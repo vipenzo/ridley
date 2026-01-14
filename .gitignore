@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Build output
+public/js/
+.shadow-cljs/
+
+# Clojure
+.cpcache/
+.nrepl-port
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db

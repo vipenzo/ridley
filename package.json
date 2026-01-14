@@ -1,0 +1,17 @@
+{
+  "name": "ridley",
+  "version": "0.1.0",
+  "description": "3D modeling with turtle graphics",
+  "private": true,
+  "scripts": {
+    "dev": "shadow-cljs watch app",
+    "release": "shadow-cljs release app",
+    "clean": "rm -rf public/js"
+  },
+  "devDependencies": {
+    "shadow-cljs": "^2.28.5"
+  },
+  "dependencies": {
+    "three": "^0.160.0"
+  }
+}

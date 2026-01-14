@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ridley</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="app">
+    <div id="editor-panel">
+      <textarea id="editor" spellcheck="false" placeholder="; Write turtle commands here
+; Example: (f 50) (th 90) (f 50)
+; Press Cmd+Enter to evaluate"></textarea>
+      <div id="error-panel"></div>
+    </div>
+    <div id="viewport-panel">
+      <canvas id="viewport"></canvas>
+    </div>
+  </div>
+  <script src="/js/main.js"></script>
+</body>
+</html>
