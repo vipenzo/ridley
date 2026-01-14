@@ -24,8 +24,8 @@
         (show-error error)
         (do
           (hide-error)
-          (when-let [geometry (repl/extract-geometry result)]
-            (viewport/update-geometry geometry)))))))
+          (when-let [render-data (repl/extract-render-data result)]
+            (viewport/update-scene render-data)))))))
 
 (defn- setup-keybindings []
   (when-let [el @editor-el]

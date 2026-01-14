@@ -6,7 +6,8 @@
     :heading [x y z]      - forward direction (unit vector)
     :up [x y z]           - up direction (unit vector)
     :pen-down? boolean    - whether movement draws
-    :geometry []}         - accumulated line segments")
+    :geometry []          - accumulated line segments
+    :meshes []}           - accumulated 3D meshes")
 
 (defn make-turtle
   "Create initial turtle state at origin, facing +Z, up +Y."
@@ -15,7 +16,8 @@
    :heading [0 0 1]
    :up [0 1 0]
    :pen-down? true
-   :geometry []})
+   :geometry []
+   :meshes []})
 
 ;; --- Vector math utilities ---
 

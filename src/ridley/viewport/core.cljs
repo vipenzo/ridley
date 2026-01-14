@@ -36,8 +36,21 @@
   (let [axes (THREE/AxesHelper. 50)]
     (.add scene axes)))
 
+(defn- add-lights [scene]
+  (let [ambient (THREE/AmbientLight. 0x404040 0.5)
+        directional (THREE/DirectionalLight. 0xffffff 1)]
+    (.set (.-position directional) 100 100 100)
+    (.add scene ambient)
+    (.add scene directional)))
+
 (defn- create-line-material []
   (THREE/LineBasicMaterial. #js {:color 0x00ff88 :linewidth 2}))
+
+(defn- create-mesh-material []
+  (THREE/MeshStandardMaterial. #js {:color 0x00aaff
+                                     :metalness 0.3
+                                     :roughness 0.7
+                                     :side THREE/DoubleSide}))
 
 (defn- geometry-to-points
   "Convert turtle geometry segments to Three.js points."
@@ -59,10 +72,28 @@
       (.setFromPoints buffer-geom points)
       (THREE/LineSegments. buffer-geom (create-line-material)))))
 
+(defn- create-three-mesh
+  "Create Three.js mesh from vertices and faces."
+  [{:keys [vertices faces]}]
+  (let [geom (THREE/BufferGeometry.)
+        ;; Flatten vertices for position attribute
+        positions (js/Float32Array.
+                   (clj->js (mapcat identity
+                                    (mapcat (fn [[i0 i1 i2]]
+                                              [(nth vertices i0)
+                                               (nth vertices i1)
+                                               (nth vertices i2)])
+                                            faces))))
+        material (create-mesh-material)]
+    (.setAttribute geom "position" (THREE/BufferAttribute. positions 3))
+    (.computeVertexNormals geom)
+    (THREE/Mesh. geom material)))
+
 (defn- clear-geometry
   "Remove all geometry objects from scene, keeping grid and axes."
   [scene]
-  (let [to-remove (filterv #(= (.-type %) "LineSegments")
+  (let [to-remove (filterv #(or (= (.-type %) "LineSegments")
+                                (= (.-type %) "Mesh"))
                            (.-children scene))]
     (doseq [obj to-remove]
       (.remove scene obj)
@@ -94,14 +125,81 @@
             (+ center-z dist))
       (.update controls))))
 
-(defn update-geometry
-  "Update viewport with new turtle geometry."
-  [geometry]
+(defn- collect-all-points
+  "Collect all points from lines and meshes for camera fitting."
+  [lines meshes]
+  (concat
+   ;; Points from line segments
+   (mapcat (fn [{:keys [from to]}] [from to]) lines)
+   ;; Points from mesh vertices
+   (mapcat :vertices meshes)))
+
+(defn update-scene
+  "Update viewport with lines and meshes."
+  [{:keys [lines meshes]}]
   (when-let [{:keys [scene camera controls]} @state]
     (clear-geometry scene)
-    (when-let [lines (create-line-segments geometry)]
-      (.add scene lines))
-    (fit-camera-to-geometry camera controls geometry)))
+    ;; Add line segments
+    (when (seq lines)
+      (when-let [line-obj (create-line-segments lines)]
+        (.add scene line-obj)))
+    ;; Add meshes
+    (doseq [mesh-data meshes]
+      (let [mesh (create-three-mesh mesh-data)]
+        (.add scene mesh)))
+    ;; Fit camera to all geometry
+    (let [all-points (collect-all-points lines meshes)]
+      (when (seq all-points)
+        (let [xs (map first all-points)
+              ys (map second all-points)
+              zs (map #(nth % 2) all-points)
+              min-x (apply min xs) max-x (apply max xs)
+              min-y (apply min ys) max-y (apply max ys)
+              min-z (apply min zs) max-z (apply max zs)
+              center-x (/ (+ min-x max-x) 2)
+              center-y (/ (+ min-y max-y) 2)
+              center-z (/ (+ min-z max-z) 2)
+              size (max (- max-x min-x) (- max-y min-y) (- max-z min-z) 10)
+              dist (* size 2)]
+          (.set (.-target controls) center-x center-y center-z)
+          (.set (.-position camera)
+                (+ center-x dist)
+                (+ center-y dist)
+                (+ center-z dist))
+          (.update controls))))))
+
+(defn update-geometry
+  "Update viewport with new turtle geometry (line segments only, legacy)."
+  [geometry]
+  (update-scene {:lines geometry :meshes []}))
+
+(defn update-mesh
+  "Update viewport with a mesh (legacy, single mesh)."
+  [mesh-data]
+  (when-let [{:keys [scene camera controls]} @state]
+    (clear-geometry scene)
+    (when mesh-data
+      (let [mesh (create-three-mesh mesh-data)]
+        (.add scene mesh)))
+    ;; Fit camera to mesh vertices
+    (when-let [vertices (:vertices mesh-data)]
+      (let [xs (map first vertices)
+            ys (map second vertices)
+            zs (map #(nth % 2) vertices)
+            min-x (apply min xs) max-x (apply max xs)
+            min-y (apply min ys) max-y (apply max ys)
+            min-z (apply min zs) max-z (apply max zs)
+            center-x (/ (+ min-x max-x) 2)
+            center-y (/ (+ min-y max-y) 2)
+            center-z (/ (+ min-z max-z) 2)
+            size (max (- max-x min-x) (- max-y min-y) (- max-z min-z) 10)
+            dist (* size 2)]
+        (.set (.-target controls) center-x center-y center-z)
+        (.set (.-position camera)
+              (+ center-x dist)
+              (+ center-y dist)
+              (+ center-z dist))
+        (.update controls)))))
 
 (defn- animate []
   (when-let [{:keys [renderer scene camera controls]} @state]
@@ -131,6 +229,7 @@
     (.setSize renderer width height)
     (add-grid scene)
     (add-axes scene)
+    (add-lights scene)
     (reset! state {:scene scene
                    :camera camera
                    :renderer renderer

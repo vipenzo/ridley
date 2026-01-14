@@ -5,7 +5,8 @@
    through each form. The DSL functions are available without require."
   (:require [sci.core :as sci]
             [ridley.turtle.core :as turtle]
-            [ridley.turtle.path :as path]))
+            [ridley.turtle.path :as path]
+            [ridley.geometry.primitives :as prims]))
 
 (def ^:private turtle-bindings
   "Map of symbols to turtle functions for SCI context."
@@ -20,7 +21,12 @@
    'pen-down     turtle/pen-down
    'turtle       turtle/make-turtle
    'path->data   path/path-from-state
-   'shape->data  path/shape-from-state})
+   'shape->data  path/shape-from-state
+   ;; 3D primitives
+   'box          prims/box
+   'sphere       prims/sphere
+   'cyl          prims/cyl
+   'cone         prims/cone})
 
 ;; Macro definitions as strings for SCI
 (def ^:private macro-defs
@@ -52,14 +58,17 @@
     (catch :default e
       {:error (.-message e)})))
 
-(defn extract-geometry
-  "Extract geometry from evaluation result.
-   Handles turtle state, path, or shape results."
+(defn extract-render-data
+  "Extract render data from evaluation result.
+   Returns {:lines [...] :meshes [...]} for combined rendering."
   [eval-result]
   (when-let [result (:result eval-result)]
     (cond
       ;; Path or shape result
-      (:segments result) (:segments result)
-      ;; Turtle state
-      (:geometry result) (:geometry result)
+      (:segments result)
+      {:lines (:segments result) :meshes []}
+      ;; Turtle state with geometry and/or meshes
+      (or (:geometry result) (:meshes result))
+      {:lines (or (:geometry result) [])
+       :meshes (or (:meshes result) [])}
       :else nil)))
