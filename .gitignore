@@ -13,6 +13,8 @@ public/js/
 .idea/
 *.iml
 .vscode/
+.clj-kondo/
+.lsp/
 
 # OS
 .DS_Store
