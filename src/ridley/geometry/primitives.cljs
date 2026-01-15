@@ -1,6 +1,8 @@
 (ns ridley.geometry.primitives
   "3D primitive shapes: box, sphere, cylinder, cone.
-   Each primitive is placed at turtle position with turtle orientation.")
+   Each primitive is placed at turtle position with turtle orientation.
+   All primitives include face-groups for face-based modeling."
+  (:require [ridley.geometry.faces :as faces]))
 
 (defn- apply-transform
   "Apply turtle position and orientation to mesh vertices."
@@ -62,7 +64,8 @@
          mesh {:type :mesh
                :primitive :box
                :vertices (vec transformed)
-               :faces faces}]
+               :faces faces
+               :face-groups (faces/box-face-groups)}]
      (update turtle-state :meshes conj mesh))))
 
 (defn- make-sphere-vertices
@@ -124,7 +127,8 @@
          mesh {:type :mesh
                :primitive :sphere
                :vertices (vec transformed)
-               :faces faces}]
+               :faces faces
+               :face-groups (faces/sphere-face-groups segments rings)}]
      (update turtle-state :meshes conj mesh))))
 
 (defn- make-cylinder-vertices
@@ -190,7 +194,8 @@
          mesh {:type :mesh
                :primitive :cylinder
                :vertices (vec transformed)
-               :faces faces}]
+               :faces faces
+               :face-groups (faces/cylinder-face-groups segments)}]
      (update turtle-state :meshes conj mesh))))
 
 (defn- make-cone-vertices
@@ -233,5 +238,6 @@
          mesh {:type :mesh
                :primitive :cone
                :vertices (vec transformed)
-               :faces faces}]
+               :faces faces
+               :face-groups (faces/cone-face-groups segments)}]
      (update turtle-state :meshes conj mesh))))

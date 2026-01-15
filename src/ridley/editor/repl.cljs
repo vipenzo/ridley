@@ -12,7 +12,8 @@
             [ridley.turtle.core :as turtle]
             [ridley.turtle.path :as path]
             [ridley.geometry.primitives :as prims]
-            [ridley.geometry.operations :as ops]))
+            [ridley.geometry.operations :as ops]
+            [ridley.geometry.faces :as faces]))
 
 ;; Global turtle state for implicit mode
 (defonce ^:private turtle-atom (atom nil))
@@ -30,12 +31,6 @@
 (defn- implicit-b [dist]
   (swap! turtle-atom turtle/b dist))
 
-(defn- implicit-u [dist]
-  (swap! turtle-atom turtle/u dist))
-
-(defn- implicit-d [dist]
-  (swap! turtle-atom turtle/d dist))
-
 (defn- implicit-th [angle]
   (swap! turtle-atom turtle/th angle))
 
@@ -50,6 +45,10 @@
 
 (defn- implicit-pen-down []
   (swap! turtle-atom turtle/pen-down))
+
+(defn- implicit-pen
+  [mode & {:keys [at normal]}]
+  (swap! turtle-atom turtle/pen mode :at at :normal normal))
 
 (defn- implicit-box
   ([size] (swap! turtle-atom prims/box size))
@@ -79,11 +78,10 @@
   {;; Implicit turtle commands (mutate atom)
    'f            implicit-f
    'b            implicit-b
-   'u            implicit-u
-   'd            implicit-d
    'th           implicit-th
    'tv           implicit-tv
    'tr           implicit-tr
+   'pen          implicit-pen
    'pen-up       implicit-pen-up
    'pen-down     implicit-pen-down
    'box          implicit-box
@@ -94,11 +92,10 @@
    'turtle       turtle/make-turtle
    'turtle-f     turtle/f
    'turtle-b     turtle/b
-   'turtle-u     turtle/u
-   'turtle-d     turtle/d
    'turtle-th    turtle/th
    'turtle-tv    turtle/tv
    'turtle-tr    turtle/tr
+   'turtle-pen      turtle/pen
    'turtle-pen-up   turtle/pen-up
    'turtle-pen-down turtle/pen-down
    'turtle-box      prims/box
@@ -115,6 +112,10 @@
    'revolve      ops/revolve
    'sweep        ops/sweep
    'loft         ops/loft
+   ;; Face operations
+   'list-faces   faces/list-faces
+   'get-face     faces/get-face
+   'face-ids     faces/face-ids
    ;; Access current turtle state
    'get-turtle   get-turtle})
 
@@ -122,9 +123,9 @@
 ;; These macros rewrite turtle commands to use pure functions for threading.
 (def ^:private macro-defs
   "(def ^:private pure-fn-map
-     {'f 'turtle-f 'b 'turtle-b 'u 'turtle-u 'd 'turtle-d
+     {'f 'turtle-f 'b 'turtle-b
       'th 'turtle-th 'tv 'turtle-tv 'tr 'turtle-tr
-      'pen-up 'turtle-pen-up 'pen-down 'turtle-pen-down
+      'pen 'turtle-pen 'pen-up 'turtle-pen-up 'pen-down 'turtle-pen-down
       'box 'turtle-box 'sphere 'turtle-sphere
       'cyl 'turtle-cyl 'cone 'turtle-cone})
 

@@ -5,7 +5,10 @@
    {:position [x y z]     - current position
     :heading [x y z]      - forward direction (unit vector)
     :up [x y z]           - up direction (unit vector)
-    :pen-down? boolean    - whether movement draws
+    :pen-mode             - nil/:off, :2d, :3d, or face-id
+    :pen-plane            - for :3d mode: {:at [x y z] :normal [x y z]}
+    :current-face         - selected face info when pen is on a face
+    :pending-profile []   - 2D points accumulated on current face/plane
     :geometry []          - accumulated line segments
     :meshes []}           - accumulated 3D meshes")
 
@@ -17,7 +20,10 @@
   {:position [0 0 0]
    :heading [1 0 0]
    :up [0 0 1]
-   :pen-down? true
+   :pen-mode :2d            ; :off, :2d, :3d, or face-id
+   :pen-plane nil           ; for :3d mode: {:at [x y z] :normal [x y z]}
+   :current-face nil        ; selected face when pen is on a face
+   :pending-profile []      ; accumulated 2D profile points
    :geometry []
    :meshes []})
 
@@ -65,16 +71,27 @@
 
 (defn- move
   "Move turtle by distance along a direction vector.
-   If pen is down, add segment to geometry."
+   Behavior depends on pen-mode:
+   - :off or nil - just move, no drawing
+   - :2d - add line segment to geometry
+   - :3d or face-id - accumulate profile point (TODO: implement extrusion)"
   [state direction dist]
   (let [pos (:position state)
-        new-pos (v+ pos (v* direction dist))]
-    (if (:pen-down? state)
+        new-pos (v+ pos (v* direction dist))
+        mode (:pen-mode state)]
+    (case mode
+      (:off nil)
+      (assoc state :position new-pos)
+
+      :2d
       (-> state
           (assoc :position new-pos)
           (update :geometry conj {:type :line
                                   :from pos
                                   :to new-pos}))
+
+      ;; For :3d and face modes, just move for now
+      ;; Profile accumulation will be handled separately
       (assoc state :position new-pos))))
 
 (defn f
@@ -138,11 +155,57 @@
 ;; --- Pen commands ---
 
 (defn pen-up
-  "Stop drawing when moving."
+  "Stop drawing when moving. (Legacy - use (pen :off) instead)"
   [state]
-  (assoc state :pen-down? false))
+  (assoc state :pen-mode :off))
 
 (defn pen-down
-  "Start drawing when moving."
+  "Start drawing when moving. (Legacy - use (pen :2d) instead)"
   [state]
-  (assoc state :pen-down? true))
+  (assoc state :pen-mode :2d))
+
+(defn pen
+  "Set pen mode for drawing.
+
+   Modes:
+   - (pen :off) - stop drawing
+   - (pen :2d) - draw lines (default turtle behavior)
+   - (pen :3d :at [x y z] :normal [nx ny nz]) - draw on arbitrary plane
+   - (pen face-id) - draw on mesh face (:top, :bottom, :front, etc.)
+   - (pen face-id :at [u v]) - draw on face with UV offset from center
+
+   When pen is on a face or plane, movement accumulates profile points
+   that can be extruded with (f dist)."
+  [state mode & {:keys [at normal]}]
+  (cond
+    ;; Simple modes
+    (= mode :off)
+    (-> state
+        (assoc :pen-mode :off)
+        (assoc :pen-plane nil)
+        (assoc :current-face nil)
+        (assoc :pending-profile []))
+
+    (= mode :2d)
+    (-> state
+        (assoc :pen-mode :2d)
+        (assoc :pen-plane nil)
+        (assoc :current-face nil)
+        (assoc :pending-profile []))
+
+    ;; 3D plane mode
+    (= mode :3d)
+    (-> state
+        (assoc :pen-mode :3d)
+        (assoc :pen-plane {:at (or at [0 0 0])
+                           :normal (or normal [0 0 1])})
+        (assoc :current-face nil)
+        (assoc :pending-profile []))
+
+    ;; Face selection mode (keyword like :top, :bottom, or numeric ID)
+    :else
+    (-> state
+        (assoc :pen-mode mode)
+        (assoc :pen-plane nil)
+        (assoc :current-face {:id mode :offset (or at [0 0])})
+        (assoc :pending-profile []))))
