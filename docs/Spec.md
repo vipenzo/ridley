@@ -32,7 +32,7 @@ For paths and shapes, a compact string notation is available alongside the funct
 
 ```
 command     = movement | rotation | modifier | anchor | curve
-movement    = ("F" | "B" | "U" | "D") number
+movement    = ("F" | "B") number
 rotation    = ("TH" | "TV" | "TR") number
 modifier    = ("R" | "C") number                    ; fillet (R=radius), chamfer (C)
 anchor      = ("@" | "@>") identifier               ; define anchor
@@ -69,8 +69,6 @@ GAstart                 ; goto anchor
 |----------|-------|-------------|
 | `(f dist)` | `F<n>` | Forward |
 | `(b dist)` | `B<n>` | Backward |
-| `(u dist)` | `U<n>` | Up (turtle's local up) |
-| `(d dist)` | `D<n>` | Down (turtle's local down) |
 
 ### Rotation
 
@@ -86,11 +84,28 @@ GAstart                 ; goto anchor
 |----------|-------|-------------|
 | `(pen :off)` | `PO` | Stop drawing (pen up) |
 | `(pen :2d)` | `P2D` | Draw 2D lines |
+| `(pen :3d ...)` | — | Draw on arbitrary plane (see below) |
 | `(pen <face-id>)` | — | Select face for 2D drawing |
+
+#### Drawing on Arbitrary Planes
+
+To start a new mesh by extruding a 2D shape, use `(pen :3d ...)` with plane specification:
+
+```clojure
+;; Explicit plane: point + normal
+(pen :3d :at [10 20 0] :normal [0 0 1])   ; XY plane at z=0, offset to [10 20]
+
+;; Using an anchor (position + up vector)
+(pen :3d @my-anchor)                       ; Uses anchor's position and up
+
+;; Then draw and extrude
+(circle 15)
+(f 30)                                     ; Creates cylinder mesh
+```
 
 #### Face Selection
 
-When working with 3D meshes, you can select a face to draw on:
+When working with existing 3D meshes, select a face to draw on:
 
 ```clojure
 ;; Semantic face names (for primitives)
@@ -103,6 +118,9 @@ When working with 3D meshes, you can select a face to draw on:
 
 ;; Numeric face IDs (for complex meshes)
 (pen 42)
+
+;; With offset on face (UV coordinates from center)
+(pen :top :at [5 10])                      ; Offset from face center
 
 ;; Face discovery
 (list-faces mesh)           ; Lists all faces with IDs
