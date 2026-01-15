@@ -2,15 +2,26 @@
 
 ## Overview
 
-Ridley is a 3D modeling application based on turtle graphics. Users write scripts in Clojure to generate 3D geometry, which is rendered in real-time and can be exported for 3D printing or viewed in VR/AR.
+Ridley is a 3D modeling application based on turtle graphics with a face-based modeling paradigm. Users write scripts in Clojure to generate 3D geometry through an intuitive "draw on face, then extrude" workflow—similar to SketchUp's push/pull but fully programmatic. Models are rendered in real-time and can be exported for 3D printing or viewed in VR/AR.
+
+## Core Concept: Face-Based Turtle Modeling
+
+The central innovation is unifying all 3D operations into the turtle paradigm:
+
+1. **Start with a primitive** (box, cylinder) or use generative ops (extrude, revolve)
+2. **Select a face** with `(pen :face-id)`
+3. **Draw a 2D profile** on that face using turtle commands
+4. **Extrude** with `(f dist)` — positive adds material, negative subtracts (creates holes)
+
+This eliminates the need for separate boolean operations in most cases, while keeping the mental model simple and sequential.
 
 ## Tech Stack
 
 ### Core
 - **ClojureScript** — Main application language
 - **SCI** (Small Clojure Interpreter) — Embedded interpreter for user scripts
-- **thi.ng/geom** — Computational geometry library (transforms, meshes, primitives)
-- **Manifold** (WASM) — Boolean operations (CSG), guarantees watertight meshes
+- **Custom geometry engine** — Mesh generation, face operations, extrusion
+- **Manifold** (WASM) — Boolean operations for complex CSG (future)
 
 ### Rendering
 - **Three.js** — 3D rendering engine
@@ -118,36 +129,61 @@ ridley/
 The turtle is a pure data structure. Commands are functions that take state and return new state. No mutation.
 
 ```clojure
-{:position [0 0 0]
- :heading [0 0 1]
- :up [0 1 0]
- :pen-down? true
- :geometry []}
+{:position [x y z]         ; Current position in 3D space
+ :heading [x y z]          ; Forward direction (unit vector)
+ :up [x y z]               ; Up direction (unit vector)
+ :pen-mode nil             ; nil=off, :2d=draw lines, face-id=draw on face
+ :current-face nil         ; Selected face for 2D drawing
+ :pending-profile []       ; 2D points accumulated on current face
+ :meshes [...]}            ; Accumulated 3D meshes with face metadata
 ```
 
-### 2. Generative Modifiers
+### 2. Face-Based Modeling (Push/Pull Paradigm)
 
-Fillet and chamfer are applied generatively, not as post-processing on meshes:
-- On 2D shapes: affects longitudinal edges
-- On paths: affects edges along extrusion direction
-- On caps: `:cap-fillet` parameter on generative operations
-- On booleans: `(subtract a b :fillet 2)`
+Instead of separate boolean operations, most 3D editing is done through face extrusion:
 
-### 3. Typed Anchors
+```clojure
+;; Create a box with a hole
+(box 100 100 50)           ; Start with a box
+(pen :top)                 ; Select top face
+(circle 20)                ; Draw a circle on that face
+(f -50)                    ; Extrude down = subtract (hole)
 
-Two types of anchors to avoid ambiguity:
-- `@` — position only
-- `@>` — position + orientation
+;; Add a boss on top
+(pen :top)
+(circle 15)
+(f 30)                     ; Extrude up = add material
+```
 
-Navigation commands:
-- `GA` — goto anchor, keep current heading (works with both)
-- `GD` — goto and adopt direction (requires `@>`)
+The direction of extrusion determines the operation:
+- **Positive distance**: Add material (union)
+- **Negative distance**: Remove material (subtraction)
 
-### 4. Viewport as Selection
+### 3. Visual Face Selection
+
+For complex meshes where face IDs aren't obvious:
+
+```clojure
+(list-faces my-mesh)       ; Show all face IDs
+(select my-mesh 42)        ; Highlight face 42 in viewport
+(pen 42)                   ; Select face 42 for drawing
+```
+
+The viewport highlights selected faces with a distinct color.
+
+### 4. Generative Operations
+
+Standard generative ops create initial meshes with labeled faces:
+
+- **extrude**: Creates `:top`, `:bottom`, `:side-N` faces
+- **revolve**: Creates `:start-cap`, `:end-cap`, `:surface` faces
+- **loft**: Creates `:start`, `:end`, `:surface` faces
+
+### 5. Viewport as Selection
 
 What's visible in the viewport is what gets exported. Simple mental model.
 
-### 5. SCI for User Scripts
+### 6. SCI for User Scripts
 
 User code runs in SCI, not raw ClojureScript. Benefits:
 - Sandboxed execution

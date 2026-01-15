@@ -10,11 +10,13 @@
     :meshes []}           - accumulated 3D meshes")
 
 (defn make-turtle
-  "Create initial turtle state at origin, facing +Z, up +Y."
+  "Create initial turtle state at origin, facing +X, up +Z.
+   This makes 2D drawing happen in the XY plane (Z=0),
+   ideal for extruding along Z."
   []
   {:position [0 0 0]
-   :heading [0 0 1]
-   :up [0 1 0]
+   :heading [1 0 0]
+   :up [0 0 1]
    :pen-down? true
    :geometry []
    :meshes []})

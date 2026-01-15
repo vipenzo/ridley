@@ -37,11 +37,20 @@
     (.add scene axes)))
 
 (defn- add-lights [scene]
-  (let [ambient (THREE/AmbientLight. 0x404040 0.5)
-        directional (THREE/DirectionalLight. 0xffffff 1)]
-    (.set (.-position directional) 100 100 100)
+  (let [ambient (THREE/AmbientLight. 0x606060 0.6)
+        ;; Main light from top-front-right
+        main-light (THREE/DirectionalLight. 0xffffff 0.8)
+        ;; Fill light from opposite side (softer)
+        fill-light (THREE/DirectionalLight. 0x8888ff 0.3)
+        ;; Rim light from behind
+        rim-light (THREE/DirectionalLight. 0xffffcc 0.2)]
+    (.set (.-position main-light) 100 150 100)
+    (.set (.-position fill-light) -80 50 -50)
+    (.set (.-position rim-light) 0 -50 -100)
     (.add scene ambient)
-    (.add scene directional)))
+    (.add scene main-light)
+    (.add scene fill-light)
+    (.add scene rim-light)))
 
 (defn- create-line-material []
   (THREE/LineBasicMaterial. #js {:color 0x00ff88 :linewidth 2}))
@@ -76,14 +85,16 @@
   "Create Three.js mesh from vertices and faces."
   [{:keys [vertices faces]}]
   (let [geom (THREE/BufferGeometry.)
-        ;; Flatten vertices for position attribute
-        positions (js/Float32Array.
-                   (clj->js (mapcat identity
-                                    (mapcat (fn [[i0 i1 i2]]
-                                              [(nth vertices i0)
-                                               (nth vertices i1)
-                                               (nth vertices i2)])
-                                            faces))))
+        n-verts (count vertices)
+        ;; Flatten vertices for position attribute, with bounds checking
+        face-verts (mapcat (fn [[i0 i1 i2]]
+                             (when (and (< i0 n-verts) (< i1 n-verts) (< i2 n-verts))
+                               [(nth vertices i0 [0 0 0])
+                                (nth vertices i1 [0 0 0])
+                                (nth vertices i2 [0 0 0])]))
+                           faces)
+        flat-coords (mapcat identity face-verts)
+        positions (js/Float32Array. (clj->js flat-coords))
         material (create-mesh-material)]
     (.setAttribute geom "position" (THREE/BufferAttribute. positions 3))
     (.computeVertexNormals geom)

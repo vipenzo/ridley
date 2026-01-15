@@ -9,15 +9,33 @@
 <body>
   <div id="app">
     <div id="editor-panel">
-      <textarea id="editor" spellcheck="false" placeholder="; Write turtle commands here
-; Example: (f 50) (th 90) (f 50)
-; Press Cmd+Enter to evaluate"></textarea>
+      <div id="explicit-section">
+        <div class="section-header">
+          <span class="section-title">Definitions</span>
+          <div class="section-actions">
+            <button id="btn-save" class="action-btn" title="Save definitions">Save</button>
+            <button id="btn-load" class="action-btn" title="Load definitions">Load</button>
+          </div>
+        </div>
+        <textarea id="editor-explicit" spellcheck="false" placeholder="; Definitions, functions, data
+; Example: (def my-shape (fn [s] (-> s (f 20) (box 5))))"></textarea>
+      </div>
+      <div class="section-divider"></div>
+      <div id="implicit-section">
+        <div class="section-header">
+          <span class="section-title">Commands</span>
+          <span class="section-hint">Cmd+Enter to run</span>
+        </div>
+        <textarea id="editor-implicit" spellcheck="false" placeholder="; Turtle commands (implicit state)
+; Example: (f 50) (th 90) (f 50)"></textarea>
+      </div>
       <div id="error-panel"></div>
     </div>
     <div id="viewport-panel">
       <canvas id="viewport"></canvas>
     </div>
   </div>
+  <input type="file" id="file-input" accept=".clj,.cljs,.edn" style="display:none">
   <script src="/js/main.js"></script>
 </body>
 </html>

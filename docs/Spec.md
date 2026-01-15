@@ -84,8 +84,30 @@ GAstart                 ; goto anchor
 
 | Function | Dense | Description |
 |----------|-------|-------------|
-| `(pen-up)` | `PU` | Stop drawing |
-| `(pen-down)` | `PD` | Start drawing |
+| `(pen :off)` | `PO` | Stop drawing (pen up) |
+| `(pen :2d)` | `P2D` | Draw 2D lines |
+| `(pen <face-id>)` | — | Select face for 2D drawing |
+
+#### Face Selection
+
+When working with 3D meshes, you can select a face to draw on:
+
+```clojure
+;; Semantic face names (for primitives)
+(pen :top)
+(pen :bottom)
+(pen :front)
+(pen :back)
+(pen :left)
+(pen :right)
+
+;; Numeric face IDs (for complex meshes)
+(pen 42)
+
+;; Face discovery
+(list-faces mesh)           ; Lists all faces with IDs
+(select mesh face-id)       ; Highlights face in viewport
+```
 
 ### Anchors
 
@@ -240,7 +262,53 @@ With modifiers:
 
 ---
 
-## Boolean Operations
+## Face-Based Modeling (Primary Method)
+
+The primary way to modify 3D shapes is through face extrusion:
+
+```clojure
+;; Create a box with a cylindrical hole
+(box 100 100 50)              ; Create initial box
+(pen :top)                    ; Select top face
+(circle 20)                   ; Draw circle profile
+(f -50)                       ; Extrude down = subtract hole
+
+;; Add a raised boss
+(pen :top)                    ; Select top face again
+(circle 15)                   ; Draw smaller circle
+(f 30)                        ; Extrude up = add material
+
+;; Create a pocket
+(pen :top)
+(rect 30 20)                  ; Draw rectangle
+(f -10)                       ; Shallow pocket
+```
+
+### Extrusion Direction
+
+The direction of `(f dist)` determines the operation:
+- **Positive distance**: Add material (like union)
+- **Negative distance**: Remove material (like subtract)
+
+### Face Discovery
+
+For complex meshes where face IDs aren't obvious:
+
+```clojure
+(list-faces my-mesh)          ; Print all face IDs and info
+;; => [{:id :top :normal [0 0 1] :center [50 50 50]}
+;;     {:id :side-0 :normal [1 0 0] :center [100 50 25]}
+;;     ...]
+
+(select my-mesh :side-0)      ; Highlight face in viewport
+(pen :side-0)                 ; Select for drawing
+```
+
+---
+
+## Boolean Operations (Advanced)
+
+For cases where face-based modeling isn't sufficient:
 
 ```clojure
 (union a b)
@@ -259,6 +327,8 @@ With integrated fillet/chamfer:
 (subtract base tool :fillet 1)
 (subtract base tool :chamfer 0.5)
 ```
+
+Note: Boolean operations require Manifold WASM integration.
 
 ---
 
@@ -386,6 +456,41 @@ Exports whatever is currently visible.
 ---
 
 ## Complete Example
+
+### Face-Based Approach (Recommended)
+
+```clojure
+;; Parametric enclosure with mounting holes
+
+(def wall 3)
+(def outer-w 60)
+(def outer-h 40)
+(def outer-d 25)
+(def corner-r 3)
+(def hole-r 2.5)
+(def hole-inset 5)
+
+;; Start with solid box
+(box outer-w outer-h outer-d)
+
+;; Hollow out from top
+(pen :top)
+(rect (- outer-w (* wall 2)) (- outer-h (* wall 2)))
+(f (- (- outer-d wall)))                ; Deep pocket, leaves bottom wall
+
+;; Add mounting holes in corners
+(pen :bottom)
+(pen-up)
+(f hole-inset) (th 90) (f hole-inset)   ; Move to corner
+(pen-down)
+(circle hole-r)
+(f outer-d)                              ; Through hole (positive = add? No, from bottom face normal points down)
+;; Actually: (f -outer-d) to go "into" the part
+
+;; Repeat for other corners...
+```
+
+### Traditional Approach (with Booleans)
 
 ```clojure
 ;; Parametric box with snap-fit lid
