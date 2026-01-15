@@ -89,19 +89,24 @@ GAstart                 ; goto anchor
 
 #### Drawing on Arbitrary Planes
 
-To start a new mesh by extruding a 2D shape, use `(pen :3d ...)` with plane specification:
+To start a new mesh by extruding a 2D shape, use `(pen :3d ...)` with full frame specification:
 
 ```clojure
-;; Explicit plane: point + normal
-(pen :3d :at [10 20 0] :normal [0 0 1])   ; XY plane at z=0, offset to [10 20]
+;; Explicit plane: point + normal + heading (full frame)
+(pen :3d :at [10 20 0] :normal [0 0 1] :heading [1 0 0])
 
-;; Using an anchor (position + up vector)
-(pen :3d @my-anchor)                       ; Uses anchor's position and up
+;; Using an anchor (has full frame: position + heading + up)
+(pen @my-anchor)                           ; Uses anchor's full frame
 
 ;; Then draw and extrude
 (circle 15)
 (f 30)                                     ; Creates cylinder mesh
 ```
+
+The plane requires a full coordinate frame:
+- `:at` — position (origin of the 2D coordinate system)
+- `:normal` — Z axis of the plane (extrusion direction)
+- `:heading` — X axis of the plane (turtle's forward direction)
 
 #### Face Selection
 

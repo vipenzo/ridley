@@ -47,8 +47,8 @@
   (swap! turtle-atom turtle/pen-down))
 
 (defn- implicit-pen
-  [mode & {:keys [at normal]}]
-  (swap! turtle-atom turtle/pen mode :at at :normal normal))
+  [mode & {:keys [at normal heading]}]
+  (swap! turtle-atom turtle/pen mode :at at :normal normal :heading heading))
 
 (defn- implicit-box
   ([size] (swap! turtle-atom prims/box size))

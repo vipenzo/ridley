@@ -170,13 +170,16 @@
    Modes:
    - (pen :off) - stop drawing
    - (pen :2d) - draw lines (default turtle behavior)
-   - (pen :3d :at [x y z] :normal [nx ny nz]) - draw on arbitrary plane
+   - (pen :3d :at [p] :normal [n] :heading [h]) - draw on arbitrary plane
    - (pen face-id) - draw on mesh face (:top, :bottom, :front, etc.)
    - (pen face-id :at [u v]) - draw on face with UV offset from center
 
+   The plane requires a full frame: :at (position), :normal (Z axis),
+   and :heading (X axis). The Y axis is derived from normal × heading.
+
    When pen is on a face or plane, movement accumulates profile points
    that can be extruded with (f dist)."
-  [state mode & {:keys [at normal]}]
+  [state mode & {:keys [at normal heading]}]
   (cond
     ;; Simple modes
     (= mode :off)
@@ -193,12 +196,13 @@
         (assoc :current-face nil)
         (assoc :pending-profile []))
 
-    ;; 3D plane mode
+    ;; 3D plane mode - requires full frame
     (= mode :3d)
     (-> state
         (assoc :pen-mode :3d)
         (assoc :pen-plane {:at (or at [0 0 0])
-                           :normal (or normal [0 0 1])})
+                           :normal (or normal [0 0 1])
+                           :heading (or heading [1 0 0])})
         (assoc :current-face nil)
         (assoc :pending-profile []))
 

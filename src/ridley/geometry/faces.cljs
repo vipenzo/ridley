@@ -47,8 +47,11 @@
   (v* (v+ (v+ v0 v1) v2) (/ 1 3)))
 
 (defn compute-face-info
-  "Compute normal and center for a face group (set of triangle indices).
-   Returns {:normal [x y z] :center [x y z] :vertices [indices]}."
+  "Compute normal, heading, and center for a face group (set of triangle indices).
+   Returns {:normal [x y z] :heading [x y z] :center [x y z] :vertices [indices]}.
+
+   The heading is derived from the first edge of the first triangle,
+   projected onto the face plane (perpendicular to normal)."
   [vertices face-triangles]
   (when (seq face-triangles)
     (let [;; Collect all unique vertex indices
@@ -62,8 +65,12 @@
           v0 (nth vertices i0 [0 0 0])
           v1 (nth vertices i1 [0 0 0])
           v2 (nth vertices i2 [0 0 0])
-          normal (compute-triangle-normal v0 v1 v2)]
+          normal (compute-triangle-normal v0 v1 v2)
+          ;; Heading is first edge direction (v0 -> v1), normalized
+          edge1 (v- v1 v0)
+          heading (normalize edge1)]
       {:normal normal
+       :heading heading
        :center center
        :vertices (vec all-indices)
        :triangles face-triangles})))
