@@ -66,6 +66,16 @@
   ([r1 r2 height] (swap! turtle-atom prims/cone r1 r2 height))
   ([r1 r2 height segments] (swap! turtle-atom prims/cone r1 r2 height segments)))
 
+(defn- implicit-circle
+  ([radius] (swap! turtle-atom turtle/circle radius))
+  ([radius segments] (swap! turtle-atom turtle/circle radius segments)))
+
+(defn- implicit-rect [width height]
+  (swap! turtle-atom turtle/rect width height))
+
+(defn- implicit-polygon [points]
+  (swap! turtle-atom turtle/polygon points))
+
 (defn- get-turtle []
   @turtle-atom)
 
@@ -88,6 +98,10 @@
    'sphere       implicit-sphere
    'cyl          implicit-cyl
    'cone         implicit-cone
+   ;; 2D primitives (generate profiles)
+   'circle       implicit-circle
+   'rect         implicit-rect
+   'polygon      implicit-polygon
    ;; Pure turtle functions (for explicit threading)
    'turtle       turtle/make-turtle
    'turtle-f     turtle/f
@@ -102,6 +116,9 @@
    'turtle-sphere   prims/sphere
    'turtle-cyl      prims/cyl
    'turtle-cone     prims/cone
+   'turtle-circle   turtle/circle
+   'turtle-rect     turtle/rect
+   'turtle-polygon  turtle/polygon
    ;; Path/shape utilities
    'path->data   path/path-from-state
    'shape->data  path/shape-from-state
@@ -127,7 +144,8 @@
       'th 'turtle-th 'tv 'turtle-tv 'tr 'turtle-tr
       'pen 'turtle-pen 'pen-up 'turtle-pen-up 'pen-down 'turtle-pen-down
       'box 'turtle-box 'sphere 'turtle-sphere
-      'cyl 'turtle-cyl 'cone 'turtle-cone})
+      'cyl 'turtle-cyl 'cone 'turtle-cone
+      'circle 'turtle-circle 'rect 'turtle-rect 'polygon 'turtle-polygon})
 
    (defn- rewrite-form [form]
      (if (seq? form)

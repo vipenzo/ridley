@@ -6,9 +6,9 @@
     :heading [x y z]      - forward direction (unit vector)
     :up [x y z]           - up direction (unit vector)
     :pen-mode             - nil/:off, :2d, :3d, or face-id
-    :pen-plane            - for :3d mode: {:at [x y z] :normal [x y z]}
+    :pen-plane            - for :3d mode: {:at [x y z] :normal [x y z] :heading [x y z]}
     :current-face         - selected face info when pen is on a face
-    :pending-profile []   - 2D points accumulated on current face/plane
+    :pending-profile []   - 2D points [x y] in local plane coords
     :geometry []          - accumulated line segments
     :meshes []}           - accumulated 3D meshes")
 
@@ -67,6 +67,89 @@
         term3 (v* k (* (dot k v) (- 1 cos-a)))]
     (normalize (v+ (v+ term1 term2) term3))))
 
+;; --- Plane coordinate transforms ---
+
+(defn- get-plane-frame
+  "Get the coordinate frame for the current plane.
+   Returns {:origin [x y z] :x-axis [x y z] :y-axis [x y z] :z-axis [x y z]}
+   or nil if not in plane mode."
+  [state]
+  (when-let [plane (:pen-plane state)]
+    (let [origin (:at plane)
+          z-axis (normalize (:normal plane))
+          x-axis (normalize (:heading plane))
+          ;; Y axis = Z cross X (right-hand rule)
+          y-axis (cross z-axis x-axis)]
+      {:origin origin
+       :x-axis x-axis
+       :y-axis y-axis
+       :z-axis z-axis})))
+
+(defn- world-to-plane
+  "Convert a 3D world position to 2D plane coordinates [x y].
+   Returns nil if no plane is set."
+  [state world-pos]
+  (when-let [frame (get-plane-frame state)]
+    (let [rel (v- world-pos (:origin frame))
+          x (dot rel (:x-axis frame))
+          y (dot rel (:y-axis frame))]
+      [x y])))
+
+(defn- plane-to-world
+  "Convert 2D plane coordinates [x y] to 3D world position.
+   Returns nil if no plane is set."
+  [state [px py]]
+  (when-let [frame (get-plane-frame state)]
+    (v+ (:origin frame)
+        (v+ (v* (:x-axis frame) px)
+            (v* (:y-axis frame) py)))))
+
+(defn- extrude-profile
+  "Extrude a 2D profile along the plane's normal to create a 3D mesh.
+   Returns the mesh or nil if no valid profile/plane."
+  [state dist]
+  (when-let [frame (get-plane-frame state)]
+    (let [profile (:pending-profile state)
+          n (count profile)]
+      (when (>= n 3)
+        (let [;; Convert 2D profile points to 3D
+              bottom-verts (mapv (fn [[px py]]
+                                   (v+ (:origin frame)
+                                       (v+ (v* (:x-axis frame) px)
+                                           (v* (:y-axis frame) py))))
+                                 profile)
+              ;; Extrude along normal
+              offset (v* (:z-axis frame) dist)
+              top-verts (mapv #(v+ % offset) bottom-verts)
+              ;; Combine vertices: bottom ring, then top ring
+              vertices (into (vec bottom-verts) top-verts)
+              ;; Side faces (quads as 2 triangles each)
+              side-faces (vec
+                          (mapcat (fn [i]
+                                    (let [next-i (mod (inc i) n)
+                                          b0 i
+                                          b1 next-i
+                                          t0 (+ i n)
+                                          t1 (+ next-i n)]
+                                      ;; Winding order depends on extrusion direction
+                                      (if (pos? dist)
+                                        [[b0 b1 t1] [b0 t1 t0]]
+                                        [[b0 t0 t1] [b0 t1 b1]])))
+                                  (range n)))
+              ;; Cap faces (simple fan triangulation)
+              bottom-cap (vec (for [i (range 1 (dec n))]
+                                (if (pos? dist)
+                                  [0 (inc i) i]
+                                  [0 i (inc i)])))
+              top-cap (vec (for [i (range 1 (dec n))]
+                             (if (pos? dist)
+                               [n (+ n i) (+ n i 1)]
+                               [n (+ n i 1) (+ n i)])))]
+          {:type :mesh
+           :primitive :profile-extrude
+           :vertices vertices
+           :faces (vec (concat side-faces bottom-cap top-cap))})))))
+
 ;; --- Movement commands ---
 
 (defn- move
@@ -74,7 +157,7 @@
    Behavior depends on pen-mode:
    - :off or nil - just move, no drawing
    - :2d - add line segment to geometry
-   - :3d or face-id - accumulate profile point (TODO: implement extrusion)"
+   - :3d - if profile exists, extrude it; otherwise accumulate profile points"
   [state direction dist]
   (let [pos (:position state)
         new-pos (v+ pos (v* direction dist))
@@ -90,8 +173,35 @@
                                   :from pos
                                   :to new-pos}))
 
-      ;; For :3d and face modes, just move for now
-      ;; Profile accumulation will be handled separately
+      :3d
+      ;; In plane mode: check if we have a complete profile to extrude
+      (let [profile (:pending-profile state)]
+        (if (>= (count profile) 3)
+          ;; Profile exists - extrude it along plane normal
+          (if-let [mesh (extrude-profile state dist)]
+            (-> state
+                (assoc :position new-pos)
+                (update :meshes conj mesh)
+                (assoc :pending-profile []))  ; Clear profile after extrusion
+            ;; Fallback: just move if extrusion failed
+            (assoc state :position new-pos))
+          ;; No complete profile - accumulate points
+          (let [;; Add start point if this is the first move
+                profile' (if (empty? profile)
+                           (if-let [start-2d (world-to-plane state pos)]
+                             [start-2d]
+                             profile)
+                           profile)
+                ;; Add end point
+                profile'' (if-let [end-2d (world-to-plane state new-pos)]
+                            (conj profile' end-2d)
+                            profile')]
+            (-> state
+                (assoc :position new-pos)
+                (assoc :pending-profile profile'')))))
+
+      ;; Face mode - similar to :3d but needs face info lookup
+      ;; For now, just move without accumulating
       (assoc state :position new-pos))))
 
 (defn f
@@ -213,3 +323,59 @@
         (assoc :pen-plane nil)
         (assoc :current-face {:id mode :offset (or at [0 0])})
         (assoc :pending-profile []))))
+
+;; --- 2D Primitives ---
+;; These generate closed profile points centered at current turtle position.
+;; They work in any pen mode but are most useful in :3d mode for extrusion.
+
+(defn circle
+  "Generate a circular profile centered at turtle position.
+   Returns state with pending-profile set to circle points."
+  ([state radius] (circle state radius 32))
+  ([state radius segments]
+   (let [pos (:position state)
+         ;; Get 2D center position on plane
+         center-2d (if (= :3d (:pen-mode state))
+                     (world-to-plane state pos)
+                     [0 0])
+         [cx cy] (or center-2d [0 0])
+         ;; Generate circle points
+         step (/ (* 2 Math/PI) segments)
+         points (vec (for [i (range segments)]
+                       (let [angle (* i step)]
+                         [(+ cx (* radius (Math/cos angle)))
+                          (+ cy (* radius (Math/sin angle)))])))]
+     (assoc state :pending-profile points))))
+
+(defn rect
+  "Generate a rectangular profile centered at turtle position.
+   Returns state with pending-profile set to rectangle corners."
+  [state width height]
+  (let [pos (:position state)
+        ;; Get 2D center position on plane
+        center-2d (if (= :3d (:pen-mode state))
+                    (world-to-plane state pos)
+                    [0 0])
+        [cx cy] (or center-2d [0 0])
+        hw (/ width 2)
+        hh (/ height 2)
+        ;; Rectangle corners (CCW from bottom-left)
+        points [[(- cx hw) (- cy hh)]
+                [(+ cx hw) (- cy hh)]
+                [(+ cx hw) (+ cy hh)]
+                [(- cx hw) (+ cy hh)]]]
+    (assoc state :pending-profile points)))
+
+(defn polygon
+  "Generate a polygonal profile from a sequence of 2D points.
+   Points are relative to turtle position if in :3d mode."
+  [state points]
+  (let [pos (:position state)
+        ;; Get 2D offset for turtle position
+        offset (if (= :3d (:pen-mode state))
+                 (world-to-plane state pos)
+                 [0 0])
+        [ox oy] (or offset [0 0])
+        ;; Apply offset to all points
+        adjusted (mapv (fn [[x y]] [(+ ox x) (+ oy y)]) points)]
+    (assoc state :pending-profile adjusted)))
