@@ -86,7 +86,10 @@
 - [ ] Refactor pen state: `pen-mode` replaces `pen-down?`
 - [ ] `(pen :off)` — no drawing
 - [ ] `(pen :2d)` — draw lines (current behavior)
+- [ ] `(pen :3d :at [p] :normal [n])` — draw on arbitrary plane
+- [ ] `(pen :3d @anchor)` — draw on plane defined by anchor
 - [ ] `(pen face-id)` — draw on selected face
+- [ ] `(pen face-id :at [u v])` — draw on face with offset
 
 ### 3.4 2D Drawing on Faces
 - [ ] Transform turtle to face-local coordinates
