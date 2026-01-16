@@ -32,9 +32,41 @@
     (.rotateX grid (/ js/Math.PI 2)) ; XY plane instead of XZ
     (.add scene grid)))
 
+(defn- create-text-sprite
+  "Create a text sprite for axis labels."
+  [text color]
+  (let [canvas (js/document.createElement "canvas")
+        ctx (.getContext canvas "2d")
+        size 64]
+    (set! (.-width canvas) size)
+    (set! (.-height canvas) size)
+    (set! (.-font ctx) "bold 48px Arial")
+    (set! (.-fillStyle ctx) color)
+    (set! (.-textAlign ctx) "center")
+    (set! (.-textBaseline ctx) "middle")
+    (.fillText ctx text (/ size 2) (/ size 2))
+    (let [texture (THREE/CanvasTexture. canvas)
+          material (THREE/SpriteMaterial. #js {:map texture})
+          sprite (THREE/Sprite. material)]
+      (set! (.-x (.-scale sprite)) 8)
+      (set! (.-y (.-scale sprite)) 8)
+      sprite)))
+
 (defn- add-axes [scene]
-  (let [axes (THREE/AxesHelper. 50)]
-    (.add scene axes)))
+  (let [axes (THREE/AxesHelper. 50)
+        ;; Add axis labels
+        ;; Three.js AxesHelper: Red = X, Green = Y, Blue = Z
+        label-x (create-text-sprite "X" "#ff4444")
+        label-y (create-text-sprite "Y" "#44ff44")
+        label-z (create-text-sprite "Z" "#4444ff")]
+    ;; Position labels at end of each axis
+    (.set (.-position label-x) 58 0 0)
+    (.set (.-position label-y) 0 58 0)
+    (.set (.-position label-z) 0 0 58)
+    (.add scene axes)
+    (.add scene label-x)
+    (.add scene label-y)
+    (.add scene label-z)))
 
 (defn- add-lights [scene]
   (let [ambient (THREE/AmbientLight. 0x606060 0.6)
@@ -218,7 +250,9 @@
     (.render renderer scene camera)
     (js/requestAnimationFrame animate)))
 
-(defn- handle-resize []
+(defn handle-resize
+  "Handle viewport resize - call when panel dimensions change."
+  []
   (when-let [{:keys [renderer camera canvas]} @state]
     (let [panel (.-parentElement canvas)
           width (.-clientWidth panel)

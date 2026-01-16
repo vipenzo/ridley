@@ -12,6 +12,7 @@
     "shadow-cljs": "^2.28.5"
   },
   "dependencies": {
+    "manifold-3d": "^3.0.0",
     "three": "^0.160.0"
   }
 }

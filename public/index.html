@@ -5,6 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Ridley</title>
   <link rel="stylesheet" href="/css/style.css">
+  <!-- Load Manifold WASM via ES module and expose on window -->
+  <script type="module">
+    import Module from 'https://cdn.jsdelivr.net/npm/manifold-3d@3.0.0/+esm';
+    window.ManifoldModule = Module;
+  </script>
 </head>
 <body>
   <div id="app">
@@ -13,6 +18,7 @@
         <div class="section-header">
           <span class="section-title">Definitions</span>
           <div class="section-actions">
+            <button id="btn-run" class="action-btn run-btn" title="Run (Cmd+Enter)">▶</button>
             <button id="btn-save" class="action-btn" title="Save definitions">Save</button>
             <button id="btn-load" class="action-btn" title="Load definitions">Load</button>
           </div>
@@ -21,17 +27,25 @@
 ; Example: (def my-shape (fn [s] (-> s (f 20) (box 5))))"></textarea>
       </div>
       <div class="section-divider"></div>
-      <div id="implicit-section">
+      <div id="repl-section">
         <div class="section-header">
-          <span class="section-title">Commands</span>
-          <span class="section-hint">Cmd+Enter to run</span>
+          <span class="section-title">REPL</span>
+          <span class="section-hint">Enter to run, ↑↓ history</span>
         </div>
-        <textarea id="editor-implicit" spellcheck="false" placeholder="; Turtle commands (implicit state)
-; Example: (f 50) (th 90) (f 50)"></textarea>
+        <div id="repl-terminal">
+          <div id="repl-history"></div>
+          <div id="repl-input-line">
+            <span class="repl-prompt">&gt; </span>
+            <input type="text" id="repl-input" spellcheck="false" placeholder="(+ 1 2)">
+          </div>
+        </div>
       </div>
       <div id="error-panel"></div>
     </div>
     <div id="viewport-panel">
+      <div id="viewport-toolbar">
+        <button id="btn-export-stl" class="action-btn export-btn" title="Export as STL">Export STL</button>
+      </div>
       <canvas id="viewport"></canvas>
     </div>
   </div>

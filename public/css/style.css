@@ -33,11 +33,83 @@ html, body {
   min-height: 120px;
 }
 
-#implicit-section {
+#repl-section {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 120px;
+}
+
+#repl-terminal {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: #1a1a2e;
+  font-family: "SF Mono", "Monaco", "Menlo", "Consolas", monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow: hidden;
+}
+
+#repl-history {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 12px;
+}
+
+.repl-entry {
+  margin-bottom: 4px;
+}
+
+.repl-entry .repl-input-echo {
+  color: #d4d4d4;
+}
+
+.repl-entry .repl-prompt {
+  color: #6a9955;
+}
+
+.repl-entry .repl-result {
+  color: #9cdcfe;
+  margin-left: 20px;
+}
+
+.repl-entry .repl-nil {
+  color: #6a6a6a;
+  margin-left: 20px;
+}
+
+.repl-entry .repl-error {
+  color: #f48771;
+  margin-left: 20px;
+}
+
+#repl-input-line {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px;
+  background: #252530;
+  border-top: 1px solid #3c3c3c;
+}
+
+#repl-input-line .repl-prompt {
+  color: #6a9955;
+  margin-right: 8px;
+  font-weight: bold;
+}
+
+#repl-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #d4d4d4;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+#repl-input::placeholder {
+  color: #6a6a6a;
 }
 
 .section-header {
@@ -84,14 +156,24 @@ html, body {
   color: #d4d4d4;
 }
 
+.run-btn {
+  color: #4ec9b0;
+  font-size: 10px;
+  padding: 2px 6px;
+}
+
+.run-btn:hover {
+  background: #2d4a3e;
+  color: #4ec9b0;
+}
+
 .section-divider {
   height: 4px;
   background: #3c3c3c;
   cursor: ns-resize;
 }
 
-#editor-explicit,
-#editor-implicit {
+#editor-explicit {
   flex: 1;
   background: #1e1e1e;
   color: #d4d4d4;
@@ -104,8 +186,7 @@ html, body {
   outline: none;
 }
 
-#editor-explicit::placeholder,
-#editor-implicit::placeholder {
+#editor-explicit::placeholder {
   color: #6a6a6a;
 }
 
@@ -130,10 +211,68 @@ html, body {
   flex: 1;
   position: relative;
   background: #252526;
+  display: flex;
+  flex-direction: column;
+}
+
+#viewport-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 6px 12px;
+  background: #252526;
+  border-bottom: 1px solid #3c3c3c;
+  gap: 8px;
+}
+
+.export-btn {
+  color: #4ec9b0;
+}
+
+.export-btn:hover {
+  background: #2d4a3e;
+  color: #4ec9b0;
 }
 
 #viewport {
+  flex: 1;
   width: 100%;
-  height: 100%;
   display: block;
+}
+
+/* Horizontal resizer between editor and viewport */
+#panel-resizer {
+  width: 5px;
+  background: #3c3c3c;
+  cursor: ew-resize;
+  flex-shrink: 0;
+}
+
+#panel-resizer:hover {
+  background: #007acc;
+}
+
+/* Vertical resizer styling enhancement */
+.section-divider:hover {
+  background: #007acc;
+}
+
+/* Prevent text selection while dragging */
+body.resizing-v,
+body.resizing-h {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+body.resizing-v {
+  cursor: ns-resize;
+}
+
+body.resizing-h {
+  cursor: ew-resize;
+}
+
+body.resizing-v *,
+body.resizing-h * {
+  cursor: inherit !important;
 }

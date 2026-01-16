@@ -37,15 +37,15 @@
      [(- hx) hy hz]]))
 
 (defn- make-box-faces
-  "Generate box face indices (quads as triangles)."
+  "Generate box face indices (quads as triangles, CCW winding for outward normals)."
   []
-  ;; Each face as two triangles
-  [[0 1 2] [0 2 3]   ; back
-   [4 6 5] [4 7 6]   ; front
-   [0 4 5] [0 5 1]   ; bottom
-   [2 6 7] [2 7 3]   ; top
-   [0 3 7] [0 7 4]   ; left
-   [1 5 6] [1 6 2]]) ; right
+  ;; Each face as two triangles - reversed winding for correct normals
+  [[0 2 1] [0 3 2]   ; back
+   [4 5 6] [4 6 7]   ; front
+   [0 5 4] [0 1 5]   ; bottom
+   [2 7 6] [2 3 7]   ; top
+   [0 7 3] [0 4 7]   ; left
+   [1 6 5] [1 2 6]]) ; right
 
 (defn box
   "Create a box primitive at current turtle position.
@@ -100,7 +100,7 @@
         [next-ring (+ next-ring seg)]
         [next-ring (+ next-ring next-seg)]
         [current (+ current next-seg)]])))
-  ;; Simplified: generate triangles
+  ;; Simplified: generate triangles (CCW winding for outward normals)
   (vec
    (apply concat
           (for [ring (range rings)
@@ -110,7 +110,7 @@
                   i1 (+ next-seg (* ring segments))
                   i2 (+ seg (* (inc ring) segments))
                   i3 (+ next-seg (* (inc ring) segments))]
-              [[i0 i2 i1] [i1 i2 i3]])))))
+              [[i0 i1 i2] [i1 i3 i2]])))))
 
 (defn sphere
   "Create a sphere primitive at current turtle position.
@@ -162,22 +162,22 @@
     (vec
      (apply concat
             (concat
-             ;; Side faces
+             ;; Side faces (CCW winding for outward normals)
              (for [i (range segments)]
                (let [next-i (mod (inc i) segments)
                      b0 i
                      b1 next-i
                      t0 (+ i segments)
                      t1 (+ next-i segments)]
-                 [[b0 t0 t1] [b0 t1 b1]]))
-             ;; Bottom cap
+                 [[b0 t1 t0] [b0 b1 t1]]))
+             ;; Bottom cap (CW for downward-facing normal)
              (for [i (range segments)]
                (let [next-i (mod (inc i) segments)]
-                 [[bottom-center next-i i]]))
-             ;; Top cap
+                 [[bottom-center i next-i]]))
+             ;; Top cap (CCW for upward-facing normal)
              (for [i (range segments)]
                (let [next-i (mod (inc i) segments)]
-                 [[(+ i segments) (+ next-i segments) top-center]])))))))
+                 [[(+ i segments) top-center (+ next-i segments)]])))))))
 
 (defn cyl
   "Create a cylinder primitive at current turtle position.

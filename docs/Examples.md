@@ -101,94 +101,340 @@ Working examples demonstrating Ridley's features.
 
 ---
 
-## Profile Extrusion (Phase 3)
+## Shape Extrusion (Phase 3 - New API)
 
-The new face-based modeling workflow: define a plane, draw a 2D profile, extrude.
+The new shape-based modeling uses `extrude` to stamp and extrude shapes.
 
-### Basic Cylinder via Profile
+### Core Concept
+
+Shapes are 2D profiles. Use `extrude` with a shape and movements:
 
 ```clojure
-;; Set up a drawing plane at origin
-(pen :3d :at [0 0 0] :normal [0 0 1] :heading [1 0 0])
+;; Shapes are data - they don't modify the turtle
+(circle 15)              ; Returns a circular shape
+(rect 40 20)             ; Returns a rectangular shape
+(polygon [[0 0] ...])    ; Returns a polygon shape
 
-;; Draw a circle profile
-(circle 15)
-
-;; Extrude along plane normal
-(f 30)
+;; Stamp and extrude in one call
+(extrude (circle 15) (f 30)) ; Stamp circle, extrude 30 units
 ```
 
-### Box via Rectangle Profile
+**Key insight**: The shape is stamped on the plane perpendicular to the turtle's
+heading. Movements inside `extrude` create the 3D geometry.
+
+### Basic Cylinder
 
 ```clojure
-(pen :3d :at [0 0 0] :normal [0 0 1] :heading [1 0 0])
-(rect 40 20)
-(f 25)
+;; Turtle starts at origin, facing +X
+;; Stamp circle (on YZ plane), extrude along +X
+(extrude (circle 15) (f 30))
+```
+
+### Box via Rectangle
+
+```clojure
+(extrude (rect 40 20) (f 25))  ; Rectangle extruded 25 along X
 ```
 
 ### Custom Polygon Extrusion
 
 ```clojure
-(pen :3d :at [0 0 0] :normal [0 0 1] :heading [1 0 0])
-(polygon [[-10 -10] [10 -10] [15 0] [10 10] [-10 10] [-15 0]])
-(f 20)
+(extrude (polygon [[-10 -10] [10 -10] [15 0] [10 10] [-10 10] [-15 0]])
+         (f 20))
 ```
 
-### Offset Profile
+### Positioned Extrusion
 
-Move the turtle before drawing to offset the profile center:
+Move the turtle first, then extrude:
 
 ```clojure
-(pen :3d :at [0 0 0] :normal [0 0 1] :heading [1 0 0])
-(f 20)           ; Move 20 units along X on the plane
-(circle 10)      ; Circle centered at [20, 0] on plane
-(f 15)           ; Extrude
+(pen :off)                     ; Don't draw while moving
+(f 50)                         ; Move to position
+(tv 90)                        ; Point up (+Z)
+(extrude (circle 10) (f 30))   ; Extrude cylinder along Z
 ```
 
-### Tilted Plane
-
-Extrude on a non-axis-aligned plane:
+### Diagonal Extrusion
 
 ```clojure
-;; Plane tilted 45 degrees
-(pen :3d
-  :at [0 0 0]
-  :normal [0 0.707 0.707]   ; 45 deg between Y and Z
-  :heading [1 0 0])
-(circle 12)
-(f 25)
+(tv 45)                        ; Point 45° up from X axis
+(extrude (circle 10) (f 30))   ; Diagonal cylinder
+```
+
+### Multiple Shapes
+
+```clojure
+;; First cylinder at origin
+(extrude (circle 10) (f 20))
+
+;; Move and create second cylinder
+(pen :off)
+(th 90)                        ; Turn left
+(f 50)                         ; Move
+(extrude (circle 10) (f 20))
+```
+
+### Sweep (Multiple Movements)
+
+Multiple movements inside `extrude` create a unified mesh:
+
+```clojure
+(extrude (circle 8)
+         (f 20)                ; First segment
+         (th 45)               ; Turn
+         (f 20))               ; Second segment - joins seamlessly
+```
+
+All movements within a single `extrude` produce one unified mesh with proper connectivity.
+
+### Loft (Shape Transformation)
+
+`loft` extrudes a shape while applying a transformation function.
+Works like `extrude` - uses turtle movements to define the path:
+
+```clojure
+;; Basic cone (scale down to 0)
+(loft (circle 20) #(scale %1 (- 1 %2)) (f 30))
+
+;; Cone that tapers to half size
+(loft (circle 20) #(scale %1 (- 1 (* 0.5 %2))) (f 30))
+
+;; Twist: rectangle rotating 90° during extrusion
+(loft (rect 30 10) #(rotate-shape %1 (* %2 90)) (f 40))
+
+;; Twist + scale (combined transforms)
+(loft (rect 20 20)
+      #(-> %1
+           (scale (- 1 (* 0.5 %2)))      ; scale from 100% to 50%
+           (rotate-shape (* %2 180)))    ; rotate from 0° to 180°
+      (f 30))
+
+;; Scale down to point + twist
+(loft (rect 20 20)
+      #(-> %1 (scale (- 1 %2)) (rotate-shape (* %2 90)))
+      (f 40))
+
+;; Witch hat: cone with a bend
+(loft (circle 20) #(scale %1 (- 1 %2)) (f 15) (th 30) (f 15))
+
+;; Star morphing to circle
+(loft (star 5 20 8)
+      #(morph %1 (circle 15 10) %2)  ; both need same point count
+      (f 30))
+
+;; With custom step count (smoother)
+(loft-n 32 (circle 20) #(scale %1 (- 1 %2)) (f 30))
+```
+
+The transform function receives:
+- `shape` - the current 2D shape
+- `t` - progress from 0.0 to 1.0 (based on cumulative distance traveled)
+
+Step count:
+- Default: 16 steps (use `loft`)
+- Custom: use `loft-n` with step count as first argument
+
+Available shape transforms:
+- `(scale shape factor)` - uniform scale
+- `(scale shape fx fy)` - non-uniform scale
+- `(rotate-shape shape angle)` - rotate (degrees)
+- `(translate shape dx dy)` - move
+- `(morph shape-a shape-b t)` - interpolate between shapes
+- `(resample shape n)` - resample to n points
+
+### Pen Modes
+
+`pen` controls line drawing mode (separate from extrusion):
+
+```clojure
+(pen :off)               ; Stop drawing lines
+(pen :on)                ; Draw lines (default turtle mode)
+(f 30)                   ; This draws a line when pen is :on
 ```
 
 ---
 
-## Multiple Shapes
+## Paths (Recorded Movements)
+
+Paths record turtle movements for later replay. The code inside `path` executes
+on a "recorder" turtle - you can use any Clojure code including loops.
+
+### Basic Path
 
 ```clojure
-;; Two cylinders side by side
-(pen :3d :at [-30 0 0] :normal [0 0 1] :heading [1 0 0])
-(circle 10)
-(f 20)
+;; Record a simple path
+(def square-path (path (f 20) (th 90) (f 20) (th 90) (f 20) (th 90) (f 20)))
 
-(pen :3d :at [30 0 0] :normal [0 0 1] :heading [1 0 0])
-(circle 10)
-(f 20)
+;; Use with extrude
+(extrude (circle 5) square-path)
+```
+
+### Path with Loops
+
+```clojure
+;; Record a square using dotimes
+(def square (path (dotimes [_ 4] (f 30) (th 90))))
+
+;; Record a zigzag
+(def zigzag (path (dotimes [_ 5] (f 10) (th 60) (f 10) (th -60))))
+
+;; Use paths in extrude or loft
+(extrude (rect 10 10) square)
+(loft (circle 15) #(scale %1 (- 1 %2)) zigzag)
+```
+
+### Path with 3D Movement
+
+```clojure
+;; Helix path
+(def helix (path (dotimes [_ 36] (f 5) (th 10) (tv 5))))
+
+;; Spiral staircase
+(extrude (rect 20 5) helix)
+```
+
+### Combining Paths
+
+```clojure
+;; Define reusable path segments
+(def step (path (f 10) (tv 45) (f 10) (tv -45)))
+
+;; Paths can be used multiple times
+(extrude (circle 8) step)
+(pen :off) (f 50) (th 90)
+(extrude (circle 8) step)
+```
+
+---
+
+## Closed Extrusion (Torus-like)
+
+`extrude-closed` creates a closed mesh where the last ring connects back to the first.
+Use this for paths that return to the starting point.
+
+```clojure
+;; Square torus
+(def square-path (path (dotimes [_ 4] (f 20) (th 90))))
+(extrude-closed (circle 5) square-path)
+
+;; Triangular torus
+(def tri-path (path (dotimes [_ 3] (f 30) (th 120))))
+(extrude-closed (circle 8) tri-path)
+
+;; Hexagonal torus
+(def hex-path (path (dotimes [_ 6] (f 15) (th 60))))
+(extrude-closed (rect 4 4) hex-path)
+```
+
+**Note**: `extrude-closed` automatically processes any pending rotation at the end,
+ensuring proper corner filleting before closing the loop.
+
+---
+
+## Manifold Operations
+
+Manifold operations validate meshes and perform boolean operations (CSG).
+Requires manifold-3d WASM module (loaded automatically from CDN).
+
+### Mesh Validation
+
+```clojure
+;; Create a mesh
+(box 20)
+
+;; Check if the mesh is valid (watertight, no self-intersections)
+(manifold? (first (:meshes (get-turtle))))
+;; => true
+
+;; Get detailed status
+(mesh-status (first (:meshes (get-turtle))))
+;; => {:manifold? true, :status :ok, :volume 8000, :surface-area 2400}
+```
+
+### Boolean Union
+
+Combine two meshes into one:
+
+```clojure
+;; Create first mesh
+(box 20)
+(def mesh-a (first (:meshes (get-turtle))))
+
+;; Create second mesh (overlapping)
+(f 15)
+(sphere 12)
+(def mesh-b (second (:meshes (get-turtle))))
+
+;; Union: A + B
+(mesh-union mesh-a mesh-b)
+```
+
+### Boolean Difference
+
+Subtract one mesh from another:
+
+```clojure
+;; Box with spherical hole
+(box 30)
+(def base (first (:meshes (get-turtle))))
+
+(sphere 18)
+(def cutter (second (:meshes (get-turtle))))
+
+;; Difference: A - B
+(mesh-difference base cutter)
+```
+
+### Boolean Intersection
+
+Keep only the overlapping region:
+
+```clojure
+;; Create two overlapping shapes
+(box 25)
+(def a (first (:meshes (get-turtle))))
+
+(f 10)
+(box 25)
+(def b (second (:meshes (get-turtle))))
+
+;; Intersection: A ∩ B
+(mesh-intersection a b)
+```
+
+### Practical Example: Dice
+
+```clojure
+;; Definitions panel:
+(def dice-size 20)
+(def pip-radius 2.5)
+(def pip-depth 1.5)
+
+;; Create the base cube
+(box dice-size)
+
+;; Note: For a complete dice, you would create spheres at pip positions
+;; and use mesh-difference to subtract them from the cube.
 ```
 
 ---
 
 ## Coming Soon
 
-### Face-Based Modeling (not yet implemented)
+### Custom Shapes from Points
 
 ```clojure
-;; Create box, select face, draw profile, extrude
-(box 50 50 20)
-(pen :top)           ; Select top face
-(circle 15)          ; Draw circle on face
-(f 30)               ; Extrude up (add boss)
+(def my-L
+  (make-shape [[0 0] [30 0] [30 10] [10 10] [10 30] [0 30]]))
 
-;; Create hole
-(pen :top)
-(circle 10)
-(f -25)              ; Extrude down (subtract hole)
+(extrude my-L (f 15))
+```
+
+### Face-Based Modeling
+
+```clojure
+;; Create box, select face, extrude on it
+(box 50 50 20)
+(pen :top)                     ; Select top face
+(extrude (circle 15) (f 30))   ; Extrude up (add boss)
 ```

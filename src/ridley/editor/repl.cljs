@@ -10,10 +10,13 @@
   (:require [sci.core :as sci]
             [clojure.string :as str]
             [ridley.turtle.core :as turtle]
+            [ridley.turtle.shape :as shape]
             [ridley.turtle.path :as path]
+            [ridley.turtle.transform :as xform]
             [ridley.geometry.primitives :as prims]
             [ridley.geometry.operations :as ops]
-            [ridley.geometry.faces :as faces]))
+            [ridley.geometry.faces :as faces]
+            [ridley.manifold.core :as manifold]))
 
 ;; Global turtle state for implicit mode
 (defonce ^:private turtle-atom (atom nil))
@@ -27,9 +30,6 @@
 
 (defn- implicit-f [dist]
   (swap! turtle-atom turtle/f dist))
-
-(defn- implicit-b [dist]
-  (swap! turtle-atom turtle/b dist))
 
 (defn- implicit-th [angle]
   (swap! turtle-atom turtle/th angle))
@@ -46,9 +46,8 @@
 (defn- implicit-pen-down []
   (swap! turtle-atom turtle/pen-down))
 
-(defn- implicit-pen
-  [mode & {:keys [at normal heading]}]
-  (swap! turtle-atom turtle/pen mode :at at :normal normal :heading heading))
+(defn- implicit-pen [mode]
+  (swap! turtle-atom turtle/pen mode))
 
 (defn- implicit-box
   ([size] (swap! turtle-atom prims/box size))
@@ -66,18 +65,21 @@
   ([r1 r2 height] (swap! turtle-atom prims/cone r1 r2 height))
   ([r1 r2 height segments] (swap! turtle-atom prims/cone r1 r2 height segments)))
 
-(defn- implicit-circle
-  ([radius] (swap! turtle-atom turtle/circle radius))
-  ([radius segments] (swap! turtle-atom turtle/circle radius segments)))
-
-(defn- implicit-rect [width height]
-  (swap! turtle-atom turtle/rect width height))
-
-(defn- implicit-polygon [points]
-  (swap! turtle-atom turtle/polygon points))
-
 (defn- get-turtle []
   @turtle-atom)
+
+(defn- last-mesh []
+  (last (:meshes @turtle-atom)))
+
+;; Loft is now a macro - these are the impl functions
+(defn- implicit-stamp-loft
+  ([shape transform-fn]
+   (swap! turtle-atom turtle/stamp-loft shape transform-fn))
+  ([shape transform-fn steps]
+   (swap! turtle-atom turtle/stamp-loft shape transform-fn steps)))
+
+(defn- implicit-finalize-loft []
+  (swap! turtle-atom turtle/finalize-loft))
 
 ;; ============================================================
 ;; Shared SCI context
@@ -87,25 +89,28 @@
   "Bindings available in both explicit and implicit sections."
   {;; Implicit turtle commands (mutate atom)
    'f            implicit-f
-   'b            implicit-b
    'th           implicit-th
    'tv           implicit-tv
    'tr           implicit-tr
-   'pen          implicit-pen
+   'pen-impl     implicit-pen      ; Used by pen macro
+   'stamp-impl   (fn [shape] (swap! turtle-atom turtle/stamp shape))
+   'finalize-sweep-impl (fn [] (swap! turtle-atom turtle/finalize-sweep))
+   'finalize-sweep-closed-impl (fn [] (swap! turtle-atom turtle/finalize-sweep-closed))
    'pen-up       implicit-pen-up
    'pen-down     implicit-pen-down
+   ;; 3D primitives
    'box          implicit-box
    'sphere       implicit-sphere
    'cyl          implicit-cyl
    'cone         implicit-cone
-   ;; 2D primitives (generate profiles)
-   'circle       implicit-circle
-   'rect         implicit-rect
-   'polygon      implicit-polygon
+   ;; Shape constructors (return shape data, use with pen)
+   'circle       shape/circle-shape
+   'rect         shape/rect-shape
+   'polygon      shape/polygon-shape
+   'star         shape/star-shape
    ;; Pure turtle functions (for explicit threading)
    'turtle       turtle/make-turtle
    'turtle-f     turtle/f
-   'turtle-b     turtle/b
    'turtle-th    turtle/th
    'turtle-tv    turtle/tv
    'turtle-tr    turtle/tr
@@ -116,55 +121,191 @@
    'turtle-sphere   prims/sphere
    'turtle-cyl      prims/cyl
    'turtle-cone     prims/cone
-   'turtle-circle   turtle/circle
-   'turtle-rect     turtle/rect
-   'turtle-polygon  turtle/polygon
    ;; Path/shape utilities
    'path->data   path/path-from-state
-   'shape->data  path/shape-from-state
-   ;; Generative operations
-   'extrude      ops/extrude
+   'make-shape   shape/make-shape
+   ;; Generative operations (legacy ops namespace)
+   'ops-extrude  ops/extrude
    'extrude-z    ops/extrude-z
    'extrude-y    ops/extrude-y
    'revolve      ops/revolve
    'sweep        ops/sweep
-   'loft         ops/loft
+   'ops-loft     ops/loft
+   ;; Loft impl functions (used by loft macro)
+   'stamp-loft-impl     implicit-stamp-loft
+   'finalize-loft-impl  implicit-finalize-loft
+   ;; Shape transformation functions
+   'scale        xform/scale
+   'rotate-shape xform/rotate
+   'translate    xform/translate
+   'morph        xform/morph
+   'resample     xform/resample
    ;; Face operations
    'list-faces   faces/list-faces
    'get-face     faces/get-face
    'face-ids     faces/face-ids
    ;; Access current turtle state
-   'get-turtle   get-turtle})
+   'get-turtle   get-turtle
+   'last-mesh    last-mesh
+   ;; Path recording functions
+   'make-recorder       turtle/make-recorder
+   'rec-f               turtle/rec-f
+   'rec-th              turtle/rec-th
+   'rec-tv              turtle/rec-tv
+   'rec-tr              turtle/rec-tr
+   'path-from-recorder  turtle/path-from-recorder
+   'run-path-impl       turtle/run-path
+   'path?               turtle/path?
+   ;; Manifold operations
+   'manifold?           manifold/manifold?
+   'mesh-status         manifold/get-mesh-status
+   'mesh-union          manifold/union
+   'mesh-difference     manifold/difference
+   'mesh-intersection   manifold/intersection})
 
-;; Macro definitions for explicit mode
-;; These macros rewrite turtle commands to use pure functions for threading.
+;; Macro definitions for SCI context
 (def ^:private macro-defs
-  "(def ^:private pure-fn-map
-     {'f 'turtle-f 'b 'turtle-b
-      'th 'turtle-th 'tv 'turtle-tv 'tr 'turtle-tr
-      'pen 'turtle-pen 'pen-up 'turtle-pen-up 'pen-down 'turtle-pen-down
-      'box 'turtle-box 'sphere 'turtle-sphere
-      'cyl 'turtle-cyl 'cone 'turtle-cone
-      'circle 'turtle-circle 'rect 'turtle-rect 'polygon 'turtle-polygon})
+  ";; Atom to hold recorder during path recording
+   (def ^:private path-recorder (atom nil))
 
-   (defn- rewrite-form [form]
-     (if (seq? form)
-       (let [[head & args] form
-             new-head (get pure-fn-map head head)]
-         (cons new-head (map rewrite-form args)))
-       form))
+   ;; Recording versions that work with the path-recorder atom
+   (defn- rec-f* [dist]
+     (swap! path-recorder rec-f dist))
+   (defn- rec-th* [angle]
+     (swap! path-recorder rec-th angle))
+   (defn- rec-tv* [angle]
+     (swap! path-recorder rec-tv angle))
+   (defn- rec-tr* [angle]
+     (swap! path-recorder rec-tr angle))
 
+   ;; path: record turtle movements for later replay
+   ;; (def p (path (f 20) (th 90) (f 20))) - record a path
+   ;; (def p (path (dotimes [_ 4] (f 20) (th 90)))) - with arbitrary code
+   ;; Returns a path object that can be used in extrude/loft
    (defmacro path [& body]
-     (let [rewritten (map rewrite-form body)]
-       `(-> (turtle) ~@rewritten path->data)))
+     `(do
+        (reset! path-recorder (make-recorder))
+        (let [~'f rec-f*
+              ~'th rec-th*
+              ~'tv rec-tv*
+              ~'tr rec-tr*]
+          ~@body)
+        (path-from-recorder @path-recorder)))
 
-   (defmacro shape [& body]
-     (let [rewritten (map rewrite-form body)]
-       `(-> (turtle) ~@rewritten shape->data)))
+   ;; pen is now only for mode changes: (pen :off), (pen :on)
+   ;; No longer handles shapes - use extrude for that
+   (defmacro pen [mode]
+     `(pen-impl ~mode))
 
-   (defmacro with-turtle [& body]
-     (let [rewritten (map rewrite-form body)]
-       `(-> (turtle) ~@rewritten)))")
+   ;; run-path: execute a path's movements on the implicit turtle
+   ;; Used internally by extrude/loft when given a path
+   (defn run-path [p]
+     (doseq [{:keys [cmd args]} (:commands p)]
+       (case cmd
+         :f  (f (first args))
+         :th (th (first args))
+         :tv (tv (first args))
+         :tr (tr (first args))
+         nil)))
+
+   ;; extrude: stamp a shape and extrude it via movements or path
+   ;; (extrude (circle 15) (f 30)) - stamp circle, extrude 30 units forward
+   ;; (extrude (circle 15) my-path) - extrude along a recorded path
+   ;; (extrude (rect 20 10) (f 20) (th 45) (f 20)) - sweep with turns
+   ;; Builds a unified mesh from all movements, restores previous pen mode
+   ;; Returns the created mesh (can be bound with def)
+   (defmacro extrude [shape & movements]
+     (if (and (= 1 (count movements)) (symbol? (first movements)))
+       ;; Single symbol - might be a path, check at runtime
+       `(let [prev-mode# (:pen-mode (get-turtle))
+              arg# ~(first movements)]
+          (stamp-impl ~shape)
+          (if (path? arg#)
+            (run-path arg#)
+            ~(first movements))
+          (finalize-sweep-impl)
+          (pen-impl prev-mode#)
+          (last-mesh))
+       ;; Multiple movements or literals - execute directly
+       `(let [prev-mode# (:pen-mode (get-turtle))]
+          (stamp-impl ~shape)
+          ~@movements
+          (finalize-sweep-impl)
+          (pen-impl prev-mode#)
+          (last-mesh))))
+
+   ;; extrude-closed: like extrude but creates a closed torus-like mesh
+   ;; (extrude-closed (circle 5) square-path) - closed torus along path
+   ;; The path should return to the starting point for proper closure
+   ;; Last ring connects to first ring, no end caps
+   ;; Returns the created mesh (can be bound with def)
+   (defmacro extrude-closed [shape & movements]
+     (if (and (= 1 (count movements)) (symbol? (first movements)))
+       ;; Single symbol - might be a path, check at runtime
+       `(let [prev-mode# (:pen-mode (get-turtle))
+              arg# ~(first movements)]
+          (stamp-impl ~shape)
+          (if (path? arg#)
+            (run-path arg#)
+            ~(first movements))
+          (finalize-sweep-closed-impl)
+          (pen-impl prev-mode#)
+          (last-mesh))
+       ;; Multiple movements or literals - execute directly
+       `(let [prev-mode# (:pen-mode (get-turtle))]
+          (stamp-impl ~shape)
+          ~@movements
+          (finalize-sweep-closed-impl)
+          (pen-impl prev-mode#)
+          (last-mesh))))
+
+   ;; loft: like extrude but with shape transformation based on progress
+   ;; (loft (circle 20) #(scale %1 (- 1 %2)) (f 30)) - cone
+   ;; (loft (circle 20) #(scale %1 (- 1 %2)) my-path) - cone along path
+   ;; (loft (rect 20 10) #(rotate-shape %1 (* %2 90)) (f 30)) - twist
+   ;; Transform fn receives (shape t) where t goes from 0 to 1
+   ;; Default: 16 steps
+   ;; Returns the created mesh (can be bound with def)
+   (defmacro loft [shape transform-fn & movements]
+     (if (and (= 1 (count movements)) (symbol? (first movements)))
+       ;; Single symbol - might be a path
+       `(let [prev-mode# (:pen-mode (get-turtle))
+              arg# ~(first movements)]
+          (stamp-loft-impl ~shape ~transform-fn)
+          (if (path? arg#)
+            (run-path arg#)
+            ~(first movements))
+          (finalize-loft-impl)
+          (pen-impl prev-mode#)
+          (last-mesh))
+       ;; Multiple movements or literals
+       `(let [prev-mode# (:pen-mode (get-turtle))]
+          (stamp-loft-impl ~shape ~transform-fn)
+          ~@movements
+          (finalize-loft-impl)
+          (pen-impl prev-mode#)
+          (last-mesh))))
+
+   ;; loft-n: loft with custom step count
+   ;; (loft-n 32 (circle 20) #(scale %1 (- 1 %2)) (f 30)) - smoother cone
+   ;; Returns the created mesh (can be bound with def)
+   (defmacro loft-n [steps shape transform-fn & movements]
+     (if (and (= 1 (count movements)) (symbol? (first movements)))
+       `(let [prev-mode# (:pen-mode (get-turtle))
+              arg# ~(first movements)]
+          (stamp-loft-impl ~shape ~transform-fn ~steps)
+          (if (path? arg#)
+            (run-path arg#)
+            ~(first movements))
+          (finalize-loft-impl)
+          (pen-impl prev-mode#)
+          (last-mesh))
+       `(let [prev-mode# (:pen-mode (get-turtle))]
+          (stamp-loft-impl ~shape ~transform-fn ~steps)
+          ~@movements
+          (finalize-loft-impl)
+          (pen-impl prev-mode#)
+          (last-mesh))))")
 
 ;; Create a fresh SCI context for each evaluation session
 (defn- make-sci-ctx []
@@ -178,7 +319,7 @@
 
 (defn evaluate
   "Evaluate both explicit and implicit code sections.
-   Returns {:result turtle-state :explicit-result any} or {:error msg}."
+   Returns {:result turtle-state :explicit-result any :implicit-result any} or {:error msg}."
   [explicit-code implicit-code]
   (try
     (let [ctx (make-sci-ctx)]
@@ -186,13 +327,14 @@
       (reset-turtle!)
       ;; Phase 1: Evaluate explicit code (definitions, functions, explicit geometry)
       (let [explicit-result (when (and explicit-code (seq (str/trim explicit-code)))
-                              (sci/eval-string explicit-code ctx))]
-        ;; Phase 2: Evaluate implicit code (turtle commands)
-        (when (and implicit-code (seq (str/trim implicit-code)))
-          (sci/eval-string implicit-code ctx))
+                              (sci/eval-string explicit-code ctx))
+            ;; Phase 2: Evaluate implicit code (turtle commands)
+            implicit-result (when (and implicit-code (seq (str/trim implicit-code)))
+                              (sci/eval-string implicit-code ctx))]
         ;; Return combined result
         {:result @turtle-atom
-         :explicit-result explicit-result}))
+         :explicit-result explicit-result
+         :implicit-result implicit-result}))
     (catch :default e
       {:error (.-message e)})))
 

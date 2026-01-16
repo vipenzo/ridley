@@ -101,16 +101,17 @@
                                         b1 next-i
                                         t0 (+ i n)
                                         t1 (+ next-i n)]
-                                    [[b0 b1 t1] [b0 t1 t0]]))
+                                    ;; CCW winding for outward normals
+                                    [[b0 t1 b1] [b0 t0 t1]]))
                                 (range n)))
             closed? (or (:closed? path)
                         (and (>= n 3)
                              (< (magnitude (v- (first points) (last points))) 0.001)))
             cap-faces (when (and closed? (>= n 3))
                         (let [bottom-cap (vec (for [i (range 1 (dec n))]
-                                                [0 (inc i) i]))
+                                                [0 i (inc i)]))
                               top-cap (vec (for [i (range 1 (dec n))]
-                                             [n (+ n i) (+ n i 1)]))]
+                                             [n (+ n i 1) (+ n i)]))]
                           (concat bottom-cap top-cap)))]
         {:type :mesh
          :primitive :extrude
@@ -169,7 +170,7 @@
                     (for [seg (range num-rings)
                           pt points]
                       (rotate-point-around-axis pt axis-norm (* seg step))))
-         ;; Generate faces connecting adjacent rings
+         ;; Generate faces connecting adjacent rings (CCW winding for outward normals)
          faces (vec
                 (apply concat
                        (for [seg (range segments)
@@ -183,15 +184,15 @@
                                p1 (+ ring-offset (inc i))
                                p2 (+ next-ring-offset (inc i))
                                p3 (+ next-ring-offset i)]
-                           ;; Two triangles per quad
-                           [[p0 p1 p2] [p0 p2 p3]]))))
+                           ;; Two triangles per quad (CCW winding)
+                           [[p0 p2 p1] [p0 p3 p2]]))))
          ;; Add end caps only if not full revolution
          cap-faces (when (and (not full-revolution?) (>= n 3))
                      (let [start-cap (vec (for [i (range 1 (dec n))]
-                                            [0 i (inc i)]))
+                                            [0 (inc i) i]))
                            end-offset (* segments n)
                            end-cap (vec (for [i (range 1 (dec n))]
-                                          [end-offset (+ end-offset (inc i)) (+ end-offset i)]))]
+                                          [end-offset (+ end-offset i) (+ end-offset (inc i))]))]
                        (concat start-cap end-cap)))]
      {:type :mesh
       :primitive :revolve
@@ -262,7 +263,7 @@
                                    frame (compute-frame-with-up tangent global-up)]
                                (transform-profile-to-position profile-points pos frame)))
                            (range spine-n)))
-        ;; Generate faces connecting adjacent rings
+        ;; Generate faces connecting adjacent rings (CCW winding for outward normals)
         faces (vec
                (apply concat
                       (for [seg (range (dec spine-n))
@@ -274,8 +275,8 @@
                               p1 (+ ring-offset next-i)
                               p2 (+ next-ring-offset next-i)
                               p3 (+ next-ring-offset i)]
-                          ;; Two triangles per quad
-                          [[p0 p1 p2] [p0 p2 p3]]))))]
+                          ;; Two triangles per quad (CCW winding)
+                          [[p0 p2 p1] [p0 p3 p2]]))))]
     {:type :mesh
      :primitive :sweep
      :vertices all-verts
@@ -298,7 +299,7 @@
         num-profiles (count profiles)
         ;; Flatten all vertices
         all-verts (vec (apply concat profile-points))
-        ;; Generate faces between adjacent profiles
+        ;; Generate faces between adjacent profiles (CCW winding for outward normals)
         faces (vec
                (apply concat
                       (for [p (range (dec num-profiles))
@@ -310,16 +311,17 @@
                               p1 (+ ring-offset next-i)
                               p2 (+ next-ring-offset next-i)
                               p3 (+ next-ring-offset i)]
-                          [[p0 p1 p2] [p0 p2 p3]]))))
+                          ;; CCW winding
+                          [[p0 p2 p1] [p0 p3 p2]]))))
         ;; Add end caps
         cap-faces (when (>= n 3)
-                    (let [;; First profile cap
+                    (let [;; First profile cap (CW for inward normal)
                           start-cap (vec (for [i (range 1 (dec n))]
-                                           [0 (inc i) i]))
-                          ;; Last profile cap
+                                           [0 i (inc i)]))
+                          ;; Last profile cap (CCW for outward normal)
                           end-offset (* (dec num-profiles) n)
                           end-cap (vec (for [i (range 1 (dec n))]
-                                         [end-offset (+ end-offset i) (+ end-offset (inc i))]))]
+                                         [end-offset (+ end-offset (inc i)) (+ end-offset i)]))]
                       (concat start-cap end-cap)))]
     {:type :mesh
      :primitive :loft
