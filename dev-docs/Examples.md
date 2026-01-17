@@ -1,3 +1,4 @@
+
 # Ridley — Examples
 
 Working examples demonstrating Ridley's features.
@@ -415,6 +416,55 @@ Keep only the overlapping region:
 
 ;; Note: For a complete dice, you would create spheres at pip positions
 ;; and use mesh-difference to subtract them from the cube.
+```
+
+---
+
+## Scene Registry
+
+Register named objects for show/hide control and easy export.
+
+### Register Objects
+
+```clojure
+;; Register creates a named object and shows it
+(def sq (path (dotimes [_ 4] (f 20) (th 90))))
+(register torus (extrude-closed (circle 5) sq))
+(register cube (box 30))
+```
+
+### List Objects
+
+```clojure
+(objects)      ;; => [:torus :cube] - visible objects
+(registered)   ;; => [:torus :cube] - all registered (visible + hidden)
+```
+
+### Show/Hide Objects
+
+```clojure
+(hide :torus)      ;; Hide torus from viewport
+(show :torus)      ;; Show it again
+(hide-all)         ;; Hide everything
+(show-all)         ;; Show everything
+```
+
+### Object Info
+
+```clojure
+(info :torus)
+;; => {:name :torus, :visible true, :vertices 512, :faces 1024}
+
+(mesh :torus)      ;; Get raw mesh data {:vertices [...] :faces [...]}
+```
+
+### Export to STL
+
+```clojure
+(export :torus)           ;; Downloads torus.stl
+(export :torus :cube)     ;; Downloads torus-cube.stl (combined)
+(export (objects))        ;; Export all visible objects
+(export (registered))     ;; Export all registered objects
 ```
 
 ---
