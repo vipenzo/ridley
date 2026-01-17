@@ -12,104 +12,98 @@
    (save-stl (visible-meshes))             ; export all visible meshes"
   (:require [ridley.viewport.core :as viewport]))
 
-;; Registered meshes: {name -> mesh}
-(defonce ^:private registered (atom {}))
-
-;; Visible mesh names: #{name1 name2 ...}
-(defonce ^:private visible (atom #{}))
-
-;; Meshes from definitions panel (non-registered, "anonymous" meshes)
-(defonce ^:private definition-meshes (atom []))
+;; All meshes in the scene: [{:mesh data :name nil/keyword :visible true/false} ...]
+(defonce ^:private scene-meshes (atom []))
 
 (defn clear-all!
-  "Clear both registry and visible set. Called on code re-evaluation."
+  "Clear all meshes. Called on code re-evaluation."
   []
-  (reset! registered {})
-  (reset! visible #{})
-  (reset! definition-meshes []))
+  (reset! scene-meshes []))
+
+(defn add-mesh!
+  "Add a mesh to the scene. Returns the mesh data (not the wrapper)."
+  ([mesh] (add-mesh! mesh nil true))
+  ([mesh name] (add-mesh! mesh name true))
+  ([mesh name visible?]
+   (when mesh
+     (swap! scene-meshes conj {:mesh mesh :name name :visible visible?}))
+   mesh))
 
 (defn set-definition-meshes!
-  "Store meshes created by the definitions panel (non-registered meshes).
-   Automatically excludes meshes that are already in the registry."
+  "Store meshes created by the definitions panel (anonymous, visible by default)."
   [meshes]
-  (let [registry-mesh-set (set (vals @registered))
-        non-registered (remove #(contains? registry-mesh-set %) meshes)]
-    (reset! definition-meshes (vec non-registered))))
-
-(defn get-definition-meshes
-  "Get meshes stored from definitions panel."
-  []
-  @definition-meshes)
+  (doseq [m meshes]
+    (add-mesh! m nil true)))
 
 (defn register-mesh!
-  "Add a named mesh to the registry. Returns the mesh."
+  "Add a named mesh to the scene. Returns the mesh data."
   [name mesh]
-  (when (and name mesh)
-    (swap! registered assoc name mesh))
-  mesh)
+  (add-mesh! mesh name true))
+
+(defn- find-mesh-index
+  "Find index of mesh entry by name."
+  [name]
+  (first (keep-indexed (fn [i entry] (when (= (:name entry) name) i)) @scene-meshes)))
 
 (defn show-mesh!
-  "Add a mesh name to the visible set. Returns nil."
+  "Show a mesh by name. Returns nil."
   [name]
-  (when name
-    (swap! visible conj name))
+  (when-let [idx (find-mesh-index name)]
+    (swap! scene-meshes assoc-in [idx :visible] true))
   nil)
 
 (defn hide-mesh!
-  "Remove a mesh name from the visible set. Returns nil."
+  "Hide a mesh by name. Returns nil."
   [name]
-  (when name
-    (swap! visible disj name))
+  (when-let [idx (find-mesh-index name)]
+    (swap! scene-meshes assoc-in [idx :visible] false))
   nil)
 
 (defn show-all!
-  "Show all registered meshes."
+  "Show all named meshes."
   []
-  (reset! visible (set (keys @registered)))
+  (swap! scene-meshes (fn [meshes]
+                        (mapv #(if (:name %) (assoc % :visible true) %) meshes)))
   nil)
 
 (defn hide-all!
-  "Hide all meshes (clear visible set)."
+  "Hide all named meshes."
   []
-  (reset! visible #{})
+  (swap! scene-meshes (fn [meshes]
+                        (mapv #(if (:name %) (assoc % :visible false) %) meshes)))
   nil)
 
 (defn visible-names
-  "Get names of currently visible meshes as a vector."
+  "Get names of currently visible named meshes."
   []
-  (vec @visible))
+  (vec (keep (fn [entry] (when (and (:name entry) (:visible entry)) (:name entry))) @scene-meshes)))
 
 (defn visible-meshes
-  "Get all currently visible mesh data as a vector."
+  "Get all currently visible mesh data."
   []
-  (let [reg @registered
-        vis @visible]
-    (vec (keep (fn [name] (get reg name)) vis))))
+  (vec (keep (fn [entry] (when (:visible entry) (:mesh entry))) @scene-meshes)))
 
 (defn registered-names
-  "Get all registered mesh names as a vector."
+  "Get all named mesh names."
   []
-  (vec (keys @registered)))
+  (vec (keep :name @scene-meshes)))
 
 (defn get-mesh
   "Get mesh data by name."
   [name]
-  (get @registered name))
+  (:mesh (first (filter #(= (:name %) name) @scene-meshes))))
 
 (defn visible-count
   "Get count of visible meshes."
   []
-  (count @visible))
+  (count (filter :visible @scene-meshes)))
 
 (defn registered-count
-  "Get count of registered meshes."
+  "Get count of named meshes."
   []
-  (count @registered))
+  (count (filter :name @scene-meshes)))
 
 (defn refresh-viewport!
-  "Update the viewport with current visible meshes and definition meshes."
+  "Update the viewport with all visible meshes."
   []
-  (let [registry-meshes (visible-meshes)
-        def-meshes @definition-meshes
-        all-meshes (concat def-meshes registry-meshes)]
-    (viewport/update-scene {:lines [] :meshes (vec all-meshes)})))
+  (viewport/update-scene {:lines [] :meshes (visible-meshes)}))
