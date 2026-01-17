@@ -38,6 +38,11 @@
   []
   @definition-meshes)
 
+(defn remove-definition-mesh!
+  "Remove a specific mesh from definition-meshes (used when mesh is registered)."
+  [mesh]
+  (swap! definition-meshes (fn [meshes] (vec (remove #(= % mesh) meshes)))))
+
 (defn register-mesh!
   "Add a named mesh to the registry. Returns the mesh."
   [name mesh]
