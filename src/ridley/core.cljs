@@ -83,6 +83,8 @@
       (do
         (hide-error)
         (when-let [render-data (repl/extract-render-data result)]
+          ;; Store definition meshes for later refresh
+          (registry/set-definition-meshes! (:meshes render-data))
           (viewport/update-scene render-data))))))
 
 (defn- evaluate-repl-input

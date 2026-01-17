@@ -18,11 +18,25 @@
 ;; Visible mesh names: #{name1 name2 ...}
 (defonce ^:private visible (atom #{}))
 
+;; Meshes from definitions panel (non-registered, "anonymous" meshes)
+(defonce ^:private definition-meshes (atom []))
+
 (defn clear-all!
   "Clear both registry and visible set. Called on code re-evaluation."
   []
   (reset! registered {})
-  (reset! visible #{}))
+  (reset! visible #{})
+  (reset! definition-meshes []))
+
+(defn set-definition-meshes!
+  "Store meshes created by the definitions panel (non-registered meshes)."
+  [meshes]
+  (reset! definition-meshes (vec meshes)))
+
+(defn get-definition-meshes
+  "Get meshes stored from definitions panel."
+  []
+  @definition-meshes)
 
 (defn register-mesh!
   "Add a named mesh to the registry. Returns the mesh."
@@ -65,7 +79,9 @@
 (defn visible-meshes
   "Get all currently visible mesh data as a vector."
   []
-  (vec (keep #(get @registered %) @visible)))
+  (let [reg @registered
+        vis @visible]
+    (vec (keep (fn [name] (get reg name)) vis))))
 
 (defn registered-names
   "Get all registered mesh names as a vector."
@@ -88,6 +104,9 @@
   (count @registered))
 
 (defn refresh-viewport!
-  "Update the viewport with current visible meshes."
+  "Update the viewport with current visible meshes and definition meshes."
   []
-  (viewport/update-scene {:lines [] :meshes (visible-meshes)}))
+  (let [registry-meshes (visible-meshes)
+        def-meshes @definition-meshes
+        all-meshes (concat def-meshes registry-meshes)]
+    (viewport/update-scene {:lines [] :meshes (vec all-meshes)})))
