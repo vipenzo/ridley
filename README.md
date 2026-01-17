@@ -2,6 +2,8 @@
 
 A 3D CAD environment powered by turtle graphics and ClojureScript. Create 3D models using an intuitive, programmable approach inspired by Logo.
 
+**[Try it now in your browser](https://vipenzo.github.io/Ridley/)** — no installation required!
+
 ![Ridley Screenshot](dev-docs/screenshot.png)
 
 ## Overview

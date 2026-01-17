@@ -398,6 +398,7 @@
       (set! (.-value explicit) saved)
       (set! (.-value explicit) "; Define reusable shapes here
 (def sq (path (dotimes [_ 4] (f 20) (th 90))))
+(extrude-closed (circle 5) sq)
 
 ; Run with Cmd+Enter, then use REPL below"))
     ;; Focus REPL input
