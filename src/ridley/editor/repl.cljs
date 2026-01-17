@@ -166,7 +166,6 @@
    'mesh-intersection   manifold/intersection
    ;; Scene registry
    'register-mesh!      registry/register-mesh!
-   'remove-definition-mesh! registry/remove-definition-mesh!
    'show-mesh!          registry/show-mesh!
    'hide-mesh!          registry/hide-mesh!
    'show-all!           registry/show-all!
@@ -332,8 +331,6 @@
             name-kw# ~(keyword name)
             already-registered# (contains? (set (registered-names)) name-kw#)]
         (def ~name mesh#)
-        ;; Remove from definition-meshes so it's only managed by registry
-        (remove-definition-mesh! mesh#)
         (register-mesh! name-kw# mesh#)
         ;; Only auto-show on first registration
         (when-not already-registered#

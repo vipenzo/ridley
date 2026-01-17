@@ -29,19 +29,17 @@
   (reset! definition-meshes []))
 
 (defn set-definition-meshes!
-  "Store meshes created by the definitions panel (non-registered meshes)."
+  "Store meshes created by the definitions panel (non-registered meshes).
+   Automatically excludes meshes that are already in the registry."
   [meshes]
-  (reset! definition-meshes (vec meshes)))
+  (let [registry-mesh-set (set (vals @registered))
+        non-registered (remove #(contains? registry-mesh-set %) meshes)]
+    (reset! definition-meshes (vec non-registered))))
 
 (defn get-definition-meshes
   "Get meshes stored from definitions panel."
   []
   @definition-meshes)
-
-(defn remove-definition-mesh!
-  "Remove a specific mesh from definition-meshes (used when mesh is registered)."
-  [mesh]
-  (swap! definition-meshes (fn [meshes] (vec (remove #(identical? % mesh) meshes)))))
 
 (defn register-mesh!
   "Add a named mesh to the registry. Returns the mesh."
