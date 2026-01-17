@@ -33,9 +33,9 @@
   "Store meshes created by the definitions panel (anonymous, visible by default).
    Skips meshes that are already in the scene (e.g. from register)."
   [meshes]
-  (let [existing-meshes (set (map :mesh @scene-meshes))]
+  (let [existing-meshes (map :mesh @scene-meshes)]
     (doseq [m meshes]
-      (when-not (contains? existing-meshes m)
+      (when-not (some #(identical? % m) existing-meshes)
         (add-mesh! m nil true)))))
 
 (defn register-mesh!
