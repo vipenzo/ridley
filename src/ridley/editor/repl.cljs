@@ -164,14 +164,17 @@
    'mesh-union          manifold/union
    'mesh-difference     manifold/difference
    'mesh-intersection   manifold/intersection
-   ;; Scene registry (named objects)
-   'register-mesh       registry/register-mesh
-   'show                registry/show
-   'hide                registry/hide
-   'show-all            registry/show-all
-   'hide-all            registry/hide-all
+   ;; Scene registry
+   'register-mesh!      registry/register-mesh!
+   'show-mesh!          registry/show-mesh!
+   'hide-mesh!          registry/hide-mesh!
+   'show-all!           registry/show-all!
+   'hide-all!           registry/hide-all!
+   'visible-names       registry/visible-names
    'visible-meshes      registry/visible-meshes
-   'list-objects        registry/list-objects
+   'registered-names    registry/registered-names
+   'get-mesh            registry/get-mesh
+   'refresh-viewport!   registry/refresh-viewport!
    ;; STL export
    'save-stl            stl/download-stl})
 
@@ -317,25 +320,164 @@
           ~@movements
           (finalize-loft-impl)
           (pen-impl prev-mode#)
-          (last-mesh))))")
+          (last-mesh))))
 
-;; Create a fresh SCI context for each evaluation session
+   ;; register: define a symbol, add to registry, AND show it (only first time)
+   ;; (register torus (extrude-closed (circle 5) square-path))
+   ;; This creates a var 'torus', registers it, and makes it visible
+   ;; On subsequent evals, updates the mesh but preserves visibility state
+   (defmacro register [name expr]
+     `(let [mesh# ~expr
+            name-kw# ~(keyword name)
+            already-registered# (contains? (set (registered-names)) name-kw#)]
+        (def ~name mesh#)
+        (register-mesh! name-kw# mesh#)
+        ;; Only auto-show on first registration
+        (when-not already-registered#
+          (show-mesh! name-kw#))
+        mesh#))
+
+   ;; Convenience functions that work with names
+   (defn show [name]
+     (show-mesh! (if (keyword? name) name (keyword name)))
+     (refresh-viewport!))
+
+   (defn hide [name]
+     (let [kw (if (keyword? name) name (keyword name))]
+       (hide-mesh! kw)
+       (refresh-viewport!)
+       nil))
+
+   (defn show-all []
+     (show-all!)
+     (refresh-viewport!))
+
+   (defn hide-all []
+     (hide-all!)
+     (refresh-viewport!))
+
+   ;; List visible object names
+   (defn objects []
+     (visible-names))
+
+   ;; List all registered object names (visible and hidden)
+   (defn registered []
+     (registered-names))
+
+   ;; Get info/details about a registered object
+   ;; (info :torus) - show vertex/face count and visibility
+   (defn info [name]
+     (let [kw (if (keyword? name) name (keyword name))
+           mesh (get-mesh kw)
+           vis (contains? (set (visible-names)) kw)]
+       (when mesh
+         {:name kw
+          :visible vis
+          :vertices (count (:vertices mesh))
+          :faces (count (:faces mesh))})))
+
+   ;; Get the raw mesh data for an object
+   ;; (deref :torus) or @:torus won't work, use (mesh :torus)
+   (defn mesh [name]
+     (get-mesh (if (keyword? name) name (keyword name))))
+
+   ;; Export mesh(es) to STL file
+   ;; (export :torus) - export as torus.stl
+   ;; (export :torus :cube) - export as torus-cube.stl
+   ;; (export (objects)) - export all visible objects
+   (defn export
+     ([name-or-names]
+      (let [names (if (keyword? name-or-names)
+                    [name-or-names]
+                    (if (and (sequential? name-or-names) (keyword? (first name-or-names)))
+                      name-or-names
+                      nil))
+            meshes (if names
+                     (keep get-mesh names)
+                     [name-or-names])
+            filename (if names
+                       (str (clojure.string/join \"-\" (map name names)) \".stl\")
+                       \"export.stl\")]
+        (when (seq meshes)
+          (save-stl (vec meshes) filename))))
+     ([name & more-names]
+      (let [all-names (cons name more-names)
+            meshes (keep get-mesh all-names)
+            filename (str (clojure.string/join \"-\" (map name all-names)) \".stl\")]
+        (when (seq meshes)
+          (save-stl (vec meshes) filename)))))")
+
+;; Persistent SCI context - created once, reused for REPL commands
+(defonce ^:private sci-ctx (atom nil))
+
 (defn- make-sci-ctx []
   (let [ctx (sci/init {:bindings base-bindings})]
     (sci/eval-string macro-defs ctx)
     ctx))
 
+(defn- get-or-create-ctx []
+  (if-let [ctx @sci-ctx]
+    ctx
+    (let [ctx (make-sci-ctx)]
+      (reset! sci-ctx ctx)
+      ctx)))
+
+(defn reset-ctx!
+  "Reset the SCI context. Called when definitions are re-evaluated."
+  []
+  (reset! sci-ctx (make-sci-ctx)))
+
 ;; ============================================================
 ;; Evaluation
 ;; ============================================================
 
+(defn evaluate-definitions
+  "Evaluate definitions code only. Resets context and turtle state.
+   Called when user runs definitions panel (Cmd+Enter or Run button).
+   Returns {:result turtle-state :explicit-result any} or {:error msg}."
+  [explicit-code]
+  (try
+    ;; Reset context for fresh definitions evaluation
+    (reset-ctx!)
+    (let [ctx (get-or-create-ctx)]
+      ;; Reset turtle for fresh evaluation
+      (reset-turtle!)
+      ;; Evaluate explicit code (definitions, functions, explicit geometry)
+      (let [explicit-result (when (and explicit-code (seq (str/trim explicit-code)))
+                              (sci/eval-string explicit-code ctx))]
+        {:result @turtle-atom
+         :explicit-result explicit-result
+         :implicit-result nil}))
+    (catch :default e
+      {:error (.-message e)})))
+
+(defn evaluate-repl
+  "Evaluate REPL input only, using existing context.
+   Definitions must be evaluated first to populate the context.
+   Returns {:result turtle-state :implicit-result any} or {:error msg}."
+  [repl-code]
+  (try
+    (let [ctx (get-or-create-ctx)]
+      ;; Reset turtle for fresh geometry (but keep definitions in context)
+      (reset-turtle!)
+      ;; Evaluate REPL code using existing context with definitions
+      (let [implicit-result (when (and repl-code (seq (str/trim repl-code)))
+                              (sci/eval-string repl-code ctx))]
+        {:result @turtle-atom
+         :explicit-result nil
+         :implicit-result implicit-result}))
+    (catch :default e
+      {:error (.-message e)})))
+
 (defn evaluate
-  "Evaluate both explicit and implicit code sections.
+  "Evaluate both explicit and implicit code sections (legacy API).
    Returns {:result turtle-state :explicit-result any :implicit-result any} or {:error msg}."
   [explicit-code implicit-code]
   (try
-    (let [ctx (make-sci-ctx)]
-      ;; Reset turtle for implicit commands
+    ;; Reset context for fresh evaluation
+    (reset-ctx!)
+    (let [ctx (get-or-create-ctx)]
+      ;; Reset turtle for fresh evaluation (but NOT registry - that persists)
       (reset-turtle!)
       ;; Phase 1: Evaluate explicit code (definitions, functions, explicit geometry)
       (let [explicit-result (when (and explicit-code (seq (str/trim explicit-code)))
@@ -352,7 +494,7 @@
 
 (defn extract-render-data
   "Extract render data from evaluation result.
-   Combines geometry from turtle state and any explicit geometry results."
+   Combines geometry from turtle state, explicit results, and visible registry meshes."
   [eval-result]
   (let [turtle-state (:result eval-result)
         explicit-result (:explicit-result eval-result)
@@ -371,9 +513,13 @@
                         {:lines (or (:geometry explicit-result) [])
                          :meshes (or (:meshes explicit-result) [])}
                         :else nil)
+        ;; Get visible meshes from registry
+        visible-registry-meshes (registry/visible-meshes)
         ;; Combine all geometry
         all-lines (concat turtle-lines (or (:lines explicit-data) []))
-        all-meshes (concat turtle-meshes (or (:meshes explicit-data) []))]
+        all-meshes (concat turtle-meshes
+                           (or (:meshes explicit-data) [])
+                           visible-registry-meshes)]
     (when (or (seq all-lines) (seq all-meshes))
       {:lines (vec all-lines)
        :meshes (vec all-meshes)})))

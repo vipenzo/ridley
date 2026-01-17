@@ -5,6 +5,7 @@
             [ridley.viewport.core :as viewport]
             [ridley.viewport.xr :as xr]
             [ridley.manifold.core :as manifold]
+            [ridley.scene.registry :as registry]
             [ridley.export.stl :as stl]))
 
 (defonce ^:private explicit-el (atom nil))
@@ -73,8 +74,10 @@
 (defn- evaluate-definitions
   "Evaluate only the definitions panel (for Cmd+Enter)."
   []
+  ;; Clear registry when re-running definitions (fresh start)
+  (registry/clear-all!)
   (let [explicit-code (when-let [el @explicit-el] (.-value el))
-        result (repl/evaluate explicit-code nil)]
+        result (repl/evaluate-definitions explicit-code)]
     (if-let [error (:error result)]
       (show-error error)
       (do
@@ -93,9 +96,8 @@
         (reset! history-index -1)
         ;; Clear input
         (set! (.-value input-el) "")
-        ;; Evaluate with definitions context
-        (let [explicit-code (when-let [el @explicit-el] (.-value el))
-              result (repl/evaluate explicit-code input)]
+        ;; Evaluate REPL input only (definitions already in context)
+        (let [result (repl/evaluate-repl input)]
           (if-let [error (:error result)]
             (do
               (add-repl-entry input error true)
@@ -104,9 +106,8 @@
               (hide-error)
               ;; Show result in terminal history
               (add-repl-entry input (:implicit-result result) false)
-              ;; Update viewport
-              (when-let [render-data (repl/extract-render-data result)]
-                (viewport/update-scene render-data)))))))))
+              ;; Update viewport with visible registry meshes
+              (registry/refresh-viewport!))))))))
 
 (defn- navigate-history
   "Navigate command history. direction: -1 for older, +1 for newer."
