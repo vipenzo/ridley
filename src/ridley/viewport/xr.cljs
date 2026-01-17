@@ -291,7 +291,7 @@
 
 (defn- get-ray-point-at-distance
   "Get the point along the controller ray at a given distance."
-  [controller-group distance]
+  [^js controller-group distance]
   (let [ray-origin (THREE/Vector3.)
         ray-dir (THREE/Vector3. 0 0 -1)]
     (.getWorldPosition controller-group ray-origin)
@@ -372,16 +372,19 @@
   []
   (when-let [{:keys [control-panel controller-group camera]} @xr-state]
     (when (and control-panel controller-group)
-      (let [ctrl-pos (.-position controller-group)
+      (let [^js ctrl-grp controller-group
+            ^js ctrl-pos (.-position ctrl-grp)
+            ^js panel control-panel
+            ^js cam camera
             cam-pos (THREE/Vector3.)]
-        (.getWorldPosition camera cam-pos)
+        (.getWorldPosition cam cam-pos)
         ;; Position panel in front and below controller (arm's length away)
-        (.set (.-position control-panel)
+        (.set (.-position panel)
               (.-x ctrl-pos)
               (- (.-y ctrl-pos) 0.1)
               (- (.-z ctrl-pos) 0.4))
         ;; Make panel face the camera
-        (.lookAt control-panel cam-pos)))))
+        (.lookAt panel cam-pos)))))
 
 (defn- toggle-panel-visibility
   "Toggle control panel visibility."
@@ -445,18 +448,19 @@
   [buttons]
   (when-let [{:keys [controller-group]} @xr-state]
     (when controller-group
-      (.identity temp-matrix)
-      (.extractRotation temp-matrix (.-matrixWorld controller-group))
-      (.setFromMatrixPosition (.-origin (.-ray raycaster)) (.-matrixWorld controller-group))
-      (.set (.-direction (.-ray raycaster)) 0 0 -1)
-      (.applyMatrix4 (.-direction (.-ray raycaster)) temp-matrix)
-      (let [intersects (.intersectObjects raycaster (clj->js buttons) false)]
-        (when (> (.-length intersects) 0)
-          (let [hit (aget intersects 0)
-                obj (.-object hit)
-                user-data (.-userData obj)]
-            (when (.-isButton user-data)
-              obj)))))))
+      (let [^js ctrl-grp controller-group]
+        (.identity temp-matrix)
+        (.extractRotation temp-matrix (.-matrixWorld ctrl-grp))
+        (.setFromMatrixPosition (.-origin (.-ray raycaster)) (.-matrixWorld ctrl-grp))
+        (.set (.-direction (.-ray raycaster)) 0 0 -1)
+        (.applyMatrix4 (.-direction (.-ray raycaster)) temp-matrix)
+        (let [intersects (.intersectObjects raycaster (clj->js buttons) false)]
+          (when (> (.-length intersects) 0)
+            (let [^js hit (aget intersects 0)
+                  ^js obj (.-object hit)
+                  ^js user-data (.-userData obj)]
+              (when (.-isButton user-data)
+                obj))))))))
 
 (defn- update-button-hover
   "Update button hover visual feedback."
@@ -474,8 +478,8 @@
 (defn- check-button-intersection
   "Check if controller ray intersects any button and handle click."
   [buttons]
-  (when-let [btn (get-hovered-button buttons)]
-    (let [user-data (.-userData btn)
+  (when-let [^js btn (get-hovered-button buttons)]
+    (let [^js user-data (.-userData btn)
           action-id (.-actionId user-data)
           ;; actionId is stored as keyword, convert properly
           action-kw (if (keyword? action-id)
@@ -577,7 +581,10 @@
   [^js xr-frame ^js renderer]
   (when-let [{:keys [controller-group debug-sprite camera-rig camera mode world-group grip-held a-button-was-pressed b-button-was-pressed input-source]} @xr-state]
     (when (and controller-group camera-rig camera world-group xr-frame renderer input-source)
-      (let [^js xr (.-xr renderer)
+      ;; Cast Three.js objects to preserve property names in advanced compilation
+      (let [^js ctrl-grp controller-group
+            ^js world-grp world-group
+            ^js xr (.-xr renderer)
             ^js ref-space (.getReferenceSpace xr)
             ^js target-space (when input-source (.-targetRaySpace ^js input-source))
             ^js pose (when (and ref-space target-space)
@@ -587,9 +594,9 @@
           (let [^js transform (.-transform pose)
                 ^js pos (.-position transform)
                 ^js ori (.-orientation transform)]
-            (.set (.-position controller-group) (.-x pos) (.-y pos) (.-z pos))
-            (.set (.-quaternion controller-group) (.-x ori) (.-y ori) (.-z ori) (.-w ori))
-            (.updateMatrixWorld controller-group true)))
+            (.set (.-position ctrl-grp) (.-x pos) (.-y pos) (.-z pos))
+            (.set (.-quaternion ctrl-grp) (.-x ori) (.-y ori) (.-z ori) (.-w ori))
+            (.updateMatrixWorld ctrl-grp true)))
         ;; Update button hover feedback when panel is visible
         (when (:panel-visible @xr-state)
           (update-button-hover (:panel-buttons @xr-state)))
@@ -597,8 +604,8 @@
         (let [{:keys [trigger-held drag-pending drag-start-ray-point drag-world-start drag-distance]} @xr-state]
           ;; Initialize drag on first frame after trigger press (pose is now updated)
           (when (and trigger-held drag-pending)
-            (let [ray-point (get-ray-point-at-distance controller-group default-drag-distance)
-                  world-pos (.-position world-group)]
+            (let [ray-point (get-ray-point-at-distance ctrl-grp default-drag-distance)
+                  ^js world-pos (.-position world-grp)]
               (when-let [sprite (:debug-sprite @xr-state)]
                 (update-debug-sprite sprite "DRAG-START"))
               (swap! xr-state assoc
@@ -609,17 +616,19 @@
           ;; Apply drag movement
           (when (and trigger-held (not drag-pending) drag-start-ray-point drag-world-start drag-distance)
             ;; Get current ray point at the same distance as when drag started
-            (let [current-ray-point (get-ray-point-at-distance controller-group drag-distance)
+            (let [^js current-ray-point (get-ray-point-at-distance ctrl-grp drag-distance)
                   ;; Calculate how much the ray point moved
-                  delta-x (- (.-x current-ray-point) (.-x drag-start-ray-point))
-                  delta-y (- (.-y current-ray-point) (.-y drag-start-ray-point))
-                  delta-z (- (.-z current-ray-point) (.-z drag-start-ray-point))
+                  ^js start-ray-point drag-start-ray-point
+                  delta-x (- (.-x current-ray-point) (.-x start-ray-point))
+                  delta-y (- (.-y current-ray-point) (.-y start-ray-point))
+                  delta-z (- (.-z current-ray-point) (.-z start-ray-point))
                   ;; Move world WITH ray movement - when you point right, world moves right
                   ;; This makes the scene follow where you're pointing
-                  world-pos (.-position world-group)]
-              (set! (.-x world-pos) (+ (.-x drag-world-start) delta-x))
-              (set! (.-y world-pos) (+ (.-y drag-world-start) delta-y))
-              (set! (.-z world-pos) (+ (.-z drag-world-start) delta-z)))))
+                  ^js world-pos (.-position world-grp)
+                  ^js drag-start drag-world-start]
+              (set! (.-x world-pos) (+ (.-x drag-start) delta-x))
+              (set! (.-y world-pos) (+ (.-y drag-start) delta-y))
+              (set! (.-z world-pos) (+ (.-z drag-start) delta-z)))))
         ;; Process gamepad input
         (when-let [^js gamepad (.-gamepad ^js input-source)]
           (swap! debug-counter inc)
@@ -631,7 +640,7 @@
               (let [{:keys [trigger-held]} @xr-state
                     x-val (if (>= (.-length axes) 4) (aget axes 2) 0)
                     y-val (if (>= (.-length axes) 4) (aget axes 3) 0)
-                    world-pos (.-position world-group)]
+                    ^js world-pos (.-position world-grp)]
                 (if trigger-held
                   (update-debug-sprite debug-sprite
                     (str "DRAG W:" (.toFixed (.-x world-pos) 0) "," (.toFixed (.-z world-pos) 0)))
@@ -671,7 +680,7 @@
                   (if (= mode :move)
                     ;; Move mode - move world in opposite direction (so it looks like we move)
                     ;; Default: X/Z movement (horizontal plane), Grip + Y = Y movement (vertical)
-                    (let [world-pos (.-position world-group)]
+                    (let [world-pos (.-position world-grp)]
                       (set! (.-x world-pos) (- (.-x world-pos) (* x move-speed)))
                       (if grip-held
                         (set! (.-y world-pos) (+ (.-y world-pos) (* y move-speed)))
@@ -679,11 +688,11 @@
                     ;; Rotate mode
                     (do
                       (when (not= x 0)
-                        (.rotateOnWorldAxis world-group (THREE/Vector3. 0 0 1) (* (- x) rotate-speed)))
+                        (.rotateOnWorldAxis world-grp (THREE/Vector3. 0 0 1) (* (- x) rotate-speed)))
                       (when (not= y 0)
                         (if grip-held
-                          (.rotateOnWorldAxis world-group (THREE/Vector3. 0 1 0) (* (- y) rotate-speed))
-                          (.rotateOnWorldAxis world-group (THREE/Vector3. 1 0 0) (* y rotate-speed)))))))))))))))
+                          (.rotateOnWorldAxis world-grp (THREE/Vector3. 0 1 0) (* (- y) rotate-speed))
+                          (.rotateOnWorldAxis world-grp (THREE/Vector3. 1 0 0) (* y rotate-speed)))))))))))))))
 
 (defn update-mode-indicator
   "Update the mode indicator color based on current mode."
