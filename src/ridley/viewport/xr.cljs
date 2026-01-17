@@ -63,7 +63,7 @@
 ;; Session Management
 ;; ============================================================
 
-(defn- on-session-started [session renderer session-mode]
+(defn- on-session-started [^js session ^js renderer session-mode]
   (let [scene (:scene @xr-state)]
     ;; Save original background for restoration
     (when (and scene (= session-mode :ar))
@@ -75,7 +75,7 @@
            :session-mode session-mode
            :panel-visible false
            :a-button-was-pressed false)
-    (.setSession (.-xr renderer) session)
+    (.setSession ^js (.-xr renderer) session)
     (when-let [panel (:control-panel @xr-state)]
       (set! (.-visible panel) false))
     (when-let [btn (:button @xr-state)]
@@ -96,10 +96,10 @@
 
 (defn enter-vr
   "Request immersive VR session."
-  [renderer]
-  (-> (.requestSession js/navigator.xr "immersive-vr"
+  [^js renderer]
+  (-> (.requestSession ^js js/navigator.xr "immersive-vr"
                        #js {:optionalFeatures #js ["local-floor" "bounded-floor"]})
-      (.then (fn [session]
+      (.then (fn [^js session]
                (.addEventListener session "end" on-session-ended)
                (on-session-started session renderer :vr)))
       (.catch (fn [err]
@@ -107,10 +107,10 @@
 
 (defn enter-ar
   "Request immersive AR session (passthrough mode)."
-  [renderer]
-  (-> (.requestSession js/navigator.xr "immersive-ar"
+  [^js renderer]
+  (-> (.requestSession ^js js/navigator.xr "immersive-ar"
                        #js {:optionalFeatures #js ["local-floor" "bounded-floor"]})
-      (.then (fn [session]
+      (.then (fn [^js session]
                (.addEventListener session "end" on-session-ended)
                (on-session-started session renderer :ar)))
       (.catch (fn [err]
@@ -119,19 +119,19 @@
 (defn exit-vr
   "End current VR session."
   []
-  (when-let [session (:session @xr-state)]
+  (when-let [^js session (:session @xr-state)]
     (.end session)))
 
 (defn toggle-vr
   "Toggle VR session on/off."
-  [renderer]
+  [^js renderer]
   (if (:session @xr-state)
     (exit-vr)
     (enter-vr renderer)))
 
 (defn toggle-ar
   "Toggle AR (passthrough) session on/off."
-  [renderer]
+  [^js renderer]
   (if (:session @xr-state)
     (exit-vr)
     (enter-ar renderer)))
@@ -142,8 +142,8 @@
 
 (defn enable-xr
   "Enable WebXR on the renderer. Call after renderer creation."
-  [renderer]
-  (set! (.-enabled (.-xr renderer)) true))
+  [^js renderer]
+  (set! (.-enabled ^js (.-xr renderer)) true))
 
 (defn create-vr-button
   "Create a VR button element. Returns the button."
@@ -189,8 +189,8 @@
 
 (defn xr-presenting?
   "Check if currently in XR presentation mode."
-  [renderer]
-  (and renderer (.-isPresenting (.-xr renderer))))
+  [^js renderer]
+  (and renderer (.-isPresenting ^js (.-xr renderer))))
 
 ;; ============================================================
 ;; VR Controller Support
@@ -397,21 +397,21 @@
 (defn- switch-to-vr
   "Switch from AR to VR mode."
   []
-  (when-let [{:keys [session renderer]} @xr-state]
+  (let [{:keys [session renderer]} @xr-state]
     (when session
       (js/console.log "Switching to VR...")
       ;; Exit current session, then enter VR
-      (.end session)
+      (.end ^js session)
       (js/setTimeout #(enter-vr renderer) 500))))
 
 (defn- switch-to-ar
   "Switch from VR to AR mode."
   []
-  (when-let [{:keys [session renderer]} @xr-state]
+  (let [{:keys [session renderer]} @xr-state]
     (when session
       (js/console.log "Switching to AR...")
       ;; Exit current session, then enter AR
-      (.end session)
+      (.end ^js session)
       (js/setTimeout #(enter-ar renderer) 500))))
 
 (defn- handle-button-click
@@ -489,8 +489,8 @@
 
 (defn setup-controller
   "Setup VR controller with input handling."
-  [renderer scene camera-rig camera world-group]
-  (let [xr (.-xr renderer)
+  [^js renderer scene camera-rig camera world-group]
+  (let [^js xr (.-xr renderer)
         controller-0 (.getController xr 0)
         controller-1 (.getController xr 1)
         controller-group (THREE/Group.)
@@ -522,8 +522,8 @@
            :renderer renderer)
     (doseq [[ctrl idx] [[controller-0 0] [controller-1 1]]]
       (.addEventListener ctrl "connected"
-        (fn [event]
-          (let [input-source (.-data event)
+        (fn [^js event]
+          (let [^js input-source (.-data event)
                 handedness (.-handedness input-source)]
             (js/console.log "Controller" idx "connected, hand:" handedness)
             (when (or (nil? (:controller @xr-state))
@@ -574,18 +574,19 @@
 
 (defn update-controller
   "Update controller input each frame. Call from render loop when in VR."
-  [xr-frame renderer]
+  [^js xr-frame ^js renderer]
   (when-let [{:keys [controller-group debug-sprite camera-rig camera mode world-group grip-held a-button-was-pressed b-button-was-pressed input-source]} @xr-state]
     (when (and controller-group camera-rig camera world-group xr-frame renderer input-source)
-      (let [ref-space (.getReferenceSpace (.-xr renderer))
-            target-space (when input-source (.-targetRaySpace input-source))
-            pose (when (and ref-space target-space)
-                   (.getPose xr-frame target-space ref-space))]
+      (let [^js xr (.-xr renderer)
+            ^js ref-space (.getReferenceSpace xr)
+            ^js target-space (when input-source (.-targetRaySpace ^js input-source))
+            ^js pose (when (and ref-space target-space)
+                       (.getPose xr-frame target-space ref-space))]
         ;; Update controller-group position from XRFrame pose
         (when pose
-          (let [transform (.-transform pose)
-                pos (.-position transform)
-                ori (.-orientation transform)]
+          (let [^js transform (.-transform pose)
+                ^js pos (.-position transform)
+                ^js ori (.-orientation transform)]
             (.set (.-position controller-group) (.-x pos) (.-y pos) (.-z pos))
             (.set (.-quaternion controller-group) (.-x ori) (.-y ori) (.-z ori) (.-w ori))
             (.updateMatrixWorld controller-group true)))
@@ -620,11 +621,11 @@
               (set! (.-y world-pos) (+ (.-y drag-world-start) delta-y))
               (set! (.-z world-pos) (+ (.-z drag-world-start) delta-z)))))
         ;; Process gamepad input
-        (when-let [gamepad (.-gamepad input-source)]
+        (when-let [^js gamepad (.-gamepad ^js input-source)]
           (swap! debug-counter inc)
-          (let [buttons (.-buttons gamepad)
+          (let [^js buttons (.-buttons gamepad)
                 n-buttons (when buttons (.-length buttons))
-                axes (.-axes gamepad)]
+                ^js axes (.-axes gamepad)]
             ;; Update debug sprite (every 10 frames) - show DRAG when trigger held
             (when (and debug-sprite (zero? (mod @debug-counter 10)))
               (let [{:keys [trigger-held]} @xr-state
@@ -640,8 +641,8 @@
                          " W:" (.toFixed (.-x world-pos) 0))))))
             ;; A button = toggle panel, B button = switch move/rotate mode
             (when (and buttons (> n-buttons 5))
-              (let [a-button (aget buttons 4)
-                    b-button (aget buttons 5)
+              (let [^js a-button (aget buttons 4)
+                    ^js b-button (aget buttons 5)
                     a-pressed (and a-button (.-pressed a-button))
                     b-pressed (and b-button (.-pressed b-button))]
                 ;; A button - toggle panel
