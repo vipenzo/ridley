@@ -49,6 +49,8 @@
         (.then (fn [Module]
                  (Module)))
         (.then (fn [wasm]
+                 ;; v3.0 requires setup() to be called before using classes
+                 (.setup wasm)
                  (reset! manifold-state
                          {:wasm wasm
                           :Manifold (.-Manifold wasm)
@@ -202,10 +204,13 @@
     (let [ma (mesh->manifold mesh-a)
           mb (mesh->manifold mesh-b)]
       (when (and ma mb)
-        (let [result (.add ma mb)
+        (let [raw-result (.add ma mb)
+              ;; Use asOriginal to condense coplanar faces and collapse unnecessary edges
+              result (.asOriginal raw-result)
               output (manifold->mesh result)]
           (.delete ma)
           (.delete mb)
+          (.delete raw-result)
           (.delete result)
           output)))))
 
@@ -217,10 +222,27 @@
     (let [ma (mesh->manifold mesh-a)
           mb (mesh->manifold mesh-b)]
       (when (and ma mb)
-        (let [result (.subtract ma mb)
+        ;; Debug: check manifold status of inputs
+        (let [status-a (.-value (.status ma))
+              status-b (.-value (.status mb))]
+          (when (not (zero? status-a))
+            (js/console.warn "mesh-difference: mesh-a is not manifold, status:" status-a))
+          (when (not (zero? status-b))
+            (js/console.warn "mesh-difference: mesh-b is not manifold, status:" status-b)))
+        (let [raw-result (.subtract ma mb)
+              ;; Use asOriginal to condense coplanar faces and collapse unnecessary edges
+              ;; This cleans up artifacts from boolean operations
+              result (.asOriginal raw-result)
+              ;; Check result status
+              result-status (.-value (.status result))
+              _ (when (not (zero? result-status))
+                  (js/console.warn "mesh-difference: result is not manifold, status:" result-status))
+              _ (js/console.log "mesh-difference result: volume=" (.volume result)
+                                "triangles=" (.-numTri (.getMesh result)))
               output (manifold->mesh result)]
           (.delete ma)
           (.delete mb)
+          (.delete raw-result)
           (.delete result)
           output)))))
 
@@ -232,9 +254,12 @@
     (let [ma (mesh->manifold mesh-a)
           mb (mesh->manifold mesh-b)]
       (when (and ma mb)
-        (let [result (.intersect ma mb)
+        (let [raw-result (.intersect ma mb)
+              ;; Use asOriginal to condense coplanar faces and collapse unnecessary edges
+              result (.asOriginal raw-result)
               output (manifold->mesh result)]
           (.delete ma)
           (.delete mb)
+          (.delete raw-result)
           (.delete result)
           output)))))

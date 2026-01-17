@@ -1,11 +1,16 @@
 (ns ridley.geometry.primitives
   "3D primitive shapes: box, sphere, cylinder, cone.
-   Each primitive is placed at turtle position with turtle orientation.
+
+   Two APIs:
+   1. Pure functions (box-mesh, sphere-mesh, etc.) - return mesh data at origin
+   2. Turtle functions (box, sphere, etc.) - transform and add to turtle state
+
    All primitives include face-groups for face-based modeling."
   (:require [ridley.geometry.faces :as faces]))
 
-(defn- apply-transform
-  "Apply turtle position and orientation to mesh vertices."
+(defn apply-transform
+  "Apply turtle position and orientation to mesh vertices.
+   Used by stamp/make to position meshes at turtle location."
   [vertices position heading up]
   (let [[hx hy hz] heading
         [ux uy uz] up
@@ -37,15 +42,38 @@
      [(- hx) hy hz]]))
 
 (defn- make-box-faces
-  "Generate box face indices (quads as triangles, CCW winding for outward normals)."
+  "Generate box face indices (quads as triangles).
+   All faces CCW when viewed from outside (Manifold requirement).
+   Vertices: 0-3 back face (z=-), 4-7 front face (z=+)"
   []
-  ;; Each face as two triangles - reversed winding for correct normals
-  [[0 2 1] [0 3 2]   ; back
-   [4 5 6] [4 6 7]   ; front
-   [0 5 4] [0 1 5]   ; bottom
-   [2 7 6] [2 3 7]   ; top
-   [0 7 3] [0 4 7]   ; left
-   [1 6 5] [1 2 6]]) ; right
+  ;; Each quad split into two triangles, CCW from outside
+  [[0 1 2] [0 2 3]   ; back  (-z): 0→1→2, 0→2→3
+   [4 6 5] [4 7 6]   ; front (+z): 4→6→5, 4→7→6
+   [0 4 5] [0 5 1]   ; bottom (-y): 0→4→5, 0→5→1
+   [3 2 6] [3 6 7]   ; top (+y): 3→2→6, 3→6→7
+   [0 3 7] [0 7 4]   ; left (-x): 0→3→7, 0→7→4
+   [1 5 6] [1 6 2]]) ; right (+x): 1→5→6, 1→6→2
+
+;; ============================================================
+;; Pure mesh constructors (return mesh data at origin)
+;; ============================================================
+
+(defn box-mesh
+  "Create a box mesh centered at origin.
+   Returns mesh data (not transformed, not added to scene).
+   (box-mesh size) - cube
+   (box-mesh sx sy sz) - rectangular box"
+  ([size] (box-mesh size size size))
+  ([sx sy sz]
+   {:type :mesh
+    :primitive :box
+    :vertices (vec (make-box-vertices sx sy sz))
+    :faces (make-box-faces)
+    :face-groups (faces/box-face-groups)}))
+
+;; ============================================================
+;; Turtle-aware functions (transform and add to turtle state)
+;; ============================================================
 
 (defn box
   "Create a box primitive at current turtle position.
@@ -87,20 +115,10 @@
           (* radius sin-phi sin-theta)])))))
 
 (defn- make-sphere-faces
-  "Generate sphere face indices."
+  "Generate sphere face indices.
+   All faces CCW when viewed from outside (Manifold requirement).
+   UV sphere with rings from north pole (ring 0) to south pole."
   [segments rings]
-  (vec
-   (for [ring (range rings)
-         seg (range segments)]
-     (let [next-seg (mod (inc seg) segments)
-           current (* ring segments)
-           next-ring (* (inc ring) segments)]
-       ;; Two triangles per quad
-       [[current (+ current seg)]
-        [next-ring (+ next-ring seg)]
-        [next-ring (+ next-ring next-seg)]
-        [current (+ current next-seg)]])))
-  ;; Simplified: generate triangles (CCW winding for outward normals)
   (vec
    (apply concat
           (for [ring (range rings)
@@ -110,7 +128,19 @@
                   i1 (+ next-seg (* ring segments))
                   i2 (+ seg (* (inc ring) segments))
                   i3 (+ next-seg (* (inc ring) segments))]
-              [[i0 i1 i2] [i1 i3 i2]])))))
+              ;; CCW from outside: i0→i2→i1 and i2→i3→i1
+              [[i0 i2 i1] [i2 i3 i1]])))))
+
+(defn sphere-mesh
+  "Create a sphere mesh centered at origin.
+   Returns mesh data (not transformed, not added to scene)."
+  ([radius] (sphere-mesh radius 16 12))
+  ([radius segments rings]
+   {:type :mesh
+    :primitive :sphere
+    :vertices (vec (make-sphere-vertices radius segments rings))
+    :faces (make-sphere-faces segments rings)
+    :face-groups (faces/sphere-face-groups segments rings)}))
 
 (defn sphere
   "Create a sphere primitive at current turtle position.
@@ -155,29 +185,41 @@
        [0 half-h 0]]))))
 
 (defn- make-cylinder-faces
-  "Generate cylinder face indices."
+  "Generate cylinder face indices.
+   All faces CCW when viewed from outside (Manifold requirement)."
   [segments]
   (let [bottom-center (* 2 segments)
         top-center (inc bottom-center)]
     (vec
      (apply concat
             (concat
-             ;; Side faces (CCW winding for outward normals)
+             ;; Side faces - CCW from outside: b0→b1→t1 and b0→t1→t0
              (for [i (range segments)]
                (let [next-i (mod (inc i) segments)
                      b0 i
                      b1 next-i
                      t0 (+ i segments)
                      t1 (+ next-i segments)]
-                 [[b0 t1 t0] [b0 b1 t1]]))
-             ;; Bottom cap (CW for downward-facing normal)
+                 [[b0 b1 t1] [b0 t1 t0]]))
+             ;; Bottom cap - CCW from below (looking up at bottom)
              (for [i (range segments)]
                (let [next-i (mod (inc i) segments)]
-                 [[bottom-center i next-i]]))
-             ;; Top cap (CCW for upward-facing normal)
+                 [[bottom-center next-i i]]))
+             ;; Top cap - CCW from above (looking down at top)
              (for [i (range segments)]
                (let [next-i (mod (inc i) segments)]
-                 [[(+ i segments) top-center (+ next-i segments)]])))))))
+                 [[top-center (+ i segments) (+ next-i segments)]])))))))
+
+(defn cyl-mesh
+  "Create a cylinder mesh centered at origin.
+   Returns mesh data (not transformed, not added to scene)."
+  ([radius height] (cyl-mesh radius height 24))
+  ([radius height segments]
+   {:type :mesh
+    :primitive :cylinder
+    :vertices (vec (make-cylinder-vertices radius height segments))
+    :faces (make-cylinder-faces segments)
+    :face-groups (faces/cylinder-face-groups segments)}))
 
 (defn cyl
   "Create a cylinder primitive at current turtle position.
@@ -220,6 +262,19 @@
       ;; Center points for caps
       [[0 (- half-h) 0]
        [0 half-h 0]]))))
+
+(defn cone-mesh
+  "Create a cone/frustum mesh centered at origin.
+   Returns mesh data (not transformed, not added to scene).
+   (cone-mesh r1 r2 height) - frustum with bottom radius r1, top radius r2
+   Use r2=0 for a proper cone."
+  ([r1 r2 height] (cone-mesh r1 r2 height 24))
+  ([r1 r2 height segments]
+   {:type :mesh
+    :primitive :cone
+    :vertices (vec (make-cone-vertices r1 r2 height segments))
+    :faces (make-cylinder-faces segments)
+    :face-groups (faces/cone-face-groups segments)}))
 
 (defn cone
   "Create a cone or frustum primitive at current turtle position.

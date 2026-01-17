@@ -51,21 +51,66 @@
 (defn- implicit-pen [mode]
   (swap! turtle-atom turtle/pen mode))
 
-(defn- implicit-box
-  ([size] (swap! turtle-atom prims/box size))
-  ([sx sy sz] (swap! turtle-atom prims/box sx sy sz)))
+(defn- implicit-reset
+  ([] (swap! turtle-atom turtle/reset-pose))
+  ([pos] (swap! turtle-atom turtle/reset-pose pos))
+  ([pos & opts] (swap! turtle-atom #(apply turtle/reset-pose % pos opts))))
 
-(defn- implicit-sphere
-  ([radius] (swap! turtle-atom prims/sphere radius))
-  ([radius segments rings] (swap! turtle-atom prims/sphere radius segments rings)))
+;; Pure primitive constructors - return mesh data at origin (no side effects)
+(defn- pure-box
+  ([size] (prims/box-mesh size))
+  ([sx sy sz] (prims/box-mesh sx sy sz)))
 
-(defn- implicit-cyl
-  ([radius height] (swap! turtle-atom prims/cyl radius height))
-  ([radius height segments] (swap! turtle-atom prims/cyl radius height segments)))
+(defn- pure-sphere
+  ([radius] (prims/sphere-mesh radius))
+  ([radius segments rings] (prims/sphere-mesh radius segments rings)))
 
-(defn- implicit-cone
-  ([r1 r2 height] (swap! turtle-atom prims/cone r1 r2 height))
-  ([r1 r2 height segments] (swap! turtle-atom prims/cone r1 r2 height segments)))
+(defn- pure-cyl
+  ([radius height] (prims/cyl-mesh radius height))
+  ([radius height segments] (prims/cyl-mesh radius height segments)))
+
+(defn- pure-cone
+  ([r1 r2 height] (prims/cone-mesh r1 r2 height))
+  ([r1 r2 height segments] (prims/cone-mesh r1 r2 height segments)))
+
+;; Transform a mesh to turtle position/orientation
+(defn- transform-mesh-to-turtle
+  "Transform a mesh's vertices to current turtle position and orientation."
+  [mesh]
+  (let [turtle @turtle-atom
+        transformed-verts (prims/apply-transform
+                           (:vertices mesh)
+                           (:position turtle)
+                           (:heading turtle)
+                           (:up turtle))]
+    (assoc mesh :vertices (vec transformed-verts))))
+
+;; stamp: materialize mesh at turtle position, add to scene as visible
+;; Only works with primitives (box, sphere, cyl, cone) - not extrude results
+(defn- implicit-stamp
+  "Materialize a mesh at current turtle position and show it.
+   Returns the transformed mesh.
+   Only works with primitives - throws error for extrude results."
+  [mesh]
+  (if (:primitive mesh)
+    (let [transformed (transform-mesh-to-turtle mesh)]
+      (registry/add-mesh! transformed nil true)
+      (registry/refresh-viewport!)
+      transformed)
+    (throw (js/Error. (str "stamp only works with primitives (box, sphere, cyl, cone). "
+                           "For extrude results, use 'register' directly.")))))
+
+;; make: materialize mesh at turtle position, return without showing
+;; Only works with primitives (box, sphere, cyl, cone) - not extrude results
+(defn- implicit-make
+  "Materialize a mesh at current turtle position without showing.
+   Returns the transformed mesh (for use in boolean operations).
+   Only works with primitives - throws error for extrude results."
+  [mesh]
+  (if (:primitive mesh)
+    (transform-mesh-to-turtle mesh)
+    (throw (js/Error. (str "make only works with primitives (box, sphere, cyl, cone). "
+                           "For extrude results, position the turtle first, then create the mesh.")))))
 
 (defn- get-turtle []
   @turtle-atom)
@@ -83,6 +128,14 @@
 (defn- implicit-finalize-loft []
   (swap! turtle-atom turtle/finalize-loft))
 
+(defn- implicit-add-mesh [mesh]
+  (swap! turtle-atom update :meshes conj mesh)
+  mesh)
+
+(defn- implicit-extrude-closed-path [shape path]
+  (swap! turtle-atom turtle/extrude-closed-from-path shape path)
+  (last (:meshes @turtle-atom)))
+
 ;; ============================================================
 ;; Shared SCI context
 ;; ============================================================
@@ -96,15 +149,20 @@
    'tr           implicit-tr
    'pen-impl     implicit-pen      ; Used by pen macro
    'stamp-impl   (fn [shape] (swap! turtle-atom turtle/stamp shape))
+   'stamp-closed-impl (fn [shape] (swap! turtle-atom turtle/stamp-closed shape))
    'finalize-sweep-impl (fn [] (swap! turtle-atom turtle/finalize-sweep))
    'finalize-sweep-closed-impl (fn [] (swap! turtle-atom turtle/finalize-sweep-closed))
    'pen-up       implicit-pen-up
    'pen-down     implicit-pen-down
-   ;; 3D primitives
-   'box          implicit-box
-   'sphere       implicit-sphere
-   'cyl          implicit-cyl
-   'cone         implicit-cone
+   'reset        implicit-reset
+   ;; 3D primitives - return mesh data at origin (no side effects)
+   'box          pure-box
+   'sphere       pure-sphere
+   'cyl          pure-cyl
+   'cone         pure-cone
+   ;; Materialize mesh at turtle position
+   'stamp        implicit-stamp    ; show in viewport
+   'make         implicit-make     ; hidden (for boolean ops)
    ;; Shape constructors (return shape data, use with pen)
    'circle       shape/circle-shape
    'rect         shape/rect-shape
@@ -131,7 +189,7 @@
    'extrude-z    ops/extrude-z
    'extrude-y    ops/extrude-y
    'revolve      ops/revolve
-   'sweep        ops/sweep
+   'ops-sweep    ops/sweep
    'ops-loft     ops/loft
    ;; Loft impl functions (used by loft macro)
    'stamp-loft-impl     implicit-stamp-loft
@@ -158,6 +216,11 @@
    'path-from-recorder  turtle/path-from-recorder
    'run-path-impl       turtle/run-path
    'path?               turtle/path?
+   'extrude-closed-path-impl implicit-extrude-closed-path
+   ;; Sweep between two shapes
+   'stamp-shape-at      turtle/stamp-shape-at
+   'sweep-two-shapes    turtle/sweep-two-shapes
+   'add-mesh-impl       implicit-add-mesh
    ;; Manifold operations
    'manifold?           manifold/manifold?
    'mesh-status         manifold/get-mesh-status
@@ -168,13 +231,19 @@
    'register-mesh!      registry/register-mesh!
    'show-mesh!          registry/show-mesh!
    'hide-mesh!          registry/hide-mesh!
+   'show-mesh-ref!      registry/show-mesh-ref!
+   'hide-mesh-ref!      registry/hide-mesh-ref!
    'show-all!           registry/show-all!
    'hide-all!           registry/hide-all!
+   'show-only-registered! registry/show-only-registered!
    'visible-names       registry/visible-names
    'visible-meshes      registry/visible-meshes
    'registered-names    registry/registered-names
    'get-mesh            registry/get-mesh
    'refresh-viewport!   registry/refresh-viewport!
+   'all-meshes-info     registry/all-meshes-info
+   'anonymous-meshes    registry/anonymous-meshes
+   'anonymous-count     registry/anonymous-count
    ;; STL export
    'save-stl            stl/download-stl})
 
@@ -254,25 +323,9 @@
    ;; The path should return to the starting point for proper closure
    ;; Last ring connects to first ring, no end caps
    ;; Returns the created mesh (can be bound with def)
-   (defmacro extrude-closed [shape & movements]
-     (if (and (= 1 (count movements)) (symbol? (first movements)))
-       ;; Single symbol - might be a path, check at runtime
-       `(let [prev-mode# (:pen-mode (get-turtle))
-              arg# ~(first movements)]
-          (stamp-impl ~shape)
-          (if (path? arg#)
-            (run-path arg#)
-            ~(first movements))
-          (finalize-sweep-closed-impl)
-          (pen-impl prev-mode#)
-          (last-mesh))
-       ;; Multiple movements or literals - execute directly
-       `(let [prev-mode# (:pen-mode (get-turtle))]
-          (stamp-impl ~shape)
-          ~@movements
-          (finalize-sweep-closed-impl)
-          (pen-impl prev-mode#)
-          (last-mesh))))
+   ;; Uses pre-processed path approach for correct corner geometry
+   (defmacro extrude-closed [shape path-expr]
+     `(extrude-closed-path-impl ~shape ~path-expr))
 
    ;; loft: like extrude but with shape transformation based on progress
    ;; (loft (circle 20) #(scale %1 (- 1 %2)) (f 30)) - cone
@@ -322,6 +375,24 @@
           (pen-impl prev-mode#)
           (last-mesh))))
 
+   ;; sweep: create mesh between two shapes
+   ;; (sweep (circle 5) (do (f 10) (th 90) (circle 5)))
+   ;; First shape is stamped at current turtle position
+   ;; Body executes (can move turtle), last expression must return a shape
+   ;; Second shape is stamped at final turtle position
+   ;; Returns mesh connecting the two shapes
+   (defmacro sweep [shape1 body]
+     `(let [;; Stamp first shape at current position
+            ring1# (stamp-shape-at (get-turtle) ~shape1)
+            ;; Execute body (moves turtle, returns second shape)
+            shape2# ~body
+            ;; Stamp second shape at new position
+            ring2# (stamp-shape-at (get-turtle) shape2#)
+            ;; Create mesh between the two rings
+            mesh# (sweep-two-shapes ring1# ring2#)]
+        ;; Add mesh to turtle state and return it
+        (add-mesh-impl mesh#)))
+
    ;; register: define a symbol, add to registry, AND show it (only first time)
    ;; (register torus (extrude-closed (circle 5) square-path))
    ;; This creates a var 'torus', registers it, and makes it visible
@@ -337,16 +408,25 @@
           (show-mesh! name-kw#))
         mesh#))
 
-   ;; Convenience functions that work with names
-   (defn show [name]
-     (show-mesh! (if (keyword? name) name (keyword name)))
+   ;; Convenience functions that work with names OR mesh references
+   ;; (hide :torus) - hide by registered name (keyword)
+   ;; (hide torus)  - hide by mesh reference (def'd variable)
+   (defn show [name-or-mesh]
+     (if (or (keyword? name-or-mesh) (string? name-or-mesh) (symbol? name-or-mesh))
+       ;; It's a name - convert to keyword and look up
+       (show-mesh! (if (keyword? name-or-mesh) name-or-mesh (keyword name-or-mesh)))
+       ;; It's a mesh reference - look up by identity
+       (show-mesh-ref! name-or-mesh))
      (refresh-viewport!))
 
-   (defn hide [name]
-     (let [kw (if (keyword? name) name (keyword name))]
-       (hide-mesh! kw)
-       (refresh-viewport!)
-       nil))
+   (defn hide [name-or-mesh]
+     (if (or (keyword? name-or-mesh) (string? name-or-mesh) (symbol? name-or-mesh))
+       ;; It's a name - convert to keyword and look up
+       (hide-mesh! (if (keyword? name-or-mesh) name-or-mesh (keyword name-or-mesh)))
+       ;; It's a mesh reference - look up by identity
+       (hide-mesh-ref! name-or-mesh))
+     (refresh-viewport!)
+     nil)
 
    (defn show-all []
      (show-all!)
@@ -354,6 +434,11 @@
 
    (defn hide-all []
      (hide-all!)
+     (refresh-viewport!))
+
+   ;; Show only registered objects (hide work-in-progress meshes)
+   (defn show-only-objects []
+     (show-only-registered!)
      (refresh-viewport!))
 
    ;; List visible object names
@@ -364,48 +449,78 @@
    (defn registered []
      (registered-names))
 
-   ;; Get info/details about a registered object
-   ;; (info :torus) - show vertex/face count and visibility
-   (defn info [name]
-     (let [kw (if (keyword? name) name (keyword name))
-           mesh (get-mesh kw)
-           vis (contains? (set (visible-names)) kw)]
-       (when mesh
-         {:name kw
-          :visible vis
-          :vertices (count (:vertices mesh))
-          :faces (count (:faces mesh))})))
+   ;; List all meshes in scene (registered + anonymous)
+   (defn scene []
+     (all-meshes-info))
+
+   ;; Get info/details about a mesh
+   ;; (info :torus) - by registered name (keyword)
+   ;; (info torus)  - by mesh reference (def'd variable)
+   (defn info [name-or-mesh]
+     (if (or (keyword? name-or-mesh) (string? name-or-mesh) (symbol? name-or-mesh))
+       ;; It's a name - look up by keyword
+       (let [kw (if (keyword? name-or-mesh) name-or-mesh (keyword name-or-mesh))
+             mesh (get-mesh kw)
+             vis (contains? (set (visible-names)) kw)]
+         (when mesh
+           {:name kw
+            :visible vis
+            :vertices (count (:vertices mesh))
+            :faces (count (:faces mesh))}))
+       ;; It's a mesh reference - show info directly
+       (when (and name-or-mesh (:vertices name-or-mesh))
+         {:name nil
+          :vertices (count (:vertices name-or-mesh))
+          :faces (count (:faces name-or-mesh))})))
 
    ;; Get the raw mesh data for an object
-   ;; (deref :torus) or @:torus won't work, use (mesh :torus)
-   (defn mesh [name]
-     (get-mesh (if (keyword? name) name (keyword name))))
+   ;; (mesh :torus) - by registered name
+   ;; (mesh torus)  - returns mesh itself (identity)
+   (defn mesh [name-or-mesh]
+     (if (or (keyword? name-or-mesh) (string? name-or-mesh) (symbol? name-or-mesh))
+       (get-mesh (if (keyword? name-or-mesh) name-or-mesh (keyword name-or-mesh)))
+       name-or-mesh))
+
+   ;; Helper to check if something is a mesh (has :vertices and :faces)
+   (defn- mesh? [x]
+     (and (map? x) (:vertices x) (:faces x)))
+
+   ;; Helper to resolve name-or-mesh to actual mesh
+   (defn- resolve-mesh [name-or-mesh]
+     (if (mesh? name-or-mesh)
+       name-or-mesh
+       (get-mesh (if (keyword? name-or-mesh) name-or-mesh (keyword name-or-mesh)))))
 
    ;; Export mesh(es) to STL file
-   ;; (export :torus) - export as torus.stl
-   ;; (export :torus :cube) - export as torus-cube.stl
-   ;; (export (objects)) - export all visible objects
+   ;; (export :torus) - by registered name
+   ;; (export torus)  - by mesh reference
+   ;; (export :torus :cube) - multiple by name
+   ;; (export torus cube)   - multiple by reference
+   ;; (export (objects))    - export all visible objects
    (defn export
-     ([name-or-names]
-      (let [names (if (keyword? name-or-names)
-                    [name-or-names]
-                    (if (and (sequential? name-or-names) (keyword? (first name-or-names)))
-                      name-or-names
-                      nil))
-            meshes (if names
-                     (keep get-mesh names)
-                     [name-or-names])
-            filename (if names
-                       (str (clojure.string/join \"-\" (map name names)) \".stl\")
-                       \"export.stl\")]
+     ([name-or-mesh]
+      (cond
+        ;; Single keyword
+        (keyword? name-or-mesh)
+        (when-let [m (get-mesh name-or-mesh)]
+          (save-stl [m] (str (name name-or-mesh) \".stl\")))
+        ;; List of keywords
+        (and (sequential? name-or-mesh) (keyword? (first name-or-mesh)))
+        (let [meshes (keep get-mesh name-or-mesh)]
+          (when (seq meshes)
+            (save-stl (vec meshes)
+                      (str (clojure.string/join \"-\" (map name name-or-mesh)) \".stl\"))))
+        ;; Single mesh
+        (mesh? name-or-mesh)
+        (save-stl [name-or-mesh] \"export.stl\")
+        ;; List of meshes
+        (and (sequential? name-or-mesh) (mesh? (first name-or-mesh)))
+        (save-stl (vec name-or-mesh) \"export.stl\")))
+     ([first-arg & more-args]
+      (let [all-args (cons first-arg more-args)
+            meshes (keep resolve-mesh all-args)]
         (when (seq meshes)
-          (save-stl (vec meshes) filename))))
-     ([name & more-names]
-      (let [all-names (cons name more-names)
-            meshes (keep get-mesh all-names)
-            filename (str (clojure.string/join \"-\" (map name all-names)) \".stl\")]
-        (when (seq meshes)
-          (save-stl (vec meshes) filename)))))")
+          (save-stl (vec meshes) \"export.stl\")))))")
 
 ;; Persistent SCI context - created once, reused for REPL commands
 (defonce ^:private sci-ctx (atom nil))

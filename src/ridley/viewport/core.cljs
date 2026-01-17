@@ -95,7 +95,8 @@
   (THREE/MeshStandardMaterial. #js {:color 0x00aaff
                                      :metalness 0.3
                                      :roughness 0.7
-                                     :side THREE/DoubleSide}))
+                                     :side THREE/FrontSide
+                                     :flatShading true}))
 
 (defn- geometry-to-points
   "Convert turtle geometry segments to Three.js points."
@@ -133,6 +134,8 @@
         positions (js/Float32Array. (clj->js flat-coords))
         material (create-mesh-material)]
     (.setAttribute geom "position" (THREE/BufferAttribute. positions 3))
+    ;; With flatShading: true, Three.js computes face normals automatically
+    ;; We still call computeVertexNormals for compatibility, but flatShading overrides
     (.computeVertexNormals geom)
     (THREE/Mesh. geom material)))
 

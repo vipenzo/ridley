@@ -71,6 +71,39 @@
         term3 (v* k (* (dot k v) (- 1 cos-a)))]
     (normalize (v+ (v+ term1 term2) term3))))
 
+;; --- Pose reset ---
+
+(defn reset-pose
+  "Reset turtle position, orientation, and pen mode to defaults.
+   Keeps accumulated geometry and meshes.
+   Options:
+   - (reset-pose state) - reset to origin, facing +X, up +Z, pen :on
+   - (reset-pose state [x y z]) - reset to position, default orientation
+   - (reset-pose state [x y z] :heading [hx hy hz]) - position + heading
+   - (reset-pose state [x y z] :heading [hx hy hz] :up [ux uy uz]) - full control"
+  ([state]
+   (reset-pose state [0 0 0]))
+  ([state position]
+   (assoc state
+          :position (vec position)
+          :heading [1 0 0]
+          :up [0 0 1]
+          :pen-mode :on
+          :stamped-shape nil
+          :sweep-rings []
+          :pending-rotation nil))
+  ([state position & {:keys [heading up]}]
+   (let [h (if heading (normalize (vec heading)) [1 0 0])
+         u (if up (normalize (vec up)) [0 0 1])]
+     (assoc state
+            :position (vec position)
+            :heading h
+            :up u
+            :pen-mode :on
+            :stamped-shape nil
+            :sweep-rings []
+            :pending-rotation nil))))
+
 ;; --- Sweep mesh building ---
 
 (defn- build-sweep-mesh
@@ -101,6 +134,7 @@
                                          b1 (+ base next-vert)
                                          t0 (+ next-base vert-idx)
                                          t1 (+ next-base next-vert)]
+                                     ;; CCW winding from outside (inverted for correct volume)
                                      [[b0 t1 b1] [b0 t0 t1]]))
                                  (range n-verts))))
                             (range effective-n-rings)))]
@@ -122,12 +156,15 @@
                                        b1 (+ base next-vert)
                                        t0 (+ next-base vert-idx)
                                        t1 (+ next-base next-vert)]
+                                   ;; CCW winding from outside (inverted for correct volume)
                                    [[b0 t1 b1] [b0 t0 t1]]))
                                (range n-verts)))
                             (range (dec n-rings))))
+               ;; Bottom cap: facing -heading direction (CCW from below)
                bottom-cap (vec (for [i (range 1 (dec n-verts))]
                                  [0 i (inc i)]))
                last-base (* (dec n-rings) n-verts)
+               ;; Top cap: facing +heading direction (CCW from above)
                top-cap (vec (for [i (range 1 (dec n-verts))]
                               [last-base (+ last-base i 1) (+ last-base i)]))]
            {:type :mesh
@@ -197,9 +234,6 @@
   [state]
   (cross (:heading state) (:up state)))
 
-;; Default number of interpolation steps for fillet during extrude
-(def ^:private default-fillet-steps 16)
-
 (defn- apply-rotations
   "Apply a list of rotations to heading/up vectors.
    Returns {:heading new-heading :up new-up}"
@@ -218,62 +252,122 @@
    {:heading (:heading state) :up (:up state)}
    rotations))
 
-;; --- Fillet/Bend calculation ---
+;; --- Corner/Bend calculation ---
 
-(defn- create-fillet-rings
-  "Create fillet rings connecting pre-rotation and post-rotation orientations.
-   The fillet rotates the shape in place at the current position, creating
-   a smooth angular transition without moving the turtle along an arc.
+(defn- shape-radius
+  "Calculate the radius of a shape (max distance from origin to any point)."
+  [shape]
+  (if-let [points (:points shape)]
+    (reduce max 0 (map (fn [[x y]] (Math/sqrt (+ (* x x) (* y y)))) points))
+    0))
 
-   Parameters:
-   - state: turtle state (at start of fillet, before rotation applied)
-   - new-heading: heading after rotation
-   - new-up: up vector after rotation
-   - steps: number of intermediate rings
+(defn- build-segment-mesh
+  "Build a mesh from sweep rings (no caps - for segments that will be joined).
+   Returns nil if not enough rings."
+  [rings]
+  (let [n-rings (count rings)
+        n-verts (count (first rings))]
+    (when (and (>= n-rings 2) (>= n-verts 3))
+      (let [vertices (vec (apply concat rings))
+            side-faces (vec
+                        (mapcat
+                         (fn [ring-idx]
+                           (mapcat
+                            (fn [vert-idx]
+                              (let [next-vert (mod (inc vert-idx) n-verts)
+                                    base (* ring-idx n-verts)
+                                    next-base (* (inc ring-idx) n-verts)
+                                    b0 (+ base vert-idx)
+                                    b1 (+ base next-vert)
+                                    t0 (+ next-base vert-idx)
+                                    t1 (+ next-base next-vert)]
+                                ;; CCW winding from outside
+                                [[b0 t1 b1] [b0 t0 t1]]))
+                            (range n-verts)))
+                         (range (dec n-rings))))]
+        {:type :mesh
+         :primitive :segment
+         :vertices vertices
+         :faces side-faces}))))
 
-   Returns vector of rings (3D vertex arrays).
-
-   The turtle stays at its current position; only the orientation changes.
-   This keeps the extrusion centered on the path's centerline."
-  [state new-heading new-up steps]
-  (let [base-shape (:sweep-base-shape state)
-        old-heading (:heading state)
-        old-up (:up state)
-        pos (:position state)]
-    (when base-shape
-      (vec
-       (for [i (range 1 (inc steps))]
-         (let [t (/ i steps)
-               ;; Interpolate heading and up vectors
-               interp-heading (normalize (v+ (v* old-heading (- 1 t))
-                                             (v* new-heading t)))
-               interp-up (normalize (v+ (v* old-up (- 1 t))
-                                        (v* new-up t)))
-               ;; Create temp state with interpolated orientation at same position
-               temp-state (-> state
-                              (assoc :position pos)
-                              (assoc :heading interp-heading)
-                              (assoc :up interp-up))]
-           (stamp-shape temp-state base-shape)))))))
+(defn- build-corner-mesh
+  "Build a corner mesh connecting two rings (no caps).
+   ring1 and ring2 must have the same number of vertices."
+  [ring1 ring2]
+  (let [n-verts (count ring1)]
+    (when (and (>= n-verts 3) (= n-verts (count ring2)))
+      (let [vertices (vec (concat ring1 ring2))
+            side-faces (vec
+                        (mapcat
+                         (fn [i]
+                           (let [next-i (mod (inc i) n-verts)
+                                 b0 i
+                                 b1 next-i
+                                 t0 (+ n-verts i)
+                                 t1 (+ n-verts next-i)]
+                             ;; CCW winding from outside
+                             [[b0 t1 b1] [b0 t0 t1]]))
+                         (range n-verts)))]
+        {:type :mesh
+         :primitive :corner
+         :vertices vertices
+         :faces side-faces}))))
 
 (defn- process-pending-rotation
   "Process a pending rotation when moving forward.
-   Creates a fillet connecting the old and new orientations.
-   The turtle rotates in place - no positional offset is introduced.
-   Returns updated state with fillet rings added and pending rotation cleared."
+   Creates separate meshes for the pre-rotation segment and corner.
+
+   Strategy:
+   1. Finalize current segment (rings accumulated so far) - shortened by radius
+   2. Create corner mesh connecting end of old segment to start of new segment
+   3. Start fresh rings for next segment - starting at radius offset
+
+   This ensures no internal faces at corners."
   [state _dist]
   (let [pending (:pending-rotation state)
-        ;; Calculate final heading/up after all pending rotations
         {:keys [heading up]} (apply-rotations state pending)
-        ;; Steps for fillet smoothness
-        steps (or (:fillet-steps state) default-fillet-steps)
-        ;; Create fillet rings (turtle stays at same position)
-        fillet-rings (create-fillet-rings state heading up steps)]
+        base-shape (:sweep-base-shape state)
+        radius (shape-radius base-shape)
+        old-heading (:heading state)
+        pos (:position state)
+        rings (:sweep-rings state)
+
+        ;; Corner position: pull back from current pos by radius along old heading
+        corner-pos (v+ pos (v* old-heading (- radius)))
+
+        ;; New turtle position: advance from corner by radius along NEW heading
+        new-pos (v+ corner-pos (v* heading radius))
+
+        ;; Create the end ring of the pre-rotation segment (at corner-pos, old orientation)
+        end-ring (stamp-shape (assoc state :position corner-pos) base-shape)
+
+        ;; Replace last ring with shortened version and build segment mesh
+        segment-rings (if (seq rings)
+                        (conj (pop rings) end-ring)
+                        [end-ring])
+        segment-mesh (build-segment-mesh segment-rings)
+
+        ;; Create first ring of new segment (at new-pos, new orientation)
+        first-new-ring (stamp-shape (-> state
+                                        (assoc :position new-pos)
+                                        (assoc :heading heading)
+                                        (assoc :up up))
+                                    base-shape)
+
+        ;; Create corner mesh: from end-ring to first-new-ring
+        ;; This connects the end of old segment to start of new segment
+        corner-mesh (build-corner-mesh end-ring first-new-ring)]
     (-> state
         (assoc :heading heading)
         (assoc :up up)
-        ;; Position stays the same - turtle rotates in place
-        (update :sweep-rings into fillet-rings)
+        (assoc :position new-pos)
+        ;; Add segment mesh and corner mesh to accumulated meshes
+        (update :meshes (fn [meshes]
+                          (cond-> meshes
+                            segment-mesh (conj segment-mesh)
+                            corner-mesh (conj corner-mesh))))
+        ;; Start fresh rings for next segment
+        (assoc :sweep-rings [first-new-ring])
         (dissoc :pending-rotation))))
 
 ;; --- Movement commands ---
@@ -304,10 +398,24 @@
       (let [state' (if (:pending-rotation state)
                      (process-pending-rotation state dist)
                      state)
-            ;; Now do normal forward movement from (possibly updated) position
-            new-pos' (v+ (:position state') (v* (:heading state') dist))
             base-shape (:sweep-base-shape state')
-            new-state (assoc state' :position new-pos')
+            rings (:sweep-rings state')
+            closed? (:sweep-closed? state')
+            radius (shape-radius base-shape)
+            ;; For closed extrusion with empty rings: add offset first ring
+            state'' (if (and closed? (empty? rings))
+                      ;; First movement in closed extrusion: start at offset position
+                      (let [offset-pos (v+ (:position state') (v* (:heading state') radius))
+                            first-ring (stamp-shape (assoc state' :position offset-pos) base-shape)]
+                        (-> state'
+                            (assoc :position offset-pos)
+                            (assoc :sweep-rings [first-ring])
+                            ;; Save this offset first ring for closing
+                            (assoc :sweep-closed-first-ring first-ring)))
+                      state')
+            ;; Move forward from current position
+            new-pos' (v+ (:position state'') (v* (:heading state'') dist))
+            new-state (assoc state'' :position new-pos')
             ;; Re-stamp the 2D shape at the new position/orientation
             new-shape (stamp-shape new-state base-shape)]
         (-> new-state
@@ -436,7 +544,9 @@
 (defn stamp
   "Internal: stamp a shape for extrusion. Used by extrude macro.
    Initializes sweep-rings with the first ring (the stamped shape).
-   Also stores the 2D base shape for re-stamping after rotations."
+   Also stores the 2D base shape for re-stamping after rotations.
+   For closed extrusions, also saves initial orientation to compute
+   the correct closing connection."
   [state shape]
   (if (shape? shape)
     (let [stamped (stamp-shape state shape)]
@@ -444,32 +554,86 @@
           (assoc :pen-mode :shape)
           (assoc :stamped-shape stamped)
           (assoc :sweep-base-shape shape)  ; Store 2D shape for re-stamping
-          (assoc :sweep-rings [stamped])))  ; First ring is the stamped shape
+          (assoc :sweep-rings [stamped])   ; First ring is the stamped shape
+          (assoc :sweep-first-ring stamped) ; Save for caps and closing
+          (assoc :sweep-initial-pos (:position state))
+          (assoc :sweep-initial-heading (:heading state))
+          (assoc :sweep-initial-up (:up state))))
+    state))
+
+(defn stamp-closed
+  "Internal: stamp a shape for closed extrusion. Used by extrude-closed macro.
+   Unlike stamp, does NOT add the first ring to sweep-rings because for closed
+   extrusions, all segments will be shortened on both ends.
+   The first ring will be added during the first forward movement."
+  [state shape]
+  (if (shape? shape)
+    (let [stamped (stamp-shape state shape)]
+      (-> state
+          (assoc :pen-mode :shape)
+          (assoc :stamped-shape stamped)
+          (assoc :sweep-base-shape shape)
+          (assoc :sweep-rings [])          ; Empty! First ring added on first (f)
+          (assoc :sweep-first-ring stamped) ; Save for reference
+          (assoc :sweep-initial-pos (:position state))
+          (assoc :sweep-initial-heading (:heading state))
+          (assoc :sweep-initial-up (:up state))
+          (assoc :sweep-closed? true)))    ; Mark as closed extrusion
     state))
 
 (defn finalize-sweep
-  "Internal: finalize sweep by building unified mesh from accumulated rings.
-   Called at end of extrude macro."
+  "Internal: finalize sweep by building final segment mesh with caps.
+   Called at end of extrude macro.
+
+   The meshes list may already contain segment and corner meshes from
+   rotations. This adds the final segment and puts caps on the whole thing."
   [state]
-  (let [rings (:sweep-rings state)]
+  (let [rings (:sweep-rings state)
+        existing-meshes (:meshes state)
+        first-ring (:sweep-first-ring state)]
     (if (>= (count rings) 2)
-      ;; Build unified mesh from all rings
-      (if-let [mesh (build-sweep-mesh rings)]
+      ;; Build final segment from remaining rings
+      (let [final-segment (build-segment-mesh rings)
+            ;; Determine the actual first and last rings for caps
+            actual-first-ring (or first-ring (first rings))
+            actual-last-ring (last rings)
+            ;; Add caps to final segment if it's the only mesh,
+            ;; otherwise we need to add caps to the combined structure
+            all-meshes (if final-segment
+                         (conj existing-meshes final-segment)
+                         existing-meshes)
+            ;; Create separate cap meshes
+            n-verts (count actual-first-ring)
+            ;; Bottom cap mesh
+            bottom-cap-mesh (when (>= n-verts 3)
+                              {:type :mesh
+                               :primitive :cap
+                               :vertices (vec actual-first-ring)
+                               :faces (vec (for [i (range 1 (dec n-verts))]
+                                             [0 i (inc i)]))})
+            ;; Top cap mesh
+            top-cap-mesh (when (>= n-verts 3)
+                           {:type :mesh
+                            :primitive :cap
+                            :vertices (vec actual-last-ring)
+                            :faces (vec (for [i (range 1 (dec n-verts))]
+                                          [0 (inc i) i]))})]
         (-> state
-            (update :meshes conj mesh)
+            (assoc :meshes (cond-> all-meshes
+                             bottom-cap-mesh (conj bottom-cap-mesh)
+                             top-cap-mesh (conj top-cap-mesh)))
             (assoc :sweep-rings [])
             (assoc :stamped-shape nil)
-            (dissoc :sweep-base-shape))
-        ;; Fallback: clear state without adding mesh
-        (-> state
-            (assoc :sweep-rings [])
-            (assoc :stamped-shape nil)
-            (dissoc :sweep-base-shape)))
+            (dissoc :sweep-base-shape :sweep-first-ring :sweep-closed?
+                    :sweep-closed-first-ring
+                    :sweep-initial-pos :sweep-initial-heading :sweep-initial-up)))
       ;; Not enough rings - just clear state
       (-> state
           (assoc :sweep-rings [])
           (assoc :stamped-shape nil)
-          (dissoc :sweep-base-shape)))))
+          (dissoc :sweep-base-shape :sweep-first-ring :sweep-closed?
+                  :sweep-closed-first-ring
+                  :sweep-initial-pos :sweep-initial-heading :sweep-initial-up)))))
 
 (defn finalize-sweep-closed
   "Internal: finalize sweep as a closed torus-like mesh.
@@ -477,32 +641,223 @@
    Called at end of extrude-closed macro.
 
    Forces (f 0) first to process any pending rotation, ensuring
-   the final corner fillet is created before closing the loop."
+   the final corner fillet is created before closing the loop.
+
+   With stamp-closed, the first ring is already offset by radius
+   and saved in :sweep-closed-first-ring.
+   The closing corner connects:
+   - FROM: last ring (after final corner was processed)
+   - TO: the saved first ring (offset, created during first movement)"
   [state]
   ;; First, process any pending rotation by doing (f 0)
   ;; This creates the fillet for the last corner
   (let [state' (if (:pending-rotation state)
                  (f state 0)
                  state)
-        rings (:sweep-rings state')]
-    (if (>= (count rings) 2)
-      ;; Build closed mesh from all rings
-      (if-let [mesh (build-sweep-mesh rings true)]
+        rings (:sweep-rings state')
+        existing-meshes (:meshes state')
+        ;; Use the saved first ring (from first movement with offset)
+        closed-first-ring (:sweep-closed-first-ring state')]
+    (if (and (>= (count rings) 1) closed-first-ring)
+      ;; Build final segment (if any) and closing corner
+      (let [;; The last ring is at post-corner position
+            last-ring (last rings)
+
+            ;; If there are 2+ rings, we have a final segment to build
+            ;; Otherwise, just the closing corner
+            final-segment (when (>= (count rings) 2)
+                            (build-segment-mesh rings))
+
+            ;; Create closing corner: from last ring to the saved first ring
+            closing-corner (build-corner-mesh last-ring closed-first-ring)
+
+            ;; Combine all meshes
+            all-meshes (cond-> existing-meshes
+                         final-segment (conj final-segment)
+                         closing-corner (conj closing-corner))]
         (-> state'
-            (update :meshes conj mesh)
+            (assoc :meshes all-meshes)
             (assoc :sweep-rings [])
             (assoc :stamped-shape nil)
-            (dissoc :sweep-base-shape))
-        ;; Fallback: clear state without adding mesh
-        (-> state'
-            (assoc :sweep-rings [])
-            (assoc :stamped-shape nil)
-            (dissoc :sweep-base-shape)))
-      ;; Not enough rings - just clear state
+            (dissoc :sweep-base-shape :sweep-first-ring :sweep-closed?
+                    :sweep-closed-first-ring
+                    :sweep-initial-pos :sweep-initial-heading :sweep-initial-up)))
+      ;; Not enough rings or missing initial data - just clear state
       (-> state'
           (assoc :sweep-rings [])
           (assoc :stamped-shape nil)
-          (dissoc :sweep-base-shape)))))
+          (dissoc :sweep-base-shape :sweep-first-ring :sweep-closed?
+                  :sweep-closed-first-ring
+                  :sweep-initial-pos :sweep-initial-heading :sweep-initial-up)))))
+
+;; ============================================================
+;; Extrude-closed with pre-processed path (clean implementation)
+;; ============================================================
+
+(defn- is-rotation?
+  "Check if command is a rotation."
+  [cmd]
+  (#{:th :tv :tr} cmd))
+
+(defn- is-path?
+  "Check if x is a path (internal version to avoid forward reference)."
+  [x]
+  (and (map? x) (= :path (:type x))))
+
+(defn- analyze-closed-path
+  "Analyze a path for closed extrusion.
+   Returns a vector of segments with their adjustments.
+
+   For a closed path, each forward segment may need shortening:
+   - If preceded by rotation: shorten start by radius
+   - If followed by rotation: shorten end by radius
+
+   Returns: [{:cmd :f :dist 20 :shorten-start r :shorten-end r :rotations-after [...]}]"
+  [commands radius]
+  (let [cmds (vec commands)
+        n (count cmds)
+        ;; Find all forward commands and their indices
+        forwards (keep-indexed (fn [i c] (when (= :f (:cmd c)) [i c])) cmds)]
+    (vec
+     (for [[idx cmd] forwards]
+       (let [dist (first (:args cmd))
+             ;; Check if there's a rotation before this forward
+             ;; For closed path, rotation before first forward = rotation after last forward
+             prev-idx (mod (dec idx) n)
+             prev-cmd (:cmd (nth cmds prev-idx))
+             has-rotation-before (is-rotation? prev-cmd)
+             ;; Collect all rotations after this forward until next forward
+             rotations-after (loop [i (inc idx)
+                                    rots []]
+                               (if (>= i n)
+                                 ;; Wrap around for closed path
+                                 (let [wrapped-i (mod i n)]
+                                   (if (= wrapped-i idx)
+                                     rots  ; Back to start
+                                     (let [c (nth cmds wrapped-i)]
+                                       (if (is-rotation? (:cmd c))
+                                         (recur (inc i) (conj rots c))
+                                         rots))))
+                                 (let [c (nth cmds i)]
+                                   (if (is-rotation? (:cmd c))
+                                     (recur (inc i) (conj rots c))
+                                     rots))))
+             has-rotation-after (seq rotations-after)]
+         {:cmd :f
+          :dist dist
+          :shorten-start (if has-rotation-before radius 0)
+          :shorten-end (if has-rotation-after radius 0)
+          :rotations-after rotations-after})))))
+
+(defn- apply-rotation-to-state
+  "Apply a single rotation command to turtle state."
+  [state rotation]
+  (case (:cmd rotation)
+    :th (let [angle (first (:args rotation))]
+          (th (assoc state :pen-mode :off) angle))
+    :tv (let [angle (first (:args rotation))]
+          (tv (assoc state :pen-mode :off) angle))
+    :tr (let [angle (first (:args rotation))]
+          (tr (assoc state :pen-mode :off) angle))
+    state))
+
+(defn extrude-closed-from-path
+  "Extrude a shape along a closed path, creating a torus-like mesh.
+
+   Pre-processes the path to calculate correct segment lengths.
+   Creates a SINGLE manifold mesh with all rings connected.
+
+   Returns the turtle state with the mesh added."
+  [state shape path]
+  (if-not (and (shape? shape) (is-path? path))
+    state
+    (let [radius (shape-radius shape)
+          commands (:commands path)
+          segments (analyze-closed-path commands radius)
+          n-segments (count segments)]
+      (if (< n-segments 1)
+        state
+        ;; First pass: collect ALL rings in order
+        (let [rings-result
+              (loop [i 0
+                     s state
+                     rings []]
+                (if (>= i n-segments)
+                  {:rings rings :state s}
+                  (let [seg (nth segments i)
+                        dist (:dist seg)
+                        shorten-start (:shorten-start seg)
+                        shorten-end (:shorten-end seg)
+                        rotations (:rotations-after seg)
+                        effective-dist (- dist shorten-start shorten-end)
+
+                        next-seg (nth segments (mod (inc i) n-segments))
+                        next-shorten-start (:shorten-start next-seg)
+
+                        ;; Move forward by shorten-start ONLY on first iteration
+                        s1 (if (and (zero? i) (pos? shorten-start))
+                             (assoc s :position (v+ (:position s) (v* (:heading s) shorten-start)))
+                             s)
+
+                        ;; Create start ring of this segment
+                        start-ring (stamp-shape s1 shape)
+
+                        ;; Move forward by effective distance
+                        s2 (assoc s1 :position (v+ (:position s1) (v* (:heading s1) effective-dist)))
+
+                        ;; Create end ring of this segment
+                        end-ring (stamp-shape s2 shape)
+
+                        ;; Move to corner position
+                        s3 (assoc s2 :position (v+ (:position s2) (v* (:heading s2) shorten-end)))
+
+                        ;; Apply rotations to get new heading
+                        s4 (reduce apply-rotation-to-state s3 rotations)
+
+                        ;; Position for next segment's start
+                        corner-start-pos (v+ (:position s4) (v* (:heading s4) next-shorten-start))
+
+                        ;; Collect rings: only add distinct position rings
+                        ;; - start-ring: beginning of segment (after shorten-start)
+                        ;; - end-ring: end of segment (before shorten-end)
+                        ;; DON'T add corner-end-ring - it's the same position as next start-ring
+                        new-rings (conj rings start-ring end-ring)
+
+                        s5 (assoc s4 :position corner-start-pos)]
+                    (recur (inc i) s5 new-rings))))
+
+              all-rings (:rings rings-result)
+              final-state (:state rings-result)
+              n-rings (count all-rings)
+              n-verts (count (first all-rings))]
+
+          (if (< n-rings 2)
+            state
+            ;; Build single manifold mesh from all rings
+            (let [vertices (vec (apply concat all-rings))
+                  ;; Create faces connecting consecutive rings (closed torus)
+                  side-faces (vec
+                              (mapcat
+                               (fn [ring-idx]
+                                 (let [next-ring-idx (mod (inc ring-idx) n-rings)]
+                                   (mapcat
+                                    (fn [vert-idx]
+                                      (let [next-vert (mod (inc vert-idx) n-verts)
+                                            base (* ring-idx n-verts)
+                                            next-base (* next-ring-idx n-verts)
+                                            b0 (+ base vert-idx)
+                                            b1 (+ base next-vert)
+                                            t0 (+ next-base vert-idx)
+                                            t1 (+ next-base next-vert)]
+                                        ;; CCW winding from outside
+                                        [[b0 t1 b1] [b0 t0 t1]]))
+                                    (range n-verts))))
+                               (range n-rings)))
+                  mesh {:type :mesh
+                        :primitive :torus
+                        :vertices vertices
+                        :faces side-faces}]
+              (update final-state :meshes conj mesh))))))))
 
 ;; ============================================================
 ;; Loft - extrusion with shape transformation
@@ -628,6 +983,49 @@
   "Check if x is a path."
   [x]
   (and (map? x) (= :path (:type x))))
+
+;; ============================================================
+;; Sweep between two shapes
+;; ============================================================
+
+(defn stamp-shape-at
+  "Stamp a 2D shape at current turtle position/orientation.
+   Returns the 3D ring (vector of 3D points).
+   Does not modify turtle state."
+  [state shape]
+  (when (shape? shape)
+    (stamp-shape state shape)))
+
+(defn sweep-two-shapes
+  "Create a mesh connecting two 3D rings (stamped shapes).
+   ring1 and ring2 must have the same number of vertices.
+   Returns a mesh with side faces connecting the two rings."
+  [ring1 ring2]
+  (let [n-verts (count ring1)]
+    (when (and (>= n-verts 3) (= n-verts (count ring2)))
+      (let [vertices (vec (concat ring1 ring2))
+            ;; Create faces connecting ring1 (indices 0 to n-1) to ring2 (indices n to 2n-1)
+            side-faces (vec
+                        (mapcat
+                         (fn [i]
+                           (let [next-i (mod (inc i) n-verts)
+                                 b0 i
+                                 b1 next-i
+                                 t0 (+ n-verts i)
+                                 t1 (+ n-verts next-i)]
+                             ;; CCW winding from outside
+                             [[b0 t1 b1] [b0 t0 t1]]))
+                         (range n-verts)))
+            ;; Bottom cap (ring1) - facing backward
+            bottom-cap (vec (for [i (range 1 (dec n-verts))]
+                              [0 i (inc i)]))
+            ;; Top cap (ring2) - facing forward
+            top-cap (vec (for [i (range 1 (dec n-verts))]
+                           [n-verts (+ n-verts i 1) (+ n-verts i)]))]
+        {:type :mesh
+         :primitive :sweep-two
+         :vertices vertices
+         :faces (vec (concat side-faces bottom-cap top-cap))}))))
 
 (defn make-path
   "Create a path from a vector of recorded commands.

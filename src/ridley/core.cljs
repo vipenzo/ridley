@@ -17,6 +17,9 @@
 (defonce ^:private command-history (atom []))
 (defonce ^:private history-index (atom -1))
 
+;; View toggle state: true = show all, false = show only registered objects
+(defonce ^:private show-all-view (atom true))
+
 (defn- show-error [msg]
   (when-let [el @error-el]
     (set! (.-textContent el) msg)
@@ -83,9 +86,10 @@
       (do
         (hide-error)
         (when-let [render-data (repl/extract-render-data result)]
-          ;; Store definition meshes (non-registered ones) for later refresh
+          ;; Store lines and definition meshes
+          (registry/set-lines! (:lines render-data))
           (registry/set-definition-meshes! (:meshes render-data))
-          ;; Use refresh-viewport! to show both definition meshes and registry meshes
+          ;; Use refresh-viewport! to show everything
           (registry/refresh-viewport!))))))
 
 (defn- evaluate-repl-input
@@ -109,7 +113,11 @@
               (hide-error)
               ;; Show result in terminal history
               (add-repl-entry input (:implicit-result result) false)
-              ;; Update viewport with visible registry meshes
+              ;; Extract lines and meshes from REPL evaluation
+              (when-let [render-data (repl/extract-render-data result)]
+                (registry/add-lines! (:lines render-data))
+                (registry/set-definition-meshes! (:meshes render-data)))
+              ;; Update viewport
               (registry/refresh-viewport!))))))))
 
 (defn- navigate-history
@@ -335,12 +343,26 @@
       (stl/download-stl meshes "ridley-model.stl")
       (js/alert "No meshes to export. Run some code first!"))))
 
+(defn- toggle-view []
+  "Toggle between showing all meshes and only registered objects."
+  (let [btn (.getElementById js/document "btn-toggle-view")]
+    (swap! show-all-view not)
+    (if @show-all-view
+      (do
+        (registry/show-all!)
+        (set! (.-textContent btn) "All"))
+      (do
+        (registry/show-only-registered!)
+        (set! (.-textContent btn) "Obj")))
+    (registry/refresh-viewport!)))
+
 (defn- setup-save-load []
   (let [run-btn (.getElementById js/document "btn-run")
         save-btn (.getElementById js/document "btn-save")
         load-btn (.getElementById js/document "btn-load")
         examples-btn (.getElementById js/document "btn-examples")
         export-stl-btn (.getElementById js/document "btn-export-stl")
+        toggle-view-btn (.getElementById js/document "btn-toggle-view")
         file-input (.getElementById js/document "file-input")]
     ;; Run button - evaluate definitions
     (.addEventListener run-btn "click"
@@ -359,6 +381,10 @@
     (when export-stl-btn
       (.addEventListener export-stl-btn "click"
         (fn [_] (export-stl))))
+    ;; Toggle view button
+    (when toggle-view-btn
+      (.addEventListener toggle-view-btn "click"
+        (fn [_] (toggle-view))))
     ;; File input change (for local file loading)
     (.addEventListener file-input "change"
       (fn [e]
