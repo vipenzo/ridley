@@ -16,7 +16,9 @@
             [ridley.geometry.primitives :as prims]
             [ridley.geometry.operations :as ops]
             [ridley.geometry.faces :as faces]
-            [ridley.manifold.core :as manifold]))
+            [ridley.manifold.core :as manifold]
+            [ridley.scene.registry :as registry]
+            [ridley.export.stl :as stl]))
 
 ;; Global turtle state for implicit mode
 (defonce ^:private turtle-atom (atom nil))
@@ -161,7 +163,17 @@
    'mesh-status         manifold/get-mesh-status
    'mesh-union          manifold/union
    'mesh-difference     manifold/difference
-   'mesh-intersection   manifold/intersection})
+   'mesh-intersection   manifold/intersection
+   ;; Scene registry (named objects)
+   'register-mesh       registry/register-mesh
+   'show                registry/show
+   'hide                registry/hide
+   'show-all            registry/show-all
+   'hide-all            registry/hide-all
+   'visible-meshes      registry/visible-meshes
+   'list-objects        registry/list-objects
+   ;; STL export
+   'save-stl            stl/download-stl})
 
 ;; Macro definitions for SCI context
 (def ^:private macro-defs

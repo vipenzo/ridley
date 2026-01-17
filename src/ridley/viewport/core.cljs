@@ -6,6 +6,9 @@
 
 (defonce ^:private state (atom nil))
 
+;; Track current mesh data for export
+(defonce ^:private current-meshes (atom []))
+
 (defn- create-scene []
   (let [scene (THREE/Scene.)]
     (set! (.-background scene) (THREE/Color. 0x252526))
@@ -183,6 +186,8 @@
 (defn update-scene
   "Update viewport with lines and meshes."
   [{:keys [lines meshes]}]
+  ;; Store meshes for export
+  (reset! current-meshes (vec meshes))
   (when-let [{:keys [world-group camera controls]} @state]
     (clear-geometry world-group)
     ;; Add line segments to world-group
@@ -319,6 +324,11 @@
   "Return the current renderer (for XR integration)."
   []
   (:renderer @state))
+
+(defn get-current-meshes
+  "Return the current mesh data for export."
+  []
+  @current-meshes)
 
 (defn dispose
   "Clean up Three.js resources."

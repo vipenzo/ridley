@@ -4,7 +4,8 @@
             [ridley.editor.repl :as repl]
             [ridley.viewport.core :as viewport]
             [ridley.viewport.xr :as xr]
-            [ridley.manifold.core :as manifold]))
+            [ridley.manifold.core :as manifold]
+            [ridley.export.stl :as stl]))
 
 (defonce ^:private explicit-el (atom nil))
 (defonce ^:private repl-input-el (atom nil))
@@ -325,8 +326,10 @@
           nil)))))
 
 (defn- export-stl []
-  ;; Placeholder - will implement actual STL export
-  (js/alert "STL export coming soon!"))
+  (let [meshes (viewport/get-current-meshes)]
+    (if (seq meshes)
+      (stl/download-stl meshes "ridley-model.stl")
+      (js/alert "No meshes to export. Run some code first!"))))
 
 (defn- setup-save-load []
   (let [run-btn (.getElementById js/document "btn-run")
