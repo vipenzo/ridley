@@ -2,7 +2,7 @@
 
 A 3D CAD environment powered by turtle graphics and ClojureScript. Create 3D models using an intuitive, programmable approach inspired by Logo.
 
-![Ridley Screenshot](docs/screenshot.png)
+![Ridley Screenshot](dev-docs/screenshot.png)
 
 ## Overview
 
@@ -172,7 +172,7 @@ npx shadow-cljs cljs-repl app
 
 ## Examples
 
-See [docs/Examples.md](docs/Examples.md) for comprehensive examples including:
+See [dev-docs/Examples.md](dev-docs/Examples.md) for comprehensive examples including:
 - Basic turtle drawing
 - 3D primitives
 - Shape extrusion and sweeping

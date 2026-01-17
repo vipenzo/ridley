@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "shadow-cljs watch app",
     "release": "shadow-cljs release app",
-    "clean": "rm -rf public/js"
+    "clean": "rm -rf public/js docs/js",
+    "build:gh-pages": "npm run copy-static && shadow-cljs release release",
+    "copy-static": "rm -rf docs && mkdir -p docs && cp -r public/css public/scripts public/index.html docs/ && touch docs/.nojekyll"
   },
   "devDependencies": {
     "shadow-cljs": "^2.28.5"

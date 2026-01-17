@@ -3,6 +3,7 @@
   (:require [clojure.string :as str]
             [ridley.editor.repl :as repl]
             [ridley.viewport.core :as viewport]
+            [ridley.viewport.xr :as xr]
             [ridley.manifold.core :as manifold]))
 
 (defonce ^:private explicit-el (atom nil))
@@ -171,6 +172,46 @@
     (.readAsText reader file)))
 
 ;; ============================================================
+;; Server scripts (for VR access)
+;; ============================================================
+
+(defn- fetch-script-list
+  "Fetch list of available scripts from server."
+  []
+  (-> (js/fetch "scripts/index.json")
+      (.then #(.json %))
+      (.catch (fn [_] #js []))))
+
+(defn- fetch-script
+  "Fetch a script by name and load it."
+  [script-name]
+  (-> (js/fetch (str "scripts/" script-name))
+      (.then #(.text %))
+      (.then (fn [content]
+               (when-let [el @explicit-el]
+                 (set! (.-value el) content)
+                 (save-to-storage)
+                 (evaluate-definitions))))
+      (.catch #(js/console.error "Failed to load script:" %))))
+
+(defn- show-script-picker
+  "Show a dialog to pick a script from server."
+  []
+  (-> (fetch-script-list)
+      (.then (fn [scripts]
+               (let [scripts-arr (js->clj scripts)]
+                 (if (empty? scripts-arr)
+                   (js/alert "No scripts available")
+                   (let [msg (str "Available scripts:\n"
+                                  (str/join "\n" (map-indexed #(str (inc %1) ". " %2) scripts-arr))
+                                  "\n\nEnter number:")
+                         choice (js/prompt msg "1")]
+                     (when choice
+                       (let [idx (dec (js/parseInt choice 10))]
+                         (when (and (>= idx 0) (< idx (count scripts-arr)))
+                           (fetch-script (nth scripts-arr idx))))))))))))
+
+;; ============================================================
 ;; Resizable panels
 ;; ============================================================
 
@@ -291,6 +332,7 @@
   (let [run-btn (.getElementById js/document "btn-run")
         save-btn (.getElementById js/document "btn-save")
         load-btn (.getElementById js/document "btn-load")
+        examples-btn (.getElementById js/document "btn-examples")
         export-stl-btn (.getElementById js/document "btn-export-stl")
         file-input (.getElementById js/document "file-input")]
     ;; Run button - evaluate definitions
@@ -299,14 +341,18 @@
     ;; Save button
     (.addEventListener save-btn "click"
       (fn [_] (save-definitions)))
-    ;; Load button - trigger file input
+    ;; Load button - open file picker for local files
     (.addEventListener load-btn "click"
       (fn [_] (.click file-input)))
+    ;; Examples button - show script picker from server
+    (when examples-btn
+      (.addEventListener examples-btn "click"
+        (fn [_] (show-script-picker))))
     ;; Export STL button
     (when export-stl-btn
       (.addEventListener export-stl-btn "click"
         (fn [_] (export-stl))))
-    ;; File input change
+    ;; File input change (for local file loading)
     (.addEventListener file-input "change"
       (fn [e]
         (when-let [file (aget (.-files (.-target e)) 0)]
@@ -333,6 +379,16 @@
     (setup-save-load)
     (setup-vertical-resizer)
     (setup-horizontal-resizer)
+    ;; Setup VR and AR buttons in toolbar
+    (let [toolbar (.getElementById js/document "viewport-toolbar")
+          renderer (viewport/get-renderer)
+          vr-btn (xr/create-vr-button renderer #(xr/toggle-vr renderer))
+          ar-btn (xr/create-ar-button renderer #(xr/toggle-ar renderer))]
+      (when toolbar
+        (when ar-btn
+          (.insertBefore toolbar ar-btn (.-firstChild toolbar)))
+        (when vr-btn
+          (.insertBefore toolbar vr-btn (.-firstChild toolbar)))))
     ;; Initialize Manifold WASM (async)
     (-> (manifold/init!)
         (.then #(js/console.log "Manifold WASM initialized"))

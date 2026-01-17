@@ -1,7 +1,8 @@
 (ns ridley.viewport.core
   "Three.js viewport for rendering turtle geometry."
   (:require ["three" :as THREE]
-            ["three/examples/jsm/controls/OrbitControls.js" :refer [OrbitControls]]))
+            ["three/examples/jsm/controls/OrbitControls.js" :refer [OrbitControls]]
+            [ridley.viewport.xr :as xr]))
 
 (defonce ^:private state (atom nil))
 
@@ -27,10 +28,10 @@
     (set! (.-dampingFactor controls) 0.05)
     controls))
 
-(defn- add-grid [scene]
+(defn- add-grid [parent]
   (let [grid (THREE/GridHelper. 200 20 0x444444 0x333333)]
     (.rotateX grid (/ js/Math.PI 2)) ; XY plane instead of XZ
-    (.add scene grid)))
+    (.add parent grid)))
 
 (defn- create-text-sprite
   "Create a text sprite for axis labels."
@@ -52,7 +53,7 @@
       (set! (.-y (.-scale sprite)) 8)
       sprite)))
 
-(defn- add-axes [scene]
+(defn- add-axes [parent]
   (let [axes (THREE/AxesHelper. 50)
         ;; Add axis labels
         ;; Three.js AxesHelper: Red = X, Green = Y, Blue = Z
@@ -63,10 +64,10 @@
     (.set (.-position label-x) 58 0 0)
     (.set (.-position label-y) 0 58 0)
     (.set (.-position label-z) 0 0 58)
-    (.add scene axes)
-    (.add scene label-x)
-    (.add scene label-y)
-    (.add scene label-z)))
+    (.add parent axes)
+    (.add parent label-x)
+    (.add parent label-y)
+    (.add parent label-z)))
 
 (defn- add-lights [scene]
   (let [ambient (THREE/AmbientLight. 0x606060 0.6)
@@ -133,13 +134,15 @@
     (THREE/Mesh. geom material)))
 
 (defn- clear-geometry
-  "Remove all geometry objects from scene, keeping grid and axes."
-  [scene]
-  (let [to-remove (filterv #(or (= (.-type %) "LineSegments")
-                                (= (.-type %) "Mesh"))
-                           (.-children scene))]
+  "Remove all user geometry objects from world-group, keeping grid and axes."
+  [world-group]
+  (let [to-remove (filterv #(and (or (= (.-type %) "LineSegments")
+                                      (= (.-type %) "Mesh"))
+                                  ;; Keep grid (GridHelper is also a LineSegments)
+                                  (not (instance? THREE/GridHelper %)))
+                           (.-children world-group))]
     (doseq [obj to-remove]
-      (.remove scene obj)
+      (.remove world-group obj)
       (when-let [geom (.-geometry obj)]
         (.dispose geom))
       (when-let [mat (.-material obj)]
@@ -180,16 +183,16 @@
 (defn update-scene
   "Update viewport with lines and meshes."
   [{:keys [lines meshes]}]
-  (when-let [{:keys [scene camera controls]} @state]
-    (clear-geometry scene)
-    ;; Add line segments
+  (when-let [{:keys [world-group camera controls]} @state]
+    (clear-geometry world-group)
+    ;; Add line segments to world-group
     (when (seq lines)
       (when-let [line-obj (create-line-segments lines)]
-        (.add scene line-obj)))
-    ;; Add meshes
+        (.add world-group line-obj)))
+    ;; Add meshes to world-group
     (doseq [mesh-data meshes]
       (let [mesh (create-three-mesh mesh-data)]
-        (.add scene mesh)))
+        (.add world-group mesh)))
     ;; Fit camera to all geometry
     (let [all-points (collect-all-points lines meshes)]
       (when (seq all-points)
@@ -219,11 +222,11 @@
 (defn update-mesh
   "Update viewport with a mesh (legacy, single mesh)."
   [mesh-data]
-  (when-let [{:keys [scene camera controls]} @state]
-    (clear-geometry scene)
+  (when-let [{:keys [world-group camera controls]} @state]
+    (clear-geometry world-group)
     (when mesh-data
       (let [mesh (create-three-mesh mesh-data)]
-        (.add scene mesh)))
+        (.add world-group mesh)))
     ;; Fit camera to mesh vertices
     (when-let [vertices (:vertices mesh-data)]
       (let [xs (map first vertices)
@@ -244,11 +247,23 @@
               (+ center-z dist))
         (.update controls)))))
 
-(defn- animate []
+(defn- render-frame
+  "Single frame render function for setAnimationLoop.
+   In WebXR mode, receives (time, xr-frame) parameters."
+  [_time xr-frame]
   (when-let [{:keys [renderer scene camera controls]} @state]
-    (.update controls)
-    (.render renderer scene camera)
-    (js/requestAnimationFrame animate)))
+    (if (xr/xr-presenting? renderer)
+      ;; VR mode: update controller input, pass XR frame for pose data
+      (xr/update-controller xr-frame renderer)
+      ;; Desktop mode: update OrbitControls
+      (.update controls))
+    (.render renderer scene camera)))
+
+(defn- start-animation-loop
+  "Start the render loop using setAnimationLoop for XR compatibility."
+  []
+  (when-let [{:keys [renderer]} @state]
+    (.setAnimationLoop renderer render-frame)))
 
 (defn handle-resize
   "Handle viewport resize - call when panel dimensions change."
@@ -270,18 +285,40 @@
         scene (create-scene)
         camera (create-camera width height)
         renderer (create-renderer canvas)
-        controls (create-controls camera renderer)]
+        controls (create-controls camera renderer)
+        ;; Create camera rig for VR movement
+        camera-rig (THREE/Group.)
+        ;; Create world group for rotatable content (grid, axes, geometry)
+        world-group (THREE/Group.)]
+    ;; Add camera to rig (for VR positioning)
+    (.add camera-rig camera)
+    (.add scene camera-rig)
+    ;; Add world group to scene
+    (.add scene world-group)
     (.setSize renderer width height)
-    (add-grid scene)
-    (add-axes scene)
+    ;; Add grid, axes to world-group (so they rotate together)
+    (add-grid world-group)
+    (add-axes world-group)
+    ;; Lights stay in scene (not affected by world rotation)
     (add-lights scene)
+    ;; Enable WebXR on renderer
+    (xr/enable-xr renderer)
+    ;; Setup VR controller (pass world-group for rotation)
+    (xr/setup-controller renderer scene camera-rig camera world-group)
     (reset! state {:scene scene
                    :camera camera
+                   :camera-rig camera-rig
+                   :world-group world-group
                    :renderer renderer
                    :controls controls
                    :canvas canvas})
     (.addEventListener js/window "resize" handle-resize)
-    (animate)))
+    (start-animation-loop)))
+
+(defn get-renderer
+  "Return the current renderer (for XR integration)."
+  []
+  (:renderer @state))
 
 (defn dispose
   "Clean up Three.js resources."
