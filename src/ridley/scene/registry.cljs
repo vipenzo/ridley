@@ -30,10 +30,13 @@
    mesh))
 
 (defn set-definition-meshes!
-  "Store meshes created by the definitions panel (anonymous, visible by default)."
+  "Store meshes created by the definitions panel (anonymous, visible by default).
+   Skips meshes that are already in the scene (e.g. from register)."
   [meshes]
-  (doseq [m meshes]
-    (add-mesh! m nil true)))
+  (let [existing-meshes (set (map :mesh @scene-meshes))]
+    (doseq [m meshes]
+      (when-not (contains? existing-meshes m)
+        (add-mesh! m nil true)))))
 
 (defn register-mesh!
   "Add a named mesh to the scene. Returns the mesh data."
