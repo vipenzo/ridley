@@ -83,9 +83,10 @@
       (do
         (hide-error)
         (when-let [render-data (repl/extract-render-data result)]
-          ;; Store definition meshes for later refresh
+          ;; Store definition meshes (non-registered ones) for later refresh
           (registry/set-definition-meshes! (:meshes render-data))
-          (viewport/update-scene render-data))))))
+          ;; Use refresh-viewport! to show both definition meshes and registry meshes
+          (registry/refresh-viewport!))))))
 
 (defn- evaluate-repl-input
   "Evaluate the REPL input and show result in history."

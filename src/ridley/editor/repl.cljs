@@ -497,7 +497,8 @@
 
 (defn extract-render-data
   "Extract render data from evaluation result.
-   Combines geometry from turtle state, explicit results, and visible registry meshes."
+   Combines geometry from turtle state and explicit results.
+   Does NOT include registry meshes - those are handled separately by refresh-viewport!."
   [eval-result]
   (let [turtle-state (:result eval-result)
         explicit-result (:explicit-result eval-result)
@@ -516,13 +517,10 @@
                         {:lines (or (:geometry explicit-result) [])
                          :meshes (or (:meshes explicit-result) [])}
                         :else nil)
-        ;; Get visible meshes from registry
-        visible-registry-meshes (registry/visible-meshes)
-        ;; Combine all geometry
+        ;; Combine turtle + explicit geometry (NOT registry - that's handled by refresh-viewport!)
         all-lines (concat turtle-lines (or (:lines explicit-data) []))
         all-meshes (concat turtle-meshes
-                           (or (:meshes explicit-data) [])
-                           visible-registry-meshes)]
+                           (or (:meshes explicit-data) []))]
     (when (or (seq all-lines) (seq all-meshes))
       {:lines (vec all-lines)
        :meshes (vec all-meshes)})))
