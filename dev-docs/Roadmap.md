@@ -41,10 +41,11 @@
 **Goal**: Generate solid geometry, not just lines.
 
 ### 2.1 Path and Shape ✓
-- [x] `(path ...)` constructor
+- [x] `(path ...)` constructor with loops and conditionals
 - [x] `(shape ...)` constructor with auto-close
+- [x] Path pre-processing for closed extrusions (corner shortening)
 - [ ] Dense syntax parser for strings (deferred)
-- [ ] Fillet/chamfer in path context (deferred)
+- [ ] Fillet/chamfer in path context (partial - corners handled in extrude-closed)
 
 ### 2.2 3D Primitives ✓
 - [x] `box`, `sphere`, `cyl`, `cone`
@@ -52,10 +53,11 @@
 - [x] Custom mesh generation
 
 ### 2.3 Generative Operations ✓
-- [x] `extrude` — linear extrusion
+- [x] `extrude` — linear extrusion with turtle movements
+- [x] `extrude-closed` — closed torus-like extrusion (manifold)
 - [x] `revolve` — revolution around axis
 - [x] `sweep` — extrude along path
-- [x] `loft` — transition between profiles
+- [x] `loft` — transition between profiles with transform function
 
 ### 2.4 Viewport Improvements ✓
 - [x] Render solid meshes (not just lines)
@@ -106,25 +108,26 @@
 
 ---
 
-## Phase 4: Boolean Operations (Future)
+## Phase 4: Boolean Operations ✓
 
 **Goal**: CSG operations for cases where face-based modeling isn't sufficient.
 
-### 4.1 Manifold Integration
-- [ ] Load Manifold WASM module
-- [ ] Convert mesh ↔ Manifold mesh
-- [ ] `union`, `subtract`, `intersect`
+### 4.1 Manifold Integration ✓
+- [x] Load Manifold WASM module (v3.0 via CDN)
+- [x] Convert mesh ↔ Manifold mesh
+- [x] `mesh-union`, `mesh-difference`, `mesh-intersection`
 
-### 4.2 Integrated Modifiers
+### 4.2 Validation ✓
+- [x] `manifold?` check
+- [x] `mesh-status` — detailed validation info
+- [x] Volume calculation (via Manifold)
+
+### 4.3 Integrated Modifiers (Future)
 - [ ] Boolean with fillet: `(subtract a b :fillet 2)`
 - [ ] Boolean with chamfer: `(union a b :chamfer 1)`
-
-### 4.3 Validation
-- [ ] `watertight?` check
-- [ ] `volume` calculation
 - [ ] `bounds` query
 
-**Deliverable**: Can create complex CSG operations when face-based isn't enough.
+**Deliverable**: Can create complex CSG operations. ✓
 
 ---
 
@@ -156,43 +159,45 @@
 
 ---
 
-## Phase 6: Viewport and Visibility
+## Phase 6: Viewport and Visibility (Partial) ✓
 
 **Goal**: Control what's displayed, prepare for export.
 
-### 6.1 Scene Management
-- [ ] Track all defined shapes by name
-- [ ] `(show shape)`, `(hide shape)`
-- [ ] `(solo shape)`, `(show-all)`
+### 6.1 Scene Management ✓
+- [x] Scene registry for named meshes
+- [x] `(register name mesh)` — create named object
+- [x] `(show! name)`, `(hide! name)` — visibility control
+- [x] `(show-all!)`, `(hide-all!)`, `(show-only-registered!)`
+- [x] Toggle view button (All / Objects only)
 - [ ] Wireframe mode
 
-### 6.2 Visual Aids
-- [ ] Toggle axes display
-- [ ] Toggle grid
+### 6.2 Visual Aids ✓
+- [x] Grid display
+- [x] Axes display
 - [ ] Show anchors as small markers
-- [ ] Show paths as lines
+- [x] Show turtle path as lines
 
-### 6.3 Inspection
+### 6.3 Inspection (Partial)
 - [ ] `(inspect shape)` — zoom to fit
-- [ ] `(bounds shape)`, `(volume shape)`
-- [ ] `(center shape)`
+- [x] Volume calculation (via Manifold)
+- [ ] `(bounds shape)`, `(center shape)`
 
 ### 6.4 Fuzzy Search
 - [ ] `(find "pattern")` — search defined names
 - [ ] UI: search box that filters and highlights
 
-**Deliverable**: Can selectively show parts of a complex model.
+**Deliverable**: Can selectively show parts of a complex model. ✓
 
 ---
 
-## Phase 7: Export
+## Phase 7: Export (Partial) ✓
 
 **Goal**: Generate files for 3D printing.
 
-### 7.1 STL Export
-- [ ] Binary STL export
-- [ ] ASCII STL export
-- [ ] Proper normals calculation
+### 7.1 STL Export ✓
+- [x] Binary STL export
+- [x] Export via `(save-stl mesh)` or `(save-stl (visible-meshes))`
+- [x] Proper normals calculation
 
 ### 7.2 Other Formats
 - [ ] OBJ export
@@ -203,21 +208,24 @@
 - [ ] Auto-orient for printing
 - [ ] `(export-each "dir/")` — batch export
 
-### 7.4 Pre-flight Check
-- [ ] `(check-printable shape)` — manifold, overhangs, thin walls
+### 7.4 Pre-flight Check (Partial)
+- [x] `(manifold? mesh)` — check if valid manifold
+- [x] `(mesh-status mesh)` — detailed validation
+- [ ] `(check-printable shape)` — overhangs, thin walls
 
-**Deliverable**: Can export print-ready STL files.
+**Deliverable**: Can export print-ready STL files. ✓
 
 ---
 
-## Phase 8: WebXR / VR
+## Phase 8: WebXR / VR (Partial) ✓
 
 **Goal**: View models in VR on Quest 3.
 
-### 8.1 WebXR Setup
-- [ ] Enable WebXR on Three.js renderer
-- [ ] VR button / enter VR mode
-- [ ] Handle session start/end
+### 8.1 WebXR Setup ✓
+- [x] Enable WebXR on Three.js renderer
+- [x] VR button / enter VR mode
+- [x] Handle session start/end
+- [x] WebXR polyfill included
 
 ### 8.2 HTTPS and QR
 - [ ] Toggle to start HTTPS server
@@ -287,14 +295,21 @@
 
 ## Current Focus
 
-**→ Phase 3: Face-Based Modeling**
+**→ Phase 3: Face-Based Modeling** (deferred for now)
 
-The core turtle system and generative operations are working. Now implementing the face-based push/pull paradigm:
+The core turtle system, generative operations, and boolean operations are working well.
 
-1. **3.1 Mesh data structure** — Add face metadata to track selectable faces
-2. **3.2 Face selection** — Visual highlighting and REPL commands
-3. **3.3 Pen modes** — Refactor pen state for face drawing
-4. **3.4 2D on faces** — Draw profiles on selected faces
-5. **3.5 Face extrusion** — Push/pull to add or remove material
+**Recent completions:**
+- ✓ `extrude-closed` with path pre-processing for manifold torus-like meshes
+- ✓ Manifold WASM integration (union, difference, intersection)
+- ✓ Scene registry with named meshes and visibility control
+- ✓ STL export
+- ✓ WebXR basic support
 
-This is the key differentiating feature that makes Ridley intuitive for 3D modeling.
+**Next priorities:**
+1. Complete remaining loft/extrude edge cases
+2. Improve error messages and validation
+3. Add more shape transformations
+4. Face-based modeling (Phase 3) when ready
+
+The face-based push/pull paradigm remains a key differentiating feature for future development.

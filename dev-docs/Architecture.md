@@ -40,43 +40,34 @@ This eliminates the need for separate boolean operations in most cases, while ke
 ```
 ridley/
 ├── src/
-│   ├── ridley/
-│   │   ├── core.cljs          # App entry point
-│   │   ├── editor/
-│   │   │   ├── core.cljs      # Editor component
-│   │   │   └── repl.cljs      # REPL evaluation with SCI
-│   │   ├── turtle/
-│   │   │   ├── core.cljs      # Turtle state and commands
-│   │   │   ├── path.cljs      # Path construction (2D/3D)
-│   │   │   ├── shape.cljs     # Shape definitions
-│   │   │   └── parse.cljs     # Dense syntax parser
-│   │   ├── geometry/
-│   │   │   ├── primitives.cljs # Box, cylinder, sphere, cone
-│   │   │   ├── generative.cljs # Extrude, revolve, sweep, loft
-│   │   │   ├── boolean.cljs    # Union, subtract, intersect (Manifold)
-│   │   │   └── export.cljs     # STL, OBJ, 3MF export
-│   │   ├── viewport/
-│   │   │   ├── core.cljs      # Three.js setup
-│   │   │   ├── scene.cljs     # Scene management (show/hide/solo)
-│   │   │   ├── controls.cljs  # Orbit controls, zoom, pan
-│   │   │   └── xr.cljs        # WebXR integration
-│   │   └── ui/
-│   │       ├── layout.cljs    # Main layout
-│   │       ├── toolbar.cljs   # Toolbar, VR toggle
-│   │       └── search.cljs    # Fuzzy search for shapes
-│   └── sci_ctx.cljs           # SCI context with preloaded symbols
+│   └── ridley/
+│       ├── core.cljs              # App entry point, UI event handling
+│       ├── editor/
+│       │   └── repl.cljs          # SCI-based code evaluation, macros
+│       ├── turtle/
+│       │   ├── core.cljs          # Turtle state, movement, extrusion
+│       │   ├── path.cljs          # Path recording and playback
+│       │   ├── shape.cljs         # 2D shape definitions (circle, rect, star)
+│       │   └── transform.cljs     # Shape transformations (scale, rotate, morph)
+│       ├── geometry/
+│       │   ├── primitives.cljs    # Box, sphere, cylinder, cone
+│       │   ├── operations.cljs    # Legacy extrude, revolve, sweep, loft
+│       │   ├── faces.cljs         # Face group identification
+│       │   └── stl.cljs           # STL export
+│       ├── scene/
+│       │   └── registry.cljs      # Mesh registry (named meshes, visibility)
+│       ├── viewport/
+│       │   └── core.cljs          # Three.js rendering, OrbitControls
+│       └── manifold/
+│           └── core.cljs          # Manifold WASM integration (CSG)
 ├── public/
 │   ├── index.html
-│   └── css/
-│       └── style.css
-├── src-tauri/                  # Tauri config (for desktop)
-├── deps.edn                    # Clojure dependencies
-├── shadow-cljs.edn             # Build config
-├── package.json                # JS dependencies
-└── docs/
-    ├── ARCHITECTURE.md         # This file
-    ├── SPEC.md                 # DSL specification
-    └── ROADMAP.md              # Development phases
+│   ├── css/style.css
+│   └── scripts/                   # WebXR polyfill
+├── docs/                          # GitHub Pages deployment
+├── dev-docs/                      # Development documentation
+├── shadow-cljs.edn                # Build config
+└── package.json                   # JS dependencies
 ```
 
 ## Data Flow
@@ -85,39 +76,38 @@ ridley/
 ┌─────────────────────────────────────────────────────────────┐
 │                         USER                                │
 │                          │                                  │
-│                    Clojure script                           │
+│         Definitions panel / REPL input                      │
 │                          ▼                                  │
 │  ┌─────────────────────────────────────────────────────┐   │
 │  │                    SCI Interpreter                   │   │
-│  │   - Evaluates user code                             │   │
-│  │   - Preloaded namespace with DSL functions          │   │
-│  │   - Returns geometry data structures                │   │
+│  │   - Evaluates user code (repl.cljs)                 │   │
+│  │   - DSL macros: extrude, loft, path, register       │   │
+│  │   - Returns turtle state with meshes/lines          │   │
 │  └──────────────────────┬──────────────────────────────┘   │
 │                         │                                   │
-│            Immutable geometry data (thi.ng)                │
+│         Turtle state: {:meshes [...] :lines [...]}         │
 │                         ▼                                   │
 │  ┌─────────────────────────────────────────────────────┐   │
-│  │                 Geometry Engine                      │   │
-│  │   - thi.ng/geom for transforms, tessellation        │   │
-│  │   - Manifold WASM for boolean ops                   │   │
-│  │   - Produces renderable meshes                      │   │
+│  │               Scene Registry                         │   │
+│  │   - Named meshes (persistent)                       │   │
+│  │   - Anonymous meshes (cleared on re-eval)           │   │
+│  │   - Visibility flags per mesh                       │   │
 │  └──────────────────────┬──────────────────────────────┘   │
 │                         │                                   │
-│                    Mesh data                                │
+│         Visible meshes: [{:vertices :faces} ...]           │
 │                         ▼                                   │
 │  ┌─────────────────────────────────────────────────────┐   │
-│  │                    Viewport                          │   │
-│  │   - Three.js scene                                  │   │
-│  │   - WebXR for VR/AR                                 │   │
-│  │   - Show/hide/solo commands                         │   │
+│  │              Three.js Viewport                       │   │
+│  │   - BufferGeometry from mesh vertices/faces         │   │
+│  │   - MeshStandardMaterial with flat shading          │   │
+│  │   - OrbitControls for camera                        │   │
 │  └──────────────────────┬──────────────────────────────┘   │
 │                         │                                   │
 │                         ▼                                   │
 │  ┌─────────────────────────────────────────────────────┐   │
 │  │                    Export                            │   │
-│  │   - STL (binary/ascii)                              │   │
-│  │   - OBJ                                             │   │
-│  │   - 3MF (with colors)                               │   │
+│  │   - STL (visible meshes)                            │   │
+│  │   - Manifold boolean ops for CSG                    │   │
 │  └─────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -129,13 +119,27 @@ ridley/
 The turtle is a pure data structure. Commands are functions that take state and return new state. No mutation.
 
 ```clojure
-{:position [x y z]         ; Current position in 3D space
- :heading [x y z]          ; Forward direction (unit vector)
- :up [x y z]               ; Up direction (unit vector)
- :pen-mode nil             ; nil=off, :2d=draw lines, face-id=draw on face
- :current-face nil         ; Selected face for 2D drawing
- :pending-profile []       ; 2D points accumulated on current face
- :meshes [...]}            ; Accumulated 3D meshes with face metadata
+{:position [x y z]              ; Current position in 3D space
+ :heading [x y z]               ; Forward direction (unit vector)
+ :up [x y z]                    ; Up direction (unit vector)
+ :pen-mode nil                  ; nil/:off, :line, :shape, :loft
+ :lines [...]                   ; Accumulated line segments
+ :meshes [...]                  ; Accumulated 3D meshes
+
+ ;; Extrusion state (when pen-mode is :shape)
+ :sweep-base-shape shape        ; 2D shape being extruded
+ :sweep-rings [...]             ; Accumulated 3D rings for mesh construction
+ :sweep-first-ring ring         ; First ring (for caps)
+ :pending-rotation {:th :tv :tr} ; Pending rotation (processed on next f)
+
+ ;; Closed extrusion state
+ :sweep-closed? true            ; Marks closed extrusion (torus-like)
+ :sweep-closed-first-ring ring  ; Offset first ring for closing
+
+ ;; Loft state (when pen-mode is :loft)
+ :loft-transform-fn fn          ; Shape transform function (shape, t) -> shape
+ :loft-steps n                  ; Number of interpolation steps
+ :loft-progress 0.0}            ; Current progress (0 to 1)
 ```
 
 ### 2. Face-Based Modeling (Push/Pull Paradigm)
@@ -193,24 +197,24 @@ User code runs in SCI, not raw ClojureScript. Benefits:
 
 ## External Dependencies
 
-### ClojureScript (deps.edn)
+### ClojureScript (shadow-cljs.edn)
 ```clojure
-{:deps
- {org.clojure/clojurescript {:mvn/version "1.11.132"}
-  thheller/shadow-cljs {:mvn/version "2.27.1"}
-  borkdude/sci {:mvn/version "0.8.41"}
-  thi.ng/geom {:mvn/version "1.0.1"}}}
+:dependencies [[borkdude/sci "0.8.43"]]
 ```
 
 ### JavaScript (package.json)
 ```json
 {
   "dependencies": {
-    "three": "^0.160.0",
-    "manifold-3d": "^2.5.0"
+    "three": "^0.176.0"
   }
 }
 ```
+
+### CDN
+- **Manifold 3D** (v3.0.0) - Loaded as ES module from jsDelivr CDN
+  - Boolean operations (union, difference, intersection)
+  - Mesh validation (manifold status check)
 
 ## VR/AR Architecture
 
@@ -220,6 +224,89 @@ WebXR runs in the same Three.js context. The VR toggle:
 3. Quest browser connects, same scene renders in stereo
 
 Passthrough AR uses Quest 3's passthrough API via WebXR's `immersive-ar` session type.
+
+## Extrusion Architecture
+
+### Open Extrusion (`extrude`)
+
+Standard extrusion creates a mesh with caps at both ends:
+
+1. **Stamp**: Place first ring at turtle position
+2. **Move**: Each `(f dist)` adds a new ring
+3. **Rotate**: Rotations are "pending" until next forward movement
+4. **Finalize**: Build mesh from rings, add caps
+
+When a rotation is followed by forward movement, the system:
+- Shortens the previous segment by shape radius
+- Creates a corner mesh connecting old and new orientations
+- Starts new segment at offset position
+
+### Closed Extrusion (`extrude-closed`)
+
+Creates torus-like meshes where the last ring connects to the first (no caps):
+
+**Two implementations:**
+
+1. **Macro-based** (`extrude-closed shape & movements`):
+   - Uses `stamp-closed` to mark closed mode
+   - First ring offset by radius
+   - `finalize-sweep-closed` creates closing corner
+
+2. **Path-based** (`extrude-closed shape path`):
+   - Pre-processes path to calculate segment shortening
+   - Creates a SINGLE manifold mesh (not multiple segments)
+   - All rings collected in one pass, faces connect consecutively
+   - Last ring wraps to first ring for closed topology
+
+**Path pre-processing algorithm:**
+
+```
+For each forward segment:
+  - shorten-start = radius if preceded by rotation, else 0
+  - shorten-end = radius if followed by rotation, else 0
+  - effective-dist = dist - shorten-start - shorten-end
+```
+
+This produces correct manifold meshes suitable for boolean operations.
+
+## Mesh Registry
+
+The scene registry (`scene/registry.cljs`) manages all meshes in the scene:
+
+```clojure
+;; Internal structure
+[{:mesh mesh-data :name :keyword-or-nil :visible true/false} ...]
+```
+
+**Features:**
+- **Named meshes**: `(register name mesh)` - persisted across evaluations
+- **Anonymous meshes**: From turtle movements, cleared on re-eval
+- **Visibility control**: `(show! :name)`, `(hide! :name)`, `(show-all!)`, `(hide-all!)`
+- **Toggle view**: "All" shows everything, "Objects" shows only named meshes
+
+The viewport only renders meshes marked as `:visible true`.
+
+## Manifold Integration
+
+Boolean operations use Manifold WASM library:
+
+```clojure
+(mesh-union a b)        ; A + B
+(mesh-difference a b)   ; A - B
+(mesh-intersection a b) ; A ∩ B
+(mesh-status mesh)      ; Check if mesh is valid manifold
+```
+
+**Manifold requirements:**
+- Meshes must be watertight (no holes)
+- All faces must have consistent CCW winding (from outside)
+- No self-intersecting geometry
+- No duplicate/degenerate faces
+
+The `extrude-closed-from-path` function produces single manifold meshes by:
+- Collecting all rings in a single vector
+- Building faces that connect consecutive rings
+- Using `(mod (inc ring-idx) n-rings)` for closed topology
 
 ## Future Considerations
 

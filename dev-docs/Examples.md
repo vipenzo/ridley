@@ -327,8 +327,26 @@ Use this for paths that return to the starting point.
 (extrude-closed (rect 4 4) hex-path)
 ```
 
-**Note**: `extrude-closed` automatically processes any pending rotation at the end,
-ensuring proper corner filleting before closing the loop.
+### Verifying Manifold Status
+
+Closed extrusions create proper manifold meshes suitable for boolean operations:
+
+```clojure
+(def hex-path (path (dotimes [_ 6] (f 20) (th 60))))
+(def square-torus (extrude-closed (circle 5) hex-path))
+
+;; Check if it's a valid manifold
+(mesh-status square-torus)
+;; => {:manifold? true, :status :ok, :volume 1234.56, ...}
+
+;; Boolean operations work on manifold meshes
+(mesh-difference square-torus (box 30))
+```
+
+**How it works**: The path-based `extrude-closed` pre-processes the path to calculate
+segment shortening at corners. Each segment is shortened by the shape radius at
+corners, and all rings are collected into a single manifold mesh where the last
+ring connects back to the first.
 
 ---
 
@@ -422,12 +440,14 @@ Keep only the overlapping region:
 
 ## Scene Registry
 
-Register named objects for show/hide control and easy export.
+Register named meshes for show/hide control and easy export.
+Named meshes persist across re-evaluations.
 
 ### Register Objects
 
 ```clojure
-;; Register creates a named object and shows it
+;; register creates a named object and shows it
+;; On re-eval, updates the mesh but preserves visibility state
 (def sq (path (dotimes [_ 4] (f 20) (th 90))))
 (register torus (extrude-closed (circle 5) sq))
 (register cube (box 30))
@@ -436,55 +456,71 @@ Register named objects for show/hide control and easy export.
 ### List Objects
 
 ```clojure
-(objects)      ;; => [:torus :cube] - visible objects
-(registered)   ;; => [:torus :cube] - all registered (visible + hidden)
+(registered-names)   ;; => [:torus :cube] - all registered names
+(visible-names)      ;; => [:torus :cube] - currently visible
 ```
 
 ### Show/Hide Objects
 
 ```clojure
-(hide :torus)      ;; Hide torus from viewport
-(show :torus)      ;; Show it again
-(hide-all)         ;; Hide everything
-(show-all)         ;; Show everything
+(hide! :torus)       ;; Hide torus from viewport
+(show! :torus)       ;; Show it again
+(hide-all!)          ;; Hide all meshes
+(show-all!)          ;; Show all meshes
+(show-only-registered!)  ;; Show named, hide anonymous
 ```
 
-### Object Info
+### Toggle View Button
 
-```clojure
-(info :torus)
-;; => {:name :torus, :visible true, :vertices 512, :faces 1024}
-
-(mesh :torus)      ;; Get raw mesh data {:vertices [...] :faces [...]}
-```
+The "All" / "Objects" button in the viewport toolbar toggles between:
+- **All**: Shows all meshes (named + anonymous from turtle)
+- **Objects**: Shows only registered (named) meshes
 
 ### Export to STL
 
 ```clojure
-(export :torus)           ;; Downloads torus.stl
-(export :torus :cube)     ;; Downloads torus-cube.stl (combined)
-(export (objects))        ;; Export all visible objects
-(export (registered))     ;; Export all registered objects
+(save-stl my-mesh)            ;; Downloads mesh as STL
+(save-stl (visible-meshes))   ;; Export all visible meshes
 ```
 
 ---
 
-## Coming Soon
+## Custom Shapes from Points
 
-### Custom Shapes from Points
+Create shapes from arbitrary 2D point vectors:
 
 ```clojure
+;; L-shaped profile
 (def my-L
   (make-shape [[0 0] [30 0] [30 10] [10 10] [10 30] [0 30]]))
 
 (extrude my-L (f 15))
+
+;; Arrow shape
+(def arrow
+  (make-shape [[0 0] [20 10] [15 10] [15 25] [5 25] [5 10] [0 10]]))
+
+(extrude arrow (f 10))
 ```
 
-### Face-Based Modeling
+**Note**: Points should be in counter-clockwise order for correct face normals.
+
+---
+
+## Complete Example: Ring with Hole
 
 ```clojure
-;; Create box, select face, extrude on it
-(box 50 50 20)
-(pen :top)                     ; Select top face
-(extrude (circle 15) (f 30))   ; Extrude up (add boss)
+;; Create a torus
+(def ring-path (path (dotimes [_ 36] (f 5) (th 10))))
+(def ring (extrude-closed (circle 3) ring-path))
+
+;; Create a cylinder to cut a hole
+(tv 90)  ; Point up
+(def hole (extrude (circle 20) (f 20)))
+
+;; Subtract to create ring with flat spot
+(def final (mesh-difference ring hole))
+
+;; Register and show
+(register my-ring final)
 ```
