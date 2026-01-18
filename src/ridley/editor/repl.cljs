@@ -119,6 +119,17 @@
 (defn- implicit-detach []
   (swap! turtle-atom turtle/detach))
 
+(defn- implicit-inset [dist]
+  (let [old-attached (:attached @turtle-atom)
+        registry-idx (:registry-index old-attached)]
+    (swap! turtle-atom turtle/inset dist)
+    ;; If attached with registry index, update the registry directly
+    (when registry-idx
+      (let [new-mesh (get-in @turtle-atom [:attached :mesh])]
+        (when new-mesh
+          (registry/update-mesh-at-index! registry-idx new-mesh)
+          (registry/refresh-viewport! false))))))
+
 ;; Pure primitive constructors - return mesh data at origin (no side effects)
 (defn- pure-box
   ([size] (prims/box-mesh size))
@@ -245,6 +256,7 @@
    'attach-face  implicit-attach-face
    'detach       implicit-detach
    'attached?    (fn [] (turtle/attached? @turtle-atom))
+   'inset        implicit-inset
    ;; 3D primitives - return mesh data at origin (no side effects)
    'box          pure-box
    'sphere       pure-sphere

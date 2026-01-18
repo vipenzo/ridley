@@ -714,6 +714,117 @@
         (assoc-in [:attached :mesh] new-mesh)
         (assoc-in [:attached :face-info] new-face-info))))
 
+;; --- Face inset ---
+
+(defn- build-face-inset
+  "Inset a face by creating new smaller face and connecting trapezoid sides.
+   Positive dist = inset (smaller), negative = outset (larger).
+   Returns updated mesh."
+  [mesh face-id face-info dist]
+  (let [vertices (:vertices mesh)
+        faces (:faces mesh)
+        face-groups (:face-groups mesh)
+        center (:center face-info)
+
+        ;; Get face triangles and extract ordered perimeter
+        face-triangles (:triangles face-info)
+        perimeter (extract-face-perimeter face-triangles)
+        n-old-verts (count vertices)
+        n-perimeter (count perimeter)
+
+        ;; Calculate inset direction for each vertex (toward center)
+        ;; We move each vertex toward the centroid by dist units
+        inset-verts (mapv (fn [idx]
+                           (let [v (nth vertices idx)
+                                 to-center (normalize (v- center v))
+                                 ;; Move toward center by dist
+                                 new-v (v+ v (v* to-center dist))]
+                             new-v))
+                         perimeter)
+
+        ;; Map old perimeter vertex indices to new vertex indices
+        index-mapping (zipmap perimeter
+                              (range n-old-verts (+ n-old-verts n-perimeter)))
+
+        ;; Build side faces (trapezoids as two triangles each)
+        ;; Connect outer edge (old vertices) to inner edge (new vertices)
+        side-faces (vec
+                    (mapcat
+                     (fn [i]
+                       (let [next-i (mod (inc i) n-perimeter)
+                             ;; Outer edge vertices (original)
+                             o0 (nth perimeter i)
+                             o1 (nth perimeter next-i)
+                             ;; Inner edge vertices (inset)
+                             i0 (get index-mapping o0)
+                             i1 (get index-mapping o1)]
+                         ;; Two triangles forming the trapezoid
+                         ;; Winding: CCW from outside (same as face normal)
+                         [[o0 o1 i1] [o0 i1 i0]]))
+                     (range n-perimeter)))
+
+        ;; Create new inner face triangles (same winding, new indices)
+        new-inner-triangles (mapv (fn [[i j k]]
+                                    [(get index-mapping i)
+                                     (get index-mapping j)
+                                     (get index-mapping k)])
+                                  face-triangles)
+
+        ;; Remove old face triangles from faces list
+        old-face-set (set face-triangles)
+        remaining-faces (vec (remove old-face-set faces))
+
+        ;; Combine all faces
+        all-faces (vec (concat remaining-faces side-faces new-inner-triangles))
+
+        ;; Update face-groups
+        ;; The inner face keeps the original face-id
+        ;; Side faces get a new id
+        side-face-id (keyword (str (name face-id) "-inset-sides-" (count vertices)))
+        new-face-groups (-> face-groups
+                           (assoc face-id new-inner-triangles)
+                           (assoc side-face-id side-faces))]
+
+    (assoc mesh
+           :vertices (vec (concat vertices inset-verts))
+           :faces all-faces
+           :face-groups new-face-groups)))
+
+(defn- inset-attached-face
+  "Inset the attached face, creating a smaller inner face.
+   Returns updated state with attachment moved to inner face."
+  [state dist]
+  (let [attachment (:attached state)
+        mesh (:mesh attachment)
+        face-id (:face-id attachment)
+        face-info (:face-info attachment)
+
+        ;; Build inset mesh
+        new-mesh (build-face-inset mesh face-id face-info dist)
+
+        ;; The face center stays the same (we're not moving normal direction)
+        ;; But we need to update face-info with new triangles and vertices
+        new-triangles (get-in new-mesh [:face-groups face-id])
+        new-face-info (-> face-info
+                          (assoc :triangles new-triangles)
+                          (assoc :vertices (vec (distinct (mapcat identity new-triangles)))))]
+    (-> state
+        (replace-mesh-in-state mesh new-mesh)
+        (assoc-in [:attached :mesh] new-mesh)
+        (assoc-in [:attached :face-info] new-face-info))))
+
+(defn inset
+  "Inset the attached face by dist units.
+   Positive = smaller face (toward center).
+   Negative = larger face (away from center).
+   Only works when attached to a face."
+  [state dist]
+  (if-let [attachment (:attached state)]
+    (if (= :face (:type attachment))
+      (inset-attached-face state dist)
+      state)
+    state))
+
 ;; --- Movement commands ---
 
 (defn- move

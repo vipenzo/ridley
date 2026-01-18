@@ -144,7 +144,7 @@
 
 ### 3.6 Face Operations (when attached to face) ✓
 - [x] `(f dist)` — extrude face along normal (positive = outward, negative = inward)
-- [ ] `(inset dist)` — create smaller/larger face inside, returns new face
+- [x] `(inset dist)` — create smaller/larger face inside, returns new face
 - [ ] `(scale factor)` — scale face vertices from centroid
 - [x] Face extrusion creates new side faces and updates mesh topology
 
@@ -169,9 +169,9 @@
 2. [x] Mesh move via `(f dist)` when attached to mesh
 3. [x] Face extrusion via `(f dist)` when attached to face
 
-**Phase 3d: Advanced Face Ops**
-1. `inset`
-2. Face cutting (draw shape on face)
+**Phase 3d: Advanced Face Ops** (partial)
+1. [x] `inset`
+2. [ ] Face cutting (draw shape on face)
 
 ### Design Decisions
 

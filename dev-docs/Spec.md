@@ -145,6 +145,12 @@ Attach to meshes or faces to manipulate them with turtle commands:
 
 ;; Check attachment status
 (attached?)               ; Returns true if attached
+
+;; Inset: create smaller face with surrounding border
+(attach-face b :top)
+(inset 3)                 ; Create smaller face 3 units from edges
+(f 5)                     ; Extrude the inset face
+(detach)
 ```
 
 **Behavior:**
@@ -153,6 +159,7 @@ Attach to meshes or faces to manipulate them with turtle commands:
 - When attached to a **mesh**: `(f dist)` translates all vertices
 - When attached to a **face**: `(f dist)` extrudes the face along its normal
 - Face heading = outward normal, so positive `f` extrudes outward
+- `(inset dist)` creates a smaller face inside, connected by trapezoid sides
 
 ---
 
@@ -591,7 +598,7 @@ Full Clojure available via SCI:
 - Pen control (:on, :off)
 - State stack (push-state, pop-state, clear-stack)
 - Anchors (mark, goto, look-at, path-to)
-- Attachment system (attach, attach-face, detach)
+- Attachment system (attach, attach-face, detach, inset)
 - Path recording
 - 2D shapes (circle, rect, polygon, star)
 - Shape transforms (scale, rotate, translate, morph, resample)
