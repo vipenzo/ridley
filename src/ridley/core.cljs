@@ -2,13 +2,14 @@
   "Main entry point for Ridley application."
   (:require [clojure.string :as str]
             [ridley.editor.repl :as repl]
+            [ridley.editor.codemirror :as cm]
             [ridley.viewport.core :as viewport]
             [ridley.viewport.xr :as xr]
             [ridley.manifold.core :as manifold]
             [ridley.scene.registry :as registry]
             [ridley.export.stl :as stl]))
 
-(defonce ^:private explicit-el (atom nil))
+(defonce ^:private editor-view (atom nil))
 (defonce ^:private repl-input-el (atom nil))
 (defonce ^:private repl-history-el (atom nil))
 (defonce ^:private error-el (atom nil))
@@ -79,7 +80,7 @@
   []
   ;; Clear registry when re-running definitions (fresh start)
   (registry/clear-all!)
-  (let [explicit-code (when-let [el @explicit-el] (.-value el))
+  (let [explicit-code (cm/get-value @editor-view)
         result (repl/evaluate-definitions explicit-code)]
     (if-let [error (:error result)]
       (show-error error)
@@ -153,8 +154,8 @@
 (defn- save-to-storage
   "Auto-save definitions to localStorage."
   []
-  (when-let [el @explicit-el]
-    (.setItem js/localStorage storage-key (.-value el))))
+  (when-let [content (cm/get-value @editor-view)]
+    (.setItem js/localStorage storage-key content)))
 
 (defn- load-from-storage
   "Load definitions from localStorage if available."
@@ -162,9 +163,8 @@
   (.getItem js/localStorage storage-key))
 
 (defn- save-definitions []
-  (when-let [el @explicit-el]
-    (let [content (.-value el)
-          blob (js/Blob. #js [content] #js {:type "text/plain"})
+  (when-let [content (cm/get-value @editor-view)]
+    (let [blob (js/Blob. #js [content] #js {:type "text/plain"})
           url (js/URL.createObjectURL blob)
           link (.createElement js/document "a")]
       (set! (.-href link) url)
@@ -178,10 +178,9 @@
   (let [reader (js/FileReader.)]
     (set! (.-onload reader)
       (fn [e]
-        (when-let [el @explicit-el]
-          (set! (.-value el) (.. e -target -result))
-          ;; Auto-save to localStorage after loading
-          (save-to-storage))))
+        (cm/set-value @editor-view (.. e -target -result))
+        ;; Auto-save to localStorage after loading
+        (save-to-storage)))
     (.readAsText reader file)))
 
 ;; ============================================================
@@ -201,10 +200,9 @@
   (-> (js/fetch (str "scripts/" script-name))
       (.then #(.text %))
       (.then (fn [content]
-               (when-let [el @explicit-el]
-                 (set! (.-value el) content)
-                 (save-to-storage)
-                 (evaluate-definitions))))
+               (cm/set-value @editor-view content)
+               (save-to-storage)
+               (evaluate-definitions)))
       (.catch #(js/console.error "Failed to load script:" %))))
 
 (defn- show-script-picker
@@ -309,15 +307,7 @@
 ;; ============================================================
 
 (defn- setup-keybindings []
-  ;; Definitions panel: Cmd+Enter to run definitions only
-  (when-let [el @explicit-el]
-    (.addEventListener el "keydown"
-      (fn [e]
-        (when (and (.-metaKey e) (= (.-key e) "Enter"))
-          (.preventDefault e)
-          (evaluate-definitions))))
-    ;; Auto-save definitions on change
-    (.addEventListener el "input" (fn [_] (save-to-storage))))
+  ;; CodeMirror handles Cmd+Enter via keymap and on-change via update listener
   ;; REPL input: Enter to run, arrows for history
   (when-let [el @repl-input-el]
     (.addEventListener el "keydown"
@@ -397,13 +387,26 @@
 ;; Initialization
 ;; ============================================================
 
+(def ^:private default-code "; Define reusable shapes here
+(def sq (path (dotimes [_ 4] (f 20) (th 90))))
+(extrude-closed (circle 5) sq)
+
+; Run with Cmd+Enter, then use REPL below")
+
 (defn init []
   (let [canvas (.getElementById js/document "viewport")
-        explicit (.getElementById js/document "editor-explicit")
+        editor-container (.getElementById js/document "editor-explicit")
         repl-input (.getElementById js/document "repl-input")
         repl-history (.getElementById js/document "repl-history")
-        error-panel (.getElementById js/document "error-panel")]
-    (reset! explicit-el explicit)
+        error-panel (.getElementById js/document "error-panel")
+        initial-content (or (load-from-storage) default-code)]
+    ;; Create CodeMirror editor
+    (reset! editor-view
+      (cm/create-editor
+        {:parent editor-container
+         :initial-value initial-content
+         :on-change save-to-storage
+         :on-run evaluate-definitions}))
     (reset! repl-input-el repl-input)
     (reset! repl-history-el repl-history)
     (reset! error-el error-panel)
@@ -426,14 +429,6 @@
     (-> (manifold/init!)
         (.then #(js/console.log "Manifold WASM initialized"))
         (.catch #(js/console.warn "Manifold WASM failed to initialize:" %)))
-    ;; Load from localStorage or set default
-    (if-let [saved (load-from-storage)]
-      (set! (.-value explicit) saved)
-      (set! (.-value explicit) "; Define reusable shapes here
-(def sq (path (dotimes [_ 4] (f 20) (th 90))))
-(extrude-closed (circle 5) sq)
-
-; Run with Cmd+Enter, then use REPL below"))
     ;; Focus REPL input
     (when repl-input
       (.focus repl-input))

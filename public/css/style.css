@@ -176,18 +176,16 @@ html, body {
 #editor-explicit {
   flex: 1;
   background: #1e1e1e;
-  color: #d4d4d4;
-  border: none;
-  padding: 12px 16px;
-  font-family: "SF Mono", "Monaco", "Menlo", "Consolas", monospace;
-  font-size: 13px;
-  line-height: 1.5;
-  resize: none;
-  outline: none;
+  overflow: hidden;
 }
 
-#editor-explicit::placeholder {
-  color: #6a6a6a;
+/* CodeMirror container fills parent */
+#editor-explicit .cm-editor {
+  height: 100%;
+}
+
+#editor-explicit .cm-scroller {
+  overflow: auto;
 }
 
 #error-panel {
