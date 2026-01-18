@@ -73,20 +73,29 @@
     (.add parent label-z)))
 
 (defn- add-lights [scene]
-  (let [ambient (THREE/AmbientLight. 0x606060 0.6)
+  (let [;; Hemisphere light for even ambient from sky/ground
+        hemi-light (THREE/HemisphereLight. 0xffffff 0x444444 0.8)
         ;; Main light from top-front-right
-        main-light (THREE/DirectionalLight. 0xffffff 0.8)
+        main-light (THREE/DirectionalLight. 0xffffff 1.0)
         ;; Fill light from opposite side (softer)
-        fill-light (THREE/DirectionalLight. 0x8888ff 0.3)
-        ;; Rim light from behind
-        rim-light (THREE/DirectionalLight. 0xffffcc 0.2)]
+        fill-light (THREE/DirectionalLight. 0x8888ff 0.5)
+        ;; Top-down light for horizontal surfaces
+        top-light (THREE/DirectionalLight. 0xffffff 0.6)
+        ;; Bottom fill to illuminate undersides
+        bottom-light (THREE/DirectionalLight. 0xffffff 0.4)
+        ;; Front light
+        front-light (THREE/DirectionalLight. 0xffffff 0.4)]
     (.set (.-position main-light) 100 150 100)
     (.set (.-position fill-light) -80 50 -50)
-    (.set (.-position rim-light) 0 -50 -100)
-    (.add scene ambient)
+    (.set (.-position top-light) 0 200 0)
+    (.set (.-position bottom-light) 0 -200 0)
+    (.set (.-position front-light) 0 50 150)
+    (.add scene hemi-light)
     (.add scene main-light)
     (.add scene fill-light)
-    (.add scene rim-light)))
+    (.add scene top-light)
+    (.add scene bottom-light)
+    (.add scene front-light)))
 
 (defn- create-line-material []
   (THREE/LineBasicMaterial. #js {:color 0x00ff88 :linewidth 2}))

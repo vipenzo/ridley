@@ -137,8 +137,8 @@
 
 ### 3.5 Mesh Manipulation (when attached to mesh) ✓
 - [x] `f` moves the entire mesh along turtle heading
-- [ ] `th`, `tv`, `tr` rotate the entire mesh
-- [ ] `(scale factor)` — scale mesh uniformly from origin
+- [x] `th`, `tv`, `tr` rotate the entire mesh around centroid
+- [x] `(scale factor)` — scale mesh uniformly from centroid
 - [ ] `(scale [sx sy sz])` — scale non-uniformly
 - [x] Mesh vertices are transformed in-place
 
@@ -396,9 +396,11 @@ The core turtle system, generative operations, boolean operations, and anchor/na
 - ✓ Anchors and navigation (`mark`, `goto`, `look-at`, `path-to`)
 - ✓ **Phase 3a: Foundation** — creation pose in meshes, inspection commands, face highlighting
 - ✓ **Phase 3b-c: Attachment** — `attach`, `attach-face`, `detach`, mesh move, face extrusion
+- ✓ **Phase 3d: Face inset** — `inset` operation
+- ✓ **Phase 3.5: Mesh manipulation** — `th`, `tv`, `tr` rotate mesh, `scale` mesh
 
-**Current sprint (Phase 3d):**
-1. [ ] `inset` operation
-2. [ ] Face cutting (draw shape on face)
+**Current sprint:**
+1. [ ] Face cutting (draw shape on face)
+2. [ ] Non-uniform scale `(scale [sx sy sz])`
 
 The turtle attachment paradigm unifies all 3D operations under the familiar turtle metaphor: attach to an element, use turtle commands to manipulate it, detach when done.

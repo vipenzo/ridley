@@ -43,13 +43,37 @@
           (registry/refresh-viewport! false))))))
 
 (defn- implicit-th [angle]
-  (swap! turtle-atom turtle/th angle))
+  (let [old-attached (:attached @turtle-atom)
+        registry-idx (:registry-index old-attached)]
+    (swap! turtle-atom turtle/th angle)
+    ;; If attached to mesh with registry index, update the registry
+    (when (and registry-idx (= :pose (:type old-attached)))
+      (let [new-mesh (get-in @turtle-atom [:attached :mesh])]
+        (when new-mesh
+          (registry/update-mesh-at-index! registry-idx new-mesh)
+          (registry/refresh-viewport! false))))))
 
 (defn- implicit-tv [angle]
-  (swap! turtle-atom turtle/tv angle))
+  (let [old-attached (:attached @turtle-atom)
+        registry-idx (:registry-index old-attached)]
+    (swap! turtle-atom turtle/tv angle)
+    ;; If attached to mesh with registry index, update the registry
+    (when (and registry-idx (= :pose (:type old-attached)))
+      (let [new-mesh (get-in @turtle-atom [:attached :mesh])]
+        (when new-mesh
+          (registry/update-mesh-at-index! registry-idx new-mesh)
+          (registry/refresh-viewport! false))))))
 
 (defn- implicit-tr [angle]
-  (swap! turtle-atom turtle/tr angle))
+  (let [old-attached (:attached @turtle-atom)
+        registry-idx (:registry-index old-attached)]
+    (swap! turtle-atom turtle/tr angle)
+    ;; If attached to mesh with registry index, update the registry
+    (when (and registry-idx (= :pose (:type old-attached)))
+      (let [new-mesh (get-in @turtle-atom [:attached :mesh])]
+        (when new-mesh
+          (registry/update-mesh-at-index! registry-idx new-mesh)
+          (registry/refresh-viewport! false))))))
 
 (defn- implicit-pen-up []
   (swap! turtle-atom turtle/pen-up))
@@ -129,6 +153,33 @@
         (when new-mesh
           (registry/update-mesh-at-index! registry-idx new-mesh)
           (registry/refresh-viewport! false))))))
+
+(defn- implicit-scale-mesh [factor]
+  (let [old-attached (:attached @turtle-atom)
+        registry-idx (:registry-index old-attached)]
+    (swap! turtle-atom turtle/scale factor)
+    ;; If attached to mesh with registry index, update the registry
+    (when (and registry-idx (= :pose (:type old-attached)))
+      (let [new-mesh (get-in @turtle-atom [:attached :mesh])]
+        (when new-mesh
+          (registry/update-mesh-at-index! registry-idx new-mesh)
+          (registry/refresh-viewport! false))))))
+
+(defn- unified-scale
+  "Unified scale function:
+   - If first arg is a shape, scales the shape (2D)
+   - If no args and attached to mesh, scales the attached mesh"
+  ([factor]
+   ;; No shape provided - try to scale attached mesh
+   (if (= :pose (get-in @turtle-atom [:attached :type]))
+     (implicit-scale-mesh factor)
+     (throw (js/Error. "scale requires a shape argument, or attach to a mesh first"))))
+  ([shape factor]
+   ;; Shape provided - scale the 2D shape
+   (xform/scale shape factor))
+  ([shape fx fy]
+   ;; Non-uniform scale of 2D shape
+   (xform/scale shape fx fy)))
 
 ;; Pure primitive constructors - return mesh data at origin (no side effects)
 (defn- pure-box
@@ -296,8 +347,8 @@
    ;; Loft impl functions (used by loft macro)
    'stamp-loft-impl     implicit-stamp-loft
    'finalize-loft-impl  implicit-finalize-loft
-   ;; Shape transformation functions
-   'scale        xform/scale
+   ;; Shape transformation functions (scale also works on attached mesh)
+   'scale        unified-scale
    'rotate-shape xform/rotate
    'translate    xform/translate
    'morph        xform/morph

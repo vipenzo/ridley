@@ -96,8 +96,9 @@
       v
       (v* v (/ 1 m)))))
 
-(defn rotate-around-axis
-  "Rotate vector v around axis by angle (radians) using Rodrigues' formula."
+(defn rotate-point-around-axis
+  "Rotate point v around axis by angle (radians) using Rodrigues' formula.
+   Preserves vector magnitude - use for position vectors."
   [v axis angle]
   (let [k (normalize axis)
         cos-a (Math/cos angle)
@@ -106,7 +107,13 @@
         term1 (v* v cos-a)
         term2 (v* (cross k v) sin-a)
         term3 (v* k (* (dot k v) (- 1 cos-a)))]
-    (normalize (v+ (v+ term1 term2) term3))))
+    (v+ (v+ term1 term2) term3)))
+
+(defn rotate-around-axis
+  "Rotate direction vector v around axis by angle (radians) using Rodrigues' formula.
+   Result is normalized - use for direction vectors (heading, up)."
+  [v axis angle]
+  (normalize (rotate-point-around-axis v axis angle)))
 
 ;; --- Pose reset ---
 
@@ -556,6 +563,15 @@
 
 ;; --- Mesh movement when attached ---
 
+(defn- mesh-centroid
+  "Calculate the centroid of a mesh from its vertices."
+  [mesh]
+  (let [verts (:vertices mesh)
+        n (count verts)]
+    (if (pos? n)
+      (v* (reduce v+ [0 0 0] verts) (/ 1 n))
+      [0 0 0])))
+
 (defn- translate-mesh
   "Translate all vertices of a mesh by an offset vector."
   [mesh offset]
@@ -566,12 +582,73 @@
                 (when pose
                   (update pose :position #(v+ % offset)))))))
 
+(defn- rotate-mesh
+  "Rotate all vertices of a mesh around its centroid by angle (radians) around axis.
+   Also rotates the creation-pose heading and up vectors."
+  [mesh axis angle]
+  (let [centroid (mesh-centroid mesh)
+        rotate-vertex (fn [pt]
+                        (let [rel (v- pt centroid)
+                              rotated (rotate-point-around-axis rel axis angle)]
+                          (v+ centroid rotated)))]
+    (-> mesh
+        (update :vertices (fn [verts] (mapv rotate-vertex verts)))
+        (update :creation-pose
+                (fn [pose]
+                  (when pose
+                    (-> pose
+                        (update :position rotate-vertex)
+                        (update :heading #(rotate-around-axis % axis angle))
+                        (update :up #(rotate-around-axis % axis angle)))))))))
+
+(defn- scale-mesh
+  "Scale all vertices of a mesh uniformly from its centroid."
+  [mesh factor]
+  (let [centroid (mesh-centroid mesh)]
+    (-> mesh
+        (update :vertices
+                (fn [verts]
+                  (mapv (fn [v]
+                          (let [rel (v- v centroid)
+                                scaled (v* rel factor)]
+                            (v+ centroid scaled)))
+                        verts))))))
+
 (defn- replace-mesh-in-state
   "Replace a mesh in the state's meshes vector."
   [state old-mesh new-mesh]
   (update state :meshes
           (fn [meshes]
             (mapv #(if (identical? % old-mesh) new-mesh %) meshes))))
+
+(defn- rotate-attached-mesh
+  "Rotate the attached mesh around its centroid using the given axis.
+   Also rotates the turtle's heading and up vectors so subsequent movements
+   follow the new orientation."
+  [state axis angle-deg]
+  (let [attachment (:attached state)
+        mesh (:mesh attachment)
+        rad (deg->rad angle-deg)
+        new-mesh (rotate-mesh mesh axis rad)
+        ;; Also rotate the turtle's heading and up
+        new-heading (rotate-around-axis (:heading state) axis rad)
+        new-up (rotate-around-axis (:up state) axis rad)]
+    (-> state
+        (replace-mesh-in-state mesh new-mesh)
+        (assoc :heading new-heading)
+        (assoc :up new-up)
+        (assoc-in [:attached :mesh] new-mesh)
+        (assoc-in [:attached :original-pose] (:creation-pose new-mesh)))))
+
+(defn- scale-attached-mesh
+  "Scale the attached mesh uniformly from its centroid."
+  [state factor]
+  (let [attachment (:attached state)
+        mesh (:mesh attachment)
+        new-mesh (scale-mesh mesh factor)]
+    (-> state
+        (replace-mesh-in-state mesh new-mesh)
+        (assoc-in [:attached :mesh] new-mesh))))
 
 (defn- move-attached-mesh
   "Move the attached mesh along the turtle's heading direction."
@@ -825,6 +902,17 @@
       state)
     state))
 
+(defn scale
+  "Scale the attached mesh uniformly from its centroid.
+   factor > 1 = larger, factor < 1 = smaller.
+   Only works when attached to a mesh (not face)."
+  [state factor]
+  (if-let [attachment (:attached state)]
+    (if (= :pose (:type attachment))
+      (scale-attached-mesh state factor)
+      state)
+    state))
+
 ;; --- Movement commands ---
 
 (defn- move
@@ -927,12 +1015,20 @@
 (defn th
   "Turn horizontal (yaw) - rotate heading around up axis.
    Positive angle turns left.
+   When attached to mesh, rotates the entire mesh around up axis.
    In shape mode, stores pending rotation for fillet creation on next (f)."
   [state angle]
-  (if (= :shape (:pen-mode state))
-    ;; In shape mode, store pending rotation (fillet created on next f)
+  (cond
+    ;; Attached to mesh: rotate the mesh
+    (= :pose (get-in state [:attached :type]))
+    (rotate-attached-mesh state (:up state) angle)
+
+    ;; Shape mode: store pending rotation
+    (= :shape (:pen-mode state))
     (store-pending-rotation state :th angle)
+
     ;; Normal mode: apply rotation immediately
+    :else
     (let [rad (deg->rad angle)
           new-heading (rotate-around-axis (:heading state) (:up state) rad)]
       (assoc state :heading new-heading))))
@@ -940,12 +1036,21 @@
 (defn tv
   "Turn vertical (pitch) - rotate heading and up around right axis.
    Positive angle pitches up.
+   When attached to mesh, rotates the entire mesh around right axis.
    In shape mode, stores pending rotation for fillet creation on next (f)."
   [state angle]
-  (if (= :shape (:pen-mode state))
-    ;; In shape mode, store pending rotation (fillet created on next f)
+  (cond
+    ;; Attached to mesh: rotate the mesh
+    (= :pose (get-in state [:attached :type]))
+    (let [right (right-vector state)]
+      (rotate-attached-mesh state right angle))
+
+    ;; Shape mode: store pending rotation
+    (= :shape (:pen-mode state))
     (store-pending-rotation state :tv angle)
+
     ;; Normal mode: apply rotation immediately
+    :else
     (let [rad (deg->rad angle)
           right (right-vector state)
           new-heading (rotate-around-axis (:heading state) right rad)
@@ -957,12 +1062,20 @@
 (defn tr
   "Turn roll - rotate up around heading axis.
    Positive angle rolls clockwise (when viewed from behind).
+   When attached to mesh, rotates the entire mesh around heading axis.
    In shape mode, stores pending rotation for fillet creation on next (f)."
   [state angle]
-  (if (= :shape (:pen-mode state))
-    ;; In shape mode, store pending rotation (fillet created on next f)
+  (cond
+    ;; Attached to mesh: rotate the mesh
+    (= :pose (get-in state [:attached :type]))
+    (rotate-attached-mesh state (:heading state) angle)
+
+    ;; Shape mode: store pending rotation
+    (= :shape (:pen-mode state))
     (store-pending-rotation state :tr angle)
+
     ;; Normal mode: apply rotation immediately
+    :else
     (let [rad (deg->rad angle)
           new-up (rotate-around-axis (:up state) (:heading state) rad)]
       (assoc state :up new-up))))
