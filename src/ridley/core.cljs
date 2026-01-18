@@ -6,6 +6,7 @@
             [ridley.viewport.core :as viewport]
             [ridley.viewport.xr :as xr]
             [ridley.manifold.core :as manifold]
+            [ridley.turtle.text :as text]
             [ridley.scene.registry :as registry]
             [ridley.export.stl :as stl]))
 
@@ -429,6 +430,10 @@
     (-> (manifold/init!)
         (.then #(js/console.log "Manifold WASM initialized"))
         (.catch #(js/console.warn "Manifold WASM failed to initialize:" %)))
+    ;; Initialize default font for text shapes (async)
+    (-> (text/init-default-font!)
+        (.then #(js/console.log "Default font loaded"))
+        (.catch #(js/console.warn "Default font failed to load:" %)))
     ;; Focus REPL input
     (when repl-input
       (.focus repl-input))

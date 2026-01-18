@@ -263,3 +263,42 @@
           (.delete raw-result)
           (.delete result)
           output)))))
+
+(defn hull
+  "Compute the convex hull of one or more meshes.
+   The convex hull is the smallest convex shape that contains all input meshes.
+
+   Usage:
+   (hull mesh)                    ; hull of single mesh
+   (hull mesh1 mesh2)             ; hull of multiple meshes
+   (hull [mesh1 mesh2 mesh3])     ; hull of vector of meshes
+
+   Returns a new Ridley mesh."
+  [& args]
+  (when-let [Manifold (get-manifold-class)]
+    (let [;; Normalize args: accept both (hull a b c) and (hull [a b c])
+          meshes (if (and (= 1 (count args))
+                          (vector? (first args)))
+                   (first args)
+                   args)
+          ;; Convert all meshes to Manifold objects
+          manifolds (keep mesh->manifold meshes)]
+      (when (seq manifolds)
+        (try
+          (let [;; Manifold.hull() is a static method that takes an array
+                manifold-array (clj->js (vec manifolds))
+                raw-result (.hull Manifold manifold-array)
+                result (.asOriginal raw-result)
+                output (manifold->mesh result)]
+            ;; Clean up
+            (doseq [m manifolds]
+              (.delete m))
+            (.delete raw-result)
+            (.delete result)
+            output)
+          (catch :default e
+            (js/console.error "Hull operation failed:" e)
+            ;; Clean up on error
+            (doseq [m manifolds]
+              (.delete m))
+            nil))))))

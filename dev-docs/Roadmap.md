@@ -398,6 +398,8 @@ The core turtle system, generative operations, boolean operations, and anchor/na
 - ✓ **Phase 3b-c: Attachment** — `attach`, `attach-face`, `detach`, mesh move, face extrusion
 - ✓ **Phase 3d: Face inset** — `inset` operation
 - ✓ **Phase 3.5: Mesh manipulation** — `th`, `tv`, `tr` rotate mesh, `scale` mesh
+- ✓ **Convex Hull** — `mesh-hull` via Manifold
+- ✓ **Text Shapes** — `text-shape`, `text-shapes` via opentype.js with bundled Roboto fonts
 
 **Current sprint:**
 1. [ ] Face cutting (draw shape on face)

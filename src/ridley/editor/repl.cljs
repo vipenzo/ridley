@@ -13,6 +13,7 @@
             [ridley.turtle.shape :as shape]
             [ridley.turtle.path :as path]
             [ridley.turtle.transform :as xform]
+            [ridley.turtle.text :as text]
             [ridley.geometry.primitives :as prims]
             [ridley.geometry.operations :as ops]
             [ridley.geometry.faces :as faces]
@@ -321,6 +322,12 @@
    'rect         shape/rect-shape
    'polygon      shape/polygon-shape
    'star         shape/star-shape
+   ;; Text shapes
+   'text-shape   text/text-shape
+   'text-shapes  text/text-shapes
+   'char-shape   text/char-shape
+   'load-font!   text/load-font!
+   'font-loaded? text/font-loaded?
    ;; Pure turtle functions (for explicit threading)
    'turtle       turtle/make-turtle
    'turtle-f     turtle/f
@@ -387,6 +394,7 @@
    'mesh-union          manifold/union
    'mesh-difference     manifold/difference
    'mesh-intersection   manifold/intersection
+   'mesh-hull           manifold/hull
    ;; Scene registry
    'register-mesh!      registry/register-mesh!
    'show-mesh!          registry/show-mesh!

@@ -375,6 +375,57 @@ Check mesh status:
 
 ---
 
+## Convex Hull
+
+Compute the convex hull of one or more meshes:
+
+```clojure
+;; Hull of multiple meshes - creates smallest convex shape containing all
+(def s1 (stamp (sphere 10)))
+(f 30)
+(def s2 (stamp (sphere 10)))
+(mesh-hull s1 s2)                ; Creates a "capsule" shape
+
+;; Can also pass a vector
+(mesh-hull [s1 s2 s3])
+```
+
+---
+
+## Text Shapes
+
+Convert text to 2D shapes using opentype.js font parsing:
+
+```clojure
+;; Basic text shape (uses default Roboto font)
+(text-shape "Hello")                    ; Returns 2D shape
+
+;; With size
+(text-shape "Hello" :size 30)           ; Larger text
+
+;; Extrude for 3D text
+(stamp (extrude (text-shape "RIDLEY" :size 40) (f 5)))
+
+;; Individual character shapes
+(text-shapes "ABC" :size 20)            ; Returns vector of shapes
+
+;; Single character
+(char-shape "A" (get-default-font) 50)
+
+;; Load custom font
+(load-font! "/path/to/font.ttf")        ; Returns promise
+(load-font! :roboto-mono)               ; Built-in monospace font
+
+;; Check if font is ready
+(font-loaded?)                          ; true when default font loaded
+```
+
+**Built-in fonts:**
+- `:roboto` - Roboto Regular (default)
+- `:roboto-mono` - Roboto Mono (monospace)
+
+---
+
 ## Scene Registry
 
 Named objects persist across evaluations:
@@ -600,7 +651,8 @@ Full Clojure available via SCI:
 - Anchors (mark, goto, look-at, path-to)
 - Attachment system (attach, attach-face, detach, inset)
 - Path recording
-- 2D shapes (circle, rect, polygon, star)
+- 2D shapes (circle, rect, polygon, star, text-shape)
+- Text shapes via opentype.js (text-shape, text-shapes, char-shape)
 - Shape transforms (scale, rotate, translate, morph, resample)
 - 3D primitives (box, sphere, cyl, cone)
 - Extrude (open and closed)
@@ -608,6 +660,7 @@ Full Clojure available via SCI:
 - Sweep between shapes
 - Joint modes (flat, round, tapered)
 - Boolean operations (via Manifold WASM)
+- Convex hull (mesh-hull)
 - Scene registry
 - Face operations
 - Face highlighting (highlight-face, flash-face)
@@ -637,7 +690,8 @@ src/ridley/
 │   ├── core.cljs            # Turtle state + movement
 │   ├── shape.cljs           # 2D shape definitions
 │   ├── transform.cljs       # Shape transformations
-│   └── path.cljs            # Path utilities
+│   ├── path.cljs            # Path utilities
+│   └── text.cljs            # Text to shape conversion
 ├── geometry/
 │   ├── primitives.cljs      # Box, sphere, cyl, cone
 │   ├── operations.cljs      # Revolve, legacy sweep/loft
@@ -645,7 +699,7 @@ src/ridley/
 ├── viewport/
 │   ├── core.cljs            # Three.js rendering
 │   └── xr.cljs              # WebXR/VR
-├── manifold/core.cljs       # Manifold WASM booleans
+├── manifold/core.cljs       # Manifold WASM booleans + hull
 ├── export/stl.cljs          # STL export
 └── scene/registry.cljs      # Named object registry
 ```
