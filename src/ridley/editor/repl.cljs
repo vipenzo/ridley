@@ -18,6 +18,7 @@
             [ridley.geometry.faces :as faces]
             [ridley.manifold.core :as manifold]
             [ridley.scene.registry :as registry]
+            [ridley.viewport.core :as viewport]
             [ridley.export.stl :as stl]))
 
 ;; Global turtle state for implicit mode
@@ -124,7 +125,7 @@
   (if (:primitive mesh)
     (let [transformed (transform-mesh-to-turtle mesh)]
       (registry/add-mesh! transformed nil true)
-      (registry/refresh-viewport!)
+      (registry/refresh-viewport! false)  ; Don't reset camera
       transformed)
     (throw (js/Error. (str "stamp only works with primitives (box, sphere, cyl, cone). "
                            "For extrude results, use 'register' directly.")))))
@@ -246,7 +247,13 @@
    ;; Face operations
    'list-faces   faces/list-faces
    'get-face     faces/get-face
+   'face-info    faces/face-info
    'face-ids     faces/face-ids
+   ;; Face highlighting
+   'flash-face      viewport/flash-face
+   'highlight-face  viewport/highlight-face
+   'clear-highlights viewport/clear-highlights
+   'fit-camera      viewport/fit-camera
    ;; Access current turtle state
    'get-turtle   get-turtle
    'last-mesh    last-mesh
@@ -456,7 +463,7 @@
        (show-mesh! (if (keyword? name-or-mesh) name-or-mesh (keyword name-or-mesh)))
        ;; It's a mesh reference - look up by identity
        (show-mesh-ref! name-or-mesh))
-     (refresh-viewport!))
+     (refresh-viewport! false))  ; Don't reset camera
 
    (defn hide [name-or-mesh]
      (if (or (keyword? name-or-mesh) (string? name-or-mesh) (symbol? name-or-mesh))
@@ -464,21 +471,21 @@
        (hide-mesh! (if (keyword? name-or-mesh) name-or-mesh (keyword name-or-mesh)))
        ;; It's a mesh reference - look up by identity
        (hide-mesh-ref! name-or-mesh))
-     (refresh-viewport!)
+     (refresh-viewport! false)  ; Don't reset camera
      nil)
 
    (defn show-all []
      (show-all!)
-     (refresh-viewport!))
+     (refresh-viewport! false))  ; Don't reset camera
 
    (defn hide-all []
      (hide-all!)
-     (refresh-viewport!))
+     (refresh-viewport! false))  ; Don't reset camera
 
    ;; Show only registered objects (hide work-in-progress meshes)
    (defn show-only-objects []
      (show-only-registered!)
-     (refresh-viewport!))
+     (refresh-viewport! false))  ; Don't reset camera
 
    ;; List visible object names
    (defn objects []

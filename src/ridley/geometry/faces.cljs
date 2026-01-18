@@ -169,6 +169,59 @@
   [mesh]
   (keys (:face-groups mesh)))
 
+(defn- compute-triangle-area
+  "Compute the area of a triangle using cross product."
+  [v0 v1 v2]
+  (let [edge1 (v- v1 v0)
+        edge2 (v- v2 v0)
+        cross-vec (cross edge1 edge2)]
+    (/ (magnitude cross-vec) 2)))
+
+(defn- extract-edges-from-triangles
+  "Extract unique edges from a list of triangles.
+   Returns vector of [v0 v1] pairs where v0 < v1."
+  [triangles]
+  (let [all-edges (mapcat (fn [[i j k]]
+                            [[i j] [j k] [k i]])
+                          triangles)
+        ;; Normalize edge direction (smaller index first)
+        normalized (map (fn [[a b]] (if (< a b) [a b] [b a])) all-edges)]
+    (vec (distinct normalized))))
+
+(defn face-info
+  "Get detailed info for a specific face by ID.
+   Returns {:id face-id
+            :normal [x y z]
+            :heading [x y z]
+            :center [x y z]
+            :vertices [indices]
+            :vertex-positions [[x y z] ...]
+            :area number
+            :edges [[v0 v1] ...]
+            :triangles [[i j k] ...]}"
+  [mesh face-id]
+  (when-let [triangles (get-in mesh [:face-groups face-id])]
+    (let [vertices (:vertices mesh)
+          base-info (compute-face-info vertices triangles)
+          ;; Get unique vertex indices
+          vertex-indices (:vertices base-info)
+          ;; Get actual positions
+          vertex-positions (mapv #(nth vertices % [0 0 0]) vertex-indices)
+          ;; Calculate total area
+          area (reduce + 0 (map (fn [[i j k]]
+                                  (compute-triangle-area
+                                   (nth vertices i [0 0 0])
+                                   (nth vertices j [0 0 0])
+                                   (nth vertices k [0 0 0])))
+                                triangles))
+          ;; Extract edges
+          edges (extract-edges-from-triangles triangles)]
+      (assoc base-info
+             :id face-id
+             :vertex-positions vertex-positions
+             :area area
+             :edges edges))))
+
 ;; ============================================================
 ;; Mesh with face metadata
 ;; ============================================================

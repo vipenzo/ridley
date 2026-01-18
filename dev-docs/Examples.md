@@ -561,3 +561,128 @@ Create shapes from arbitrary 2D point vectors:
 ;; Register and show
 (register my-ring final)
 ```
+
+---
+
+## Face Inspection and Highlighting
+
+Inspect faces of meshes and highlight them in the viewport.
+
+### Inspecting Faces
+
+```clojure
+;; Create a box and inspect its faces
+(def b (stamp (box 50 30 20)))
+
+;; List all faces with basic info
+(list-faces b)
+;; => [{:id :top :normal [0 0 1] :center [0 0 10] ...}
+;;     {:id :bottom :normal [0 0 -1] :center [0 0 -10] ...}
+;;     {:id :front :normal [0 1 0] ...}
+;;     {:id :back :normal [0 -1 0] ...}
+;;     {:id :left :normal [-1 0 0] ...}
+;;     {:id :right :normal [1 0 0] ...}]
+
+;; Get just the face IDs
+(face-ids b)
+;; => (:top :bottom :front :back :left :right)
+
+;; Detailed info on a specific face
+(face-info b :top)
+;; => {:id :top
+;;     :normal [0 0 1]
+;;     :center [0 0 10]
+;;     :vertices [2 3 6 7]
+;;     :vertex-positions [[25 15 10] [-25 15 10] [25 -15 10] [-25 -15 10]]
+;;     :area 1500
+;;     :edges [[2 3] [3 7] [6 7] [2 6]]
+;;     :triangles [[2 6 7] [2 7 3]]}
+
+;; Quick lookup of a single face
+(get-face b :front)
+;; => {:id :front :normal [0 1 0] :center [0 15 0] ...}
+```
+
+### Face Highlighting
+
+```clojure
+;; Create a cylinder
+(def c (stamp (cyl 20 40)))
+
+;; Flash a face temporarily (2 seconds, orange)
+(flash-face c :top)
+
+;; Flash with custom duration (5 seconds)
+(flash-face c :bottom 5000)
+
+;; Flash with custom color (green, 3 seconds)
+(flash-face c :side 3000 0x00ff00)
+
+;; Permanent highlight (stays until cleared)
+(highlight-face c :top)
+(highlight-face c :bottom 0xff0000)  ;; red
+
+;; Remove all highlights
+(clear-highlights)
+```
+
+### Exploring Meshes Interactively
+
+```clojure
+;; Create a shape and discover its faces
+(def my-box (stamp (box 100)))
+
+;; Flash each face one by one
+(doseq [id (face-ids my-box)]
+  (println "Faccia:" id)
+  (flash-face my-box id 1500))
+
+;; Find the face with the largest area
+(let [faces (list-faces my-box)]
+  (->> faces
+       (map #(assoc % :area (:area (face-info my-box (:id %)))))
+       (sort-by :area >)
+       first
+       :id))
+```
+
+### With Registered Objects
+
+```clojure
+;; Register an object
+(register cube (extrude (rect 30 30) (f 30)))
+
+;; Inspect and highlight
+(list-faces cube)
+(flash-face cube :top)
+
+;; Highlight multiple faces
+(highlight-face cube :top 0xff6600)
+(highlight-face cube :front 0x00ff00)
+(highlight-face cube :right 0x0066ff)
+
+;; Clear when done
+(clear-highlights)
+```
+
+### Primitive Face Groups
+
+Different primitives have different face structures:
+
+```clojure
+;; Box: 6 named faces
+(face-ids (stamp (box 20)))
+;; => (:top :bottom :front :back :left :right)
+
+;; Cylinder: 3 face groups
+(face-ids (stamp (cyl 10 30)))
+;; => (:top :bottom :side)
+
+;; Cone: same as cylinder
+(face-ids (stamp (cone 15 5 25)))
+;; => (:top :bottom :side)
+
+;; Sphere: single surface group
+(face-ids (stamp (sphere 20)))
+;; => (:surface)
+```

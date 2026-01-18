@@ -172,6 +172,10 @@
   (vec (keep (fn [entry] (when (nil? (:name entry)) (:mesh entry))) @scene-meshes)))
 
 (defn refresh-viewport!
-  "Update the viewport with all visible meshes and lines."
-  []
-  (viewport/update-scene {:lines @scene-lines :meshes (visible-meshes)}))
+  "Update the viewport with all visible meshes and lines.
+   reset-camera?: if true (default), fit camera to geometry"
+  ([] (refresh-viewport! true))
+  ([reset-camera?]
+   (viewport/update-scene {:lines @scene-lines
+                           :meshes (visible-meshes)
+                           :reset-camera? reset-camera?})))

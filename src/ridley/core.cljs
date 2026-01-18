@@ -89,9 +89,9 @@
         (when-let [render-data (repl/extract-render-data result)]
           ;; Store lines and definition meshes
           (registry/set-lines! (:lines render-data))
-          (registry/set-definition-meshes! (:meshes render-data))
-          ;; Use refresh-viewport! to show everything
-          (registry/refresh-viewport!))))))
+          (registry/set-definition-meshes! (:meshes render-data)))
+        ;; Always refresh viewport with camera reset on full rebuild
+        (registry/refresh-viewport! true)))))
 
 (defn- evaluate-repl-input
   "Evaluate the REPL input and show result in history."
@@ -118,8 +118,8 @@
               (when-let [render-data (repl/extract-render-data result)]
                 (registry/add-lines! (:lines render-data))
                 (registry/set-definition-meshes! (:meshes render-data)))
-              ;; Update viewport
-              (registry/refresh-viewport!))))))))
+              ;; Update viewport (don't reset camera)
+              (registry/refresh-viewport! false))))))))
 
 (defn- navigate-history
   "Navigate command history. direction: -1 for older, +1 for newer."
@@ -344,7 +344,7 @@
       (do
         (registry/show-only-registered!)
         (set! (.-textContent btn) "Obj")))
-    (registry/refresh-viewport!)))
+    (registry/refresh-viewport! false)))
 
 (defn- setup-save-load []
   (let [run-btn (.getElementById js/document "btn-run")

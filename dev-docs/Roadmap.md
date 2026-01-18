@@ -158,13 +158,10 @@
 
 ### Implementation Order
 
-**Phase 3a: Foundation**
-1. Creation pose in meshes
-2. Inspection commands (`list-faces`, `face-info`)
-
-**Phase 3b: Highlighting**
-1. `flash-face` with Three.js overlay
-2. Distinct highlight colors
+**Phase 3a: Foundation** ✓
+1. [x] Creation pose in meshes (primitives + extrusions)
+2. [x] Inspection commands (`list-faces`, `face-info`, `get-face`, `face-ids`)
+3. [x] `flash-face` with Three.js overlay and distinct highlight colors
 
 **Phase 3c: Attachment**
 1. `attach`, `attach-face`, `detach`
@@ -396,13 +393,9 @@ The core turtle system, generative operations, boolean operations, and anchor/na
 - ✓ CodeMirror editor with syntax highlighting and paredit
 - ✓ State stack (`push-state`, `pop-state`, `clear-stack`)
 - ✓ Anchors and navigation (`mark`, `goto`, `look-at`, `path-to`)
+- ✓ **Phase 3a: Foundation** — creation pose in meshes, inspection commands, face highlighting
 
-**Current sprint (Phase 3a):**
-1. [ ] Store creation pose in meshes
-2. [ ] Implement `list-faces`, `face-info` inspection commands
-3. [ ] Implement `flash-face` highlighting in viewport
-
-**Next sprint (Phase 3b-c):**
+**Current sprint (Phase 3b-c):**
 1. [ ] Attachment commands (`attach`, `attach-face`, `detach`)
 2. [ ] Face extrusion via `(f dist)` when attached
 3. [ ] `inset` operation

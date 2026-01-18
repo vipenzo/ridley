@@ -145,15 +145,15 @@
                             clojure-mode/default_extensions
                             ;; Theme
                             (create-theme)
-                            ;; Keymaps
+                            ;; Keymaps (run-keymap first for priority)
+                            (create-run-keymap on-run)
                             (.of keymap clojure-mode/paredit_keymap)
                             (.of keymap historyKeymap)
                             (.of keymap closeBracketsKeymap)
                             (.of keymap defaultKeymap)
                             (.of keymap searchKeymap)
                             (.of keymap foldKeymap)
-                            (.of keymap #js [indentWithTab])
-                            (create-run-keymap on-run)]
+                            (.of keymap #js [indentWithTab])]
                      ;; Add change listener if provided
                      on-change (conj (create-change-listener on-change)))
         ;; Flatten nested arrays and filter nils

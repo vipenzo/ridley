@@ -98,6 +98,22 @@
                                      :side THREE/FrontSide
                                      :flatShading true}))
 
+(defn- create-highlight-material
+  "Create material for highlighted faces."
+  [color]
+  (THREE/MeshStandardMaterial. #js {:color color
+                                     :metalness 0.1
+                                     :roughness 0.5
+                                     :side THREE/DoubleSide
+                                     :flatShading true
+                                     :transparent true
+                                     :opacity 0.85
+                                     :emissive color
+                                     :emissiveIntensity 0.3}))
+
+;; Track highlight objects for cleanup
+(defonce ^:private highlight-objects (atom []))
+
 (defn- geometry-to-points
   "Convert turtle geometry segments to Three.js points."
   [geometry]
@@ -140,12 +156,14 @@
     (THREE/Mesh. geom material)))
 
 (defn- clear-geometry
-  "Remove all user geometry objects from world-group, keeping grid and axes."
-  [world-group]
+  "Remove all user geometry objects from world-group, keeping grid, axes, and highlight-group."
+  [world-group highlight-group]
   (let [to-remove (filterv #(and (or (= (.-type %) "LineSegments")
                                       (= (.-type %) "Mesh"))
                                   ;; Keep grid (GridHelper is also a LineSegments)
-                                  (not (instance? THREE/GridHelper %)))
+                                  (not (instance? THREE/GridHelper %))
+                                  ;; Keep highlight group
+                                  (not (identical? % highlight-group)))
                            (.-children world-group))]
     (doseq [obj to-remove]
       (.remove world-group obj)
@@ -187,12 +205,14 @@
    (mapcat :vertices meshes)))
 
 (defn update-scene
-  "Update viewport with lines and meshes."
-  [{:keys [lines meshes]}]
+  "Update viewport with lines and meshes.
+   Options:
+     :reset-camera? - if true (default), fit camera to geometry"
+  [{:keys [lines meshes reset-camera?] :or {reset-camera? true}}]
   ;; Store meshes for export
   (reset! current-meshes (vec meshes))
-  (when-let [{:keys [world-group camera controls]} @state]
-    (clear-geometry world-group)
+  (when-let [{:keys [world-group highlight-group camera controls]} @state]
+    (clear-geometry world-group highlight-group)
     ;; Add line segments to world-group
     (when (seq lines)
       (when-let [line-obj (create-line-segments lines)]
@@ -201,26 +221,27 @@
     (doseq [mesh-data meshes]
       (let [mesh (create-three-mesh mesh-data)]
         (.add world-group mesh)))
-    ;; Fit camera to all geometry
-    (let [all-points (collect-all-points lines meshes)]
-      (when (seq all-points)
-        (let [xs (map first all-points)
-              ys (map second all-points)
-              zs (map #(nth % 2) all-points)
-              min-x (apply min xs) max-x (apply max xs)
-              min-y (apply min ys) max-y (apply max ys)
-              min-z (apply min zs) max-z (apply max zs)
-              center-x (/ (+ min-x max-x) 2)
-              center-y (/ (+ min-y max-y) 2)
-              center-z (/ (+ min-z max-z) 2)
-              size (max (- max-x min-x) (- max-y min-y) (- max-z min-z) 10)
-              dist (* size 2)]
-          (.set (.-target controls) center-x center-y center-z)
-          (.set (.-position camera)
-                (+ center-x dist)
-                (+ center-y dist)
-                (+ center-z dist))
-          (.update controls))))))
+    ;; Fit camera to all geometry (only if reset-camera? is true)
+    (when reset-camera?
+      (let [all-points (collect-all-points lines meshes)]
+        (when (seq all-points)
+          (let [xs (map first all-points)
+                ys (map second all-points)
+                zs (map #(nth % 2) all-points)
+                min-x (apply min xs) max-x (apply max xs)
+                min-y (apply min ys) max-y (apply max ys)
+                min-z (apply min zs) max-z (apply max zs)
+                center-x (/ (+ min-x max-x) 2)
+                center-y (/ (+ min-y max-y) 2)
+                center-z (/ (+ min-z max-z) 2)
+                size (max (- max-x min-x) (- max-y min-y) (- max-z min-z) 10)
+                dist (* size 2)]
+            (.set (.-target controls) center-x center-y center-z)
+            (.set (.-position camera)
+                  (+ center-x dist)
+                  (+ center-y dist)
+                  (+ center-z dist))
+            (.update controls)))))))
 
 (defn update-geometry
   "Update viewport with new turtle geometry (line segments only, legacy)."
@@ -230,8 +251,8 @@
 (defn update-mesh
   "Update viewport with a mesh (legacy, single mesh)."
   [mesh-data]
-  (when-let [{:keys [world-group camera controls]} @state]
-    (clear-geometry world-group)
+  (when-let [{:keys [world-group highlight-group camera controls]} @state]
+    (clear-geometry world-group highlight-group)
     (when mesh-data
       (let [mesh (create-three-mesh mesh-data)]
         (.add world-group mesh)))
@@ -297,12 +318,16 @@
         ;; Create camera rig for VR movement
         camera-rig (THREE/Group.)
         ;; Create world group for rotatable content (grid, axes, geometry)
-        world-group (THREE/Group.)]
+        world-group (THREE/Group.)
+        ;; Create separate group for highlights (not cleared with geometry)
+        highlight-group (THREE/Group.)]
     ;; Add camera to rig (for VR positioning)
     (.add camera-rig camera)
     (.add scene camera-rig)
     ;; Add world group to scene
     (.add scene world-group)
+    ;; Add highlight group to world-group (so it rotates with scene)
+    (.add world-group highlight-group)
     (.setSize renderer width height)
     ;; Add grid, axes to world-group (so they rotate together)
     (add-grid world-group)
@@ -317,6 +342,7 @@
                    :camera camera
                    :camera-rig camera-rig
                    :world-group world-group
+                   :highlight-group highlight-group
                    :renderer renderer
                    :controls controls
                    :canvas canvas})
@@ -333,10 +359,141 @@
   []
   @current-meshes)
 
+;; ============================================================
+;; Face highlighting
+;; ============================================================
+
+(defn clear-highlights
+  "Remove all highlight objects from the scene."
+  []
+  (when-let [{:keys [highlight-group]} @state]
+    (doseq [obj @highlight-objects]
+      (.remove highlight-group obj)
+      (when-let [geom (.-geometry obj)]
+        (.dispose geom))
+      (when-let [mat (.-material obj)]
+        (.dispose mat)))
+    (reset! highlight-objects [])))
+
+(defn- compute-triangle-normal
+  "Compute the normal of a triangle from three vertices."
+  [[x0 y0 z0] [x1 y1 z1] [x2 y2 z2]]
+  (let [;; Edge vectors
+        e1x (- x1 x0) e1y (- y1 y0) e1z (- z1 z0)
+        e2x (- x2 x0) e2y (- y2 y0) e2z (- z2 z0)
+        ;; Cross product
+        nx (- (* e1y e2z) (* e1z e2y))
+        ny (- (* e1z e2x) (* e1x e2z))
+        nz (- (* e1x e2y) (* e1y e2x))
+        ;; Normalize
+        len (js/Math.sqrt (+ (* nx nx) (* ny ny) (* nz nz)))]
+    (if (> len 0.0001)
+      [(/ nx len) (/ ny len) (/ nz len)]
+      [0 1 0])))  ; fallback
+
+(defn- offset-vertex-by-normal
+  "Offset a vertex along a normal direction."
+  [[x y z] [nx ny nz] offset]
+  [(+ x (* nx offset))
+   (+ y (* ny offset))
+   (+ z (* nz offset))])
+
+(defn- create-face-highlight-mesh
+  "Create a Three.js mesh for highlighting specific triangles of a mesh."
+  [mesh-data triangles color]
+  (let [vertices (:vertices mesh-data)
+        n-verts (count vertices)
+        offset 0.5  ; Offset along normal to prevent z-fighting
+        ;; Collect vertices for the triangles to highlight, offset along normal
+        face-verts (mapcat (fn [[i0 i1 i2]]
+                             (when (and (< i0 n-verts) (< i1 n-verts) (< i2 n-verts))
+                               (let [v0 (nth vertices i0 [0 0 0])
+                                     v1 (nth vertices i1 [0 0 0])
+                                     v2 (nth vertices i2 [0 0 0])
+                                     normal (compute-triangle-normal v0 v1 v2)]
+                                 [(offset-vertex-by-normal v0 normal offset)
+                                  (offset-vertex-by-normal v1 normal offset)
+                                  (offset-vertex-by-normal v2 normal offset)])))
+                           triangles)
+        flat-coords (mapcat identity face-verts)
+        geom (THREE/BufferGeometry.)
+        positions (js/Float32Array. (clj->js flat-coords))
+        material (create-highlight-material color)]
+    (.setAttribute geom "position" (THREE/BufferAttribute. positions 3))
+    (.computeVertexNormals geom)
+    (THREE/Mesh. geom material)))
+
+(defn highlight-face
+  "Highlight a specific face of a mesh.
+   mesh-data: the mesh data map with :vertices, :faces, :face-groups
+   face-id: the face identifier (keyword like :top, :bottom, etc.)
+   color: optional hex color (default 0xff6600 orange)
+   Returns true if face was found and highlighted."
+  ([mesh-data face-id] (highlight-face mesh-data face-id 0xff6600))
+  ([mesh-data face-id color]
+   (when-let [{:keys [highlight-group]} @state]
+     (when-let [triangles (get-in mesh-data [:face-groups face-id])]
+       (let [highlight-mesh (create-face-highlight-mesh mesh-data triangles color)]
+         (.add highlight-group highlight-mesh)
+         (swap! highlight-objects conj highlight-mesh)
+         true)))))
+
+(defn flash-face
+  "Temporarily highlight a face, then remove after duration.
+   mesh-data: the mesh data map
+   face-id: the face identifier
+   duration-ms: how long to show highlight (default 2000ms)
+   color: optional hex color (default 0xff6600 orange)"
+  ([mesh-data face-id] (flash-face mesh-data face-id 2000 0xff6600))
+  ([mesh-data face-id duration-ms] (flash-face mesh-data face-id duration-ms 0xff6600))
+  ([mesh-data face-id duration-ms color]
+   (when (highlight-face mesh-data face-id color)
+     ;; Schedule removal
+     (js/setTimeout
+      (fn []
+        ;; Remove only the most recently added highlight
+        (when-let [{:keys [highlight-group]} @state]
+          (when-let [obj (last @highlight-objects)]
+            (.remove highlight-group obj)
+            (when-let [geom (.-geometry obj)]
+              (.dispose geom))
+            (when-let [mat (.-material obj)]
+              (.dispose mat))
+            (swap! highlight-objects pop))))
+      duration-ms)
+     true)))
+
+(defn fit-camera
+  "Fit camera to current visible geometry."
+  []
+  (when-let [{:keys [camera controls]} @state]
+    (let [meshes @current-meshes
+          all-points (mapcat :vertices meshes)]
+      (when (seq all-points)
+        (let [xs (map first all-points)
+              ys (map second all-points)
+              zs (map #(nth % 2) all-points)
+              min-x (apply min xs) max-x (apply max xs)
+              min-y (apply min ys) max-y (apply max ys)
+              min-z (apply min zs) max-z (apply max zs)
+              center-x (/ (+ min-x max-x) 2)
+              center-y (/ (+ min-y max-y) 2)
+              center-z (/ (+ min-z max-z) 2)
+              size (max (- max-x min-x) (- max-y min-y) (- max-z min-z) 10)
+              dist (* size 2)]
+          (.set (.-target controls) center-x center-y center-z)
+          (.set (.-position camera)
+                (+ center-x dist)
+                (+ center-y dist)
+                (+ center-z dist))
+          (.update controls)
+          true)))))
+
 (defn dispose
   "Clean up Three.js resources."
   []
   (when-let [{:keys [renderer controls]} @state]
+    (clear-highlights)
     (.removeEventListener js/window "resize" handle-resize)
     (.dispose controls)
     (.dispose renderer)

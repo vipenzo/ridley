@@ -84,16 +84,19 @@
    (box turtle-state size size size))
   ([turtle-state sx sy sz]
    (let [vertices (make-box-vertices sx sy sz)
-         transformed (apply-transform vertices
-                                       (:position turtle-state)
-                                       (:heading turtle-state)
-                                       (:up turtle-state))
+         position (:position turtle-state)
+         heading (:heading turtle-state)
+         up (:up turtle-state)
+         transformed (apply-transform vertices position heading up)
          faces (make-box-faces)
          mesh {:type :mesh
                :primitive :box
                :vertices (vec transformed)
                :faces faces
-               :face-groups (faces/box-face-groups)}]
+               :face-groups (faces/box-face-groups)
+               :creation-pose {:position position
+                               :heading heading
+                               :up up}}]
      (update turtle-state :meshes conj mesh))))
 
 (defn- make-sphere-vertices
@@ -149,16 +152,19 @@
    (sphere turtle-state radius 16 12))
   ([turtle-state radius segments rings]
    (let [vertices (make-sphere-vertices radius segments rings)
-         transformed (apply-transform vertices
-                                       (:position turtle-state)
-                                       (:heading turtle-state)
-                                       (:up turtle-state))
+         position (:position turtle-state)
+         heading (:heading turtle-state)
+         up (:up turtle-state)
+         transformed (apply-transform vertices position heading up)
          faces (make-sphere-faces segments rings)
          mesh {:type :mesh
                :primitive :sphere
                :vertices (vec transformed)
                :faces faces
-               :face-groups (faces/sphere-face-groups segments rings)}]
+               :face-groups (faces/sphere-face-groups segments rings)
+               :creation-pose {:position position
+                               :heading heading
+                               :up up}}]
      (update turtle-state :meshes conj mesh))))
 
 (defn- make-cylinder-vertices
@@ -228,16 +234,19 @@
    (cyl turtle-state radius height 24))
   ([turtle-state radius height segments]
    (let [vertices (make-cylinder-vertices radius height segments)
-         transformed (apply-transform vertices
-                                       (:position turtle-state)
-                                       (:heading turtle-state)
-                                       (:up turtle-state))
+         position (:position turtle-state)
+         heading (:heading turtle-state)
+         up (:up turtle-state)
+         transformed (apply-transform vertices position heading up)
          faces (make-cylinder-faces segments)
          mesh {:type :mesh
                :primitive :cylinder
                :vertices (vec transformed)
                :faces faces
-               :face-groups (faces/cylinder-face-groups segments)}]
+               :face-groups (faces/cylinder-face-groups segments)
+               :creation-pose {:position position
+                               :heading heading
+                               :up up}}]
      (update turtle-state :meshes conj mesh))))
 
 (defn- make-cone-vertices
@@ -285,14 +294,17 @@
    (cone turtle-state r1 r2 height 24))
   ([turtle-state r1 r2 height segments]
    (let [vertices (make-cone-vertices r1 r2 height segments)
-         transformed (apply-transform vertices
-                                       (:position turtle-state)
-                                       (:heading turtle-state)
-                                       (:up turtle-state))
+         position (:position turtle-state)
+         heading (:heading turtle-state)
+         up (:up turtle-state)
+         transformed (apply-transform vertices position heading up)
          faces (make-cylinder-faces segments)
          mesh {:type :mesh
                :primitive :cone
                :vertices (vec transformed)
                :faces faces
-               :face-groups (faces/cone-face-groups segments)}]
+               :face-groups (faces/cone-face-groups segments)
+               :creation-pose {:position position
+                               :heading heading
+                               :up up}}]
      (update turtle-state :meshes conj mesh))))

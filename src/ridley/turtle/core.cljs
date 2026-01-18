@@ -146,9 +146,11 @@
   "Build a unified mesh from accumulated sweep rings.
    Each ring is a vector of 3D vertices.
    If closed? is true, connects last ring back to first (torus-like, no caps).
-   Otherwise creates bottom cap, side faces, and top cap."
-  ([rings] (build-sweep-mesh rings false))
-  ([rings closed?]
+   Otherwise creates bottom cap, side faces, and top cap.
+   Optional creation-pose records where the extrusion started."
+  ([rings] (build-sweep-mesh rings false nil))
+  ([rings closed?] (build-sweep-mesh rings closed? nil))
+  ([rings closed? creation-pose]
    (let [n-rings (count rings)
          n-verts (count (first rings))]
      (when (and (>= n-rings 2) (>= n-verts 3))
@@ -174,10 +176,11 @@
                                      [[b0 t1 b1] [b0 t0 t1]]))
                                  (range n-verts))))
                             (range effective-n-rings)))]
-           {:type :mesh
-            :primitive :sweep-closed
-            :vertices vertices
-            :faces side-faces})
+           (cond-> {:type :mesh
+                    :primitive :sweep-closed
+                    :vertices vertices
+                    :faces side-faces}
+             creation-pose (assoc :creation-pose creation-pose)))
          ;; Open: caps at both ends
          (let [vertices (vec (apply concat rings))
                side-faces (vec
@@ -203,10 +206,11 @@
                ;; Top cap: facing +heading direction (CCW from above)
                top-cap (vec (for [i (range 1 (dec n-verts))]
                               [last-base (+ last-base i 1) (+ last-base i)]))]
-           {:type :mesh
-            :primitive :sweep
-            :vertices vertices
-            :faces (vec (concat side-faces bottom-cap top-cap))}))))))
+           (cond-> {:type :mesh
+                    :primitive :sweep
+                    :vertices vertices
+                    :faces (vec (concat side-faces bottom-cap top-cap))}
+             creation-pose (assoc :creation-pose creation-pose))))))))
 
 ;; --- Shape stamping ---
 
@@ -959,7 +963,11 @@
   [state shape path]
   (if-not (and (shape? shape) (is-path? path))
     state
-    (let [radius (shape-radius shape)
+    (let [;; Save creation pose before any modifications
+          creation-pose {:position (:position state)
+                         :heading (:heading state)
+                         :up (:up state)}
+          radius (shape-radius shape)
           commands (:commands path)
           segments (analyze-closed-path commands radius)
           n-segments (count segments)]
@@ -1044,7 +1052,8 @@
                   mesh {:type :mesh
                         :primitive :torus
                         :vertices vertices
-                        :faces side-faces}]
+                        :faces side-faces
+                        :creation-pose creation-pose}]
               (update final-state :meshes conj mesh))))))))
 
 ;; ============================================================
@@ -1074,6 +1083,8 @@
            (assoc :loft-steps steps)
            (assoc :loft-total-dist 0)
            (assoc :loft-start-pos (:position state))
+           (assoc :loft-start-heading (:heading state))
+           (assoc :loft-start-up (:up state))
            (assoc :loft-orientations [initial-orientation])))
      state)))
 
@@ -1126,7 +1137,10 @@
         base-shape (:loft-base-shape state)
         transform-fn (:loft-transform-fn state)
         orientations (:loft-orientations state)
-        steps (:loft-steps state)]
+        steps (:loft-steps state)
+        creation-pose {:position (:loft-start-pos state)
+                       :heading (:loft-start-heading state)
+                       :up (:loft-start-up state)}]
     (if (and (pos? total-dist) base-shape transform-fn (>= (count orientations) 2))
       ;; Generate rings at N+1 evenly spaced points (0 to 1)
       (let [new-rings (vec
@@ -1143,25 +1157,28 @@
                                               (assoc :heading (:heading orientation))
                                               (assoc :up (:up orientation)))]
                            (stamp-shape temp-state transformed-2d))))
-            mesh (build-sweep-mesh new-rings)]
+            mesh (build-sweep-mesh new-rings false creation-pose)]
         (if mesh
           (-> state
               (update :meshes conj mesh)
               (assoc :sweep-rings [])
               (assoc :stamped-shape nil)
               (dissoc :loft-base-shape :loft-transform-fn :loft-steps
-                      :loft-total-dist :loft-start-pos :loft-orientations))
+                      :loft-total-dist :loft-start-pos :loft-start-heading
+                      :loft-start-up :loft-orientations))
           (-> state
               (assoc :sweep-rings [])
               (assoc :stamped-shape nil)
               (dissoc :loft-base-shape :loft-transform-fn :loft-steps
-                      :loft-total-dist :loft-start-pos :loft-orientations))))
+                      :loft-total-dist :loft-start-pos :loft-start-heading
+                      :loft-start-up :loft-orientations))))
       ;; Not enough data - just clear
       (-> state
           (assoc :sweep-rings [])
           (assoc :stamped-shape nil)
           (dissoc :loft-base-shape :loft-transform-fn :loft-steps
-                  :loft-total-dist :loft-start-pos :loft-orientations)))))
+                  :loft-total-dist :loft-start-pos :loft-start-heading
+                  :loft-start-up :loft-orientations)))))
 
 ;; ============================================================
 ;; Path - recorded turtle movements
@@ -1328,7 +1345,11 @@
   [state shape path]
   (if-not (and (shape? shape) (is-path? path))
     state
-    (let [radius (shape-radius shape)
+    (let [;; Save creation pose before any modifications
+          creation-pose {:position (:position state)
+                         :heading (:heading state)
+                         :up (:up state)}
+          radius (shape-radius shape)
           commands (:commands path)
           segments (analyze-open-path commands radius)
           n-segments (count segments)]
@@ -1464,7 +1485,8 @@
                   mesh {:type :mesh
                         :primitive :extrusion
                         :vertices vertices
-                        :faces all-faces}]
+                        :faces all-faces
+                        :creation-pose creation-pose}]
               (update final-state :meshes conj mesh))))))))
 
 ;; ============================================================
