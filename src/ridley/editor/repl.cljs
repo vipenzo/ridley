@@ -59,6 +59,32 @@
 (defn- implicit-joint-mode [mode]
   (swap! turtle-atom turtle/joint-mode mode))
 
+;; State stack
+(defn- implicit-push-state []
+  (swap! turtle-atom turtle/push-state))
+
+(defn- implicit-pop-state []
+  (swap! turtle-atom turtle/pop-state))
+
+(defn- implicit-clear-stack []
+  (swap! turtle-atom turtle/clear-stack))
+
+;; Anchors and navigation
+(defn- implicit-mark [name]
+  (swap! turtle-atom turtle/mark name))
+
+(defn- implicit-goto [name]
+  (swap! turtle-atom turtle/goto name))
+
+(defn- implicit-look-at [name]
+  (swap! turtle-atom turtle/look-at name))
+
+(defn- implicit-path-to [name]
+  ;; First orient turtle toward anchor, then create path
+  ;; This ensures extrusions go in the correct direction
+  (swap! turtle-atom turtle/look-at name)
+  (turtle/path-to @turtle-atom name))
+
 ;; Pure primitive constructors - return mesh data at origin (no side effects)
 (defn- pure-box
   ([size] (prims/box-mesh size))
@@ -163,6 +189,15 @@
    'pen-down     implicit-pen-down
    'reset        implicit-reset
    'joint-mode   implicit-joint-mode
+   ;; State stack
+   'push-state   implicit-push-state
+   'pop-state    implicit-pop-state
+   'clear-stack  implicit-clear-stack
+   ;; Anchors and navigation
+   'mark         implicit-mark
+   'goto         implicit-goto
+   'look-at      implicit-look-at
+   'path-to      implicit-path-to
    ;; 3D primitives - return mesh data at origin (no side effects)
    'box          pure-box
    'sphere       pure-sphere
@@ -304,20 +339,22 @@
    ;; extrude: stamp a shape and extrude it via movements or path
    ;; (extrude (circle 15) (f 30)) - stamp circle, extrude 30 units forward
    ;; (extrude (circle 15) my-path) - extrude along a recorded path
+   ;; (extrude (circle 15) (path-to :target)) - extrude along path to anchor
    ;; (extrude (rect 20 10) (f 20) (th 45) (f 20)) - sweep with turns
    ;; Uses two-pass approach: first records movements into a path,
    ;; then processes with correct segment shortening at corners.
    ;; Returns the created mesh (can be bound with def)
    (defmacro extrude [shape & movements]
-     (if (and (= 1 (count movements)) (symbol? (first movements)))
-       ;; Single symbol - might be a path, check at runtime
+     (if (= 1 (count movements))
+       ;; Single argument - check at runtime if it's a path
+       ;; This handles: my-path, (path-to :x), (my-fn :x), etc.
        `(let [arg# ~(first movements)]
           (if (path? arg#)
-            ;; Already a path - use path-based extrusion
+            ;; It's a path - use directly
             (extrude-path-impl ~shape arg#)
-            ;; Not a path - wrap in path macro and extrude
+            ;; Not a path - it was a movement that mutated turtle, record it fresh
             (extrude-path-impl ~shape (path ~(first movements)))))
-       ;; Multiple movements - wrap in path macro for two-pass processing
+       ;; Multiple movements - wrap in path macro
        `(extrude-path-impl ~shape (path ~@movements))))
 
    ;; extrude-closed: like extrude but creates a closed torus-like mesh

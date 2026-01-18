@@ -68,43 +68,130 @@
 
 ---
 
-## Phase 3: Face-Based Modeling ← CURRENT
+## Phase 2.5: Anchors and Navigation ✓
 
-**Goal**: Implement the push/pull paradigm for intuitive 3D editing.
+**Goal**: Named reference points and navigation commands for complex models.
 
-### 3.1 Enhanced Mesh Data Structure
-- [ ] Add face metadata to meshes (id, normal, center, vertices)
-- [ ] Semantic face naming for primitives (:top, :bottom, :side-N)
-- [ ] Numeric face IDs for complex meshes
-- [ ] Face lookup functions
+### 2.5.1 Turtle State Stack ✓
+- [x] Add `:state-stack` to turtle state (vector of saved poses)
+- [x] `(push-state)` — save position/heading/up/pen-mode onto stack
+- [x] `(pop-state)` — restore most recent saved pose from stack
+- [x] `(clear-stack)` — clear stack without restoring
+- [x] Stack saves only pose, not meshes/geometry (those persist)
 
-### 3.2 Face Selection System
-- [ ] `(list-faces mesh)` — enumerate all faces with info
-- [ ] `(select mesh face-id)` — highlight face in viewport
-- [ ] Face highlighting in Three.js (distinct color/material)
-- [ ] Click-to-select in viewport (optional)
+### 2.5.2 Anchor System ✓
+- [x] Add `:anchors` map to turtle state `{:name {:position :heading :up}}`
+- [x] `(mark :name)` — save current position + heading + up with name
+- [x] Calling `(mark :name)` twice overwrites the previous value
+- [x] Anchors persist within the turtle state (cleared on new turtle)
 
-### 3.3 New Pen Modes
-- [ ] Refactor pen state: `pen-mode` replaces `pen-down?`
-- [ ] `(pen :off)` — no drawing
-- [ ] `(pen :2d)` — draw lines (current behavior)
-- [ ] `(pen :3d :at [p] :normal [n])` — draw on arbitrary plane
-- [ ] `(pen :3d @anchor)` — draw on plane defined by anchor
-- [ ] `(pen face-id)` — draw on selected face
-- [ ] `(pen face-id :at [u v])` — draw on face with offset
+### 2.5.3 Navigation Commands ✓
+- [x] `(goto :name)` — move to anchor position AND adopt its heading/up
+- [x] `(goto :name)` draws a line if pen-mode is `:on`
+- [x] `(look-at :name)` — rotate heading to point toward anchor position
+- [x] `(look-at :name)` also adjusts up to maintain orthogonality
+- [x] `(path-to :name)` — orient toward anchor (implicit look-at), return path with `(f dist)`
 
-### 3.4 2D Drawing on Faces
-- [ ] Transform turtle to face-local coordinates
-- [ ] Profile accumulation in `pending-profile`
-- [ ] 2D primitives on face: `circle`, `rect`, `polygon`
+### 2.5.4 Design Decisions
+1. **Stack saves pose only**: position, heading, up, pen-mode. Meshes created during push/pop are kept.
+2. **goto is oriented**: adopts the saved heading/up (no separate goto-oriented needed)
+3. **mark overwrites**: calling twice with same name keeps the latest
+4. **goto draws**: respects pen-mode like any movement command
+5. **path-to orients and returns path**: implicitly does `look-at`, then returns `(f dist)` — works with `extrude`
 
-### 3.5 Face Extrusion
-- [ ] `(f dist)` when pen is on face triggers extrusion
-- [ ] Positive dist = add material (union with mesh)
-- [ ] Negative dist = remove material (subtract from mesh)
-- [ ] Update mesh topology after extrusion
+**Deliverable**: Can mark points, navigate between them, and extrude paths to anchors. ✓
 
-**Deliverable**: Can create a box with holes using `(pen :top) (circle 10) (f -50)`.
+---
+
+## Phase 3: Turtle Attachment System ← CURRENT
+
+**Goal**: Enable the turtle to attach to geometry elements (meshes, faces, edges, vertices) and manipulate them using standard turtle commands.
+
+### 3.1 Mesh Creation Pose
+- [ ] Store turtle pose in mesh when created: `:creation-pose {:position :heading :up}`
+- [ ] Update `box`, `sphere`, `cyl`, `cone` to include creation pose
+- [ ] Update extrusion/sweep/loft to include creation pose
+- [ ] `(attach mesh)` positions turtle at mesh's creation pose
+
+### 3.2 Inspection Commands
+- [ ] `(list-faces mesh)` — return list of faces with id, normal, center, vertices
+- [ ] `(face-info mesh face-id)` — detailed info: normal, center, vertices, area, edges
+- [ ] `(list-edges mesh)` — return list of edges with vertices and adjacent faces
+- [ ] `(flash-face mesh face-id)` — temporarily highlight face in viewport
+- [ ] `(flash-edge mesh edge-id)` — temporarily highlight edge
+- [ ] `(flash-vertex mesh vertex-id)` — temporarily highlight vertex
+
+### 3.3 Viewport Highlighting
+- [ ] Add highlight layer to Three.js scene
+- [ ] Support temporary highlighting (flash) with configurable duration
+- [ ] Distinct colors for face/edge/vertex highlights
+- [ ] Highlight clears on next evaluation
+
+### 3.4 Attachment Commands
+- [ ] `(attach mesh)` — push state, move to mesh creation pose
+- [ ] `(attach-face mesh face-id)` — push state, move to face center, heading = normal
+- [ ] `(attach-edge mesh edge-id)` — push state, move to edge midpoint
+- [ ] `(attach-vertex mesh vertex-id)` — push state, move to vertex position
+- [ ] `(detach)` — pop state, return to previous position
+- [ ] Track attached element in turtle state: `:attached {:type :face :mesh m :id :top}`
+
+### 3.5 Mesh Manipulation (when attached to mesh)
+- [ ] `f`, `th`, `tv`, `tr` move/rotate the entire mesh
+- [ ] `(scale factor)` — scale mesh uniformly from origin
+- [ ] `(scale [sx sy sz])` — scale non-uniformly
+- [ ] Mesh vertices are transformed in-place
+
+### 3.6 Face Operations (when attached to face)
+- [ ] `(f dist)` — extrude face along normal (positive = outward, negative = inward)
+- [ ] `(inset dist)` — create smaller/larger face inside, returns new face
+- [ ] `(scale factor)` — scale face vertices from centroid
+- [ ] Face extrusion creates new side faces and updates mesh topology
+
+### 3.7 Edge Operations (when attached to edge) — FUTURE
+- [ ] `(bevel radius)` — round the edge
+- [ ] `(chamfer dist)` — cut the edge at 45°
+
+### 3.8 Vertex Operations (when attached to vertex) — FUTURE
+- [ ] `(move [dx dy dz])` — move vertex, adjacent faces update
+
+**Deliverable**: Can do `(attach-face mesh :top) (f 20) (detach)` to extrude a face.
+
+### Implementation Order
+
+**Phase 3a: Foundation**
+1. Creation pose in meshes
+2. Inspection commands (`list-faces`, `face-info`)
+
+**Phase 3b: Highlighting**
+1. `flash-face` with Three.js overlay
+2. Distinct highlight colors
+
+**Phase 3c: Attachment**
+1. `attach`, `attach-face`, `detach`
+2. Mesh manipulation (move/rotate/scale)
+3. Face extrusion
+
+**Phase 3d: Advanced Face Ops**
+1. `inset`
+2. Face cutting (draw shape on face)
+
+### Design Decisions
+
+1. **Stack-based**: `attach` pushes, `detach` pops. Simple mental model, supports nesting.
+
+2. **Automatic push**: Can't "lose" position — detach always returns you.
+
+3. **Creation pose**: Meshes remember where they were created for intuitive re-attachment.
+
+4. **No multi-selection**: Use Clojure loops for batch operations:
+   ```clojure
+   (doseq [id [:top :bottom]]
+     (attach-face mesh id) (inset 2) (detach))
+   ```
+
+5. **No undo**: Re-evaluate code with changes. The script IS the model.
+
+6. **Face heading = normal**: `(f 10)` always extrudes outward, `(f -10)` inward.
 
 ---
 
@@ -295,9 +382,9 @@
 
 ## Current Focus
 
-**→ Phase 3: Face-Based Modeling** (deferred for now)
+**→ Phase 3: Turtle Attachment System** (ACTIVE)
 
-The core turtle system, generative operations, and boolean operations are working well.
+The core turtle system, generative operations, boolean operations, and anchor/navigation system are complete. Now implementing the attachment system for face-based modeling.
 
 **Recent completions:**
 - ✓ `extrude-closed` with path pre-processing for manifold torus-like meshes
@@ -305,11 +392,19 @@ The core turtle system, generative operations, and boolean operations are workin
 - ✓ Scene registry with named meshes and visibility control
 - ✓ STL export
 - ✓ WebXR basic support
+- ✓ Joint modes for extrusion corners (flat, round, tapered)
+- ✓ CodeMirror editor with syntax highlighting and paredit
+- ✓ State stack (`push-state`, `pop-state`, `clear-stack`)
+- ✓ Anchors and navigation (`mark`, `goto`, `look-at`, `path-to`)
 
-**Next priorities:**
-1. Complete remaining loft/extrude edge cases
-2. Improve error messages and validation
-3. Add more shape transformations
-4. Face-based modeling (Phase 3) when ready
+**Current sprint (Phase 3a):**
+1. [ ] Store creation pose in meshes
+2. [ ] Implement `list-faces`, `face-info` inspection commands
+3. [ ] Implement `flash-face` highlighting in viewport
 
-The face-based push/pull paradigm remains a key differentiating feature for future development.
+**Next sprint (Phase 3b-c):**
+1. [ ] Attachment commands (`attach`, `attach-face`, `detach`)
+2. [ ] Face extrusion via `(f dist)` when attached
+3. [ ] `inset` operation
+
+The turtle attachment paradigm unifies all 3D operations under the familiar turtle metaphor: attach to an element, use turtle commands to manipulate it, detach when done.

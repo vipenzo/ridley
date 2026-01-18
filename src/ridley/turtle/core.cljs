@@ -29,7 +29,43 @@
    :stamped-shape nil       ; for :shape mode: current 3D vertices of shape
    :sweep-rings []          ; for :shape mode: accumulated rings for unified mesh
    :geometry []
-   :meshes []})
+   :meshes []
+   :state-stack []          ; stack for push-state/pop-state
+   :anchors {}})            ; named poses for mark/goto
+
+;; --- State stack ---
+
+(defn push-state
+  "Push current turtle pose (position, heading, up, pen-mode) onto the stack.
+   Use pop-state to restore. Useful for branching or temporary movements.
+   Meshes and geometry created between push and pop are kept."
+  [state]
+  (let [pose {:position (:position state)
+              :heading (:heading state)
+              :up (:up state)
+              :pen-mode (:pen-mode state)}]
+    (update state :state-stack conj pose)))
+
+(defn pop-state
+  "Pop and restore the most recently pushed turtle pose from the stack.
+   Returns state unchanged if stack is empty."
+  [state]
+  (let [stack (:state-stack state)]
+    (if (empty? stack)
+      state
+      (let [pose (peek stack)]
+        (-> state
+            (assoc :position (:position pose))
+            (assoc :heading (:heading pose))
+            (assoc :up (:up pose))
+            (assoc :pen-mode (:pen-mode pose))
+            (assoc :state-stack (pop stack)))))))
+
+(defn clear-stack
+  "Clear the state stack without restoring any pose.
+   Useful to reset after complex branching operations."
+  [state]
+  (assoc state :state-stack []))
 
 ;; --- Vector math utilities ---
 
@@ -1430,4 +1466,91 @@
                         :vertices vertices
                         :faces all-faces}]
               (update final-state :meshes conj mesh))))))))
+
+;; ============================================================
+;; Anchors and Navigation
+;; ============================================================
+
+(defn mark
+  "Save current turtle pose (position, heading, up) with a name.
+   Overwrites if name already exists.
+   Use goto to return to this position later."
+  [state name]
+  (let [pose {:position (:position state)
+              :heading (:heading state)
+              :up (:up state)}]
+    (assoc-in state [:anchors name] pose)))
+
+(defn goto
+  "Move to a named anchor position and adopt its heading/up.
+   Draws a line if pen-mode is :on.
+   Returns state unchanged if anchor doesn't exist."
+  [state name]
+  (if-let [anchor (get-in state [:anchors name])]
+    (let [from-pos (:position state)
+          to-pos (:position anchor)
+          mode (:pen-mode state)
+          ;; Draw line if pen is on
+          state' (if (= mode :on)
+                   (update state :geometry conj {:type :line
+                                                 :from from-pos
+                                                 :to to-pos})
+                   state)]
+      (-> state'
+          (assoc :position to-pos)
+          (assoc :heading (:heading anchor))
+          (assoc :up (:up anchor))))
+    state))
+
+(defn look-at
+  "Rotate heading to point toward a named anchor.
+   Does not move the turtle.
+   Adjusts up to maintain orthogonality.
+   Returns state unchanged if anchor doesn't exist or if at same position."
+  [state name]
+  (if-let [anchor (get-in state [:anchors name])]
+    (let [from-pos (:position state)
+          to-pos (:position anchor)
+          dir (v- to-pos from-pos)
+          dist (magnitude dir)]
+      (if (< dist 0.0001)
+        ;; Already at target position, can't determine direction
+        state
+        (let [new-heading (normalize dir)
+              ;; Compute new up: try to keep it as close to original up as possible
+              ;; but orthogonal to new heading
+              old-up (:up state)
+              ;; Project old-up onto plane perpendicular to new-heading
+              ;; up' = up - (up · heading) * heading
+              dot-prod (dot old-up new-heading)
+              projected-up (v- old-up (v* new-heading dot-prod))
+              proj-mag (magnitude projected-up)
+              new-up (if (< proj-mag 0.0001)
+                       ;; old-up is parallel to new-heading, pick arbitrary perpendicular
+                       (let [arbitrary (if (< (Math/abs (first new-heading)) 0.9)
+                                         [1 0 0]
+                                         [0 1 0])]
+                         (normalize (cross new-heading arbitrary)))
+                       (normalize projected-up))]
+          (-> state
+              (assoc :heading new-heading)
+              (assoc :up new-up)))))
+    state))
+
+(defn path-to
+  "Create a path from current position to a named anchor.
+   Returns a path with a single (f distance) command.
+
+   Note: In implicit mode (REPL), this also orients the turtle toward
+   the anchor first (via look-at), so extrusions go in the correct direction.
+
+   Useful for: (extrude (circle 5) (path-to :target))
+   Returns nil if anchor doesn't exist."
+  [state name]
+  (when-let [anchor (get-in state [:anchors name])]
+    (let [from-pos (:position state)
+          to-pos (:position anchor)
+          dir (v- to-pos from-pos)
+          dist (magnitude dir)]
+      (make-path [{:cmd :f :args [dist]}]))))
 

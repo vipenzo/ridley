@@ -308,6 +308,230 @@ The `extrude-closed-from-path` function produces single manifold meshes by:
 - Building faces that connect consecutive rings
 - Using `(mod (inc ring-idx) n-rings)` for closed topology
 
+## Anchors and Navigation
+
+The anchor system provides named reference points for navigation in complex models.
+
+### Turtle State Stack
+
+The turtle maintains a **stack of saved poses**. This enables:
+- Temporary movements with automatic return
+- Branching constructions (L-systems, trees)
+- Attachment/detachment without losing original position
+
+```clojure
+;; Pose structure (what gets saved on the stack)
+{:position [x y z]
+ :heading [x y z]
+ :up [x y z]
+ :pen-mode :on}
+
+;; Stack in turtle state
+{:state-stack [pose1 pose2 ...]}  ; vector used as stack (conj/peek/pop)
+
+;; Commands
+(push-state)   ; Save current pose onto stack
+(pop-state)    ; Restore most recent saved pose
+```
+
+**Important**: The stack saves only the pose, not meshes or geometry. Any meshes created between push and pop are kept.
+
+### Anchor System
+
+Anchors are named poses stored in the turtle state:
+
+```clojure
+;; Anchors in turtle state
+{:anchors {:start {:position [0 0 0]
+                   :heading [1 0 0]
+                   :up [0 0 1]}
+           :corner {:position [100 0 0]
+                    :heading [0 1 0]
+                    :up [0 0 1]}}}
+
+;; Commands
+(mark :name)      ; Save current position + heading + up with name
+                  ; Overwrites if name already exists
+```
+
+### Navigation Commands
+
+```clojure
+(goto :name)      ; Move to anchor position AND adopt its heading/up
+                  ; Draws a line if pen-mode is :on
+
+(look-at :name)   ; Rotate heading to point toward anchor position
+                  ; Adjusts up to maintain orthogonality
+                  ; Does not move
+
+(path-to :name)   ; Orient toward anchor (implicit look-at), then return
+                  ; a path with single (f dist) to reach it
+                  ; Useful for: (extrude (circle 5) (path-to :target))
+```
+
+### Design Decisions
+
+1. **Stack saves pose only**: position, heading, up, pen-mode. Meshes created during push/pop persist.
+
+2. **goto is oriented**: Adopts the saved heading/up. No separate `goto-oriented` needed.
+
+3. **mark overwrites**: Calling `(mark :foo)` twice keeps only the latest value.
+
+4. **goto draws**: Respects pen-mode like any movement command. If pen is on, draws a line.
+
+5. **look-at adjusts up**: When rotating heading toward a point, up is recalculated to stay orthogonal while preserving the original up direction as much as possible.
+
+6. **path-to orients and returns path**: Implicitly does a `look-at` to orient the turtle toward the anchor, then returns a path with `(f dist)`. This ensures extrusions go in the correct direction:
+   ```clojure
+   (mark :target)
+   ;; ... do other things ...
+   (extrude (circle 5) (path-to :target))  ; Orients toward :target, then extrudes
+   ```
+
+---
+
+## Phase 3: Turtle Attachment System
+
+Phase 3 introduces the ability to "attach" the turtle to existing geometry elements (meshes, faces, edges, vertices) and manipulate them using standard turtle commands.
+
+### Core Concepts
+
+#### Attachment System
+
+When the turtle attaches to a geometry element, it:
+1. **Pushes** current state onto the stack (automatic)
+2. **Moves** to the element's position/orientation
+3. **Enters attachment mode** where commands affect the attached element
+
+```clojure
+;; Attach commands (all push state automatically)
+(attach mesh)              ; Attach to mesh at its creation pose
+(attach-face mesh :top)    ; Attach to face center, heading = normal
+(attach-edge mesh edge-id) ; Attach to edge midpoint
+(attach-vertex mesh v-id)  ; Attach to vertex position
+
+;; Detach (pops state, returns to previous position)
+(detach)
+```
+
+#### Mesh Creation Pose
+
+When a mesh is created, it remembers the turtle's pose at that moment:
+
+```clojure
+;; Mesh structure with creation pose
+{:type :mesh
+ :primitive :box
+ :vertices [...]
+ :faces [...]
+ :creation-pose {:position [0 0 0]
+                 :heading [1 0 0]
+                 :up [0 0 1]}}
+```
+
+This allows `(attach mesh)` to position the turtle exactly where it was when the mesh was created, enabling intuitive modifications.
+
+### Element-Specific Behavior
+
+#### When Attached to a Mesh
+- `f`, `th`, `tv`, `tr` → move/rotate the entire mesh
+- `(scale factor)` → scale the mesh uniformly
+- `(scale [sx sy sz])` → scale non-uniformly
+
+#### When Attached to a Face
+- Turtle position = face centroid
+- Turtle heading = face normal (outward)
+- Turtle up = first edge direction (for consistent orientation)
+- `f` → extrude the face (positive = add material, negative = subtract)
+- `(inset dist)` → create smaller face inside (or larger if negative)
+- `(scale factor)` → scale face vertices from centroid
+
+#### When Attached to an Edge
+- Turtle position = edge midpoint
+- Turtle heading = along the edge
+- Turtle up = average of adjacent face normals
+- `(bevel radius)` → bevel the edge
+- `(chamfer dist)` → chamfer the edge
+
+#### When Attached to a Vertex
+- Turtle position = vertex position
+- `(move [dx dy dz])` → move the vertex
+- Adjacent faces update automatically
+
+### Face Operations
+
+#### Extrusion
+```clojure
+(attach-face mesh :top)
+(f 20)        ; Extrude top face by 20 units (adds material)
+(f -10)       ; Extrude inward (subtracts material / creates pocket)
+(detach)
+```
+
+#### Inset
+```clojure
+(attach-face mesh :top)
+(inset 5)     ; Create smaller face 5 units inward from edges
+(f 10)        ; Extrude the inset face
+(detach)
+```
+
+#### Face Cutting (Future)
+```clojure
+(attach-face mesh :top)
+(circle 10)   ; Draw circle on face → creates new inner face
+(f -50)       ; Extrude circle inward → creates hole
+(detach)
+```
+
+### Inspection Commands
+
+```clojure
+;; List all faces of a mesh
+(list-faces mesh)
+; => [{:id :top :normal [0 0 1] :center [0 0 25] :vertices [0 1 2 3]}
+;     {:id :bottom :normal [0 0 -1] :center [0 0 0] :vertices [4 5 6 7]}
+;     ...]
+
+;; Get detailed info about a specific face
+(face-info mesh :top)
+; => {:id :top
+;     :normal [0 0 1]
+;     :center [0 0 25]
+;     :vertices [0 1 2 3]
+;     :vertex-positions [[x y z] [x y z] ...]
+;     :area 2500
+;     :edges [[0 1] [1 2] [2 3] [3 0]]}
+
+;; Highlight a face in the viewport (temporary flash)
+(flash-face mesh :top)
+
+;; List edges
+(list-edges mesh)
+; => [{:id 0 :vertices [0 1] :faces [:top :front]}
+;     ...]
+```
+
+### Design Decisions
+
+1. **Stack-based attachment**: Using push/pop instead of explicit save/restore simplifies the mental model and naturally handles nested operations.
+
+2. **Automatic push on attach**: `(attach ...)` always pushes state, `(detach)` always pops. This ensures you can't "lose" your position.
+
+3. **Mesh remembers creation pose**: Enables intuitive "go back to where I made this" workflow.
+
+4. **No multi-selection**: Complex multi-element operations can be expressed with Clojure:
+   ```clojure
+   (doseq [id [:top :bottom :left :right]]
+     (attach-face mesh id)
+     (inset 2)
+     (detach))
+   ```
+
+5. **No built-in undo**: The language itself is the undo mechanism — re-evaluate with changes.
+
+6. **Face orientation**: When attached to a face, heading is always the outward normal. This makes `(f 10)` consistently mean "extrude outward" and `(f -10)` mean "extrude inward/cut".
+
 ## Future Considerations
 
 - **Undo/redo** — Since state is immutable, history is just a list of states
