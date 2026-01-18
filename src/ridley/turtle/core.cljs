@@ -313,6 +313,149 @@
          :vertices vertices
          :faces side-faces}))))
 
+;; --- Joint mode helper functions ---
+
+(defn- ring-centroid
+  "Calculate the centroid of a ring (vector of 3D points)."
+  [ring]
+  (let [n (count ring)
+        sum (reduce (fn [[sx sy sz] [x y z]]
+                      [(+ sx x) (+ sy y) (+ sz z)])
+                    [0 0 0] ring)]
+    [(/ (first sum) n) (/ (second sum) n) (/ (nth sum 2) n)]))
+
+(defn- rotate-ring-around-axis
+  "Rotate all points of a ring around an axis passing through a pivot point."
+  [ring pivot axis angle]
+  (mapv (fn [pt]
+          (let [;; Translate to origin (relative to pivot)
+                rel (v- pt pivot)
+                ;; Rotate around axis
+                rotated (let [k (normalize axis)
+                              cos-a (Math/cos angle)
+                              sin-a (Math/sin angle)
+                              term1 (v* rel cos-a)
+                              term2 (v* (cross k rel) sin-a)
+                              term3 (v* k (* (dot k rel) (- 1 cos-a)))]
+                          (v+ (v+ term1 term2) term3))]
+            ;; Translate back
+            (v+ rotated pivot)))
+        ring))
+
+(defn- scale-ring-from-centroid
+  "Scale a ring uniformly from its centroid."
+  [ring scale-factor]
+  (let [centroid (ring-centroid ring)]
+    (mapv (fn [pt]
+            (let [rel (v- pt centroid)
+                  scaled (v* rel scale-factor)]
+              (v+ centroid scaled)))
+          ring)))
+
+(defn- generate-round-corner-rings
+  "Generate intermediate rings for a rounded corner.
+
+   Parameters:
+   - end-ring: the last ring before the corner
+   - corner-pos: position at the corner vertex (unused, kept for API compatibility)
+   - old-heading: heading before rotation
+   - new-heading: heading after rotation
+   - n-steps: number of intermediate rings (more = smoother)
+   - radius: the shape radius (needed to find pivot point)
+
+   Returns a vector of intermediate rings.
+   These connect end-ring to the start of the next segment."
+  [end-ring _corner-pos old-heading new-heading n-steps radius]
+  (let [;; Calculate rotation axis (perpendicular to both headings)
+        axis (cross old-heading new-heading)
+        axis-mag (magnitude axis)]
+    ;; If headings are parallel, no corner needed
+    (if (< axis-mag 0.001)
+      []
+      (let [axis-norm (normalize axis)
+            ;; Total angle to rotate = angle between headings
+            cos-angle (dot old-heading new-heading)
+            total-angle (Math/acos (min 1 (max -1 cos-angle)))
+            ;; Step angle - divide angle into n-steps segments
+            step-angle (/ total-angle n-steps)
+            ;; Direction toward the center of the turn
+            ;; This is perpendicular to old-heading, in the plane of the turn
+            ;; cross(axis, old-heading) points toward the inside of the curve
+            center-dir (normalize (cross axis-norm old-heading))
+            ;; The pivot is at the ring's centroid + radius in the center direction
+            ;; This is the point on the cylinder surface where the two cylinders touch
+            end-centroid (ring-centroid end-ring)
+            pivot (v+ end-centroid (v* center-dir radius))]
+        ;; Generate intermediate rings by rotating around the pivot point
+        ;; The end-ring stays where it is (at end-pos), we rotate it around the pivot
+        (vec
+         (for [i (range 1 (inc n-steps))]
+           (let [angle (* i step-angle)]
+             (rotate-ring-around-axis end-ring pivot axis-norm angle))))))))
+
+(defn- scale-ring-along-direction
+  "Scale a ring along a specific direction from its centroid.
+   Points are stretched along 'direction' by scale-factor, unchanged perpendicular to it."
+  [ring direction scale-factor]
+  (let [centroid (ring-centroid ring)
+        dir-norm (normalize direction)]
+    (mapv (fn [pt]
+            (let [rel (v- pt centroid)
+                  ;; Project rel onto direction
+                  proj-len (dot rel dir-norm)
+                  proj (v* dir-norm proj-len)
+                  ;; Perpendicular component stays the same
+                  perp (v- rel proj)
+                  ;; Scale only the projection component
+                  scaled-proj (v* proj scale-factor)
+                  ;; Recombine
+                  new-rel (v+ perp scaled-proj)]
+              (v+ centroid new-rel)))
+          ring)))
+
+(defn- generate-tapered-corner-rings
+  "Generate intermediate ring for a tapered/beveled corner.
+
+   Creates a single intermediate ring at the corner, scaled along the
+   bisector direction to maintain continuous cross-section.
+
+   Parameters:
+   - end-ring: the last ring before the corner
+   - corner-pos: position at the corner vertex
+   - old-heading: heading before rotation
+   - new-heading: heading after rotation
+
+   Returns a vector with one intermediate ring."
+  [end-ring corner-pos old-heading new-heading]
+  (let [;; Calculate the angle between headings
+        cos-angle (dot old-heading new-heading)
+        total-angle (Math/acos (min 1 (max -1 cos-angle)))
+        half-angle (/ total-angle 2)
+        ;; Scale factor to prevent pinching: 1/cos(half_angle)
+        ;; At 90°: scale = 1/cos(45°) ≈ 1.414
+        ;; At 60°: scale = 1/cos(30°) ≈ 1.155
+        scale-factor (if (> (Math/cos half-angle) 0.1)
+                       (/ 1 (Math/cos half-angle))
+                       2.0)  ; Cap at 2x for very sharp angles
+        ;; Calculate rotation axis (perpendicular to both headings)
+        axis (cross old-heading new-heading)
+        axis-mag (magnitude axis)]
+    (if (< axis-mag 0.001)
+      ;; Headings are parallel, no corner needed
+      []
+      (let [axis-norm (normalize axis)
+            ;; First translate end-ring to corner position
+            end-centroid (ring-centroid end-ring)
+            offset (v- corner-pos end-centroid)
+            translated-ring (mapv #(v+ % offset) end-ring)
+            ;; Rotate by half the angle to align with bisector
+            rotated-ring (rotate-ring-around-axis translated-ring corner-pos axis-norm half-angle)
+            ;; Scale only along the bisector direction (perpendicular to the axis)
+            ;; The stretch direction is perpendicular to both axis and the rotated heading
+            stretch-dir (normalize (cross axis-norm (normalize (v+ old-heading new-heading))))
+            scaled-ring (scale-ring-along-direction rotated-ring stretch-dir scale-factor)]
+        [scaled-ring]))))
+
 (defn- process-pending-rotation
   "Process a pending rotation when moving forward.
    Creates separate meshes for the pre-rotation segment and corner.
@@ -504,6 +647,15 @@
     (let [rad (deg->rad angle)
           new-up (rotate-around-axis (:up state) (:heading state) rad)]
       (assoc state :up new-up))))
+
+;; --- Joint mode (for future corner styles) ---
+
+(defn joint-mode
+  "Set the joint mode for corners during extrusion.
+   Currently supported: :flat (default)
+   Future: :round, :tapered"
+  [state mode]
+  (assoc state :joint-mode mode))
 
 ;; --- Pen commands ---
 
@@ -1080,4 +1232,202 @@
             state
             (:commands path))
     state))
+
+;; ============================================================
+;; Extrude with pre-processed path (open path, unified mesh)
+;; ============================================================
+
+(defn- analyze-open-path
+  "Analyze a path for open extrusion.
+   Returns a vector of segments with their adjustments.
+
+   For an open path:
+   - First segment: no shorten-start (unless preceded by rotation in commands)
+   - Last segment: no shorten-end
+   - Middle segments: shorten both ends at corners
+
+   Returns: [{:cmd :f :dist 20 :shorten-start r :shorten-end r :rotations-after [...]}]"
+  [commands radius]
+  (let [cmds (vec commands)
+        n (count cmds)
+        ;; Find all forward commands and their indices
+        forwards (keep-indexed (fn [i c] (when (= :f (:cmd c)) [i c])) cmds)
+        n-forwards (count forwards)]
+    (vec
+     (map-indexed
+      (fn [fwd-idx [idx cmd]]
+        (let [dist (first (:args cmd))
+              is-first (zero? fwd-idx)
+              is-last (= fwd-idx (dec n-forwards))
+              ;; Check if there's a rotation before this forward
+              prev-idx (dec idx)
+              has-rotation-before (and (>= prev-idx 0)
+                                       (is-rotation? (:cmd (nth cmds prev-idx))))
+              ;; Collect all rotations after this forward until next forward or end
+              rotations-after (loop [i (inc idx)
+                                     rots []]
+                                (if (>= i n)
+                                  rots
+                                  (let [c (nth cmds i)]
+                                    (if (is-rotation? (:cmd c))
+                                      (recur (inc i) (conj rots c))
+                                      rots))))
+              has-rotation-after (seq rotations-after)]
+          {:cmd :f
+           :dist dist
+           ;; Open path: first segment doesn't shorten start
+           :shorten-start (if (and has-rotation-before (not is-first)) radius 0)
+           ;; Open path: last segment doesn't shorten end
+           :shorten-end (if (and has-rotation-after (not is-last)) radius 0)
+           :rotations-after rotations-after}))
+      forwards))))
+
+(defn extrude-from-path
+  "Extrude a shape along an open path, creating a SINGLE unified mesh.
+
+   Pre-processes the path to calculate correct segment lengths.
+   Collects all rings in order and builds one mesh with side faces and end caps.
+
+   Returns the turtle state with the mesh added."
+  [state shape path]
+  (if-not (and (shape? shape) (is-path? path))
+    state
+    (let [radius (shape-radius shape)
+          commands (:commands path)
+          segments (analyze-open-path commands radius)
+          n-segments (count segments)]
+      (if (< n-segments 1)
+        state
+        ;; First pass: collect ALL rings in order
+        (let [rings-result
+              (loop [i 0
+                     s state
+                     rings []]
+                (if (>= i n-segments)
+                  {:rings rings :state s}
+                  (let [seg (nth segments i)
+                        dist (:dist seg)
+                        shorten-start (:shorten-start seg)
+                        shorten-end (:shorten-end seg)
+                        rotations (:rotations-after seg)
+                        effective-dist (- dist shorten-start shorten-end)
+                        is-last (= i (dec n-segments))
+
+                        ;; For first segment, start at current position
+                        ;; For subsequent segments, position is already correct from previous iteration
+                        start-pos (:position s)
+                        s1 (assoc s :position start-pos)
+
+                        ;; Create start ring
+                        start-ring (stamp-shape s1 shape)
+
+                        ;; Position at end of segment
+                        end-pos (v+ start-pos (v* (:heading s1) effective-dist))
+                        s2 (assoc s1 :position end-pos)
+                        end-ring (stamp-shape s2 shape)
+
+                        ;; Move to corner position
+                        corner-pos (v+ end-pos (v* (:heading s2) shorten-end))
+                        s3 (assoc s2 :position corner-pos)
+
+                        ;; Apply rotations and get new heading
+                        s4 (reduce apply-rotation-to-state s3 rotations)
+                        old-heading (:heading s3)
+                        new-heading (:heading s4)
+
+                        ;; Generate corner rings based on joint-mode
+                        joint-mode (or (:joint-mode state) :flat)
+                        corner-rings (if (and (seq rotations) (not is-last))
+                                       (case joint-mode
+                                         :round (generate-round-corner-rings
+                                                 end-ring corner-pos old-heading new-heading 4 radius)
+                                         :tapered (generate-tapered-corner-rings
+                                                   end-ring corner-pos old-heading new-heading)
+                                         ;; :flat - no intermediate rings
+                                         [])
+                                       [])
+
+                        ;; Position for next segment (if any)
+                        ;; Same calculation for all joint modes
+                        next-shorten-start (if (and (not is-last) (seq rotations))
+                                             (:shorten-start (nth segments (inc i)))
+                                             0)
+                        next-start-pos (v+ corner-pos (v* (:heading s4) next-shorten-start))
+                        s-next (assoc s4 :position next-start-pos)
+
+                        ;; Collect rings for this segment
+                        ;; start-ring + end-ring + any corner rings
+                        new-rings (into (conj rings start-ring end-ring) corner-rings)]
+                    (recur (inc i) s-next new-rings))))
+
+              all-rings (:rings rings-result)
+              final-state (:state rings-result)
+              n-rings (count all-rings)
+              n-verts (count (first all-rings))]
+
+          (if (< n-rings 2)
+            state
+            ;; Build single unified mesh from all rings
+            (let [;; Calculate centroid for cap
+                  calc-centroid (fn [ring]
+                                  (let [n (count ring)
+                                        sum (reduce (fn [[sx sy sz] [x y z]]
+                                                      [(+ sx x) (+ sy y) (+ sz z)])
+                                                    [0 0 0] ring)]
+                                    [(/ (first sum) n) (/ (second sum) n) (/ (nth sum 2) n)]))
+
+                  first-ring (first all-rings)
+                  last-ring (last all-rings)
+                  bottom-centroid (calc-centroid first-ring)
+                  top-centroid (calc-centroid last-ring)
+
+                  ;; Vertices: bottom-centroid + all rings + top-centroid
+                  ;; Layout: [bottom-centroid, ring0-v0, ring0-v1, ..., ring0-vN, ring1-v0, ..., top-centroid]
+                  vertices (vec (concat [bottom-centroid]
+                                        (apply concat all-rings)
+                                        [top-centroid]))
+
+                  ;; Bottom cap faces (fan from centroid at index 0)
+                  ;; Ring vertices start at index 1
+                  bottom-cap-faces (vec (for [j (range n-verts)]
+                                          (let [v0 (+ 1 j)
+                                                v1 (+ 1 (mod (inc j) n-verts))]
+                                            ;; CCW from outside (facing backward along extrusion)
+                                            [0 v0 v1])))
+
+                  ;; Side faces connecting consecutive rings
+                  ;; Ring i vertices: 1 + i*n-verts to 1 + (i+1)*n-verts - 1
+                  side-faces (vec
+                              (mapcat
+                               (fn [ring-idx]
+                                 (mapcat
+                                  (fn [vert-idx]
+                                    (let [next-vert (mod (inc vert-idx) n-verts)
+                                          base (+ 1 (* ring-idx n-verts))
+                                          next-base (+ 1 (* (inc ring-idx) n-verts))
+                                          b0 (+ base vert-idx)
+                                          b1 (+ base next-vert)
+                                          t0 (+ next-base vert-idx)
+                                          t1 (+ next-base next-vert)]
+                                      ;; CCW winding from outside
+                                      [[b0 t0 t1] [b0 t1 b1]]))
+                                  (range n-verts)))
+                               (range (dec n-rings))))
+
+                  ;; Top cap faces (fan from centroid at last index)
+                  top-centroid-idx (dec (count vertices))
+                  last-ring-base (+ 1 (* (dec n-rings) n-verts))
+                  top-cap-faces (vec (for [j (range n-verts)]
+                                       (let [v0 (+ last-ring-base j)
+                                             v1 (+ last-ring-base (mod (inc j) n-verts))]
+                                         ;; CCW from outside (facing forward along extrusion)
+                                         [top-centroid-idx v1 v0])))
+
+                  all-faces (vec (concat bottom-cap-faces side-faces top-cap-faces))
+
+                  mesh {:type :mesh
+                        :primitive :extrusion
+                        :vertices vertices
+                        :faces all-faces}]
+              (update final-state :meshes conj mesh))))))))
 

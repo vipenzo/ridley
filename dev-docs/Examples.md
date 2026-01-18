@@ -253,6 +253,43 @@ Available shape transforms:
 (f 30)                   ; This draws a line when pen is :on
 ```
 
+### Joint Modes
+
+`joint-mode` controls how corners are rendered during extrusion:
+
+```clojure
+;; :flat (default) - direct connection, sharp corners
+(joint-mode :flat)
+(extrude (circle 5) (f 30) (th 90) (f 30))
+
+;; :round - smooth arc at corners
+(joint-mode :round)
+(extrude (circle 5) (f 30) (th 90) (f 30))
+
+;; :tapered - beveled corners with scaling
+(joint-mode :tapered)
+(extrude (circle 5) (f 30) (th 90) (f 30))
+```
+
+Comparison of joint modes side by side:
+
+```clojure
+;; Flat joint (default)
+(reset [0 0 0])
+(joint-mode :flat)
+(extrude (circle 5) (f 30) (th 90) (f 30))
+
+;; Round joint
+(reset [40 0 0])
+(joint-mode :round)
+(extrude (circle 5) (f 30) (th 90) (f 30))
+
+;; Tapered joint
+(reset [80 0 0])
+(joint-mode :tapered)
+(extrude (circle 5) (f 30) (th 90) (f 30))
+```
+
 ---
 
 ## Paths (Recorded Movements)

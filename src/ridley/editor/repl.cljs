@@ -56,6 +56,9 @@
   ([pos] (swap! turtle-atom turtle/reset-pose pos))
   ([pos & opts] (swap! turtle-atom #(apply turtle/reset-pose % pos opts))))
 
+(defn- implicit-joint-mode [mode]
+  (swap! turtle-atom turtle/joint-mode mode))
+
 ;; Pure primitive constructors - return mesh data at origin (no side effects)
 (defn- pure-box
   ([size] (prims/box-mesh size))
@@ -136,6 +139,10 @@
   (swap! turtle-atom turtle/extrude-closed-from-path shape path)
   (last (:meshes @turtle-atom)))
 
+(defn- implicit-extrude-path [shape path]
+  (swap! turtle-atom turtle/extrude-from-path shape path)
+  (last (:meshes @turtle-atom)))
+
 ;; ============================================================
 ;; Shared SCI context
 ;; ============================================================
@@ -155,6 +162,7 @@
    'pen-up       implicit-pen-up
    'pen-down     implicit-pen-down
    'reset        implicit-reset
+   'joint-mode   implicit-joint-mode
    ;; 3D primitives - return mesh data at origin (no side effects)
    'box          pure-box
    'sphere       pure-sphere
@@ -217,6 +225,7 @@
    'run-path-impl       turtle/run-path
    'path?               turtle/path?
    'extrude-closed-path-impl implicit-extrude-closed-path
+   'extrude-path-impl        implicit-extrude-path
    ;; Sweep between two shapes
    'stamp-shape-at      turtle/stamp-shape-at
    'sweep-two-shapes    turtle/sweep-two-shapes
@@ -296,27 +305,20 @@
    ;; (extrude (circle 15) (f 30)) - stamp circle, extrude 30 units forward
    ;; (extrude (circle 15) my-path) - extrude along a recorded path
    ;; (extrude (rect 20 10) (f 20) (th 45) (f 20)) - sweep with turns
-   ;; Builds a unified mesh from all movements, restores previous pen mode
+   ;; Uses two-pass approach: first records movements into a path,
+   ;; then processes with correct segment shortening at corners.
    ;; Returns the created mesh (can be bound with def)
    (defmacro extrude [shape & movements]
      (if (and (= 1 (count movements)) (symbol? (first movements)))
        ;; Single symbol - might be a path, check at runtime
-       `(let [prev-mode# (:pen-mode (get-turtle))
-              arg# ~(first movements)]
-          (stamp-impl ~shape)
+       `(let [arg# ~(first movements)]
           (if (path? arg#)
-            (run-path arg#)
-            ~(first movements))
-          (finalize-sweep-impl)
-          (pen-impl prev-mode#)
-          (last-mesh))
-       ;; Multiple movements or literals - execute directly
-       `(let [prev-mode# (:pen-mode (get-turtle))]
-          (stamp-impl ~shape)
-          ~@movements
-          (finalize-sweep-impl)
-          (pen-impl prev-mode#)
-          (last-mesh))))
+            ;; Already a path - use path-based extrusion
+            (extrude-path-impl ~shape arg#)
+            ;; Not a path - wrap in path macro and extrude
+            (extrude-path-impl ~shape (path ~(first movements)))))
+       ;; Multiple movements - wrap in path macro for two-pass processing
+       `(extrude-path-impl ~shape (path ~@movements))))
 
    ;; extrude-closed: like extrude but creates a closed torus-like mesh
    ;; (extrude-closed (circle 5) square-path) - closed torus along path
