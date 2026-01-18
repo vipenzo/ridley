@@ -31,7 +31,8 @@
    :geometry []
    :meshes []
    :state-stack []          ; stack for push-state/pop-state
-   :anchors {}})            ; named poses for mark/goto
+   :anchors {}              ; named poses for mark/goto
+   :attached nil})           ; attachment state for face/mesh operations
 
 ;; --- State stack ---
 
@@ -553,6 +554,166 @@
         (assoc :sweep-rings [first-new-ring])
         (dissoc :pending-rotation))))
 
+;; --- Mesh movement when attached ---
+
+(defn- translate-mesh
+  "Translate all vertices of a mesh by an offset vector."
+  [mesh offset]
+  (-> mesh
+      (update :vertices (fn [verts] (mapv #(v+ % offset) verts)))
+      (update :creation-pose
+              (fn [pose]
+                (when pose
+                  (update pose :position #(v+ % offset)))))))
+
+(defn- replace-mesh-in-state
+  "Replace a mesh in the state's meshes vector."
+  [state old-mesh new-mesh]
+  (update state :meshes
+          (fn [meshes]
+            (mapv #(if (identical? % old-mesh) new-mesh %) meshes))))
+
+(defn- move-attached-mesh
+  "Move the attached mesh along the turtle's heading direction."
+  [state dist]
+  (let [attachment (:attached state)
+        mesh (:mesh attachment)
+        heading (:heading state)
+        offset (v* heading dist)
+        new-mesh (translate-mesh mesh offset)
+        new-pos (v+ (:position state) offset)]
+    (-> state
+        (replace-mesh-in-state mesh new-mesh)
+        (assoc :position new-pos)
+        (assoc-in [:attached :mesh] new-mesh)
+        (assoc-in [:attached :original-pose :position] new-pos))))
+
+;; --- Face extrusion when attached to face ---
+
+(defn- extract-face-perimeter
+  "Extract ordered perimeter vertices from face triangles.
+   Returns vector of vertex indices in order around the face boundary."
+  [triangles]
+  (let [;; Collect all edges from triangles
+        edges (mapcat (fn [[a b c]] [[a b] [b c] [c a]]) triangles)
+        ;; Count edge occurrences (boundary edges appear once, internal edges twice)
+        edge-counts (frequencies (map (fn [[a b]] #{a b}) edges))
+        ;; Keep only boundary edges (appear once)
+        boundary-edges (filter (fn [[a b]] (= 1 (get edge-counts #{a b}))) edges)
+        ;; Build adjacency map
+        adj (reduce (fn [m [a b]] (update m a (fnil conj []) b))
+                    {} boundary-edges)]
+    ;; Walk the boundary starting from first edge
+    (when (seq boundary-edges)
+      (let [start (ffirst boundary-edges)]
+        (loop [current start
+               visited #{}
+               result []]
+          (if (contains? visited current)
+            result
+            (let [next-v (first (filter #(not (contains? visited %))
+                                        (get adj current)))]
+              (if next-v
+                (recur next-v (conj visited current) (conj result current))
+                (conj result current)))))))))
+
+(defn- build-face-extrusion
+  "Extrude a face by creating new vertices and side faces.
+   Returns updated mesh with extruded face."
+  [mesh face-id face-info dist]
+  (let [vertices (:vertices mesh)
+        faces (:faces mesh)
+        face-groups (:face-groups mesh)
+        normal (:normal face-info)
+        offset (v* normal dist)
+
+        ;; Get face triangles and extract ordered perimeter
+        face-triangles (:triangles face-info)
+        perimeter (extract-face-perimeter face-triangles)
+        n-old-verts (count vertices)
+        n-perimeter (count perimeter)
+
+        ;; Create new vertices at offset positions (for perimeter vertices only)
+        new-verts (mapv (fn [idx]
+                          (v+ (nth vertices idx) offset))
+                        perimeter)
+
+        ;; Map old perimeter vertex indices to new vertex indices
+        index-mapping (zipmap perimeter
+                              (range n-old-verts (+ n-old-verts n-perimeter)))
+
+        ;; Build side faces (quads as two triangles each)
+        ;; For each edge of the perimeter, create a quad connecting old to new vertices
+        side-faces (vec
+                    (mapcat
+                     (fn [i]
+                       (let [next-i (mod (inc i) n-perimeter)
+                             ;; Old edge vertices (perimeter order)
+                             b0 (nth perimeter i)
+                             b1 (nth perimeter next-i)
+                             ;; New edge vertices
+                             t0 (get index-mapping b0)
+                             t1 (get index-mapping b1)]
+                         ;; Two triangles forming the quad
+                         ;; Side faces need CCW winding when viewed from outside
+                         ;; For extrusion outward: b0-b1 is bottom edge, t0-t1 is top edge
+                         [[b0 b1 t1] [b0 t1 t0]]))
+                     (range n-perimeter)))
+
+        ;; Create new top face triangles (same winding, new indices)
+        new-top-triangles (mapv (fn [[i j k]]
+                                  [(get index-mapping i)
+                                   (get index-mapping j)
+                                   (get index-mapping k)])
+                                face-triangles)
+
+        ;; Remove old face triangles from faces list
+        old-face-set (set face-triangles)
+        remaining-faces (vec (remove old-face-set faces))
+
+        ;; Combine all faces
+        all-faces (vec (concat remaining-faces side-faces new-top-triangles))
+
+        ;; Update face-groups
+        side-face-id (keyword (str (name face-id) "-sides-" (count vertices)))
+        new-face-groups (-> face-groups
+                           (assoc face-id new-top-triangles)
+                           (assoc side-face-id side-faces))]
+
+    (assoc mesh
+           :vertices (vec (concat vertices new-verts))
+           :faces all-faces
+           :face-groups new-face-groups)))
+
+(defn- extrude-attached-face
+  "Extrude the attached face along its normal."
+  [state dist]
+  (let [attachment (:attached state)
+        mesh (:mesh attachment)
+        face-id (:face-id attachment)
+        face-info (:face-info attachment)
+        normal (:normal face-info)
+        center (:center face-info)
+
+        ;; Build extruded mesh
+        new-mesh (build-face-extrusion mesh face-id face-info dist)
+
+        ;; Calculate new face center
+        new-center (v+ center (v* normal dist))
+
+        ;; Update face info with new center and triangles
+        new-triangles (get-in new-mesh [:face-groups face-id])
+        new-face-info (-> face-info
+                          (assoc :center new-center)
+                          (assoc :triangles new-triangles)
+                          ;; Update vertex indices to the new vertices
+                          (assoc :vertices (vec (distinct (mapcat identity new-triangles)))))]
+    (-> state
+        (replace-mesh-in-state mesh new-mesh)
+        (assoc :position new-center)
+        (assoc-in [:attached :mesh] new-mesh)
+        (assoc-in [:attached :face-info] new-face-info))))
+
 ;; --- Movement commands ---
 
 (defn- move
@@ -627,9 +788,16 @@
       (assoc state :position new-pos))))
 
 (defn f
-  "Move forward by distance. Use negative values to move backward."
+  "Move forward by distance. Use negative values to move backward.
+   When attached to a mesh, moves the entire mesh.
+   When attached to a face, extrudes the face along its normal."
   [state dist]
-  (move state (:heading state) dist))
+  (if-let [attachment (:attached state)]
+    (case (:type attachment)
+      :pose (move-attached-mesh state dist)
+      :face (extrude-attached-face state dist)
+      (move state (:heading state) dist))
+    (move state (:heading state) dist)))
 
 ;; --- Rotation commands ---
 
@@ -1575,4 +1743,96 @@
           dir (v- to-pos from-pos)
           dist (magnitude dir)]
       (make-path [{:cmd :f :args [dist]}]))))
+
+;; ============================================================
+;; Attachment system - attach to meshes and faces
+;; ============================================================
+
+(defn- compute-triangle-normal
+  "Compute normal vector for a triangle given three vertices."
+  [v0 v1 v2]
+  (let [edge1 (v- v1 v0)
+        edge2 (v- v2 v0)]
+    (normalize (cross edge1 edge2))))
+
+(defn- compute-face-info-internal
+  "Compute normal, heading, and center for a face group.
+   Returns {:normal :heading :center :vertices :triangles}."
+  [vertices face-triangles]
+  (when (seq face-triangles)
+    (let [all-indices (distinct (mapcat identity face-triangles))
+          face-verts (mapv #(nth vertices % [0 0 0]) all-indices)
+          center (v* (reduce v+ [0 0 0] face-verts) (/ 1 (count face-verts)))
+          [i0 i1 i2] (first face-triangles)
+          v0 (nth vertices i0 [0 0 0])
+          v1 (nth vertices i1 [0 0 0])
+          v2 (nth vertices i2 [0 0 0])
+          normal (compute-triangle-normal v0 v1 v2)
+          edge1 (v- v1 v0)
+          heading (normalize edge1)]
+      {:normal normal
+       :heading heading
+       :center center
+       :vertices (vec all-indices)
+       :triangles face-triangles})))
+
+(defn attached?
+  "Check if turtle is currently attached to a mesh or face."
+  [state]
+  (some? (:attached state)))
+
+(defn attach
+  "Attach to a mesh's creation pose.
+   Pushes current state, moves turtle to the mesh's creation position,
+   adopts its heading and up vectors.
+   Returns state unchanged if mesh has no creation-pose."
+  [state mesh]
+  (if-let [pose (:creation-pose mesh)]
+    (-> state
+        (push-state)
+        (assoc :position (:position pose))
+        (assoc :heading (:heading pose))
+        (assoc :up (:up pose))
+        (assoc :attached {:type :pose
+                          :mesh mesh
+                          :original-pose pose}))
+    state))
+
+(defn attach-face
+  "Attach to a specific face of a mesh.
+   Pushes current state, moves turtle to face center,
+   sets heading to face normal (outward), up perpendicular.
+   Returns state unchanged if face not found."
+  [state mesh face-id]
+  (if-let [face-groups (:face-groups mesh)]
+    (if-let [triangles (get face-groups face-id)]
+      (let [info (compute-face-info-internal (:vertices mesh) triangles)
+            normal (:normal info)
+            center (:center info)
+            ;; Derive up vector perpendicular to normal
+            face-heading (:heading info)
+            ;; up = normal × face-heading (perpendicular to both)
+            up (normalize (cross normal face-heading))]
+        (-> state
+            (push-state)
+            (assoc :position center)
+            (assoc :heading normal)
+            (assoc :up up)
+            (assoc :attached {:type :face
+                              :mesh mesh
+                              :face-id face-id
+                              :face-info info})))
+      state)
+    state))
+
+(defn detach
+  "Detach from current attachment and restore previous position.
+   Equivalent to pop-state but also clears :attached.
+   Returns state unchanged if not attached."
+  [state]
+  (if (:attached state)
+    (-> state
+        (pop-state)
+        (assoc :attached nil))
+    state))
 

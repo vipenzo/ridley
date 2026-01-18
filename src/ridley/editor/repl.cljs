@@ -32,7 +32,15 @@
 ;; ============================================================
 
 (defn- implicit-f [dist]
-  (swap! turtle-atom turtle/f dist))
+  (let [old-attached (:attached @turtle-atom)
+        registry-idx (:registry-index old-attached)]
+    (swap! turtle-atom turtle/f dist)
+    ;; If attached with registry index, update the registry directly
+    (when registry-idx
+      (let [new-mesh (get-in @turtle-atom [:attached :mesh])]
+        (when new-mesh
+          (registry/update-mesh-at-index! registry-idx new-mesh)
+          (registry/refresh-viewport! false))))))
 
 (defn- implicit-th [angle]
   (swap! turtle-atom turtle/th angle))
@@ -86,6 +94,31 @@
   (swap! turtle-atom turtle/look-at name)
   (turtle/path-to @turtle-atom name))
 
+;; Attachment commands
+;; Store registry index in :attached so we can update the real mesh
+(defn- implicit-attach [mesh]
+  (let [idx (registry/get-mesh-index mesh)
+        ;; Get the current mesh from registry (may have been modified since def)
+        current-mesh (if idx (registry/get-mesh-at-index idx) mesh)]
+    (swap! turtle-atom (fn [state]
+                         (let [state' (turtle/attach state current-mesh)]
+                           (if idx
+                             (assoc-in state' [:attached :registry-index] idx)
+                             state'))))))
+
+(defn- implicit-attach-face [mesh face-id]
+  (let [idx (registry/get-mesh-index mesh)
+        ;; Get the current mesh from registry (may have been modified since def)
+        current-mesh (if idx (registry/get-mesh-at-index idx) mesh)]
+    (swap! turtle-atom (fn [state]
+                         (let [state' (turtle/attach-face state current-mesh face-id)]
+                           (if idx
+                             (assoc-in state' [:attached :registry-index] idx)
+                             state'))))))
+
+(defn- implicit-detach []
+  (swap! turtle-atom turtle/detach))
+
 ;; Pure primitive constructors - return mesh data at origin (no side effects)
 (defn- pure-box
   ([size] (prims/box-mesh size))
@@ -105,28 +138,36 @@
 
 ;; Transform a mesh to turtle position/orientation
 (defn- transform-mesh-to-turtle
-  "Transform a mesh's vertices to current turtle position and orientation."
+  "Transform a mesh's vertices to current turtle position and orientation.
+   Also stores creation-pose so mesh can be re-attached later."
   [mesh]
   (let [turtle @turtle-atom
+        position (:position turtle)
+        heading (:heading turtle)
+        up (:up turtle)
         transformed-verts (prims/apply-transform
                            (:vertices mesh)
-                           (:position turtle)
-                           (:heading turtle)
-                           (:up turtle))]
-    (assoc mesh :vertices (vec transformed-verts))))
+                           position
+                           heading
+                           up)]
+    (-> mesh
+        (assoc :vertices (vec transformed-verts))
+        (assoc :creation-pose {:position position
+                               :heading heading
+                               :up up}))))
 
 ;; stamp: materialize mesh at turtle position, add to scene as visible
 ;; Only works with primitives (box, sphere, cyl, cone) - not extrude results
 (defn- implicit-stamp
   "Materialize a mesh at current turtle position and show it.
-   Returns the transformed mesh.
+   Returns the transformed mesh with :registry-id.
    Only works with primitives - throws error for extrude results."
   [mesh]
   (if (:primitive mesh)
-    (let [transformed (transform-mesh-to-turtle mesh)]
-      (registry/add-mesh! transformed nil true)
+    (let [transformed (transform-mesh-to-turtle mesh)
+          mesh-with-id (registry/add-mesh! transformed nil true)]
       (registry/refresh-viewport! false)  ; Don't reset camera
-      transformed)
+      mesh-with-id)
     (throw (js/Error. (str "stamp only works with primitives (box, sphere, cyl, cone). "
                            "For extrude results, use 'register' directly.")))))
 
@@ -199,6 +240,11 @@
    'goto         implicit-goto
    'look-at      implicit-look-at
    'path-to      implicit-path-to
+   ;; Attachment commands
+   'attach       implicit-attach
+   'attach-face  implicit-attach-face
+   'detach       implicit-detach
+   'attached?    (fn [] (turtle/attached? @turtle-atom))
    ;; 3D primitives - return mesh data at origin (no side effects)
    'box          pure-box
    'sphere       pure-sphere

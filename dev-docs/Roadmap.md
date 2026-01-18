@@ -107,45 +107,46 @@
 
 **Goal**: Enable the turtle to attach to geometry elements (meshes, faces, edges, vertices) and manipulate them using standard turtle commands.
 
-### 3.1 Mesh Creation Pose
-- [ ] Store turtle pose in mesh when created: `:creation-pose {:position :heading :up}`
-- [ ] Update `box`, `sphere`, `cyl`, `cone` to include creation pose
-- [ ] Update extrusion/sweep/loft to include creation pose
-- [ ] `(attach mesh)` positions turtle at mesh's creation pose
+### 3.1 Mesh Creation Pose ✓
+- [x] Store turtle pose in mesh when created: `:creation-pose {:position :heading :up}`
+- [x] Update `box`, `sphere`, `cyl`, `cone` to include creation pose
+- [x] Update extrusion/sweep/loft to include creation pose
+- [x] `(attach mesh)` positions turtle at mesh's creation pose
 
-### 3.2 Inspection Commands
-- [ ] `(list-faces mesh)` — return list of faces with id, normal, center, vertices
-- [ ] `(face-info mesh face-id)` — detailed info: normal, center, vertices, area, edges
+### 3.2 Inspection Commands ✓
+- [x] `(list-faces mesh)` — return list of faces with id, normal, center, vertices
+- [x] `(face-info mesh face-id)` — detailed info: normal, center, vertices, area, edges
 - [ ] `(list-edges mesh)` — return list of edges with vertices and adjacent faces
-- [ ] `(flash-face mesh face-id)` — temporarily highlight face in viewport
+- [x] `(flash-face mesh face-id)` — temporarily highlight face in viewport
 - [ ] `(flash-edge mesh edge-id)` — temporarily highlight edge
 - [ ] `(flash-vertex mesh vertex-id)` — temporarily highlight vertex
 
-### 3.3 Viewport Highlighting
-- [ ] Add highlight layer to Three.js scene
-- [ ] Support temporary highlighting (flash) with configurable duration
-- [ ] Distinct colors for face/edge/vertex highlights
-- [ ] Highlight clears on next evaluation
+### 3.3 Viewport Highlighting ✓
+- [x] Add highlight layer to Three.js scene
+- [x] Support temporary highlighting (flash) with configurable duration
+- [x] Distinct colors for face/edge/vertex highlights
+- [x] Highlight clears on next evaluation
 
-### 3.4 Attachment Commands
-- [ ] `(attach mesh)` — push state, move to mesh creation pose
-- [ ] `(attach-face mesh face-id)` — push state, move to face center, heading = normal
+### 3.4 Attachment Commands ✓
+- [x] `(attach mesh)` — push state, move to mesh creation pose
+- [x] `(attach-face mesh face-id)` — push state, move to face center, heading = normal
 - [ ] `(attach-edge mesh edge-id)` — push state, move to edge midpoint
 - [ ] `(attach-vertex mesh vertex-id)` — push state, move to vertex position
-- [ ] `(detach)` — pop state, return to previous position
-- [ ] Track attached element in turtle state: `:attached {:type :face :mesh m :id :top}`
+- [x] `(detach)` — pop state, return to previous position
+- [x] Track attached element in turtle state: `:attached {:type :face :mesh m :id :top}`
 
-### 3.5 Mesh Manipulation (when attached to mesh)
-- [ ] `f`, `th`, `tv`, `tr` move/rotate the entire mesh
+### 3.5 Mesh Manipulation (when attached to mesh) ✓
+- [x] `f` moves the entire mesh along turtle heading
+- [ ] `th`, `tv`, `tr` rotate the entire mesh
 - [ ] `(scale factor)` — scale mesh uniformly from origin
 - [ ] `(scale [sx sy sz])` — scale non-uniformly
-- [ ] Mesh vertices are transformed in-place
+- [x] Mesh vertices are transformed in-place
 
-### 3.6 Face Operations (when attached to face)
-- [ ] `(f dist)` — extrude face along normal (positive = outward, negative = inward)
+### 3.6 Face Operations (when attached to face) ✓
+- [x] `(f dist)` — extrude face along normal (positive = outward, negative = inward)
 - [ ] `(inset dist)` — create smaller/larger face inside, returns new face
 - [ ] `(scale factor)` — scale face vertices from centroid
-- [ ] Face extrusion creates new side faces and updates mesh topology
+- [x] Face extrusion creates new side faces and updates mesh topology
 
 ### 3.7 Edge Operations (when attached to edge) — FUTURE
 - [ ] `(bevel radius)` — round the edge
@@ -154,7 +155,7 @@
 ### 3.8 Vertex Operations (when attached to vertex) — FUTURE
 - [ ] `(move [dx dy dz])` — move vertex, adjacent faces update
 
-**Deliverable**: Can do `(attach-face mesh :top) (f 20) (detach)` to extrude a face.
+**Deliverable**: Can do `(attach-face mesh :top) (f 20) (detach)` to extrude a face. ✓
 
 ### Implementation Order
 
@@ -163,10 +164,10 @@
 2. [x] Inspection commands (`list-faces`, `face-info`, `get-face`, `face-ids`)
 3. [x] `flash-face` with Three.js overlay and distinct highlight colors
 
-**Phase 3c: Attachment**
-1. `attach`, `attach-face`, `detach`
-2. Mesh manipulation (move/rotate/scale)
-3. Face extrusion
+**Phase 3b-c: Attachment** ✓
+1. [x] `attach`, `attach-face`, `detach`, `attached?`
+2. [x] Mesh move via `(f dist)` when attached to mesh
+3. [x] Face extrusion via `(f dist)` when attached to face
 
 **Phase 3d: Advanced Face Ops**
 1. `inset`
@@ -394,10 +395,10 @@ The core turtle system, generative operations, boolean operations, and anchor/na
 - ✓ State stack (`push-state`, `pop-state`, `clear-stack`)
 - ✓ Anchors and navigation (`mark`, `goto`, `look-at`, `path-to`)
 - ✓ **Phase 3a: Foundation** — creation pose in meshes, inspection commands, face highlighting
+- ✓ **Phase 3b-c: Attachment** — `attach`, `attach-face`, `detach`, mesh move, face extrusion
 
-**Current sprint (Phase 3b-c):**
-1. [ ] Attachment commands (`attach`, `attach-face`, `detach`)
-2. [ ] Face extrusion via `(f dist)` when attached
-3. [ ] `inset` operation
+**Current sprint (Phase 3d):**
+1. [ ] `inset` operation
+2. [ ] Face cutting (draw shape on face)
 
 The turtle attachment paradigm unifies all 3D operations under the familiar turtle metaphor: attach to an element, use turtle commands to manipulate it, detach when done.

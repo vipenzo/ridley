@@ -15,6 +15,9 @@
 ;; All meshes in the scene: [{:mesh data :name nil/keyword :visible true/false} ...]
 (defonce ^:private scene-meshes (atom []))
 
+;; Counter for unique mesh IDs
+(defonce ^:private mesh-id-counter (atom 0))
+
 ;; Lines (geometry) from turtle movements
 (defonce ^:private scene-lines (atom []))
 
@@ -35,13 +38,15 @@
   (swap! scene-lines into lines))
 
 (defn add-mesh!
-  "Add a mesh to the scene. Returns the mesh data (not the wrapper)."
+  "Add a mesh to the scene. Returns the mesh data with :registry-id assigned."
   ([mesh] (add-mesh! mesh nil true))
   ([mesh name] (add-mesh! mesh name true))
   ([mesh name visible?]
    (when mesh
-     (swap! scene-meshes conj {:mesh mesh :name name :visible visible?}))
-   mesh))
+     (let [id (swap! mesh-id-counter inc)
+           mesh-with-id (assoc mesh :registry-id id)]
+       (swap! scene-meshes conj {:mesh mesh-with-id :name name :visible visible?})
+       mesh-with-id))))
 
 (defn set-definition-meshes!
   "Store meshes created by the definitions panel (anonymous, visible by default).
@@ -66,6 +71,40 @@
   "Find index of mesh entry by reference (identical?)."
   [mesh]
   (first (keep-indexed (fn [i entry] (when (identical? (:mesh entry) mesh) i)) @scene-meshes)))
+
+(defn- find-mesh-index-by-id
+  "Find index of mesh entry by :registry-id."
+  [registry-id]
+  (first (keep-indexed (fn [i entry] (when (= (:registry-id (:mesh entry)) registry-id) i)) @scene-meshes)))
+
+(defn update-mesh-by-ref!
+  "Update a mesh in the registry by reference. Returns the new mesh or nil if not found."
+  [old-mesh new-mesh]
+  (when-let [idx (find-mesh-index-by-ref old-mesh)]
+    (swap! scene-meshes assoc-in [idx :mesh] new-mesh)
+    new-mesh))
+
+(defn get-mesh-index
+  "Get the index of a mesh in the registry by :registry-id (preferred) or reference."
+  [mesh]
+  (if-let [id (:registry-id mesh)]
+    (find-mesh-index-by-id id)
+    (find-mesh-index-by-ref mesh)))
+
+(defn get-mesh-at-index
+  "Get mesh data at a specific index."
+  [idx]
+  (get-in @scene-meshes [idx :mesh]))
+
+(defn update-mesh-at-index!
+  "Update mesh at a specific index. Preserves :registry-id. Returns the new mesh."
+  [idx new-mesh]
+  (let [old-id (get-in @scene-meshes [idx :mesh :registry-id])
+        mesh-with-id (if old-id
+                       (assoc new-mesh :registry-id old-id)
+                       new-mesh)]
+    (swap! scene-meshes assoc-in [idx :mesh] mesh-with-id)
+    mesh-with-id))
 
 (defn show-mesh!
   "Show a mesh by name. Returns nil."
