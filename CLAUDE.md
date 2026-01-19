@@ -22,10 +22,28 @@ Update the **Current Sprint** section in `Roadmap.md` with progress and any new 
 
 When creating a new release:
 1. Create the GitHub release with `gh release create`
-2. GitHub Actions will automatically build and deploy to GitHub Pages on push to main
+2. GitHub Actions will automatically build and deploy to GitHub Pages on release publish
 
 The deploy workflow (`.github/workflows/deploy.yml`) handles:
 - Installing dependencies
 - Building production JS with shadow-cljs
 - Deploying `public/` to GitHub Pages
+
+## ClojureScript Gotchas
+
+### Dead Code Elimination (DCE)
+
+Functions used in SCI bindings (the `implicit-*` functions in `repl.cljs`) must use `^:export` metadata to prevent Google Closure Compiler from eliminating them in production builds.
+
+**Wrong:**
+```clojure
+(defn- implicit-foo [x] ...)  ; Will be eliminated!
+```
+
+**Correct:**
+```clojure
+(defn ^:export implicit-foo [x] ...)  ; Preserved in production
+```
+
+This is because the reference through the SCI bindings map is not visible to the Closure Compiler's static analysis.
 

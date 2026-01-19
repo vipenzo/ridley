@@ -32,7 +32,7 @@
 ;; Implicit turtle functions (mutate atom)
 ;; ============================================================
 
-(defn- implicit-f [dist]
+(defn ^:export implicit-f [dist]
   (let [old-attached (:attached @turtle-atom)
         registry-idx (:registry-index old-attached)]
     (swap! turtle-atom turtle/f dist)
@@ -43,7 +43,7 @@
           (registry/update-mesh-at-index! registry-idx new-mesh)
           (registry/refresh-viewport! false))))))
 
-(defn- implicit-th [angle]
+(defn ^:export implicit-th [angle]
   (let [old-attached (:attached @turtle-atom)
         registry-idx (:registry-index old-attached)]
     (swap! turtle-atom turtle/th angle)
@@ -54,7 +54,7 @@
           (registry/update-mesh-at-index! registry-idx new-mesh)
           (registry/refresh-viewport! false))))))
 
-(defn- implicit-tv [angle]
+(defn ^:export implicit-tv [angle]
   (let [old-attached (:attached @turtle-atom)
         registry-idx (:registry-index old-attached)]
     (swap! turtle-atom turtle/tv angle)
@@ -65,7 +65,7 @@
           (registry/update-mesh-at-index! registry-idx new-mesh)
           (registry/refresh-viewport! false))))))
 
-(defn- implicit-tr [angle]
+(defn ^:export implicit-tr [angle]
   (let [old-attached (:attached @turtle-atom)
         registry-idx (:registry-index old-attached)]
     (swap! turtle-atom turtle/tr angle)
@@ -76,44 +76,44 @@
           (registry/update-mesh-at-index! registry-idx new-mesh)
           (registry/refresh-viewport! false))))))
 
-(defn- implicit-pen-up []
+(defn ^:export implicit-pen-up []
   (swap! turtle-atom turtle/pen-up))
 
-(defn- implicit-pen-down []
+(defn ^:export implicit-pen-down []
   (swap! turtle-atom turtle/pen-down))
 
-(defn- implicit-pen [mode]
+(defn ^:export implicit-pen [mode]
   (swap! turtle-atom turtle/pen mode))
 
-(defn- implicit-reset
+(defn ^:export implicit-reset
   ([] (swap! turtle-atom turtle/reset-pose))
   ([pos] (swap! turtle-atom turtle/reset-pose pos))
   ([pos & opts] (swap! turtle-atom #(apply turtle/reset-pose % pos opts))))
 
-(defn- implicit-joint-mode [mode]
+(defn ^:export implicit-joint-mode [mode]
   (swap! turtle-atom turtle/joint-mode mode))
 
 ;; State stack
-(defn- implicit-push-state []
+(defn ^:export implicit-push-state []
   (swap! turtle-atom turtle/push-state))
 
-(defn- implicit-pop-state []
+(defn ^:export implicit-pop-state []
   (swap! turtle-atom turtle/pop-state))
 
-(defn- implicit-clear-stack []
+(defn ^:export implicit-clear-stack []
   (swap! turtle-atom turtle/clear-stack))
 
 ;; Anchors and navigation
-(defn- implicit-mark [name]
+(defn ^:export implicit-mark [name]
   (swap! turtle-atom turtle/mark name))
 
-(defn- implicit-goto [name]
+(defn ^:export implicit-goto [name]
   (swap! turtle-atom turtle/goto name))
 
-(defn- implicit-look-at [name]
+(defn ^:export implicit-look-at [name]
   (swap! turtle-atom turtle/look-at name))
 
-(defn- implicit-path-to [name]
+(defn ^:export implicit-path-to [name]
   ;; First orient turtle toward anchor, then create path
   ;; This ensures extrusions go in the correct direction
   (swap! turtle-atom turtle/look-at name)
@@ -121,7 +121,7 @@
 
 ;; Attachment commands
 ;; Store registry index in :attached so we can update the real mesh
-(defn- implicit-attach [mesh]
+(defn ^:export implicit-attach [mesh]
   (let [idx (registry/get-mesh-index mesh)
         ;; Get the current mesh from registry (may have been modified since def)
         current-mesh (if idx (registry/get-mesh-at-index idx) mesh)]
@@ -131,7 +131,7 @@
                              (assoc-in state' [:attached :registry-index] idx)
                              state'))))))
 
-(defn- implicit-attach-face [mesh face-id]
+(defn ^:export implicit-attach-face [mesh face-id]
   (let [idx (registry/get-mesh-index mesh)
         ;; Get the current mesh from registry (may have been modified since def)
         current-mesh (if idx (registry/get-mesh-at-index idx) mesh)]
@@ -141,10 +141,10 @@
                              (assoc-in state' [:attached :registry-index] idx)
                              state'))))))
 
-(defn- implicit-detach []
+(defn ^:export implicit-detach []
   (swap! turtle-atom turtle/detach))
 
-(defn- implicit-inset [dist]
+(defn ^:export implicit-inset [dist]
   (let [old-attached (:attached @turtle-atom)
         registry-idx (:registry-index old-attached)]
     (swap! turtle-atom turtle/inset dist)
@@ -155,7 +155,7 @@
           (registry/update-mesh-at-index! registry-idx new-mesh)
           (registry/refresh-viewport! false))))))
 
-(defn- implicit-scale-mesh [factor]
+(defn ^:export implicit-scale-mesh [factor]
   (let [old-attached (:attached @turtle-atom)
         registry-idx (:registry-index old-attached)]
     (swap! turtle-atom turtle/scale factor)
@@ -221,7 +221,7 @@
 
 ;; stamp: materialize mesh at turtle position, add to scene as visible
 ;; Only works with primitives (box, sphere, cyl, cone) - not extrude results
-(defn- implicit-stamp
+(defn ^:export implicit-stamp
   "Materialize a mesh at current turtle position and show it.
    Returns the transformed mesh with :registry-id.
    Only works with primitives - throws error for extrude results."
@@ -236,7 +236,7 @@
 
 ;; make: materialize mesh at turtle position, return without showing
 ;; Only works with primitives (box, sphere, cyl, cone) - not extrude results
-(defn- implicit-make
+(defn ^:export implicit-make
   "Materialize a mesh at current turtle position without showing.
    Returns the transformed mesh (for use in boolean operations).
    Only works with primitives - throws error for extrude results."
@@ -253,13 +253,13 @@
   (last (:meshes @turtle-atom)))
 
 ;; Loft is now a macro - these are the impl functions
-(defn- implicit-stamp-loft
+(defn ^:export implicit-stamp-loft
   ([shape transform-fn]
    (swap! turtle-atom turtle/stamp-loft shape transform-fn))
   ([shape transform-fn steps]
    (swap! turtle-atom turtle/stamp-loft shape transform-fn steps)))
 
-(defn- implicit-finalize-loft []
+(defn ^:export implicit-finalize-loft []
   (swap! turtle-atom turtle/finalize-loft))
 
 (defn ^:export implicit-run-path
@@ -268,11 +268,11 @@
   [path]
   (swap! turtle-atom turtle/run-path path))
 
-(defn- implicit-add-mesh [mesh]
+(defn ^:export implicit-add-mesh [mesh]
   (swap! turtle-atom update :meshes conj mesh)
   mesh)
 
-(defn- implicit-extrude-closed-path [shape-or-shapes path]
+(defn ^:export implicit-extrude-closed-path [shape-or-shapes path]
   ;; Handle both single shape and vector of shapes (from text-shape)
   (let [shapes (if (vector? shape-or-shapes) shape-or-shapes [shape-or-shapes])
         start-pos (:position @turtle-atom)]
@@ -285,7 +285,7 @@
       (last (:meshes @turtle-atom))
       (vec (take-last (count shapes) (:meshes @turtle-atom))))))
 
-(defn- implicit-extrude-path [shape-or-shapes path]
+(defn ^:export implicit-extrude-path [shape-or-shapes path]
   ;; Handle both single shape and vector of shapes (from text-shape)
   (let [shapes (if (vector? shape-or-shapes) shape-or-shapes [shape-or-shapes])
         start-pos (:position @turtle-atom)]
@@ -407,7 +407,7 @@
         (assoc :vertices transformed-verts)
         (assoc :faces faces))))
 
-(defn- implicit-extrude-text
+(defn ^:export implicit-extrude-text
   "Extrude text along the turtle's heading direction.
    Text flows along heading, extrudes along up.
    Uses Manifold's CrossSection for proper handling of holes.
@@ -457,7 +457,7 @@
                   (swap! turtle-atom update :meshes conj mesh-with-pose))))))))
     @meshes))
 
-(defn- implicit-text-on-path
+(defn ^:export implicit-text-on-path
   "Place text along a path, extruding each glyph perpendicular to curve.
    Each letter is positioned at its x-offset distance along the path,
    oriented tangent to the curve direction.
