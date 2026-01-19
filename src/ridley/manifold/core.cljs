@@ -318,23 +318,37 @@
 
    Returns a Ridley mesh."
   [contours height]
-  (when-let [CrossSection (get-cross-section-class)]
-    (when (seq contours)
-      (try
-        (let [;; Convert contours to the format expected by CrossSection
-              ;; CrossSection constructor takes an array of SimplePolygons
-              ;; where each polygon is an array of Vec2 (just [x,y] arrays)
-              polygons (clj->js (mapv (fn [contour]
-                                        (mapv (fn [[x y]] #js [x y]) contour))
-                                      contours))
-              cross-section (new CrossSection polygons)
-              ;; Extrude to 3D
-              manifold (.extrude cross-section height)
-              result (manifold->mesh manifold)]
-          ;; Clean up
-          (.delete cross-section)
-          (.delete manifold)
-          result)
-        (catch :default e
-          (js/console.error "CrossSection extrusion failed:" e)
-          nil)))))
+  (js/console.log "extrude-cross-section: checking CrossSection class")
+  (let [CrossSection (get-cross-section-class)]
+    (js/console.log "extrude-cross-section: CrossSection class:" (if CrossSection "found" "nil"))
+    (if-not CrossSection
+      (do (js/console.error "extrude-cross-section: CrossSection class not available - Manifold not initialized?")
+          nil)
+      (if-not (seq contours)
+        (do (js/console.warn "extrude-cross-section: no contours provided")
+            nil)
+        (try
+          (let [;; Convert contours to the format expected by CrossSection
+                ;; CrossSection constructor takes an array of SimplePolygons
+                ;; where each polygon is an array of Vec2 (just [x,y] arrays)
+                _ (js/console.log "extrude-cross-section: converting" (count contours) "contours")
+                polygons (clj->js (mapv (fn [contour]
+                                          (mapv (fn [[x y]] #js [x y]) contour))
+                                        contours))
+                _ (js/console.log "extrude-cross-section: creating CrossSection")
+                cross-section (new CrossSection polygons)
+                _ (js/console.log "extrude-cross-section: CrossSection created:" (if cross-section "ok" "nil"))
+                ;; Extrude to 3D
+                _ (js/console.log "extrude-cross-section: extruding with height" height)
+                manifold (.extrude cross-section height)
+                _ (js/console.log "extrude-cross-section: manifold created:" (if manifold "ok" "nil"))
+                _ (js/console.log "extrude-cross-section: converting to mesh")
+                result (manifold->mesh manifold)
+                _ (js/console.log "extrude-cross-section: mesh result:" (if result "ok" "nil"))]
+            ;; Clean up
+            (.delete cross-section)
+            (.delete manifold)
+            result)
+          (catch :default e
+            (js/console.error "CrossSection extrusion failed:" e)
+            nil))))))
