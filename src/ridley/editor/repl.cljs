@@ -302,7 +302,7 @@
 ;; Text extrusion
 ;; ============================================================
 
-(defn- transform-2d-point-to-3d
+(defn ^:export transform-2d-point-to-3d
   "Transform a 2D point [x y] to 3D using turtle orientation.
    x -> along heading (text reading direction)
    y -> along right vector (perpendicular in text plane)
@@ -313,7 +313,7 @@
                (turtle/v+ (turtle/v* heading x)
                           (turtle/v* right y)))))
 
-(defn- contour-signed-area
+(defn ^:export contour-signed-area
   "Calculate signed area of a 2D contour using shoelace formula.
    Positive = counter-clockwise (outer), negative = clockwise (hole)."
   [contour]
@@ -325,7 +325,7 @@
                        (- (* x1 y2) (* x2 y1)))))
          2.0))))
 
-(defn- build-extruded-contour-mesh
+(defn ^:export build-extruded-contour-mesh
   "Build a mesh from extruding a single 2D contour along a direction.
    Returns {:vertices [...] :faces [...]}.
 
@@ -362,7 +362,7 @@
      :vertices vertices
      :faces all-faces}))
 
-(defn- classify-glyph-contours
+(defn ^:export classify-glyph-contours
   "Classify contours into outer boundary and holes based on signed area.
    Returns {:outer contour :holes [contours]}
    The outer contour has the largest absolute area."
@@ -376,7 +376,7 @@
       {:outer (:contour outer-entry)
        :holes (vec (map :contour rest-entries))})))
 
-(defn- transform-mesh-to-turtle-orientation
+(defn ^:export transform-mesh-to-turtle-orientation
   "Transform a mesh from XY plane (Z up) to turtle orientation.
    Manifold's extrude creates mesh in XY plane extruding along +Z.
    We need to rotate it so the base is perpendicular to turtle's up,
@@ -473,8 +473,11 @@
    Returns vector of meshes, one per glyph."
   [txt path & {:keys [size depth font overflow align spacing]
                :or {size 10 depth 5 overflow :truncate align :start spacing 0}}]
+  (js/console.log "text-on-path called with:" txt "path:" (pr-str path))
   (let [glyph-data (text/text-glyph-data txt :size size :font font)
+        _ (js/console.log "glyph-data:" (pr-str (count glyph-data)) "glyphs")
         path-len (turtle/path-total-length path)
+        _ (js/console.log "path-len:" path-len)
         ;; Calculate total text width including spacing
         text-len (if (seq glyph-data)
                    (+ (reduce + (map :advance-width glyph-data))
@@ -509,7 +512,8 @@
                      :wrap? (= overflow :wrap)
                      :start-pos turtle-pos
                      :start-heading turtle-heading
-                     :start-up turtle-up)]
+                     :start-up turtle-up)
+            _ (js/console.log "glyph" glyph-idx "sample:" (pr-str sample) "contours:" (count contours))]
         (when (and sample (seq contours))
           (let [{:keys [position heading up]} sample
                 {:keys [outer holes]} (classify-glyph-contours contours)
@@ -526,7 +530,9 @@
                                              (if (pos? a) (vec (reverse hole)) hole)))
                                          holes)
                     all-contours (into [prepared-outer] prepared-holes)
-                    raw-mesh (manifold/extrude-cross-section all-contours depth)]
+                    _ (js/console.log "calling extrude-cross-section with" (count all-contours) "contours, depth:" depth)
+                    raw-mesh (manifold/extrude-cross-section all-contours depth)
+                    _ (js/console.log "raw-mesh result:" (pr-str (when raw-mesh {:verts (count (:vertices raw-mesh)) :faces (count (:faces raw-mesh))})))]
                 (when raw-mesh
                   (let [transformed (transform-mesh-to-turtle-orientation raw-mesh glyph-position heading up)
                         with-pose (assoc transformed :creation-pose
