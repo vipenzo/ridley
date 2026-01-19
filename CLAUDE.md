@@ -21,7 +21,11 @@ Update the **Current Sprint** section in `Roadmap.md` with progress and any new 
 ## Release Process
 
 When creating a new release:
-1. Build the production version for GitHub Pages: `npx shadow-cljs release app`
-2. Commit the built files in `public/` if changed
-3. Create the GitHub release with `gh release create`
+1. Create the GitHub release with `gh release create`
+2. GitHub Actions will automatically build and deploy to GitHub Pages on push to main
+
+The deploy workflow (`.github/workflows/deploy.yml`) handles:
+- Installing dependencies
+- Building production JS with shadow-cljs
+- Deploying `public/` to GitHub Pages
 
