@@ -51,6 +51,11 @@
         (.then (fn [wasm]
                  ;; v3.0 requires setup() to be called before using classes
                  (.setup wasm)
+                 ;; Debug: log available properties on wasm object
+                 (js/console.log "Manifold WASM object keys:" (js/Object.keys wasm))
+                 (js/console.log "Manifold class:" (.-Manifold wasm))
+                 (js/console.log "CrossSection class:" (.-CrossSection wasm))
+                 (js/console.log "Mesh class:" (.-Mesh wasm))
                  (reset! manifold-state
                          {:wasm wasm
                           :Manifold (.-Manifold wasm)
