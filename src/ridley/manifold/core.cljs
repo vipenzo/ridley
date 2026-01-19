@@ -234,12 +234,6 @@
               ;; Use asOriginal to condense coplanar faces and collapse unnecessary edges
               ;; This cleans up artifacts from boolean operations
               result (.asOriginal raw-result)
-              ;; Check result status
-              result-status (.-value (.status result))
-              _ (when (not (zero? result-status))
-                  (js/console.warn "mesh-difference: result is not manifold, status:" result-status))
-              _ (js/console.log "mesh-difference result: volume=" (.volume result)
-                                "triangles=" (.-numTri (.getMesh result)))
               output (manifold->mesh result)]
           (.delete ma)
           (.delete mb)
@@ -333,12 +327,9 @@
               polygons (clj->js (mapv (fn [contour]
                                         (mapv (fn [[x y]] #js [x y]) contour))
                                       contours))
-              _ (js/console.log "Creating CrossSection with" (count contours) "contours")
               cross-section (new CrossSection polygons)
-              _ (js/console.log "CrossSection created, area:" (.area cross-section))
               ;; Extrude to 3D
               manifold (.extrude cross-section height)
-              _ (js/console.log "Extrusion created")
               result (manifold->mesh manifold)]
           ;; Clean up
           (.delete cross-section)

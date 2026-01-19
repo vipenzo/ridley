@@ -262,6 +262,12 @@
 (defn- implicit-finalize-loft []
   (swap! turtle-atom turtle/finalize-loft))
 
+(defn- implicit-run-path
+  "Execute a path's commands on the turtle.
+   The turtle will move/turn as if the path commands were executed directly."
+  [path]
+  (swap! turtle-atom turtle/run-path path))
+
 (defn- implicit-add-mesh [mesh]
   (swap! turtle-atom update :meshes conj mesh)
   mesh)
@@ -359,12 +365,10 @@
 (defn- classify-glyph-contours
   "Classify contours into outer boundary and holes based on signed area.
    Returns {:outer contour :holes [contours]}
-   The outer contour has the largest absolute area.
-   Also logs area info for debugging."
+   The outer contour has the largest absolute area."
   [contours]
   (when (seq contours)
     (let [with-areas (map (fn [c] {:contour c :area (contour-signed-area c)}) contours)
-          _ (js/console.log "Contour areas:" (clj->js (mapv :area with-areas)))
           ;; Sort by absolute area descending - largest is outer
           sorted (sort-by #(- (Math/abs (or (:area %) 0))) with-areas)
           outer-entry (first sorted)
@@ -420,10 +424,9 @@
         heading (:heading @turtle-atom)
         up (:up @turtle-atom)
         meshes (atom [])]
-    (doseq [{:keys [contours x-offset char]} glyph-data]
+    (doseq [{:keys [contours x-offset]} glyph-data]
       (when (seq contours)
         (let [{:keys [outer holes]} (classify-glyph-contours contours)]
-          (js/console.log "Processing glyph:" char "outer points:" (count outer) "holes:" (count holes))
           (when (and outer (> (count outer) 2))
             ;; Position for this glyph: start + offset along heading
             (let [glyph-pos (turtle/v+ start-pos (turtle/v* heading x-offset))
@@ -441,7 +444,6 @@
                                        holes)
                   ;; Combine outer + holes into single contours vector
                   all-contours (into [prepared-outer] prepared-holes)
-                  _ (js/console.log "Extruding with CrossSection:" (count all-contours) "contours")
                   ;; Use Manifold's CrossSection for proper extrusion with holes
                   raw-mesh (manifold/extrude-cross-section all-contours depth)]
               (when raw-mesh
@@ -453,6 +455,84 @@
                                              :up up})]
                   (swap! meshes conj mesh-with-pose)
                   (swap! turtle-atom update :meshes conj mesh-with-pose))))))))
+    @meshes))
+
+(defn- implicit-text-on-path
+  "Place text along a path, extruding each glyph perpendicular to curve.
+   Each letter is positioned at its x-offset distance along the path,
+   oriented tangent to the curve direction.
+
+   Options:
+   - :size - font size (default 10)
+   - :depth - extrusion depth (default 5)
+   - :font - custom font (optional)
+   - :overflow - :truncate (default), :wrap, or :scale
+   - :align - :start (default), :center, or :end
+   - :spacing - extra letter spacing (default 0)
+
+   Returns vector of meshes, one per glyph."
+  [txt path & {:keys [size depth font overflow align spacing]
+               :or {size 10 depth 5 overflow :truncate align :start spacing 0}}]
+  (let [glyph-data (text/text-glyph-data txt :size size :font font)
+        path-len (turtle/path-total-length path)
+        ;; Calculate total text width including spacing
+        text-len (if (seq glyph-data)
+                   (+ (reduce + (map :advance-width glyph-data))
+                      (* spacing (max 0 (dec (count glyph-data)))))
+                   0)
+        ;; Calculate start offset based on alignment
+        start-offset (case align
+                       :center (/ (- path-len text-len) 2)
+                       :end (- path-len text-len)
+                       0)
+        ;; Scale factor for :scale overflow mode
+        scale-factor (if (and (= overflow :scale) (pos? text-len))
+                       (/ path-len text-len)
+                       1.0)
+        ;; Get turtle's starting orientation for path sampling
+        turtle-pos (:position @turtle-atom)
+        turtle-heading (:heading @turtle-atom)
+        turtle-up (:up @turtle-atom)
+        meshes (atom [])]
+    ;; x-offset in glyph-data is already cumulative, so we use it directly
+    ;; We only need to add start-offset (for alignment) and apply scale-factor
+    (doseq [[glyph-idx {:keys [contours x-offset advance-width]}] (map-indexed vector glyph-data)]
+      (let [;; Distance along path for glyph CENTER (not start)
+            ;; This gives better orientation on curves
+            ;; x-offset is cumulative position of glyph start
+            extra-spacing (* spacing glyph-idx)
+            glyph-center-dist (+ start-offset
+                                 (* (+ x-offset (/ advance-width 2)) scale-factor)
+                                 extra-spacing)
+            ;; Sample the path at the CENTER of the glyph for orientation
+            sample (turtle/sample-path-at-distance path glyph-center-dist
+                     :wrap? (= overflow :wrap)
+                     :start-pos turtle-pos
+                     :start-heading turtle-heading
+                     :start-up turtle-up)]
+        (when (and sample (seq contours))
+          (let [{:keys [position heading up]} sample
+                {:keys [outer holes]} (classify-glyph-contours contours)
+                ;; Position is at center, but glyph origin is at x-offset=0
+                ;; So we need to shift back by half the advance-width
+                half-width (/ (* advance-width scale-factor) 2)
+                glyph-position (turtle/v- position (turtle/v* heading half-width))]
+            (when (and outer (> (count outer) 2))
+              ;; Prepare contours for CrossSection (same as extrude-text)
+              (let [outer-area (contour-signed-area outer)
+                    prepared-outer (if (neg? outer-area) (vec (reverse outer)) outer)
+                    prepared-holes (mapv (fn [hole]
+                                           (let [a (contour-signed-area hole)]
+                                             (if (pos? a) (vec (reverse hole)) hole)))
+                                         holes)
+                    all-contours (into [prepared-outer] prepared-holes)
+                    raw-mesh (manifold/extrude-cross-section all-contours depth)]
+                (when raw-mesh
+                  (let [transformed (transform-mesh-to-turtle-orientation raw-mesh glyph-position heading up)
+                        with-pose (assoc transformed :creation-pose
+                                         {:position glyph-position :heading heading :up up})]
+                    (swap! meshes conj with-pose)
+                    (swap! turtle-atom update :meshes conj with-pose)))))))))
     @meshes))
 
 ;; ============================================================
@@ -510,6 +590,7 @@
    'load-font!   text/load-font!
    'font-loaded? text/font-loaded?
    'extrude-text implicit-extrude-text
+   'text-on-path implicit-text-on-path
    ;; Pure turtle functions (for explicit threading)
    'turtle       turtle/make-turtle
    'turtle-f     turtle/f
@@ -563,6 +644,7 @@
    'rec-tr              turtle/rec-tr
    'path-from-recorder  turtle/path-from-recorder
    'run-path-impl       turtle/run-path
+   'follow-path         implicit-run-path
    'path?               turtle/path?
    'extrude-closed-path-impl implicit-extrude-closed-path
    'extrude-path-impl        implicit-extrude-path

@@ -426,6 +426,69 @@ Convert text to 2D shapes using opentype.js font parsing:
 
 ---
 
+## Text on Path
+
+Place 3D text along a curved path, with each letter oriented tangent to the curve:
+
+```clojure
+;; Define a curved path
+(def curve (path (dotimes [_ 40] (f 2) (th 3))))
+
+;; Place text along the curve
+(text-on-path "Hello" curve :size 15 :depth 3)
+```
+
+### Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `:size` | 10 | Font size in units |
+| `:depth` | 5 | Extrusion depth |
+| `:font` | Roboto | Custom font object |
+| `:spacing` | 0 | Extra letter spacing (can be negative) |
+| `:align` | `:start` | Alignment: `:start`, `:center`, `:end` |
+| `:overflow` | `:truncate` | What to do when text is longer than path |
+
+### Overflow Modes
+
+- `:truncate` — Stop placing letters when path ends (default)
+- `:wrap` — Continue from start (for closed paths)
+- `:scale` — Scale text to fit path length
+
+### Examples
+
+```clojure
+;; Centered text on arc
+(def arc (path (dotimes [_ 12] (f 8) (th 15))))
+(text-on-path "CENTERED" arc :size 12 :depth 4 :align :center)
+
+;; Text around a circle (wrapping)
+(def circle-path (path (dotimes [_ 36] (f 5) (th 10))))
+(text-on-path "RIDLEY • RIDLEY • " circle-path
+  :size 8 :depth 2 :overflow :wrap)
+
+;; Scaled to fit
+(def short-path (path (f 50)))
+(text-on-path "LONG TEXT HERE" short-path
+  :size 10 :depth 2 :overflow :scale)
+```
+
+### Path Utilities
+
+```clojure
+;; Visualize a path (draws it with the turtle)
+(follow-path curve)
+
+;; Get total arc length of a path
+(path-total-length curve)           ; => 80.0 (sum of forward distances)
+
+;; Sample path at a specific distance
+(sample-path-at-distance curve 40)
+;; => {:position [x y z] :heading [hx hy hz] :up [ux uy uz]}
+```
+
+---
+
 ## Scene Registry
 
 Named objects persist across evaluations:
@@ -651,8 +714,10 @@ Full Clojure available via SCI:
 - Anchors (mark, goto, look-at, path-to)
 - Attachment system (attach, attach-face, detach, inset)
 - Path recording
+- Path utilities (follow-path, path-total-length, sample-path-at-distance)
 - 2D shapes (circle, rect, polygon, star, text-shape)
 - Text shapes via opentype.js (text-shape, text-shapes, char-shape)
+- Text on path (text-on-path)
 - Shape transforms (scale, rotate, translate, morph, resample)
 - 3D primitives (box, sphere, cyl, cone)
 - Extrude (open and closed)

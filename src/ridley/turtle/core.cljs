@@ -1679,6 +1679,82 @@
     state))
 
 ;; ============================================================
+;; Path sampling for text-on-path
+;; ============================================================
+
+(defn path-total-length
+  "Calculate total arc length of a path by summing positive :f distances."
+  [path]
+  (if (path? path)
+    (->> (:commands path)
+         (filter #(= :f (:cmd %)))
+         (map #(first (:args %)))
+         (filter pos?)
+         (reduce + 0))
+    0))
+
+(defn sample-path-at-distance
+  "Sample a path at a specific arc-length distance.
+   Returns {:position [x y z] :heading [x y z] :up [x y z]} or nil if past end.
+
+   Options:
+   - :wrap? - if true, wrap distance around for closed paths (default false)
+   - :start-pos - starting position (default [0 0 0])
+   - :start-heading - starting heading (default [1 0 0])
+   - :start-up - starting up vector (default [0 0 1])"
+  [path distance & {:keys [wrap? start-pos start-heading start-up]
+                    :or {wrap? false
+                         start-pos [0 0 0]
+                         start-heading [1 0 0]
+                         start-up [0 0 1]}}]
+  (when (path? path)
+    (let [total (path-total-length path)
+          dist (if (and wrap? (> distance total) (pos? total))
+                 (mod distance total)
+                 distance)]
+      (when (and (>= dist 0) (<= dist total))
+        (loop [cmds (:commands path)
+               pos start-pos
+               heading start-heading
+               up start-up
+               cumulative 0.0]
+          (if-let [cmd (first cmds)]
+            (case (:cmd cmd)
+              :f (let [d (first (:args cmd))]
+                   (if (and (pos? d) (>= (+ cumulative d) dist))
+                     ;; Target is in this segment - interpolate position
+                     (let [remaining (- dist cumulative)
+                           final-pos (v+ pos (v* heading remaining))]
+                       {:position final-pos :heading heading :up up})
+                     ;; Continue to next segment
+                     (recur (rest cmds)
+                            (if (pos? d)
+                              (v+ pos (v* heading d))
+                              pos)
+                            heading
+                            up
+                            (if (pos? d) (+ cumulative d) cumulative))))
+              :th (let [angle (first (:args cmd))
+                        rad (deg->rad angle)
+                        new-heading (rotate-around-axis heading up rad)]
+                    (recur (rest cmds) pos new-heading up cumulative))
+              :tv (let [angle (first (:args cmd))
+                        rad (deg->rad angle)
+                        right (cross heading up)
+                        new-heading (rotate-around-axis heading right rad)
+                        new-up (rotate-around-axis up right rad)]
+                    (recur (rest cmds) pos new-heading new-up cumulative))
+              :tr (let [angle (first (:args cmd))
+                        rad (deg->rad angle)
+                        new-up (rotate-around-axis up heading rad)]
+                    (recur (rest cmds) pos heading new-up cumulative))
+              ;; Unknown command - skip
+              (recur (rest cmds) pos heading up cumulative))
+            ;; End of commands - return final position if we reached the target
+            (when (>= cumulative dist)
+              {:position pos :heading heading :up up})))))))
+
+;; ============================================================
 ;; Extrude with pre-processed path (open path, unified mesh)
 ;; ============================================================
 

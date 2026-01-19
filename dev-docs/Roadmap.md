@@ -405,4 +405,8 @@ The core turtle system, generative operations, boolean operations, and anchor/na
 1. [ ] Face cutting (draw shape on face)
 2. [ ] Non-uniform scale `(scale [sx sy sz])`
 
+**Recently completed:**
+- ✓ **Text on Path** — `text-on-path` places extruded text along a curved path, with each letter oriented tangent to the curve
+- ✓ **Path Utilities** — `follow-path` for visualizing paths, `path-total-length` for arc-length calculation, `sample-path-at-distance` for path sampling
+
 The turtle attachment paradigm unifies all 3D operations under the familiar turtle metaphor: attach to an element, use turtle commands to manipulate it, detach when done.

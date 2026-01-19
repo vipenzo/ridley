@@ -387,6 +387,61 @@ ring connects back to the first.
 
 ---
 
+## Text on Path
+
+Place 3D text along a curved path. Each letter is oriented tangent to the curve.
+
+```clojure
+;; Define a curved path
+(def curve (path (dotimes [_ 40] (f 2) (th 3))))
+
+;; Visualize the path (optional)
+(follow-path curve)
+
+;; Reset turtle and place text along the curve
+(reset)
+(text-on-path "Hello Ridley" curve :size 10 :depth 3 :spacing 1 :align :center)
+```
+
+### Options
+
+```clojure
+(text-on-path "TEXT" path
+  :size 10          ; font size (default 10)
+  :depth 5          ; extrusion depth (default 5)
+  :spacing 0        ; extra letter spacing (default 0)
+  :align :start     ; :start, :center, or :end (default :start)
+  :overflow :truncate  ; :truncate, :wrap, or :scale (default :truncate)
+  :font custom-font)   ; optional custom font
+```
+
+### Alignment Examples
+
+```clojure
+(def arc (path (dotimes [_ 20] (f 5) (th 9))))
+
+;; Text at start of path
+(text-on-path "START" arc :size 8 :depth 2 :align :start)
+
+;; Text centered on path
+(text-on-path "CENTER" arc :size 8 :depth 2 :align :center)
+
+;; Text at end of path
+(text-on-path "END" arc :size 8 :depth 2 :align :end)
+```
+
+### Circular Text
+
+```clojure
+;; Create a full circle path
+(def circle-path (path (dotimes [_ 36] (f 5) (th 10))))
+
+;; Text wraps around the circle
+(text-on-path "RIDLEY 3D CAD" circle-path :size 8 :depth 2 :overflow :wrap)
+```
+
+---
+
 ## Manifold Operations
 
 Manifold operations validate meshes and perform boolean operations (CSG).
@@ -686,3 +741,45 @@ Different primitives have different face structures:
 (face-ids (stamp (sphere 20)))
 ;; => (:surface)
 ```
+
+---
+
+## Editor Keybindings (Paredit)
+
+The editor uses `@nextjournal/clojure-mode` for structural editing.
+
+### Slurp & Barf
+
+| Action | Mac | Windows/Linux |
+|--------|-----|---------------|
+| **Slurp forward** (pull next expr into parens) | `Ctrl+→` or `Cmd+Shift+K` | `Ctrl+→` or `Ctrl+Shift+K` |
+| **Barf forward** (push last expr out of parens) | `Ctrl+←` or `Cmd+Shift+J` | `Ctrl+←` or `Ctrl+Shift+J` |
+| **Slurp backward** | `Ctrl+Alt+←` | `Ctrl+Alt+←` |
+| **Barf backward** | `Ctrl+Alt+→` | `Ctrl+Alt+→` |
+
+### Semantic Selection
+
+| Action | Shortcut |
+|--------|----------|
+| **Expand selection** (select larger form) | `Alt+↑` or `Cmd+1` |
+| **Contract selection** | `Alt+↓` or `Cmd+2` |
+
+### Other
+
+| Action | Shortcut |
+|--------|----------|
+| **Run code** | `Cmd+Enter` |
+| **Undo** | `Cmd+Z` |
+| **Redo** | `Cmd+Shift+Z` |
+
+### Example
+
+```
+;; Start: (foo |bar) baz   (cursor after foo)
+;; Slurp forward (Ctrl+→): (foo bar baz)
+
+;; Start: (foo bar| baz)
+;; Barf forward (Ctrl+←):  (foo bar) baz
+```
+
+Full documentation: https://nextjournal.github.io/clojure-mode/#keybindings
