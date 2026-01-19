@@ -266,13 +266,194 @@
   (swap! turtle-atom update :meshes conj mesh)
   mesh)
 
-(defn- implicit-extrude-closed-path [shape path]
-  (swap! turtle-atom turtle/extrude-closed-from-path shape path)
-  (last (:meshes @turtle-atom)))
+(defn- implicit-extrude-closed-path [shape-or-shapes path]
+  ;; Handle both single shape and vector of shapes (from text-shape)
+  (let [shapes (if (vector? shape-or-shapes) shape-or-shapes [shape-or-shapes])
+        start-pos (:position @turtle-atom)]
+    (doseq [shape shapes]
+      ;; Reset to start position for each shape
+      (swap! turtle-atom assoc :position start-pos)
+      (swap! turtle-atom turtle/extrude-closed-from-path shape path))
+    ;; Return last mesh (or all meshes for multiple shapes)
+    (if (= 1 (count shapes))
+      (last (:meshes @turtle-atom))
+      (vec (take-last (count shapes) (:meshes @turtle-atom))))))
 
-(defn- implicit-extrude-path [shape path]
-  (swap! turtle-atom turtle/extrude-from-path shape path)
-  (last (:meshes @turtle-atom)))
+(defn- implicit-extrude-path [shape-or-shapes path]
+  ;; Handle both single shape and vector of shapes (from text-shape)
+  (let [shapes (if (vector? shape-or-shapes) shape-or-shapes [shape-or-shapes])
+        start-pos (:position @turtle-atom)]
+    (doseq [shape shapes]
+      ;; Reset to start position for each shape
+      (swap! turtle-atom assoc :position start-pos)
+      (swap! turtle-atom turtle/extrude-from-path shape path))
+    ;; Return last mesh (or all meshes for multiple shapes)
+    (if (= 1 (count shapes))
+      (last (:meshes @turtle-atom))
+      (vec (take-last (count shapes) (:meshes @turtle-atom))))))
+
+;; ============================================================
+;; Text extrusion
+;; ============================================================
+
+(defn- transform-2d-point-to-3d
+  "Transform a 2D point [x y] to 3D using turtle orientation.
+   x -> along heading (text reading direction)
+   y -> along right vector (perpendicular in text plane)
+   The shape plane is perpendicular to 'up' (extrusion direction)."
+  [[x y] position heading up]
+  (let [right (turtle/cross heading up)]
+    (turtle/v+ position
+               (turtle/v+ (turtle/v* heading x)
+                          (turtle/v* right y)))))
+
+(defn- contour-signed-area
+  "Calculate signed area of a 2D contour using shoelace formula.
+   Positive = counter-clockwise (outer), negative = clockwise (hole)."
+  [contour]
+  (let [n (count contour)]
+    (when (> n 2)
+      (/ (reduce + (for [i (range n)]
+                     (let [[x1 y1] (nth contour i)
+                           [x2 y2] (nth contour (mod (inc i) n))]
+                       (- (* x1 y2) (* x2 y1)))))
+         2.0))))
+
+(defn- build-extruded-contour-mesh
+  "Build a mesh from extruding a single 2D contour along a direction.
+   Returns {:vertices [...] :faces [...]}.
+
+   reverse-winding? should be true for holes to ensure outward-facing normals
+   point into the hole (which will be subtracted)."
+  [contour-2d position heading up depth & {:keys [reverse-winding?] :or {reverse-winding? false}}]
+  (let [;; If reverse-winding?, reverse the contour order
+        contour (if reverse-winding? (vec (reverse contour-2d)) contour-2d)
+        n (count contour)
+        ;; Transform 2D contour to 3D at base position
+        base-ring (mapv #(transform-2d-point-to-3d % position heading up) contour)
+        ;; Create top ring by moving along 'up' direction
+        top-ring (mapv #(turtle/v+ % (turtle/v* up depth)) base-ring)
+        ;; Vertices: base ring then top ring
+        vertices (vec (concat base-ring top-ring))
+        ;; Side faces (quads as 2 triangles each)
+        side-faces (vec (for [i (range n)]
+                          (let [i0 i
+                                i1 (mod (inc i) n)
+                                i2 (+ n (mod (inc i) n))
+                                i3 (+ n i)]
+                            ;; Two triangles for each quad
+                            [[i0 i1 i2] [i0 i2 i3]])))
+        side-faces-flat (vec (mapcat identity side-faces))
+        ;; Cap faces (simple fan triangulation)
+        ;; Bottom cap (reversed winding for outward normal)
+        bottom-faces (vec (for [i (range 1 (dec n))]
+                            [0 (inc i) i]))
+        ;; Top cap
+        top-faces (vec (for [i (range 1 (dec n))]
+                         [(+ n 0) (+ n i) (+ n (inc i))]))
+        all-faces (vec (concat side-faces-flat bottom-faces top-faces))]
+    {:type :mesh
+     :vertices vertices
+     :faces all-faces}))
+
+(defn- classify-glyph-contours
+  "Classify contours into outer boundary and holes based on signed area.
+   Returns {:outer contour :holes [contours]}
+   The outer contour has the largest absolute area.
+   Also logs area info for debugging."
+  [contours]
+  (when (seq contours)
+    (let [with-areas (map (fn [c] {:contour c :area (contour-signed-area c)}) contours)
+          _ (js/console.log "Contour areas:" (clj->js (mapv :area with-areas)))
+          ;; Sort by absolute area descending - largest is outer
+          sorted (sort-by #(- (Math/abs (or (:area %) 0))) with-areas)
+          outer-entry (first sorted)
+          rest-entries (rest sorted)]
+      {:outer (:contour outer-entry)
+       :holes (vec (map :contour rest-entries))})))
+
+(defn- transform-mesh-to-turtle-orientation
+  "Transform a mesh from XY plane (Z up) to turtle orientation.
+   Manifold's extrude creates mesh in XY plane extruding along +Z.
+   We need to rotate it so the base is perpendicular to turtle's up,
+   and the text flows along turtle's heading.
+
+   Default orientation (heading=[1,0,0], up=[0,0,1]):
+   - Text flows along +X (heading)
+   - Letters' top points toward +Y
+   - Extrusion goes toward +Z (up)"
+  [mesh position heading up]
+  (let [;; Manifold extrudes along +Z, we want along 'up'
+        ;; Manifold's X axis should map to our 'heading' (text reading direction)
+        ;; Manifold's Y axis should map to -right so letter tops point correctly
+        ;; (With default turtle, -right = [0,-1,0] * -1 = toward +Y for letter tops)
+        right (turtle/cross heading up)
+        vertices (:vertices mesh)
+        faces (:faces mesh)
+        ;; Transform each vertex: [x, y, z] -> position + x*heading - y*right + z*up
+        ;; Note the -y*right to flip the Y axis orientation
+        transformed-verts
+        (mapv (fn [[x y z]]
+                (turtle/v+ position
+                           (turtle/v+ (turtle/v* heading x)
+                                      (turtle/v+ (turtle/v* right (- y))
+                                                 (turtle/v* up z)))))
+              vertices)]
+    (-> mesh
+        (assoc :vertices transformed-verts)
+        (assoc :faces faces))))
+
+(defn- implicit-extrude-text
+  "Extrude text along the turtle's heading direction.
+   Text flows along heading, extrudes along up.
+   Uses Manifold's CrossSection for proper handling of holes.
+
+   Options:
+   - :size - font size (default 10)
+   - :depth - extrusion depth (default 5)
+   - :font - font object (optional)
+
+   Returns vector of meshes, one per character."
+  [txt & {:keys [size depth font] :or {size 10 depth 5}}]
+  (let [glyph-data (text/text-glyph-data txt :size size :font font)
+        start-pos (:position @turtle-atom)
+        heading (:heading @turtle-atom)
+        up (:up @turtle-atom)
+        meshes (atom [])]
+    (doseq [{:keys [contours x-offset char]} glyph-data]
+      (when (seq contours)
+        (let [{:keys [outer holes]} (classify-glyph-contours contours)]
+          (js/console.log "Processing glyph:" char "outer points:" (count outer) "holes:" (count holes))
+          (when (and outer (> (count outer) 2))
+            ;; Position for this glyph: start + offset along heading
+            (let [glyph-pos (turtle/v+ start-pos (turtle/v* heading x-offset))
+                  ;; Prepare contours for CrossSection:
+                  ;; - Outer must be counter-clockwise (positive area)
+                  ;; - Holes must be clockwise (negative area)
+                  outer-area (contour-signed-area outer)
+                  prepared-outer (if (neg? outer-area) (vec (reverse outer)) outer)
+                  prepared-holes (mapv (fn [hole]
+                                         (let [hole-area (contour-signed-area hole)]
+                                           ;; Holes should be clockwise (negative area)
+                                           (if (pos? hole-area)
+                                             (vec (reverse hole))
+                                             hole)))
+                                       holes)
+                  ;; Combine outer + holes into single contours vector
+                  all-contours (into [prepared-outer] prepared-holes)
+                  _ (js/console.log "Extruding with CrossSection:" (count all-contours) "contours")
+                  ;; Use Manifold's CrossSection for proper extrusion with holes
+                  raw-mesh (manifold/extrude-cross-section all-contours depth)]
+              (when raw-mesh
+                (let [;; Transform mesh from XY/Z orientation to turtle orientation
+                      transformed-mesh (transform-mesh-to-turtle-orientation raw-mesh glyph-pos heading up)
+                      mesh-with-pose (assoc transformed-mesh :creation-pose
+                                            {:position glyph-pos
+                                             :heading heading
+                                             :up up})]
+                  (swap! meshes conj mesh-with-pose)
+                  (swap! turtle-atom update :meshes conj mesh-with-pose))))))))
+    @meshes))
 
 ;; ============================================================
 ;; Shared SCI context
@@ -328,6 +509,7 @@
    'char-shape   text/char-shape
    'load-font!   text/load-font!
    'font-loaded? text/font-loaded?
+   'extrude-text implicit-extrude-text
    ;; Pure turtle functions (for explicit threading)
    'turtle       turtle/make-turtle
    'turtle-f     turtle/f

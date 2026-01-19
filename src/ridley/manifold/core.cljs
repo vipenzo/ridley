@@ -54,7 +54,8 @@
                  (reset! manifold-state
                          {:wasm wasm
                           :Manifold (.-Manifold wasm)
-                          :Mesh (.-Mesh wasm)})
+                          :Mesh (.-Mesh wasm)
+                          :CrossSection (.-CrossSection wasm)})
                  @manifold-state)))))
 
 (defn- get-manifold-class
@@ -302,3 +303,47 @@
             (doseq [m manifolds]
               (.delete m))
             nil))))))
+
+;; ============================================================
+;; CrossSection extrusion (handles holes natively)
+;; ============================================================
+
+(defn- get-cross-section-class
+  "Get the CrossSection class from initialized state."
+  []
+  (when-let [state @manifold-state]
+    (:CrossSection state)))
+
+(defn extrude-cross-section
+  "Extrude a 2D cross-section with optional holes to create a 3D manifold.
+
+   contours: vector of contours, each contour is a vector of [x y] points.
+             First contour is the outer boundary, rest are holes.
+             Outer should be counter-clockwise, holes clockwise.
+   height: extrusion height
+
+   Returns a Ridley mesh."
+  [contours height]
+  (when-let [CrossSection (get-cross-section-class)]
+    (when (seq contours)
+      (try
+        (let [;; Convert contours to the format expected by CrossSection
+              ;; CrossSection constructor takes an array of SimplePolygons
+              ;; where each polygon is an array of Vec2 (just [x,y] arrays)
+              polygons (clj->js (mapv (fn [contour]
+                                        (mapv (fn [[x y]] #js [x y]) contour))
+                                      contours))
+              _ (js/console.log "Creating CrossSection with" (count contours) "contours")
+              cross-section (new CrossSection polygons)
+              _ (js/console.log "CrossSection created, area:" (.area cross-section))
+              ;; Extrude to 3D
+              manifold (.extrude cross-section height)
+              _ (js/console.log "Extrusion created")
+              result (manifold->mesh manifold)]
+          ;; Clean up
+          (.delete cross-section)
+          (.delete manifold)
+          result)
+        (catch :default e
+          (js/console.error "CrossSection extrusion failed:" e)
+          nil)))))

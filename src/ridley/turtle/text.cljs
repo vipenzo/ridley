@@ -219,54 +219,54 @@
           (shape/make-shape largest {:centered? false}))))))
 
 (defn text-shape
-  "Create a 2D shape from a text string.
+  "Create 2D shapes from a text string.
 
    Options:
    - :size - font size in units (default 10)
    - :font - font object (default: built-in Roboto)
    - :curve-segments - segments for Bezier curves (default 8)
 
-   Returns a shape with all character outlines combined.
+   Returns a VECTOR of shapes, one per character contour.
+   Use with extrude which handles multiple shapes:
+   (extrude (text-shape \"Hi\" :size 30) (f 5))
+
    Note: Currently returns only outer contours (no holes/counter-shapes)."
   [text & {:keys [size font curve-segments]
            :or {size 10 curve-segments 8}}]
   (let [font (or font @default-font)]
     (when font
-      (let [;; Get all glyphs
-            glyphs (.stringToGlyphs font text)
+      (let [glyphs (.stringToGlyphs font text)
             units-per-em (.-unitsPerEm font)
-            scale (/ size units-per-em)
-
-            ;; Process each glyph with proper positioning
-            all-points
-            (loop [idx 0
-                   x-offset 0
-                   points []]
-              (if (>= idx (.-length glyphs))
-                points
-                (let [glyph (aget glyphs idx)
-                      path (.getPath glyph x-offset 0 size)
-                      commands (.-commands path)
-                      contours (path-commands->contours commands curve-segments)
-                      ;; Get advance width for next character positioning
-                      advance-width (* (.-advanceWidth glyph) scale)
-                      ;; Normalize and flip Y
-                      normalized-contours
-                      (mapv (fn [contour]
-                              (mapv (fn [[x y]]
-                                      [x (- y)])  ; Flip Y
-                                    contour))
-                            contours)
-                      ;; Add largest contour from this glyph
-                      largest (when (seq normalized-contours)
-                                (apply max-key count normalized-contours))]
-                  (recur (inc idx)
-                         (+ x-offset advance-width)
-                         (if largest
-                           (into points largest)
-                           points)))))]
-        (when (seq all-points)
-          (shape/make-shape all-points {:centered? false}))))))
+            scale (/ size units-per-em)]
+        ;; Process each glyph with proper positioning
+        (loop [idx 0
+               x-offset 0
+               shapes []]
+          (if (>= idx (.-length glyphs))
+            shapes
+            (let [glyph (aget glyphs idx)
+                  path (.getPath glyph x-offset 0 size)
+                  commands (.-commands path)
+                  contours (path-commands->contours commands curve-segments)
+                  advance-width (* (.-advanceWidth glyph) scale)
+                  ;; Normalize and flip Y for each contour
+                  normalized-contours
+                  (mapv (fn [contour]
+                          (mapv (fn [[x y]]
+                                  [x (- y)])
+                                contour))
+                        contours)
+                  ;; Get largest contour (outer boundary) for this glyph
+                  largest (when (seq normalized-contours)
+                            (apply max-key count normalized-contours))
+                  ;; Create shape from largest contour
+                  glyph-shape (when (and largest (> (count largest) 2))
+                                (shape/make-shape largest {:centered? false}))]
+              (recur (inc idx)
+                     (+ x-offset advance-width)
+                     (if glyph-shape
+                       (conj shapes glyph-shape)
+                       shapes)))))))))
 
 (defn text-shapes
   "Create multiple shapes, one per character.
@@ -293,3 +293,72 @@
   "Check if the default font is loaded and ready."
   []
   (some? @default-font))
+
+(defn text-metrics
+  "Get metrics for text rendering: advance widths for each character.
+   Returns vector of {:char c :advance-width w} maps."
+  [text & {:keys [size font] :or {size 10}}]
+  (let [font (or font @default-font)]
+    (when font
+      (let [glyphs (.stringToGlyphs font text)
+            units-per-em (.-unitsPerEm font)
+            scale (/ size units-per-em)]
+        (vec (for [i (range (.-length glyphs))]
+               (let [glyph (aget glyphs i)]
+                 {:char (.charAt text i)
+                  :advance-width (* (.-advanceWidth glyph) scale)})))))))
+
+(defn text-glyph-data
+  "Get raw glyph data for text extrusion.
+   Returns vector of {:contours [...] :x-offset n :advance-width n} for each character.
+   Contours are in 2D local coordinates (not yet transformed to 3D).
+
+   This is used by extrude-text to create properly oriented 3D text."
+  [text & {:keys [size font curve-segments]
+           :or {size 10 curve-segments 8}}]
+  (let [font (or font @default-font)]
+    (when font
+      (let [glyphs (.stringToGlyphs font text)
+            units-per-em (.-unitsPerEm font)
+            scale (/ size units-per-em)]
+        (loop [idx 0
+               x-offset 0
+               result []]
+          (if (>= idx (.-length glyphs))
+            result
+            (let [glyph (aget glyphs idx)
+                  ;; Get path at origin (no offset) so contours are local
+                  path (.getPath glyph 0 0 size)
+                  commands (.-commands path)
+                  contours (path-commands->contours commands curve-segments)
+                  advance-width (* (.-advanceWidth glyph) scale)
+                  ;; Flip Y for each contour
+                  normalized-contours
+                  (mapv (fn [contour]
+                          (mapv (fn [[x y]] [x (- y)]) contour))
+                        contours)]
+              (recur (inc idx)
+                     (+ x-offset advance-width)
+                     (conj result {:char (.charAt text idx)
+                                   :contours normalized-contours
+                                   :x-offset x-offset
+                                   :advance-width advance-width})))))))))
+
+(defn- contour-area
+  "Calculate signed area of a 2D contour using shoelace formula.
+   Positive = counter-clockwise (outer), negative = clockwise (hole)."
+  [contour]
+  (let [n (count contour)]
+    (/ (reduce + (for [i (range n)]
+                   (let [[x1 y1] (nth contour i)
+                         [x2 y2] (nth contour (mod (inc i) n))]
+                     (- (* x1 y2) (* x2 y1)))))
+       2.0)))
+
+(defn- classify-contours
+  "Classify contours as outer (positive area) or holes (negative area).
+   Returns {:outer [...] :holes [...]}."
+  [contours]
+  (let [classified (map (fn [c] {:contour c :area (contour-area c)}) contours)]
+    {:outer (vec (map :contour (filter #(pos? (:area %)) classified)))
+     :holes (vec (map :contour (filter #(neg? (:area %)) classified)))}))
