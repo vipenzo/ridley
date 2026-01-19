@@ -43,16 +43,18 @@
 
 (defn- make-box-faces
   "Generate box face indices (quads as triangles).
-   All faces CCW when viewed from outside (Manifold requirement).
-   Vertices: 0-3 back face (z=-), 4-7 front face (z=+)"
+   All faces CCW when viewed from outside (standard convention).
+   Vertices: 0-3 back face (z=-), 4-7 front face (z=+)
+   0=(-x,-y,-z), 1=(+x,-y,-z), 2=(+x,+y,-z), 3=(-x,+y,-z)
+   4=(-x,-y,+z), 5=(+x,-y,+z), 6=(+x,+y,+z), 7=(-x,+y,+z)"
   []
   ;; Each quad split into two triangles, CCW from outside
-  [[0 1 2] [0 2 3]   ; back  (-z): 0→1→2, 0→2→3
-   [4 6 5] [4 7 6]   ; front (+z): 4→6→5, 4→7→6
-   [0 4 5] [0 5 1]   ; bottom (-y): 0→4→5, 0→5→1
-   [3 2 6] [3 6 7]   ; top (+y): 3→2→6, 3→6→7
-   [0 3 7] [0 7 4]   ; left (-x): 0→3→7, 0→7→4
-   [1 5 6] [1 6 2]]) ; right (+x): 1→5→6, 1→6→2
+  [[0 2 1] [0 3 2]   ; back  (-z): looking from -z, CCW is 0→2→1, 0→3→2
+   [4 5 6] [4 6 7]   ; front (+z): looking from +z, CCW is 4→5→6, 4→6→7
+   [0 1 5] [0 5 4]   ; bottom (-y): looking from -y, CCW is 0→1→5, 0→5→4
+   [3 6 2] [3 7 6]   ; top (+y): looking from +y, CCW is 3→6→2, 3→7→6
+   [0 4 7] [0 7 3]   ; left (-x): looking from -x, CCW is 0→4→7, 0→7→3
+   [1 2 6] [1 6 5]]) ; right (+x): looking from +x, CCW is 1→2→6, 1→6→5
 
 ;; ============================================================
 ;; Pure mesh constructors (return mesh data at origin)
@@ -100,39 +102,69 @@
      (update turtle-state :meshes conj mesh))))
 
 (defn- make-sphere-vertices
-  "Generate sphere vertices using UV sphere algorithm."
+  "Generate sphere vertices with single vertices at poles.
+   Layout: [north-pole, ring1-verts..., ring2-verts..., ..., south-pole]
+   Total: 2 + segments * (rings - 1) vertices"
   [radius segments rings]
   (let [seg-step (/ (* 2 Math/PI) segments)
         ring-step (/ Math/PI rings)]
     (vec
-     (for [ring (range (inc rings))
-           seg (range segments)]
-       (let [phi (* ring ring-step)
-             theta (* seg seg-step)
-             sin-phi (Math/sin phi)
-             cos-phi (Math/cos phi)
-             sin-theta (Math/sin theta)
-             cos-theta (Math/cos theta)]
-         [(* radius sin-phi cos-theta)
-          (* radius cos-phi)
-          (* radius sin-phi sin-theta)])))))
+     (concat
+      ;; North pole (single vertex)
+      [[0 radius 0]]
+      ;; Middle rings (rings 1 to rings-1)
+      (for [ring (range 1 rings)
+            seg (range segments)]
+        (let [phi (* ring ring-step)
+              theta (* seg seg-step)
+              sin-phi (Math/sin phi)
+              cos-phi (Math/cos phi)
+              sin-theta (Math/sin theta)
+              cos-theta (Math/cos theta)]
+          [(* radius sin-phi cos-theta)
+           (* radius cos-phi)
+           (* radius sin-phi sin-theta)]))
+      ;; South pole (single vertex)
+      [[0 (- radius) 0]]))))
 
 (defn- make-sphere-faces
-  "Generate sphere face indices.
-   All faces CCW when viewed from outside (Manifold requirement).
-   UV sphere with rings from north pole (ring 0) to south pole."
+  "Generate sphere face indices with proper pole handling.
+   Vertex layout: [north-pole, ring1..., ring2..., ..., south-pole]
+   North pole = index 0
+   Ring r (1 to rings-1) starts at: 1 + (r-1) * segments
+   South pole = last vertex"
   [segments rings]
-  (vec
-   (apply concat
-          (for [ring (range rings)
-                seg (range segments)]
-            (let [next-seg (mod (inc seg) segments)
-                  i0 (+ seg (* ring segments))
-                  i1 (+ next-seg (* ring segments))
-                  i2 (+ seg (* (inc ring) segments))
-                  i3 (+ next-seg (* (inc ring) segments))]
-              ;; CCW from outside: i0→i2→i1 and i2→i3→i1
-              [[i0 i2 i1] [i2 i3 i1]])))))
+  (let [north-pole 0
+        south-pole (+ 1 (* (dec rings) segments))
+        ring-start (fn [r] (+ 1 (* (dec r) segments)))]
+    (vec
+     (concat
+      ;; North pole triangles (connect pole to first ring)
+      (for [seg (range segments)]
+        (let [next-seg (mod (inc seg) segments)
+              r1-curr (+ (ring-start 1) seg)
+              r1-next (+ (ring-start 1) next-seg)]
+          ;; CCW from outside: pole -> next -> curr
+          [north-pole r1-next r1-curr]))
+      ;; Middle quads (rings 1 to rings-2, connecting to ring+1)
+      (apply concat
+             (for [ring (range 1 (dec rings))
+                   seg (range segments)]
+               (let [next-seg (mod (inc seg) segments)
+                     i0 (+ (ring-start ring) seg)
+                     i1 (+ (ring-start ring) next-seg)
+                     i2 (+ (ring-start (inc ring)) seg)
+                     i3 (+ (ring-start (inc ring)) next-seg)]
+                 ;; CCW from outside: i0->i1->i3 and i0->i3->i2
+                 [[i0 i1 i3] [i0 i3 i2]])))
+      ;; South pole triangles (connect last ring to pole)
+      (for [seg (range segments)]
+        (let [next-seg (mod (inc seg) segments)
+              last-ring (dec rings)
+              rl-curr (+ (ring-start last-ring) seg)
+              rl-next (+ (ring-start last-ring) next-seg)]
+          ;; CCW from outside: curr -> next -> pole
+          [rl-curr rl-next south-pole]))))))
 
 (defn sphere-mesh
   "Create a sphere mesh centered at origin.
@@ -190,31 +222,34 @@
       [[0 (- half-h) 0]
        [0 half-h 0]]))))
 
+
 (defn- make-cylinder-faces
   "Generate cylinder face indices.
-   All faces CCW when viewed from outside (Manifold requirement)."
+   All faces CCW when viewed from outside (standard convention).
+   Bottom verts: 0 to segments-1, Top verts: segments to 2*segments-1
+   bottom-center: 2*segments, top-center: 2*segments+1"
   [segments]
   (let [bottom-center (* 2 segments)
         top-center (inc bottom-center)]
     (vec
      (apply concat
             (concat
-             ;; Side faces - CCW from outside: b0→b1→t1 and b0→t1→t0
+             ;; Side faces - CCW from outside
              (for [i (range segments)]
                (let [next-i (mod (inc i) segments)
                      b0 i
                      b1 next-i
                      t0 (+ i segments)
                      t1 (+ next-i segments)]
-                 [[b0 b1 t1] [b0 t1 t0]]))
-             ;; Bottom cap - CCW from below (looking up at bottom)
+                 [[b0 t0 t1] [b0 t1 b1]]))
+             ;; Bottom cap - CCW from below (looking from -y)
              (for [i (range segments)]
                (let [next-i (mod (inc i) segments)]
-                 [[bottom-center next-i i]]))
-             ;; Top cap - CCW from above (looking down at top)
+                 [[bottom-center i next-i]]))
+             ;; Top cap - CCW from above (looking from +y)
              (for [i (range segments)]
                (let [next-i (mod (inc i) segments)]
-                 [[top-center (+ i segments) (+ next-i segments)]])))))))
+                 [[top-center (+ next-i segments) (+ i segments)]])))))))
 
 (defn cyl-mesh
   "Create a cylinder mesh centered at origin.

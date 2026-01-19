@@ -128,18 +128,37 @@
 
 (defn sphere-face-groups
   "Return face groups for a sphere mesh.
-   Sphere has no distinct faces, returns single :surface group."
+   Sphere has no distinct faces, returns single :surface group.
+   Uses new vertex layout: [north-pole, ring1..., ring2..., ..., south-pole]"
   [segments rings]
-  {:surface (vec
-             (apply concat
-                    (for [ring (range rings)
-                          seg (range segments)]
-                      (let [next-seg (mod (inc seg) segments)
-                            i0 (+ seg (* ring segments))
-                            i1 (+ next-seg (* ring segments))
-                            i2 (+ seg (* (inc ring) segments))
-                            i3 (+ next-seg (* (inc ring) segments))]
-                        [[i0 i2 i1] [i1 i2 i3]]))))})
+  (let [north-pole 0
+        south-pole (+ 1 (* (dec rings) segments))
+        ring-start (fn [r] (+ 1 (* (dec r) segments)))]
+    {:surface (vec
+               (concat
+                ;; North pole triangles
+                (for [seg (range segments)]
+                  (let [next-seg (mod (inc seg) segments)
+                        r1-curr (+ (ring-start 1) seg)
+                        r1-next (+ (ring-start 1) next-seg)]
+                    [north-pole r1-next r1-curr]))
+                ;; Middle quads
+                (apply concat
+                       (for [ring (range 1 (dec rings))
+                             seg (range segments)]
+                         (let [next-seg (mod (inc seg) segments)
+                               i0 (+ (ring-start ring) seg)
+                               i1 (+ (ring-start ring) next-seg)
+                               i2 (+ (ring-start (inc ring)) seg)
+                               i3 (+ (ring-start (inc ring)) next-seg)]
+                           [[i0 i1 i3] [i0 i3 i2]])))
+                ;; South pole triangles
+                (for [seg (range segments)]
+                  (let [next-seg (mod (inc seg) segments)
+                        last-ring (dec rings)
+                        rl-curr (+ (ring-start last-ring) seg)
+                        rl-next (+ (ring-start last-ring) next-seg)]
+                    [rl-curr rl-next south-pole]))))}))
 
 ;; ============================================================
 ;; Face operations
