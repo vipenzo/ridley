@@ -20,7 +20,7 @@
   []
   (some? @manifold-state))
 
-(defn- wait-for-manifold-module
+(defn ^:export wait-for-manifold-module
   "Poll for window.ManifoldModule to become available.
    Returns a promise that resolves with the Module or rejects after timeout."
   [max-attempts interval-ms]
@@ -58,7 +58,7 @@
                           :CrossSection (.-CrossSection wasm)})
                  @manifold-state)))))
 
-(defn- get-manifold-class
+(defn ^:export get-manifold-class
   "Get the Manifold class from initialized state."
   []
   (when-let [state @manifold-state]
@@ -69,7 +69,7 @@
 ;; Mesh conversion: Ridley -> Manifold
 ;; ============================================================
 
-(defn ridley-mesh->manifold-mesh
+(defn ^:export ridley-mesh->manifold-mesh
   "Convert a Ridley mesh to Manifold Mesh format.
 
    Ridley mesh format:
@@ -91,7 +91,7 @@
          :vertProperties vert-props
          :triVerts tri-verts}))
 
-(defn manifold-mesh->ridley-mesh
+(defn ^:export manifold-mesh->ridley-mesh
   "Convert a Manifold Mesh back to Ridley mesh format."
   [manifold-mesh]
   (let [vert-props (.-vertProperties manifold-mesh)
@@ -115,7 +115,7 @@
 ;; Manifold operations
 ;; ============================================================
 
-(defn mesh->manifold
+(defn ^:export mesh->manifold
   "Create a Manifold object from a Ridley mesh.
    Returns nil if the mesh is not valid/manifold.
 
@@ -133,7 +133,7 @@
           (js/console.error "Failed to create manifold:" e)
           nil)))))
 
-(defn manifold->mesh
+(defn ^:export manifold->mesh
   "Extract the mesh from a Manifold object back to Ridley format."
   [manifold]
   (when manifold
@@ -302,7 +302,7 @@
 ;; CrossSection extrusion (handles holes natively)
 ;; ============================================================
 
-(defn- get-cross-section-class
+(defn ^:export get-cross-section-class
   "Get the CrossSection class from initialized state."
   []
   (when-let [state @manifold-state]
