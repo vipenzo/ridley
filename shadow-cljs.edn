@@ -6,8 +6,11 @@
                 :output-dir "public/js"
                 :asset-path "js"
                 :modules {:main {:init-fn ridley.core/init}}
-                :devtools {:after-load ridley.core/reload}}
-          ;; Release build for GitHub Pages
+                :devtools {:after-load ridley.core/reload}
+                ;; Use :simple optimizations to avoid aggressive property renaming
+                ;; that breaks interop with external JS libraries (Manifold WASM, Three.js)
+                :release {:compiler-options {:optimizations :simple}}}
+          ;; Release build for GitHub Pages (legacy, not used)
           :release {:target :browser
                     :output-dir "docs/js"
                     :asset-path "js"
