@@ -24,10 +24,10 @@
 ;; Default font (loaded at startup)
 (defonce ^:private default-font (atom nil))
 
-;; Built-in font paths
+;; Built-in font paths (relative for GitHub Pages compatibility)
 (def ^:private builtin-fonts
-  {:roboto "/fonts/Roboto-Regular.ttf"
-   :roboto-mono "/fonts/RobotoMono-Regular.ttf"})
+  {:roboto "fonts/Roboto-Regular.ttf"
+   :roboto-mono "fonts/RobotoMono-Regular.ttf"})
 
 (defn load-font!
   "Load a font file asynchronously. Returns a promise that resolves to the font.
