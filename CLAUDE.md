@@ -17,3 +17,11 @@ Review and update the relevant documentation files if there have been changes th
 
 ### After Every Iteration
 Update the **Current Sprint** section in `Roadmap.md` with progress and any new items.
+
+## Release Process
+
+When creating a new release:
+1. Build the production version for GitHub Pages: `npx shadow-cljs release app`
+2. Commit the built files in `public/` if changed
+3. Create the GitHub release with `gh release create`
+
