@@ -262,7 +262,7 @@
 (defn- implicit-finalize-loft []
   (swap! turtle-atom turtle/finalize-loft))
 
-(defn- implicit-run-path
+(defn ^:export implicit-run-path
   "Execute a path's commands on the turtle.
    The turtle will move/turn as if the path commands were executed directly."
   [path]
