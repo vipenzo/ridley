@@ -473,11 +473,8 @@
    Returns vector of meshes, one per glyph."
   [txt path & {:keys [size depth font overflow align spacing]
                :or {size 10 depth 5 overflow :truncate align :start spacing 0}}]
-  (js/console.log "text-on-path called with:" txt "path:" (pr-str path))
   (let [glyph-data (text/text-glyph-data txt :size size :font font)
-        _ (js/console.log "glyph-data:" (pr-str (count glyph-data)) "glyphs")
         path-len (turtle/path-total-length path)
-        _ (js/console.log "path-len:" path-len)
         ;; Calculate total text width including spacing
         text-len (if (seq glyph-data)
                    (+ (reduce + (map :advance-width glyph-data))
@@ -512,8 +509,7 @@
                      :wrap? (= overflow :wrap)
                      :start-pos turtle-pos
                      :start-heading turtle-heading
-                     :start-up turtle-up)
-            _ (js/console.log "glyph" glyph-idx "sample:" (pr-str sample) "contours:" (count contours))]
+                     :start-up turtle-up)]
         (when (and sample (seq contours))
           (let [{:keys [position heading up]} sample
                 {:keys [outer holes]} (classify-glyph-contours contours)
@@ -530,9 +526,7 @@
                                              (if (pos? a) (vec (reverse hole)) hole)))
                                          holes)
                     all-contours (into [prepared-outer] prepared-holes)
-                    _ (js/console.log "calling extrude-cross-section with" (count all-contours) "contours, depth:" depth)
-                    raw-mesh (manifold/extrude-cross-section all-contours depth)
-                    _ (js/console.log "raw-mesh result:" (pr-str (when raw-mesh {:verts (count (:vertices raw-mesh)) :faces (count (:faces raw-mesh))})))]
+                    raw-mesh (manifold/extrude-cross-section all-contours depth)]
                 (when raw-mesh
                   (let [transformed (transform-mesh-to-turtle-orientation raw-mesh glyph-position heading up)
                         with-pose (assoc transformed :creation-pose
