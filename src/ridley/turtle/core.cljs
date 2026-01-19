@@ -70,33 +70,33 @@
 
 ;; --- Vector math utilities ---
 
-(defn v+ [[x1 y1 z1] [x2 y2 z2]]
+(defn ^:export v+ [[x1 y1 z1] [x2 y2 z2]]
   [(+ x1 x2) (+ y1 y2) (+ z1 z2)])
 
-(defn v- [[x1 y1 z1] [x2 y2 z2]]
+(defn ^:export v- [[x1 y1 z1] [x2 y2 z2]]
   [(- x1 x2) (- y1 y2) (- z1 z2)])
 
-(defn v* [[x y z] s]
+(defn ^:export v* [[x y z] s]
   [(* x s) (* y s) (* z s)])
 
-(defn dot [[x1 y1 z1] [x2 y2 z2]]
+(defn ^:export dot [[x1 y1 z1] [x2 y2 z2]]
   (+ (* x1 x2) (* y1 y2) (* z1 z2)))
 
-(defn cross [[x1 y1 z1] [x2 y2 z2]]
+(defn ^:export cross [[x1 y1 z1] [x2 y2 z2]]
   [(- (* y1 z2) (* z1 y2))
    (- (* z1 x2) (* x1 z2))
    (- (* x1 y2) (* y1 x2))])
 
-(defn magnitude [[x y z]]
+(defn ^:export magnitude [[x y z]]
   (Math/sqrt (+ (* x x) (* y y) (* z z))))
 
-(defn normalize [v]
+(defn ^:export normalize [v]
   (let [m (magnitude v)]
     (if (zero? m)
       v
       (v* v (/ 1 m)))))
 
-(defn rotate-point-around-axis
+(defn ^:export rotate-point-around-axis
   "Rotate point v around axis by angle (radians) using Rodrigues' formula.
    Preserves vector magnitude - use for position vectors."
   [v axis angle]
@@ -109,7 +109,7 @@
         term3 (v* k (* (dot k v) (- 1 cos-a)))]
     (v+ (v+ term1 term2) term3)))
 
-(defn rotate-around-axis
+(defn ^:export rotate-around-axis
   "Rotate direction vector v around axis by angle (radians) using Rodrigues' formula.
    Result is normalized - use for direction vectors (heading, up)."
   [v axis angle]
@@ -1576,7 +1576,7 @@
 ;; Path - recorded turtle movements
 ;; ============================================================
 
-(defn path?
+(defn ^:export path?
   "Check if x is a path."
   [x]
   (and (map? x) (= :path (:type x))))
@@ -1682,7 +1682,7 @@
 ;; Path sampling for text-on-path
 ;; ============================================================
 
-(defn path-total-length
+(defn ^:export path-total-length
   "Calculate total arc length of a path by summing positive :f distances."
   [path]
   (if (path? path)
@@ -1693,7 +1693,7 @@
          (reduce + 0))
     0))
 
-(defn sample-path-at-distance
+(defn ^:export sample-path-at-distance
   "Sample a path at a specific arc-length distance.
    Returns {:position [x y z] :heading [x y z] :up [x y z]} or nil if past end.
 

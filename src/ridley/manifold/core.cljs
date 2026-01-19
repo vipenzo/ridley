@@ -308,7 +308,7 @@
   (when-let [state @manifold-state]
     (:CrossSection state)))
 
-(defn extrude-cross-section
+(defn ^:export extrude-cross-section
   "Extrude a 2D cross-section with optional holes to create a 3D manifold.
 
    contours: vector of contours, each contour is a vector of [x y] points.

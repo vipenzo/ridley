@@ -308,7 +308,7 @@
                  {:char (.charAt text i)
                   :advance-width (* (.-advanceWidth glyph) scale)})))))))
 
-(defn text-glyph-data
+(defn ^:export text-glyph-data
   "Get raw glyph data for text extrusion.
    Returns vector of {:contours [...] :x-offset n :advance-width n} for each character.
    Contours are in 2D local coordinates (not yet transformed to 3D).
