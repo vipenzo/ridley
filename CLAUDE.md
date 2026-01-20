@@ -1,5 +1,26 @@
 # Ridley Project Instructions
 
+## Clojure REPL Evaluation
+
+Use `/Users/vipenzo/.local/bin/clj-nrepl-eval` for evaluating ClojureScript code via nREPL.
+
+**Discover nREPL servers:**
+```bash
+/Users/vipenzo/.local/bin/clj-nrepl-eval --discover-ports
+```
+
+**For shadow-cljs projects, first switch to CLJS mode:**
+```bash
+/Users/vipenzo/.local/bin/clj-nrepl-eval -p <port> "(shadow/repl :app)"
+```
+
+**Then evaluate CLJS code:**
+```bash
+/Users/vipenzo/.local/bin/clj-nrepl-eval -p <port> "<cljs-code>"
+```
+
+The REPL session persists between evaluations. Always use `:reload` or `:reload-all` when requiring namespaces to pick up changes.
+
 ## Documentation Maintenance
 
 Keep the following documents in `/dev-docs` up to date:

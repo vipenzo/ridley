@@ -387,6 +387,267 @@ ring connects back to the first.
 
 ---
 
+## Arc Commands
+
+Draw smooth arcs by combining movement with rotation.
+
+### Basic Arcs
+
+```clojure
+;; Quarter circle turning left (horizontal arc)
+(arc-h 20 90)
+
+;; Quarter circle turning right
+(arc-h 20 -90)
+
+;; Arc going up (vertical arc)
+(arc-v 15 45)
+
+;; Arc going down
+(arc-v 15 -45)
+```
+
+### S-Curve
+
+```clojure
+;; S-curve from two opposite arcs
+(arc-h 15 90)
+(arc-h 15 -90)
+```
+
+### Spiral Extrusion
+
+```clojure
+;; Spiral tube: 8 quarter-turns
+(extrude (circle 3)
+  (dotimes [_ 8]
+    (arc-h 20 90)))
+```
+
+### Curved Pipe
+
+```clojure
+;; Pipe with 90° bend
+(extrude (circle 5)
+  (f 30)
+  (arc-h 15 90)
+  (f 30))
+```
+
+### 3D Wavy Loop
+
+```clojure
+;; Alternating horizontal and vertical arcs create a 3D wavy closed shape
+(extrude (circle 4)
+  (dotimes [_ 4]
+    (arc-h 25 90)
+    (arc-v 25 90)))
+```
+
+### 3D Curved Path
+
+```clojure
+;; Combined horizontal and vertical arcs
+(extrude (rect 6 6)
+  (f 20)
+  (arc-h 15 90)
+  (arc-v 15 45)
+  (f 20))
+```
+
+---
+
+## Bezier Curves
+
+Draw smooth bezier curves to target positions.
+
+### Auto Control Points
+
+```clojure
+;; Bezier to a point (control points auto-generated)
+;; The curve starts tangent to the current heading
+(bezier-to [50 30 0])
+```
+
+### Quadratic Bezier (1 Control Point)
+
+```clojure
+;; Curve pulled toward the control point
+(bezier-to [40 0 0] [20 25 0])
+```
+
+### Cubic Bezier (2 Control Points)
+
+```clojure
+;; S-curve with two control points
+(bezier-to [50 0 0] [15 30 0] [35 -30 0])
+```
+
+### Bezier to Anchor
+
+```clojure
+;; Mark a destination
+(pen :off)
+(f 60) (tv 30) (f 30)
+(mark :target)
+
+;; Return to origin and draw bezier to anchor
+(reset)
+(pen :on)
+(bezier-to-anchor :target)
+```
+
+### Bezier Extrusion
+
+```clojure
+;; Extruded bezier curve
+(extrude (circle 4)
+  (bezier-to [60 40 0]))
+```
+
+### Complex 3D Bezier Path
+
+```clojure
+;; 3D bezier with explicit control points
+(extrude (rect 5 5)
+  (bezier-to [40 20 30] [10 30 10] [30 -10 20]))
+```
+
+### Smooth Path Between Anchors
+
+```clojure
+;; Define two waypoints
+(mark :start)
+(pen :off)
+(f 50) (th 90) (f 30) (tv 45) (f 20)
+(mark :end)
+
+;; Smooth bezier path from start to end
+(goto :start)
+(pen :on)
+(extrude (circle 3)
+  (bezier-to-anchor :end))
+```
+
+---
+
+## Resolution Control
+
+Control the smoothness of curves and circular primitives globally.
+
+### Resolution Modes
+
+```clojure
+;; Fixed segment count (like OpenSCAD $fn)
+(resolution :n 32)
+
+;; Maximum angle per segment (like OpenSCAD $fa)
+(resolution :a 5)
+
+;; Maximum segment length (like OpenSCAD $fs)
+(resolution :s 0.5)
+```
+
+### Low Resolution Draft
+
+```clojure
+;; Fast iteration with low resolution
+(resolution :n 8)
+(extrude (circle 10) (arc-h 30 180))
+```
+
+### High Resolution for Export
+
+```clojure
+;; High quality for final export
+(resolution :n 32)
+(extrude (circle 10) (arc-h 30 180))
+```
+
+### Resolution Affects Primitives
+
+```clojure
+;; Resolution affects circle segments
+(resolution :n 8)
+(extrude (circle 15) (f 20))  ; 8-sided "circle"
+
+(reset [40 0 0])
+(resolution :n 32)
+(extrude (circle 15) (f 20))  ; smooth circle
+```
+
+### Override for Specific Calls
+
+```clojure
+;; Use global resolution
+(resolution :n 16)
+(arc-h 20 90)
+
+;; Override for a specific call
+(arc-h 20 90 :steps 48)
+
+;; Explicit segment count for primitives
+(circle 10 64)           ; 64-segment circle
+(sphere 15 32 16)        ; 32x16 sphere
+```
+
+### Resolution-Based Workflow
+
+```clojure
+;; Draft mode: fast iteration
+(resolution :n 6)
+
+;; Design your model
+(def spiral-path (path (dotimes [_ 8] (arc-h 20 45))))
+(extrude (circle 5) spiral-path)
+
+;; Preview mode: check details
+(resolution :n 16)
+
+;; Export mode: maximum quality
+(resolution :n 32)
+```
+
+### Angle-Based Resolution
+
+```clojure
+;; Max 10° per segment
+(resolution :a 10)
+
+;; A 90° arc gets ceil(90/10) = 9 segments
+(arc-h 20 90)
+
+;; A 45° arc gets ceil(45/10) = 5 segments
+(arc-h 20 45)
+```
+
+### Length-Based Resolution (for 3D Printing)
+
+```clojure
+;; Max 1mm per segment (good for 3D printing)
+(resolution :s 1)
+
+;; Larger arcs get more segments automatically
+(arc-h 10 90)   ; ~16 segments (arc-length ≈ 15.7)
+(arc-h 50 90)   ; ~79 segments (arc-length ≈ 78.5)
+```
+
+### Round Joints with Resolution
+
+```clojure
+;; Resolution affects round joint smoothness
+(resolution :n 8)
+(joint-mode :round)
+(extrude (circle 5) (f 20) (th 90) (f 20))
+
+(reset [50 0 0])
+(resolution :n 24)
+(joint-mode :round)
+(extrude (circle 5) (f 20) (th 90) (f 20))
+```
+
+---
+
 ## Text on Path
 
 Place 3D text along a curved path. Each letter is oriented tangent to the curve.

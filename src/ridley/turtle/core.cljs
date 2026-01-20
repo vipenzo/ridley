@@ -32,7 +32,8 @@
    :meshes []
    :state-stack []          ; stack for push-state/pop-state
    :anchors {}              ; named poses for mark/goto
-   :attached nil})           ; attachment state for face/mesh operations
+   :attached nil            ; attachment state for face/mesh operations
+   :resolution {:mode :n :value 16}})  ; curve resolution (like OpenSCAD $fn)
 
 ;; --- State stack ---
 
@@ -299,6 +300,74 @@
          acc)))
    {:heading (:heading state) :up (:up state)}
    rotations))
+
+;; --- Resolution settings (like OpenSCAD $fn/$fa/$fs) ---
+
+(defn resolution
+  "Set the default curve resolution for arcs, beziers, and primitives.
+
+   Modes:
+   - (resolution state :n 32)   ; fixed number of segments
+   - (resolution state :a 5)    ; minimum angle per segment (degrees)
+   - (resolution state :s 0.5)  ; minimum segment length (units)
+
+   This affects: arc-h, arc-v, bezier-to, circle, sphere, cyl, cone, round joints."
+  [state mode value]
+  (assoc state :resolution {:mode mode :value value}))
+
+(defn- get-resolution
+  "Get current resolution settings, defaulting to {:mode :n :value 16}."
+  [state]
+  (or (:resolution state) {:mode :n :value 16}))
+
+(defn calc-arc-steps
+  "Calculate steps for an arc based on resolution settings.
+   arc-length: approximate arc length in units
+   angle-deg: total angle in degrees"
+  [state arc-length angle-deg]
+  (let [{:keys [mode value]} (get-resolution state)]
+    (case mode
+      :n value
+      :a (max 1 (int (Math/ceil (/ (Math/abs angle-deg) value))))
+      :s (max 1 (int (Math/ceil (/ arc-length value))))
+      ;; default
+      value)))
+
+(defn calc-bezier-steps
+  "Calculate steps for a bezier based on resolution settings.
+   approx-length: approximate curve length in units"
+  [state approx-length]
+  (let [{:keys [mode value]} (get-resolution state)]
+    (case mode
+      :n value
+      :a value  ; for bezier, :a mode uses value as steps (angle doesn't apply)
+      :s (max 1 (int (Math/ceil (/ approx-length value))))
+      ;; default
+      value)))
+
+(defn calc-circle-segments
+  "Calculate segments for a full circle based on resolution.
+   circumference: circle circumference in units"
+  [state circumference]
+  (let [{:keys [mode value]} (get-resolution state)]
+    (case mode
+      :n value
+      :a (max 8 (int (Math/ceil (/ 360 value))))
+      :s (max 8 (int (Math/ceil (/ circumference value))))
+      ;; default
+      value)))
+
+(defn calc-round-steps
+  "Calculate steps for a round joint based on resolution and angle.
+   angle-deg: the bend angle in degrees"
+  [state angle-deg]
+  (let [{:keys [mode value]} (get-resolution state)]
+    (case mode
+      :n (max 2 (int (/ value 4)))  ; use fraction of :n value
+      :a (max 2 (int (Math/ceil (/ (Math/abs angle-deg) value))))
+      :s value  ; :s mode doesn't apply well to corners, use value as steps
+      ;; default
+      4)))
 
 ;; --- Corner/Bend calculation ---
 
@@ -1080,6 +1149,246 @@
           new-up (rotate-around-axis (:up state) (:heading state) rad)]
       (assoc state :up new-up))))
 
+;; --- Arc commands ---
+
+(defn arc-h
+  "Draw a horizontal arc (turning around up axis while moving).
+
+   Parameters:
+   - radius: arc radius in units
+   - angle: total turn angle in degrees (positive = left, negative = right)
+   - :steps n (optional): override resolution
+
+   The turtle moves along an arc, ending at radius * angle_rad distance
+   with heading rotated by angle degrees.
+
+   Example: (arc-h 10 90) draws a quarter circle turning left"
+  [state radius angle & {:keys [steps]}]
+  (if (or (zero? radius) (zero? angle))
+    state
+    (let [angle-rad (* (Math/abs angle) (/ Math/PI 180))
+          arc-length (* radius angle-rad)
+          actual-steps (or steps (calc-arc-steps state arc-length (Math/abs angle)))
+          step-angle-deg (/ angle actual-steps)
+          step-angle-rad (/ angle-rad actual-steps)
+          ;; Chord length for each step: 2 * r * sin(θ/2)
+          step-dist (* 2 radius (Math/sin (/ step-angle-rad 2)))
+          ;; First step: rotate half, then move
+          ;; Middle steps: rotate full, then move
+          ;; This ensures proper extrusion integration (pending rotation consumed by f)
+          half-angle (/ step-angle-deg 2)]
+      (-> (reduce (fn [s _]
+                    (-> s
+                        (th step-angle-deg)
+                        (f step-dist)))
+                  ;; First: rotate half and move
+                  (-> state
+                      (th half-angle)
+                      (f step-dist))
+                  ;; Remaining steps (n-1)
+                  (range (dec actual-steps)))
+          ;; Final half rotation to complete the arc
+          (th half-angle)))))
+
+(defn arc-v
+  "Draw a vertical arc (pitching around right axis while moving).
+
+   Parameters:
+   - radius: arc radius in units
+   - angle: total pitch angle in degrees (positive = up, negative = down)
+   - :steps n (optional): override resolution
+
+   The turtle moves along an arc in the vertical plane.
+
+   Example: (arc-v 10 45) draws an arc pitching upward"
+  [state radius angle & {:keys [steps]}]
+  (if (or (zero? radius) (zero? angle))
+    state
+    (let [angle-rad (* (Math/abs angle) (/ Math/PI 180))
+          arc-length (* radius angle-rad)
+          actual-steps (or steps (calc-arc-steps state arc-length (Math/abs angle)))
+          step-angle-deg (/ angle actual-steps)
+          step-angle-rad (/ angle-rad actual-steps)
+          ;; Chord length for each step: 2 * r * sin(θ/2)
+          step-dist (* 2 radius (Math/sin (/ step-angle-rad 2)))
+          ;; First step: rotate half, then move
+          ;; Middle steps: rotate full, then move
+          half-angle (/ step-angle-deg 2)]
+      (-> (reduce (fn [s _]
+                    (-> s
+                        (tv step-angle-deg)
+                        (f step-dist)))
+                  ;; First: rotate half and move
+                  (-> state
+                      (tv half-angle)
+                      (f step-dist))
+                  ;; Remaining steps (n-1)
+                  (range (dec actual-steps)))
+          ;; Final half rotation to complete the arc
+          (tv half-angle)))))
+
+;; --- Bezier commands ---
+
+(defn- cubic-bezier-point
+  "Calculate point on cubic Bezier curve at parameter t.
+   p0 = start, p1 = control1, p2 = control2, p3 = end"
+  [p0 p1 p2 p3 t]
+  (let [t2 (- 1 t)
+        a (* t2 t2 t2)
+        b (* 3 t2 t2 t)
+        c (* 3 t2 t t)
+        d (* t t t)]
+    [(+ (* a (nth p0 0)) (* b (nth p1 0)) (* c (nth p2 0)) (* d (nth p3 0)))
+     (+ (* a (nth p0 1)) (* b (nth p1 1)) (* c (nth p2 1)) (* d (nth p3 1)))
+     (+ (* a (nth p0 2)) (* b (nth p1 2)) (* c (nth p2 2)) (* d (nth p3 2)))]))
+
+(defn- quadratic-bezier-point
+  "Calculate point on quadratic Bezier curve at parameter t.
+   p0 = start, p1 = control, p2 = end"
+  [p0 p1 p2 t]
+  (let [t2 (- 1 t)
+        a (* t2 t2)
+        b (* 2 t2 t)
+        c (* t t)]
+    [(+ (* a (nth p0 0)) (* b (nth p1 0)) (* c (nth p2 0)))
+     (+ (* a (nth p0 1)) (* b (nth p1 1)) (* c (nth p2 1)))
+     (+ (* a (nth p0 2)) (* b (nth p1 2)) (* c (nth p2 2)))]))
+
+(defn- cubic-bezier-tangent
+  "Calculate tangent (derivative) on cubic Bezier curve at parameter t."
+  [p0 p1 p2 p3 t]
+  (let [t2 (- 1 t)
+        a (* 3 t2 t2)
+        b (* 6 t2 t)
+        c (* 3 t t)]
+    (normalize
+     [(+ (* a (- (nth p1 0) (nth p0 0)))
+         (* b (- (nth p2 0) (nth p1 0)))
+         (* c (- (nth p3 0) (nth p2 0))))
+      (+ (* a (- (nth p1 1) (nth p0 1)))
+         (* b (- (nth p2 1) (nth p1 1)))
+         (* c (- (nth p3 1) (nth p2 1))))
+      (+ (* a (- (nth p1 2) (nth p0 2)))
+         (* b (- (nth p2 2) (nth p1 2)))
+         (* c (- (nth p3 2) (nth p2 2))))])))
+
+(defn- quadratic-bezier-tangent
+  "Calculate tangent (derivative) on quadratic Bezier curve at parameter t."
+  [p0 p1 p2 t]
+  (let [t2 (- 1 t)
+        a (* 2 t2)
+        b (* 2 t)]
+    (normalize
+     [(+ (* a (- (nth p1 0) (nth p0 0))) (* b (- (nth p2 0) (nth p1 0))))
+      (+ (* a (- (nth p1 1) (nth p0 1))) (* b (- (nth p2 1) (nth p1 1))))
+      (+ (* a (- (nth p1 2) (nth p0 2))) (* b (- (nth p2 2) (nth p1 2))))])))
+
+(defn- auto-control-points
+  "Generate control points for a smooth cubic bezier.
+   The curve starts tangent to current heading and ends smoothly at target."
+  [p0 heading p3]
+  (let [dist (magnitude (v- p3 p0))
+        ;; First control point: extend from start along heading
+        c1 (v+ p0 (v* heading (* dist 0.33)))
+        ;; Second control point: extend from end back toward start
+        to-start (normalize (v- p0 p3))
+        c2 (v+ p3 (v* to-start (* dist 0.33)))]
+    [c1 c2]))
+
+(defn- bezier-walk
+  "Walk along a bezier curve, moving directly to each sample point.
+   Updates heading to follow the curve tangent."
+  [state steps point-fn tangent-fn]
+  (let [initial-up (:up state)]
+    (reduce
+     (fn [s i]
+       (let [t (/ (inc i) steps)
+             new-pos (point-fn t)
+             new-heading (tangent-fn t)
+             current-pos (:position s)
+             move-dir (v- new-pos current-pos)
+             dist (magnitude move-dir)]
+         (if (> dist 0.001)
+           (let [;; Set heading to actual movement direction for f to work correctly
+                 actual-heading (normalize move-dir)
+                 ;; Recompute up to stay perpendicular to heading
+                 right (cross actual-heading initial-up)
+                 right-mag (magnitude right)]
+             (if (< right-mag 0.001)
+               ;; Heading parallel to up - use current up
+               (-> s
+                   (f dist)
+                   (assoc :heading new-heading))
+               ;; Normal case: recompute up from heading and right
+               (let [new-up (normalize (cross right actual-heading))]
+                 (-> s
+                     (assoc :heading actual-heading)
+                     (assoc :up new-up)
+                     (f dist)
+                     ;; After movement, set heading to curve tangent for next iteration
+                     (assoc :heading new-heading)))))
+           s)))
+     state
+     (range steps))))
+
+(defn bezier-to
+  "Draw a bezier curve to target position.
+
+   Usage:
+   (bezier-to state target)                    ; auto control points
+   (bezier-to state target [cx cy cz])         ; quadratic with 1 control point
+   (bezier-to state target [c1...] [c2...])    ; cubic with 2 control points
+   (bezier-to state target :steps 24)          ; auto with more steps
+   (bezier-to state target [c1] [c2] :steps 24); explicit with more steps
+
+   With 0 control points: generates smooth curve starting along current heading
+   With 1 control point: quadratic bezier
+   With 2 control points: cubic bezier"
+  [state target & args]
+  (let [;; Separate vector args (control points) from keyword args
+        {control-points true options false} (group-by vector? args)
+        {:keys [steps]} (apply hash-map (flatten options))
+        p0 (:position state)
+        p3 (vec target)
+        approx-length (magnitude (v- p3 p0))
+        actual-steps (or steps (calc-bezier-steps state approx-length))
+        n-controls (count control-points)]
+    (if (< approx-length 0.001)
+      state  ; target same as current position
+      (cond
+        ;; 2 control points: cubic bezier
+        (= n-controls 2)
+        (let [[c1 c2] control-points]
+          (bezier-walk state actual-steps
+                       #(cubic-bezier-point p0 c1 c2 p3 %)
+                       #(cubic-bezier-tangent p0 c1 c2 p3 %)))
+
+        ;; 1 control point: quadratic bezier
+        (= n-controls 1)
+        (let [c1 (first control-points)]
+          (bezier-walk state actual-steps
+                       #(quadratic-bezier-point p0 c1 p3 %)
+                       #(quadratic-bezier-tangent p0 c1 p3 %)))
+
+        ;; 0 control points: auto-generate cubic
+        :else
+        (let [[c1 c2] (auto-control-points p0 (:heading state) p3)]
+          (bezier-walk state actual-steps
+                       #(cubic-bezier-point p0 c1 c2 p3 %)
+                       #(cubic-bezier-tangent p0 c1 c2 p3 %)))))))
+
+(defn bezier-to-anchor
+  "Draw a bezier curve to a named anchor position.
+
+   Usage:
+   (bezier-to-anchor state :name)
+   (bezier-to-anchor state :name [c1] [c2])
+   (bezier-to-anchor state :name :steps 24)"
+  [state anchor-name & args]
+  (if-let [anchor (get-in state [:anchors anchor-name])]
+    (apply bezier-to state (:position anchor) args)
+    state))
+
 ;; --- Joint mode (for future corner styles) ---
 
 (defn joint-mode
@@ -1279,7 +1588,14 @@
 ;; ============================================================
 
 (defn- is-rotation?
-  "Check if command is a rotation."
+  "Check if command is a rotation (or direct heading set)."
+  [cmd]
+  (#{:th :tv :tr :set-heading} cmd))
+
+(defn- is-corner-rotation?
+  "Check if command is a corner rotation that requires segment shortening.
+   Excludes :set-heading which is used for smooth curves (bezier/arc)
+   that don't need corner treatment."
   [cmd]
   (#{:th :tv :tr} cmd))
 
@@ -1288,13 +1604,29 @@
   [x]
   (and (map? x) (= :path (:type x))))
 
+(defn- total-rotation-angle-closed
+  "Calculate the total absolute rotation angle from a sequence of rotation commands.
+   For :set-heading commands, we return 0 (no shortening needed for bezier curves)."
+  [rotations]
+  (reduce + 0 (map (fn [r]
+                     (if (= :set-heading (:cmd r))
+                       0
+                       (Math/abs (first (:args r)))))
+                   rotations)))
+
+(def ^:private ^:const corner-threshold-deg-closed
+  "Minimum rotation angle (degrees) to be considered a corner requiring segment shortening.
+   Smaller rotations (like arc steps) don't need shortening."
+  10.0)
+
 (defn- analyze-closed-path
   "Analyze a path for closed extrusion.
    Returns a vector of segments with their adjustments.
 
    For a closed path, each forward segment may need shortening:
-   - If preceded by rotation: shorten start by radius
-   - If followed by rotation: shorten end by radius
+   - If preceded by significant rotation (>10°): shorten start by radius
+   - If followed by significant rotation (>10°): shorten end by radius
+   - Small rotations (like arc steps) don't trigger shortening
 
    Returns: [{:cmd :f :dist 20 :shorten-start r :shorten-end r :rotations-after [...]}]"
   [commands radius]
@@ -1305,11 +1637,20 @@
     (vec
      (for [[idx cmd] forwards]
        (let [dist (first (:args cmd))
-             ;; Check if there's a rotation before this forward
-             ;; For closed path, rotation before first forward = rotation after last forward
-             prev-idx (mod (dec idx) n)
-             prev-cmd (:cmd (nth cmds prev-idx))
-             has-rotation-before (is-rotation? prev-cmd)
+             ;; Collect rotations before this forward (back to previous forward)
+             rotations-before (loop [i (dec idx)
+                                     rots []
+                                     steps 0]
+                                (if (or (< i 0) (> steps n))
+                                  rots
+                                  (let [ci (mod i n)
+                                        c (nth cmds ci)]
+                                    (if (is-rotation? (:cmd c))
+                                      (recur (dec i) (conj rots c) (inc steps))
+                                      rots))))
+             ;; Check if rotation before is significant
+             has-significant-rotation-before (>= (total-rotation-angle-closed rotations-before)
+                                                 corner-threshold-deg-closed)
              ;; Collect all rotations after this forward until next forward
              rotations-after (loop [i (inc idx)
                                     rots []]
@@ -1326,11 +1667,13 @@
                                    (if (is-rotation? (:cmd c))
                                      (recur (inc i) (conj rots c))
                                      rots))))
-             has-rotation-after (seq rotations-after)]
+             ;; Check if rotation after is significant
+             has-significant-rotation-after (>= (total-rotation-angle-closed rotations-after)
+                                                corner-threshold-deg-closed)]
          {:cmd :f
           :dist dist
-          :shorten-start (if has-rotation-before radius 0)
-          :shorten-end (if has-rotation-after radius 0)
+          :shorten-start (if has-significant-rotation-before radius 0)
+          :shorten-end (if has-significant-rotation-after radius 0)
           :rotations-after rotations-after})))))
 
 (defn- apply-rotation-to-state
@@ -1343,6 +1686,10 @@
           (tv (assoc state :pen-mode :off) angle))
     :tr (let [angle (first (:args rotation))]
           (tr (assoc state :pen-mode :off) angle))
+    :set-heading (let [[heading up] (:args rotation)]
+                   (-> state
+                       (assoc :heading (normalize heading))
+                       (assoc :up (normalize up))))
     state))
 
 (defn extrude-closed-from-path
@@ -1378,6 +1725,8 @@
                         shorten-end (:shorten-end seg)
                         rotations (:rotations-after seg)
                         effective-dist (- dist shorten-start shorten-end)
+                        joint-mode (or (:joint-mode state) :flat)
+                        has-corner-rotation (some #(is-corner-rotation? (:cmd %)) rotations)
 
                         next-seg (nth segments (mod (inc i) n-segments))
                         next-shorten-start (:shorten-start next-seg)
@@ -1396,20 +1745,36 @@
                         ;; Create end ring of this segment
                         end-ring (stamp-shape s2 shape)
 
-                        ;; Move to corner position
-                        s3 (assoc s2 :position (v+ (:position s2) (v* (:heading s2) shorten-end)))
+                        ;; Corner position
+                        corner-pos (v+ (:position s2) (v* (:heading s2) shorten-end))
+                        s3 (assoc s2 :position corner-pos)
 
                         ;; Apply rotations to get new heading
                         s4 (reduce apply-rotation-to-state s3 rotations)
+                        old-heading (:heading s3)
+                        new-heading (:heading s4)
 
-                        ;; Position for next segment's start
+                        ;; Generate corner junction rings based on joint-mode
+                        ;; All modes use same shortening. Difference is the junction geometry:
+                        ;; :flat - NO extra rings; mesh connects end-ring directly to next start-ring
+                        ;; :round - arc of rings rotating from old to new orientation
+                        ;; :tapered - scaled intermediate ring at corner
+                        corner-rings (if has-corner-rotation
+                                       (case joint-mode
+                                         :flat []  ;; Direct connection, no intermediate rings
+                                         :round (generate-round-corner-rings
+                                                 end-ring corner-pos old-heading new-heading
+                                                 (calc-round-steps state 90) radius)
+                                         :tapered (generate-tapered-corner-rings
+                                                   end-ring corner-pos old-heading new-heading)
+                                         [])
+                                       [])
+
+                        ;; Position for next segment's start: corner + radius along new heading
                         corner-start-pos (v+ (:position s4) (v* (:heading s4) next-shorten-start))
 
-                        ;; Collect rings: only add distinct position rings
-                        ;; - start-ring: beginning of segment (after shorten-start)
-                        ;; - end-ring: end of segment (before shorten-end)
-                        ;; DON'T add corner-end-ring - it's the same position as next start-ring
-                        new-rings (conj rings start-ring end-ring)
+                        ;; Collect rings: start-ring, end-ring, and any corner junction rings
+                        new-rings (into (conj rings start-ring end-ring) corner-rings)
 
                         s5 (assoc s4 :position corner-start-pos)]
                     (recur (inc i) s5 new-rings))))
@@ -1657,6 +2022,14 @@
 (defn rec-tr [state angle]
   (record-cmd state :tr [angle] #(tr % angle)))
 
+(defn rec-set-heading
+  "Record a set-heading command that directly sets heading and up vectors."
+  [state heading up]
+  (record-cmd state :set-heading [heading up]
+              #(-> %
+                   (assoc :heading (normalize heading))
+                   (assoc :up (normalize up)))))
+
 (defn path-from-recorder
   "Extract a path from a recorder turtle."
   [recorder]
@@ -1673,6 +2046,9 @@
                 :th (th s (first args))
                 :tv (tv s (first args))
                 :tr (tr s (first args))
+                :set-heading (-> s
+                                 (assoc :heading (normalize (first args)))
+                                 (assoc :up (normalize (second args))))
                 s))
             state
             (:commands path))
@@ -1780,11 +2156,13 @@
         (let [dist (first (:args cmd))
               is-first (zero? fwd-idx)
               is-last (= fwd-idx (dec n-forwards))
-              ;; Check if there's a rotation before this forward
+              ;; Check if there's a CORNER rotation before this forward
+              ;; (excludes :set-heading used by smooth curves like bezier/arc)
               prev-idx (dec idx)
-              has-rotation-before (and (>= prev-idx 0)
-                                       (is-rotation? (:cmd (nth cmds prev-idx))))
+              has-corner-before (and (>= prev-idx 0)
+                                     (is-corner-rotation? (:cmd (nth cmds prev-idx))))
               ;; Collect all rotations after this forward until next forward or end
+              ;; (includes :set-heading for applying during extrude)
               rotations-after (loop [i (inc idx)
                                      rots []]
                                 (if (>= i n)
@@ -1793,13 +2171,14 @@
                                     (if (is-rotation? (:cmd c))
                                       (recur (inc i) (conj rots c))
                                       rots))))
-              has-rotation-after (seq rotations-after)]
+              ;; Check if there's a CORNER rotation after (for shorten decision)
+              has-corner-after (some #(is-corner-rotation? (:cmd %)) rotations-after)]
           {:cmd :f
            :dist dist
            ;; Open path: first segment doesn't shorten start
-           :shorten-start (if (and has-rotation-before (not is-first)) radius 0)
+           :shorten-start (if (and has-corner-before (not is-first)) radius 0)
            ;; Open path: last segment doesn't shorten end
-           :shorten-end (if (and has-rotation-after (not is-last)) radius 0)
+           :shorten-end (if (and has-corner-after (not is-last)) radius 0)
            :rotations-after rotations-after}))
       forwards))))
 
@@ -1837,6 +2216,8 @@
                         rotations (:rotations-after seg)
                         effective-dist (- dist shorten-start shorten-end)
                         is-last (= i (dec n-segments))
+                        joint-mode (or (:joint-mode state) :flat)
+                        has-corner-rotation (some #(is-corner-rotation? (:cmd %)) rotations)
 
                         ;; For first segment, start at current position
                         ;; For subsequent segments, position is already correct from previous iteration
@@ -1846,12 +2227,12 @@
                         ;; Create start ring
                         start-ring (stamp-shape s1 shape)
 
-                        ;; Position at end of segment
+                        ;; Position at end of segment (shortened by shorten-end)
                         end-pos (v+ start-pos (v* (:heading s1) effective-dist))
                         s2 (assoc s1 :position end-pos)
                         end-ring (stamp-shape s2 shape)
 
-                        ;; Move to corner position
+                        ;; Corner position
                         corner-pos (v+ end-pos (v* (:heading s2) shorten-end))
                         s3 (assoc s2 :position corner-pos)
 
@@ -1860,21 +2241,32 @@
                         old-heading (:heading s3)
                         new-heading (:heading s4)
 
-                        ;; Generate corner rings based on joint-mode
-                        joint-mode (or (:joint-mode state) :flat)
-                        corner-rings (if (and (seq rotations) (not is-last))
+                        ;; Calculate angle between headings for round corner resolution
+                        corner-angle-deg (when (and has-corner-rotation (= joint-mode :round))
+                                           (let [cos-a (dot old-heading new-heading)
+                                                 angle-rad (Math/acos (min 1 (max -1 cos-a)))]
+                                             (* angle-rad (/ 180 Math/PI))))
+                        round-steps (when corner-angle-deg
+                                      (calc-round-steps state corner-angle-deg))
+
+                        ;; Generate corner junction rings based on joint-mode
+                        ;; All modes use same shortening. Difference is the junction geometry:
+                        ;; :flat - NO extra rings; mesh connects end-ring directly to next start-ring
+                        ;; :round - arc of rings rotating from old to new orientation
+                        ;; :tapered - scaled intermediate ring at corner
+                        corner-rings (if (and has-corner-rotation (not is-last))
                                        (case joint-mode
+                                         :flat []  ;; Direct connection, no intermediate rings
                                          :round (generate-round-corner-rings
-                                                 end-ring corner-pos old-heading new-heading 4 radius)
+                                                 end-ring corner-pos old-heading new-heading
+                                                 (or round-steps 4) radius)
                                          :tapered (generate-tapered-corner-rings
                                                    end-ring corner-pos old-heading new-heading)
-                                         ;; :flat - no intermediate rings
                                          [])
                                        [])
 
-                        ;; Position for next segment (if any)
-                        ;; Same calculation for all joint modes
-                        next-shorten-start (if (and (not is-last) (seq rotations))
+                        ;; Position for next segment: corner + radius along new heading
+                        next-shorten-start (if (and (not is-last) has-corner-rotation)
                                              (:shorten-start (nth segments (inc i)))
                                              0)
                         next-start-pos (v+ corner-pos (v* (:heading s4) next-shorten-start))

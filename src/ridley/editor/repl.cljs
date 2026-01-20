@@ -93,6 +93,24 @@
 (defn ^:export implicit-joint-mode [mode]
   (swap! turtle-atom turtle/joint-mode mode))
 
+;; Resolution (like OpenSCAD $fn/$fa/$fs)
+(defn ^:export implicit-resolution [mode value]
+  (swap! turtle-atom turtle/resolution mode value))
+
+;; Arc commands
+(defn ^:export implicit-arc-h [radius angle & {:keys [steps]}]
+  (swap! turtle-atom #(turtle/arc-h % radius angle :steps steps)))
+
+(defn ^:export implicit-arc-v [radius angle & {:keys [steps]}]
+  (swap! turtle-atom #(turtle/arc-v % radius angle :steps steps)))
+
+;; Bezier commands
+(defn ^:export implicit-bezier-to [target & args]
+  (swap! turtle-atom #(apply turtle/bezier-to % target args)))
+
+(defn ^:export implicit-bezier-to-anchor [anchor-name & args]
+  (swap! turtle-atom #(apply turtle/bezier-to-anchor % anchor-name args)))
+
 ;; State stack
 (defn ^:export implicit-push-state []
   (swap! turtle-atom turtle/push-state))
@@ -187,17 +205,43 @@
   ([size] (prims/box-mesh size))
   ([sx sy sz] (prims/box-mesh sx sy sz)))
 
-(defn- pure-sphere
-  ([radius] (prims/sphere-mesh radius))
-  ([radius segments rings] (prims/sphere-mesh radius segments rings)))
+;; Resolution-aware shape and primitive constructors
+;; These read resolution from turtle state when segments not explicitly provided
 
-(defn- pure-cyl
-  ([radius height] (prims/cyl-mesh radius height))
-  ([radius height segments] (prims/cyl-mesh radius height segments)))
+(defn- circle-with-resolution
+  "Create circular shape, using resolution from turtle state if segments not provided."
+  ([radius]
+   (let [circumference (* 2 Math/PI radius)
+         segments (turtle/calc-circle-segments @turtle-atom circumference)]
+     (shape/circle-shape radius segments)))
+  ([radius segments]
+   (shape/circle-shape radius segments)))
 
-(defn- pure-cone
-  ([r1 r2 height] (prims/cone-mesh r1 r2 height))
-  ([r1 r2 height segments] (prims/cone-mesh r1 r2 height segments)))
+(defn- sphere-with-resolution
+  "Create sphere mesh, using resolution from turtle state if not provided."
+  ([radius]
+   (let [segments (turtle/calc-circle-segments @turtle-atom (* 2 Math/PI radius))
+         rings (max 4 (int (/ segments 2)))]
+     (prims/sphere-mesh radius segments rings)))
+  ([radius segments rings]
+   (prims/sphere-mesh radius segments rings)))
+
+(defn- cyl-with-resolution
+  "Create cylinder mesh, using resolution from turtle state if not provided."
+  ([radius height]
+   (let [segments (turtle/calc-circle-segments @turtle-atom (* 2 Math/PI radius))]
+     (prims/cyl-mesh radius height segments)))
+  ([radius height segments]
+   (prims/cyl-mesh radius height segments)))
+
+(defn- cone-with-resolution
+  "Create cone mesh, using resolution from turtle state if not provided."
+  ([r1 r2 height]
+   (let [max-r (max r1 r2)
+         segments (turtle/calc-circle-segments @turtle-atom (* 2 Math/PI max-r))]
+     (prims/cone-mesh r1 r2 height segments)))
+  ([r1 r2 height segments]
+   (prims/cone-mesh r1 r2 height segments)))
 
 ;; Transform a mesh to turtle position/orientation
 (defn- transform-mesh-to-turtle
@@ -555,6 +599,14 @@
    'pen-down     implicit-pen-down
    'reset        implicit-reset
    'joint-mode   implicit-joint-mode
+   ;; Resolution (like OpenSCAD $fn/$fa/$fs)
+   'resolution   implicit-resolution
+   ;; Arc commands
+   'arc-h        implicit-arc-h
+   'arc-v        implicit-arc-v
+   ;; Bezier commands
+   'bezier-to         implicit-bezier-to
+   'bezier-to-anchor  implicit-bezier-to-anchor
    ;; State stack
    'push-state   implicit-push-state
    'pop-state    implicit-pop-state
@@ -570,16 +622,16 @@
    'detach       implicit-detach
    'attached?    (fn [] (turtle/attached? @turtle-atom))
    'inset        implicit-inset
-   ;; 3D primitives - return mesh data at origin (no side effects)
+   ;; 3D primitives - return mesh data at origin (resolution-aware)
    'box          pure-box
-   'sphere       pure-sphere
-   'cyl          pure-cyl
-   'cone         pure-cone
+   'sphere       sphere-with-resolution
+   'cyl          cyl-with-resolution
+   'cone         cone-with-resolution
    ;; Materialize mesh at turtle position
    'stamp        implicit-stamp    ; show in viewport
    'make         implicit-make     ; hidden (for boolean ops)
-   ;; Shape constructors (return shape data, use with pen)
-   'circle       shape/circle-shape
+   ;; Shape constructors (return shape data, resolution-aware)
+   'circle       circle-with-resolution
    'rect         shape/rect-shape
    'polygon      shape/polygon-shape
    'star         shape/star-shape
@@ -642,6 +694,7 @@
    'rec-th              turtle/rec-th
    'rec-tv              turtle/rec-tv
    'rec-tr              turtle/rec-tr
+   'rec-set-heading     turtle/rec-set-heading
    'path-from-recorder  turtle/path-from-recorder
    'run-path-impl       turtle/run-path
    'follow-path         implicit-run-path
@@ -677,7 +730,18 @@
    'anonymous-meshes    registry/anonymous-meshes
    'anonymous-count     registry/anonymous-count
    ;; STL export
-   'save-stl            stl/download-stl})
+   'save-stl            stl/download-stl
+   ;; Math functions for SCI context (used by arc/bezier recording)
+   'PI                  js/Math.PI
+   'abs                 js/Math.abs
+   'sin                 js/Math.sin
+   'cos                 js/Math.cos
+   'sqrt                js/Math.sqrt
+   'ceil                js/Math.ceil
+   'floor               js/Math.floor
+   'round               js/Math.round
+   'pow                 js/Math.pow
+   'atan2               js/Math.atan2})
 
 ;; Macro definitions for SCI context
 (def ^:private macro-defs
@@ -693,6 +757,193 @@
      (swap! path-recorder rec-tv angle))
    (defn- rec-tr* [angle]
      (swap! path-recorder rec-tr angle))
+   (defn- rec-set-heading* [heading up]
+     (swap! path-recorder rec-set-heading heading up))
+
+   ;; Recording version of arc-h that decomposes into rec-f* and rec-th*
+   (defn- rec-arc-h* [radius angle & {:keys [steps]}]
+     (when-not (or (zero? radius) (zero? angle))
+       (let [angle-rad (* (abs angle) (/ PI 180))
+             arc-length (* radius angle-rad)
+             ;; Use resolution from path-recorder state
+             res-mode (get-in @path-recorder [:resolution :mode] :n)
+             res-value (get-in @path-recorder [:resolution :value] 16)
+             actual-steps (or steps
+                              (case res-mode
+                                :n res-value
+                                :a (max 1 (int (ceil (/ (abs angle) res-value))))
+                                :s (max 1 (int (ceil (/ arc-length res-value))))))
+             step-angle-deg (/ angle actual-steps)
+             step-angle-rad (/ angle-rad actual-steps)
+             step-dist (* 2 radius (sin (/ step-angle-rad 2)))
+             half-angle (/ step-angle-deg 2)]
+         ;; First: rotate half and move
+         (rec-th* half-angle)
+         (rec-f* step-dist)
+         ;; Middle steps
+         (dotimes [_ (dec actual-steps)]
+           (rec-th* step-angle-deg)
+           (rec-f* step-dist))
+         ;; Final half rotation
+         (rec-th* half-angle))))
+
+   ;; Recording version of arc-v that decomposes into rec-f* and rec-tv*
+   (defn- rec-arc-v* [radius angle & {:keys [steps]}]
+     (when-not (or (zero? radius) (zero? angle))
+       (let [angle-rad (* (abs angle) (/ PI 180))
+             arc-length (* radius angle-rad)
+             res-mode (get-in @path-recorder [:resolution :mode] :n)
+             res-value (get-in @path-recorder [:resolution :value] 16)
+             actual-steps (or steps
+                              (case res-mode
+                                :n res-value
+                                :a (max 1 (int (ceil (/ (abs angle) res-value))))
+                                :s (max 1 (int (ceil (/ arc-length res-value))))))
+             step-angle-deg (/ angle actual-steps)
+             step-angle-rad (/ angle-rad actual-steps)
+             step-dist (* 2 radius (sin (/ step-angle-rad 2)))
+             half-angle (/ step-angle-deg 2)]
+         ;; First: rotate half and move
+         (rec-tv* half-angle)
+         (rec-f* step-dist)
+         ;; Middle steps
+         (dotimes [_ (dec actual-steps)]
+           (rec-tv* step-angle-deg)
+           (rec-f* step-dist))
+         ;; Final half rotation
+         (rec-tv* half-angle))))
+
+   ;; Helper: normalize a 3D vector
+   (defn- rec-normalize [v]
+     (let [len (sqrt (+ (* (nth v 0) (nth v 0))
+                        (* (nth v 1) (nth v 1))
+                        (* (nth v 2) (nth v 2))))]
+       (if (> len 0.0001)
+         [(/ (nth v 0) len) (/ (nth v 1) len) (/ (nth v 2) len)]
+         [1 0 0])))
+
+   ;; Helper: dot product
+   (defn- rec-dot [a b]
+     (+ (* (nth a 0) (nth b 0))
+        (* (nth a 1) (nth b 1))
+        (* (nth a 2) (nth b 2))))
+
+   ;; Helper: cross product
+   (defn- rec-cross [a b]
+     [(- (* (nth a 1) (nth b 2)) (* (nth a 2) (nth b 1)))
+      (- (* (nth a 2) (nth b 0)) (* (nth a 0) (nth b 2)))
+      (- (* (nth a 0) (nth b 1)) (* (nth a 1) (nth b 0)))])
+
+   ;; Helper: compute th and tv angles to rotate from one heading to another
+   ;; Returns [th-angle tv-angle] in degrees
+   ;; Rotation order: first apply tv (pitch around right), then th (yaw around up)
+   (defn- rec-compute-rotation-angles [from-heading from-up to-direction]
+     (let [;; Vertical angle (tv): pitch around right axis
+           ;; First, find the vertical component
+           up-comp (rec-dot to-direction from-up)
+           ;; Project to horizontal plane to find horizontal direction
+           horiz-dir [(- (nth to-direction 0) (* up-comp (nth from-up 0)))
+                      (- (nth to-direction 1) (* up-comp (nth from-up 1)))
+                      (- (nth to-direction 2) (* up-comp (nth from-up 2)))]
+           horiz-len (sqrt (rec-dot horiz-dir horiz-dir))
+           ;; Vertical angle: angle between horizontal and actual direction
+           tv-rad (atan2 up-comp horiz-len)
+           tv-deg (* tv-rad (/ 180 PI))
+           ;; Horizontal angle (th): yaw around up axis
+           ;; Only calculate if there's horizontal component
+           [th-deg] (if (> horiz-len 0.001)
+                      (let [horiz-norm (rec-normalize horiz-dir)
+                            fwd-comp (rec-dot horiz-norm from-heading)
+                            right (rec-cross from-heading from-up)
+                            right-comp (rec-dot horiz-norm right)
+                            th-rad (atan2 right-comp fwd-comp)]
+                        [(* (- th-rad) (/ 180 PI))])
+                      [0])]
+       [th-deg tv-deg]))
+
+   ;; Recording version of bezier-to
+   ;; Decomposes bezier into f movements with th/tv rotations to follow the curve
+   (defn- rec-bezier-to* [target & args]
+     (let [grouped (group-by vector? args)
+           control-points (get grouped true)
+           options (get grouped false)
+           steps (get (apply hash-map (flatten options)) :steps)
+           state @path-recorder
+           p0 (:position state)
+           p3 (vec target)
+           dx0 (- (nth p3 0) (nth p0 0))
+           dy0 (- (nth p3 1) (nth p0 1))
+           dz0 (- (nth p3 2) (nth p0 2))
+           approx-length (sqrt (+ (* dx0 dx0) (* dy0 dy0) (* dz0 dz0)))]
+       (when (> approx-length 0.001)
+         (let [res-mode (get-in state [:resolution :mode] :n)
+               res-value (get-in state [:resolution :value] 16)
+               actual-steps (or steps
+                                (case res-mode
+                                  :n res-value
+                                  :a res-value
+                                  :s (max 1 (int (ceil (/ approx-length res-value))))))
+               n-controls (count control-points)
+               ;; Compute control points
+               [c1 c2] (cond
+                         (= n-controls 2) control-points
+                         (= n-controls 1) [(first control-points) (first control-points)]
+                         :else ;; Auto control points
+                         (let [heading (:heading state)]
+                           [(mapv + p0 (mapv #(* % (* approx-length 0.33)) heading))
+                            (let [to-start (rec-normalize [(- (nth p0 0) (nth p3 0))
+                                                           (- (nth p0 1) (nth p3 1))
+                                                           (- (nth p0 2) (nth p3 2))])]
+                              (mapv + p3 (mapv #(* % (* approx-length 0.33)) to-start)))]))
+               ;; Bezier point function
+               cubic-point (fn [t]
+                             (let [t2 (- 1 t)
+                                   a (* t2 t2 t2) b (* 3 t2 t2 t) c (* 3 t2 t t) d (* t t t)]
+                               [(+ (* a (nth p0 0)) (* b (nth c1 0)) (* c (nth c2 0)) (* d (nth p3 0)))
+                                (+ (* a (nth p0 1)) (* b (nth c1 1)) (* c (nth c2 1)) (* d (nth p3 1)))
+                                (+ (* a (nth p0 2)) (* b (nth c1 2)) (* c (nth c2 2)) (* d (nth p3 2)))]))
+               ;; Precompute all bezier points
+               points (mapv #(cubic-point (/ % actual-steps)) (range (inc actual-steps)))
+               ;; Precompute all segment directions and distances
+               segments (vec (for [i (range actual-steps)]
+                               (let [curr-pos (nth points i)
+                                     next-pos (nth points (inc i))
+                                     dx (- (nth next-pos 0) (nth curr-pos 0))
+                                     dy (- (nth next-pos 1) (nth curr-pos 1))
+                                     dz (- (nth next-pos 2) (nth curr-pos 2))
+                                     dist (sqrt (+ (* dx dx) (* dy dy) (* dz dz)))]
+                                 {:dir (if (> dist 0.001) (rec-normalize [dx dy dz]) nil)
+                                  :dist dist})))]
+           ;; Walk through segments using rotation-minimizing frame
+           ;; This propagates the up vector smoothly to avoid twist/concave faces
+           (loop [remaining-segments segments
+                  current-up (:up state)]
+             (when (seq remaining-segments)
+               (let [{:keys [dir dist]} (first remaining-segments)]
+                 (if (and dir (> dist 0.001))
+                   (let [;; Rotation-minimizing frame: project current up onto plane perpendicular to new heading
+                         ;; new_up = normalize(current_up - (current_up · dir) * dir)
+                         dot-product (rec-dot current-up dir)
+                         projected [(- (nth current-up 0) (* dot-product (nth dir 0)))
+                                    (- (nth current-up 1) (* dot-product (nth dir 1)))
+                                    (- (nth current-up 2) (* dot-product (nth dir 2)))]
+                         proj-len (sqrt (rec-dot projected projected))
+                         new-up (if (> proj-len 0.001)
+                                  (rec-normalize projected)
+                                  ;; Fallback: compute perpendicular using cross product
+                                  (let [right (rec-cross dir current-up)
+                                        right-len (sqrt (rec-dot right right))]
+                                    (if (> right-len 0.001)
+                                      (rec-normalize (rec-cross right dir))
+                                      current-up)))]
+                     ;; Set heading directly to segment direction with propagated up
+                     (rec-set-heading* dir new-up)
+                     ;; Move forward
+                     (rec-f* dist)
+                     ;; Continue with next segment, propagating the up vector
+                     (recur (rest remaining-segments) new-up))
+                   ;; Skip zero-length segment, keep current up
+                   (recur (rest remaining-segments) current-up)))))))))
 
    ;; path: record turtle movements for later replay
    ;; (def p (path (f 20) (th 90) (f 20))) - record a path
@@ -704,7 +955,10 @@
         (let [~'f rec-f*
               ~'th rec-th*
               ~'tv rec-tv*
-              ~'tr rec-tr*]
+              ~'tr rec-tr*
+              ~'arc-h rec-arc-h*
+              ~'arc-v rec-arc-v*
+              ~'bezier-to rec-bezier-to*]
           ~@body)
         (path-from-recorder @path-recorder)))
 
@@ -734,14 +988,23 @@
    ;; Returns the created mesh (can be bound with def)
    (defmacro extrude [shape & movements]
      (if (= 1 (count movements))
-       ;; Single argument - check at runtime if it's a path
-       ;; This handles: my-path, (path-to :x), (my-fn :x), etc.
-       `(let [arg# ~(first movements)]
-          (if (path? arg#)
-            ;; It's a path - use directly
-            (extrude-path-impl ~shape arg#)
-            ;; Not a path - it was a movement that mutated turtle, record it fresh
-            (extrude-path-impl ~shape (path ~(first movements)))))
+       (let [arg (first movements)]
+         (cond
+           ;; Symbol - might be a pre-defined path, check at runtime
+           (symbol? arg)
+           `(let [arg# ~arg]
+              (if (path? arg#)
+                (extrude-path-impl ~shape arg#)
+                ;; Not a path - shouldn't happen for symbols, but wrap to be safe
+                (extrude-path-impl ~shape (path ~arg))))
+
+           ;; List starting with path or path-to - use directly
+           (and (list? arg) (contains? #{'path 'path-to} (first arg)))
+           `(extrude-path-impl ~shape ~arg)
+
+           ;; Any other expression (movements like (f 10)) - wrap in path
+           :else
+           `(extrude-path-impl ~shape (path ~arg))))
        ;; Multiple movements - wrap in path macro
        `(extrude-path-impl ~shape (path ~@movements))))
 
@@ -752,7 +1015,18 @@
    ;; Returns the created mesh (can be bound with def)
    ;; Uses pre-processed path approach for correct corner geometry
    (defmacro extrude-closed [shape path-expr]
-     `(extrude-closed-path-impl ~shape ~path-expr))
+     (cond
+       ;; Symbol - use directly (should be a path)
+       (symbol? path-expr)
+       `(extrude-closed-path-impl ~shape ~path-expr)
+
+       ;; List starting with path - use directly
+       (and (list? path-expr) (= 'path (first path-expr)))
+       `(extrude-closed-path-impl ~shape ~path-expr)
+
+       ;; Other list - wrap in path
+       :else
+       `(extrude-closed-path-impl ~shape (path ~path-expr))))
 
    ;; loft: like extrude but with shape transformation based on progress
    ;; (loft (circle 20) #(scale %1 (- 1 %2)) (f 30)) - cone

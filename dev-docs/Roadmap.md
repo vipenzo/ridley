@@ -216,31 +216,38 @@
 
 ---
 
-## Phase 5: Anchors and Navigation
+## Phase 5: Anchors and Navigation (Partial) ✓
 
 **Goal**: Named reference points for complex models.
 
-### 5.1 Anchor System
-- [ ] `(mark :name)` — position only
-- [ ] `(mark-oriented :name)` — position + heading
-- [ ] Store anchors in scene context
+### 5.1 Anchor System ✓
+- [x] `(mark :name)` — saves position + heading + up (always oriented)
+- [x] Store anchors in turtle state
 
-### 5.2 Navigation
-- [ ] `(goto :name)` — move, keep heading
-- [ ] `(goto-oriented :name)` — move and adopt heading
-- [ ] `(look-at :name)` — orient toward
+### 5.2 Navigation ✓
+- [x] `(goto :name)` — move and adopt heading/up
+- [x] `(look-at :name)` — orient toward anchor
+- [x] `(path-to :name)` — create path from current position to anchor
 
-### 5.3 Bezier Curves
-- [ ] `(bezier-to [x y z])`
-- [ ] `(bezier-to [x y z] :heading [...])`
-- [ ] `(bezier-to-anchor :name)`
-- [ ] `(bezier-to-oriented :name)`
+### 5.3 Bezier Curves ✓
+- [x] `(bezier-to [x y z])` — auto control points (starts tangent to heading)
+- [x] `(bezier-to [x y z] [c1])` — quadratic bezier with 1 control point
+- [x] `(bezier-to [x y z] [c1] [c2])` — cubic bezier with 2 control points
+- [x] `(bezier-to-anchor :name)` — bezier to named anchor
+- [x] Integration with path/extrusion system (decomposes to f + rotations)
 
-### 5.4 Arcs
-- [ ] `(arc-h radius angle)`
-- [ ] `(arc-v radius angle)`
+### 5.4 Arcs ✓
+- [x] `(arc-h radius angle)` — horizontal arc (turn while moving)
+- [x] `(arc-v radius angle)` — vertical arc (pitch while moving)
+- [x] Integration with extrusion system (decomposes to f + rotations)
 
-**Deliverable**: Can create smooth curved paths between named points.
+### 5.5 Resolution Control ✓
+- [x] `(resolution :n value)` — fixed segment count (like OpenSCAD $fn)
+- [x] `(resolution :a value)` — max angle per segment (like OpenSCAD $fa)
+- [x] `(resolution :s value)` — max segment length (like OpenSCAD $fs)
+- [x] Affects: arc-h, arc-v, bezier-to, circle, sphere, cyl, cone, round joints
+
+**Deliverable**: Can create smooth curved paths between named points. ✓
 
 ---
 
@@ -406,6 +413,9 @@ The core turtle system, generative operations, boolean operations, and anchor/na
 2. [ ] Non-uniform scale `(scale [sx sy sz])`
 
 **Recently completed:**
+- ✓ **Arc Commands** — `arc-h` and `arc-v` for smooth curved paths
+- ✓ **Bezier Commands** — `bezier-to` and `bezier-to-anchor` for bezier curves
+- ✓ **Resolution Control** — `resolution` function inspired by OpenSCAD (`$fn`/`$fa`/`$fs`)
 - ✓ **Text on Path** — `text-on-path` places extruded text along a curved path, with each letter oriented tangent to the curve
 - ✓ **Path Utilities** — `follow-path` for visualizing paths, `path-total-length` for arc-length calculation, `sample-path-at-distance` for path sampling
 

@@ -74,6 +74,78 @@ separator   = " " | ";" | newline
 
 All rotation commands support **pending rotations in extrude mode** for automatic fillet generation at corners.
 
+### Arc Commands
+
+Draw smooth arcs by combining movement with rotation:
+
+```clojure
+(arc-h radius angle)             ; Horizontal arc (turns around up axis)
+(arc-h radius angle :steps 24)   ; With explicit step count
+
+(arc-v radius angle)             ; Vertical arc (turns around right axis)
+(arc-v radius angle :steps 24)   ; With explicit step count
+```
+
+- `arc-h`: turtle moves in a circular arc horizontally, like `f` + `th` combined
+- `arc-v`: turtle moves in a circular arc vertically, like `f` + `tv` combined
+- Positive angle = standard rotation direction (left for arc-h, up for arc-v)
+- Arc length = radius × angle_radians
+- Steps default to resolution setting (see Resolution below)
+
+**Examples:**
+```clojure
+(arc-h 10 90)                    ; Quarter circle turning left, radius 10
+(arc-h 10 -90)                   ; Quarter circle turning right
+
+;; S-curve
+(arc-h 10 90)
+(arc-h 10 -90)
+
+;; Spiral
+(extrude (circle 3)
+  (dotimes [_ 8]
+    (arc-h 20 90)))
+```
+
+### Bezier Commands
+
+Draw smooth bezier curves to target positions:
+
+```clojure
+;; Auto-generated control points (starts tangent to current heading)
+(bezier-to [x y z])
+(bezier-to [x y z] :steps 24)
+
+;; Quadratic bezier (1 control point)
+(bezier-to [x y z] [cx cy cz])
+
+;; Cubic bezier (2 control points)
+(bezier-to [x y z] [c1x c1y c1z] [c2x c2y c2z])
+
+;; Bezier to named anchor
+(bezier-to-anchor :name)
+(bezier-to-anchor :name :steps 24)
+```
+
+- With 0 control points: auto-generates smooth curve starting along current heading
+- With 1 control point: quadratic bezier
+- With 2 control points: cubic bezier
+- Steps default to resolution setting
+
+**Examples:**
+```clojure
+;; Smooth curve to a point
+(bezier-to [30 30 0])
+
+;; Curve to anchor
+(mark :target [50 0 20])
+(reset)
+(bezier-to-anchor :target)
+
+;; With explicit control points
+(bezier-to [30 0 0] [10 20 0] [20 20 0])   ; S-curve
+```
+
 ### Pen Control
 
 | Function | Description |
@@ -103,6 +175,40 @@ Useful for branching or temporary movements. Meshes and geometry created between
 ```
 
 Resets turtle pose without clearing accumulated geometry/meshes.
+
+### Resolution (Curve Quality)
+
+Control the resolution of curves and circular primitives globally, inspired by OpenSCAD's `$fn`, `$fa`, `$fs`:
+
+```clojure
+(resolution :n 32)               ; Fixed number of segments (default 16)
+(resolution :a 5)                ; Maximum angle per segment (degrees)
+(resolution :s 0.5)              ; Maximum segment length (units)
+```
+
+**Affected operations:**
+- `arc-h`, `arc-v` — arc step count
+- `bezier-to` — bezier step count
+- `circle` — circle segment count
+- `sphere`, `cyl`, `cone` — circumferential segments
+- Round joints during extrusion — interpolation steps
+
+**Workflow:**
+```clojure
+;; Fast iteration with low resolution
+(resolution :n 8)
+;; ... design ...
+
+;; High quality for final export
+(resolution :n 32)
+```
+
+**Override for specific calls:**
+```clojure
+(arc-h 10 90 :steps 32)          ; Override resolution for this arc
+(circle 5 64)                    ; Circle with explicit 64 segments
+(sphere 10 32 16)                ; Sphere with explicit segments/rings
+```
 
 ### Anchors & Navigation
 
@@ -709,6 +815,9 @@ Full Clojure available via SCI:
 
 ### Fully Implemented
 - Turtle movement (f, th, tv, tr)
+- Arc commands (arc-h, arc-v)
+- Bezier commands (bezier-to, bezier-to-anchor)
+- Resolution control (resolution :n/:a/:s)
 - Pen control (:on, :off)
 - State stack (push-state, pop-state, clear-stack)
 - Anchors (mark, goto, look-at, path-to)
@@ -735,7 +844,6 @@ Full Clojure available via SCI:
 ### Not Yet Implemented
 - Dense syntax parser (string notation)
 - Backward movement (b)
-- Curves (arc-h, arc-v, bezier-to)
 - Fillet/chamfer modifiers in paths
 - Boolean ops with fillet/chamfer
 - Face-based drawing (pen :3d, pen with face selection)
