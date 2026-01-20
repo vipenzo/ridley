@@ -69,7 +69,7 @@
 ;; Session Management
 ;; ============================================================
 
-(defn- on-session-started [^js session ^js renderer session-mode]
+(defn- on-session-started [^js session ^js renderer session-mode] 
   (let [scene (:scene @xr-state)]
     ;; Save original background for restoration
     (when (and scene (= session-mode :ar))
@@ -82,6 +82,13 @@
            :panel-visible false
            :a-button-was-pressed false)
     (.setSession ^js (.-xr renderer) session)
+    ;; Disable foveated rendering to avoid visible rectangular artifacts
+    (when (.-setFoveation (.-xr renderer))
+      (.setFoveation (.-xr renderer) 0))
+    (.setReferenceSpaceType (.-xr renderer) "local-floor")
+    ;; Show controller group when entering XR
+    (when-let [controller-group (:controller-group @xr-state)]
+      (set! (.-visible controller-group) true))
     (when-let [panel (:control-panel @xr-state)]
       (set! (.-visible panel) false))
     (when-let [btn (:button @xr-state)]
@@ -94,6 +101,9 @@
   (when-let [{:keys [scene original-background session-mode]} @xr-state]
     (when (and scene (= session-mode :ar) original-background)
       (set! (.-background scene) original-background)))
+  ;; Hide controller group when exiting XR
+  (when-let [controller-group (:controller-group @xr-state)]
+    (set! (.-visible controller-group) false))
   (swap! xr-state assoc :session nil :session-mode nil :original-background nil)
   (when-let [btn (:button @xr-state)]
     (set! (.-textContent btn) "Enter VR"))
@@ -575,6 +585,8 @@
     (.add controller-group ray)
     (.add controller-group indicator)
     (.add controller-group debug-sprite)
+    ;; Hide controller group initially - only show in XR mode
+    (set! (.-visible controller-group) false)
     (.add scene controller-group)
     (swap! xr-state assoc
            :controller nil
@@ -645,121 +657,122 @@
 
 (defn update-controller
   "Update controller input each frame. Call from render loop when in VR."
-  [^js xr-frame ^js renderer]
+  [^js xr-frame ^js renderer] 
+  
   (when-let [{:keys [controller-group debug-sprite camera-rig camera mode world-group grip-held a-button-was-pressed b-button-was-pressed input-source]} @xr-state]
-    (when (and controller-group camera-rig camera world-group xr-frame renderer input-source)
-      ;; Cast Three.js objects to preserve property names in advanced compilation
-      (let [^js ctrl-grp controller-group
-            ^js world-grp world-group
-            ^js xr (.-xr renderer)
-            ^js ref-space (.getReferenceSpace xr)
-            ^js target-space (when input-source (.-targetRaySpace ^js input-source))
-            ^js pose (when (and ref-space target-space)
-                       (.getPose xr-frame target-space ref-space))]
-        ;; Update controller-group position from XRFrame pose
-        (when pose
-          (let [^js transform (.-transform pose)
-                ^js pos (.-position transform)
-                ^js ori (.-orientation transform)]
-            (.set (.-position ctrl-grp) (.-x pos) (.-y pos) (.-z pos))
-            (.set (.-quaternion ctrl-grp) (.-x ori) (.-y ori) (.-z ori) (.-w ori))
-            (.updateMatrixWorld ctrl-grp true)))
-        ;; Update button hover feedback when panel is visible
-        (when (:panel-visible @xr-state)
-          (update-button-hover (:panel-buttons @xr-state)))
-        ;; Handle ray-based drag-to-move when trigger is held
-        (let [{:keys [trigger-held drag-pending drag-start-ray-point drag-world-start drag-distance]} @xr-state]
-          ;; Initialize drag on first frame after trigger press (pose is now updated)
-          (when (and trigger-held drag-pending)
-            (let [ray-point (get-ray-point-at-distance ctrl-grp default-drag-distance)
-                  ^js world-pos (.-position world-grp)]
-              (when-let [sprite (:debug-sprite @xr-state)]
-                (update-debug-sprite sprite "DRAG-START"))
-              (swap! xr-state assoc
-                     :drag-pending false
-                     :drag-start-ray-point ray-point
-                     :drag-world-start (.clone world-pos)
-                     :drag-distance default-drag-distance)))
-          ;; Apply drag movement
-          (when (and trigger-held (not drag-pending) drag-start-ray-point drag-world-start drag-distance)
-            ;; Get current ray point at the same distance as when drag started
-            (let [^js current-ray-point (get-ray-point-at-distance ctrl-grp drag-distance)
-                  ;; Calculate how much the ray point moved
-                  ^js start-ray-point drag-start-ray-point
-                  delta-x (- (.-x current-ray-point) (.-x start-ray-point))
-                  delta-y (- (.-y current-ray-point) (.-y start-ray-point))
-                  delta-z (- (.-z current-ray-point) (.-z start-ray-point))
-                  ;; Move world WITH ray movement - when you point right, world moves right
-                  ;; This makes the scene follow where you're pointing
-                  ^js world-pos (.-position world-grp)
-                  ^js drag-start drag-world-start]
-              (set! (.-x world-pos) (+ (.-x drag-start) delta-x))
-              (set! (.-y world-pos) (+ (.-y drag-start) delta-y))
-              (set! (.-z world-pos) (+ (.-z drag-start) delta-z)))))
-        ;; Process gamepad input
-        (when-let [^js gamepad (.-gamepad ^js input-source)]
-          (swap! debug-counter inc)
-          (let [^js buttons (.-buttons gamepad)
-                n-buttons (when buttons (.-length buttons))
-                ^js axes (.-axes gamepad)]
-            ;; Update debug sprite (every 10 frames) - show DRAG when trigger held
-            (when (and debug-sprite (zero? (mod @debug-counter 10)))
-              (let [{:keys [trigger-held]} @xr-state
-                    x-val (if (>= (.-length axes) 4) (aget axes 2) 0)
-                    y-val (if (>= (.-length axes) 4) (aget axes 3) 0)
-                    ^js world-pos (.-position world-grp)]
-                (if trigger-held
-                  (update-debug-sprite debug-sprite
-                    (str "DRAG W:" (.toFixed (.-x world-pos) 0) "," (.toFixed (.-z world-pos) 0)))
-                  (update-debug-sprite debug-sprite
-                    (str (name mode) " "
-                         (.toFixed x-val 1) "," (.toFixed y-val 1)
-                         " W:" (.toFixed (.-x world-pos) 0))))))
-            ;; A button = toggle panel, B button = switch move/rotate mode
-            (when (and buttons (> n-buttons 5))
-              (let [^js a-button (aget buttons 4)
-                    ^js b-button (aget buttons 5)
-                    a-pressed (and a-button (.-pressed a-button))
-                    b-pressed (and b-button (.-pressed b-button))]
-                ;; A button - toggle panel
-                (when (and a-pressed (not a-button-was-pressed))
-                  (swap! xr-state assoc :a-button-was-pressed true)
-                  (toggle-panel-visibility))
-                (when (and (not a-pressed) a-button-was-pressed)
-                  (swap! xr-state assoc :a-button-was-pressed false))
-                ;; B button - switch move/rotate mode
-                (when (and b-pressed (not b-button-was-pressed))
-                  (swap! xr-state assoc :b-button-was-pressed true)
-                  (let [new-mode (if (= mode :move) :rotate :move)]
-                    (swap! xr-state assoc :mode new-mode)
-                    (when-let [indicator (:indicator @xr-state)]
-                      (let [color (if (= new-mode :move) 0x00ff00 0x6666ff)]
-                        (set! (.-color (.-material indicator)) (THREE/Color. color))))))
-                (when (and (not b-pressed) b-button-was-pressed)
-                  (swap! xr-state assoc :b-button-was-pressed false))))
-            ;; Thumbstick axes
-            (when (and axes (>= (.-length axes) 2))
-              (let [raw-x (if (>= (.-length axes) 4) (aget axes 2) (aget axes 0))
-                    raw-y (if (>= (.-length axes) 4) (aget axes 3) (aget axes 1))
-                    x (if (< (js/Math.abs raw-x) deadzone) 0 raw-x)
-                    y (if (< (js/Math.abs raw-y) deadzone) 0 raw-y)]
-                (when (or (not= x 0) (not= y 0))
-                  (if (= mode :move)
-                    ;; Move mode - move world in opposite direction (so it looks like we move)
-                    ;; Default: X/Z movement (horizontal plane), Grip + Y = Y movement (vertical)
-                    (let [world-pos (.-position world-grp)]
-                      (set! (.-x world-pos) (- (.-x world-pos) (* x move-speed)))
-                      (if grip-held
-                        (set! (.-y world-pos) (+ (.-y world-pos) (* y move-speed)))
-                        (set! (.-z world-pos) (- (.-z world-pos) (* y move-speed)))))
-                    ;; Rotate mode
-                    (do
-                      (when (not= x 0)
-                        (.rotateOnWorldAxis world-grp (THREE/Vector3. 0 0 1) (* (- x) rotate-speed)))
-                      (when (not= y 0)
-                        (if grip-held
-                          (.rotateOnWorldAxis world-grp (THREE/Vector3. 0 1 0) (* (- y) rotate-speed))
-                          (.rotateOnWorldAxis world-grp (THREE/Vector3. 1 0 0) (* y rotate-speed)))))))))))))))
+                                 (when (and controller-group camera-rig camera world-group xr-frame renderer input-source)
+                                   ;; Cast Three.js objects to preserve property names in advanced compilation
+                                   (let [^js ctrl-grp controller-group
+                                         ^js world-grp world-group
+                                         ^js xr (.-xr renderer)
+                                         ^js ref-space (.getReferenceSpace xr)
+                                         ^js target-space (when input-source (.-targetRaySpace ^js input-source))
+                                         ^js pose (when (and ref-space target-space)
+                                                    (.getPose xr-frame target-space ref-space))]
+                                     ;; Update controller-group position from XRFrame pose
+                                     (when pose
+                                       (let [^js transform (.-transform pose)
+                                             ^js pos (.-position transform)
+                                             ^js ori (.-orientation transform)]
+                                         (.set (.-position ctrl-grp) (.-x pos) (.-y pos) (.-z pos))
+                                         (.set (.-quaternion ctrl-grp) (.-x ori) (.-y ori) (.-z ori) (.-w ori))
+                                         (.updateMatrixWorld ctrl-grp true)))
+                                     ;; Update button hover feedback when panel is visible
+                                     (when (:panel-visible @xr-state)
+                                       (update-button-hover (:panel-buttons @xr-state)))
+                                     ;; Handle ray-based drag-to-move when trigger is held
+                                     (let [{:keys [trigger-held drag-pending drag-start-ray-point drag-world-start drag-distance]} @xr-state]
+                                       ;; Initialize drag on first frame after trigger press (pose is now updated)
+                                       (when (and trigger-held drag-pending)
+                                         (let [ray-point (get-ray-point-at-distance ctrl-grp default-drag-distance)
+                                               ^js world-pos (.-position world-grp)]
+                                           (when-let [sprite (:debug-sprite @xr-state)]
+                                             (update-debug-sprite sprite "DRAG-START"))
+                                           (swap! xr-state assoc
+                                                  :drag-pending false
+                                                  :drag-start-ray-point ray-point
+                                                  :drag-world-start (.clone world-pos)
+                                                  :drag-distance default-drag-distance)))
+                                       ;; Apply drag movement
+                                       (when (and trigger-held (not drag-pending) drag-start-ray-point drag-world-start drag-distance)
+                                         ;; Get current ray point at the same distance as when drag started
+                                         (let [^js current-ray-point (get-ray-point-at-distance ctrl-grp drag-distance)
+                                               ;; Calculate how much the ray point moved
+                                               ^js start-ray-point drag-start-ray-point
+                                               delta-x (- (.-x current-ray-point) (.-x start-ray-point))
+                                               delta-y (- (.-y current-ray-point) (.-y start-ray-point))
+                                               delta-z (- (.-z current-ray-point) (.-z start-ray-point))
+                                               ;; Move world WITH ray movement - when you point right, world moves right
+                                               ;; This makes the scene follow where you're pointing
+                                               ^js world-pos (.-position world-grp)
+                                               ^js drag-start drag-world-start]
+                                           (set! (.-x world-pos) (+ (.-x drag-start) delta-x))
+                                           (set! (.-y world-pos) (+ (.-y drag-start) delta-y))
+                                           (set! (.-z world-pos) (+ (.-z drag-start) delta-z)))))
+                                     ;; Process gamepad input
+                                     (when-let [^js gamepad (.-gamepad ^js input-source)]
+                                       (swap! debug-counter inc)
+                                       (let [^js buttons (.-buttons gamepad)
+                                             n-buttons (when buttons (.-length buttons))
+                                             ^js axes (.-axes gamepad)]
+                                         ;; Update debug sprite (every 10 frames) - show DRAG when trigger held
+                                         (when (and debug-sprite (zero? (mod @debug-counter 10)))
+                                           (let [{:keys [trigger-held]} @xr-state
+                                                 x-val (if (>= (.-length axes) 4) (aget axes 2) 0)
+                                                 y-val (if (>= (.-length axes) 4) (aget axes 3) 0)
+                                                 ^js world-pos (.-position world-grp)]
+                                             (if trigger-held
+                                               (update-debug-sprite debug-sprite
+                                                                    (str "DRAG W:" (.toFixed (.-x world-pos) 0) "," (.toFixed (.-z world-pos) 0)))
+                                               (update-debug-sprite debug-sprite
+                                                                    (str (name mode) " "
+                                                                         (.toFixed x-val 1) "," (.toFixed y-val 1)
+                                                                         " W:" (.toFixed (.-x world-pos) 0))))))
+                                         ;; A button = toggle panel, B button = switch move/rotate mode
+                                         (when (and buttons (> n-buttons 5))
+                                           (let [^js a-button (aget buttons 4)
+                                                 ^js b-button (aget buttons 5)
+                                                 a-pressed (and a-button (.-pressed a-button))
+                                                 b-pressed (and b-button (.-pressed b-button))]
+                                             ;; A button - toggle panel
+                                             (when (and a-pressed (not a-button-was-pressed))
+                                               (swap! xr-state assoc :a-button-was-pressed true)
+                                               (toggle-panel-visibility))
+                                             (when (and (not a-pressed) a-button-was-pressed)
+                                               (swap! xr-state assoc :a-button-was-pressed false))
+                                             ;; B button - switch move/rotate mode
+                                             (when (and b-pressed (not b-button-was-pressed))
+                                               (swap! xr-state assoc :b-button-was-pressed true)
+                                               (let [new-mode (if (= mode :move) :rotate :move)]
+                                                 (swap! xr-state assoc :mode new-mode)
+                                                 (when-let [indicator (:indicator @xr-state)]
+                                                   (let [color (if (= new-mode :move) 0x00ff00 0x6666ff)]
+                                                     (set! (.-color (.-material indicator)) (THREE/Color. color))))))
+                                             (when (and (not b-pressed) b-button-was-pressed)
+                                               (swap! xr-state assoc :b-button-was-pressed false))))
+                                         ;; Thumbstick axes
+                                         (when (and axes (>= (.-length axes) 2))
+                                           (let [raw-x (if (>= (.-length axes) 4) (aget axes 2) (aget axes 0))
+                                                 raw-y (if (>= (.-length axes) 4) (aget axes 3) (aget axes 1))
+                                                 x (if (< (js/Math.abs raw-x) deadzone) 0 raw-x)
+                                                 y (if (< (js/Math.abs raw-y) deadzone) 0 raw-y)]
+                                             (when (or (not= x 0) (not= y 0))
+                                               (if (= mode :move)
+                                                 ;; Move mode - move world in opposite direction (so it looks like we move)
+                                                 ;; Default: X/Z movement (horizontal plane), Grip + Y = Y movement (vertical)
+                                                 (let [world-pos (.-position world-grp)]
+                                                   (set! (.-x world-pos) (- (.-x world-pos) (* x move-speed)))
+                                                   (if grip-held
+                                                     (set! (.-y world-pos) (+ (.-y world-pos) (* y move-speed)))
+                                                     (set! (.-z world-pos) (- (.-z world-pos) (* y move-speed)))))
+                                                 ;; Rotate mode
+                                                 (do
+                                                   (when (not= x 0)
+                                                     (.rotateOnWorldAxis world-grp (THREE/Vector3. 0 0 1) (* (- x) rotate-speed)))
+                                                   (when (not= y 0)
+                                                     (if grip-held
+                                                       (.rotateOnWorldAxis world-grp (THREE/Vector3. 0 1 0) (* (- y) rotate-speed))
+                                                       (.rotateOnWorldAxis world-grp (THREE/Vector3. 1 0 0) (* y rotate-speed)))))))))))))))
 
 (defn update-mode-indicator
   "Update the mode indicator color based on current mode."

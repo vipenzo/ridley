@@ -1638,12 +1638,13 @@
      (for [[idx cmd] forwards]
        (let [dist (first (:args cmd))
              ;; Collect rotations before this forward (back to previous forward)
+             ;; For closed path, wrap around negative indices
              rotations-before (loop [i (dec idx)
                                      rots []
                                      steps 0]
-                                (if (or (< i 0) (> steps n))
-                                  rots
-                                  (let [ci (mod i n)
+                                (if (> steps n)
+                                  rots  ; Safety limit to prevent infinite loop
+                                  (let [ci (mod (+ i n) n)  ; Proper modulo for negative numbers
                                         c (nth cmds ci)]
                                     (if (is-rotation? (:cmd c))
                                       (recur (dec i) (conj rots c) (inc steps))
