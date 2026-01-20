@@ -9,6 +9,10 @@
 ;; Track current mesh data for export
 (defonce ^:private current-meshes (atom []))
 
+;; Visibility state for grid and axes
+(defonce ^:private grid-visible (atom true))
+(defonce ^:private axes-visible (atom true))
+
 (defn- create-scene []
   (let [scene (THREE/Scene.)]
     (set! (.-background scene) (THREE/Color. 0x252526))
@@ -34,7 +38,9 @@
 (defn- add-grid [parent]
   (let [grid (THREE/GridHelper. 200 20 0x444444 0x333333)]
     (.rotateX grid (/ js/Math.PI 2)) ; XY plane instead of XZ
-    (.add parent grid)))
+    (set! (.-name grid) "grid")
+    (.add parent grid)
+    grid))
 
 (defn- create-text-sprite
   "Create a text sprite for axis labels."
@@ -57,7 +63,8 @@
       sprite)))
 
 (defn- add-axes [parent]
-  (let [axes (THREE/AxesHelper. 50)
+  (let [axes-group (THREE/Group.)
+        axes (THREE/AxesHelper. 50)
         ;; Add axis labels
         ;; Three.js AxesHelper: Red = X, Green = Y, Blue = Z
         label-x (create-text-sprite "X" "#ff4444")
@@ -67,10 +74,13 @@
     (.set (.-position label-x) 58 0 0)
     (.set (.-position label-y) 0 58 0)
     (.set (.-position label-z) 0 0 58)
-    (.add parent axes)
-    (.add parent label-x)
-    (.add parent label-y)
-    (.add parent label-z)))
+    (.add axes-group axes)
+    (.add axes-group label-x)
+    (.add axes-group label-y)
+    (.add axes-group label-z)
+    (set! (.-name axes-group) "axes")
+    (.add parent axes-group)
+    axes-group))
 
 (defn- add-lights [scene]
   (let [;; Hemisphere light for even ambient from sky/ground
@@ -339,24 +349,26 @@
     (.add world-group highlight-group)
     (.setSize renderer width height)
     ;; Add grid, axes to world-group (so they rotate together)
-    (add-grid world-group)
-    (add-axes world-group)
-    ;; Lights stay in scene (not affected by world rotation)
-    (add-lights scene)
-    ;; Enable WebXR on renderer
-    (xr/enable-xr renderer)
-    ;; Setup VR controller (pass world-group for rotation)
-    (xr/setup-controller renderer scene camera-rig camera world-group)
-    (reset! state {:scene scene
-                   :camera camera
-                   :camera-rig camera-rig
-                   :world-group world-group
-                   :highlight-group highlight-group
-                   :renderer renderer
-                   :controls controls
-                   :canvas canvas})
-    (.addEventListener js/window "resize" handle-resize)
-    (start-animation-loop)))
+    (let [grid (add-grid world-group)
+          axes (add-axes world-group)]
+      ;; Lights stay in scene (not affected by world rotation)
+      (add-lights scene)
+      ;; Enable WebXR on renderer
+      (xr/enable-xr renderer)
+      ;; Setup VR controller (pass world-group for rotation)
+      (xr/setup-controller renderer scene camera-rig camera world-group)
+      (reset! state {:scene scene
+                     :camera camera
+                     :camera-rig camera-rig
+                     :world-group world-group
+                     :highlight-group highlight-group
+                     :renderer renderer
+                     :controls controls
+                     :grid grid
+                     :axes axes
+                     :canvas canvas})
+      (.addEventListener js/window "resize" handle-resize)
+      (start-animation-loop))))
 
 (defn get-renderer
   "Return the current renderer (for XR integration)."
@@ -497,6 +509,44 @@
                 (+ center-z dist))
           (.update controls)
           true)))))
+
+;; ============================================================
+;; Grid/Axes visibility toggles
+;; ============================================================
+
+(defn toggle-grid
+  "Toggle grid visibility. Returns new visibility state."
+  []
+  (when-let [{:keys [grid]} @state]
+    (let [new-visible (swap! grid-visible not)]
+      (set! (.-visible grid) new-visible)
+      new-visible)))
+
+(defn toggle-axes
+  "Toggle axes visibility. Returns new visibility state."
+  []
+  (when-let [{:keys [axes]} @state]
+    (let [new-visible (swap! axes-visible not)]
+      (set! (.-visible axes) new-visible)
+      new-visible)))
+
+(defn grid-visible?
+  "Return current grid visibility state."
+  []
+  @grid-visible)
+
+(defn axes-visible?
+  "Return current axes visibility state."
+  []
+  @axes-visible)
+
+(defn reset-camera
+  "Reset camera to default position looking at origin."
+  []
+  (when-let [{:keys [camera controls]} @state]
+    (.set (.-position camera) 100 100 100)
+    (.set (.-target controls) 0 0 0)
+    (.update controls)))
 
 (defn dispose
   "Clean up Three.js resources."

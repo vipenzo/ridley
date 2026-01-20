@@ -354,6 +354,9 @@
         examples-btn (.getElementById js/document "btn-examples")
         export-stl-btn (.getElementById js/document "btn-export-stl")
         toggle-view-btn (.getElementById js/document "btn-toggle-view")
+        toggle-grid-btn (.getElementById js/document "btn-toggle-grid")
+        toggle-axes-btn (.getElementById js/document "btn-toggle-axes")
+        reset-view-btn (.getElementById js/document "btn-reset-view")
         file-input (.getElementById js/document "file-input")]
     ;; Run button - evaluate definitions
     (.addEventListener run-btn "click"
@@ -376,6 +379,30 @@
     (when toggle-view-btn
       (.addEventListener toggle-view-btn "click"
         (fn [_] (toggle-view))))
+    ;; Toggle grid button
+    (when toggle-grid-btn
+      ;; Set initial active state (grid is visible by default)
+      (.add (.-classList toggle-grid-btn) "active")
+      (.addEventListener toggle-grid-btn "click"
+        (fn [_]
+          (let [visible (viewport/toggle-grid)]
+            (if visible
+              (.add (.-classList toggle-grid-btn) "active")
+              (.remove (.-classList toggle-grid-btn) "active"))))))
+    ;; Toggle axes button
+    (when toggle-axes-btn
+      ;; Set initial active state (axes visible by default)
+      (.add (.-classList toggle-axes-btn) "active")
+      (.addEventListener toggle-axes-btn "click"
+        (fn [_]
+          (let [visible (viewport/toggle-axes)]
+            (if visible
+              (.add (.-classList toggle-axes-btn) "active")
+              (.remove (.-classList toggle-axes-btn) "active"))))))
+    ;; Reset view button
+    (when reset-view-btn
+      (.addEventListener reset-view-btn "click"
+        (fn [_] (viewport/reset-camera))))
     ;; File input change (for local file loading)
     (.addEventListener file-input "change"
       (fn [e]
@@ -412,6 +439,14 @@
     (reset! repl-history-el repl-history)
     (reset! error-el error-panel)
     (viewport/init canvas)
+    ;; Register XR panel callbacks (avoid circular dependency)
+    (xr/register-action-callback! :toggle-all-obj
+      (fn [show-all?]
+        (if show-all?
+          (do (registry/show-all!)
+              (registry/refresh-viewport! false))
+          (do (registry/show-only-registered!)
+              (registry/refresh-viewport! false)))))
     (setup-keybindings)
     (setup-save-load)
     (setup-vertical-resizer)

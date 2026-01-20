@@ -3,6 +3,9 @@
   (:require ["three" :as THREE]
             [clojure.string :as str]))
 
+;; Callbacks for actions that need access to other modules (avoid circular deps)
+(defonce ^:private action-callbacks (atom {}))
+
 (defonce ^:private xr-state (atom {:supported false
                                     :ar-supported false
                                     :session nil
@@ -29,7 +32,10 @@
                                     :b-button-was-pressed false
                                     :hovered-button nil
                                     :mode :move
-                                    :original-background nil}))
+                                    :original-background nil
+                                    :show-all-view true  ;; All/Obj toggle state
+                                    :grid-visible true   ;; Grid visibility
+                                    :axes-visible true})) ;; Axes visibility
 
 ;; Movement settings
 (def ^:private move-speed 0.4)
@@ -139,6 +145,12 @@
 ;; ============================================================
 ;; Initialization
 ;; ============================================================
+
+(defn register-action-callback!
+  "Register a callback for XR panel actions.
+   Supported actions: :toggle-all-obj (fn [show-all?] ...)"
+  [action-key callback-fn]
+  (swap! action-callbacks assoc action-key callback-fn))
 
 (defn enable-xr
   "Enable WebXR on the renderer. Call after renderer creation."
@@ -348,16 +360,28 @@
   [scene]
   (let [panel (THREE/Group.)
         ;; Row 1: VR/AR mode switch
-        btn-vr (create-panel-button "VR" 0.12 0.06 :switch-vr)
-        btn-ar (create-panel-button "AR" 0.12 0.06 :switch-ar)
-        ;; Row 2: Exit
-        btn-exit (create-panel-button "Exit" 0.12 0.06 :exit)
-        buttons [btn-vr btn-ar btn-exit]]
-    ;; Row 1 (top)
-    (.set (.-position btn-vr) -0.08 0.04 0.01)
-    (.set (.-position btn-ar) 0.08 0.04 0.01)
-    ;; Row 2 (bottom)
-    (.set (.-position btn-exit) 0 -0.04 0.01)
+        btn-vr (create-panel-button "VR" 0.10 0.05 :switch-vr)
+        btn-ar (create-panel-button "AR" 0.10 0.05 :switch-ar)
+        ;; Row 2: View controls
+        btn-grid (create-panel-button "Grid" 0.10 0.05 :toggle-grid)
+        btn-axes (create-panel-button "Axes" 0.10 0.05 :toggle-axes)
+        ;; Row 3: All/Obj and Reset
+        btn-all-obj (create-panel-button "All" 0.10 0.05 :toggle-all-obj)
+        btn-reset (create-panel-button "Reset" 0.10 0.05 :reset-view)
+        ;; Row 4: Exit
+        btn-exit (create-panel-button "Exit" 0.10 0.05 :exit)
+        buttons [btn-vr btn-ar btn-grid btn-axes btn-all-obj btn-reset btn-exit]]
+    ;; Row 1 (top): VR / AR
+    (.set (.-position btn-vr) -0.06 0.10 0.01)
+    (.set (.-position btn-ar) 0.06 0.10 0.01)
+    ;; Row 2: Grid / Axes
+    (.set (.-position btn-grid) -0.06 0.04 0.01)
+    (.set (.-position btn-axes) 0.06 0.04 0.01)
+    ;; Row 3: All-Obj / Reset
+    (.set (.-position btn-all-obj) -0.06 -0.02 0.01)
+    (.set (.-position btn-reset) 0.06 -0.02 0.01)
+    ;; Row 4 (bottom): Exit
+    (.set (.-position btn-exit) 0 -0.08 0.01)
     (set! (.-frustumCulled panel) false)
     (doseq [btn buttons]
       (set! (.-frustumCulled btn) false))
@@ -417,6 +441,45 @@
       (.end ^js session)
       (js/setTimeout #(enter-ar renderer) 500))))
 
+(defn- find-object-by-name
+  "Find a child object by name in the world-group."
+  [name]
+  (when-let [{:keys [world-group]} @xr-state]
+    (.getObjectByName world-group name)))
+
+(defn- toggle-grid-vr
+  "Toggle grid visibility in VR."
+  []
+  (when-let [grid (find-object-by-name "grid")]
+    (swap! xr-state update :grid-visible not)
+    (set! (.-visible grid) (:grid-visible @xr-state))))
+
+(defn- toggle-axes-vr
+  "Toggle axes visibility in VR."
+  []
+  (when-let [axes (find-object-by-name "axes")]
+    (swap! xr-state update :axes-visible not)
+    (set! (.-visible axes) (:axes-visible @xr-state))))
+
+(defn- toggle-all-obj-vr
+  "Toggle between All and Objects-only view in VR."
+  []
+  (swap! xr-state update :show-all-view not)
+  (when-let [callback (:toggle-all-obj @action-callbacks)]
+    (callback (:show-all-view @xr-state))))
+
+(defn- reset-view-vr
+  "Reset camera/world position in VR."
+  []
+  (when-let [{:keys [world-group camera-rig]} @xr-state]
+    ;; Reset world-group position and rotation
+    (.set (.-position world-group) 0 0 0)
+    (.set (.-rotation world-group) 0 0 0)
+    (.set (.-scale world-group) 1 1 1)
+    ;; Reset camera rig position
+    (when camera-rig
+      (.set (.-position camera-rig) 0 1.6 2))))
+
 (defn- handle-button-click
   "Handle VR button click action."
   [action-id]
@@ -427,6 +490,10 @@
     :rotate (do
               (swap! xr-state assoc :mode :rotate)
               (js/console.log "Mode: rotate"))
+    :toggle-grid (toggle-grid-vr)
+    :toggle-axes (toggle-axes-vr)
+    :toggle-all-obj (toggle-all-obj-vr)
+    :reset-view (reset-view-vr)
     :switch-vr (switch-to-vr)
     :switch-ar (switch-to-ar)
     :exit (exit-vr)

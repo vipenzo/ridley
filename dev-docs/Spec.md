@@ -318,7 +318,7 @@ For loft operations that morph shapes:
 
 (rotate-shape shape angle-deg)   ; Rotate around origin
 
-(translate shape dx dy)          ; Move shape
+(translate shape dx dy)          ; Translate shape by [dx dy]
 
 (morph shape-a shape-b t)        ; Interpolate between shapes (t: 0-1)
                                  ; Both must have same point count

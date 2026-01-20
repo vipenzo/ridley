@@ -232,6 +232,33 @@ html, body {
   color: #4ec9b0;
 }
 
+/* View controls (Grid, Axes, Reset) */
+.view-btn {
+  color: #a0a0a0;
+}
+
+.view-btn:hover {
+  background: #3c3c3c;
+  color: #d4d4d4;
+}
+
+.view-btn.active {
+  color: #ffcc00;
+  border-color: #ffcc00;
+}
+
+.view-btn.active:hover {
+  background: #3d3a2d;
+  color: #ffcc00;
+}
+
+.toolbar-separator {
+  width: 1px;
+  height: 16px;
+  background: #3c3c3c;
+  margin: 0 4px;
+}
+
 /* VR Button */
 .vr-btn {
   color: #b48eff;

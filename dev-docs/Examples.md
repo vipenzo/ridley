@@ -239,7 +239,7 @@ Available shape transforms:
 - `(scale shape factor)` - uniform scale
 - `(scale shape fx fy)` - non-uniform scale
 - `(rotate-shape shape angle)` - rotate (degrees)
-- `(translate shape dx dy)` - move
+- `(translate shape dx dy)` - translate shape
 - `(morph shape-a shape-b t)` - interpolate between shapes
 - `(resample shape n)` - resample to n points
 

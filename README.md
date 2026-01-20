@@ -124,7 +124,7 @@ Use these in loft transform functions:
 (scale shape factor)        ; Uniform scale
 (scale shape fx fy)         ; Non-uniform scale
 (rotate-shape shape angle)  ; Rotate (degrees)
-(translate shape dx dy)     ; Move
+(translate shape dx dy)     ; Translate shape
 (morph shape-a shape-b t)   ; Interpolate between shapes
 (resample shape n)          ; Resample to n points
 ```
