@@ -10,6 +10,8 @@
     import Module from 'https://cdn.jsdelivr.net/npm/manifold-3d@3.0.0/+esm';
     window.ManifoldModule = Module;
   </script>
+  <!-- PeerJS for WebRTC sync -->
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 </head>
 <body>
   <div id="app">
@@ -50,6 +52,9 @@
         <span class="toolbar-separator"></span>
         <button id="btn-toggle-view" class="action-btn toggle-btn" title="Toggle: show all / objects only">All</button>
         <button id="btn-export-stl" class="action-btn export-btn" title="Export as STL">Export STL</button>
+        <button id="btn-share" class="action-btn sync-btn" title="Host sync session">Share</button>
+        <button id="btn-link" class="action-btn sync-btn" title="Join sync session">Link</button>
+        <span id="sync-status" class="sync-status"></span>
       </div>
       <canvas id="viewport"></canvas>
     </div>

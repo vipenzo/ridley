@@ -8,7 +8,8 @@
             [ridley.manifold.core :as manifold]
             [ridley.turtle.text :as text]
             [ridley.scene.registry :as registry]
-            [ridley.export.stl :as stl]))
+            [ridley.export.stl :as stl]
+            [ridley.sync.peer :as sync]))
 
 (defonce ^:private editor-view (atom nil))
 (defonce ^:private repl-input-el (atom nil))
@@ -21,6 +22,12 @@
 
 ;; View toggle state: true = show all, false = show only registered objects
 (defonce ^:private show-all-view (atom true))
+
+;; Sync state
+(defonce ^:private sync-mode (atom nil))  ; nil, :host, or :client
+(defonce ^:private sync-debounce-timer (atom nil))
+(defonce ^:private share-modal-el (atom nil))  ; Reference to share modal for closing on connect
+(defonce ^:private connected-host-id (atom nil))  ; Host peer-id when we're a client
 
 (defn- show-error [msg]
   (when-let [el @error-el]
@@ -77,22 +84,24 @@
       (set! (.-scrollTop history-el) (.-scrollHeight history-el)))))
 
 (defn- evaluate-definitions
-  "Evaluate only the definitions panel (for Cmd+Enter)."
-  []
-  ;; Clear registry when re-running definitions (fresh start)
-  (registry/clear-all!)
-  (let [explicit-code (cm/get-value @editor-view)
-        result (repl/evaluate-definitions explicit-code)]
-    (if-let [error (:error result)]
-      (show-error error)
-      (do
-        (hide-error)
-        (when-let [render-data (repl/extract-render-data result)]
-          ;; Store lines and definition meshes
-          (registry/set-lines! (:lines render-data))
-          (registry/set-definition-meshes! (:meshes render-data)))
-        ;; Always refresh viewport with camera reset on full rebuild
-        (registry/refresh-viewport! true)))))
+  "Evaluate only the definitions panel (for Cmd+Enter).
+   Optional reset-camera? parameter controls whether to reset camera view (default false)."
+  ([] (evaluate-definitions false))
+  ([reset-camera?]
+   ;; Clear registry when re-running definitions (fresh start)
+   (registry/clear-all!)
+   (let [explicit-code (cm/get-value @editor-view)
+         result (repl/evaluate-definitions explicit-code)]
+     (if-let [error (:error result)]
+       (show-error error)
+       (do
+         (hide-error)
+         (when-let [render-data (repl/extract-render-data result)]
+           ;; Store lines and definition meshes
+           (registry/set-lines! (:lines render-data))
+           (registry/set-definition-meshes! (:meshes render-data)))
+         ;; Refresh viewport, optionally resetting camera
+         (registry/refresh-viewport! reset-camera?))))))
 
 (defn- evaluate-repl-input
   "Evaluate the REPL input and show result in history."
@@ -412,6 +421,240 @@
         (set! (.-value file-input) "")))))
 
 ;; ============================================================
+;; Sync (Desktop <-> Headset)
+;; ============================================================
+
+(declare join-session)
+
+(defn- send-script-debounced
+  "Send script to connected peer with debounce.
+   Only sends if we're the host (client never sends, only receives)."
+  []
+  (when (and (sync/connected?)
+             (= :host @sync-mode))
+    (when-let [timer @sync-debounce-timer]
+      (js/clearTimeout timer))
+    (reset! sync-debounce-timer
+            (js/setTimeout
+             (fn []
+               (when-let [content (cm/get-value @editor-view)]
+                 (sync/send-script content)))
+             500))))
+
+(defn- on-script-received
+  "Called when we receive a script from peer (client only receives, never sends back)."
+  [definitions]
+  (when @editor-view
+    (cm/set-value @editor-view definitions)
+    (save-to-storage)
+    (evaluate-definitions)))
+
+(defn- update-sync-status-text
+  "Update the sync status text in toolbar."
+  []
+  (when-let [status-el (.getElementById js/document "sync-status")]
+    (let [status (sync/get-status)]
+      (set! (.-textContent status-el)
+            (case status
+              :connected (if (= :host @sync-mode)
+                           (let [peer-id (sync/get-peer-id)
+                                 short-code (sync/get-short-code peer-id)
+                                 client-count (sync/get-client-count)]
+                             (str client-count " client" (when (not= client-count 1) "s")
+                                  " · " short-code))
+                           ;; Client: show host's code
+                           (let [short-code (sync/get-short-code @connected-host-id)]
+                             (str "Connected to " short-code)))
+              :waiting (let [peer-id (sync/get-peer-id)
+                             short-code (sync/get-short-code peer-id)]
+                         (str "Waiting · " short-code))
+              "")))))
+
+(defn- on-clients-change
+  "Called when number of connected clients changes."
+  [_count]
+  (update-sync-status-text))
+
+(defn- update-sync-status-ui
+  "Update the sync buttons UI based on status."
+  [status]
+  (let [share-btn (.getElementById js/document "btn-share")
+        link-btn (.getElementById js/document "btn-link")]
+    (case status
+      :disconnected (do
+                      (when share-btn
+                        (set! (.-textContent share-btn) "Share")
+                        (.remove (.-classList share-btn) "active" "waiting"))
+                      (when link-btn
+                        (set! (.-textContent link-btn) "Link")
+                        (.remove (.-classList link-btn) "active" "waiting"))
+                      (update-sync-status-text))
+      :waiting      (do
+                      (when share-btn
+                        (set! (.-textContent share-btn) "Waiting...")
+                        (.add (.-classList share-btn) "waiting"))
+                      (update-sync-status-text))
+      :connecting   (when link-btn
+                      (set! (.-textContent link-btn) "Connecting...")
+                      (.add (.-classList link-btn) "waiting"))
+      :connected    (do
+                      ;; Close share modal if open
+                      (when-let [modal @share-modal-el]
+                        (reset! share-modal-el nil)
+                        (.remove modal))
+                      (when share-btn
+                        (set! (.-textContent share-btn) "Synced")
+                        (.add (.-classList share-btn) "active")
+                        (.remove (.-classList share-btn) "waiting"))
+                      (when link-btn
+                        (set! (.-textContent link-btn) "Synced")
+                        (.add (.-classList link-btn) "active")
+                        (.remove (.-classList link-btn) "waiting"))
+                      (update-sync-status-text))
+      :error        (do
+                      (when share-btn
+                        (set! (.-textContent share-btn) "Error")
+                        (.remove (.-classList share-btn) "active" "waiting"))
+                      (when link-btn
+                        (set! (.-textContent link-btn) "Error")
+                        (.remove (.-classList link-btn) "active" "waiting")))
+      nil)))
+
+(defn- show-share-modal
+  "Show modal with session code for sharing."
+  [peer-id]
+  (let [short-code (sync/get-short-code peer-id)
+        modal (.createElement js/document "div")
+        overlay (.createElement js/document "div")]
+    ;; Store reference so we can close it on connect
+    (reset! share-modal-el modal)
+    ;; Setup overlay
+    (set! (.-className overlay) "sync-modal-overlay")
+    (.addEventListener overlay "click" (fn []
+                                         (reset! share-modal-el nil)
+                                         (.remove modal)))
+    ;; Setup modal
+    (set! (.-className modal) "sync-modal")
+    (set! (.-innerHTML modal)
+          (str "<div class='sync-modal-content'>"
+               "<h3>Share Session</h3>"
+               "<p>Enter this code on the other device:</p>"
+               "<div class='sync-code'>" short-code "</div>"
+               "<p class='sync-status'>Waiting for connection...</p>"
+               "<button class='sync-close-btn'>Close</button>"
+               "</div>"))
+    (.appendChild modal overlay)
+    (.appendChild js/document.body modal)
+    ;; Close button
+    (when-let [close-btn (.querySelector modal ".sync-close-btn")]
+      (.addEventListener close-btn "click" (fn []
+                                             (reset! share-modal-el nil)
+                                             (.remove modal))))))
+
+(defn- show-link-modal
+  "Show modal with input field to enter session code."
+  []
+  (let [modal (.createElement js/document "div")
+        overlay (.createElement js/document "div")]
+    ;; Setup overlay
+    (set! (.-className overlay) "sync-modal-overlay")
+    (.addEventListener overlay "click" #(.remove modal))
+    ;; Setup modal
+    (set! (.-className modal) "sync-modal")
+    (set! (.-innerHTML modal)
+          (str "<div class='sync-modal-content'>"
+               "<h3>Join Session</h3>"
+               "<p>Enter the code shown on the other device:</p>"
+               "<input type='text' class='sync-code-input' placeholder='ABC123' maxlength='6' autocapitalize='characters'>"
+               "<p class='sync-error' style='display:none; color:#e74c3c;'></p>"
+               "<div class='sync-buttons'>"
+               "<button class='sync-connect-btn'>Connect</button>"
+               "<button class='sync-close-btn'>Cancel</button>"
+               "</div>"
+               "</div>"))
+    (.appendChild modal overlay)
+    (.appendChild js/document.body modal)
+    ;; Focus input
+    (when-let [input (.querySelector modal ".sync-code-input")]
+      (.focus input)
+      ;; Connect on Enter
+      (.addEventListener input "keydown"
+                         (fn [e]
+                           (when (= "Enter" (.-key e))
+                             (.click (.querySelector modal ".sync-connect-btn"))))))
+    ;; Connect button
+    (when-let [connect-btn (.querySelector modal ".sync-connect-btn")]
+      (.addEventListener connect-btn "click"
+                         (fn []
+                           (let [input (.querySelector modal ".sync-code-input")
+                                 code (.-value input)]
+                             (if (>= (count code) 4)
+                               (let [peer-id (sync/peer-id-from-code code)]
+                                 (.remove modal)
+                                 (join-session peer-id))
+                               (when-let [error (.querySelector modal ".sync-error")]
+                                 (set! (.-textContent error) "Code must be at least 4 characters")
+                                 (set! (.-style.display error) "block")))))))
+    ;; Close button
+    (when-let [close-btn (.querySelector modal ".sync-close-btn")]
+      (.addEventListener close-btn "click" #(.remove modal)))))
+
+(defn- on-client-connected
+  "Called when a new client connects - send them the current script."
+  [conn]
+  (when-let [content (cm/get-value @editor-view)]
+    (sync/send-script-to-connection conn content)))
+
+(defn- start-hosting
+  "Start hosting a sync session."
+  []
+  (let [peer-id (sync/host-session
+                 :on-script-received on-script-received
+                 :on-status-change update-sync-status-ui
+                 :on-clients-change on-clients-change
+                 :on-client-connected on-client-connected)]
+    (reset! sync-mode :host)
+    (show-share-modal peer-id)))
+
+(defn- join-session
+  "Join an existing sync session."
+  [peer-id]
+  (reset! sync-mode :client)
+  (reset! connected-host-id peer-id)  ; Save host's peer-id for status display
+  (sync/join-session peer-id
+                     :on-script-received on-script-received
+                     :on-status-change update-sync-status-ui))
+
+(defn- setup-sync
+  "Setup sync buttons and auto-join if URL has peer parameter."
+  []
+  ;; Share button - start hosting
+  (when-let [share-btn (.getElementById js/document "btn-share")]
+    (.addEventListener share-btn "click"
+                       (fn [_]
+                         (if (or (sync/hosting?) (sync/connected?))
+                           (do
+                             (sync/stop-hosting)
+                             (reset! sync-mode nil)
+                             (update-sync-status-ui :disconnected))
+                           (start-hosting)))))
+  ;; Link button - join session
+  (when-let [link-btn (.getElementById js/document "btn-link")]
+    (.addEventListener link-btn "click"
+                       (fn [_]
+                         (if (sync/connected?)
+                           (do
+                             (sync/leave-session)
+                             (reset! sync-mode nil)
+                             (update-sync-status-ui :disconnected))
+                           (show-link-modal)))))
+  ;; Auto-join if URL has peer parameter
+  (when-let [peer-id (sync/get-peer-from-url)]
+    (js/console.log "Auto-joining sync session:" peer-id)
+    (sync/clear-peer-from-url)
+    (join-session peer-id)))
+
+;; ============================================================
 ;; Initialization
 ;; ============================================================
 
@@ -433,7 +676,9 @@
       (cm/create-editor
         {:parent editor-container
          :initial-value initial-content
-         :on-change save-to-storage
+         :on-change (fn []
+                      (save-to-storage)
+                      (send-script-debounced))
          :on-run evaluate-definitions}))
     (reset! repl-input-el repl-input)
     (reset! repl-history-el repl-history)
@@ -469,6 +714,8 @@
     (-> (text/init-default-font!)
         (.then #(js/console.log "Default font loaded"))
         (.catch #(js/console.warn "Default font failed to load:" %)))
+    ;; Setup sync (desktop <-> headset)
+    (setup-sync)
     ;; Focus REPL input
     (when repl-input
       (.focus repl-input))
