@@ -13,6 +13,7 @@
                            :status :disconnected
                            :peer-id nil
                            :on-script-received nil
+                           :on-repl-received nil   ; Callback when REPL command received
                            :on-status-change nil
                            :on-clients-change nil}))  ; Callback when client count changes
 
@@ -105,6 +106,10 @@
                  (callback (:definitions msg)))
                (.send conn (clj->js {:type "script-ack" :timestamp (.now js/Date)})))
 
+             "repl-command"
+             (when-let [callback (:on-repl-received @peer-state)]
+               (callback (:command msg)))
+
              "ping"
              (.send conn (clj->js {:type "pong"}))
 
@@ -194,14 +199,16 @@
   "Join an existing sync session by peer ID.
    Options:
    - :on-script-received (fn [definitions]) - called when host sends script
+   - :on-repl-received (fn [command]) - called when host sends REPL command
    - :on-status-change (fn [status]) - called when status changes"
-  [host-peer-id & {:keys [on-script-received on-status-change]}]
+  [host-peer-id & {:keys [on-script-received on-repl-received on-status-change]}]
   (let [peer (js/Peer. peer-config)]
 
     (swap! peer-state assoc
            :peer peer
            :role :client
            :on-script-received on-script-received
+           :on-repl-received on-repl-received
            :on-status-change on-status-change)
 
     (set-status! :connecting)
@@ -241,6 +248,18 @@
     (.send conn (clj->js {:type "script-update"
                           :definitions definitions
                           :timestamp (.now js/Date)}))))
+
+(defn send-repl-command
+  "Send REPL command to all connected clients (host only)."
+  [command]
+  (let [connections (:connections @peer-state)
+        msg (clj->js {:type "repl-command"
+                      :command command
+                      :timestamp (.now js/Date)})]
+    (when (seq connections)
+      (doseq [^js conn connections]
+        (when (.-open conn)
+          (.send conn msg))))))
 
 (defn send-ping
   "Send keepalive ping to all connected clients."

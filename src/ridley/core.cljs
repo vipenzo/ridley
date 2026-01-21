@@ -114,6 +114,9 @@
         (reset! history-index -1)
         ;; Clear input
         (set! (.-value input-el) "")
+        ;; Send to connected clients if we're the host
+        (when (= :host @sync-mode)
+          (sync/send-repl-command input))
         ;; Evaluate REPL input only (definitions already in context)
         (let [result (repl/evaluate-repl input)]
           (if-let [error (:error result)]
@@ -449,6 +452,23 @@
     (save-to-storage)
     (evaluate-definitions)))
 
+(defn- on-repl-received
+  "Called when we receive a REPL command from host. Execute it and show in history."
+  [command]
+  (when (seq (str/trim command))
+    (let [result (repl/evaluate-repl command)]
+      (if-let [error (:error result)]
+        (do
+          (add-repl-entry command error true)
+          (show-error error))
+        (do
+          (hide-error)
+          (add-repl-entry command (:implicit-result result) false)
+          (when-let [render-data (repl/extract-render-data result)]
+            (registry/add-lines! (:lines render-data))
+            (registry/set-definition-meshes! (:meshes render-data)))
+          (registry/refresh-viewport! false))))))
+
 (defn- update-sync-status-text
   "Update the sync status text in toolbar."
   []
@@ -525,14 +545,16 @@
   [peer-id]
   (let [short-code (sync/get-short-code peer-id)
         modal (.createElement js/document "div")
-        overlay (.createElement js/document "div")]
+        overlay (.createElement js/document "div")
+        close-modal (fn []
+                      (reset! share-modal-el nil)
+                      (.remove overlay)
+                      (.remove modal))]
     ;; Store reference so we can close it on connect
     (reset! share-modal-el modal)
-    ;; Setup overlay
+    ;; Setup overlay (sibling of modal, not child)
     (set! (.-className overlay) "sync-modal-overlay")
-    (.addEventListener overlay "click" (fn []
-                                         (reset! share-modal-el nil)
-                                         (.remove modal)))
+    (.addEventListener overlay "click" close-modal)
     ;; Setup modal
     (set! (.-className modal) "sync-modal")
     (set! (.-innerHTML modal)
@@ -543,22 +565,21 @@
                "<p class='sync-status'>Waiting for connection...</p>"
                "<button class='sync-close-btn'>Close</button>"
                "</div>"))
-    (.appendChild modal overlay)
+    (.appendChild js/document.body overlay)
     (.appendChild js/document.body modal)
     ;; Close button
     (when-let [close-btn (.querySelector modal ".sync-close-btn")]
-      (.addEventListener close-btn "click" (fn []
-                                             (reset! share-modal-el nil)
-                                             (.remove modal))))))
+      (.addEventListener close-btn "click" close-modal))))
 
 (defn- show-link-modal
   "Show modal with input field to enter session code."
   []
   (let [modal (.createElement js/document "div")
-        overlay (.createElement js/document "div")]
-    ;; Setup overlay
+        overlay (.createElement js/document "div")
+        close-modal (fn [] (.remove overlay) (.remove modal))]
+    ;; Setup overlay (sibling of modal, not child)
     (set! (.-className overlay) "sync-modal-overlay")
-    (.addEventListener overlay "click" #(.remove modal))
+    (.addEventListener overlay "click" close-modal)
     ;; Setup modal
     (set! (.-className modal) "sync-modal")
     (set! (.-innerHTML modal)
@@ -572,7 +593,7 @@
                "<button class='sync-close-btn'>Cancel</button>"
                "</div>"
                "</div>"))
-    (.appendChild modal overlay)
+    (.appendChild js/document.body overlay)
     (.appendChild js/document.body modal)
     ;; Focus input
     (when-let [input (.querySelector modal ".sync-code-input")]
@@ -590,14 +611,14 @@
                                  code (.-value input)]
                              (if (>= (count code) 4)
                                (let [peer-id (sync/peer-id-from-code code)]
-                                 (.remove modal)
+                                 (close-modal)
                                  (join-session peer-id))
                                (when-let [error (.querySelector modal ".sync-error")]
                                  (set! (.-textContent error) "Code must be at least 4 characters")
                                  (set! (.-style.display error) "block")))))))
     ;; Close button
     (when-let [close-btn (.querySelector modal ".sync-close-btn")]
-      (.addEventListener close-btn "click" #(.remove modal)))))
+      (.addEventListener close-btn "click" close-modal))))
 
 (defn- on-client-connected
   "Called when a new client connects - send them the current script."
@@ -623,6 +644,7 @@
   (reset! connected-host-id peer-id)  ; Save host's peer-id for status display
   (sync/join-session peer-id
                      :on-script-received on-script-received
+                     :on-repl-received on-repl-received
                      :on-status-change update-sync-status-ui))
 
 (defn- setup-sync

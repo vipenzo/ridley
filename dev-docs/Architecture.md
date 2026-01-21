@@ -655,6 +655,165 @@ This allows `(attach mesh)` to position the turtle exactly where it was when the
 
 6. **Face orientation**: When attached to a face, heading is always the outward normal. This makes `(f 10)` consistently mean "extrude outward" and `(f -10)` mean "extrude inward/cut".
 
+## Desktop-Headset Sync (WebRTC)
+
+Ridley supports real-time synchronization between a desktop browser (where you edit code) and a VR/AR headset (where you view the model). This enables a workflow where you write code on your computer while seeing the 3D result immersively on a Quest or other WebXR-capable device.
+
+### Architecture
+
+```
+┌─────────────────┐                      ┌─────────────────┐
+│  Desktop        │◄───── WebRTC ──────►│  VR/AR Headset  │
+│  (host/editor)  │      DataChannel     │  (client/viewer)│
+└─────────────────┘                      └─────────────────┘
+         │                                        │
+         └────────► PeerJS Cloud ◄────────────────┘
+                   (signaling only)
+```
+
+- **PeerJS** abstracts WebRTC complexity (signaling, ICE negotiation)
+- **Signaling** goes through PeerJS public server (only for initial handshake)
+- **Data** flows directly peer-to-peer (low latency on LAN)
+- **No server required** — works entirely in browsers
+
+### Implementation
+
+**Files:**
+- `src/ridley/sync/peer.cljs` — PeerJS wrapper (host/join/send)
+- `src/ridley/core.cljs` — UI integration (Share/Link buttons, status display)
+
+**State (`peer-state` atom):**
+```clojure
+{:peer nil              ; PeerJS Peer instance
+ :connections #{}       ; Set of DataConnection (host can have multiple)
+ :connection nil        ; Single DataConnection (client has one)
+ :role nil              ; :host or :client
+ :status :disconnected  ; :disconnected, :waiting, :connecting, :connected, :error
+ :peer-id nil           ; "ridley-XXXXXX" (host only)
+ :on-script-received fn ; Callback when script arrives
+ :on-repl-received fn   ; Callback when REPL command arrives
+ :on-status-change fn   ; Callback for UI updates
+ :on-clients-change fn  ; Callback when client count changes
+ :on-client-connected fn} ; Callback for initial sync
+```
+
+### Protocol Messages
+
+**Host → Client:**
+```clojure
+;; Script update (definitions panel content)
+{:type "script-update"
+ :definitions "..."
+ :timestamp 1234567890}
+
+;; REPL command (single expression)
+{:type "repl-command"
+ :command "(f 10)"
+ :timestamp 1234567890}
+
+;; Keepalive
+{:type "ping"}
+```
+
+**Client → Host:**
+```clojure
+;; Acknowledgment
+{:type "script-ack"
+ :timestamp 1234567890}
+
+;; Keepalive response
+{:type "pong"}
+```
+
+### User Flow
+
+**Host (Desktop):**
+1. Click "Share" button
+2. Modal shows 6-character code (e.g., `ABC123`)
+3. Status: "Waiting · ABC123"
+4. When client connects: "1 client · ABC123"
+5. Every edit (debounced 500ms) sends `script-update`
+6. Every REPL command sends `repl-command`
+
+**Client (Headset):**
+1. Click "Link" button, enter code (or use URL `?peer=ridley-ABC123`)
+2. Status: "Connected to ABC123"
+3. Receives initial script, evaluates, renders 3D
+4. On each `script-update`: re-evaluate definitions, update viewport
+5. On each `repl-command`: evaluate in REPL context, update viewport
+
+### Multi-Client Support
+
+The host maintains a **set** of connections, enabling multiple headsets to view simultaneously:
+
+```clojure
+;; Broadcasting to all clients
+(defn send-script [definitions]
+  (doseq [conn (:connections @peer-state)]
+    (when (.-open conn)
+      (.send conn (clj->js {:type "script-update" ...})))))
+```
+
+When a new client connects, the `on-client-connected` callback sends the current script immediately (so they don't have to wait for an edit).
+
+### Peer ID Format
+
+```
+ridley-XXXXXX
+```
+
+- Prefix `ridley-` avoids collisions with other PeerJS apps
+- 6 alphanumeric characters (no I, O, 0, 1 to avoid confusion)
+- Case-insensitive (converted to uppercase internally)
+
+### Browser Compatibility Notes
+
+**Brave Browser:**
+- Aggressive WebRTC privacy features can block connections
+- May show `mDNS` addresses instead of real IPs
+- Fix: Disable "Anonymize local IPs exposed by WebRTC" in `brave://flags`
+
+**Safari:**
+- Works out of the box
+- Recommended for macOS development
+
+**Quest Browser:**
+- Works well on same network
+- Must use HTTPS or localhost for WebXR
+
+### Debouncing
+
+Script updates are debounced to avoid flooding the connection:
+
+```clojure
+(def debounce-delay 500)  ; ms
+
+(defn- send-script-debounced []
+  (when (= :host @sync-mode)
+    (when-let [timer @sync-debounce-timer]
+      (js/clearTimeout timer))
+    (reset! sync-debounce-timer
+            (js/setTimeout
+             (fn []
+               (when-let [content (cm/get-value @editor-view)]
+                 (sync/send-script content)))
+             debounce-delay))))
+```
+
+### Limitations
+
+1. **NAT traversal**: Works best on same network. Cross-network may fail without TURN server.
+2. **Signaling dependency**: Relies on peerjs.com public server (free, no SLA).
+3. **No persistence**: Session ends when host closes browser.
+4. **One-way sync**: Host → clients only. Clients are view-only.
+
+### Future Improvements
+
+- QR code for easy headset connection
+- Automatic reconnection on disconnect
+- Custom PeerJS server for reliability
+- Bidirectional editing (collaborative mode)
+
 ## Future Considerations
 
 - **Undo/redo** — Since state is immutable, history is just a list of states

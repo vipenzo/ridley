@@ -1002,9 +1002,13 @@
            (and (list? arg) (contains? #{'path 'path-to} (first arg)))
            `(extrude-path-impl ~shape ~arg)
 
-           ;; Any other expression (movements like (f 10)) - wrap in path
+           ;; Any other expression - check at runtime if it's already a path
+           ;; This handles cases like (my-fn :arg) where my-fn returns a path
            :else
-           `(extrude-path-impl ~shape (path ~arg))))
+           `(let [result# ~arg]
+              (if (path? result#)
+                (extrude-path-impl ~shape result#)
+                (extrude-path-impl ~shape (path ~arg))))))
        ;; Multiple movements - wrap in path macro
        `(extrude-path-impl ~shape (path ~@movements))))
 
@@ -1024,9 +1028,12 @@
        (and (list? path-expr) (= 'path (first path-expr)))
        `(extrude-closed-path-impl ~shape ~path-expr)
 
-       ;; Other list - wrap in path
+       ;; Other list - check at runtime if it's already a path
        :else
-       `(extrude-closed-path-impl ~shape (path ~path-expr))))
+       `(let [result# ~path-expr]
+          (if (path? result#)
+            (extrude-closed-path-impl ~shape result#)
+            (extrude-closed-path-impl ~shape (path ~path-expr))))))
 
    ;; loft: like extrude but with shape transformation based on progress
    ;; (loft (circle 20) #(scale %1 (- 1 %2)) (f 30)) - cone
@@ -1036,18 +1043,30 @@
    ;; Default: 16 steps
    ;; Returns the created mesh (can be bound with def)
    (defmacro loft [shape transform-fn & movements]
-     (if (and (= 1 (count movements)) (symbol? (first movements)))
-       ;; Single symbol - might be a path
-       `(let [prev-mode# (:pen-mode (get-turtle))
-              arg# ~(first movements)]
-          (stamp-loft-impl ~shape ~transform-fn)
-          (if (path? arg#)
-            (run-path arg#)
-            ~(first movements))
-          (finalize-loft-impl)
-          (pen-impl prev-mode#)
-          (last-mesh))
-       ;; Multiple movements or literals
+     (if (= 1 (count movements))
+       (let [arg (first movements)]
+         (if (symbol? arg)
+           ;; Single symbol - might be a path
+           `(let [prev-mode# (:pen-mode (get-turtle))
+                  arg# ~arg]
+              (stamp-loft-impl ~shape ~transform-fn)
+              (if (path? arg#)
+                (run-path arg#)
+                ~arg)
+              (finalize-loft-impl)
+              (pen-impl prev-mode#)
+              (last-mesh))
+           ;; Single expression - check at runtime if it's a path
+           `(let [prev-mode# (:pen-mode (get-turtle))
+                  result# ~arg]
+              (stamp-loft-impl ~shape ~transform-fn)
+              (if (path? result#)
+                (run-path result#)
+                ~arg)
+              (finalize-loft-impl)
+              (pen-impl prev-mode#)
+              (last-mesh))))
+       ;; Multiple movements
        `(let [prev-mode# (:pen-mode (get-turtle))]
           (stamp-loft-impl ~shape ~transform-fn)
           ~@movements
@@ -1059,16 +1078,28 @@
    ;; (loft-n 32 (circle 20) #(scale %1 (- 1 %2)) (f 30)) - smoother cone
    ;; Returns the created mesh (can be bound with def)
    (defmacro loft-n [steps shape transform-fn & movements]
-     (if (and (= 1 (count movements)) (symbol? (first movements)))
-       `(let [prev-mode# (:pen-mode (get-turtle))
-              arg# ~(first movements)]
-          (stamp-loft-impl ~shape ~transform-fn ~steps)
-          (if (path? arg#)
-            (run-path arg#)
-            ~(first movements))
-          (finalize-loft-impl)
-          (pen-impl prev-mode#)
-          (last-mesh))
+     (if (= 1 (count movements))
+       (let [arg (first movements)]
+         (if (symbol? arg)
+           `(let [prev-mode# (:pen-mode (get-turtle))
+                  arg# ~arg]
+              (stamp-loft-impl ~shape ~transform-fn ~steps)
+              (if (path? arg#)
+                (run-path arg#)
+                ~arg)
+              (finalize-loft-impl)
+              (pen-impl prev-mode#)
+              (last-mesh))
+           ;; Single expression - check at runtime if it's a path
+           `(let [prev-mode# (:pen-mode (get-turtle))
+                  result# ~arg]
+              (stamp-loft-impl ~shape ~transform-fn ~steps)
+              (if (path? result#)
+                (run-path result#)
+                ~arg)
+              (finalize-loft-impl)
+              (pen-impl prev-mode#)
+              (last-mesh))))
        `(let [prev-mode# (:pen-mode (get-turtle))]
           (stamp-loft-impl ~shape ~transform-fn ~steps)
           ~@movements
