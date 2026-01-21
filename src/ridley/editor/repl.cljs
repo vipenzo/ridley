@@ -28,6 +28,8 @@
 (defn- reset-turtle! []
   (reset! turtle-atom (turtle/make-turtle)))
 
+;; NOTE: attach-state and att-* functions moved to macro-defs for SCI context
+
 ;; ============================================================
 ;; Implicit turtle functions (mutate atom)
 ;; ============================================================
@@ -139,25 +141,35 @@
 
 ;; Attachment commands
 ;; Store registry index in :attached so we can update the real mesh
-(defn ^:export implicit-attach [mesh]
-  (let [idx (registry/get-mesh-index mesh)
-        ;; Get the current mesh from registry (may have been modified since def)
-        current-mesh (if idx (registry/get-mesh-at-index idx) mesh)]
-    (swap! turtle-atom (fn [state]
-                         (let [state' (turtle/attach state current-mesh)]
-                           (if idx
-                             (assoc-in state' [:attached :registry-index] idx)
-                             state'))))))
+(defn ^:export implicit-attach
+  "Implicit attach - saves registry-index for replace-on-detach.
+   With :clone flag, doesn't track registry (the clone is new)."
+  ([mesh] (implicit-attach mesh nil))
+  ([mesh clone-flag]
+   (let [clone? (= clone-flag :clone)
+         idx (when-not clone? (registry/get-mesh-index mesh))
+         ;; Get the current mesh from registry (may have been modified since def)
+         current-mesh (if idx (registry/get-mesh-at-index idx) mesh)]
+     (swap! turtle-atom (fn [state]
+                          (let [state' (turtle/attach state current-mesh :clone clone?)]
+                            (if idx
+                              (assoc-in state' [:attached :registry-index] idx)
+                              state')))))))
 
-(defn ^:export implicit-attach-face [mesh face-id]
-  (let [idx (registry/get-mesh-index mesh)
-        ;; Get the current mesh from registry (may have been modified since def)
-        current-mesh (if idx (registry/get-mesh-at-index idx) mesh)]
-    (swap! turtle-atom (fn [state]
-                         (let [state' (turtle/attach-face state current-mesh face-id)]
-                           (if idx
-                             (assoc-in state' [:attached :registry-index] idx)
-                             state'))))))
+(defn ^:export implicit-attach-face
+  "Implicit attach-face - saves registry-index for replace-on-detach.
+   With :clone flag, enables extrusion mode (f creates side faces)."
+  ([mesh face-id] (implicit-attach-face mesh face-id nil))
+  ([mesh face-id clone-flag]
+   (let [clone? (= clone-flag :clone)
+         idx (registry/get-mesh-index mesh)
+         ;; Get the current mesh from registry (may have been modified since def)
+         current-mesh (if idx (registry/get-mesh-at-index idx) mesh)]
+     (swap! turtle-atom (fn [state]
+                          (let [state' (turtle/attach-face state current-mesh face-id :clone clone?)]
+                            (if idx
+                              (assoc-in state' [:attached :registry-index] idx)
+                              state')))))))
 
 (defn ^:export implicit-detach []
   (swap! turtle-atom turtle/detach))
@@ -329,6 +341,30 @@
       (last (:meshes @turtle-atom))
       (vec (take-last (count shapes) (:meshes @turtle-atom))))))
 
+(defn ^:export pure-extrude-path
+  "Pure extrude function - creates mesh without side effects.
+   Uses a local turtle state, does not modify global turtle-atom."
+  [shape-or-shapes path]
+  ;; Handle both single shape and vector of shapes (from text-shape)
+  (let [shapes (if (vector? shape-or-shapes) shape-or-shapes [shape-or-shapes])
+        ;; Create local turtle state at origin
+        initial-state (turtle/make-turtle)
+        ;; Extrude each shape, collecting results
+        results (reduce
+                 (fn [acc shape]
+                   (let [state (turtle/extrude-from-path initial-state shape path)
+                         mesh (last (:meshes state))]
+                     (if mesh
+                       (conj acc mesh)
+                       acc)))
+                 []
+                 shapes)]
+    ;; Return single mesh or vector of meshes
+    (if (= 1 (count results))
+      (first results)
+      results)))
+
+;; Legacy version for backwards compatibility (modifies global state)
 (defn ^:export implicit-extrude-path [shape-or-shapes path]
   ;; Handle both single shape and vector of shapes (from text-shape)
   (let [shapes (if (vector? shape-or-shapes) shape-or-shapes [shape-or-shapes])
@@ -616,19 +652,19 @@
    'goto         implicit-goto
    'look-at      implicit-look-at
    'path-to      implicit-path-to
-   ;; Attachment commands
-   'attach       implicit-attach
-   'attach-face  implicit-attach-face
-   'detach       implicit-detach
+   ;; Attachment commands (functional versions defined in macro-defs)
+   ;; NOTE: Legacy implicit-attach and implicit-attach-face removed
+   ;; Use the functional macro: (attach-face mesh :top (f 20))
    'attached?    (fn [] (turtle/attached? @turtle-atom))
+   ;; NOTE: 'detach' removed - implicit at end of attach/attach-face macro
    'inset        implicit-inset
    ;; 3D primitives - return mesh data at origin (resolution-aware)
    'box          pure-box
    'sphere       sphere-with-resolution
    'cyl          cyl-with-resolution
    'cone         cone-with-resolution
-   ;; Materialize mesh at turtle position
-   'stamp        implicit-stamp    ; show in viewport
+   ;; NOTE: 'stamp' removed - use (register :name mesh) to make mesh visible
+   ;; 'make' kept for internal use (creates mesh without showing)
    'make         implicit-make     ; hidden (for boolean ops)
    ;; Shape constructors (return shape data, resolution-aware)
    'circle       circle-with-resolution
@@ -656,6 +692,16 @@
    'turtle-sphere   prims/sphere
    'turtle-cyl      prims/cyl
    'turtle-cone     prims/cone
+   ;; Pure attach functions for functional macros
+   ;; (turtle-f, turtle-th, turtle-tv, turtle-tr already defined above)
+   'turtle-attach       turtle/attach
+   'turtle-attach-face  turtle/attach-face
+   'turtle-attach-face-extrude turtle/attach-face-extrude
+   'turtle-attach-move  turtle/attach-move
+   'turtle-attach-clone turtle/attach-clone
+   'turtle-inset        turtle/inset
+   'turtle-scale        turtle/scale
+   ;; NOTE: attach-state and att-* functions are defined in macro-defs
    ;; Path/shape utilities
    'path->data   path/path-from-state
    'make-shape   shape/make-shape
@@ -701,6 +747,7 @@
    'path?               turtle/path?
    'extrude-closed-path-impl implicit-extrude-closed-path
    'extrude-path-impl        implicit-extrude-path
+   'pure-extrude-path        pure-extrude-path  ; Pure version (no side effects)
    ;; Sweep between two shapes
    'stamp-shape-at      turtle/stamp-shape-at
    'sweep-two-shapes    turtle/sweep-two-shapes
@@ -729,6 +776,10 @@
    'all-meshes-info     registry/all-meshes-info
    'anonymous-meshes    registry/anonymous-meshes
    'anonymous-count     registry/anonymous-count
+   ;; Path registry
+   'register-path!      registry/register-path!
+   'show-path!          registry/show-path!
+   'hide-path!          registry/hide-path!
    ;; STL export
    'save-stl            stl/download-stl
    ;; Math functions for SCI context (used by arc/bezier recording)
@@ -741,12 +792,31 @@
    'floor               js/Math.floor
    'round               js/Math.round
    'pow                 js/Math.pow
-   'atan2               js/Math.atan2})
+   'atan2               js/Math.atan2
+   ;; Debug logging (outputs to browser console)
+   'log                 (fn [& args] (apply js/console.log (map clj->js args)))})
 
 ;; Macro definitions for SCI context
 (def ^:private macro-defs
   ";; Atom to hold recorder during path recording
    (def ^:private path-recorder (atom nil))
+
+   ;; Atom for attach-face and attach macros (functional style)
+   (def ^:private attach-state (atom nil))
+
+   ;; Wrapper functions for attach macros that operate on attach-state
+   (defn- att-f* [dist]
+     (swap! attach-state (fn [s] (turtle-f s dist))))
+   (defn- att-th* [angle]
+     (swap! attach-state (fn [s] (turtle-th s angle))))
+   (defn- att-tv* [angle]
+     (swap! attach-state (fn [s] (turtle-tv s angle))))
+   (defn- att-tr* [angle]
+     (swap! attach-state (fn [s] (turtle-tr s angle))))
+   (defn- att-inset* [amount]
+     (swap! attach-state (fn [s] (turtle-inset s amount))))
+   (defn- att-scale* [factor]
+     (swap! attach-state (fn [s] (turtle-scale s factor))))
 
    ;; Recording versions that work with the path-recorder atom
    (defn- rec-f* [dist]
@@ -978,14 +1048,13 @@
          :tr (tr (first args))
          nil)))
 
-   ;; extrude: stamp a shape and extrude it via movements or path
-   ;; (extrude (circle 15) (f 30)) - stamp circle, extrude 30 units forward
+   ;; extrude: create mesh by extruding shape along a path
+   ;; PURE: returns mesh without side effects (use register to make visible)
+   ;; (extrude (circle 15) (f 30)) - extrude circle 30 units forward
    ;; (extrude (circle 15) my-path) - extrude along a recorded path
    ;; (extrude (circle 15) (path-to :target)) - extrude along path to anchor
    ;; (extrude (rect 20 10) (f 20) (th 45) (f 20)) - sweep with turns
-   ;; Uses two-pass approach: first records movements into a path,
-   ;; then processes with correct segment shortening at corners.
-   ;; Returns the created mesh (can be bound with def)
+   ;; Returns the created mesh (bind with def, show with register)
    (defmacro extrude [shape & movements]
      (if (= 1 (count movements))
        (let [arg (first movements)]
@@ -994,23 +1063,22 @@
            (symbol? arg)
            `(let [arg# ~arg]
               (if (path? arg#)
-                (extrude-path-impl ~shape arg#)
-                ;; Not a path - shouldn't happen for symbols, but wrap to be safe
-                (extrude-path-impl ~shape (path ~arg))))
+                (pure-extrude-path ~shape arg#)
+                ;; Not a path - wrap in path macro
+                (pure-extrude-path ~shape (path ~arg))))
 
            ;; List starting with path or path-to - use directly
            (and (list? arg) (contains? #{'path 'path-to} (first arg)))
-           `(extrude-path-impl ~shape ~arg)
+           `(pure-extrude-path ~shape ~arg)
 
            ;; Any other expression - check at runtime if it's already a path
-           ;; This handles cases like (my-fn :arg) where my-fn returns a path
            :else
            `(let [result# ~arg]
               (if (path? result#)
-                (extrude-path-impl ~shape result#)
-                (extrude-path-impl ~shape (path ~arg))))))
+                (pure-extrude-path ~shape result#)
+                (pure-extrude-path ~shape (path ~arg))))))
        ;; Multiple movements - wrap in path macro
-       `(extrude-path-impl ~shape (path ~@movements))))
+       `(pure-extrude-path ~shape (path ~@movements))))
 
    ;; extrude-closed: like extrude but creates a closed torus-like mesh
    ;; (extrude-closed (circle 5) square-path) - closed torus along path
@@ -1125,20 +1193,111 @@
         ;; Add mesh to turtle state and return it
         (add-mesh-impl mesh#)))
 
-   ;; register: define a symbol, add to registry, AND show it (only first time)
-   ;; (register torus (extrude-closed (circle 5) square-path))
-   ;; This creates a var 'torus', registers it, and makes it visible
-   ;; On subsequent evals, updates the mesh but preserves visibility state
+   ;; ============================================================
+   ;; Functional attach macros
+   ;; ============================================================
+
+   ;; attach-face: move existing face vertices (no extrusion)
+   ;; (attach-face mesh face-id & body) => modified mesh
+   ;; Body operations (f, th, tv, tr, inset, scale) are rebound to operate
+   ;; on a local attach-state atom, returning the modified mesh at the end.
+   ;; f moves the face vertices directly without creating new geometry.
+   (defmacro attach-face [mesh face-id & body]
+     `(let [m# ~mesh
+            _# (reset! attach-state
+                       (-> (turtle)
+                           (turtle-attach-face m# ~face-id)))]
+        ;; Rebind operations to local versions and execute body
+        (let [~'f att-f*
+              ~'th att-th*
+              ~'tv att-tv*
+              ~'tr att-tr*
+              ~'inset att-inset*
+              ~'scale att-scale*]
+          ~@body)
+        ;; Return modified mesh
+        (or (get-in @attach-state [:attached :mesh]) m#)))
+
+   ;; clone-face: extrude face creating new vertices and side faces
+   ;; (clone-face mesh face-id & body) => modified mesh with extrusion
+   ;; f creates new vertices offset from original and side faces connecting them.
+   (defmacro clone-face [mesh face-id & body]
+     `(let [m# ~mesh
+            _# (reset! attach-state
+                       (-> (turtle)
+                           (turtle-attach-face-extrude m# ~face-id)))]
+        ;; Rebind operations to local versions and execute body
+        (let [~'f att-f*
+              ~'th att-th*
+              ~'tv att-tv*
+              ~'tr att-tr*
+              ~'inset att-inset*
+              ~'scale att-scale*]
+          ~@body)
+        ;; Return modified mesh
+        (or (get-in @attach-state [:attached :mesh]) m#)))
+
+   ;; attach: transform mesh in place (modifies original)
+   ;; (attach mesh & body) => transformed mesh
+   ;; Attaches to mesh's creation pose and applies transformations.
+   (defmacro attach [mesh & body]
+     `(let [m# ~mesh]
+        ;; Initialize local state with turtle attached to mesh pose (no clone)
+        (reset! attach-state
+                (-> (turtle)
+                    (turtle-attach-move m#)))
+        ;; Rebind operations to local versions
+        (let [~'f att-f*
+              ~'th att-th*
+              ~'tv att-tv*
+              ~'tr att-tr*]
+          ~@body)
+        ;; Return modified mesh
+        (or (get-in @attach-state [:attached :mesh]) m#)))
+
+   ;; clone: create transformed copy of mesh (original unchanged)
+   ;; (clone mesh & body) => new transformed mesh
+   ;; Creates a copy, attaches to its creation pose, applies transformations.
+   (defmacro clone [mesh & body]
+     `(do
+        ;; Initialize local state with turtle attached to cloned mesh
+        (reset! attach-state
+                (-> (turtle)
+                    (turtle-attach-clone ~mesh)))
+        ;; Rebind operations to local versions
+        (let [~'f att-f*
+              ~'th att-th*
+              ~'tv att-tv*
+              ~'tr att-tr*]
+          ~@body)
+        ;; Return modified mesh
+        (or (get-in @attach-state [:attached :mesh]) ~mesh)))
+
+   ;; register: define a symbol, add to registry, AND show it
+   ;; Works with both meshes and paths:
+   ;; (register torus (extrude ...))  ; registers a mesh
+   ;; (register line (path ...))      ; registers a path (shown as polyline)
+   ;; On subsequent evals, updates the value but preserves visibility state
    (defmacro register [name expr]
-     `(let [mesh# ~expr
-            name-kw# ~(keyword name)
-            already-registered# (contains? (set (registered-names)) name-kw#)]
-        (def ~name mesh#)
-        (register-mesh! name-kw# mesh#)
-        ;; Only auto-show on first registration
-        (when-not already-registered#
-          (show-mesh! name-kw#))
-        mesh#))
+     `(let [value# ~expr
+            name-kw# ~(keyword name)]
+        (def ~name value#)
+        (cond
+          ;; It's a mesh (has :vertices)
+          (and (map? value#) (:vertices value#))
+          (let [already-registered# (contains? (set (registered-names)) name-kw#)]
+            (register-mesh! name-kw# value#)
+            (when-not already-registered#
+              (show-mesh! name-kw#)))
+
+          ;; It's a path (has :type :path)
+          (and (map? value#) (= :path (:type value#)))
+          (do
+            (register-path! name-kw# value#)
+            (show-path! name-kw#)))
+        ;; Refresh viewport and return value
+        (refresh-viewport! false)
+        value#))
 
    ;; Convenience functions that work with names OR mesh references
    ;; (hide :torus) - hide by registered name (keyword)

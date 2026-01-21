@@ -317,19 +317,20 @@
   "Handle viewport resize - call when panel dimensions change."
   []
   (when-let [{:keys [renderer camera canvas]} @state]
-    (let [panel (.-parentElement canvas)
-          width (.-clientWidth panel)
-          height (.-clientHeight panel)]
-      (.setSize renderer width height)
-      (set! (.-aspect camera) (/ width height))
-      (.updateProjectionMatrix camera))))
+    ;; Use canvas's own dimensions (set by CSS flex: 1)
+    (let [width (.-clientWidth canvas)
+          height (.-clientHeight canvas)]
+      (when (and (pos? width) (pos? height))
+        (.setSize renderer width height false)  ; false = don't set CSS style
+        (set! (.-aspect camera) (/ width height))
+        (.updateProjectionMatrix camera)))))
 
 (defn init
   "Initialize Three.js viewport on given canvas element."
   [canvas]
-  (let [panel (.-parentElement canvas)
-        width (.-clientWidth panel)
-        height (.-clientHeight panel)
+  (let [;; Get initial dimensions from canvas (CSS sets flex: 1)
+        width (max 1 (.-clientWidth canvas))
+        height (max 1 (.-clientHeight canvas))
         scene (create-scene)
         camera (create-camera width height)
         renderer (create-renderer canvas)
@@ -357,18 +358,28 @@
       (xr/enable-xr renderer)
       ;; Setup VR controller (pass world-group for rotation)
       (xr/setup-controller renderer scene camera-rig camera world-group)
-      (reset! state {:scene scene
-                     :camera camera
-                     :camera-rig camera-rig
-                     :world-group world-group
-                     :highlight-group highlight-group
-                     :renderer renderer
-                     :controls controls
-                     :grid grid
-                     :axes axes
-                     :canvas canvas})
-      (.addEventListener js/window "resize" handle-resize)
-      (start-animation-loop))))
+      ;; Setup ResizeObserver on viewport-panel (parent) for responsive canvas sizing
+      ;; Observing the parent catches resize from panel divider drag
+      (let [viewport-panel (.-parentElement canvas)
+            resize-observer (js/ResizeObserver.
+                              (fn [_entries]
+                                ;; Use requestAnimationFrame to ensure layout is updated
+                                (js/requestAnimationFrame handle-resize)))]
+        (.observe resize-observer viewport-panel)
+        (reset! state {:scene scene
+                       :camera camera
+                       :camera-rig camera-rig
+                       :world-group world-group
+                       :highlight-group highlight-group
+                       :renderer renderer
+                       :controls controls
+                       :grid grid
+                       :axes axes
+                       :canvas canvas
+                       :resize-observer resize-observer})
+        ;; Initial resize
+        (handle-resize)
+        (start-animation-loop)))))
 
 (defn get-renderer
   "Return the current renderer (for XR integration)."
@@ -551,9 +562,10 @@
 (defn dispose
   "Clean up Three.js resources."
   []
-  (when-let [{:keys [renderer controls]} @state]
+  (when-let [{:keys [renderer controls resize-observer]} @state]
     (clear-highlights)
-    (.removeEventListener js/window "resize" handle-resize)
+    (when resize-observer
+      (.disconnect resize-observer))
     (.dispose controls)
     (.dispose renderer)
     (reset! state nil)))

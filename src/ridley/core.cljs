@@ -306,9 +306,8 @@
                     max-width (- app-width 300)] ; Leave room for viewport
                 (when (and (>= new-width min-width) (<= new-width max-width))
                   (set! (.-width (.-style editor-panel)) (str new-width "px"))
-                  (set! (.-minWidth (.-style editor-panel)) (str new-width "px"))
-                  ;; Notify Three.js to resize
-                  (viewport/handle-resize))))))
+                  (set! (.-minWidth (.-style editor-panel)) (str new-width "px")))))))
+                  ;; ResizeObserver handles viewport resize automatically
         (.addEventListener js/document "mouseup"
           (fn [_]
             (when @dragging

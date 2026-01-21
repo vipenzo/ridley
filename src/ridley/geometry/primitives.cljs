@@ -14,10 +14,10 @@
   [vertices position heading up]
   (let [[hx hy hz] heading
         [ux uy uz] up
-        ;; Right vector = heading cross up
-        rx (- (* hy uz) (* hz uy))
-        ry (- (* hz ux) (* hx uz))
-        rz (- (* hx uy) (* hy ux))
+        ;; Right vector = up cross heading (right-handed system)
+        rx (- (* uy hz) (* uz hy))
+        ry (- (* uz hx) (* ux hz))
+        rz (- (* ux hy) (* uy hx))
         [px py pz] position]
     (mapv (fn [vertex]
             (let [[x y z] vertex]

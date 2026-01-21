@@ -81,14 +81,27 @@
 
 (defn box-face-groups
   "Return face groups for a box mesh.
-   Box faces are defined by triangle indices from make-box-faces."
+   Box faces are defined by triangle indices from make-box-faces.
+   Must match exactly the triangles in make-box-faces (primitives.cljs).
+
+   Face naming convention (Z is up):
+   - :top = +Z, :bottom = -Z
+   - :front = +Y, :back = -Y
+   - :right = +X, :left = -X"
   []
-  {:back   [[0 1 2] [0 2 3]]
-   :front  [[4 6 5] [4 7 6]]
-   :bottom [[0 4 5] [0 5 1]]
-   :top    [[2 6 7] [2 7 3]]
-   :left   [[0 3 7] [0 7 4]]
-   :right  [[1 5 6] [1 6 2]]})
+  ;; From make-box-faces (vertices 0-3 at z=-, 4-7 at z=+):
+  ;; [0 2 1] [0 3 2]   ; -Z face (bottom)
+  ;; [4 5 6] [4 6 7]   ; +Z face (top)
+  ;; [0 1 5] [0 5 4]   ; -Y face (back)
+  ;; [3 6 2] [3 7 6]   ; +Y face (front)
+  ;; [0 4 7] [0 7 3]   ; -X face (left)
+  ;; [1 2 6] [1 6 5]   ; +X face (right)
+  {:bottom [[0 2 1] [0 3 2]]   ; -Z
+   :top    [[4 5 6] [4 6 7]]   ; +Z
+   :back   [[0 1 5] [0 5 4]]   ; -Y
+   :front  [[3 6 2] [3 7 6]]   ; +Y
+   :left   [[0 4 7] [0 7 3]]   ; -X
+   :right  [[1 2 6] [1 6 5]]}) ; +X
 
 (defn cylinder-face-groups
   "Return face groups for a cylinder mesh.

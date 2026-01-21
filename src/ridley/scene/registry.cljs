@@ -10,7 +10,8 @@
    (visible-meshes)                        ; get meshes currently shown
    (save-stl torus)                        ; export a mesh to STL
    (save-stl (visible-meshes))             ; export all visible meshes"
-  (:require [ridley.viewport.core :as viewport]))
+  (:require [ridley.viewport.core :as viewport]
+            [ridley.turtle.core :as turtle]))
 
 ;; All meshes in the scene: [{:mesh data :name nil/keyword :visible true/false} ...]
 (defonce ^:private scene-meshes (atom []))
@@ -21,11 +22,15 @@
 ;; Lines (geometry) from turtle movements
 (defonce ^:private scene-lines (atom []))
 
+;; Registered paths: [{:path data :name keyword :visible true/false} ...]
+(defonce ^:private scene-paths (atom []))
+
 (defn clear-all!
-  "Clear all meshes and lines. Called on code re-evaluation."
+  "Clear all meshes, lines, and paths. Called on code re-evaluation."
   []
   (reset! scene-meshes [])
-  (reset! scene-lines []))
+  (reset! scene-lines [])
+  (reset! scene-paths []))
 
 (defn set-lines!
   "Set the lines (geometry) to display."
@@ -36,6 +41,61 @@
   "Add lines to the current set."
   [lines]
   (swap! scene-lines into lines))
+
+;; ============================================================
+;; Path registration (polylines)
+;; ============================================================
+
+(defn- path-to-lines
+  "Convert a path to line segments for rendering.
+   Returns vector of {:type :line :from [x y z] :to [x y z]} segments."
+  [path]
+  (when (and (map? path) (= :path (:type path)))
+    (let [state (turtle/run-path (turtle/make-turtle) path)
+          geometry (:geometry state)]
+      ;; geometry is [{:type :line :from [...] :to [...]} ...]
+      (vec geometry))))
+
+(defn register-path!
+  "Register a named path. Returns the path."
+  [name path]
+  (when (and name path (= :path (:type path)))
+    ;; Check if path with this name already exists
+    (let [existing-idx (first (keep-indexed
+                               (fn [i entry] (when (= (:name entry) name) i))
+                               @scene-paths))]
+      (if existing-idx
+        ;; Update existing
+        (swap! scene-paths assoc existing-idx {:path path :name name :visible true})
+        ;; Add new
+        (swap! scene-paths conj {:path path :name name :visible true})))
+    path))
+
+(defn show-path!
+  "Show a path by name."
+  [name]
+  (when-let [idx (first (keep-indexed
+                         (fn [i entry] (when (= (:name entry) name) i))
+                         @scene-paths))]
+    (swap! scene-paths assoc-in [idx :visible] true))
+  nil)
+
+(defn hide-path!
+  "Hide a path by name."
+  [name]
+  (when-let [idx (first (keep-indexed
+                         (fn [i entry] (when (= (:name entry) name) i))
+                         @scene-paths))]
+    (swap! scene-paths assoc-in [idx :visible] false))
+  nil)
+
+(defn visible-path-lines
+  "Get line segments from all visible paths."
+  []
+  (vec (mapcat (fn [entry]
+                 (when (:visible entry)
+                   (path-to-lines (:path entry))))
+               @scene-paths)))
 
 (defn add-mesh!
   "Add a mesh to the scene. Returns the mesh data with :registry-id assigned."
@@ -57,15 +117,22 @@
       (when-not (some #(identical? % m) existing-meshes)
         (add-mesh! m nil true)))))
 
-(defn register-mesh!
-  "Add a named mesh to the scene. Returns the mesh data."
-  [name mesh]
-  (add-mesh! mesh name true))
-
 (defn- find-mesh-index
   "Find index of mesh entry by name."
   [name]
   (first (keep-indexed (fn [i entry] (when (= (:name entry) name) i)) @scene-meshes)))
+
+(defn register-mesh!
+  "Add a named mesh to the scene. If mesh with same name exists, replace it."
+  [name mesh]
+  ;; Check if mesh with this name already exists
+  (if-let [idx (find-mesh-index name)]
+    ;; Replace existing mesh
+    (do
+      (swap! scene-meshes assoc-in [idx :mesh] mesh)
+      mesh)
+    ;; Add new mesh
+    (add-mesh! mesh name true)))
 
 (defn- find-mesh-index-by-ref
   "Find index of mesh entry by reference (identical?)."
@@ -211,10 +278,12 @@
   (vec (keep (fn [entry] (when (nil? (:name entry)) (:mesh entry))) @scene-meshes)))
 
 (defn refresh-viewport!
-  "Update the viewport with all visible meshes and lines.
+  "Update the viewport with all visible meshes, lines, and paths.
    reset-camera?: if true (default), fit camera to geometry"
   ([] (refresh-viewport! true))
   ([reset-camera?]
-   (viewport/update-scene {:lines @scene-lines
-                           :meshes (visible-meshes)
-                           :reset-camera? reset-camera?})))
+   ;; Combine scene-lines with path lines
+   (let [all-lines (into (vec @scene-lines) (visible-path-lines))]
+     (viewport/update-scene {:lines all-lines
+                             :meshes (visible-meshes)
+                             :reset-camera? reset-camera?}))))

@@ -684,11 +684,16 @@
                         verts))))))
 
 (defn- replace-mesh-in-state
-  "Replace a mesh in the state's meshes vector."
+  "Replace a mesh in the state's meshes vector.
+   If the old mesh is not found, adds the new mesh to the end."
   [state old-mesh new-mesh]
-  (update state :meshes
-          (fn [meshes]
-            (mapv #(if (identical? % old-mesh) new-mesh %) meshes))))
+  (let [meshes (:meshes state)
+        found? (some #(identical? % old-mesh) meshes)]
+    (if found?
+      (update state :meshes
+              (fn [ms] (mapv #(if (identical? % old-mesh) new-mesh %) ms)))
+      ;; Not found - add the new mesh
+      (update state :meshes conj new-mesh))))
 
 (defn- rotate-attached-mesh
   "Rotate the attached mesh around its centroid using the given axis.
@@ -860,6 +865,91 @@
         (assoc-in [:attached :mesh] new-mesh)
         (assoc-in [:attached :face-info] new-face-info))))
 
+(defn- move-attached-face
+  "Move the attached face along its normal WITHOUT creating side faces.
+   Updates the vertex positions of the face directly."
+  [state dist]
+  (let [attachment (:attached state)
+        mesh (:mesh attachment)
+        face-info (:face-info attachment)
+        normal (:normal face-info)
+        offset (v* normal dist)
+
+        ;; Get face vertices (from perimeter)
+        face-triangles (:triangles face-info)
+        perimeter (extract-face-perimeter face-triangles)
+
+        ;; Move each perimeter vertex by offset
+        vertices (:vertices mesh)
+        new-vertices (reduce
+                      (fn [verts idx]
+                        (assoc verts idx (v+ (nth verts idx) offset)))
+                      (vec vertices)
+                      perimeter)
+
+        new-mesh (assoc mesh :vertices new-vertices)
+        new-center (v+ (:center face-info) offset)
+        new-face-info (assoc face-info :center new-center)]
+
+    (-> state
+        (replace-mesh-in-state mesh new-mesh)
+        (assoc :position new-center)
+        (assoc-in [:attached :mesh] new-mesh)
+        (assoc-in [:attached :face-info] new-face-info))))
+
+(defn- rotate-attached-face
+  "Rotate the attached face around an axis passing through its center.
+   Updates vertex positions of the face directly."
+  [state axis angle-deg]
+  (if-let [attachment (:attached state)]
+    (let [mesh (:mesh attachment)
+          face-info (:face-info attachment)
+          center (:center face-info)
+          rad (deg->rad angle-deg)
+
+          ;; Get face vertices (from perimeter)
+          face-triangles (:triangles face-info)
+          perimeter (extract-face-perimeter face-triangles)]
+
+      (if (seq perimeter)
+        ;; Rotate each perimeter vertex around center
+        (let [vertices (:vertices mesh)
+              new-vertices (reduce
+                            (fn [verts idx]
+                              (let [v (nth verts idx)
+                                    ;; Translate to origin, rotate, translate back
+                                    v-centered (v- v center)
+                                    v-rotated (rotate-point-around-axis v-centered axis rad)
+                                    v-final (v+ v-rotated center)]
+                                (assoc verts idx v-final)))
+                            (vec vertices)
+                            perimeter)
+
+              new-mesh (assoc mesh :vertices new-vertices)
+
+              ;; Also rotate the face normal and heading
+              old-normal (:normal face-info)
+              old-heading (:heading face-info)
+              new-normal (rotate-around-axis old-normal axis rad)
+              new-heading (rotate-around-axis old-heading axis rad)
+              new-face-info (-> face-info
+                                (assoc :normal new-normal)
+                                (assoc :heading new-heading))
+
+              ;; Update turtle orientation to match new face orientation
+              new-up (normalize (cross new-normal new-heading))]
+
+          (-> state
+              (replace-mesh-in-state mesh new-mesh)
+              (assoc :heading new-normal)
+              (assoc :up new-up)
+              (assoc-in [:attached :mesh] new-mesh)
+              (assoc-in [:attached :face-info] new-face-info)))
+        ;; No perimeter found, return state unchanged
+        state))
+    ;; No attachment, return state unchanged
+    state))
+
 ;; --- Face inset ---
 
 (defn- build-face-inset
@@ -971,14 +1061,57 @@
       state)
     state))
 
-(defn scale
-  "Scale the attached mesh uniformly from its centroid.
+(defn- build-face-scale
+  "Scale a face uniformly from its center.
    factor > 1 = larger, factor < 1 = smaller.
-   Only works when attached to a mesh (not face)."
+   Modifies vertices in place (doesn't create new vertices).
+   Returns updated mesh."
+  [mesh face-info factor]
+  (let [vertices (:vertices mesh)
+        center (:center face-info)
+        ;; Get face triangles and extract ordered perimeter
+        face-triangles (:triangles face-info)
+        perimeter (extract-face-perimeter face-triangles)
+        ;; Scale each perimeter vertex from the center
+        new-vertices (reduce
+                      (fn [verts idx]
+                        (let [v (nth verts idx)
+                              rel (v- v center)
+                              scaled (v* rel factor)
+                              new-v (v+ center scaled)]
+                          (assoc verts idx new-v)))
+                      (vec vertices)
+                      perimeter)]
+    (assoc mesh :vertices new-vertices)))
+
+(defn- scale-attached-face
+  "Scale the attached face uniformly from its center.
+   Returns updated state with scaled face."
+  [state factor]
+  (let [attachment (:attached state)
+        mesh (:mesh attachment)
+        face-id (:face-id attachment)
+        face-info (:face-info attachment)
+        ;; Build scaled mesh
+        new-mesh (build-face-scale mesh face-info factor)
+        ;; Update face-info: center stays the same after uniform scaling from center
+        ;; but recalculate to get updated vertex positions
+        new-face-info (assoc face-info
+                             :center (:center face-info))]  ; center unchanged
+    (-> state
+        (replace-mesh-in-state mesh new-mesh)
+        (assoc-in [:attached :mesh] new-mesh)
+        (assoc-in [:attached :face-info] (assoc new-face-info :id face-id)))))
+
+(defn scale
+  "Scale the attached geometry uniformly from its centroid.
+   factor > 1 = larger, factor < 1 = smaller.
+   Works with both mesh attachment (:pose) and face attachment (:face)."
   [state factor]
   (if-let [attachment (:attached state)]
-    (if (= :pose (:type attachment))
-      (scale-attached-mesh state factor)
+    (case (:type attachment)
+      :pose (scale-attached-mesh state factor)
+      :face (scale-attached-face state factor)
       state)
     state))
 
@@ -1063,7 +1196,9 @@
   (if-let [attachment (:attached state)]
     (case (:type attachment)
       :pose (move-attached-mesh state dist)
-      :face (extrude-attached-face state dist)
+      :face (if (:extrude-mode attachment)
+              (extrude-attached-face state dist)
+              (move-attached-face state dist))
       (move state (:heading state) dist))
     (move state (:heading state) dist)))
 
@@ -1085,12 +1220,17 @@
   "Turn horizontal (yaw) - rotate heading around up axis.
    Positive angle turns left.
    When attached to mesh, rotates the entire mesh around up axis.
+   When attached to face, rotates the face around up axis (tilt sideways).
    In shape mode, stores pending rotation for fillet creation on next (f)."
   [state angle]
   (cond
-    ;; Attached to mesh: rotate the mesh
+    ;; Attached to mesh pose: rotate the mesh
     (= :pose (get-in state [:attached :type]))
     (rotate-attached-mesh state (:up state) angle)
+
+    ;; Attached to face: rotate the face around up axis (tilt sideways)
+    (= :face (get-in state [:attached :type]))
+    (rotate-attached-face state (:up state) angle)
 
     ;; Shape mode: store pending rotation
     (= :shape (:pen-mode state))
@@ -1106,13 +1246,19 @@
   "Turn vertical (pitch) - rotate heading and up around right axis.
    Positive angle pitches up.
    When attached to mesh, rotates the entire mesh around right axis.
+   When attached to face, rotates the face around right axis (tilts the face).
    In shape mode, stores pending rotation for fillet creation on next (f)."
   [state angle]
   (cond
-    ;; Attached to mesh: rotate the mesh
+    ;; Attached to mesh pose: rotate the mesh
     (= :pose (get-in state [:attached :type]))
     (let [right (right-vector state)]
       (rotate-attached-mesh state right angle))
+
+    ;; Attached to face: rotate the face around right axis
+    (= :face (get-in state [:attached :type]))
+    (let [right (right-vector state)]
+      (rotate-attached-face state right angle))
 
     ;; Shape mode: store pending rotation
     (= :shape (:pen-mode state))
@@ -1132,12 +1278,17 @@
   "Turn roll - rotate up around heading axis.
    Positive angle rolls clockwise (when viewed from behind).
    When attached to mesh, rotates the entire mesh around heading axis.
+   When attached to face, rotates the face around its normal (spins in place).
    In shape mode, stores pending rotation for fillet creation on next (f)."
   [state angle]
   (cond
-    ;; Attached to mesh: rotate the mesh
+    ;; Attached to mesh pose: rotate the mesh
     (= :pose (get-in state [:attached :type]))
     (rotate-attached-mesh state (:heading state) angle)
+
+    ;; Attached to face: rotate the face around its normal (heading = normal)
+    (= :face (get-in state [:attached :type]))
+    (rotate-attached-face state (:heading state) angle)
 
     ;; Shape mode: store pending rotation
     (= :shape (:pen-mode state))
@@ -2469,6 +2620,18 @@
        :vertices (vec all-indices)
        :triangles face-triangles})))
 
+;; --- Clone mesh helper ---
+
+(defn- clone-mesh
+  "Create a deep copy of a mesh with fresh collections.
+   Removes :registry-id so it can be registered separately."
+  [mesh]
+  (-> mesh
+      (update :vertices vec)
+      (update :faces vec)
+      (update :face-groups #(when % (into {} (map (fn [[k v]] [k (vec v)]) %))))
+      (dissoc :registry-id)))
+
 (defn attached?
   "Check if turtle is currently attached to a mesh or face."
   [state]
@@ -2476,27 +2639,34 @@
 
 (defn attach
   "Attach to a mesh's creation pose.
+   With :clone true, creates a copy of the mesh first (original unchanged).
    Pushes current state, moves turtle to the mesh's creation position,
    adopts its heading and up vectors.
    Returns state unchanged if mesh has no creation-pose."
-  [state mesh]
-  (if-let [pose (:creation-pose mesh)]
-    (-> state
-        (push-state)
-        (assoc :position (:position pose))
-        (assoc :heading (:heading pose))
-        (assoc :up (:up pose))
-        (assoc :attached {:type :pose
-                          :mesh mesh
-                          :original-pose pose}))
-    state))
+  [state mesh & {:keys [clone]}]
+  (let [target-mesh (if clone (clone-mesh mesh) mesh)
+        state (if clone
+                (update state :meshes conj target-mesh)
+                state)]
+    (if-let [pose (:creation-pose target-mesh)]
+      (-> state
+          (push-state)
+          (assoc :position (:position pose))
+          (assoc :heading (:heading pose))
+          (assoc :up (:up pose))
+          (assoc :attached {:type :pose
+                            :mesh target-mesh
+                            :original-pose pose}))
+      state)))
 
 (defn attach-face
   "Attach to a specific face of a mesh.
+   With :clone true, enables extrusion mode (f creates side faces).
+   Without :clone, face movement mode (f moves vertices directly).
    Pushes current state, moves turtle to face center,
    sets heading to face normal (outward), up perpendicular.
    Returns state unchanged if face not found."
-  [state mesh face-id]
+  [state mesh face-id & {:keys [clone]}]
   (if-let [face-groups (:face-groups mesh)]
     (if-let [triangles (get face-groups face-id)]
       (let [info (compute-face-info-internal (:vertices mesh) triangles)
@@ -2514,9 +2684,37 @@
             (assoc :attached {:type :face
                               :mesh mesh
                               :face-id face-id
-                              :face-info info})))
+                              :face-info info
+                              :extrude-mode clone})))  ; flag: if true, f() extrudes
       state)
     state))
+
+(defn ^:export attach-face-extrude
+  "Attach to a face with extrusion mode enabled.
+   Immediately creates cloned vertices at distance 0 (coincident with original).
+   This way scale/inset can operate on the new vertices, and f moves them.
+   After cloning, extrude-mode is turned off so f just moves vertices.
+   SCI-compatible (no keyword args)."
+  [state mesh face-id]
+  (-> state
+      (attach-face mesh face-id :clone true)
+      ;; Immediately extrude 0 to create cloned vertices and side faces
+      ;; The cloned vertices start coincident with the original face
+      (extrude-attached-face 0)
+      ;; Turn off extrude-mode: vertices are now cloned, future f just moves them
+      (assoc-in [:attached :extrude-mode] false)))
+
+(defn ^:export attach-move
+  "Attach to a mesh's creation pose (modifies original mesh).
+   SCI-compatible wrapper for (attach state mesh) without :clone."
+  [state mesh]
+  (attach state mesh))
+
+(defn ^:export attach-clone
+  "Attach to a cloned copy of a mesh (original unchanged).
+   SCI-compatible wrapper for (attach state mesh :clone true)."
+  [state mesh]
+  (attach state mesh :clone true))
 
 (defn detach
   "Detach from current attachment and restore previous position.
