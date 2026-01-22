@@ -1170,17 +1170,38 @@
 
       :loft
       ;; Loft mode: track distance and orientations (rings built at finalize)
-      (let [current-shape (:stamped-shape state)
-            offset (v* direction dist)
+      ;; Check for pending rotation first - record corner info
+      (let [pending (:pending-rotation state)
+            ;; If there's a pending rotation, apply it and record corner
+            state' (if pending
+                     (let [{:keys [heading up]} (apply-rotations state pending)
+                           old-heading (:heading state)
+                           ;; Record corner info for processing at finalize
+                           corner {:position pos
+                                   :old-heading old-heading
+                                   :new-heading heading
+                                   :new-up up
+                                   :dist-at-corner (:loft-total-dist state)}]
+                       (-> state
+                           (assoc :heading heading)
+                           (assoc :up up)
+                           (update :loft-corners (fnil conj []) corner)
+                           (dissoc :pending-rotation)))
+                     state)
+            ;; Now do the forward movement with updated heading
+            current-shape (:stamped-shape state')
+            actual-heading (:heading state')
+            offset (v* actual-heading dist)
             new-shape (mapv #(v+ % offset) current-shape)
-            new-total-dist (+ (:loft-total-dist state) (Math/abs dist))
+            new-pos' (v+ (:position state') offset)
+            new-total-dist (+ (:loft-total-dist state') (Math/abs dist))
             ;; Save turtle orientation for this waypoint
-            orientation {:position new-pos
-                         :heading (:heading state)
-                         :up (:up state)
+            orientation {:position new-pos'
+                         :heading actual-heading
+                         :up (:up state')
                          :dist new-total-dist}]
-        (-> state
-            (assoc :position new-pos)
+        (-> state'
+            (assoc :position new-pos')
             (assoc :stamped-shape new-shape)
             (assoc :loft-total-dist new-total-dist)
             (update :loft-orientations conj orientation)))
@@ -1232,8 +1253,8 @@
     (= :face (get-in state [:attached :type]))
     (rotate-attached-face state (:up state) angle)
 
-    ;; Shape mode: store pending rotation
-    (= :shape (:pen-mode state))
+    ;; Shape or loft mode: store pending rotation
+    (#{:shape :loft} (:pen-mode state))
     (store-pending-rotation state :th angle)
 
     ;; Normal mode: apply rotation immediately
@@ -1260,8 +1281,8 @@
     (let [right (right-vector state)]
       (rotate-attached-face state right angle))
 
-    ;; Shape mode: store pending rotation
-    (= :shape (:pen-mode state))
+    ;; Shape or loft mode: store pending rotation
+    (#{:shape :loft} (:pen-mode state))
     (store-pending-rotation state :tv angle)
 
     ;; Normal mode: apply rotation immediately
@@ -1290,8 +1311,8 @@
     (= :face (get-in state [:attached :type]))
     (rotate-attached-face state (:heading state) angle)
 
-    ;; Shape mode: store pending rotation
-    (= :shape (:pen-mode state))
+    ;; Shape or loft mode: store pending rotation
+    (#{:shape :loft} (:pen-mode state))
     (store-pending-rotation state :tr angle)
 
     ;; Normal mode: apply rotation immediately
@@ -2057,56 +2078,264 @@
                 (interpolate-orientation o1 o2 local-t))
               (recur (inc i)))))))))
 
+(defn- calculate-loft-corner-shortening
+  "Calculate R_p and R_n for a loft corner based on inner edge intersection.
+
+   For a tapered loft (linear taper from radius R to 0 over distance D),
+   when there's a turn at distance L_A, we need to find where the inner edges
+   of the two cone segments intersect (point P).
+
+   R_p = distance to shorten the previous segment (before corner)
+   R_n = distance to offset the next segment start (after corner)
+   hidden-dist = R_p + R_n (virtual distance traveled through corner)
+
+   Parameters:
+   - initial-radius: the shape radius at t=0
+   - total-dist: total loft distance D
+   - dist-at-corner: distance traveled when corner occurs (L_A)
+   - turn-angle: angle between old and new heading (radians)"
+  [initial-radius total-dist dist-at-corner turn-angle]
+  (let [R initial-radius
+        D total-dist
+        L_A dist-at-corner
+        theta turn-angle
+        L (- D L_A)  ;; remaining distance
+        ;; Radius at corner (linear taper)
+        r-corner (* R (/ L D))  ;; = R * (1 - L_A/D) = R * L / D
+
+        ;; For very small angles, no corner shortening needed
+        _ (when (< (Math/abs theta) 0.01)
+            (throw (ex-info "skip" {:r-p 0 :r-n 0 :hidden-dist 0})))
+
+        ;; Set up line intersection in 2D local coordinates at corner
+        ;; X axis = old heading direction, Y axis = toward inside of turn
+        ;; (For theta > 0, turn is to the left, inside is +Y)
+        cos-t (Math/cos theta)
+        sin-t (Math/sin theta)
+
+        ;; Line A (inner edge of cone A):
+        ;; From (-L_A, R) to (D-L_A, 0) = (L, 0)
+        ;; Point p1, direction d1
+        p1-x (- L_A)
+        p1-y R
+        d1-x D      ;; = L + L_A
+        d1-y (- R)
+
+        ;; Line B (inner edge of cone B, rotated):
+        ;; Starts at inner point of corner cross-section
+        ;; Inner direction for B is perpendicular to B's heading, toward inside
+        ;; B's heading is (cos θ, sin θ), inner perpendicular is (-sin θ, cos θ)
+        ;; Start point: r-corner * (-sin θ, cos θ)
+        ;; End point (tip): L * (cos θ, sin θ)
+        p2-x (* r-corner (- sin-t))
+        p2-y (* r-corner cos-t)
+        ;; Direction from start to end
+        d2-x (- (* L cos-t) p2-x)
+        d2-y (- (* L sin-t) p2-y)
+
+        ;; Solve line intersection: p1 + t*d1 = p2 + s*d2
+        ;; Using Cramer's rule for 2x2 system
+        det (- (* d1-x (- d2-y)) (* (- d2-x) d1-y))
+        ;; det = -d1-x*d2-y + d2-x*d1-y
+        ]
+    (if (< (Math/abs det) 0.0001)
+      ;; Lines are parallel (shouldn't happen for reasonable angles)
+      {:r-p 0 :r-n 0 :hidden-dist 0}
+      (let [;; t parameter for point P on line A
+            dx (- p2-x p1-x)
+            dy (- p2-y p1-y)
+            t-param (/ (- (* (- d2-y) dx) (* (- d2-x) dy)) det)
+
+            ;; Point P in local coordinates
+            p-x (+ p1-x (* t-param d1-x))
+            p-y (+ p1-y (* t-param d1-y))
+
+            ;; R_p: distance from corner (origin) back along A's axis (negative X)
+            ;; P is at x = p-x. If p-x < 0, P is behind corner, R_p = -p-x
+            r-p (if (neg? p-x) (- p-x) 0)
+
+            ;; R_n: projection of P onto B's heading direction
+            ;; B's heading is (cos θ, sin θ)
+            r-n (+ (* p-x cos-t) (* p-y sin-t))
+            r-n (if (pos? r-n) r-n 0)]
+        {:r-p r-p
+         :r-n r-n
+         :hidden-dist (+ r-p r-n)
+         :intersection-point [p-x p-y]}))))
+
+(defn- process-loft-corners
+  "Process all recorded corners to adjust orientations and distances.
+
+   For each corner:
+   1. Calculate R_p and R_n based on taper geometry
+   2. Adjust the position of orientations around the corner
+   3. Add hidden distance to subsequent orientation dist values
+
+   Returns updated orientations and new total distance."
+  [orientations corners initial-radius original-total-dist]
+  (if (empty? corners)
+    {:orientations orientations :total-dist original-total-dist}
+    ;; Process corners in order of distance
+    (let [sorted-corners (sort-by :dist-at-corner corners)]
+      (loop [orients orientations
+             remaining-corners sorted-corners
+             accumulated-hidden 0
+             total-dist original-total-dist]
+        (if (empty? remaining-corners)
+          {:orientations orients :total-dist total-dist}
+          (let [corner (first remaining-corners)
+                {:keys [old-heading new-heading dist-at-corner]} corner
+
+                ;; Calculate turn angle from dot product
+                cos-angle (dot old-heading new-heading)
+                turn-angle (Math/acos (min 1 (max -1 cos-angle)))
+
+                ;; Calculate R_p and R_n
+                {:keys [r-p r-n hidden-dist]}
+                (try
+                  (calculate-loft-corner-shortening
+                   initial-radius total-dist
+                   (+ dist-at-corner accumulated-hidden)
+                   turn-angle)
+                  (catch :default _
+                    {:r-p 0 :r-n 0 :hidden-dist 0}))
+
+                ;; Find and adjust orientations around this corner
+                ;; The corner is at dist-at-corner (plus any previously accumulated hidden)
+                adjusted-dist (+ dist-at-corner accumulated-hidden)
+
+                ;; Adjust positions: shorten end of previous segment, offset start of next
+                new-orients
+                (vec
+                 (map-indexed
+                  (fn [idx o]
+                    (let [o-dist (or (:dist o) 0)]
+                      (cond
+                        ;; Before corner: no change to dist, but check if this is the corner waypoint
+                        (< o-dist adjusted-dist)
+                        o
+
+                        ;; At or near corner: adjust position backward by R_p along old heading
+                        (and (>= o-dist adjusted-dist)
+                             (< o-dist (+ adjusted-dist 0.001)))
+                        (-> o
+                            (update :position #(v+ % (v* old-heading (- r-p))))
+                            (assoc :dist o-dist))
+
+                        ;; After corner: shift dist by hidden amount, adjust first one's position
+                        :else
+                        (let [is-first-after (and (> idx 0)
+                                                  (< (or (:dist (nth orients (dec idx))) 0)
+                                                     adjusted-dist))]
+                          (cond-> o
+                            true (update :dist #(+ % hidden-dist))
+                            is-first-after (update :position
+                                                   #(v+ (v+ % (v* old-heading (- r-p)))
+                                                        (v* new-heading r-n))))))))
+                  orients))]
+            (recur new-orients
+                   (rest remaining-corners)
+                   (+ accumulated-hidden hidden-dist)
+                   (+ total-dist hidden-dist))))))))
+
+(defn- generate-loft-segment-mesh
+  "Generate a mesh for a single loft segment.
+   t-start and t-end are the t values (0-1) for this segment.
+   steps-per-segment is the number of interpolation steps."
+  [state base-shape transform-fn orientations total-dist t-start t-end steps-per-segment creation-pose]
+  (let [new-rings (vec
+                   (for [i (range (inc steps-per-segment))]
+                     (let [local-t (/ i steps-per-segment)
+                           t (+ t-start (* local-t (- t-end t-start)))
+                           target-dist (* t total-dist)
+                           orientation (find-orientation-at-dist orientations target-dist total-dist)
+                           transformed-2d (transform-fn base-shape t)
+                           temp-state (-> state
+                                          (assoc :position (:position orientation))
+                                          (assoc :heading (:heading orientation))
+                                          (assoc :up (:up orientation)))]
+                       (stamp-shape temp-state transformed-2d))))]
+    (build-sweep-mesh new-rings false creation-pose)))
+
 (defn finalize-loft
   "Internal: finalize loft by generating rings at N steps with interpolated orientations.
+   When corners exist, generates separate meshes for each segment (no joint mesh).
    Called at end of loft macro."
   [state]
-  (let [total-dist (:loft-total-dist state)
+  (let [original-total-dist (:loft-total-dist state)
         base-shape (:loft-base-shape state)
         transform-fn (:loft-transform-fn state)
-        orientations (:loft-orientations state)
+        original-orientations (:loft-orientations state)
+        corners (:loft-corners state)
         steps (:loft-steps state)
         creation-pose {:position (:loft-start-pos state)
                        :heading (:loft-start-heading state)
-                       :up (:loft-start-up state)}]
-    (if (and (pos? total-dist) base-shape transform-fn (>= (count orientations) 2))
-      ;; Generate rings at N+1 evenly spaced points (0 to 1)
-      (let [new-rings (vec
-                       (for [i (range (inc steps))]
-                         (let [t (/ i steps)
-                               target-dist (* t total-dist)
-                               ;; Get interpolated orientation at this distance
-                               orientation (find-orientation-at-dist orientations target-dist total-dist)
-                               ;; Get transformed 2D shape at this t
-                               transformed-2d (transform-fn base-shape t)
-                               ;; Create temp state with interpolated orientation
-                               temp-state (-> state
-                                              (assoc :position (:position orientation))
-                                              (assoc :heading (:heading orientation))
-                                              (assoc :up (:up orientation)))]
-                           (stamp-shape temp-state transformed-2d))))
-            mesh (build-sweep-mesh new-rings false creation-pose)]
-        (if mesh
-          (-> state
-              (update :meshes conj mesh)
-              (assoc :sweep-rings [])
-              (assoc :stamped-shape nil)
-              (dissoc :loft-base-shape :loft-transform-fn :loft-steps
-                      :loft-total-dist :loft-start-pos :loft-start-heading
-                      :loft-start-up :loft-orientations))
-          (-> state
-              (assoc :sweep-rings [])
-              (assoc :stamped-shape nil)
-              (dissoc :loft-base-shape :loft-transform-fn :loft-steps
-                      :loft-total-dist :loft-start-pos :loft-start-heading
-                      :loft-start-up :loft-orientations))))
+                       :up (:loft-start-up state)}
+        initial-radius (shape-radius base-shape)]
+    (if (and (pos? original-total-dist) base-shape transform-fn (>= (count original-orientations) 2))
+      (let [{:keys [orientations total-dist]}
+            (process-loft-corners original-orientations corners initial-radius original-total-dist)]
+        (if (empty? corners)
+          ;; No corners: generate single mesh as before
+          (let [new-rings (vec
+                           (for [i (range (inc steps))]
+                             (let [t (/ i steps)
+                                   target-dist (* t total-dist)
+                                   orientation (find-orientation-at-dist orientations target-dist total-dist)
+                                   transformed-2d (transform-fn base-shape t)
+                                   temp-state (-> state
+                                                  (assoc :position (:position orientation))
+                                                  (assoc :heading (:heading orientation))
+                                                  (assoc :up (:up orientation)))]
+                               (stamp-shape temp-state transformed-2d))))
+                mesh (build-sweep-mesh new-rings false creation-pose)]
+            (if mesh
+              (-> state
+                  (update :meshes conj mesh)
+                  (assoc :sweep-rings [])
+                  (assoc :stamped-shape nil)
+                  (dissoc :loft-base-shape :loft-transform-fn :loft-steps
+                          :loft-total-dist :loft-start-pos :loft-start-heading
+                          :loft-start-up :loft-orientations :loft-corners))
+              (-> state
+                  (assoc :sweep-rings [])
+                  (assoc :stamped-shape nil)
+                  (dissoc :loft-base-shape :loft-transform-fn :loft-steps
+                          :loft-total-dist :loft-start-pos :loft-start-heading
+                          :loft-start-up :loft-orientations :loft-corners))))
+          ;; Has corners: generate separate mesh for each segment
+          (let [;; Calculate t values at each corner (based on adjusted distances)
+                sorted-corners (sort-by :dist-at-corner corners)
+                corner-t-values (mapv (fn [c]
+                                        (/ (:dist-at-corner c) total-dist))
+                                      sorted-corners)
+                ;; Segment boundaries: [0, corner1-t, corner2-t, ..., 1]
+                segment-bounds (vec (concat [0] corner-t-values [1]))
+                num-segments (dec (count segment-bounds))
+                steps-per-segment (max 4 (quot steps num-segments))
+                ;; Generate mesh for each segment
+                segment-meshes (vec
+                                (for [seg-idx (range num-segments)]
+                                  (let [t-start (nth segment-bounds seg-idx)
+                                        t-end (nth segment-bounds (inc seg-idx))]
+                                    (generate-loft-segment-mesh
+                                     state base-shape transform-fn orientations
+                                     total-dist t-start t-end steps-per-segment creation-pose))))
+                valid-meshes (filterv some? segment-meshes)]
+            (-> state
+                (update :meshes into valid-meshes)
+                (assoc :sweep-rings [])
+                (assoc :stamped-shape nil)
+                (dissoc :loft-base-shape :loft-transform-fn :loft-steps
+                        :loft-total-dist :loft-start-pos :loft-start-heading
+                        :loft-start-up :loft-orientations :loft-corners)))))
       ;; Not enough data - just clear
       (-> state
           (assoc :sweep-rings [])
           (assoc :stamped-shape nil)
           (dissoc :loft-base-shape :loft-transform-fn :loft-steps
                   :loft-total-dist :loft-start-pos :loft-start-heading
-                  :loft-start-up :loft-orientations)))))
+                  :loft-start-up :loft-orientations :loft-corners)))))
 
 ;; ============================================================
 ;; Path - recorded turtle movements
@@ -2539,6 +2768,220 @@
               (update final-state :meshes conj mesh))))))))
 
 ;; ============================================================
+;; Loft from path (unified extrusion with transform)
+;; ============================================================
+
+(defn- analyze-loft-path
+  "Analyze a path for loft operation.
+   Similar to analyze-open-path but tracks where corners are without
+   pre-computing shorten values (since radius changes along the path).
+
+   Returns: [{:cmd :f :dist d :has-corner-after bool :rotations-after [...]}]"
+  [commands]
+  (let [cmds (vec commands)
+        n (count cmds)
+        forwards (keep-indexed (fn [i c] (when (= :f (:cmd c)) [i c])) cmds)
+        n-forwards (count forwards)]
+    (vec
+     (map-indexed
+      (fn [fwd-idx [idx cmd]]
+        (let [dist (first (:args cmd))
+              is-last (= fwd-idx (dec n-forwards))
+              ;; Collect all rotations after this forward until next forward or end
+              rotations-after (loop [i (inc idx)
+                                     rots []]
+                                (if (>= i n)
+                                  rots
+                                  (let [c (nth cmds i)]
+                                    (if (is-rotation? (:cmd c))
+                                      (recur (inc i) (conj rots c))
+                                      rots))))
+              ;; Check if there's a corner rotation after
+              has-corner-after (and (not is-last)
+                                    (some #(is-corner-rotation? (:cmd %)) rotations-after))]
+          {:cmd :f
+           :dist dist
+           :has-corner-after has-corner-after
+           :rotations-after rotations-after}))
+      forwards))))
+
+(defn- calc-t-at-dist
+  "Calculate the parameter t (0-1) at a given distance along total path length."
+  [dist total-dist]
+  (if (pos? total-dist)
+    (/ dist total-dist)
+    0))
+
+(defn loft-from-path
+  "Loft a shape along a path with a transform function.
+
+   transform-fn: (fn [shape t]) where t goes from 0 to 1
+   steps: number of rings to generate (default 16)
+
+   At corners, generates SEPARATE meshes for each segment (no joint mesh).
+   Use mesh-union to combine them if needed."
+  ([state shape transform-fn path] (loft-from-path state shape transform-fn path 16))
+  ([state shape transform-fn path steps]
+   (if-not (and (shape? shape) (is-path? path))
+     state
+     (let [creation-pose {:position (:position state)
+                          :heading (:heading state)
+                          :up (:up state)}
+           commands (:commands path)
+           segments (analyze-loft-path commands)
+           n-segments (count segments)
+           initial-radius (shape-radius shape)
+
+           ;; Total visible path distance (does NOT include hidden/shortening)
+           total-visible-dist (reduce + 0 (map :dist segments))]
+         (letfn [(compute-corner-data []
+                   ;; Use visible distances only for taper/radius; hidden distance is only positional
+                   (loop [idx 0
+                          s state
+                          acc-visible 0
+                          results []]
+                     (if (>= idx n-segments)
+                       results
+                       (let [seg (nth segments idx)
+                             seg-dist (:dist seg)
+                             has-corner (:has-corner-after seg)
+                             rotations (:rotations-after seg)
+                             dist-at-corner (+ acc-visible seg-dist)
+
+                             ;; Get rotation angle
+                             s-temp (reduce apply-rotation-to-state s rotations)
+                             old-heading (:heading s)
+                             new-heading (:heading s-temp)
+                             cos-angle (dot old-heading new-heading)
+                             turn-angle (if (< cos-angle 0.9999)
+                                          (Math/acos (min 1 (max -1 cos-angle)))
+                                          0)
+
+                             ;; R_p/R_n based on visible taper distance
+                             {:keys [r-p r-n]}
+                             (if (and has-corner (> turn-angle 0.01))
+                               (try
+                                 (calculate-loft-corner-shortening
+                                  initial-radius total-visible-dist dist-at-corner turn-angle)
+                                 (catch :default _
+                                   {:r-p 0 :r-n 0}))
+                               {:r-p 0 :r-n 0})
+
+                             corner-pos (v+ (:position s) (v* (:heading s) seg-dist))
+                             s-at-corner (assoc s :position corner-pos)
+                             s-rotated (reduce apply-rotation-to-state s-at-corner rotations)]
+
+                         (recur (inc idx)
+                                s-rotated
+                                (+ acc-visible seg-dist)
+                                (conj results {:r-p r-p :r-n r-n :turn-angle turn-angle}))))))]
+
+         (let [corner-data (compute-corner-data)
+               ;; Total effective distance used for taper (subtract start offset and end pullback)
+               total-effective-dist
+               (loop [seg-idx 0
+                      prev-rn 0
+                      acc 0]
+                 (if (>= seg-idx n-segments)
+                   acc
+                   (let [seg (nth segments seg-idx)
+                         seg-dist (:dist seg)
+                         has-corner (:has-corner-after seg)
+                         {:keys [r-p]} (nth corner-data seg-idx)
+                         eff (-> seg-dist
+                                 (- prev-rn)
+                                 (- (if has-corner r-p 0))
+                                 (max 0.001))]
+                     (recur (inc seg-idx)
+                            (if has-corner (:r-n (nth corner-data seg-idx)) 0)
+                            (+ acc eff)))))]
+           (if (or (< n-segments 1) (<= total-visible-dist 0))
+             state
+             ;; Generate rings for each segment separately (no joint mesh)
+             (let [result
+                   (loop [seg-idx 0
+                          s state
+                          taper-acc 0         ;; effective distance travelled so far (for t)
+                          prev-rn 0           ;; carry start offset from previous corner
+                          segment-meshes []]
+                     (if (>= seg-idx n-segments)
+                       {:meshes segment-meshes :state s}
+                       (let [seg (nth segments seg-idx)
+                             seg-dist (:dist seg)
+                             has-corner (:has-corner-after seg)
+                             rotations (:rotations-after seg)
+
+                             ;; Get pre-calculated corner data
+                             {:keys [r-p r-n]} (nth corner-data seg-idx)
+
+                             ;; Remaining distance to the original corner after start offset
+                             remaining-to-corner (max 0.0 (- seg-dist prev-rn))
+                             ;; Effective length: pull back by r_p and also leave space for next start (r_n)
+                             ;; Clamp to at least one step length so the last ring doesn't reach the corner
+                             min-step (/ remaining-to-corner (max 4 seg-steps))
+                             ;; Leave room for next start, but only half of r_n to reduce gaps
+                             effective-seg-dist (max min-step
+                                                     (- remaining-to-corner
+                                                        (if has-corner (+ r-p (* 0.5 r-n)) 0)))
+
+                             ;; Original corner position (before pullback)
+                             corner-base (v+ (:position s) (v* (:heading s) remaining-to-corner))
+                             ;; End position after pullback
+                             corner-pos (v+ corner-base (v* (:heading s) (- r-p)))
+
+                             ;; Generate rings for this segment
+                             seg-steps (max 4 (Math/round (* steps (/ seg-dist total-visible-dist))))
+
+                              seg-rings
+                              (vec
+                               (for [i (range (inc seg-steps))]
+                                 (let [local-t (/ i seg-steps)
+                                       dist-in-seg (* local-t effective-seg-dist)
+                                       ;; Taper parameter based on effective travelled distance
+                                       taper-at (+ taper-acc dist-in-seg)
+                                       clamped-t (if (pos? total-effective-dist)
+                                                   (min 1 (/ taper-at total-effective-dist))
+                                                   0)
+                                       pos (v+ (:position s) (v* (:heading s) dist-in-seg))
+                                       transformed-shape (transform-fn shape clamped-t)
+                                       temp-state (assoc s :position pos)]
+                                  (stamp-shape temp-state transformed-shape))))
+
+                             ;; Build mesh for this segment
+                             seg-mesh (when (>= (count seg-rings) 2)
+                                        (build-sweep-mesh seg-rings false creation-pose))
+
+                             ;; Apply rotations to get new heading (rotate at corner position)
+                             s-at-corner (assoc s :position corner-base)
+                             s-rotated (reduce apply-rotation-to-state s-at-corner rotations)
+
+                             ;; Next segment starts at corner + R_n along new heading
+                             next-start-pos (if has-corner
+                                              (v+ corner-base (v* (:heading s-rotated) r-n))
+                                              corner-pos)
+                             s-next (assoc s-rotated :position next-start-pos)
+
+                             ;; Taper distance advances by effective length; carry r_n forward
+                             new-taper-acc (+ taper-acc effective-seg-dist)
+                             next-prev-rn (if has-corner r-n 0)]
+
+                         (recur (inc seg-idx)
+                                s-next
+                                new-taper-acc
+                                next-prev-rn
+                                (if seg-mesh
+                                  (conj segment-meshes seg-mesh)
+                                  segment-meshes)))))
+
+                   segment-meshes (:meshes result)
+                   final-state (:state result)]
+
+               (if (empty? segment-meshes)
+                 state
+                 ;; Add all segment meshes to state
+                 (update final-state :meshes into segment-meshes))))))))))
+
+;; ============================================================
 ;; Anchors and Navigation
 ;; ============================================================
 
@@ -2763,4 +3206,3 @@
         (pop-state)
         (assoc :attached nil))
     state))
-

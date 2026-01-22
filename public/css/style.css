@@ -223,6 +223,8 @@ html, body {
   background: #252526;
   border-bottom: 1px solid #3c3c3c;
   gap: 8px;
+  position: relative; /* keep above canvas */
+  z-index: 2;
 }
 
 .export-btn {
@@ -296,6 +298,8 @@ html, body {
   width: 100%;
   min-height: 0;  /* Allow flex shrink */
   display: block;
+  position: relative;
+  z-index: 1;
 }
 
 /* Horizontal resizer between editor and viewport */

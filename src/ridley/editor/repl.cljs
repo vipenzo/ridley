@@ -374,11 +374,40 @@
       (first results)
       results)))
 
+(defn- combine-meshes
+  "Combine multiple meshes into one by concatenating vertices and reindexing faces.
+   Results in a single mesh with potentially disconnected parts."
+  [meshes]
+  (when (seq meshes)
+    (if (= 1 (count meshes))
+      (first meshes)
+      (loop [remaining (rest meshes)
+             combined-verts (vec (:vertices (first meshes)))
+             combined-faces (vec (:faces (first meshes)))]
+        (if (empty? remaining)
+          {:type :mesh
+           :primitive :combined
+           :vertices combined-verts
+           :faces combined-faces
+           :creation-pose (:creation-pose (first meshes))}
+          (let [m (first remaining)
+                offset (count combined-verts)
+                new-verts (:vertices m)
+                new-faces (mapv (fn [face]
+                                  (mapv #(+ % offset) face))
+                                (:faces m))]
+            (recur (rest remaining)
+                   (into combined-verts new-verts)
+                   (into combined-faces new-faces))))))))
+
 (defn ^:export pure-loft-path
   "Pure loft function - creates mesh without side effects.
    Starts from current turtle position/orientation.
    transform-fn: (fn [shape t]) where t goes from 0 to 1
-   steps: number of intermediate steps (default 16)"
+   steps: number of intermediate steps (default 16)
+
+   At corners, generates separate segment meshes and combines them.
+   The resulting mesh may have overlapping/intersecting parts."
   ([shape transform-fn path] (pure-loft-path shape transform-fn path 16))
   ([shape transform-fn path steps]
    (let [;; Start from current turtle position/orientation
@@ -392,15 +421,11 @@
                              (assoc :joint-mode (:joint-mode current-turtle))
                              (assoc :resolution (:resolution current-turtle)))
                          (turtle/make-turtle))
-         ;; Start loft mode on local state
-         state-with-loft (turtle/stamp-loft initial-state shape transform-fn steps)
-         ;; Run path commands on local state (this will track orientations)
-         final-state (turtle/run-path state-with-loft path)
-         ;; Finalize loft to build mesh
-         result-state (turtle/finalize-loft final-state)
-         ;; Get the mesh
-         mesh (last (:meshes result-state))]
-     mesh)))
+         ;; Use loft-from-path which generates separate meshes at corners
+         result-state (turtle/loft-from-path initial-state shape transform-fn path steps)
+         ;; Combine all segment meshes into one
+         meshes (:meshes result-state)]
+     (combine-meshes meshes))))
 
 ;; Legacy version for backwards compatibility (modifies global state)
 (defn ^:export implicit-extrude-path [shape-or-shapes path]
