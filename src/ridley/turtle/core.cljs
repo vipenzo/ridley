@@ -2903,7 +2903,7 @@
                           s state
                           taper-acc 0         ;; effective distance travelled so far (for t)
                           prev-rn 0           ;; carry start offset from previous corner
-                          segment-meshes []]
+                         segment-meshes []]
                      (if (>= seg-idx n-segments)
                        {:meshes segment-meshes :state s}
                        (let [seg (nth segments seg-idx)
@@ -2961,6 +2961,33 @@
                                               corner-pos)
                              s-next (assoc s-rotated :position next-start-pos)
 
+                             ;; Corner mesh (bridge end ring to next start ring) with midpoint ring
+                             t-end (if (pos? total-effective-dist)
+                                     (min 1 (/ (+ taper-acc effective-seg-dist) total-effective-dist))
+                                     0)
+                             end-ring (last seg-rings)
+                             next-start-ring (when has-corner
+                                               (let [shape-next (transform-fn shape t-end)
+                                                     temp-state (assoc s-rotated :position next-start-pos)]
+                                                 (stamp-shape temp-state shape-next)))
+                             ;; Corner mesh with tapered mid-rings
+                             mid-rings (when has-corner
+                                         (let [generated (generate-tapered-corner-rings
+                                                          end-ring corner-base
+                                                          (:heading s) (:heading s-rotated))]
+                                           (when (seq generated) generated)))
+                             fallback-mid (when (and has-corner end-ring next-start-ring (nil? mid-rings))
+                                            [(mapv (fn [p1 p2] (v+ p1 (v* (v- p2 p1) 0.5)))
+                                                   end-ring next-start-ring)])
+                             corner-rings (cond
+                                            mid-rings (concat [end-ring] mid-rings [next-start-ring])
+                                            fallback-mid (concat [end-ring] fallback-mid [next-start-ring])
+                                            :else nil)
+                             corner-mesh (when corner-rings
+                                           (assoc (build-sweep-mesh (vec corner-rings)
+                                                                    false creation-pose)
+                                                  :creation-pose creation-pose))
+
                              ;; Taper distance advances by effective length; carry r_n forward
                              new-taper-acc (+ taper-acc effective-seg-dist)
                              next-prev-rn (if has-corner r-n 0)]
@@ -2969,9 +2996,9 @@
                                 s-next
                                 new-taper-acc
                                 next-prev-rn
-                                (if seg-mesh
-                                  (conj segment-meshes seg-mesh)
-                                  segment-meshes)))))
+                                (cond-> segment-meshes
+                                  seg-mesh (conj seg-mesh)
+                                  corner-mesh (conj corner-mesh))))))
 
                    segment-meshes (:meshes result)
                    final-state (:state result)]
