@@ -317,12 +317,15 @@
   ;; Handle both single shape and vector of shapes (from text-shape)
   (let [shapes (if (vector? shape-or-shapes) shape-or-shapes [shape-or-shapes])
         ;; Start from current turtle position/orientation
+        ;; Also copy joint-mode and resolution settings
         current-turtle @turtle-atom
         initial-state (if current-turtle
                         (-> (turtle/make-turtle)
                             (assoc :position (:position current-turtle))
                             (assoc :heading (:heading current-turtle))
-                            (assoc :up (:up current-turtle)))
+                            (assoc :up (:up current-turtle))
+                            (assoc :joint-mode (:joint-mode current-turtle))
+                            (assoc :resolution (:resolution current-turtle)))
                         (turtle/make-turtle))
         ;; Extrude each shape, collecting results
         results (reduce
@@ -346,12 +349,15 @@
   ;; Handle both single shape and vector of shapes (from text-shape)
   (let [shapes (if (vector? shape-or-shapes) shape-or-shapes [shape-or-shapes])
         ;; Start from current turtle position/orientation (not origin)
+        ;; Also copy joint-mode and resolution settings
         current-turtle @turtle-atom
         initial-state (if current-turtle
                         (-> (turtle/make-turtle)
                             (assoc :position (:position current-turtle))
                             (assoc :heading (:heading current-turtle))
-                            (assoc :up (:up current-turtle)))
+                            (assoc :up (:up current-turtle))
+                            (assoc :joint-mode (:joint-mode current-turtle))
+                            (assoc :resolution (:resolution current-turtle)))
                         (turtle/make-turtle))
         ;; Extrude each shape, collecting results
         results (reduce
@@ -376,12 +382,15 @@
   ([shape transform-fn path] (pure-loft-path shape transform-fn path 16))
   ([shape transform-fn path steps]
    (let [;; Start from current turtle position/orientation
+         ;; Also copy joint-mode and resolution settings
          current-turtle @turtle-atom
          initial-state (if current-turtle
                          (-> (turtle/make-turtle)
                              (assoc :position (:position current-turtle))
                              (assoc :heading (:heading current-turtle))
-                             (assoc :up (:up current-turtle)))
+                             (assoc :up (:up current-turtle))
+                             (assoc :joint-mode (:joint-mode current-turtle))
+                             (assoc :resolution (:resolution current-turtle)))
                          (turtle/make-turtle))
          ;; Start loft mode on local state
          state-with-loft (turtle/stamp-loft initial-state shape transform-fn steps)
