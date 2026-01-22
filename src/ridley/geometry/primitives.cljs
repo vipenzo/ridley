@@ -60,6 +60,13 @@
 ;; Pure mesh constructors (return mesh data at origin)
 ;; ============================================================
 
+;; Default creation pose for pure mesh constructors (centered at origin)
+;; Must match turtle's default orientation: facing +X, up +Z
+(def ^:private default-creation-pose
+  {:position [0 0 0]
+   :heading [1 0 0]  ; +X forward (matches turtle default)
+   :up [0 0 1]})     ; +Z up
+
 (defn box-mesh
   "Create a box mesh centered at origin.
    Returns mesh data (not transformed, not added to scene).
@@ -71,7 +78,8 @@
     :primitive :box
     :vertices (vec (make-box-vertices sx sy sz))
     :faces (make-box-faces)
-    :face-groups (faces/box-face-groups)}))
+    :face-groups (faces/box-face-groups)
+    :creation-pose default-creation-pose}))
 
 ;; ============================================================
 ;; Turtle-aware functions (transform and add to turtle state)
@@ -175,7 +183,8 @@
     :primitive :sphere
     :vertices (vec (make-sphere-vertices radius segments rings))
     :faces (make-sphere-faces segments rings)
-    :face-groups (faces/sphere-face-groups segments rings)}))
+    :face-groups (faces/sphere-face-groups segments rings)
+    :creation-pose default-creation-pose}))
 
 (defn sphere
   "Create a sphere primitive at current turtle position.
@@ -260,7 +269,8 @@
     :primitive :cylinder
     :vertices (vec (make-cylinder-vertices radius height segments))
     :faces (make-cylinder-faces segments)
-    :face-groups (faces/cylinder-face-groups segments)}))
+    :face-groups (faces/cylinder-face-groups segments)
+    :creation-pose default-creation-pose}))
 
 (defn cyl
   "Create a cylinder primitive at current turtle position.
@@ -318,7 +328,8 @@
     :primitive :cone
     :vertices (vec (make-cone-vertices r1 r2 height segments))
     :faces (make-cylinder-faces segments)
-    :face-groups (faces/cone-face-groups segments)}))
+    :face-groups (faces/cone-face-groups segments)
+    :creation-pose default-creation-pose}))
 
 (defn cone
   "Create a cone or frustum primitive at current turtle position.

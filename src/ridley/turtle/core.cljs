@@ -2139,7 +2139,11 @@
         {:type :mesh
          :primitive :sweep-two
          :vertices vertices
-         :faces (vec (concat side-faces bottom-cap top-cap))}))))
+         :faces (vec (concat side-faces bottom-cap top-cap))
+         ;; Default creation pose at origin (matches turtle default orientation)
+         :creation-pose {:position [0 0 0]
+                         :heading [1 0 0]
+                         :up [0 0 1]}}))))
 
 (defn make-path
   "Create a path from a vector of recorded commands.

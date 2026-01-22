@@ -2,7 +2,17 @@
   "2D shape transformations for loft operations.
 
    All functions work on shapes: {:type :shape :points [[x y]...] :centered? bool}
-   Transform functions take a shape and return a new shape with transformed points.")
+   Transform functions take a shape and return a new shape with transformed points."
+  (:require [ridley.turtle.shape :refer [shape?]]))
+
+(defn- assert-shape
+  "Validate that x is a 2D shape, throw descriptive error if not."
+  [x fn-name]
+  (when-not (shape? x)
+    (throw (js/Error. (str fn-name " expects a 2D shape, got "
+                           (if (map? x)
+                             (or (:type x) "map without :type")
+                             (type x)))))))
 
 ;; ============================================================
 ;; Basic transformations
@@ -15,6 +25,7 @@
   ([shape factor]
    (scale shape factor factor))
   ([shape fx fy]
+   (assert-shape shape "scale")
    (let [points (:points shape)
          scaled (mapv (fn [[x y]] [(* x fx) (* y fy)]) points)]
      (assoc shape :points scaled))))
@@ -22,6 +33,7 @@
 (defn rotate
   "Rotate a shape by angle (degrees) around origin."
   [shape angle-deg]
+  (assert-shape shape "rotate")
   (let [angle (/ (* angle-deg Math/PI) 180)
         cos-a (Math/cos angle)
         sin-a (Math/sin angle)
@@ -35,6 +47,7 @@
 (defn translate
   "Translate a shape by [dx dy]."
   [shape dx dy]
+  (assert-shape shape "translate")
   (let [points (:points shape)
         translated (mapv (fn [[x y]] [(+ x dx) (+ y dy)]) points)]
     (assoc shape :points translated)))
@@ -48,6 +61,8 @@
    Both shapes must have the same number of points.
    t=0 gives shape-a, t=1 gives shape-b."
   [shape-a shape-b t]
+  (assert-shape shape-a "morph")
+  (assert-shape shape-b "morph")
   (let [points-a (:points shape-a)
         points-b (:points shape-b)
         n-a (count points-a)
@@ -83,6 +98,7 @@
   "Resample a shape to have exactly n points.
    Points are distributed evenly along the perimeter."
   [shape n]
+  (assert-shape shape "resample")
   (let [points (:points shape)
         n-orig (count points)
         ;; Calculate total perimeter (closed shape)

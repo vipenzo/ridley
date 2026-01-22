@@ -91,6 +91,13 @@
          :vertProperties vert-props
          :triVerts tri-verts}))
 
+;; Default creation pose for mesh constructors (centered at origin)
+;; Must match turtle's default orientation: facing +X, up +Z
+(def ^:private default-creation-pose
+  {:position [0 0 0]
+   :heading [1 0 0]  ; +X forward (matches turtle default)
+   :up [0 0 1]})     ; +Z up
+
 (defn ^:export manifold-mesh->ridley-mesh
   "Convert a Manifold Mesh back to Ridley mesh format."
   [manifold-mesh]
@@ -109,7 +116,8 @@
                       (aget tri-verts (+ i 2))]))]
     {:type :mesh
      :vertices vertices
-     :faces faces}))
+     :faces faces
+     :creation-pose default-creation-pose}))
 
 ;; ============================================================
 ;; Manifold operations
