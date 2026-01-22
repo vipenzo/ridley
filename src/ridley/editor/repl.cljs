@@ -1178,27 +1178,31 @@
    ;; Last ring connects to first ring, no end caps
    ;; Returns the created mesh (can be bound with def)
    ;; Uses pre-processed path approach for correct corner geometry
-   (defmacro extrude-closed [shape path-expr]
-     (cond
-       ;; Symbol - use directly (should be a path)
-       (symbol? path-expr)
-       `(extrude-closed-path-impl ~shape ~path-expr)
+   (defmacro extrude-closed [shape & movements]
+     (if (= 1 (count movements))
+       (let [path-expr (first movements)]
+         (cond
+           ;; Symbol - use directly (should be a path)
+           (symbol? path-expr)
+           `(extrude-closed-path-impl ~shape ~path-expr)
 
-       ;; List starting with path - use directly
-       (and (list? path-expr) (= 'path (first path-expr)))
-       `(extrude-closed-path-impl ~shape ~path-expr)
+           ;; List starting with path - use directly
+           (and (list? path-expr) (= 'path (first path-expr)))
+           `(extrude-closed-path-impl ~shape ~path-expr)
 
-       ;; List starting with turtle movement - wrap in path
-       ;; This avoids evaluating commands directly which would modify turtle-atom
-       (and (list? path-expr) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v 'bezier-to} (first path-expr)))
-       `(extrude-closed-path-impl ~shape (path ~path-expr))
+           ;; List starting with turtle movement - wrap in path
+           ;; This avoids evaluating commands directly which would modify turtle-atom
+           (and (list? path-expr) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v 'bezier-to} (first path-expr)))
+           `(extrude-closed-path-impl ~shape (path ~path-expr))
 
-       ;; Other list - check at runtime if it's already a path
-       :else
-       `(let [result# ~path-expr]
-          (if (path? result#)
-            (extrude-closed-path-impl ~shape result#)
-            (extrude-closed-path-impl ~shape (path ~path-expr))))))
+           ;; Other list - check at runtime if it's already a path
+           :else
+           `(let [result# ~path-expr]
+              (if (path? result#)
+                (extrude-closed-path-impl ~shape result#)
+                (extrude-closed-path-impl ~shape (path ~path-expr))))))
+       ;; Multiple movements - wrap in path macro
+       `(extrude-closed-path-impl ~shape (path ~@movements))))
 
    ;; loft: like extrude but with shape transformation based on progress
    ;; PURE: returns mesh without side effects (use register to make visible)

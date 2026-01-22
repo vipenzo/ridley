@@ -1820,53 +1820,83 @@
    - If preceded by significant rotation (>10°): shorten start by radius
    - If followed by significant rotation (>10°): shorten end by radius
    - Small rotations (like arc steps) don't trigger shortening
+   - The LAST segment also accounts for the implicit closing rotation
 
-   Returns: [{:cmd :f :dist 20 :shorten-start r :shorten-end r :rotations-after [...]}]"
+   Returns: [{:cmd :f :dist 20 :shorten-start r :shorten-end r :rotations-after [...] :is-last bool}]"
   [commands radius]
   (let [cmds (vec commands)
         n (count cmds)
         ;; Find all forward commands and their indices
-        forwards (keep-indexed (fn [i c] (when (= :f (:cmd c)) [i c])) cmds)]
+        forwards (vec (keep-indexed (fn [i c] (when (= :f (:cmd c)) [i c])) cmds))
+        n-forwards (count forwards)
+        ;; Calculate total explicit rotation in the path to determine closing angle
+        ;; Sum all rotation angles from th/tv/tr commands
+        total-explicit-rotation (reduce
+                                 (fn [sum cmd]
+                                   (if (is-corner-rotation? (:cmd cmd))
+                                     (+ sum (Math/abs (first (:args cmd))))
+                                     sum))
+                                 0
+                                 cmds)
+        ;; For a closed square path, total should be 360°
+        ;; The closing angle is what's needed to complete 360°
+        closing-angle (let [remainder (mod total-explicit-rotation 360)]
+                        (if (< remainder 1) 0 (- 360 remainder)))]
     (vec
-     (for [[idx cmd] forwards]
-       (let [dist (first (:args cmd))
-             ;; Collect rotations before this forward (back to previous forward)
-             ;; For closed path, wrap around negative indices
-             rotations-before (loop [i (dec idx)
-                                     rots []
-                                     steps 0]
-                                (if (> steps n)
-                                  rots  ; Safety limit to prevent infinite loop
-                                  (let [ci (mod (+ i n) n)  ; Proper modulo for negative numbers
-                                        c (nth cmds ci)]
+     (map-indexed
+      (fn [seg-idx [idx cmd]]
+        (let [dist (first (:args cmd))
+              is-first (= seg-idx 0)
+              is-last (= seg-idx (dec n-forwards))
+              ;; Collect rotations before this forward (back to previous forward)
+              ;; For closed path, wrap around negative indices
+              rotations-before (loop [i (dec idx)
+                                      rots []
+                                      steps 0]
+                                 (if (> steps n)
+                                   rots  ; Safety limit to prevent infinite loop
+                                   (let [ci (mod (+ i n) n)  ; Proper modulo for negative numbers
+                                         c (nth cmds ci)]
+                                     (if (is-rotation? (:cmd c))
+                                       (recur (dec i) (conj rots c) (inc steps))
+                                       rots))))
+              ;; Calculate total rotation angle before this forward
+              ;; For the FIRST segment, add the closing angle (rotation coming from closure)
+              explicit-angle-before (total-rotation-angle-closed rotations-before)
+              angle-before (if is-first
+                             (+ explicit-angle-before closing-angle)
+                             explicit-angle-before)
+              ;; Collect all rotations after this forward until next forward
+              rotations-after (loop [i (inc idx)
+                                     rots []]
+                                (if (>= i n)
+                                  ;; Wrap around for closed path
+                                  (let [wrapped-i (mod i n)]
+                                    (if (= wrapped-i idx)
+                                      rots  ; Back to start
+                                      (let [c (nth cmds wrapped-i)]
+                                        (if (is-rotation? (:cmd c))
+                                          (recur (inc i) (conj rots c))
+                                          rots))))
+                                  (let [c (nth cmds i)]
                                     (if (is-rotation? (:cmd c))
-                                      (recur (dec i) (conj rots c) (inc steps))
+                                      (recur (inc i) (conj rots c))
                                       rots))))
-             ;; Calculate total rotation angle before this forward
-             angle-before (total-rotation-angle-closed rotations-before)
-             ;; Collect all rotations after this forward until next forward
-             rotations-after (loop [i (inc idx)
-                                    rots []]
-                               (if (>= i n)
-                                 ;; Wrap around for closed path
-                                 (let [wrapped-i (mod i n)]
-                                   (if (= wrapped-i idx)
-                                     rots  ; Back to start
-                                     (let [c (nth cmds wrapped-i)]
-                                       (if (is-rotation? (:cmd c))
-                                         (recur (inc i) (conj rots c))
-                                         rots))))
-                                 (let [c (nth cmds i)]
-                                   (if (is-rotation? (:cmd c))
-                                     (recur (inc i) (conj rots c))
-                                     rots))))
-             ;; Calculate total rotation angle after this forward
-             angle-after (total-rotation-angle-closed rotations-after)]
-         {:cmd :f
-          :dist dist
-          :shorten-start (calc-shorten-for-angle angle-before radius)
-          :shorten-end (calc-shorten-for-angle angle-after radius)
-          :rotations-after rotations-after})))))
+              ;; Calculate total rotation angle after this forward
+              ;; For the LAST segment, add the closing angle
+              explicit-angle-after (total-rotation-angle-closed rotations-after)
+              angle-after (if is-last
+                            (+ explicit-angle-after closing-angle)
+                            explicit-angle-after)]
+          {:cmd :f
+           :dist dist
+           :shorten-start (calc-shorten-for-angle angle-before radius)
+           :shorten-end (calc-shorten-for-angle angle-after radius)
+           :rotations-after rotations-after
+           :is-first is-first
+           :is-last is-last
+           :closing-angle closing-angle}))
+      forwards))))
 
 (defn- apply-rotation-to-state
   "Apply a single rotation command to turtle state."
@@ -1973,13 +2003,51 @@
 
               all-rings (:rings rings-result)
               final-state (:state rings-result)
-              n-rings (count all-rings)
-              n-verts (count (first all-rings))]
+
+              ;; Generate closing corner rings (from last segment back to first)
+              ;; This handles the implicit rotation to close the path
+              initial-heading (:heading creation-pose)
+              final-heading (:heading final-state)
+              cos-angle (dot final-heading initial-heading)
+              closing-angle (Math/acos (min 1 (max -1 cos-angle)))
+              needs-closing-corner (> closing-angle 0.1)  ;; More than ~6 degrees
+              joint-mode (or (:joint-mode state) :flat)
+
+              ;; Get last end-ring for corner generation
+              ;; In ring order: [start0, end0, corner0?, start1, end1, corner1?, ...]
+              ;; The last segment has start and end but no corner (since no rotations-after)
+              ;; So last ring is end-ring of last segment
+              last-end-ring (last all-rings)
+
+              ;; The closing corner position: undo the offset that was added for next segment
+              ;; final-state.position = corner-pos + heading * first-segment-shorten-start
+              ;; So corner-pos = final-state.position - heading * first-segment-shorten-start
+              first-shorten-start (:shorten-start (first segments))
+              closing-corner-pos (v- (:position final-state)
+                                     (v* final-heading first-shorten-start))
+
+              closing-corner-rings (if needs-closing-corner
+                                     (case joint-mode
+                                       :flat []
+                                       :round (generate-round-corner-rings
+                                               last-end-ring closing-corner-pos
+                                               final-heading initial-heading
+                                               (calc-round-steps state 90) radius)
+                                       :tapered (generate-tapered-corner-rings
+                                                 last-end-ring closing-corner-pos
+                                                 final-heading initial-heading)
+                                       [])
+                                     [])
+
+              ;; Add closing corner rings to all rings
+              all-rings-with-closing (into all-rings closing-corner-rings)
+              n-rings (count all-rings-with-closing)
+              n-verts (count (first all-rings-with-closing))]
 
           (if (< n-rings 2)
             state
             ;; Build single manifold mesh from all rings
-            (let [vertices (vec (apply concat all-rings))
+            (let [vertices (vec (apply concat all-rings-with-closing))
                   ;; Create faces connecting consecutive rings (closed torus)
                   side-faces (vec
                               (mapcat
