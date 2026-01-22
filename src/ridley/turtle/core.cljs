@@ -1770,6 +1770,27 @@
    Smaller rotations (like arc steps) don't need shortening."
   10.0)
 
+(defn- calc-shorten-for-angle
+  "Calculate the segment shortening needed for a given rotation angle.
+
+   For a corner rotation of θ degrees, the shortening is:
+   shorten = radius * tan(θ/2)
+
+   This ensures segments meet properly at any angle:
+   - 90° → shorten = radius * tan(45°) = radius * 1 = radius
+   - 45° → shorten = radius * tan(22.5°) ≈ radius * 0.414
+   - 135° → shorten = radius * tan(67.5°) ≈ radius * 2.414
+
+   For angles >= 180°, we cap at a reasonable maximum to avoid infinite shortening."
+  [angle-deg radius]
+  (if (< (Math/abs angle-deg) corner-threshold-deg-closed)
+    0
+    (let [half-angle-rad (* (Math/abs angle-deg) (/ Math/PI 360))  ; angle/2 in radians
+          ;; Cap at 175° to avoid tan approaching infinity
+          capped-half-angle (min half-angle-rad (* 87.5 (/ Math/PI 180)))
+          tan-half (Math/tan capped-half-angle)]
+      (* radius tan-half))))
+
 (defn- analyze-closed-path
   "Analyze a path for closed extrusion.
    Returns a vector of segments with their adjustments.
@@ -1800,9 +1821,8 @@
                                     (if (is-rotation? (:cmd c))
                                       (recur (dec i) (conj rots c) (inc steps))
                                       rots))))
-             ;; Check if rotation before is significant
-             has-significant-rotation-before (>= (total-rotation-angle-closed rotations-before)
-                                                 corner-threshold-deg-closed)
+             ;; Calculate total rotation angle before this forward
+             angle-before (total-rotation-angle-closed rotations-before)
              ;; Collect all rotations after this forward until next forward
              rotations-after (loop [i (inc idx)
                                     rots []]
@@ -1819,13 +1839,12 @@
                                    (if (is-rotation? (:cmd c))
                                      (recur (inc i) (conj rots c))
                                      rots))))
-             ;; Check if rotation after is significant
-             has-significant-rotation-after (>= (total-rotation-angle-closed rotations-after)
-                                                corner-threshold-deg-closed)]
+             ;; Calculate total rotation angle after this forward
+             angle-after (total-rotation-angle-closed rotations-after)]
          {:cmd :f
           :dist dist
-          :shorten-start (if has-significant-rotation-before radius 0)
-          :shorten-end (if has-significant-rotation-after radius 0)
+          :shorten-start (calc-shorten-for-angle angle-before radius)
+          :shorten-end (calc-shorten-for-angle angle-after radius)
           :rotations-after rotations-after})))))
 
 (defn- apply-rotation-to-state
@@ -2312,11 +2331,21 @@
         (let [dist (first (:args cmd))
               is-first (zero? fwd-idx)
               is-last (= fwd-idx (dec n-forwards))
-              ;; Check if there's a CORNER rotation before this forward
-              ;; (excludes :set-heading used by smooth curves like bezier/arc)
-              prev-idx (dec idx)
-              has-corner-before (and (>= prev-idx 0)
-                                     (is-corner-rotation? (:cmd (nth cmds prev-idx))))
+              ;; Collect rotations before this forward (back to previous forward or start)
+              rotations-before (loop [i (dec idx)
+                                      rots []]
+                                 (if (< i 0)
+                                   rots
+                                   (let [c (nth cmds i)]
+                                     (if (is-rotation? (:cmd c))
+                                       (recur (dec i) (conj rots c))
+                                       rots))))
+              ;; Calculate angle before (only corner rotations count)
+              angle-before (reduce + 0 (map (fn [r]
+                                              (if (is-corner-rotation? (:cmd r))
+                                                (Math/abs (first (:args r)))
+                                                0))
+                                            rotations-before))
               ;; Collect all rotations after this forward until next forward or end
               ;; (includes :set-heading for applying during extrude)
               rotations-after (loop [i (inc idx)
@@ -2327,14 +2356,18 @@
                                     (if (is-rotation? (:cmd c))
                                       (recur (inc i) (conj rots c))
                                       rots))))
-              ;; Check if there's a CORNER rotation after (for shorten decision)
-              has-corner-after (some #(is-corner-rotation? (:cmd %)) rotations-after)]
+              ;; Calculate angle after (only corner rotations count)
+              angle-after (reduce + 0 (map (fn [r]
+                                             (if (is-corner-rotation? (:cmd r))
+                                               (Math/abs (first (:args r)))
+                                               0))
+                                           rotations-after))]
           {:cmd :f
            :dist dist
            ;; Open path: first segment doesn't shorten start
-           :shorten-start (if (and has-corner-before (not is-first)) radius 0)
+           :shorten-start (if is-first 0 (calc-shorten-for-angle angle-before radius))
            ;; Open path: last segment doesn't shorten end
-           :shorten-end (if (and has-corner-after (not is-last)) radius 0)
+           :shorten-end (if is-last 0 (calc-shorten-for-angle angle-after radius))
            :rotations-after rotations-after}))
       forwards))))
 
