@@ -1074,11 +1074,14 @@
    ;; (def tri (shape (f 4) (th 120) (f 4) (th 120) (f 4))) - triangle
    ;; (def tri (shape (f 4) (th 120) (f 4))) - same, auto-closes
    ;; Uses a 2D turtle starting at origin, facing +X
+   ;; Only f and th are allowed (2D plane)
    ;; Returns a shape that can be used in extrude/loft
    (defmacro shape [& body]
      `(let [state# (atom (recording-turtle))
             ~'f (fn [d#] (swap! state# shape-rec-f d#))
-            ~'th (fn [a#] (swap! state# shape-rec-th a#))]
+            ~'th (fn [a#] (swap! state# shape-rec-th a#))
+            ~'tv (fn [& _#] (throw (js/Error. \"tv not allowed in shape - 2D only\")))
+            ~'tr (fn [& _#] (throw (js/Error. \"tr not allowed in shape - 2D only\")))]
         ~@body
         (shape-from-recording @state#)))
 
