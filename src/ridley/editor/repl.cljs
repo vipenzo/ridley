@@ -770,6 +770,11 @@
    'rec-tr              turtle/rec-tr
    'rec-set-heading     turtle/rec-set-heading
    'path-from-recorder  turtle/path-from-recorder
+   ;; Shape recording functions (2D turtle)
+   'shape-rec-f         shape/rec-f
+   'shape-rec-th        shape/rec-th
+   'shape-from-recording shape/shape-from-recording
+   'recording-turtle    shape/recording-turtle
    'run-path-impl       turtle/run-path
    'follow-path         implicit-run-path
    'path?               turtle/path?
@@ -1064,6 +1069,18 @@
               ~'bezier-to rec-bezier-to*]
           ~@body)
         (path-from-recorder @path-recorder)))
+
+   ;; shape: create a 2D shape from turtle movements
+   ;; (def tri (shape (f 4) (th 120) (f 4) (th 120) (f 4))) - triangle
+   ;; (def tri (shape (f 4) (th 120) (f 4))) - same, auto-closes
+   ;; Uses a 2D turtle starting at origin, facing +X
+   ;; Returns a shape that can be used in extrude/loft
+   (defmacro shape [& body]
+     `(let [state# (atom (recording-turtle))
+            ~'f (fn [d#] (swap! state# shape-rec-f d#))
+            ~'th (fn [a#] (swap! state# shape-rec-th a#))]
+        ~@body
+        (shape-from-recording @state#)))
 
    ;; pen is now only for mode changes: (pen :off), (pen :on)
    ;; No longer handles shapes - use extrude for that

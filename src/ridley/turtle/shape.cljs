@@ -85,7 +85,7 @@
 ;; Shape from turtle recording
 ;; ============================================================
 
-(defn- recording-turtle
+(defn recording-turtle
   "Create a turtle for recording movements.
    Starts at origin, facing +X, records path."
   []
