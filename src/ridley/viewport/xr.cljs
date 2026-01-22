@@ -35,7 +35,9 @@
                                     :original-background nil
                                     :show-all-view true  ;; All/Obj toggle state
                                     :grid-visible true   ;; Grid visibility
-                                    :axes-visible true})) ;; Axes visibility
+                                    :axes-visible true   ;; Axes visibility
+                                    :turtle-visible true ;; Turtle indicator visibility
+                                    :lines-visible true})) ;; Construction lines visibility
 
 ;; Movement settings
 (def ^:private move-speed 0.4)
@@ -372,21 +374,25 @@
         ;; Row 1: VR/AR mode switch
         btn-vr (create-panel-button "VR" 0.10 0.05 :switch-vr)
         btn-ar (create-panel-button "AR" 0.10 0.05 :switch-ar)
-        ;; Row 2: View controls
-        btn-grid (create-panel-button "Grid" 0.10 0.05 :toggle-grid)
-        btn-axes (create-panel-button "Axes" 0.10 0.05 :toggle-axes)
+        ;; Row 2: View controls (4 buttons)
+        btn-grid (create-panel-button "Grid" 0.06 0.05 :toggle-grid)
+        btn-axes (create-panel-button "Axes" 0.06 0.05 :toggle-axes)
+        btn-turtle (create-panel-button "Turtle" 0.06 0.05 :toggle-turtle)
+        btn-lines (create-panel-button "Lines" 0.06 0.05 :toggle-lines)
         ;; Row 3: All/Obj and Reset
         btn-all-obj (create-panel-button "All" 0.10 0.05 :toggle-all-obj)
         btn-reset (create-panel-button "Reset" 0.10 0.05 :reset-view)
         ;; Row 4: Exit
         btn-exit (create-panel-button "Exit" 0.10 0.05 :exit)
-        buttons [btn-vr btn-ar btn-grid btn-axes btn-all-obj btn-reset btn-exit]]
+        buttons [btn-vr btn-ar btn-grid btn-axes btn-turtle btn-lines btn-all-obj btn-reset btn-exit]]
     ;; Row 1 (top): VR / AR
     (.set (.-position btn-vr) -0.06 0.10 0.01)
     (.set (.-position btn-ar) 0.06 0.10 0.01)
-    ;; Row 2: Grid / Axes
-    (.set (.-position btn-grid) -0.06 0.04 0.01)
-    (.set (.-position btn-axes) 0.06 0.04 0.01)
+    ;; Row 2: Grid / Axes / Turtle / Lines (4 buttons)
+    (.set (.-position btn-grid) -0.10 0.04 0.01)
+    (.set (.-position btn-axes) -0.035 0.04 0.01)
+    (.set (.-position btn-turtle) 0.035 0.04 0.01)
+    (.set (.-position btn-lines) 0.10 0.04 0.01)
     ;; Row 3: All-Obj / Reset
     (.set (.-position btn-all-obj) -0.06 -0.02 0.01)
     (.set (.-position btn-reset) 0.06 -0.02 0.01)
@@ -471,6 +477,20 @@
     (swap! xr-state update :axes-visible not)
     (set! (.-visible axes) (:axes-visible @xr-state))))
 
+(defn- toggle-turtle-vr
+  "Toggle turtle indicator visibility in VR."
+  []
+  (when-let [turtle (find-object-by-name "turtle-indicator")]
+    (swap! xr-state update :turtle-visible not)
+    (set! (.-visible turtle) (:turtle-visible @xr-state))))
+
+(defn- toggle-lines-vr
+  "Toggle construction lines visibility in VR."
+  []
+  (when-let [lines (find-object-by-name "turtle-lines")]
+    (swap! xr-state update :lines-visible not)
+    (set! (.-visible lines) (:lines-visible @xr-state))))
+
 (defn- toggle-all-obj-vr
   "Toggle between All and Objects-only view in VR."
   []
@@ -502,6 +522,8 @@
               (js/console.log "Mode: rotate"))
     :toggle-grid (toggle-grid-vr)
     :toggle-axes (toggle-axes-vr)
+    :toggle-turtle (toggle-turtle-vr)
+    :toggle-lines (toggle-lines-vr)
     :toggle-all-obj (toggle-all-obj-vr)
     :reset-view (reset-view-vr)
     :switch-vr (switch-to-vr)

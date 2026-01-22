@@ -9,9 +9,18 @@
 ;; Track current mesh data for export
 (defonce ^:private current-meshes (atom []))
 
-;; Visibility state for grid and axes
+;; Visibility state for grid, axes, and lines
 (defonce ^:private grid-visible (atom true))
 (defonce ^:private axes-visible (atom true))
+(defonce ^:private lines-visible (atom true))
+(defonce ^:private lines-object (atom nil))
+
+;; Turtle indicator state
+(defonce ^:private turtle-visible (atom true))
+(defonce ^:private turtle-indicator (atom nil))
+(defonce ^:private turtle-pose (atom {:position [0 0 0]
+                                       :heading [1 0 0]
+                                       :up [0 0 1]}))
 
 (defn- create-scene []
   (let [scene (THREE/Scene.)]
@@ -81,6 +90,83 @@
     (set! (.-name axes-group) "axes")
     (.add parent axes-group)
     axes-group))
+
+;; ============================================================
+;; Turtle indicator (airplane-shaped orientation marker)
+;; ============================================================
+
+(defn- create-turtle-indicator
+  "Create an airplane-shaped indicator showing turtle position and orientation.
+   Returns a Three.js Group with the indicator mesh."
+  []
+  (let [group (THREE/Group.)
+        ;; Body - cone pointing forward (along local +Z)
+        body-geo (THREE/ConeGeometry. 0.3 1.2 8)
+        body-mat (THREE/MeshBasicMaterial. #js {:color 0x00ffaa
+                                                 :transparent true
+                                                 :opacity 0.85
+                                                 :depthTest false})
+        body (THREE/Mesh. body-geo body-mat)
+        ;; Wings - flat box extending sideways
+        wing-geo (THREE/BoxGeometry. 1.0 0.05 0.3)
+        wing-mat (THREE/MeshBasicMaterial. #js {:color 0x00ddff
+                                                 :transparent true
+                                                 :opacity 0.8
+                                                 :depthTest false})
+        wing (THREE/Mesh. wing-geo wing-mat)
+        ;; Tail fin - vertical (shows up direction)
+        tail-geo (THREE/BoxGeometry. 0.05 0.4 0.2)
+        tail-mat (THREE/MeshBasicMaterial. #js {:color 0xffaa00
+                                                 :transparent true
+                                                 :opacity 0.8
+                                                 :depthTest false})
+        tail (THREE/Mesh. tail-geo tail-mat)]
+    ;; Rotate body so cone points along +Z (local forward)
+    (.rotateX body (/ js/Math.PI 2))
+    ;; Position wings at center-back
+    (.set (.-position wing) 0 0 -0.1)
+    ;; Position tail at back, pointing up
+    (.set (.-position tail) 0 0.2 -0.4)
+    ;; High render order to draw on top
+    (set! (.-renderOrder body) 1000)
+    (set! (.-renderOrder wing) 1000)
+    (set! (.-renderOrder tail) 1000)
+    (.add group body)
+    (.add group wing)
+    (.add group tail)
+    ;; Disable frustum culling
+    (set! (.-frustumCulled group) false)
+    (set! (.-name group) "turtle-indicator")
+    group))
+
+(defn- update-turtle-indicator-scale
+  "Update indicator scale based on camera distance for screen-relative sizing."
+  [indicator camera]
+  (when (and indicator (.-visible indicator))
+    (let [world-pos (THREE/Vector3.)]
+      (.getWorldPosition indicator world-pos)
+      (let [cam-pos (.-position camera)
+            distance (.distanceTo world-pos cam-pos)
+            ;; Scale factor: larger = bigger on screen
+            base-scale 0.04
+            scale (* distance base-scale)]
+        (.set (.-scale indicator) scale scale scale)))))
+
+(defn- update-turtle-indicator-pose
+  "Update turtle indicator position and orientation from pose data."
+  [indicator {:keys [position heading up]}]
+  (when indicator
+    (let [[px py pz] position
+          [hx hy hz] heading
+          [ux uy uz] up]
+      ;; Set position
+      (.set (.-position indicator) px py pz)
+      ;; Use lookAt with custom up vector
+      ;; Three.js lookAt: object's +Z faces target, +Y is up
+      ;; We want: heading = forward (+Z), up = up (+Y)
+      (let [target (THREE/Vector3. (+ px hx) (+ py hy) (+ pz hz))]
+        (.set (.-up indicator) ux uy uz)
+        (.lookAt indicator target)))))
 
 (defn- add-lights [scene]
   (let [;; Hemisphere light for even ambient from sky/ground
@@ -233,8 +319,12 @@
   (when-let [{:keys [world-group highlight-group camera controls]} @state]
     (clear-geometry world-group highlight-group)
     ;; Add line segments to world-group
+    (reset! lines-object nil)
     (when (seq lines)
       (when-let [line-obj (create-line-segments lines)]
+        (set! (.-name line-obj) "turtle-lines")
+        (set! (.-visible line-obj) @lines-visible)
+        (reset! lines-object line-obj)
         (.add world-group line-obj)))
     ;; Add meshes to world-group
     (doseq [mesh-data meshes]
@@ -300,6 +390,9 @@
    In WebXR mode, receives (time, xr-frame) parameters."
   [_time xr-frame]
   (when-let [{:keys [renderer scene camera controls]} @state]
+    ;; Update turtle indicator scale for screen-relative sizing
+    (when-let [indicator @turtle-indicator]
+      (update-turtle-indicator-scale indicator camera))
     (if (xr/xr-presenting? renderer)
       ;; VR mode: update controller input, pass XR frame for pose data
       (xr/update-controller xr-frame renderer)
@@ -351,7 +444,15 @@
     (.setSize renderer width height)
     ;; Add grid, axes to world-group (so they rotate together)
     (let [grid (add-grid world-group)
-          axes (add-axes world-group)]
+          axes (add-axes world-group)
+          ;; Create turtle indicator
+          turtle-ind (create-turtle-indicator)]
+      ;; Add turtle indicator to world-group
+      (.add world-group turtle-ind)
+      (reset! turtle-indicator turtle-ind)
+      (set! (.-visible turtle-ind) @turtle-visible)
+      ;; Initialize with default pose
+      (update-turtle-indicator-pose turtle-ind @turtle-pose)
       ;; Lights stay in scene (not affected by world rotation)
       (add-lights scene)
       ;; Enable WebXR on renderer
@@ -551,6 +652,26 @@
   []
   @axes-visible)
 
+(defn toggle-lines
+  "Toggle construction lines visibility. Returns new visibility state."
+  []
+  (let [new-visible (swap! lines-visible not)]
+    (when-let [line-obj @lines-object]
+      (set! (.-visible line-obj) new-visible))
+    new-visible))
+
+(defn lines-visible?
+  "Return current lines visibility state."
+  []
+  @lines-visible)
+
+(defn set-lines-visible
+  "Set construction lines visibility explicitly."
+  [visible?]
+  (reset! lines-visible visible?)
+  (when-let [line-obj @lines-object]
+    (set! (.-visible line-obj) visible?)))
+
 (defn reset-camera
   "Reset camera to default position looking at origin."
   []
@@ -558,6 +679,39 @@
     (.set (.-position camera) 100 100 100)
     (.set (.-target controls) 0 0 0)
     (.update controls)))
+
+;; ============================================================
+;; Turtle indicator visibility and updates
+;; ============================================================
+
+(defn toggle-turtle
+  "Toggle turtle indicator visibility. Returns new visibility state."
+  []
+  (when-let [indicator @turtle-indicator]
+    (let [new-visible (swap! turtle-visible not)]
+      (set! (.-visible indicator) new-visible)
+      new-visible)))
+
+(defn turtle-visible?
+  "Return current turtle indicator visibility state."
+  []
+  @turtle-visible)
+
+(defn set-turtle-visible
+  "Set turtle indicator visibility explicitly."
+  [visible?]
+  (reset! turtle-visible visible?)
+  (when-let [indicator @turtle-indicator]
+    (set! (.-visible indicator) visible?)))
+
+(defn update-turtle-pose
+  "Update turtle indicator with new pose from REPL evaluation.
+   pose is {:position [x y z] :heading [x y z] :up [x y z]}"
+  [pose]
+  (when pose
+    (reset! turtle-pose pose)
+    (when-let [indicator @turtle-indicator]
+      (update-turtle-indicator-pose indicator pose))))
 
 (defn dispose
   "Clean up Three.js resources."

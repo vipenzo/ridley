@@ -83,6 +83,11 @@
       ;; Scroll to bottom
       (set! (.-scrollTop history-el) (.-scrollHeight history-el)))))
 
+(defn- update-turtle-indicator
+  "Update the turtle indicator with current pose from REPL."
+  []
+  (viewport/update-turtle-pose (repl/get-turtle-pose)))
+
 (defn- evaluate-definitions
   "Evaluate only the definitions panel (for Cmd+Enter).
    Optional reset-camera? parameter controls whether to reset camera view (default false)."
@@ -101,7 +106,9 @@
            (registry/set-lines! (:lines render-data))
            (registry/set-definition-meshes! (:meshes render-data)))
          ;; Refresh viewport, optionally resetting camera
-         (registry/refresh-viewport! reset-camera?))))))
+         (registry/refresh-viewport! reset-camera?)
+         ;; Update turtle indicator
+         (update-turtle-indicator))))))
 
 (defn- evaluate-repl-input
   "Evaluate the REPL input and show result in history."
@@ -132,7 +139,9 @@
                 (registry/add-lines! (:lines render-data))
                 (registry/set-definition-meshes! (:meshes render-data)))
               ;; Update viewport (don't reset camera)
-              (registry/refresh-viewport! false))))))))
+              (registry/refresh-viewport! false)
+              ;; Update turtle indicator
+              (update-turtle-indicator))))))))
 
 (defn- navigate-history
   "Navigate command history. direction: -1 for older, +1 for newer."
@@ -367,6 +376,8 @@
         toggle-view-btn (.getElementById js/document "btn-toggle-view")
         toggle-grid-btn (.getElementById js/document "btn-toggle-grid")
         toggle-axes-btn (.getElementById js/document "btn-toggle-axes")
+        toggle-turtle-btn (.getElementById js/document "btn-toggle-turtle")
+        toggle-lines-btn (.getElementById js/document "btn-toggle-lines")
         reset-view-btn (.getElementById js/document "btn-reset-view")
         file-input (.getElementById js/document "file-input")]
     ;; Run button - evaluate definitions
@@ -410,6 +421,26 @@
             (if visible
               (.add (.-classList toggle-axes-btn) "active")
               (.remove (.-classList toggle-axes-btn) "active"))))))
+    ;; Toggle turtle indicator button
+    (when toggle-turtle-btn
+      ;; Set initial active state (turtle visible by default)
+      (.add (.-classList toggle-turtle-btn) "active")
+      (.addEventListener toggle-turtle-btn "click"
+        (fn [_]
+          (let [visible (viewport/toggle-turtle)]
+            (if visible
+              (.add (.-classList toggle-turtle-btn) "active")
+              (.remove (.-classList toggle-turtle-btn) "active"))))))
+    ;; Toggle construction lines button
+    (when toggle-lines-btn
+      ;; Set initial active state (lines visible by default)
+      (.add (.-classList toggle-lines-btn) "active")
+      (.addEventListener toggle-lines-btn "click"
+        (fn [_]
+          (let [visible (viewport/toggle-lines)]
+            (if visible
+              (.add (.-classList toggle-lines-btn) "active")
+              (.remove (.-classList toggle-lines-btn) "active"))))))
     ;; Reset view button
     (when reset-view-btn
       (.addEventListener reset-view-btn "click"

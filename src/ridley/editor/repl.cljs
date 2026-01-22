@@ -212,49 +212,6 @@
    ;; Non-uniform scale of 2D shape
    (xform/scale shape fx fy)))
 
-;; Pure primitive constructors - return mesh data at origin (no side effects)
-(defn- pure-box
-  ([size] (prims/box-mesh size))
-  ([sx sy sz] (prims/box-mesh sx sy sz)))
-
-;; Resolution-aware shape and primitive constructors
-;; These read resolution from turtle state when segments not explicitly provided
-
-(defn- circle-with-resolution
-  "Create circular shape, using resolution from turtle state if segments not provided."
-  ([radius]
-   (let [circumference (* 2 Math/PI radius)
-         segments (turtle/calc-circle-segments @turtle-atom circumference)]
-     (shape/circle-shape radius segments)))
-  ([radius segments]
-   (shape/circle-shape radius segments)))
-
-(defn- sphere-with-resolution
-  "Create sphere mesh, using resolution from turtle state if not provided."
-  ([radius]
-   (let [segments (turtle/calc-circle-segments @turtle-atom (* 2 Math/PI radius))
-         rings (max 4 (int (/ segments 2)))]
-     (prims/sphere-mesh radius segments rings)))
-  ([radius segments rings]
-   (prims/sphere-mesh radius segments rings)))
-
-(defn- cyl-with-resolution
-  "Create cylinder mesh, using resolution from turtle state if not provided."
-  ([radius height]
-   (let [segments (turtle/calc-circle-segments @turtle-atom (* 2 Math/PI radius))]
-     (prims/cyl-mesh radius height segments)))
-  ([radius height segments]
-   (prims/cyl-mesh radius height segments)))
-
-(defn- cone-with-resolution
-  "Create cone mesh, using resolution from turtle state if not provided."
-  ([r1 r2 height]
-   (let [max-r (max r1 r2)
-         segments (turtle/calc-circle-segments @turtle-atom (* 2 Math/PI max-r))]
-     (prims/cone-mesh r1 r2 height segments)))
-  ([r1 r2 height segments]
-   (prims/cone-mesh r1 r2 height segments)))
-
 ;; Transform a mesh to turtle position/orientation
 (defn- transform-mesh-to-turtle
   "Transform a mesh's vertices to current turtle position and orientation.
@@ -275,35 +232,60 @@
                                :heading heading
                                :up up}))))
 
-;; stamp: materialize mesh at turtle position, add to scene as visible
-;; Only works with primitives (box, sphere, cyl, cone) - not extrude results
-(defn ^:export implicit-stamp
-  "Materialize a mesh at current turtle position and show it.
-   Returns the transformed mesh with :registry-id.
-   Only works with primitives - throws error for extrude results."
-  [mesh]
-  (if (:primitive mesh)
-    (let [transformed (transform-mesh-to-turtle mesh)
-          mesh-with-id (registry/add-mesh! transformed nil true)]
-      (registry/refresh-viewport! false)  ; Don't reset camera
-      mesh-with-id)
-    (throw (js/Error. (str "stamp only works with primitives (box, sphere, cyl, cone). "
-                           "For extrude results, use 'register' directly.")))))
+;; Primitive constructors - create mesh at current turtle position
+(defn- pure-box
+  ([size] (transform-mesh-to-turtle (prims/box-mesh size)))
+  ([sx sy sz] (transform-mesh-to-turtle (prims/box-mesh sx sy sz))))
 
-;; make: materialize mesh at turtle position, return without showing
-;; Only works with primitives (box, sphere, cyl, cone) - not extrude results
-(defn ^:export implicit-make
-  "Materialize a mesh at current turtle position without showing.
-   Returns the transformed mesh (for use in boolean operations).
-   Only works with primitives - throws error for extrude results."
-  [mesh]
-  (if (:primitive mesh)
-    (transform-mesh-to-turtle mesh)
-    (throw (js/Error. (str "make only works with primitives (box, sphere, cyl, cone). "
-                           "For extrude results, position the turtle first, then create the mesh.")))))
+;; Resolution-aware shape and primitive constructors
+;; These read resolution from turtle state when segments not explicitly provided
+
+(defn- circle-with-resolution
+  "Create circular shape, using resolution from turtle state if segments not provided."
+  ([radius]
+   (let [circumference (* 2 Math/PI radius)
+         segments (turtle/calc-circle-segments @turtle-atom circumference)]
+     (shape/circle-shape radius segments)))
+  ([radius segments]
+   (shape/circle-shape radius segments)))
+
+(defn- sphere-with-resolution
+  "Create sphere mesh at current turtle position, using resolution from turtle state if not provided."
+  ([radius]
+   (let [segments (turtle/calc-circle-segments @turtle-atom (* 2 Math/PI radius))
+         rings (max 4 (int (/ segments 2)))]
+     (transform-mesh-to-turtle (prims/sphere-mesh radius segments rings))))
+  ([radius segments rings]
+   (transform-mesh-to-turtle (prims/sphere-mesh radius segments rings))))
+
+(defn- cyl-with-resolution
+  "Create cylinder mesh at current turtle position, using resolution from turtle state if not provided."
+  ([radius height]
+   (let [segments (turtle/calc-circle-segments @turtle-atom (* 2 Math/PI radius))]
+     (transform-mesh-to-turtle (prims/cyl-mesh radius height segments))))
+  ([radius height segments]
+   (transform-mesh-to-turtle (prims/cyl-mesh radius height segments))))
+
+(defn- cone-with-resolution
+  "Create cone mesh at current turtle position, using resolution from turtle state if not provided."
+  ([r1 r2 height]
+   (let [max-r (max r1 r2)
+         segments (turtle/calc-circle-segments @turtle-atom (* 2 Math/PI max-r))]
+     (transform-mesh-to-turtle (prims/cone-mesh r1 r2 height segments))))
+  ([r1 r2 height segments]
+   (transform-mesh-to-turtle (prims/cone-mesh r1 r2 height segments))))
 
 (defn- get-turtle []
   @turtle-atom)
+
+(defn get-turtle-pose
+  "Get current turtle pose for indicator display.
+   Returns {:position [x y z] :heading [x y z] :up [x y z]} or nil."
+  []
+  (when-let [t @turtle-atom]
+    {:position (:position t)
+     :heading (:heading t)
+     :up (:up t)}))
 
 (defn- last-mesh []
   (last (:meshes @turtle-atom)))
@@ -328,27 +310,49 @@
   (swap! turtle-atom update :meshes conj mesh)
   mesh)
 
-(defn ^:export implicit-extrude-closed-path [shape-or-shapes path]
-  ;; Handle both single shape and vector of shapes (from text-shape)
-  (let [shapes (if (vector? shape-or-shapes) shape-or-shapes [shape-or-shapes])
-        start-pos (:position @turtle-atom)]
-    (doseq [shape shapes]
-      ;; Reset to start position for each shape
-      (swap! turtle-atom assoc :position start-pos)
-      (swap! turtle-atom turtle/extrude-closed-from-path shape path))
-    ;; Return last mesh (or all meshes for multiple shapes)
-    (if (= 1 (count shapes))
-      (last (:meshes @turtle-atom))
-      (vec (take-last (count shapes) (:meshes @turtle-atom))))))
-
-(defn ^:export pure-extrude-path
-  "Pure extrude function - creates mesh without side effects.
-   Uses a local turtle state, does not modify global turtle-atom."
+(defn ^:export implicit-extrude-closed-path
+  "Extrude-closed function - creates closed mesh without side effects.
+   Starts from current turtle position/orientation."
   [shape-or-shapes path]
   ;; Handle both single shape and vector of shapes (from text-shape)
   (let [shapes (if (vector? shape-or-shapes) shape-or-shapes [shape-or-shapes])
-        ;; Create local turtle state at origin
-        initial-state (turtle/make-turtle)
+        ;; Start from current turtle position/orientation
+        current-turtle @turtle-atom
+        initial-state (if current-turtle
+                        (-> (turtle/make-turtle)
+                            (assoc :position (:position current-turtle))
+                            (assoc :heading (:heading current-turtle))
+                            (assoc :up (:up current-turtle)))
+                        (turtle/make-turtle))
+        ;; Extrude each shape, collecting results
+        results (reduce
+                 (fn [acc shape]
+                   (let [state (turtle/extrude-closed-from-path initial-state shape path)
+                         mesh (last (:meshes state))]
+                     (if mesh
+                       (conj acc mesh)
+                       acc)))
+                 []
+                 shapes)]
+    ;; Return single mesh or vector of meshes
+    (if (= 1 (count results))
+      (first results)
+      results)))
+
+(defn ^:export pure-extrude-path
+  "Pure extrude function - creates mesh without side effects.
+   Starts from current turtle position/orientation."
+  [shape-or-shapes path]
+  ;; Handle both single shape and vector of shapes (from text-shape)
+  (let [shapes (if (vector? shape-or-shapes) shape-or-shapes [shape-or-shapes])
+        ;; Start from current turtle position/orientation (not origin)
+        current-turtle @turtle-atom
+        initial-state (if current-turtle
+                        (-> (turtle/make-turtle)
+                            (assoc :position (:position current-turtle))
+                            (assoc :heading (:heading current-turtle))
+                            (assoc :up (:up current-turtle)))
+                        (turtle/make-turtle))
         ;; Extrude each shape, collecting results
         results (reduce
                  (fn [acc shape]
@@ -363,6 +367,31 @@
     (if (= 1 (count results))
       (first results)
       results)))
+
+(defn ^:export pure-loft-path
+  "Pure loft function - creates mesh without side effects.
+   Starts from current turtle position/orientation.
+   transform-fn: (fn [shape t]) where t goes from 0 to 1
+   steps: number of intermediate steps (default 16)"
+  ([shape transform-fn path] (pure-loft-path shape transform-fn path 16))
+  ([shape transform-fn path steps]
+   (let [;; Start from current turtle position/orientation
+         current-turtle @turtle-atom
+         initial-state (if current-turtle
+                         (-> (turtle/make-turtle)
+                             (assoc :position (:position current-turtle))
+                             (assoc :heading (:heading current-turtle))
+                             (assoc :up (:up current-turtle)))
+                         (turtle/make-turtle))
+         ;; Start loft mode on local state
+         state-with-loft (turtle/stamp-loft initial-state shape transform-fn steps)
+         ;; Run path commands on local state (this will track orientations)
+         final-state (turtle/run-path state-with-loft path)
+         ;; Finalize loft to build mesh
+         result-state (turtle/finalize-loft final-state)
+         ;; Get the mesh
+         mesh (last (:meshes result-state))]
+     mesh)))
 
 ;; Legacy version for backwards compatibility (modifies global state)
 (defn ^:export implicit-extrude-path [shape-or-shapes path]
@@ -663,9 +692,8 @@
    'sphere       sphere-with-resolution
    'cyl          cyl-with-resolution
    'cone         cone-with-resolution
-   ;; NOTE: 'stamp' removed - use (register :name mesh) to make mesh visible
-   ;; 'make' kept for internal use (creates mesh without showing)
-   'make         implicit-make     ; hidden (for boolean ops)
+   ;; NOTE: 'stamp' and 'make' removed - primitives are now created at turtle position
+   ;; Use (register :name mesh) to make mesh visible in scene
    ;; Shape constructors (return shape data, resolution-aware)
    'circle       circle-with-resolution
    'rect         shape/rect-shape
@@ -748,6 +776,7 @@
    'extrude-closed-path-impl implicit-extrude-closed-path
    'extrude-path-impl        implicit-extrude-path
    'pure-extrude-path        pure-extrude-path  ; Pure version (no side effects)
+   'pure-loft-path           pure-loft-path     ; Pure loft version (no side effects)
    ;; Sweep between two shapes
    'stamp-shape-at      turtle/stamp-shape-at
    'sweep-two-shapes    turtle/sweep-two-shapes
@@ -776,6 +805,10 @@
    'all-meshes-info     registry/all-meshes-info
    'anonymous-meshes    registry/anonymous-meshes
    'anonymous-count     registry/anonymous-count
+   ;; Viewport visibility controls
+   'show-lines          (fn [] (viewport/set-lines-visible true))
+   'hide-lines          (fn [] (viewport/set-lines-visible false))
+   'lines-visible?      viewport/lines-visible?
    ;; Path registry
    'register-path!      registry/register-path!
    'show-path!          registry/show-path!
@@ -1071,6 +1104,11 @@
            (and (list? arg) (contains? #{'path 'path-to} (first arg)))
            `(pure-extrude-path ~shape ~arg)
 
+           ;; List starting with turtle movement - wrap in path
+           ;; This avoids evaluating (f 20) directly which would modify turtle-atom
+           (and (list? arg) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v 'bezier-to} (first arg)))
+           `(pure-extrude-path ~shape (path ~arg))
+
            ;; Any other expression - check at runtime if it's already a path
            :else
            `(let [result# ~arg]
@@ -1096,6 +1134,11 @@
        (and (list? path-expr) (= 'path (first path-expr)))
        `(extrude-closed-path-impl ~shape ~path-expr)
 
+       ;; List starting with turtle movement - wrap in path
+       ;; This avoids evaluating commands directly which would modify turtle-atom
+       (and (list? path-expr) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v 'bezier-to} (first path-expr)))
+       `(extrude-closed-path-impl ~shape (path ~path-expr))
+
        ;; Other list - check at runtime if it's already a path
        :else
        `(let [result# ~path-expr]
@@ -1104,6 +1147,7 @@
             (extrude-closed-path-impl ~shape (path ~path-expr))))))
 
    ;; loft: like extrude but with shape transformation based on progress
+   ;; PURE: returns mesh without side effects (use register to make visible)
    ;; (loft (circle 20) #(scale %1 (- 1 %2)) (f 30)) - cone
    ;; (loft (circle 20) #(scale %1 (- 1 %2)) my-path) - cone along path
    ;; (loft (rect 20 10) #(rotate-shape %1 (* %2 90)) (f 30)) - twist
@@ -1113,34 +1157,30 @@
    (defmacro loft [shape transform-fn & movements]
      (if (= 1 (count movements))
        (let [arg (first movements)]
-         (if (symbol? arg)
-           ;; Single symbol - might be a path
-           `(let [prev-mode# (:pen-mode (get-turtle))
-                  arg# ~arg]
-              (stamp-loft-impl ~shape ~transform-fn)
+         (cond
+           ;; Symbol - might be a pre-defined path, check at runtime
+           (symbol? arg)
+           `(let [arg# ~arg]
               (if (path? arg#)
-                (run-path arg#)
-                ~arg)
-              (finalize-loft-impl)
-              (pen-impl prev-mode#)
-              (last-mesh))
-           ;; Single expression - check at runtime if it's a path
-           `(let [prev-mode# (:pen-mode (get-turtle))
-                  result# ~arg]
-              (stamp-loft-impl ~shape ~transform-fn)
+                (pure-loft-path ~shape ~transform-fn arg#)
+                (pure-loft-path ~shape ~transform-fn (path ~arg))))
+
+           ;; List starting with path - use directly
+           (and (list? arg) (= 'path (first arg)))
+           `(pure-loft-path ~shape ~transform-fn ~arg)
+
+           ;; List starting with turtle movement - wrap in path
+           (and (list? arg) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v 'bezier-to} (first arg)))
+           `(pure-loft-path ~shape ~transform-fn (path ~arg))
+
+           ;; Any other expression - check at runtime if it's a path
+           :else
+           `(let [result# ~arg]
               (if (path? result#)
-                (run-path result#)
-                ~arg)
-              (finalize-loft-impl)
-              (pen-impl prev-mode#)
-              (last-mesh))))
-       ;; Multiple movements
-       `(let [prev-mode# (:pen-mode (get-turtle))]
-          (stamp-loft-impl ~shape ~transform-fn)
-          ~@movements
-          (finalize-loft-impl)
-          (pen-impl prev-mode#)
-          (last-mesh))))
+                (pure-loft-path ~shape ~transform-fn result#)
+                (pure-loft-path ~shape ~transform-fn (path ~arg))))))
+       ;; Multiple movements - wrap in path macro
+       `(pure-loft-path ~shape ~transform-fn (path ~@movements))))
 
    ;; loft-n: loft with custom step count
    ;; (loft-n 32 (circle 20) #(scale %1 (- 1 %2)) (f 30)) - smoother cone
@@ -1148,32 +1188,30 @@
    (defmacro loft-n [steps shape transform-fn & movements]
      (if (= 1 (count movements))
        (let [arg (first movements)]
-         (if (symbol? arg)
-           `(let [prev-mode# (:pen-mode (get-turtle))
-                  arg# ~arg]
-              (stamp-loft-impl ~shape ~transform-fn ~steps)
+         (cond
+           ;; Symbol - might be a pre-defined path, check at runtime
+           (symbol? arg)
+           `(let [arg# ~arg]
               (if (path? arg#)
-                (run-path arg#)
-                ~arg)
-              (finalize-loft-impl)
-              (pen-impl prev-mode#)
-              (last-mesh))
-           ;; Single expression - check at runtime if it's a path
-           `(let [prev-mode# (:pen-mode (get-turtle))
-                  result# ~arg]
-              (stamp-loft-impl ~shape ~transform-fn ~steps)
+                (pure-loft-path ~shape ~transform-fn arg# ~steps)
+                (pure-loft-path ~shape ~transform-fn (path ~arg) ~steps)))
+
+           ;; List starting with path - use directly
+           (and (list? arg) (= 'path (first arg)))
+           `(pure-loft-path ~shape ~transform-fn ~arg ~steps)
+
+           ;; List starting with turtle movement - wrap in path
+           (and (list? arg) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v 'bezier-to} (first arg)))
+           `(pure-loft-path ~shape ~transform-fn (path ~arg) ~steps)
+
+           ;; Any other expression - check at runtime if it's a path
+           :else
+           `(let [result# ~arg]
               (if (path? result#)
-                (run-path result#)
-                ~arg)
-              (finalize-loft-impl)
-              (pen-impl prev-mode#)
-              (last-mesh))))
-       `(let [prev-mode# (:pen-mode (get-turtle))]
-          (stamp-loft-impl ~shape ~transform-fn ~steps)
-          ~@movements
-          (finalize-loft-impl)
-          (pen-impl prev-mode#)
-          (last-mesh))))
+                (pure-loft-path ~shape ~transform-fn result# ~steps)
+                (pure-loft-path ~shape ~transform-fn (path ~arg) ~steps)))))
+       ;; Multiple movements - wrap in path macro
+       `(pure-loft-path ~shape ~transform-fn (path ~@movements) ~steps)))
 
    ;; sweep: create mesh between two shapes
    ;; (sweep (circle 5) (do (f 10) (th 90) (circle 5)))
@@ -1460,12 +1498,17 @@
 (defn evaluate-repl
   "Evaluate REPL input only, using existing context.
    Definitions must be evaluated first to populate the context.
+   Turtle pose (position, heading, up) persists between REPL commands.
+   Geometry is cleared each command (only shows current command's output).
    Returns {:result turtle-state :implicit-result any} or {:error msg}."
   [repl-code]
   (try
     (let [ctx (get-or-create-ctx)]
-      ;; Reset turtle for fresh geometry (but keep definitions in context)
-      (reset-turtle!)
+      ;; Preserve turtle pose but clear geometry for fresh output
+      (if (nil? @turtle-atom)
+        (reset-turtle!)
+        ;; Keep position/heading/up, clear geometry/meshes
+        (swap! turtle-atom assoc :geometry [] :meshes []))
       ;; Evaluate REPL code using existing context with definitions
       (let [implicit-result (when (and repl-code (seq (str/trim repl-code)))
                               (sci/eval-string repl-code ctx))]
@@ -1500,30 +1543,14 @@
 
 (defn extract-render-data
   "Extract render data from evaluation result.
-   Combines geometry from turtle state and explicit results.
+   Returns turtle geometry (lines from pen movements).
+   Meshes must be explicitly registered with (register name mesh) to be visible.
    Does NOT include registry meshes - those are handled separately by refresh-viewport!."
   [eval-result]
   (let [turtle-state (:result eval-result)
-        explicit-result (:explicit-result eval-result)
-        turtle-lines (or (:geometry turtle-state) [])
-        turtle-meshes (or (:meshes turtle-state) [])
-        ;; Check if explicit result has geometry
-        explicit-data (cond
-                        ;; Direct mesh result (from extrude, revolve, etc.)
-                        (and (:vertices explicit-result) (:faces explicit-result))
-                        {:lines [] :meshes [explicit-result]}
-                        ;; Path or shape result
-                        (:segments explicit-result)
-                        {:lines (:segments explicit-result) :meshes []}
-                        ;; Turtle state from explicit
-                        (or (:geometry explicit-result) (:meshes explicit-result))
-                        {:lines (or (:geometry explicit-result) [])
-                         :meshes (or (:meshes explicit-result) [])}
-                        :else nil)
-        ;; Combine turtle + explicit geometry (NOT registry - that's handled by refresh-viewport!)
-        all-lines (concat turtle-lines (or (:lines explicit-data) []))
-        all-meshes (concat turtle-meshes
-                           (or (:meshes explicit-data) []))]
-    (when (or (seq all-lines) (seq all-meshes))
-      {:lines (vec all-lines)
-       :meshes (vec all-meshes)})))
+        turtle-lines (or (:geometry turtle-state) [])]
+    ;; Only return turtle lines (pen traces)
+    ;; Meshes from extrude/loft/etc are NOT auto-displayed - use register
+    (when (seq turtle-lines)
+      {:lines (vec turtle-lines)
+       :meshes []})))
