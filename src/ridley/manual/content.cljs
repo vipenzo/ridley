@@ -58,7 +58,7 @@
       {:id :reusable-shapes
        :examples
        [{:id :def-shape
-         :code "(def my-circle (circle 12))\n\n(register tube1 (extrude my-circle (f 30)))\n(register tube2 (extrude my-circle (f 50)))"}
+         :code "(def my-circle (circle 12))\n\n(register tube1 (extrude my-circle (f 30)))\n(tv 90) (f 50) (tv -90) (register tube2 (extrude my-circle (f 50)))"}
         {:id :def-path
          :code "(def corner (path (f 30) (th 90) (f 30)))\n\n(register pipe\n  (extrude (circle 8) corner))"}]}
       {:id :extrude-closed

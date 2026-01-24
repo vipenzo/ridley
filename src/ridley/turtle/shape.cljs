@@ -157,6 +157,33 @@
       (make-shape path {:centered? false}))))
 
 ;; ============================================================
+;; Shape interpolation
+;; ============================================================
+
+(defn lerp-shape
+  "Linearly interpolate between two shapes.
+   t=0 returns shape1, t=1 returns shape2.
+   Both shapes must have the same number of points."
+  [shape1 shape2 t]
+  (let [pts1 (:points shape1)
+        pts2 (:points shape2)
+        n1 (count pts1)
+        n2 (count pts2)]
+    (when (= n1 n2)
+      (let [lerp-pt (fn [[x1 y1] [x2 y2]]
+                      [(+ x1 (* t (- x2 x1)))
+                       (+ y1 (* t (- y2 y1)))])
+            new-pts (mapv lerp-pt pts1 pts2)]
+        (make-shape new-pts {:centered? (:centered? shape1)})))))
+
+(defn make-lerp-fn
+  "Create a transform function that interpolates from shape1 to shape2.
+   Returns (fn [_ t]) that ignores the first arg and returns lerp-shape."
+  [shape1 shape2]
+  (fn [_ t]
+    (lerp-shape shape1 shape2 t)))
+
+;; ============================================================
 ;; Shape transformation for stamping
 ;; ============================================================
 

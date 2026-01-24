@@ -229,6 +229,31 @@
       :else
       [(mapv (fn [[_ y z]] [y z]) pts) (>= nx 0)])))
 
+(defn- ring-normal
+  "Calculate normal from ring vertices by finding three non-collinear points.
+   Returns normalized cross-product, or [0 0 1] as fallback."
+  [ring]
+  (let [n (count ring)
+        v0 (nth ring 0)
+        epsilon 1e-10
+        ;; Generate all (i, j) pairs to try
+        pairs (for [i (range 1 n)
+                    j (range (inc i) n)]
+                [i j])]
+    (or
+     (some (fn [[i j]]
+             (let [v1 (nth ring i)
+                   v2 (nth ring j)
+                   cross-vec (cross (v- v1 v0) (v- v2 v0))
+                   mag-sq (+ (* (nth cross-vec 0) (nth cross-vec 0))
+                             (* (nth cross-vec 1) (nth cross-vec 1))
+                             (* (nth cross-vec 2) (nth cross-vec 2)))]
+               (when (> mag-sq epsilon)
+                 (normalize cross-vec))))
+           pairs)
+     ;; Fallback if all points are collinear
+     [0 0 1])))
+
 (defn- triangulate-cap
   "Triangulate a polygon cap using ear clipping.
    - ring: vector of 3D vertex positions
@@ -333,27 +358,34 @@
                                        b1 (+ base next-vert)
                                        t0 (+ next-base vert-idx)
                                        t1 (+ next-base next-vert)]
-                                   ;; CCW winding from outside (inverted for correct volume)
-                                   [[b0 t1 b1] [b0 t0 t1]]))
+                                   ;; CCW winding from outside (same as extrude-from-path)
+                                   [[b0 t0 t1] [b0 t1 b1]]))
                                (range n-verts)))
                             (range (dec n-rings))))
                ;; Compute cap normals from ring geometry
                first-ring (first rings)
                last-ring (last rings)
                last-base (* (dec n-rings) n-verts)
-               ;; Bottom cap normal: computed from first ring (pointing backward)
-               bottom-normal (let [v0 (nth first-ring 0)
-                                   v1 (nth first-ring 1)
-                                   v2 (nth first-ring 2)]
-                               (normalize (cross (v- v1 v0) (v- v2 v0))))
-               ;; Top cap normal: computed from last ring (pointing forward)
-               top-normal (let [v0 (nth last-ring 0)
-                                v1 (nth last-ring 1)
-                                v2 (nth last-ring 2)]
-                            (normalize (cross (v- v1 v0) (v- v2 v0))))
-               ;; Use ear clipping for proper concave polygon triangulation
-               bottom-cap (triangulate-cap first-ring 0 bottom-normal true)
-               top-cap (triangulate-cap last-ring last-base top-normal false)]
+
+               ;; Calculate extrusion direction from ring centroids
+               ring-centroid (fn [ring]
+                               (let [n (count ring)]
+                                 (v* (reduce v+ ring) (/ 1.0 n))))
+               extrusion-dir (normalize (v- (ring-centroid (second rings))
+                                            (ring-centroid first-ring)))
+
+               ;; Cap normals from ring geometry (finds non-collinear points automatically)
+               bottom-cross-normal (ring-normal first-ring)
+               top-cross-normal (ring-normal last-ring)
+
+               ;; Determine flip based on extrusion direction:
+               ;; Bottom cap: normal should point OPPOSITE to extrusion → flip if dot > 0
+               ;; Top cap: normal should point SAME as extrusion → flip if dot < 0
+               bottom-flip? (pos? (dot bottom-cross-normal extrusion-dir))
+               top-flip? (neg? (dot top-cross-normal extrusion-dir))
+
+               bottom-cap (triangulate-cap first-ring 0 bottom-cross-normal bottom-flip?)
+               top-cap (triangulate-cap last-ring last-base top-cross-normal top-flip?)]
            (cond-> {:type :mesh
                     :primitive :sweep
                     :vertices vertices
@@ -3121,6 +3153,9 @@
                              ;; Get pre-calculated corner data
                              {:keys [r-p r-n]} (nth corner-data seg-idx)
 
+                             ;; Calculate seg-steps FIRST (it's used in min-step calculation)
+                             seg-steps (max 4 (Math/round (* steps (/ seg-dist total-visible-dist))))
+
                              ;; Remaining distance to the original corner after start offset
                              remaining-to-corner (max 0.0 (- seg-dist prev-rn))
                              ;; Effective length: pull back by r_p and also leave space for next start (r_n)
@@ -3135,9 +3170,6 @@
                              corner-base (v+ (:position s) (v* (:heading s) remaining-to-corner))
                              ;; End position after pullback
                              corner-pos (v+ corner-base (v* (:heading s) (- r-p)))
-
-                             ;; Generate rings for this segment
-                             seg-steps (max 4 (Math/round (* steps (/ seg-dist total-visible-dist))))
 
                               seg-rings
                               (vec

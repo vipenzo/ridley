@@ -427,6 +427,26 @@
          meshes (:meshes result-state)]
      (combine-meshes meshes))))
 
+(defn ^:export pure-loft-two-shapes
+  "Pure loft between two shapes - creates mesh that transitions from shape1 to shape2.
+   If shapes have different point counts, they are automatically resampled to match.
+   Point arrays are aligned angularly for smooth morphing between different topologies.
+   Starts from current turtle position/orientation."
+  ([shape1 shape2 path] (pure-loft-two-shapes shape1 shape2 path 16))
+  ([shape1 shape2 path steps]
+   (let [n1 (count (:points shape1))
+         n2 (count (:points shape2))
+         ;; Auto-resample to the maximum point count
+         [s1 s2] (if (= n1 n2)
+                   [shape1 shape2]
+                   (let [target-n (max n1 n2)]
+                     [(xform/resample shape1 target-n)
+                      (xform/resample shape2 target-n)]))
+         ;; Align s2's starting point to match s1's angular position
+         s2-aligned (xform/align-to-shape s1 s2)
+         transform-fn (shape/make-lerp-fn s1 s2-aligned)]
+     (pure-loft-path s1 transform-fn path steps))))
+
 ;; Legacy version for backwards compatibility (modifies global state)
 (defn ^:export implicit-extrude-path [shape-or-shapes path]
   ;; Handle both single shape and vector of shapes (from text-shape)
@@ -767,6 +787,7 @@
    ;; Path/shape utilities
    'path->data   path/path-from-state
    'make-shape   shape/make-shape
+   'shape?       shape/shape?
    ;; Generative operations (legacy ops namespace)
    'ops-extrude  ops/extrude
    'extrude-z    ops/extrude-z
@@ -816,6 +837,7 @@
    'extrude-path-impl        implicit-extrude-path
    'pure-extrude-path        pure-extrude-path  ; Pure version (no side effects)
    'pure-loft-path           pure-loft-path     ; Pure loft version (no side effects)
+   'pure-loft-two-shapes     pure-loft-two-shapes ; Loft between two shapes
    ;; Sweep between two shapes
    'stamp-shape-at      turtle/stamp-shape-at
    'sweep-two-shapes    turtle/sweep-two-shapes
@@ -1207,39 +1229,61 @@
 
    ;; loft: like extrude but with shape transformation based on progress
    ;; PURE: returns mesh without side effects (use register to make visible)
-   ;; (loft (circle 20) #(scale %1 (- 1 %2)) (f 30)) - cone
+   ;; (loft (circle 20) #(scale %1 (- 1 %2)) (f 30)) - cone (transform function)
+   ;; (loft (circle 20) (circle 10) (f 40)) - taper (two shapes)
    ;; (loft (circle 20) #(scale %1 (- 1 %2)) my-path) - cone along path
    ;; (loft (rect 20 10) #(rotate-shape %1 (* %2 90)) (f 30)) - twist
    ;; Transform fn receives (shape t) where t goes from 0 to 1
    ;; Default: 16 steps
    ;; Returns the created mesh (can be bound with def)
-   (defmacro loft [shape transform-fn & movements]
+   (defmacro loft [shape transform-fn-or-shape & movements]
      (if (= 1 (count movements))
        (let [arg (first movements)]
          (cond
            ;; Symbol - might be a pre-defined path, check at runtime
            (symbol? arg)
-           `(let [arg# ~arg]
-              (if (path? arg#)
-                (pure-loft-path ~shape ~transform-fn arg#)
-                (pure-loft-path ~shape ~transform-fn (path ~arg))))
+           `(let [arg# ~arg
+                  tfn# ~transform-fn-or-shape]
+              (if (shape? tfn#)
+                ;; Two-shape loft
+                (if (path? arg#)
+                  (pure-loft-two-shapes ~shape tfn# arg#)
+                  (pure-loft-two-shapes ~shape tfn# (path ~arg)))
+                ;; Transform function loft
+                (if (path? arg#)
+                  (pure-loft-path ~shape tfn# arg#)
+                  (pure-loft-path ~shape tfn# (path ~arg)))))
 
            ;; List starting with path - use directly
            (and (list? arg) (= 'path (first arg)))
-           `(pure-loft-path ~shape ~transform-fn ~arg)
+           `(let [tfn# ~transform-fn-or-shape]
+              (if (shape? tfn#)
+                (pure-loft-two-shapes ~shape tfn# ~arg)
+                (pure-loft-path ~shape tfn# ~arg)))
 
            ;; List starting with turtle movement - wrap in path
            (and (list? arg) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v 'bezier-to} (first arg)))
-           `(pure-loft-path ~shape ~transform-fn (path ~arg))
+           `(let [tfn# ~transform-fn-or-shape]
+              (if (shape? tfn#)
+                (pure-loft-two-shapes ~shape tfn# (path ~arg))
+                (pure-loft-path ~shape tfn# (path ~arg))))
 
            ;; Any other expression - check at runtime if it's a path
            :else
-           `(let [result# ~arg]
-              (if (path? result#)
-                (pure-loft-path ~shape ~transform-fn result#)
-                (pure-loft-path ~shape ~transform-fn (path ~arg))))))
+           `(let [result# ~arg
+                  tfn# ~transform-fn-or-shape]
+              (if (shape? tfn#)
+                (if (path? result#)
+                  (pure-loft-two-shapes ~shape tfn# result#)
+                  (pure-loft-two-shapes ~shape tfn# (path ~arg)))
+                (if (path? result#)
+                  (pure-loft-path ~shape tfn# result#)
+                  (pure-loft-path ~shape tfn# (path ~arg)))))))
        ;; Multiple movements - wrap in path macro
-       `(pure-loft-path ~shape ~transform-fn (path ~@movements))))
+       `(let [tfn# ~transform-fn-or-shape]
+          (if (shape? tfn#)
+            (pure-loft-two-shapes ~shape tfn# (path ~@movements))
+            (pure-loft-path ~shape tfn# (path ~@movements))))))
 
    ;; loft-n: loft with custom step count
    ;; (loft-n 32 (circle 20) #(scale %1 (- 1 %2)) (f 30)) - smoother cone

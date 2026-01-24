@@ -136,3 +136,52 @@
                          (+ accumulated seg-len)
                          target))))))]
     (assoc shape :points (vec new-points))))
+
+;; ============================================================
+;; Point alignment for morphing
+;; ============================================================
+
+(defn- point-angle
+  "Calculate the angle (radians) of a 2D point from origin."
+  [[x y]]
+  (Math/atan2 y x))
+
+(defn- angle-diff
+  "Calculate the smallest difference between two angles (radians)."
+  [a1 a2]
+  (let [diff (- a2 a1)
+        ;; Normalize to [-π, π]
+        normalized (cond
+                     (> diff Math/PI) (- diff (* 2 Math/PI))
+                     (< diff (- Math/PI)) (+ diff (* 2 Math/PI))
+                     :else diff)]
+    (Math/abs normalized)))
+
+(defn align-to-shape
+  "Rotate shape2's point array so its starting point aligns angularly
+   with shape1's starting point. This helps create smoother morphs
+   between shapes with different topologies (e.g., rect to circle).
+
+   Both shapes must have the same number of points and be centered."
+  [shape1 shape2]
+  (assert-shape shape1 "align-to-shape")
+  (assert-shape shape2 "align-to-shape")
+  (let [pts1 (:points shape1)
+        pts2 (:points shape2)
+        n (count pts2)]
+    (if (or (zero? n) (not= (count pts1) n))
+      shape2  ;; Can't align if different point counts
+      (let [;; Find the angle of shape1's first point
+            target-angle (point-angle (first pts1))
+            ;; Find which point in shape2 is closest to that angle
+            best-idx (reduce
+                      (fn [best-idx idx]
+                        (let [angle (point-angle (nth pts2 idx))
+                              curr-diff (angle-diff target-angle angle)
+                              best-diff (angle-diff target-angle (point-angle (nth pts2 best-idx)))]
+                          (if (< curr-diff best-diff) idx best-idx)))
+                      0
+                      (range n))
+            ;; Rotate the point array to start from best-idx
+            rotated-pts (vec (concat (drop best-idx pts2) (take best-idx pts2)))]
+        (assoc shape2 :points rotated-pts)))))

@@ -560,3 +560,46 @@
       (doseq [i (range (min 5 (count (:faces mesh1))))]
         (is (identical-face? mesh1 i mesh2 i)
             (str "Face " i " should be identical in both meshes"))))))
+
+;; ============================================================
+;; Loft tests
+;; ============================================================
+
+(deftest loft-basic-test
+  (testing "Loft between two circles creates tapered mesh"
+    (let [start-shape (shape/circle-shape 20 16)
+          end-shape (shape/circle-shape 10 16)
+          ;; Create a transform function that interpolates between shapes
+          transform-fn (shape/make-lerp-fn start-shape end-shape)
+          path (t/make-path [{:cmd :f :args [40]}])
+          turtle (-> (t/make-turtle)
+                     (t/loft-from-path start-shape transform-fn path))
+          mesh (last (:meshes turtle))]
+      (is (some? mesh)
+          "Loft should create a mesh")
+      (is (some? (:vertices mesh))
+          "Loft mesh should have vertices")
+      (is (some? (:faces mesh))
+          "Loft mesh should have faces")
+      (is (> (count (:vertices mesh)) 0)
+          "Loft mesh should have at least some vertices")))
+
+  (testing "Loft creates mesh with correct approximate dimensions"
+    (let [start-shape (shape/circle-shape 20 16)
+          end-shape (shape/circle-shape 10 16)
+          transform-fn (shape/make-lerp-fn start-shape end-shape)
+          path (t/make-path [{:cmd :f :args [40]}])
+          turtle (-> (t/make-turtle)
+                     (t/loft-from-path start-shape transform-fn path))
+          mesh (last (:meshes turtle))
+          bbox (mesh-bounding-box mesh)]
+      (when bbox
+        ;; Start diameter 40, end diameter 20, length 40
+        ;; X size should be 40 (length)
+        ;; Y and Z should be 40 (max diameter at start)
+        (is (approx= (first (:size bbox)) 40)
+            "X size (loft length) should be 40")
+        (is (approx= (second (:size bbox)) 40)
+            "Y size (start diameter) should be 40")
+        (is (approx= (nth (:size bbox) 2) 40)
+            "Z size (start diameter) should be 40")))))
