@@ -14,8 +14,12 @@ html, body {
 
 #app {
   display: flex;
+  /* Use dvh for iOS Safari dynamic address bar, fallback to vh */
   height: 100vh;
+  height: 100dvh;
   width: 100vw;
+  /* iOS Safari safe area for notch/address bar */
+  padding-top: env(safe-area-inset-top);
 }
 
 #editor-panel {
