@@ -534,7 +534,8 @@
   [state angle-deg]
   (let [{:keys [mode value]} (get-resolution state)]
     (case mode
-      :n (max 2 (int (/ value 4)))  ; use fraction of :n value
+      ;; :n mode: scale proportionally with angle (90° = 1/4 of full circle)
+      :n (max 2 (int (* value (/ (Math/abs angle-deg) 360))))
       :a (max 2 (int (Math/ceil (/ (Math/abs angle-deg) value))))
       :s value  ; :s mode doesn't apply well to corners, use value as steps
       ;; default
@@ -2156,6 +2157,14 @@
                         old-heading (:heading s3)
                         new-heading (:heading s4)
 
+                        ;; Calculate angle between headings for round corner resolution
+                        corner-angle-deg (when (and has-corner-rotation (= joint-mode :round))
+                                           (let [cos-a (dot old-heading new-heading)
+                                                 angle-rad (Math/acos (min 1 (max -1 cos-a)))]
+                                             (* angle-rad (/ 180 Math/PI))))
+                        round-steps (when corner-angle-deg
+                                      (calc-round-steps state corner-angle-deg))
+
                         ;; Generate corner junction rings based on joint-mode
                         ;; All modes use same shortening. Difference is the junction geometry:
                         ;; :flat - NO extra rings; mesh connects end-ring directly to next start-ring
@@ -2166,7 +2175,7 @@
                                          :flat []  ;; Direct connection, no intermediate rings
                                          :round (generate-round-corner-rings
                                                  end-ring corner-pos old-heading new-heading
-                                                 (calc-round-steps state 90) radius)
+                                                 round-steps radius)
                                          :tapered (generate-tapered-corner-rings
                                                    end-ring corner-pos old-heading new-heading)
                                          [])
@@ -2206,13 +2215,18 @@
               closing-corner-pos (v- (:position final-state)
                                      (v* final-heading first-shorten-start))
 
+              ;; Calculate closing corner angle in degrees for round resolution
+              closing-angle-deg (* closing-angle (/ 180 Math/PI))
+              closing-round-steps (when (= joint-mode :round)
+                                    (calc-round-steps state closing-angle-deg))
+
               closing-corner-rings (if needs-closing-corner
                                      (case joint-mode
                                        :flat []
                                        :round (generate-round-corner-rings
                                                last-end-ring closing-corner-pos
                                                final-heading initial-heading
-                                               (calc-round-steps state 90) radius)
+                                               closing-round-steps radius)
                                        :tapered (generate-tapered-corner-rings
                                                  last-end-ring closing-corner-pos
                                                  final-heading initial-heading)

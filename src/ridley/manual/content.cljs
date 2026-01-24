@@ -72,7 +72,23 @@
        [{:id :scale-shape
          :code "(register tapered\n  (loft (circle 20) (circle 10) (f 40)))"}
         {:id :morph-shapes
-         :code "(register morph\n  (loft (rect 30 30) (circle 15) (f 40)))"}]}]}
+         :code "(register morph\n  (loft (rect 30 30) (circle 15) (f 40)))"}]}
+      {:id :joint-modes
+       :examples
+       [{:id :joint-flat
+         :code "(joint-mode :flat)\n(register flat-bend\n  (extrude (rect 15 15)\n    (f 30) (th 90) (f 30)))"}
+        {:id :joint-round
+         :code "(joint-mode :round)\n(register round-bend\n  (extrude (rect 15 15)\n    (f 30) (th 90) (f 30)))"}
+        {:id :joint-tapered
+         :code "(joint-mode :tapered)\n(register tapered-bend\n  (extrude (rect 15 15)\n    (f 30) (th 90) (f 30)))"}]}
+      {:id :resolution-settings
+       :examples
+       [{:id :resolution-n
+         :code "(resolution :n 20)\n(joint-mode :round)\n(register res-demo\n  (extrude (circle 15)\n    (f 50) (th 90) (f 50)))"}
+        {:id :resolution-a
+         :code "(resolution :a 15)\n(register angle-res\n  (extrude (circle 15)\n    (f 20) (arc-h 15 180) (f 20)))"}
+        {:id :resolution-steps
+         :code "(register custom-steps\n  (extrude (circle 15)\n    (f 20) (arc-h 15 180 :steps 32) (f 20)))"}]}]}
     {:id :part-3
      :pages
      [{:id :control-structures
@@ -247,6 +263,47 @@ This creates tapered forms, organic transitions, and complex geometry."
                      :description "Loft from a large circle to a small circle creates a tapered cone."}
        :morph-shapes {:caption "Shape morphing"
                       :description "Loft can transition between completely different shapes — here, from a square to a circle."}}}
+
+     :joint-modes
+     {:title "Joint Modes"
+      :content "When an extrusion path has corners (turns), the `joint-mode` command controls how the corner junction is generated.
+
+```
+(joint-mode :flat)    ; direct connection (default)
+(joint-mode :round)   ; smooth rounded corner
+(joint-mode :tapered) ; tapered intermediate ring
+```
+
+The joint mode affects how the shape transitions through corners, impacting both aesthetics and geometry."
+      :examples
+      {:joint-flat {:caption "Flat joint"
+                    :description "`:flat` connects rings directly at corners. Simple but can show sharp edges."}
+       :joint-round {:caption "Round joint"
+                     :description "`:round` adds intermediate rings that arc smoothly through the corner."}
+       :joint-tapered {:caption "Tapered joint"
+                       :description "`:tapered` adds a scaled intermediate ring, creating a tapered transition at corners."}}}
+
+     :resolution-settings
+     {:title "Resolution"
+      :content "The `resolution` command controls curve smoothness for arcs, beziers, and round joints.
+
+```
+(resolution :n 32)  ; fixed number of segments
+(resolution :a 5)   ; max angle per segment (degrees)
+(resolution :s 0.5) ; max segment length (units)
+```
+
+You can also override resolution per-command using the `:steps` argument:
+```
+(arc-h 20 90 :steps 16)
+```"
+      :examples
+      {:resolution-n {:caption "Fixed segments"
+                      :description "`:n` sets a fixed number of segments for curves. Lower values = faster but coarser."}
+       :resolution-a {:caption "Angle-based"
+                      :description "`:a` sets max degrees per segment. Good for consistent smoothness regardless of arc size."}
+       :resolution-steps {:caption "Per-command steps"
+                          :description "Use `:steps` to override global resolution for a specific command."}}}
 
      :control-structures
      {:title "Control Structures"
@@ -450,6 +507,47 @@ Questo crea forme rastremate, transizioni organiche e geometrie complesse."
                      :description "Loft da un cerchio grande a uno piccolo crea un cono rastremato."}
        :morph-shapes {:caption "Morphing di forme"
                       :description "Loft può fare transizioni tra forme completamente diverse — qui, da un quadrato a un cerchio."}}}
+
+     :joint-modes
+     {:title "Modalità Giunzione"
+      :content "Quando un percorso di estrusione ha angoli (curve), il comando `joint-mode` controlla come viene generata la giunzione all'angolo.
+
+```
+(joint-mode :flat)    ; connessione diretta (default)
+(joint-mode :round)   ; angolo arrotondato
+(joint-mode :tapered) ; anello intermedio rastremato
+```
+
+La modalità giunzione influenza come la forma transita attraverso gli angoli, impattando sia l'estetica che la geometria."
+      :examples
+      {:joint-flat {:caption "Giunzione piatta"
+                    :description "`:flat` connette gli anelli direttamente agli angoli. Semplice ma può mostrare spigoli."}
+       :joint-round {:caption "Giunzione arrotondata"
+                     :description "`:round` aggiunge anelli intermedi che curvano dolcemente attraverso l'angolo."}
+       :joint-tapered {:caption "Giunzione rastremata"
+                       :description "`:tapered` aggiunge un anello intermedio scalato, creando una transizione rastremata agli angoli."}}}
+
+     :resolution-settings
+     {:title "Risoluzione"
+      :content "Il comando `resolution` controlla la levigatezza delle curve per archi, bezier e giunzioni arrotondate.
+
+```
+(resolution :n 32)  ; numero fisso di segmenti
+(resolution :a 5)   ; angolo massimo per segmento (gradi)
+(resolution :s 0.5) ; lunghezza massima del segmento (unità)
+```
+
+Puoi anche sovrascrivere la risoluzione per singolo comando usando l'argomento `:steps`:
+```
+(arc-h 20 90 :steps 16)
+```"
+      :examples
+      {:resolution-n {:caption "Segmenti fissi"
+                      :description "`:n` imposta un numero fisso di segmenti per le curve. Valori bassi = più veloce ma più grezzo."}
+       :resolution-a {:caption "Basato sull'angolo"
+                      :description "`:a` imposta i gradi massimi per segmento. Buono per levigatezza consistente indipendentemente dalla dimensione dell'arco."}
+       :resolution-steps {:caption "Steps per comando"
+                          :description "Usa `:steps` per sovrascrivere la risoluzione globale per un comando specifico."}}}
 
      :control-structures
      {:title "Strutture di Controllo"
