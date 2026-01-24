@@ -3,6 +3,7 @@ node_modules/
 
 # Build output
 public/js/
+out/
 .shadow-cljs/
 
 # Clojure
