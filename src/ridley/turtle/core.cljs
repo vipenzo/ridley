@@ -1198,28 +1198,60 @@
            :faces all-faces
            :face-groups new-face-groups)))
 
+(defn- move-face-vertices-toward-center
+  "Move face vertices toward center by dist units (in place).
+   Positive dist = smaller face, negative = larger.
+   Does NOT create new vertices - modifies existing ones.
+   Returns updated mesh."
+  [mesh face-info dist]
+  (let [vertices (:vertices mesh)
+        center (:center face-info)
+        face-triangles (:triangles face-info)
+        perimeter (extract-face-perimeter face-triangles)
+        ;; Move each perimeter vertex toward center by dist
+        new-vertices (reduce
+                      (fn [verts idx]
+                        (let [v (nth verts idx)
+                              to-center (normalize (v- center v))
+                              new-v (v+ v (v* to-center dist))]
+                          (assoc verts idx new-v)))
+                      (vec vertices)
+                      perimeter)]
+    (assoc mesh :vertices new-vertices)))
+
 (defn- inset-attached-face
-  "Inset the attached face, creating a smaller inner face.
-   Returns updated state with attachment moved to inner face."
+  "Inset the attached face.
+   In clone-face context (after attach-face-extrude): creates new inner face
+   with side trapezoids, and enables extrude-mode so next f creates a spike.
+   In attach-face context: moves existing vertices toward center (frustum base).
+   Returns updated state."
   [state dist]
   (let [attachment (:attached state)
         mesh (:mesh attachment)
         face-id (:face-id attachment)
         face-info (:face-info attachment)
+        clone-context? (:clone-context attachment)]
 
-        ;; Build inset mesh
-        new-mesh (build-face-inset mesh face-id face-info dist)
+    (if clone-context?
+      ;; Clone mode: create new inner face with connecting side faces
+      ;; After this, enable extrude-mode so f will create spike side faces
+      (let [new-mesh (build-face-inset mesh face-id face-info dist)
+            new-triangles (get-in new-mesh [:face-groups face-id])
+            new-face-info (-> face-info
+                              (assoc :triangles new-triangles)
+                              (assoc :vertices (vec (distinct (mapcat identity new-triangles)))))]
+        (-> state
+            (replace-mesh-in-state mesh new-mesh)
+            (assoc-in [:attached :mesh] new-mesh)
+            (assoc-in [:attached :face-info] new-face-info)
+            ;; Enable extrude-mode so next f creates side faces for spike
+            (assoc-in [:attached :extrude-mode] true)))
 
-        ;; The face center stays the same (we're not moving normal direction)
-        ;; But we need to update face-info with new triangles and vertices
-        new-triangles (get-in new-mesh [:face-groups face-id])
-        new-face-info (-> face-info
-                          (assoc :triangles new-triangles)
-                          (assoc :vertices (vec (distinct (mapcat identity new-triangles)))))]
-    (-> state
-        (replace-mesh-in-state mesh new-mesh)
-        (assoc-in [:attached :mesh] new-mesh)
-        (assoc-in [:attached :face-info] new-face-info))))
+      ;; Attach mode: move existing face vertices toward center
+      (let [new-mesh (move-face-vertices-toward-center mesh face-info dist)]
+        (-> state
+            (replace-mesh-in-state mesh new-mesh)
+            (assoc-in [:attached :mesh] new-mesh))))))
 
 (defn inset
   "Inset the attached face by dist units.
@@ -3454,6 +3486,7 @@
    Immediately creates cloned vertices at distance 0 (coincident with original).
    This way scale/inset can operate on the new vertices, and f moves them.
    After cloning, extrude-mode is turned off so f just moves vertices.
+   Sets clone-context so inset knows to create new vertices and re-enable extrude.
    SCI-compatible (no keyword args)."
   [state mesh face-id]
   (-> state
@@ -3462,7 +3495,9 @@
       ;; The cloned vertices start coincident with the original face
       (extrude-attached-face 0)
       ;; Turn off extrude-mode: vertices are now cloned, future f just moves them
-      (assoc-in [:attached :extrude-mode] false)))
+      (assoc-in [:attached :extrude-mode] false)
+      ;; Mark clone context so inset knows to create new vertices
+      (assoc-in [:attached :clone-context] true)))
 
 (defn ^:export attach-move
   "Attach to a mesh's creation pose (modifies original mesh).

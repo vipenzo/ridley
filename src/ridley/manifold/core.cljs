@@ -205,16 +205,52 @@
 ;; Boolean operations
 ;; ============================================================
 
-(defn union
-  "Compute the union of two meshes (A + B).
-   Returns a new Ridley mesh."
+(defn- union-two
+  "Compute the union of exactly two meshes."
   [mesh-a mesh-b]
   (when (get-manifold-class)
     (let [ma (mesh->manifold mesh-a)
           mb (mesh->manifold mesh-b)]
       (when (and ma mb)
         (let [raw-result (.add ma mb)
-              ;; Use asOriginal to condense coplanar faces and collapse unnecessary edges
+              result (.asOriginal raw-result)
+              output (manifold->mesh result)]
+          (.delete ma)
+          (.delete mb)
+          (.delete raw-result)
+          (.delete result)
+          output)))))
+
+(defn union
+  "Compute the union of two or more meshes.
+   Returns a new Ridley mesh.
+
+   Usage:
+   (union a b)           ; union of two meshes
+   (union a b c d)       ; union of multiple meshes
+   (union [a b c d])     ; union of a vector of meshes"
+  [first-arg & more]
+  (let [;; Normalize: accept both (union a b c) and (union [a b c])
+        meshes (if (and (empty? more) (sequential? first-arg))
+                 (vec first-arg)
+                 (into [first-arg] more))]
+    (when (>= (count meshes) 2)
+      (reduce union-two meshes))))
+
+(defn- difference-two
+  "Compute the difference of exactly two meshes (A - B)."
+  [mesh-a mesh-b]
+  (when (get-manifold-class)
+    (let [ma (mesh->manifold mesh-a)
+          mb (mesh->manifold mesh-b)]
+      (when (and ma mb)
+        (let [status-a (.-value (.status ma))
+              status-b (.-value (.status mb))]
+          (when (not (zero? status-a))
+            (js/console.warn "mesh-difference: mesh-a is not manifold, status:" status-a))
+          (when (not (zero? status-b))
+            (js/console.warn "mesh-difference: mesh-b is not manifold, status:" status-b)))
+        (let [raw-result (.subtract ma mb)
               result (.asOriginal raw-result)
               output (manifold->mesh result)]
           (.delete ma)
@@ -224,23 +260,29 @@
           output)))))
 
 (defn difference
-  "Compute the difference of two meshes (A - B).
-   Returns a new Ridley mesh."
+  "Compute the difference of meshes (A - B - C - ...).
+   Returns a new Ridley mesh.
+
+   Usage:
+   (difference a b)         ; subtract B from A
+   (difference a b c d)     ; subtract B, C, D from A
+   (difference [a b c d])   ; subtract B, C, D from A (first is base)"
+  [first-arg & more]
+  (let [;; Normalize: accept both (difference a b c) and (difference [a b c])
+        meshes (if (and (empty? more) (sequential? first-arg))
+                 (vec first-arg)
+                 (into [first-arg] more))]
+    (when (>= (count meshes) 2)
+      (reduce difference-two meshes))))
+
+(defn- intersection-two
+  "Compute the intersection of exactly two meshes."
   [mesh-a mesh-b]
   (when (get-manifold-class)
     (let [ma (mesh->manifold mesh-a)
           mb (mesh->manifold mesh-b)]
       (when (and ma mb)
-        ;; Debug: check manifold status of inputs
-        (let [status-a (.-value (.status ma))
-              status-b (.-value (.status mb))]
-          (when (not (zero? status-a))
-            (js/console.warn "mesh-difference: mesh-a is not manifold, status:" status-a))
-          (when (not (zero? status-b))
-            (js/console.warn "mesh-difference: mesh-b is not manifold, status:" status-b)))
-        (let [raw-result (.subtract ma mb)
-              ;; Use asOriginal to condense coplanar faces and collapse unnecessary edges
-              ;; This cleans up artifacts from boolean operations
+        (let [raw-result (.intersect ma mb)
               result (.asOriginal raw-result)
               output (manifold->mesh result)]
           (.delete ma)
@@ -250,22 +292,20 @@
           output)))))
 
 (defn intersection
-  "Compute the intersection of two meshes (A ∩ B).
-   Returns a new Ridley mesh."
-  [mesh-a mesh-b]
-  (when (get-manifold-class)
-    (let [ma (mesh->manifold mesh-a)
-          mb (mesh->manifold mesh-b)]
-      (when (and ma mb)
-        (let [raw-result (.intersect ma mb)
-              ;; Use asOriginal to condense coplanar faces and collapse unnecessary edges
-              result (.asOriginal raw-result)
-              output (manifold->mesh result)]
-          (.delete ma)
-          (.delete mb)
-          (.delete raw-result)
-          (.delete result)
-          output)))))
+  "Compute the intersection of two or more meshes (A ∩ B ∩ C ∩ ...).
+   Returns a new Ridley mesh.
+
+   Usage:
+   (intersection a b)         ; intersection of two meshes
+   (intersection a b c d)     ; intersection of multiple meshes
+   (intersection [a b c d])   ; intersection of a vector of meshes"
+  [first-arg & more]
+  (let [;; Normalize: accept both (intersection a b c) and (intersection [a b c])
+        meshes (if (and (empty? more) (sequential? first-arg))
+                 (vec first-arg)
+                 (into [first-arg] more))]
+    (when (>= (count meshes) 2)
+      (reduce intersection-two meshes))))
 
 (defn hull
   "Compute the convex hull of one or more meshes.

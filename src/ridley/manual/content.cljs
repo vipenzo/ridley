@@ -88,7 +88,35 @@
         {:id :resolution-a
          :code "(resolution :a 15)\n(register angle-res\n  (extrude (circle 15)\n    (f 20) (arc-h 15 180) (f 20)))"}
         {:id :resolution-steps
-         :code "(register custom-steps\n  (extrude (circle 15)\n    (f 20) (arc-h 15 180 :steps 32) (f 20)))"}]}]}
+         :code "(register custom-steps\n  (extrude (circle 15)\n    (f 20) (arc-h 15 180 :steps 32) (f 20)))"}]}
+      {:id :boolean-operations
+       :examples
+       [{:id :bool-union
+         :code "(register a (box 30))\n(f 15) (tv 90) (f 15) (tv -90)\n(register b (cyl 12 40))\n(hide :a)\n(hide :b)\n(register ab\n  (mesh-union (get-mesh :a) (get-mesh :b)))"}
+        {:id :bool-difference
+         :code "(register a (box 30))\n(f 15) (tv 90) (f 15) (tv -90)\n(register b (cyl 12 40))\n(hide :a)\n(hide :b)\n(register ab\n  (mesh-difference (get-mesh :a) (get-mesh :b)))"}
+        {:id :bool-intersection
+         :code "(register a (box 30))\n(f 15) (tv 90) (f 15) (tv -90)\n(register b (cyl 12 40))\n(hide :a)\n(hide :b)\n(register ab\n  (mesh-intersection (get-mesh :a) (get-mesh :b)))"}
+        {:id :bool-hull
+         :code "(register p1 (sphere 10))\n(f 40)\n(register p2 (sphere 10))\n(f -20) (th 90) (f 30)\n(register p3 (sphere 10))\n\n(register hull-shape\n  (mesh-hull (get-mesh :p1) (get-mesh :p2) (get-mesh :p3)))"}
+        {:id :bool-union-for
+         :code "(register row\n  (mesh-union\n    (for [i (range 10)]\n      (attach (cyl 5 30) (f (* i 9))))))"}]}
+      {:id :attach-meshes
+       :examples
+       [{:id :attach-basic
+         :code "(register base (box 40 40 10))\n\n(register top\n  (attach (cyl 10 50) (f 31) (tv 90)))"}
+        {:id :attach-boolean
+         :code "(register drilled\n  (mesh-difference\n    (box 40)\n    (attach (cyl 10 50)\n      (f 20) (tv 90) (f 20))))"}
+        {:id :attach-clone
+         :code "(register original (box 10))\n(register copy1 (clone original (f 30)))\n(register copy2 (clone copy1 (tv 90) (f 30)))"}
+        {:id :attach-clone-rotated
+         :code "(register original (box 10 30 5))\n(register copy1 (clone original (f 30)))\n(register copy2 (clone copy1 (tv 90) (tr 90) (f 30)))"}]}
+      {:id :attach-faces
+       :examples
+       [{:id :attach-face-frustum
+         :code "(register frustum\n  (attach-face (box 30) :top\n    (inset 10) (f 30)))"}
+        {:id :clone-face-spike
+         :code "(register spike\n  (clone-face (box 30) :top\n    (inset 10) (f 30)))"}]}]}
     {:id :part-3
      :pages
      [{:id :control-structures
@@ -304,6 +332,71 @@ You can also override resolution per-command using the `:steps` argument:
                       :description "`:a` sets max degrees per segment. Good for consistent smoothness regardless of arc size."}
        :resolution-steps {:caption "Per-command steps"
                           :description "Use `:steps` to override global resolution for a specific command."}}}
+
+     :boolean-operations
+     {:title "Boolean Operations"
+      :content "Boolean operations combine meshes in different ways. Use `get-mesh` to retrieve a mesh by its registered name.
+
+```
+(mesh-union a b)        ; combine A and B
+(mesh-difference a b)   ; subtract B from A
+(mesh-intersection a b) ; keep only where A and B overlap
+(mesh-hull a b c ...)   ; convex hull of all meshes
+```
+
+These operations require **manifold** meshes (watertight, no self-intersections). The result is a new mesh that you can register."
+      :examples
+      {:bool-union {:caption "Union"
+                    :description "Combine two meshes into one. Overlapping regions are merged."}
+       :bool-difference {:caption "Difference"
+                         :description "Subtract one mesh from another. Creates holes, cuts, and carving effects."}
+       :bool-intersection {:caption "Intersection"
+                           :description "Keep only the volume where both meshes overlap. Creates lens-like shapes from spheres."}
+       :bool-hull {:caption "Convex Hull"
+                   :description "Create the smallest convex shape that contains all input meshes. Like wrapping them in shrink-wrap."}
+       :bool-union-for {:caption "Union with for"
+                        :description "Boolean operations accept vectors, so you can use `for` to generate multiple meshes and combine them in one call."}}}
+
+     :attach-meshes
+     {:title "Attach Meshes"
+      :content "The `attach` function creates a mesh at the current turtle position and orientation. The `clone` macro creates a copy of an existing mesh at the turtle position.
+
+```
+(attach mesh)    ; place mesh at turtle position
+(clone mesh)     ; create a copy at turtle position
+```
+
+Unlike `register`, these create geometry that follows the turtle's current transformation."
+      :examples
+      {:attach-basic {:caption "Basic attach"
+                      :description "The base is registered at origin. The cylinder is attached with movements that position it relative to the turtle."}
+       :attach-boolean {:caption "Attach for boolean"
+                        :description "`attach` can be used inline to position one mesh relative to another for boolean operations."}
+       :attach-clone {:caption "Clone a mesh"
+                      :description "Use `clone` to create copies of an existing registered mesh at different positions."}
+       :attach-clone-rotated {:caption "Clone with rotation"
+                              :description "Clones can include rotations. Here `tv` pitches and `tr` rolls the turtle before placing the copy."}}}
+
+     :attach-faces
+     {:title "Attach to Faces"
+      :content "The `attach-face` function attaches geometry to a specific face of a mesh. Use face keywords (`:top`, `:bottom`, `:front`, `:back`, `:left`, `:right`) or indices 0-5.
+
+```
+(attach-face mesh :top body)
+```
+
+The turtle is positioned at the face center, oriented outward. Use `inset` to shrink the face before extruding:
+
+```
+(inset dist)  ; move each vertex dist units toward center
+```
+
+Positive values shrink the face, negative values expand it."
+      :examples
+      {:attach-face-frustum {:caption "Frustum (attach-face)"
+                             :description "`attach-face` modifies the original face. `inset` shrinks it, `f` moves it outward. Creates a frustum (tapered box)."}
+       :clone-face-spike {:caption "Spike (clone-face)"
+                          :description "`clone-face` creates new vertices. `inset` creates a smaller inner face, `f` extrudes it. Creates a spike."}}}
 
      :control-structures
      {:title "Control Structures"
@@ -548,6 +641,71 @@ Puoi anche sovrascrivere la risoluzione per singolo comando usando l'argomento `
                       :description "`:a` imposta i gradi massimi per segmento. Buono per levigatezza consistente indipendentemente dalla dimensione dell'arco."}
        :resolution-steps {:caption "Steps per comando"
                           :description "Usa `:steps` per sovrascrivere la risoluzione globale per un comando specifico."}}}
+
+     :boolean-operations
+     {:title "Operazioni Booleane"
+      :content "Le operazioni booleane combinano mesh in modi diversi. Usa `get-mesh` per recuperare una mesh dal suo nome registrato.
+
+```
+(mesh-union a b)        ; combina A e B
+(mesh-difference a b)   ; sottrai B da A
+(mesh-intersection a b) ; tieni solo dove A e B si sovrappongono
+(mesh-hull a b c ...)   ; inviluppo convesso di tutte le mesh
+```
+
+Queste operazioni richiedono mesh **manifold** (a tenuta stagna, senza auto-intersezioni). Il risultato è una nuova mesh che puoi registrare."
+      :examples
+      {:bool-union {:caption "Unione"
+                    :description "Combina due mesh in una. Le regioni sovrapposte vengono fuse."}
+       :bool-difference {:caption "Differenza"
+                         :description "Sottrai una mesh dall'altra. Crea fori, tagli ed effetti di intaglio."}
+       :bool-intersection {:caption "Intersezione"
+                           :description "Tieni solo il volume dove entrambe le mesh si sovrappongono. Crea forme a lente dalle sfere."}
+       :bool-hull {:caption "Inviluppo Convesso"
+                   :description "Crea la più piccola forma convessa che contiene tutte le mesh di input. Come avvolgerle in pellicola termoretraibile."}
+       :bool-union-for {:caption "Unione con for"
+                        :description "Le operazioni booleane accettano vettori, quindi puoi usare `for` per generare più mesh e combinarle in una sola chiamata."}}}
+
+     :attach-meshes
+     {:title "Attaccare Mesh"
+      :content "La funzione `attach` crea una mesh nella posizione e orientamento corrente della tartaruga. La macro `clone` crea una copia di una mesh esistente alla posizione della tartaruga.
+
+```
+(attach mesh)    ; posiziona mesh alla posizione turtle
+(clone mesh)     ; crea una copia alla posizione turtle
+```
+
+A differenza di `register`, questi creano geometria che segue la trasformazione corrente della tartaruga."
+      :examples
+      {:attach-basic {:caption "Attach base"
+                      :description "La base è registrata all'origine. Il cilindro è attaccato con movimenti che lo posizionano relativamente alla tartaruga."}
+       :attach-boolean {:caption "Attach per booleane"
+                        :description "`attach` può essere usato inline per posizionare una mesh relativamente a un'altra per operazioni booleane."}
+       :attach-clone {:caption "Clonare una mesh"
+                      :description "Usa `clone` per creare copie di una mesh registrata esistente in posizioni diverse."}
+       :attach-clone-rotated {:caption "Clone con rotazione"
+                              :description "I cloni possono includere rotazioni. Qui `tv` inclina e `tr` ruota la tartaruga prima di posizionare la copia."}}}
+
+     :attach-faces
+     {:title "Attaccare alle Facce"
+      :content "La funzione `attach-face` attacca geometria a una faccia specifica di una mesh. Usa keyword (`:top`, `:bottom`, `:front`, `:back`, `:left`, `:right`) o indici 0-5.
+
+```
+(attach-face mesh :top body)
+```
+
+La tartaruga viene posizionata al centro della faccia, orientata verso l'esterno. Usa `inset` per rimpicciolire la faccia prima di estrudere:
+
+```
+(inset dist)  ; sposta ogni vertice di dist unità verso il centro
+```
+
+Valori positivi rimpiccioliscono la faccia, valori negativi la espandono."
+      :examples
+      {:attach-face-frustum {:caption "Tronco (attach-face)"
+                             :description "`attach-face` modifica la faccia originale. `inset` la rimpicciolisce, `f` la sposta verso l'esterno. Crea un tronco di piramide."}
+       :clone-face-spike {:caption "Punta (clone-face)"
+                          :description "`clone-face` crea nuovi vertici. `inset` crea una faccia interna più piccola, `f` la estrude. Crea una punta."}}}
 
      :control-structures
      {:title "Strutture di Controllo"
