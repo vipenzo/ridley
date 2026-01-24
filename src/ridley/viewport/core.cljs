@@ -22,6 +22,10 @@
                                        :heading [1 0 0]
                                        :up [0 0 1]}))
 
+;; Face normals visualization (like Blender's normal display)
+(defonce ^:private normals-visible (atom false))
+(defonce ^:private normals-object (atom nil))
+
 (defn- create-scene []
   (let [scene (THREE/Scene.)]
     (set! (.-background scene) (THREE/Color. 0x252526))
@@ -309,6 +313,97 @@
    ;; Points from mesh vertices
    (mapcat :vertices meshes)))
 
+;; ============================================================
+;; Face normals visualization
+;; ============================================================
+
+(defn- compute-face-normal
+  "Compute normal vector for a triangular face."
+  [[v0 v1 v2]]
+  (let [[x0 y0 z0] v0
+        [x1 y1 z1] v1
+        [x2 y2 z2] v2
+        ;; Edge vectors
+        e1x (- x1 x0) e1y (- y1 y0) e1z (- z1 z0)
+        e2x (- x2 x0) e2y (- y2 y0) e2z (- z2 z0)
+        ;; Cross product
+        nx (- (* e1y e2z) (* e1z e2y))
+        ny (- (* e1z e2x) (* e1x e2z))
+        nz (- (* e1x e2y) (* e1y e2x))
+        ;; Normalize
+        len (Math/sqrt (+ (* nx nx) (* ny ny) (* nz nz)))]
+    (if (pos? len)
+      [(/ nx len) (/ ny len) (/ nz len)]
+      [0 0 1])))
+
+(defn- compute-face-centroid
+  "Compute centroid of a triangular face."
+  [[v0 v1 v2]]
+  (let [[x0 y0 z0] v0
+        [x1 y1 z1] v1
+        [x2 y2 z2] v2]
+    [(/ (+ x0 x1 x2) 3)
+     (/ (+ y0 y1 y2) 3)
+     (/ (+ z0 z1 z2) 3)]))
+
+(defn- create-normals-lines
+  "Create line segments showing face normals for all meshes.
+   Each normal is a short line from face centroid in the normal direction."
+  [meshes normal-length]
+  (let [segments (atom [])]
+    (doseq [mesh-data meshes]
+      (let [vertices (:vertices mesh-data)
+            faces (:faces mesh-data)]
+        (doseq [[i0 i1 i2] faces]
+          (when (and (< i0 (count vertices))
+                     (< i1 (count vertices))
+                     (< i2 (count vertices)))
+            (let [v0 (nth vertices i0)
+                  v1 (nth vertices i1)
+                  v2 (nth vertices i2)
+                  face-verts [v0 v1 v2]
+                  centroid (compute-face-centroid face-verts)
+                  normal (compute-face-normal face-verts)
+                  [cx cy cz] centroid
+                  [nx ny nz] normal
+                  end-point [(+ cx (* nx normal-length))
+                             (+ cy (* ny normal-length))
+                             (+ cz (* nz normal-length))]]
+              (swap! segments conj {:from centroid :to end-point}))))))
+    @segments))
+
+(defn- create-normals-object
+  "Create a Three.js LineSegments object for normals visualization."
+  [meshes]
+  (let [segments (create-normals-lines meshes 2.0)]  ;; 2 units normal length
+    (when (seq segments)
+      (let [points (clj->js (mapcat (fn [{:keys [from to]}]
+                                      [(THREE/Vector3. (first from) (second from) (nth from 2))
+                                       (THREE/Vector3. (first to) (second to) (nth to 2))])
+                                    segments))
+            buffer-geom (THREE/BufferGeometry.)
+            material (THREE/LineBasicMaterial. #js {:color 0xff00ff   ;; Magenta like Blender
+                                                    :linewidth 1})]
+        (.setFromPoints buffer-geom points)
+        (THREE/LineSegments. buffer-geom material)))))
+
+(defn- update-normals-display
+  "Update or create the normals visualization object."
+  [world-group meshes]
+  ;; Remove old normals object
+  (when-let [old-obj @normals-object]
+    (.remove world-group old-obj)
+    (when-let [geom (.-geometry old-obj)]
+      (.dispose geom))
+    (when-let [mat (.-material old-obj)]
+      (.dispose mat)))
+  ;; Create new normals object if visible and we have meshes
+  (when (and @normals-visible (seq meshes))
+    (when-let [new-obj (create-normals-object meshes)]
+      (set! (.-name new-obj) "face-normals")
+      (reset! normals-object new-obj)
+      (.add world-group new-obj))))
+
 (defn update-scene
   "Update viewport with lines and meshes.
    Options:
@@ -330,6 +425,8 @@
     (doseq [mesh-data meshes]
       (let [mesh (create-three-mesh mesh-data)]
         (.add world-group mesh)))
+    ;; Update normals visualization
+    (update-normals-display world-group meshes)
     ;; Fit camera to all geometry (only if reset-camera? is true)
     (when reset-camera?
       (let [all-points (collect-all-points lines meshes)]
@@ -703,6 +800,45 @@
   (reset! turtle-visible visible?)
   (when-let [indicator @turtle-indicator]
     (set! (.-visible indicator) visible?)))
+
+;; ============================================================
+;; Face normals visibility
+;; ============================================================
+
+(defn toggle-normals
+  "Toggle face normals visualization. Returns new visibility state."
+  []
+  (let [new-visible (swap! normals-visible not)]
+    (if new-visible
+      ;; Turning on - recreate normals from current meshes
+      (when-let [{:keys [world-group]} @state]
+        (update-normals-display world-group @current-meshes))
+      ;; Turning off - remove normals object
+      (when-let [{:keys [world-group]} @state]
+        (when-let [obj @normals-object]
+          (.remove world-group obj)
+          (when-let [geom (.-geometry obj)]
+            (.dispose geom))
+          (when-let [mat (.-material obj)]
+            (.dispose mat))
+          (reset! normals-object nil))))
+    new-visible))
+
+(defn normals-visible?
+  "Return current normals visibility state."
+  []
+  @normals-visible)
+
+(defn set-normals-visible
+  "Set normals visibility explicitly."
+  [visible?]
+  (reset! normals-visible visible?)
+  (when-let [{:keys [world-group]} @state]
+    (if visible?
+      (update-normals-display world-group @current-meshes)
+      (when-let [obj @normals-object]
+        (.remove world-group obj)
+        (reset! normals-object nil)))))
 
 (defn update-turtle-pose
   "Update turtle indicator with new pose from REPL evaluation.

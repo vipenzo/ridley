@@ -5,6 +5,7 @@
   "private": true,
   "scripts": {
     "dev": "shadow-cljs watch app",
+    "test": "shadow-cljs compile test",
     "release": "shadow-cljs release app",
     "clean": "rm -rf public/js docs/js",
     "build:gh-pages": "npm run copy-static && shadow-cljs release release",

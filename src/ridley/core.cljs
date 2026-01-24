@@ -9,7 +9,9 @@
             [ridley.turtle.text :as text]
             [ridley.scene.registry :as registry]
             [ridley.export.stl :as stl]
-            [ridley.sync.peer :as sync]))
+            [ridley.sync.peer :as sync]
+            [ridley.manual.core :as manual]
+            [ridley.manual.components :as manual-ui]))
 
 (defonce ^:private editor-view (atom nil))
 (defonce ^:private repl-input-el (atom nil))
@@ -28,6 +30,9 @@
 (defonce ^:private sync-debounce-timer (atom nil))
 (defonce ^:private share-modal-el (atom nil))  ; Reference to share modal for closing on connect
 (defonce ^:private connected-host-id (atom nil))  ; Host peer-id when we're a client
+
+;; Manual panel state
+(defonce ^:private manual-panel (atom nil))
 
 (defn- show-error [msg]
   (when-let [el @error-el]
@@ -378,6 +383,7 @@
         toggle-axes-btn (.getElementById js/document "btn-toggle-axes")
         toggle-turtle-btn (.getElementById js/document "btn-toggle-turtle")
         toggle-lines-btn (.getElementById js/document "btn-toggle-lines")
+        toggle-normals-btn (.getElementById js/document "btn-toggle-normals")
         reset-view-btn (.getElementById js/document "btn-reset-view")
         file-input (.getElementById js/document "file-input")]
     ;; Run button - evaluate definitions
@@ -441,6 +447,15 @@
             (if visible
               (.add (.-classList toggle-lines-btn) "active")
               (.remove (.-classList toggle-lines-btn) "active"))))))
+    ;; Toggle face normals button
+    (when toggle-normals-btn
+      ;; Normals off by default (no active class initially)
+      (.addEventListener toggle-normals-btn "click"
+        (fn [_]
+          (let [visible (viewport/toggle-normals)]
+            (if visible
+              (.add (.-classList toggle-normals-btn) "active")
+              (.remove (.-classList toggle-normals-btn) "active"))))))
     ;; Reset view button
     (when reset-view-btn
       (.addEventListener reset-view-btn "click"
@@ -707,6 +722,86 @@
     (join-session peer-id)))
 
 ;; ============================================================
+;; Manual
+;; ============================================================
+
+(defn- update-manual-visibility
+  "Show or hide the manual panel based on manual state."
+  []
+  (let [editor-section (.getElementById js/document "explicit-section")
+        repl-section (.getElementById js/document "repl-section")
+        section-divider (.querySelector js/document ".section-divider")
+        manual-container (.getElementById js/document "manual-container")]
+    (if (manual/open?)
+      ;; Show manual, hide editor
+      (do
+        (when editor-section (set! (.-style.display editor-section) "none"))
+        (when repl-section (set! (.-style.display repl-section) "none"))
+        (when section-divider (set! (.-style.display section-divider) "none"))
+        (when manual-container
+          (set! (.-style.display manual-container) "flex")
+          ;; Render manual content
+          (when-let [panel @manual-panel]
+            ((:render panel)))))
+      ;; Hide manual, show editor
+      (do
+        (when editor-section (set! (.-style.display editor-section) "flex"))
+        (when repl-section (set! (.-style.display repl-section) "flex"))
+        (when section-divider (set! (.-style.display section-divider) "block"))
+        (when manual-container (set! (.-style.display manual-container) "none"))))))
+
+(defn- run-manual-code
+  "Execute code from the manual and show result in viewport."
+  [code]
+  ;; Clear previous geometry and evaluate fresh
+  (registry/clear-all!)
+  (let [result (repl/evaluate-definitions code)]
+    (if-let [error (:error result)]
+      (show-error error)
+      (do
+        (hide-error)
+        (when-let [render-data (repl/extract-render-data result)]
+          (registry/set-lines! (:lines render-data))
+          (registry/set-definition-meshes! (:meshes render-data)))
+        (registry/refresh-viewport! true)  ; Reset camera to show result
+        (update-turtle-indicator)))))
+
+(defn- copy-manual-code
+  "Copy code from manual to editor and close manual."
+  [code]
+  (when @editor-view
+    ;; Replace editor content with example code
+    (cm/set-value @editor-view code)
+    (save-to-storage)
+    (manual/close-manual!)))
+
+(defn- setup-manual
+  "Setup the manual panel and button."
+  []
+  ;; Create manual container in editor panel
+  (let [editor-panel (.getElementById js/document "editor-panel")
+        container (.createElement js/document "div")]
+    (set! (.-id container) "manual-container")
+    (set! (.-className container) "manual-container")
+    (set! (.-style.display container) "none")
+    (.appendChild editor-panel container)
+    ;; Create manual panel
+    (let [panel (manual-ui/create-manual-panel)]
+      (reset! manual-panel panel)
+      (.appendChild container (:element panel))))
+  ;; Set callbacks for Run/Copy buttons
+  (manual-ui/set-callbacks!
+   {:on-run run-manual-code
+    :on-copy copy-manual-code})
+  ;; Watch manual state for changes
+  (manual/add-state-watcher! :ui-update
+    (fn [_ _] (update-manual-visibility)))
+  ;; Setup Manual button
+  (when-let [manual-btn (.getElementById js/document "btn-manual")]
+    (.addEventListener manual-btn "click"
+      (fn [_] (manual/toggle-manual!)))))
+
+;; ============================================================
 ;; Initialization
 ;; ============================================================
 
@@ -768,6 +863,8 @@
         (.catch #(js/console.warn "Default font failed to load:" %)))
     ;; Setup sync (desktop <-> headset)
     (setup-sync)
+    ;; Setup manual panel
+    (setup-manual)
     ;; Focus REPL input
     (when repl-input
       (.focus repl-input))
