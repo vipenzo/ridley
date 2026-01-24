@@ -372,6 +372,208 @@
 
 ---
 
+## Phase 10: Live Manual
+
+**Goal**: Interactive, bilingual documentation integrated into the app.
+
+### 10.1 Manual Infrastructure
+
+#### Data Structure
+- [ ] `structure.edn` — Single source of truth for hierarchy, page IDs, and code examples
+- [ ] `i18n/en.edn` — English text content (titles, descriptions, captions)
+- [ ] `i18n/it.edn` — Italian text content
+- [ ] Build-time validation: all structure keys must exist in all i18n files
+- [ ] Runtime fallback: missing translation falls back to English
+
+#### File Layout
+```
+docs/manual/
+├── structure.edn              # Page hierarchy + code examples
+├── i18n/
+│   ├── en.edn                 # English text
+│   └── it.edn                 # Italian text
+└── build.clj                  # Validation script (optional)
+
+src/ridley/manual/
+├── core.cljs                  # State, navigation, loading
+├── content.cljs               # Merged structure + i18n at runtime
+├── components.cljs            # UI components
+└── keywords.cljs              # Keyword → page mapping for F1 help
+```
+
+### 10.2 UI Components
+
+#### Manual Panel
+- [ ] Toolbar button toggles manual open/closed
+- [ ] Manual replaces editor area (left panel) when open
+- [ ] Read-only display with syntax-highlighted code blocks
+- [ ] Viewport (right panel) remains visible and interactive
+
+#### Navigation
+- [ ] Breadcrumb: `Home > Part > Page` (each element clickable)
+- [ ] "Up" link returns to parent section
+- [ ] Cross-reference links between pages (see-also)
+- [ ] Table of contents (collapsible sidebar or top-level page)
+
+#### Language Switcher
+- [ ] Toggle EN/IT in manual header
+- [ ] Preference saved to localStorage
+- [ ] Auto-detect from browser locale on first visit
+
+### 10.3 Example Blocks
+
+#### Visual Design
+- [ ] Code displayed in styled box with syntax highlighting
+- [ ] Caption/title above code block
+- [ ] Description text below code block
+- [ ] **Active indicator**: border highlight (e.g., orange glow) when example is running
+
+#### Interaction Buttons
+- [ ] **Copy** button — copies code to editor, closes manual
+- [ ] **Run** button — executes code in current context, keeps manual open
+- [ ] Buttons appear on hover or always visible (TBD)
+
+#### Auto-Execution
+- [ ] When page loads or scrolls to reveal an example, auto-execute the **first visible example**
+- [ ] Intersection Observer tracks which examples are in viewport
+- [ ] Only one example runs at a time (new visible example replaces previous)
+- [ ] Example block shows "active" state while its result is in viewport
+- [ ] Explicit "Run" button needed only when multiple examples visible simultaneously
+
+### 10.4 Editor Integration
+
+#### F1 Context Help
+- [ ] `keywords.cljs` maps DSL keywords to manual page IDs
+- [ ] F1 with cursor on keyword opens corresponding manual page
+- [ ] If no match, show "No documentation for X" toast
+- [ ] Works for: commands (`f`, `th`, `extrude`), shapes (`circle`, `rect`), macros (`path`, `shape`)
+
+#### Keyword Mapping Example
+```clojure
+{:f :the-turtle
+ :th :the-turtle
+ :tv :the-turtle
+ :tr :the-turtle
+ :extrude :extrude
+ :extrude-closed :extrude-closed
+ :circle :builtin-shapes
+ :rect :builtin-shapes
+ :path :paths
+ :shape :drawing-shapes
+ :register :register
+ :mesh-union :csg
+ :mesh-difference :csg
+ ...}
+```
+
+### 10.5 Manual Content Structure
+
+#### Table of Contents
+
+**Part I: Getting Started**
+1. Hello Ridley
+2. The Turtle
+3. Clojure Basics (sidebar)
+
+**Part II: 2D Shapes**
+4. Built-in Shapes
+5. Drawing Shapes
+6. Shape Transformations
+
+**Part III: From 2D to 3D**
+7. Extrude
+8. Paths
+9. Extrude-Closed
+10. Loft
+11. Revolve
+
+**Part IV: 3D Primitives**
+12. Box, Sphere, Cylinder, Cone
+13. Register and Scene Management
+
+**Part V: Curves and Navigation**
+14. Arcs
+15. Bezier Curves
+16. Anchors
+17. Resolution Control
+
+**Part VI: Modifying Geometry**
+18. Face Inspection
+19. Attach and Detach
+20. Face Operations
+21. Mesh Manipulation
+
+**Part VII: Boolean Operations**
+22. CSG Operations
+23. Manifold Validation
+24. Convex Hull
+
+**Part VIII: Text**
+25. Text Shapes
+26. Text on Path
+
+**Part IX: Workflow**
+27. State Stack
+28. Joint Modes
+29. STL Export
+30. WebXR (when ready)
+
+**Appendices**
+- A. Command Reference
+- B. Clojure Essentials
+- C. Editor Keybindings
+
+### 10.6 Implementation Order
+
+**Phase 10a: Foundation**
+1. [ ] Manual state atom (`open?`, `current-page`, `lang`, `history`)
+2. [ ] Load `structure.edn` + i18n files at startup
+3. [ ] Basic panel toggle (button + left panel replacement)
+4. [ ] Simple page rendering (title + content + code blocks)
+
+**Phase 10b: Navigation**
+1. [ ] Breadcrumb component
+2. [ ] Page links (internal navigation)
+3. [ ] History (back button)
+4. [ ] Language switcher
+
+**Phase 10c: Example Interaction**
+1. [ ] Run button executes code
+2. [ ] Copy button copies to editor
+3. [ ] Active state styling (border highlight)
+4. [ ] Auto-execution on scroll (Intersection Observer)
+
+**Phase 10d: Editor Integration**
+1. [ ] Build keyword → page-id map
+2. [ ] F1 keybinding in CodeMirror
+3. [ ] Word-at-cursor detection
+4. [ ] Open manual to correct page
+
+**Phase 10e: Content**
+1. [ ] Write `structure.edn` with all pages and examples
+2. [ ] Write `en.edn` (English content)
+3. [ ] Write `it.edn` (Italian content)
+4. [ ] Validate completeness
+
+### 10.7 Design Decisions
+
+1. **Markdown vs EDN**: Pure EDN for content. Simpler parsing, no external dependencies, content is data.
+
+2. **Code in structure, text in i18n**: Examples are language-agnostic, only descriptions need translation.
+
+3. **Auto-run first example**: Provides immediate visual context when landing on a page.
+
+4. **Single active example**: Avoids confusion about which code produced the current viewport state.
+
+5. **F1 for help**: Familiar pattern (VS Code, most IDEs). Low friction to access docs.
+
+6. **Manual replaces editor**: Clean separation — you're either coding or reading. No split attention.
+
+7. **Fallback to English**: Incomplete translations don't break the app.
+
+---
+
+
 ## Future / Someday
 
 - **Undo/redo** — state history

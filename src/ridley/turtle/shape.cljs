@@ -66,6 +66,18 @@
   [points]
   (make-shape points {:centered? false}))
 
+(defn ngon-shape
+  "Create a regular n-sided polygon centered at origin.
+   n: number of sides (e.g., 6 for hexagon)
+   radius: distance from center to vertices"
+  [n radius]
+  (let [step (/ (* 2 Math/PI) n)
+        points (vec (for [i (range n)]
+                      (let [angle (- (* i step) (/ Math/PI 2))]  ; Start at top
+                        [(* radius (Math/cos angle))
+                         (* radius (Math/sin angle))])))]
+    (make-shape points {:centered? true})))
+
 (defn star-shape
   "Create a star shape centered at origin.
    n-points: number of points (tips)

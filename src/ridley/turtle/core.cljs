@@ -116,6 +116,135 @@
   [v axis angle]
   (normalize (rotate-point-around-axis v axis angle)))
 
+;; --- Polygon triangulation (ear clipping for concave shapes) ---
+
+(defn- signed-area-2d
+  "Signed area of 2D polygon (positive = CCW, negative = CW)."
+  [pts]
+  (let [n (count pts)]
+    (/ (reduce +
+         (for [i (range n)]
+           (let [[x1 y1] (nth pts i)
+                 [x2 y2] (nth pts (mod (inc i) n))]
+             (- (* x1 y2) (* x2 y1)))))
+       2)))
+
+(defn- point-in-triangle-2d
+  "Check if point p is strictly inside triangle abc (2D)."
+  [[px py] [ax ay] [bx by] [cx cy]]
+  (let [v0x (- cx ax) v0y (- cy ay)
+        v1x (- bx ax) v1y (- by ay)
+        v2x (- px ax) v2y (- py ay)
+        dot00 (+ (* v0x v0x) (* v0y v0y))
+        dot01 (+ (* v0x v1x) (* v0y v1y))
+        dot02 (+ (* v0x v2x) (* v0y v2y))
+        dot11 (+ (* v1x v1x) (* v1y v1y))
+        dot12 (+ (* v1x v2x) (* v1y v2y))
+        denom (- (* dot00 dot11) (* dot01 dot01))]
+    (if (zero? denom)
+      false
+      (let [inv-denom (/ 1.0 denom)
+            u (* (- (* dot11 dot02) (* dot01 dot12)) inv-denom)
+            v (* (- (* dot00 dot12) (* dot01 dot02)) inv-denom)]
+        (and (> u 0) (> v 0) (< (+ u v) 1))))))
+
+(defn- is-ear-2d
+  "Check if vertex at index i forms an ear in 2D polygon."
+  [pts indices i ccw?]
+  (let [n (count indices)
+        prev-i (mod (dec i) n)
+        next-i (mod (inc i) n)
+        a (nth pts (nth indices prev-i))
+        b (nth pts (nth indices i))
+        c (nth pts (nth indices next-i))
+        [ax ay] a [bx by] b [cx cy] c
+        ;; Cross product z-component tells us if turn is left (CCW) or right (CW)
+        cross-z (- (* (- bx ax) (- cy ay)) (* (- by ay) (- cx ax)))
+        convex? (if ccw? (> cross-z 0) (< cross-z 0))]
+    (when convex?
+      ;; Check no other vertices inside this triangle
+      (not-any?
+        (fn [j]
+          (when (and (not= j prev-i) (not= j i) (not= j next-i))
+            (point-in-triangle-2d (nth pts (nth indices j)) a b c)))
+        (range n)))))
+
+(defn- ear-clip-2d
+  "Ear clipping triangulation for 2D polygon.
+   Returns vector of [i j k] triangles (indices into original pts)."
+  [pts]
+  (let [n (count pts)]
+    (cond
+      (< n 3) []
+      (= n 3) [[0 1 2]]
+      :else
+      (let [ccw? (> (signed-area-2d pts) 0)]
+        (loop [indices (vec (range n))
+               result []]
+          (let [m (count indices)]
+            (cond
+              (< m 3) result
+              (= m 3) (conj result (vec indices))
+              :else
+              (let [ear-idx (first (filter #(is-ear-2d pts indices % ccw?) (range m)))]
+                (if ear-idx
+                  (let [prev-i (mod (dec ear-idx) m)
+                        next-i (mod (inc ear-idx) m)
+                        triangle [(nth indices prev-i)
+                                  (nth indices ear-idx)
+                                  (nth indices next-i)]
+                        new-indices (into (subvec indices 0 ear-idx)
+                                          (subvec indices (inc ear-idx)))]
+                    (recur new-indices (conj result triangle)))
+                  ;; Fallback if no ear found (degenerate polygon)
+                  result)))))))))
+
+(defn- project-to-2d
+  "Project 3D points to 2D by dropping the axis most aligned with normal.
+   Returns [pts-2d winding-preserved?] where winding-preserved? indicates
+   whether the 2D winding matches the 3D winding (false if mirrored).
+
+   The key insight: when we drop an axis, we're projecting onto a plane.
+   If the normal points in the positive direction of the dropped axis,
+   the winding is preserved. If negative, it's reversed.
+   But also, dropping Y uses XZ which swaps axis order, so we need to
+   account for that too."
+  [pts normal]
+  (let [[nx ny nz] normal
+        ax (Math/abs nx) ay (Math/abs ny) az (Math/abs nz)]
+    (cond
+      ;; Drop Z, project to XY plane
+      ;; Winding preserved if normal points +Z
+      (and (>= az ax) (>= az ay))
+      [(mapv (fn [[x y _]] [x y]) pts) (>= nz 0)]
+
+      ;; Drop Y, project to XZ plane
+      ;; Using [x z] means we're looking from +Y direction
+      ;; Winding preserved if normal points -Y (looking from +Y at -Y surface)
+      (and (>= ay ax) (>= ay az))
+      [(mapv (fn [[x _ z]] [x z]) pts) (< ny 0)]
+
+      ;; Drop X, project to YZ plane
+      ;; Winding preserved if normal points +X
+      :else
+      [(mapv (fn [[_ y z]] [y z]) pts) (>= nx 0)])))
+
+(defn- triangulate-cap
+  "Triangulate a polygon cap using ear clipping.
+   - ring: vector of 3D vertex positions
+   - base-idx: starting index in the mesh vertex array
+   - normal: cap normal (for 2D projection)
+   - flip?: whether to flip winding order for final triangles
+   Returns vector of [i j k] face triangles with mesh indices."
+  [ring base-idx normal flip?]
+  (let [[pts-2d _] (project-to-2d ring normal)
+        local-tris (ear-clip-2d pts-2d)]
+    (mapv (fn [[i j k]]
+            (if flip?
+              [(+ base-idx i) (+ base-idx k) (+ base-idx j)]
+              [(+ base-idx i) (+ base-idx j) (+ base-idx k)]))
+          local-tris)))
+
 ;; --- Pose reset ---
 
 (defn reset-pose
@@ -208,13 +337,23 @@
                                    [[b0 t1 b1] [b0 t0 t1]]))
                                (range n-verts)))
                             (range (dec n-rings))))
-               ;; Bottom cap: facing -heading direction (CCW from below)
-               bottom-cap (vec (for [i (range 1 (dec n-verts))]
-                                 [0 i (inc i)]))
+               ;; Compute cap normals from ring geometry
+               first-ring (first rings)
+               last-ring (last rings)
                last-base (* (dec n-rings) n-verts)
-               ;; Top cap: facing +heading direction (CCW from above)
-               top-cap (vec (for [i (range 1 (dec n-verts))]
-                              [last-base (+ last-base i 1) (+ last-base i)]))]
+               ;; Bottom cap normal: computed from first ring (pointing backward)
+               bottom-normal (let [v0 (nth first-ring 0)
+                                   v1 (nth first-ring 1)
+                                   v2 (nth first-ring 2)]
+                               (normalize (cross (v- v1 v0) (v- v2 v0))))
+               ;; Top cap normal: computed from last ring (pointing forward)
+               top-normal (let [v0 (nth last-ring 0)
+                                v1 (nth last-ring 1)
+                                v2 (nth last-ring 2)]
+                            (normalize (cross (v- v1 v0) (v- v2 v0))))
+               ;; Use ear clipping for proper concave polygon triangulation
+               bottom-cap (triangulate-cap first-ring 0 bottom-normal true)
+               top-cap (triangulate-cap last-ring last-base top-normal false)]
            (cond-> {:type :mesh
                     :primitive :sweep
                     :vertices vertices
@@ -1667,22 +1806,31 @@
             all-meshes (if final-segment
                          (conj existing-meshes final-segment)
                          existing-meshes)
-            ;; Create separate cap meshes
+            ;; Create separate cap meshes using ear clipping for concave shapes
             n-verts (count actual-first-ring)
+            ;; Compute normals from ring geometry
+            bottom-normal (when (>= n-verts 3)
+                            (let [v0 (nth actual-first-ring 0)
+                                  v1 (nth actual-first-ring 1)
+                                  v2 (nth actual-first-ring 2)]
+                              (normalize (cross (v- v1 v0) (v- v2 v0)))))
+            top-normal (when (>= n-verts 3)
+                         (let [v0 (nth actual-last-ring 0)
+                               v1 (nth actual-last-ring 1)
+                               v2 (nth actual-last-ring 2)]
+                           (normalize (cross (v- v1 v0) (v- v2 v0)))))
             ;; Bottom cap mesh
             bottom-cap-mesh (when (>= n-verts 3)
                               {:type :mesh
                                :primitive :cap
                                :vertices (vec actual-first-ring)
-                               :faces (vec (for [i (range 1 (dec n-verts))]
-                                             [0 i (inc i)]))})
+                               :faces (triangulate-cap actual-first-ring 0 bottom-normal true)})
             ;; Top cap mesh
             top-cap-mesh (when (>= n-verts 3)
                            {:type :mesh
                             :primitive :cap
                             :vertices (vec actual-last-ring)
-                            :faces (vec (for [i (range 1 (dec n-verts))]
-                                          [0 (inc i) i]))})]
+                            :faces (triangulate-cap actual-last-ring 0 top-normal false)})]
         (-> state
             (assoc :meshes (cond-> all-meshes
                              bottom-cap-mesh (conj bottom-cap-mesh)
@@ -2446,12 +2594,14 @@
                              ;; CCW winding from outside
                              [[b0 t1 b1] [b0 t0 t1]]))
                          (range n-verts)))
-            ;; Bottom cap (ring1) - facing backward
-            bottom-cap (vec (for [i (range 1 (dec n-verts))]
-                              [0 i (inc i)]))
-            ;; Top cap (ring2) - facing forward
-            top-cap (vec (for [i (range 1 (dec n-verts))]
-                           [n-verts (+ n-verts i 1) (+ n-verts i)]))]
+            ;; Compute normals for ear clipping
+            bottom-normal (let [v0 (nth ring1 0) v1 (nth ring1 1) v2 (nth ring1 2)]
+                            (normalize (cross (v- v1 v0) (v- v2 v0))))
+            top-normal (let [v0 (nth ring2 0) v1 (nth ring2 1) v2 (nth ring2 2)]
+                         (normalize (cross (v- v1 v0) (v- v2 v0))))
+            ;; Use ear clipping for proper concave polygon triangulation
+            bottom-cap (triangulate-cap ring1 0 bottom-normal true)
+            top-cap (triangulate-cap ring2 n-verts top-normal false)]
         {:type :mesh
          :primitive :sweep-two
          :vertices vertices
@@ -2770,44 +2920,38 @@
 
           (if (< n-rings 2)
             state
-            ;; Build single unified mesh from all rings
-            (let [;; Calculate centroid for cap
-                  calc-centroid (fn [ring]
-                                  (let [n (count ring)
-                                        sum (reduce (fn [[sx sy sz] [x y z]]
-                                                      [(+ sx x) (+ sy y) (+ sz z)])
-                                                    [0 0 0] ring)]
-                                    [(/ (first sum) n) (/ (second sum) n) (/ (nth sum 2) n)]))
-
-                  first-ring (first all-rings)
+            ;; Build single unified mesh from all rings using ear clipping for caps
+            (let [first-ring (first all-rings)
                   last-ring (last all-rings)
-                  bottom-centroid (calc-centroid first-ring)
-                  top-centroid (calc-centroid last-ring)
 
-                  ;; Vertices: bottom-centroid + all rings + top-centroid
-                  ;; Layout: [bottom-centroid, ring0-v0, ring0-v1, ..., ring0-vN, ring1-v0, ..., top-centroid]
-                  vertices (vec (concat [bottom-centroid]
-                                        (apply concat all-rings)
-                                        [top-centroid]))
+                  ;; Vertices: all rings (no centroids needed with ear clipping)
+                  ;; Layout: [ring0-v0, ring0-v1, ..., ring0-vN, ring1-v0, ...]
+                  vertices (vec (apply concat all-rings))
 
-                  ;; Bottom cap faces (fan from centroid at index 0)
-                  ;; Ring vertices start at index 1
-                  bottom-cap-faces (vec (for [j (range n-verts)]
-                                          (let [v0 (+ 1 j)
-                                                v1 (+ 1 (mod (inc j) n-verts))]
-                                            ;; CCW from outside (facing backward along extrusion)
-                                            [0 v0 v1])))
+                  ;; Compute cap normals from ring vertices using cross-product
+                  ;; Each ring may have different orientation after bends
+                  bottom-normal (let [v0 (nth first-ring 0)
+                                      v1 (nth first-ring 1)
+                                      v2 (nth first-ring 2)]
+                                  (normalize (cross (v- v1 v0) (v- v2 v0))))
+                  top-normal (let [v0 (nth last-ring 0)
+                                   v1 (nth last-ring 1)
+                                   v2 (nth last-ring 2)]
+                               (normalize (cross (v- v1 v0) (v- v2 v0))))
+
+                  ;; Bottom cap: flip=false - faces opposite to cross-product normal (backward)
+                  bottom-cap-faces (triangulate-cap first-ring 0 bottom-normal false)
 
                   ;; Side faces connecting consecutive rings
-                  ;; Ring i vertices: 1 + i*n-verts to 1 + (i+1)*n-verts - 1
+                  ;; Ring i vertices: i*n-verts to (i+1)*n-verts - 1
                   side-faces (vec
                               (mapcat
                                (fn [ring-idx]
                                  (mapcat
                                   (fn [vert-idx]
                                     (let [next-vert (mod (inc vert-idx) n-verts)
-                                          base (+ 1 (* ring-idx n-verts))
-                                          next-base (+ 1 (* (inc ring-idx) n-verts))
+                                          base (* ring-idx n-verts)
+                                          next-base (* (inc ring-idx) n-verts)
                                           b0 (+ base vert-idx)
                                           b1 (+ base next-vert)
                                           t0 (+ next-base vert-idx)
@@ -2817,14 +2961,9 @@
                                   (range n-verts)))
                                (range (dec n-rings))))
 
-                  ;; Top cap faces (fan from centroid at last index)
-                  top-centroid-idx (dec (count vertices))
-                  last-ring-base (+ 1 (* (dec n-rings) n-verts))
-                  top-cap-faces (vec (for [j (range n-verts)]
-                                       (let [v0 (+ last-ring-base j)
-                                             v1 (+ last-ring-base (mod (inc j) n-verts))]
-                                         ;; CCW from outside (facing forward along extrusion)
-                                         [top-centroid-idx v1 v0])))
+                  ;; Top cap: flip=true - faces opposite to cross-product normal (forward)
+                  last-ring-base (* (dec n-rings) n-verts)
+                  top-cap-faces (triangulate-cap last-ring last-ring-base top-normal true)
 
                   all-faces (vec (concat bottom-cap-faces side-faces top-cap-faces))
 

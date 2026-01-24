@@ -731,7 +731,7 @@
    ;; Shape constructors (return shape data, resolution-aware)
    'circle       circle-with-resolution
    'rect         shape/rect-shape
-   'polygon      shape/polygon-shape
+   'polygon      shape/ngon-shape
    'star         shape/star-shape
    ;; Text shapes
    'text-shape   text/text-shape
@@ -828,6 +828,7 @@
    'mesh-intersection   manifold/intersection
    'mesh-hull           manifold/hull
    ;; Scene registry
+   'add-mesh!           registry/add-mesh!
    'register-mesh!      registry/register-mesh!
    'show-mesh!          registry/show-mesh!
    'hide-mesh!          registry/hide-mesh!
@@ -1369,24 +1370,57 @@
         ;; Return modified mesh
         (or (get-in @attach-state [:attached :mesh]) ~mesh)))
 
+   ;; Helper to check if something is a mesh (has :vertices and :faces)
+   (defn mesh? [x]
+     (and (map? x) (:vertices x) (:faces x)))
+
+   ;; Helper to check if x is a vector/seq of meshes
+   (defn mesh-vector? [x]
+     (and (or (vector? x) (seq? x))
+          (seq x)
+          (mesh? (first x))))
+
+   ;; Helper to check if x is a map of meshes (not a mesh itself)
+   (defn mesh-map? [x]
+     (and (map? x)
+          (not (:vertices x))
+          (seq x)
+          (mesh? (first (vals x)))))
+
    ;; register: define a symbol, add to registry, AND show it
-   ;; Works with both meshes and paths:
+   ;; Works with meshes, paths, and collections of meshes:
    ;; (register torus (extrude ...))  ; registers a mesh
    ;; (register line (path ...))      ; registers a path (shown as polyline)
+   ;; (register parts (for [...] ...)) ; registers vector of meshes
+   ;; (register robot {:hand m1 :body m2}) ; registers map of meshes
    ;; On subsequent evals, updates the value but preserves visibility state
    (defmacro register [name expr]
-     `(let [value# ~expr
-            name-kw# ~(keyword name)]
+     `(let [raw-value# ~expr
+            name-kw# ~(keyword name)
+            ;; Convert lazy seqs to vectors for collections of meshes
+            value# (if (and (seq? raw-value#) (not (map? raw-value#)) (seq raw-value#) (mesh? (first raw-value#)))
+                     (vec raw-value#)
+                     raw-value#)]
         (def ~name value#)
         (cond
-          ;; It's a mesh (has :vertices)
+          ;; Single mesh (has :vertices)
           (and (map? value#) (:vertices value#))
           (let [already-registered# (contains? (set (registered-names)) name-kw#)]
             (register-mesh! name-kw# value#)
             (when-not already-registered#
               (show-mesh! name-kw#)))
 
-          ;; It's a path (has :type :path)
+          ;; Vector of meshes - add each anonymously
+          (mesh-vector? value#)
+          (doseq [mesh# value#]
+            (add-mesh! mesh#))
+
+          ;; Map of meshes - add each anonymously
+          (mesh-map? value#)
+          (doseq [[_# mesh#] value#]
+            (add-mesh! mesh#))
+
+          ;; Path (has :type :path)
           (and (map? value#) (= :path (:type value#)))
           (do
             (register-path! name-kw# value#)
@@ -1395,25 +1429,53 @@
         (refresh-viewport! false)
         value#))
 
-   ;; Convenience functions that work with names OR mesh references
-   ;; (hide :torus) - hide by registered name (keyword)
-   ;; (hide torus)  - hide by mesh reference (def'd variable)
-   (defn show [name-or-mesh]
-     (if (or (keyword? name-or-mesh) (string? name-or-mesh) (symbol? name-or-mesh))
-       ;; It's a name - convert to keyword and look up
-       (show-mesh! (if (keyword? name-or-mesh) name-or-mesh (keyword name-or-mesh)))
-       ;; It's a mesh reference - look up by identity
-       (show-mesh-ref! name-or-mesh))
-     (refresh-viewport! false))  ; Don't reset camera
+   ;; Convenience functions that work with names, mesh references, or collections
+   ;; (show :torus)       - by registered name (keyword)
+   ;; (show torus)        - by mesh reference
+   ;; (show parts)        - show all meshes in vector/map
+   ;; (show parts 2)      - show specific element by index
+   ;; (show robot :hand)  - show specific element by key
+   (defn show
+     ([name-or-coll]
+      (cond
+        ;; Name (keyword/string/symbol)
+        (or (keyword? name-or-coll) (string? name-or-coll) (symbol? name-or-coll))
+        (show-mesh! (if (keyword? name-or-coll) name-or-coll (keyword name-or-coll)))
+        ;; Vector of meshes - show all
+        (mesh-vector? name-or-coll)
+        (doseq [m name-or-coll] (show-mesh-ref! m))
+        ;; Map of meshes - show all
+        (mesh-map? name-or-coll)
+        (doseq [[_ m] name-or-coll] (show-mesh-ref! m))
+        ;; Single mesh reference
+        :else (show-mesh-ref! name-or-coll))
+      (refresh-viewport! false))
+     ([coll key]
+      (when-let [m (get coll key)]
+        (show-mesh-ref! m))
+      (refresh-viewport! false)))
 
-   (defn hide [name-or-mesh]
-     (if (or (keyword? name-or-mesh) (string? name-or-mesh) (symbol? name-or-mesh))
-       ;; It's a name - convert to keyword and look up
-       (hide-mesh! (if (keyword? name-or-mesh) name-or-mesh (keyword name-or-mesh)))
-       ;; It's a mesh reference - look up by identity
-       (hide-mesh-ref! name-or-mesh))
-     (refresh-viewport! false)  ; Don't reset camera
-     nil)
+   (defn hide
+     ([name-or-coll]
+      (cond
+        ;; Name (keyword/string/symbol)
+        (or (keyword? name-or-coll) (string? name-or-coll) (symbol? name-or-coll))
+        (hide-mesh! (if (keyword? name-or-coll) name-or-coll (keyword name-or-coll)))
+        ;; Vector of meshes - hide all
+        (mesh-vector? name-or-coll)
+        (doseq [m name-or-coll] (hide-mesh-ref! m))
+        ;; Map of meshes - hide all
+        (mesh-map? name-or-coll)
+        (doseq [[_ m] name-or-coll] (hide-mesh-ref! m))
+        ;; Single mesh reference
+        :else (hide-mesh-ref! name-or-coll))
+      (refresh-viewport! false)
+      nil)
+     ([coll key]
+      (when-let [m (get coll key)]
+        (hide-mesh-ref! m))
+      (refresh-viewport! false)
+      nil))
 
    (defn show-all []
      (show-all!)
@@ -1440,25 +1502,51 @@
    (defn scene []
      (all-meshes-info))
 
-   ;; Get info/details about a mesh
-   ;; (info :torus) - by registered name (keyword)
-   ;; (info torus)  - by mesh reference (def'd variable)
-   (defn info [name-or-mesh]
-     (if (or (keyword? name-or-mesh) (string? name-or-mesh) (symbol? name-or-mesh))
-       ;; It's a name - look up by keyword
-       (let [kw (if (keyword? name-or-mesh) name-or-mesh (keyword name-or-mesh))
-             mesh (get-mesh kw)
-             vis (contains? (set (visible-names)) kw)]
-         (when mesh
-           {:name kw
-            :visible vis
-            :vertices (count (:vertices mesh))
-            :faces (count (:faces mesh))}))
-       ;; It's a mesh reference - show info directly
-       (when (and name-or-mesh (:vertices name-or-mesh))
-         {:name nil
-          :vertices (count (:vertices name-or-mesh))
-          :faces (count (:faces name-or-mesh))})))
+   ;; Get info/details about a mesh or collection
+   ;; (info :torus)       - by registered name (keyword)
+   ;; (info torus)        - by mesh reference
+   ;; (info parts)        - info for all meshes in vector/map
+   ;; (info parts 2)      - info for specific element by index
+   ;; (info robot :hand)  - info for specific element by key
+   (defn info
+     ([name-or-coll]
+      (cond
+        ;; Name (keyword/string/symbol)
+        (or (keyword? name-or-coll) (string? name-or-coll) (symbol? name-or-coll))
+        (let [kw (if (keyword? name-or-coll) name-or-coll (keyword name-or-coll))
+              mesh (get-mesh kw)
+              vis (contains? (set (visible-names)) kw)]
+          (when mesh
+            {:name kw
+             :visible vis
+             :vertices (count (:vertices mesh))
+             :faces (count (:faces mesh))}))
+        ;; Vector of meshes - return vector of info
+        (mesh-vector? name-or-coll)
+        (vec (map-indexed
+              (fn [i m]
+                {:index i
+                 :vertices (count (:vertices m))
+                 :faces (count (:faces m))})
+              name-or-coll))
+        ;; Map of meshes - return map of info
+        (mesh-map? name-or-coll)
+        (into {}
+              (map (fn [[k m]]
+                     [k {:vertices (count (:vertices m))
+                         :faces (count (:faces m))}])
+                   name-or-coll))
+        ;; Single mesh reference
+        (mesh? name-or-coll)
+        {:name nil
+         :vertices (count (:vertices name-or-coll))
+         :faces (count (:faces name-or-coll))}
+        :else nil))
+     ([coll key]
+      (when-let [m (get coll key)]
+        {:key key
+         :vertices (count (:vertices m))
+         :faces (count (:faces m))})))
 
    ;; Get the raw mesh data for an object
    ;; (mesh :torus) - by registered name
@@ -1468,10 +1556,6 @@
        (get-mesh (if (keyword? name-or-mesh) name-or-mesh (keyword name-or-mesh)))
        name-or-mesh))
 
-   ;; Helper to check if something is a mesh (has :vertices and :faces)
-   (defn- mesh? [x]
-     (and (map? x) (:vertices x) (:faces x)))
-
    ;; Helper to resolve name-or-mesh to actual mesh
    (defn- resolve-mesh [name-or-mesh]
      (if (mesh? name-or-mesh)
@@ -1479,32 +1563,54 @@
        (get-mesh (if (keyword? name-or-mesh) name-or-mesh (keyword name-or-mesh)))))
 
    ;; Export mesh(es) to STL file
-   ;; (export :torus) - by registered name
-   ;; (export torus)  - by mesh reference
+   ;; (export :torus)       - by registered name
+   ;; (export torus)        - by mesh reference
+   ;; (export parts)        - export all meshes in vector/map
+   ;; (export parts 2)      - export specific element by index
+   ;; (export robot :hand)  - export specific element by key
    ;; (export :torus :cube) - multiple by name
    ;; (export torus cube)   - multiple by reference
    ;; (export (objects))    - export all visible objects
    (defn export
-     ([name-or-mesh]
+     ([name-or-coll]
       (cond
         ;; Single keyword
-        (keyword? name-or-mesh)
-        (when-let [m (get-mesh name-or-mesh)]
-          (save-stl [m] (str (name name-or-mesh) \".stl\")))
+        (keyword? name-or-coll)
+        (when-let [m (get-mesh name-or-coll)]
+          (save-stl [m] (str (name name-or-coll) \".stl\")))
         ;; List of keywords
-        (and (sequential? name-or-mesh) (keyword? (first name-or-mesh)))
-        (let [meshes (keep get-mesh name-or-mesh)]
+        (and (sequential? name-or-coll) (seq name-or-coll) (keyword? (first name-or-coll)))
+        (let [meshes (keep get-mesh name-or-coll)]
           (when (seq meshes)
             (save-stl (vec meshes)
-                      (str (clojure.string/join \"-\" (map name name-or-mesh)) \".stl\"))))
+                      (str (clojure.string/join \"-\" (map name name-or-coll)) \".stl\"))))
+        ;; Vector of meshes
+        (mesh-vector? name-or-coll)
+        (save-stl (vec name-or-coll) \"export.stl\")
+        ;; Map of meshes
+        (mesh-map? name-or-coll)
+        (save-stl (vec (vals name-or-coll)) \"export.stl\")
         ;; Single mesh
-        (mesh? name-or-mesh)
-        (save-stl [name-or-mesh] \"export.stl\")
-        ;; List of meshes
-        (and (sequential? name-or-mesh) (mesh? (first name-or-mesh)))
-        (save-stl (vec name-or-mesh) \"export.stl\")))
-     ([first-arg & more-args]
-      (let [all-args (cons first-arg more-args)
+        (mesh? name-or-coll)
+        (save-stl [name-or-coll] \"export.stl\")))
+     ([first-arg second-arg]
+      ;; Check if it's collection + key access
+      (cond
+        ;; Vector + index
+        (and (mesh-vector? first-arg) (number? second-arg))
+        (when-let [m (get first-arg second-arg)]
+          (save-stl [m] (str \"export-\" second-arg \".stl\")))
+        ;; Map + key
+        (and (mesh-map? first-arg) (keyword? second-arg))
+        (when-let [m (get first-arg second-arg)]
+          (save-stl [m] (str \"export-\" (name second-arg) \".stl\")))
+        ;; Otherwise treat as multiple meshes/names
+        :else
+        (let [meshes (keep resolve-mesh [first-arg second-arg])]
+          (when (seq meshes)
+            (save-stl (vec meshes) \"export.stl\")))))
+     ([first-arg second-arg & more-args]
+      (let [all-args (cons first-arg (cons second-arg more-args))
             meshes (keep resolve-mesh all-args)]
         (when (seq meshes)
           (save-stl (vec meshes) \"export.stl\")))))")
