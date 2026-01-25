@@ -119,6 +119,30 @@
 ;; Glyph path to points conversion
 ;; ============================================================
 
+(defn- remove-consecutive-duplicates
+  "Remove consecutive duplicate points from a contour.
+   Also removes near-duplicate points (within epsilon distance)."
+  [contour]
+  (let [epsilon 1e-6
+        near-equal? (fn [[x1 y1] [x2 y2]]
+                      (and (< (Math/abs (- x1 x2)) epsilon)
+                           (< (Math/abs (- y1 y2)) epsilon)))]
+    (if (< (count contour) 2)
+      contour
+      (loop [result [(first contour)]
+             remaining (rest contour)]
+        (if (empty? remaining)
+          ;; Also check if last point equals first point
+          (if (and (> (count result) 1)
+                   (near-equal? (last result) (first result)))
+            (vec (butlast result))
+            (vec result))
+          (let [prev (last result)
+                curr (first remaining)]
+            (if (near-equal? prev curr)
+              (recur result (rest remaining))
+              (recur (conj result curr) (rest remaining)))))))))
+
 (defn- path-commands->contours
   "Convert opentype.js path commands to contours (list of point lists).
    Each contour is a closed loop of points."
@@ -187,9 +211,10 @@
    - Flip Y axis (font Y is up, we want Y down for consistency)"
   [contour font-units-per-em target-size]
   (let [scale (/ target-size font-units-per-em)]
+    ;; Scale and flip Y
     (mapv (fn [[x y]]
             [(* x scale)
-             (* (- y) scale)])  ; Flip Y
+             (* (- y) scale)])
           contour)))
 
 ;; ============================================================
@@ -204,7 +229,10 @@
         commands (.-commands path)
         units-per-em (.-unitsPerEm font)]
     (->> (path-commands->contours commands curve-segments)
-         (mapv #(normalize-contour % units-per-em size)))))
+         (map #(normalize-contour % units-per-em size))
+         (map remove-consecutive-duplicates)
+         (filter #(> (count %) 2))
+         vec)))
 
 (defn char-shape
   "Create a shape from a single character.
@@ -249,19 +277,23 @@
                   commands (.-commands path)
                   contours (path-commands->contours commands curve-segments)
                   advance-width (* (.-advanceWidth glyph) scale)
-                  ;; Normalize and flip Y for each contour
+                  ;; Transform coordinates for proper 3D text orientation:
+                  ;; - Swap x and y so spacing goes along up (+Z), height along right (-Y)
                   normalized-contours
-                  (mapv (fn [contour]
-                          (mapv (fn [[x y]]
-                                  [x (- y)])
-                                contour))
-                        contours)
+                  (->> contours
+                       (map (fn [contour]
+                              (mapv (fn [[x y]] [(- y) (- x)]) contour)))
+                       (map remove-consecutive-duplicates)
+                       (filter #(> (count %) 2))  ; filter out degenerate contours
+                       vec)
                   ;; Get largest contour (outer boundary) for this glyph
                   largest (when (seq normalized-contours)
                             (apply max-key count normalized-contours))
                   ;; Create shape from largest contour
+                  ;; preserve-position? keeps the offset for proper text spacing
                   glyph-shape (when (and largest (> (count largest) 2))
-                                (shape/make-shape largest {:centered? false}))]
+                                (shape/make-shape largest {:centered? false
+                                                           :preserve-position? true}))]
               (recur (inc idx)
                      (+ x-offset advance-width)
                      (if glyph-shape
@@ -332,11 +364,14 @@
                   commands (.-commands path)
                   contours (path-commands->contours commands curve-segments)
                   advance-width (* (.-advanceWidth glyph) scale)
-                  ;; Flip Y for each contour
+                  ;; Flip Y for correct winding, keep x-offset in X for spacing
                   normalized-contours
-                  (mapv (fn [contour]
-                          (mapv (fn [[x y]] [x (- y)]) contour))
-                        contours)]
+                  (->> contours
+                       (map (fn [contour]
+                              (mapv (fn [[x y]] [x (- y)]) contour)))
+                       (map remove-consecutive-duplicates)
+                       (filter #(> (count %) 2))
+                       vec)]
               (recur (inc idx)
                      (+ x-offset advance-width)
                      (conj result {:char (.charAt text idx)

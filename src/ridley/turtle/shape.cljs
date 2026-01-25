@@ -22,12 +22,18 @@
 
    Options:
    - :centered? true  - shape is centered at turtle position (default for circle/rect)
-   - :centered? false - shape starts at turtle position (default for custom shapes)"
+   - :centered? false - shape starts at turtle position (default for custom shapes)
+   - :preserve-position? true - use raw 2D coords without offset (for text with built-in spacing)
+   - :align-to-heading? true - 2D x maps to heading direction (for text along path)
+   - :flip-plane-x? true - negate plane-x axis (equivalent to tr 180 before stamp)"
   ([points] (make-shape points {:centered? false}))
   ([points opts]
-   {:type :shape
-    :points (vec points)
-    :centered? (:centered? opts false)}))
+   (cond-> {:type :shape
+            :points (vec points)
+            :centered? (:centered? opts false)}
+     (:preserve-position? opts) (assoc :preserve-position? true)
+     (:align-to-heading? opts) (assoc :align-to-heading? true)
+     (:flip-plane-x? opts) (assoc :flip-plane-x? true))))
 
 (defn shape?
   "Check if x is a shape."
@@ -197,13 +203,17 @@
    - The shape is placed on the plane perpendicular to turtle heading
 
    For centered shapes, the center is at turtle position.
-   For non-centered shapes, the first point is at turtle position."
+   For non-centered shapes, the first point is at turtle position.
+   For preserve-position? shapes, raw 2D coords are used (for text with built-in spacing).
+   For align-to-heading? shapes, 2D x maps to heading (for text progression along path)."
   [shape turtle-pos turtle-heading turtle-up]
   (let [points (:points shape)
         centered? (:centered? shape)
-        ;; The plane is perpendicular to heading
-        ;; x-axis of plane = right vector (heading × up)
-        ;; y-axis of plane = up vector
+        preserve-position? (:preserve-position? shape)
+        align-to-heading? (:align-to-heading? shape)
+        flip-plane-x? (:flip-plane-x? shape)
+        ;; The plane is perpendicular to heading (default)
+        ;; Or aligned to heading for text shapes
         [hx hy hz] turtle-heading
         [ux uy uz] turtle-up
         ;; Right vector = heading × up
@@ -215,14 +225,23 @@
         [rx ry rz] (if (pos? r-mag)
                      [(/ rx r-mag) (/ ry r-mag) (/ rz r-mag)]
                      [1 0 0])
-        ;; Plane axes: X = right, Y = up
-        plane-x [rx ry rz]
-        plane-y turtle-up
+        ;; Flip plane-x if requested (equivalent to tr 180 before stamp)
+        [rx ry rz] (if flip-plane-x?
+                     [(- rx) (- ry) (- rz)]
+                     [rx ry rz])
+        ;; Choose plane axes based on align-to-heading?
+        ;; Default: x=right, y=up (shape perpendicular to path)
+        ;; Text mode: x=heading, y=up (text progresses along heading)
+        [plane-x plane-y] (if align-to-heading?
+                           [turtle-heading turtle-up]
+                           [[rx ry rz] turtle-up])
         ;; Calculate offset for non-centered shapes
-        offset (if centered?
-                 [0 0]
-                 (let [[fx fy] (first points)]
-                   [(- fx) (- fy)]))]
+        ;; preserve-position? = use raw 2D coords (for text with built-in offsets)
+        offset (cond
+                 preserve-position? [0 0]
+                 centered? [0 0]
+                 :else (let [[fx fy] (first points)]
+                         [(- fx) (- fy)]))]
     ;; Transform each 2D point to 3D
     (mapv (fn [[px py]]
             (let [;; Apply offset for non-centered shapes
