@@ -1671,6 +1671,27 @@
         c2 (v+ p3 (v* to-start (* dist 0.33)))]
     [c1 c2]))
 
+(defn- auto-control-points-with-target-heading
+  "Generate control points for a smooth cubic bezier respecting both headings.
+   The curve starts tangent to start-heading and ends tangent to target-heading.
+
+   tension controls how far control points extend from endpoints:
+   - 0 = very tight curve (almost angular)
+   - 0.33 = default, balanced curve
+   - 0.5-0.7 = wider, smoother curves
+   - 1 = very wide curve"
+  ([p0 start-heading p3 target-heading]
+   (auto-control-points-with-target-heading p0 start-heading p3 target-heading 0.33))
+  ([p0 start-heading p3 target-heading tension]
+   (let [dist (magnitude (v- p3 p0))
+         factor (or tension 0.33)
+         ;; First control point: extend from start along start heading
+         c1 (v+ p0 (v* start-heading (* dist factor)))
+         ;; Second control point: extend from end opposite to target heading
+         ;; (the curve arrives in the direction of target-heading)
+         c2 (v+ p3 (v* (v* target-heading -1) (* dist factor)))]
+     [c1 c2])))
+
 (defn- bezier-walk
   "Walk along a bezier curve, moving directly to each sample point.
    Updates heading to follow the curve tangent."
@@ -1755,14 +1776,35 @@
 
 (defn bezier-to-anchor
   "Draw a bezier curve to a named anchor position.
+   When auto-generating control points (no explicit [c1] [c2] provided),
+   the curve respects both the current heading AND the anchor's saved heading,
+   creating a smooth connection that honors both directions.
 
    Usage:
-   (bezier-to-anchor state :name)
-   (bezier-to-anchor state :name [c1] [c2])
-   (bezier-to-anchor state :name :steps 24)"
+   (bezier-to-anchor state :name)              ; auto control points (respects both headings)
+   (bezier-to-anchor state :name [c1] [c2])    ; explicit control points
+   (bezier-to-anchor state :name :steps 24)    ; auto with more steps
+   (bezier-to-anchor state :name :tension 0.5) ; control curve width (0=tight, 1=wide)"
   [state anchor-name & args]
   (if-let [anchor (get-in state [:anchors anchor-name])]
-    (apply bezier-to state (:position anchor) args)
+    (let [{control-points true options false} (group-by vector? args)
+          {:keys [steps tension]} (apply hash-map (flatten options))
+          n-controls (count control-points)]
+      (if (zero? n-controls)
+        ;; Auto-generate control points using BOTH headings
+        (let [p0 (:position state)
+              p3 (:position anchor)
+              approx-length (magnitude (v- p3 p0))
+              actual-steps (or steps (calc-bezier-steps state approx-length))
+              [c1 c2] (auto-control-points-with-target-heading
+                        p0 (:heading state) p3 (:heading anchor) (or tension 0.33))]
+          (if (< approx-length 0.001)
+            state
+            (bezier-walk state actual-steps
+                         #(cubic-bezier-point p0 c1 c2 p3 %)
+                         #(cubic-bezier-tangent p0 c1 c2 p3 %))))
+        ;; Explicit control points - delegate to bezier-to
+        (apply bezier-to state (:position anchor) args)))
     state))
 
 ;; --- Joint mode (for future corner styles) ---
@@ -2147,10 +2189,14 @@
           n-segments (count segments)]
       (if (< n-segments 1)
         state
-        ;; First pass: collect ALL rings in order
-        (let [rings-result
+        ;; Apply any rotations/set-heading that appear BEFORE the first :f command
+        ;; This is critical for bezier paths where the first direction differs from initial heading
+        (let [initial-rotations (take-while #(not= :f (:cmd %)) commands)
+              state-with-initial-heading (reduce apply-rotation-to-state state initial-rotations)
+              ;; First pass: collect ALL rings in order
+              rings-result
               (loop [i 0
-                     s state
+                     s state-with-initial-heading
                      rings []]
                 (if (>= i n-segments)
                   {:rings rings :state s}
@@ -2916,10 +2962,14 @@
           n-segments (count segments)]
       (if (< n-segments 1)
         state
-        ;; First pass: collect ALL rings in order
-        (let [rings-result
+        ;; Apply any rotations/set-heading that appear BEFORE the first :f command
+        ;; This is critical for bezier paths where the first direction differs from initial heading
+        (let [initial-rotations (take-while #(not= :f (:cmd %)) commands)
+              state-with-initial-heading (reduce apply-rotation-to-state state initial-rotations)
+              ;; First pass: collect ALL rings in order
+              rings-result
               (loop [i 0
-                     s state
+                     s state-with-initial-heading
                      rings []]
                 (if (>= i n-segments)
                   {:rings rings :state s}

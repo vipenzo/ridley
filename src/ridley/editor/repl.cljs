@@ -19,6 +19,7 @@
             [ridley.geometry.faces :as faces]
             [ridley.manifold.core :as manifold]
             [ridley.scene.registry :as registry]
+            [ridley.scene.panel :as panel]
             [ridley.viewport.core :as viewport]
             [ridley.export.stl :as stl]))
 
@@ -145,6 +146,11 @@
 
 (defn ^:export implicit-goto [name]
   (swap! turtle-atom turtle/goto name))
+
+(defn ^:export get-anchor
+  "Get anchor data by name from turtle state. Returns {:position [x y z] :heading [x y z] :up [x y z]} or nil."
+  [name]
+  (get-in @turtle-atom [:anchors name]))
 
 (defn ^:export implicit-look-at [name]
   (swap! turtle-atom turtle/look-at name))
@@ -294,6 +300,16 @@
 (defn- get-turtle []
   @turtle-atom)
 
+(defn ^:export get-turtle-resolution
+  "Get current turtle resolution settings for use in path macro."
+  []
+  (:resolution @turtle-atom))
+
+(defn ^:export get-turtle-joint-mode
+  "Get current turtle joint-mode for use in path macro."
+  []
+  (:joint-mode @turtle-atom))
+
 (defn get-turtle-pose
   "Get current turtle pose for indicator display.
    Returns {:position [x y z] :heading [x y z] :up [x y z]} or nil."
@@ -302,6 +318,57 @@
     {:position (:position t)
      :heading (:heading t)
      :up (:up t)}))
+
+;; ============================================================
+;; Panel creation (3D text billboards)
+;; ============================================================
+
+(defn ^:export implicit-panel
+  "Create a panel at the current turtle position and orientation.
+   Options: :font-size :bg :fg :padding :line-height"
+  [width height & {:keys [font-size bg fg padding line-height]
+                   :or {font-size 3
+                        bg 0x333333cc
+                        fg 0xffffff
+                        padding 2
+                        line-height 1.4}}]
+  (let [t @turtle-atom
+        pos (:position t)
+        heading (:heading t)
+        up (:up t)]
+    (panel/make-panel width height pos heading up
+                      :font-size font-size
+                      :bg bg
+                      :fg fg
+                      :padding padding
+                      :line-height line-height)))
+
+(defn ^:export implicit-out
+  "Set the content of a registered panel. name can be a keyword or the panel itself."
+  [name-or-panel text]
+  (let [name (if (keyword? name-or-panel) name-or-panel (:name name-or-panel))]
+    (when name
+      (let [updated (registry/update-panel! name #(panel/set-content % text))]
+        (when updated
+          (viewport/update-panel-text name updated))))))
+
+(defn ^:export implicit-append
+  "Append text to a registered panel's content."
+  [name-or-panel text]
+  (let [name (if (keyword? name-or-panel) name-or-panel (:name name-or-panel))]
+    (when name
+      (let [updated (registry/update-panel! name #(panel/append-content % text))]
+        (when updated
+          (viewport/update-panel-text name updated))))))
+
+(defn ^:export implicit-clear
+  "Clear the content of a registered panel."
+  [name-or-panel]
+  (let [name (if (keyword? name-or-panel) name-or-panel (:name name-or-panel))]
+    (when name
+      (let [updated (registry/update-panel! name panel/clear-content)]
+        (when updated
+          (viewport/update-panel-text name updated))))))
 
 (defn- last-mesh []
   (last (:meshes @turtle-atom)))
@@ -749,12 +816,17 @@
    ;; Anchors and navigation
    'mark         implicit-mark
    'goto         implicit-goto
+   'get-anchor   get-anchor
    'look-at      implicit-look-at
    'path-to      implicit-path-to
    ;; Attachment commands (functional versions defined in macro-defs)
    ;; NOTE: Legacy implicit-attach and implicit-attach-face removed
    ;; Use the functional macro: (attach-face mesh :top (f 20))
    'attached?    (fn [] (turtle/attached? @turtle-atom))
+   ;; Turtle state inspection (for debugging)
+   'turtle-position (fn [] (:position @turtle-atom))
+   'turtle-heading  (fn [] (:heading @turtle-atom))
+   'turtle-up       (fn [] (:up @turtle-atom))
    ;; NOTE: 'detach' removed - implicit at end of attach/attach-face macro
    'inset        implicit-inset
    ;; 3D primitives - return mesh data at origin (resolution-aware)
@@ -832,6 +904,8 @@
    'fit-camera      viewport/fit-camera
    ;; Access current turtle state
    'get-turtle   get-turtle
+   'get-turtle-resolution get-turtle-resolution
+   'get-turtle-joint-mode get-turtle-joint-mode
    'last-mesh    last-mesh
    ;; Path recording functions
    'make-recorder       turtle/make-recorder
@@ -910,7 +984,20 @@
    'print               capture-print
    'println             capture-println
    'pr                  (fn [& args] (capture-print (apply pr-str args)))
-   'prn                 (fn [& args] (capture-println (apply pr-str args)))})
+   'prn                 (fn [& args] (capture-println (apply pr-str args)))
+   ;; Debug tap function - prints label and value, returns value
+   'T                   (fn [label x] (capture-println (str label ": " x)) x)
+   ;; Panel (3D text billboard) functions
+   'panel               implicit-panel
+   'panel?              panel/panel?
+   'out                 implicit-out
+   'append              implicit-append
+   'clear               implicit-clear
+   ;; Panel registry
+   'register-panel!     registry/register-panel!
+   'get-panel           registry/get-panel
+   'show-panel!         registry/show-panel!
+   'hide-panel!         registry/hide-panel!})
 
 ;; Macro definitions for SCI context
 (def ^:private macro-defs
@@ -945,6 +1032,10 @@
      (swap! path-recorder rec-tr angle))
    (defn- rec-set-heading* [heading up]
      (swap! path-recorder rec-set-heading heading up))
+
+   ;; Recording version of resolution - sets resolution in path-recorder
+   (defn- rec-resolution* [mode value]
+     (swap! path-recorder assoc :resolution {:mode mode :value value}))
 
    ;; Recording version of arc-h that decomposes into rec-f* and rec-th*
    (defn- rec-arc-h* [radius angle & {:keys [steps]}]
@@ -1056,6 +1147,7 @@
            steps (get (apply hash-map (flatten options)) :steps)
            state @path-recorder
            p0 (:position state)
+           start-heading (:heading state)
            p3 (vec target)
            dx0 (- (nth p3 0) (nth p0 0))
            dy0 (- (nth p3 1) (nth p0 1))
@@ -1071,11 +1163,14 @@
                                   :s (max 1 (int (ceil (/ approx-length res-value))))))
                n-controls (count control-points)
                ;; Compute control points
+               ;; User-provided control points are ABSOLUTE coordinates (same as turtle/bezier-to)
                [c1 c2] (cond
-                         (= n-controls 2) control-points
-                         (= n-controls 1) [(first control-points) (first control-points)]
+                         (= n-controls 2) [(vec (first control-points))
+                                           (vec (second control-points))]
+                         (= n-controls 1) (let [cp (vec (first control-points))]
+                                            [cp cp])
                          :else ;; Auto control points
-                         (let [heading (:heading state)]
+                         (let [heading start-heading]
                            [(mapv + p0 (mapv #(* % (* approx-length 0.33)) heading))
                             (let [to-start (rec-normalize [(- (nth p0 0) (nth p3 0))
                                                            (- (nth p0 1) (nth p3 1))
@@ -1131,6 +1226,103 @@
                    ;; Skip zero-length segment, keep current up
                    (recur (rest remaining-segments) current-up)))))))))
 
+   ;; Recording version of bezier-to-anchor
+   ;; Like rec-bezier-to* but gets target from anchor and uses both headings
+   ;; IMPORTANT: Anchor positions are in world coordinates, but the path-recorder
+   ;; works in local coordinates starting at [0,0,0]. We must compute the
+   ;; relative position from the turtle's current world position to the anchor.
+   (defn- rec-bezier-to-anchor* [anchor-name & args]
+     (when-let [anchor (get-anchor anchor-name)]
+       (let [;; Get turtle's world position to compute relative target
+             turtle-pos (turtle-position)
+             anchor-pos (:position anchor)
+             ;; Compute relative position from turtle to anchor
+             relative-target [(- (nth anchor-pos 0) (nth turtle-pos 0))
+                              (- (nth anchor-pos 1) (nth turtle-pos 1))
+                              (- (nth anchor-pos 2) (nth turtle-pos 2))]
+             grouped (group-by vector? args)
+             control-points (get grouped true)
+             options (get grouped false)
+             opts-map (apply hash-map (flatten options))
+             steps (get opts-map :steps)
+             tension (get opts-map :tension 0.33)  ; default tension
+             n-controls (count control-points)]
+         (if (> n-controls 0)
+           ;; Explicit control points provided - delegate to rec-bezier-to*
+           ;; Use relative target (control points should also be relative)
+           (apply rec-bezier-to* relative-target args)
+           ;; Auto control points - use both headings for smooth connection
+           (let [state @path-recorder
+                 p0 (:position state)
+                 ;; p3 is anchor position relative to turtle start (NOT relative to p0!)
+                 ;; When extruded, path origin aligns with turtle, so anchor should be at anchor-turtle offset
+                 p3 relative-target
+                 ;; Use path-recorder's heading for start direction (tangent to path at current point)
+                 start-heading (:heading state)
+                 target-heading (:heading anchor)
+                 dx0 (- (nth p3 0) (nth p0 0))
+                 dy0 (- (nth p3 1) (nth p0 1))
+                 dz0 (- (nth p3 2) (nth p0 2))
+                 approx-length (sqrt (+ (* dx0 dx0) (* dy0 dy0) (* dz0 dz0)))]
+             (when (> approx-length 0.001)
+               (let [res-mode (get-in state [:resolution :mode] :n)
+                     res-value (get-in state [:resolution :value] 16)
+                     actual-steps (or steps
+                                      (case res-mode
+                                        :n res-value
+                                        :a res-value
+                                        :s (max 1 (int (ceil (/ approx-length res-value))))))
+                     ;; Auto control points using BOTH headings, with tension
+                     c1 (mapv + p0 (mapv #(* % (* approx-length tension)) start-heading))
+                     ;; c2 extends from target in opposite direction of target heading
+                     c2 (mapv + p3 (mapv #(* % (* approx-length (- tension))) target-heading))
+                     ;; Bezier point function
+                     cubic-point (fn [t]
+                                   (let [t2 (- 1 t)
+                                         a (* t2 t2 t2) b (* 3 t2 t2 t) c (* 3 t2 t t) d (* t t t)]
+                                     [(+ (* a (nth p0 0)) (* b (nth c1 0)) (* c (nth c2 0)) (* d (nth p3 0)))
+                                      (+ (* a (nth p0 1)) (* b (nth c1 1)) (* c (nth c2 1)) (* d (nth p3 1)))
+                                      (+ (* a (nth p0 2)) (* b (nth c1 2)) (* c (nth c2 2)) (* d (nth p3 2)))]))
+                     ;; Precompute all bezier points
+                     points (mapv #(cubic-point (/ % actual-steps)) (range (inc actual-steps)))
+                     ;; Precompute all segment directions and distances
+                     segments (vec (for [i (range actual-steps)]
+                                     (let [curr-pos (nth points i)
+                                           next-pos (nth points (inc i))
+                                           dx (- (nth next-pos 0) (nth curr-pos 0))
+                                           dy (- (nth next-pos 1) (nth curr-pos 1))
+                                           dz (- (nth next-pos 2) (nth curr-pos 2))
+                                           dist (sqrt (+ (* dx dx) (* dy dy) (* dz dz)))]
+                                       {:dir (if (> dist 0.001) (rec-normalize [dx dy dz]) nil)
+                                        :dist dist})))]
+                 ;; Walk through segments using rotation-minimizing frame
+                 ;; Use path-recorder's up vector (maintains path's local frame)
+                 ;; IMPORTANT: First segment uses start-heading for smooth connection
+                 (loop [remaining-segments segments
+                        current-up (:up state)
+                        first-segment? true]
+                   (when (seq remaining-segments)
+                     (let [{:keys [dir dist]} (first remaining-segments)]
+                       (if (and dir (> dist 0.001))
+                         ;; Use start-heading for first segment to avoid discontinuity
+                         (let [effective-dir (if first-segment? start-heading dir)
+                               dot-product (rec-dot current-up effective-dir)
+                               projected [(- (nth current-up 0) (* dot-product (nth effective-dir 0)))
+                                          (- (nth current-up 1) (* dot-product (nth effective-dir 1)))
+                                          (- (nth current-up 2) (* dot-product (nth effective-dir 2)))]
+                               proj-len (sqrt (rec-dot projected projected))
+                               new-up (if (> proj-len 0.001)
+                                        (rec-normalize projected)
+                                        (let [right (rec-cross effective-dir current-up)
+                                              right-len (sqrt (rec-dot right right))]
+                                          (if (> right-len 0.001)
+                                            (rec-normalize (rec-cross right effective-dir))
+                                            current-up)))]
+                           (rec-set-heading* effective-dir new-up)
+                           (rec-f* dist)
+                           (recur (rest remaining-segments) new-up false))
+                         (recur (rest remaining-segments) current-up false))))))))))))
+
    ;; path: record turtle movements for later replay
    ;; (def p (path (f 20) (th 90) (f 20))) - record a path
    ;; (def p (path (dotimes [_ 4] (f 20) (th 90)))) - with arbitrary code
@@ -1138,13 +1330,19 @@
    (defmacro path [& body]
      `(do
         (reset! path-recorder (make-recorder))
+        ;; Copy resolution and joint-mode from global turtle
+        (swap! path-recorder assoc
+               :resolution (get-turtle-resolution)
+               :joint-mode (get-turtle-joint-mode))
         (let [~'f rec-f*
               ~'th rec-th*
               ~'tv rec-tv*
               ~'tr rec-tr*
               ~'arc-h rec-arc-h*
               ~'arc-v rec-arc-v*
-              ~'bezier-to rec-bezier-to*]
+              ~'bezier-to rec-bezier-to*
+              ~'bezier-to-anchor rec-bezier-to-anchor*
+              ~'resolution rec-resolution*]
           ~@body)
         (path-from-recorder @path-recorder)))
 
@@ -1204,7 +1402,7 @@
 
            ;; List starting with turtle movement - wrap in path
            ;; This avoids evaluating (f 20) directly which would modify turtle-atom
-           (and (list? arg) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v 'bezier-to} (first arg)))
+           (and (list? arg) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v 'bezier-to 'bezier-to-anchor} (first arg)))
            `(pure-extrude-path ~shape (path ~arg))
 
            ;; Any other expression - check at runtime if it's already a path
@@ -1236,7 +1434,7 @@
 
            ;; List starting with turtle movement - wrap in path
            ;; This avoids evaluating commands directly which would modify turtle-atom
-           (and (list? path-expr) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v 'bezier-to} (first path-expr)))
+           (and (list? path-expr) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v 'bezier-to 'bezier-to-anchor} (first path-expr)))
            `(extrude-closed-path-impl ~shape (path ~path-expr))
 
            ;; Other list - check at runtime if it's already a path
@@ -1283,7 +1481,7 @@
                 (pure-loft-path ~shape tfn# ~arg)))
 
            ;; List starting with turtle movement - wrap in path
-           (and (list? arg) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v 'bezier-to} (first arg)))
+           (and (list? arg) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v 'bezier-to 'bezier-to-anchor} (first arg)))
            `(let [tfn# ~transform-fn-or-shape]
               (if (shape? tfn#)
                 (pure-loft-two-shapes ~shape tfn# (path ~arg))
@@ -1399,41 +1597,74 @@
         ;; Return modified mesh
         (or (get-in @attach-state [:attached :mesh]) m#)))
 
-   ;; attach: transform mesh in place (modifies original)
+   ;; attach: transform mesh/panel in place (modifies original)
    ;; (attach mesh & body) => transformed mesh
+   ;; (attach panel & body) => panel repositioned to final turtle position
    ;; Attaches to mesh's creation pose and applies transformations.
    (defmacro attach [mesh & body]
      `(let [m# ~mesh]
-        ;; Initialize local state with turtle attached to mesh pose (no clone)
-        (reset! attach-state
-                (-> (turtle)
-                    (turtle-attach-move m#)))
-        ;; Rebind operations to local versions
-        (let [~'f att-f*
-              ~'th att-th*
-              ~'tv att-tv*
-              ~'tr att-tr*]
-          ~@body)
-        ;; Return modified mesh
-        (or (get-in @attach-state [:attached :mesh]) m#)))
+        (if (panel? m#)
+          ;; Panel handling: start from current turtle, run movements, reposition panel
+          (do
+            (reset! attach-state (turtle))
+            (let [~'f att-f*
+                  ~'th att-th*
+                  ~'tv att-tv*
+                  ~'tr att-tr*]
+              ~@body)
+            ;; Return panel with updated position/heading/up from final attach-state
+            (let [final-state @attach-state]
+              (assoc m#
+                :position (:position final-state)
+                :heading (:heading final-state)
+                :up (:up final-state))))
+          ;; Mesh handling: original behavior
+          (do
+            (reset! attach-state
+                    (-> (turtle)
+                        (turtle-attach-move m#)))
+            (let [~'f att-f*
+                  ~'th att-th*
+                  ~'tv att-tv*
+                  ~'tr att-tr*]
+              ~@body)
+            (or (get-in @attach-state [:attached :mesh]) m#)))))
 
-   ;; clone: create transformed copy of mesh (original unchanged)
+   ;; clone: create transformed copy of mesh/panel (original unchanged)
    ;; (clone mesh & body) => new transformed mesh
+   ;; (clone panel & body) => new panel at transformed position
    ;; Creates a copy, attaches to its creation pose, applies transformations.
    (defmacro clone [mesh & body]
-     `(do
-        ;; Initialize local state with turtle attached to cloned mesh
-        (reset! attach-state
-                (-> (turtle)
-                    (turtle-attach-clone ~mesh)))
-        ;; Rebind operations to local versions
-        (let [~'f att-f*
-              ~'th att-th*
-              ~'tv att-tv*
-              ~'tr att-tr*]
-          ~@body)
-        ;; Return modified mesh
-        (or (get-in @attach-state [:attached :mesh]) ~mesh)))
+     `(let [m# ~mesh]
+        (if (panel? m#)
+          ;; Panel handling: start from panel's position, run movements, create new panel
+          (do
+            (reset! attach-state
+                    {:position (:position m#)
+                     :heading (:heading m#)
+                     :up (:up m#)})
+            (let [~'f att-f*
+                  ~'th att-th*
+                  ~'tv att-tv*
+                  ~'tr att-tr*]
+              ~@body)
+            ;; Return new panel with updated position/heading/up
+            (let [final-state @attach-state]
+              (assoc m#
+                :position (:position final-state)
+                :heading (:heading final-state)
+                :up (:up final-state))))
+          ;; Mesh handling: original behavior
+          (do
+            (reset! attach-state
+                    (-> (turtle)
+                        (turtle-attach-clone m#)))
+            (let [~'f att-f*
+                  ~'th att-th*
+                  ~'tv att-tv*
+                  ~'tr att-tr*]
+              ~@body)
+            (or (get-in @attach-state [:attached :mesh]) m#)))))
 
    ;; Helper to check if something is a mesh (has :vertices and :faces)
    (defn mesh? [x]
@@ -1466,33 +1697,43 @@
             value# (if (and (seq? raw-value#) (not (map? raw-value#)) (seq raw-value#) (mesh? (first raw-value#)))
                      (vec raw-value#)
                      raw-value#)]
-        (def ~name value#)
-        (cond
-          ;; Single mesh (has :vertices)
-          (and (map? value#) (:vertices value#))
-          (let [already-registered# (contains? (set (registered-names)) name-kw#)]
-            (register-mesh! name-kw# value#)
-            (when-not already-registered#
-              (show-mesh! name-kw#)))
-
-          ;; Vector of meshes - add each anonymously
-          (mesh-vector? value#)
-          (doseq [mesh# value#]
-            (add-mesh! mesh#))
-
-          ;; Map of meshes - add each anonymously
-          (mesh-map? value#)
-          (doseq [[_# mesh#] value#]
-            (add-mesh! mesh#))
-
-          ;; Path (has :type :path)
-          (and (map? value#) (= :path (:type value#)))
+        ;; For panels, add :name before def so out/append/clear work
+        (if (and (map? value#) (= :panel (:type value#)))
+          ;; Panel case - add name to value, def it, register it
+          (let [panel-with-name# (assoc value# :name name-kw#)]
+            (def ~name panel-with-name#)
+            (register-panel! name-kw# panel-with-name#)
+            (refresh-viewport! false)
+            panel-with-name#)
+          ;; Non-panel cases
           (do
-            (register-path! name-kw# value#)
-            (show-path! name-kw#)))
-        ;; Refresh viewport and return value
-        (refresh-viewport! false)
-        value#))
+            (def ~name value#)
+            (cond
+              ;; Single mesh (has :vertices)
+              (and (map? value#) (:vertices value#))
+              (let [already-registered# (contains? (set (registered-names)) name-kw#)]
+                (register-mesh! name-kw# value#)
+                (when-not already-registered#
+                  (show-mesh! name-kw#)))
+
+              ;; Vector of meshes - add each anonymously
+              (mesh-vector? value#)
+              (doseq [mesh# value#]
+                (add-mesh! mesh#))
+
+              ;; Map of meshes - add each anonymously
+              (mesh-map? value#)
+              (doseq [[_# mesh#] value#]
+                (add-mesh! mesh#))
+
+              ;; Path (has :type :path)
+              (and (map? value#) (= :path (:type value#)))
+              (do
+                (register-path! name-kw# value#)
+                (show-path! name-kw#)))
+            ;; Refresh viewport and return value
+            (refresh-viewport! false)
+            value#))))
 
    ;; Convenience functions that work with names, mesh references, or collections
    ;; (show :torus)       - by registered name (keyword)
@@ -1503,9 +1744,15 @@
    (defn show
      ([name-or-coll]
       (cond
-        ;; Name (keyword/string/symbol)
+        ;; Name (keyword/string/symbol) - try mesh first, then panel
         (or (keyword? name-or-coll) (string? name-or-coll) (symbol? name-or-coll))
-        (show-mesh! (if (keyword? name-or-coll) name-or-coll (keyword name-or-coll)))
+        (let [kw (if (keyword? name-or-coll) name-or-coll (keyword name-or-coll))]
+          (show-mesh! kw)
+          (show-panel! kw))
+        ;; Panel reference
+        (panel? name-or-coll)
+        (when-let [n (:name name-or-coll)]
+          (show-panel! n))
         ;; Vector of meshes - show all
         (mesh-vector? name-or-coll)
         (doseq [m name-or-coll] (show-mesh-ref! m))
@@ -1523,9 +1770,15 @@
    (defn hide
      ([name-or-coll]
       (cond
-        ;; Name (keyword/string/symbol)
+        ;; Name (keyword/string/symbol) - try mesh first, then panel
         (or (keyword? name-or-coll) (string? name-or-coll) (symbol? name-or-coll))
-        (hide-mesh! (if (keyword? name-or-coll) name-or-coll (keyword name-or-coll)))
+        (let [kw (if (keyword? name-or-coll) name-or-coll (keyword name-or-coll))]
+          (hide-mesh! kw)
+          (hide-panel! kw))
+        ;; Panel reference
+        (panel? name-or-coll)
+        (when-let [n (:name name-or-coll)]
+          (hide-panel! n))
         ;; Vector of meshes - hide all
         (mesh-vector? name-or-coll)
         (doseq [m name-or-coll] (hide-mesh-ref! m))
@@ -1576,16 +1829,33 @@
    (defn info
      ([name-or-coll]
       (cond
-        ;; Name (keyword/string/symbol)
+        ;; Name (keyword/string/symbol) - try mesh first, then panel
         (or (keyword? name-or-coll) (string? name-or-coll) (symbol? name-or-coll))
         (let [kw (if (keyword? name-or-coll) name-or-coll (keyword name-or-coll))
               mesh (get-mesh kw)
-              vis (contains? (set (visible-names)) kw)]
-          (when mesh
+              panel (get-panel kw)]
+          (cond
+            mesh
+            (let [vis (contains? (set (visible-names)) kw)]
+              {:name kw
+               :type :mesh
+               :visible vis
+               :vertices (count (:vertices mesh))
+               :faces (count (:faces mesh))})
+            panel
             {:name kw
-             :visible vis
-             :vertices (count (:vertices mesh))
-             :faces (count (:faces mesh))}))
+             :type :panel
+             :width (:width panel)
+             :height (:height panel)
+             :content-length (count (:content panel \"\"))}
+            :else nil))
+        ;; Panel reference
+        (panel? name-or-coll)
+        {:name (:name name-or-coll)
+         :type :panel
+         :width (:width name-or-coll)
+         :height (:height name-or-coll)
+         :content-length (count (:content name-or-coll \"\"))}
         ;; Vector of meshes - return vector of info
         (mesh-vector? name-or-coll)
         (vec (map-indexed
@@ -1604,6 +1874,7 @@
         ;; Single mesh reference
         (mesh? name-or-coll)
         {:name nil
+         :type :mesh
          :vertices (count (:vertices name-or-coll))
          :faces (count (:faces name-or-coll))}
         :else nil))
