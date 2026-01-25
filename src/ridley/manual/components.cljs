@@ -122,18 +122,39 @@
           (set! (.-textContent code-el) (.trim part))
           (.appendChild pre code-el)
           (.appendChild container pre))
-        ;; Regular text - split by paragraphs
+        ;; Regular text - split by paragraphs (double newline)
         (let [paragraphs (.split part #"\n\n+")]
           (doseq [para paragraphs]
             (when (seq (.trim para))
-              (let [p (.createElement js/document "p")]
-                (set! (.-className p) "manual-paragraph")
-                ;; Handle bold (**text**)
-                (set! (.-innerHTML p)
-                      (-> para
-                          (.replace #"\*\*([^*]+)\*\*" "<strong>$1</strong>")
-                          (.replace #"`([^`]+)`" "<code>$1</code>")))
-                (.appendChild container p))))))
+              ;; Check if this is a list (lines starting with -)
+              (if (re-find #"(?m)^- " para)
+                ;; It's a list
+                (let [ul (.createElement js/document "ul")
+                      items (->> (.split para #"\n")
+                                 (filter #(re-find #"^- " %))
+                                 (map #(.replace % #"^- " "")))]
+                  (set! (.-className ul) "manual-list")
+                  (doseq [item items]
+                    (let [li (.createElement js/document "li")]
+                      ;; Apply inline formatting to list items
+                      (set! (.-innerHTML li)
+                            (-> item
+                                (.replace (js/RegExp. "\\*\\*([^*]+)\\*\\*" "g") "<strong>$1</strong>")
+                                (.replace (js/RegExp. "`([^`]+)`" "g") "<code>$1</code>")
+                                (.replace (js/RegExp. "\\[([^\\]]+)\\]\\(([^)]+)\\)" "g") "<a href=\"$2\" target=\"_blank\">$1</a>")))
+                      (.appendChild ul li)))
+                  (.appendChild container ul))
+                ;; Regular paragraph
+                (let [p (.createElement js/document "p")]
+                  (set! (.-className p) "manual-paragraph")
+                  ;; Handle bold (**text**) and inline code (`code`)
+                  ;; Use JS RegExp with global flag for multiple replacements
+                  (set! (.-innerHTML p)
+                        (-> para
+                            (.replace (js/RegExp. "\\*\\*([^*]+)\\*\\*" "g") "<strong>$1</strong>")
+                            (.replace (js/RegExp. "`([^`]+)`" "g") "<code>$1</code>")
+                            (.replace (js/RegExp. "\\[([^\\]]+)\\]\\(([^)]+)\\)" "g") "<a href=\"$2\" target=\"_blank\">$1</a>")))
+                  (.appendChild container p)))))))
       (swap! in-code not))))
 
 ;; Render the "See Also" section

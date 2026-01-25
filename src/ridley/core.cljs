@@ -22,8 +22,6 @@
 (defonce ^:private command-history (atom []))
 (defonce ^:private history-index (atom -1))
 
-;; View toggle state: true = show all, false = show only registered objects
-(defonce ^:private show-all-view (atom true))
 
 ;; Sync state
 (defonce ^:private sync-mode (atom nil))  ; nil, :host, or :client
@@ -236,45 +234,6 @@
     (.readAsText reader file)))
 
 ;; ============================================================
-;; Server scripts (for VR access)
-;; ============================================================
-
-(defn- fetch-script-list
-  "Fetch list of available scripts from server."
-  []
-  (-> (js/fetch "scripts/index.json")
-      (.then #(.json %))
-      (.catch (fn [_] #js []))))
-
-(defn- fetch-script
-  "Fetch a script by name and load it."
-  [script-name]
-  (-> (js/fetch (str "scripts/" script-name))
-      (.then #(.text %))
-      (.then (fn [content]
-               (cm/set-value @editor-view content)
-               (save-to-storage)
-               (evaluate-definitions)))
-      (.catch #(js/console.error "Failed to load script:" %))))
-
-(defn- show-script-picker
-  "Show a dialog to pick a script from server."
-  []
-  (-> (fetch-script-list)
-      (.then (fn [scripts]
-               (let [scripts-arr (js->clj scripts)]
-                 (if (empty? scripts-arr)
-                   (js/alert "No scripts available")
-                   (let [msg (str "Available scripts:\n"
-                                  (str/join "\n" (map-indexed #(str (inc %1) ". " %2) scripts-arr))
-                                  "\n\nEnter number:")
-                         choice (js/prompt msg "1")]
-                     (when choice
-                       (let [idx (dec (js/parseInt choice 10))]
-                         (when (and (>= idx 0) (< idx (count scripts-arr)))
-                           (fetch-script (nth scripts-arr idx))))))))))))
-
-;; ============================================================
 ;; Resizable panels
 ;; ============================================================
 
@@ -384,26 +343,11 @@
       (stl/download-stl meshes "ridley-model.stl")
       (js/alert "No meshes to export. Run some code first!"))))
 
-(defn- toggle-view []
-  "Toggle between showing all meshes and only registered objects."
-  (let [btn (.getElementById js/document "btn-toggle-view")]
-    (swap! show-all-view not)
-    (if @show-all-view
-      (do
-        (registry/show-all!)
-        (set! (.-textContent btn) "All"))
-      (do
-        (registry/show-only-registered!)
-        (set! (.-textContent btn) "Obj")))
-    (registry/refresh-viewport! false)))
-
 (defn- setup-save-load []
   (let [run-btn (.getElementById js/document "btn-run")
         save-btn (.getElementById js/document "btn-save")
         load-btn (.getElementById js/document "btn-load")
-        examples-btn (.getElementById js/document "btn-examples")
         export-stl-btn (.getElementById js/document "btn-export-stl")
-        toggle-view-btn (.getElementById js/document "btn-toggle-view")
         toggle-grid-btn (.getElementById js/document "btn-toggle-grid")
         toggle-axes-btn (.getElementById js/document "btn-toggle-axes")
         toggle-turtle-btn (.getElementById js/document "btn-toggle-turtle")
@@ -420,18 +364,10 @@
     ;; Load button - open file picker for local files
     (.addEventListener load-btn "click"
       (fn [_] (.click file-input)))
-    ;; Examples button - show script picker from server
-    (when examples-btn
-      (.addEventListener examples-btn "click"
-        (fn [_] (show-script-picker))))
     ;; Export STL button
     (when export-stl-btn
       (.addEventListener export-stl-btn "click"
         (fn [_] (export-stl))))
-    ;; Toggle view button
-    (when toggle-view-btn
-      (.addEventListener toggle-view-btn "click"
-        (fn [_] (toggle-view))))
     ;; Toggle grid button
     (when toggle-grid-btn
       ;; Set initial active state (grid is visible by default)

@@ -16,6 +16,10 @@
          :auto-run true}
         {:id :first-tube
          :code "(register tube\n  (extrude (circle 10) (f 30)))"}]}
+      {:id :ui-overview
+       :see-also [:editor-commands]}
+      {:id :editor-commands
+       :see-also [:ui-overview :repl-usage]}
       {:id :the-turtle
        :see-also [:control-structures :extrude-basics]
        :examples
@@ -60,7 +64,9 @@
        [{:id :def-shape
          :code "(def my-circle (circle 12))\n\n(register tube1 (extrude my-circle (f 30)))\n(tv 90) (f 50) (tv -90) (register tube2 (extrude my-circle (f 50)))"}
         {:id :def-path
-         :code "(def corner (path (f 30) (th 90) (f 30)))\n\n(register pipe\n  (extrude (circle 8) corner))"}]}
+         :code "(def corner (path (f 30) (th 90) (f 30)))\n\n(register pipe\n  (extrude (circle 8) corner))"}
+        {:id :follow-path
+         :code "(def curve (path (f 30) (tv 30) (f 20) (bezier-to [0 60 0] [0 20 30] [0 40 -30])))\n\n;; Draw the curve with the turtle\n(follow-path curve)"}]}
       {:id :extrude-closed
        :examples
        [{:id :square-torus
@@ -90,30 +96,6 @@
         {:id :resolution-steps
          :code "(register custom-steps\n  (extrude (circle 15)\n    (f 20) (arc-h 15 180 :steps 32) (f 20)))"}]}]}
     {:id :part-3
-     :pages
-     [{:id :control-structures
-       :see-also [:clojure-basics :local-variables]
-       :examples
-       [{:id :dotimes-ignore
-         :code "(dotimes [_ 4]\n  (f 20)\n  (th 90))"}
-        {:id :for-comprehension
-         :code "(register tubes\n  (for [size [10 20 30]]\n    (attach (extrude (circle size) (f 20))\n      (f size))))"}
-        {:id :when-conditional
-         :code "(dotimes [i 10]\n  (f 10)\n  (when (odd? i)\n    (th 30)))"}]}
-      {:id :local-variables
-       :see-also [:clojure-basics :control-structures]
-       :examples
-       [{:id :let-basics
-         :code "(let [r 15\n      h 40]\n  (register cyl\n    (extrude (circle r) (f h))))"}
-        {:id :let-computed
-         :code "(let [base 20\n      half (/ base 2)\n      quarter (/ half 2)]\n  (register box1 (box base))\n  (f (+ half quarter))\n  (register box2 (box half)))"}]}
-      {:id :repl-usage
-       :examples
-       [{:id :repl-quick-test
-         :code "(+ 1 2 3)"}
-        {:id :repl-println
-         :code "(println \"Hello from REPL!\")\n(println \"2 + 2 =\" (+ 2 2))"}]}]}
-    {:id :part-4
      :pages
      [{:id :mesh-basics
        :see-also [:boolean-operations :attach-meshes]
@@ -151,7 +133,89 @@
        [{:id :attach-face-frustum
          :code "(register frustum\n  (attach-face (box 30) :top\n    (inset 10) (f 30)))"}
         {:id :clone-face-spike
-         :code "(register spike\n  (clone-face (box 30) :top\n    (inset 10) (f 30)))"}]}]}]})
+         :code "(register spike\n  (clone-face (box 30) :top\n    (inset 10) (f 30)))"}]}]}
+    {:id :part-4
+     :pages
+     [{:id :mark-goto-pushpop
+       :see-also [:the-turtle :arcs-beziers]
+       :examples
+       [{:id :mark-goto-basic
+         :code "(register base (box 20 20 5))\n(mark :top)\n(f 40) (th 90) (f 30)\n(register beacon (cyl 5 30))\n(goto :top)\n(register tower (cyl 8 60))"}
+        {:id :push-pop-branch
+         :code "(register trunk (extrude (circle 5) (f 50)))\n(push-state)\n  (th 45) (register b1 (extrude (circle 3) (f 30)))\n(pop-state)\n(push-state)\n  (th -45) (register b2 (extrude (circle 3) (f 30)))\n(pop-state)\n(register top (extrude (circle 3) (f 20)))"}
+        {:id :multiple-anchors
+         :code "(register row\n  (mesh-union\n    (for [i (range 5)]\n      (do\n        (mark (keyword (str \"pos\" i)))\n        (f 15)\n        (sphere 5)))))\n(goto :pos2)\n(register selected (cyl 2 30))"}]}
+      {:id :arcs-beziers
+       :see-also [:mark-goto-pushpop :resolution-settings]
+       :examples
+       [{:id :arc-h-basic
+         :code "(register curved-tube\n  (extrude (circle 8)\n    (f 20) (arc-h 30 180) (f 20)))"}
+        {:id :arc-v-basic
+         :code "(register arc-loop\n  (extrude (circle 5)\n    (f 20) (arc-v 25 180) (f 20)))"}
+        {:id :bezier-auto
+         :code "(mark :start)\n(f 60) (th 90) (f 40)\n(mark :end)\n(goto :start)\n(register curve\n  (extrude (circle 4)\n    (bezier-to-anchor :end)))"}
+        {:id :bezier-control
+         :code "(register s-curve\n  (extrude (circle 4)\n    (bezier-to [0 60 0] [0 20 30] [0 40 -30])))"}]}
+      {:id :colors-materials
+       :see-also [:extrude-basics :mesh-basics]
+       :examples
+       [{:id :color-basic
+         :code "(color 0xff0000)\n(register red-box (box 20))\n(f 40)\n(color 0x00ff00)\n(register green-cyl (cyl 10 30))"}
+        {:id :material-pbr
+         :code "(material :color 0x8888ff :metalness 0.8 :roughness 0.2)\n(register shiny (sphere 15))\n(f 40)\n(material :color 0xffaa00 :metalness 0.1 :roughness 0.9)\n(register matte (sphere 15))"}
+        {:id :material-reset
+         :code "(color 0xff0000)\n(register red (box 15))\n(f 30)\n(reset-material)\n(register default (box 15))"}]}
+      {:id :text-shapes
+       :see-also [:extrude-basics :custom-shapes]
+       :examples
+       [{:id :text-basic
+         :code "(register title\n  (extrude (text-shape \"HI\" :size 30) (f 5)))"}
+        {:id :text-large
+         :code "(register sign\n  (extrude (text-shape \"RIDLEY\" :size 20) (f 3)))"}]}]}
+    {:id :part-5
+     :pages
+     [{:id :debug-panels
+       :see-also [:debug-techniques]
+       :examples
+       [{:id :panel-basic
+         :code "(register P1 (panel 60 40))\n(out P1 \"Hello World!\")"}
+        {:id :panel-attach
+         :code "(register cube (box 30))\n(register P1\n  (attach (panel 25 8)\n    (f 25) (tv 90) (f 25)))\n(out P1 \"This is a cube\")"}
+        {:id :panel-multiline
+         :code "(register P1 (panel 80 60))\n(out P1 \"Line 1\")\n(append P1 \"\\nLine 2\")\n(append P1 \"\\nLine 3\")"}]}
+      {:id :debug-techniques
+       :see-also [:debug-panels :repl-usage]
+       :examples
+       [{:id :tap-function
+         :code "(register cube\n  (box (T \"size\" (* 10 3))))"}
+        {:id :inspect-turtle
+         :code "(f 50)\n(println \"pos:\" (turtle-position))\n(th 45)\n(println \"heading:\" (turtle-heading))"}
+        {:id :step-by-step
+         :code "(println \"Step 1: create base\")\n(register base (box 40 40 10))\n(println \"Step 2: move up\")\n(f 10)\n(println \"Step 3: create top\")\n(register top (cyl 15 20))"}]}]}
+    {:id :part-6
+     :pages
+     [{:id :control-structures
+       :see-also [:clojure-basics :local-variables]
+       :examples
+       [{:id :dotimes-ignore
+         :code "(dotimes [_ 4]\n  (f 20)\n  (th 90))"}
+        {:id :for-comprehension
+         :code "(register tubes\n  (for [size [10 20 30]]\n    (attach (extrude (circle size) (f 20))\n      (f size))))"}
+        {:id :when-conditional
+         :code "(dotimes [i 10]\n  (f 10)\n  (when (odd? i)\n    (th 30)))"}]}
+      {:id :local-variables
+       :see-also [:clojure-basics :control-structures]
+       :examples
+       [{:id :let-basics
+         :code "(let [r 15\n      h 40]\n  (register cyl\n    (extrude (circle r) (f h))))"}
+        {:id :let-computed
+         :code "(let [base 20\n      half (/ base 2)\n      quarter (/ half 2)]\n  (register box1 (box base))\n  (f (+ half quarter))\n  (register box2 (box half)))"}]}
+      {:id :repl-usage
+       :examples
+       [{:id :repl-quick-test
+         :code "(+ 1 2 3)"}
+        {:id :repl-println
+         :code "(println \"Hello from REPL!\")\n(println \"2 + 2 =\" (+ 2 2))"}]}]}]})
 
 ;; Internationalization - text content for each language
 (def i18n
@@ -159,8 +223,10 @@
    {:sections
     {:part-1 {:title "Getting Started"}
      :part-2 {:title "Shapes & Extrusion"}
-     :part-3 {:title "Clojure Advanced"}
-     :part-4 {:title "Mesh Manipulation"}}
+     :part-3 {:title "Mesh Manipulation"}
+     :part-4 {:title "Advanced Features"}
+     :part-5 {:title "Debug Help"}
+     :part-6 {:title "Clojure Advanced"}}
     :pages
     {:hello-ridley
      {:title "Hello Ridley"
@@ -174,6 +240,63 @@ Let's see both approaches:"
                     :description "The `register` command gives a name to your shape so it appears in the viewport. `box` creates a cube with the given size."}
        :first-tube {:caption "Your first extrusion"
                     :description "`extrude` sweeps a 2D shape (here, a circle) along a path (here, forward 30 units). This creates a tube."}}}
+
+     :ui-overview
+     {:title "The Interface"
+      :content "Ridley has three main areas:
+
+**Editor** (left) — Write your code here. This is where you define shapes, functions, and geometry.
+
+**Viewport** (right) — The 3D view showing your models. You can rotate (drag), zoom (scroll), and pan (right-drag) to explore.
+
+**REPL** (bottom) — An interactive command line. Type expressions and press Enter to evaluate them instantly.
+
+**Editor Toolbar:**
+- **▶ Run** — Execute your code (same as Cmd+Enter)
+- **Save** — Download your code as a .clj file
+- **Load** — Load a .clj file from disk
+- **Manual** — Open this manual
+
+**Viewport Toolbar:**
+- **Grid** — Toggle the reference grid
+- **Axes** — Toggle X/Y/Z axis lines
+- **Turtle** — Toggle the turtle indicator (shows position/direction)
+- **Lines** — Toggle construction lines (pen traces)
+- **Normals** — Toggle face normal visualization
+- **Reset** — Reset camera to default view
+- **Export STL** — Download visible meshes as STL file"}
+
+     :editor-commands
+     {:title "Editor Commands"
+      :content "**Editor:**
+- **Cmd+Enter** (Mac) or **Ctrl+Enter** (Windows/Linux) — Run all code
+- Click the **▶ Run** button for the same effect
+
+**REPL:**
+- **Enter** — Evaluate the current line
+- **↑/↓** — Navigate command history
+
+**Paredit** (structural editing):
+Paredit keeps your parentheses balanced automatically. Key commands:
+
+- **Tab** — Indent current line
+- **(** or **[** or **{** — Auto-insert matching bracket
+- **Backspace** on empty brackets — Delete the pair
+- **Ctrl+K** — Kill (cut) to end of line
+- **Ctrl+Shift+K** — Kill the enclosing expression
+- **Shift+Cmd+K** — Slurp: pull next element into parentheses
+- **Shift+Cmd+J** — Barf: push last element out of parentheses
+
+Example — Slurp: with cursor in `(+ 1 2|) 3`, Slurp → `(+ 1 2 3)`
+Barf: with cursor in `(+ 1 2 3|)`, Barf → `(+ 1 2) 3`
+
+**Search:**
+- **Cmd+F** / **Ctrl+F** — Find in editor
+- **Cmd+G** / **Ctrl+G** — Find next
+
+**Undo/Redo:**
+- **Cmd+Z** / **Ctrl+Z** — Undo
+- **Cmd+Shift+Z** / **Ctrl+Shift+Z** — Redo"}
 
      :the-turtle
      {:title "The Turtle"
@@ -205,7 +328,15 @@ Basic movement commands:
 
 **defn** — Create a function: `(defn name [args] body)`
 
-These let you build reusable pieces and keep your code organized."
+These let you build reusable pieces and keep your code organized.
+
+**Learning More**
+
+To learn more about Clojure, check out these resources:
+
+- [Clojure for the Brave and True](https://www.braveclojure.com/) — A free online book that's both fun and comprehensive
+
+- [ClojureDocs](https://clojuredocs.org/) — Quick reference with examples for all core functions"
       :examples
       {:define-value {:caption "Define a value"
                       :description "Use `def` to name a value. Here we define `size` and use it to create a cube."}
@@ -278,7 +409,9 @@ Similarly, paths can be captured with the `path` macro and reused across multipl
       {:def-shape {:caption "Reusing a shape"
                    :description "Define a shape once, use it multiple times. Both tubes use the same circle but different lengths."}
        :def-path {:caption "Reusing a path"
-                  :description "Paths can also be stored and reused. The `path` macro captures turtle movements for later use."}}}
+                  :description "Paths can also be stored and reused. The `path` macro captures turtle movements for later use."}
+       :follow-path {:caption "Drawing a path"
+                     :description "Use `follow-path` to make the turtle trace a stored path, drawing visible lines in the viewport."}}}
 
      :extrude-closed
      {:title "Closed Extrusion"
@@ -523,14 +656,216 @@ Positive values shrink the face, negative values expand it."
       {:attach-face-frustum {:caption "Frustum (attach-face)"
                              :description "`attach-face` modifies the original face. `inset` shrinks it, `f` moves it outward. Creates a frustum (tapered box)."}
        :clone-face-spike {:caption "Spike (clone-face)"
-                          :description "`clone-face` creates new vertices. `inset` creates a smaller inner face, `f` extrudes it. Creates a spike."}}}}}
+                          :description "`clone-face` creates new vertices. `inset` creates a smaller inner face, `f` extrudes it. Creates a spike."}}}
+
+     :debug-panels
+     {:title "3D Text Panels"
+      :content "**Panels** are 3D text displays that float in the viewport. They always face the camera (billboard effect) and are perfect for debugging or annotating your models.
+
+**Creating panels:**
+```
+(register P1 (panel width height))
+```
+
+**Writing to panels:**
+- `(out P1 \"text\")` — replace content
+- `(append P1 \"text\")` — add to content
+- `(clear P1)` — clear content
+
+**Positioning panels:**
+Use `attach` to position panels relative to the turtle:
+```
+(register P1 (attach (panel 50 30) (f 20)))
+```
+
+Panels are NOT exported to STL — they're for visualization only."
+      :examples
+      {:panel-basic {:caption "Basic panel"
+                     :description "Create a panel and write text to it. The panel appears at the turtle's current position."}
+       :panel-attach {:caption "Positioned panel"
+                      :description "Use `attach` to position the panel relative to geometry. The panel floats near the cube."}
+       :panel-multiline {:caption "Multi-line text"
+                         :description "Use `append` with `\\n` to add new lines. Build up complex messages incrementally."}}}
+
+     :debug-techniques
+     {:title "Debugging Techniques"
+      :content "When your code doesn't work as expected, these techniques help you understand what's happening.
+
+**The T (tap) function:**
+`T` is a built-in debug helper that prints a value with a label and returns it unchanged:
+```
+(T \"label\" value)  ; prints \"label: value\", returns value
+```
+
+Insert `T` anywhere to see intermediate values without changing behavior. Its implementation is simply:
+```
+(defn T [label x] (println label \":\" x) x)
+```
+You can define your own variant if needed.
+
+**Turtle inspection:**
+- `(turtle-position)` — current [x y z] position
+- `(turtle-heading)` — current direction vector
+- `(turtle-up)` — current up vector
+
+**Step-by-step execution:**
+Add `println` statements between operations to see the sequence of events. This helps identify which step causes problems.
+
+**Common issues:**
+- Mesh not visible? Check `(hide :name)` / `(show :name)`
+- Wrong position? Print turtle state before creating geometry
+- Unexpected shape? Simplify and test each part separately"
+      :examples
+      {:tap-function {:caption "The T function"
+                      :description "`T` is built-in. It prints the value with a label, then returns it unchanged. Here we see the computed size (30) in the REPL output."}
+       :inspect-turtle {:caption "Inspect turtle state"
+                        :description "Print the turtle's position and heading at any point to understand where geometry will be created."}
+       :step-by-step {:caption "Step-by-step debugging"
+                      :description "Add println between operations to trace execution. The output appears in the REPL history."}}}
+
+     :mark-goto-pushpop
+     {:title "Marks and State Stack"
+      :content "When creating complex geometry, you often need to return to previous positions or branch out from a point. Ridley provides two mechanisms:
+
+**Named Anchors (mark/goto):**
+- `(mark :name)` — Save current position, heading, and up vector with a name
+- `(goto :name)` — Teleport to a named anchor (draws line if pen is on)
+
+Anchors are persistent and named — use them when you need to return to specific points multiple times or navigate between distant locations.
+
+**State Stack (push-state/pop-state):**
+- `(push-state)` — Push current turtle state onto an anonymous stack
+- `(pop-state)` — Restore the most recently pushed state
+
+The stack is perfect for branching: push-state before a branch, create geometry, pop-state to return, then branch again. It's like undo for turtle position.
+
+**Key difference:**
+- `mark`/`goto` = named bookmarks for navigation
+- `push-state`/`pop-state` = anonymous stack for branching patterns"
+      :examples
+      {:mark-goto-basic {:caption "Mark and goto"
+                         :description "Mark a position, move away to create something, then goto returns you to the marked spot. The tower is built exactly where we marked :top."}
+       :push-pop-branch {:caption "Branching with push-state/pop-state"
+                         :description "Classic tree pattern: push-state before each branch, pop-state to return to the trunk. Both branches originate from the same point."}
+       :multiple-anchors {:caption "Multiple anchors"
+                          :description "Create multiple named anchors in a loop, then navigate to any of them later. Note: `(keyword (str \"pos\" i))` builds keywords dynamically (:pos0, :pos1, etc.)."}}}
+
+     :arcs-beziers
+     {:title "Arcs and Bezier Curves"
+      :content "Smooth curves are essential for organic shapes. Ridley provides arc and bezier commands that integrate with extrusion.
+
+**Horizontal Arc:**
+```
+(arc-h radius angle)      ; turn left/right while moving
+(arc-h radius angle :steps 16)
+```
+Positive angle = left turn, negative = right turn. The turtle ends up at `radius × angle_rad` distance away, heading rotated by `angle` degrees.
+
+**Vertical Arc:**
+```
+(arc-v radius angle)      ; pitch up/down while moving
+(arc-v radius angle :steps 16)
+```
+Positive angle = pitch up, negative = pitch down.
+
+**Bezier Curves:**
+```
+(bezier-to [x y z])                    ; auto control points
+(bezier-to [x y z] [c1])               ; quadratic (1 control)
+(bezier-to [x y z] [c1] [c2])          ; cubic (2 controls)
+(bezier-to-anchor :name)               ; bezier to named anchor
+```
+
+`bezier-to` with no control points creates a curve tangent to the current heading.
+
+`bezier-to-anchor` is smarter: it respects **both** the current heading AND the anchor's saved heading, creating a smooth S-curve that honors both directions."
+      :examples
+      {:arc-h-basic {:caption "Horizontal arc (U-turn)"
+                     :description "`arc-h 30 180` creates a 180° arc with radius 30 — a U-turn in the horizontal plane. Combined with straight segments."}
+       :arc-v-basic {:caption "Vertical arc (loop)"
+                     :description "`arc-v 25 180` creates a half-loop in the vertical plane, like going over a hill."}
+       :bezier-auto {:caption "Auto bezier to anchor"
+                     :description "Mark start, move away, mark end, then goto start and extrude with `bezier-to-anchor`. The curve respects both the starting direction and the anchor's saved direction."}
+       :bezier-control {:caption "Bezier with control points"
+                        :description "Explicit control points give precise control. Here `[0 20 30]` and `[0 40 -30]` create an S-curve."}}}
+
+     :colors-materials
+     {:title "Colors and Materials"
+      :content "Every mesh can have its own color and material properties. Set them **before** creating geometry — they apply to all meshes created afterward.
+
+**Color only:**
+```
+(color 0xff0000)        ; red (hex RGB)
+(color 255 0 0)         ; red (RGB values 0-255)
+```
+
+**Full material control:**
+```
+(material :color 0x8888ff
+          :metalness 0.8    ; 0-1, how metallic
+          :roughness 0.2    ; 0-1, how smooth/rough
+          :opacity 1.0      ; 0-1, transparency
+          :flat-shading true)
+```
+
+When you call `material`, any unspecified options reset to defaults. To reset everything:
+```
+(reset-material)
+```
+
+PBR (Physically Based Rendering) guidelines:
+- **Metals** (gold, chrome): metalness 0.8-1.0, roughness 0.1-0.4
+- **Plastics**: metalness 0.0-0.1, roughness 0.3-0.7
+- **Matte surfaces**: metalness 0.0, roughness 0.8-1.0"
+      :examples
+      {:color-basic {:caption "Setting colors"
+                     :description "Use `color` to quickly set the color for subsequent geometry. Each mesh remembers the color that was active when it was created."}
+       :material-pbr {:caption "PBR materials"
+                      :description "Full control over material appearance. High metalness + low roughness = shiny metal. Low metalness + high roughness = matte plastic."}
+       :material-reset {:caption "Reset to defaults"
+                        :description "`reset-material` returns all material properties to the default blue appearance."}}}
+
+     :text-shapes
+     {:title "Text Shapes"
+      :content "Convert text to 2D shapes using the built-in Roboto font.
+
+**Basic usage:**
+```
+(text-shape \"Hello\")           ; default size
+(text-shape \"Hello\" :size 30)  ; larger text
+```
+
+**Extrude for 3D text:**
+```
+(register sign (extrude (text-shape \"RIDLEY\" :size 20) (f 5)))
+```
+
+The function returns a vector of shapes (one per character), which `extrude` handles automatically.
+
+**Built-in fonts:**
+- `:roboto` — Roboto Regular (default)
+- `:roboto-mono` — Roboto Mono (monospace)
+
+**Load custom font:**
+```
+(load-font! \"/path/to/font.ttf\")  ; returns a promise
+```
+
+Note: Text shapes currently render only the outer contour of each character (holes in letters like 'O' or 'A' are not subtracted)."
+      :examples
+      {:text-basic {:caption "Simple 3D text"
+                    :description "Extrude text shapes to create 3D letters. The :size option controls the font size in world units."}
+       :text-large {:caption "Signage"
+                    :description "Larger text for signs and titles. Adjust :size and extrusion depth (f 3) for desired proportions."}}}}}
 
    :it
    {:sections
     {:part-1 {:title "Per Iniziare"}
      :part-2 {:title "Forme & Estrusione"}
-     :part-3 {:title "Clojure Avanzato"}
-     :part-4 {:title "Manipolazione Mesh"}}
+     :part-3 {:title "Manipolazione Mesh"}
+     :part-4 {:title "Funzionalità Avanzate"}
+     :part-5 {:title "Aiuto al Debug"}
+     :part-6 {:title "Clojure Avanzato"}}
     :pages
     {:hello-ridley
      {:title "Ciao Ridley"
@@ -544,6 +879,63 @@ Vediamo entrambi gli approcci:"
                     :description "Il comando `register` dà un nome alla tua forma così appare nel viewport. `box` crea un cubo della dimensione specificata."}
        :first-tube {:caption "La tua prima estrusione"
                     :description "`extrude` trascina una forma 2D (qui, un cerchio) lungo un percorso (qui, avanti di 30 unità). Questo crea un tubo."}}}
+
+     :ui-overview
+     {:title "L'Interfaccia"
+      :content "Ridley ha tre aree principali:
+
+**Editor** (sinistra) — Scrivi il tuo codice qui. È dove definisci forme, funzioni e geometria.
+
+**Viewport** (destra) — La vista 3D che mostra i tuoi modelli. Puoi ruotare (trascinare), zoomare (scroll) e spostare (tasto destro) per esplorare.
+
+**REPL** (in basso) — Una linea di comando interattiva. Scrivi espressioni e premi Invio per valutarle istantaneamente.
+
+**Barra Editor:**
+- **▶ Run** — Esegui il codice (come Cmd+Invio)
+- **Save** — Scarica il codice come file .clj
+- **Load** — Carica un file .clj dal disco
+- **Manual** — Apri questo manuale
+
+**Barra Viewport:**
+- **Grid** — Mostra/nascondi la griglia di riferimento
+- **Axes** — Mostra/nascondi le linee degli assi X/Y/Z
+- **Turtle** — Mostra/nascondi l'indicatore turtle (posizione/direzione)
+- **Lines** — Mostra/nascondi le linee di costruzione (tracce della penna)
+- **Normals** — Mostra/nascondi le normali delle facce
+- **Reset** — Reimposta la camera alla vista predefinita
+- **Export STL** — Scarica le mesh visibili come file STL"}
+
+     :editor-commands
+     {:title "Comandi Editor"
+      :content "**Editor:**
+- **Cmd+Invio** (Mac) o **Ctrl+Invio** (Windows/Linux) — Esegui tutto il codice
+- Clicca il bottone **▶ Run** per lo stesso effetto
+
+**REPL:**
+- **Invio** — Valuta la linea corrente
+- **↑/↓** — Naviga la cronologia dei comandi
+
+**Paredit** (editing strutturale):
+Paredit mantiene le parentesi bilanciate automaticamente. Comandi principali:
+
+- **Tab** — Indenta la linea corrente
+- **(** o **[** o **{** — Inserisce automaticamente la parentesi di chiusura
+- **Backspace** su parentesi vuote — Elimina la coppia
+- **Ctrl+K** — Taglia fino a fine linea
+- **Ctrl+Shift+K** — Taglia l'espressione che racchiude
+- **Shift+Cmd+K** — Slurp: ingloba l'elemento successivo nelle parentesi
+- **Shift+Cmd+J** — Barf: espelle l'ultimo elemento dalle parentesi
+
+Esempio — Slurp: con cursore in `(+ 1 2|) 3`, Slurp → `(+ 1 2 3)`
+Barf: con cursore in `(+ 1 2 3|)`, Barf → `(+ 1 2) 3`
+
+**Ricerca:**
+- **Cmd+F** / **Ctrl+F** — Cerca nell'editor
+- **Cmd+G** / **Ctrl+G** — Trova successivo
+
+**Annulla/Ripeti:**
+- **Cmd+Z** / **Ctrl+Z** — Annulla
+- **Cmd+Shift+Z** / **Ctrl+Shift+Z** — Ripeti"}
 
      :the-turtle
      {:title "La Tartaruga"
@@ -575,7 +967,15 @@ Comandi di movimento base:
 
 **defn** — Crea una funzione: `(defn nome [args] corpo)`
 
-Questi ti permettono di costruire pezzi riutilizzabili e mantenere il codice organizzato."
+Questi ti permettono di costruire pezzi riutilizzabili e mantenere il codice organizzato.
+
+**Per Approfondire**
+
+Per imparare di più su Clojure, consulta queste risorse:
+
+- [Clojure for the Brave and True](https://www.braveclojure.com/) — Un libro online gratuito, divertente e completo (in inglese)
+
+- [ClojureDocs](https://clojuredocs.org/) — Riferimento rapido con esempi per tutte le funzioni core"
       :examples
       {:define-value {:caption "Definire un valore"
                       :description "Usa `def` per dare un nome a un valore. Qui definiamo `size` e lo usiamo per creare un cubo."}
@@ -648,7 +1048,9 @@ Allo stesso modo, i percorsi possono essere catturati con la macro `path` e riut
       {:def-shape {:caption "Riutilizzare una forma"
                    :description "Definisci una forma una volta, usala più volte. Entrambi i tubi usano lo stesso cerchio ma lunghezze diverse."}
        :def-path {:caption "Riutilizzare un percorso"
-                  :description "Anche i percorsi possono essere memorizzati e riutilizzati. La macro `path` cattura i movimenti turtle per uso futuro."}}}
+                  :description "Anche i percorsi possono essere memorizzati e riutilizzati. La macro `path` cattura i movimenti turtle per uso futuro."}
+       :follow-path {:caption "Disegnare un percorso"
+                     :description "Usa `follow-path` per far tracciare alla tartaruga un percorso memorizzato, disegnando linee visibili nel viewport."}}}
 
      :extrude-closed
      {:title "Estrusione Chiusa"
@@ -893,7 +1295,207 @@ Valori positivi rimpiccioliscono la faccia, valori negativi la espandono."
       {:attach-face-frustum {:caption "Tronco (attach-face)"
                              :description "`attach-face` modifica la faccia originale. `inset` la rimpicciolisce, `f` la sposta verso l'esterno. Crea un tronco di piramide."}
        :clone-face-spike {:caption "Punta (clone-face)"
-                          :description "`clone-face` crea nuovi vertici. `inset` crea una faccia interna più piccola, `f` la estrude. Crea una punta."}}}}}})
+                          :description "`clone-face` crea nuovi vertici. `inset` crea una faccia interna più piccola, `f` la estrude. Crea una punta."}}}
+
+     :debug-panels
+     {:title "Pannelli 3D di Testo"
+      :content "I **pannelli** sono display di testo 3D che fluttuano nel viewport. Guardano sempre verso la camera (effetto billboard) e sono perfetti per il debug o per annotare i tuoi modelli.
+
+**Creare pannelli:**
+```
+(register P1 (panel larghezza altezza))
+```
+
+**Scrivere sui pannelli:**
+- `(out P1 \"testo\")` — sostituisce il contenuto
+- `(append P1 \"testo\")` — aggiunge al contenuto
+- `(clear P1)` — cancella il contenuto
+
+**Posizionare pannelli:**
+Usa `attach` per posizionare i pannelli relativamente alla turtle:
+```
+(register P1 (attach (panel 50 30) (f 20)))
+```
+
+I pannelli NON vengono esportati in STL — sono solo per visualizzazione."
+      :examples
+      {:panel-basic {:caption "Pannello base"
+                     :description "Crea un pannello e scrivi del testo. Il pannello appare alla posizione corrente della turtle."}
+       :panel-attach {:caption "Pannello posizionato"
+                      :description "Usa `attach` per posizionare il pannello relativo alla geometria. Il pannello fluttua vicino al cubo."}
+       :panel-multiline {:caption "Testo multi-riga"
+                         :description "Usa `append` con `\\n` per aggiungere nuove righe. Costruisci messaggi complessi incrementalmente."}}}
+
+     :debug-techniques
+     {:title "Tecniche di Debug"
+      :content "Quando il codice non funziona come previsto, queste tecniche ti aiutano a capire cosa sta succedendo.
+
+**La funzione T (tap):**
+`T` è un helper di debug built-in che stampa un valore con un'etichetta e lo restituisce invariato:
+```
+(T \"etichetta\" valore)  ; stampa \"etichetta: valore\", ritorna valore
+```
+
+Inserisci `T` ovunque per vedere i valori intermedi senza cambiare il comportamento. La sua implementazione è semplicemente:
+```
+(defn T [label x] (println label \":\" x) x)
+```
+Puoi definire una tua variante se necessario.
+
+**Ispezione della turtle:**
+- `(turtle-position)` — posizione [x y z] corrente
+- `(turtle-heading)` — vettore direzione corrente
+- `(turtle-up)` — vettore up corrente
+
+**Esecuzione passo-passo:**
+Aggiungi istruzioni `println` tra le operazioni per vedere la sequenza degli eventi. Questo aiuta a identificare quale passo causa problemi.
+
+**Problemi comuni:**
+- Mesh non visibile? Controlla `(hide :nome)` / `(show :nome)`
+- Posizione sbagliata? Stampa lo stato della turtle prima di creare geometria
+- Forma inaspettata? Semplifica e testa ogni parte separatamente"
+      :examples
+      {:tap-function {:caption "La funzione T"
+                      :description "`T` è built-in. Stampa il valore con un'etichetta, poi lo restituisce invariato. Qui vediamo la dimensione calcolata (30) nell'output della REPL."}
+       :inspect-turtle {:caption "Ispezionare lo stato turtle"
+                        :description "Stampa posizione e direzione della turtle in qualsiasi punto per capire dove verrà creata la geometria."}
+       :step-by-step {:caption "Debug passo-passo"
+                      :description "Aggiungi println tra le operazioni per tracciare l'esecuzione. L'output appare nella cronologia della REPL."}}}
+
+     :mark-goto-pushpop
+     {:title "Marcatori e Stack di Stato"
+      :content "Quando crei geometrie complesse, spesso devi tornare a posizioni precedenti o diramarti da un punto. Ridley fornisce due meccanismi:
+
+**Ancore con Nome (mark/goto):**
+- `(mark :nome)` — Salva posizione, direzione e vettore up correnti con un nome
+- `(goto :nome)` — Teletrasportati a un'ancora nominata (disegna una linea se la penna è attiva)
+
+Le ancore sono persistenti e nominate — usale quando devi tornare a punti specifici più volte o navigare tra posizioni distanti.
+
+**Stack di Stato (push-state/pop-state):**
+- `(push-state)` — Metti lo stato corrente della turtle su uno stack anonimo
+- `(pop-state)` — Ripristina lo stato più recentemente salvato
+
+Lo stack è perfetto per le diramazioni: push-state prima di un ramo, crea la geometria, pop-state per tornare, poi dirama di nuovo. È come un annulla per la posizione della turtle.
+
+**Differenza chiave:**
+- `mark`/`goto` = segnalibri nominati per la navigazione
+- `push-state`/`pop-state` = stack anonimo per pattern di diramazione"
+      :examples
+      {:mark-goto-basic {:caption "Mark e goto"
+                         :description "Marca una posizione, spostati per creare qualcosa, poi goto ti riporta al punto marcato. La torre è costruita esattamente dove abbiamo marcato :top."}
+       :push-pop-branch {:caption "Diramazioni con push-state/pop-state"
+                         :description "Pattern classico ad albero: push-state prima di ogni ramo, pop-state per tornare al tronco. Entrambi i rami originano dallo stesso punto."}
+       :multiple-anchors {:caption "Ancore multiple"
+                          :description "Crea più ancore nominate in un ciclo, poi naviga a qualsiasi di esse dopo. Nota: `(keyword (str \"pos\" i))` costruisce keyword dinamicamente (:pos0, :pos1, ecc.)."}}}
+
+     :arcs-beziers
+     {:title "Archi e Curve di Bezier"
+      :content "Le curve morbide sono essenziali per forme organiche. Ridley fornisce comandi arc e bezier che si integrano con l'estrusione.
+
+**Arco Orizzontale:**
+```
+(arc-h raggio angolo)      ; gira sinistra/destra mentre ti muovi
+(arc-h raggio angolo :steps 16)
+```
+Angolo positivo = gira a sinistra, negativo = gira a destra. La turtle finisce a distanza `raggio × angolo_rad`, con direzione ruotata di `angolo` gradi.
+
+**Arco Verticale:**
+```
+(arc-v raggio angolo)      ; beccheggia su/giù mentre ti muovi
+(arc-v raggio angolo :steps 16)
+```
+Angolo positivo = beccheggia su, negativo = beccheggia giù.
+
+**Curve di Bezier:**
+```
+(bezier-to [x y z])                    ; punti di controllo automatici
+(bezier-to [x y z] [c1])               ; quadratica (1 controllo)
+(bezier-to [x y z] [c1] [c2])          ; cubica (2 controlli)
+(bezier-to-anchor :nome)               ; bezier verso ancora nominata
+```
+
+`bezier-to` senza punti di controllo crea una curva tangente alla direzione corrente.
+
+`bezier-to-anchor` è più intelligente: rispetta **sia** la direzione corrente CHE la direzione salvata nell'ancora, creando una curva a S morbida che onora entrambe le direzioni."
+      :examples
+      {:arc-h-basic {:caption "Arco orizzontale (inversione a U)"
+                     :description "`arc-h 30 180` crea un arco di 180° con raggio 30 — un'inversione a U nel piano orizzontale. Combinato con segmenti rettilinei."}
+       :arc-v-basic {:caption "Arco verticale (loop)"
+                     :description "`arc-v 25 180` crea un mezzo-loop nel piano verticale, come passare sopra una collina."}
+       :bezier-auto {:caption "Bezier automatica verso ancora"
+                     :description "Marca start, spostati, marca end, poi vai a start ed estrudi con `bezier-to-anchor`. La curva rispetta sia la direzione di partenza che la direzione salvata nell'ancora."}
+       :bezier-control {:caption "Bezier con punti di controllo"
+                        :description "Punti di controllo espliciti danno controllo preciso. Qui `[0 20 30]` e `[0 40 -30]` creano una curva a S."}}}
+
+     :colors-materials
+     {:title "Colori e Materiali"
+      :content "Ogni mesh può avere le proprie proprietà di colore e materiale. Impostale **prima** di creare la geometria — si applicano a tutte le mesh create successivamente.
+
+**Solo colore:**
+```
+(color 0xff0000)        ; rosso (hex RGB)
+(color 255 0 0)         ; rosso (valori RGB 0-255)
+```
+
+**Controllo completo del materiale:**
+```
+(material :color 0x8888ff
+          :metalness 0.8    ; 0-1, quanto metallico
+          :roughness 0.2    ; 0-1, quanto liscio/ruvido
+          :opacity 1.0      ; 0-1, trasparenza
+          :flat-shading true)
+```
+
+Quando chiami `material`, le opzioni non specificate tornano ai default. Per resettare tutto:
+```
+(reset-material)
+```
+
+Linee guida PBR (Physically Based Rendering):
+- **Metalli** (oro, cromo): metalness 0.8-1.0, roughness 0.1-0.4
+- **Plastiche**: metalness 0.0-0.1, roughness 0.3-0.7
+- **Superfici opache**: metalness 0.0, roughness 0.8-1.0"
+      :examples
+      {:color-basic {:caption "Impostare colori"
+                     :description "Usa `color` per impostare rapidamente il colore per la geometria successiva. Ogni mesh ricorda il colore che era attivo quando è stata creata."}
+       :material-pbr {:caption "Materiali PBR"
+                      :description "Controllo completo sull'aspetto del materiale. Alta metalness + bassa roughness = metallo lucido. Bassa metalness + alta roughness = plastica opaca."}
+       :material-reset {:caption "Reset ai default"
+                        :description "`reset-material` riporta tutte le proprietà del materiale all'aspetto blu predefinito."}}}
+
+     :text-shapes
+     {:title "Forme di Testo"
+      :content "Converti testo in forme 2D usando il font Roboto integrato.
+
+**Uso base:**
+```
+(text-shape \"Hello\")           ; dimensione default
+(text-shape \"Hello\" :size 30)  ; testo più grande
+```
+
+**Estrudi per testo 3D:**
+```
+(register sign (extrude (text-shape \"RIDLEY\" :size 20) (f 5)))
+```
+
+La funzione restituisce un vettore di forme (una per carattere), che `extrude` gestisce automaticamente.
+
+**Font integrati:**
+- `:roboto` — Roboto Regular (default)
+- `:roboto-mono` — Roboto Mono (monospace)
+
+**Carica font personalizzato:**
+```
+(load-font! \"/path/to/font.ttf\")  ; restituisce una promise
+```
+
+Nota: Le forme di testo attualmente renderizzano solo il contorno esterno di ogni carattere (i buchi in lettere come 'O' o 'A' non vengono sottratti)."
+      :examples
+      {:text-basic {:caption "Testo 3D semplice"
+                    :description "Estrudi forme di testo per creare lettere 3D. L'opzione :size controlla la dimensione del font in unità mondo."}
+       :text-large {:caption "Segnaletica"
+                    :description "Testo più grande per insegne e titoli. Regola :size e profondità estrusione (f 3) per le proporzioni desiderate."}}}}}})
 
 ;; Helper to find a page in the structure
 (defn- find-page-structure [page-id]

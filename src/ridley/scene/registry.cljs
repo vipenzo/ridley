@@ -1,8 +1,9 @@
 (ns ridley.scene.registry
-  "Scene registry for tracking meshes and visibility.
+  "Scene registry for tracking meshes, panels, and visibility.
 
    Usage:
    (register torus (extrude-closed ...))  ; create, def, and register
+   (register P1 (panel 40 60))            ; register a text panel
    (show torus)                            ; add to visible scene
    (hide torus)                            ; remove from scene
    (show-all)                              ; show all registered meshes
@@ -11,7 +12,8 @@
    (save-stl torus)                        ; export a mesh to STL
    (save-stl (visible-meshes))             ; export all visible meshes"
   (:require [ridley.viewport.core :as viewport]
-            [ridley.turtle.core :as turtle]))
+            [ridley.turtle.core :as turtle]
+            [ridley.scene.panel :as panel]))
 
 ;; All meshes in the scene: [{:mesh data :name nil/keyword :visible true/false} ...]
 (defonce ^:private scene-meshes (atom []))
@@ -25,12 +27,16 @@
 ;; Registered paths: [{:path data :name keyword :visible true/false} ...]
 (defonce ^:private scene-paths (atom []))
 
+;; Registered panels: [{:panel data :name keyword :visible true/false} ...]
+(defonce ^:private scene-panels (atom []))
+
 (defn clear-all!
-  "Clear all meshes, lines, and paths. Called on code re-evaluation."
+  "Clear all meshes, lines, paths, and panels. Called on code re-evaluation."
   []
   (reset! scene-meshes [])
   (reset! scene-lines [])
-  (reset! scene-paths []))
+  (reset! scene-paths [])
+  (reset! scene-panels []))
 
 (defn set-lines!
   "Set the lines (geometry) to display."
@@ -277,8 +283,73 @@
   []
   (vec (keep (fn [entry] (when (nil? (:name entry)) (:mesh entry))) @scene-meshes)))
 
+;; ============================================================
+;; Panel registration
+;; ============================================================
+
+(defn- find-panel-index
+  "Find index of panel entry by name."
+  [name]
+  (first (keep-indexed (fn [i entry] (when (= (:name entry) name) i)) @scene-panels)))
+
+(defn register-panel!
+  "Add a named panel to the scene. If panel with same name exists, replace it."
+  [name panel-data]
+  (when (panel/panel? panel-data)
+    (if-let [idx (find-panel-index name)]
+      ;; Replace existing panel
+      (do
+        (swap! scene-panels assoc-in [idx :panel] panel-data)
+        panel-data)
+      ;; Add new panel
+      (do
+        (swap! scene-panels conj {:panel panel-data :name name :visible true})
+        panel-data))))
+
+(defn get-panel
+  "Get panel data by name."
+  [name]
+  (:panel (first (filter #(= (:name %) name) @scene-panels))))
+
+(defn update-panel!
+  "Update a panel's data by name. Returns the updated panel or nil."
+  [name update-fn]
+  (when-let [idx (find-panel-index name)]
+    (let [updated (update-fn (get-in @scene-panels [idx :panel]))]
+      (swap! scene-panels assoc-in [idx :panel] updated)
+      updated)))
+
+(defn show-panel!
+  "Show a panel by name. Returns nil."
+  [name]
+  (when-let [idx (find-panel-index name)]
+    (swap! scene-panels assoc-in [idx :visible] true))
+  nil)
+
+(defn hide-panel!
+  "Hide a panel by name. Returns nil."
+  [name]
+  (when-let [idx (find-panel-index name)]
+    (swap! scene-panels assoc-in [idx :visible] false))
+  nil)
+
+(defn visible-panels
+  "Get all currently visible panel data."
+  []
+  (vec (keep (fn [entry] (when (:visible entry) (:panel entry))) @scene-panels)))
+
+(defn all-panels
+  "Get all panels (visible and hidden)."
+  []
+  (vec (map :panel @scene-panels)))
+
+(defn panel-names
+  "Get names of all registered panels."
+  []
+  (vec (keep :name @scene-panels)))
+
 (defn refresh-viewport!
-  "Update the viewport with all visible meshes, lines, and paths.
+  "Update the viewport with all visible meshes, lines, paths, and panels.
    reset-camera?: if true (default), fit camera to geometry"
   ([] (refresh-viewport! true))
   ([reset-camera?]
@@ -286,4 +357,5 @@
    (let [all-lines (into (vec @scene-lines) (visible-path-lines))]
      (viewport/update-scene {:lines all-lines
                              :meshes (visible-meshes)
+                             :panels (visible-panels)
                              :reset-camera? reset-camera?}))))

@@ -33,7 +33,12 @@
    :state-stack []          ; stack for push-state/pop-state
    :anchors {}              ; named poses for mark/goto
    :attached nil            ; attachment state for face/mesh operations
-   :resolution {:mode :n :value 16}})  ; curve resolution (like OpenSCAD $fn)
+   :resolution {:mode :n :value 16}  ; curve resolution (like OpenSCAD $fn)
+   :material {:color 0x00aaff        ; hex color
+              :metalness 0.3         ; 0-1, PBR metalness
+              :roughness 0.7         ; 0-1, PBR roughness
+              :opacity 1.0           ; 0-1, transparency
+              :flat-shading true}})  ; flat vs smooth shading
 
 ;; --- State stack ---
 
@@ -130,9 +135,11 @@
        2)))
 
 (defn- point-in-triangle-2d
-  "Check if point p is strictly inside triangle abc (2D)."
+  "Check if point p is inside or on edge of triangle abc (2D).
+   Uses small epsilon to handle numerical edge cases."
   [[px py] [ax ay] [bx by] [cx cy]]
-  (let [v0x (- cx ax) v0y (- cy ay)
+  (let [eps -1e-10  ; small negative epsilon to include points on/near edges
+        v0x (- cx ax) v0y (- cy ay)
         v1x (- bx ax) v1y (- by ay)
         v2x (- px ax) v2y (- py ay)
         dot00 (+ (* v0x v0x) (* v0y v0y))
@@ -141,12 +148,12 @@
         dot11 (+ (* v1x v1x) (* v1y v1y))
         dot12 (+ (* v1x v2x) (* v1y v2y))
         denom (- (* dot00 dot11) (* dot01 dot01))]
-    (if (zero? denom)
-      false
+    (if (< (Math/abs denom) 1e-12)
+      false  ; degenerate triangle
       (let [inv-denom (/ 1.0 denom)
             u (* (- (* dot11 dot02) (* dot01 dot12)) inv-denom)
             v (* (- (* dot00 dot12) (* dot01 dot02)) inv-denom)]
-        (and (> u 0) (> v 0) (< (+ u v) 1))))))
+        (and (> u eps) (> v eps) (< (+ u v) (- 1 eps)))))))
 
 (defn- is-ear-2d
   "Check if vertex at index i forms an ear in 2D polygon."
@@ -160,7 +167,9 @@
         [ax ay] a [bx by] b [cx cy] c
         ;; Cross product z-component tells us if turn is left (CCW) or right (CW)
         cross-z (- (* (- bx ax) (- cy ay)) (* (- by ay) (- cx ax)))
-        convex? (if ccw? (> cross-z 0) (< cross-z 0))]
+        ;; Use epsilon to handle nearly-collinear points (not valid ears)
+        eps 1e-10
+        convex? (if ccw? (> cross-z eps) (< cross-z (- eps)))]
     (when convex?
       ;; Check no other vertices inside this triangle
       (not-any?
@@ -173,18 +182,21 @@
   "Ear clipping triangulation for 2D polygon.
    Returns vector of [i j k] triangles (indices into original pts)."
   [pts]
-  (let [n (count pts)]
+  (let [n (count pts)
+        area (when (>= n 3) (signed-area-2d pts))]
     (cond
       (< n 3) []
       (= n 3) [[0 1 2]]
       :else
-      (let [ccw? (> (signed-area-2d pts) 0)]
+      (let [ccw? (> area 0)]
         (loop [indices (vec (range n))
-               result []]
+               result []
+               iteration 0]
           (let [m (count indices)]
             (cond
               (< m 3) result
               (= m 3) (conj result (vec indices))
+              (> iteration (* n 2)) result  ; max iterations reached
               :else
               (let [ear-idx (first (filter #(is-ear-2d pts indices % ccw?) (range m)))]
                 (if ear-idx
@@ -195,8 +207,8 @@
                                   (nth indices next-i)]
                         new-indices (into (subvec indices 0 ear-idx)
                                           (subvec indices (inc ear-idx)))]
-                    (recur new-indices (conj result triangle)))
-                  ;; Fallback if no ear found (degenerate polygon)
+                    (recur new-indices (conj result triangle) (inc iteration)))
+                  ;; No ear found - return partial result
                   result)))))))))
 
 (defn- project-to-2d
@@ -228,31 +240,6 @@
       ;; Winding preserved if normal points +X
       :else
       [(mapv (fn [[_ y z]] [y z]) pts) (>= nx 0)])))
-
-(defn- ring-normal
-  "Calculate normal from ring vertices by finding three non-collinear points.
-   Returns normalized cross-product, or [0 0 1] as fallback."
-  [ring]
-  (let [n (count ring)
-        v0 (nth ring 0)
-        epsilon 1e-10
-        ;; Generate all (i, j) pairs to try
-        pairs (for [i (range 1 n)
-                    j (range (inc i) n)]
-                [i j])]
-    (or
-     (some (fn [[i j]]
-             (let [v1 (nth ring i)
-                   v2 (nth ring j)
-                   cross-vec (cross (v- v1 v0) (v- v2 v0))
-                   mag-sq (+ (* (nth cross-vec 0) (nth cross-vec 0))
-                             (* (nth cross-vec 1) (nth cross-vec 1))
-                             (* (nth cross-vec 2) (nth cross-vec 2)))]
-               (when (> mag-sq epsilon)
-                 (normalize cross-vec))))
-           pairs)
-     ;; Fallback if all points are collinear
-     [0 0 1])))
 
 (defn- triangulate-cap
   "Triangulate a polygon cap using ear clipping.
@@ -374,18 +361,14 @@
                extrusion-dir (normalize (v- (ring-centroid (second rings))
                                             (ring-centroid first-ring)))
 
-               ;; Cap normals from ring geometry (finds non-collinear points automatically)
-               bottom-cross-normal (ring-normal first-ring)
-               top-cross-normal (ring-normal last-ring)
+               ;; Use extrusion direction as cap normal (more robust than ring-normal)
+               ;; Bottom cap: normal points opposite to extrusion (no flip needed)
+               ;; Top cap: normal points same as extrusion (no flip needed)
+               bottom-normal (v* extrusion-dir -1)  ; points backward
+               top-normal extrusion-dir             ; points forward
 
-               ;; Determine flip based on extrusion direction:
-               ;; Bottom cap: normal should point OPPOSITE to extrusion → flip if dot > 0
-               ;; Top cap: normal should point SAME as extrusion → flip if dot < 0
-               bottom-flip? (pos? (dot bottom-cross-normal extrusion-dir))
-               top-flip? (neg? (dot top-cross-normal extrusion-dir))
-
-               bottom-cap (triangulate-cap first-ring 0 bottom-cross-normal bottom-flip?)
-               top-cap (triangulate-cap last-ring last-base top-cross-normal top-flip?)]
+               bottom-cap (triangulate-cap first-ring 0 bottom-normal false)
+               top-cap (triangulate-cap last-ring last-base top-normal false)]
            (cond-> {:type :mesh
                     :primitive :sweep
                     :vertices vertices
@@ -405,6 +388,7 @@
   [state shape]
   (let [points (:points shape)
         centered? (:centered? shape)
+        preserve-position? (:preserve-position? shape)
         pos (:position state)
         heading (:heading state)
         up (:up state)
@@ -426,10 +410,12 @@
         plane-x [rx ry rz]
         plane-y up
         ;; Calculate offset for non-centered shapes
-        offset (if centered?
-                 [0 0]
-                 (let [[fx fy] (first points)]
-                   [(- fx) (- fy)]))]
+        ;; preserve-position? = use raw 2D coords (for text with built-in offsets)
+        offset (cond
+                 preserve-position? [0 0]
+                 centered? [0 0]
+                 :else (let [[fx fy] (first points)]
+                         [(- fx) (- fy)]))]
     ;; Transform each 2D point to 3D
     (mapv (fn [[px py]]
             (let [;; Apply offset for non-centered shapes
@@ -1816,6 +1802,54 @@
   [state mode]
   (assoc state :joint-mode mode))
 
+;; --- Material settings ---
+
+(defn set-color
+  "Set the color for subsequent meshes.
+   Accepts hex integer (0xff0000 for red) or RGB values (255 0 0)."
+  ([state hex-color]
+   (assoc-in state [:material :color] hex-color))
+  ([state r g b]
+   (let [hex (+ (bit-shift-left (int r) 16)
+                (bit-shift-left (int g) 8)
+                (int b))]
+     (assoc-in state [:material :color] hex))))
+
+(def ^:private default-material
+  "Default material settings."
+  {:color 0x00aaff
+   :metalness 0.3
+   :roughness 0.7
+   :opacity 1.0
+   :flat-shading true})
+
+(defn set-material
+  "Set material properties for subsequent meshes.
+   Unspecified options reset to defaults.
+   Options:
+     :color - hex color (e.g., 0xff0000)
+     :metalness - 0-1, how metallic the surface appears
+     :roughness - 0-1, how rough/smooth the surface is
+     :opacity - 0-1, transparency (1 = opaque)
+     :flat-shading - true/false for flat vs smooth shading"
+  [state & {:keys [color metalness roughness opacity flat-shading]}]
+  (assoc state :material
+         {:color (or color (:color default-material))
+          :metalness (or metalness (:metalness default-material))
+          :roughness (or roughness (:roughness default-material))
+          :opacity (or opacity (:opacity default-material))
+          :flat-shading (if (some? flat-shading) flat-shading (:flat-shading default-material))}))
+
+(defn get-material
+  "Get the current material settings."
+  [state]
+  (:material state))
+
+(defn reset-material
+  "Reset material to default values."
+  [state]
+  (assoc state :material default-material))
+
 ;; --- Pen commands ---
 
 (defn pen-up
@@ -1915,17 +1949,25 @@
                          existing-meshes)
             ;; Create separate cap meshes using ear clipping for concave shapes
             n-verts (count actual-first-ring)
-            ;; Compute normals from ring geometry
-            bottom-normal (when (>= n-verts 3)
-                            (let [v0 (nth actual-first-ring 0)
-                                  v1 (nth actual-first-ring 1)
-                                  v2 (nth actual-first-ring 2)]
-                              (normalize (cross (v- v1 v0) (v- v2 v0)))))
+            ;; Compute normals from extrusion direction (centroid-based)
+            ;; More robust than cross-product of ring vertices (which fails with duplicate points)
+            ring-centroid (fn [ring]
+                            (let [n (count ring)]
+                              (v* (reduce v+ ring) (/ 1.0 n))))
+            ;; For bottom cap: direction is from actual-first-ring toward first ring in rings
+            ;; (or second ring if actual-first-ring IS the first ring)
+            bottom-reference-ring (if (= actual-first-ring (first rings))
+                                    (second rings)
+                                    (first rings))
+            bottom-normal (when (and (>= n-verts 3) bottom-reference-ring)
+                            (v* (normalize (v- (ring-centroid bottom-reference-ring)
+                                               (ring-centroid actual-first-ring)))
+                                -1))  ; points backward (away from interior)
+            ;; For top cap: direction is from second-to-last ring toward last ring
+            second-to-last-ring (nth rings (- (count rings) 2))
             top-normal (when (>= n-verts 3)
-                         (let [v0 (nth actual-last-ring 0)
-                               v1 (nth actual-last-ring 1)
-                               v2 (nth actual-last-ring 2)]
-                           (normalize (cross (v- v1 v0) (v- v2 v0)))))
+                         (normalize (v- (ring-centroid actual-last-ring)
+                                        (ring-centroid second-to-last-ring))))
             ;; Bottom cap mesh
             bottom-cap-mesh (when (>= n-verts 3)
                               {:type :mesh
@@ -2338,11 +2380,12 @@
                                         [[b0 t1 b1] [b0 t0 t1]]))
                                     (range n-verts))))
                                (range n-rings)))
-                  mesh {:type :mesh
-                        :primitive :torus
-                        :vertices vertices
-                        :faces side-faces
-                        :creation-pose creation-pose}]
+                  mesh (cond-> {:type :mesh
+                               :primitive :torus
+                               :vertices vertices
+                               :faces side-faces
+                               :creation-pose creation-pose}
+                         (:material state) (assoc :material (:material state)))]
               (update final-state :meshes conj mesh))))))))
 
 ;; ============================================================
@@ -2628,10 +2671,13 @@
                                                   (assoc :heading (:heading orientation))
                                                   (assoc :up (:up orientation)))]
                                (stamp-shape temp-state transformed-2d))))
-                mesh (build-sweep-mesh new-rings false creation-pose)]
-            (if mesh
+                mesh (build-sweep-mesh new-rings false creation-pose)
+                mesh-with-material (when mesh
+                                     (cond-> mesh
+                                       (:material state) (assoc :material (:material state))))]
+            (if mesh-with-material
               (-> state
-                  (update :meshes conj mesh)
+                  (update :meshes conj mesh-with-material)
                   (assoc :sweep-rings [])
                   (assoc :stamped-shape nil)
                   (dissoc :loft-base-shape :loft-transform-fn :loft-steps
@@ -2661,9 +2707,13 @@
                                     (generate-loft-segment-mesh
                                      state base-shape transform-fn orientations
                                      total-dist t-start t-end steps-per-segment creation-pose))))
-                valid-meshes (filterv some? segment-meshes)]
+                valid-meshes (filterv some? segment-meshes)
+                ;; Add material to each mesh
+                meshes-with-material (if (:material state)
+                                       (mapv #(assoc % :material (:material state)) valid-meshes)
+                                       valid-meshes)]
             (-> state
-                (update :meshes into valid-meshes)
+                (update :meshes into meshes-with-material)
                 (assoc :sweep-rings [])
                 (assoc :stamped-shape nil)
                 (dissoc :loft-base-shape :loft-transform-fn :loft-steps
@@ -2718,11 +2768,14 @@
                              ;; CCW winding from outside
                              [[b0 t1 b1] [b0 t0 t1]]))
                          (range n-verts)))
-            ;; Compute normals for ear clipping
-            bottom-normal (let [v0 (nth ring1 0) v1 (nth ring1 1) v2 (nth ring1 2)]
-                            (normalize (cross (v- v1 v0) (v- v2 v0))))
-            top-normal (let [v0 (nth ring2 0) v1 (nth ring2 1) v2 (nth ring2 2)]
-                         (normalize (cross (v- v1 v0) (v- v2 v0))))
+            ;; Compute normals from extrusion direction (centroid-based)
+            ;; More robust than cross-product of ring vertices
+            ring-centroid (fn [ring]
+                            (let [n (count ring)]
+                              (v* (reduce v+ ring) (/ 1.0 n))))
+            extrusion-dir (normalize (v- (ring-centroid ring2) (ring-centroid ring1)))
+            bottom-normal (v* extrusion-dir -1)  ; points backward
+            top-normal extrusion-dir             ; points forward
             ;; Use ear clipping for proper concave polygon triangulation
             bottom-cap (triangulate-cap ring1 0 bottom-normal true)
             top-cap (triangulate-cap ring2 n-verts top-normal false)]
@@ -3056,19 +3109,26 @@
                   ;; Layout: [ring0-v0, ring0-v1, ..., ring0-vN, ring1-v0, ...]
                   vertices (vec (apply concat all-rings))
 
-                  ;; Compute cap normals from ring vertices using cross-product
-                  ;; Each ring may have different orientation after bends
-                  bottom-normal (let [v0 (nth first-ring 0)
-                                      v1 (nth first-ring 1)
-                                      v2 (nth first-ring 2)]
-                                  (normalize (cross (v- v1 v0) (v- v2 v0))))
-                  top-normal (let [v0 (nth last-ring 0)
-                                   v1 (nth last-ring 1)
-                                   v2 (nth last-ring 2)]
-                               (normalize (cross (v- v1 v0) (v- v2 v0))))
+                  ;; Compute cap normals from extrusion direction (ring centroids)
+                  ;; More robust than cross-product of ring vertices (which fails with duplicate points)
+                  ring-centroid (fn [ring]
+                                  (let [n (count ring)]
+                                    (v* (reduce v+ ring) (/ 1.0 n))))
+                  second-ring (nth all-rings 1)
+                  second-to-last-ring (nth all-rings (- n-rings 2))
 
-                  ;; Bottom cap: flip=false - faces opposite to cross-product normal (backward)
-                  bottom-cap-faces (triangulate-cap first-ring 0 bottom-normal false)
+                  ;; Bottom cap: normal points opposite to extrusion direction
+                  bottom-extrusion-dir (normalize (v- (ring-centroid second-ring)
+                                                      (ring-centroid first-ring)))
+                  bottom-normal (v* bottom-extrusion-dir -1)
+
+                  ;; Top cap: normal points same as extrusion direction
+                  top-extrusion-dir (normalize (v- (ring-centroid last-ring)
+                                                   (ring-centroid second-to-last-ring)))
+                  top-normal top-extrusion-dir
+
+                  ;; Bottom cap: flip=true for correct outward-facing orientation
+                  bottom-cap-faces (triangulate-cap first-ring 0 bottom-normal true)
 
                   ;; Side faces connecting consecutive rings
                   ;; Ring i vertices: i*n-verts to (i+1)*n-verts - 1
@@ -3084,22 +3144,23 @@
                                           b1 (+ base next-vert)
                                           t0 (+ next-base vert-idx)
                                           t1 (+ next-base next-vert)]
-                                      ;; CCW winding from outside
-                                      [[b0 t0 t1] [b0 t1 b1]]))
+                                      ;; Flip winding for outward-facing normals
+                                      [[b0 t1 t0] [b0 b1 t1]]))
                                   (range n-verts)))
                                (range (dec n-rings))))
 
-                  ;; Top cap: flip=true - faces opposite to cross-product normal (forward)
+                  ;; Top cap: flip=false for correct outward-facing orientation
                   last-ring-base (* (dec n-rings) n-verts)
-                  top-cap-faces (triangulate-cap last-ring last-ring-base top-normal true)
+                  top-cap-faces (triangulate-cap last-ring last-ring-base top-normal false)
 
                   all-faces (vec (concat bottom-cap-faces side-faces top-cap-faces))
 
-                  mesh {:type :mesh
-                        :primitive :extrusion
-                        :vertices vertices
-                        :faces all-faces
-                        :creation-pose creation-pose}]
+                  mesh (cond-> {:type :mesh
+                               :primitive :extrusion
+                               :vertices vertices
+                               :faces all-faces
+                               :creation-pose creation-pose}
+                         (:material state) (assoc :material (:material state)))]
               (update final-state :meshes conj mesh))))))))
 
 ;; ============================================================
@@ -3340,8 +3401,11 @@
 
                (if (empty? segment-meshes)
                  state
-                 ;; Add all segment meshes to state
-                 (update final-state :meshes into segment-meshes))))))))))
+                 ;; Add all segment meshes with material to state
+                 (let [meshes-with-material (if (:material state)
+                                              (mapv #(assoc % :material (:material state)) segment-meshes)
+                                              segment-meshes)]
+                   (update final-state :meshes into meshes-with-material)))))))))))
 
 ;; ============================================================
 ;; Anchors and Navigation

@@ -97,16 +97,18 @@
          position (:position turtle-state)
          heading (:heading turtle-state)
          up (:up turtle-state)
+         material (:material turtle-state)
          transformed (apply-transform vertices position heading up)
          faces (make-box-faces)
-         mesh {:type :mesh
-               :primitive :box
-               :vertices (vec transformed)
-               :faces faces
-               :face-groups (faces/box-face-groups)
-               :creation-pose {:position position
-                               :heading heading
-                               :up up}}]
+         mesh (cond-> {:type :mesh
+                       :primitive :box
+                       :vertices (vec transformed)
+                       :faces faces
+                       :face-groups (faces/box-face-groups)
+                       :creation-pose {:position position
+                                       :heading heading
+                                       :up up}}
+                material (assoc :material material))]
      (update turtle-state :meshes conj mesh))))
 
 (defn- make-sphere-vertices
@@ -196,16 +198,18 @@
          position (:position turtle-state)
          heading (:heading turtle-state)
          up (:up turtle-state)
+         material (:material turtle-state)
          transformed (apply-transform vertices position heading up)
          faces (make-sphere-faces segments rings)
-         mesh {:type :mesh
-               :primitive :sphere
-               :vertices (vec transformed)
-               :faces faces
-               :face-groups (faces/sphere-face-groups segments rings)
-               :creation-pose {:position position
-                               :heading heading
-                               :up up}}]
+         mesh (cond-> {:type :mesh
+                       :primitive :sphere
+                       :vertices (vec transformed)
+                       :faces faces
+                       :face-groups (faces/sphere-face-groups segments rings)
+                       :creation-pose {:position position
+                                       :heading heading
+                                       :up up}}
+                material (assoc :material material))]
      (update turtle-state :meshes conj mesh))))
 
 (defn- make-cylinder-vertices
@@ -282,16 +286,18 @@
          position (:position turtle-state)
          heading (:heading turtle-state)
          up (:up turtle-state)
+         material (:material turtle-state)
          transformed (apply-transform vertices position heading up)
          faces (make-cylinder-faces segments)
-         mesh {:type :mesh
-               :primitive :cylinder
-               :vertices (vec transformed)
-               :faces faces
-               :face-groups (faces/cylinder-face-groups segments)
-               :creation-pose {:position position
-                               :heading heading
-                               :up up}}]
+         mesh (cond-> {:type :mesh
+                       :primitive :cylinder
+                       :vertices (vec transformed)
+                       :faces faces
+                       :face-groups (faces/cylinder-face-groups segments)
+                       :creation-pose {:position position
+                                       :heading heading
+                                       :up up}}
+                material (assoc :material material))]
      (update turtle-state :meshes conj mesh))))
 
 (defn- make-cone-vertices

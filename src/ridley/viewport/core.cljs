@@ -2,7 +2,8 @@
   "Three.js viewport for rendering turtle geometry."
   (:require ["three" :as THREE]
             ["three/examples/jsm/controls/OrbitControls.js" :refer [OrbitControls]]
-            [ridley.viewport.xr :as xr]))
+            [ridley.viewport.xr :as xr]
+            [clojure.string :as str]))
 
 (defonce ^:private state (atom nil))
 
@@ -25,6 +26,10 @@
 ;; Face normals visualization (like Blender's normal display)
 (defonce ^:private normals-visible (atom false))
 (defonce ^:private normals-object (atom nil))
+
+;; Panel (3D text billboard) objects
+;; Maps panel name -> {:mesh THREE.Mesh :canvas OffscreenCanvas :texture THREE.CanvasTexture}
+(defonce ^:private panel-objects (atom {}))
 
 (defn- create-scene []
   (let [scene (THREE/Scene.)]
@@ -172,6 +177,160 @@
         (.set (.-up indicator) ux uy uz)
         (.lookAt indicator target)))))
 
+;; ============================================================
+;; 3D Text Panels (billboard)
+;; ============================================================
+
+(def ^:private panel-px-per-unit
+  "Pixels per world unit for panel texture resolution."
+  10)
+
+(defn- hex-to-rgba
+  "Convert hex color (with optional alpha in high byte) to RGBA string."
+  [hex]
+  (let [has-alpha? (> hex 0xffffff)
+        r (bit-and (bit-shift-right hex (if has-alpha? 24 16)) 0xff)
+        g (bit-and (bit-shift-right hex (if has-alpha? 16 8)) 0xff)
+        b (bit-and (bit-shift-right hex (if has-alpha? 8 0)) 0xff)
+        a (if has-alpha?
+            (/ (bit-and hex 0xff) 255.0)
+            1.0)]
+    (str "rgba(" r "," g "," b "," a ")")))
+
+(defn- hex-to-rgb
+  "Convert hex color to RGB string for canvas."
+  [hex]
+  (let [r (bit-and (bit-shift-right hex 16) 0xff)
+        g (bit-and (bit-shift-right hex 8) 0xff)
+        b (bit-and hex 0xff)]
+    (str "rgb(" r "," g "," b ")")))
+
+(defn- render-panel-canvas
+  "Render panel content to a canvas. Returns the canvas."
+  [canvas panel-data]
+  (let [{:keys [width height content style]} panel-data
+        {:keys [font-size bg fg padding line-height]
+         :or {font-size 3 bg 0x333333cc fg 0xffffff padding 2 line-height 1.4}} style
+        px-width (* width panel-px-per-unit)
+        px-height (* height panel-px-per-unit)
+        px-padding (* padding panel-px-per-unit)
+        ;; font-size is in world units, convert to pixels
+        px-font-size (* font-size panel-px-per-unit)
+        ctx (.getContext canvas "2d")
+        ;; Use provided content or show placeholder
+        display-content (if (seq content) content "<empty>")]
+    ;; Debug
+    (js/console.log "Panel render:" (clj->js {:content content :width px-width :height px-height :font px-font-size}))
+    ;; Clear and draw background
+    (.clearRect ctx 0 0 px-width px-height)
+    (set! (.-fillStyle ctx) "rgba(50,50,50,0.9)")
+    (.fillRect ctx 0 0 px-width px-height)
+    ;; Draw border
+    (set! (.-strokeStyle ctx) "rgba(255,255,255,0.5)")
+    (set! (.-lineWidth ctx) 3)
+    (.strokeRect ctx 1 1 (- px-width 2) (- px-height 2))
+    ;; Setup text rendering - use explicit white color
+    (set! (.-fillStyle ctx) "#ffffff")
+    (set! (.-font ctx) (str "bold " px-font-size "px Arial, sans-serif"))
+    (set! (.-textBaseline ctx) "top")
+    ;; Word wrap and render text
+    (let [max-width (- px-width (* 2 px-padding))
+          lines (str/split display-content #"\n")
+          line-h (* px-font-size line-height)]
+      (loop [y px-padding
+             remaining-lines lines]
+        (when (and (seq remaining-lines) (< y (- px-height px-padding)))
+          (let [line (first remaining-lines)
+                words (str/split line #" ")
+                wrapped (reduce
+                         (fn [{:keys [current-line lines]} word]
+                           (let [test-line (if (empty? current-line)
+                                             word
+                                             (str current-line " " word))
+                                 metrics (.measureText ctx test-line)]
+                             (if (> (.-width metrics) max-width)
+                               {:current-line word
+                                :lines (conj lines current-line)}
+                               {:current-line test-line
+                                :lines lines})))
+                         {:current-line "" :lines []}
+                         words)
+                final-lines (if (empty? (:current-line wrapped))
+                              (:lines wrapped)
+                              (conj (:lines wrapped) (:current-line wrapped)))]
+            ;; Draw wrapped lines
+            (doseq [[idx text] (map-indexed vector final-lines)]
+              (let [line-y (+ y (* idx line-h))]
+                (when (< line-y (- px-height px-padding))
+                  (.fillText ctx text px-padding line-y))))
+            (recur (+ y (* (count final-lines) line-h))
+                   (rest remaining-lines))))))
+    canvas))
+
+(defn- create-panel-mesh
+  "Create a Three.js mesh for a panel. Returns {:mesh :canvas :texture}."
+  [panel-data]
+  (let [{:keys [width height position heading up]} panel-data
+        [px py pz] position
+        [hx hy hz] heading
+        [ux uy uz] up
+        ;; Create canvas and texture (use regular canvas for Three.js compatibility)
+        px-width (* width panel-px-per-unit)
+        px-height (* height panel-px-per-unit)
+        canvas (js/document.createElement "canvas")
+        _ (set! (.-width canvas) px-width)
+        _ (set! (.-height canvas) px-height)
+        _ (render-panel-canvas canvas panel-data)
+        texture (THREE/CanvasTexture. canvas)
+        ;; Create geometry and material
+        geometry (THREE/PlaneGeometry. width height)
+        material (THREE/MeshBasicMaterial. #js {:map texture
+                                                 :transparent true
+                                                 :side THREE/DoubleSide
+                                                 :depthWrite false})
+        mesh (THREE/Mesh. geometry material)]
+    ;; Position the mesh
+    (.set (.-position mesh) px py pz)
+    ;; Orient based on heading/up (panel faces opposite to heading)
+    (let [target (THREE/Vector3. (- px hx) (- py hy) (- pz hz))]
+      (.set (.-up mesh) ux uy uz)
+      (.lookAt mesh target))
+    ;; Mark as panel for identification
+    (set! (.-userData mesh) #js {:isPanel true})
+    (set! (.-renderOrder mesh) 100)  ; Render after other objects
+    {:mesh mesh
+     :canvas canvas
+     :texture texture}))
+
+(defn- update-panel-content
+  "Update an existing panel's texture with new content."
+  [panel-obj panel-data]
+  (let [{:keys [canvas texture]} panel-obj]
+    (render-panel-canvas canvas panel-data)
+    (set! (.-needsUpdate texture) true)))
+
+(defn- update-panels-billboard
+  "Update all panels to face the camera (billboard effect)."
+  [camera]
+  (doseq [[_name panel-obj] @panel-objects]
+    (when-let [mesh (:mesh panel-obj)]
+      ;; Copy camera quaternion for billboard effect
+      (.copy (.-quaternion mesh) (.-quaternion camera)))))
+
+(defn- clear-panels
+  "Remove all panel objects from the scene."
+  [world-group]
+  (doseq [[_name panel-obj] @panel-objects]
+    (when-let [mesh (:mesh panel-obj)]
+      (.remove world-group mesh)
+      (when-let [geom (.-geometry mesh)]
+        (.dispose geom))
+      (when-let [mat (.-material mesh)]
+        (.dispose mat))
+      (when-let [tex (:texture panel-obj)]
+        (.dispose tex))))
+  (reset! panel-objects {}))
+
 (defn- add-lights [scene]
   (let [;; Hemisphere light for even ambient from sky/ground
         hemi-light (THREE/HemisphereLight. 0xffffff 0x444444 0.8)
@@ -200,12 +359,21 @@
 (defn- create-line-material []
   (THREE/LineBasicMaterial. #js {:color 0x00ff88 :linewidth 2}))
 
-(defn- create-mesh-material []
-  (THREE/MeshStandardMaterial. #js {:color 0x00aaff
-                                     :metalness 0.3
-                                     :roughness 0.7
-                                     :side THREE/FrontSide
-                                     :flatShading true}))
+(defn- create-mesh-material
+  "Create mesh material from optional material map or use defaults."
+  ([] (create-mesh-material nil))
+  ([material]
+   (let [{:keys [color metalness roughness opacity flat-shading]
+          :or {color 0x00aaff metalness 0.3 roughness 0.7 opacity 1.0 flat-shading true}} material
+         needs-transparency (< opacity 1.0)]
+     (THREE/MeshStandardMaterial.
+      #js {:color color
+           :metalness metalness
+           :roughness roughness
+           :opacity opacity
+           :transparent needs-transparency
+           :side THREE/FrontSide
+           :flatShading flat-shading}))))
 
 (defn- create-highlight-material
   "Create material for highlighted faces."
@@ -244,8 +412,8 @@
       (THREE/LineSegments. buffer-geom (create-line-material)))))
 
 (defn- create-three-mesh
-  "Create Three.js mesh from vertices and faces."
-  [{:keys [vertices faces]}]
+  "Create Three.js mesh from vertices, faces, and optional material."
+  [{:keys [vertices faces material]}]
   (let [geom (THREE/BufferGeometry.)
         n-verts (count vertices)
         ;; Flatten vertices for position attribute, with bounds checking
@@ -257,16 +425,19 @@
                            faces)
         flat-coords (mapcat identity face-verts)
         positions (js/Float32Array. (clj->js flat-coords))
-        material (create-mesh-material)]
+        three-material (create-mesh-material material)]
     (.setAttribute geom "position" (THREE/BufferAttribute. positions 3))
     ;; With flatShading: true, Three.js computes face normals automatically
     ;; We still call computeVertexNormals for compatibility, but flatShading overrides
     (.computeVertexNormals geom)
-    (THREE/Mesh. geom material)))
+    (THREE/Mesh. geom three-material)))
 
 (defn- clear-geometry
   "Remove all user geometry objects from world-group, keeping grid, axes, and highlight-group."
   [world-group highlight-group]
+  ;; Clear panels first (dispose textures properly)
+  (clear-panels world-group)
+  ;; Clear other geometry
   (let [to-remove (filterv #(and (or (= (.-type %) "LineSegments")
                                       (= (.-type %) "Mesh"))
                                   ;; Keep grid (GridHelper is also a LineSegments)
@@ -405,10 +576,11 @@
       (.add world-group new-obj))))
 
 (defn update-scene
-  "Update viewport with lines and meshes.
+  "Update viewport with lines, meshes, and panels.
    Options:
-     :reset-camera? - if true (default), fit camera to geometry"
-  [{:keys [lines meshes reset-camera?] :or {reset-camera? true}}]
+     :reset-camera? - if true (default), fit camera to geometry
+     :panels - vector of panel data to render"
+  [{:keys [lines meshes panels reset-camera?] :or {reset-camera? true panels []}}]
   ;; Store meshes for export
   (reset! current-meshes (vec meshes))
   (when-let [{:keys [world-group highlight-group camera controls]} @state]
@@ -425,6 +597,13 @@
     (doseq [mesh-data meshes]
       (let [mesh (create-three-mesh mesh-data)]
         (.add world-group mesh)))
+    ;; Add panels to world-group
+    (doseq [panel-data panels]
+      (when (= :panel (:type panel-data))
+        (let [panel-obj (create-panel-mesh panel-data)
+              name (:name panel-data)]
+          (.add world-group (:mesh panel-obj))
+          (swap! panel-objects assoc name panel-obj))))
     ;; Update normals visualization
     (update-normals-display world-group meshes)
     ;; Fit camera to all geometry (only if reset-camera? is true)
@@ -490,6 +669,8 @@
     ;; Update turtle indicator scale for screen-relative sizing
     (when-let [indicator @turtle-indicator]
       (update-turtle-indicator-scale indicator camera))
+    ;; Update panels to face camera (billboard effect)
+    (update-panels-billboard camera)
     (if (xr/xr-presenting? renderer)
       ;; VR mode: update controller input, pass XR frame for pose data
       (xr/update-controller xr-frame renderer)
@@ -848,6 +1029,17 @@
     (reset! turtle-pose pose)
     (when-let [indicator @turtle-indicator]
       (update-turtle-indicator-pose indicator pose))))
+
+;; ============================================================
+;; Panel content updates
+;; ============================================================
+
+(defn update-panel-text
+  "Update the text content of a panel by name.
+   panel-data should include :name, :width, :height, :content, :style."
+  [name panel-data]
+  (when-let [panel-obj (get @panel-objects name)]
+    (update-panel-content panel-obj panel-data)))
 
 (defn dispose
   "Clean up Three.js resources."

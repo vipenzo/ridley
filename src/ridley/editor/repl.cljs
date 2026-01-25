@@ -116,6 +116,25 @@
 (defn ^:export implicit-resolution [mode value]
   (swap! turtle-atom turtle/resolution mode value))
 
+;; Color and material
+(defn ^:export implicit-color
+  "Set the color for subsequent meshes.
+   Can be called with hex value or RGB components."
+  ([hex-or-r]
+   (swap! turtle-atom turtle/set-color hex-or-r))
+  ([r g b]
+   (swap! turtle-atom turtle/set-color r g b)))
+
+(defn ^:export implicit-material
+  "Set material properties for subsequent meshes."
+  [& {:as opts}]
+  (swap! turtle-atom #(apply turtle/set-material % (mapcat identity opts))))
+
+(defn ^:export implicit-reset-material
+  "Reset material to default values."
+  []
+  (swap! turtle-atom turtle/reset-material))
+
 ;; Arc commands
 (defn ^:export implicit-arc-h [radius angle & {:keys [steps]}]
   (swap! turtle-atom #(turtle/arc-h % radius angle :steps steps)))
@@ -237,22 +256,24 @@
 ;; Transform a mesh to turtle position/orientation
 (defn- transform-mesh-to-turtle
   "Transform a mesh's vertices to current turtle position and orientation.
-   Also stores creation-pose so mesh can be re-attached later."
+   Also stores creation-pose and material so mesh can be re-attached later."
   [mesh]
   (let [turtle @turtle-atom
         position (:position turtle)
         heading (:heading turtle)
         up (:up turtle)
+        material (:material turtle)
         transformed-verts (prims/apply-transform
                            (:vertices mesh)
                            position
                            heading
                            up)]
-    (-> mesh
-        (assoc :vertices (vec transformed-verts))
-        (assoc :creation-pose {:position position
-                               :heading heading
-                               :up up}))))
+    (cond-> mesh
+      true (assoc :vertices (vec transformed-verts))
+      true (assoc :creation-pose {:position position
+                                  :heading heading
+                                  :up up})
+      material (assoc :material material))))
 
 ;; Primitive constructors - create mesh at current turtle position
 (defn- pure-box
@@ -408,7 +429,8 @@
                             (assoc :heading (:heading current-turtle))
                             (assoc :up (:up current-turtle))
                             (assoc :joint-mode (:joint-mode current-turtle))
-                            (assoc :resolution (:resolution current-turtle)))
+                            (assoc :resolution (:resolution current-turtle))
+                            (assoc :material (:material current-turtle)))
                         (turtle/make-turtle))
         ;; Extrude each shape, collecting results
         results (reduce
@@ -440,7 +462,8 @@
                             (assoc :heading (:heading current-turtle))
                             (assoc :up (:up current-turtle))
                             (assoc :joint-mode (:joint-mode current-turtle))
-                            (assoc :resolution (:resolution current-turtle)))
+                            (assoc :resolution (:resolution current-turtle))
+                            (assoc :material (:material current-turtle)))
                         (turtle/make-turtle))
         ;; Extrude each shape, collecting results
         results (reduce
@@ -502,7 +525,8 @@
                              (assoc :heading (:heading current-turtle))
                              (assoc :up (:up current-turtle))
                              (assoc :joint-mode (:joint-mode current-turtle))
-                             (assoc :resolution (:resolution current-turtle)))
+                             (assoc :resolution (:resolution current-turtle))
+                             (assoc :material (:material current-turtle)))
                          (turtle/make-turtle))
          ;; Use loft-from-path which generates separate meshes at corners
          result-state (turtle/loft-from-path initial-state shape transform-fn path steps)
@@ -803,6 +827,10 @@
    'joint-mode   implicit-joint-mode
    ;; Resolution (like OpenSCAD $fn/$fa/$fs)
    'resolution   implicit-resolution
+   ;; Color and material
+   'color        implicit-color
+   'material     implicit-material
+   'reset-material implicit-reset-material
    ;; Arc commands
    'arc-h        implicit-arc-h
    'arc-v        implicit-arc-v

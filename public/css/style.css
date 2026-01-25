@@ -641,6 +641,31 @@ body.resizing-h * {
   color: #9cdcfe;
 }
 
+.manual-list {
+  color: #d4d4d4;
+  margin: 0 0 16px 0;
+  padding-left: 24px;
+}
+
+.manual-list li {
+  margin-bottom: 8px;
+  line-height: 1.5;
+}
+
+.manual-list strong {
+  color: #fff;
+  font-weight: 600;
+}
+
+.manual-list code {
+  background: #2d2d2d;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: "SF Mono", "Monaco", "Menlo", "Consolas", monospace;
+  font-size: 0.9em;
+  color: #9cdcfe;
+}
+
 .manual-code-block {
   background: #1a1a2e;
   border-radius: 6px;
