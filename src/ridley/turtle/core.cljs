@@ -2901,7 +2901,7 @@
                              [[b0 t1 b1] [b0 t0 t1]]))
                          (range n-outer)))
 
-            ;; Side faces for each hole (reversed winding - CW from outside = inward facing)
+            ;; Side faces for each hole (same winding as outer - holes have opposite point order)
             hole-side-faces
             (vec (apply concat
                         (map-indexed
@@ -2913,8 +2913,8 @@
                                        (let [next-i (mod (inc i) hole-len)
                                              b0 (+ base1 i) b1 (+ base1 next-i)
                                              t0 (+ base2 i) t1 (+ base2 next-i)]
-                                         ;; Reversed winding for holes (facing inward)
-                                         [[b0 b1 t1] [b0 t1 t0]]))
+                                         ;; Same winding as outer (CCW from outside)
+                                         [[b0 t1 b1] [b0 t0 t1]]))
                                      (range hole-len))))
                          hole-lengths)))
 

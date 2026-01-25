@@ -300,16 +300,16 @@
                   commands (.-commands path)
                   contours (path-commands->contours commands curve-segments)
                   advance-width (* (.-advanceWidth glyph) scale)
-                  ;; Transform coordinates for proper 3D text orientation:
-                  ;; - Swap x and y so spacing goes along up (+Z), height along right (-Y)
+                  ;; Flip Y and reverse point order to preserve winding
+                  ;; Y flip changes winding direction, reverse restores it
                   normalized-contours
                   (->> contours
                        (map (fn [contour]
-                              (mapv (fn [[x y]] [(- y) (- x)]) contour)))
+                              (vec (reverse (mapv (fn [[x y]] [x (- y)]) contour)))))
                        (map remove-consecutive-duplicates)
-                       (filter #(> (count %) 2))  ; filter out degenerate contours
+                       (filter #(> (count %) 2))
                        vec)
-                  ;; Classify contours into outer boundaries and holes
+                  ;; Classify contours - winding is now correct
                   {:keys [outer holes]} (classify-contours normalized-contours)
                   ;; Get largest outer contour as the main shape boundary
                   largest-outer (when (seq outer)
