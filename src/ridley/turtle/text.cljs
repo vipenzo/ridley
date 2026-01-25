@@ -208,13 +208,12 @@
 (defn- normalize-contour
   "Normalize a contour to the specified size.
    - Scale from font units to target size
-   - Flip Y axis (font Y is up, we want Y down for consistency)"
+   - Keep Y as-is (font Y up matches turtle up)"
   [contour font-units-per-em target-size]
   (let [scale (/ target-size font-units-per-em)]
-    ;; Scale and flip Y
     (mapv (fn [[x y]]
             [(* x scale)
-             (* (- y) scale)])
+             (* y scale)])
           contour)))
 
 ;; ============================================================
@@ -246,13 +245,17 @@
 
 (defn glyph->contours
   "Extract contours from a single glyph.
-   Returns vector of contours, each contour is a vector of [x y] points."
+   Returns vector of contours, each contour is a vector of [x y] points.
+   Y is flipped (SVG Y-down → our Y-up) and points reversed to preserve winding."
   [glyph font size & {:keys [curve-segments] :or {curve-segments 8}}]
   (let [path (.getPath glyph 0 0 size)
         commands (.-commands path)
         units-per-em (.-unitsPerEm font)]
     (->> (path-commands->contours commands curve-segments)
          (map #(normalize-contour % units-per-em size))
+         ;; Flip Y and reverse to preserve winding
+         (map (fn [contour]
+                (vec (reverse (mapv (fn [[x y]] [x (- y)]) contour)))))
          (map remove-consecutive-duplicates)
          (filter #(> (count %) 2))
          vec)))
@@ -300,8 +303,9 @@
                   commands (.-commands path)
                   contours (path-commands->contours commands curve-segments)
                   advance-width (* (.-advanceWidth glyph) scale)
-                  ;; Flip Y and reverse point order to preserve winding
-                  ;; Y flip changes winding direction, reverse restores it
+                  ;; Flip Y and reverse points to preserve winding
+                  ;; opentype.js getPath uses SVG coords (Y-down), we need Y-up
+                  ;; Y flip inverts winding, reverse restores it
                   normalized-contours
                   (->> contours
                        (map (fn [contour]
@@ -309,15 +313,21 @@
                        (map remove-consecutive-duplicates)
                        (filter #(> (count %) 2))
                        vec)
-                  ;; Classify contours - winding is now correct
+                  ;; Classify contours - winding is preserved after flip+reverse
                   {:keys [outer holes]} (classify-contours normalized-contours)
                   ;; Get largest outer contour as the main shape boundary
                   largest-outer (when (seq outer)
                                   (apply max-key count outer))
+                  ;; Letters WITHOUT holes need reversed winding for standard extrusion
+                  ;; Letters WITH holes use earcut which expects current winding
+                  final-outer (when largest-outer
+                                (if (seq holes)
+                                  largest-outer
+                                  (vec (reverse largest-outer))))
                   ;; Create shape with holes
                   ;; preserve-position? keeps the offset for proper text spacing
-                  glyph-shape (when (and largest-outer (> (count largest-outer) 2))
-                                (shape/make-shape largest-outer
+                  glyph-shape (when (and final-outer (> (count final-outer) 2))
+                                (shape/make-shape final-outer
                                                   (cond-> {:centered? false
                                                            :preserve-position? true}
                                                     (seq holes) (assoc :holes holes))))]
@@ -391,11 +401,12 @@
                   commands (.-commands path)
                   contours (path-commands->contours commands curve-segments)
                   advance-width (* (.-advanceWidth glyph) scale)
-                  ;; Flip Y for correct winding, keep x-offset in X for spacing
+                  ;; Flip Y and reverse to preserve winding (same as text-shape)
+                  ;; opentype.js getPath uses SVG coords (Y-down), we need Y-up
                   normalized-contours
                   (->> contours
                        (map (fn [contour]
-                              (mapv (fn [[x y]] [x (- y)]) contour)))
+                              (vec (reverse (mapv (fn [[x y]] [x (- y)]) contour)))))
                        (map remove-consecutive-duplicates)
                        (filter #(> (count %) 2))
                        vec)]

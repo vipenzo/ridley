@@ -177,7 +177,7 @@
         {:id :text-on-arc
          :code "(def arc-path (path (arc-h 50 180)))\n\n(register curved\n  (text-on-path \"CURVED TEXT\" arc-path\n    :size 12 :depth 3 :align :center))"}
         {:id :text-on-spiral
-         :code "(def spiral (path (dotimes [_ 20] (f 8) (th 18) (tv 3))))\n\n(register spiral-text\n  (text-on-path \"SPIRAL\" spiral :size 10 :depth 2))"}]}]}
+         :code "(def spiral (path (dotimes [_ 60] (f 3) (th 6) (tv 1))))\n\n(register spiral-text\n  (text-on-path \"SPIRAL\" spiral :size 10 :depth 2))"}]}]}
     {:id :part-5
      :pages
      [{:id :debug-panels
