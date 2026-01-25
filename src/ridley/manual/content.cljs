@@ -166,12 +166,18 @@
         {:id :material-reset
          :code "(color 0xff0000)\n(register red (box 15))\n(f 30)\n(reset-material)\n(register default (box 15))"}]}
       {:id :text-shapes
-       :see-also [:extrude-basics :custom-shapes]
+       :see-also [:extrude-basics :custom-shapes :curves-beziers]
        :examples
        [{:id :text-basic
          :code "(register title\n  (extrude (text-shape \"HI\" :size 30) (f 5)))"}
         {:id :text-large
-         :code "(register sign\n  (extrude (text-shape \"RIDLEY\" :size 20) (f 3)))"}]}]}
+         :code "(register sign\n  (extrude (text-shape \"RIDLEY\" :size 20) (f 3)))"}
+        {:id :extrude-text
+         :code "(register hello\n  (extrude-text \"Hello\" :size 25 :depth 4))"}
+        {:id :text-on-arc
+         :code "(def arc-path (path (arc-h 50 180)))\n\n(register curved\n  (text-on-path \"CURVED TEXT\" arc-path\n    :size 12 :depth 3 :align :center))"}
+        {:id :text-on-spiral
+         :code "(def spiral (path (dotimes [_ 20] (f 8) (th 18) (tv 3))))\n\n(register spiral-text\n  (text-on-path \"SPIRAL\" spiral :size 10 :depth 2))"}]}]}
     {:id :part-5
      :pages
      [{:id :debug-panels
@@ -840,7 +846,22 @@ PBR (Physically Based Rendering) guidelines:
 (register sign (extrude (text-shape \"RIDLEY\" :size 20) (f 5)))
 ```
 
-The function returns a vector of shapes (one per character), which `extrude` handles automatically.
+**Quick extrusion with `extrude-text`:**
+```
+(extrude-text \"Hello\" :size 25 :depth 4)
+```
+This is a shortcut that extrudes text at the turtle position, flowing along heading.
+
+**Text on a path:**
+```
+(def my-arc (path (arc-h 50 180)))
+(text-on-path \"CURVED\" my-arc :size 12 :depth 3)
+```
+
+Options for `text-on-path`:
+- `:align` — `:start`, `:center`, or `:end`
+- `:spacing` — extra letter spacing (default 0)
+- `:overflow` — `:truncate`, `:wrap`, or `:scale`
 
 **Built-in fonts:**
 - `:roboto` — Roboto Regular (default)
@@ -849,14 +870,18 @@ The function returns a vector of shapes (one per character), which `extrude` han
 **Load custom font:**
 ```
 (load-font! \"/path/to/font.ttf\")  ; returns a promise
-```
-
-Note: Text shapes currently render only the outer contour of each character (holes in letters like 'O' or 'A' are not subtracted)."
+```"
       :examples
       {:text-basic {:caption "Simple 3D text"
                     :description "Extrude text shapes to create 3D letters. The :size option controls the font size in world units."}
        :text-large {:caption "Signage"
-                    :description "Larger text for signs and titles. Adjust :size and extrusion depth (f 3) for desired proportions."}}}}}
+                    :description "Larger text for signs and titles. Adjust :size and extrusion depth (f 3) for desired proportions."}
+       :extrude-text {:caption "Quick extrusion"
+                      :description "`extrude-text` is a convenient shortcut: text flows along the turtle's heading and extrudes perpendicular to it."}
+       :text-on-arc {:caption "Text on arc"
+                     :description "Place text along a curved path. Each letter follows the curve tangent. Use `:align :center` to center text on the path."}
+       :text-on-spiral {:caption "Text on spiral"
+                        :description "Text can follow any path, including complex 3D curves like spirals."}}}}}
 
    :it
    {:sections
@@ -1479,7 +1504,22 @@ Linee guida PBR (Physically Based Rendering):
 (register sign (extrude (text-shape \"RIDLEY\" :size 20) (f 5)))
 ```
 
-La funzione restituisce un vettore di forme (una per carattere), che `extrude` gestisce automaticamente.
+**Estrusione rapida con `extrude-text`:**
+```
+(extrude-text \"Hello\" :size 25 :depth 4)
+```
+Scorciatoia che estrude il testo alla posizione della turtle, fluendo lungo l'heading.
+
+**Testo su percorso:**
+```
+(def mio-arco (path (arc-h 50 180)))
+(text-on-path \"CURVO\" mio-arco :size 12 :depth 3)
+```
+
+Opzioni per `text-on-path`:
+- `:align` — `:start`, `:center`, o `:end`
+- `:spacing` — spaziatura extra tra lettere (default 0)
+- `:overflow` — `:truncate`, `:wrap`, o `:scale`
 
 **Font integrati:**
 - `:roboto` — Roboto Regular (default)
@@ -1488,14 +1528,18 @@ La funzione restituisce un vettore di forme (una per carattere), che `extrude` g
 **Carica font personalizzato:**
 ```
 (load-font! \"/path/to/font.ttf\")  ; restituisce una promise
-```
-
-Nota: Le forme di testo attualmente renderizzano solo il contorno esterno di ogni carattere (i buchi in lettere come 'O' o 'A' non vengono sottratti)."
+```"
       :examples
       {:text-basic {:caption "Testo 3D semplice"
                     :description "Estrudi forme di testo per creare lettere 3D. L'opzione :size controlla la dimensione del font in unità mondo."}
        :text-large {:caption "Segnaletica"
-                    :description "Testo più grande per insegne e titoli. Regola :size e profondità estrusione (f 3) per le proporzioni desiderate."}}}}}})
+                    :description "Testo più grande per insegne e titoli. Regola :size e profondità estrusione (f 3) per le proporzioni desiderate."}
+       :extrude-text {:caption "Estrusione rapida"
+                      :description "`extrude-text` è una scorciatoia conveniente: il testo fluisce lungo l'heading della turtle e viene estruso perpendicolarmente."}
+       :text-on-arc {:caption "Testo su arco"
+                     :description "Posiziona testo lungo un percorso curvo. Ogni lettera segue la tangente alla curva. Usa `:align :center` per centrare il testo sul percorso."}
+       :text-on-spiral {:caption "Testo su spirale"
+                        :description "Il testo può seguire qualsiasi percorso, incluse curve 3D complesse come spirali."}}}}}})
 
 ;; Helper to find a page in the structure
 (defn- find-page-structure [page-id]
