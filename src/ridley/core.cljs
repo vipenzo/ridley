@@ -64,25 +64,47 @@
       (str/replace ">" "&gt;")))
 
 (defn- add-repl-entry
-  "Add an entry to the REPL history display."
-  [input result error?]
+  "Add an entry to the REPL history display.
+   Optional print-output shows stdout before the result."
+  ([input result error?] (add-repl-entry input result error? nil))
+  ([input result error? print-output]
+   (when-let [history-el @repl-history-el]
+     (let [entry (.createElement js/document "div")
+           formatted (if error?
+                       (escape-html result)
+                       (escape-html (format-value result)))
+           result-class (cond
+                          error? "repl-error"
+                          (nil? result) "repl-nil"
+                          :else "repl-result")
+           print-html (when print-output
+                        (str "<div class=\"repl-print-output\">"
+                             (escape-html print-output)
+                             "</div>"))]
+       (.add (.-classList entry) "repl-entry")
+       (set! (.-innerHTML entry)
+             (str "<div class=\"repl-input-echo\">"
+                  "<span class=\"repl-prompt\">&gt; </span>"
+                  (escape-html input)
+                  "</div>"
+                  (or print-html "")
+                  "<div class=\"" result-class "\">"
+                  formatted
+                  "</div>"))
+       (.appendChild history-el entry)
+       ;; Scroll to bottom
+       (set! (.-scrollTop history-el) (.-scrollHeight history-el))))))
+
+(defn- add-script-output
+  "Add script output (from definitions/manual) to the REPL history.
+   Shows only print output without input/result."
+  [print-output]
   (when-let [history-el @repl-history-el]
-    (let [entry (.createElement js/document "div")
-          formatted (if error?
-                      (escape-html result)
-                      (escape-html (format-value result)))
-          result-class (cond
-                         error? "repl-error"
-                         (nil? result) "repl-nil"
-                         :else "repl-result")]
+    (let [entry (.createElement js/document "div")]
       (.add (.-classList entry) "repl-entry")
       (set! (.-innerHTML entry)
-            (str "<div class=\"repl-input-echo\">"
-                 "<span class=\"repl-prompt\">&gt; </span>"
-                 (escape-html input)
-                 "</div>"
-                 "<div class=\"" result-class "\">"
-                 formatted
+            (str "<div class=\"repl-print-output\">"
+                 (escape-html print-output)
                  "</div>"))
       (.appendChild history-el entry)
       ;; Scroll to bottom
@@ -106,6 +128,9 @@
        (show-error error)
        (do
          (hide-error)
+         ;; Show print output in REPL history if any
+         (when-let [print-output (:print-output result)]
+           (add-script-output print-output))
          (when-let [render-data (repl/extract-render-data result)]
            ;; Store lines and definition meshes
            (registry/set-lines! (:lines render-data))
@@ -137,8 +162,8 @@
               (show-error error))
             (do
               (hide-error)
-              ;; Show result in terminal history
-              (add-repl-entry input (:implicit-result result) false)
+              ;; Show result in terminal history (with any print output)
+              (add-repl-entry input (:implicit-result result) false (:print-output result))
               ;; Extract lines and meshes from REPL evaluation
               (when-let [render-data (repl/extract-render-data result)]
                 (registry/add-lines! (:lines render-data))
@@ -508,7 +533,7 @@
           (show-error error))
         (do
           (hide-error)
-          (add-repl-entry command (:implicit-result result) false)
+          (add-repl-entry command (:implicit-result result) false (:print-output result))
           (when-let [render-data (repl/extract-render-data result)]
             (registry/add-lines! (:lines render-data))
             (registry/set-definition-meshes! (:meshes render-data)))
@@ -760,6 +785,9 @@
       (show-error error)
       (do
         (hide-error)
+        ;; Show print output in REPL history if any
+        (when-let [print-output (:print-output result)]
+          (add-script-output print-output))
         (when-let [render-data (repl/extract-render-data result)]
           (registry/set-lines! (:lines render-data))
           (registry/set-definition-meshes! (:meshes render-data)))

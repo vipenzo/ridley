@@ -25,6 +25,22 @@
 ;; Global turtle state for implicit mode
 (defonce ^:private turtle-atom (atom nil))
 
+;; Atom to capture print output during evaluation
+(defonce ^:private print-buffer (atom []))
+
+(defn- reset-print-buffer! []
+  (reset! print-buffer []))
+
+(defn- capture-print [& args]
+  (swap! print-buffer conj (apply str args)))
+
+(defn- capture-println [& args]
+  (swap! print-buffer conj (str (apply str args) "\n")))
+
+(defn- get-print-output []
+  (let [output (apply str @print-buffer)]
+    (when (seq output) output)))
+
 (defn- reset-turtle! []
   (reset! turtle-atom (turtle/make-turtle)))
 
@@ -889,7 +905,12 @@
    'pow                 js/Math.pow
    'atan2               js/Math.atan2
    ;; Debug logging (outputs to browser console)
-   'log                 (fn [& args] (apply js/console.log (map clj->js args)))})
+   'log                 (fn [& args] (apply js/console.log (map clj->js args)))
+   ;; Print functions (captured and shown in REPL)
+   'print               capture-print
+   'println             capture-println
+   'pr                  (fn [& args] (capture-print (apply pr-str args)))
+   'prn                 (fn [& args] (capture-println (apply pr-str args)))})
 
 ;; Macro definitions for SCI context
 (def ^:private macro-defs
@@ -1686,20 +1707,23 @@
 (defn evaluate-definitions
   "Evaluate definitions code only. Resets context and turtle state.
    Called when user runs definitions panel (Cmd+Enter or Run button).
-   Returns {:result turtle-state :explicit-result any} or {:error msg}."
+   Returns {:result turtle-state :explicit-result any :print-output str} or {:error msg}."
   [explicit-code]
   (try
     ;; Reset context for fresh definitions evaluation
     (reset-ctx!)
     (let [ctx (get-or-create-ctx)]
-      ;; Reset turtle for fresh evaluation
+      ;; Reset turtle and print buffer for fresh evaluation
       (reset-turtle!)
+      (reset-print-buffer!)
       ;; Evaluate explicit code (definitions, functions, explicit geometry)
       (let [explicit-result (when (and explicit-code (seq (str/trim explicit-code)))
-                              (sci/eval-string explicit-code ctx))]
+                              (sci/eval-string explicit-code ctx))
+            print-output (get-print-output)]
         {:result @turtle-atom
          :explicit-result explicit-result
-         :implicit-result nil}))
+         :implicit-result nil
+         :print-output print-output}))
     (catch :default e
       {:error (.-message e)})))
 
@@ -1708,7 +1732,7 @@
    Definitions must be evaluated first to populate the context.
    Turtle pose (position, heading, up) persists between REPL commands.
    Geometry is cleared each command (only shows current command's output).
-   Returns {:result turtle-state :implicit-result any} or {:error msg}."
+   Returns {:result turtle-state :implicit-result any :print-output str} or {:error msg}."
   [repl-code]
   (try
     (let [ctx (get-or-create-ctx)]
@@ -1717,35 +1741,42 @@
         (reset-turtle!)
         ;; Keep position/heading/up, clear geometry/meshes
         (swap! turtle-atom assoc :geometry [] :meshes []))
+      ;; Reset print buffer for this command
+      (reset-print-buffer!)
       ;; Evaluate REPL code using existing context with definitions
       (let [implicit-result (when (and repl-code (seq (str/trim repl-code)))
-                              (sci/eval-string repl-code ctx))]
+                              (sci/eval-string repl-code ctx))
+            print-output (get-print-output)]
         {:result @turtle-atom
          :explicit-result nil
-         :implicit-result implicit-result}))
+         :implicit-result implicit-result
+         :print-output print-output}))
     (catch :default e
       {:error (.-message e)})))
 
 (defn evaluate
   "Evaluate both explicit and implicit code sections (legacy API).
-   Returns {:result turtle-state :explicit-result any :implicit-result any} or {:error msg}."
+   Returns {:result turtle-state :explicit-result any :implicit-result any :print-output str} or {:error msg}."
   [explicit-code implicit-code]
   (try
     ;; Reset context for fresh evaluation
     (reset-ctx!)
     (let [ctx (get-or-create-ctx)]
-      ;; Reset turtle for fresh evaluation (but NOT registry - that persists)
+      ;; Reset turtle and print buffer for fresh evaluation
       (reset-turtle!)
+      (reset-print-buffer!)
       ;; Phase 1: Evaluate explicit code (definitions, functions, explicit geometry)
       (let [explicit-result (when (and explicit-code (seq (str/trim explicit-code)))
                               (sci/eval-string explicit-code ctx))
             ;; Phase 2: Evaluate implicit code (turtle commands)
             implicit-result (when (and implicit-code (seq (str/trim implicit-code)))
-                              (sci/eval-string implicit-code ctx))]
+                              (sci/eval-string implicit-code ctx))
+            print-output (get-print-output)]
         ;; Return combined result
         {:result @turtle-atom
          :explicit-result explicit-result
-         :implicit-result implicit-result}))
+         :implicit-result implicit-result
+         :print-output print-output}))
     (catch :default e
       {:error (.-message e)})))
 

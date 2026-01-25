@@ -88,6 +88,13 @@ html, body {
   margin-left: 20px;
 }
 
+.repl-entry .repl-print-output {
+  color: #d4d4d4;
+  margin-left: 20px;
+  white-space: pre-wrap;
+  font-style: italic;
+}
+
 #repl-input-line {
   display: flex;
   align-items: center;

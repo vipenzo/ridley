@@ -88,7 +88,42 @@
         {:id :resolution-a
          :code "(resolution :a 15)\n(register angle-res\n  (extrude (circle 15)\n    (f 20) (arc-h 15 180) (f 20)))"}
         {:id :resolution-steps
-         :code "(register custom-steps\n  (extrude (circle 15)\n    (f 20) (arc-h 15 180 :steps 32) (f 20)))"}]}
+         :code "(register custom-steps\n  (extrude (circle 15)\n    (f 20) (arc-h 15 180 :steps 32) (f 20)))"}]}]}
+    {:id :part-3
+     :pages
+     [{:id :control-structures
+       :see-also [:clojure-basics :local-variables]
+       :examples
+       [{:id :dotimes-ignore
+         :code "(dotimes [_ 4]\n  (f 20)\n  (th 90))"}
+        {:id :for-comprehension
+         :code "(register tubes\n  (for [size [10 20 30]]\n    (attach (extrude (circle size) (f 20))\n      (f size))))"}
+        {:id :when-conditional
+         :code "(dotimes [i 10]\n  (f 10)\n  (when (odd? i)\n    (th 30)))"}]}
+      {:id :local-variables
+       :see-also [:clojure-basics :control-structures]
+       :examples
+       [{:id :let-basics
+         :code "(let [r 15\n      h 40]\n  (register cyl\n    (extrude (circle r) (f h))))"}
+        {:id :let-computed
+         :code "(let [base 20\n      half (/ base 2)\n      quarter (/ half 2)]\n  (register box1 (box base))\n  (f (+ half quarter))\n  (register box2 (box half)))"}]}
+      {:id :repl-usage
+       :examples
+       [{:id :repl-quick-test
+         :code "(+ 1 2 3)"}
+        {:id :repl-println
+         :code "(println \"Hello from REPL!\")\n(println \"2 + 2 =\" (+ 2 2))"}]}]}
+    {:id :part-4
+     :pages
+     [{:id :mesh-basics
+       :see-also [:boolean-operations :attach-meshes]
+       :examples
+       [{:id :mesh-register
+         :code "(register cube (box 30))"}
+        {:id :mesh-info
+         :code "(register tube\n  (extrude (circle 10) (f 40)))\n(println (info :tube))"}
+        {:id :mesh-get-mesh
+         :code "(register a (box 20))\n(register b (cyl 8 30))\n(hide :a) (hide :b)\n(register ab\n  (mesh-union (get-mesh :a) (get-mesh :b)))"}]}
       {:id :boolean-operations
        :examples
        [{:id :bool-union
@@ -116,25 +151,7 @@
        [{:id :attach-face-frustum
          :code "(register frustum\n  (attach-face (box 30) :top\n    (inset 10) (f 30)))"}
         {:id :clone-face-spike
-         :code "(register spike\n  (clone-face (box 30) :top\n    (inset 10) (f 30)))"}]}]}
-    {:id :part-3
-     :pages
-     [{:id :control-structures
-       :see-also [:clojure-basics :local-variables]
-       :examples
-       [{:id :dotimes-ignore
-         :code "(dotimes [_ 4]\n  (f 20)\n  (th 90))"}
-        {:id :for-comprehension
-         :code "(register tubes\n  (for [size [10 20 30]]\n    (attach (extrude (circle size) (f 20))\n      (f size))))"}
-        {:id :when-conditional
-         :code "(dotimes [i 10]\n  (f 10)\n  (when (odd? i)\n    (th 30)))"}]}
-      {:id :local-variables
-       :see-also [:clojure-basics :control-structures]
-       :examples
-       [{:id :let-basics
-         :code "(let [r 15\n      h 40]\n  (register cyl\n    (extrude (circle r) (f h))))"}
-        {:id :let-computed
-         :code "(let [base 20\n      half (/ base 2)\n      quarter (/ half 2)]\n  (register box1 (box base))\n  (f (+ half quarter))\n  (register box2 (box half)))"}]}]}]})
+         :code "(register spike\n  (clone-face (box 30) :top\n    (inset 10) (f 30)))"}]}]}]})
 
 ;; Internationalization - text content for each language
 (def i18n
@@ -142,7 +159,8 @@
    {:sections
     {:part-1 {:title "Getting Started"}
      :part-2 {:title "Shapes & Extrusion"}
-     :part-3 {:title "Clojure Advanced"}}
+     :part-3 {:title "Clojure Advanced"}
+     :part-4 {:title "Mesh Manipulation"}}
     :pages
     {:hello-ridley
      {:title "Hello Ridley"
@@ -333,6 +351,115 @@ You can also override resolution per-command using the `:steps` argument:
        :resolution-steps {:caption "Per-command steps"
                           :description "Use `:steps` to override global resolution for a specific command."}}}
 
+     :control-structures
+     {:title "Control Structures"
+      :content "Clojure provides several ways to control program flow:
+
+**dotimes** — Repeat n times. Use `_` when you don't need the index:
+```
+(dotimes [_ 4] body)   ; repeat 4 times
+(dotimes [i 10] body)  ; i goes 0,1,2...9
+```
+
+**for** — Create a sequence by iterating over values:
+```
+(for [x [1 2 3]] (f x))
+```
+
+**when** — Execute only if condition is true:
+```
+(when (> x 5) (do-something))
+```
+
+**if** — Choose between two branches:
+```
+(if condition then-expr else-expr)
+```"
+      :examples
+      {:dotimes-ignore {:caption "Repeat without index"
+                        :description "Use `_` when you don't need the loop counter. This draws a square by repeating 4 times."}
+       :for-comprehension {:caption "For comprehension"
+                           :description "`for` iterates over a collection and returns a vector. Here we register 3 tubes with different radii. Use `(hide tubes 1)` to hide the second."}
+       :when-conditional {:caption "Conditional execution"
+                          :description "`when` executes its body only if the condition is true. Here we turn only on odd iterations."}}}
+
+     :local-variables
+     {:title "Local Variables"
+      :content "The `let` form creates local variables that exist only within its body:
+
+```
+(let [name1 value1
+      name2 value2]
+  body)
+```
+
+Variables can depend on earlier ones in the same `let`. This keeps your code clean and avoids repetition."
+      :examples
+      {:let-basics {:caption "Basic let"
+                    :description "Define local variables `r` and `h`, then use them to create a cylinder."}
+       :let-computed {:caption "Computed values"
+                      :description "Variables can be computed from earlier ones. Note: in Clojure, operators like `+`, `-`, `*`, `/` use prefix notation: `(/ base 2)` instead of `base / 2`."}}}
+
+     :repl-usage
+     {:title "The REPL"
+      :content "The **REPL** (Read-Eval-Print Loop) at the bottom of the editor is your interactive playground. Type expressions and press Enter to evaluate them immediately.
+
+**Why use the REPL?**
+- Test small pieces of code without modifying your main definitions
+- Inspect values and meshes
+- Explore Clojure functions interactively
+- Debug by evaluating parts of expressions
+
+**Mechanics:**
+- Type an expression and press **Enter** to evaluate
+- Use **↑/↓** arrows to navigate command history
+- Results appear above the input line
+- The REPL shares state with your definitions — you can access registered meshes
+
+**Useful commands:**
+```
+(info :name)      ; show mesh info (vertices, faces)
+(get-mesh :name)  ; retrieve a mesh by name
+(hide :name)      ; hide a mesh from viewport
+(show :name)      ; show a hidden mesh
+```"
+      :examples
+      {:repl-quick-test {:caption "Quick calculations"
+                         :description "Use the REPL as a calculator. Try arithmetic, string operations, or any Clojure expression."}
+       :repl-println {:caption "Print output"
+                      :description "`println` output appears in the REPL history. Use it for debugging your scripts."}}}
+
+     :mesh-basics
+     {:title "What is a Mesh"
+      :content "A **mesh** is a 3D object made of vertices (points in space) and faces (polygons connecting vertices). In Ridley, meshes are the final output of your modeling operations.
+
+**The mesh data structure:**
+- **vertices** — a list of 3D points `[x y z]`
+- **faces** — a list of vertex indices forming triangles
+
+**Registering meshes:**
+The `register` command gives a mesh a name and adds it to the scene:
+```
+(register name mesh-expression)
+```
+
+**Working with meshes:**
+```
+(get-mesh :name)   ; retrieve mesh by name (for boolean ops)
+(info :name)       ; show mesh statistics in REPL
+(hide :name)       ; hide from viewport
+(show :name)       ; show again
+```
+
+All primitives (`box`, `cyl`, `sphere`) and extrusions produce meshes."
+      :examples
+      {:mesh-register {:caption "Register a mesh"
+                       :description "`register` creates a named mesh that appears in the viewport. The name becomes a keyword you can use later."}
+       :mesh-info {:caption "Inspect with info"
+                   :description "`info` returns mesh statistics. Wrap with `println` to see the output in the REPL."}
+       :mesh-get-mesh {:caption "Use get-mesh for operations"
+                       :description "`get-mesh` retrieves a registered mesh by name. Use it to pass meshes to boolean operations."}}}
+
      :boolean-operations
      {:title "Boolean Operations"
       :content "Boolean operations combine meshes in different ways. Use `get-mesh` to retrieve a mesh by its registered name.
@@ -396,62 +523,14 @@ Positive values shrink the face, negative values expand it."
       {:attach-face-frustum {:caption "Frustum (attach-face)"
                              :description "`attach-face` modifies the original face. `inset` shrinks it, `f` moves it outward. Creates a frustum (tapered box)."}
        :clone-face-spike {:caption "Spike (clone-face)"
-                          :description "`clone-face` creates new vertices. `inset` creates a smaller inner face, `f` extrudes it. Creates a spike."}}}
-
-     :control-structures
-     {:title "Control Structures"
-      :content "Clojure provides several ways to control program flow:
-
-**dotimes** — Repeat n times. Use `_` when you don't need the index:
-```
-(dotimes [_ 4] body)   ; repeat 4 times
-(dotimes [i 10] body)  ; i goes 0,1,2...9
-```
-
-**for** — Create a sequence by iterating over values:
-```
-(for [x [1 2 3]] (f x))
-```
-
-**when** — Execute only if condition is true:
-```
-(when (> x 5) (do-something))
-```
-
-**if** — Choose between two branches:
-```
-(if condition then-expr else-expr)
-```"
-      :examples
-      {:dotimes-ignore {:caption "Repeat without index"
-                        :description "Use `_` when you don't need the loop counter. This draws a square by repeating 4 times."}
-       :for-comprehension {:caption "For comprehension"
-                           :description "`for` iterates over a collection and returns a vector. Here we register 3 tubes with different radii. Use `(hide tubes 1)` to hide the second."}
-       :when-conditional {:caption "Conditional execution"
-                          :description "`when` executes its body only if the condition is true. Here we turn only on odd iterations."}}}
-
-     :local-variables
-     {:title "Local Variables"
-      :content "The `let` form creates local variables that exist only within its body:
-
-```
-(let [name1 value1
-      name2 value2]
-  body)
-```
-
-Variables can depend on earlier ones in the same `let`. This keeps your code clean and avoids repetition."
-      :examples
-      {:let-basics {:caption "Basic let"
-                    :description "Define local variables `r` and `h`, then use them to create a cylinder."}
-       :let-computed {:caption "Computed values"
-                      :description "Variables can be computed from earlier ones. Note: in Clojure, operators like `+`, `-`, `*`, `/` use prefix notation: `(/ base 2)` instead of `base / 2`."}}}}}
+                          :description "`clone-face` creates new vertices. `inset` creates a smaller inner face, `f` extrudes it. Creates a spike."}}}}}
 
    :it
    {:sections
     {:part-1 {:title "Per Iniziare"}
      :part-2 {:title "Forme & Estrusione"}
-     :part-3 {:title "Clojure Avanzato"}}
+     :part-3 {:title "Clojure Avanzato"}
+     :part-4 {:title "Manipolazione Mesh"}}
     :pages
     {:hello-ridley
      {:title "Ciao Ridley"
@@ -642,6 +721,115 @@ Puoi anche sovrascrivere la risoluzione per singolo comando usando l'argomento `
        :resolution-steps {:caption "Steps per comando"
                           :description "Usa `:steps` per sovrascrivere la risoluzione globale per un comando specifico."}}}
 
+     :control-structures
+     {:title "Strutture di Controllo"
+      :content "Clojure fornisce diversi modi per controllare il flusso del programma:
+
+**dotimes** — Ripeti n volte. Usa `_` quando non ti serve l'indice:
+```
+(dotimes [_ 4] corpo)   ; ripeti 4 volte
+(dotimes [i 10] corpo)  ; i va 0,1,2...9
+```
+
+**for** — Crea una sequenza iterando su valori:
+```
+(for [x [1 2 3]] (f x))
+```
+
+**when** — Esegui solo se la condizione è vera:
+```
+(when (> x 5) (fai-qualcosa))
+```
+
+**if** — Scegli tra due rami:
+```
+(if condizione expr-then expr-else)
+```"
+      :examples
+      {:dotimes-ignore {:caption "Ripetere senza indice"
+                        :description "Usa `_` quando non ti serve il contatore. Questo disegna un quadrato ripetendo 4 volte."}
+       :for-comprehension {:caption "Comprensione for"
+                           :description "`for` itera su una collezione e ritorna un vettore. Qui registriamo 3 tubi con raggi diversi. Usa `(hide tubes 1)` per nascondere il secondo."}
+       :when-conditional {:caption "Esecuzione condizionale"
+                          :description "`when` esegue il corpo solo se la condizione è vera. Qui giriamo solo nelle iterazioni dispari."}}}
+
+     :local-variables
+     {:title "Variabili Locali"
+      :content "La forma `let` crea variabili locali che esistono solo nel suo corpo:
+
+```
+(let [nome1 valore1
+      nome2 valore2]
+  corpo)
+```
+
+Le variabili possono dipendere da quelle precedenti nello stesso `let`. Questo mantiene il codice pulito ed evita ripetizioni."
+      :examples
+      {:let-basics {:caption "Let base"
+                    :description "Definisci variabili locali `r` e `h`, poi usale per creare un cilindro."}
+       :let-computed {:caption "Valori calcolati"
+                      :description "Le variabili possono essere calcolate da quelle precedenti. Nota: in Clojure, operatori come `+`, `-`, `*`, `/` usano notazione prefissa: `(/ base 2)` invece di `base / 2`."}}}
+
+     :repl-usage
+     {:title "La REPL"
+      :content "La **REPL** (Read-Eval-Print Loop) in fondo all'editor è il tuo spazio interattivo. Scrivi espressioni e premi Invio per valutarle immediatamente.
+
+**Perché usare la REPL?**
+- Testare piccoli pezzi di codice senza modificare le definizioni principali
+- Ispezionare valori e mesh
+- Esplorare funzioni Clojure interattivamente
+- Debug valutando parti di espressioni
+
+**Meccanica:**
+- Scrivi un'espressione e premi **Invio** per valutare
+- Usa le frecce **↑/↓** per navigare la cronologia dei comandi
+- I risultati appaiono sopra la linea di input
+- La REPL condivide lo stato con le tue definizioni — puoi accedere alle mesh registrate
+
+**Comandi utili:**
+```
+(info :nome)      ; mostra info mesh (vertici, facce)
+(get-mesh :nome)  ; recupera mesh per nome
+(hide :nome)      ; nascondi mesh dal viewport
+(show :nome)      ; mostra mesh nascosta
+```"
+      :examples
+      {:repl-quick-test {:caption "Calcoli veloci"
+                         :description "Usa la REPL come calcolatrice. Prova operazioni aritmetiche, stringhe o qualsiasi espressione Clojure."}
+       :repl-println {:caption "Output stampato"
+                      :description "L'output di `println` appare nella cronologia della REPL. Usalo per debuggare i tuoi script."}}}
+
+     :mesh-basics
+     {:title "Cos'è una Mesh"
+      :content "Una **mesh** è un oggetto 3D fatto di vertici (punti nello spazio) e facce (poligoni che connettono i vertici). In Ridley, le mesh sono l'output finale delle operazioni di modellazione.
+
+**La struttura dati mesh:**
+- **vertices** — una lista di punti 3D `[x y z]`
+- **faces** — una lista di indici di vertici che formano triangoli
+
+**Registrare mesh:**
+Il comando `register` dà un nome a una mesh e la aggiunge alla scena:
+```
+(register nome espressione-mesh)
+```
+
+**Lavorare con le mesh:**
+```
+(get-mesh :nome)   ; recupera mesh per nome (per op. booleane)
+(info :nome)       ; mostra statistiche nella REPL
+(hide :nome)       ; nascondi dal viewport
+(show :nome)       ; mostra di nuovo
+```
+
+Tutte le primitive (`box`, `cyl`, `sphere`) e le estrusioni producono mesh."
+      :examples
+      {:mesh-register {:caption "Registrare una mesh"
+                       :description "`register` crea una mesh con nome che appare nel viewport. Il nome diventa una keyword che puoi usare dopo."}
+       :mesh-info {:caption "Ispezionare con info"
+                   :description "`info` ritorna statistiche della mesh. Usa `println` per vedere l'output nella REPL."}
+       :mesh-get-mesh {:caption "Usare get-mesh per operazioni"
+                       :description "`get-mesh` recupera una mesh registrata per nome. Usalo per passare mesh alle operazioni booleane."}}}
+
      :boolean-operations
      {:title "Operazioni Booleane"
       :content "Le operazioni booleane combinano mesh in modi diversi. Usa `get-mesh` per recuperare una mesh dal suo nome registrato.
@@ -705,56 +893,7 @@ Valori positivi rimpiccioliscono la faccia, valori negativi la espandono."
       {:attach-face-frustum {:caption "Tronco (attach-face)"
                              :description "`attach-face` modifica la faccia originale. `inset` la rimpicciolisce, `f` la sposta verso l'esterno. Crea un tronco di piramide."}
        :clone-face-spike {:caption "Punta (clone-face)"
-                          :description "`clone-face` crea nuovi vertici. `inset` crea una faccia interna più piccola, `f` la estrude. Crea una punta."}}}
-
-     :control-structures
-     {:title "Strutture di Controllo"
-      :content "Clojure fornisce diversi modi per controllare il flusso del programma:
-
-**dotimes** — Ripeti n volte. Usa `_` quando non ti serve l'indice:
-```
-(dotimes [_ 4] corpo)   ; ripeti 4 volte
-(dotimes [i 10] corpo)  ; i va 0,1,2...9
-```
-
-**for** — Crea una sequenza iterando su valori:
-```
-(for [x [1 2 3]] (f x))
-```
-
-**when** — Esegui solo se la condizione è vera:
-```
-(when (> x 5) (fai-qualcosa))
-```
-
-**if** — Scegli tra due rami:
-```
-(if condizione expr-then expr-else)
-```"
-      :examples
-      {:dotimes-ignore {:caption "Ripetere senza indice"
-                        :description "Usa `_` quando non ti serve il contatore. Questo disegna un quadrato ripetendo 4 volte."}
-       :for-comprehension {:caption "Comprensione for"
-                           :description "`for` itera su una collezione e ritorna un vettore. Qui registriamo 3 tubi con raggi diversi. Usa `(hide tubes 1)` per nascondere il secondo."}
-       :when-conditional {:caption "Esecuzione condizionale"
-                          :description "`when` esegue il corpo solo se la condizione è vera. Qui giriamo solo nelle iterazioni dispari."}}}
-
-     :local-variables
-     {:title "Variabili Locali"
-      :content "La forma `let` crea variabili locali che esistono solo nel suo corpo:
-
-```
-(let [nome1 valore1
-      nome2 valore2]
-  corpo)
-```
-
-Le variabili possono dipendere da quelle precedenti nello stesso `let`. Questo mantiene il codice pulito ed evita ripetizioni."
-      :examples
-      {:let-basics {:caption "Let base"
-                    :description "Definisci variabili locali `r` e `h`, poi usale per creare un cilindro."}
-       :let-computed {:caption "Valori calcolati"
-                      :description "Le variabili possono essere calcolate da quelle precedenti. Nota: in Clojure, operatori come `+`, `-`, `*`, `/` usano notazione prefissa: `(/ base 2)` invece di `base / 2`."}}}}}})
+                          :description "`clone-face` crea nuovi vertici. `inset` crea una faccia interna più piccola, `f` la estrude. Crea una punta."}}}}}})
 
 ;; Helper to find a page in the structure
 (defn- find-page-structure [page-id]
