@@ -18,11 +18,12 @@
 
 (defn make-shape
   "Create a shape from a vector of 2D points.
-   Points should form a closed polygon (CCW winding).
+   Points should form a closed polygon (CCW winding for outer, CW for holes).
 
    Options:
    - :centered? true  - shape is centered at turtle position (default for circle/rect)
    - :centered? false - shape starts at turtle position (default for custom shapes)
+   - :holes [...]     - vector of hole contours (each is a vector of [x y] points, CW winding)
    - :preserve-position? true - use raw 2D coords without offset (for text with built-in spacing)
    - :align-to-heading? true - 2D x maps to heading direction (for text along path)
    - :flip-plane-x? true - negate plane-x axis (equivalent to tr 180 before stamp)"
@@ -31,6 +32,7 @@
    (cond-> {:type :shape
             :points (vec points)
             :centered? (:centered? opts false)}
+     (:holes opts) (assoc :holes (vec (map vec (:holes opts))))
      (:preserve-position? opts) (assoc :preserve-position? true)
      (:align-to-heading? opts) (assoc :align-to-heading? true)
      (:flip-plane-x? opts) (assoc :flip-plane-x? true))))
@@ -193,6 +195,60 @@
 ;; Shape transformation for stamping
 ;; ============================================================
 
+(defn- compute-plane-params
+  "Compute plane transformation parameters from turtle state and shape options.
+   Returns {:plane-x :plane-y :offset} for transforming 2D points to 3D."
+  [shape turtle-pos turtle-heading turtle-up]
+  (let [points (:points shape)
+        centered? (:centered? shape)
+        preserve-position? (:preserve-position? shape)
+        align-to-heading? (:align-to-heading? shape)
+        flip-plane-x? (:flip-plane-x? shape)
+        [hx hy hz] turtle-heading
+        [ux uy uz] turtle-up
+        ;; Right vector = heading × up
+        rx (- (* hy uz) (* hz uy))
+        ry (- (* hz ux) (* hx uz))
+        rz (- (* hx uy) (* hy ux))
+        ;; Normalize right vector
+        r-mag (Math/sqrt (+ (* rx rx) (* ry ry) (* rz rz)))
+        [rx ry rz] (if (pos? r-mag)
+                     [(/ rx r-mag) (/ ry r-mag) (/ rz r-mag)]
+                     [1 0 0])
+        ;; Flip plane-x if requested
+        [rx ry rz] (if flip-plane-x?
+                     [(- rx) (- ry) (- rz)]
+                     [rx ry rz])
+        ;; Choose plane axes
+        [plane-x plane-y] (if align-to-heading?
+                           [turtle-heading turtle-up]
+                           [[rx ry rz] turtle-up])
+        ;; Calculate offset
+        offset (cond
+                 preserve-position? [0 0]
+                 centered? [0 0]
+                 :else (let [[fx fy] (first points)]
+                         [(- fx) (- fy)]))]
+    {:plane-x plane-x
+     :plane-y plane-y
+     :offset offset
+     :origin turtle-pos}))
+
+(defn- transform-points-to-plane
+  "Transform 2D points to 3D using precomputed plane parameters."
+  [points {:keys [plane-x plane-y offset origin]}]
+  (let [[ox oy oz] origin
+        [xx xy xz] plane-x
+        [yx yy yz] plane-y
+        [off-x off-y] offset]
+    (mapv (fn [[px py]]
+            (let [px' (+ px off-x)
+                  py' (+ py off-y)]
+              [(+ ox (* px' xx) (* py' yx))
+               (+ oy (* px' xy) (* py' yy))
+               (+ oz (* px' xz) (* py' yz))]))
+          points)))
+
 (defn transform-shape-to-plane
   "Transform a 2D shape to 3D points on a plane.
 
@@ -207,51 +263,16 @@
    For preserve-position? shapes, raw 2D coords are used (for text with built-in spacing).
    For align-to-heading? shapes, 2D x maps to heading (for text progression along path)."
   [shape turtle-pos turtle-heading turtle-up]
-  (let [points (:points shape)
-        centered? (:centered? shape)
-        preserve-position? (:preserve-position? shape)
-        align-to-heading? (:align-to-heading? shape)
-        flip-plane-x? (:flip-plane-x? shape)
-        ;; The plane is perpendicular to heading (default)
-        ;; Or aligned to heading for text shapes
-        [hx hy hz] turtle-heading
-        [ux uy uz] turtle-up
-        ;; Right vector = heading × up
-        rx (- (* hy uz) (* hz uy))
-        ry (- (* hz ux) (* hx uz))
-        rz (- (* hx uy) (* hy ux))
-        ;; Normalize right vector
-        r-mag (Math/sqrt (+ (* rx rx) (* ry ry) (* rz rz)))
-        [rx ry rz] (if (pos? r-mag)
-                     [(/ rx r-mag) (/ ry r-mag) (/ rz r-mag)]
-                     [1 0 0])
-        ;; Flip plane-x if requested (equivalent to tr 180 before stamp)
-        [rx ry rz] (if flip-plane-x?
-                     [(- rx) (- ry) (- rz)]
-                     [rx ry rz])
-        ;; Choose plane axes based on align-to-heading?
-        ;; Default: x=right, y=up (shape perpendicular to path)
-        ;; Text mode: x=heading, y=up (text progresses along heading)
-        [plane-x plane-y] (if align-to-heading?
-                           [turtle-heading turtle-up]
-                           [[rx ry rz] turtle-up])
-        ;; Calculate offset for non-centered shapes
-        ;; preserve-position? = use raw 2D coords (for text with built-in offsets)
-        offset (cond
-                 preserve-position? [0 0]
-                 centered? [0 0]
-                 :else (let [[fx fy] (first points)]
-                         [(- fx) (- fy)]))]
-    ;; Transform each 2D point to 3D
-    (mapv (fn [[px py]]
-            (let [;; Apply offset for non-centered shapes
-                  px' (+ px (first offset))
-                  py' (+ py (second offset))
-                  ;; Transform to 3D: origin + px*plane-x + py*plane-y
-                  [ox oy oz] turtle-pos
-                  [xx xy xz] plane-x
-                  [yx yy yz] plane-y]
-              [(+ ox (* px' xx) (* py' yx))
-               (+ oy (* px' xy) (* py' yy))
-               (+ oz (* px' xz) (* py' yz))]))
-          points)))
+  (let [params (compute-plane-params shape turtle-pos turtle-heading turtle-up)]
+    (transform-points-to-plane (:points shape) params)))
+
+(defn transform-shape-with-holes-to-plane
+  "Transform a 2D shape with holes to 3D points on a plane.
+   Returns {:outer <3D-points> :holes [<3D-points> ...]}"
+  [shape turtle-pos turtle-heading turtle-up]
+  (let [params (compute-plane-params shape turtle-pos turtle-heading turtle-up)
+        outer-3d (transform-points-to-plane (:points shape) params)
+        holes-3d (when-let [holes (:holes shape)]
+                   (mapv #(transform-points-to-plane % params) holes))]
+    {:outer outer-3d
+     :holes holes-3d}))

@@ -15,7 +15,8 @@
    API:
    - (pen :off) - stop drawing lines
    - (pen :on) - draw lines (default)
-   - (extrude shape movements...) - stamp shape and extrude via movements")
+   - (extrude shape movements...) - stamp shape and extrude via movements"
+  (:require ["earcut" :default earcut]))
 
 (defn make-turtle
   "Create initial turtle state at origin, facing +X, up +Z.
@@ -211,6 +212,36 @@
                   ;; No ear found - return partial result
                   result)))))))))
 
+(defn- earcut-triangulate
+  "Triangulate a 2D polygon with holes using earcut.js.
+   - outer: vector of [x y] points for outer boundary (CCW)
+   - holes: vector of hole contours, each is vector of [x y] points (CW)
+   Returns vector of [i j k] triangles (indices into combined vertex list).
+   The combined vertex list is: outer ++ hole1 ++ hole2 ++ ..."
+  [outer holes]
+  (let [;; Flatten outer contour to [x y x y ...]
+        outer-flat (into-array (mapcat identity outer))
+        ;; Track hole start indices and flatten holes
+        outer-len (count outer)
+        [hole-indices holes-flat]
+        (reduce (fn [[indices flat-data] hole]
+                  [(conj indices (+ outer-len (/ (count flat-data) 2)))
+                   (into flat-data (mapcat identity hole))])
+                [[] []]
+                holes)
+        ;; Combine outer + holes into single flat array
+        all-coords (js/Float64Array. (into-array (concat outer-flat holes-flat)))
+        ;; Create hole indices array (empty if no holes)
+        hole-idx-arr (when (seq hole-indices) (into-array hole-indices))
+        ;; Call earcut: returns flat array of triangle indices
+        result (if hole-idx-arr
+                 (earcut all-coords hole-idx-arr 2)
+                 (earcut all-coords nil 2))
+        ;; Convert flat [i j k i j k ...] to [[i j k] [i j k] ...]
+        n-indices (.-length result)]
+    (vec (for [i (range 0 n-indices 3)]
+           [(aget result i) (aget result (+ i 1)) (aget result (+ i 2))]))))
+
 (defn- project-to-2d
   "Project 3D points to 2D by dropping the axis most aligned with normal.
    Returns [pts-2d winding-preserved?] where winding-preserved? indicates
@@ -256,6 +287,30 @@
               [(+ base-idx i) (+ base-idx k) (+ base-idx j)]
               [(+ base-idx i) (+ base-idx j) (+ base-idx k)]))
           local-tris)))
+
+(defn- triangulate-cap-with-holes
+  "Triangulate a polygon cap with holes using earcut.
+   - outer-ring: vector of 3D vertex positions for outer boundary
+   - hole-rings: vector of 3D vertex vectors for each hole
+   - base-idx: starting index in the mesh vertex array
+   - normal: cap normal (for 2D projection)
+   - flip?: whether to flip winding order for final triangles
+   Returns vector of [i j k] face triangles with mesh indices.
+
+   The combined vertex order is: outer-ring ++ hole1 ++ hole2 ++ ..."
+  [outer-ring hole-rings base-idx normal flip?]
+  (if (empty? hole-rings)
+    ;; No holes - use standard triangulation
+    (triangulate-cap outer-ring base-idx normal flip?)
+    ;; With holes - use earcut
+    (let [[outer-2d _] (project-to-2d outer-ring normal)
+          holes-2d (mapv #(first (project-to-2d % normal)) hole-rings)
+          local-tris (earcut-triangulate outer-2d holes-2d)]
+      (mapv (fn [[i j k]]
+              (if flip?
+                [(+ base-idx i) (+ base-idx k) (+ base-idx j)]
+                [(+ base-idx i) (+ base-idx j) (+ base-idx k)]))
+            local-tris))))
 
 ;; --- Pose reset ---
 
@@ -382,9 +437,9 @@
   [x]
   (and (map? x) (= :shape (:type x))))
 
-(defn- stamp-shape
-  "Stamp a shape onto the plane perpendicular to turtle's heading.
-   Returns 3D vertices of the stamped shape."
+(defn- compute-stamp-transform
+  "Compute transformation parameters for stamping a shape.
+   Returns {:plane-x :plane-y :offset :origin}."
   [state shape]
   (let [points (:points shape)
         centered? (:centered? shape)
@@ -392,9 +447,6 @@
         pos (:position state)
         heading (:heading state)
         up (:up state)
-        ;; The plane is perpendicular to heading
-        ;; x-axis of plane = right vector (heading × up)
-        ;; y-axis of plane = up vector
         [hx hy hz] heading
         [ux uy uz] up
         ;; Right vector = heading × up
@@ -410,25 +462,45 @@
         plane-x [rx ry rz]
         plane-y up
         ;; Calculate offset for non-centered shapes
-        ;; preserve-position? = use raw 2D coords (for text with built-in offsets)
         offset (cond
                  preserve-position? [0 0]
                  centered? [0 0]
                  :else (let [[fx fy] (first points)]
                          [(- fx) (- fy)]))]
-    ;; Transform each 2D point to 3D
+    {:plane-x plane-x :plane-y plane-y :offset offset :origin pos}))
+
+(defn- transform-2d-to-3d
+  "Transform 2D points to 3D using stamp parameters."
+  [points {:keys [plane-x plane-y offset origin]}]
+  (let [[ox oy oz] origin
+        [xx xy xz] plane-x
+        [yx yy yz] plane-y
+        [off-x off-y] offset]
     (mapv (fn [[px py]]
-            (let [;; Apply offset for non-centered shapes
-                  px' (+ px (first offset))
-                  py' (+ py (second offset))
-                  ;; Transform to 3D: origin + px*plane-x + py*plane-y
-                  [ox oy oz] pos
-                  [xx xy xz] plane-x
-                  [yx yy yz] plane-y]
+            (let [px' (+ px off-x)
+                  py' (+ py off-y)]
               [(+ ox (* px' xx) (* py' yx))
                (+ oy (* px' xy) (* py' yy))
                (+ oz (* px' xz) (* py' yz))]))
           points)))
+
+(defn- stamp-shape
+  "Stamp a shape onto the plane perpendicular to turtle's heading.
+   Returns 3D vertices of the stamped shape."
+  [state shape]
+  (let [params (compute-stamp-transform state shape)]
+    (transform-2d-to-3d (:points shape) params)))
+
+(defn- stamp-shape-with-holes
+  "Stamp a shape with holes onto the plane perpendicular to turtle's heading.
+   Returns {:outer <3D-vertices> :holes [<3D-vertices> ...]}."
+  [state shape]
+  (let [params (compute-stamp-transform state shape)
+        outer-3d (transform-2d-to-3d (:points shape) params)
+        holes-3d (when-let [holes (:holes shape)]
+                   (mapv #(transform-2d-to-3d % params) holes))]
+    {:outer outer-3d
+     :holes holes-3d}))
 
 ;; --- Rotation utilities (needed by fillet) ---
 
@@ -2788,6 +2860,86 @@
                          :heading [1 0 0]
                          :up [0 0 1]}}))))
 
+(defn sweep-two-shapes-with-holes
+  "Create a mesh connecting two 3D rings with holes.
+   data1 and data2 are {:outer <ring> :holes [<ring> ...]}
+   Returns a mesh with:
+   - Side faces connecting outer rings
+   - Side faces connecting each hole (reversed winding)
+   - Caps triangulated with holes"
+  [data1 data2]
+  (let [outer1 (:outer data1)
+        outer2 (:outer data2)
+        holes1 (or (:holes data1) [])
+        holes2 (or (:holes data2) [])
+        n-outer (count outer1)
+        n-holes (count holes1)]
+    (when (and (>= n-outer 3)
+               (= n-outer (count outer2))
+               (= n-holes (count holes2)))
+      (let [;; Vertices: outer1, outer2, hole1-ring1, hole1-ring2, hole2-ring1, hole2-ring2, ...
+            ;; For caps, we need: outer + all holes (flattened per ring)
+            ;; Layout per ring: outer ++ hole1 ++ hole2 ++ ...
+            hole-lengths (mapv count holes1)
+
+            ;; Build combined vertex list
+            ;; Ring1: outer1 ++ holes1[0] ++ holes1[1] ++ ...
+            ;; Ring2: outer2 ++ holes2[0] ++ holes2[1] ++ ...
+            ring1-vertices (vec (concat outer1 (apply concat holes1)))
+            ring2-vertices (vec (concat outer2 (apply concat holes2)))
+            vertices (vec (concat ring1-vertices ring2-vertices))
+
+            ring1-len (count ring1-vertices)
+
+            ;; Side faces for outer contour (indices 0 to n-outer-1 for ring1)
+            outer-side-faces
+            (vec (mapcat (fn [i]
+                           (let [next-i (mod (inc i) n-outer)
+                                 b0 i b1 next-i
+                                 t0 (+ ring1-len i) t1 (+ ring1-len next-i)]
+                             ;; CCW from outside
+                             [[b0 t1 b1] [b0 t0 t1]]))
+                         (range n-outer)))
+
+            ;; Side faces for each hole (reversed winding - CW from outside = inward facing)
+            hole-side-faces
+            (vec (apply concat
+                        (map-indexed
+                         (fn [hole-idx hole-len]
+                           (let [;; Start index for this hole in ring1
+                                 base1 (+ n-outer (reduce + (take hole-idx hole-lengths)))
+                                 base2 (+ ring1-len base1)]
+                             (mapcat (fn [i]
+                                       (let [next-i (mod (inc i) hole-len)
+                                             b0 (+ base1 i) b1 (+ base1 next-i)
+                                             t0 (+ base2 i) t1 (+ base2 next-i)]
+                                         ;; Reversed winding for holes (facing inward)
+                                         [[b0 b1 t1] [b0 t1 t0]]))
+                                     (range hole-len))))
+                         hole-lengths)))
+
+            all-side-faces (vec (concat outer-side-faces hole-side-faces))
+
+            ;; Compute normals for caps
+            ring-centroid (fn [ring] (v* (reduce v+ ring) (/ 1.0 (count ring))))
+            extrusion-dir (normalize (v- (ring-centroid outer2) (ring-centroid outer1)))
+            bottom-normal (v* extrusion-dir -1)
+            top-normal extrusion-dir
+
+            ;; Caps with holes
+            ;; Bottom cap: vertices 0 to ring1-len-1
+            bottom-cap (triangulate-cap-with-holes outer1 holes1 0 bottom-normal true)
+            ;; Top cap: vertices ring1-len to end
+            top-cap (triangulate-cap-with-holes outer2 holes2 ring1-len top-normal false)]
+
+        {:type :mesh
+         :primitive :sweep-two-holes
+         :vertices vertices
+         :faces (vec (concat all-side-faces bottom-cap top-cap))
+         :creation-pose {:position [0 0 0]
+                         :heading [1 0 0]
+                         :up [0 0 1]}}))))
+
 (defn make-path
   "Create a path from a vector of recorded commands.
    Each command is {:cmd :f/:b/:th/:tv/:tr :args [...]}"
@@ -2995,6 +3147,39 @@
            :rotations-after rotations-after}))
       forwards))))
 
+(defn- is-simple-forward-path?
+  "Check if path is a simple straight extrusion (single forward command, no corners)."
+  [path]
+  (let [commands (:commands path)]
+    (and (= 1 (count commands))
+         (= :f (:cmd (first commands))))))
+
+(defn- extrude-simple-with-holes
+  "Extrude a shape with holes along a simple straight path.
+   Only works for single-segment forward paths.
+   Returns turtle state with mesh added."
+  [state shape path]
+  (let [creation-pose {:position (:position state)
+                       :heading (:heading state)
+                       :up (:up state)}
+        dist (-> path :commands first :args first)
+        ;; Stamp start ring with holes
+        start-data (stamp-shape-with-holes state shape)
+        ;; Move to end position
+        end-pos (v+ (:position state) (v* (:heading state) dist))
+        end-state (assoc state :position end-pos)
+        ;; Stamp end ring with holes
+        end-data (stamp-shape-with-holes end-state shape)
+        ;; Build mesh with holes
+        mesh (sweep-two-shapes-with-holes start-data end-data)]
+    (if mesh
+      (let [mesh-with-pose (cond-> (assoc mesh :creation-pose creation-pose)
+                            (:material state) (assoc :material (:material state)))]
+        (-> state
+            (assoc :position end-pos)
+            (update :meshes conj mesh-with-pose)))
+      state)))
+
 (defn extrude-from-path
   "Extrude a shape along an open path, creating a SINGLE unified mesh.
 
@@ -3005,7 +3190,12 @@
   [state shape path]
   (if-not (and (shape? shape) (is-path? path))
     state
-    (let [;; Save creation pose before any modifications
+    ;; Check if shape has holes and path is simple
+    (if (and (:holes shape) (is-simple-forward-path? path))
+      ;; Use specialized hole-aware extrusion for simple paths
+      (extrude-simple-with-holes state shape path)
+      ;; Standard extrusion (no holes or complex path)
+      (let [;; Save creation pose before any modifications
           creation-pose {:position (:position state)
                          :heading (:heading state)
                          :up (:up state)}
@@ -3161,7 +3351,8 @@
                                :faces all-faces
                                :creation-pose creation-pose}
                          (:material state) (assoc :material (:material state)))]
-              (update final-state :meshes conj mesh))))))))
+              (update final-state :meshes conj mesh)))))))))
+
 
 ;; ============================================================
 ;; Loft from path (unified extrusion with transform)

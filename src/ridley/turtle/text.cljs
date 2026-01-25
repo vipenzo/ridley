@@ -218,6 +218,29 @@
           contour)))
 
 ;; ============================================================
+;; Contour classification (for holes)
+;; ============================================================
+
+(defn- contour-area
+  "Calculate signed area of a 2D contour using shoelace formula.
+   Positive = counter-clockwise (outer), negative = clockwise (hole)."
+  [contour]
+  (let [n (count contour)]
+    (/ (reduce + (for [i (range n)]
+                   (let [[x1 y1] (nth contour i)
+                         [x2 y2] (nth contour (mod (inc i) n))]
+                     (- (* x1 y2) (* x2 y1)))))
+       2.0)))
+
+(defn- classify-contours
+  "Classify contours as outer (positive area) or holes (negative area).
+   Returns {:outer [...] :holes [...]}."
+  [contours]
+  (let [classified (map (fn [c] {:contour c :area (contour-area c)}) contours)]
+    {:outer (vec (map :contour (filter #(pos? (:area %)) classified)))
+     :holes (vec (map :contour (filter #(neg? (:area %)) classified)))}))
+
+;; ============================================================
 ;; Public API
 ;; ============================================================
 
@@ -258,7 +281,7 @@
    Use with extrude which handles multiple shapes:
    (extrude (text-shape \"Hi\" :size 30) (f 5))
 
-   Note: Currently returns only outer contours (no holes/counter-shapes)."
+   Shapes include holes for letters like O, A, B, etc."
   [text & {:keys [size font curve-segments]
            :or {size 10 curve-segments 8}}]
   (let [font (or font @default-font)]
@@ -286,14 +309,18 @@
                        (map remove-consecutive-duplicates)
                        (filter #(> (count %) 2))  ; filter out degenerate contours
                        vec)
-                  ;; Get largest contour (outer boundary) for this glyph
-                  largest (when (seq normalized-contours)
-                            (apply max-key count normalized-contours))
-                  ;; Create shape from largest contour
+                  ;; Classify contours into outer boundaries and holes
+                  {:keys [outer holes]} (classify-contours normalized-contours)
+                  ;; Get largest outer contour as the main shape boundary
+                  largest-outer (when (seq outer)
+                                  (apply max-key count outer))
+                  ;; Create shape with holes
                   ;; preserve-position? keeps the offset for proper text spacing
-                  glyph-shape (when (and largest (> (count largest) 2))
-                                (shape/make-shape largest {:centered? false
-                                                           :preserve-position? true}))]
+                  glyph-shape (when (and largest-outer (> (count largest-outer) 2))
+                                (shape/make-shape largest-outer
+                                                  (cond-> {:centered? false
+                                                           :preserve-position? true}
+                                                    (seq holes) (assoc :holes holes))))]
               (recur (inc idx)
                      (+ x-offset advance-width)
                      (if glyph-shape
@@ -378,22 +405,3 @@
                                    :contours normalized-contours
                                    :x-offset x-offset
                                    :advance-width advance-width})))))))))
-
-(defn- contour-area
-  "Calculate signed area of a 2D contour using shoelace formula.
-   Positive = counter-clockwise (outer), negative = clockwise (hole)."
-  [contour]
-  (let [n (count contour)]
-    (/ (reduce + (for [i (range n)]
-                   (let [[x1 y1] (nth contour i)
-                         [x2 y2] (nth contour (mod (inc i) n))]
-                     (- (* x1 y2) (* x2 y1)))))
-       2.0)))
-
-(defn- classify-contours
-  "Classify contours as outer (positive area) or holes (negative area).
-   Returns {:outer [...] :holes [...]}."
-  [contours]
-  (let [classified (map (fn [c] {:contour c :area (contour-area c)}) contours)]
-    {:outer (vec (map :contour (filter #(pos? (:area %)) classified)))
-     :holes (vec (map :contour (filter #(neg? (:area %)) classified)))}))
