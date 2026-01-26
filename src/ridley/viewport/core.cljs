@@ -458,9 +458,6 @@
     (.add scene bottom-light)
     (.add scene front-light)))
 
-(defn- create-line-material []
-  (THREE/LineBasicMaterial. #js {:color 0x00ff88 :linewidth 2}))
-
 (defn- create-mesh-material
   "Create mesh material from optional material map or use defaults."
   ([] (create-mesh-material nil))
@@ -493,25 +490,40 @@
 ;; Track highlight objects for cleanup
 (defonce ^:private highlight-objects (atom []))
 
-(defn- geometry-to-points
-  "Convert turtle geometry segments to Three.js points."
-  [geometry]
-  (let [points #js []]
-    (doseq [{:keys [from to]} geometry]
-      (let [[x1 y1 z1] from
-            [x2 y2 z2] to]
-        (.push points (THREE/Vector3. x1 y1 z1))
-        (.push points (THREE/Vector3. x2 y2 z2))))
-    points))
+(def ^:private default-line-color 0x00ff88)
+
+(defn- normalize-color
+  "Convert color (keyword, string, or number) to [r g b] floats using Three.js."
+  [c]
+  (let [color-val (if (keyword? c) (name c) c)
+        three-color (THREE/Color. color-val)]
+    [(.-r three-color) (.-g three-color) (.-b three-color)]))
 
 (defn- create-line-segments
-  "Create Three.js line segments from turtle geometry."
+  "Create Three.js line segments from turtle geometry.
+   Supports per-segment colors via vertex colors."
   [geometry]
   (when (seq geometry)
-    (let [points (geometry-to-points geometry)
-          buffer-geom (THREE/BufferGeometry.)]
-      (.setFromPoints buffer-geom points)
-      (THREE/LineSegments. buffer-geom (create-line-material)))))
+    (let [points #js []
+          colors #js []
+          default-rgb (normalize-color default-line-color)]
+      ;; Build points and colors
+      (doseq [{:keys [from to color]} geometry]
+        (let [[x1 y1 z1] from
+              [x2 y2 z2] to
+              [r g b] (if color (normalize-color color) default-rgb)]
+          (.push points (THREE/Vector3. x1 y1 z1))
+          (.push points (THREE/Vector3. x2 y2 z2))
+          ;; Each vertex needs color
+          (.push colors r g b r g b)))
+      ;; Create geometry
+      (let [buffer-geom (THREE/BufferGeometry.)]
+        (.setFromPoints buffer-geom points)
+        ;; Add color attribute
+        (.setAttribute buffer-geom "color"
+                       (THREE/Float32BufferAttribute. (clj->js colors) 3))
+        (THREE/LineSegments. buffer-geom
+                             (THREE/LineBasicMaterial. #js {:vertexColors true}))))))
 
 (defn- create-three-mesh
   "Create Three.js mesh from vertices, faces, and optional material."
