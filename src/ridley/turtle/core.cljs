@@ -423,7 +423,7 @@
                top-normal extrusion-dir             ; points forward
 
                bottom-cap (triangulate-cap first-ring 0 bottom-normal false)
-               top-cap (triangulate-cap last-ring last-base top-normal false)]
+               top-cap (triangulate-cap last-ring last-base top-normal true)]
            (cond-> {:type :mesh
                     :primitive :sweep
                     :vertices vertices
@@ -2041,18 +2041,18 @@
             top-normal (when (>= n-verts 3)
                          (normalize (v- (ring-centroid actual-last-ring)
                                         (ring-centroid second-to-last-ring))))
-            ;; Bottom cap mesh
+            ;; Bottom cap mesh: flip=false for normal pointing back
             bottom-cap-mesh (when (>= n-verts 3)
                               {:type :mesh
                                :primitive :cap
                                :vertices (vec actual-first-ring)
-                               :faces (triangulate-cap actual-first-ring 0 bottom-normal true)})
-            ;; Top cap mesh
+                               :faces (triangulate-cap actual-first-ring 0 bottom-normal false)})
+            ;; Top cap mesh: flip=true for normal pointing forward
             top-cap-mesh (when (>= n-verts 3)
                            {:type :mesh
                             :primitive :cap
                             :vertices (vec actual-last-ring)
-                            :faces (triangulate-cap actual-last-ring 0 top-normal false)})]
+                            :faces (triangulate-cap actual-last-ring 0 top-normal true)})]
         (-> state
             (assoc :meshes (cond-> all-meshes
                              bottom-cap-mesh (conj bottom-cap-mesh)
@@ -2850,8 +2850,10 @@
             bottom-normal (v* extrusion-dir -1)  ; points backward
             top-normal extrusion-dir             ; points forward
             ;; Use ear clipping for proper concave polygon triangulation
-            bottom-cap (triangulate-cap ring1 0 bottom-normal true)
-            top-cap (triangulate-cap ring2 n-verts top-normal false)]
+            ;; bottom-cap: flip=false for normal pointing -X
+            ;; top-cap: flip=true for normal pointing +X
+            bottom-cap (triangulate-cap ring1 0 bottom-normal false)
+            top-cap (triangulate-cap ring2 n-verts top-normal true)]
         {:type :mesh
          :primitive :sweep-two
          :vertices vertices
@@ -3289,7 +3291,6 @@
               final-state (:state rings-result)
               n-rings (count all-rings)
               n-verts (count (first all-rings))]
-
           (if (< n-rings 2)
             state
             ;; Build single unified mesh from all rings using ear clipping for caps
@@ -3318,7 +3319,7 @@
                                                    (ring-centroid second-to-last-ring)))
                   top-normal top-extrusion-dir
 
-                  ;; Bottom cap: flip=false for correct outward-facing orientation
+                  ;; Bottom cap: flip=false produces normal pointing back (-X)
                   bottom-cap-faces (triangulate-cap first-ring 0 bottom-normal false)
 
                   ;; Side faces connecting consecutive rings
@@ -3335,12 +3336,12 @@
                                           b1 (+ base next-vert)
                                           t0 (+ next-base vert-idx)
                                           t1 (+ next-base next-vert)]
-                                      ;; CCW winding from outside (same as rings-from-sweep)
+                                      ;; CCW winding from outside
                                       [[b0 t0 t1] [b0 t1 b1]]))
                                   (range n-verts)))
                                (range (dec n-rings))))
 
-                  ;; Top cap: flip=true for correct outward-facing orientation
+                  ;; Top cap: flip=true produces normal pointing forward (+X)
                   last-ring-base (* (dec n-rings) n-verts)
                   top-cap-faces (triangulate-cap last-ring last-ring-base top-normal true)
 

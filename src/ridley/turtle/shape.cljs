@@ -156,13 +156,27 @@
         new-heading (rotate-2d (:heading state) rad)]
     (assoc state :heading new-heading)))
 
+(defn- points-close?
+  "Check if two 2D points are very close (within epsilon)."
+  [[x1 y1] [x2 y2]]
+  (let [eps 0.001
+        dx (- x2 x1)
+        dy (- y2 y1)]
+    (< (+ (* dx dx) (* dy dy)) (* eps eps))))
+
 (defn shape-from-recording
   "Extract shape from recorded turtle state.
-   The path forms the shape outline."
+   The path forms the shape outline.
+   Removes duplicate closing point if present."
   [rec-state]
-  (let [path (:path rec-state)]
-    (when (>= (count path) 3)
-      (make-shape path {:centered? false}))))
+  (let [path (:path rec-state)
+        ;; Remove last point if it's essentially the same as the first (closed polygon)
+        clean-path (if (and (>= (count path) 4)
+                           (points-close? (first path) (last path)))
+                     (vec (butlast path))
+                     path)]
+    (when (>= (count clean-path) 3)
+      (make-shape clean-path {:centered? false}))))
 
 ;; ============================================================
 ;; Shape interpolation

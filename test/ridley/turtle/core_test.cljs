@@ -534,6 +534,83 @@
         (is (normal-points-toward? mesh end-face [30 100 0])
             "End cap should point toward final extrusion direction")))))
 
+(deftest cap-position-vs-normal-test
+  (testing "Start cap at X=0 has normal pointing -X, end cap at X=20 has normal pointing +X"
+    (let [rect (shape/rect-shape 10 10)
+          path (t/make-path [{:cmd :f :args [20]}])
+          turtle (-> (t/make-turtle)
+                     (t/extrude-from-path rect path))
+          mesh (last (:meshes turtle))
+          vertices (:vertices mesh)
+          faces (:faces mesh)]
+      ;; Find faces at X≈0 and X≈20
+      (doseq [face-idx (range (count faces))]
+        (let [verts (mapv #(nth vertices %) (nth faces face-idx))
+              avg-x (/ (reduce + (map first verts)) (count verts))
+              normal (face-normal mesh face-idx)
+              normal-x (first normal)]
+          ;; Start cap: X≈0 should have normal pointing -X
+          (when (< avg-x 1)
+            (is (< normal-x -0.9)
+                (str "Start cap face at X=" avg-x " should have normal pointing -X, got " normal-x)))
+          ;; End cap: X≈20 should have normal pointing +X
+          (when (> avg-x 19)
+            (is (> normal-x 0.9)
+                (str "End cap face at X=" avg-x " should have normal pointing +X, got " normal-x))))))))
+
+(deftest triangle-shape-extrusion-test
+  (testing "Triangle shape with closing point creates valid caps"
+    ;; This tests the fix for shapes where the last point nearly coincides with the first
+    (let [;; Create triangle manually (simulating (shape (f 30) (th 120) (f 30) (th 120) (f 30)))
+          triangle-pts [[0 0] [30 0] [15 25.98]]  ; equilateral triangle
+          triangle (shape/make-shape triangle-pts {:centered? false})
+          path (t/make-path [{:cmd :f :args [40]}])
+          turtle (-> (t/make-turtle)
+                     (t/extrude-from-path triangle path))
+          mesh (last (:meshes turtle))
+          faces (:faces mesh)]
+      (is (some? mesh) "Triangle extrusion should create a mesh")
+      (is (> (count faces) 3) "Triangle extrusion should have caps (more than just side faces)")
+      ;; Verify we have faces at both ends
+      (let [vertices (:vertices mesh)
+            face-x-positions (map (fn [face]
+                                    (let [verts (mapv #(nth vertices %) face)]
+                                      (/ (reduce + (map first verts)) (count verts))))
+                                  faces)
+            has-start-cap (some #(< % 1) face-x-positions)
+            has-end-cap (some #(> % 39) face-x-positions)]
+        (is has-start-cap "Should have start cap faces at X≈0")
+        (is has-end-cap "Should have end cap faces at X≈40")))))
+
+(deftest loft-cap-orientation-test
+  (testing "Loft between two rings has correctly oriented caps"
+    (let [;; Create two rings at different positions (same vertex count)
+          rect1 (shape/rect-shape 30 30)
+          rect2 (shape/rect-shape 15 15)
+          turtle1 (t/make-turtle)
+          turtle2 (assoc turtle1 :position [40 0 0])
+          ring1 (#'t/stamp-shape turtle1 rect1)
+          ring2 (#'t/stamp-shape turtle2 rect2)
+          ;; Use sweep-two-shapes directly
+          mesh (t/sweep-two-shapes ring1 ring2)
+          vertices (:vertices mesh)
+          faces (:faces mesh)]
+      (is (some? mesh) "Loft should create a mesh")
+      ;; Check cap orientations
+      (doseq [face-idx (range (count faces))]
+        (let [verts (mapv #(nth vertices %) (nth faces face-idx))
+              avg-x (/ (reduce + (map first verts)) (count verts))
+              normal (face-normal mesh face-idx)
+              normal-x (first normal)]
+          ;; Start cap: X≈0 should have normal pointing -X
+          (when (< avg-x 1)
+            (is (< normal-x -0.9)
+                (str "Loft start cap at X=" avg-x " should point -X, got " normal-x)))
+          ;; End cap: X≈40 should have normal pointing +X
+          (when (> avg-x 39)
+            (is (> normal-x 0.9)
+                (str "Loft end cap at X=" avg-x " should point +X, got " normal-x))))))))
+
 (deftest mesh-identity-test
   (testing "Same extrusion twice produces identical meshes"
     (let [rect (shape/rect-shape 15 15)
