@@ -31,6 +31,11 @@
 ;; Maps panel name -> {:mesh THREE.Mesh :canvas OffscreenCanvas :texture THREE.CanvasTexture}
 (defonce ^:private panel-objects (atom {}))
 
+;; Axis-constrained rotation state
+;; :axis-key - currently pressed axis key (:x :y :z or nil)
+;; :drag-start - mouse position at drag start
+(defonce ^:private axis-rotation-state (atom {:axis-key nil :drag-start nil :dragging false}))
+
 (defn- create-scene []
   (let [scene (THREE/Scene.)]
     (set! (.-background scene) (THREE/Color. 0x252526))
@@ -52,6 +57,103 @@
     (set! (.-enableDamping controls) true)
     (set! (.-dampingFactor controls) 0.05)
     controls))
+
+;; ============================================================
+;; Axis-constrained rotation (X/Y/Z keys + drag)
+;; ============================================================
+
+(defn- rotate-vector-around-axis
+  "Rotate a 3D vector [x y z] around an axis by angle."
+  [[vx vy vz] axis angle]
+  (let [cos-a (js/Math.cos angle)
+        sin-a (js/Math.sin angle)]
+    (case axis
+      :x [vx
+          (- (* vy cos-a) (* vz sin-a))
+          (+ (* vy sin-a) (* vz cos-a))]
+      :y [(+ (* vx cos-a) (* vz sin-a))
+          vy
+          (- (* vz cos-a) (* vx sin-a))]
+      :z [(- (* vx cos-a) (* vy sin-a))
+          (+ (* vx sin-a) (* vy cos-a))
+          vz]
+      [vx vy vz])))
+
+(defn- rotate-camera-around-axis
+  "Rotate camera around a world axis, keeping it looking at the target.
+   Also rotates the camera's up vector to maintain consistent orientation."
+  [camera controls axis angle]
+  (let [target (.-target controls)
+        cam-pos (.-position camera)
+        cam-up (.-up camera)
+        ;; Get camera position relative to target
+        rel-pos [(- (.-x cam-pos) (.-x target))
+                 (- (.-y cam-pos) (.-y target))
+                 (- (.-z cam-pos) (.-z target))]
+        ;; Get current up vector
+        up-vec [(.-x cam-up) (.-y cam-up) (.-z cam-up)]
+        ;; Rotate both position and up vector
+        [new-x new-y new-z] (rotate-vector-around-axis rel-pos axis angle)
+        [new-ux new-uy new-uz] (rotate-vector-around-axis up-vec axis angle)]
+    ;; Set new camera position
+    (.set cam-pos
+          (+ (.-x target) new-x)
+          (+ (.-y target) new-y)
+          (+ (.-z target) new-z))
+    ;; Set new up vector
+    (.set cam-up new-ux new-uy new-uz)
+    ;; Look at target with new up vector
+    (.lookAt camera target)
+    (.update controls)))
+
+(defn- setup-axis-rotation
+  "Setup keyboard and mouse handlers for axis-constrained rotation."
+  [canvas camera controls]
+  (let [key->axis {"x" :x "X" :x
+                   "y" :y "Y" :y
+                   "z" :z "Z" :z}
+        on-keydown (fn [e]
+                     ;; Ignore key repeat events
+                     (when-not (.-repeat e)
+                       (when-let [axis (key->axis (.-key e))]
+                         (swap! axis-rotation-state assoc :axis-key axis)
+                         (set! (.-enabled controls) false))))
+        on-keyup (fn [e]
+                   (when (key->axis (.-key e))
+                     (swap! axis-rotation-state assoc :axis-key nil :dragging false)
+                     (set! (.-enabled controls) true)))
+        on-mousedown (fn [e]
+                       (when (:axis-key @axis-rotation-state)
+                         (swap! axis-rotation-state assoc
+                                :drag-start [(.-clientX e) (.-clientY e)]
+                                :dragging true)))
+        on-mousemove (fn [e]
+                       (let [{:keys [axis-key drag-start dragging]} @axis-rotation-state]
+                         (when (and axis-key dragging drag-start)
+                           (let [[start-x _] drag-start
+                                 dx (- (.-clientX e) start-x)
+                                 ;; Convert pixel movement to rotation angle
+                                 ;; ~200 pixels = 90 degrees
+                                 angle (* dx (/ js/Math.PI 400))]
+                             (rotate-camera-around-axis camera controls axis-key angle)
+                             ;; Update drag start for continuous rotation
+                             (swap! axis-rotation-state assoc
+                                    :drag-start [(.-clientX e) (.-clientY e)])))))
+        on-mouseup (fn [_]
+                     (swap! axis-rotation-state assoc :dragging false :drag-start nil))
+        ;; Handle focus loss
+        on-blur (fn [_]
+                  (swap! axis-rotation-state assoc :axis-key nil :dragging false :drag-start nil)
+                  (set! (.-enabled controls) true))]
+    ;; Add listeners to window for keys (so they work when canvas has focus)
+    (.addEventListener js/window "keydown" on-keydown)
+    (.addEventListener js/window "keyup" on-keyup)
+    (.addEventListener js/window "blur" on-blur)
+    ;; Add mouse listeners to canvas
+    (.addEventListener canvas "mousedown" on-mousedown)
+    (.addEventListener canvas "mousemove" on-mousemove)
+    (.addEventListener canvas "mouseup" on-mouseup)
+    (.addEventListener canvas "mouseleave" on-mouseup)))
 
 (defn- add-grid [parent]
   (let [grid (THREE/GridHelper. 200 20 0x444444 0x333333)]
@@ -737,6 +839,8 @@
       (xr/enable-xr renderer)
       ;; Setup VR controller (pass world-group for rotation)
       (xr/setup-controller renderer scene camera-rig camera world-group)
+      ;; Setup axis-constrained rotation (X/Y/Z keys + drag)
+      (setup-axis-rotation canvas camera controls)
       ;; Setup ResizeObserver on viewport-panel (parent) for responsive canvas sizing
       ;; Observing the parent catches resize from panel divider drag
       (let [viewport-panel (.-parentElement canvas)

@@ -326,10 +326,12 @@
                                   (vec (reverse largest-outer))))
                   ;; Create shape with holes
                   ;; preserve-position? keeps the offset for proper text spacing
+                  ;; align-to-heading? makes text extend along heading (readable from front)
                   glyph-shape (when (and final-outer (> (count final-outer) 2))
                                 (shape/make-shape final-outer
                                                   (cond-> {:centered? false
-                                                           :preserve-position? true}
+                                                           :preserve-position? true
+                                                           :align-to-heading? true}
                                                     (seq holes) (assoc :holes holes))))]
               (recur (inc idx)
                      (+ x-offset advance-width)
