@@ -253,7 +253,7 @@ Let's see both approaches:"
 
 **Editor** (left) — Write your code here. This is where you define shapes, functions, and geometry.
 
-**Viewport** (right) — The 3D view showing your models. You can rotate (drag), zoom (scroll), and pan (right-drag) to explore.
+**Viewport** (right) — The 3D view showing your models. You can rotate (drag), zoom (scroll), and pan (right-drag) to explore. Hold **X**, **Y**, or **Z** while dragging to rotate around that world axis only.
 
 **REPL** (bottom) — An interactive command line. Type expressions and press Enter to evaluate them instantly.
 
@@ -911,7 +911,7 @@ Vediamo entrambi gli approcci:"
 
 **Editor** (sinistra) — Scrivi il tuo codice qui. È dove definisci forme, funzioni e geometria.
 
-**Viewport** (destra) — La vista 3D che mostra i tuoi modelli. Puoi ruotare (trascinare), zoomare (scroll) e spostare (tasto destro) per esplorare.
+**Viewport** (destra) — La vista 3D che mostra i tuoi modelli. Puoi ruotare (trascinare), zoomare (scroll) e spostare (tasto destro) per esplorare. Tieni premuto **X**, **Y** o **Z** mentre trascini per ruotare solo attorno a quell'asse.
 
 **REPL** (in basso) — Una linea di comando interattiva. Scrivi espressioni e premi Invio per valutarle istantaneamente.
 

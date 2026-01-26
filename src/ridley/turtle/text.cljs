@@ -318,12 +318,8 @@
                   ;; Get largest outer contour as the main shape boundary
                   largest-outer (when (seq outer)
                                   (apply max-key count outer))
-                  ;; Letters WITHOUT holes need reversed winding for standard extrusion
-                  ;; Letters WITH holes use earcut which expects current winding
-                  final-outer (when largest-outer
-                                (if (seq holes)
-                                  largest-outer
-                                  (vec (reverse largest-outer))))
+                  ;; Use the outer contour as-is (winding is correct after flip+reverse)
+                  final-outer largest-outer
                   ;; Create shape with holes
                   ;; preserve-position? keeps the offset for proper text spacing
                   ;; align-to-heading? makes text extend along heading (readable from front)

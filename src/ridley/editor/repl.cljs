@@ -554,6 +554,33 @@
          transform-fn (shape/make-lerp-fn s1 s2-aligned)]
      (pure-loft-path s1 transform-fn path steps))))
 
+(defn ^:export pure-revolve
+  "Pure revolve function - creates mesh without side effects.
+   Revolves a 2D profile shape around the turtle's heading axis.
+
+   The profile is interpreted as:
+   - 2D X = radial distance from axis
+   - 2D Y = position along axis (in heading direction)
+
+   angle: rotation angle in degrees (default 360 for full revolution)"
+  ([shape] (pure-revolve shape 360))
+  ([shape angle]
+   (let [;; Start from current turtle position/orientation
+         ;; Also copy resolution settings
+         current-turtle @turtle-atom
+         initial-state (if current-turtle
+                         (-> (turtle/make-turtle)
+                             (assoc :position (:position current-turtle))
+                             (assoc :heading (:heading current-turtle))
+                             (assoc :up (:up current-turtle))
+                             (assoc :resolution (:resolution current-turtle))
+                             (assoc :material (:material current-turtle)))
+                         (turtle/make-turtle))
+         ;; Revolve the shape
+         result-state (turtle/revolve-shape initial-state shape angle)
+         mesh (last (:meshes result-state))]
+     mesh)))
+
 ;; Legacy version for backwards compatibility (modifies global state)
 (defn ^:export implicit-extrude-path [shape-or-shapes path]
   ;; Handle both single shape and vector of shapes (from text-shape)
@@ -956,6 +983,7 @@
    'pure-extrude-path        pure-extrude-path  ; Pure version (no side effects)
    'pure-loft-path           pure-loft-path     ; Pure loft version (no side effects)
    'pure-loft-two-shapes     pure-loft-two-shapes ; Loft between two shapes
+   'pure-revolve             pure-revolve       ; Pure revolve/lathe version
    ;; Sweep between two shapes
    'stamp-shape-at      turtle/stamp-shape-at
    'sweep-two-shapes    turtle/sweep-two-shapes
@@ -1562,6 +1590,21 @@
                 (pure-loft-path ~shape ~transform-fn (path ~arg) ~steps)))))
        ;; Multiple movements - wrap in path macro
        `(pure-loft-path ~shape ~transform-fn (path ~@movements) ~steps)))
+
+   ;; revolve: create solid of revolution (lathe operation)
+   ;; PURE: returns mesh without side effects (use register to make visible)
+   ;; (revolve (shape (f 8) (th 90) (f 10) (th 90) (f 8)))  ; solid cylinder
+   ;; (revolve (circle 5))         ; torus (circle revolved around axis)
+   ;; (revolve profile 180)        ; half revolution
+   ;; The profile is interpreted as:
+   ;; - 2D X = radial distance from axis (perpendicular to heading)
+   ;; - 2D Y = position along axis (in heading direction)
+   ;; Returns the created mesh (can be bound with def)
+   (defmacro revolve
+     ([shape]
+      `(pure-revolve ~shape 360))
+     ([shape angle]
+      `(pure-revolve ~shape ~angle)))
 
    ;; sweep: create mesh between two shapes
    ;; (sweep (circle 5) (do (f 10) (th 90) (circle 5)))

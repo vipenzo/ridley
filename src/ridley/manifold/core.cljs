@@ -222,10 +222,11 @@
           output)))))
 
 (defn union
-  "Compute the union of two or more meshes.
+  "Compute the union of one or more meshes.
    Returns a new Ridley mesh.
 
    Usage:
+   (union a)             ; returns a unchanged (no-op)
    (union a b)           ; union of two meshes
    (union a b c d)       ; union of multiple meshes
    (union [a b c d])     ; union of a vector of meshes"
@@ -234,7 +235,9 @@
         meshes (if (and (empty? more) (sequential? first-arg))
                  (vec first-arg)
                  (into [first-arg] more))]
-    (when (>= (count meshes) 2)
+    (case (count meshes)
+      0 nil
+      1 (first meshes)
       (reduce union-two meshes))))
 
 (defn- difference-two

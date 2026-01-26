@@ -1398,7 +1398,8 @@
           (assoc :position new-pos)
           (update :geometry conj {:type :line
                                   :from pos
-                                  :to new-pos}))
+                                  :to new-pos
+                                  :color (get-in state [:material :color])}))
 
       :shape
       ;; Shape mode: check for pending rotation first
@@ -3317,8 +3318,8 @@
                                                    (ring-centroid second-to-last-ring)))
                   top-normal top-extrusion-dir
 
-                  ;; Bottom cap: flip=true for correct outward-facing orientation
-                  bottom-cap-faces (triangulate-cap first-ring 0 bottom-normal true)
+                  ;; Bottom cap: flip=false for correct outward-facing orientation
+                  bottom-cap-faces (triangulate-cap first-ring 0 bottom-normal false)
 
                   ;; Side faces connecting consecutive rings
                   ;; Ring i vertices: i*n-verts to (i+1)*n-verts - 1
@@ -3334,14 +3335,14 @@
                                           b1 (+ base next-vert)
                                           t0 (+ next-base vert-idx)
                                           t1 (+ next-base next-vert)]
-                                      ;; Flip winding for outward-facing normals
-                                      [[b0 t1 t0] [b0 b1 t1]]))
+                                      ;; CCW winding from outside (same as rings-from-sweep)
+                                      [[b0 t0 t1] [b0 t1 b1]]))
                                   (range n-verts)))
                                (range (dec n-rings))))
 
-                  ;; Top cap: flip=false for correct outward-facing orientation
+                  ;; Top cap: flip=true for correct outward-facing orientation
                   last-ring-base (* (dec n-rings) n-verts)
-                  top-cap-faces (triangulate-cap last-ring last-ring-base top-normal false)
+                  top-cap-faces (triangulate-cap last-ring last-ring-base top-normal true)
 
                   all-faces (vec (concat bottom-cap-faces side-faces top-cap-faces))
 
@@ -3352,6 +3353,131 @@
                                :creation-pose creation-pose}
                          (:material state) (assoc :material (:material state)))]
               (update final-state :meshes conj mesh)))))))))
+
+
+;; ============================================================
+;; Revolve (lathe operation)
+;; ============================================================
+
+(defn ^:export revolve-shape
+  "Revolve a 2D profile shape around the turtle's heading axis.
+   Creates a solid of revolution (like a lathe operation).
+
+   The profile is interpreted as:
+   - 2D X = radial distance from axis (perpendicular to heading)
+   - 2D Y = position along axis (in heading direction)
+
+   The axis of revolution passes through the turtle's current position.
+
+   Parameters:
+   - state: turtle state
+   - shape: a 2D shape (profile to revolve)
+   - angle: rotation angle in degrees (default 360 for full revolution)
+
+   Uses the global resolution setting for number of segments.
+
+   Examples:
+   (revolve (shape (f 8) (th 90) (f 10) (th 90) (f 8)) 360)  ; solid cylinder
+   (revolve (circle 5) 360)  ; torus (circle revolved around axis)
+   (revolve cup-profile 360) ; cup/vase shape"
+  ([state shape]
+   (revolve-shape state shape 360))
+  ([state shape angle]
+   (if-not (shape? shape)
+     state
+     (let [;; Save creation pose
+           creation-pose {:position (:position state)
+                          :heading (:heading state)
+                          :up (:up state)}
+           ;; Get profile points
+           profile-points (:points shape)
+           n-profile (count profile-points)
+           ;; Calculate number of segments based on resolution
+           ;; Use same logic as arc: resolution based on angle
+           steps (calc-arc-steps state (* 2 Math/PI) (Math/abs angle))
+           ;; For full 360, we don't need the last ring (it overlaps with first)
+           is-closed (>= (Math/abs angle) 360)
+           n-rings (if is-closed steps (inc steps))
+           angle-rad (* angle (/ Math/PI 180))
+           angle-step (/ angle-rad steps)
+           ;; Get turtle orientation
+           pos (:position state)
+           heading (:heading state)
+           up (:up state)
+           ;; Right vector = heading × up (initial radial direction at θ=0)
+           right (normalize (cross heading up))
+           ;; Transform profile point [px py] at angle θ to 3D:
+           ;; pos + py * heading + px * (cos(θ) * right + sin(θ) * up)
+           transform-point (fn [[px py] theta]
+                             (let [cos-t (Math/cos theta)
+                                   sin-t (Math/sin theta)
+                                   ;; Radial direction at this angle
+                                   radial-x (+ (* cos-t (nth right 0)) (* sin-t (nth up 0)))
+                                   radial-y (+ (* cos-t (nth right 1)) (* sin-t (nth up 1)))
+                                   radial-z (+ (* cos-t (nth right 2)) (* sin-t (nth up 2)))]
+                               [(+ (nth pos 0) (* py (nth heading 0)) (* px radial-x))
+                                (+ (nth pos 1) (* py (nth heading 1)) (* px radial-y))
+                                (+ (nth pos 2) (* py (nth heading 2)) (* px radial-z))]))
+           ;; Generate all rings
+           rings (vec (for [i (range n-rings)]
+                        (let [theta (* i angle-step)]
+                          (vec (for [pt profile-points]
+                                 (transform-point pt theta))))))
+           ;; Flatten vertices
+           vertices (vec (apply concat rings))
+           ;; Side faces connecting consecutive rings
+           ;; For closed revolve, connect last ring to first
+           side-faces
+           (vec
+            (mapcat
+             (fn [ring-idx]
+               (let [next-ring-idx (if (and is-closed (= ring-idx (dec n-rings)))
+                                     0
+                                     (inc ring-idx))]
+                 (when (< next-ring-idx n-rings)
+                   (mapcat
+                    (fn [vert-idx]
+                      (let [next-vert (mod (inc vert-idx) n-profile)
+                            base (* ring-idx n-profile)
+                            next-base (* next-ring-idx n-profile)
+                            b0 (+ base vert-idx)
+                            b1 (+ base next-vert)
+                            t0 (+ next-base vert-idx)
+                            t1 (+ next-base next-vert)]
+                        ;; CCW winding for outward-facing normals
+                        [[b0 t0 t1] [b0 t1 b1]]))
+                    (range n-profile)))))
+             (range (if is-closed n-rings (dec n-rings)))))
+           ;; Caps for open revolve (angle < 360)
+           cap-faces
+           (when-not is-closed
+             (let [first-ring (first rings)
+                   last-ring (last rings)
+                   last-ring-base (* (dec n-rings) n-profile)
+                   ;; Calculate normals from ring geometry
+                   ;; Start cap normal: opposite to initial right direction
+                   start-normal (v* right -1)
+                   ;; End cap normal: rotated right direction
+                   end-theta (* (dec n-rings) angle-step)
+                   end-cos (Math/cos end-theta)
+                   end-sin (Math/sin end-theta)
+                   end-normal [(+ (* end-cos (nth right 0)) (* end-sin (nth up 0)))
+                               (+ (* end-cos (nth right 1)) (* end-sin (nth up 1)))
+                               (+ (* end-cos (nth right 2)) (* end-sin (nth up 2)))]
+                   ;; Triangulate caps
+                   start-cap (triangulate-cap first-ring 0 start-normal false)
+                   end-cap (triangulate-cap last-ring last-ring-base end-normal true)]
+               (vec (concat start-cap end-cap))))
+           all-faces (if cap-faces
+                       (vec (concat side-faces cap-faces))
+                       side-faces)
+           mesh (cond-> {:type :mesh
+                         :primitive :revolve
+                         :vertices vertices
+                         :faces all-faces
+                         :creation-pose creation-pose}
+                  (:material state) (assoc :material (:material state)))]
+       (update state :meshes conj mesh)))))
 
 
 ;; ============================================================
@@ -3625,7 +3751,8 @@
           state' (if (= mode :on)
                    (update state :geometry conj {:type :line
                                                  :from from-pos
-                                                 :to to-pos})
+                                                 :to to-pos
+                                                 :color (get-in state [:material :color])})
                    state)]
       (-> state'
           (assoc :position to-pos)
