@@ -896,6 +896,11 @@
    'rect         shape/rect-shape
    'polygon      shape/ngon-shape
    'star         shape/star-shape
+   ;; Shape transformations
+   'translate-shape shape/translate-shape
+   'scale-shape     shape/scale-shape
+   'reverse-shape   shape/reverse-shape
+   'path-to-shape   shape/path-to-shape
    ;; Text shapes
    'text-shape   text/text-shape
    'text-shapes  text/text-shapes
@@ -975,6 +980,7 @@
    'shape-rec-th        shape/rec-th
    'shape-from-recording shape/shape-from-recording
    'recording-turtle    shape/recording-turtle
+   'replay-path-to-recording shape/replay-path-to-recording
    'run-path-impl       turtle/run-path
    'follow-path         implicit-run-path
    'path?               turtle/path?
@@ -1405,9 +1411,10 @@
    ;; shape: create a 2D shape from turtle movements
    ;; (def tri (shape (f 4) (th 120) (f 4) (th 120) (f 4))) - triangle
    ;; (def tri (shape (f 4) (th 120) (f 4))) - same, auto-closes
+   ;; To convert a path to shape, use: (path-to-shape my-path)
    ;; Uses a 2D turtle starting at origin, facing +X
    ;; Only f and th are allowed (2D plane)
-   ;; Returns a shape that can be used in extrude/loft
+   ;; Returns a shape that can be used in extrude/loft/revolve
    (defmacro shape [& body]
      `(let [state# (atom (recording-turtle))
             ~'f (fn [d#] (swap! state# shape-rec-f d#))

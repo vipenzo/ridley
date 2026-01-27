@@ -102,6 +102,115 @@
      (make-shape points {:centered? true}))))
 
 ;; ============================================================
+;; Shape transformations
+;; ============================================================
+
+(defn translate-shape
+  "Translate a shape by [dx dy]. Returns a new shape with translated points.
+   Useful for positioning shapes before revolve (which uses X as radial distance)."
+  [shape dx dy]
+  (when (shape? shape)
+    (let [translate-point (fn [[x y]] [(+ x dx) (+ y dy)])
+          new-points (mapv translate-point (:points shape))
+          new-holes (when (:holes shape)
+                      (mapv (fn [hole] (mapv translate-point hole)) (:holes shape)))]
+      (cond-> (assoc shape :points new-points)
+        new-holes (assoc :holes new-holes)))))
+
+(defn scale-shape
+  "Scale a shape by [sx sy]. Returns a new shape with scaled points."
+  [shape sx sy]
+  (when (shape? shape)
+    (let [scale-point (fn [[x y]] [(* x sx) (* y sy)])
+          new-points (mapv scale-point (:points shape))
+          new-holes (when (:holes shape)
+                      (mapv (fn [hole] (mapv scale-point hole)) (:holes shape)))]
+      (cond-> (assoc shape :points new-points)
+        new-holes (assoc :holes new-holes)))))
+
+(defn reverse-shape
+  "Reverse the winding order of a shape's points.
+   This flips the normal direction when the shape is extruded/revolved.
+   Use when normals are pointing the wrong way."
+  [shape]
+  (when (shape? shape)
+    (let [new-points (vec (reverse (:points shape)))
+          ;; Holes also need to be reversed to maintain relative winding
+          new-holes (when (:holes shape)
+                      (mapv (fn [hole] (vec (reverse hole))) (:holes shape)))]
+      (cond-> (assoc shape :points new-points)
+        new-holes (assoc :holes new-holes)))))
+
+(defn- signed-area-2d
+  "Calculate the signed area of a 2D polygon.
+   Positive = CCW (counter-clockwise), Negative = CW (clockwise).
+   Uses the shoelace formula."
+  [points]
+  (let [n (count points)]
+    (if (< n 3)
+      0
+      (/ (reduce
+          (fn [sum i]
+            (let [[x1 y1] (nth points i)
+                  [x2 y2] (nth points (mod (inc i) n))]
+              (+ sum (- (* x1 y2) (* x2 y1)))))
+          0
+          (range n))
+         2))))
+
+(defn- ensure-ccw
+  "Ensure points are in counter-clockwise order (positive signed area).
+   Reverses points if they are clockwise."
+  [points]
+  (if (neg? (signed-area-2d points))
+    (vec (reverse points))
+    points))
+
+(defn path-to-shape
+  "Convert a path to a 2D shape by tracing the commands.
+   Extracts X and Y coordinates from the 3D path.
+   Automatically ensures CCW winding for correct normals.
+   Useful for creating revolve profiles from recorded paths."
+  [path]
+  (when (and (map? path) (= :path (:type path)))
+    (let [commands (:commands path)
+          ;; Trace the path to collect 2D points
+          result (reduce
+                  (fn [{:keys [pos heading points]} cmd]
+                    (case (:cmd cmd)
+                      :f (let [dist (first (:args cmd))
+                               ;; Use only XY components of heading
+                               hx (first heading)
+                               hy (second heading)
+                               new-pos [(+ (first pos) (* hx dist))
+                                        (+ (second pos) (* hy dist))]]
+                           {:pos new-pos
+                            :heading heading
+                            :points (conj points new-pos)})
+                      :th (let [angle (first (:args cmd))
+                                rad (* angle (/ Math/PI 180))
+                                hx (first heading)
+                                hy (second heading)
+                                cos-a (Math/cos rad)
+                                sin-a (Math/sin rad)
+                                new-heading [(- (* hx cos-a) (* hy sin-a))
+                                             (+ (* hx sin-a) (* hy cos-a))
+                                             0]]
+                            {:pos pos :heading new-heading :points points})
+                      :set-heading (let [[h _up] (:args cmd)
+                                         ;; Extract XY from 3D heading
+                                         new-heading [(first h) (second h) 0]]
+                                     {:pos pos :heading new-heading :points points})
+                      ;; Skip unknown commands
+                      {:pos pos :heading heading :points points}))
+                  {:pos [0 0] :heading [1 0 0] :points [[0 0]]}
+                  commands)
+          raw-points (:points result)]
+      (when (>= (count raw-points) 3)
+        ;; Ensure CCW winding for correct outward-facing normals
+        (make-shape (ensure-ccw raw-points) {:centered? false})))))
+
+;; ============================================================
 ;; Shape from turtle recording
 ;; ============================================================
 
@@ -156,6 +265,31 @@
         new-heading (rotate-2d (:heading state) rad)]
     (assoc state :heading new-heading)))
 
+(defn replay-path-to-recording
+  "Replay a path's commands into a recording state.
+   Used by the shape macro to incorporate path variables.
+   Returns the updated recording state."
+  [rec-state path]
+  (if-not (and (map? path) (= :path (:type path)))
+    rec-state
+    (reduce
+     (fn [state cmd-map]
+       (let [cmd (:cmd cmd-map)
+             args (:args cmd-map)]
+         (case cmd
+           :f (rec-f state (first args))
+           :th (rec-th state (first args))
+           :set-heading
+           (let [h (first args)
+                 hx (first h)
+                 hy (second h)
+                 angle (Math/atan2 hy hx)]
+             (assoc state :heading [(Math/cos angle) (Math/sin angle)]))
+           ;; Skip unknown commands
+           state)))
+     rec-state
+     (:commands path))))
+
 (defn- points-close?
   "Check if two 2D points are very close (within epsilon)."
   [[x1 y1] [x2 y2]]
@@ -167,7 +301,8 @@
 (defn shape-from-recording
   "Extract shape from recorded turtle state.
    The path forms the shape outline.
-   Removes duplicate closing point if present."
+   Removes duplicate closing point if present.
+   Ensures CCW winding for correct outward-facing normals."
   [rec-state]
   (let [path (:path rec-state)
         ;; Remove last point if it's essentially the same as the first (closed polygon)
@@ -176,7 +311,8 @@
                      (vec (butlast path))
                      path)]
     (when (>= (count clean-path) 3)
-      (make-shape clean-path {:centered? false}))))
+      ;; Ensure CCW winding for correct outward-facing normals
+      (make-shape (ensure-ccw clean-path) {:centered? false}))))
 
 ;; ============================================================
 ;; Shape interpolation

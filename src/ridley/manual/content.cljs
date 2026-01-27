@@ -78,7 +78,11 @@
        [{:id :scale-shape
          :code "(register tapered\n  (loft (circle 20) (circle 10) (f 40)))"}
         {:id :morph-shapes
-         :code "(register morph\n  (loft (rect 30 30) (circle 15) (f 40)))"}]}
+         :code "(register morph\n  (loft (rect 30 30) (circle 15) (f 40)))"}
+        {:id :loft-transform
+         :code "(register cone\n  (loft (circle 20)\n    #(scale %1 (- 1 %2))\n    (f 40)))"}
+        {:id :loft-twist
+         :code "(register twisted\n  (loft (rect 20 10)\n    #(rotate-shape %1 (* %2 90))\n    (f 40)))"}]}
       {:id :joint-modes
        :examples
        [{:id :joint-flat
@@ -216,6 +220,24 @@
          :code "(let [r 15\n      h 40]\n  (register cyl\n    (extrude (circle r) (f h))))"}
         {:id :let-computed
          :code "(let [base 20\n      half (/ base 2)\n      quarter (/ half 2)]\n  (register box1 (box base))\n  (f (+ half quarter))\n  (register box2 (box half)))"}]}
+      {:id :anonymous-functions
+       :see-also [:clojure-basics :control-structures :shape-transforms]
+       :examples
+       [{:id :anon-shorthand
+         :code "(register columns\n  (map #(attach (box 5) (th (* % 36)) (f 10))\n    (range 10)))"}
+        {:id :anon-fn-form
+         :code "(register cone\n  (loft (circle 20)\n    (fn [shape t] (scale shape t))\n    (f 40)))"}
+        {:id :anon-loft-twist
+         :code "(register twisted\n  (loft (rect 20 10)\n    #(rotate-shape %1 (* %2 90))\n    (f 40)))"}]}
+      {:id :map-and-reduce
+       :see-also [:control-structures :anonymous-functions]
+       :examples
+       [{:id :map-basic
+         :code "(register sizes\n  (for [r (map #(* % 5) [1 2 3 4])]\n    (attach (sphere r) (f (* r 3)))))"}
+        {:id :reduce-union
+         :code "(register merged\n  (reduce mesh-union\n    (for [i (range 5)]\n      (attach (box 10) (f (* i 15))))))"}
+        {:id :map-indexed
+         :code "(register staircase\n  (for [[i size] (map-indexed vector [8 12 16 20])]\n    (attach (extrude (circle size) (f 5))\n      (f (* i 8)))))"}]}
       {:id :repl-usage
        :examples
        [{:id :repl-quick-test
@@ -232,7 +254,7 @@
      :part-3 {:title "Mesh Manipulation"}
      :part-4 {:title "Advanced Features"}
      :part-5 {:title "Debug Help"}
-     :part-6 {:title "Clojure Advanced"}}
+     :part-6 {:title "Advanced Clojure"}}
     :pages
     {:hello-ridley
      {:title "Hello Ridley"
@@ -436,18 +458,34 @@ The path must return to (approximately) the starting position and orientation."
 
      :shape-transforms
      {:title "Shape Transitions"
-      :content "The `loft` command lets you transition between different shapes along the extrusion path. The shape smoothly morphs from start to end.
+      :content "The `loft` command lets you transition between different shapes along the extrusion path.
+
+**Two-shape loft** — smoothly morphs from one shape to another:
 
 ```
 (loft start-shape end-shape movements...)
 ```
 
-This creates tapered forms, organic transitions, and complex geometry."
+**Transform function loft** — applies a function that controls the shape at each step:
+
+```
+(loft shape transform-fn movements...)
+```
+
+The transform function receives two arguments: the original shape and a progress value `t` from 0.0 (start) to 1.0 (end). Use `loft-n` for a custom number of steps (default is 16):
+
+```
+(loft-n steps shape transform-fn movements...)
+```"
       :examples
       {:scale-shape {:caption "Tapered cone"
                      :description "Loft from a large circle to a small circle creates a tapered cone."}
        :morph-shapes {:caption "Shape morphing"
-                      :description "Loft can transition between completely different shapes — here, from a square to a circle."}}}
+                      :description "Loft can transition between completely different shapes — here, from a square to a circle."}
+       :loft-transform {:caption "Transform function"
+                        :description "A transform function scales the shape based on progress, creating a cone from a single shape."}
+       :loft-twist {:caption "Twist"
+                    :description "Rotating the shape as it extrudes creates a twist effect."}}}
 
      :joint-modes
      {:title "Joint Modes"
@@ -538,6 +576,67 @@ Variables can depend on earlier ones in the same `let`. This keeps your code cle
                     :description "Define local variables `r` and `h`, then use them to create a cylinder."}
        :let-computed {:caption "Computed values"
                       :description "Variables can be computed from earlier ones. Note: in Clojure, operators like `+`, `-`, `*`, `/` use prefix notation: `(/ base 2)` instead of `base / 2`."}}}
+
+     :anonymous-functions
+     {:title "Anonymous Functions"
+      :content "Not every function needs a name. Clojure has two ways to write anonymous (inline) functions:
+
+**Short form** — `#(...)` with `%`, `%1`, `%2` for arguments:
+```
+#(* % 2)           ; one argument
+#(scale %1 %2)     ; two arguments
+```
+
+**Long form** — `(fn [args] body)` for more complex cases:
+```
+(fn [shape t]
+  (scale shape (- 1 t)))
+```
+
+Use the short form for simple one-liners. Use `fn` when the body is more complex or when naming the arguments improves clarity.
+
+Anonymous functions are especially useful with `loft`, `map`, `reduce`, and `filter`."
+      :examples
+      {:anon-shorthand {:caption "Short form #()"
+                        :description "`#()` creates a quick inline function. `%` (or `%1`, `%2`) refers to the arguments. Here we multiply each radius by a scaling factor."}
+       :anon-fn-form {:caption "Long form (fn)"
+                      :description "`(fn [args] body)` is clearer when the function has multiple arguments with specific meaning — here `shape` and `t` (progress)."}
+       :anon-loft-twist {:caption "Loft with #()"
+                         :description "The short form works well for loft transforms. `%1` is the shape, `%2` is the progress from 0 to 1."}}}
+
+     :map-and-reduce
+     {:title "Map and Reduce"
+      :content "Transform and combine collections with functional tools:
+
+**map** — Apply a function to each element:
+```
+(map #(* % 2) [1 2 3])   ; => (2 4 6)
+```
+
+**reduce** — Combine all elements into one value:
+```
+(reduce + [1 2 3 4])      ; => 10
+```
+
+**map-indexed** — Like `map` but also provides the index:
+```
+(map-indexed vector [:a :b :c])
+; => ([0 :a] [1 :b] [2 :c])
+```
+
+**filter** — Keep only elements matching a predicate:
+```
+(filter odd? [1 2 3 4 5]) ; => (1 3 5)
+```
+
+These compose naturally: `(map f (filter pred coll))`. Combined with `for`, they give you powerful ways to generate geometry from data."
+      :examples
+      {:map-basic {:caption "Map"
+                   :description "`map` applies a function to each element. Here we scale a list of values to get radii, then create spheres."}
+       :reduce-union {:caption "Reduce"
+                      :description "`reduce` combines elements pairwise. Here we merge multiple boxes into a single mesh with `mesh-union`."}
+       :map-indexed {:caption "Map-indexed"
+                     :description "`map-indexed` pairs each element with its index. Useful for positioning objects along a sequence."}}}
 
      :repl-usage
      {:title "The REPL"
@@ -1094,18 +1193,34 @@ Il percorso deve ritornare (approssimativamente) alla posizione e orientamento i
 
      :shape-transforms
      {:title "Transizioni di Forma"
-      :content "Il comando `loft` ti permette di fare transizioni tra forme diverse lungo il percorso di estrusione. La forma si trasforma gradualmente dall'inizio alla fine.
+      :content "Il comando `loft` ti permette di fare transizioni tra forme lungo il percorso di estrusione.
+
+**Loft a due forme** — transizione graduale da una forma all'altra:
 
 ```
 (loft forma-inizio forma-fine movimenti...)
 ```
 
-Questo crea forme rastremate, transizioni organiche e geometrie complesse."
+**Loft con funzione di trasformazione** — applica una funzione che controlla la forma ad ogni passo:
+
+```
+(loft forma funzione-trasformazione movimenti...)
+```
+
+La funzione di trasformazione riceve due argomenti: la forma originale e un valore di progresso `t` da 0.0 (inizio) a 1.0 (fine). Usa `loft-n` per un numero personalizzato di passi (default 16):
+
+```
+(loft-n passi forma funzione-trasformazione movimenti...)
+```"
       :examples
       {:scale-shape {:caption "Cono rastremato"
                      :description "Loft da un cerchio grande a uno piccolo crea un cono rastremato."}
        :morph-shapes {:caption "Morphing di forme"
-                      :description "Loft può fare transizioni tra forme completamente diverse — qui, da un quadrato a un cerchio."}}}
+                      :description "Loft può fare transizioni tra forme completamente diverse — qui, da un quadrato a un cerchio."}
+       :loft-transform {:caption "Funzione di trasformazione"
+                        :description "Una funzione di trasformazione scala la forma in base al progresso, creando un cono da una singola forma."}
+       :loft-twist {:caption "Torsione"
+                    :description "Ruotare la forma durante l'estrusione crea un effetto di torsione."}}}
 
      :joint-modes
      {:title "Modalità Giunzione"
@@ -1196,6 +1311,67 @@ Le variabili possono dipendere da quelle precedenti nello stesso `let`. Questo m
                     :description "Definisci variabili locali `r` e `h`, poi usale per creare un cilindro."}
        :let-computed {:caption "Valori calcolati"
                       :description "Le variabili possono essere calcolate da quelle precedenti. Nota: in Clojure, operatori come `+`, `-`, `*`, `/` usano notazione prefissa: `(/ base 2)` invece di `base / 2`."}}}
+
+     :anonymous-functions
+     {:title "Funzioni Anonime"
+      :content "Non tutte le funzioni hanno bisogno di un nome. Clojure ha due modi per scrivere funzioni anonime (inline):
+
+**Forma breve** — `#(...)` con `%`, `%1`, `%2` per gli argomenti:
+```
+#(* % 2)           ; un argomento
+#(scale %1 %2)     ; due argomenti
+```
+
+**Forma estesa** — `(fn [args] corpo)` per casi più complessi:
+```
+(fn [shape t]
+  (scale shape (- 1 t)))
+```
+
+Usa la forma breve per semplici one-liner. Usa `fn` quando il corpo è più complesso o quando dare un nome agli argomenti migliora la chiarezza.
+
+Le funzioni anonime sono particolarmente utili con `loft`, `map`, `reduce` e `filter`."
+      :examples
+      {:anon-shorthand {:caption "Forma breve #()"
+                        :description "`#()` crea una funzione inline rapida. `%` (o `%1`, `%2`) si riferisce agli argomenti. Qui moltiplichiamo ogni raggio per un fattore di scala."}
+       :anon-fn-form {:caption "Forma estesa (fn)"
+                      :description "`(fn [args] corpo)` è più chiaro quando la funzione ha più argomenti con significato specifico — qui `shape` e `t` (progresso)."}
+       :anon-loft-twist {:caption "Loft con #()"
+                         :description "La forma breve funziona bene per le trasformazioni loft. `%1` è la forma, `%2` è il progresso da 0 a 1."}}}
+
+     :map-and-reduce
+     {:title "Map e Reduce"
+      :content "Trasforma e combina collezioni con strumenti funzionali:
+
+**map** — Applica una funzione a ogni elemento:
+```
+(map #(* % 2) [1 2 3])   ; => (2 4 6)
+```
+
+**reduce** — Combina tutti gli elementi in un singolo valore:
+```
+(reduce + [1 2 3 4])      ; => 10
+```
+
+**map-indexed** — Come `map` ma fornisce anche l'indice:
+```
+(map-indexed vector [:a :b :c])
+; => ([0 :a] [1 :b] [2 :c])
+```
+
+**filter** — Mantieni solo gli elementi che soddisfano un predicato:
+```
+(filter odd? [1 2 3 4 5]) ; => (1 3 5)
+```
+
+Si compongono naturalmente: `(map f (filter pred coll))`. Combinati con `for`, offrono modi potenti per generare geometria a partire da dati."
+      :examples
+      {:map-basic {:caption "Map"
+                   :description "`map` applica una funzione a ogni elemento. Qui scaliamo una lista di valori per ottenere raggi, poi creiamo sfere."}
+       :reduce-union {:caption "Reduce"
+                      :description "`reduce` combina elementi a coppie. Qui uniamo più box in una singola mesh con `mesh-union`."}
+       :map-indexed {:caption "Map-indexed"
+                     :description "`map-indexed` accoppia ogni elemento con il suo indice. Utile per posizionare oggetti lungo una sequenza."}}}
 
      :repl-usage
      {:title "La REPL"

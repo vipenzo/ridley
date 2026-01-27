@@ -3446,7 +3446,7 @@
                             t0 (+ next-base vert-idx)
                             t1 (+ next-base next-vert)]
                         ;; CCW winding for outward-facing normals
-                        [[b0 t0 t1] [b0 t1 b1]]))
+                        [[b0 t1 t0] [b0 b1 t1]]))
                     (range n-profile)))))
              (range (if is-closed n-rings (dec n-rings)))))
            ;; Caps for open revolve (angle < 360)
