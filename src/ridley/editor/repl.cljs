@@ -989,6 +989,8 @@
    'follow-path         implicit-run-path
    'path?               turtle/path?
    'quick-path          turtle/quick-path
+   'path-segments-impl  turtle/path-segments
+   'subdivide-segment-impl turtle/subdivide-segment
    'extrude-closed-path-impl implicit-extrude-closed-path
    'extrude-path-impl        implicit-extrude-path
    'pure-extrude-path        pure-extrude-path  ; Pure version (no side effects)
@@ -1206,84 +1208,148 @@
        [th-deg tv-deg]))
 
    ;; Recording version of bezier-as
-   ;; Runs the path virtually on the recorder state to find endpoint and heading,
-   ;; then decomposes a cubic bezier into f + set-heading segments.
-   ;; Uses chord directions for accurate positions. Skips set-heading on the
-   ;; first step (preserving exact start heading) and appends a final set-heading
-   ;; to ensure exact end heading.
-   (defn- rec-bezier-as* [p & {:keys [tension steps]}]
-     (let [state @path-recorder
-           ;; Run the path on a copy of current recorder state to get endpoint
-           end-state (run-path-impl state p)
-           p0 (:position state)
-           p3 (:position end-state)
-           start-heading (:heading state)
-           end-heading (:heading end-state)
-           dx0 (- (nth p3 0) (nth p0 0))
-           dy0 (- (nth p3 1) (nth p0 1))
-           dz0 (- (nth p3 2) (nth p0 2))
-           approx-length (sqrt (+ (* dx0 dx0) (* dy0 dy0) (* dz0 dz0)))]
-       (when (> approx-length 0.001)
-         (let [res-mode (get-in state [:resolution :mode] :n)
-               res-value (get-in state [:resolution :value] 16)
-               actual-steps (or steps
-                                (case res-mode
-                                  :n res-value
-                                  :a res-value
-                                  :s (max 1 (int (ceil (/ approx-length res-value))))))
-               factor (or tension 0.33)
-               ;; Auto control points using both headings
-               c1 (mapv + p0 (mapv #(* % (* approx-length factor)) start-heading))
-               c2 (mapv + p3 (mapv #(* % (* approx-length (- factor))) end-heading))
-               ;; Bezier point function
-               cubic-point (fn [t]
-                             (let [t2 (- 1 t)
-                                   a (* t2 t2 t2) b (* 3 t2 t2 t) c (* 3 t2 t t) d (* t t t)]
-                               [(+ (* a (nth p0 0)) (* b (nth c1 0)) (* c (nth c2 0)) (* d (nth p3 0)))
-                                (+ (* a (nth p0 1)) (* b (nth c1 1)) (* c (nth c2 1)) (* d (nth p3 1)))
-                                (+ (* a (nth p0 2)) (* b (nth c1 2)) (* c (nth c2 2)) (* d (nth p3 2)))]))
-               ;; Precompute points and chord segments
-               points (mapv #(cubic-point (/ % actual-steps)) (range (inc actual-steps)))
-               segments (vec (for [i (range actual-steps)]
-                               (let [curr-pos (nth points i)
-                                     next-pos (nth points (inc i))
-                                     dx (- (nth next-pos 0) (nth curr-pos 0))
-                                     dy (- (nth next-pos 1) (nth curr-pos 1))
-                                     dz (- (nth next-pos 2) (nth curr-pos 2))
-                                     dist (sqrt (+ (* dx dx) (* dy dy) (* dz dz)))]
-                                 {:dir (if (> dist 0.001) (rec-normalize [dx dy dz]) nil)
-                                  :dist dist})))]
-           ;; Walk through segments:
-           ;; - first step: keep existing heading (exact tangent at t=0)
-           ;; - last step: use end-heading (exact tangent at t=1)
-           ;; - middle steps: use chord direction
-           (loop [remaining-segments segments
-                  current-up (:up state)
-                  first? true]
-             (when (seq remaining-segments)
-               (let [{:keys [dir dist]} (first remaining-segments)
-                     last? (empty? (rest remaining-segments))]
-                 (if (and dir (> dist 0.001))
-                   (let [heading-dir (cond first? (:heading @path-recorder)
-                                           last? end-heading
-                                           :else dir)
-                         dot-product (rec-dot current-up heading-dir)
-                         projected [(- (nth current-up 0) (* dot-product (nth heading-dir 0)))
-                                    (- (nth current-up 1) (* dot-product (nth heading-dir 1)))
-                                    (- (nth current-up 2) (* dot-product (nth heading-dir 2)))]
-                         proj-len (sqrt (rec-dot projected projected))
-                         new-up (if (> proj-len 0.001)
-                                  (rec-normalize projected)
-                                  (let [right (rec-cross heading-dir current-up)
-                                        right-len (sqrt (rec-dot right right))]
-                                    (if (> right-len 0.001)
-                                      (rec-normalize (rec-cross right heading-dir))
-                                      current-up)))]
-                     (when-not first?
-                       (rec-set-heading* heading-dir new-up))
-                     (rec-f* dist)
-                     (recur (rest remaining-segments) new-up false))
-                   (recur (rest remaining-segments) current-up first?)))))))))
+   ;; Produces one cubic bezier per path segment with C1 continuity.
+   ;; Decomposes each bezier into f + set-heading commands for recording.
+   (defn- rec-bezier-as* [p & {:keys [tension steps max-segment-length cubic]}]
+     (let [factor (or tension 0.33)
+           path-segs (path-segments-impl p)
+           path-segs (if max-segment-length
+                       (vec (mapcat #(subdivide-segment-impl % max-segment-length) path-segs))
+                       path-segs)]
+       (when (seq path-segs)
+         ;; Collect waypoints by running segments on a virtual turtle
+         (let [init-state @path-recorder
+               waypoints (loop [s init-state
+                                segs path-segs
+                                wps [{:position (:position s) :heading (:heading s)}]]
+                           (if (empty? segs)
+                             wps
+                             (let [{:keys [rotations distance]} (first segs)
+                                   rotated (reduce (fn [st {:keys [cmd args]}]
+                                                     (case cmd
+                                                       :th (turtle-th st (first args))
+                                                       :tv (turtle-tv st (first args))
+                                                       :tr (turtle-tr st (first args))
+                                                       :set-heading (-> st
+                                                                        (assoc :heading (rec-normalize (first args)))
+                                                                        (assoc :up (rec-normalize (second args))))
+                                                       st))
+                                                   s rotations)
+                                   next-s (turtle-f rotated distance)]
+                               (recur next-s (rest segs)
+                                      (conj wps {:position (:position next-s)
+                                                 :heading  (:heading next-s)})))))
+               ;; Catmull-Rom directions for :cubic mode (unit vectors)
+               n-wps (count waypoints)
+               directions (when cubic
+                            (mapv (fn [i]
+                                    (if (or (zero? i) (= i (dec n-wps)))
+                                      ;; Endpoints: turtle heading
+                                      (:heading (nth waypoints i))
+                                      ;; Interior: Catmull-Rom direction
+                                      (let [prev (:position (nth waypoints (dec i)))
+                                            nxt  (:position (nth waypoints (inc i)))
+                                            diff (mapv - nxt prev)
+                                            len  (sqrt (rec-dot diff diff))]
+                                        (if (> len 0.001)
+                                          (rec-normalize diff)
+                                          (:heading (nth waypoints i))))))
+                                  (range n-wps)))]
+           ;; Walk each bezier segment
+           (doseq [seg-idx (range (count path-segs))]
+             (let [wp0 (nth waypoints seg-idx)
+                   wp1 (nth waypoints (inc seg-idx))
+                   p0 (:position wp0)
+                   p3 (:position wp1)
+                   dx0 (- (nth p3 0) (nth p0 0))
+                   dy0 (- (nth p3 1) (nth p0 1))
+                   dz0 (- (nth p3 2) (nth p0 2))
+                   seg-length (sqrt (+ (* dx0 dx0) (* dy0 dy0) (* dz0 dz0)))]
+               (when (> seg-length 0.001)
+                 (let [state @path-recorder
+                       res-mode (get-in state [:resolution :mode] :n)
+                       res-value (get-in state [:resolution :value] 16)
+                       actual-steps (or steps
+                                       (case res-mode
+                                         :n res-value
+                                         :a res-value
+                                         :s (max 1 (int (ceil (/ seg-length res-value))))))
+                       ;; Control points: cubic (Catmull-Rom directions) or heading-based
+                       [c1 c2] (if cubic
+                                 (let [d0 (nth directions seg-idx)
+                                       d1 (nth directions (inc seg-idx))
+                                       offset (* seg-length factor)]
+                                   [(mapv + p0 (mapv #(* % offset) d0))
+                                    (mapv - p3 (mapv #(* % offset) d1))])
+                                 (let [start-h (:heading wp0)
+                                       end-h (:heading wp1)]
+                                   [(mapv + p0 (mapv #(* % (* seg-length factor)) start-h))
+                                    (mapv + p3 (mapv #(* % (* seg-length (- factor))) end-h))]))
+                       ;; Bezier point function
+                       cubic-point (fn [t]
+                                     (let [t2 (- 1 t)
+                                           a (* t2 t2 t2) b (* 3 t2 t2 t) c (* 3 t2 t t) d (* t t t)]
+                                       [(+ (* a (nth p0 0)) (* b (nth c1 0)) (* c (nth c2 0)) (* d (nth p3 0)))
+                                        (+ (* a (nth p0 1)) (* b (nth c1 1)) (* c (nth c2 1)) (* d (nth p3 1)))
+                                        (+ (* a (nth p0 2)) (* b (nth c1 2)) (* c (nth c2 2)) (* d (nth p3 2)))]))
+                       ;; Precompute points and chord walk-segments
+                       points (mapv #(cubic-point (/ % actual-steps)) (range (inc actual-steps)))
+                       walk-segs (vec (for [i (range actual-steps)]
+                                        (let [curr-pos (nth points i)
+                                              next-pos (nth points (inc i))
+                                              dx (- (nth next-pos 0) (nth curr-pos 0))
+                                              dy (- (nth next-pos 1) (nth curr-pos 1))
+                                              dz (- (nth next-pos 2) (nth curr-pos 2))
+                                              dist (sqrt (+ (* dx dx) (* dy dy) (* dz dz)))]
+                                          {:dir (if (> dist 0.001) (rec-normalize [dx dy dz]) nil)
+                                           :dist dist})))]
+                   ;; Walk through bezier sample points
+                   ;; Always use chord direction (dir) for heading during movement.
+                   ;; The direct bezier-walk uses tangent for first/last steps and
+                   ;; corrects position with (assoc :position), but the recording
+                   ;; version can only emit set-heading + f commands. Using tangent
+                   ;; instead of chord causes positional drift (significant at low
+                   ;; resolution), leading to ring crossings at segment junctions.
+                   (let [final-up
+                         (loop [remaining walk-segs
+                                current-up (:up @path-recorder)]
+                           (if (empty? remaining)
+                             current-up
+                             (let [{:keys [dir dist]} (first remaining)]
+                               (if (and dir (> dist 0.001))
+                                 (let [heading-dir dir ;; always chord for position accuracy
+                                       dot-product (rec-dot current-up heading-dir)
+                                       projected [(- (nth current-up 0) (* dot-product (nth heading-dir 0)))
+                                                  (- (nth current-up 1) (* dot-product (nth heading-dir 1)))
+                                                  (- (nth current-up 2) (* dot-product (nth heading-dir 2)))]
+                                       proj-len (sqrt (rec-dot projected projected))
+                                       new-up (if (> proj-len 0.001)
+                                                (rec-normalize projected)
+                                                (let [right (rec-cross heading-dir current-up)
+                                                      right-len (sqrt (rec-dot right right))]
+                                                  (if (> right-len 0.001)
+                                                    (rec-normalize (rec-cross right heading-dir))
+                                                    current-up)))]
+                                   (rec-set-heading* heading-dir new-up)
+                                   (rec-f* dist)
+                                   (recur (rest remaining) new-up))
+                                 (recur (rest remaining) current-up)))))
+                         ;; Restore exact tangent heading at end for C1 continuity.
+                         ;; The walk used chord directions for accuracy, but the heading
+                         ;; at the junction must match the waypoint tangent so the next
+                         ;; bezier segment starts with the correct orientation.
+                         end-h (:heading wp1)
+                         dot-p (rec-dot final-up end-h)
+                         proj-end [(- (nth final-up 0) (* dot-p (nth end-h 0)))
+                                   (- (nth final-up 1) (* dot-p (nth end-h 1)))
+                                   (- (nth final-up 2) (* dot-p (nth end-h 2)))]
+                         proj-end-len (sqrt (rec-dot proj-end proj-end))
+                         end-up (if (> proj-end-len 0.001)
+                                  (rec-normalize proj-end)
+                                  final-up)]
+                     (rec-set-heading* end-h end-up))))))))))
+
+
 
    ;; Recording version of bezier-to
    ;; Decomposes bezier into f movements with th/tv rotations

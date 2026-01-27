@@ -377,8 +377,12 @@
                                          b1 (+ base next-vert)
                                          t0 (+ next-base vert-idx)
                                          t1 (+ next-base next-vert)]
-                                     ;; CCW winding from outside (inverted for correct volume)
-                                     [[b0 t1 b1] [b0 t0 t1]]))
+                                     ;; Choose shorter diagonal for curves
+                                     (let [db0t1 (v- (nth vertices b0) (nth vertices t1))
+                                           db1t0 (v- (nth vertices b1) (nth vertices t0))]
+                                       (if (<= (dot db0t1 db0t1) (dot db1t0 db1t0))
+                                         [[b0 t0 t1] [b0 t1 b1]]
+                                         [[b0 t0 b1] [t0 t1 b1]]))))
                                  (range n-verts))))
                             (range effective-n-rings)))]
            (cond-> {:type :mesh
@@ -400,8 +404,12 @@
                                        b1 (+ base next-vert)
                                        t0 (+ next-base vert-idx)
                                        t1 (+ next-base next-vert)]
-                                   ;; CCW winding from outside (same as extrude-from-path)
-                                   [[b0 t0 t1] [b0 t1 b1]]))
+                                   ;; Choose shorter diagonal for curves
+                                   (let [db0t1 (v- (nth vertices b0) (nth vertices t1))
+                                         db1t0 (v- (nth vertices b1) (nth vertices t0))]
+                                     (if (<= (dot db0t1 db0t1) (dot db1t0 db1t0))
+                                       [[b0 t0 t1] [b0 t1 b1]]
+                                       [[b0 t0 b1] [t0 t1 b1]]))))
                                (range n-verts)))
                             (range (dec n-rings))))
                ;; Compute cap normals from ring geometry
@@ -2316,7 +2324,8 @@
               rings-result
               (loop [i 0
                      s state-with-initial-heading
-                     rings []]
+                     rings []
+                     prev-had-corner true] ;; treat first segment as if preceded by corner (emit start-ring)
                 (if (>= i n-segments)
                   {:rings rings :state s}
                   (let [seg (nth segments i)
@@ -2336,17 +2345,23 @@
                              (assoc s :position (v+ (:position s) (v* (:heading s) shorten-start)))
                              s)
 
-                        ;; Create start ring of this segment
-                        start-ring (stamp-shape s1 shape)
+                        start-pos (:position s1)
+
+                        ;; Create start ring only if first segment or preceded by a corner.
+                        ;; For smooth curves (bezier/arc), consecutive segments share the same
+                        ;; junction position via :set-heading. Emitting both previous end-ring
+                        ;; and this start-ring creates duplicate rings with degenerate faces.
+                        emit-start-ring? (or (zero? i) prev-had-corner)
+                        start-ring (when emit-start-ring? (stamp-shape s1 shape))
 
                         ;; Move forward by effective distance
-                        s2 (assoc s1 :position (v+ (:position s1) (v* (:heading s1) effective-dist)))
+                        s2 (assoc s1 :position (v+ start-pos (v* (:heading s1) effective-dist)))
+                        end-pos (:position s2)
 
-                        ;; Create end ring of this segment
                         end-ring (stamp-shape s2 shape)
 
                         ;; Corner position
-                        corner-pos (v+ (:position s2) (v* (:heading s2) shorten-end))
+                        corner-pos (v+ end-pos (v* (:heading s2) shorten-end))
                         s3 (assoc s2 :position corner-pos)
 
                         ;; Apply rotations to get new heading
@@ -2354,38 +2369,56 @@
                         old-heading (:heading s3)
                         new-heading (:heading s4)
 
-                        ;; Calculate angle between headings for round corner resolution
-                        corner-angle-deg (when (and has-corner-rotation (= joint-mode :round))
-                                           (let [cos-a (dot old-heading new-heading)
-                                                 angle-rad (Math/acos (min 1 (max -1 cos-a)))]
-                                             (* angle-rad (/ 180 Math/PI))))
-                        round-steps (when corner-angle-deg
-                                      (calc-round-steps state corner-angle-deg))
+                        ;; Calculate angle between headings
+                        cos-a (dot old-heading new-heading)
+                        heading-angle (when (< cos-a 0.9998) ;; > ~1 degree
+                                        (Math/acos (min 1 (max -1 cos-a))))
 
-                        ;; Generate corner junction rings based on joint-mode
-                        ;; All modes use same shortening. Difference is the junction geometry:
-                        ;; :flat - NO extra rings; mesh connects end-ring directly to next start-ring
-                        ;; :round - arc of rings rotating from old to new orientation
-                        ;; :tapered - scaled intermediate ring at corner
+                        ;; For corner rotations, generate junction rings based on joint-mode
                         corner-rings (if has-corner-rotation
-                                       (case joint-mode
-                                         :flat []  ;; Direct connection, no intermediate rings
-                                         :round (generate-round-corner-rings
-                                                 end-ring corner-pos old-heading new-heading
-                                                 round-steps radius)
-                                         :tapered (generate-tapered-corner-rings
-                                                   end-ring corner-pos old-heading new-heading)
-                                         [])
+                                       (let [corner-angle-deg (when (= joint-mode :round)
+                                                                (when heading-angle
+                                                                  (* heading-angle (/ 180 Math/PI))))
+                                             round-steps (when corner-angle-deg
+                                                           (calc-round-steps state corner-angle-deg))]
+                                         (case joint-mode
+                                           :flat []
+                                           :round (generate-round-corner-rings
+                                                   end-ring corner-pos old-heading new-heading
+                                                   (or round-steps 4) radius)
+                                           :tapered (generate-tapered-corner-rings
+                                                     end-ring corner-pos old-heading new-heading)
+                                           []))
                                        [])
 
-                        ;; Position for next segment's start: corner + radius along new heading
-                        corner-start-pos (v+ (:position s4) (v* (:heading s4) next-shorten-start))
+                        ;; For smooth (non-corner) junctions with heading change,
+                        ;; generate transition rings that pivot on the inner edge.
+                        ;; This prevents ring overlap on the inner side of tight curves.
+                        smooth-transition-rings
+                        (if (and heading-angle
+                                 (not has-corner-rotation)
+                                 (seq rotations))
+                          (let [n-smooth (max 1 (int (Math/ceil (/ heading-angle (/ Math/PI 12)))))]
+                            (generate-round-corner-rings
+                             end-ring end-pos old-heading new-heading
+                             n-smooth radius))
+                          [])
 
-                        ;; Collect rings: start-ring, end-ring, and any corner junction rings
-                        new-rings (into (conj rings start-ring end-ring) corner-rings)
+                        ;; Position for next segment's start: when smooth transition rings
+                        ;; were generated, use centroid of last ring for continuity
+                        corner-start-pos (if (seq smooth-transition-rings)
+                                           (ring-centroid (last smooth-transition-rings))
+                                           (v+ (:position s4) (v* (:heading s4) next-shorten-start)))
+
+                        ;; Collect rings for this segment
+                        new-rings (cond-> rings
+                                    emit-start-ring? (conj start-ring)
+                                    true (conj end-ring)
+                                    (seq smooth-transition-rings) (into smooth-transition-rings)
+                                    (seq corner-rings) (into corner-rings))
 
                         s5 (assoc s4 :position corner-start-pos)]
-                    (recur (inc i) s5 new-rings))))
+                    (recur (inc i) s5 new-rings (boolean has-corner-rotation)))))
 
               all-rings (:rings rings-result)
               final-state (:state rings-result)
@@ -2452,9 +2485,13 @@
                                             b0 (+ base vert-idx)
                                             b1 (+ base next-vert)
                                             t0 (+ next-base vert-idx)
-                                            t1 (+ next-base next-vert)]
-                                        ;; CCW winding from outside
-                                        [[b0 t1 b1] [b0 t0 t1]]))
+                                            t1 (+ next-base next-vert)
+                                            ;; Compare diagonal lengths
+                                            db0t1 (v- (nth vertices b0) (nth vertices t1))
+                                            db1t0 (v- (nth vertices b1) (nth vertices t0))]
+                                        (if (<= (dot db0t1 db0t1) (dot db1t0 db1t0))
+                                          [[b0 t0 t1] [b0 t1 b1]]
+                                          [[b0 t0 b1] [t0 t1 b1]])))
                                     (range n-verts))))
                                (range n-rings)))
                   mesh (cond-> {:type :mesh
@@ -3033,34 +3070,140 @@
             (:commands path))
     state))
 
+(defn path-segments
+  "Split a path's commands into segments, one per :f command.
+   Each segment is a group of rotation commands followed by one :f.
+   Returns a vector of {:rotations [...] :distance d}."
+  [path]
+  (loop [cmds (:commands path)
+         current-rotations []
+         segments []]
+    (if (empty? cmds)
+      segments
+      (let [{:keys [cmd args] :as c} (first cmds)]
+        (if (= :f cmd)
+          (recur (rest cmds)
+                 []
+                 (conj segments {:rotations current-rotations
+                                 :distance (first args)}))
+          (recur (rest cmds)
+                 (conj current-rotations c)
+                 segments))))))
+
+(defn subdivide-segment
+  "Subdivide a segment into smaller sub-segments if it exceeds max-length.
+   Returns a vector of segments. Only the first sub-segment keeps rotations."
+  [segment max-length]
+  (let [dist (:distance segment)]
+    (if (or (<= dist max-length) (<= max-length 0))
+      [segment]
+      (let [n (int (Math/ceil (/ dist max-length)))
+            sub-dist (/ dist n)]
+        (into [{:rotations (:rotations segment) :distance sub-dist}]
+              (repeat (dec n) {:rotations [] :distance sub-dist}))))))
+
+(defn- segment->state
+  "Run a segment's rotations and forward on a turtle state. Returns new state."
+  [state segment]
+  (let [rotated (reduce (fn [s {:keys [cmd args]}]
+                          (case cmd
+                            :th (th s (first args))
+                            :tv (tv s (first args))
+                            :tr (tr s (first args))
+                            :set-heading (-> s
+                                             (assoc :heading (normalize (first args)))
+                                             (assoc :up (normalize (second args))))
+                            s))
+                        state
+                        (:rotations segment))]
+    (f rotated (:distance segment))))
+
+(defn- catmull-rom-directions
+  "Compute smoothing directions at each waypoint for cubic spline mode.
+   At endpoints: turtle heading (unit vector).
+   At interior points: normalized (P_{i+1} - P_{i-1}) (Catmull-Rom direction)."
+  [waypoints]
+  (let [n (count waypoints)]
+    (mapv (fn [i]
+            (if (or (zero? i) (= i (dec n)))
+              ;; Endpoints: use turtle heading
+              (:heading (nth waypoints i))
+              ;; Interior: Catmull-Rom direction
+              (let [prev (:position (nth waypoints (dec i)))
+                    nxt  (:position (nth waypoints (inc i)))
+                    diff (v- nxt prev)
+                    len  (magnitude diff)]
+                (if (> len 0.001)
+                  (v* diff (/ 1.0 len))
+                  (:heading (nth waypoints i))))))
+          (range n))))
+
 (defn bezier-as
   "Draw a bezier curve that smoothly approximates a turtle path.
-   Executes the path virtually to find endpoint and heading,
-   then generates a cubic bezier with matching tangents.
+   Produces one cubic bezier per segment in the path, with C1 continuity
+   at junction points.
 
    Usage:
-   (bezier-as state my-path)              ; default tension
-   (bezier-as state my-path :tension 0.5) ; wider curve
-   (bezier-as state my-path :steps 32)    ; more resolution
+   (bezier-as state my-path)                          ; one bezier per segment
+   (bezier-as state my-path :tension 0.5)             ; wider curves
+   (bezier-as state my-path :max-segment-length 20)   ; subdivide long segments
+   (bezier-as state my-path :cubic true)              ; Catmull-Rom spline
+   (bezier-as state my-path :steps 32)                ; resolution per bezier
 
-   :tension - control point distance factor (default 0.33)
-   :steps   - bezier resolution (default from resolution settings)"
+   :tension            - control point distance factor (default 0.33)
+   :max-segment-length - subdivide segments longer than this
+   :cubic              - use Catmull-Rom tangents for smoother global curves
+   :steps              - bezier resolution (default from resolution settings)"
   [state p & args]
-  (let [{:keys [tension steps]} (apply hash-map args)
-        end-state (run-path state p)
-        p0 (:position state)
-        p3 (:position end-state)
-        approx-length (magnitude (v- p3 p0))]
-    (if (< approx-length 0.001)
-      end-state
-      (let [actual-steps (or steps (calc-bezier-steps state approx-length))
-            start-heading (:heading state)
-            end-heading (:heading end-state)
-            [c1 c2] (auto-control-points-with-target-heading
-                      p0 start-heading p3 end-heading (or tension 0.33))]
-        (bezier-walk state actual-steps
-                     #(cubic-bezier-point p0 c1 c2 p3 %)
-                     #(cubic-bezier-tangent p0 c1 c2 p3 %))))))
+  (let [{:keys [tension steps max-segment-length cubic]} (apply hash-map args)
+        factor (or tension 0.33)
+        segments (path-segments p)
+        ;; Optionally subdivide long segments
+        segments (if max-segment-length
+                   (vec (mapcat #(subdivide-segment % max-segment-length) segments))
+                   segments)]
+    (if (empty? segments)
+      state
+      ;; Collect waypoints: run each segment on a virtual turtle
+      ;; to find positions and headings at each junction
+      (let [waypoints (loop [s state
+                             segs segments
+                             wps [{:position (:position state)
+                                   :heading  (:heading state)}]]
+                        (if (empty? segs)
+                          wps
+                          (let [next-s (segment->state s (first segs))]
+                            (recur next-s
+                                   (rest segs)
+                                   (conj wps {:position (:position next-s)
+                                              :heading  (:heading next-s)})))))
+            ;; Precompute directions for cubic (Catmull-Rom) mode
+            directions (when cubic (catmull-rom-directions waypoints))]
+        ;; Walk each bezier segment
+        (reduce
+         (fn [current-state i]
+           (let [wp0 (nth waypoints i)
+                 wp1 (nth waypoints (inc i))
+                 p0 (:position wp0)
+                 p3 (:position wp1)
+                 seg-length (magnitude (v- p3 p0))]
+             (if (< seg-length 0.001)
+               ;; Degenerate segment: just apply rotations and advance
+               (segment->state current-state (nth segments i))
+               (let [actual-steps (or steps (calc-bezier-steps current-state seg-length))
+                     [c1 c2] (if cubic
+                               ;; Cubic: Catmull-Rom directions, same distance formula
+                               (let [d0 (nth directions i)
+                                     d1 (nth directions (inc i))]
+                                 [(v+ p0 (v* d0 (* seg-length factor)))
+                                  (v- p3 (v* d1 (* seg-length factor)))])
+                               (auto-control-points-with-target-heading
+                                 p0 (:heading wp0) p3 (:heading wp1) factor))]
+                 (bezier-walk current-state actual-steps
+                              #(cubic-bezier-point p0 c1 c2 p3 %)
+                              #(cubic-bezier-tangent p0 c1 c2 p3 %))))))
+         state
+         (range (count segments)))))))
 
 ;; ============================================================
 ;; Path sampling for text-on-path
@@ -3270,7 +3413,8 @@
               rings-result
               (loop [i 0
                      s state-with-initial-heading
-                     rings []]
+                     rings []
+                     prev-had-corner true] ;; treat first segment as if preceded by corner (emit start-ring)
                 (if (>= i n-segments)
                   {:rings rings :state s}
                   (let [seg (nth segments i)
@@ -3288,8 +3432,13 @@
                         start-pos (:position s)
                         s1 (assoc s :position start-pos)
 
-                        ;; Create start ring
-                        start-ring (stamp-shape s1 shape)
+                        ;; Create start ring only if this is the first segment or preceded by a corner.
+                        ;; For smooth curves (bezier/arc), consecutive segments share the same junction
+                        ;; position via :set-heading (not a corner rotation). Emitting both the previous
+                        ;; end-ring and this start-ring would create duplicate rings at the same position,
+                        ;; producing degenerate zero-area faces that break boolean operations.
+                        emit-start-ring? (or (zero? i) prev-had-corner)
+                        start-ring (when emit-start-ring? (stamp-shape s1 shape))
 
                         ;; Position at end of segment (shortened by shorten-end)
                         end-pos (v+ start-pos (v* (:heading s1) effective-dist))
@@ -3305,41 +3454,61 @@
                         old-heading (:heading s3)
                         new-heading (:heading s4)
 
-                        ;; Calculate angle between headings for round corner resolution
-                        corner-angle-deg (when (and has-corner-rotation (= joint-mode :round))
-                                           (let [cos-a (dot old-heading new-heading)
-                                                 angle-rad (Math/acos (min 1 (max -1 cos-a)))]
-                                             (* angle-rad (/ 180 Math/PI))))
-                        round-steps (when corner-angle-deg
-                                      (calc-round-steps state corner-angle-deg))
+                        ;; Calculate angle between headings
+                        cos-a (dot old-heading new-heading)
+                        heading-angle (when (< cos-a 0.9998) ;; > ~1 degree
+                                        (Math/acos (min 1 (max -1 cos-a))))
 
-                        ;; Generate corner junction rings based on joint-mode
-                        ;; All modes use same shortening. Difference is the junction geometry:
-                        ;; :flat - NO extra rings; mesh connects end-ring directly to next start-ring
-                        ;; :round - arc of rings rotating from old to new orientation
-                        ;; :tapered - scaled intermediate ring at corner
+                        ;; For corner rotations, generate junction rings based on joint-mode
                         corner-rings (if (and has-corner-rotation (not is-last))
-                                       (case joint-mode
-                                         :flat []  ;; Direct connection, no intermediate rings
-                                         :round (generate-round-corner-rings
-                                                 end-ring corner-pos old-heading new-heading
-                                                 (or round-steps 4) radius)
-                                         :tapered (generate-tapered-corner-rings
-                                                   end-ring corner-pos old-heading new-heading)
-                                         [])
+                                       (let [corner-angle-deg (when (= joint-mode :round)
+                                                                (when heading-angle
+                                                                  (* heading-angle (/ 180 Math/PI))))
+                                             round-steps (when corner-angle-deg
+                                                           (calc-round-steps state corner-angle-deg))]
+                                         (case joint-mode
+                                           :flat []
+                                           :round (generate-round-corner-rings
+                                                   end-ring corner-pos old-heading new-heading
+                                                   (or round-steps 4) radius)
+                                           :tapered (generate-tapered-corner-rings
+                                                     end-ring corner-pos old-heading new-heading)
+                                           []))
                                        [])
+
+                        ;; For smooth (non-corner) junctions with heading change,
+                        ;; generate transition rings that pivot on the inner edge.
+                        ;; This prevents ring overlap on the inner side of tight curves.
+                        ;; Uses the same inner-pivot approach as round corner rings.
+                        smooth-transition-rings
+                        (if (and heading-angle
+                                 (not has-corner-rotation)
+                                 (not is-last)
+                                 (seq rotations))
+                          (let [n-smooth (max 1 (int (Math/ceil (/ heading-angle (/ Math/PI 12)))))]
+                            (generate-round-corner-rings
+                             end-ring end-pos old-heading new-heading
+                             n-smooth radius))
+                          [])
 
                         ;; Position for next segment: corner + radius along new heading
                         next-shorten-start (if (and (not is-last) has-corner-rotation)
                                              (:shorten-start (nth segments (inc i)))
                                              0)
-                        next-start-pos (v+ corner-pos (v* (:heading s4) next-shorten-start))
+                        ;; When smooth transition rings were generated, start next segment
+                        ;; from the centroid of the last transition ring to maintain continuity
+                        next-start-pos (if (seq smooth-transition-rings)
+                                         (ring-centroid (last smooth-transition-rings))
+                                         (v+ corner-pos (v* (:heading s4) next-shorten-start)))
                         s-next (assoc s4 :position next-start-pos)
 
                         ;; Collect rings for this segment
-                        ;; start-ring + end-ring + any corner rings
-                        new-rings (into (conj rings start-ring end-ring) corner-rings)]
-                    (recur (inc i) s-next new-rings))))
+                        new-rings (cond-> rings
+                                    emit-start-ring? (conj start-ring)
+                                    true (conj end-ring)
+                                    (seq smooth-transition-rings) (into smooth-transition-rings)
+                                    (seq corner-rings) (into corner-rings))]
+                    (recur (inc i) s-next new-rings (boolean has-corner-rotation)))))
 
               all-rings (:rings rings-result)
               final-state (:state rings-result)
@@ -3378,6 +3547,8 @@
 
                   ;; Side faces connecting consecutive rings
                   ;; Ring i vertices: i*n-verts to (i+1)*n-verts - 1
+                  ;; Use shorter diagonal to split each quad, preventing inverted
+                  ;; triangles at tight curve bends where quads become non-planar.
                   side-faces (vec
                               (mapcat
                                (fn [ring-idx]
@@ -3389,9 +3560,15 @@
                                           b0 (+ base vert-idx)
                                           b1 (+ base next-vert)
                                           t0 (+ next-base vert-idx)
-                                          t1 (+ next-base next-vert)]
-                                      ;; CCW winding from outside
-                                      [[b0 t0 t1] [b0 t1 b1]]))
+                                          t1 (+ next-base next-vert)
+                                          ;; Compare diagonal lengths
+                                          db0t1 (v- (nth vertices b0) (nth vertices t1))
+                                          db1t0 (v- (nth vertices b1) (nth vertices t0))]
+                                      (if (<= (dot db0t1 db0t1) (dot db1t0 db1t0))
+                                        ;; Diagonal b0-t1 (shorter)
+                                        [[b0 t0 t1] [b0 t1 b1]]
+                                        ;; Diagonal b1-t0 (shorter)
+                                        [[b0 t0 b1] [t0 t1 b1]])))
                                   (range n-verts)))
                                (range (dec n-rings))))
 

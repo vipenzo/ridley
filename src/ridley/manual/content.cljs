@@ -168,7 +168,9 @@
         {:id :bezier-control
          :code "(register s-curve\n  (extrude (circle 4)\n    (bezier-to [0 60 0] [0 20 30] [0 40 -30])))"}
         {:id :bezier-as
-         :code "(register smooth-bend\n  (extrude (circle 5)\n    (bezier-as\n      (path (f 30) (th 90) (f 30)))))"}]}
+         :code "(register smooth-bend\n  (extrude (circle 5)\n    (bezier-as\n      (path (f 30) (th 90) (f 30)))))"}
+        {:id :bezier-as-cubic
+         :code "(register smooth-spline\n  (extrude (circle 5)\n    (bezier-as\n      (path (f 30) (th 90) (f 20) (th -45) (f 25))\n      :cubic true)))"}]}
       {:id :colors-materials
        :see-also [:extrude-basics :mesh-basics]
        :examples
@@ -909,15 +911,17 @@ Positive angle = pitch up, negative = pitch down.
 (bezier-to [x y z] [c1])               ; quadratic (1 control)
 (bezier-to [x y z] [c1] [c2])          ; cubic (2 controls)
 (bezier-to-anchor :name)               ; bezier to named anchor
-(bezier-as (path ...))                 ; smooth a path into a bezier
+(bezier-as (path ...))                 ; one bezier per segment
 (bezier-as (path ...) :tension 0.5)    ; wider curve
+(bezier-as (path ...) :cubic true)     ; Catmull-Rom spline
+(bezier-as (path ...) :max-segment-length 20) ; subdivide long segments
 ```
 
 `bezier-to` with no control points creates a curve tangent to the current heading.
 
 `bezier-to-anchor` is smarter: it respects **both** the current heading AND the anchor's saved heading, creating a smooth S-curve that honors both directions.
 
-`bezier-as` takes a turtle path and replaces it with a smooth bezier curve that connects the same start and end points, matching both headings."
+`bezier-as` takes a turtle path and replaces it with a chain of smooth bezier curves, one per segment. Use `:tension` to control how wide the curves are (default 0.33). With `:cubic true`, interior waypoints use Catmull-Rom directions for globally smoother curves. Use `:max-segment-length` to subdivide long segments."
       :examples
       {:arc-h-basic {:caption "Horizontal arc (U-turn)"
                      :description "`arc-h 30 180` creates a 180° arc with radius 30 — a U-turn in the horizontal plane. Combined with straight segments."}
@@ -928,7 +932,9 @@ Positive angle = pitch up, negative = pitch down.
        :bezier-control {:caption "Bezier with control points"
                         :description "Explicit control points give precise control. Here `[0 20 30]` and `[0 40 -30]` create an S-curve."}
        :bezier-as {:caption "Smooth a path with bezier-as"
-                   :description "`bezier-as` takes a turtle path and draws a smooth bezier curve that connects start and end with matching headings. Use `:tension` to control how wide the curve is (default 0.33)."}}}
+                   :description "`bezier-as` takes a turtle path and draws a chain of smooth bezier curves, one per segment. Use `:tension` to control how wide the curves are (default 0.33)."}
+       :bezier-as-cubic {:caption "Catmull-Rom spline with :cubic"
+                         :description "With `:cubic true`, interior waypoints use Catmull-Rom directions (based on neighboring points) instead of turtle headings, producing globally smoother curves through multiple turns."}}}
 
      :colors-materials
      {:title "Colors and Materials"
@@ -1671,15 +1677,17 @@ Angolo positivo = beccheggia su, negativo = beccheggia giù.
 (bezier-to [x y z] [c1])               ; quadratica (1 controllo)
 (bezier-to [x y z] [c1] [c2])          ; cubica (2 controlli)
 (bezier-to-anchor :nome)               ; bezier verso ancora nominata
-(bezier-as (path ...))                 ; smussa un path in una bezier
+(bezier-as (path ...))                 ; una bezier per segmento
 (bezier-as (path ...) :tension 0.5)    ; curva più ampia
+(bezier-as (path ...) :cubic true)     ; spline Catmull-Rom
+(bezier-as (path ...) :max-segment-length 20) ; suddividi segmenti lunghi
 ```
 
 `bezier-to` senza punti di controllo crea una curva tangente alla direzione corrente.
 
 `bezier-to-anchor` è più intelligente: rispetta **sia** la direzione corrente CHE la direzione salvata nell'ancora, creando una curva a S morbida che onora entrambe le direzioni.
 
-`bezier-as` prende un path turtle e lo sostituisce con una curva bezier smooth che collega gli stessi punti di partenza e arrivo, rispettando entrambe le direzioni."
+`bezier-as` prende un path turtle e lo sostituisce con una catena di curve bezier smooth, una per segmento. Usa `:tension` per controllare l'ampiezza (default 0.33). Con `:cubic true`, i waypoint interni usano direzioni Catmull-Rom per curve globalmente più morbide. Usa `:max-segment-length` per suddividere segmenti lunghi."
       :examples
       {:arc-h-basic {:caption "Arco orizzontale (inversione a U)"
                      :description "`arc-h 30 180` crea un arco di 180° con raggio 30 — un'inversione a U nel piano orizzontale. Combinato con segmenti rettilinei."}
@@ -1690,8 +1698,9 @@ Angolo positivo = beccheggia su, negativo = beccheggia giù.
        :bezier-control {:caption "Bezier con punti di controllo"
                         :description "Punti di controllo espliciti danno controllo preciso. Qui `[0 20 30]` e `[0 40 -30]` creano una curva a S."}
        :bezier-as {:caption "Smussare un path con bezier-as"
-                   :description "`bezier-as` prende un path turtle e disegna una curva bezier smooth che collega inizio e fine rispettando le direzioni. Usa `:tension` per controllare l'ampiezza della curva (default 0.33)."}}}
-
+                   :description "`bezier-as` prende un path turtle e disegna una catena di curve bezier smooth, una per segmento. Usa `:tension` per controllare l'ampiezza della curva (default 0.33)."}
+       :bezier-as-cubic {:caption "Spline Catmull-Rom con :cubic"
+                         :description "Con `:cubic true`, i waypoint interni usano direzioni Catmull-Rom (basate sui punti vicini) invece delle direzioni del turtle, producendo curve globalmente più morbide attraverso più svolte."}}}
      :colors-materials
      {:title "Colori e Materiali"
       :content "Ogni mesh può avere le proprie proprietà di colore e materiale. Impostale **prima** di creare la geometria — si applicano a tutte le mesh create successivamente.
