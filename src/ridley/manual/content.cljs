@@ -67,6 +67,13 @@
          :code "(def corner (path (f 30) (th 90) (f 30)))\n\n(register pipe\n  (extrude (circle 8) corner))"}
         {:id :follow-path
          :code "(def curve (path (f 30) (tv 30) (f 20) (bezier-to [0 60 0] [0 20 30] [0 40 -30])))\n\n;; Draw the curve with the turtle\n(follow-path curve)"}]}
+      {:id :quick-path
+       :see-also [:reusable-shapes :extrude-basics]
+       :examples
+       [{:id :qp-basic
+         :code "(def zigzag (quick-path 30 90 30 -90 30))\n(register tube\n  (extrude (circle 5) zigzag))"}
+        {:id :qp-vector
+         :code "(def steps [20 45 20 45 20 45 20])\n(register pipe\n  (extrude (circle 6) (quick-path steps)))"}]}
       {:id :extrude-closed
        :examples
        [{:id :square-torus
@@ -442,6 +449,27 @@ Similarly, paths can be captured with the `path` macro and reused across multipl
                   :description "Paths can also be stored and reused. The `path` macro captures turtle movements for later use."}
        :follow-path {:caption "Drawing a path"
                      :description "Use `follow-path` to make the turtle trace a stored path, drawing visible lines in the viewport."}}}
+
+     :quick-path
+     {:title "Quick Path"
+      :content "`quick-path` creates a path from a compact list of numbers. Values alternate between **forward distance** and **turn angle**:
+
+```
+(quick-path f1 th1 f2 th2 ... fN)
+```
+
+This is equivalent to:
+
+```
+(path (f f1) (th th1) (f f2) (th th2) ... (f fN))
+```
+
+You can pass the numbers as separate arguments or as a single vector — useful when the sequence is computed or stored in a variable."
+      :examples
+      {:qp-basic {:caption "Zigzag path"
+                   :description "Numbers alternate: forward 30, turn 90°, forward 30, turn -90°, forward 30. The result is a zigzag tube."}
+       :qp-vector {:caption "Path from vector"
+                   :description "When the numbers are in a vector, `quick-path` accepts it directly. Handy for computed or parameterized paths."}}}
 
      :extrude-closed
      {:title "Closed Extrusion"
@@ -1183,6 +1211,27 @@ Allo stesso modo, i percorsi possono essere catturati con la macro `path` e riut
                   :description "Anche i percorsi possono essere memorizzati e riutilizzati. La macro `path` cattura i movimenti turtle per uso futuro."}
        :follow-path {:caption "Disegnare un percorso"
                      :description "Usa `follow-path` per far tracciare alla tartaruga un percorso memorizzato, disegnando linee visibili nel viewport."}}}
+
+     :quick-path
+     {:title "Quick Path"
+      :content "`quick-path` crea un percorso da una lista compatta di numeri. I valori si alternano tra **distanza avanti** e **angolo di svolta**:
+
+```
+(quick-path f1 th1 f2 th2 ... fN)
+```
+
+Equivale a:
+
+```
+(path (f f1) (th th1) (f f2) (th th2) ... (f fN))
+```
+
+Puoi passare i numeri come argomenti separati o come un singolo vettore — utile quando la sequenza è calcolata o memorizzata in una variabile."
+      :examples
+      {:qp-basic {:caption "Percorso a zigzag"
+                   :description "I numeri si alternano: avanti 30, gira 90°, avanti 30, gira -90°, avanti 30. Il risultato è un tubo a zigzag."}
+       :qp-vector {:caption "Percorso da vettore"
+                   :description "Quando i numeri sono in un vettore, `quick-path` lo accetta direttamente. Comodo per percorsi calcolati o parametrizzati."}}}
 
      :extrude-closed
      {:title "Estrusione Chiusa"

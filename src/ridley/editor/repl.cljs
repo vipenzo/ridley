@@ -988,6 +988,7 @@
    'run-path-impl       turtle/run-path
    'follow-path         implicit-run-path
    'path?               turtle/path?
+   'quick-path          turtle/quick-path
    'extrude-closed-path-impl implicit-extrude-closed-path
    'extrude-path-impl        implicit-extrude-path
    'pure-extrude-path        pure-extrude-path  ; Pure version (no side effects)

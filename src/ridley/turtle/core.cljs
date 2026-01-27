@@ -2954,6 +2954,27 @@
   {:type :path
    :commands (vec commands)})
 
+(defn quick-path
+  "Create a path from compact numeric notation.
+   Numbers alternate between forward distance and turn angle.
+   Accepts: (quick-path 30 90 30), (quick-path [30 90 30]),
+   or (def v [30 90 30]) (quick-path v)"
+  ([x] (quick-path x nil))
+  ([x y & more]
+   (let [nums (if (and (nil? y) (sequential? x))
+                x
+                (cons x (cons y more)))]
+     {:type :path
+      :commands
+      (->> nums
+           (partition-all 2)
+           (mapcat (fn [[a b]]
+                     (if (some? b)
+                       [{:cmd :f :args [a]}
+                        {:cmd :th :args [b]}]
+                       [{:cmd :f :args [a]}])))
+           vec)})))
+
 (defn make-recorder
   "Create a recorder turtle that captures commands.
    This is a regular turtle with an extra :recording vector."
