@@ -149,6 +149,9 @@
 (defn ^:export implicit-bezier-to-anchor [anchor-name & args]
   (swap! turtle-atom #(apply turtle/bezier-to-anchor % anchor-name args)))
 
+(defn ^:export implicit-bezier-as [p & args]
+  (swap! turtle-atom #(apply turtle/bezier-as % p args)))
+
 ;; State stack
 (defn ^:export implicit-push-state []
   (swap! turtle-atom turtle/push-state))
@@ -864,6 +867,7 @@
    ;; Bezier commands
    'bezier-to         implicit-bezier-to
    'bezier-to-anchor  implicit-bezier-to-anchor
+   'bezier-as         implicit-bezier-as
    ;; State stack
    'push-state   implicit-push-state
    'pop-state    implicit-pop-state
@@ -1200,8 +1204,76 @@
                       [0])]
        [th-deg tv-deg]))
 
+   ;; Recording version of bezier-as
+   ;; Runs the path virtually on the recorder state to find endpoint and heading,
+   ;; then decomposes a cubic bezier into f + set-heading segments
+   (defn- rec-bezier-as* [p & {:keys [tension steps]}]
+     (let [state @path-recorder
+           ;; Run the path on a copy of current recorder state to get endpoint
+           end-state (run-path-impl state p)
+           p0 (:position state)
+           p3 (:position end-state)
+           start-heading (:heading state)
+           end-heading (:heading end-state)
+           dx0 (- (nth p3 0) (nth p0 0))
+           dy0 (- (nth p3 1) (nth p0 1))
+           dz0 (- (nth p3 2) (nth p0 2))
+           approx-length (sqrt (+ (* dx0 dx0) (* dy0 dy0) (* dz0 dz0)))]
+       (when (> approx-length 0.001)
+         (let [res-mode (get-in state [:resolution :mode] :n)
+               res-value (get-in state [:resolution :value] 16)
+               actual-steps (or steps
+                                (case res-mode
+                                  :n res-value
+                                  :a res-value
+                                  :s (max 1 (int (ceil (/ approx-length res-value))))))
+               factor (or tension 0.33)
+               ;; Auto control points using both headings
+               c1 (mapv + p0 (mapv #(* % (* approx-length factor)) start-heading))
+               c2 (mapv + p3 (mapv #(* % (* approx-length (- factor))) end-heading))
+               ;; Bezier point function
+               cubic-point (fn [t]
+                             (let [t2 (- 1 t)
+                                   a (* t2 t2 t2) b (* 3 t2 t2 t) c (* 3 t2 t t) d (* t t t)]
+                               [(+ (* a (nth p0 0)) (* b (nth c1 0)) (* c (nth c2 0)) (* d (nth p3 0)))
+                                (+ (* a (nth p0 1)) (* b (nth c1 1)) (* c (nth c2 1)) (* d (nth p3 1)))
+                                (+ (* a (nth p0 2)) (* b (nth c1 2)) (* c (nth c2 2)) (* d (nth p3 2)))]))
+               ;; Precompute points and segments
+               points (mapv #(cubic-point (/ % actual-steps)) (range (inc actual-steps)))
+               segments (vec (for [i (range actual-steps)]
+                               (let [curr-pos (nth points i)
+                                     next-pos (nth points (inc i))
+                                     dx (- (nth next-pos 0) (nth curr-pos 0))
+                                     dy (- (nth next-pos 1) (nth curr-pos 1))
+                                     dz (- (nth next-pos 2) (nth curr-pos 2))
+                                     dist (sqrt (+ (* dx dx) (* dy dy) (* dz dz)))]
+                                 {:dir (if (> dist 0.001) (rec-normalize [dx dy dz]) nil)
+                                  :dist dist})))]
+           ;; Walk through segments using rotation-minimizing frame
+           (loop [remaining-segments segments
+                  current-up (:up state)]
+             (when (seq remaining-segments)
+               (let [{:keys [dir dist]} (first remaining-segments)]
+                 (if (and dir (> dist 0.001))
+                   (let [dot-product (rec-dot current-up dir)
+                         projected [(- (nth current-up 0) (* dot-product (nth dir 0)))
+                                    (- (nth current-up 1) (* dot-product (nth dir 1)))
+                                    (- (nth current-up 2) (* dot-product (nth dir 2)))]
+                         proj-len (sqrt (rec-dot projected projected))
+                         new-up (if (> proj-len 0.001)
+                                  (rec-normalize projected)
+                                  (let [right (rec-cross dir current-up)
+                                        right-len (sqrt (rec-dot right right))]
+                                    (if (> right-len 0.001)
+                                      (rec-normalize (rec-cross right dir))
+                                      current-up)))]
+                     (rec-set-heading* dir new-up)
+                     (rec-f* dist)
+                     (recur (rest remaining-segments) new-up))
+                   (recur (rest remaining-segments) current-up)))))))))
+
    ;; Recording version of bezier-to
-   ;; Decomposes bezier into f movements with th/tv rotations to follow the curve
+   ;; Decomposes bezier into f movements with th/tv rotations
    (defn- rec-bezier-to* [target & args]
      (let [grouped (group-by vector? args)
            control-points (get grouped true)
@@ -1390,7 +1462,7 @@
    ;; (def p (path (dotimes [_ 4] (f 20) (th 90)))) - with arbitrary code
    ;; Returns a path object that can be used in extrude/loft
    (defmacro path [& body]
-     `(do
+     `(let [saved# @path-recorder]
         (reset! path-recorder (make-recorder))
         ;; Copy resolution and joint-mode from global turtle
         (swap! path-recorder assoc
@@ -1404,9 +1476,12 @@
               ~'arc-v rec-arc-v*
               ~'bezier-to rec-bezier-to*
               ~'bezier-to-anchor rec-bezier-to-anchor*
+              ~'bezier-as rec-bezier-as*
               ~'resolution rec-resolution*]
           ~@body)
-        (path-from-recorder @path-recorder)))
+        (let [result# (path-from-recorder @path-recorder)]
+          (reset! path-recorder saved#)
+          result#)))
 
    ;; shape: create a 2D shape from turtle movements
    ;; (def tri (shape (f 4) (th 120) (f 4) (th 120) (f 4))) - triangle
@@ -1465,7 +1540,7 @@
 
            ;; List starting with turtle movement - wrap in path
            ;; This avoids evaluating (f 20) directly which would modify turtle-atom
-           (and (list? arg) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v 'bezier-to 'bezier-to-anchor} (first arg)))
+           (and (list? arg) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v 'bezier-to 'bezier-to-anchor 'bezier-as} (first arg)))
            `(pure-extrude-path ~shape (path ~arg))
 
            ;; Any other expression - check at runtime if it's already a path
@@ -1497,7 +1572,7 @@
 
            ;; List starting with turtle movement - wrap in path
            ;; This avoids evaluating commands directly which would modify turtle-atom
-           (and (list? path-expr) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v 'bezier-to 'bezier-to-anchor} (first path-expr)))
+           (and (list? path-expr) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v 'bezier-to 'bezier-to-anchor 'bezier-as} (first path-expr)))
            `(extrude-closed-path-impl ~shape (path ~path-expr))
 
            ;; Other list - check at runtime if it's already a path
@@ -1544,7 +1619,7 @@
                 (pure-loft-path ~shape tfn# ~arg)))
 
            ;; List starting with turtle movement - wrap in path
-           (and (list? arg) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v 'bezier-to 'bezier-to-anchor} (first arg)))
+           (and (list? arg) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v 'bezier-to 'bezier-to-anchor 'bezier-as} (first arg)))
            `(let [tfn# ~transform-fn-or-shape]
               (if (shape? tfn#)
                 (pure-loft-two-shapes ~shape tfn# (path ~arg))
@@ -1586,7 +1661,7 @@
            `(pure-loft-path ~shape ~transform-fn ~arg ~steps)
 
            ;; List starting with turtle movement - wrap in path
-           (and (list? arg) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v 'bezier-to} (first arg)))
+           (and (list? arg) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v 'bezier-to 'bezier-as} (first arg)))
            `(pure-loft-path ~shape ~transform-fn (path ~arg) ~steps)
 
            ;; Any other expression - check at runtime if it's a path

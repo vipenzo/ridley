@@ -3008,6 +3008,35 @@
             (:commands path))
     state))
 
+(defn bezier-as
+  "Draw a bezier curve that smoothly approximates a turtle path.
+   Executes the path virtually to find endpoint and heading,
+   then generates a cubic bezier with matching tangents.
+
+   Usage:
+   (bezier-as state my-path)              ; default tension
+   (bezier-as state my-path :tension 0.5) ; wider curve
+   (bezier-as state my-path :steps 32)    ; more resolution
+
+   :tension - control point distance factor (default 0.33)
+   :steps   - bezier resolution (default from resolution settings)"
+  [state p & args]
+  (let [{:keys [tension steps]} (apply hash-map args)
+        end-state (run-path state p)
+        p0 (:position state)
+        p3 (:position end-state)
+        approx-length (magnitude (v- p3 p0))]
+    (if (< approx-length 0.001)
+      end-state
+      (let [actual-steps (or steps (calc-bezier-steps state approx-length))
+            start-heading (:heading state)
+            end-heading (:heading end-state)
+            [c1 c2] (auto-control-points-with-target-heading
+                      p0 start-heading p3 end-heading (or tension 0.33))]
+        (bezier-walk state actual-steps
+                     #(cubic-bezier-point p0 c1 c2 p3 %)
+                     #(cubic-bezier-tangent p0 c1 c2 p3 %))))))
+
 ;; ============================================================
 ;; Path sampling for text-on-path
 ;; ============================================================
