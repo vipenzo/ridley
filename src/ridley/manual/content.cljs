@@ -159,7 +159,9 @@
         {:id :bezier-auto
          :code "(mark :start)\n(f 60) (th 90) (f 40)\n(mark :end)\n(goto :start)\n(register curve\n  (extrude (circle 4)\n    (bezier-to-anchor :end)))"}
         {:id :bezier-control
-         :code "(register s-curve\n  (extrude (circle 4)\n    (bezier-to [0 60 0] [0 20 30] [0 40 -30])))"}]}
+         :code "(register s-curve\n  (extrude (circle 4)\n    (bezier-to [0 60 0] [0 20 30] [0 40 -30])))"}
+        {:id :bezier-as
+         :code "(register smooth-bend\n  (extrude (circle 5)\n    (bezier-as\n      (path (f 30) (th 90) (f 30)))))"}]}
       {:id :colors-materials
        :see-also [:extrude-basics :mesh-basics]
        :examples
@@ -879,11 +881,15 @@ Positive angle = pitch up, negative = pitch down.
 (bezier-to [x y z] [c1])               ; quadratic (1 control)
 (bezier-to [x y z] [c1] [c2])          ; cubic (2 controls)
 (bezier-to-anchor :name)               ; bezier to named anchor
+(bezier-as (path ...))                 ; smooth a path into a bezier
+(bezier-as (path ...) :tension 0.5)    ; wider curve
 ```
 
 `bezier-to` with no control points creates a curve tangent to the current heading.
 
-`bezier-to-anchor` is smarter: it respects **both** the current heading AND the anchor's saved heading, creating a smooth S-curve that honors both directions."
+`bezier-to-anchor` is smarter: it respects **both** the current heading AND the anchor's saved heading, creating a smooth S-curve that honors both directions.
+
+`bezier-as` takes a turtle path and replaces it with a smooth bezier curve that connects the same start and end points, matching both headings."
       :examples
       {:arc-h-basic {:caption "Horizontal arc (U-turn)"
                      :description "`arc-h 30 180` creates a 180° arc with radius 30 — a U-turn in the horizontal plane. Combined with straight segments."}
@@ -892,7 +898,9 @@ Positive angle = pitch up, negative = pitch down.
        :bezier-auto {:caption "Auto bezier to anchor"
                      :description "Mark start, move away, mark end, then goto start and extrude with `bezier-to-anchor`. The curve respects both the starting direction and the anchor's saved direction."}
        :bezier-control {:caption "Bezier with control points"
-                        :description "Explicit control points give precise control. Here `[0 20 30]` and `[0 40 -30]` create an S-curve."}}}
+                        :description "Explicit control points give precise control. Here `[0 20 30]` and `[0 40 -30]` create an S-curve."}
+       :bezier-as {:caption "Smooth a path with bezier-as"
+                   :description "`bezier-as` takes a turtle path and draws a smooth bezier curve that connects start and end with matching headings. Use `:tension` to control how wide the curve is (default 0.33)."}}}
 
      :colors-materials
      {:title "Colors and Materials"
@@ -1614,11 +1622,15 @@ Angolo positivo = beccheggia su, negativo = beccheggia giù.
 (bezier-to [x y z] [c1])               ; quadratica (1 controllo)
 (bezier-to [x y z] [c1] [c2])          ; cubica (2 controlli)
 (bezier-to-anchor :nome)               ; bezier verso ancora nominata
+(bezier-as (path ...))                 ; smussa un path in una bezier
+(bezier-as (path ...) :tension 0.5)    ; curva più ampia
 ```
 
 `bezier-to` senza punti di controllo crea una curva tangente alla direzione corrente.
 
-`bezier-to-anchor` è più intelligente: rispetta **sia** la direzione corrente CHE la direzione salvata nell'ancora, creando una curva a S morbida che onora entrambe le direzioni."
+`bezier-to-anchor` è più intelligente: rispetta **sia** la direzione corrente CHE la direzione salvata nell'ancora, creando una curva a S morbida che onora entrambe le direzioni.
+
+`bezier-as` prende un path turtle e lo sostituisce con una curva bezier smooth che collega gli stessi punti di partenza e arrivo, rispettando entrambe le direzioni."
       :examples
       {:arc-h-basic {:caption "Arco orizzontale (inversione a U)"
                      :description "`arc-h 30 180` crea un arco di 180° con raggio 30 — un'inversione a U nel piano orizzontale. Combinato con segmenti rettilinei."}
@@ -1627,7 +1639,9 @@ Angolo positivo = beccheggia su, negativo = beccheggia giù.
        :bezier-auto {:caption "Bezier automatica verso ancora"
                      :description "Marca start, spostati, marca end, poi vai a start ed estrudi con `bezier-to-anchor`. La curva rispetta sia la direzione di partenza che la direzione salvata nell'ancora."}
        :bezier-control {:caption "Bezier con punti di controllo"
-                        :description "Punti di controllo espliciti danno controllo preciso. Qui `[0 20 30]` e `[0 40 -30]` creano una curva a S."}}}
+                        :description "Punti di controllo espliciti danno controllo preciso. Qui `[0 20 30]` e `[0 40 -30]` creano una curva a S."}
+       :bezier-as {:caption "Smussare un path con bezier-as"
+                   :description "`bezier-as` prende un path turtle e disegna una curva bezier smooth che collega inizio e fine rispettando le direzioni. Usa `:tension` per controllare l'ampiezza della curva (default 0.33)."}}}
 
      :colors-materials
      {:title "Colori e Materiali"

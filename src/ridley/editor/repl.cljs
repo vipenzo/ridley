@@ -1206,7 +1206,10 @@
 
    ;; Recording version of bezier-as
    ;; Runs the path virtually on the recorder state to find endpoint and heading,
-   ;; then decomposes a cubic bezier into f + set-heading segments
+   ;; then decomposes a cubic bezier into f + set-heading segments.
+   ;; Uses chord directions for accurate positions. Skips set-heading on the
+   ;; first step (preserving exact start heading) and appends a final set-heading
+   ;; to ensure exact end heading.
    (defn- rec-bezier-as* [p & {:keys [tension steps]}]
      (let [state @path-recorder
            ;; Run the path on a copy of current recorder state to get endpoint
@@ -1238,7 +1241,7 @@
                                [(+ (* a (nth p0 0)) (* b (nth c1 0)) (* c (nth c2 0)) (* d (nth p3 0)))
                                 (+ (* a (nth p0 1)) (* b (nth c1 1)) (* c (nth c2 1)) (* d (nth p3 1)))
                                 (+ (* a (nth p0 2)) (* b (nth c1 2)) (* c (nth c2 2)) (* d (nth p3 2)))]))
-               ;; Precompute points and segments
+               ;; Precompute points and chord segments
                points (mapv #(cubic-point (/ % actual-steps)) (range (inc actual-steps)))
                segments (vec (for [i (range actual-steps)]
                                (let [curr-pos (nth points i)
@@ -1249,28 +1252,37 @@
                                      dist (sqrt (+ (* dx dx) (* dy dy) (* dz dz)))]
                                  {:dir (if (> dist 0.001) (rec-normalize [dx dy dz]) nil)
                                   :dist dist})))]
-           ;; Walk through segments using rotation-minimizing frame
+           ;; Walk through segments:
+           ;; - first step: keep existing heading (exact tangent at t=0)
+           ;; - last step: use end-heading (exact tangent at t=1)
+           ;; - middle steps: use chord direction
            (loop [remaining-segments segments
-                  current-up (:up state)]
+                  current-up (:up state)
+                  first? true]
              (when (seq remaining-segments)
-               (let [{:keys [dir dist]} (first remaining-segments)]
+               (let [{:keys [dir dist]} (first remaining-segments)
+                     last? (empty? (rest remaining-segments))]
                  (if (and dir (> dist 0.001))
-                   (let [dot-product (rec-dot current-up dir)
-                         projected [(- (nth current-up 0) (* dot-product (nth dir 0)))
-                                    (- (nth current-up 1) (* dot-product (nth dir 1)))
-                                    (- (nth current-up 2) (* dot-product (nth dir 2)))]
+                   (let [heading-dir (cond first? (:heading @path-recorder)
+                                           last? end-heading
+                                           :else dir)
+                         dot-product (rec-dot current-up heading-dir)
+                         projected [(- (nth current-up 0) (* dot-product (nth heading-dir 0)))
+                                    (- (nth current-up 1) (* dot-product (nth heading-dir 1)))
+                                    (- (nth current-up 2) (* dot-product (nth heading-dir 2)))]
                          proj-len (sqrt (rec-dot projected projected))
                          new-up (if (> proj-len 0.001)
                                   (rec-normalize projected)
-                                  (let [right (rec-cross dir current-up)
+                                  (let [right (rec-cross heading-dir current-up)
                                         right-len (sqrt (rec-dot right right))]
                                     (if (> right-len 0.001)
-                                      (rec-normalize (rec-cross right dir))
+                                      (rec-normalize (rec-cross right heading-dir))
                                       current-up)))]
-                     (rec-set-heading* dir new-up)
+                     (when-not first?
+                       (rec-set-heading* heading-dir new-up))
                      (rec-f* dist)
-                     (recur (rest remaining-segments) new-up))
-                   (recur (rest remaining-segments) current-up)))))))))
+                     (recur (rest remaining-segments) new-up false))
+                   (recur (rest remaining-segments) current-up first?)))))))))
 
    ;; Recording version of bezier-to
    ;; Decomposes bezier into f movements with th/tv rotations

@@ -1753,36 +1753,40 @@
 
 (defn- bezier-walk
   "Walk along a bezier curve, moving directly to each sample point.
-   Updates heading to follow the curve tangent."
+   Uses chord directions for accurate positions. First step preserves
+   the existing heading, last step uses exact end tangent."
   [state steps point-fn tangent-fn]
-  (let [initial-up (:up state)]
+  (let [initial-up (:up state)
+        last-i (dec steps)
+        end-heading (tangent-fn 1)]
     (reduce
      (fn [s i]
        (let [t (/ (inc i) steps)
              new-pos (point-fn t)
-             new-heading (tangent-fn t)
              current-pos (:position s)
              move-dir (v- new-pos current-pos)
              dist (magnitude move-dir)]
          (if (> dist 0.001)
-           (let [;; Set heading to actual movement direction for f to work correctly
-                 actual-heading (normalize move-dir)
-                 ;; Recompute up to stay perpendicular to heading
-                 right (cross actual-heading initial-up)
+           (let [chord-heading (normalize move-dir)
+                 ;; First step: keep existing heading (exact tangent at t=0)
+                 ;; Last step: use exact end tangent
+                 ;; Middle steps: use chord
+                 heading-dir (cond (zero? i) (:heading s)
+                                   (= i last-i) end-heading
+                                   :else chord-heading)
+                 right (cross heading-dir initial-up)
                  right-mag (magnitude right)]
              (if (< right-mag 0.001)
-               ;; Heading parallel to up - use current up
                (-> s
+                   (assoc :heading heading-dir)
                    (f dist)
-                   (assoc :heading new-heading))
-               ;; Normal case: recompute up from heading and right
-               (let [new-up (normalize (cross right actual-heading))]
+                   (assoc :position new-pos))
+               (let [new-up (normalize (cross right heading-dir))]
                  (-> s
-                     (assoc :heading actual-heading)
+                     (assoc :heading heading-dir)
                      (assoc :up new-up)
                      (f dist)
-                     ;; After movement, set heading to curve tangent for next iteration
-                     (assoc :heading new-heading)))))
+                     (assoc :position new-pos)))))
            s)))
      state
      (range steps))))
