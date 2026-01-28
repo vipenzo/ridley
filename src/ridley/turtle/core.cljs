@@ -618,55 +618,65 @@
 
 (defn- build-segment-mesh
   "Build a mesh from sweep rings (no caps - for segments that will be joined).
-   Returns nil if not enough rings."
-  [rings]
-  (let [n-rings (count rings)
-        n-verts (count (first rings))]
-    (when (and (>= n-rings 2) (>= n-verts 3))
-      (let [vertices (vec (apply concat rings))
-            side-faces (vec
-                        (mapcat
-                         (fn [ring-idx]
-                           (mapcat
-                            (fn [vert-idx]
-                              (let [next-vert (mod (inc vert-idx) n-verts)
-                                    base (* ring-idx n-verts)
-                                    next-base (* (inc ring-idx) n-verts)
-                                    b0 (+ base vert-idx)
-                                    b1 (+ base next-vert)
-                                    t0 (+ next-base vert-idx)
-                                    t1 (+ next-base next-vert)]
-                                ;; CCW winding from outside
-                                [[b0 t1 b1] [b0 t0 t1]]))
-                            (range n-verts)))
-                         (range (dec n-rings))))]
-        {:type :mesh
-         :primitive :segment
-         :vertices vertices
-         :faces side-faces}))))
+   Returns nil if not enough rings.
+   flip-winding? reverses face winding for backward extrusions."
+  ([rings] (build-segment-mesh rings false))
+  ([rings flip-winding?]
+   (let [n-rings (count rings)
+         n-verts (count (first rings))]
+     (when (and (>= n-rings 2) (>= n-verts 3))
+       (let [vertices (vec (apply concat rings))
+             side-faces (vec
+                         (mapcat
+                          (fn [ring-idx]
+                            (mapcat
+                             (fn [vert-idx]
+                               (let [next-vert (mod (inc vert-idx) n-verts)
+                                     base (* ring-idx n-verts)
+                                     next-base (* (inc ring-idx) n-verts)
+                                     b0 (+ base vert-idx)
+                                     b1 (+ base next-vert)
+                                     t0 (+ next-base vert-idx)
+                                     t1 (+ next-base next-vert)]
+                                 ;; CCW winding from outside
+                                 ;; Flip when extrusion goes backward
+                                 (if flip-winding?
+                                   [[b0 b1 t1] [b0 t1 t0]]
+                                   [[b0 t1 b1] [b0 t0 t1]])))
+                             (range n-verts)))
+                          (range (dec n-rings))))]
+         {:type :mesh
+          :primitive :segment
+          :vertices vertices
+          :faces side-faces})))))
 
 (defn- build-corner-mesh
   "Build a corner mesh connecting two rings (no caps).
-   ring1 and ring2 must have the same number of vertices."
-  [ring1 ring2]
-  (let [n-verts (count ring1)]
-    (when (and (>= n-verts 3) (= n-verts (count ring2)))
-      (let [vertices (vec (concat ring1 ring2))
-            side-faces (vec
-                        (mapcat
-                         (fn [i]
-                           (let [next-i (mod (inc i) n-verts)
-                                 b0 i
-                                 b1 next-i
-                                 t0 (+ n-verts i)
-                                 t1 (+ n-verts next-i)]
-                             ;; CCW winding from outside
-                             [[b0 t1 b1] [b0 t0 t1]]))
-                         (range n-verts)))]
-        {:type :mesh
-         :primitive :corner
-         :vertices vertices
-         :faces side-faces}))))
+   ring1 and ring2 must have the same number of vertices.
+   flip-winding? reverses face winding for backward extrusions."
+  ([ring1 ring2] (build-corner-mesh ring1 ring2 false))
+  ([ring1 ring2 flip-winding?]
+   (let [n-verts (count ring1)]
+     (when (and (>= n-verts 3) (= n-verts (count ring2)))
+       (let [vertices (vec (concat ring1 ring2))
+             side-faces (vec
+                         (mapcat
+                          (fn [i]
+                            (let [next-i (mod (inc i) n-verts)
+                                  b0 i
+                                  b1 next-i
+                                  t0 (+ n-verts i)
+                                  t1 (+ n-verts next-i)]
+                              ;; CCW winding from outside
+                              ;; Flip when extrusion goes backward
+                              (if flip-winding?
+                                [[b0 b1 t1] [b0 t1 t0]]
+                                [[b0 t1 b1] [b0 t0 t1]])))
+                          (range n-verts)))]
+         {:type :mesh
+          :primitive :corner
+          :vertices vertices
+          :faces side-faces})))))
 
 ;; --- Joint mode helper functions ---
 
@@ -2023,7 +2033,20 @@
         first-ring (:sweep-first-ring state)]
     (if (>= (count rings) 2)
       ;; Build final segment from remaining rings
-      (let [final-segment (build-segment-mesh rings)
+      ;; Detect if extrusion went backward by comparing first and last ring centroids
+      ;; with the sweep-initial-heading
+      (let [ring-centroid-fn (fn [ring]
+                               (let [n (count ring)]
+                                 (v* (reduce v+ ring) (/ 1.0 n))))
+            first-centroid (ring-centroid-fn (first rings))
+            last-centroid (ring-centroid-fn (last rings))
+            extrusion-dir (v- last-centroid first-centroid)
+            initial-heading (or (:sweep-initial-heading state) (:heading state))
+            ;; If dot product is negative, extrusion went backward
+            backward? (neg? (dot extrusion-dir initial-heading))
+            ;; Flip winding for backward extrusion to correct normals
+            flip-winding? backward?
+            final-segment (build-segment-mesh rings flip-winding?)
             ;; Determine the actual first and last rings for caps
             actual-first-ring (or first-ring (first rings))
             actual-last-ring (last rings)
@@ -2053,18 +2076,23 @@
             top-normal (when (>= n-verts 3)
                          (normalize (v- (ring-centroid actual-last-ring)
                                         (ring-centroid second-to-last-ring))))
-            ;; Bottom cap mesh: flip=false for normal pointing back
+            ;; Cap flip logic: XOR with backward? to handle backward extrusion
+            ;; Forward (backward?=false): bottom=false, top=true
+            ;; Backward (backward?=true): bottom=true, top=false
+            bottom-cap-flip backward?
+            top-cap-flip (not backward?)
+            ;; Bottom cap mesh
             bottom-cap-mesh (when (>= n-verts 3)
                               {:type :mesh
                                :primitive :cap
                                :vertices (vec actual-first-ring)
-                               :faces (triangulate-cap actual-first-ring 0 bottom-normal false)})
-            ;; Top cap mesh: flip=true for normal pointing forward
+                               :faces (triangulate-cap actual-first-ring 0 bottom-normal bottom-cap-flip)})
+            ;; Top cap mesh
             top-cap-mesh (when (>= n-verts 3)
                            {:type :mesh
                             :primitive :cap
                             :vertices (vec actual-last-ring)
-                            :faces (triangulate-cap actual-last-ring 0 top-normal true)})]
+                            :faces (triangulate-cap actual-last-ring 0 top-normal top-cap-flip)})]
         (-> state
             (assoc :meshes (cond-> all-meshes
                              bottom-cap-mesh (conj bottom-cap-mesh)
@@ -3532,6 +3560,14 @@
                   second-ring (nth all-rings 1)
                   second-to-last-ring (nth all-rings (- n-rings 2))
 
+                  ;; Detect backward extrusion - only for simple straight paths
+                  ;; For curved paths (arcs, multiple segments), don't flip
+                  is-simple-straight? (= n-segments 1)
+                  overall-extrusion-dir (v- (ring-centroid last-ring) (ring-centroid first-ring))
+                  initial-heading (:heading state)
+                  backward? (and is-simple-straight?
+                                 (neg? (dot overall-extrusion-dir initial-heading)))
+
                   ;; Bottom cap: normal points opposite to extrusion direction
                   bottom-extrusion-dir (normalize (v- (ring-centroid second-ring)
                                                       (ring-centroid first-ring)))
@@ -3542,13 +3578,16 @@
                                                    (ring-centroid second-to-last-ring)))
                   top-normal top-extrusion-dir
 
-                  ;; Bottom cap: flip=false produces normal pointing back (-X)
-                  bottom-cap-faces (triangulate-cap first-ring 0 bottom-normal false)
+                  ;; Cap flip: XOR with backward? to handle backward extrusion
+                  bottom-cap-flip backward?
+                  top-cap-flip (not backward?)
+                  bottom-cap-faces (triangulate-cap first-ring 0 bottom-normal bottom-cap-flip)
 
                   ;; Side faces connecting consecutive rings
                   ;; Ring i vertices: i*n-verts to (i+1)*n-verts - 1
                   ;; Use shorter diagonal to split each quad, preventing inverted
                   ;; triangles at tight curve bends where quads become non-planar.
+                  ;; Flip winding for backward extrusion to correct normals.
                   side-faces (vec
                               (mapcat
                                (fn [ring-idx]
@@ -3566,15 +3605,19 @@
                                           db1t0 (v- (nth vertices b1) (nth vertices t0))]
                                       (if (<= (dot db0t1 db0t1) (dot db1t0 db1t0))
                                         ;; Diagonal b0-t1 (shorter)
-                                        [[b0 t0 t1] [b0 t1 b1]]
+                                        (if backward?
+                                          [[b0 t1 t0] [b0 b1 t1]]  ;; flipped
+                                          [[b0 t0 t1] [b0 t1 b1]]) ;; normal
                                         ;; Diagonal b1-t0 (shorter)
-                                        [[b0 t0 b1] [t0 t1 b1]])))
+                                        (if backward?
+                                          [[b0 b1 t0] [t0 b1 t1]]  ;; flipped
+                                          [[b0 t0 b1] [t0 t1 b1]]))))  ;; normal
                                   (range n-verts)))
                                (range (dec n-rings))))
 
-                  ;; Top cap: flip=true produces normal pointing forward (+X)
+                  ;; Top cap: flip based on backward?
                   last-ring-base (* (dec n-rings) n-verts)
-                  top-cap-faces (triangulate-cap last-ring last-ring-base top-normal true)
+                  top-cap-faces (triangulate-cap last-ring last-ring-base top-normal top-cap-flip)
 
                   all-faces (vec (concat bottom-cap-faces side-faces top-cap-faces))
 
@@ -3596,8 +3639,11 @@
    Creates a solid of revolution (like a lathe operation).
 
    The profile is interpreted as:
-   - 2D X = radial distance from axis (perpendicular to heading)
-   - 2D Y = position along axis (in heading direction)
+   - 2D X = radial distance from axis (swept around up axis)
+   - 2D Y = position along axis (in up direction)
+
+   At θ=0 the stamp matches extrude: shape-X → right, shape-Y → up.
+   Revolution axis = turtle's up vector. Use (tv) to change the axis.
 
    The axis of revolution passes through the turtle's current position.
 
@@ -3624,6 +3670,19 @@
            ;; Get profile points
            profile-points (:points shape)
            n-profile (count profile-points)
+           ;; Calculate shape winding using signed area
+           ;; Positive = CCW, Negative = CW
+           shape-signed-area (let [pts profile-points
+                                   n (count pts)]
+                               (/ (reduce + (for [i (range n)]
+                                              (let [[x1 y1] (nth pts i)
+                                                    [x2 y2] (nth pts (mod (inc i) n))]
+                                                (- (* x1 y2) (* x2 y1)))))
+                                  2))
+           ;; Determine if we need to flip face winding
+           ;; Flip when: (CCW shape AND positive angle) OR (CW shape AND negative angle)
+           shape-is-ccw? (pos? shape-signed-area)
+           flip-winding? (if shape-is-ccw? (pos? angle) (neg? angle))
            ;; Calculate number of segments based on resolution
            ;; Use same logic as arc: resolution based on angle
            steps (calc-arc-steps state (* 2 Math/PI) (Math/abs angle))
@@ -3639,17 +3698,21 @@
            ;; Right vector = heading × up (initial radial direction at θ=0)
            right (normalize (cross heading up))
            ;; Transform profile point [px py] at angle θ to 3D:
-           ;; pos + py * heading + px * (cos(θ) * right + sin(θ) * up)
+           ;; pos + py * up + px * (cos(θ) * right + sin(θ) * heading)
+           ;; At θ=0 this matches extrude's stamp: px*right + py*up
+           ;; Revolution axis = up; radial sweeps from right toward heading
+           ;; shape-X = radial distance (swept around up axis)
+           ;; shape-Y = axial position (along up / revolution axis)
            transform-point (fn [[px py] theta]
                              (let [cos-t (Math/cos theta)
                                    sin-t (Math/sin theta)
-                                   ;; Radial direction at this angle
-                                   radial-x (+ (* cos-t (nth right 0)) (* sin-t (nth up 0)))
-                                   radial-y (+ (* cos-t (nth right 1)) (* sin-t (nth up 1)))
-                                   radial-z (+ (* cos-t (nth right 2)) (* sin-t (nth up 2)))]
-                               [(+ (nth pos 0) (* py (nth heading 0)) (* px radial-x))
-                                (+ (nth pos 1) (* py (nth heading 1)) (* px radial-y))
-                                (+ (nth pos 2) (* py (nth heading 2)) (* px radial-z))]))
+                                   ;; Radial direction at this angle (sweeps in right-heading plane)
+                                   radial-x (+ (* cos-t (nth right 0)) (* sin-t (nth heading 0)))
+                                   radial-y (+ (* cos-t (nth right 1)) (* sin-t (nth heading 1)))
+                                   radial-z (+ (* cos-t (nth right 2)) (* sin-t (nth heading 2)))]
+                               [(+ (nth pos 0) (* py (nth up 0)) (* px radial-x))
+                                (+ (nth pos 1) (* py (nth up 1)) (* px radial-y))
+                                (+ (nth pos 2) (* py (nth up 2)) (* px radial-z))]))
            ;; Generate all rings
            rings (vec (for [i (range n-rings)]
                         (let [theta (* i angle-step)]
@@ -3677,7 +3740,10 @@
                             t0 (+ next-base vert-idx)
                             t1 (+ next-base next-vert)]
                         ;; CCW winding for outward-facing normals
-                        [[b0 t1 t0] [b0 b1 t1]]))
+                        ;; Flip based on shape winding and angle sign
+                        (if flip-winding?
+                          [[b0 t0 t1] [b0 t1 b1]]
+                          [[b0 t1 t0] [b0 b1 t1]])))
                     (range n-profile)))))
              (range (if is-closed n-rings (dec n-rings)))))
            ;; Caps for open revolve (angle < 360)
@@ -3686,19 +3752,21 @@
              (let [first-ring (first rings)
                    last-ring (last rings)
                    last-ring-base (* (dec n-rings) n-profile)
-                   ;; Calculate normals from ring geometry
-                   ;; Start cap normal: opposite to initial right direction
-                   start-normal (v* right -1)
-                   ;; End cap normal: rotated right direction
-                   end-theta (* (dec n-rings) angle-step)
-                   end-cos (Math/cos end-theta)
-                   end-sin (Math/sin end-theta)
-                   end-normal [(+ (* end-cos (nth right 0)) (* end-sin (nth up 0)))
-                               (+ (* end-cos (nth right 1)) (* end-sin (nth up 1)))
-                               (+ (* end-cos (nth right 2)) (* end-sin (nth up 2)))]
-                   ;; Triangulate caps
-                   start-cap (triangulate-cap first-ring 0 start-normal false)
-                   end-cap (triangulate-cap last-ring last-ring-base end-normal true)]
+                   ;; For triangulation, we need the normal to the ring PLANE
+                   ;; (not the cap face normal). Ring plane is spanned by up and right,
+                   ;; so plane normal = cross(up, right) = -heading (or heading depending on order)
+                   ;; At theta=0, ring plane normal is along heading direction
+                   start-proj-normal heading
+                   ;; At theta=end, ring plane normal is still along heading
+                   ;; (revolution around up doesn't change the ring plane normal direction)
+                   end-proj-normal heading
+                   ;; Cap flip determines which way the triangles face
+                   ;; Try inverted flip logic
+                   start-cap-flip (not flip-winding?)
+                   end-cap-flip flip-winding?
+                   ;; Triangulate caps using ring plane normal for projection
+                   start-cap (triangulate-cap first-ring 0 start-proj-normal start-cap-flip)
+                   end-cap (triangulate-cap last-ring last-ring-base end-proj-normal end-cap-flip)]
                (vec (concat start-cap end-cap))))
            all-faces (if cap-faces
                        (vec (concat side-faces cap-faces))

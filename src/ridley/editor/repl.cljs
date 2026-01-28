@@ -559,11 +559,12 @@
 
 (defn ^:export pure-revolve
   "Pure revolve function - creates mesh without side effects.
-   Revolves a 2D profile shape around the turtle's heading axis.
+   Revolves a 2D profile shape around the turtle's up axis.
 
+   At θ=0 the stamp matches extrude: shape-X → right, shape-Y → up.
    The profile is interpreted as:
    - 2D X = radial distance from axis
-   - 2D Y = position along axis (in heading direction)
+   - 2D Y = position along axis (in up direction)
 
    angle: rotation angle in degrees (default 360 for full revolution)"
   ([shape] (pure-revolve shape 360))
@@ -905,6 +906,7 @@
    'scale-shape     shape/scale-shape
    'reverse-shape   shape/reverse-shape
    'path-to-shape   shape/path-to-shape
+   'stroke-shape    shape/stroke-shape
    ;; Text shapes
    'text-shape   text/text-shape
    'text-shapes  text/text-shapes

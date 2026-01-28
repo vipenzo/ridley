@@ -211,6 +211,236 @@
         (make-shape (ensure-ccw raw-points) {:centered? false})))))
 
 ;; ============================================================
+;; Stroke shape: offset a path into a 2D outline
+;; ============================================================
+
+(defn- v2-mag [[x y]]
+  (Math/sqrt (+ (* x x) (* y y))))
+
+(defn- v2-normalize [[x y]]
+  (let [m (v2-mag [x y])]
+    (if (< m 0.0001) [0 0] [(/ x m) (/ y m)])))
+
+(defn- v2-perp
+  "Left-side perpendicular (rotate 90° CCW)."
+  [[x y]]
+  [(- y) x])
+
+(defn- line-intersect-2d
+  "Intersect two lines defined by point+direction.
+   Returns parameter t along line1 (p1 + t*d1), or nil if parallel."
+  [[p1x p1y] [d1x d1y] [p2x p2y] [d2x d2y]]
+  (let [denom (- (* d1x d2y) (* d1y d2x))]
+    (when (> (Math/abs denom) 0.0001)
+      (let [dx (- p2x p1x)
+            dy (- p2y p1y)]
+        (/ (- (* dx d2y) (* dy d2x)) denom)))))
+
+(defn- arc-pts
+  "Generate arc points around center from angle start-a to end-a (radians).
+   Includes start and end points. n = number of segments."
+  [[cx cy] radius start-a end-a n]
+  (mapv (fn [i]
+          (let [t (/ i n)
+                a (+ start-a (* t (- end-a start-a)))]
+            [(+ cx (* radius (Math/cos a)))
+             (+ cy (* radius (Math/sin a)))]))
+        (range (inc n))))
+
+(defn- path-to-2d-waypoints
+  "Extract 2D waypoints (position + heading direction) from a path.
+   Projects XY from 3D turtle state. Returns vector of {:pos [x y] :dir [dx dy]}."
+  [path]
+  (when (and (map? path) (= :path (:type path)))
+    (let [commands (:commands path)]
+      (:waypoints
+       (reduce
+        (fn [{:keys [pos heading waypoints]} cmd]
+          (case (:cmd cmd)
+            :f (let [dist (first (:args cmd))
+                     hx (first heading) hy (second heading)
+                     new-pos [(+ (first pos) (* hx dist))
+                              (+ (second pos) (* hy dist))]]
+                 {:pos new-pos :heading heading
+                  :waypoints (conj waypoints {:pos new-pos :dir heading})})
+            :th (let [angle (first (:args cmd))
+                      rad (* angle (/ Math/PI 180))
+                      hx (first heading) hy (second heading)
+                      cos-a (Math/cos rad) sin-a (Math/sin rad)]
+                  {:pos pos
+                   :heading [(- (* hx cos-a) (* hy sin-a))
+                             (+ (* hx sin-a) (* hy cos-a))]
+                   :waypoints waypoints})
+            :set-heading (let [[h _] (:args cmd)]
+                           {:pos pos
+                            :heading [(first h) (second h)]
+                            :waypoints waypoints})
+            {:pos pos :heading heading :waypoints waypoints}))
+        {:pos [0 0] :heading [1 0] :waypoints [{:pos [0 0] :dir [1 0]}]}
+        commands)))))
+
+(defn- offset-point-2d
+  "Offset a 2D point along a normal by a signed distance."
+  [[px py] [nx ny] dist]
+  [(+ px (* nx dist)) (+ py (* ny dist))])
+
+(defn- miter-point-2d
+  "Compute miter intersection point for an offset side.
+   sign: +1 for left, -1 for right. Returns the miter point or nil."
+  [p n1 n2 d1 d2 half-w sign]
+  (let [off1 (offset-point-2d p n1 (* sign half-w))
+        off2 (offset-point-2d p n2 (* sign half-w))
+        t (line-intersect-2d off1 d1 off2 d2)]
+    (when t
+      [(+ (first off1) (* t (first d1)))
+       (+ (second off1) (* t (second d1)))])))
+
+(defn- compute-offset-pts
+  "Compute offset points for one side of the stroke.
+   sign: +1 for left side, -1 for right side.
+   At a left turn (cross-z > 0), the outside of the curve is the right side.
+   At a right turn (cross-z < 0), the outside is the left side."
+  [wps seg-dirs seg-normals half-w join-mode miter-limit sign]
+  (let [n (count wps)
+        n-segs (count seg-dirs)
+        is-outer? (if (pos? sign)
+                    (fn [cross-z] (neg? cross-z))   ;; left: outer on right turns
+                    (fn [cross-z] (pos? cross-z)))]  ;; right: outer on left turns
+    (loop [i 0, pts []]
+      (if (>= i n)
+        pts
+        (let [p (:pos (nth wps i))]
+          (cond
+            ;; First or last point: simple offset
+            (or (zero? i) (= i (dec n)))
+            (let [seg-idx (if (zero? i) 0 (dec n-segs))
+                  [nx ny] (nth seg-normals seg-idx)]
+              (recur (if (zero? i) 1 (inc i))
+                     (conj pts (offset-point-2d p [nx ny] (* sign half-w)))))
+
+            ;; Interior vertex: handle join
+            :else
+            (let [n1 (nth seg-normals (dec i))
+                  n2 (nth seg-normals i)
+                  d1 (nth seg-dirs (dec i))
+                  d2 (nth seg-dirs i)
+                  cross-z (- (* (first d1) (second d2))
+                             (* (second d1) (first d2)))
+                  outer? (is-outer? cross-z)]
+              (cond
+                ;; Inner side: always miter (converging)
+                (not outer?)
+                (let [mp (miter-point-2d p n1 n2 d1 d2 half-w sign)]
+                  (recur (inc i)
+                         (conj pts (or mp (offset-point-2d p n1 (* sign half-w))))))
+
+                ;; Outer side with :bevel
+                (= join-mode :bevel)
+                (let [p1 (offset-point-2d p n1 (* sign half-w))
+                      p2 (offset-point-2d p n2 (* sign half-w))]
+                  (recur (inc i) (-> pts (conj p1) (conj p2))))
+
+                ;; Outer side with :round
+                (= join-mode :round)
+                (let [sn1 (if (pos? sign) n1 [(- (first n1)) (- (second n1))])
+                      sn2 (if (pos? sign) n2 [(- (first n2)) (- (second n2))])
+                      a1 (Math/atan2 (second sn1) (first sn1))
+                      a2 (Math/atan2 (second sn2) (first sn2))
+                      ;; Ensure correct arc direction
+                      a2 (if (pos? sign)
+                           (if (< a2 a1) (+ a2 (* 2 Math/PI)) a2)
+                           (if (> a2 a1) (- a2 (* 2 Math/PI)) a2))
+                      arc (arc-pts p half-w a1 a2 8)]
+                  (recur (inc i) (into pts arc)))
+
+                ;; Outer side with :miter (default)
+                :else
+                (let [mp (miter-point-2d p n1 n2 d1 d2 half-w sign)]
+                  (if (and mp (<= (v2-mag [(- (first mp) (first p))
+                                           (- (second mp) (second p))])
+                               (* miter-limit half-w)))
+                    (recur (inc i) (conj pts mp))
+                    ;; Miter limit exceeded: bevel fallback
+                    (let [p1 (offset-point-2d p n1 (* sign half-w))
+                          p2 (offset-point-2d p n2 (* sign half-w))]
+                      (recur (inc i) (-> pts (conj p1) (conj p2))))))))))))))
+
+(defn ^:export stroke-shape
+  "Create a 2D outline shape by stroking a path with a given width.
+
+   (stroke-shape path width)
+   (stroke-shape path width :start-cap :round :end-cap :flat :join :miter)
+
+   Options:
+   - :start-cap  :flat (default), :round, :square
+   - :end-cap    :flat (default), :round, :square
+   - :join       :miter (default), :bevel, :round
+   - :miter-limit  maximum miter ratio before falling back to bevel (default 4)
+
+   Returns a shape suitable for extrude, revolve, etc."
+  [path width & {:keys [start-cap end-cap join miter-limit]
+                 :or {start-cap :flat end-cap :flat join :miter miter-limit 4}}]
+  (assert (number? width) "stroke-shape requires a width argument: (stroke-shape path width)")
+  (let [wps (path-to-2d-waypoints path)
+        n (count wps)
+        half-w (/ width 2.0)]
+    (when (and wps (>= n 2))
+      (let [seg-dirs (mapv (fn [i]
+                             (let [p0 (:pos (nth wps i))
+                                   p1 (:pos (nth wps (inc i)))]
+                               (v2-normalize [(- (first p1) (first p0))
+                                              (- (second p1) (second p0))])))
+                           (range (dec n)))
+            seg-normals (mapv v2-perp seg-dirs)
+            n-segs (count seg-dirs)
+
+            left-pts (compute-offset-pts wps seg-dirs seg-normals half-w join miter-limit +1)
+            right-pts (compute-offset-pts wps seg-dirs seg-normals half-w join miter-limit -1)
+
+            ;; End cap
+            end-pos (:pos (nth wps (dec n)))
+            end-dir (nth seg-dirs (dec n-segs))
+            end-cap-pts
+            (case end-cap
+              :round (let [n-left (v2-perp end-dir)
+                           a-start (Math/atan2 (second n-left) (first n-left))
+                           a-end (- a-start Math/PI)]
+                       (rest (arc-pts end-pos half-w a-start a-end 8)))
+              :square (let [[nx ny] (v2-perp end-dir)
+                            ext [(+ (first end-pos) (* (first end-dir) half-w))
+                                 (+ (second end-pos) (* (second end-dir) half-w))]]
+                        [[(+ (first ext) (* nx half-w))
+                          (+ (second ext) (* ny half-w))]
+                         [(- (first ext) (* nx half-w))
+                          (- (second ext) (* ny half-w))]])
+              [])
+
+            ;; Start cap
+            start-pos (:pos (nth wps 0))
+            start-dir (nth seg-dirs 0)
+            start-cap-pts
+            (case start-cap
+              :round (let [n-right [(second start-dir) (- (first start-dir))]
+                           a-start (Math/atan2 (second n-right) (first n-right))
+                           a-end (+ a-start Math/PI)]
+                       (rest (arc-pts start-pos half-w a-start a-end 8)))
+              :square (let [[nx ny] (v2-perp start-dir)
+                            ext [(- (first start-pos) (* (first start-dir) half-w))
+                                 (- (second start-pos) (* (second start-dir) half-w))]]
+                        [[(- (first ext) (* nx half-w))
+                          (- (second ext) (* ny half-w))]
+                         [(+ (first ext) (* nx half-w))
+                          (+ (second ext) (* ny half-w))]])
+              [])
+
+            ;; Combine: left (forward) + end-cap + right (reversed) + start-cap
+            all-pts (-> (vec left-pts)
+                        (into end-cap-pts)
+                        (into (rseq (vec right-pts)))
+                        (into start-cap-pts))]
+        (make-shape (ensure-ccw all-pts) {:centered? true})))))
+
+;; ============================================================
 ;; Shape from turtle recording
 ;; ============================================================
 
