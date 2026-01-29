@@ -30,13 +30,18 @@
 ;; Registered panels: [{:panel data :name keyword :visible true/false} ...]
 (defonce ^:private scene-panels (atom []))
 
+;; Registered shapes: [{:shape data :name keyword} ...]
+;; Shapes have no visibility concept (not directly renderable)
+(defonce ^:private scene-shapes (atom []))
+
 (defn clear-all!
-  "Clear all meshes, lines, paths, and panels. Called on code re-evaluation."
+  "Clear all meshes, lines, paths, panels, and shapes. Called on code re-evaluation."
   []
   (reset! scene-meshes [])
   (reset! scene-lines [])
   (reset! scene-paths [])
-  (reset! scene-panels []))
+  (reset! scene-panels [])
+  (reset! scene-shapes []))
 
 (defn set-lines!
   "Set the lines (geometry) to display."
@@ -347,6 +352,43 @@
   "Get names of all registered panels."
   []
   (vec (keep :name @scene-panels)))
+
+;; ============================================================
+;; Shape registration
+;; ============================================================
+
+(defn- find-shape-index
+  "Find index of shape entry by name."
+  [name]
+  (first (keep-indexed (fn [i entry] (when (= (:name entry) name) i)) @scene-shapes)))
+
+(defn register-shape!
+  "Register a named shape. Returns the shape."
+  [name shape]
+  (when (and name shape (map? shape) (= :shape (:type shape)))
+    (if-let [idx (find-shape-index name)]
+      (swap! scene-shapes assoc idx {:shape shape :name name})
+      (swap! scene-shapes conj {:shape shape :name name}))
+    shape))
+
+(defn get-shape
+  "Get shape data by name."
+  [name]
+  (:shape (first (filter #(= (:name %) name) @scene-shapes))))
+
+(defn shape-names
+  "Get names of all registered shapes."
+  []
+  (vec (keep :name @scene-shapes)))
+
+;; ============================================================
+;; Cross-type query helpers
+;; ============================================================
+
+(defn path-names
+  "Get names of all registered paths."
+  []
+  (vec (keep :name @scene-paths)))
 
 (defn refresh-viewport!
   "Update the viewport with all visible meshes, lines, paths, and panels.

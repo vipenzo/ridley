@@ -1036,6 +1036,11 @@
    'register-path!      registry/register-path!
    'show-path!          registry/show-path!
    'hide-path!          registry/hide-path!
+   'path-names          registry/path-names
+   ;; Shape registry
+   'register-shape!     registry/register-shape!
+   'get-shape           registry/get-shape
+   'shape-names         registry/shape-names
    ;; STL export
    'save-stl            stl/download-stl
    ;; Math functions for SCI context (used by arc/bezier recording)
@@ -1918,15 +1923,17 @@
           (mesh? (first (vals x)))))
 
    ;; register: define a symbol, add to registry, AND show it
-   ;; Works with meshes, paths, and collections of meshes:
-   ;; (register torus (extrude ...))  ; registers a mesh
+   ;; Works with meshes, paths, shapes, and collections of meshes:
+   ;; (register torus (extrude ...))  ; registers and shows a mesh
    ;; (register line (path ...))      ; registers a path (shown as polyline)
    ;; (register parts (for [...] ...)) ; registers vector of meshes
    ;; (register robot {:hand m1 :body m2}) ; registers map of meshes
+   ;; (register torus (extrude ...) :hidden) ; registers but keeps hidden
    ;; On subsequent evals, updates the value but preserves visibility state
-   (defmacro register [name expr]
+   (defmacro register [name expr & opts]
      `(let [raw-value# ~expr
             name-kw# ~(keyword name)
+            hidden?# ~(contains? (set opts) :hidden)
             ;; Convert lazy seqs to vectors for collections of meshes
             value# (if (and (seq? raw-value#) (not (map? raw-value#)) (seq raw-value#) (mesh? (first raw-value#)))
                      (vec raw-value#)
@@ -1937,6 +1944,7 @@
           (let [panel-with-name# (assoc value# :name name-kw#)]
             (def ~name panel-with-name#)
             (register-panel! name-kw# panel-with-name#)
+            (when hidden?# (hide-panel! name-kw#))
             (refresh-viewport! false)
             panel-with-name#)
           ;; Non-panel cases
@@ -1947,8 +1955,14 @@
               (and (map? value#) (:vertices value#))
               (let [already-registered# (contains? (set (registered-names)) name-kw#)]
                 (register-mesh! name-kw# value#)
-                (when-not already-registered#
-                  (show-mesh! name-kw#)))
+                (if hidden?#
+                  (hide-mesh! name-kw#)
+                  (when-not already-registered#
+                    (show-mesh! name-kw#))))
+
+              ;; Shape (has :type :shape)
+              (and (map? value#) (= :shape (:type value#)))
+              (register-shape! name-kw# value#)
 
               ;; Vector of meshes - add each anonymously
               (mesh-vector? value#)
@@ -1964,10 +1978,16 @@
               (and (map? value#) (= :path (:type value#)))
               (do
                 (register-path! name-kw# value#)
-                (show-path! name-kw#)))
+                (if hidden?#
+                  (hide-path! name-kw#)
+                  (show-path! name-kw#))))
             ;; Refresh viewport and return value
             (refresh-viewport! false)
             value#))))
+
+   ;; r: short alias for register
+   (defmacro r [name expr & opts]
+     `(register ~name ~expr ~@opts))
 
    ;; Convenience functions that work with names, mesh references, or collections
    ;; (show :torus)       - by registered name (keyword)
@@ -1978,15 +1998,19 @@
    (defn show
      ([name-or-coll]
       (cond
-        ;; Name (keyword/string/symbol) - try mesh first, then panel
+        ;; Name (keyword/string/symbol) - try mesh, path, and panel
         (or (keyword? name-or-coll) (string? name-or-coll) (symbol? name-or-coll))
         (let [kw (if (keyword? name-or-coll) name-or-coll (keyword name-or-coll))]
           (show-mesh! kw)
+          (show-path! kw)
           (show-panel! kw))
         ;; Panel reference
         (panel? name-or-coll)
         (when-let [n (:name name-or-coll)]
           (show-panel! n))
+        ;; Path reference
+        (and (map? name-or-coll) (= :path (:type name-or-coll)))
+        nil ;; paths don't have ref-based show
         ;; Vector of meshes - show all
         (mesh-vector? name-or-coll)
         (doseq [m name-or-coll] (show-mesh-ref! m))
@@ -2004,15 +2028,19 @@
    (defn hide
      ([name-or-coll]
       (cond
-        ;; Name (keyword/string/symbol) - try mesh first, then panel
+        ;; Name (keyword/string/symbol) - try mesh, path, and panel
         (or (keyword? name-or-coll) (string? name-or-coll) (symbol? name-or-coll))
         (let [kw (if (keyword? name-or-coll) name-or-coll (keyword name-or-coll))]
           (hide-mesh! kw)
+          (hide-path! kw)
           (hide-panel! kw))
         ;; Panel reference
         (panel? name-or-coll)
         (when-let [n (:name name-or-coll)]
           (hide-panel! n))
+        ;; Path reference
+        (and (map? name-or-coll) (= :path (:type name-or-coll)))
+        nil ;; paths don't have ref-based hide
         ;; Vector of meshes - hide all
         (mesh-vector? name-or-coll)
         (doseq [m name-or-coll] (hide-mesh-ref! m))
