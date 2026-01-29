@@ -769,11 +769,12 @@
 ;; Initialization
 ;; ============================================================
 
-(def ^:private default-code "; Define reusable shapes here
-(def sq (path (dotimes [_ 4] (f 20) (th 90))))
-(extrude-closed (circle 5) sq)
-
-; Run with Cmd+Enter, then use REPL below")
+(def ^:private default-code "; Run with Cmd+Enter, then use REPL below
+(register smooth-spline
+  (extrude (circle 5)
+    (bezier-as
+      (path (f 30) (th 90) (f 20) (tr -80) (th -45) (f 25))
+      :cubic true)))")
 
 (defn init []
   (let [canvas (.getElementById js/document "viewport")

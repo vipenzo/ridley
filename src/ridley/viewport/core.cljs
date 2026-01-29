@@ -43,6 +43,7 @@
 
 (defn- create-camera [width height]
   (let [camera (THREE/PerspectiveCamera. 60 (/ width height) 0.1 10000)]
+    (.set (.-up camera) 0 0 1)
     (.set (.-position camera) 100 100 100)
     (.lookAt camera 0 0 0)
     camera))
@@ -1070,6 +1071,7 @@
   "Reset camera to default position looking at origin."
   []
   (when-let [{:keys [camera controls]} @state]
+    (.set (.-up camera) 0 0 1)
     (.set (.-position camera) 100 100 100)
     (.set (.-target controls) 0 0 0)
     (.update controls)))
