@@ -11,7 +11,9 @@
             [ridley.export.stl :as stl]
             [ridley.sync.peer :as sync]
             [ridley.manual.core :as manual]
-            [ridley.manual.components :as manual-ui]))
+            [ridley.manual.components :as manual-ui]
+            [ridley.ai.core :as ai]
+            [ridley.ai.state :as ai-state]))
 
 (defonce ^:private editor-view (atom nil))
 (defonce ^:private repl-input-el (atom nil))
@@ -31,6 +33,8 @@
 
 ;; Manual panel state
 (defonce ^:private manual-panel (atom nil))
+
+(declare sync-ai-state)
 
 (defn- show-error [msg]
   (when-let [el @error-el]
@@ -136,7 +140,9 @@
          ;; Refresh viewport, optionally resetting camera
          (registry/refresh-viewport! reset-camera?)
          ;; Update turtle indicator
-         (update-turtle-indicator))))))
+         (update-turtle-indicator)
+         ;; Sync AI state
+         (sync-ai-state))))))
 
 (defn- evaluate-repl-input
   "Evaluate the REPL input and show result in history."
@@ -169,7 +175,9 @@
               ;; Update viewport (don't reset camera)
               (registry/refresh-viewport! false)
               ;; Update turtle indicator
-              (update-turtle-indicator))))))))
+              (update-turtle-indicator)
+              ;; Sync AI state
+              (sync-ai-state))))))))
 
 (defn- navigate-history
   "Navigate command history. direction: -1 for older, +1 for newer."
@@ -766,6 +774,325 @@
       (fn [_] (manual/toggle-manual!)))))
 
 ;; ============================================================
+;; AI Voice Extension
+;; ============================================================
+
+(defn- ai-insert-code
+  "Insert code into editor or REPL based on target and position."
+  [{:keys [target code position]}]
+  (case target
+    :script
+    (when-let [view @editor-view]
+      (let [insert-pos (case position
+                         :cursor (.. view -state -selection -main -head)
+                         :end (.. view -state -doc -length)
+                         :after-current-form
+                         (if-let [form (cm/get-form-at-cursor view)]
+                           (:to form)
+                           (.. view -state -selection -main -head))
+                         ;; Default: at cursor
+                         (.. view -state -selection -main -head))
+            ;; Add newline prefix for after-current-form
+            actual-code (if (= position :after-current-form)
+                          (str "\n" code)
+                          code)
+            code-length (count actual-code)
+            start-pos (if (= position :after-current-form)
+                        (inc insert-pos)  ; skip the newline
+                        insert-pos)
+            end-pos (+ insert-pos code-length)]
+        ;; Insert the code
+        (case position
+          :cursor (cm/insert-at-cursor view actual-code)
+          :end (cm/insert-at-end view actual-code)
+          :after-current-form
+          (do
+            (cm/set-cursor-position view {:pos insert-pos})
+            (cm/insert-at-cursor view actual-code))
+          ;; Default
+          (cm/insert-at-cursor view actual-code))
+        ;; Select the inserted code (excluding leading newline if any)
+        (cm/select-range view start-pos end-pos)
+        ;; Update AI focus to the inserted form
+        (cm/update-ai-focus! view)
+        ;; Keep focus on editor
+        (cm/focus view))
+      ;; Auto-save
+      (save-to-storage)
+      (send-script-debounced))
+
+    :repl
+    (when-let [input-el @repl-input-el]
+      (case position
+        :cursor (let [start (.-selectionStart input-el)
+                      value (.-value input-el)]
+                  (set! (.-value input-el)
+                        (str (subs value 0 start) code (subs value start))))
+        :end (set! (.-value input-el)
+                   (str (.-value input-el) code))
+        ;; Default: replace all
+        (set! (.-value input-el) code)))
+
+    (js/console.warn "AI insert: unknown target" target)))
+
+(defn- ai-edit-code
+  "Edit code based on operation and target."
+  [{:keys [operation target value element]}]
+  (when-let [view @editor-view]
+    (let [;; Check if target references "it/lo/last" - meaning previous form
+          ref (:ref target)
+          use-previous? (and (= (:type target) "form")
+                             (contains? #{"it" "lo" "last" "questo" "this"} ref))
+          ;; Get the appropriate form based on target type
+          the-form (if use-previous?
+                     (cm/get-previous-form view)
+                     (case (:type target)
+                       "form" (cm/get-form-at-cursor view)
+                       "word" (cm/get-word-at-cursor view)
+                       "selection" (cm/get-selection view)
+                       nil))]
+
+      (when the-form
+        (case operation
+          :replace
+          (cm/replace-range view (:from the-form) (:to the-form) value)
+
+          :delete
+          (cm/delete-range view (:from the-form) (:to the-form))
+
+          :wrap
+          (when value
+            (let [wrapped (str/replace value "$" (:text the-form))]
+              (cm/replace-range view (:from the-form) (:to the-form) wrapped)))
+
+          :unwrap
+          (when (and (str/starts-with? (:text the-form) "(")
+                     (str/ends-with? (:text the-form) ")"))
+            (let [inner (subs (:text the-form) 1 (dec (count (:text the-form))))
+                  content (str/trim (str/replace-first inner #"^\S+\s*" ""))]
+              (cm/replace-range view (:from the-form) (:to the-form) content)))
+
+          :replace-structured
+          (when (and element value)
+            (when-let [new-form (cm/replace-form-element (:text the-form) element value)]
+              (cm/replace-range view (:from the-form) (:to the-form) new-form)))
+
+          (js/console.warn "AI edit: unknown operation" operation)))
+
+      (when-not the-form
+        (js/console.warn "AI edit: no form found" (if use-previous? "(looking for previous)" ""))))
+
+    ;; Update AI focus after edit
+    (cm/update-ai-focus! view)
+
+    ;; Auto-save after edit
+    (save-to-storage)
+    (send-script-debounced)))
+
+(defn- ai-navigate
+  "Navigate cursor based on direction and mode."
+  [{:keys [direction mode count]}]
+  (when-let [view @editor-view]
+    (let [n (or count 1)]
+      (dotimes [_ n]
+        (case mode
+          :text
+          (case direction
+            :left (cm/move-cursor view :left)
+            :right (cm/move-cursor view :right)
+            :up (cm/move-cursor view :up)
+            :down (cm/move-cursor view :down)
+            :start (cm/move-cursor view :start)
+            :end (cm/move-cursor view :end)
+            nil)
+
+          :structure
+          (case direction
+            :next (cm/move-cursor view :right)
+            :prev (cm/move-cursor view :left)
+            :parent (when-let [{:keys [from]} (cm/get-form-at-cursor view)]
+                      ;; Move to start of current form, then try to find parent
+                      (cm/set-cursor-position view {:pos (max 0 (dec from))})
+                      (when-let [parent (cm/get-form-at-cursor view)]
+                        (cm/set-cursor-position view {:pos (:from parent)})))
+            :child (when-let [{:keys [from]} (cm/get-form-at-cursor view)]
+                     ;; Move inside the form (after opening paren)
+                     (cm/set-cursor-position view {:pos (inc from)}))
+            :start (cm/move-cursor view :start)
+            :end (cm/move-cursor view :end)
+            nil)
+
+          ;; Default: text mode
+          (cm/move-cursor view direction))))))
+
+(defn- sync-ai-state
+  "Sync current editor state to AI state for LLM context."
+  []
+  (when (ai-state/enabled?)
+    (when-let [view @editor-view]
+      ;; Update buffer
+      (ai-state/update-buffer! :script (cm/get-value view))
+      (when-let [repl-el @repl-input-el]
+        (ai-state/update-buffer! :repl (.-value repl-el)))
+
+      ;; Update cursor and form info
+      (let [cursor (cm/get-cursor-position view)
+            form (cm/get-form-at-cursor view)
+            selection (cm/get-selection view)]
+        (ai-state/update-cursor! {:line (:line cursor)
+                                  :col (:col cursor)
+                                  :current-form (:text form)
+                                  :selection (when (not= (:from selection) (:to selection))
+                                               (:text selection))}))
+
+      ;; Update scene info
+      (ai-state/update-scene! {:meshes (vec (registry/registered-names))
+                               :visible (vec (registry/visible-names))
+                               :shapes (vec (registry/shape-names))
+                               :paths (vec (registry/path-names))}))))
+
+(defn- setup-ai-ui
+  "Setup AI voice button with push-to-talk behavior."
+  []
+  (when-let [toolbar (.getElementById js/document "viewport-toolbar")]
+    (let [ai-btn (.createElement js/document "button")]
+      (set! (.-id ai-btn) "btn-ai-voice")
+      (set! (.-className ai-btn) "toolbar-button")
+      (set! (.-textContent ai-btn) "AI")
+      (set! (.-title ai-btn) "Push to talk — hold or click")
+
+      ;; Track if we're doing push-to-talk (hold) or toggle (click)
+      (let [press-start (atom nil)
+            hold-threshold 200]  ; ms - if held longer than this, it's push-to-talk
+
+        ;; Mouse down — start listening, prevent focus loss
+        (.addEventListener ai-btn "mousedown"
+          (fn [e]
+            (.preventDefault e)
+            (.stopPropagation e)  ; Prevent focus loss
+            (reset! press-start (js/Date.now))
+            (ai/start-listening!)
+            (.add (.-classList ai-btn) "active")
+            ;; Refocus editor after a brief delay
+            (js/setTimeout #(when @editor-view (cm/focus @editor-view)) 50)))
+
+        ;; Mouse up — if held, stop listening; if quick click, keep listening
+        (.addEventListener ai-btn "mouseup"
+          (fn [_]
+            (when-let [start @press-start]
+              (let [held (- (js/Date.now) start)]
+                (when (> held hold-threshold)
+                  ;; Held — this was push-to-talk, stop now
+                  (ai/stop-listening!)
+                  (.remove (.-classList ai-btn) "active")))
+              ;; Always refocus editor
+              (when @editor-view (cm/focus @editor-view)))))
+
+        ;; Mouse leave while pressed — treat as release
+        (.addEventListener ai-btn "mouseleave"
+          (fn [_]
+            (when @press-start
+              (reset! press-start nil)
+              (when (ai/voice-active?)
+                (ai/stop-listening!))
+              (.remove (.-classList ai-btn) "active")))))
+
+      ;; Watch state to update button appearance
+      (add-watch ai-state/ai-state :ai-button-update
+        (fn [_ _ old-state new-state]
+          (let [was-listening (get-in old-state [:voice :listening?])
+                is-listening (get-in new-state [:voice :listening?])
+                pending (get-in new-state [:voice :pending-speech])]
+            ;; Update active class
+            (when (not= was-listening is-listening)
+              (if is-listening
+                (.add (.-classList ai-btn) "active")
+                (.remove (.-classList ai-btn) "active")))
+            ;; Show error/status as tooltip
+            (when pending
+              (set! (.-title ai-btn) pending))
+            (when (and (not pending) (not is-listening))
+              (set! (.-title ai-btn) "Push to talk — hold or click")))))
+
+      (.appendChild toolbar ai-btn)))
+
+  ;; Create AI status panel (for debugging)
+  (let [panel-el (.createElement js/document "div")]
+    (set! (.-id panel-el) "ai-status-panel")
+    (set! (.-className panel-el) "ai-panel")
+    (set! (.-style.display panel-el) "none")
+    (.appendChild js/document.body panel-el)
+
+    ;; Update panel content when state changes
+    (add-watch ai-state/ai-state :ai-panel-update
+      (fn [_ _ _ new-state]
+        (if (ai-state/enabled?)
+          (do
+            (set! (.-style.display panel-el) "block")
+            (let [voice (:voice new-state)
+                  cursor (:cursor new-state)
+                  scene (:scene new-state)
+                  mode (:mode new-state)
+                  listening (:listening? voice)
+                  transcript (:partial-transcript voice)
+                  pending (:pending-speech voice)
+                  last-utterance (:last-utterance voice)
+                  meshes (:meshes scene)
+                  shapes (:shapes scene)
+                  paths (:paths scene)]
+              (set! (.-innerHTML panel-el)
+                (str
+                 ;; Header
+                 "<div class='ai-header'>"
+                 "<span class='ai-status'>" (if listening "🟢" "⚫") "</span>"
+                 (when listening " <span class='ai-listening'>🎤 LISTENING</span>")
+                 " <span class='ai-mode'>[" (name mode) "]</span>"
+                 " <span class='ai-target'>" (name (or (:target cursor) :script)) "</span>"
+                 "</div>"
+
+                 ;; Cursor info
+                 "<div class='ai-section'>"
+                 "<div class='ai-section-title'>Cursor</div>"
+                 "<code class='ai-current-form'>"
+                 (or (:current-form cursor) "(no form)")
+                 "</code>"
+                 "</div>"
+
+                 ;; Voice info
+                 "<div class='ai-section'>"
+                 "<div class='ai-section-title'>Voice</div>"
+                 (when (and transcript (seq transcript))
+                   (str "<div class='ai-transcript'>🎤 \"" transcript "...\"</div>"))
+                 (when last-utterance
+                   (str "<div class='ai-last-utterance'>Last: \"" last-utterance "\"</div>"))
+                 (when pending
+                   (str "<div class='ai-pending'>💬 " pending "</div>"))
+                 (when (and (not (seq transcript)) (not last-utterance) (not pending))
+                   "<div class='ai-empty'>—</div>")
+                 "</div>"
+
+                 ;; Scene info
+                 "<div class='ai-section'>"
+                 "<div class='ai-section-title'>Scene</div>"
+                 "<div class='ai-scene-row'>Meshes: "
+                 (if (seq meshes)
+                   (str/join ", " (map name meshes))
+                   "—")
+                 "</div>"
+                 "<div class='ai-scene-row'>Shapes: "
+                 (if (seq shapes)
+                   (str/join ", " (map name shapes))
+                   "—")
+                 "</div>"
+                 "<div class='ai-scene-row'>Paths: "
+                 (if (seq paths)
+                   (str/join ", " (map name paths))
+                   "—")
+                 "</div>"
+                 "</div>"))))
+          (set! (.-style.display panel-el) "none"))))))
+
+;; ============================================================
 ;; Initialization
 ;; ============================================================
 
@@ -790,8 +1117,12 @@
          :initial-value initial-content
          :on-change (fn []
                       (save-to-storage)
-                      (send-script-debounced))
-         :on-run evaluate-definitions}))
+                      (send-script-debounced)
+                      (sync-ai-state))
+         :on-run evaluate-definitions
+         :on-selection-change (fn []
+                                (cm/update-ai-focus!)
+                                (sync-ai-state))}))
     (reset! repl-input-el repl-input)
     (reset! repl-history-el repl-history)
     (reset! error-el error-panel)
@@ -830,6 +1161,16 @@
     (setup-sync)
     ;; Setup manual panel
     (setup-manual)
+    ;; Initialize AI extension
+    (ai/init! {:insert ai-insert-code
+               :edit ai-edit-code
+               :navigate ai-navigate
+               :execute (fn [{:keys [target]}]
+                          (case target
+                            :script (evaluate-definitions)
+                            :repl (evaluate-repl-input)
+                            (js/console.warn "AI execute: unknown target" target)))})
+    (setup-ai-ui)
     ;; Focus REPL input
     (when repl-input
       (.focus repl-input))

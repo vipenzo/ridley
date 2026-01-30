@@ -392,22 +392,51 @@ new-rings = [... start-ring end-ring ...corner-rings]
 
 4. **Closed paths work the same way** - `extrude-closed-from-path` uses identical logic but wraps the last ring back to the first.
 
-## Mesh Registry
+## Scene Registry
 
-The scene registry (`scene/registry.cljs`) manages all meshes in the scene:
+The scene registry (`scene/registry.cljs`) manages all objects in the scene.
 
+### Renderable Objects (have visibility)
+
+**Meshes:**
 ```clojure
-;; Internal structure
 [{:mesh mesh-data :name :keyword-or-nil :visible true/false} ...]
 ```
-
-**Features:**
-- **Named meshes**: `(register name mesh)` - persisted across evaluations
+- **Named meshes**: `(register name mesh)` — persisted across evaluations
 - **Anonymous meshes**: From turtle movements, cleared on re-eval
-- **Visibility control**: `(show! :name)`, `(hide! :name)`, `(show-all!)`, `(hide-all!)`
-- **Toggle view**: "All" shows everything, "Objects" shows only named meshes
+- **Visibility control**: `(show :name)`, `(hide :name)`, `(show-all)`, `(hide-all)`
 
-The viewport only renders meshes marked as `:visible true`.
+**Panels** (3D text billboards):
+```clojure
+[{:panel panel-data :name keyword :visible true/false} ...]
+```
+
+The viewport only renders objects marked as `:visible true`.
+
+### Abstract Objects (no visibility)
+
+**Paths** — relocatable command sequences with embedded marks:
+```clojure
+[{:path path-data :name keyword} ...]
+```
+
+**Shapes** — 2D profiles for extrusion:
+```clojure
+[{:shape shape-data :name keyword} ...]
+```
+
+Paths and shapes are pure data. They have no rendering of their own. Use `follow-path` to draw a path as lines, or pass a shape to `extrude`/`revolve` to create a mesh.
+
+### register / r
+
+`(register name expr)` or `(r name expr)` detects the type and routes to the correct registry. Optional `:hidden` flag keeps renderable objects invisible on creation:
+
+```clojure
+(r my-box (box 40 20 10))              ; mesh — registered and shown
+(r my-box (box 40 20 10) :hidden)      ; mesh — registered but hidden
+(r C (circle 10))                       ; shape — registered (no visibility)
+(r skeleton (path (f 30) (mark :P1)))   ; path — registered (no visibility)
+```
 
 ## Manifold Integration
 
@@ -431,9 +460,88 @@ The `extrude-closed-from-path` function produces single manifold meshes by:
 - Building faces that connect consecutive rings
 - Using `(mod (inc ring-idx) n-rings)` for closed topology
 
-## Anchors and Navigation
+## Paths, Marks, and Navigation
 
-The anchor system provides named reference points for navigation in complex models.
+### Paths as Abstract Data
+
+Paths are abstract, relocatable sequences of turtle commands. They have **no position** and **no visibility** — they are pure data describing a trajectory. Paths are created with the `path` macro or `quick-path` function and stored in the registry like shapes.
+
+```clojure
+;; Path data structure
+{:type :path
+ :commands [{:cmd :f :args [30]}
+            {:cmd :th :args [45]}
+            {:cmd :mark :args [:shoulder]}   ;; named point along the path
+            {:cmd :f :args [20]}
+            {:cmd :mark :args [:elbow]}]}
+```
+
+**Creating paths:**
+```clojure
+;; With the path macro (records turtle commands)
+(r skeleton (path (f 30) (th 45) (mark :shoulder) (f 20) (mark :elbow)))
+
+;; With quick-path (compact numeric notation)
+(r skeleton (path (qp 30 45 20)))
+
+;; follow inserts an existing path's commands into a recording
+(r full (path (f 10) (follow other-path) (f 10)))
+```
+
+**Key principle:** `mark` exists **only** inside `path` recording. It records a `{:cmd :mark}` in the command list — nothing else. Marks are resolved to concrete positions only when the path is "pinned" via `with-path`.
+
+### Marks in Paths
+
+Marks are named reference points embedded in a path's command sequence. They record the pose (position, heading, up) that the turtle would have at that point during path execution. Since paths are abstract and relocatable, marks have no absolute position — they are resolved relative to a starting pose.
+
+### with-path: Pinning a Path
+
+`with-path` is the mechanism that resolves abstract marks into concrete anchor positions. It "pins" a path at the turtle's current pose:
+
+```clojure
+(with-path skeleton
+  ;; Marks are now resolved as anchors relative to current turtle pose.
+  ;; goto, bezier-to-anchor, look-at, path-to work with :keyword as before.
+  (goto :shoulder)
+  (bezier-to-anchor :elbow)
+  (extrude (circle 3) (path-to :elbow)))
+```
+
+**Under the hood:**
+1. Saves the turtle's current anchors
+2. Executes the path virtually (no geometry) from the current pose
+3. Collects poses at each `:mark` command and stores them as anchors
+4. Executes the body — `goto`, `bezier-to-anchor`, `look-at`, `path-to` find the resolved anchors
+5. Restores previous anchors
+
+### follow-path: Executing a Path
+
+`follow-path` replays a path's commands on the current turtle, generating geometry (lines) as it goes. This is how paths become visible:
+
+```clojure
+(follow-path skeleton)  ; Draws the path as lines from current position
+```
+
+The turtle ends up at the path's final position/heading. Any lines generated are visible in the viewport (via `scene-lines`).
+
+### Navigation Commands
+
+These commands work with anchors resolved by `with-path`:
+
+```clojure
+(goto :name)      ; Move to anchor position AND adopt its heading/up
+                  ; Draws a line if pen-mode is :on
+
+(look-at :name)   ; Rotate heading to point toward anchor position
+                  ; Adjusts up to maintain orthogonality
+                  ; Does not move
+
+(path-to :name)   ; Orient toward anchor (implicit look-at), then return
+                  ; a path with single (f dist) to reach it
+                  ; Useful for: (extrude (circle 5) (path-to :target))
+
+(bezier-to-anchor :name)  ; Draw bezier curve to anchor position
+```
 
 ### Turtle State Stack
 
@@ -459,57 +567,25 @@ The turtle maintains a **stack of saved poses**. This enables:
 
 **Important**: The stack saves only the pose, not meshes or geometry. Any meshes created between push and pop are kept.
 
-### Anchor System
-
-Anchors are named poses stored in the turtle state:
-
-```clojure
-;; Anchors in turtle state
-{:anchors {:start {:position [0 0 0]
-                   :heading [1 0 0]
-                   :up [0 0 1]}
-           :corner {:position [100 0 0]
-                    :heading [0 1 0]
-                    :up [0 0 1]}}}
-
-;; Commands
-(mark :name)      ; Save current position + heading + up with name
-                  ; Overwrites if name already exists
-```
-
-### Navigation Commands
-
-```clojure
-(goto :name)      ; Move to anchor position AND adopt its heading/up
-                  ; Draws a line if pen-mode is :on
-
-(look-at :name)   ; Rotate heading to point toward anchor position
-                  ; Adjusts up to maintain orthogonality
-                  ; Does not move
-
-(path-to :name)   ; Orient toward anchor (implicit look-at), then return
-                  ; a path with single (f dist) to reach it
-                  ; Useful for: (extrude (circle 5) (path-to :target))
-```
-
 ### Design Decisions
 
-1. **Stack saves pose only**: position, heading, up, pen-mode. Meshes created during push/pop persist.
+1. **Paths are abstract**: No position, no visibility. Pure command sequences. Registered like shapes.
 
-2. **goto is oriented**: Adopts the saved heading/up. No separate `goto-oriented` needed.
+2. **Marks live in paths only**: `mark` is a path-recording command, not a turtle state command. No global anchor creation outside paths.
 
-3. **mark overwrites**: Calling `(mark :foo)` twice keeps only the latest value.
+3. **with-path resolves marks**: The only way to get concrete anchor positions from path marks. Scoped — anchors exist only for the duration of the block.
 
-4. **goto draws**: Respects pen-mode like any movement command. If pen is on, draws a line.
+4. **follow-path generates geometry**: The way to "draw" a path. Executes commands on the live turtle, producing visible lines.
 
-5. **look-at adjusts up**: When rotating heading toward a point, up is recalculated to stay orthogonal while preserving the original up direction as much as possible.
+5. **Stack saves pose only**: position, heading, up, pen-mode. Meshes created during push/pop persist.
 
-6. **path-to orients and returns path**: Implicitly does a `look-at` to orient the turtle toward the anchor, then returns a path with `(f dist)`. This ensures extrusions go in the correct direction:
-   ```clojure
-   (mark :target)
-   ;; ... do other things ...
-   (extrude (circle 5) (path-to :target))  ; Orients toward :target, then extrudes
-   ```
+6. **goto is oriented**: Adopts the saved heading/up.
+
+7. **goto draws**: Respects pen-mode like any movement command.
+
+8. **look-at adjusts up**: Recalculated to stay orthogonal while preserving the original up direction as much as possible.
+
+9. **path-to orients and returns path**: Implicitly does a `look-at` to orient toward the anchor, then returns a path with `(f dist)`.
 
 ---
 

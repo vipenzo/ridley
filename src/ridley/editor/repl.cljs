@@ -163,8 +163,23 @@
   (swap! turtle-atom turtle/clear-stack))
 
 ;; Anchors and navigation
-(defn ^:export implicit-mark [name]
-  (swap! turtle-atom turtle/mark name))
+;; mark removed — marks now exist only inside path recordings.
+
+(defn ^:export implicit-save-anchors
+  "Save current turtle anchors. Returns the saved anchors map."
+  []
+  (get @turtle-atom :anchors {}))
+
+(defn ^:export implicit-restore-anchors
+  "Restore turtle anchors to a previously saved state."
+  [saved]
+  (swap! turtle-atom assoc :anchors saved))
+
+(defn ^:export implicit-resolve-and-merge-marks
+  "Resolve marks from a path at current turtle pose and merge into anchors."
+  [path]
+  (let [marks (turtle/resolve-marks @turtle-atom path)]
+    (swap! turtle-atom update :anchors merge marks)))
 
 (defn ^:export implicit-goto [name]
   (swap! turtle-atom turtle/goto name))
@@ -873,12 +888,15 @@
    'push-state   implicit-push-state
    'pop-state    implicit-pop-state
    'clear-stack  implicit-clear-stack
-   ;; Anchors and navigation
-   'mark         implicit-mark
+   ;; Anchors and navigation (mark removed — use inside path macro only)
    'goto         implicit-goto
    'get-anchor   get-anchor
    'look-at      implicit-look-at
    'path-to      implicit-path-to
+   ;; with-path helpers (used by with-path macro)
+   'save-anchors*           implicit-save-anchors
+   'restore-anchors*        implicit-restore-anchors
+   'resolve-and-merge-marks* implicit-resolve-and-merge-marks
    ;; Attachment commands (functional versions defined in macro-defs)
    ;; NOTE: Legacy implicit-attach and implicit-attach-face removed
    ;; Use the functional macro: (attach-face mesh :top (f 20))
@@ -1032,10 +1050,9 @@
    'show-lines          (fn [] (viewport/set-lines-visible true))
    'hide-lines          (fn [] (viewport/set-lines-visible false))
    'lines-visible?      viewport/lines-visible?
-   ;; Path registry
+   ;; Path registry (abstract, no visibility)
    'register-path!      registry/register-path!
-   'show-path!          registry/show-path!
-   'hide-path!          registry/hide-path!
+   'get-path            registry/get-path
    'path-names          registry/path-names
    ;; Shape registry
    'register-shape!     registry/register-shape!
@@ -1108,6 +1125,16 @@
      (swap! path-recorder rec-tr angle))
    (defn- rec-set-heading* [heading up]
      (swap! path-recorder rec-set-heading heading up))
+
+   ;; Recording version of mark - records a named point in the path
+   (defn- rec-mark* [name]
+     (swap! path-recorder update :recording conj {:cmd :mark :args [name]}))
+
+   ;; Recording version of follow - splices another path's commands into current recording
+   (defn- rec-follow* [path]
+     (when (and (map? path) (= :path (:type path)))
+       (doseq [cmd (:commands path)]
+         (swap! path-recorder update :recording conj cmd))))
 
    ;; Recording version of resolution - sets resolution in path-recorder
    (defn- rec-resolution* [mode value]
@@ -1563,7 +1590,9 @@
               ~'bezier-to rec-bezier-to*
               ~'bezier-to-anchor rec-bezier-to-anchor*
               ~'bezier-as rec-bezier-as*
-              ~'resolution rec-resolution*]
+              ~'resolution rec-resolution*
+              ~'mark rec-mark*
+              ~'follow rec-follow*]
           ~@body)
         (let [result# (path-from-recorder @path-recorder)]
           (reset! path-recorder saved#)
@@ -1974,13 +2003,9 @@
               (doseq [[_# mesh#] value#]
                 (add-mesh! mesh#))
 
-              ;; Path (has :type :path)
+              ;; Path (has :type :path) — abstract, no visibility
               (and (map? value#) (= :path (:type value#)))
-              (do
-                (register-path! name-kw# value#)
-                (if hidden?#
-                  (hide-path! name-kw#)
-                  (show-path! name-kw#))))
+              (register-path! name-kw# value#))
             ;; Refresh viewport and return value
             (refresh-viewport! false)
             value#))))
@@ -1988,6 +2013,19 @@
    ;; r: short alias for register
    (defmacro r [name expr & opts]
      `(register ~name ~expr ~@opts))
+
+   ;; with-path: pin a path at current turtle pose, resolve marks as anchors
+   ;; (with-path skeleton (goto :shoulder) (bezier-to-anchor :elbow))
+   ;; Supports nesting — inner with-path shadows outer anchors, restores on exit
+   (defmacro with-path [path-expr & body]
+     `(let [saved-anchors# (save-anchors*)]
+        (resolve-and-merge-marks* ~path-expr)
+        (let [result# (do ~@body)]
+          (restore-anchors* saved-anchors#)
+          result#)))
+
+   ;; qp: short alias for quick-path
+   (def qp quick-path)
 
    ;; Convenience functions that work with names, mesh references, or collections
    ;; (show :torus)       - by registered name (keyword)
@@ -1998,19 +2036,15 @@
    (defn show
      ([name-or-coll]
       (cond
-        ;; Name (keyword/string/symbol) - try mesh, path, and panel
+        ;; Name (keyword/string/symbol) - try mesh and panel
         (or (keyword? name-or-coll) (string? name-or-coll) (symbol? name-or-coll))
         (let [kw (if (keyword? name-or-coll) name-or-coll (keyword name-or-coll))]
           (show-mesh! kw)
-          (show-path! kw)
           (show-panel! kw))
         ;; Panel reference
         (panel? name-or-coll)
         (when-let [n (:name name-or-coll)]
           (show-panel! n))
-        ;; Path reference
-        (and (map? name-or-coll) (= :path (:type name-or-coll)))
-        nil ;; paths don't have ref-based show
         ;; Vector of meshes - show all
         (mesh-vector? name-or-coll)
         (doseq [m name-or-coll] (show-mesh-ref! m))
@@ -2028,19 +2062,15 @@
    (defn hide
      ([name-or-coll]
       (cond
-        ;; Name (keyword/string/symbol) - try mesh, path, and panel
+        ;; Name (keyword/string/symbol) - try mesh and panel
         (or (keyword? name-or-coll) (string? name-or-coll) (symbol? name-or-coll))
         (let [kw (if (keyword? name-or-coll) name-or-coll (keyword name-or-coll))]
           (hide-mesh! kw)
-          (hide-path! kw)
           (hide-panel! kw))
         ;; Panel reference
         (panel? name-or-coll)
         (when-let [n (:name name-or-coll)]
           (hide-panel! n))
-        ;; Path reference
-        (and (map? name-or-coll) (= :path (:type name-or-coll)))
-        nil ;; paths don't have ref-based hide
         ;; Vector of meshes - hide all
         (mesh-vector? name-or-coll)
         (doseq [m name-or-coll] (hide-mesh-ref! m))

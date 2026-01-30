@@ -151,11 +151,11 @@
        :see-also [:the-turtle :arcs-beziers]
        :examples
        [{:id :mark-goto-basic
-         :code "(register base (box 20 20 5))\n(mark :top)\n(f 40) (th 90) (f 30)\n(register beacon (cyl 5 30))\n(goto :top)\n(register tower (cyl 8 60))"}
+         :code ";; Define a layout path with named marks\n(def layout (path (f 50) (mark :top) (th 90) (f 30) (mark :side)))\n\n;; with-path resolves marks as anchors\n(register base (box 20 20 5))\n(with-path layout\n  (goto :top)\n  (register tower (cyl 8 60))\n  (goto :side)\n  (register beacon (cyl 5 30)))"}
         {:id :push-pop-branch
          :code "(register trunk (extrude (circle 5) (f 50)))\n(push-state)\n  (th 45) (register b1 (extrude (circle 3) (f 30)))\n(pop-state)\n(push-state)\n  (th -45) (register b2 (extrude (circle 3) (f 30)))\n(pop-state)\n(register top (extrude (circle 3) (f 20)))"}
-        {:id :multiple-anchors
-         :code "(register row\n  (mesh-union\n    (for [i (range 5)]\n      (do\n        (mark (keyword (str \"pos\" i)))\n        (f 15)\n        (sphere 5)))))\n(goto :pos2)\n(register selected (cyl 2 30))"}]}
+        {:id :path-follow
+         :code ";; follow splices another path into the current recording\n(def segment (path (f 20) (th 90)))\n(def full (path (follow segment) (follow segment) (follow segment) (follow segment)))\n\n(register square-tube\n  (extrude-closed (circle 5) full))"}]}
       {:id :arcs-beziers
        :see-also [:mark-goto-pushpop :resolution-settings]
        :examples
@@ -164,7 +164,7 @@
         {:id :arc-v-basic
          :code "(register arc-loop\n  (extrude (circle 5)\n    (f 20) (arc-v 25 180) (f 20)))"}
         {:id :bezier-auto
-         :code "(mark :start)\n(f 60) (th 90) (f 40)\n(mark :end)\n(goto :start)\n(register curve\n  (extrude (circle 4)\n    (bezier-to-anchor :end)))"}
+         :code ";; Define a path with marks for start and end\n(def layout (path (mark :start) (f 60) (th 90) (f 40) (mark :end)))\n\n(with-path layout\n  (goto :start)\n  (register curve\n    (extrude (circle 4)\n      (bezier-to-anchor :end))))"}
         {:id :bezier-control
          :code "(register s-curve\n  (extrude (circle 4)\n    (bezier-to [0 60 0] [0 20 30] [0 40 -30])))"}
         {:id :bezier-as
@@ -861,14 +861,18 @@ Add `println` statements between operations to see the sequence of events. This 
                       :description "Add println between operations to trace execution. The output appears in the REPL history."}}}
 
      :mark-goto-pushpop
-     {:title "Marks and State Stack"
+     {:title "Marks, Paths, and State Stack"
       :content "When creating complex geometry, you often need to return to previous positions or branch out from a point. Ridley provides two mechanisms:
 
-**Named Anchors (mark/goto):**
-- `(mark :name)` — Save current position, heading, and up vector with a name
+**Marks and with-path:**
+- `(mark :name)` — Inside a `path`, save the current pose with a name
+- `(with-path p ...)` — Resolve marks from path `p` as anchors, then execute body
 - `(goto :name)` — Teleport to a named anchor (draws line if pen is on)
 
-Anchors are persistent and named — use them when you need to return to specific points multiple times or navigate between distant locations.
+Marks are embedded in paths and resolved with `with-path`. This makes paths reusable — the same path can be pinned at different turtle positions.
+
+**Path composition with follow:**
+- `(follow other-path)` — Inside a `path`, splice another path's commands
 
 **State Stack (push-state/pop-state):**
 - `(push-state)` — Push current turtle state onto an anonymous stack
@@ -877,15 +881,15 @@ Anchors are persistent and named — use them when you need to return to specifi
 The stack is perfect for branching: push-state before a branch, create geometry, pop-state to return, then branch again. It's like undo for turtle position.
 
 **Key difference:**
-- `mark`/`goto` = named bookmarks for navigation
+- `mark`/`with-path`/`goto` = named layout points for navigation
 - `push-state`/`pop-state` = anonymous stack for branching patterns"
       :examples
-      {:mark-goto-basic {:caption "Mark and goto"
-                         :description "Mark a position, move away to create something, then goto returns you to the marked spot. The tower is built exactly where we marked :top."}
+      {:mark-goto-basic {:caption "Marks and with-path"
+                         :description "Define a path with named marks, then use `with-path` to resolve them as anchors. `goto` navigates to the marked positions. Marks are relative to the turtle's pose when `with-path` is called."}
        :push-pop-branch {:caption "Branching with push-state/pop-state"
                          :description "Classic tree pattern: push-state before each branch, pop-state to return to the trunk. Both branches originate from the same point."}
-       :multiple-anchors {:caption "Multiple anchors"
-                          :description "Create multiple named anchors in a loop, then navigate to any of them later. Note: `(keyword (str \"pos\" i))` builds keywords dynamically (:pos0, :pos1, etc.)."}}}
+       :path-follow {:caption "Path composition with follow"
+                     :description "`follow` splices another path's commands into the current recording. Here we compose a square from a single segment repeated four times."}}}
 
      :arcs-beziers
      {:title "Arcs and Bezier Curves"
@@ -928,7 +932,7 @@ Positive angle = pitch up, negative = pitch down.
        :arc-v-basic {:caption "Vertical arc (loop)"
                      :description "`arc-v 25 180` creates a half-loop in the vertical plane, like going over a hill."}
        :bezier-auto {:caption "Auto bezier to anchor"
-                     :description "Mark start, move away, mark end, then goto start and extrude with `bezier-to-anchor`. The curve respects both the starting direction and the anchor's saved direction."}
+                     :description "Define marks in a path, resolve them with `with-path`, then extrude with `bezier-to-anchor`. The curve respects both the starting direction and the anchor's saved direction."}
        :bezier-control {:caption "Bezier with control points"
                         :description "Explicit control points give precise control. Here `[0 20 30]` and `[0 40 -30]` create an S-curve."}
        :bezier-as {:caption "Smooth a path with bezier-as"
@@ -1627,14 +1631,18 @@ Aggiungi istruzioni `println` tra le operazioni per vedere la sequenza degli eve
                       :description "Aggiungi println tra le operazioni per tracciare l'esecuzione. L'output appare nella cronologia della REPL."}}}
 
      :mark-goto-pushpop
-     {:title "Marcatori e Stack di Stato"
+     {:title "Marcatori, Path e Stack di Stato"
       :content "Quando crei geometrie complesse, spesso devi tornare a posizioni precedenti o diramarti da un punto. Ridley fornisce due meccanismi:
 
-**Ancore con Nome (mark/goto):**
-- `(mark :nome)` — Salva posizione, direzione e vettore up correnti con un nome
+**Marcatori e with-path:**
+- `(mark :nome)` — Dentro un `path`, salva la posizione corrente con un nome
+- `(with-path p ...)` — Risolvi i mark del path `p` come ancore, poi esegui il body
 - `(goto :nome)` — Teletrasportati a un'ancora nominata (disegna una linea se la penna è attiva)
 
-Le ancore sono persistenti e nominate — usale quando devi tornare a punti specifici più volte o navigare tra posizioni distanti.
+I mark sono definiti nei path e risolti con `with-path`. Questo rende i path riutilizzabili — lo stesso path può essere posizionato in punti diversi.
+
+**Composizione di path con follow:**
+- `(follow altro-path)` — Dentro un `path`, inserisci i comandi di un altro path
 
 **Stack di Stato (push-state/pop-state):**
 - `(push-state)` — Metti lo stato corrente della turtle su uno stack anonimo
@@ -1643,15 +1651,15 @@ Le ancore sono persistenti e nominate — usale quando devi tornare a punti spec
 Lo stack è perfetto per le diramazioni: push-state prima di un ramo, crea la geometria, pop-state per tornare, poi dirama di nuovo. È come un annulla per la posizione della turtle.
 
 **Differenza chiave:**
-- `mark`/`goto` = segnalibri nominati per la navigazione
+- `mark`/`with-path`/`goto` = punti di layout nominati per la navigazione
 - `push-state`/`pop-state` = stack anonimo per pattern di diramazione"
       :examples
-      {:mark-goto-basic {:caption "Mark e goto"
-                         :description "Marca una posizione, spostati per creare qualcosa, poi goto ti riporta al punto marcato. La torre è costruita esattamente dove abbiamo marcato :top."}
+      {:mark-goto-basic {:caption "Mark e with-path"
+                         :description "Definisci un path con mark nominati, poi usa `with-path` per risolverli come ancore. `goto` naviga alle posizioni marcate. I mark sono relativi alla posizione della turtle quando si chiama `with-path`."}
        :push-pop-branch {:caption "Diramazioni con push-state/pop-state"
                          :description "Pattern classico ad albero: push-state prima di ogni ramo, pop-state per tornare al tronco. Entrambi i rami originano dallo stesso punto."}
-       :multiple-anchors {:caption "Ancore multiple"
-                          :description "Crea più ancore nominate in un ciclo, poi naviga a qualsiasi di esse dopo. Nota: `(keyword (str \"pos\" i))` costruisce keyword dinamicamente (:pos0, :pos1, ecc.)."}}}
+       :path-follow {:caption "Composizione di path con follow"
+                     :description "`follow` inserisce i comandi di un altro path nella registrazione corrente. Qui componiamo un quadrato da un singolo segmento ripetuto quattro volte."}}}
 
      :arcs-beziers
      {:title "Archi e Curve di Bezier"
@@ -1694,7 +1702,7 @@ Angolo positivo = beccheggia su, negativo = beccheggia giù.
        :arc-v-basic {:caption "Arco verticale (loop)"
                      :description "`arc-v 25 180` crea un mezzo-loop nel piano verticale, come passare sopra una collina."}
        :bezier-auto {:caption "Bezier automatica verso ancora"
-                     :description "Marca start, spostati, marca end, poi vai a start ed estrudi con `bezier-to-anchor`. La curva rispetta sia la direzione di partenza che la direzione salvata nell'ancora."}
+                     :description "Definisci i mark in un path, risolvili con `with-path`, poi estrudi con `bezier-to-anchor`. La curva rispetta sia la direzione di partenza che la direzione salvata nell'ancora."}
        :bezier-control {:caption "Bezier con punti di controllo"
                         :description "Punti di controllo espliciti danno controllo preciso. Qui `[0 20 30]` e `[0 40 -30]` creano una curva a S."}
        :bezier-as {:caption "Smussare un path con bezier-as"

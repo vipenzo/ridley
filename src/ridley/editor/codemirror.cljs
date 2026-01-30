@@ -1,13 +1,15 @@
 (ns ridley.editor.codemirror
   "CodeMirror 6 integration for Clojure editing with paredit support."
-  (:require ["@codemirror/view" :as view :refer [EditorView keymap
+  (:require [clojure.string :as str]
+            ["@codemirror/view" :as view :refer [EditorView ViewPlugin Decoration
+                                                  keymap
                                                   highlightActiveLine
                                                   highlightActiveLineGutter
                                                   drawSelection
                                                   rectangularSelection
                                                   crosshairCursor
                                                   highlightSpecialChars]]
-            ["@codemirror/state" :refer [EditorState]]
+            ["@codemirror/state" :refer [EditorState StateField StateEffect]]
             ["@codemirror/commands" :as commands :refer [history historyKeymap
                                                          defaultKeymap
                                                          indentWithTab]]
@@ -22,6 +24,57 @@
             ["@nextjournal/clojure-mode" :as clojure-mode]))
 
 (defonce ^:private editor-instance (atom nil))
+
+;; ============================================================
+;; AI Focus Indicator — highlights current form for AI context
+;; ============================================================
+
+;; State effect to update AI focus range
+(def set-ai-focus-effect (.define StateEffect))
+
+;; State field to track AI focus range {from, to} or nil
+(def ai-focus-field
+  (.define StateField
+    #js {:create (fn [] nil)
+         :update (fn [value tr]
+                   (let [effects (.-effects tr)]
+                     ;; Check for our effect first
+                     (loop [i 0]
+                       (if (< i (.-length effects))
+                         (let [effect (aget effects i)]
+                           (if (.is effect set-ai-focus-effect)
+                             (.-value effect)
+                             (recur (inc i))))
+                         ;; No effect found — map positions through doc changes
+                         (when value
+                           (let [from (.-from value)
+                                 to (.-to value)]
+                             (when (and from to)
+                               #js {:from (.mapPos (.-changes tr) from)
+                                    :to (.mapPos (.-changes tr) to)})))))))}))
+
+;; Mark decoration for AI focus
+(def ^:private ai-focus-mark
+  (.mark Decoration #js {:class "cm-ai-focus"}))
+
+;; Plugin that provides decorations from the state field
+(def ai-focus-plugin
+  (.fromClass ViewPlugin
+    (fn [^js view]
+      #js {:decorations (let [range (.field (.-state view) ai-focus-field)]
+                          (if (and range (.-from range) (.-to range))
+                            (.set Decoration
+                              #js [(.range ai-focus-mark (.-from range) (.-to range))])
+                            (.-none Decoration)))
+           :update (fn [^js update]
+                     (this-as this
+                       (set! (.-decorations this)
+                             (let [range (.field (.-state (.-view update)) ai-focus-field)]
+                               (if (and range (.-from range) (.-to range))
+                                 (.set Decoration
+                                   #js [(.range ai-focus-mark (.-from range) (.-to range))])
+                                 (.-none Decoration))))))})
+    #js {:decorations (fn [v] (.-decorations v))}))
 
 (defn- create-highlight-style
   "Create a bright syntax highlighting style for Clojure."
@@ -95,10 +148,28 @@
          ".cm-selectionMatch" #js {:backgroundColor "#3a3d41"}
          ".cm-cursor" #js {:borderLeftColor "#fff"
                            :borderLeftWidth "2px"}
-         ;; Selection
+         ;; Selection background colors
          "&.cm-focused .cm-selectionBackground" #js {:backgroundColor "#264f78"}
-         ".cm-selectionBackground" #js {:backgroundColor "#3a3d41"}}
+         ".cm-selectionBackground" #js {:backgroundColor "#3a3d41"}
+         ;; AI focus indicator — orange highlight around current form
+         ".cm-ai-focus" #js {:backgroundColor "rgba(255, 152, 0, 0.12)"
+                             :borderBottom "2px solid #ff9800"
+                             :borderRadius "2px"}}
     #js {:dark true}))
+
+(defn- create-selection-layer-fix
+  "ViewPlugin that applies inline styles to .cm-selectionLayer,
+   bypassing CSS specificity issues with CodeMirror's theme system."
+  []
+  (.define ViewPlugin
+    (fn [^js view]
+      (let [apply-fix (fn []
+                        (when-let [layer (.querySelector (.-dom view) ".cm-selectionLayer")]
+                          (let [s (.-style layer)]
+                            (set! (.-zIndex s) "2")
+                            (set! (.-mixBlendMode s) "screen"))))]
+        (apply-fix)
+        #js {:update (fn [_update] (apply-fix))}))))
 
 (defn- create-run-keymap
   "Create keymap for Cmd+Enter to run code."
@@ -117,14 +188,23 @@
       (when (and on-change (.-docChanged update))
         (on-change)))))
 
+(defn- create-selection-listener
+  "Create update listener that calls on-selection-change when selection changes."
+  [on-selection-change]
+  (.of (.-updateListener EditorView)
+    (fn [^js update]
+      (when (and on-selection-change (.-selectionSet update))
+        (on-selection-change)))))
+
 (defn create-editor
   "Create a CodeMirror editor instance.
    Options:
    - parent: DOM element to mount editor
    - initial-value: initial content string
    - on-change: callback when content changes
-   - on-run: callback for Cmd+Enter"
-  [{:keys [parent initial-value on-change on-run]}]
+   - on-run: callback for Cmd+Enter
+   - on-selection-change: callback when selection/cursor changes"
+  [{:keys [parent initial-value on-change on-run on-selection-change]}]
   (let [extensions (cond-> [;; Basic editor features
                             (highlightSpecialChars)
                             (history)
@@ -143,8 +223,13 @@
                             (highlightSelectionMatches)
                             ;; Clojure language support (syntax + paredit)
                             clojure-mode/default_extensions
+                            ;; AI focus indicator
+                            ai-focus-field
+                            ai-focus-plugin
                             ;; Theme
                             (create-theme)
+                            ;; Selection layer inline style fix
+                            (create-selection-layer-fix)
                             ;; Keymaps (run-keymap first for priority)
                             (create-run-keymap on-run)
                             (.of keymap clojure-mode/paredit_keymap)
@@ -155,7 +240,9 @@
                             (.of keymap foldKeymap)
                             (.of keymap #js [indentWithTab])]
                      ;; Add change listener if provided
-                     on-change (conj (create-change-listener on-change)))
+                     on-change (conj (create-change-listener on-change))
+                     ;; Add selection change listener if provided
+                     on-selection-change (conj (create-selection-listener on-selection-change)))
         ;; Flatten nested arrays and filter nils
         flat-extensions (-> extensions
                             flatten
@@ -210,3 +297,263 @@
   "Get the current editor instance."
   []
   @editor-instance)
+
+(defn get-cursor-position
+  "Get current cursor position as {:line :col :pos}."
+  ([] (get-cursor-position @editor-instance))
+  ([view]
+   (when view
+     (let [state (.-state view)
+           pos (.. state -selection -main -head)
+           line (.lineAt (.-doc state) pos)]
+       {:line (.-number line)
+        :col (- pos (.-from line))
+        :pos pos}))))
+
+(defn set-cursor-position
+  "Set cursor position. Accepts {:pos n} or {:line l :col c}."
+  ([position] (set-cursor-position @editor-instance position))
+  ([view {:keys [pos line col]}]
+   (when view
+     (let [actual-pos (if pos
+                        pos
+                        (let [state (.-state view)
+                              line-obj (.line (.-doc state) line)]
+                          (+ (.-from line-obj) col)))]
+       (.dispatch view
+         #js {:selection #js {:anchor actual-pos :head actual-pos}})))))
+
+(defn insert-at-cursor
+  "Insert text at current cursor position."
+  ([text] (insert-at-cursor @editor-instance text))
+  ([view text]
+   (when view
+     (let [pos (.. view -state -selection -main -head)]
+       (.dispatch view
+         #js {:changes #js {:from pos :to pos :insert text}
+              :selection #js {:anchor (+ pos (count text))}})))))
+
+(defn insert-at-end
+  "Insert text at end of document."
+  ([text] (insert-at-end @editor-instance text))
+  ([view text]
+   (when view
+     (let [end (.. view -state -doc -length)]
+       (.dispatch view
+         #js {:changes #js {:from end :to end :insert text}
+              :selection #js {:anchor (+ end (count text))}})))))
+
+(defn get-selection
+  "Get current selection as {:from :to :text}."
+  ([] (get-selection @editor-instance))
+  ([view]
+   (when view
+     (let [sel (.. view -state -selection -main)
+           from (.-from sel)
+           to (.-to sel)
+           text (.sliceDoc (.-state view) from to)]
+       {:from from :to to :text text}))))
+
+(defn replace-range
+  "Replace text in range [from, to) with new text."
+  ([from to text] (replace-range @editor-instance from to text))
+  ([view from to text]
+   (when view
+     (.dispatch view
+       #js {:changes #js {:from from :to to :insert text}
+            :selection #js {:anchor (+ from (count text))}}))))
+
+(defn delete-range
+  "Delete text in range [from, to)."
+  ([from to] (delete-range @editor-instance from to))
+  ([view from to]
+   (replace-range view from to "")))
+
+(defn get-word-at-cursor
+  "Get word under cursor as {:from :to :text}."
+  ([] (get-word-at-cursor @editor-instance))
+  ([view]
+   (when view
+     (let [state (.-state view)
+           pos (.. state -selection -main -head)
+           doc (.-doc state)
+           line (.lineAt doc pos)
+           line-text (.-text line)
+           line-start (.-from line)
+           col (- pos line-start)
+           ;; Find word boundaries (simple: alphanumeric + hyphen)
+           before (subs line-text 0 col)
+           after (subs line-text col)
+           word-start (- col (count (re-find #"[\w\-]*$" before)))
+           word-end (+ col (count (re-find #"^[\w\-]*" after)))
+           from (+ line-start word-start)
+           to (+ line-start word-end)
+           text (.sliceDoc state from to)]
+       {:from from :to to :text text}))))
+
+(defn get-form-at-cursor
+  "Get the S-expression (form) containing the cursor.
+   Returns {:from :to :text} or nil if not in a form."
+  ([] (get-form-at-cursor @editor-instance))
+  ([view]
+   (when view
+     (let [state (.-state view)
+           pos (.. state -selection -main -head)
+           doc-text (.toString (.-doc state))
+           find-form (fn []
+                       (loop [i (dec pos)
+                              depth 0]
+                         (when (>= i 0)
+                           (let [ch (.charAt doc-text i)]
+                             (cond
+                               (= ch \)) (recur (dec i) (inc depth))
+                               (= ch \() (if (zero? depth)
+                                           ;; Found start, now find end
+                                           (loop [j pos
+                                                  d 1]
+                                             (when (< j (count doc-text))
+                                               (let [c (.charAt doc-text j)]
+                                                 (cond
+                                                   (= c \() (recur (inc j) (inc d))
+                                                   (= c \)) (if (= d 1)
+                                                              {:from i :to (inc j)
+                                                               :text (subs doc-text i (inc j))}
+                                                              (recur (inc j) (dec d)))
+                                                   :else (recur (inc j) d)))))
+                                           (recur (dec i) (dec depth)))
+                               :else (recur (dec i) depth))))))]
+       (find-form)))))
+
+(defn get-previous-form
+  "Get the form immediately before the cursor."
+  ([] (get-previous-form @editor-instance))
+  ([view]
+   (when view
+     (let [pos (.. view -state -selection -main -head)]
+       ;; Cerca da pos-1 indietro
+       (loop [p (dec pos)]
+         (when (>= p 0)
+           (let [ch (.sliceDoc (.-state view) p (inc p))]
+             (if (= ch ")")
+               ;; Trovata chiusura, cerca la form che finisce qui
+               (let [end (inc p)]
+                 ;; Vai indietro a trovare l'apertura
+                 (loop [i (dec p) depth 1]
+                   (when (>= i 0)
+                     (let [c (.sliceDoc (.-state view) i (inc i))]
+                       (cond
+                         (= c ")") (recur (dec i) (inc depth))
+                         (= c "(") (if (= depth 1)
+                                     {:from i :to end
+                                      :text (.sliceDoc (.-state view) i end)}
+                                     (recur (dec i) (dec depth)))
+                         :else (recur (dec i) depth))))))
+               (recur (dec p))))))))))
+
+(defn select-range
+  "Select text from position `from` to position `to`."
+  ([from to] (select-range @editor-instance from to))
+  ([view from to]
+   (when view
+     (.dispatch view
+       #js {:selection #js {:anchor from :head to}})
+     ;; Return the selection info
+     {:from from :to to :text (.sliceDoc (.-state view) from to)})))
+
+(defn move-cursor
+  "Move cursor by direction. Returns new position.
+   direction: :left :right :up :down :start :end"
+  ([direction] (move-cursor @editor-instance direction))
+  ([view direction]
+   (when view
+     (case direction
+       :left (do (.dispatch view #js {:selection #js {:anchor (max 0 (dec (.. view -state -selection -main -head)))}})
+                 (get-cursor-position view))
+       :right (let [max-pos (.. view -state -doc -length)]
+                (.dispatch view #js {:selection #js {:anchor (min max-pos (inc (.. view -state -selection -main -head)))}})
+                (get-cursor-position view))
+       :up (do (commands/cursorLineUp view)
+               (get-cursor-position view))
+       :down (do (commands/cursorLineDown view)
+                 (get-cursor-position view))
+       :start (do (.dispatch view #js {:selection #js {:anchor 0}})
+                  (get-cursor-position view))
+       :end (do (.dispatch view #js {:selection #js {:anchor (.. view -state -doc -length)}})
+                (get-cursor-position view))
+       nil))))
+
+;; ============================================================
+;; AI Focus — public API
+;; ============================================================
+
+(defn set-ai-focus!
+  "Set the AI focus highlight range. Pass nil to clear."
+  ([range] (set-ai-focus! @editor-instance range))
+  ([view range]
+   (when view
+     (let [effect (if range
+                    (.of set-ai-focus-effect #js {:from (:from range) :to (:to range)})
+                    (.of set-ai-focus-effect nil))]
+       (.dispatch view #js {:effects #js [effect]})))))
+
+(defn update-ai-focus!
+  "Update AI focus to highlight the form at cursor."
+  ([] (update-ai-focus! @editor-instance))
+  ([view]
+   (when view
+     (let [form (get-form-at-cursor view)]
+       (set-ai-focus! view form)))))
+
+(defn clear-ai-focus!
+  "Clear the AI focus highlight."
+  ([] (clear-ai-focus! @editor-instance))
+  ([view]
+   (set-ai-focus! view nil)))
+
+(defn parse-form-elements
+  "Parse a form string into its elements, respecting nested parentheses.
+   Returns vector of element strings.
+   Example: '(register cubo (box 30))' → ['register' 'cubo' '(box 30)']"
+  [form-text]
+  (when (and form-text
+             (str/starts-with? form-text "(")
+             (str/ends-with? form-text ")"))
+    (let [inner (subs form-text 1 (dec (count form-text)))
+          len (count inner)]
+      (loop [i 0
+             depth 0
+             current ""
+             elements []]
+        (if (>= i len)
+          (if (seq (str/trim current))
+            (conj elements (str/trim current))
+            elements)
+          (let [ch (nth inner i)]
+            (cond
+              (= ch \()
+              (recur (inc i) (inc depth) (str current ch) elements)
+
+              (= ch \))
+              (recur (inc i) (dec depth) (str current ch) elements)
+
+              (and (= ch \space) (zero? depth))
+              (if (seq (str/trim current))
+                (recur (inc i) depth "" (conj elements (str/trim current)))
+                (recur (inc i) depth "" elements))
+
+              :else
+              (recur (inc i) depth (str current ch) elements))))))))
+
+(defn replace-form-element
+  "Replace element at index in a form string.
+   Index 0 = function name, 1 = first arg, etc.
+   Negative index counts from end (-1 = last element).
+   Returns new form string or nil if index out of bounds."
+  [form-text element-index new-value]
+  (when-let [elements (parse-form-elements form-text)]
+    (let [idx (if (neg? element-index)
+                (+ (count elements) element-index)
+                element-index)]
+      (when (and (>= idx 0) (< idx (count elements)))
+        (let [new-elements (assoc elements idx new-value)]
+          (str "(" (str/join " " new-elements) ")"))))))

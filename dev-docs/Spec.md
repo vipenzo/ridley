@@ -127,10 +127,10 @@ Control the resolution of curves and circular primitives globally:
 
 ### Anchors & Navigation
 
-```clojure
-;; Define anchor at current position+orientation
-(mark :name)
+Anchors are named poses (position + orientation) that the turtle can navigate to.
+They are created by resolving **marks** embedded in paths via `with-path`.
 
+```clojure
 ;; Navigate to anchor (adopts anchor's heading)
 (goto :name)
 
@@ -139,13 +139,36 @@ Control the resolution of curves and circular primitives globally:
 
 ;; Create path from current position to anchor
 (path-to :name)           ; Returns a path for use in extrude
+
+;; Get anchor data
+(get-anchor :name)        ; {:position [...] :heading [...] :up [...]}
+```
+
+Marks are defined inside `path` recordings (see below). To use them, pin the
+path at the current turtle pose with `with-path`:
+
+```clojure
+(def skeleton (path (f 30) (mark :shoulder) (th 45) (f 20) (mark :elbow)))
+
+;; with-path resolves marks relative to current turtle pose
+(with-path skeleton
+  (goto :shoulder)
+  (bezier-to-anchor :elbow))
+
+;; Nesting is supported — inner scope shadows, outer scope restores
+(with-path outer-path
+  (with-path inner-path
+    (goto :inner-mark))      ; inner anchors available here
+  (goto :outer-mark))         ; outer anchors restored here
 ```
 
 ---
 
 ## Path Recording
 
-Paths record turtle movements for later replay in extrusions:
+Paths record turtle movements as abstract data for later replay in extrusions.
+Paths are not directly renderable — they are used to define extrusion trajectories,
+embed marks for navigation, and compose complex curves.
 
 ```clojure
 (def my-path
@@ -163,6 +186,34 @@ Paths record turtle movements for later replay in extrusions:
 
 ;; Paths can be used directly in extrude
 (register tube (extrude (circle 5) my-path))
+```
+
+### Marks Inside Paths
+
+Marks record named poses within a path. They have no effect on geometry —
+they simply tag the turtle's position and orientation at that point.
+
+```clojure
+(def arm (path (f 30) (mark :elbow) (th 45) (f 20) (mark :hand)))
+```
+
+### Follow (Path Splicing)
+
+`follow` splices another path's commands into the current recording:
+
+```clojure
+(def segment (path (f 10) (mark :joint)))
+(def full (path (f 20) (follow segment) (th 90) (f 10)))
+;; full contains: f 20, f 10, mark :joint, th 90, f 10
+```
+
+### Quick Path
+
+`quick-path` (alias `qp`) creates paths from compact notation:
+
+```clojure
+(quick-path 20 90 30 -45 10)  ; alternating: forward, turn, forward, turn, ...
+(qp 20 90 30 -45 10)          ; same, shorter
 ```
 
 ### Path Utilities
@@ -468,14 +519,27 @@ Place 3D text along a curved path:
 
 ## Scene Registry
 
-Named objects persist across evaluations:
+Named objects persist across evaluations. The registry holds two kinds of objects:
+
+- **Renderable** (meshes, panels): have visibility, appear in the viewport
+- **Abstract** (paths, shapes): data-only, no visibility concept
 
 ```clojure
 ;; Register: define var, add to registry, show on first registration
 (register torus (extrude-closed (circle 5) square-path))
 ;; Creates 'torus' var, registers as :torus, makes visible
 
-;; Show/hide by name (keyword) or reference
+;; r is a short alias for register
+(r torus (extrude-closed (circle 5) square-path))
+
+;; Register with :hidden flag (registers but doesn't show)
+(register torus (extrude-closed (circle 5) square-path) :hidden)
+
+;; Register abstract objects (paths, shapes — no visibility)
+(register skeleton (path (f 30) (mark :shoulder)))
+(register profile (shape (f 10) (th 90) (f 5)))
+
+;; Show/hide by name (keyword) or reference (renderable only)
 (show :torus)
 (hide :torus)
 (show torus)                     ; By var reference

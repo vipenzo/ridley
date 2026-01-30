@@ -3081,6 +3081,7 @@
 
 (defn run-path
   "Execute a path's commands on a turtle state.
+   Handles :mark commands by saving the pose as an anchor.
    Returns the updated state."
   [state path]
   (if (path? path)
@@ -3093,10 +3094,30 @@
                 :set-heading (-> s
                                  (assoc :heading (normalize (first args)))
                                  (assoc :up (normalize (second args))))
+                :mark (assoc-in s [:anchors (first args)]
+                                {:position (:position s)
+                                 :heading (:heading s)
+                                 :up (:up s)})
                 s))
             state
             (:commands path))
     state))
+
+(defn resolve-marks
+  "Execute a path virtually from the given state (no geometry generated),
+   collecting mark poses. Returns a map of {mark-name pose}."
+  [state path]
+  (if (path? path)
+    (let [;; Run path on a bare turtle (no geometry) starting from given pose
+          virtual-turtle (-> (make-turtle)
+                             (assoc :position (:position state))
+                             (assoc :heading (:heading state))
+                             (assoc :up (:up state))
+                             (assoc :pen-mode :off)
+                             (assoc :anchors {}))
+          result (run-path virtual-turtle path)]
+      (:anchors result))
+    {}))
 
 (defn path-segments
   "Split a path's commands into segments, one per :f command.
@@ -4028,15 +4049,9 @@
 ;; Anchors and Navigation
 ;; ============================================================
 
-(defn mark
-  "Save current turtle pose (position, heading, up) with a name.
-   Overwrites if name already exists.
-   Use goto to return to this position later."
-  [state name]
-  (let [pose {:position (:position state)
-              :heading (:heading state)
-              :up (:up state)}]
-    (assoc-in state [:anchors name] pose)))
+;; mark removed — marks now exist only inside path recordings.
+;; Use (mark :name) inside (path ...) to embed a mark,
+;; then (with-path p ...) to resolve marks as anchors.
 
 (defn goto
   "Move to a named anchor position and adopt its heading/up.
