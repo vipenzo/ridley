@@ -1,29 +1,29 @@
-(ns ridley.ai.voice
-  "Web Speech API integration for voice input."
-  (:require [ridley.ai.state :as state]))
+(ns ridley.voice.speech
+  "Web Speech API integration for voice input (push-to-talk)."
+  (:require [ridley.voice.state :as state]))
 
 (defonce ^:private recognition (atom nil))
-(defonce ^:private current-callback (atom nil))
-(defonce ^:private voice-lang (atom "it-IT"))
 
-(defn set-language!
-  "Set voice recognition language: 'it-IT' or 'en-US'"
-  [lang]
-  (reset! voice-lang lang))
+;; Use plain atoms (not defonce) so hot-reload picks up changes
+(def ^:private utterance-callback (atom nil))
+(def ^:private finalized? (atom false))
+
+(def ^:private lang-codes
+  {:it "it-IT" :en "en-US"})
 
 (defn supported? []
-  (or (.-webkitSpeechRecognition js/window)
-      (.-SpeechRecognition js/window)))
+  (boolean (or (.-webkitSpeechRecognition js/window)
+               (.-SpeechRecognition js/window))))
 
 (defn- create-recognition []
   (let [SpeechRecognition (or (.-webkitSpeechRecognition js/window)
                               (.-SpeechRecognition js/window))]
     (when SpeechRecognition
-      (let [rec (SpeechRecognition.)]
-        ;; For push-to-talk: single result, not continuous
+      (let [rec (SpeechRecognition.)
+            lang (get lang-codes (state/get-language) "it-IT")]
         (set! (.-continuous rec) false)
         (set! (.-interimResults rec) true)
-        (set! (.-lang rec) @voice-lang)
+        (set! (.-lang rec) lang)
         rec))))
 
 (defn- on-result [callback event]
@@ -32,10 +32,9 @@
         result (aget results last-idx)
         transcript (.-transcript (aget result 0))
         is-final (.-isFinal result)]
-    ;; Update partial transcript
     (state/update-voice! {:partial-transcript transcript})
-    ;; When final, trigger callback
     (when is-final
+      (reset! finalized? true)
       (state/update-voice! {:last-utterance transcript
                             :partial-transcript ""
                             :pending-speech nil})
@@ -46,10 +45,10 @@
   (let [error (.-error event)
         msg (case error
               "no-speech" "Nessun audio rilevato"
-              "network" "Errore di rete — prova Chrome"
+              "network" "Errore di rete"
               "not-allowed" "Microfono non autorizzato"
               "audio-capture" "Nessun microfono trovato"
-              "aborted" nil  ; user cancelled, no message needed
+              "aborted" nil
               (str "Errore: " error))]
     (js/console.warn "Speech recognition error:" error)
     (state/update-voice! {:listening? false
@@ -57,21 +56,28 @@
                           :pending-speech msg})))
 
 (defn- on-end []
-  ;; Recognition ended (either got result, error, or timeout)
-  ;; For push-to-talk, we don't auto-restart
+  ;; If recognition ended without a final result, promote the last partial
+  (when-not @finalized?
+    (let [partial (get-in @state/voice-state [:voice :partial-transcript])]
+      (when (and (seq partial) @utterance-callback)
+        (js/console.log "Speech: promoting partial →" partial)
+        (state/update-voice! {:last-utterance partial
+                              :partial-transcript ""
+                              :pending-speech nil})
+        (@utterance-callback partial))))
   (state/update-voice! {:listening? false}))
 
 (defn start!
-  "Start listening for a single utterance (push-to-talk style).
+  "Start listening for a single utterance (push-to-talk).
    Calls on-utterance with final transcript string."
   [on-utterance]
   (when (supported?)
-    ;; Create fresh recognition each time for clean state
     (when-let [old-rec @recognition]
       (try (.abort old-rec) (catch :default _)))
+    (reset! utterance-callback on-utterance)
+    (reset! finalized? false)
     (let [rec (create-recognition)]
       (reset! recognition rec)
-      (reset! current-callback on-utterance)
       (when rec
         (set! (.-onresult rec) (partial on-result on-utterance))
         (set! (.-onerror rec) on-error)
@@ -87,23 +93,24 @@
                                   :pending-speech "Impossibile avviare il microfono"})))))))
 
 (defn stop!
-  "Stop listening and process any pending result."
+  "Stop listening — on-end will handle promoting partial if needed."
   []
   (when-let [rec @recognition]
-    (try
-      (.stop rec)  ; .stop() triggers onend and processes pending results
-      (catch :default _)))
-  (state/update-voice! {:listening? false}))
+    (try (.stop rec) (catch :default _))))
 
 (defn abort!
   "Abort listening without processing results."
   []
+  (reset! finalized? true) ;; Prevent on-end from promoting partial
   (when-let [rec @recognition]
-    (try
-      (.abort rec)  ; .abort() cancels without result
-      (catch :default _)))
+    (try (.abort rec) (catch :default _)))
   (state/update-voice! {:listening? false
                         :partial-transcript ""}))
 
 (defn listening? []
-  (:listening? (:voice @state/ai-state)))
+  (get-in @state/voice-state [:voice :listening?]))
+
+(defn set-language!
+  "Update speech recognition language. Takes effect on next start! call."
+  [lang-key]
+  (state/set-language! lang-key))
