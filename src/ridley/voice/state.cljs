@@ -5,7 +5,7 @@
 (defonce voice-enabled? (atom true))
 
 (defonce voice-state
-  (atom {:mode :structure          ; :structure :text :turtle :help :ai
+  (atom {:mode :structure          ; :structure :turtle :help :ai
          :sub-mode nil             ; :selection :dictation nil
          :language :it             ; :it :en
 

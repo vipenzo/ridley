@@ -51,6 +51,16 @@
    .voice-last {
      color: #666;
      margin-top: 2px;
+   }
+   .voice-continuous {
+     color: #f44;
+     font-weight: bold;
+     animation: voice-pulse 1.5s ease-in-out infinite;
+   }
+   #btn-voice.continuous {
+     background: #600;
+     border-color: #f44;
+     animation: voice-pulse 1.5s ease-in-out infinite;
    }")
 
 (defn render-html
@@ -61,13 +71,15 @@
         sub-mode (:sub-mode st)
         voice (:voice st)
         listening (:listening? voice)
+        continuous (:continuous? voice)
         transcript (:partial-transcript voice)
         pending (:pending-speech voice)
         last-utt (:last-utterance voice)]
     (str
      "<div class='voice-header'>"
      "<span>" (if listening "&#x1F534;" "&#x26AB;") "</span>"
-     (when listening " <span class='voice-listening'>MIC</span>")
+     (when continuous " <span class='voice-continuous'>CONTINUOUS</span>")
+     (when (and listening (not continuous)) " <span class='voice-listening'>MIC</span>")
      " <span class='voice-mode'>" (str/upper-case (name mode)) "</span>"
      (when sub-mode
        (str " <span class='voice-sub-mode'>[" (name sub-mode) "]</span>"))

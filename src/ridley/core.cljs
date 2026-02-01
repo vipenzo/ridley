@@ -13,7 +13,8 @@
             [ridley.manual.core :as manual]
             [ridley.manual.components :as manual-ui]
             [ridley.voice.core :as voice]
-            [ridley.voice.state :as voice-state]))
+            [ridley.voice.state :as voice-state]
+            [ridley.voice.i18n :as voice-i18n]))
 
 (defonce ^:private editor-view (atom nil))
 (defonce ^:private repl-input-el (atom nil))
@@ -794,16 +795,22 @@
                          (if-let [form (cm/get-form-at-cursor view)]
                            (:from form)
                            (.. view -state -selection -main -head))
+                         :append-child
+                         (if-let [form (cm/get-form-at-cursor view)]
+                           (dec (:to form))  ; before closing bracket
+                           (.. view -state -selection -main -head))
                          ;; Default: at cursor
                          (.. view -state -selection -main -head))
-            ;; Add newline for after/before-current-form
+            ;; Add whitespace for positional insertion
             actual-code (case position
                           :after-current-form (str "\n" code)
                           :before-current-form (str code "\n")
+                          :append-child (str " " code)
                           code)
             code-length (count actual-code)
             start-pos (case position
                         :after-current-form (inc insert-pos) ; skip the leading newline
+                        :append-child (inc insert-pos)       ; skip the leading space
                         insert-pos)
             end-pos (case position
                       :before-current-form (+ insert-pos (count code)) ; exclude trailing newline
@@ -812,14 +819,19 @@
         (case position
           :cursor (cm/insert-at-cursor view actual-code)
           :end (cm/insert-at-end view actual-code)
-          (:after-current-form :before-current-form)
+          (:after-current-form :before-current-form :append-child)
           (do
             (cm/set-cursor-position view {:pos insert-pos})
             (cm/insert-at-cursor view actual-code))
           ;; Default
           (cm/insert-at-cursor view actual-code))
-        ;; Select the inserted code (excluding leading newline if any)
-        (cm/select-range view start-pos end-pos)
+        ;; Position cursor on inserted code
+        (case position
+          ;; For form-related positions, place cursor AT the new form
+          (:after-current-form :before-current-form :append-child)
+          (cm/set-cursor-position view {:pos start-pos})
+          ;; For other positions, select the range
+          (cm/select-range view start-pos end-pos))
         ;; Update AI focus to the inserted form
         (cm/update-ai-focus! view)
         ;; Keep focus on editor
@@ -844,7 +856,7 @@
 
 (defn- ai-edit-code
   "Edit code based on operation and target."
-  [{:keys [operation target value element]}]
+  [{:keys [operation target value element transform-type]}]
   (when-let [view @editor-view]
     (let [;; Check if target references "it/lo/last" - meaning previous form
           ref (:ref target)
@@ -854,7 +866,7 @@
           the-form (if use-previous?
                      (cm/get-previous-form view)
                      (case (:type target)
-                       "form" (cm/get-form-at-cursor view)
+                       "form" (cm/get-element-at-cursor view)
                        "word" (cm/get-word-at-cursor view)
                        "selection" (cm/get-selection view)
                        nil))]
@@ -884,11 +896,18 @@
               (cm/replace-range view (:from the-form) (:to the-form) wrapped)))
 
           :unwrap
-          (when (and (str/starts-with? (:text the-form) "(")
-                     (str/ends-with? (:text the-form) ")"))
-            (let [inner (subs (:text the-form) 1 (dec (count (:text the-form))))
-                  content (str/trim (str/replace-first inner #"^\S+\s*" ""))]
-              (cm/replace-range view (:from the-form) (:to the-form) content)))
+          (let [text (:text the-form)
+                first-ch (when (seq text) (.charAt text 0))
+                last-ch (when (seq text) (.charAt text (dec (count text))))]
+            (when (and first-ch last-ch
+                       (#{\( \[ \{} first-ch)
+                       (#{\) \] \}} last-ch))
+              (let [inner (subs text 1 (dec (count text)))
+                    ;; For () forms, strip the head (fn name); for [] and {}, keep all content
+                    content (if (= first-ch \()
+                              (str/trim (str/replace-first inner #"^\S+\s*" ""))
+                              (str/trim inner))]
+                (cm/replace-range view (:from the-form) (:to the-form) content))))
 
           :replace-structured
           (when (and element value)
@@ -921,6 +940,52 @@
               ;; Position cursor at the raised form
               (cm/set-cursor-position view {:pos (:from parent)})))
 
+          :join
+          ;; Merge current atom with next sibling (e.g. "do" + "times" → "dotimes")
+          (when-let [next-form (cm/get-next-form view)]
+            (let [joined (str (:text the-form) (:text next-form))]
+              (cm/replace-range view (:from the-form) (:to next-form) joined)
+              (cm/set-cursor-position view {:pos (:from the-form)})))
+
+          :transform
+          (let [text (:text the-form)
+                lang (voice-state/get-language)
+                new-text
+                (case transform-type
+                  :keyword   (str ":" text)
+                  :symbol    (when (str/starts-with? text ":")
+                               (subs text 1))
+                  :hash      (str "#" text)
+                  :deref     (str "@" text)
+                  :capitalize (when (seq text)
+                                (str (str/upper-case (subs text 0 1)) (subs text 1)))
+                  :uppercase (str/upper-case text)
+                  :number    nil  ; handled specially below
+                  nil)]
+            (if (= transform-type :number)
+              ;; Number transform: word→digit, or "minus"+"N"→"-N"
+              (let [neg-words (get voice-i18n/negative-words lang #{})
+                    nums (get voice-i18n/numbers lang {})
+                    lower (str/lower-case text)]
+                (if (contains? neg-words lower)
+                  ;; Current atom is "minus"/"meno" — negate next sibling
+                  (when-let [next-form (cm/get-next-form view)]
+                    (let [next-text (:text next-form)
+                          n (or (get nums (str/lower-case next-text))
+                                (when (re-matches #"\d+" next-text)
+                                  (js/parseInt next-text 10)))]
+                      (when n
+                        (cm/replace-range view (:from the-form) (:to next-form) (str "-" n))
+                        (cm/set-cursor-position view {:pos (:from the-form)}))))
+                  ;; Try word→digit conversion
+                  (when-let [n (get nums lower)]
+                    (cm/replace-range view (:from the-form) (:to the-form) (str n))
+                    (cm/set-cursor-position view {:pos (:from the-form)}))))
+              ;; All other transforms: simple text replacement
+              (when new-text
+                (cm/replace-range view (:from the-form) (:to the-form) new-text)
+                (cm/set-cursor-position view {:pos (:from the-form)}))))
+
           (js/console.warn "AI edit: unknown operation" operation)))
 
       (when-not the-form
@@ -940,19 +1005,9 @@
     (let [n (or count 1)]
       (dotimes [_ n]
         (case mode
-          :text
-          (case direction
-            :left (cm/move-cursor view :left)
-            :right (cm/move-cursor view :right)
-            :up (cm/move-cursor view :up)
-            :down (cm/move-cursor view :down)
-            :start (cm/move-cursor view :start)
-            :end (cm/move-cursor view :end)
-            nil)
-
           :structure
           (case direction
-            :next (let [current (cm/get-form-at-cursor view)
+            :next (let [current (cm/get-element-at-cursor view)
                         next-form (cm/get-next-form view)]
                     (js/console.log "nav :next — current:" (pr-str (:text current))
                                     "next:" (pr-str (:text next-form)))
@@ -1000,7 +1055,7 @@
 
       ;; Update cursor and form info
       (let [cursor (cm/get-cursor-position view)
-            form (cm/get-form-at-cursor view)
+            form (cm/get-element-at-cursor view)
             selection (cm/get-selection view)]
         (voice-state/update-cursor! {:line (:line cursor)
                                      :col (:col cursor)
@@ -1032,14 +1087,18 @@
           (fn [e]
             (.preventDefault e)
             (.stopPropagation e)
-            (reset! press-start (js/Date.now))
-            (voice/start-listening!)
-            (.add (.-classList mic-btn) "active")
-            (js/setTimeout #(when @editor-view (cm/focus @editor-view)) 50)))
+            ;; Ignore left-click mousedown when in continuous mode
+            ;; (continuous mode is toggled by right-click only)
+            (when-not (voice/continuous-active?)
+              (reset! press-start (js/Date.now))
+              (voice/start-listening!)
+              (.add (.-classList mic-btn) "active")
+              (js/setTimeout #(when @editor-view (cm/focus @editor-view)) 50))))
 
         (.addEventListener mic-btn "mouseup"
           (fn [_]
             (when-let [start @press-start]
+              (reset! press-start nil)
               (let [held (- (js/Date.now) start)]
                 (when (> held hold-threshold)
                   (voice/stop-listening!)
@@ -1054,22 +1113,38 @@
                 (voice/stop-listening!))
               (.remove (.-classList mic-btn) "active")))))
 
+      ;; Right-click = toggle continuous listening mode
+      (.addEventListener mic-btn "contextmenu"
+        (fn [e]
+          (.preventDefault e)
+          (.stopPropagation e)
+          (if (voice/continuous-active?)
+            (voice/stop-continuous-listening!)
+            (voice/start-continuous-listening!))
+          (when @editor-view (cm/focus @editor-view))))
+
       ;; Watch state to update button appearance
       (add-watch voice-state/voice-state :voice-button-update
         (fn [_ _ old-state new-state]
           (let [was-listening (get-in old-state [:voice :listening?])
                 is-listening (get-in new-state [:voice :listening?])
+                is-continuous (get-in new-state [:voice :continuous?])
                 pending (get-in new-state [:voice :pending-speech])
                 mode (:mode new-state)]
             (when (not= was-listening is-listening)
               (if is-listening
                 (.add (.-classList mic-btn) "active")
-                (.remove (.-classList mic-btn) "active")))
+                (do
+                  (.remove (.-classList mic-btn) "active")
+                  (.remove (.-classList mic-btn) "continuous"))))
+            (if is-continuous
+              (.add (.-classList mic-btn) "continuous")
+              (.remove (.-classList mic-btn) "continuous"))
             ;; Show mode + status as tooltip
             (when pending
               (set! (.-title mic-btn) pending))
             (when (and (not pending) (not is-listening))
-              (set! (.-title mic-btn) (str "Mode: " (name mode) " — push to talk"))))))
+              (set! (.-title mic-btn) (str "Mode: " (name mode) " — push to talk, right-click for continuous"))))))
 
       (.appendChild toolbar mic-btn)))
 

@@ -3,8 +3,7 @@
    Tokenizes input, strips fillers, and matches against i18n command tables."
   (:require [clojure.string :as str]
             [ridley.voice.i18n :as i18n]
-            [ridley.voice.modes.structure :as structure]
-            [ridley.voice.modes.text :as text]))
+            [ridley.voice.modes.structure :as structure]))
 
 ;; ============================================================
 ;; Tokenizer
@@ -48,7 +47,11 @@
     (some (fn [[cmd-key phrases-map]]
             (let [phrases (get phrases-map lang [])]
               (some (fn [phrase]
-                      (when (str/starts-with? text phrase)
+                      (when (and (str/starts-with? text phrase)
+                                 ;; Ensure word boundary after phrase
+                                 (let [plen (count phrase)]
+                                   (or (= plen (count text))
+                                       (= " " (subs text plen (inc plen))))))
                         (let [rest-text (str/trim (subs text (count phrase)))
                               rest-tokens (if (seq rest-text)
                                             (str/split rest-text #"\s+")
@@ -83,7 +86,7 @@
 ;; ============================================================
 
 (defn- try-meta
-  "Try to match meta commands: undo, redo, run."
+  "Try to match meta commands: undo, redo, run, stop."
   [tokens lang]
   (when-let [[cmd-key rest-tokens] (match-phrases tokens (:meta i18n/voice-commands) lang)]
     (let [n (when (seq rest-tokens)
@@ -92,6 +95,7 @@
         :undo {:action :undo :params (when n {:count n})}
         :redo {:action :redo :params (when n {:count n})}
         :run  {:action :run :params {}}
+        :stop {:action :stop :params {}}
         nil))))
 
 ;; ============================================================
@@ -103,18 +107,6 @@
   [tokens lang]
   (when-let [[_key _rest] (match-phrases tokens (:dictation i18n/voice-commands) lang)]
     {:action :dictation-enter :params {}}))
-
-;; ============================================================
-;; Selection sub-mode
-;; ============================================================
-
-(defn- try-selection-exit
-  "Check if tokens match selection exit command."
-  [tokens lang]
-  (when-let [[_key _rest] (match-phrases tokens (:selection i18n/voice-commands) lang)]
-    ;; :exit matches "esci"/"cancel"
-    (when (= _key :exit)
-      {:action :selection-exit :params {}})))
 
 ;; ============================================================
 ;; Main parse entry point
@@ -129,7 +121,7 @@
    2. Meta commands (undo/redo/run — work in all modes)
    3. Dictation entry
    4. Mode-specific commands"
-  [text mode lang]
+  [text mode lang & _opts]
   (let [tokens (tokenize text lang)]
     (when (seq tokens)
       (or
@@ -139,13 +131,12 @@
        (try-language-switch tokens lang)
        ;; 3. Meta commands
        (try-meta tokens lang)
-       ;; 3. Dictation entry (from text or structure mode)
-       (when (#{:text :structure} mode)
+       ;; 3. Dictation entry (from structure mode)
+       (when (= mode :structure)
          (try-dictation-enter tokens lang))
        ;; 4. Mode-specific parsing
        (case mode
          :structure (structure/parse tokens lang)
-         :text      (text/parse tokens lang)
          :turtle    nil  ;; Phase 4
          :help      nil  ;; Phase 5
          :ai        nil  ;; Passthrough to LLM

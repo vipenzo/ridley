@@ -631,6 +631,42 @@
              ;; Normal case — read form ending at p
              (read-form-backward doc-text p))))))))
 
+(defn get-element-at-cursor
+  "Get the element at cursor — atom, delimited form, or string.
+   Unlike get-form-at-cursor which only returns delimited forms,
+   this returns whatever the cursor is sitting on, including atoms.
+   Falls back to get-form-at-cursor for whitespace/close-bracket positions."
+  ([] (get-element-at-cursor @editor-instance))
+  ([view]
+   (when view
+     (let [state (.-state view)
+           doc-text (.toString (.-doc state))
+           doc-len (count doc-text)
+           pos (.. state -selection -main -head)]
+       (when (< pos doc-len)
+         (let [ch (.charAt doc-text pos)]
+           (cond
+             ;; On open bracket — return that delimited form
+             (open-brackets ch)
+             (when-let [end (find-matching-close doc-text pos doc-len)]
+               {:from pos :to end :text (subs doc-text pos end)})
+
+             ;; On string quote — return the string
+             (= ch \")
+             (when-let [end (find-string-end doc-text pos doc-len)]
+               {:from pos :to end :text (subs doc-text pos end)})
+
+             ;; On atom (symbol, keyword, number) — return the atom
+             (not (or (whitespace-chars ch) (close-brackets ch)))
+             (let [start (find-atom-start doc-text pos)
+                   end (find-atom-end doc-text pos doc-len)]
+               (when (> end start)
+                 {:from start :to end :text (subs doc-text start end)}))
+
+             ;; On whitespace or close bracket — fall back to containing form
+             :else
+             (get-form-at-cursor view))))))))
+
 (defn get-first-child-form
   "Get the first child element inside the current delimited form.
    For '(sphere (box 10))' returns 'sphere'. Handles all form types and atoms."
@@ -704,6 +740,10 @@
                (get-cursor-position view))
        :down (do (commands/cursorLineDown view)
                  (get-cursor-position view))
+       :word-right (do (commands/cursorGroupForward view)
+                       (get-cursor-position view))
+       :word-left (do (commands/cursorGroupBackward view)
+                      (get-cursor-position view))
        :start (do (.dispatch view #js {:selection #js {:anchor 0}})
                   (get-cursor-position view))
        :end (do (.dispatch view #js {:selection #js {:anchor (.. view -state -doc -length)}})
@@ -725,12 +765,12 @@
        (.dispatch view #js {:effects #js [effect]})))))
 
 (defn update-ai-focus!
-  "Update AI focus to highlight the form at cursor."
+  "Update AI focus to highlight the element at cursor (atom or delimited form)."
   ([] (update-ai-focus! @editor-instance))
   ([view]
    (when view
-     (let [form (get-form-at-cursor view)]
-       (set-ai-focus! view form)))))
+     (let [element (get-element-at-cursor view)]
+       (set-ai-focus! view element)))))
 
 (defn clear-ai-focus!
   "Clear the AI focus highlight."

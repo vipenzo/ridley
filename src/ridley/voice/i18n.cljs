@@ -5,8 +5,6 @@
   {:modes
    {:structure {:it ["modo struttura" "struttura"]
                 :en ["structure mode" "structure"]}
-    :text      {:it ["modo testo" "testo" "modo carattere"]
-                :en ["text mode" "text" "character mode"]}
     :turtle    {:it ["modo turtle" "modo tartaruga" "tartaruga"]
                 :en ["turtle mode" "turtle"]}
     :ai        {:it ["modo ai" "modo intelligenza artificiale"]
@@ -15,9 +13,9 @@
                 :en ["help"]}}
 
    :navigation
-   {:next     {:it ["prossimo" "avanti" "successivo"]
+   {:next     {:it ["prossimo" "prossima" "prossime" "prossimi" "avanti" "successivo" "successiva"]
                :en ["next" "forward"]}
-    :previous {:it ["precedente" "indietro"]
+    :previous {:it ["precedente" "precedenti" "indietro"]
                :en ["previous" "back"]}
     :into     {:it ["dentro" "entra"]
                :en ["into" "down" "enter"]}
@@ -43,23 +41,25 @@
              :en ["change" "replace" "set"]}}
 
    :structural
-   {:slurp  {:it ["slurp" "slarp" "ingloba"]
+   {:slurp  {:it ["slurp" "slarp" "slap" "slerp" "slop" "sloop" "assorbi" "ingloba"]
              :en ["slurp"]}
-    :barf   {:it ["barf" "espelli"]
+    :barf   {:it ["barf" "baf" "barb" "espelli"]
              :en ["barf"]}
     :wrap   {:it ["wrap" "rap" "vrap" "avvolgi"]
              :en ["wrap"]}
-    :unwrap {:it ["unwrap" "anvrap" "anrap"]
+    :unwrap {:it ["unwrap" "anvrap" "anrap" "unrap" "unrat" "svolgi"]
              :en ["unwrap"]}
     :raise  {:it ["estrai" "alza"]
-             :en ["raise" "extract"]}}
+             :en ["raise" "extract"]}
+    :join   {:it ["unisci" "fondi"]
+             :en ["join" "merge"]}}
 
    :insertion
    {:insert     {:it ["inserisci"]
                  :en ["insert"]}
     :append     {:it ["aggiungi"]
                  :en ["append" "add"]}
-    :new-form   {:it ["nuova form" "nuova funzione"]
+    :new-form   {:it ["nuova forma" "nuova form" "nuova funzione"]
                  :en ["new form" "new function"]}
     :new-list   {:it ["nuova lista" "nuovo vettore"]
                  :en ["new list" "new vector"]}
@@ -71,8 +71,10 @@
            :en ["undo"]}
     :redo {:it ["ripeti" "rifai"]
            :en ["redo"]}
-    :run  {:it ["esegui" "valuta" "vai"]
-           :en ["run" "eval" "execute" "go"]}}
+    :run  {:it ["esegui" "valuta"]
+           :en ["run" "eval" "execute"]}
+    :stop {:it ["basta" "stop" "fermo" "fermati"]
+           :en ["stop" "enough" "halt"]}}
 
    :dictation
    {:enter {:it ["scrivi"]
@@ -101,6 +103,22 @@
    :prepositions
    {:to {:it ["in" "a"]
          :en ["to"]}}
+
+   :transforms
+   {:keyword    {:it ["keyword" "chiave"]
+                 :en ["keyword"]}
+    :symbol     {:it ["simbolo"]
+                 :en ["symbol"]}
+    :hash       {:it ["cancelletto" "hash"]
+                 :en ["hash"]}
+    :deref      {:it ["chiocciola" "deref"]
+                 :en ["deref" "at sign"]}
+    :capitalize {:it ["maiuscolo" "maiuscola"]
+                 :en ["capitalize" "cap"]}
+    :uppercase  {:it ["tutto maiuscolo"]
+                 :en ["uppercase" "all caps"]}
+    :number     {:it ["numero"]
+                 :en ["number"]}}
 
    :language
    {:it {:it ["lingua italiana" "italiano"]
@@ -136,16 +154,18 @@
   {:it #{"di" "per" "un" "una" "il" "la" "lo" "del" "della" "in" "a" "le" "i" "gli"}
    :en #{"of" "by" "the" "a" "an" "to" "in"}})
 
-(def text-units
-  "Unit keywords mapped from words."
-  {:it {"parola" :word "parole" :word
-        "riga" :line "righe" :line "linea" :line "linee" :line
-        "carattere" :char "caratteri" :char}
-   :en {"word" :word "words" :word
-        "line" :line "lines" :line
-        "character" :char "characters" :char "char" :char "chars" :char}})
-
 (def select-targets
   "Immediate selection targets."
   {:it {"parola" :word "riga" :line "tutto" :all}
    :en {"word" :word "line" :line "all" :all}})
+
+(def negative-words
+  "Words that mean 'negative/minus' — used by :number transform."
+  {:it #{"meno" "minus"}
+   :en #{"minus" "negative"}})
+
+(def command-delimiters
+  "Words that separate chained commands in continuous listening mode.
+   Also used as silence-equivalent boundaries."
+  {:it #{"poi" "vai" "e poi" "quindi"}
+   :en #{"then" "go" "and then"}})
