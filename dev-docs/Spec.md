@@ -70,10 +70,25 @@ Draw smooth bezier curves to target positions:
 ;; Cubic bezier (2 control points)
 (bezier-to [x y z] [c1x c1y c1z] [c2x c2y c2z])
 
-;; Bezier to named anchor
+;; Bezier to named anchor (uses both headings for smooth connection)
 (bezier-to-anchor :name)
 (bezier-to-anchor :name :steps 24)
+(bezier-to-anchor :name :tension 0.5)   ; Control point distance (default 0.33)
 ```
+
+### Bezier Along Path
+
+Smooth bezier approximation of an existing turtle path, with C1 continuity at segment junctions:
+
+```clojure
+(bezier-as my-path)                          ; One cubic bezier per path segment
+(bezier-as my-path :tension 0.5)             ; Control point distance factor (default 0.33)
+(bezier-as my-path :steps 32)                ; Resolution per bezier segment
+(bezier-as my-path :cubic true)              ; Catmull-Rom spline tangents
+(bezier-as my-path :max-segment-length 20)   ; Subdivide long segments first
+```
+
+Works both in direct turtle mode and inside `path` recordings.
 
 ### Pen Control
 
@@ -235,9 +250,18 @@ Shapes are 2D profiles used for extrusion:
 
 (rect width height)              ; Rectangle centered at origin
 
-(polygon [[x1 y1] [x2 y2] ...])  ; Custom polygon from points
+(polygon n radius)                ; Regular n-sided polygon (e.g., 6 for hexagon)
 
 (star n-points outer-r inner-r)  ; Star shape (n tips)
+
+(stroke-shape my-path width)             ; Stroke a path into a 2D outline
+(stroke-shape my-path width              ; With options
+  :start-cap :round
+  :end-cap :flat
+  :join :miter
+  :miter-limit 4)
+
+(path-to-shape my-path)                  ; Convert 3D path to 2D shape (XY projection)
 ```
 
 ### Custom Shapes from Turtle
@@ -277,10 +301,16 @@ For loft operations that morph shapes:
 ```clojure
 (scale shape factor)             ; Uniform scale
 (scale shape fx fy)              ; Non-uniform scale
+(scale factor)                   ; Scale attached mesh (inside attach/clone)
 
 (rotate-shape shape angle-deg)   ; Rotate around origin
 
 (translate shape dx dy)          ; Translate shape by [dx dy]
+(translate-shape shape dx dy)    ; Alias with explicit name
+
+(scale-shape shape sx sy)        ; Non-uniform scale (explicit name)
+
+(reverse-shape shape)            ; Reverse winding order (flip normals)
 
 (morph shape-a shape-b t)        ; Interpolate between shapes (t: 0-1)
                                  ; Both must have same point count
@@ -384,6 +414,12 @@ Extrude with shape transformation based on progress:
     #(rotate-shape %1 (* %2 90))   ; 90 deg twist
     (f 30)))
 
+;; Two-shape loft: taper between two different shapes
+(register taper
+  (loft (circle 20)
+    (circle 10)                     ; End shape (must be same point count)
+    (f 40)))
+
 ;; With custom step count for smoother result
 (register smooth-cone
   (loft-n 32 (circle 20)
@@ -393,26 +429,18 @@ Extrude with shape transformation based on progress:
 
 Default: 16 steps. Returns mesh without side effects.
 
-### Sweep (Between Two Shapes)
-
-Create mesh between two shapes at different positions:
-
-```clojure
-(register transition
-  (sweep (circle 5)
-    (do
-      (f 10)
-      (th 90)
-      (circle 8))))      ; Returns second shape at new position
-```
-
-First shape stamped at current position, body moves turtle, last expression returns second shape.
-
 ### Revolve
 
 ```clojure
-(revolve shape axis)             ; Full 360 deg revolution
+(revolve shape)                  ; Full 360 deg revolution around turtle heading
+(revolve shape angle)            ; Partial revolution (degrees)
 ```
+
+The profile shape is interpreted as:
+- 2D X = radial distance from axis (perpendicular to heading)
+- 2D Y = position along axis (in heading direction)
+
+Use `translate-shape` to offset the profile from the axis for hollow shapes (e.g., torus).
 
 ---
 
@@ -461,16 +489,19 @@ Convert text to 2D shapes using opentype.js font parsing:
 
 ```clojure
 ;; Basic text shape (uses default Roboto font)
-(text-shape "Hello")                    ; Returns 2D shape
+(text-shape "Hello")                    ; Returns vector of shapes (with holes)
 
 ;; With size
 (text-shape "Hello" :size 30)           ; Larger text
 
-;; Extrude for 3D text
+;; Extrude for 3D text (extrude handles vector of shapes)
 (register title (extrude (text-shape "RIDLEY" :size 40) (f 5)))
 
-;; Individual character shapes
+;; Individual character shapes (one shape per character)
 (text-shapes "ABC" :size 20)            ; Returns vector of shapes
+
+;; Single character shape
+(char-shape "A" font size)              ; Returns shape for one character
 
 ;; Load custom font
 (load-font! "/path/to/font.ttf")        ; Returns promise
@@ -675,6 +706,102 @@ Desktop toolbar and VR panel have buttons for:
 
 ---
 
+## Color and Material
+
+Set color and material properties for subsequently created meshes:
+
+```clojure
+(color 0xff0000)                 ; Set color by hex value (red)
+(color r g b)                    ; Set color by RGB components (0-255)
+
+(material :metalness 0.8         ; Set material properties
+          :roughness 0.2)
+
+(reset-material)                 ; Reset to default material
+```
+
+Color and material are stored in turtle state and applied to all meshes created after the call (primitives, extrusions, etc.).
+
+---
+
+## 3D Panels (Text Billboards)
+
+Panels are 3D text billboards positioned in the scene. They display text content and can be used for labels, debugging output, or UI elements.
+
+```clojure
+;; Create a panel at current turtle position
+(register label (panel 40 20))
+
+;; With options
+(register label (panel 40 20
+  :font-size 3
+  :bg 0x333333cc
+  :fg 0xffffff
+  :padding 2
+  :line-height 1.4))
+
+;; Set content
+(out :label "Hello World")
+(out label "Hello World")        ; By reference
+
+;; Append content
+(append :label "\nMore text")
+
+;; Clear content
+(clear :label)
+```
+
+Panels support `show`/`hide`, `register`, `attach`/`clone` like meshes.
+
+---
+
+## Mesh Transformation Macros
+
+### attach
+
+Transform a mesh or panel in place:
+
+```clojure
+(register b (box 20))
+
+;; Move the entire mesh
+(register b (attach b (f 10) (th 45)))
+
+;; Works with panels too
+(register label (attach label (f 20) (th 90)))
+```
+
+### clone
+
+Create a transformed copy (original unchanged):
+
+```clojure
+(register b (box 20))
+
+;; Create a rotated copy
+(register b2 (clone b (th 45) (f 10)))
+```
+
+Operations available inside `attach`/`clone`: `f`, `th`, `tv`, `tr`.
+
+---
+
+## STL Export
+
+Export meshes to STL files (triggers browser download):
+
+```clojure
+(export :torus)                  ; By registered name
+(export torus)                   ; By mesh reference
+(export :torus :cube)            ; Multiple by name
+(export torus cube)              ; Multiple by reference
+(export parts)                   ; Export all meshes in vector/map
+(export parts 2)                 ; Export specific element by index
+(export robot :hand)             ; Export specific element by key
+```
+
+---
+
 ## Variables and Functions
 
 Full Clojure available via SCI:
@@ -698,7 +825,31 @@ Full Clojure available via SCI:
 
 ;; Access current turtle state
 (get-turtle)                     ; Full turtle state map
+(turtle-position)                ; Current position [x y z]
+(turtle-heading)                 ; Current heading [x y z]
+(turtle-up)                      ; Current up vector [x y z]
+(attached?)                      ; true if turtle is attached to a mesh
 (last-mesh)                      ; Most recently created mesh
+
+;; Print output (captured and shown in REPL output)
+(println "Value:" x)             ; Print with newline
+(print "no newline")             ; Print without newline
+(prn {:a 1})                     ; Print data structure
+(log "debug" x)                  ; Output to browser console only
+(T "label" expr)                 ; Tap: prints "label: value", returns value
+```
+
+### Math Functions
+
+Standard math functions are available without import:
+
+```clojure
+PI                               ; 3.14159...
+(sin x) (cos x)                  ; Trigonometric (radians)
+(sqrt x) (pow x n)               ; Power functions
+(abs x)                          ; Absolute value
+(ceil x) (floor x) (round x)    ; Rounding
+(atan2 y x)                     ; Two-argument arctangent
 ```
 
 ---
@@ -771,7 +922,7 @@ Full Clojure available via SCI:
 - Dense syntax parser (string notation like "F20 TH90")
 - Fillet/chamfer modifiers in paths
 - Boolean ops with fillet/chamfer
-- STL/OBJ/3MF export from REPL
+- OBJ/3MF export (STL export is available via `export`)
 - Backward movement command `(b dist)` — use `(f -dist)` instead
 
 ---
@@ -797,5 +948,16 @@ src/ridley/
 │   └── xr.cljs              # WebXR/VR
 ├── manifold/core.cljs       # Manifold WASM booleans + hull
 ├── export/stl.cljs          # STL export
-└── scene/registry.cljs      # Named object registry
+├── scene/
+│   ├── registry.cljs        # Named object registry
+│   └── panel.cljs           # 3D text panel data
+└── voice/
+    ├── core.cljs            # Voice input orchestrator
+    ├── speech.cljs           # Web Speech API wrapper
+    ├── state.cljs            # Voice state (mode, language)
+    ├── parser.cljs           # Deterministic command parser
+    ├── i18n.cljs             # IT/EN voice command dictionary
+    ├── modes/
+    │   └── structure.cljs    # Structure mode commands
+    └── panel.cljs            # Voice status panel UI
 ```

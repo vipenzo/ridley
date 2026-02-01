@@ -15,11 +15,6 @@
 (defn- v* [[x y z] s]
   [(* x s) (* y s) (* z s)])
 
-(defn- cross [[x1 y1 z1] [x2 y2 z2]]
-  [(- (* y1 z2) (* z1 y2))
-   (- (* z1 x2) (* x1 z2))
-   (- (* x1 y2) (* y1 x2))])
-
 (defn- magnitude [[x y z]]
   (Math/sqrt (+ (* x x) (* y y) (* z z))))
 
@@ -198,89 +193,6 @@
       :primitive :revolve
       :vertices all-verts
       :faces (vec (concat faces cap-faces))})))
-
-;; ============================================================
-;; SWEEP - Extrude along a path
-;; ============================================================
-
-(defn- compute-frame-with-up
-  "Compute a frame at a point given the tangent and a global up hint.
-   Returns {:normal :binormal} vectors for transforming the profile."
-  [tangent global-up]
-  (let [;; binormal = tangent × up (points "right" relative to path)
-        raw-binormal (cross tangent global-up)
-        binormal-mag (magnitude raw-binormal)]
-    (if (< binormal-mag 0.001)
-      ;; Tangent is parallel to up, use different up
-      (let [alt-up (if (> (Math/abs (nth tangent 0)) 0.9) [0 1 0] [1 0 0])
-            binormal (normalize (cross tangent alt-up))
-            normal (normalize (cross binormal tangent))]
-        {:normal normal :binormal binormal})
-      ;; Normal case
-      (let [binormal (normalize raw-binormal)
-            normal (normalize (cross binormal tangent))]
-        {:normal normal :binormal binormal}))))
-
-(defn- transform-profile-to-position
-  "Transform 2D profile points to a 3D position with given frame.
-   Profile points are in XY plane: X maps to normal, Y maps to binormal."
-  [profile-points position {:keys [normal binormal]}]
-  (mapv (fn [[px py _pz]]
-          (v+ position
-              (v+ (v* normal px)
-                  (v* binormal py))))
-        profile-points))
-
-(defn sweep
-  "Sweep a 2D profile along a path to create a 3D mesh.
-
-   The profile stays oriented with a consistent 'up' direction (Z axis),
-   which produces predictable results for paths with sharp turns.
-
-   Arguments:
-   - profile: A 2D path/shape (points in XY plane)
-   - spine: A 3D path to sweep along
-
-   Returns a mesh {:vertices [...] :faces [...]}."
-  [profile spine]
-  (let [profile-points (path-to-points profile)
-        spine-points (path-to-points spine)
-        profile-n (count profile-points)
-        spine-n (count spine-points)
-        global-up [0 0 1]  ;; Keep profile oriented relative to Z-up
-        ;; Generate vertices: profile at each spine point
-        all-verts (vec
-                   (mapcat (fn [i]
-                             (let [pos (nth spine-points i)
-                                   ;; Compute tangent at this point
-                                   prev-pt (when (pos? i) (nth spine-points (dec i)))
-                                   next-pt (when (< (inc i) spine-n) (nth spine-points (inc i)))
-                                   tangent (normalize
-                                            (cond
-                                              next-pt (v- next-pt pos)
-                                              prev-pt (v- pos prev-pt)
-                                              :else [1 0 0]))
-                                   frame (compute-frame-with-up tangent global-up)]
-                               (transform-profile-to-position profile-points pos frame)))
-                           (range spine-n)))
-        ;; Generate faces connecting adjacent rings (CCW winding for outward normals)
-        faces (vec
-               (apply concat
-                      (for [seg (range (dec spine-n))
-                            i (range profile-n)]
-                        (let [next-i (mod (inc i) profile-n)
-                              ring-offset (* seg profile-n)
-                              next-ring-offset (* (inc seg) profile-n)
-                              p0 (+ ring-offset i)
-                              p1 (+ ring-offset next-i)
-                              p2 (+ next-ring-offset next-i)
-                              p3 (+ next-ring-offset i)]
-                          ;; Two triangles per quad (CCW winding)
-                          [[p0 p2 p1] [p0 p3 p2]]))))]
-    {:type :mesh
-     :primitive :sweep
-     :vertices all-verts
-     :faces faces}))
 
 ;; ============================================================
 ;; LOFT - Transition between profiles

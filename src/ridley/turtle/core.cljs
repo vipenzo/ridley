@@ -2882,55 +2882,6 @@
 ;; Sweep between two shapes
 ;; ============================================================
 
-(defn stamp-shape-at
-  "Stamp a 2D shape at current turtle position/orientation.
-   Returns the 3D ring (vector of 3D points).
-   Does not modify turtle state."
-  [state shape]
-  (when (shape? shape)
-    (stamp-shape state shape)))
-
-(defn sweep-two-shapes
-  "Create a mesh connecting two 3D rings (stamped shapes).
-   ring1 and ring2 must have the same number of vertices.
-   Returns a mesh with side faces connecting the two rings."
-  [ring1 ring2]
-  (let [n-verts (count ring1)]
-    (when (and (>= n-verts 3) (= n-verts (count ring2)))
-      (let [vertices (vec (concat ring1 ring2))
-            ;; Create faces connecting ring1 (indices 0 to n-1) to ring2 (indices n to 2n-1)
-            side-faces (vec
-                        (mapcat
-                         (fn [i]
-                           (let [next-i (mod (inc i) n-verts)
-                                 b0 i
-                                 b1 next-i
-                                 t0 (+ n-verts i)
-                                 t1 (+ n-verts next-i)]
-                             ;; CCW winding from outside
-                             [[b0 t1 b1] [b0 t0 t1]]))
-                         (range n-verts)))
-            ;; Compute normals from extrusion direction (centroid-based)
-            ;; More robust than cross-product of ring vertices
-            ring-centroid (fn [ring]
-                            (let [n (count ring)]
-                              (v* (reduce v+ ring) (/ 1.0 n))))
-            extrusion-dir (normalize (v- (ring-centroid ring2) (ring-centroid ring1)))
-            bottom-normal (v* extrusion-dir -1)  ; points backward
-            top-normal extrusion-dir             ; points forward
-            ;; Use ear clipping for proper concave polygon triangulation
-            ;; bottom-cap: flip=false for normal pointing -X
-            ;; top-cap: flip=true for normal pointing +X
-            bottom-cap (triangulate-cap ring1 0 bottom-normal false)
-            top-cap (triangulate-cap ring2 n-verts top-normal true)]
-        {:type :mesh
-         :primitive :sweep-two
-         :vertices vertices
-         :faces (vec (concat side-faces bottom-cap top-cap))
-         ;; Default creation pose at origin (matches turtle default orientation)
-         :creation-pose {:position [0 0 0]
-                         :heading [1 0 0]
-                         :up [0 0 1]}}))))
 
 (defn sweep-two-shapes-with-holes
   "Create a mesh connecting two 3D rings with holes.

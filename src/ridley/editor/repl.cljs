@@ -965,7 +965,7 @@
    'extrude-z    ops/extrude-z
    'extrude-y    ops/extrude-y
    'revolve      ops/revolve
-   'ops-sweep    ops/sweep
+   ;; ops-sweep removed (sweep is redundant with loft)
    'ops-loft     ops/loft
    ;; Loft impl functions (used by loft macro)
    'stamp-loft-impl     implicit-stamp-loft
@@ -1017,9 +1017,6 @@
    'pure-loft-path           pure-loft-path     ; Pure loft version (no side effects)
    'pure-loft-two-shapes     pure-loft-two-shapes ; Loft between two shapes
    'pure-revolve             pure-revolve       ; Pure revolve/lathe version
-   ;; Sweep between two shapes
-   'stamp-shape-at      turtle/stamp-shape-at
-   'sweep-two-shapes    turtle/sweep-two-shapes
    'add-mesh-impl       implicit-add-mesh
    ;; Manifold operations
    'manifold?           manifold/manifold?
@@ -1802,24 +1799,6 @@
       `(pure-revolve ~shape 360))
      ([shape angle]
       `(pure-revolve ~shape ~angle)))
-
-   ;; sweep: create mesh between two shapes
-   ;; (sweep (circle 5) (do (f 10) (th 90) (circle 5)))
-   ;; First shape is stamped at current turtle position
-   ;; Body executes (can move turtle), last expression must return a shape
-   ;; Second shape is stamped at final turtle position
-   ;; Returns mesh connecting the two shapes
-   (defmacro sweep [shape1 body]
-     `(let [;; Stamp first shape at current position
-            ring1# (stamp-shape-at (get-turtle) ~shape1)
-            ;; Execute body (moves turtle, returns second shape)
-            shape2# ~body
-            ;; Stamp second shape at new position
-            ring2# (stamp-shape-at (get-turtle) shape2#)
-            ;; Create mesh between the two rings
-            mesh# (sweep-two-shapes ring1# ring2#)]
-        ;; Add mesh to turtle state and return it
-        (add-mesh-impl mesh#)))
 
    ;; ============================================================
    ;; Functional attach macros
