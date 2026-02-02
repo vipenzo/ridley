@@ -14,7 +14,8 @@
             [ridley.manual.components :as manual-ui]
             [ridley.voice.core :as voice]
             [ridley.voice.state :as voice-state]
-            [ridley.voice.i18n :as voice-i18n]))
+            [ridley.voice.i18n :as voice-i18n]
+            [ridley.voice.help.db :as help-db]))
 
 (defonce ^:private editor-view (atom nil))
 (defonce ^:private repl-input-el (atom nil))
@@ -856,14 +857,19 @@
 
 (defn- ai-edit-code
   "Edit code based on operation and target."
-  [{:keys [operation target value element transform-type]}]
+  [{:keys [operation target value element transform-type from to]}]
   (when-let [view @editor-view]
-    (let [;; Check if target references "it/lo/last" - meaning previous form
-          ref (:ref target)
-          use-previous? (and (= (:type target) "form")
-                             (contains? #{"it" "lo" "last" "questo" "this"} ref))
-          ;; Get the appropriate form based on target type
-          the-form (if use-previous?
+    ;; Direct range replacement (used by F1 autocomplete)
+    (if (= operation :replace-range)
+      (when (and from to value)
+        (cm/replace-range view from to value))
+
+    (do (let [;; Check if target references "it/lo/last" - meaning previous form
+              ref (:ref target)
+              use-previous? (and (= (:type target) "form")
+                                 (contains? #{"it" "lo" "last" "questo" "this"} ref))
+              ;; Get the appropriate form based on target type
+              the-form (if use-previous?
                      (cm/get-previous-form view)
                      (case (:type target)
                        "form" (cm/get-element-at-cursor view)
@@ -989,7 +995,7 @@
           (js/console.warn "AI edit: unknown operation" operation)))
 
       (when-not the-form
-        (js/console.warn "AI edit: no form found" (if use-previous? "(looking for previous)" ""))))
+        (js/console.warn "AI edit: no form found" (if use-previous? "(looking for previous)" ""))))))
 
     ;; Update AI focus after edit
     (cm/update-ai-focus! view)
@@ -1165,7 +1171,115 @@
           (do
             (set! (.-style.display panel-el) "block")
             (set! (.-innerHTML panel-el) (voice/render-panel-html)))
-          (set! (.-style.display panel-el) "none"))))))
+          (set! (.-style.display panel-el) "none"))))
+
+    ;; Help interactivity: click delegation on panel
+    (.addEventListener panel-el "click"
+      (fn [e]
+        (when (= (voice-state/get-mode) :help)
+          (loop [el (.-target e)]
+            (when (and el (not= el panel-el))
+              (if (.hasAttribute el "data-action")
+                (let [action (.getAttribute el "data-action")]
+                  (case action
+                    "select-item"
+                    (when-let [idx-str (.getAttribute el "data-index")]
+                      (voice/dispatch-action! :help-select
+                        {:index (js/parseInt idx-str 10)}))
+                    "browse-tier"
+                    (when-let [ti-str (.getAttribute el "data-tier-index")]
+                      (let [sorted-tiers (sort-by (comp :order val) help-db/tiers)
+                            tier-key (key (nth sorted-tiers (js/parseInt ti-str 10) nil))]
+                        (when tier-key
+                          (voice/dispatch-action! :help-browse {:tier tier-key}))))
+                    "help-prev"
+                    (voice/dispatch-action! :help-prev {})
+                    "help-next"
+                    (voice/dispatch-action! :help-next {})
+                    "help-back"
+                    (voice/dispatch-action! :help-back {})
+                    nil))
+                (recur (.-parentElement el))))))))
+
+    ;; Help interactivity: mouse wheel pagination on panel
+    (.addEventListener panel-el "wheel"
+      (fn [e]
+        (when (= (voice-state/get-mode) :help)
+          (.preventDefault e)
+          (if (pos? (.-deltaY e))
+            (voice/dispatch-action! :help-next {})
+            (voice/dispatch-action! :help-prev {}))))
+      #js {:passive false})
+
+    ;; Help interactivity: keyboard shortcuts (window-level)
+    (.addEventListener js/window "keydown"
+      (fn [e]
+        (let [k (.-key e)]
+          ;; F1 — open help with word at cursor (works in any mode)
+          (when (= k "F1")
+            (.preventDefault e)
+            (let [word-info (when @editor-view
+                              (cm/get-word-at-cursor @editor-view))
+                  query (when (and word-info (seq (:text word-info))) (:text word-info))]
+              (voice-state/enable!)
+              (if query
+                (do
+                  (voice/dispatch-action! :mode-switch {:mode :help :rest-tokens [query]})
+                  ;; Store word boundaries for autocomplete replacement
+                  (voice-state/update-help! {:replace-word {:from (:from word-info)
+                                                            :to (:to word-info)}}))
+                (voice/dispatch-action! :mode-switch {:mode :help}))))
+
+          ;; Help mode navigation keys
+          (when (= (voice-state/get-mode) :help)
+            (let [{:keys [highlight]} (voice-state/get-help)
+                  highlight (or highlight -1)
+                  page-count (let [{:keys [results page]} (voice-state/get-help)
+                                   start (* page 7)]
+                               (min 7 (- (count results) start)))]
+              (cond
+                ;; Number keys 1-7 → select item
+                (and (>= (.charCodeAt k 0) 49) (<= (.charCodeAt k 0) 55) (= 1 (count k)))
+                (do (.preventDefault e)
+                    (voice/dispatch-action! :help-select {:index (dec (js/parseInt k 10))}))
+
+                ;; Arrow up → move highlight up
+                (= k "ArrowUp")
+                (do (.preventDefault e)
+                    (let [new-hl (if (neg? highlight) (dec page-count) (max 0 (dec highlight)))]
+                      (voice-state/update-help! {:highlight new-hl})))
+
+                ;; Arrow down → move highlight down
+                (= k "ArrowDown")
+                (do (.preventDefault e)
+                    (let [new-hl (if (neg? highlight) 0 (min (dec page-count) (inc highlight)))]
+                      (voice-state/update-help! {:highlight new-hl})))
+
+                ;; Enter → select highlighted item
+                (= k "Enter")
+                (do (.preventDefault e)
+                    (when (>= highlight 0)
+                      (voice/dispatch-action! :help-select {:index highlight})))
+
+                ;; Arrow left / PageUp → previous page
+                (or (= k "ArrowLeft") (= k "PageUp"))
+                (do (.preventDefault e)
+                    (voice/dispatch-action! :help-prev {}))
+
+                ;; Arrow right / PageDown → next page
+                (or (= k "ArrowRight") (= k "PageDown"))
+                (do (.preventDefault e)
+                    (voice/dispatch-action! :help-next {}))
+
+                ;; Backspace → go back to categories
+                (= k "Backspace")
+                (do (.preventDefault e)
+                    (voice/dispatch-action! :help-back {}))
+
+                ;; Escape → back to categories, or exit help if already there
+                (= k "Escape")
+                (do (.preventDefault e)
+                    (voice/dispatch-action! :help-exit {}))))))))))
 
 ;; ============================================================
 ;; Initialization

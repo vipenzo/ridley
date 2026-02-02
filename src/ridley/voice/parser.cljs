@@ -3,14 +3,18 @@
    Tokenizes input, strips fillers, and matches against i18n command tables."
   (:require [clojure.string :as str]
             [ridley.voice.i18n :as i18n]
-            [ridley.voice.modes.structure :as structure]))
+            [ridley.voice.modes.structure :as structure]
+            [ridley.voice.help.core :as help]))
 
 ;; ============================================================
 ;; Tokenizer
 ;; ============================================================
 
 (defn- normalize [s]
-  (-> s str/trim str/lower-case (str/replace #"[.,;:!?\"'…]" "")))
+  (-> s str/trim str/lower-case
+      (str/replace #"[,;:!?\"'…]" "")        ;; Strip punctuation (not dots)
+      (str/replace #"\.(?!\d)|(?<!\d)\." "")  ;; Strip dots not between digits
+      ))
 
 (defn- strip-fillers [tokens lang]
   (let [filler-set (get i18n/fillers lang #{})]
@@ -27,11 +31,11 @@
 ;; ============================================================
 
 (defn parse-number
-  "Parse a token as a number. Supports digits and word forms."
+  "Parse a token as a number. Supports digits, decimals, and word forms."
   [token lang]
   (or (get-in i18n/numbers [lang token])
-      (when (re-matches #"\d+" token)
-        (js/parseInt token 10))))
+      (when (re-matches #"\d+\.?\d*" token)
+        (js/parseFloat token))))
 
 ;; ============================================================
 ;; Command lookup helpers
@@ -68,8 +72,9 @@
 (defn- try-mode-switch
   "Check if tokens match a mode switch command. Returns {:action :mode-switch :params {:mode X}} or nil."
   [tokens lang]
-  (when-let [[mode-key _rest] (match-phrases tokens (:modes i18n/voice-commands) lang)]
-    {:action :mode-switch :params {:mode mode-key}}))
+  (when-let [[mode-key rest-tokens] (match-phrases tokens (:modes i18n/voice-commands) lang)]
+    {:action :mode-switch :params (cond-> {:mode mode-key}
+                                    (seq rest-tokens) (assoc :rest-tokens rest-tokens))}))
 
 ;; ============================================================
 ;; Language switching
@@ -138,6 +143,6 @@
        (case mode
          :structure (structure/parse tokens lang)
          :turtle    nil  ;; Phase 4
-         :help      nil  ;; Phase 5
+         :help      (help/parse tokens lang)
          :ai        nil  ;; Passthrough to LLM
          nil)))))

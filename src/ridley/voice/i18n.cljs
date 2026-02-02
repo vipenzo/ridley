@@ -120,6 +120,11 @@
     :number     {:it ["numero"]
                  :en ["number"]}}
 
+   :help-browse
+   {:ridley           {:it ["ridley"] :en ["ridley"]}
+    :clojure-base     {:it ["clojure" "clojure base"] :en ["clojure" "clojure base"]}
+    :clojure-extended {:it ["esteso" "clojure esteso" "avanzato"] :en ["extended" "clojure extended" "advanced"]}}
+
    :language
    {:it {:it ["lingua italiana" "italiano"]
          :en ["italian"]}

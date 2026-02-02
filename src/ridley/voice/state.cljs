@@ -20,7 +20,16 @@
          :cursor {:target :script :line 1 :col 0
                   :current-form nil :parent-form nil}
          :selection nil
-         :scene {:meshes [] :visible [] :shapes [] :paths []}}))
+         :scene {:meshes [] :visible [] :shapes [] :paths []}
+
+         ;; Help mode state
+         :help {:results []      ; vector of entry maps
+                :page 0
+                :query nil       ; current search string
+                :view nil        ; nil | :categories | :search | :browse
+                :highlight -1    ; page-relative highlight (-1 = none)
+                :replace-word nil ; {:from N :to N} — set by F1 for autocomplete
+                }}))
 
 ;; Enable/disable
 
@@ -64,5 +73,15 @@
 
 (defn update-scene! [scene-data]
   (swap! voice-state update :scene merge scene-data))
+
+;; Help state
+
+(defn update-help! [help-data]
+  (swap! voice-state update :help merge help-data))
+
+(defn reset-help! []
+  (swap! voice-state assoc :help {:results [] :page 0 :query nil :view nil :highlight -1 :replace-word nil}))
+
+(defn get-help [] (:help @voice-state))
 
 (defn get-state [] @voice-state)

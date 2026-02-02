@@ -7,7 +7,9 @@
             [ridley.voice.speech :as speech]
             [ridley.voice.parser :as parser]
             [ridley.voice.i18n :as i18n]
-            [ridley.voice.panel :as panel]))
+            [ridley.voice.panel :as panel]
+            [ridley.voice.help.core :as help]
+            [ridley.voice.help.db :as help-db]))
 
 ;; Handler callbacks (set by core.cljs to avoid circular deps)
 (defonce ^:private handlers (atom {}))
@@ -38,9 +40,22 @@
       (case action
         ;; Mode switching
         :mode-switch
-        (let [new-mode (:mode params)]
+        (let [new-mode (:mode params)
+              rest-tokens (:rest-tokens params)]
           (state/set-mode! new-mode)
-          (when speak (speak (str "Modo " (name new-mode)))))
+          (when speak (speak (str "Modo " (name new-mode))))
+          ;; Help compound: "aiuto box" → switch to help + immediate search
+          (when (and (= new-mode :help) (seq rest-tokens))
+            (let [query (str/join " " rest-tokens)
+                  lang (state/get-language)
+                  results (help/search-help query lang)]
+              (state/update-help! {:results (or results [])
+                                   :query query
+                                   :page 0
+                                   :view :search})))
+          ;; Help without query → show categories
+          (when (and (= new-mode :help) (not (seq rest-tokens)))
+            (state/update-help! {:results [] :query nil :page 0 :view :categories})))
 
         ;; Language switching
         :language-switch
@@ -181,8 +196,91 @@
         (do (state/set-sub-mode! :dictation)
             (when speak (speak "Dettatura")))
 
+        ;; Help mode actions
+        :help-search
+        (let [query (:query params)
+              lang (state/get-language)
+              results (help/search-help query lang)]
+          (state/update-help! {:results (or results [])
+                               :query query
+                               :page 0
+                               :view :search}))
+
+        :help-browse
+        (let [tier (:tier params)
+              results (help/get-tier-entries tier)]
+          (state/update-help! {:results results
+                               :query (name tier)
+                               :page 0
+                               :view :browse}))
+
+        :help-select
+        (let [{:keys [results page view replace-word]} (state/get-help)
+              idx (:index params)]
+          (if (= view :categories)
+            ;; In categories view: number selects a tier → browse it
+            (let [sorted-tiers (sort-by (comp :order val) help-db/tiers)
+                  tier-entry (nth sorted-tiers idx nil)]
+              (when tier-entry
+                (let [tier-key (key tier-entry)
+                      tier-results (help/get-tier-entries tier-key)]
+                  (state/update-help! {:results tier-results
+                                       :query (name tier-key)
+                                       :page 0
+                                       :view :browse}))))
+            ;; In search/browse view: number selects an entry
+            (let [abs-idx (+ (* page 7) idx)
+                  entry (nth results abs-idx nil)]
+              (when entry
+                (if replace-word
+                  ;; F1 autocomplete: replace the partial word with symbol name
+                  (when edit
+                    (edit {:operation :replace-range
+                           :from (:from replace-word)
+                           :to (:to replace-word)
+                           :value (name (:symbol entry))}))
+                  ;; Voice/browse: insert full template
+                  (let [{:keys [text]} (help/insert-template entry)]
+                    (when insert
+                      (insert {:target :script :code text :position :at-cursor}))))
+                (state/set-mode! :structure)
+                (state/reset-help!)))))
+
+        :help-next
+        (let [{:keys [results page]} (state/get-help)
+              total-pages (js/Math.ceil (/ (count results) 7))]
+          (when (< (inc page) total-pages)
+            (state/update-help! {:page (inc page) :highlight -1})))
+
+        :help-prev
+        (let [{:keys [page]} (state/get-help)]
+          (when (pos? page)
+            (state/update-help! {:page (dec page) :highlight -1})))
+
+        :help-back
+        (state/update-help! {:results [] :query nil :page 0 :view :categories :highlight -1})
+
+        :help-exit
+        (let [{:keys [view]} (state/get-help)]
+          (if (= view :categories)
+            ;; Already at categories → exit help entirely
+            (do (state/set-mode! :structure)
+                (state/reset-help!))
+            ;; In browse/search → go back to categories
+            (state/update-help! {:results [] :query nil :page 0 :view :categories :highlight -1})))
+
         ;; Default
         (js/console.warn "Voice: unhandled action" (pr-str action))))))
+
+;; ============================================================
+;; Public action dispatch (for keyboard/mouse/XR)
+;; ============================================================
+
+(defn dispatch-action!
+  "Dispatch help actions programmatically from keyboard/mouse/XR.
+   Same command structure as voice parser output."
+  [action params]
+  (execute-action {:action action :params params}))
 
 ;; ============================================================
 ;; Utterance handling

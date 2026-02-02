@@ -1,10 +1,11 @@
 (ns ridley.voice.panel
   "Voice status panel UI."
   (:require [clojure.string :as str]
-            [ridley.voice.state :as state]))
+            [ridley.voice.state :as state]
+            [ridley.voice.help.ui :as help-ui]))
 
 (def panel-css
-  ".voice-panel {
+  (str ".voice-panel {
      position: fixed;
      bottom: 8px;
      right: 8px;
@@ -61,7 +62,8 @@
      background: #600;
      border-color: #f44;
      animation: voice-pulse 1.5s ease-in-out infinite;
-   }")
+   }
+   " help-ui/help-css))
 
 (defn render-html
   "Render voice status panel as HTML string."
@@ -89,4 +91,7 @@
      (when pending
        (str "<div class='voice-pending'>" pending "</div>"))
      (when last-utt
-       (str "<div class='voice-last'>Last: \"" last-utt "\"</div>")))))
+       (str "<div class='voice-last'>Last: \"" last-utt "\"</div>"))
+     ;; Help mode panel
+     (when (= mode :help)
+       (help-ui/render-html (:language st))))))
