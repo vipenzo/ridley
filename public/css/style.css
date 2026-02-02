@@ -983,3 +983,226 @@ body.resizing-h * {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
 }
+
+/* Settings button */
+.settings-btn {
+  color: #9cdcfe !important;
+  margin-left: auto;
+  font-size: 20px;
+}
+
+.settings-btn:hover {
+  color: #fff !important;
+  background: #3c3c3c;
+}
+
+/* Settings modal */
+.settings-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+}
+
+.settings-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  z-index: 9999;
+}
+
+.settings-modal-content {
+  position: relative;
+  background: #2d2d2d;
+  border-radius: 12px;
+  padding: 24px;
+  width: 360px;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  z-index: 10001;
+}
+
+.settings-modal-content h3 {
+  margin-bottom: 20px;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.settings-field {
+  margin-bottom: 14px;
+}
+
+.settings-label {
+  display: block;
+  color: #808080;
+  font-size: 11px;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.settings-select,
+.settings-input {
+  width: 100%;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.settings-select:focus,
+.settings-input:focus {
+  outline: none;
+  border-color: #4fc1ff;
+}
+
+.settings-api-key-row {
+  display: flex;
+  gap: 6px;
+}
+
+.settings-api-key-row .settings-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-toggle-btn {
+  background: transparent;
+  color: #808080;
+  border: 1px solid #3c3c3c;
+  padding: 8px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.settings-toggle-btn:hover {
+  background: #3c3c3c;
+  color: #d4d4d4;
+}
+
+.settings-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  color: #d4d4d4;
+  font-size: 13px;
+}
+
+.settings-checkbox-row input[type="checkbox"] {
+  cursor: pointer;
+  accent-color: #4ec9b0;
+}
+
+.settings-hint {
+  font-size: 11px;
+  color: #555;
+  margin-top: 4px;
+}
+
+.settings-ollama-status {
+  padding: 8px 10px;
+  background: #1e1e1e;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #d4d4d4;
+  margin-bottom: 14px;
+}
+
+.settings-ollama-status .connected {
+  color: #4ec9b0;
+}
+
+.settings-ollama-status .disconnected {
+  color: #f48771;
+}
+
+.settings-check-btn {
+  background: transparent;
+  color: #808080;
+  border: 1px solid #3c3c3c;
+  padding: 8px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.settings-check-btn:hover {
+  background: #3c3c3c;
+  color: #d4d4d4;
+}
+
+.settings-test-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+  padding-top: 14px;
+  border-top: 1px solid #3c3c3c;
+}
+
+.settings-test-btn {
+  background: #1e1e1e;
+  color: #4fc1ff;
+  border: 1px solid #4fc1ff;
+  padding: 8px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.settings-test-btn:hover:not(:disabled) {
+  background: #4fc1ff;
+  color: #1e1e1e;
+}
+
+.settings-test-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.settings-test-ok {
+  color: #4ec9b0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.settings-test-error {
+  color: #f48771;
+  font-size: 12px;
+}
+
+.settings-close-btn {
+  display: block;
+  width: 100%;
+  margin-top: 20px;
+  padding: 10px;
+  background: #444;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.settings-close-btn:hover {
+  background: #555;
+}

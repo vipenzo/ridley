@@ -15,7 +15,8 @@
             [ridley.voice.core :as voice]
             [ridley.voice.state :as voice-state]
             [ridley.voice.i18n :as voice-i18n]
-            [ridley.voice.help.db :as help-db]))
+            [ridley.voice.help.db :as help-db]
+            [ridley.settings :as settings]))
 
 (defonce ^:private editor-view (atom nil))
 (defonce ^:private repl-input-el (atom nil))
@@ -693,6 +694,284 @@
     (join-session peer-id)))
 
 ;; ============================================================
+;; LLM Settings Modal
+;; ============================================================
+
+(defonce ^:private show-api-key? (atom false))
+
+(defn- render-settings-content
+  "Render the settings modal content based on current settings state.
+   Returns an HTML string."
+  []
+  (let [ai (:ai @settings/settings)
+        enabled (:enabled ai)
+        provider (:provider ai)]
+    (str
+     "<h3>⚙ LLM Settings</h3>"
+
+     ;; Enable checkbox
+     "<div class='settings-field'>"
+     "<label class='settings-checkbox-row'>"
+     "<input type='checkbox' id='settings-ai-enabled' "
+     (when enabled "checked") ">"
+     "Enable AI"
+     "</label>"
+     "</div>"
+
+     ;; Provider-specific fields (only when enabled)
+     (when enabled
+       (str
+        ;; Provider dropdown
+        "<div class='settings-field'>"
+        "<label class='settings-label'>Provider</label>"
+        "<select id='settings-provider' class='settings-select'>"
+        "<option value='anthropic'" (when (= provider :anthropic) " selected") ">Anthropic</option>"
+        "<option value='openai'" (when (= provider :openai) " selected") ">OpenAI</option>"
+        "<option value='groq'" (when (= provider :groq) " selected") ">Groq</option>"
+        "<option value='ollama'" (when (= provider :ollama) " selected") ">Ollama</option>"
+        "</select>"
+        "</div>"
+
+        ;; Anthropic
+        (when (= provider :anthropic)
+          (str
+           "<div class='settings-field'>"
+           "<label class='settings-label'>API Key</label>"
+           "<div class='settings-api-key-row'>"
+           "<input type='" (if @show-api-key? "text" "password") "' "
+           "id='settings-api-key' class='settings-input' "
+           "placeholder='sk-ant-...' "
+           "value='" (or (:anthropic-key ai) "") "'>"
+           "<button class='settings-toggle-btn' id='settings-toggle-key'>"
+           (if @show-api-key? "Hide" "Show")
+           "</button>"
+           "</div>"
+           "</div>"
+           "<div class='settings-field'>"
+           "<label class='settings-label'>Model</label>"
+           "<select id='settings-model' class='settings-select'>"
+           "<option value='claude-sonnet-4-20250514'" (when (= (:model ai) "claude-sonnet-4-20250514") " selected") ">Claude Sonnet 4</option>"
+           "<option value='claude-opus-4-20250514'" (when (= (:model ai) "claude-opus-4-20250514") " selected") ">Claude Opus 4</option>"
+           "<option value='claude-3-5-haiku-latest'" (when (= (:model ai) "claude-3-5-haiku-latest") " selected") ">Claude 3.5 Haiku</option>"
+           "</select>"
+           "</div>"))
+
+        ;; OpenAI
+        (when (= provider :openai)
+          (str
+           "<div class='settings-field'>"
+           "<label class='settings-label'>API Key</label>"
+           "<div class='settings-api-key-row'>"
+           "<input type='" (if @show-api-key? "text" "password") "' "
+           "id='settings-api-key' class='settings-input' "
+           "placeholder='sk-...' "
+           "value='" (or (:openai-key ai) "") "'>"
+           "<button class='settings-toggle-btn' id='settings-toggle-key'>"
+           (if @show-api-key? "Hide" "Show")
+           "</button>"
+           "</div>"
+           "</div>"
+           "<div class='settings-field'>"
+           "<label class='settings-label'>Model</label>"
+           "<select id='settings-model' class='settings-select'>"
+           "<option value='gpt-4o'" (when (= (:model ai) "gpt-4o") " selected") ">GPT-4o</option>"
+           "<option value='gpt-4o-mini'" (when (= (:model ai) "gpt-4o-mini") " selected") ">GPT-4o Mini</option>"
+           "<option value='gpt-4-turbo'" (when (= (:model ai) "gpt-4-turbo") " selected") ">GPT-4 Turbo</option>"
+           "</select>"
+           "</div>"))
+
+        ;; Groq
+        (when (= provider :groq)
+          (str
+           "<div class='settings-field'>"
+           "<label class='settings-label'>API Key</label>"
+           "<div class='settings-api-key-row'>"
+           "<input type='" (if @show-api-key? "text" "password") "' "
+           "id='settings-api-key' class='settings-input' "
+           "placeholder='gsk_...' "
+           "value='" (or (:groq-key ai) "") "'>"
+           "<button class='settings-toggle-btn' id='settings-toggle-key'>"
+           (if @show-api-key? "Hide" "Show")
+           "</button>"
+           "</div>"
+           "</div>"
+           "<div class='settings-field'>"
+           "<label class='settings-label'>Model</label>"
+           "<input type='text' id='settings-groq-model' class='settings-input' "
+           "value='" (or (:groq-model ai) "") "' "
+           "placeholder='llama-3.3-70b-versatile'>"
+           "<div class='settings-hint'>e.g. llama-3.3-70b-versatile, llama-3.1-8b-instant</div>"
+           "</div>"))
+
+        ;; Ollama
+        (when (= provider :ollama)
+          (let [status @settings/ollama-status]
+            (str
+             "<div class='settings-field'>"
+             "<label class='settings-label'>Ollama URL</label>"
+             "<div class='settings-api-key-row'>"
+             "<input type='text' id='settings-ollama-url' class='settings-input' "
+             "value='" (or (:ollama-url ai) "http://localhost:11434") "'>"
+             "<button class='settings-check-btn' id='settings-ollama-check'>"
+             (if (:checking status) "Checking..." "Check")
+             "</button>"
+             "</div>"
+             "</div>"
+             ;; Connection status
+             (when (some? (:connected status))
+               (str "<div class='settings-ollama-status'>"
+                    (if (:connected status)
+                      (str "<span class='connected'>✓ Connected</span>"
+                           " — " (count (:models status)) " models found")
+                      "<span class='disconnected'>✗ Not connected</span>")
+                    "</div>"))
+             ;; Model
+             "<div class='settings-field'>"
+             "<label class='settings-label'>Model</label>"
+             (if (and (:connected status) (seq (:models status)))
+               ;; Dropdown with discovered models
+               (str "<select id='settings-ollama-model' class='settings-select'>"
+                    (apply str (map (fn [m]
+                                      (str "<option value='" m "'"
+                                           (when (= m (:ollama-model ai)) " selected")
+                                           ">" m "</option>"))
+                                    (:models status)))
+                    "</select>")
+               ;; Text input
+               (str "<input type='text' id='settings-ollama-model' class='settings-input' "
+                    "value='" (or (:ollama-model ai) "") "' "
+                    "placeholder='llama3'>"))
+             "</div>")))
+
+        ;; Test Connection button (shown for all providers when configured)
+        (let [conn @settings/connection-status]
+          (str
+           "<div class='settings-field settings-test-row'>"
+           "<button class='settings-test-btn' id='settings-test-connection'"
+           (when (or (:testing conn) (not (settings/ai-configured?))) " disabled") ">"
+           (if (:testing conn) "Testing..." "Test Connection")
+           "</button>"
+           (case (:result conn)
+             :ok "<span class='settings-test-ok'>Connected</span>"
+             :error (str "<span class='settings-test-error'>" (or (:error conn) "Failed") "</span>")
+             "")
+           "</div>")))))))
+
+(defn- attach-settings-listeners
+  "Attach event listeners to the settings modal content.
+   Calls re-render on changes that affect the form structure."
+  [modal re-render]
+  ;; Enable checkbox
+  (when-let [el (.querySelector modal "#settings-ai-enabled")]
+    (.addEventListener el "change"
+                       (fn [e]
+                         (settings/set-ai-setting! :enabled (.. e -target -checked))
+                         (re-render))))
+  ;; Provider dropdown
+  (when-let [el (.querySelector modal "#settings-provider")]
+    (.addEventListener el "change"
+                       (fn [e]
+                         (settings/set-ai-setting! :provider (keyword (.. e -target -value)))
+                         (re-render))))
+  ;; API key input (Anthropic/OpenAI/Groq)
+  (when-let [el (.querySelector modal "#settings-api-key")]
+    (.addEventListener el "input"
+                       (fn [e]
+                         (let [provider (settings/get-ai-setting :provider)
+                               p (if (keyword? provider) (name provider) (str provider))
+                               key-field (cond
+                                           (= p "anthropic") :anthropic-key
+                                           (= p "openai") :openai-key
+                                           (= p "groq") :groq-key
+                                           :else nil)]
+                           (when key-field
+                             (settings/set-ai-setting! key-field (.. e -target -value)))))))
+  ;; Toggle API key visibility
+  (when-let [el (.querySelector modal "#settings-toggle-key")]
+    (.addEventListener el "click"
+                       (fn [_]
+                         (swap! show-api-key? not)
+                         (re-render))))
+  ;; Model dropdown (Anthropic/OpenAI)
+  (when-let [el (.querySelector modal "#settings-model")]
+    (.addEventListener el "change"
+                       (fn [e]
+                         (settings/set-ai-setting! :model (.. e -target -value)))))
+  ;; Groq model text input
+  (when-let [el (.querySelector modal "#settings-groq-model")]
+    (.addEventListener el "input"
+                       (fn [e]
+                         (settings/set-ai-setting! :groq-model (.. e -target -value)))))
+  ;; Ollama URL
+  (when-let [el (.querySelector modal "#settings-ollama-url")]
+    (.addEventListener el "input"
+                       (fn [e]
+                         (settings/set-ai-setting! :ollama-url (.. e -target -value)))))
+  ;; Ollama check connection
+  (when-let [el (.querySelector modal "#settings-ollama-check")]
+    (.addEventListener el "click"
+                       (fn [_]
+                         (-> (settings/check-ollama-connection!)
+                             (.then (fn [_] (re-render)))
+                             (.catch (fn [_] (re-render)))))))
+  ;; Ollama model (select or input)
+  (when-let [el (.querySelector modal "#settings-ollama-model")]
+    (.addEventListener el (if (= "SELECT" (.-tagName el)) "change" "input")
+                       (fn [e]
+                         (settings/set-ai-setting! :ollama-model (.. e -target -value)))))
+  ;; Test Connection button
+  (when-let [el (.querySelector modal "#settings-test-connection")]
+    (.addEventListener el "click"
+                       (fn [_]
+                         (re-render)
+                         (settings/validate-connection!)
+                         ;; Poll for result and re-render when done
+                         (let [poll-id (atom nil)]
+                           (reset! poll-id
+                                   (js/setInterval
+                                    (fn []
+                                      (when-not (:testing @settings/connection-status)
+                                        (js/clearInterval @poll-id)
+                                        (re-render)))
+                                    200)))))))
+
+(defn- show-settings-modal
+  "Show the LLM settings modal."
+  []
+  (let [modal (.createElement js/document "div")
+        overlay (.createElement js/document "div")
+        close-modal (fn []
+                      (.remove overlay)
+                      (.remove modal))
+        render (fn render []
+                 (let [content-el (.querySelector modal ".settings-modal-content")]
+                   (when content-el
+                     (set! (.-innerHTML content-el)
+                           (str (render-settings-content)
+                                "<button class='settings-close-btn' id='settings-close'>Close</button>"))
+                     ;; Attach listeners
+                     (attach-settings-listeners modal render)
+                     ;; Close button
+                     (when-let [btn (.querySelector modal "#settings-close")]
+                       (.addEventListener btn "click" close-modal)))))]
+    ;; Setup overlay
+    (set! (.-className overlay) "settings-modal-overlay")
+    (.addEventListener overlay "click" close-modal)
+    ;; Setup modal
+    (set! (.-className modal) "settings-modal")
+    (set! (.-innerHTML modal) "<div class='settings-modal-content'></div>")
+    (.appendChild js/document.body overlay)
+    (.appendChild js/document.body modal)
+    ;; Initial render
+    (render)))
+
+(defn- setup-settings
+  "Setup settings button click handler."
+  []
+  (when-let [btn (.getElementById js/document "btn-settings")]
+    (.addEventListener btn "click" (fn [_] (show-settings-modal)))))
+
+;; ============================================================
 ;; Manual
 ;; ============================================================
 
@@ -1346,6 +1625,9 @@
     (-> (text/init-default-font!)
         (.then #(js/console.log "Default font loaded"))
         (.catch #(js/console.warn "Default font failed to load:" %)))
+    ;; Load LLM settings and setup button
+    (settings/load-settings!)
+    (setup-settings)
     ;; Setup sync (desktop <-> headset)
     (setup-sync)
     ;; Setup manual panel
