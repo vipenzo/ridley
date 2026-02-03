@@ -16,7 +16,8 @@
             [ridley.voice.state :as voice-state]
             [ridley.voice.i18n :as voice-i18n]
             [ridley.voice.help.db :as help-db]
-            [ridley.settings :as settings]))
+            [ridley.settings :as settings]
+            [ridley.ai.core :as ai]))
 
 (defonce ^:private editor-view (atom nil))
 (defonce ^:private repl-input-el (atom nil))
@@ -38,6 +39,8 @@
 (defonce ^:private manual-panel (atom nil))
 
 (declare sync-voice-state)
+(declare save-to-storage)
+(declare send-script-debounced)
 
 (defn- show-error [msg]
   (when-let [el @error-el]
@@ -147,6 +150,31 @@
          ;; Sync AI state
          (sync-voice-state))))))
 
+(defn- handle-ai-command
+  "Handle /ai <prompt> — call LLM and append generated code to the script.
+   When auto-run? is true, also evaluates definitions after inserting."
+  [input prompt auto-run?]
+  ;; Show loading in REPL history
+  (add-repl-entry input "Generating..." false)
+  (-> (ai/generate prompt)
+      (.then (fn [{:keys [code]}]
+               (when-let [view @editor-view]
+                 ;; Append to script: comment + generated code
+                 (let [snippet (str "\n;; AI: " prompt "\n" code "\n")]
+                   (cm/insert-at-end view snippet))
+                 ;; Auto-save
+                 (save-to-storage)
+                 (send-script-debounced))
+               ;; Show success in REPL
+               (add-repl-entry input "Code added to script." false)
+               ;; Auto-run if requested
+               (when auto-run?
+                 (evaluate-definitions))))
+      (.catch (fn [err]
+                (let [msg (or (.-message err) (str err))]
+                  (add-repl-entry input msg true)
+                  (show-error msg))))))
+
 (defn- evaluate-repl-input
   "Evaluate the REPL input and show result in history."
   []
@@ -158,29 +186,40 @@
         (reset! history-index -1)
         ;; Clear input
         (set! (.-value input-el) "")
-        ;; Send to connected clients if we're the host
-        (when (= :host @sync-mode)
-          (sync/send-repl-command input))
-        ;; Evaluate REPL input only (definitions already in context)
-        (let [result (repl/evaluate-repl input)]
-          (if-let [error (:error result)]
-            (do
-              (add-repl-entry input error true)
-              (show-error error))
-            (do
-              (hide-error)
-              ;; Show result in terminal history (with any print output)
-              (add-repl-entry input (:implicit-result result) false (:print-output result))
-              ;; Extract lines and meshes from REPL evaluation
-              (when-let [render-data (repl/extract-render-data result)]
-                (registry/add-lines! (:lines render-data))
-                (registry/set-definition-meshes! (:meshes render-data)))
-              ;; Update viewport (don't reset camera)
-              (registry/refresh-viewport! false)
-              ;; Update turtle indicator
-              (update-turtle-indicator)
-              ;; Sync AI state
-              (sync-voice-state))))))))
+        ;; Check for /ai or /ai! command
+        (if (or (str/starts-with? (str/trim input) "/ai! ")
+                (str/starts-with? (str/trim input) "/ai "))
+          (let [trimmed (str/trim input)
+                auto-run? (str/starts-with? trimmed "/ai! ")
+                prefix-len (if auto-run? 5 4)
+                prompt (str/trim (subs trimmed prefix-len))]
+            (when (seq prompt)
+              (handle-ai-command input prompt auto-run?)))
+          ;; Normal REPL evaluation
+          (do
+            ;; Send to connected clients if we're the host
+            (when (= :host @sync-mode)
+              (sync/send-repl-command input))
+            ;; Evaluate REPL input only (definitions already in context)
+            (let [result (repl/evaluate-repl input)]
+              (if-let [error (:error result)]
+                (do
+                  (add-repl-entry input error true)
+                  (show-error error))
+                (do
+                  (hide-error)
+                  ;; Show result in terminal history (with any print output)
+                  (add-repl-entry input (:implicit-result result) false (:print-output result))
+                  ;; Extract lines and meshes from REPL evaluation
+                  (when-let [render-data (repl/extract-render-data result)]
+                    (registry/add-lines! (:lines render-data))
+                    (registry/set-definition-meshes! (:meshes render-data)))
+                  ;; Update viewport (don't reset camera)
+                  (registry/refresh-viewport! false)
+                  ;; Update turtle indicator
+                  (update-turtle-indicator)
+                  ;; Sync AI state
+                  (sync-voice-state))))))))))
 
 (defn- navigate-history
   "Navigate command history. direction: -1 for older, +1 for newer."
@@ -223,15 +262,40 @@
   []
   (.getItem js/localStorage storage-key))
 
+(defn- download-blob-fallback
+  "Download a blob using the traditional createElement('a') method."
+  [blob filename]
+  (let [url (js/URL.createObjectURL blob)
+        link (.createElement js/document "a")]
+    (set! (.-href link) url)
+    (set! (.-download link) filename)
+    (.click link)
+    (js/URL.revokeObjectURL url)))
+
+(defn- save-blob-with-picker
+  "Save a blob using showSaveFilePicker (native Save As dialog) when available,
+   falling back to traditional download otherwise."
+  [blob filename description mime-type extensions]
+  (if (exists? js/window.showSaveFilePicker)
+    (let [accept (js-obj mime-type extensions)]
+      (-> (js/window.showSaveFilePicker
+            #js {:suggestedName filename
+                 :types #js [#js {:description description
+                                  :accept accept}]})
+          (.then (fn [handle] (.createWritable handle)))
+          (.then (fn [writable]
+                   (-> (.write writable blob)
+                       (.then #(.close writable)))))
+          (.catch (fn [_err]
+                    ;; User cancelled — do nothing
+                    nil))))
+    (download-blob-fallback blob filename)))
+
 (defn- save-definitions []
   (when-let [content (cm/get-value @editor-view)]
-    (let [blob (js/Blob. #js [content] #js {:type "text/plain"})
-          url (js/URL.createObjectURL blob)
-          link (.createElement js/document "a")]
-      (set! (.-href link) url)
-      (set! (.-download link) "definitions.clj")
-      (.click link)
-      (js/URL.revokeObjectURL url)
+    (let [blob (js/Blob. #js [content] #js {:type "text/plain"})]
+      (save-blob-with-picker blob "definitions.clj"
+                             "Clojure files" "text/plain" #js [".clj"])
       ;; Also save to localStorage
       (save-to-storage))))
 
@@ -346,7 +410,20 @@
           (do
             (.preventDefault e)
             (navigate-history 1))
-          nil)))))
+          nil))))
+  ;; Global Cmd+Enter — run script from anywhere (REPL, viewport, etc.)
+  (.addEventListener js/window "keydown"
+    (fn [e]
+      (when (and (= "Enter" (.-key e))
+                 (or (.-metaKey e) (.-ctrlKey e)))
+        ;; Only handle if focus is NOT in the CodeMirror editor
+        ;; (CodeMirror has its own Cmd+Enter handler)
+        (let [active (.-activeElement js/document)
+              in-editor? (when active
+                           (.closest active ".cm-editor"))]
+          (when-not in-editor?
+            (.preventDefault e)
+            (evaluate-definitions)))))))
 
 (defn- export-stl []
   (let [meshes (viewport/get-current-meshes)]

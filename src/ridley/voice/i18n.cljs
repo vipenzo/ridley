@@ -7,8 +7,8 @@
                 :en ["structure mode" "structure"]}
     :turtle    {:it ["modo turtle" "modo tartaruga" "tartaruga"]
                 :en ["turtle mode" "turtle"]}
-    :ai        {:it ["modo ai" "modo intelligenza artificiale"]
-                :en ["ai mode"]}
+    :ai        {:it ["modo ai" "modo intelligenza artificiale" "modo intelligenza" "modo generativo" "genera" "generazione"]
+                :en ["ai mode" "generate mode" "generation mode"]}
     :help      {:it ["aiuto" "help"]
                 :en ["help"]}}
 

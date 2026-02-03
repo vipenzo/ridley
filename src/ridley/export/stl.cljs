@@ -113,6 +113,16 @@
     (mesh->stl-binary {:vertices (:vertices merged)
                        :faces (:faces merged)})))
 
+(defn- download-blob-fallback
+  "Download a blob using the traditional createElement('a') method."
+  [blob filename]
+  (let [url (js/URL.createObjectURL blob)
+        link (js/document.createElement "a")]
+    (set! (.-href link) url)
+    (set! (.-download link) filename)
+    (.click link)
+    (js/URL.revokeObjectURL url)))
+
 (defn download-stl
   "Download mesh(es) as an STL file.
    mesh-or-meshes: single mesh or vector of meshes
@@ -121,16 +131,20 @@
    (download-stl mesh-or-meshes "model.stl"))
   ([mesh-or-meshes filename]
    (let [meshes (if (vector? (first (:vertices mesh-or-meshes)))
-                  ;; Single mesh
                   [mesh-or-meshes]
-                  ;; Already a collection of meshes
                   mesh-or-meshes)
          buffer (meshes->stl-binary meshes)
-         blob (js/Blob. #js [buffer] #js {:type "application/octet-stream"})
-         url (js/URL.createObjectURL blob)
-         link (js/document.createElement "a")]
-     (set! (.-href link) url)
-     (set! (.-download link) filename)
-     (.click link)
-     (js/URL.revokeObjectURL url)
-     (str "Exported " (count meshes) " mesh(es) to " filename))))
+         blob (js/Blob. #js [buffer] #js {:type "application/octet-stream"})]
+     (if (exists? js/window.showSaveFilePicker)
+       (-> (js/window.showSaveFilePicker
+             #js {:suggestedName filename
+                  :types #js [#js {:description "STL files"
+                                   :accept #js {"application/octet-stream" #js [".stl"]}}]})
+           (.then (fn [handle] (.createWritable handle)))
+           (.then (fn [writable]
+                    (-> (.write writable blob)
+                        (.then #(.close writable)))))
+           (.then (fn [_] (str "Exported " (count meshes) " mesh(es) to " filename)))
+           (.catch (fn [_err] nil)))
+       (do (download-blob-fallback blob filename)
+           (str "Exported " (count meshes) " mesh(es) to " filename))))))

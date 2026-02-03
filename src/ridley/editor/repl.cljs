@@ -695,29 +695,26 @@
 (defn ^:export transform-mesh-to-turtle-orientation
   "Transform a mesh from XY plane (Z up) to turtle orientation.
    Manifold's extrude creates mesh in XY plane extruding along +Z.
-   We need to rotate it so the base is perpendicular to turtle's up,
-   and the text flows along turtle's heading.
+   We rotate so text flows along heading, letter tops point along up,
+   and extrusion depth goes along right — matching (extrude (text-shape ...) (f d)).
 
    Default orientation (heading=[1,0,0], up=[0,0,1]):
    - Text flows along +X (heading)
-   - Letters' top points toward +Y
-   - Extrusion goes toward +Z (up)"
+   - Letters' top points toward +Z (up)
+   - Extrusion depth goes toward -Y (right)"
   [mesh position heading up]
-  (let [;; Manifold extrudes along +Z, we want along 'up'
-        ;; Manifold's X axis should map to our 'heading' (text reading direction)
-        ;; Manifold's Y axis should map to -right so letter tops point correctly
-        ;; (With default turtle, -right = [0,-1,0] * -1 = toward +Y for letter tops)
-        right (turtle/cross heading up)
+  (let [right (turtle/cross heading up)
         vertices (:vertices mesh)
         faces (:faces mesh)
-        ;; Transform each vertex: [x, y, z] -> position + x*heading - y*right + z*up
-        ;; Note the -y*right to flip the Y axis orientation
+        ;; Transform each vertex: [x, y, z] -> position + x*heading + y*up + z*right
+        ;; This matches text-shape's plane mapping (plane-x=heading, plane-y=up)
+        ;; and puts depth along right (perpendicular to the text face).
         transformed-verts
         (mapv (fn [[x y z]]
                 (turtle/v+ position
                            (turtle/v+ (turtle/v* heading x)
-                                      (turtle/v+ (turtle/v* right (- y))
-                                                 (turtle/v* up z)))))
+                                      (turtle/v+ (turtle/v* up y)
+                                                 (turtle/v* right z)))))
               vertices)]
     (-> mesh
         (assoc :vertices transformed-verts)

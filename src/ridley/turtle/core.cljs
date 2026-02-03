@@ -122,96 +122,6 @@
   [v axis angle]
   (normalize (rotate-point-around-axis v axis angle)))
 
-;; --- Polygon triangulation (ear clipping for concave shapes) ---
-
-(defn- signed-area-2d
-  "Signed area of 2D polygon (positive = CCW, negative = CW)."
-  [pts]
-  (let [n (count pts)]
-    (/ (reduce +
-         (for [i (range n)]
-           (let [[x1 y1] (nth pts i)
-                 [x2 y2] (nth pts (mod (inc i) n))]
-             (- (* x1 y2) (* x2 y1)))))
-       2)))
-
-(defn- point-in-triangle-2d
-  "Check if point p is inside or on edge of triangle abc (2D).
-   Uses small epsilon to handle numerical edge cases."
-  [[px py] [ax ay] [bx by] [cx cy]]
-  (let [eps -1e-10  ; small negative epsilon to include points on/near edges
-        v0x (- cx ax) v0y (- cy ay)
-        v1x (- bx ax) v1y (- by ay)
-        v2x (- px ax) v2y (- py ay)
-        dot00 (+ (* v0x v0x) (* v0y v0y))
-        dot01 (+ (* v0x v1x) (* v0y v1y))
-        dot02 (+ (* v0x v2x) (* v0y v2y))
-        dot11 (+ (* v1x v1x) (* v1y v1y))
-        dot12 (+ (* v1x v2x) (* v1y v2y))
-        denom (- (* dot00 dot11) (* dot01 dot01))]
-    (if (< (Math/abs denom) 1e-12)
-      false  ; degenerate triangle
-      (let [inv-denom (/ 1.0 denom)
-            u (* (- (* dot11 dot02) (* dot01 dot12)) inv-denom)
-            v (* (- (* dot00 dot12) (* dot01 dot02)) inv-denom)]
-        (and (> u eps) (> v eps) (< (+ u v) (- 1 eps)))))))
-
-(defn- is-ear-2d
-  "Check if vertex at index i forms an ear in 2D polygon."
-  [pts indices i ccw?]
-  (let [n (count indices)
-        prev-i (mod (dec i) n)
-        next-i (mod (inc i) n)
-        a (nth pts (nth indices prev-i))
-        b (nth pts (nth indices i))
-        c (nth pts (nth indices next-i))
-        [ax ay] a [bx by] b [cx cy] c
-        ;; Cross product z-component tells us if turn is left (CCW) or right (CW)
-        cross-z (- (* (- bx ax) (- cy ay)) (* (- by ay) (- cx ax)))
-        ;; Use epsilon to handle nearly-collinear points (not valid ears)
-        eps 1e-10
-        convex? (if ccw? (> cross-z eps) (< cross-z (- eps)))]
-    (when convex?
-      ;; Check no other vertices inside this triangle
-      (not-any?
-        (fn [j]
-          (when (and (not= j prev-i) (not= j i) (not= j next-i))
-            (point-in-triangle-2d (nth pts (nth indices j)) a b c)))
-        (range n)))))
-
-(defn- ear-clip-2d
-  "Ear clipping triangulation for 2D polygon.
-   Returns vector of [i j k] triangles (indices into original pts)."
-  [pts]
-  (let [n (count pts)
-        area (when (>= n 3) (signed-area-2d pts))]
-    (cond
-      (< n 3) []
-      (= n 3) [[0 1 2]]
-      :else
-      (let [ccw? (> area 0)]
-        (loop [indices (vec (range n))
-               result []
-               iteration 0]
-          (let [m (count indices)]
-            (cond
-              (< m 3) result
-              (= m 3) (conj result (vec indices))
-              (> iteration (* n 2)) result  ; max iterations reached
-              :else
-              (let [ear-idx (first (filter #(is-ear-2d pts indices % ccw?) (range m)))]
-                (if ear-idx
-                  (let [prev-i (mod (dec ear-idx) m)
-                        next-i (mod (inc ear-idx) m)
-                        triangle [(nth indices prev-i)
-                                  (nth indices ear-idx)
-                                  (nth indices next-i)]
-                        new-indices (into (subvec indices 0 ear-idx)
-                                          (subvec indices (inc ear-idx)))]
-                    (recur new-indices (conj result triangle) (inc iteration)))
-                  ;; No ear found - return partial result
-                  result)))))))))
-
 (defn- earcut-triangulate
   "Triangulate a 2D polygon with holes using earcut.js.
    - outer: vector of [x y] points for outer boundary (CCW)
@@ -273,17 +183,19 @@
       [(mapv (fn [[_ y z]] [y z]) pts) (>= nx 0)])))
 
 (defn- triangulate-cap
-  "Triangulate a polygon cap using ear clipping.
+  "Triangulate a polygon cap using earcut (handles concave polygons).
    - ring: vector of 3D vertex positions
    - base-idx: starting index in the mesh vertex array
    - normal: cap normal (for 2D projection)
    - flip?: whether to flip winding order for final triangles
    Returns vector of [i j k] face triangles with mesh indices."
   [ring base-idx normal flip?]
-  (let [[pts-2d _] (project-to-2d ring normal)
-        local-tris (ear-clip-2d pts-2d)]
+  (let [[pts-2d winding-preserved?] (project-to-2d ring normal)
+        ;; earcut preserves input winding — if projection mirrored it, compensate
+        effective-flip? (if winding-preserved? flip? (not flip?))
+        local-tris (earcut-triangulate pts-2d [])]
     (mapv (fn [[i j k]]
-            (if flip?
+            (if effective-flip?
               [(+ base-idx i) (+ base-idx k) (+ base-idx j)]
               [(+ base-idx i) (+ base-idx j) (+ base-idx k)]))
           local-tris)))
@@ -431,7 +343,7 @@
                top-normal extrusion-dir             ; points forward
 
                bottom-cap (triangulate-cap first-ring 0 bottom-normal false)
-               top-cap (triangulate-cap last-ring last-base top-normal true)]
+               top-cap (triangulate-cap last-ring last-base top-normal false)]
            (cond-> {:type :mesh
                     :primitive :sweep
                     :vertices vertices
@@ -2076,11 +1988,9 @@
             top-normal (when (>= n-verts 3)
                          (normalize (v- (ring-centroid actual-last-ring)
                                         (ring-centroid second-to-last-ring))))
-            ;; Cap flip logic: XOR with backward? to handle backward extrusion
-            ;; Forward (backward?=false): bottom=false, top=true
-            ;; Backward (backward?=true): bottom=true, top=false
-            bottom-cap-flip backward?
-            top-cap-flip (not backward?)
+            ;; triangulate-cap handles winding via project-to-2d, no flip needed
+            bottom-cap-flip false
+            top-cap-flip false
             ;; Bottom cap mesh
             bottom-cap-mesh (when (>= n-verts 3)
                               {:type :mesh
@@ -3550,9 +3460,9 @@
                                                    (ring-centroid second-to-last-ring)))
                   top-normal top-extrusion-dir
 
-                  ;; Cap flip: XOR with backward? to handle backward extrusion
-                  bottom-cap-flip backward?
-                  top-cap-flip (not backward?)
+                  ;; triangulate-cap handles winding via project-to-2d, no flip needed
+                  bottom-cap-flip false
+                  top-cap-flip false
                   bottom-cap-faces (triangulate-cap first-ring 0 bottom-normal bottom-cap-flip)
 
                   ;; Side faces connecting consecutive rings

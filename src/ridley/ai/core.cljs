@@ -1,0 +1,143 @@
+(ns ridley.ai.core
+  "AI code generation — calls LLM providers and returns generated code."
+  (:require [clojure.string :as str]
+            [ridley.settings :as settings]
+            [ridley.ai.prompts :as prompts]))
+
+;; =============================================================================
+;; Response Parsing
+;; =============================================================================
+
+(defn- extract-code
+  "Extract code from LLM response, stripping markdown fences if present."
+  [text]
+  (let [trimmed (str/trim text)]
+    (if-let [[_ code] (re-find #"(?s)```(?:clojure)?\n?(.*?)```" trimmed)]
+      (str/trim code)
+      trimmed)))
+
+;; =============================================================================
+;; Few-shot examples — critical for open-source models (llama, etc.)
+;; These reinforce the for+register pattern better than system prompt alone.
+;; =============================================================================
+
+(def ^:private few-shot-examples
+  [{:role "user"    :content "un cubo di lato 20"}
+   {:role "assistant" :content "(register cube (box 20))"}
+   {:role "user"    :content "6 sfere di raggio 10 in cerchio con raggio 40"}
+   {:role "assistant" :content "(register spheres
+  (for [i (range 6)]
+    (attach (sphere 10) (th (* i 60)) (f 40))))"}
+   {:role "user"    :content "griglia 3x3 di cubi lato 8, spaziatura 20"}
+   {:role "assistant" :content "(register cubes
+  (for [row (range 3)
+        col (range 3)]
+    (attach (box 8) (f (* col 20)) (th 90) (f (* row 20)))))"}
+   {:role "user"    :content "cubo lato 40 con 4 fori cilindrici raggio 3 in cerchio raggio 12"}
+   {:role "assistant" :content "(def holes
+  (mesh-union
+    (for [i (range 4)]
+      (attach (cyl 3 42) (th (* i 90)) (f 12)))))
+(register drilled-cube (mesh-difference (box 40) holes))"}])
+
+(defn- build-messages
+  "Build the messages array with system prompt, few-shot examples, and user prompt."
+  [prompt]
+  (into [{:role "system" :content prompts/system-prompt}]
+        (conj (vec few-shot-examples)
+              {:role "user" :content prompt})))
+
+(defn- build-messages-no-system
+  "Build messages without system role (for Anthropic which uses separate system param)."
+  [prompt]
+  (conj (vec few-shot-examples)
+        {:role "user" :content prompt}))
+
+;; =============================================================================
+;; Provider-specific API calls
+;; =============================================================================
+
+(defn- call-anthropic
+  "Call Anthropic Messages API. Returns a Promise<string>."
+  [api-key model prompt]
+  (-> (js/fetch "https://api.anthropic.com/v1/messages"
+                (clj->js {:method "POST"
+                          :headers {"Content-Type" "application/json"
+                                    "x-api-key" api-key
+                                    "anthropic-version" "2023-06-01"
+                                    "anthropic-dangerous-direct-browser-access" "true"}
+                          :body (js/JSON.stringify
+                                 (clj->js {:model model
+                                           :max_tokens 1024
+                                           :system prompts/system-prompt
+                                           :messages (build-messages-no-system prompt)}))}))
+      (.then (fn [^js resp]
+               (if (.-ok resp)
+                 (.json resp)
+                 (-> (.text resp)
+                     (.then (fn [body] (throw (js/Error. (str "Anthropic API error: " body)))))))))
+      (.then (fn [^js data]
+               (let [content (aget (.-content data) 0)]
+                 (.-text content))))))
+
+(defn- call-openai-compatible
+  "Call an OpenAI-compatible Chat Completions API. Returns a Promise<string>."
+  [url api-key model prompt]
+  (-> (js/fetch url
+                (clj->js {:method "POST"
+                          :headers (cond-> {"Content-Type" "application/json"}
+                                     api-key (assoc "Authorization" (str "Bearer " api-key)))
+                          :body (js/JSON.stringify
+                                 (clj->js {:model model
+                                           :max_tokens 1024
+                                           :messages (build-messages prompt)}))}))
+      (.then (fn [^js resp]
+               (if (.-ok resp)
+                 (.json resp)
+                 (-> (.text resp)
+                     (.then (fn [body] (throw (js/Error. (str "API error: " body)))))))))
+      (.then (fn [^js data]
+               (.. data -choices (at 0) -message -content)))))
+
+(defn- call-ollama
+  "Call Ollama chat API. Returns a Promise<string>."
+  [url model prompt]
+  (-> (js/fetch (str url "/api/chat")
+                (clj->js {:method "POST"
+                          :headers {"Content-Type" "application/json"}
+                          :body (js/JSON.stringify
+                                 (clj->js {:model model
+                                           :stream false
+                                           :messages (build-messages prompt)}))}))
+      (.then (fn [^js resp]
+               (if (.-ok resp)
+                 (.json resp)
+                 (-> (.text resp)
+                     (.then (fn [body] (throw (js/Error. (str "Ollama API error: " body)))))))))
+      (.then (fn [^js data]
+               (.. data -message -content)))))
+
+;; =============================================================================
+;; Public API
+;; =============================================================================
+
+(defn generate
+  "Generate code from a natural language prompt using the configured LLM.
+   Returns a Promise that resolves to {:code string} or rejects with an error."
+  [prompt]
+  (when-not (settings/ai-configured?)
+    (throw (js/Error. "AI not configured. Open Settings to set up a provider and API key.")))
+  (let [provider (settings/get-ai-setting :provider)
+        provider-name (if (keyword? provider) (name provider) (str provider))
+        api-key (settings/get-ai-api-key)
+        model (settings/get-ai-model)]
+    (-> (case provider-name
+          "anthropic" (call-anthropic api-key model prompt)
+          "openai"    (call-openai-compatible
+                       "https://api.openai.com/v1/chat/completions" api-key model prompt)
+          "groq"      (call-openai-compatible
+                       "https://api.groq.com/openai/v1/chat/completions" api-key model prompt)
+          "ollama"    (call-ollama (settings/get-ai-setting :ollama-url) model prompt)
+          (js/Promise.reject (js/Error. (str "Unknown provider: " provider-name))))
+        (.then (fn [raw-text]
+                 {:code (extract-code raw-text)})))))

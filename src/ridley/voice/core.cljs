@@ -9,7 +9,9 @@
             [ridley.voice.i18n :as i18n]
             [ridley.voice.panel :as panel]
             [ridley.voice.help.core :as help]
-            [ridley.voice.help.db :as help-db]))
+            [ridley.voice.help.db :as help-db]
+            [ridley.ai.core :as ai]
+            [ridley.settings :as settings]))
 
 ;; Handler callbacks (set by core.cljs to avoid circular deps)
 (defonce ^:private handlers (atom {}))
@@ -283,6 +285,31 @@
   (execute-action {:action action :params params}))
 
 ;; ============================================================
+;; AI mode — LLM code generation
+;; ============================================================
+
+(defn- handle-ai-input
+  "Send voice transcript to LLM for code generation and insert result."
+  [transcript]
+  (let [{:keys [insert speak]} @handlers]
+    (if-not (settings/ai-configured?)
+      (do (js/console.warn "AI mode: not configured")
+          (when speak (speak "AI non configurato. Apri le impostazioni.")))
+      (do
+        (js/console.log "AI generating from:" transcript)
+        (when speak (speak "Genero..."))
+        (-> (ai/generate transcript)
+            (.then (fn [{:keys [code]}]
+                     (if (and code insert)
+                       (do (insert {:target :script :code code :position :after-current-form})
+                           (js/console.log "AI generated:" code)
+                           (when speak (speak "Codice inserito")))
+                       (when speak (speak "Nessun codice generato")))))
+            (.catch (fn [err]
+                      (js/console.error "AI generation error:" err)
+                      (when speak (speak (str "Errore: " (.-message err)))))))))))
+
+;; ============================================================
 ;; Utterance handling
 ;; ============================================================
 
@@ -307,9 +334,12 @@
           (when-let [insert (:insert @handlers)]
             (insert {:target :script :code text :position :at-cursor}))))
 
-      ;; AI mode: LLM passthrough (future)
+      ;; AI mode: try parse first (mode-switch, undo, etc.), then LLM
       (= mode :ai)
-      (js/console.log "AI mode — LLM not connected:" transcript)
+      (if-let [cmd (parser/parse-command transcript mode lang)]
+        (do (js/console.log "AI mode parsed:" (pr-str cmd))
+            (execute-action cmd))
+        (handle-ai-input transcript))
 
       ;; Normal: parse and execute
       :else
@@ -357,7 +387,10 @@
             (insert {:target :script :code trimmed :position :at-cursor}))))
 
       (= mode :ai)
-      (js/console.log "AI mode — LLM not connected:" text)
+      (if-let [cmd (parser/parse-command text mode lang)]
+        (do (js/console.log "AI mode parsed:" (pr-str cmd))
+            (execute-action cmd))
+        (handle-ai-input text))
 
       :else
       (if-let [cmd (parser/parse-command text mode lang :sub-mode sub-mode)]

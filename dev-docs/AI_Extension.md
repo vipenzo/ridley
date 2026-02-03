@@ -2,9 +2,111 @@
 
 ## Overview
 
-L'estensione AI aggiunge un'interfaccia vocale a Ridley, permettendo di editare codice, navigare la struttura, eseguire query e controllare il viewport tramite comandi vocali. Progettata per funzionare sia su desktop che in VR.
+L'estensione AI aggiunge due modalità di interazione a Ridley:
 
-## Architettura
+1. **Code Generation** (`/ai` nel REPL) — "tastiera superintelligente" che converte descrizioni in linguaggio naturale in codice Clojure
+2. **Voice Interface** (futuro) — controllo vocale per editing, navigazione e viewport, pensato per VR
+
+---
+
+## Part 1: Code Generation
+
+### Filosofia
+
+L'integrazione AI è pensata come una **tastiera superintelligente**: l'utente descrive a parole cosa vuole, l'AI genera il codice Clojure corrispondente. Il codice appare nello script, l'utente lo vede, può modificarlo, e decide quando eseguirlo con Cmd+Enter. Nessun automatismo, piena trasparenza.
+
+### Interfaccia
+
+- **Input**: comando `/ai <descrizione>` nel REPL
+- **Output**: codice aggiunto in append allo script con commento che documenta la richiesta
+- **Esecuzione**: manuale, Cmd+Enter quando l'utente è pronto
+
+```
+REPL:   /ai 8 cubi in cerchio raggio 50
+
+Script: ;; AI: 8 cubi in cerchio raggio 50
+        (register cubes
+          (for [i (range 8)]
+            (attach (box 10) (th (* i 45)) (f 50))))
+```
+
+### Tier Definitions
+
+| Tier | Modelli | Caratteristica | Capacità |
+|------|---------|----------------|----------|
+| **Tier 1** | Qwen 3B, Llama 3.2 3B | "Tastiera superintelligente" | Pattern, primitive, estrusioni semplici, booleani base |
+| **Tier 2** | Mistral 8B, Llama 8B, Qwen 14B | Composizione guidata | + composizioni medie, booleani multipli, path complessi |
+| **Tier 3** | Llama 70B, Claude, GPT-4 | Assistente creativo | + composizioni complesse, ragionamento spaziale, debug, design da descrizioni vaghe |
+
+### Tier 1: Tastiera Superintelligente
+
+**Cosa fa bene:**
+- Primitive singole posizionate: "cubo lato 20 spostato avanti di 30"
+- Pattern circolari: "8 sfere in cerchio raggio 50"
+- Pattern griglia: "griglia 3x4 di cilindri, spaziatura 20"
+- Estrusioni semplici: "stella a 5 punte estrusa per 15"
+- Percorsi base: "percorso a L, estrudici un cerchio"
+- Booleani semplici: "cubo con foro cilindrico"
+- Anelli: "anello esagonale con sezione rettangolare"
+
+**Cosa non può fare:**
+- Riferimenti al contesto: "aggiungi un foro a quello che ho appena fatto"
+- Ragionamento spaziale: "metti una sfera dove i cilindri si incrociano"
+- Design creativo: "fammi una sedia elegante"
+- Debug: "perché questo non funziona?"
+
+**Modelli testati:**
+- ✅ Qwen 2.5 3B — sorprendentemente capace, molto veloce
+- ✅ Mistral 8B — buono, qualche errore su composizioni
+- ✅ Llama 3.3 70B (Groq) — eccellente
+
+### Tier 2: Composizione Guidata (futuro)
+
+Richiede contesto dello script corrente nel prompt. L'AI può:
+- Riferirsi a oggetti già definiti
+- Chiedere chiarimenti sui parametri mancanti
+- Suggerire correzioni
+
+### Tier 3: Assistente Creativo (futuro)
+
+Richiede modello grande + contesto completo. L'AI può:
+- Generare design da descrizioni vaghe
+- Analizzare e debuggare codice esistente
+- Ottimizzare e semplificare
+- Ragionamento spaziale complesso
+
+### System Prompt
+
+Il system prompt per Tier 1 include:
+- Riferimento comandi DSL
+- Pattern templates (circle, grid, extrude, boolean)
+- Natural language mappings (italiano/inglese)
+- Esempi input→output
+- COMMON MISTAKES da evitare
+
+Il prompt è stato iterato empiricamente testando con modelli di diverse dimensioni.
+
+### Test Results Summary
+
+| Test | Llama 70B | Mistral 8B | Qwen 3B |
+|------|-----------|------------|---------|
+| Primitive semplici | ✅ | ✅ | ✅ |
+| Pattern circolari | ✅ | ✅ | ✅ |
+| Griglie | ✅ | ✅ | ✅ |
+| Booleani semplici | ✅ | ✅ | ✅ |
+| Booleani con pattern | ✅ | ⚠️ | ⚠️ |
+| Stella estrusa | ⚠️ | ✅ | ✅ |
+| Percorso + extrude | ✅ | ⚠️ | ✅ |
+| Anelli | ✅ | ✅ | ✅ |
+| Composizione complessa | ⚠️ | ❌ | ⚠️ |
+
+**Legenda**: ✅ corretto, ⚠️ errori minori (parentesi, def vs register), ❌ fallito
+
+---
+
+## Part 2: Voice Interface (Futuro)
+
+### Architettura
 
 ```
                     ┌─────────────────────────────────────────────┐
@@ -41,7 +143,7 @@ Voice Input ──► LLM ──► Actions ──► Editor ──► State ─
 
 ---
 
-## Shared State
+### Shared State
 
 ```clojure
 (def ai-state
@@ -100,7 +202,7 @@ Voice Input ──► LLM ──► Actions ──► Editor ──► State ─
 
 ---
 
-## Action Protocol
+### Action Protocol
 
 Tutte le azioni seguono questo schema:
 
@@ -126,7 +228,7 @@ L'LLM può emettere una singola azione o un array di azioni:
 
 ---
 
-### InsertAction
+#### InsertAction
 
 Inserisce codice nel buffer (script o REPL).
 
@@ -160,7 +262,7 @@ Inserisce codice nel buffer (script o REPL).
 
 ---
 
-### EditAction
+#### EditAction
 
 Modifica codice esistente.
 
@@ -200,7 +302,7 @@ type Target =
 
 ---
 
-### NavigateAction
+#### NavigateAction
 
 Muove il cursore o cambia selezione.
 
@@ -253,7 +355,7 @@ type Direction =
 
 ---
 
-### ModeAction
+#### ModeAction
 
 Cambia modalità di editing.
 
@@ -280,7 +382,7 @@ Cambia modalità di editing.
 
 ---
 
-### ExecuteAction
+#### ExecuteAction
 
 Esegue il codice.
 
@@ -305,7 +407,7 @@ Esegue il codice.
 
 ---
 
-### TargetAction
+#### TargetAction
 
 Cambia il buffer target (dove si scrive).
 
@@ -325,7 +427,7 @@ Cambia il buffer target (dove si scrive).
 
 ---
 
-### SelectAction
+#### SelectAction
 
 Crea o modifica selezione.
 
@@ -347,7 +449,7 @@ Crea o modifica selezione.
 
 ---
 
-### QueryAction (Tier 2+)
+#### QueryAction (Tier 2+)
 
 Richiede informazioni o spiegazioni.
 
@@ -371,7 +473,7 @@ Queste azioni non modificano il buffer, ma popolano `:voice/pending-speech` con 
 
 ---
 
-### SpeakAction
+#### SpeakAction
 
 Fa pronunciare un testo (TTS).
 
@@ -386,7 +488,44 @@ L'LLM può usarlo per confermare azioni o rispondere a query.
 
 ---
 
-## LLM Context
+### VR Panel
+
+Il pannello VR legge direttamente dallo shared state e renderizza:
+
+```
+┌─────────────────────────────────────────────────┐
+│  [MODE] target                    🎤            │
+├─────────────────────────────────────────────────┤
+│                                                 │
+│    (register pippo                              │
+│      (extrude                                   │
+│        ▶ (circle 5) ◀                           │
+│        (f 20)))                                 │
+│                                                 │
+├─────────────────────────────────────────────────┤
+│  🎤 "vai avanti..."                             │
+├─────────────────────────────────────────────────┤
+│  ✓ Inserito forward 20                          │
+└─────────────────────────────────────────────────┘
+```
+
+| Zona | Source |
+|------|--------|
+| Header | `:mode`, `:cursor/target`, `:voice/listening?` |
+| Code view | `:buffer/*`, `:cursor/*`, `:selection` |
+| Transcript | `:voice/partial-transcript` |
+| Feedback | `:voice/pending-speech` |
+
+#### Code View Logic
+
+1. Prendi il buffer corretto (`:buffer/script` o `:buffer/repl`)
+2. Estrai un excerpt intorno al cursore (±5 righe)
+3. Evidenzia `:cursor/current-form`
+4. Se c'è `:selection`, evidenzia il range
+
+---
+
+### LLM Context (Voice Mode)
 
 Quando l'LLM riceve un comando vocale, gli viene passato:
 
@@ -416,116 +555,12 @@ L'LLM risponde con una o più Actions.
 
 ---
 
-## Model Tiers
-
-### Tier 1: Basic (Ollama 7B, local)
-
-**Capacità**: parsing deterministico, nessun ragionamento
-
-**Funzionalità:**
-- ✅ Comandi movimento → codice (`"avanti 20"` → `(f 20)`)
-- ✅ Navigazione strutturale
-- ✅ Editing vi-like
-- ✅ Cambio modalità
-- ✅ Execute
-- ❌ Dialogo guidato
-- ❌ Spiegazioni
-- ❌ Ragionamento spaziale
-
-**Prompt style**: few-shot rigido, output JSON only
-
-### Tier 2: Guided (Haiku, GPT-4o-mini, Llama 70B)
-
-**Capacità**: comprensione semantica, dialogo
-
-**Funzionalità aggiuntive:**
-- ✅ Help interattivo ("come faccio X?" → guida passo-passo)
-- ✅ Clarification ("che raggio?")
-- ✅ Spiegazioni parametri
-- ✅ Correzione errori con suggerimenti
-
-### Tier 3: Full (Sonnet, Opus, GPT-4)
-
-**Capacità**: ragionamento spaziale, creatività
-
-**Funzionalità aggiuntive:**
-- ✅ Generazione da descrizioni vaghe ("fammi una maniglia")
-- ✅ Debug ("questo sembra storto, perché?")
-- ✅ Ottimizzazione codice
-- ✅ Analisi geometrica
-
----
-
-## VR Panel
-
-Il pannello VR legge direttamente dallo shared state e renderizza:
-
-```
-┌─────────────────────────────────────────────────┐
-│  [MODE] target                    🎤            │
-├─────────────────────────────────────────────────┤
-│                                                 │
-│    (register pippo                              │
-│      (extrude                                   │
-│        ▶ (circle 5) ◀                           │
-│        (f 20)))                                 │
-│                                                 │
-├─────────────────────────────────────────────────┤
-│  🎤 "vai avanti..."                             │
-├─────────────────────────────────────────────────┤
-│  ✓ Inserito forward 20                          │
-└─────────────────────────────────────────────────┘
-```
-
-| Zona | Source |
-|------|--------|
-| Header | `:mode`, `:cursor/target`, `:voice/listening?` |
-| Code view | `:buffer/*`, `:cursor/*`, `:selection` |
-| Transcript | `:voice/partial-transcript` |
-| Feedback | `:voice/pending-speech` |
-
-### Code View Logic
-
-1. Prendi il buffer corretto (`:buffer/script` o `:buffer/repl`)
-2. Estrai un excerpt intorno al cursore (±5 righe)
-3. Evidenzia `:cursor/current-form`
-4. Se c'è `:selection`, evidenzia il range
-
----
-
-## Response Format
-
-Dopo l'esecuzione di un'azione, l'Editor può emettere una risposta per il feedback:
-
-```json
-{
-  "status": "ok" | "error" | "need_clarification",
-  "message": "Inserito (f 20)",
-  "speak": "Inserito forward 20",
-  "result": "...",
-  "error": "..."
-}
-```
-
-Per REPL execute:
-
-```json
-{
-  "status": "ok",
-  "message": "REPL: (manifold? pippo) => true",
-  "speak": "Sì, pippo è manifold",
-  "result": "true"
-}
-```
-
----
-
 ## Configuration
 
 ```clojure
 {:ai
- {:provider :ollama           ; :ollama | :anthropic | :openai
-  :model "llama3.2:7b"
+ {:provider :ollama           ; :ollama | :anthropic | :openai | :groq
+  :model "qwen2.5:3b"
   :tier :basic                ; :basic | :guided | :full (auto or manual)
   :endpoint "http://localhost:11434"}
 
@@ -543,29 +578,33 @@ Per REPL execute:
 
 ---
 
-## Implementation Phases
+## Implementation Status
 
-### Phase 1: Foundation
+### Done ✅
+- [x] Settings panel per provider/API key/model
+- [x] `/ai` command nel REPL
+- [x] System prompt per Tier 1
+- [x] Groq integration
+- [x] Ollama integration
+- [x] Code append to script con commento
+
+### Phase 2: Voice (TODO)
 - [ ] Definire `ai-state` atom
 - [ ] Editor: subscribe a state, applica Actions
 - [ ] Wire: voice input → state update
+- [ ] Web Speech API integration
 
-### Phase 2: LLM Integration (Tier 1)
-- [ ] System prompt per comandi base
-- [ ] Action parser e validator
-- [ ] Ollama integration
-
-### Phase 3: VR Panel
+### Phase 3: VR Panel (TODO)
 - [ ] Three.js text panel che legge state
 - [ ] Evidenziazione cursor/form
 - [ ] Transcript live
 
-### Phase 4: Tier 2+ Features
-- [ ] Anthropic/OpenAI integration
+### Phase 4: Tier 2+ Features (TODO)
+- [ ] Context injection (script corrente nel prompt)
 - [ ] Guided dialogs
 - [ ] Query handling
 
-### Phase 5: Polish
+### Phase 5: Polish (TODO)
 - [ ] TTS feedback
 - [ ] Error recovery
 - [ ] Continuous listening mode
