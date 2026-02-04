@@ -267,10 +267,10 @@
                      :template "(attach mesh (f 10) (th 45))"
                      :doc {:it "Trasforma mesh in place" :en "Transform mesh in place"}
                      :aliases {:it ["attacca"] :en []}}
-   :clone           {:tier :ridley :category :mesh-transform
-                     :template "(clone mesh (f 10) (th 45))"
-                     :doc {:it "Copia trasformata" :en "Transformed copy"}
-                     :aliases {:it ["clona"] :en []}}
+   :attach!         {:tier :ridley :category :mesh-transform
+                     :template "(attach! :name (f 10) (th 45))"
+                     :doc {:it "Trasforma mesh registrata in-place" :en "Transform registered mesh in-place"}
+                     :aliases {:it ["attacca!"] :en []}}
    :attach-face     {:tier :ridley :category :mesh-transform
                      :template "(attach-face mesh :top (f 10))"
                      :doc {:it "Muove faccia" :en "Move face"}

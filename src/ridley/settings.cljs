@@ -15,7 +15,8 @@
         :ollama-url "http://localhost:11434"
         :ollama-model "llama3"
         :model "claude-sonnet-4-20250514"
-        :groq-model "llama-3.3-70b-versatile"}})
+        :groq-model "llama-3.3-70b-versatile"
+        :tier :auto}})        ; :auto | :tier-1 | :tier-2 | :tier-3
 
 ;; =============================================================================
 ;; Settings State
@@ -124,6 +125,64 @@
       (:groq-model ai)
       (:ollama-model ai)
       nil)))
+
+;; =============================================================================
+;; Model → Tier Detection
+;; =============================================================================
+
+(def model-tier-map
+  {;; Tier 1: small models
+   "qwen2.5:3b" :tier-1
+   "llama3.2:3b" :tier-1
+   "phi3:mini" :tier-1
+   "gemma2:2b" :tier-1
+
+   ;; Tier 2: medium models
+   "mistral" :tier-2
+   "mistral:8b" :tier-2
+   "llama3.2:8b" :tier-2
+   "qwen2.5:7b" :tier-2
+   "qwen2.5:14b" :tier-2
+   "deepseek-coder:7b" :tier-2
+   "llama-3.1-8b-instant" :tier-2  ;; Groq
+   "gpt-4o-mini" :tier-2
+   "claude-3-5-haiku-latest" :tier-2
+
+   ;; Tier 3: large models
+   "llama-3.3-70b-versatile" :tier-3  ;; Groq
+   "llama3.3:70b" :tier-3
+   "qwen2.5:32b" :tier-3
+   "deepseek-coder:33b" :tier-3
+   "claude-sonnet-4-20250514" :tier-3
+   "claude-opus-4-20250514" :tier-3
+   "gpt-4o" :tier-3
+   "gpt-4-turbo" :tier-3})
+
+(defn detect-tier
+  "Detect tier from model name. Uses lookup table first, then pattern matching."
+  [model-name]
+  (or (get model-tier-map model-name)
+      (cond
+        (re-find #"70b|72b|65b" model-name) :tier-3
+        (re-find #"33b|32b|30b|34b" model-name) :tier-3
+        (re-find #"opus|sonnet|gpt-4o(?!-mini)" model-name) :tier-3
+        (re-find #"13b|14b|15b|8b|7b" model-name) :tier-2
+        (re-find #"haiku|mini" model-name) :tier-2
+        :else :tier-1)))
+
+(defn get-effective-tier
+  "Get the effective tier: manual override or auto-detected from model."
+  []
+  (let [manual-tier (get-in @settings [:ai :tier])
+        model (get-ai-model)]
+    (if (or (nil? manual-tier) (= manual-tier :auto))
+      (detect-tier (or model ""))
+      manual-tier)))
+
+(defn get-detected-tier
+  "Get the auto-detected tier for the current model (ignoring manual override)."
+  []
+  (detect-tier (or (get-ai-model) "")))
 
 ;; =============================================================================
 ;; Ollama Connection Check

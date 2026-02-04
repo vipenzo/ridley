@@ -293,6 +293,31 @@
                                   :up up})
       material (assoc :material material))))
 
+(defn- transform-mesh-to-turtle-upright
+  "Like transform-mesh-to-turtle but rotates so the mesh extends along the
+   turtle's UP axis instead of heading. Used for cyl/cone so height = UP."
+  [mesh]
+  (let [turtle @turtle-atom
+        position (:position turtle)
+        heading (:heading turtle)
+        up (:up turtle)
+        material (:material turtle)
+        ;; Swap heading and up: mesh 'forward' becomes turtle's UP
+        ;; heading becomes -up (pitch -90°), new up becomes heading
+        rotated-heading up
+        rotated-up (turtle/v* heading -1)
+        transformed-verts (prims/apply-transform
+                           (:vertices mesh)
+                           position
+                           rotated-heading
+                           rotated-up)]
+    (cond-> mesh
+      true (assoc :vertices (vec transformed-verts))
+      true (assoc :creation-pose {:position position
+                                  :heading heading
+                                  :up up})
+      material (assoc :material material))))
+
 ;; Primitive constructors - create mesh at current turtle position
 (defn- pure-box
   ([size] (transform-mesh-to-turtle (prims/box-mesh size)))
@@ -320,21 +345,21 @@
    (transform-mesh-to-turtle (prims/sphere-mesh radius segments rings))))
 
 (defn- cyl-with-resolution
-  "Create cylinder mesh at current turtle position, using resolution from turtle state if not provided."
+  "Create cylinder mesh at current turtle position, height along turtle's UP axis."
   ([radius height]
    (let [segments (turtle/calc-circle-segments @turtle-atom (* 2 Math/PI radius))]
-     (transform-mesh-to-turtle (prims/cyl-mesh radius height segments))))
+     (transform-mesh-to-turtle-upright (prims/cyl-mesh radius height segments))))
   ([radius height segments]
-   (transform-mesh-to-turtle (prims/cyl-mesh radius height segments))))
+   (transform-mesh-to-turtle-upright (prims/cyl-mesh radius height segments))))
 
 (defn- cone-with-resolution
-  "Create cone mesh at current turtle position, using resolution from turtle state if not provided."
+  "Create cone mesh at current turtle position, height along turtle's UP axis."
   ([r1 r2 height]
    (let [max-r (max r1 r2)
          segments (turtle/calc-circle-segments @turtle-atom (* 2 Math/PI max-r))]
-     (transform-mesh-to-turtle (prims/cone-mesh r1 r2 height segments))))
+     (transform-mesh-to-turtle-upright (prims/cone-mesh r1 r2 height segments))))
   ([r1 r2 height segments]
-   (transform-mesh-to-turtle (prims/cone-mesh r1 r2 height segments))))
+   (transform-mesh-to-turtle-upright (prims/cone-mesh r1 r2 height segments))))
 
 (defn- get-turtle []
   @turtle-atom)
@@ -949,7 +974,6 @@
    'turtle-attach-face  turtle/attach-face
    'turtle-attach-face-extrude turtle/attach-face-extrude
    'turtle-attach-move  turtle/attach-move
-   'turtle-attach-clone turtle/attach-clone
    'turtle-inset        turtle/inset
    'turtle-scale        turtle/scale
    ;; NOTE: attach-state and att-* functions are defined in macro-defs
@@ -1054,6 +1078,13 @@
    'shape-names         registry/shape-names
    ;; STL export
    'save-stl            stl/download-stl
+   ;; Vector math (used by move-to and available for user code)
+   'vec3+               turtle/v+
+   'vec3-               turtle/v-
+   'vec3*               turtle/v*
+   'vec3-dot            turtle/dot
+   'vec3-cross          turtle/cross
+   'vec3-normalize      turtle/normalize
    ;; Math functions for SCI context (used by arc/bezier recording)
    'PI                  js/Math.PI
    'abs                 js/Math.abs
@@ -1107,6 +1138,93 @@
      (swap! attach-state (fn [s] (turtle-inset s amount))))
    (defn- att-scale* [factor]
      (swap! attach-state (fn [s] (turtle-scale s factor))))
+
+   ;; Resolve name-or-mesh to actual mesh (for use before bounds/mesh? are defined)
+   (defn- att-resolve-mesh [name-or-mesh]
+     (if (and (map? name-or-mesh) (:vertices name-or-mesh))
+       name-or-mesh
+       (get-mesh (if (keyword? name-or-mesh) name-or-mesh (keyword name-or-mesh)))))
+
+   ;; Compute bounds inline (for use before bounds is defined)
+   (defn- att-compute-bounds [name-or-mesh]
+     (when-let [m (att-resolve-mesh name-or-mesh)]
+       (when-let [vertices (seq (:vertices m))]
+         (let [xs (map #(nth % 0) vertices)
+               ys (map #(nth % 1) vertices)
+               zs (map #(nth % 2) vertices)
+               min-x (apply min xs) max-x (apply max xs)
+               min-y (apply min ys) max-y (apply max ys)
+               min-z (apply min zs) max-z (apply max zs)]
+           {:min [min-x min-y min-z]
+            :max [max-x max-y max-z]
+            :center [(/ (+ min-x max-x) 2)
+                     (/ (+ min-y max-y) 2)
+                     (/ (+ min-z max-z) 2)]
+            :size [(- max-x min-x)
+                   (- max-y min-y)
+                   (- max-z min-z)]}))))
+
+   ;; Move to target object's pose or centroid (works inside attach/attach!)
+   ;; Default: move to creation-pose position AND adopt heading/up
+   ;; With :center flag: move to centroid only, keep current heading
+   (defn- att-move-to-center* [target]
+     (let [dest (:center (att-compute-bounds target))
+           state @attach-state
+           pos (:position state)
+           heading (:heading state)
+           up (:up state)
+           right (vec3-cross heading up)
+           delta (vec3- dest pos)
+           d-fwd (vec3-dot delta heading)
+           d-right (vec3-dot delta right)
+           d-up (vec3-dot delta up)]
+       ;; Move along right axis (th -90, f, th 90)
+       (when-not (zero? d-right)
+         (att-th* -90) (att-f* d-right) (att-th* 90))
+       ;; Move along forward axis
+       (when-not (zero? d-fwd)
+         (att-f* d-fwd))
+       ;; Move along up axis (tv 90, f, tv -90)
+       (when-not (zero? d-up)
+         (att-tv* 90) (att-f* d-up) (att-tv* -90))))
+
+   (defn- att-move-to-pose* [target]
+     (let [m (att-resolve-mesh target)
+           pose (when m (:creation-pose m))]
+       (if pose
+         (let [dest (:position pose)]
+           ;; First move to the pose position using centroid-style movement
+           ;; (this properly translates the attached mesh via att-f*)
+           (let [state @attach-state
+                 pos (:position state)
+                 heading (:heading state)
+                 up (:up state)
+                 right (vec3-cross heading up)
+                 delta (vec3- dest pos)
+                 d-fwd (vec3-dot delta heading)
+                 d-right (vec3-dot delta right)
+                 d-up (vec3-dot delta up)]
+             (when-not (zero? d-right)
+               (att-th* -90) (att-f* d-right) (att-th* 90))
+             (when-not (zero? d-fwd)
+               (att-f* d-fwd))
+             (when-not (zero? d-up)
+               (att-tv* 90) (att-f* d-up) (att-tv* -90)))
+           ;; Then adopt the target's heading and up
+           (swap! attach-state
+                  (fn [s]
+                    (assoc s
+                           :heading (:heading pose)
+                           :up (:up pose)))))
+         ;; Fallback: no creation-pose, use centroid
+         (att-move-to-center* target))))
+
+   (defn- att-move-to*
+     ([target] (att-move-to-pose* target))
+     ([target mode]
+      (case mode
+        :center (att-move-to-center* target)
+        (att-move-to-pose* target))))
 
    ;; Recording versions that work with the path-recorder atom
    (defn- rec-f* [dist]
@@ -1817,7 +1935,8 @@
               ~'tv att-tv*
               ~'tr att-tr*
               ~'inset att-inset*
-              ~'scale att-scale*]
+              ~'scale att-scale*
+              ~'move-to att-move-to*]
           ~@body)
         ;; Return modified mesh
         (or (get-in @attach-state [:attached :mesh]) m#)))
@@ -1836,7 +1955,8 @@
               ~'tv att-tv*
               ~'tr att-tr*
               ~'inset att-inset*
-              ~'scale att-scale*]
+              ~'scale att-scale*
+              ~'move-to att-move-to*]
           ~@body)
         ;; Return modified mesh
         (or (get-in @attach-state [:attached :mesh]) m#)))
@@ -1854,7 +1974,8 @@
             (let [~'f att-f*
                   ~'th att-th*
                   ~'tv att-tv*
-                  ~'tr att-tr*]
+                  ~'tr att-tr*
+                  ~'move-to att-move-to*]
               ~@body)
             ;; Return panel with updated position/heading/up from final attach-state
             (let [final-state @attach-state]
@@ -1870,45 +1991,31 @@
             (let [~'f att-f*
                   ~'th att-th*
                   ~'tv att-tv*
-                  ~'tr att-tr*]
+                  ~'tr att-tr*
+                  ~'move-to att-move-to*]
               ~@body)
             (or (get-in @attach-state [:attached :mesh]) m#)))))
 
-   ;; clone: create transformed copy of mesh/panel (original unchanged)
-   ;; (clone mesh & body) => new transformed mesh
-   ;; (clone panel & body) => new panel at transformed position
-   ;; Creates a copy, attaches to its creation pose, applies transformations.
-   (defmacro clone [mesh & body]
-     `(let [m# ~mesh]
-        (if (panel? m#)
-          ;; Panel handling: start from panel's position, run movements, create new panel
-          (do
-            (reset! attach-state
-                    {:position (:position m#)
-                     :heading (:heading m#)
-                     :up (:up m#)})
-            (let [~'f att-f*
-                  ~'th att-th*
-                  ~'tv att-tv*
-                  ~'tr att-tr*]
-              ~@body)
-            ;; Return new panel with updated position/heading/up
-            (let [final-state @attach-state]
-              (assoc m#
-                :position (:position final-state)
-                :heading (:heading final-state)
-                :up (:up final-state))))
-          ;; Mesh handling: original behavior
-          (do
-            (reset! attach-state
-                    (-> (turtle)
-                        (turtle-attach-clone m#)))
-            (let [~'f att-f*
-                  ~'th att-th*
-                  ~'tv att-tv*
-                  ~'tr att-tr*]
-              ~@body)
-            (or (get-in @attach-state [:attached :mesh]) m#)))))
+   ;; attach!: transform a registered mesh in-place by keyword
+   ;; (attach! :name (f 20) (th 45)) => re-registers the transformed mesh
+   ;; Equivalent to (register name (attach name (f 20) (th 45)))
+   (defmacro attach! [kw & body]
+     `(let [mesh# (get-mesh ~kw)
+            _# (when-not mesh#
+                  (throw (js/Error. (str \"attach! - no registered mesh named \" ~kw))))
+            _# (reset! attach-state
+                       (-> (turtle)
+                           (turtle-attach-move mesh#)))]
+        (let [~'f att-f*
+              ~'th att-th*
+              ~'tv att-tv*
+              ~'tr att-tr*
+              ~'move-to att-move-to*]
+          ~@body)
+        (let [result# (or (get-in @attach-state [:attached :mesh]) mesh#)]
+          (register-mesh! ~kw result#)
+          (refresh-viewport! false)
+          result#)))
 
    ;; Helper to check if something is a mesh (has :vertices and :faces)
    (defn mesh? [x]
@@ -2088,6 +2195,25 @@
    (defn scene []
      (all-meshes-info))
 
+   ;; Compute bounding box from mesh vertices
+   ;; Returns {:min [x y z] :max [x y z] :center [x y z] :size [sx sy sz]}
+   (defn- compute-bounds [vertices]
+     (when (seq vertices)
+       (let [xs (map #(nth % 0) vertices)
+             ys (map #(nth % 1) vertices)
+             zs (map #(nth % 2) vertices)
+             min-x (apply min xs) max-x (apply max xs)
+             min-y (apply min ys) max-y (apply max ys)
+             min-z (apply min zs) max-z (apply max zs)]
+         {:min [min-x min-y min-z]
+          :max [max-x max-y max-z]
+          :center [(/ (+ min-x max-x) 2)
+                   (/ (+ min-y max-y) 2)
+                   (/ (+ min-z max-z) 2)]
+          :size [(- max-x min-x)
+                 (- max-y min-y)
+                 (- max-z min-z)]})))
+
    ;; Get info/details about a mesh or collection
    ;; (info :torus)       - by registered name (keyword)
    ;; (info torus)        - by mesh reference
@@ -2109,7 +2235,8 @@
                :type :mesh
                :visible vis
                :vertices (count (:vertices mesh))
-               :faces (count (:faces mesh))})
+               :faces (count (:faces mesh))
+               :bounds (compute-bounds (:vertices mesh))})
             panel
             {:name kw
              :type :panel
@@ -2144,7 +2271,8 @@
         {:name nil
          :type :mesh
          :vertices (count (:vertices name-or-coll))
-         :faces (count (:faces name-or-coll))}
+         :faces (count (:faces name-or-coll))
+         :bounds (compute-bounds (:vertices name-or-coll))}
         :else nil))
      ([coll key]
       (when-let [m (get coll key)]
@@ -2165,6 +2293,37 @@
      (if (mesh? name-or-mesh)
        name-or-mesh
        (get-mesh (if (keyword? name-or-mesh) name-or-mesh (keyword name-or-mesh)))))
+
+   ;; Bounding box functions
+   ;; (bounds :cube)   - by registered name
+   ;; (bounds cube)    - by mesh reference
+   (defn bounds [name-or-mesh]
+     (when-let [m (resolve-mesh name-or-mesh)]
+       (compute-bounds (:vertices m))))
+
+   (defn height [name-or-mesh]
+     (get-in (bounds name-or-mesh) [:size 2]))
+
+   (defn width [name-or-mesh]
+     (get-in (bounds name-or-mesh) [:size 0]))
+
+   (defn depth [name-or-mesh]
+     (get-in (bounds name-or-mesh) [:size 1]))
+
+   (defn top [name-or-mesh]
+     (get-in (bounds name-or-mesh) [:max 2]))
+
+   (defn bottom [name-or-mesh]
+     (get-in (bounds name-or-mesh) [:min 2]))
+
+   (defn center-x [name-or-mesh]
+     (get-in (bounds name-or-mesh) [:center 0]))
+
+   (defn center-y [name-or-mesh]
+     (get-in (bounds name-or-mesh) [:center 1]))
+
+   (defn center-z [name-or-mesh]
+     (get-in (bounds name-or-mesh) [:center 2]))
 
    ;; Export mesh(es) to STL file
    ;; (export :torus)       - by registered name

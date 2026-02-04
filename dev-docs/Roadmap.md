@@ -210,7 +210,7 @@
 ### 4.3 Integrated Modifiers (Future)
 - [ ] Boolean with fillet: `(subtract a b :fillet 2)`
 - [ ] Boolean with chamfer: `(union a b :chamfer 1)`
-- [ ] `bounds` query
+- [x] `bounds` query
 
 **Deliverable**: Can create complex CSG operations. ✓
 
@@ -272,7 +272,7 @@
 ### 6.3 Inspection (Partial)
 - [ ] `(inspect shape)` — zoom to fit
 - [x] Volume calculation (via Manifold)
-- [ ] `(bounds shape)`, `(center shape)`
+- [x] `(bounds shape)`, `(center shape)` — plus `height`, `width`, `depth`, `top`, `bottom` helpers
 
 ### 6.4 Fuzzy Search
 - [ ] `(find "pattern")` — search defined names
@@ -613,8 +613,13 @@ The core turtle system, generative operations, boolean operations, and anchor/na
 **Current sprint:**
 1. [ ] Face cutting (draw shape on face)
 2. [ ] Non-uniform scale `(scale [sx sy sz])`
+3. [ ] STL import — load external STL as reusable mesh in Ridley
+4. [ ] 2D shape booleans — `(shape-union a b)`, `(shape-difference a b)`, `(shape-intersection a b)` for shapes with holes (e.g., `(extrude (shape-difference (circle 30) (circle 20)) (f 50))` → hollow tube)
 
 **Recently completed:**
+- ✓ **Bounds functions** — `bounds`, `height`, `width`, `depth`, `top`, `bottom` for bounding box queries; `info` now includes bounds data
+- ✓ **`attach!` macro** — in-place transform of registered meshes by keyword: `(attach! :name (f 20))`. Removed redundant `clone` macro (attach is already functional)
+- ✓ **AI Tier System** — Auto-detection of model tier, tier-aware prompts (Tier 1: code-only, Tier 2+: JSON with clarification support), script context for Tier 2+, Settings UI dropdown
 - ✓ **Arc Commands** — `arc-h` and `arc-v` for smooth curved paths
 - ✓ **Bezier Commands** — `bezier-to` and `bezier-to-anchor` for bezier curves
 - ✓ **Resolution Control** — `resolution` function inspired by OpenSCAD (`$fn`/`$fa`/`$fs`)

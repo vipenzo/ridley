@@ -301,7 +301,7 @@ For loft operations that morph shapes:
 ```clojure
 (scale shape factor)             ; Uniform scale
 (scale shape fx fy)              ; Non-uniform scale
-(scale factor)                   ; Scale attached mesh (inside attach/clone)
+(scale factor)                   ; Scale attached mesh (inside attach/attach!)
 
 (rotate-shape shape angle-deg)   ; Rotate around origin
 
@@ -326,17 +326,19 @@ Primitives return mesh data at current turtle position:
 
 ```clojure
 (box size)                       ; Cube
-(box sx sy sz)                   ; Rectangular box
+(box w d l)                      ; Rectangular box: w=right, d=up, l=heading
 
 (sphere radius)                  ; Sphere, uses resolution setting
 (sphere radius segments rings)   ; Custom resolution
 
-(cyl radius height)              ; Cylinder, uses resolution setting
+(cyl radius height)              ; Cylinder, height along UP axis
 (cyl radius height segments)     ; Custom segments
 
-(cone r1 r2 height)              ; Frustum (r1=bottom, r2=top)
+(cone r1 r2 height)              ; Frustum, height along UP axis (r1=bottom, r2=top)
 (cone r1 r2 height segments)     ; Use r2=0 for proper cone
 ```
+
+**Orientation:** `box` extends along heading (like extrude). `cyl` and `cone` extend along the turtle's UP axis (upright by default). At default pose (heading +X, up +Z): box extends along X, cyl/cone extend along Z.
 
 **Important:** Primitives create meshes at the current turtle position but do NOT modify turtle state. Use `register` to make them visible:
 
@@ -586,9 +588,23 @@ Named objects persist across evaluations. The registry holds two kinds of object
 (registered)                     ; List all registered names
 (scene)                          ; All meshes (registered + anonymous)
 
-;; Get info
-(info :torus)                    ; {:name :torus :visible true :vertices n :faces n}
+;; Get info (includes bounds)
+(info :torus)                    ; {:name :torus :visible true :vertices n :faces n :bounds {...}}
 (info torus)                     ; By reference
+
+;; Bounding box
+(bounds :torus)                  ; {:min [x y z] :max [x y z] :center [x y z] :size [sx sy sz]}
+(bounds torus)                   ; By reference
+
+;; Dimension helpers
+(height :torus)                  ; Z dimension (size)
+(width :torus)                   ; X dimension (size)
+(depth :torus)                   ; Y dimension (size)
+(top :torus)                     ; Max Z coordinate
+(bottom :torus)                  ; Min Z coordinate
+(center-x :torus)                ; X of centroid
+(center-y :torus)                ; Y of centroid
+(center-z :torus)                ; Z of centroid
 
 ;; Get raw mesh data
 (mesh :torus)                    ; By name
@@ -751,7 +767,7 @@ Panels are 3D text billboards positioned in the scene. They display text content
 (clear :label)
 ```
 
-Panels support `show`/`hide`, `register`, `attach`/`clone` like meshes.
+Panels support `show`/`hide`, `register`, `attach`/`attach!` like meshes.
 
 ---
 
@@ -759,30 +775,60 @@ Panels support `show`/`hide`, `register`, `attach`/`clone` like meshes.
 
 ### attach
 
-Transform a mesh or panel in place:
+Transform a mesh or panel, returning a new mesh (functional — original unchanged):
 
 ```clojure
 (register b (box 20))
 
-;; Move the entire mesh
+;; Move the entire mesh (returns new mesh)
 (register b (attach b (f 10) (th 45)))
+
+;; Create a transformed copy with a different name
+(register b2 (attach b (th 45) (f 10)))
 
 ;; Works with panels too
 (register label (attach label (f 20) (th 90)))
 ```
 
-### clone
+### attach!
 
-Create a transformed copy (original unchanged):
+Transform a registered mesh in-place by keyword. Shortcut for `(register name (attach name ...))`:
 
 ```clojure
 (register b (box 20))
 
-;; Create a rotated copy
-(register b2 (clone b (th 45) (f 10)))
+;; Move the registered mesh (updates registry)
+(attach! :b (f 10) (th 45))
+
+;; Equivalent to:
+(register b (attach b (f 10) (th 45)))
 ```
 
-Operations available inside `attach`/`clone`: `f`, `th`, `tv`, `tr`.
+Only accepts keywords (registered names). Throws an error if the name is not registered.
+
+Operations available inside `attach`/`attach!`: `f`, `th`, `tv`, `tr`, `move-to`.
+
+### move-to
+
+Move to another object's position and adopt its orientation (inside `attach`/`attach!`):
+
+```clojure
+(move-to :name)            ; move to pose position + adopt heading/up (default)
+(move-to :name :center)    ; move to centroid only, keep current heading
+```
+
+After `(move-to :A)`, the turtle is at A's position with A's orientation. "Forward" means A's forward, "up" means A's up. This makes relative positioning work correctly even if A has been rotated.
+
+```clojure
+(register base (box 40))
+(attach! :base (th -90) (f 50) (th 90))   ; move base to X=50
+
+(register sfera (sphere 10))
+;; Place sphere on top of base (wherever base is now)
+(attach! :sfera (move-to :base) (tv 90) (f 30) (tv -90))
+```
+
+Use `move-to` whenever positioning relative to another object. Use `:center` mode when you only need centroid alignment without orientation change.
 
 ---
 

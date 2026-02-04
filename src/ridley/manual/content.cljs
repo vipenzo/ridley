@@ -135,10 +135,10 @@
          :code "(register base (box 40 40 10))\n\n(register top\n  (attach (cyl 10 50) (f 31) (tv 90)))"}
         {:id :attach-boolean
          :code "(register drilled\n  (mesh-difference\n    (box 40)\n    (attach (cyl 10 50)\n      (f 20) (tv 90) (f 20))))"}
-        {:id :attach-clone
-         :code "(register original (box 10))\n(register copy1 (clone original (f 30)))\n(register copy2 (clone copy1 (tv 90) (f 30)))"}
-        {:id :attach-clone-rotated
-         :code "(register original (box 10 30 5))\n(register copy1 (clone original (f 30)))\n(register copy2 (clone copy1 (tv 90) (tr 90) (f 30)))"}]}
+        {:id :attach-copy
+         :code "(register original (box 10))\n(register copy1 (attach original (f 30)))\n(register copy2 (attach copy1 (tv 90) (f 30)))"}
+        {:id :attach-copy-rotated
+         :code "(register original (box 10 30 5))\n(register copy1 (attach original (f 30)))\n(register copy2 (attach copy1 (tv 90) (tr 90) (f 30)))"}]}
       {:id :attach-faces
        :examples
        [{:id :attach-face-frustum
@@ -756,23 +756,23 @@ These operations require **manifold** meshes (watertight, no self-intersections)
 
      :attach-meshes
      {:title "Attach Meshes"
-      :content "The `attach` function creates a mesh at the current turtle position and orientation. The `clone` macro creates a copy of an existing mesh at the turtle position.
+      :content "The `attach` function transforms a mesh with turtle movements, returning a new mesh. Use `attach!` to transform a registered mesh in-place by name.
 
 ```
-(attach mesh)    ; place mesh at turtle position
-(clone mesh)     ; create a copy at turtle position
+(attach mesh (f 20) (th 45))   ; returns transformed copy
+(attach! :name (f 20) (th 45)) ; updates registered mesh in-place
 ```
 
-Unlike `register`, these create geometry that follows the turtle's current transformation."
+`attach` is functional — the original is unchanged. `attach!` is a shortcut for `(register name (attach name ...))`."
       :examples
       {:attach-basic {:caption "Basic attach"
                       :description "The base is registered at origin. The cylinder is attached with movements that position it relative to the turtle."}
        :attach-boolean {:caption "Attach for boolean"
                         :description "`attach` can be used inline to position one mesh relative to another for boolean operations."}
-       :attach-clone {:caption "Clone a mesh"
-                      :description "Use `clone` to create copies of an existing registered mesh at different positions."}
-       :attach-clone-rotated {:caption "Clone with rotation"
-                              :description "Clones can include rotations. Here `tv` pitches and `tr` rolls the turtle before placing the copy."}}}
+       :attach-copy {:caption "Copy a mesh"
+                     :description "Use `attach` to create transformed copies of an existing mesh at different positions."}
+       :attach-copy-rotated {:caption "Copy with rotation"
+                             :description "Copies can include rotations. Here `tv` pitches and `tr` rolls the turtle before placing the copy."}}}
 
      :attach-faces
      {:title "Attach to Faces"
@@ -1526,23 +1526,23 @@ Queste operazioni richiedono mesh **manifold** (a tenuta stagna, senza auto-inte
 
      :attach-meshes
      {:title "Attaccare Mesh"
-      :content "La funzione `attach` crea una mesh nella posizione e orientamento corrente della tartaruga. La macro `clone` crea una copia di una mesh esistente alla posizione della tartaruga.
+      :content "La funzione `attach` trasforma una mesh con movimenti turtle, restituendo una nuova mesh. Usa `attach!` per trasformare una mesh registrata in-place per nome.
 
 ```
-(attach mesh)    ; posiziona mesh alla posizione turtle
-(clone mesh)     ; crea una copia alla posizione turtle
+(attach mesh (f 20) (th 45))   ; restituisce copia trasformata
+(attach! :nome (f 20) (th 45)) ; aggiorna mesh registrata in-place
 ```
 
-A differenza di `register`, questi creano geometria che segue la trasformazione corrente della tartaruga."
+`attach` è funzionale — l'originale non cambia. `attach!` è scorciatoia per `(register nome (attach nome ...))`."
       :examples
       {:attach-basic {:caption "Attach base"
                       :description "La base è registrata all'origine. Il cilindro è attaccato con movimenti che lo posizionano relativamente alla tartaruga."}
        :attach-boolean {:caption "Attach per booleane"
                         :description "`attach` può essere usato inline per posizionare una mesh relativamente a un'altra per operazioni booleane."}
-       :attach-clone {:caption "Clonare una mesh"
-                      :description "Usa `clone` per creare copie di una mesh registrata esistente in posizioni diverse."}
-       :attach-clone-rotated {:caption "Clone con rotazione"
-                              :description "I cloni possono includere rotazioni. Qui `tv` inclina e `tr` ruota la tartaruga prima di posizionare la copia."}}}
+       :attach-copy {:caption "Copiare una mesh"
+                     :description "Usa `attach` per creare copie trasformate di una mesh esistente in posizioni diverse."}
+       :attach-copy-rotated {:caption "Copia con rotazione"
+                             :description "Le copie possono includere rotazioni. Qui `tv` inclina e `tr` ruota la tartaruga prima di posizionare la copia."}}}
 
      :attach-faces
      {:title "Attaccare alle Facce"

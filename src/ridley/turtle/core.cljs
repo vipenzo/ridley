@@ -41,6 +41,19 @@
               :opacity 1.0           ; 0-1, transparency
               :flat-shading true}})  ; flat vs smooth shading
 
+;; --- Numeric validation ---
+
+(defn- check-num
+  "Validate that a value is a finite number. Throws with a clear message if not.
+   Catches NaN and non-numeric values early, before they corrupt geometry."
+  [value command-name]
+  (when-not (and (number? value) (js/isFinite value))
+    (throw (js/Error. (str "(" command-name " " (pr-str value) "): expected a number, got "
+                           (cond
+                             (js/Number.isNaN value) "NaN (bad arithmetic?)"
+                             (not (number? value)) (str (type value))
+                             :else "Infinity"))))))
+
 ;; --- State stack ---
 
 (defn push-state
@@ -1407,6 +1420,7 @@
    When attached to a mesh, moves the entire mesh.
    When attached to a face, extrudes the face along its normal."
   [state dist]
+  (check-num dist "f")
   (if-let [attachment (:attached state)]
     (case (:type attachment)
       :pose (move-attached-mesh state dist)
@@ -1437,6 +1451,7 @@
    When attached to face, rotates the face around up axis (tilt sideways).
    In shape mode, stores pending rotation for fillet creation on next (f)."
   [state angle]
+  (check-num angle "th")
   (cond
     ;; Attached to mesh pose: rotate the mesh
     (= :pose (get-in state [:attached :type]))
@@ -1463,6 +1478,7 @@
    When attached to face, rotates the face around right axis (tilts the face).
    In shape mode, stores pending rotation for fillet creation on next (f)."
   [state angle]
+  (check-num angle "tv")
   (cond
     ;; Attached to mesh pose: rotate the mesh
     (= :pose (get-in state [:attached :type]))
@@ -1495,6 +1511,7 @@
    When attached to face, rotates the face around its normal (spins in place).
    In shape mode, stores pending rotation for fillet creation on next (f)."
   [state angle]
+  (check-num angle "tr")
   (cond
     ;; Attached to mesh pose: rotate the mesh
     (= :pose (get-in state [:attached :type]))
@@ -4112,12 +4129,6 @@
    SCI-compatible wrapper for (attach state mesh) without :clone."
   [state mesh]
   (attach state mesh))
-
-(defn ^:export attach-clone
-  "Attach to a cloned copy of a mesh (original unchanged).
-   SCI-compatible wrapper for (attach state mesh :clone true)."
-  [state mesh]
-  (attach state mesh :clone true))
 
 (defn detach
   "Detach from current attachment and restore previous position.

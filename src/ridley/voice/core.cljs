@@ -289,25 +289,36 @@
 ;; ============================================================
 
 (defn- handle-ai-input
-  "Send voice transcript to LLM for code generation and insert result."
+  "Send voice transcript to LLM for code generation and insert result.
+   For tier-2+, passes script context and handles clarification responses."
   [transcript]
-  (let [{:keys [insert speak]} @handlers]
+  (let [{:keys [insert speak get-script]} @handlers]
     (if-not (settings/ai-configured?)
       (do (js/console.warn "AI mode: not configured")
           (when speak (speak "AI non configurato. Apri le impostazioni.")))
       (do
         (js/console.log "AI generating from:" transcript)
         (when speak (speak "Genero..."))
-        (-> (ai/generate transcript)
-            (.then (fn [{:keys [code]}]
-                     (if (and code insert)
-                       (do (insert {:target :script :code code :position :after-current-form})
-                           (js/console.log "AI generated:" code)
-                           (when speak (speak "Codice inserito")))
-                       (when speak (speak "Nessun codice generato")))))
-            (.catch (fn [err]
-                      (js/console.error "AI generation error:" err)
-                      (when speak (speak (str "Errore: " (.-message err)))))))))))
+        (let [script-content (when get-script (get-script))]
+          (-> (ai/generate transcript {:script-content script-content})
+              (.then (fn [{:keys [type code question]}]
+                       (case type
+                         :code
+                         (if (and code insert)
+                           (do (insert {:target :script :code code :position :after-current-form})
+                               (js/console.log "AI generated:" code)
+                               (when speak (speak "Codice inserito")))
+                           (when speak (speak "Nessun codice generato")))
+
+                         :clarification
+                         (do (js/console.log "AI clarification:" question)
+                             (when speak (speak question)))
+
+                         ;; Unknown type
+                         (when speak (speak "Risposta AI non valida")))))
+              (.catch (fn [err]
+                        (js/console.error "AI generation error:" err)
+                        (when speak (speak (str "Errore: " (.-message err))))))))))))
 
 ;; ============================================================
 ;; Utterance handling

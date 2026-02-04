@@ -152,28 +152,35 @@
 
 (defn- handle-ai-command
   "Handle /ai <prompt> — call LLM and append generated code to the script.
-   When auto-run? is true, also evaluates definitions after inserting."
+   When auto-run? is true, also evaluates definitions after inserting.
+   For tier-2+, passes script context and handles clarification responses."
   [input prompt auto-run?]
   ;; Show loading in REPL history
   (add-repl-entry input "Generating..." false)
-  (-> (ai/generate prompt)
-      (.then (fn [{:keys [code]}]
-               (when-let [view @editor-view]
-                 ;; Append to script: comment + generated code
-                 (let [snippet (str "\n;; AI: " prompt "\n" code "\n")]
-                   (cm/insert-at-end view snippet))
-                 ;; Auto-save
-                 (save-to-storage)
-                 (send-script-debounced))
-               ;; Show success in REPL
-               (add-repl-entry input "Code added to script." false)
-               ;; Auto-run if requested
-               (when auto-run?
-                 (evaluate-definitions))))
-      (.catch (fn [err]
-                (let [msg (or (.-message err) (str err))]
-                  (add-repl-entry input msg true)
-                  (show-error msg))))))
+  (let [script-content (when @editor-view (cm/get-value @editor-view))]
+    (-> (ai/generate prompt {:script-content script-content})
+        (.then (fn [{:keys [type code question]}]
+                 (case type
+                   :code
+                   (do
+                     (when-let [view @editor-view]
+                       (let [snippet (str "\n;; AI: " prompt "\n" code "\n")]
+                         (cm/insert-at-end view snippet))
+                       (save-to-storage)
+                       (send-script-debounced))
+                     (add-repl-entry input "Code added to script." false)
+                     (when auto-run?
+                       (evaluate-definitions)))
+
+                   :clarification
+                   (add-repl-entry input (str "\uD83E\uDD16 " question) false)
+
+                   ;; Unknown type fallback
+                   (add-repl-entry input "Unexpected AI response." true))))
+        (.catch (fn [err]
+                  (let [msg (or (.-message err) (str err))]
+                    (add-repl-entry input msg true)
+                    (show-error msg)))))))
 
 (defn- evaluate-repl-input
   "Evaluate the REPL input and show result in history."
@@ -920,6 +927,32 @@
                     "placeholder='llama3'>"))
              "</div>")))
 
+        ;; Tier dropdown (shown for all providers)
+        (let [current-tier (or (:tier ai) :auto)
+              detected (settings/get-detected-tier)
+              effective (settings/get-effective-tier)
+              tier-name (fn [t] (case t :tier-1 "Tier 1" :tier-2 "Tier 2" :tier-3 "Tier 3" "?"))
+              mismatch? (and (not= current-tier :auto)
+                             (not= current-tier detected)
+                             ;; Warn if forcing higher tier on weaker model
+                             (> (.indexOf [:tier-1 :tier-2 :tier-3] current-tier)
+                                (.indexOf [:tier-1 :tier-2 :tier-3] detected)))]
+          (str
+           "<div class='settings-field'>"
+           "<label class='settings-label'>Tier</label>"
+           "<select id='settings-tier' class='settings-select'>"
+           "<option value='auto'" (when (= current-tier :auto) " selected") ">Auto</option>"
+           "<option value='tier-1'" (when (= current-tier :tier-1) " selected") ">Tier 1 (code only)</option>"
+           "<option value='tier-2'" (when (= current-tier :tier-2) " selected") ">Tier 2 (guided)</option>"
+           "<option value='tier-3'" (when (= current-tier :tier-3) " selected") ">Tier 3 (full)</option>"
+           "</select>"
+           "<div class='settings-hint'>"
+           "Detected: " (tier-name detected)
+           " | Using: " (tier-name effective)
+           (when mismatch? " ⚠ may produce poor results")
+           "</div>"
+           "</div>"))
+
         ;; Test Connection button (shown for all providers when configured)
         (let [conn @settings/connection-status]
           (str
@@ -996,6 +1029,12 @@
     (.addEventListener el (if (= "SELECT" (.-tagName el)) "change" "input")
                        (fn [e]
                          (settings/set-ai-setting! :ollama-model (.. e -target -value)))))
+  ;; Tier dropdown
+  (when-let [el (.querySelector modal "#settings-tier")]
+    (.addEventListener el "change"
+                       (fn [e]
+                         (settings/set-ai-setting! :tier (keyword (.. e -target -value)))
+                         (re-render))))
   ;; Test Connection button
   (when-let [el (.querySelector modal "#settings-test-connection")]
     (.addEventListener el "click"
@@ -1727,7 +1766,8 @@
                                 nil))
                             (cm/update-ai-focus! view)
                             (save-to-storage)
-                            (send-script-debounced)))})
+                            (send-script-debounced)))
+                  :get-script (fn [] (when @editor-view (cm/get-value @editor-view)))})
     (setup-voice-ui)
     ;; Focus REPL input
     (when repl-input

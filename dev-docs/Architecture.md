@@ -895,4 +895,8 @@ Script updates are debounced to avoid flooding the connection:
 - **Undo/redo** — Since state is immutable, history is just a list of states
 - **Collaborative editing** — CRDT on the script text
 - **Plugin system** — User-defined SCI namespaces
-- **AI assistant** — LLM generates DSL code from natural language
+- **AI assistant** — LLM generates DSL code from natural language, with tier-based prompts:
+  - **Tier 1**: Code-only output (small models, few-shot examples)
+  - **Tier 2**: JSON output with code or clarification, receives script context (medium models)
+  - **Tier 3**: Same as Tier 2 for now, future: debug, creative generation, spatial reasoning (large models)
+  - Auto-detection from model name, manual override in Settings
