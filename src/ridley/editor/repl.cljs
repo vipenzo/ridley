@@ -1046,6 +1046,7 @@
    'mesh-difference     manifold/difference
    'mesh-intersection   manifold/intersection
    'mesh-hull           manifold/hull
+   'solidify            manifold/solidify
    ;; Scene registry
    'add-mesh!           registry/add-mesh!
    'register-mesh!      registry/register-mesh!
@@ -2016,6 +2017,24 @@
           (register-mesh! ~kw result#)
           (refresh-viewport! false)
           result#)))
+
+   ;; play-path: replay a recorded path on the attach-state turtle.
+   ;; Use inside attach/attach! body to follow a pre-built path:
+   ;;   (attach mesh (play-path my-path) (f 10))
+   ;;   (attach! :name (play-path my-path))
+   (defn play-path [p]
+     (when (path? p)
+       (doseq [{:keys [cmd args]} (:commands p)]
+         (case cmd
+           :f  (att-f* (first args))
+           :th (att-th* (first args))
+           :tv (att-tv* (first args))
+           :tr (att-tr* (first args))
+           :set-heading (swap! attach-state
+                          (fn [s] (assoc s
+                                    :heading (vec3-normalize (first args))
+                                    :up (vec3-normalize (second args)))))
+           nil))))
 
    ;; Helper to check if something is a mesh (has :vertices and :faces)
    (defn mesh? [x]

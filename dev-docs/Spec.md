@@ -460,6 +460,12 @@ Requires Manifold WASM integration:
 (mesh-intersection a b)
 ```
 
+Resolve self-intersections (useful for loft/extrude that produce overlapping geometry):
+
+```clojure
+(solidify mesh)                  ; Pass through Manifold to clean self-intersections
+```
+
 Check mesh status:
 
 ```clojure
@@ -806,7 +812,22 @@ Transform a registered mesh in-place by keyword. Shortcut for `(register name (a
 
 Only accepts keywords (registered names). Throws an error if the name is not registered.
 
-Operations available inside `attach`/`attach!`: `f`, `th`, `tv`, `tr`, `move-to`.
+Operations available inside `attach`/`attach!`: `f`, `th`, `tv`, `tr`, `move-to`, `play-path`.
+
+### play-path
+
+Replay a recorded path's movements inside `attach`/`attach!`. Solves the problem that functions returning paths capture global `f`/`th`/`tv` bindings, not the rebound attach versions:
+
+```clojure
+(defn branch-path [l]
+  (path (tv 90) (f (/ l 8)) (tv -90) (f l)))
+
+;; Use inside attach:
+(register Y (attach (sphere 3) (play-path (branch-path 30))))
+
+;; Combine with additional movements:
+(attach! :Y (play-path my-path) (f 10) (th 45))
+```
 
 ### move-to
 

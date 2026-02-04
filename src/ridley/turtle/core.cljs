@@ -3809,15 +3809,22 @@
                             (+ acc eff)))))]
            (if (or (< n-segments 1) (<= total-visible-dist 0))
              state
-             ;; Generate rings for each segment separately (no joint mesh)
+             ;; Generate rings, accumulating across smooth junctions.
+             ;; Only split into separate meshes at real corners (th/tv/tr).
              (let [result
                    (loop [seg-idx 0
                           s state
                           taper-acc 0         ;; effective distance travelled so far (for t)
                           prev-rn 0           ;; carry start offset from previous corner
-                         segment-meshes []]
+                          acc-rings []        ;; accumulated rings for current smooth section
+                          finished-meshes []] ;; completed meshes (split at corners)
                      (if (>= seg-idx n-segments)
-                       {:meshes segment-meshes :state s}
+                       ;; Flush any remaining accumulated rings as a final mesh
+                       {:meshes (if (>= (count acc-rings) 2)
+                                  (conj finished-meshes
+                                        (build-sweep-mesh (vec acc-rings) false creation-pose))
+                                  finished-meshes)
+                        :state s}
                        (let [seg (nth segments seg-idx)
                              seg-dist (:dist seg)
                              has-corner (:has-corner-after seg)
@@ -3827,13 +3834,17 @@
                              {:keys [r-p r-n]} (nth corner-data seg-idx)
 
                              ;; Calculate seg-steps FIRST (it's used in min-step calculation)
-                             seg-steps (max 4 (Math/round (* steps (/ seg-dist total-visible-dist))))
+                             ;; For smooth junctions (bezier micro-segments), use max 1 since
+                             ;; the path already provides fine-grained sampling. Forcing max 4
+                             ;; creates 64+ overlapping rings on tight curves.
+                             min-seg-steps (if has-corner 4 1)
+                             seg-steps (max min-seg-steps (Math/round (* steps (/ seg-dist total-visible-dist))))
 
                              ;; Remaining distance to the original corner after start offset
                              remaining-to-corner (max 0.0 (- seg-dist prev-rn))
                              ;; Effective length: pull back by r_p and also leave space for next start (r_n)
                              ;; Clamp to at least one step length so the last ring doesn't reach the corner
-                             min-step (/ remaining-to-corner (max 4 seg-steps))
+                             min-step (/ remaining-to-corner (max min-seg-steps seg-steps))
                              ;; Leave room for next start, but only half of r_n to reduce gaps
                              effective-seg-dist (max min-step
                                                      (- remaining-to-corner
@@ -3841,76 +3852,114 @@
 
                              ;; Original corner position (before pullback)
                              corner-base (v+ (:position s) (v* (:heading s) remaining-to-corner))
-                             ;; End position after pullback
-                             corner-pos (v+ corner-base (v* (:heading s) (- r-p)))
 
-                              seg-rings
-                              (vec
-                               (for [i (range (inc seg-steps))]
-                                 (let [local-t (/ i seg-steps)
-                                       dist-in-seg (* local-t effective-seg-dist)
-                                       ;; Taper parameter based on effective travelled distance
-                                       taper-at (+ taper-acc dist-in-seg)
-                                       clamped-t (if (pos? total-effective-dist)
-                                                   (min 1 (/ taper-at total-effective-dist))
-                                                   0)
-                                       pos (v+ (:position s) (v* (:heading s) dist-in-seg))
-                                       transformed-shape (transform-fn shape clamped-t)
-                                       temp-state (assoc s :position pos)]
-                                  (stamp-shape temp-state transformed-shape))))
+                             ;; Generate rings for this segment.
+                             ;; Skip i=0 if we already have accumulated rings (smooth continuation)
+                             ;; to avoid duplicate rings at the junction.
+                             start-i (if (seq acc-rings) 1 0)
+                             seg-rings
+                             (vec
+                              (for [i (range start-i (inc seg-steps))]
+                                (let [local-t (/ i seg-steps)
+                                      dist-in-seg (* local-t effective-seg-dist)
+                                      taper-at (+ taper-acc dist-in-seg)
+                                      clamped-t (if (pos? total-effective-dist)
+                                                  (min 1 (/ taper-at total-effective-dist))
+                                                  0)
+                                      pos (v+ (:position s) (v* (:heading s) dist-in-seg))
+                                      transformed-shape (transform-fn shape clamped-t)
+                                      temp-state (assoc s :position pos)]
+                                 (stamp-shape temp-state transformed-shape))))
 
-                             ;; Build mesh for this segment
-                             seg-mesh (when (>= (count seg-rings) 2)
-                                        (build-sweep-mesh seg-rings false creation-pose))
+                             ;; Merge into accumulated rings
+                             new-acc-rings (into acc-rings seg-rings)
 
                              ;; Apply rotations to get new heading (rotate at corner position)
                              s-at-corner (assoc s :position corner-base)
                              s-rotated (reduce apply-rotation-to-state s-at-corner rotations)
 
-                             ;; Next segment starts at corner + R_n along new heading
-                             next-start-pos (if has-corner
-                                              (v+ corner-base (v* (:heading s-rotated) r-n))
-                                              corner-pos)
-                             s-next (assoc s-rotated :position next-start-pos)
+                             ;; Heading change detection (for smooth transition rings)
+                             old-heading (:heading s)
+                             new-heading (:heading s-rotated)
+                             cos-a (dot old-heading new-heading)
+                             heading-angle (when (< cos-a 0.9998)
+                                             (Math/acos (min 1 (max -1 cos-a))))
 
-                             ;; Corner mesh (bridge end ring to next start ring) with midpoint ring
-                             t-end (if (pos? total-effective-dist)
-                                     (min 1 (/ (+ taper-acc effective-seg-dist) total-effective-dist))
-                                     0)
-                             end-ring (last seg-rings)
-                             next-start-ring (when has-corner
-                                               (let [shape-next (transform-fn shape t-end)
-                                                     temp-state (assoc s-rotated :position next-start-pos)]
-                                                 (stamp-shape temp-state shape-next)))
-                             ;; Corner mesh with tapered mid-rings
-                             mid-rings (when has-corner
-                                         (let [generated (generate-tapered-corner-rings
-                                                          end-ring corner-base
-                                                          (:heading s) (:heading s-rotated))]
-                                           (when (seq generated) generated)))
-                             fallback-mid (when (and has-corner end-ring next-start-ring (nil? mid-rings))
-                                            [(mapv (fn [p1 p2] (v+ p1 (v* (v- p2 p1) 0.5)))
-                                                   end-ring next-start-ring)])
-                             corner-rings (cond
-                                            mid-rings (concat [end-ring] mid-rings [next-start-ring])
-                                            fallback-mid (concat [end-ring] fallback-mid [next-start-ring])
-                                            :else nil)
-                             corner-mesh (when corner-rings
-                                           (assoc (build-sweep-mesh (vec corner-rings)
-                                                                    false creation-pose)
-                                                  :creation-pose creation-pose))
+                             ;; Taper distance advances by effective length
+                             new-taper-acc (+ taper-acc effective-seg-dist)]
 
-                             ;; Taper distance advances by effective length; carry r_n forward
-                             new-taper-acc (+ taper-acc effective-seg-dist)
-                             next-prev-rn (if has-corner r-n 0)]
+                         (if has-corner
+                           ;; Corner: flush accumulated rings as a mesh, generate corner bridge
+                           (let [;; Build mesh from accumulated rings
+                                 section-mesh (when (>= (count new-acc-rings) 2)
+                                                (build-sweep-mesh (vec new-acc-rings) false creation-pose))
 
-                         (recur (inc seg-idx)
-                                s-next
-                                new-taper-acc
-                                next-prev-rn
-                                (cond-> segment-meshes
-                                  seg-mesh (conj seg-mesh)
-                                  corner-mesh (conj corner-mesh))))))
+                                 ;; Next segment starts at corner + R_n along new heading
+                                 next-start-pos (v+ corner-base (v* (:heading s-rotated) r-n))
+                                 s-next (assoc s-rotated :position next-start-pos)
+
+                                 ;; Corner mesh (bridge end ring to next start ring)
+                                 t-end (if (pos? total-effective-dist)
+                                         (min 1 (/ new-taper-acc total-effective-dist))
+                                         0)
+                                 end-ring (last new-acc-rings)
+                                 next-start-ring (let [shape-next (transform-fn shape t-end)
+                                                       temp-state (assoc s-rotated :position next-start-pos)]
+                                                   (stamp-shape temp-state shape-next))
+                                 mid-rings (let [generated (generate-tapered-corner-rings
+                                                            end-ring corner-base
+                                                            old-heading new-heading)]
+                                             (when (seq generated) generated))
+                                 fallback-mid (when (and end-ring next-start-ring (nil? mid-rings))
+                                                [(mapv (fn [p1 p2] (v+ p1 (v* (v- p2 p1) 0.5)))
+                                                       end-ring next-start-ring)])
+                                 c-rings (cond
+                                           mid-rings (concat [end-ring] mid-rings [next-start-ring])
+                                           fallback-mid (concat [end-ring] fallback-mid [next-start-ring])
+                                           :else nil)
+                                 corner-mesh (when c-rings
+                                               (assoc (build-sweep-mesh (vec c-rings)
+                                                                        false creation-pose)
+                                                      :creation-pose creation-pose))]
+
+                             (recur (inc seg-idx)
+                                    s-next
+                                    new-taper-acc
+                                    r-n
+                                    []  ;; reset accumulated rings for next section
+                                    (cond-> finished-meshes
+                                      section-mesh (conj section-mesh)
+                                      corner-mesh (conj corner-mesh))))
+
+                           ;; No corner: smooth junction — use inner-pivot transition rings
+                           ;; to prevent ring overlap on the inner side of tight curves
+                           (let [end-ring (last new-acc-rings)
+                                 ;; Current radius at this taper position
+                                 current-t (if (pos? total-effective-dist)
+                                             (min 1 (/ new-taper-acc total-effective-dist))
+                                             0)
+                                 current-shape (transform-fn shape current-t)
+                                 current-radius (shape-radius current-shape)
+                                 ;; Generate inner-pivot transition rings if heading changed
+                                 smooth-rings
+                                 (if (and heading-angle end-ring (seq rotations))
+                                   (let [n-smooth (max 1 (int (Math/ceil (/ heading-angle (/ Math/PI 12)))))]
+                                     (generate-round-corner-rings
+                                      end-ring corner-base old-heading new-heading
+                                      n-smooth current-radius))
+                                   [])
+                                 ;; Continue from last transition ring's centroid for continuity
+                                 next-start-pos (if (seq smooth-rings)
+                                                  (ring-centroid (last smooth-rings))
+                                                  corner-base)
+                                 s-next (assoc s-rotated :position next-start-pos)
+                                 updated-acc (into new-acc-rings smooth-rings)]
+                             (recur (inc seg-idx)
+                                    s-next
+                                    new-taper-acc
+                                    0
+                                    updated-acc
+                                    finished-meshes))))))
 
                    segment-meshes (:meshes result)
                    final-state (:state result)]

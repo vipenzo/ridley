@@ -306,6 +306,7 @@
                          :code
                          (if (and code insert)
                            (do (insert {:target :script :code code :position :after-current-form})
+                               (ai/add-entry! transcript code)
                                (js/console.log "AI generated:" code)
                                (when speak (speak "Codice inserito")))
                            (when speak (speak "Nessun codice generato")))

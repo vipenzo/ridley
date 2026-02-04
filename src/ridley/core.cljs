@@ -38,6 +38,10 @@
 ;; Manual panel state
 (defonce ^:private manual-panel (atom nil))
 
+;; AI history — tracks last insertion for rollback on feedback
+(defonce ^:private last-ai-insertion (atom nil))
+;; {:start-pos int, :prompt string, :code string}
+
 (declare sync-voice-state)
 (declare save-to-storage)
 (declare send-script-debounced)
@@ -153,34 +157,41 @@
 (defn- handle-ai-command
   "Handle /ai <prompt> — call LLM and append generated code to the script.
    When auto-run? is true, also evaluates definitions after inserting.
-   For tier-2+, passes script context and handles clarification responses."
-  [input prompt auto-run?]
-  ;; Show loading in REPL history
-  (add-repl-entry input "Generating..." false)
-  (let [script-content (when @editor-view (cm/get-value @editor-view))]
-    (-> (ai/generate prompt {:script-content script-content})
-        (.then (fn [{:keys [type code question]}]
-                 (case type
-                   :code
-                   (do
-                     (when-let [view @editor-view]
-                       (let [snippet (str "\n;; AI: " prompt "\n" code "\n")]
-                         (cm/insert-at-end view snippet))
-                       (save-to-storage)
-                       (send-script-debounced))
-                     (add-repl-entry input "Code added to script." false)
-                     (when auto-run?
-                       (evaluate-definitions)))
+   For tier-2+, passes script context and handles clarification responses.
+   loading-msg overrides the initial REPL entry (nil = 'Generating...')."
+  ([input prompt auto-run?] (handle-ai-command input prompt auto-run? nil))
+  ([input prompt auto-run? loading-msg]
+   ;; Show loading in REPL history
+   (add-repl-entry input (or loading-msg "Generating...") false)
+   (let [script-content (when @editor-view (cm/get-value @editor-view))]
+     (-> (ai/generate prompt {:script-content script-content})
+         (.then (fn [{:keys [type code question]}]
+                  (case type
+                    :code
+                    (do
+                      (when-let [view @editor-view]
+                        (let [start-pos (.. view -state -doc -length)
+                              snippet (str "\n;; AI: " prompt "\n" code "\n")]
+                          (cm/insert-at-end view snippet)
+                          (reset! last-ai-insertion {:start-pos start-pos
+                                                     :prompt prompt
+                                                     :code code}))
+                        (save-to-storage)
+                        (send-script-debounced))
+                      (ai/add-entry! prompt code)
+                      (add-repl-entry input "Code added to script." false)
+                      (when auto-run?
+                        (evaluate-definitions)))
 
-                   :clarification
-                   (add-repl-entry input (str "\uD83E\uDD16 " question) false)
+                    :clarification
+                    (add-repl-entry input (str "\uD83E\uDD16 " question) false)
 
-                   ;; Unknown type fallback
-                   (add-repl-entry input "Unexpected AI response." true))))
-        (.catch (fn [err]
-                  (let [msg (or (.-message err) (str err))]
-                    (add-repl-entry input msg true)
-                    (show-error msg)))))))
+                    ;; Unknown type fallback
+                    (add-repl-entry input "Unexpected AI response." true))))
+         (.catch (fn [err]
+                   (let [msg (or (.-message err) (str err))]
+                     (add-repl-entry input msg true)
+                     (show-error msg))))))))
 
 (defn- evaluate-repl-input
   "Evaluate the REPL input and show result in history."
@@ -193,16 +204,49 @@
         (reset! history-index -1)
         ;; Clear input
         (set! (.-value input-el) "")
-        ;; Check for /ai or /ai! command
-        (if (or (str/starts-with? (str/trim input) "/ai! ")
-                (str/starts-with? (str/trim input) "/ai "))
-          (let [trimmed (str/trim input)
-                auto-run? (str/starts-with? trimmed "/ai! ")
+        ;; Check for special commands
+        (let [trimmed (str/trim input)]
+        (cond
+          ;; /ai-clear — reset AI conversation history
+          (= trimmed "/ai-clear")
+          (do (ai/clear-history!)
+              (reset! last-ai-insertion nil)
+              (add-repl-entry input "AI history cleared." false))
+
+          ;; /ai or /ai! — AI code generation
+          (or (str/starts-with? trimmed "/ai! ")
+              (str/starts-with? trimmed "/ai "))
+          (let [auto-run? (str/starts-with? trimmed "/ai! ")
                 prefix-len (if auto-run? 5 4)
                 prompt (str/trim (subs trimmed prefix-len))]
             (when (seq prompt)
               (handle-ai-command input prompt auto-run?)))
+
+          ;; Explicit negative feedback — rollback last AI code and retry
+          (and (seq @ai/ai-history)
+               @last-ai-insertion
+               (let [lower (str/lower-case trimmed)]
+                 (or (= lower "no")
+                     (str/starts-with? lower "no,")
+                     (str/starts-with? lower "no ")
+                     (some #(str/includes? lower %)
+                           ["sbagliato" "non così" "non va" "wrong" "rifai" "riprova"]))))
+          (do
+            ;; Record feedback on last history entry
+            (ai/add-feedback! trimmed)
+            ;; Rollback: delete the last AI insertion from the editor
+            (when-let [view @editor-view]
+              (let [start-pos (:start-pos @last-ai-insertion)
+                    end-pos (.. view -state -doc -length)]
+                (cm/delete-range view start-pos end-pos))
+              (save-to-storage)
+              (send-script-debounced))
+            (reset! last-ai-insertion nil)
+            ;; Auto-retry with the feedback text as the new prompt
+            (handle-ai-command input trimmed true "Feedback recorded, regenerating..."))
+
           ;; Normal REPL evaluation
+          :else
           (do
             ;; Send to connected clients if we're the host
             (when (= :host @sync-mode)
@@ -226,7 +270,7 @@
                   ;; Update turtle indicator
                   (update-turtle-indicator)
                   ;; Sync AI state
-                  (sync-voice-state))))))))))
+                  (sync-voice-state)))))))))))
 
 (defn- navigate-history
   "Navigate command history. direction: -1 for older, +1 for newer."

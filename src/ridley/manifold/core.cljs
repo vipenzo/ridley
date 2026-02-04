@@ -202,6 +202,40 @@
      :surface-area 0}))
 
 ;; ============================================================
+;; Self-union (resolve self-intersections)
+;; ============================================================
+
+(defn solidify
+  "Resolve self-intersections in a mesh via boolean self-union (A ∪ A).
+   Returns a clean mesh with only the outer surface, or the original
+   mesh unchanged if Manifold conversion fails.
+
+   Usage: (solidify (loft ...)) when a loft produces self-intersecting geometry."
+  [ridley-mesh]
+  (when-let [Manifold (get-manifold-class)]
+    (if (and (:vertices ridley-mesh) (:faces ridley-mesh))
+      (try
+        (let [mesh-data (ridley-mesh->manifold-mesh ridley-mesh)
+              m1 (new Manifold mesh-data)
+              m2 (new Manifold mesh-data)
+              ;; Self-union: A ∪ A resolves self-intersections
+              result (.add m1 m2)
+              clean (.asOriginal result)
+              output (manifold->mesh clean)
+              output (cond-> output
+                       (:creation-pose ridley-mesh) (assoc :creation-pose (:creation-pose ridley-mesh))
+                       (:material ridley-mesh) (assoc :material (:material ridley-mesh)))]
+          (.delete m1)
+          (.delete m2)
+          (.delete result)
+          (.delete clean)
+          output)
+        (catch :default e
+          (js/console.warn "solidify failed:" e)
+          ridley-mesh))
+      ridley-mesh)))
+
+;; ============================================================
 ;; Boolean operations
 ;; ============================================================
 

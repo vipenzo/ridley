@@ -5,6 +5,47 @@
             [ridley.ai.prompts :as prompts]))
 
 ;; =============================================================================
+;; Conversation History
+;; =============================================================================
+
+(def ai-history
+  "Session history of AI exchanges. Each entry: {:input str :output str :feedback nil|str}"
+  (atom []))
+
+(defn clear-history!
+  "Reset AI conversation history."
+  []
+  (reset! ai-history []))
+
+(defn add-entry!
+  "Record an AI exchange (user input → AI output)."
+  [input output]
+  (swap! ai-history conj {:input input :output output :feedback nil}))
+
+(defn add-feedback!
+  "Attach explicit feedback/correction to the last history entry."
+  [text]
+  (swap! ai-history
+    (fn [h]
+      (if (seq h)
+        (assoc-in (vec h) [(dec (count h)) :feedback] text)
+        h))))
+
+(defn history-for-prompt
+  "Format recent history entries as a <history> block for the prompt.
+   Returns nil if history is empty."
+  []
+  (let [recent (take-last 5 @ai-history)]
+    (when (seq recent)
+      (str "<history>\n"
+           (str/join "\n---\n"
+             (map (fn [{:keys [input output feedback]}]
+                    (str "USER: " input "\nAI: " output
+                         (when feedback (str "\nCORRECTION: " feedback))))
+                  recent))
+           "\n</history>"))))
+
+;; =============================================================================
 ;; Response Parsing
 ;; =============================================================================
 
@@ -74,11 +115,14 @@
 ;; =============================================================================
 
 (defn- build-user-content
-  "Build the user message content. For tier-2+, includes script context."
+  "Build the user message content. For tier-2+, includes history and script context."
   [prompt tier script-content]
-  (if (and (#{:tier-2 :tier-3} tier) script-content)
-    (str "<script>\n" script-content "\n</script>\n\n" prompt)
-    prompt))
+  (let [tier-2+? (#{:tier-2 :tier-3} tier)
+        history (when tier-2+? (history-for-prompt))
+        script  (when (and tier-2+? script-content)
+                  (str "<script>\n" script-content "\n</script>"))
+        parts   (filterv some? [history script prompt])]
+    (str/join "\n\n" parts)))
 
 (defn- get-few-shot [tier]
   (if (#{:tier-2 :tier-3} tier)

@@ -343,6 +343,7 @@ NO markdown, NO backticks around the JSON, NO explanations outside the JSON.
 You will receive:
 - The user's request
 - The current script content (if any) in <script> tags
+- Previous exchanges (if any) in <history> tags — learn from any CORRECTION notes
 
 You can reference objects defined with (register name ...) in the script.
 
