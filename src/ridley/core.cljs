@@ -134,25 +134,34 @@
   ([reset-camera?]
    ;; Clear registry when re-running definitions (fresh start)
    (registry/clear-all!)
-   (let [explicit-code (cm/get-value @editor-view)
-         result (repl/evaluate-definitions explicit-code)]
-     (if-let [error (:error result)]
-       (show-error error)
-       (do
-         (hide-error)
-         ;; Show print output in REPL history if any
-         (when-let [print-output (:print-output result)]
-           (add-script-output print-output))
-         (when-let [render-data (repl/extract-render-data result)]
-           ;; Store lines and definition meshes
-           (registry/set-lines! (:lines render-data))
-           (registry/set-definition-meshes! (:meshes render-data)))
-         ;; Refresh viewport, optionally resetting camera
-         (registry/refresh-viewport! reset-camera?)
-         ;; Update turtle indicator
-         (update-turtle-indicator)
-         ;; Sync AI state
-         (sync-voice-state))))))
+   ;; Show loading indicator for potentially long operations
+   (viewport/show-loading!)
+   ;; Use requestAnimationFrame to let the UI render the spinner before blocking
+   (js/requestAnimationFrame
+    (fn []
+      (js/setTimeout
+       (fn []
+         (let [explicit-code (cm/get-value @editor-view)
+               result (repl/evaluate-definitions explicit-code)]
+           (viewport/hide-loading!)
+           (if-let [error (:error result)]
+             (show-error error)
+             (do
+               (hide-error)
+               ;; Show print output in REPL history if any
+               (when-let [print-output (:print-output result)]
+                 (add-script-output print-output))
+               (when-let [render-data (repl/extract-render-data result)]
+                 ;; Store lines and definition meshes
+                 (registry/set-lines! (:lines render-data))
+                 (registry/set-definition-meshes! (:meshes render-data)))
+               ;; Refresh viewport, optionally resetting camera
+               (registry/refresh-viewport! reset-camera?)
+               ;; Update turtle indicator
+               (update-turtle-indicator)
+               ;; Sync AI state
+               (sync-voice-state)))))
+       0)))))
 
 (defn- handle-ai-command
   "Handle /ai <prompt> — call LLM and append generated code to the script.

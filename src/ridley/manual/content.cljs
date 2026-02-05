@@ -171,6 +171,15 @@
          :code "(register smooth-bend\n  (extrude (circle 5)\n    (bezier-as\n      (path (f 30) (th 90) (f 30)))))"}
         {:id :bezier-as-cubic
          :code "(register smooth-spline\n  (extrude (circle 5)\n    (bezier-as\n      (path (f 30) (th 90) (f 20) (th -45) (f 25))\n      :cubic true)))"}]}
+      {:id :bloft-curves
+       :see-also [:arcs-beziers :shape-transforms :resolution-settings]
+       :examples
+       [{:id :bloft-basic
+         :code "(def curved-path\n  (path (f 40) (th 120) (f 30) (th 120) (f 40)))\n\n(register tube\n  (bloft (circle 6) identity\n    (path (bezier-as curved-path))))"}
+        {:id :bloft-taper
+         :code "(def tight-curve\n  (path (f 30) (th 150) (f 25)))\n\n(register tapered\n  (bloft (circle 8)\n    #(scale %1 (- 1 (* 0.6 %2)))\n    (path (bezier-as tight-curve))))"}
+        {:id :bloft-steps
+         :code "(def loop-path\n  (path (f 20) (th 90) (f 20) (th 90)\n        (f 20) (th 90) (f 20)))\n\n(register smooth-loop\n  (bloft-n 64 (circle 5) identity\n    (path (bezier-as loop-path))))"}]}
       {:id :colors-materials
        :see-also [:extrude-basics :mesh-basics]
        :examples
@@ -939,6 +948,41 @@ Positive angle = pitch up, negative = pitch down.
                    :description "`bezier-as` takes a turtle path and draws a chain of smooth bezier curves, one per segment. Use `:tension` to control how wide the curves are (default 0.33)."}
        :bezier-as-cubic {:caption "Catmull-Rom spline with :cubic"
                          :description "With `:cubic true`, interior waypoints use Catmull-Rom directions (based on neighboring points) instead of turtle headings, producing globally smoother curves through multiple turns."}}}
+
+     :bloft-curves
+     {:title "Bezier-Safe Loft (bloft)"
+      :content "When lofting along tight bezier curves, standard `loft` can produce self-intersecting geometry. `bloft` (bezier-safe loft) handles this by detecting intersections and bridging them with convex hulls.
+
+**Basic usage** — same signature as loft:
+```
+(bloft shape transform-fn (path (bezier-as ...)))
+```
+
+**When to use bloft vs loft:**
+- Use `loft` for straight paths or gentle curves — faster
+- Use `bloft` for tight bezier curves that might self-intersect — slower but correct
+
+**Step count:**
+```
+(bloft-n 64 shape transform-fn path)  ; 64 steps (smoother)
+```
+
+**Performance and resolution:**
+
+`bloft` can take several seconds for complex curves. The bezier density is controlled by `(resolution :n ...)`:
+- Low values (`:n 10`) → fast preview, may show visual artifacts
+- High values (`:n 60`) → smooth final render, slower
+
+A loading spinner appears during long operations.
+
+**Tip:** Work with low resolution during design, then increase for final render."
+      :examples
+      {:bloft-basic {:caption "Basic bloft"
+                     :description "`bloft` lofts a circle along a curved path. Unlike `loft`, it handles tight turns without self-intersection."}
+       :bloft-taper {:caption "Tapered bloft"
+                     :description "Transform functions work the same as with `loft` — here scaling to create a tapered tube along a tight curve."}
+       :bloft-steps {:caption "Smoother with more steps"
+                     :description "`bloft-n 64` uses more steps for a smoother result. Use higher step counts for final renders."}}}
 
      :colors-materials
      {:title "Colors and Materials"
@@ -1709,6 +1753,42 @@ Angolo positivo = beccheggia su, negativo = beccheggia giù.
                    :description "`bezier-as` prende un path turtle e disegna una catena di curve bezier smooth, una per segmento. Usa `:tension` per controllare l'ampiezza della curva (default 0.33)."}
        :bezier-as-cubic {:caption "Spline Catmull-Rom con :cubic"
                          :description "Con `:cubic true`, i waypoint interni usano direzioni Catmull-Rom (basate sui punti vicini) invece delle direzioni del turtle, producendo curve globalmente più morbide attraverso più svolte."}}}
+
+     :bloft-curves
+     {:title "Loft Sicuro per Bezier (bloft)"
+      :content "Quando si fa il loft lungo curve bezier strette, il `loft` standard può produrre geometria auto-intersecante. `bloft` (bezier-safe loft) gestisce questo rilevando le intersezioni e collegandole con convex hull.
+
+**Uso base:**
+```
+(bloft shape transform-fn path)
+```
+
+**Con step espliciti:**
+```
+(bloft-n 64 shape transform-fn path)
+```
+
+**Parametri:**
+- `shape` — forma 2D da estrudere
+- `transform-fn` — funzione `(fn [shape t] ...)` o `identity`
+- `path` — path che contiene comandi bezier
+
+**Quando usare bloft:**
+- Curve bezier strette (angoli > 90°)
+- Shape larghe rispetto al raggio di curvatura
+- Quando loft mostra auto-intersezione
+
+**Risoluzione:**
+Eredita dalla globale `(resolution :n ...)`. Per la sperimentazione usa valori bassi (:n 10-20), poi aumenta per il render finale (:n 60+).
+
+**Suggerimento:** Lavora con bassa risoluzione durante il design, poi aumenta per il render finale."
+      :examples
+      {:bloft-basic {:caption "Bloft base"
+                     :description "`bloft` fa il loft di un cerchio lungo un path curvo. A differenza di `loft`, gestisce curve strette senza auto-intersezione."}
+       :bloft-taper {:caption "Bloft rastremato"
+                     :description "Le funzioni di trasformazione funzionano come con `loft` — qui scalando per creare un tubo rastremato lungo una curva stretta."}
+       :bloft-steps {:caption "Più smooth con più step"
+                     :description "`bloft-n 64` usa più step per un risultato più smooth. Usa valori alti per i render finali."}}}
      :colors-materials
      {:title "Colori e Materiali"
       :content "Ogni mesh può avere le proprie proprietà di colore e materiale. Impostale **prima** di creare la geometria — si applicano a tutte le mesh create successivamente.

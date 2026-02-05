@@ -431,6 +431,38 @@ Extrude with shape transformation based on progress:
 
 Default: 16 steps. Returns mesh without side effects.
 
+### Bloft (Bezier-safe Loft)
+
+For paths with tight curves (like `bezier-as`), regular `loft` can produce self-intersecting geometry. `bloft` handles this by detecting ring intersections and bridging them with convex hulls, then unioning all pieces into a manifold mesh.
+
+```clojure
+;; Basic usage - same signature as loft
+(register tube
+  (bloft (circle 4)
+    identity
+    (path (bezier-as my-curved-path))))
+
+;; With taper
+(register tapered-tube
+  (bloft (circle 8)
+    #(scale %1 (- 1 (* 0.5 %2)))    ; Taper to half size
+    (path (bezier-as (branch-path 30)))))
+
+;; More steps for smoother result
+(register smooth-tube
+  (bloft-n 64 (circle 4)
+    identity
+    my-bezier-path))
+```
+
+**When to use `bloft` vs `loft`:**
+- Use `loft` for straight paths or gentle curves — faster
+- Use `bloft` for tight bezier curves that might self-intersect — slower but correct
+
+**Performance note:** `bloft` can take several seconds for complex paths at high resolution. The density of bezier sampling is controlled by `(resolution :n ...)`:
+- Low values (e.g., `:n 10`) → fast draft preview (may show visual artifacts)
+- High values (e.g., `:n 60`) → smooth final render (slower)
+
 ### Revolve
 
 ```clojure

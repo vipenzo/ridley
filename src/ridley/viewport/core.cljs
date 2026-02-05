@@ -1139,6 +1139,18 @@
         (.remove world-group obj)
         (reset! normals-object nil)))))
 
+(defn show-loading!
+  "Show loading overlay on viewport."
+  []
+  (when-let [el (js/document.getElementById "loading-overlay")]
+    (.remove (.-classList el) "hidden")))
+
+(defn hide-loading!
+  "Hide loading overlay on viewport."
+  []
+  (when-let [el (js/document.getElementById "loading-overlay")]
+    (.add (.-classList el) "hidden")))
+
 (defn update-turtle-pose
   "Update turtle indicator with new pose from REPL evaluation.
    pose is {:position [x y z] :heading [x y z] :up [x y z]}"
