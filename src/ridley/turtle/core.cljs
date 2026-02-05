@@ -4174,7 +4174,10 @@
                             (:last-ring seg-result) (:last-heading seg-result)))))
 
                final-meshes (:meshes result)
-               final-state (:state result)]
+               final-state (:state result)
+               _ (js/console.log "bloft: threshold=" threshold
+                                 "shape-radius=" (.toFixed initial-radius 2)
+                                 "meshes:" (count final-meshes))]
 
            (if (empty? final-meshes)
              state

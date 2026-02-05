@@ -1125,6 +1125,7 @@
    'round               js/Math.round
    'pow                 js/Math.pow
    'atan2               js/Math.atan2
+   'acos                js/Math.acos
    ;; Debug logging (outputs to browser console)
    'log                 (fn [& args] (apply js/console.log (map clj->js args)))
    ;; Print functions (captured and shown in REPL)
@@ -1445,11 +1446,26 @@
                  (let [state @path-recorder
                        res-mode (get-in state [:resolution :mode] :n)
                        res-value (get-in state [:resolution :value] 16)
+                       ;; Calculate angle between headings for weighted step distribution
+                       h0 (:heading wp0)
+                       h1 (:heading wp1)
+                       dot-h (+ (* (nth h0 0) (nth h1 0))
+                                (* (nth h0 1) (nth h1 1))
+                                (* (nth h0 2) (nth h1 2)))
+                       angle (acos (max -1 (min 1 dot-h)))
+                       ;; Weight factor: more steps for sharper curves
+                       ;; angle=0 → factor=1, angle=π/2 → factor=1.5, angle=π → factor=2
+                       angle-factor (+ 1.0 (/ angle PI))
+                       ;; Scale down res-value for bezier: :n 20 on a circle = 20 points total
+                       ;; but bezier applies per-segment, so divide by ~3 to balance
+                       ;; Minimum 3 steps to avoid degenerate geometry
+                       scaled-res (max 3 (round (/ res-value 3)))
+                       base-steps (case res-mode
+                                    :n scaled-res
+                                    :a scaled-res
+                                    :s (max 1 (int (ceil (/ seg-length res-value)))))
                        actual-steps (or steps
-                                       (case res-mode
-                                         :n res-value
-                                         :a res-value
-                                         :s (max 1 (int (ceil (/ seg-length res-value))))))
+                                        (max 1 (round (* base-steps angle-factor))))
                        ;; Control points: cubic (Catmull-Rom directions) or heading-based
                        [c1 c2] (if cubic
                                  (let [d0 (nth directions seg-idx)
@@ -1942,7 +1958,6 @@
    ;; (bloft (circle 10) identity my-bezier-path)
    ;; (bloft (rect 3 3) #(scale %1 0.5) (bezier-as (branch-path 30)))
    ;; (bloft-n 64 (circle 10) identity my-bezier-path) - more steps
-   ;; (bloft-t 0.3 32 (circle 10) identity path) - with threshold (higher = faster)
    (defmacro bloft
      ([shape transform-fn bezier-path]
       `(bloft ~shape ~transform-fn ~bezier-path 32 0.1))
@@ -1974,10 +1989,6 @@
 
    (defmacro bloft-n [steps shape transform-fn bezier-path]
      `(bloft ~shape ~transform-fn ~bezier-path ~steps 0.1))
-
-   ;; bloft-t: bloft with threshold control (higher = faster, lower = more accurate)
-   (defmacro bloft-t [threshold steps shape transform-fn bezier-path]
-     `(bloft ~shape ~transform-fn ~bezier-path ~steps ~threshold))
 
    ;; revolve: create solid of revolution (lathe operation)
    ;; PURE: returns mesh without side effects (use register to make visible)
