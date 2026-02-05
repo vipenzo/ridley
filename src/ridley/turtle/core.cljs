@@ -16,7 +16,8 @@
    - (pen :off) - stop drawing lines
    - (pen :on) - draw lines (default)
    - (extrude shape movements...) - stamp shape and extrude via movements"
-  (:require ["earcut" :default earcut]))
+  (:require ["earcut" :default earcut]
+            [ridley.manifold.core :as manifold]))
 
 (defn make-turtle
   "Create initial turtle state at origin, facing +X, up +Z.
@@ -3971,6 +3972,220 @@
                                               (mapv #(assoc % :material (:material state)) segment-meshes)
                                               segment-meshes)]
                    (update final-state :meshes into meshes-with-material)))))))))))
+
+;; ============================================================
+;; Bezier Loft (bloft) - Self-intersection safe loft for bezier paths
+;; ============================================================
+
+(defn- rings-intersect?
+  "Check if two consecutive rings would intersect.
+   Returns true if any vertex in ring2 moved 'backward' significantly
+   relative to the direction from ring1's centroid to ring2's centroid.
+
+   threshold-factor: how much backward movement (as fraction of shape radius)
+                     triggers intersection detection. Default 0.1 = 10%.
+                     Higher = less sensitive = fewer intersections detected.
+                     Lower = more sensitive = more intersections detected.
+   shape-radius: the radius of the shape being lofted."
+  [ring1 ring2 threshold-factor shape-radius]
+  (let [c1 (ring-centroid ring1)
+        c2 (ring-centroid ring2)
+        travel-dir (v- c2 c1)
+        travel-len (Math/sqrt (dot travel-dir travel-dir))]
+    (if (< travel-len 0.0001)
+      true  ;; rings overlap, treat as intersection
+      (let [travel-unit (v* travel-dir (/ 1.0 travel-len))
+            threshold (* (- threshold-factor) shape-radius)
+            result (some (fn [[v1 v2]]
+                           (let [movement (v- v2 v1)
+                                 forward (dot movement travel-unit)]
+                             (< forward threshold)))
+                         (map vector ring1 ring2))]
+        result))))
+
+(defn- compute-segment-angles
+  "Pre-compute the angle change at each segment by simulating the turtle walk.
+   Returns a vector of angles (in radians) for each segment."
+  [segments initial-state]
+  (loop [seg-idx 0
+         s initial-state
+         angles []]
+    (if (>= seg-idx (count segments))
+      angles
+      (let [seg (nth segments seg-idx)
+            seg-dist (:dist seg)
+            rotations (:rotations-after seg)
+            corner-pos (v+ (:position s) (v* (:heading s) seg-dist))
+            s-at-corner (assoc s :position corner-pos)
+            old-heading (:heading s-at-corner)
+            s-rotated (reduce apply-rotation-to-state s-at-corner rotations)
+            new-heading (:heading s-rotated)
+            angle (if (seq rotations)
+                    (Math/acos (max -1 (min 1 (dot old-heading new-heading))))
+                    0)]
+        (recur (inc seg-idx)
+               s-rotated
+               (conj angles angle))))))
+
+(defn- compute-weighted-seg-steps
+  "Distribute steps among segments weighted by angle (sharper curves get more steps).
+   weight-factor controls how much angle affects distribution (1.0 = linear, 2.0 = quadratic)."
+  [segments angles total-steps weight-factor]
+  (let [n (count segments)
+        total-dist (reduce + 0 (map :dist segments))
+        ;; Combine distance and angle into weights
+        weights (mapv (fn [seg angle]
+                        (let [dist-weight (if (pos? total-dist)
+                                            (/ (:dist seg) total-dist)
+                                            (/ 1.0 n))
+                              angle-weight (Math/pow (+ 1.0 (/ angle Math/PI)) weight-factor)]
+                          (* dist-weight angle-weight)))
+                      segments angles)
+        total-weight (reduce + 0 weights)
+        ;; Distribute steps proportionally
+        raw-steps (mapv (fn [w]
+                          (if (pos? total-weight)
+                            (* total-steps (/ w total-weight))
+                            (/ total-steps n)))
+                        weights)]
+    ;; Ensure at least 1 step per segment, convert to integers
+    (mapv #(max 1 (Math/round %)) raw-steps)))
+
+(defn bloft
+  "Bezier-safe loft: loft a shape along a bezier path with self-intersection handling.
+
+   When consecutive rings would intersect, creates micro-mesh hulls to bridge them.
+
+   Parameters:
+   - state: turtle state
+   - shape: starting shape
+   - transform-fn: (fn [shape t]) for tapering, t goes 0→1
+   - bezier-path: a path created with bezier-as
+   - steps: number of steps (default 32)
+   - threshold: intersection sensitivity, 0.0-1.0 (default 0.1)
+                Higher = less sensitive = faster but may miss intersections
+                Lower = more sensitive = slower but catches more intersections
+
+   Returns updated state with the resulting mesh."
+  ([state shape transform-fn bezier-path]
+   (bloft state shape transform-fn bezier-path 32 0.1))
+  ([state shape transform-fn bezier-path steps]
+   (bloft state shape transform-fn bezier-path steps 0.1))
+  ([state shape transform-fn bezier-path steps threshold]
+   (if-not (and (shape? shape) (is-path? bezier-path))
+     state
+     (let [creation-pose {:position (:position state)
+                          :heading (:heading state)
+                          :up (:up state)}
+           commands (:commands bezier-path)
+           segments (analyze-loft-path commands)
+           n-segments (count segments)
+           total-dist (reduce + 0 (map :dist segments))
+           initial-radius (shape-radius shape)
+           angles (compute-segment-angles segments state)
+           weighted-steps (compute-weighted-seg-steps segments angles steps 2.0)]
+
+       (if (or (< n-segments 1) (<= total-dist 0))
+         state
+         (let [result
+               (loop [seg-idx 0
+                      s state
+                      dist-acc 0
+                      acc-rings []
+                      tmp-meshes []
+                      last-ring nil
+                      last-heading nil]
+
+                 (if (>= seg-idx n-segments)
+                   {:meshes (if (>= (count acc-rings) 2)
+                              (conj tmp-meshes (build-sweep-mesh acc-rings false creation-pose))
+                              tmp-meshes)
+                    :state s}
+
+                   (let [seg (nth segments seg-idx)
+                         seg-dist (:dist seg)
+                         rotations (:rotations-after seg)
+                         t-start (if (pos? total-dist) (/ dist-acc total-dist) 0)
+                         t-end (if (pos? total-dist) (/ (+ dist-acc seg-dist) total-dist) 1)
+                         seg-steps (nth weighted-steps seg-idx 1)
+
+                         seg-result
+                         (loop [step-i 0
+                                s-inner s
+                                inner-acc-rings acc-rings
+                                inner-tmp-meshes tmp-meshes
+                                inner-last-ring last-ring
+                                inner-last-heading last-heading]
+
+                           (if (> step-i seg-steps)
+                             {:acc-rings inner-acc-rings
+                              :tmp-meshes inner-tmp-meshes
+                              :state s-inner
+                              :last-ring inner-last-ring
+                              :last-heading inner-last-heading}
+
+                             (let [local-t (/ step-i seg-steps)
+                                   global-t (+ t-start (* local-t (- t-end t-start)))
+                                   pos (v+ (:position s) (v* (:heading s) (* local-t seg-dist)))
+                                   current-shape (transform-fn shape global-t)
+                                   temp-state (assoc s :position pos)
+                                   current-ring (stamp-shape temp-state current-shape)
+                                   current-heading (:heading s)
+
+                                   local-heading
+                                   (if inner-last-ring
+                                     (let [c1 (ring-centroid inner-last-ring)
+                                           c2 (ring-centroid current-ring)
+                                           d (v- c2 c1)
+                                           len (Math/sqrt (dot d d))]
+                                       (if (> len 0.0001)
+                                         (v* d (/ 1.0 len))
+                                         current-heading))
+                                     current-heading)]
+
+                               (if (nil? inner-last-ring)
+                                 (recur (inc step-i) s-inner
+                                        (conj inner-acc-rings current-ring)
+                                        inner-tmp-meshes current-ring local-heading)
+
+                                 (if (rings-intersect? inner-last-ring current-ring threshold initial-radius)
+                                   ;; INTERSECTION: create hull bridge directly from ring vertices
+                                   (let [hull-mesh (manifold/hull-from-points (vec (concat inner-last-ring current-ring)))
+                                         valid-hull? (and hull-mesh (pos? (count (:vertices hull-mesh))))
+                                         section-mesh (when (>= (count inner-acc-rings) 2)
+                                                        (build-sweep-mesh inner-acc-rings false creation-pose))
+                                         new-tmp-meshes (cond-> inner-tmp-meshes
+                                                          section-mesh (conj section-mesh)
+                                                          valid-hull? (conj hull-mesh))]
+                                     (recur (inc step-i) s-inner [current-ring]
+                                            new-tmp-meshes current-ring local-heading))
+
+                                   ;; No intersection - accumulate ring
+                                   (recur (inc step-i) s-inner
+                                          (conj inner-acc-rings current-ring)
+                                          inner-tmp-meshes current-ring local-heading))))))
+
+                         corner-pos (v+ (:position s) (v* (:heading s) seg-dist))
+                         s-at-corner (assoc s :position corner-pos)
+                         s-rotated (reduce apply-rotation-to-state s-at-corner rotations)]
+
+                     (recur (inc seg-idx) s-rotated (+ dist-acc seg-dist)
+                            (:acc-rings seg-result) (:tmp-meshes seg-result)
+                            (:last-ring seg-result) (:last-heading seg-result)))))
+
+               final-meshes (:meshes result)
+               final-state (:state result)]
+
+           (if (empty? final-meshes)
+             state
+             ;; Use manifold/union to properly merge meshes and remove internal faces
+             (let [unified-mesh (if (= 1 (count final-meshes))
+                                  (first final-meshes)
+                                  (manifold/union final-meshes))
+                   mesh-with-material (if (:material state)
+                                        (assoc unified-mesh :material (:material state))
+                                        unified-mesh)]
+               (update final-state :meshes conj mesh-with-material)))))))))
 
 ;; ============================================================
 ;; Anchors and Navigation
