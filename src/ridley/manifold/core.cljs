@@ -383,6 +383,50 @@
               (.delete m))
             nil))))))
 
+(defn hull-from-points
+  "Compute the convex hull from raw vertex points.
+   Unlike `hull`, this doesn't require manifold input meshes.
+
+   Usage:
+   (hull-from-points [[x1 y1 z1] [x2 y2 z2] ...])
+   (hull-from-points mesh1 mesh2)  ; extracts vertices from meshes
+
+   Returns a new Ridley mesh."
+  [& args]
+  (when-let [Manifold (get-manifold-class)]
+    (let [;; Collect all vertices from args
+          all-points (cond
+                       ;; Single vector of points
+                       (and (= 1 (count args))
+                            (vector? (first args))
+                            (vector? (first (first args))))
+                       (first args)
+
+                       ;; Multiple meshes - extract vertices
+                       :else
+                       (vec (mapcat (fn [arg]
+                                      (if (and (map? arg) (:vertices arg))
+                                        (:vertices arg)
+                                        (when (vector? arg) arg)))
+                                    (if (and (= 1 (count args)) (vector? (first args)))
+                                      (first args)
+                                      args))))]
+      (when (>= (count all-points) 4)  ;; Need at least 4 points for 3D hull
+        (try
+          (let [;; Manifold.hull takes array of Vec3
+                points-array (js/Array.)
+                _ (doseq [[x y z] all-points]
+                    (.push points-array #js [x y z]))
+                raw-result (.hull Manifold points-array)
+                result (.asOriginal raw-result)
+                output (manifold->mesh result)]
+            (.delete raw-result)
+            (.delete result)
+            output)
+          (catch :default e
+            (js/console.error "Hull from points failed:" e)
+            nil))))))
+
 ;; ============================================================
 ;; CrossSection extrusion (handles holes natively)
 ;; ============================================================

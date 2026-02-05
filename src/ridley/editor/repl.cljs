@@ -597,6 +597,33 @@
          transform-fn (shape/make-lerp-fn s1 s2-aligned)]
      (pure-loft-path s1 transform-fn path steps))))
 
+(defn ^:export pure-bloft
+  "Pure bezier-safe loft - handles self-intersecting paths.
+   Uses convex hulls to bridge intersecting ring sections, then unions.
+   Better for tight curves like bezier-as paths.
+
+   transform-fn: (fn [shape t]) where t goes from 0 to 1
+   steps: number of intermediate steps (default 32)
+   threshold: intersection sensitivity 0.0-1.0 (default 0.1)
+              Higher = faster but may miss intersections
+              Lower = slower but catches more intersections"
+  ([shape transform-fn path] (pure-bloft shape transform-fn path 32 0.1))
+  ([shape transform-fn path steps] (pure-bloft shape transform-fn path steps 0.1))
+  ([shape transform-fn path steps threshold]
+   (let [current-turtle @turtle-atom
+         initial-state (if current-turtle
+                         (-> (turtle/make-turtle)
+                             (assoc :position (:position current-turtle))
+                             (assoc :heading (:heading current-turtle))
+                             (assoc :up (:up current-turtle))
+                             (assoc :joint-mode (:joint-mode current-turtle))
+                             (assoc :resolution (:resolution current-turtle))
+                             (assoc :material (:material current-turtle)))
+                         (turtle/make-turtle))
+         result-state (turtle/bloft initial-state shape transform-fn path steps threshold)
+         meshes (:meshes result-state)]
+     (combine-meshes meshes))))
+
 (defn ^:export pure-revolve
   "Pure revolve function - creates mesh without side effects.
    Revolves a 2D profile shape around the turtle's up axis.
@@ -1037,6 +1064,7 @@
    'pure-extrude-path        pure-extrude-path  ; Pure version (no side effects)
    'pure-loft-path           pure-loft-path     ; Pure loft version (no side effects)
    'pure-loft-two-shapes     pure-loft-two-shapes ; Loft between two shapes
+   'pure-bloft               pure-bloft         ; Bezier-safe loft (handles self-intersection)
    'pure-revolve             pure-revolve       ; Pure revolve/lathe version
    'add-mesh-impl       implicit-add-mesh
    ;; Manifold operations
@@ -1368,7 +1396,7 @@
          (let [init-state @path-recorder
                waypoints (loop [s init-state
                                 segs path-segs
-                                wps [{:position (:position s) :heading (:heading s)}]]
+                                wps [{:position (:position s) :heading (:heading s) :up (:up s)}]]
                            (if (empty? segs)
                              wps
                              (let [{:keys [rotations distance]} (first segs)
@@ -1385,7 +1413,8 @@
                                    next-s (turtle-f rotated distance)]
                                (recur next-s (rest segs)
                                       (conj wps {:position (:position next-s)
-                                                 :heading  (:heading next-s)})))))
+                                                 :heading  (:heading next-s)
+                                                 :up       (:up next-s)})))))
                ;; Catmull-Rom directions for :cubic mode (unit vectors)
                n-wps (count waypoints)
                directions (when cubic
@@ -1450,37 +1479,43 @@
                                               dist (sqrt (+ (* dx dx) (* dy dy) (* dz dz)))]
                                           {:dir (if (> dist 0.001) (rec-normalize [dx dy dz]) nil)
                                            :dist dist})))]
-                   ;; Walk through bezier sample points
-                   ;; Always use chord direction (dir) for heading during movement.
-                   ;; The direct bezier-walk uses tangent for first/last steps and
-                   ;; corrects position with (assoc :position), but the recording
-                   ;; version can only emit set-heading + f commands. Using tangent
-                   ;; instead of chord causes positional drift (significant at low
-                   ;; resolution), leading to ring crossings at segment junctions.
-                   (let [final-up
+                   ;; Walk through bezier sample points using interpolated up vectors.
+                   ;; Uses chord direction for heading (position accuracy) and
+                   ;; interpolates the up vector between waypoint ups to avoid
+                   ;; gimbal lock when heading passes near the up direction.
+                   (let [up0 (:up wp0)
+                         up1 (:up wp1)
+                         final-up
                          (loop [remaining walk-segs
-                                current-up (:up @path-recorder)]
+                                step-idx 0]
                            (if (empty? remaining)
-                             current-up
+                             up1
                              (let [{:keys [dir dist]} (first remaining)]
                                (if (and dir (> dist 0.001))
-                                 (let [heading-dir dir ;; always chord for position accuracy
-                                       dot-product (rec-dot current-up heading-dir)
-                                       projected [(- (nth current-up 0) (* dot-product (nth heading-dir 0)))
-                                                  (- (nth current-up 1) (* dot-product (nth heading-dir 1)))
-                                                  (- (nth current-up 2) (* dot-product (nth heading-dir 2)))]
+                                 (let [heading-dir dir
+                                       ;; Interpolate up between waypoint ups
+                                       t (/ (inc step-idx) actual-steps)
+                                       interp-up [(+ (* (- 1 t) (nth up0 0)) (* t (nth up1 0)))
+                                                  (+ (* (- 1 t) (nth up0 1)) (* t (nth up1 1)))
+                                                  (+ (* (- 1 t) (nth up0 2)) (* t (nth up1 2)))]
+                                       ;; Make perpendicular to heading via Gram-Schmidt
+                                       dot-product (rec-dot interp-up heading-dir)
+                                       projected [(- (nth interp-up 0) (* dot-product (nth heading-dir 0)))
+                                                  (- (nth interp-up 1) (* dot-product (nth heading-dir 1)))
+                                                  (- (nth interp-up 2) (* dot-product (nth heading-dir 2)))]
                                        proj-len (sqrt (rec-dot projected projected))
                                        new-up (if (> proj-len 0.001)
                                                 (rec-normalize projected)
-                                                (let [right (rec-cross heading-dir current-up)
+                                                ;; Fallback: derive from cross product
+                                                (let [right (rec-cross heading-dir interp-up)
                                                       right-len (sqrt (rec-dot right right))]
                                                   (if (> right-len 0.001)
                                                     (rec-normalize (rec-cross right heading-dir))
-                                                    current-up)))]
+                                                    up1)))]
                                    (rec-set-heading* heading-dir new-up)
                                    (rec-f* dist)
-                                   (recur (rest remaining) new-up))
-                                 (recur (rest remaining) current-up)))))
+                                   (recur (rest remaining) (inc step-idx)))
+                                 (recur (rest remaining) (inc step-idx))))))
                          ;; Restore exact tangent heading at end for C1 continuity.
                          ;; The walk used chord directions for accuracy, but the heading
                          ;; at the junction must match the waypoint tangent so the next
@@ -1900,6 +1935,49 @@
                 (pure-loft-path ~shape ~transform-fn (path ~arg) ~steps)))))
        ;; Multiple movements - wrap in path macro
        `(pure-loft-path ~shape ~transform-fn (path ~@movements) ~steps)))
+
+   ;; bloft: bezier-safe loft that handles self-intersecting paths
+   ;; Uses convex hulls for intersecting sections, then unions all pieces.
+   ;; Best for tight curves like (bezier-as (branch-path 30))
+   ;; (bloft (circle 10) identity my-bezier-path)
+   ;; (bloft (rect 3 3) #(scale %1 0.5) (bezier-as (branch-path 30)))
+   ;; (bloft-n 64 (circle 10) identity my-bezier-path) - more steps
+   ;; (bloft-t 0.3 32 (circle 10) identity path) - with threshold (higher = faster)
+   (defmacro bloft
+     ([shape transform-fn bezier-path]
+      `(bloft ~shape ~transform-fn ~bezier-path 32 0.1))
+     ([shape transform-fn bezier-path steps]
+      `(bloft ~shape ~transform-fn ~bezier-path ~steps 0.1))
+     ([shape transform-fn bezier-path steps threshold]
+      (cond
+        ;; Symbol - check at runtime if it's a path
+        (symbol? bezier-path)
+        `(let [p# ~bezier-path]
+           (if (path? p#)
+             (pure-bloft ~shape ~transform-fn p# ~steps ~threshold)
+             (pure-bloft ~shape ~transform-fn (path ~bezier-path) ~steps ~threshold)))
+
+        ;; List starting with path - use directly
+        (and (list? bezier-path) (= 'path (first bezier-path)))
+        `(pure-bloft ~shape ~transform-fn ~bezier-path ~steps ~threshold)
+
+        ;; List starting with bezier-as or other movement - wrap in path
+        (and (list? bezier-path) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v 'bezier-to 'bezier-as} (first bezier-path)))
+        `(pure-bloft ~shape ~transform-fn (path ~bezier-path) ~steps ~threshold)
+
+        ;; Any other expression - check at runtime
+        :else
+        `(let [p# ~bezier-path]
+           (if (path? p#)
+             (pure-bloft ~shape ~transform-fn p# ~steps ~threshold)
+             (pure-bloft ~shape ~transform-fn (path ~bezier-path) ~steps ~threshold))))))
+
+   (defmacro bloft-n [steps shape transform-fn bezier-path]
+     `(bloft ~shape ~transform-fn ~bezier-path ~steps 0.1))
+
+   ;; bloft-t: bloft with threshold control (higher = faster, lower = more accurate)
+   (defmacro bloft-t [threshold steps shape transform-fn bezier-path]
+     `(bloft ~shape ~transform-fn ~bezier-path ~steps ~threshold))
 
    ;; revolve: create solid of revolution (lathe operation)
    ;; PURE: returns mesh without side effects (use register to make visible)
