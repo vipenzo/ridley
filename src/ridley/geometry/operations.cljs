@@ -1,45 +1,12 @@
 (ns ridley.geometry.operations
   "Generative operations: extrude, revolve, sweep, loft.
-   These operations take 2D profiles and generate 3D meshes.")
+   These operations take 2D profiles and generate 3D meshes."
+  (:require [ridley.math :as math :refer [v+ v- v* magnitude normalize rotate-point-around-axis]]
+            [ridley.schema :as schema]))
 
 ;; ============================================================
 ;; Utility functions
 ;; ============================================================
-
-(defn- v+ [[x1 y1 z1] [x2 y2 z2]]
-  [(+ x1 x2) (+ y1 y2) (+ z1 z2)])
-
-(defn- v- [[x1 y1 z1] [x2 y2 z2]]
-  [(- x1 x2) (- y1 y2) (- z1 z2)])
-
-(defn- v* [[x y z] s]
-  [(* x s) (* y s) (* z s)])
-
-(defn- magnitude [[x y z]]
-  (Math/sqrt (+ (* x x) (* y y) (* z z))))
-
-(defn- normalize [v]
-  (let [m (magnitude v)]
-    (if (zero? m)
-      v
-      (v* v (/ 1 m)))))
-
-(defn- rotate-point-around-axis
-  "Rotate point around an axis passing through origin using Rodrigues' formula."
-  [point axis angle]
-  (let [k (normalize axis)
-        [kx ky kz] k
-        [px py pz] point
-        cos-a (Math/cos angle)
-        sin-a (Math/sin angle)
-        dot-kp (+ (* kx px) (* ky py) (* kz pz))
-        ;; k × p
-        cross-x (- (* ky pz) (* kz py))
-        cross-y (- (* kz px) (* kx pz))
-        cross-z (- (* kx py) (* ky px))]
-    [(+ (* px cos-a) (* cross-x sin-a) (* kx dot-kp (- 1 cos-a)))
-     (+ (* py cos-a) (* cross-y sin-a) (* ky dot-kp (- 1 cos-a)))
-     (+ (* pz cos-a) (* cross-z sin-a) (* kz dot-kp (- 1 cos-a)))]))
 
 (defn- ensure-3d
   "Ensure a point has 3 numeric coordinates."
@@ -108,10 +75,11 @@
                               top-cap (vec (for [i (range 1 (dec n))]
                                              [n (+ n i 1) (+ n i)]))]
                           (concat bottom-cap top-cap)))]
-        {:type :mesh
-         :primitive :extrude
-         :vertices vertices
-         :faces (vec (concat side-faces cap-faces))}))))
+        (schema/assert-mesh!
+         {:type :mesh
+          :primitive :extrude
+          :vertices vertices
+          :faces (vec (concat side-faces cap-faces))})))))
 
 (defn extrude-z
   "Convenience: extrude along Z axis."
@@ -189,10 +157,11 @@
                            end-cap (vec (for [i (range 1 (dec n))]
                                           [end-offset (+ end-offset i) (+ end-offset (inc i))]))]
                        (concat start-cap end-cap)))]
-     {:type :mesh
-      :primitive :revolve
-      :vertices all-verts
-      :faces (vec (concat faces cap-faces))})))
+     (schema/assert-mesh!
+      {:type :mesh
+       :primitive :revolve
+       :vertices all-verts
+       :faces (vec (concat faces cap-faces))}))))
 
 ;; ============================================================
 ;; LOFT - Transition between profiles
@@ -235,7 +204,8 @@
                           end-cap (vec (for [i (range 1 (dec n))]
                                          [end-offset (+ end-offset (inc i)) (+ end-offset i)]))]
                       (concat start-cap end-cap)))]
-    {:type :mesh
-     :primitive :loft
-     :vertices all-verts
-     :faces (vec (concat faces cap-faces))}))
+    (schema/assert-mesh!
+     {:type :mesh
+      :primitive :loft
+      :vertices all-verts
+      :faces (vec (concat faces cap-faces))})))

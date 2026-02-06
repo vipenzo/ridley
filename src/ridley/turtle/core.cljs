@@ -17,6 +17,7 @@
    - (pen :on) - draw lines (default)
    - (extrude shape movements...) - stamp shape and extrude via movements"
   (:require ["earcut" :default earcut]
+            [ridley.math :as math]
             [ridley.manifold.core :as manifold]))
 
 (defn make-turtle
@@ -89,52 +90,17 @@
   [state]
   (assoc state :state-stack []))
 
-;; --- Vector math utilities ---
+;; --- Vector math utilities (shared via ridley.math) ---
 
-(defn ^:export v+ [[x1 y1 z1] [x2 y2 z2]]
-  [(+ x1 x2) (+ y1 y2) (+ z1 z2)])
-
-(defn ^:export v- [[x1 y1 z1] [x2 y2 z2]]
-  [(- x1 x2) (- y1 y2) (- z1 z2)])
-
-(defn ^:export v* [[x y z] s]
-  [(* x s) (* y s) (* z s)])
-
-(defn ^:export dot [[x1 y1 z1] [x2 y2 z2]]
-  (+ (* x1 x2) (* y1 y2) (* z1 z2)))
-
-(defn ^:export cross [[x1 y1 z1] [x2 y2 z2]]
-  [(- (* y1 z2) (* z1 y2))
-   (- (* z1 x2) (* x1 z2))
-   (- (* x1 y2) (* y1 x2))])
-
-(defn ^:export magnitude [[x y z]]
-  (Math/sqrt (+ (* x x) (* y y) (* z z))))
-
-(defn ^:export normalize [v]
-  (let [m (magnitude v)]
-    (if (zero? m)
-      v
-      (v* v (/ 1 m)))))
-
-(defn ^:export rotate-point-around-axis
-  "Rotate point v around axis by angle (radians) using Rodrigues' formula.
-   Preserves vector magnitude - use for position vectors."
-  [v axis angle]
-  (let [k (normalize axis)
-        cos-a (Math/cos angle)
-        sin-a (Math/sin angle)
-        ; v' = v*cos(a) + (k x v)*sin(a) + k*(k·v)*(1-cos(a))
-        term1 (v* v cos-a)
-        term2 (v* (cross k v) sin-a)
-        term3 (v* k (* (dot k v) (- 1 cos-a)))]
-    (v+ (v+ term1 term2) term3)))
-
-(defn ^:export rotate-around-axis
-  "Rotate direction vector v around axis by angle (radians) using Rodrigues' formula.
-   Result is normalized - use for direction vectors (heading, up)."
-  [v axis angle]
-  (normalize (rotate-point-around-axis v axis angle)))
+(def ^:export v+ math/v+)
+(def ^:export v- math/v-)
+(def ^:export v* math/v*)
+(def ^:export dot math/dot)
+(def ^:export cross math/cross)
+(def ^:export magnitude math/magnitude)
+(def ^:export normalize math/normalize)
+(def ^:export rotate-point-around-axis math/rotate-point-around-axis)
+(def ^:export rotate-around-axis math/rotate-around-axis)
 
 (defn- earcut-triangulate
   "Triangulate a 2D polygon with holes using earcut.js.
@@ -2881,7 +2847,8 @@
 
             ;; Caps with holes
             ;; Bottom cap: vertices 0 to ring1-len-1
-            bottom-cap (triangulate-cap-with-holes outer1 holes1 0 bottom-normal true)
+            ;; flip? false so normals follow provided bottom-normal (-dir)
+            bottom-cap (triangulate-cap-with-holes outer1 holes1 0 bottom-normal false)
             ;; Top cap: vertices ring1-len to end
             top-cap (triangulate-cap-with-holes outer2 holes2 ring1-len top-normal false)]
 
@@ -2892,6 +2859,12 @@
          :creation-pose {:position [0 0 0]
                          :heading [1 0 0]
                          :up [0 0 1]}}))))
+
+(defn ^:export sweep-two-shapes
+  "Wrapper for sweep-two-shapes-with-holes when shapes have no holes."
+  [ring1 ring2]
+  (sweep-two-shapes-with-holes {:outer ring1 :holes []}
+                               {:outer ring2 :holes []}))
 
 (defn make-path
   "Create a path from a vector of recorded commands.

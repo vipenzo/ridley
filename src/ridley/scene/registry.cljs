@@ -12,6 +12,7 @@
    (save-stl torus)                        ; export a mesh to STL
    (save-stl (visible-meshes))             ; export all visible meshes"
   (:require [ridley.viewport.core :as viewport]
+            [ridley.schema :as schema]
             [ridley.scene.panel :as panel]))
 
 ;; All meshes in the scene: [{:mesh data :name nil/keyword :visible true/false} ...]
@@ -65,6 +66,7 @@
   "Register a named path. Returns the path."
   [name path]
   (when (and name path (= :path (:type path)))
+    (schema/assert-path! path)
     (if-let [idx (find-path-index name)]
       (swap! scene-paths assoc idx {:path path :name name})
       (swap! scene-paths conj {:path path :name name}))
@@ -81,6 +83,7 @@
   ([mesh name] (add-mesh! mesh name true))
   ([mesh name visible?]
    (when mesh
+     (schema/assert-mesh! mesh)
      (let [id (swap! mesh-id-counter inc)
            mesh-with-id (assoc mesh :registry-id id)]
        (swap! scene-meshes conj {:mesh mesh-with-id :name name :visible visible?})
@@ -92,6 +95,7 @@
   [meshes]
   (let [existing-meshes (map :mesh @scene-meshes)]
     (doseq [m meshes]
+      (schema/assert-mesh! m)
       (when-not (some #(identical? % m) existing-meshes)
         (add-mesh! m nil true)))))
 
@@ -103,6 +107,7 @@
 (defn register-mesh!
   "Add a named mesh to the scene. If mesh with same name exists, replace it."
   [name mesh]
+  (schema/assert-mesh! mesh)
   ;; Check if mesh with this name already exists
   (if-let [idx (find-mesh-index name)]
     ;; Replace existing mesh
@@ -125,6 +130,7 @@
 (defn update-mesh-by-ref!
   "Update a mesh in the registry by reference. Returns the new mesh or nil if not found."
   [old-mesh new-mesh]
+  (schema/assert-mesh! new-mesh)
   (when-let [idx (find-mesh-index-by-ref old-mesh)]
     (swap! scene-meshes assoc-in [idx :mesh] new-mesh)
     new-mesh))
@@ -144,6 +150,7 @@
 (defn update-mesh-at-index!
   "Update mesh at a specific index. Preserves :registry-id. Returns the new mesh."
   [idx new-mesh]
+  (schema/assert-mesh! new-mesh)
   (let [old-id (get-in @scene-meshes [idx :mesh :registry-id])
         mesh-with-id (if old-id
                        (assoc new-mesh :registry-id old-id)
