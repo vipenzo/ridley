@@ -534,11 +534,12 @@
              combined-verts (vec (:vertices (first meshes)))
              combined-faces (vec (:faces (first meshes)))]
         (if (empty? remaining)
-          {:type :mesh
-           :primitive :combined
-           :vertices combined-verts
-           :faces combined-faces
-           :creation-pose (:creation-pose (first meshes))}
+          (cond-> {:type :mesh
+                   :primitive :combined
+                   :vertices combined-verts
+                   :faces combined-faces
+                   :creation-pose (:creation-pose (first meshes))}
+            (:material (first meshes)) (assoc :material (:material (first meshes))))
           (let [m (first remaining)
                 offset (count combined-verts)
                 new-verts (:vertices m)

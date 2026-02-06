@@ -277,11 +277,13 @@
   "Build a unified mesh from accumulated sweep rings.
    Each ring is a vector of 3D vertices.
    If closed? is true, connects last ring back to first (torus-like, no caps).
-   Otherwise creates bottom cap, side faces, and top cap.
+   Otherwise creates side faces, and optionally bottom/top caps.
+   caps? controls whether to generate end caps (default true).
    Optional creation-pose records where the extrusion started."
-  ([rings] (build-sweep-mesh rings false nil))
-  ([rings closed?] (build-sweep-mesh rings closed? nil))
-  ([rings closed? creation-pose]
+  ([rings] (build-sweep-mesh rings false nil true))
+  ([rings closed?] (build-sweep-mesh rings closed? nil true))
+  ([rings closed? creation-pose] (build-sweep-mesh rings closed? creation-pose true))
+  ([rings closed? creation-pose caps?]
    (let [n-rings (count rings)
          n-verts (count (first rings))]
      (when (and (>= n-rings 2) (>= n-verts 3))
@@ -350,18 +352,17 @@
                extrusion-dir (normalize (v- (ring-centroid (second rings))
                                             (ring-centroid first-ring)))
 
-               ;; Use extrusion direction as cap normal (more robust than ring-normal)
-               ;; Bottom cap: normal points opposite to extrusion (no flip needed)
-               ;; Top cap: normal points same as extrusion (no flip needed)
-               bottom-normal (v* extrusion-dir -1)  ; points backward
-               top-normal extrusion-dir             ; points forward
-
-               bottom-cap (triangulate-cap first-ring 0 bottom-normal false)
-               top-cap (triangulate-cap last-ring last-base top-normal false)]
+               ;; Generate caps only if caps? is true
+               cap-faces (when caps?
+                           (let [bottom-normal (v* extrusion-dir -1)
+                                 top-normal extrusion-dir
+                                 bottom-cap (triangulate-cap first-ring 0 bottom-normal false)
+                                 top-cap (triangulate-cap last-ring last-base top-normal false)]
+                             (concat bottom-cap top-cap)))]
            (cond-> {:type :mesh
                     :primitive :sweep
                     :vertices vertices
-                    :faces (vec (concat side-faces bottom-cap top-cap))}
+                    :faces (vec (concat side-faces cap-faces))}
              creation-pose (assoc :creation-pose creation-pose))))))))
 
 ;; --- Shape stamping ---
@@ -3889,7 +3890,9 @@
            initial-radius (shape-radius shape)
 
            ;; Total visible path distance (does NOT include hidden/shortening)
-           total-visible-dist (reduce + 0 (map :dist segments))]
+           total-visible-dist (reduce + 0 (map :dist segments))
+           ;; Read joint-mode early so we can skip shortening for :flat
+           joint-mode (or (:joint-mode state) :flat)]
          (letfn [(compute-corner-data []
                    ;; Use visible distances only for taper/radius; hidden distance is only positional
                    (loop [idx 0
@@ -3913,14 +3916,13 @@
                                           (Math/acos (min 1 (max -1 cos-angle)))
                                           0)
 
-                             ;; R_p/R_n based on visible taper distance
+                             ;; R_p/R_n: use simple miter formula for all joint modes
+                             ;; shorten = radius * tan(angle/2) - same as extrude
                              {:keys [r-p r-n]}
                              (if (and has-corner (> turn-angle 0.01))
-                               (try
-                                 (calculate-loft-corner-shortening
-                                  initial-radius total-visible-dist dist-at-corner turn-angle)
-                                 (catch :default _
-                                   {:r-p 0 :r-n 0}))
+                               (let [turn-angle-deg (* turn-angle (/ 180 Math/PI))
+                                     shorten (calc-shorten-for-angle turn-angle-deg initial-radius)]
+                                 {:r-p shorten :r-n shorten})
                                {:r-p 0 :r-n 0})
 
                              corner-pos (v+ (:position s) (v* (:heading s) seg-dist))
@@ -3955,7 +3957,8 @@
              state
              ;; Generate rings, accumulating across smooth junctions.
              ;; Only split into separate meshes at real corners (th/tv/tr).
-             (let [result
+             (let [joint-mode (or (:joint-mode state) :flat)
+                   result
                    (loop [seg-idx 0
                           s state
                           taper-acc 0         ;; effective distance travelled so far (for t)
@@ -3963,10 +3966,10 @@
                           acc-rings []        ;; accumulated rings for current smooth section
                           finished-meshes []] ;; completed meshes (split at corners)
                      (if (>= seg-idx n-segments)
-                       ;; Flush any remaining accumulated rings as a final mesh
+                       ;; Flush any remaining accumulated rings as a final mesh (no internal caps)
                        {:meshes (if (>= (count acc-rings) 2)
                                   (conj finished-meshes
-                                        (build-sweep-mesh (vec acc-rings) false creation-pose))
+                                        (build-sweep-mesh (vec acc-rings) false creation-pose false))
                                   finished-meshes)
                         :state s}
                        (let [seg (nth segments seg-idx)
@@ -3989,10 +3992,10 @@
                              ;; Effective length: pull back by r_p and also leave space for next start (r_n)
                              ;; Clamp to at least one step length so the last ring doesn't reach the corner
                              min-step (/ remaining-to-corner (max min-seg-steps seg-steps))
-                             ;; Leave room for next start, but only half of r_n to reduce gaps
+                             ;; Pull back by r-p before the corner (r-n is for the next segment's start)
                              effective-seg-dist (max min-step
                                                      (- remaining-to-corner
-                                                        (if has-corner (+ r-p (* 0.5 r-n)) 0)))
+                                                        (if has-corner r-p 0)))
 
                              ;; Original corner position (before pullback)
                              corner-base (v+ (:position s) (v* (:heading s) remaining-to-corner))
@@ -4034,9 +4037,9 @@
 
                          (if has-corner
                            ;; Corner: flush accumulated rings as a mesh, generate corner bridge
-                           (let [;; Build mesh from accumulated rings
+                           (let [;; Build mesh from accumulated rings (no caps - will be combined)
                                  section-mesh (when (>= (count new-acc-rings) 2)
-                                                (build-sweep-mesh (vec new-acc-rings) false creation-pose))
+                                                (build-sweep-mesh (vec new-acc-rings) false creation-pose false))
 
                                  ;; Next segment starts at corner + R_n along new heading
                                  next-start-pos (v+ corner-base (v* (:heading s-rotated) r-n))
@@ -4050,27 +4053,57 @@
                                  next-start-ring (let [shape-next (transform-fn shape t-end)
                                                        temp-state (assoc s-rotated :position next-start-pos)]
                                                    (stamp-shape temp-state shape-next))
-                                 mid-rings (let [generated (generate-tapered-corner-rings
-                                                            end-ring corner-base
-                                                            old-heading new-heading)]
-                                             (when (seq generated) generated))
-                                 fallback-mid (when (and end-ring next-start-ring (nil? mid-rings))
+                                 ;; Calculate corner radius from transformed shape
+                                 corner-shape (transform-fn shape t-end)
+                                 corner-radius (shape-radius corner-shape)
+                                 ;; Calculate round steps based on resolution settings
+                                 corner-angle-deg (when (and (= joint-mode :round) heading-angle)
+                                                    (* heading-angle (/ 180 Math/PI)))
+                                 round-steps (when corner-angle-deg
+                                               (calc-round-steps state corner-angle-deg))
+                                 ;; Generate corner rings based on joint-mode
+                                 mid-rings (case joint-mode
+                                             :flat nil
+                                             :round (when heading-angle
+                                                      (generate-round-corner-rings
+                                                       end-ring corner-base
+                                                       old-heading new-heading
+                                                       (or round-steps 4) corner-radius))
+                                             :tapered (let [generated (generate-tapered-corner-rings
+                                                                       end-ring corner-base
+                                                                       old-heading new-heading)]
+                                                        (when (seq generated) generated))
+                                             ;; default: tapered
+                                             (let [generated (generate-tapered-corner-rings
+                                                              end-ring corner-base
+                                                              old-heading new-heading)]
+                                               (when (seq generated) generated)))
+                                 ;; For :flat, connect directly without mid-rings
+                                 ;; For other modes, fallback to a midpoint ring if no mid-rings
+                                 fallback-mid (when (and (not= joint-mode :flat)
+                                                         end-ring next-start-ring (nil? mid-rings))
                                                 [(mapv (fn [p1 p2] (v+ p1 (v* (v- p2 p1) 0.5)))
                                                        end-ring next-start-ring)])
                                  c-rings (cond
+                                           ;; Has mid-rings (round/tapered with rings)
                                            mid-rings (concat [end-ring] mid-rings [next-start-ring])
+                                           ;; Flat mode: direct connection (no mid-rings)
+                                           (= joint-mode :flat) (when (and end-ring next-start-ring)
+                                                                  [end-ring next-start-ring])
+                                           ;; Other modes with fallback
                                            fallback-mid (concat [end-ring] fallback-mid [next-start-ring])
                                            :else nil)
+                                 ;; Corner mesh without caps (caps would create internal surfaces)
                                  corner-mesh (when c-rings
                                                (assoc (build-sweep-mesh (vec c-rings)
-                                                                        false creation-pose)
+                                                                        false creation-pose false)
                                                       :creation-pose creation-pose))]
 
                              (recur (inc seg-idx)
                                     s-next
                                     new-taper-acc
                                     r-n
-                                    []  ;; reset accumulated rings for next section
+                                    [next-start-ring]
                                     (cond-> finished-meshes
                                       section-mesh (conj section-mesh)
                                       corner-mesh (conj corner-mesh))))
