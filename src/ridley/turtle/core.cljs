@@ -1701,8 +1701,9 @@
 
 (defn- bezier-walk
   "Walk along a bezier curve, moving directly to each sample point.
-   Uses chord directions for accurate positions. First step preserves
-   the existing heading, last step uses exact end tangent."
+   Uses chord directions for drawing (position accuracy), then sets
+   the tangent heading for continuity. First step preserves the existing
+   heading, last step uses exact end tangent."
   [state steps point-fn tangent-fn]
   (let [initial-up (:up state)
         last-i (dec steps)
@@ -1716,25 +1717,25 @@
              dist (magnitude move-dir)]
          (if (> dist 0.001)
            (let [chord-heading (normalize move-dir)
-                 ;; First step: keep existing heading (exact tangent at t=0)
+                 ;; Final heading for continuity:
+                 ;; First step: keep existing heading
                  ;; Last step: use exact end tangent
                  ;; Middle steps: use chord
-                 heading-dir (cond (zero? i) (:heading s)
-                                   (= i last-i) end-heading
-                                   :else chord-heading)
-                 right (cross heading-dir initial-up)
-                 right-mag (magnitude right)]
-             (if (< right-mag 0.001)
-               (-> s
-                   (assoc :heading heading-dir)
-                   (f dist)
-                   (assoc :position new-pos))
-               (let [new-up (normalize (cross right heading-dir))]
-                 (-> s
-                     (assoc :heading heading-dir)
-                     (assoc :up new-up)
-                     (f dist)
-                     (assoc :position new-pos)))))
+                 final-heading (cond (zero? i) (:heading s)
+                                     (= i last-i) end-heading
+                                     :else chord-heading)
+                 right (cross final-heading initial-up)
+                 right-mag (magnitude right)
+                 new-up (if (< right-mag 0.001)
+                          initial-up
+                          (normalize (cross right final-heading)))]
+             ;; Move using chord direction (for accurate position),
+             ;; then set final heading for tangent continuity
+             (-> s
+                 (assoc :heading chord-heading)  ; use chord to draw correctly
+                 (f dist)                        ; draws line to new-pos
+                 (assoc :heading final-heading)  ; restore tangent heading
+                 (assoc :up new-up)))
            s)))
      state
      (range steps))))
@@ -3066,6 +3067,170 @@
                   (:heading (nth waypoints i))))))
           (range n))))
 
+;; ============================================================
+;; Pure bezier-as computation functions (for testing & reuse)
+;; ============================================================
+
+(defn compute-path-waypoints
+  "Pure function: compute waypoints from path segments and initial pose.
+   Returns vector of {:position :heading :up} maps.
+
+   Arguments:
+   - segments: vector of path segments (from path-segments)
+   - init-pose: {:position :heading :up} initial turtle pose
+
+   This is a pure function suitable for unit testing."
+  [segments init-pose]
+  (loop [s (merge {:position [0 0 0] :heading [1 0 0] :up [0 0 1]} init-pose)
+         segs segments
+         wps [(select-keys s [:position :heading :up])]]
+    (if (empty? segs)
+      wps
+      (let [next-s (segment->state s (first segs))]
+        (recur next-s
+               (rest segs)
+               (conj wps (select-keys next-s [:position :heading :up])))))))
+
+(defn compute-bezier-control-points
+  "Pure function: compute control points for a cubic bezier segment.
+
+   Arguments:
+   - p0, h0: start position and heading
+   - p3, h1: end position and heading
+   - tension: control point distance factor (0.33 default)
+   - cubic-dirs: optional [d0 d1] Catmull-Rom directions (nil for heading-based)
+
+   Returns [c1 c2] control points."
+  [p0 h0 p3 h1 tension cubic-dirs]
+  (let [seg-length (magnitude (v- p3 p0))
+        factor (or tension 0.33)]
+    (if cubic-dirs
+      ;; Catmull-Rom mode: use provided directions
+      (let [[d0 d1] cubic-dirs]
+        [(v+ p0 (v* d0 (* seg-length factor)))
+         (v- p3 (v* d1 (* seg-length factor)))])
+      ;; Heading-based: use auto-control-points
+      (auto-control-points-with-target-heading p0 h0 p3 h1 factor))))
+
+(defn sample-bezier-segment
+  "Pure function: sample a cubic bezier segment into walk steps.
+
+   Arguments:
+   - p0, c1, c2, p3: bezier control points
+   - steps: number of steps to sample
+   - start-heading: heading at t=0 (for first step)
+   - start-up: up vector at t=0
+
+   Returns vector of {:from :to :chord-heading :final-heading :final-up}
+   where chord-heading is the direction to move (for drawing)
+   and final-heading is the tangent (for continuity)."
+  [p0 c1 c2 p3 steps start-heading start-up]
+  (let [end-heading (normalize (cubic-bezier-tangent p0 c1 c2 p3 1))
+        last-i (dec steps)]
+    (loop [i 0
+           current-pos p0
+           results []]
+      (if (>= i steps)
+        results
+        (let [t (/ (inc i) steps)
+              new-pos (cubic-bezier-point p0 c1 c2 p3 t)
+              move-dir (v- new-pos current-pos)
+              dist (magnitude move-dir)]
+          (if (> dist 0.001)
+            (let [chord-heading (normalize move-dir)
+                  ;; Final heading for tangent continuity
+                  final-heading (cond (zero? i) start-heading
+                                      (= i last-i) end-heading
+                                      :else chord-heading)
+                  ;; Compute up vector
+                  right (cross final-heading start-up)
+                  right-mag (magnitude right)
+                  final-up (if (< right-mag 0.001)
+                             start-up
+                             (normalize (cross right final-heading)))]
+              (recur (inc i)
+                     new-pos
+                     (conj results {:from current-pos
+                                    :to new-pos
+                                    :dist dist
+                                    :chord-heading chord-heading
+                                    :final-heading final-heading
+                                    :final-up final-up})))
+            ;; Skip degenerate step
+            (recur (inc i) current-pos results)))))))
+
+(defn compute-bezier-walk
+  "Pure function: compute complete walk data for bezier-as.
+
+   Arguments:
+   - segments: path segments (from path-segments, optionally subdivided)
+   - init-pose: {:position :heading :up} initial pose
+   - opts: {:tension :cubic :steps :calc-steps-fn}
+           calc-steps-fn: (fn [seg-length] -> num-steps) for dynamic resolution
+
+   Returns vector of segment results, each containing:
+   {:walk-steps [...] :target-pose {:position :heading :up}}
+
+   This is the main pure function for bezier-as computation."
+  [segments init-pose opts]
+  (if (empty? segments)
+    []
+    (let [{:keys [tension cubic calc-steps-fn]
+           :or {tension 0.33}} opts
+          waypoints (compute-path-waypoints segments init-pose)
+          directions (when cubic (catmull-rom-directions waypoints))]
+      (loop [i 0
+             current-pose init-pose
+             results []]
+        (if (>= i (count segments))
+          results
+          (let [wp1 (nth waypoints (inc i))
+                p0 (:position current-pose)
+                p3 (:position wp1)
+                h0 (:heading current-pose)
+                h1 (:heading wp1)
+                seg-length (magnitude (v- p3 p0))]
+            (if (< seg-length 0.001)
+              ;; Degenerate segment - just record target pose
+              (recur (inc i)
+                     wp1
+                     (conj results {:walk-steps []
+                                    :target-pose wp1
+                                    :degenerate true
+                                    :segment-index i}))
+              ;; Normal segment - compute bezier walk
+              (let [steps (if calc-steps-fn
+                            (calc-steps-fn seg-length)
+                            16)
+                    cubic-dirs (when cubic
+                                 [(nth directions i) (nth directions (inc i))])
+                    [c1 c2] (compute-bezier-control-points
+                              p0 h0 p3 h1 tension cubic-dirs)
+                    walk-steps (sample-bezier-segment
+                                 p0 c1 c2 p3 steps h0 (:up current-pose))
+                    ;; Final pose from last walk step, or target if no steps
+                    final-pose (if (seq walk-steps)
+                                 (let [last-step (peek walk-steps)]
+                                   {:position (:to last-step)
+                                    :heading (:final-heading last-step)
+                                    :up (:final-up last-step)})
+                                 wp1)]
+                (recur (inc i)
+                       final-pose
+                       (conj results {:walk-steps walk-steps
+                                      :target-pose final-pose
+                                      :segment-index i}))))))))))
+
+(defn- apply-walk-step
+  "Apply a single walk step to turtle state, drawing a line."
+  [state step]
+  (let [{:keys [dist chord-heading final-heading final-up]} step]
+    (-> state
+        (assoc :heading chord-heading)  ; use chord to draw correctly
+        (f dist)                        ; draws line from current pos to new pos
+        (assoc :heading final-heading)  ; restore tangent heading
+        (assoc :up final-up))))
+
 (defn bezier-as
   "Draw a bezier curve that smoothly approximates a turtle path.
    Produces one cubic bezier per segment in the path, with C1 continuity
@@ -3084,7 +3249,6 @@
    :steps              - bezier resolution (default from resolution settings)"
   [state p & args]
   (let [{:keys [tension steps max-segment-length cubic]} (apply hash-map args)
-        factor (or tension 0.33)
         segments (path-segments p)
         ;; Optionally subdivide long segments
         segments (if max-segment-length
@@ -3092,46 +3256,25 @@
                    segments)]
     (if (empty? segments)
       state
-      ;; Collect waypoints: run each segment on a virtual turtle
-      ;; to find positions and headings at each junction
-      (let [waypoints (loop [s state
-                             segs segments
-                             wps [{:position (:position state)
-                                   :heading  (:heading state)}]]
-                        (if (empty? segs)
-                          wps
-                          (let [next-s (segment->state s (first segs))]
-                            (recur next-s
-                                   (rest segs)
-                                   (conj wps {:position (:position next-s)
-                                              :heading  (:heading next-s)})))))
-            ;; Precompute directions for cubic (Catmull-Rom) mode
-            directions (when cubic (catmull-rom-directions waypoints))]
-        ;; Walk each bezier segment
+      ;; Use pure function to compute walk data
+      (let [init-pose (select-keys state [:position :heading :up])
+            calc-steps-fn (when-not steps
+                            #(calc-bezier-steps state %))
+            walk-data (compute-bezier-walk
+                        segments init-pose
+                        {:tension (or tension 0.33)
+                         :cubic cubic
+                         :calc-steps-fn (or calc-steps-fn (constantly (or steps 16)))})]
+        ;; Apply walk steps to state
         (reduce
-         (fn [current-state i]
-           (let [wp0 (nth waypoints i)
-                 wp1 (nth waypoints (inc i))
-                 p0 (:position wp0)
-                 p3 (:position wp1)
-                 seg-length (magnitude (v- p3 p0))]
-             (if (< seg-length 0.001)
-               ;; Degenerate segment: just apply rotations and advance
-               (segment->state current-state (nth segments i))
-               (let [actual-steps (or steps (calc-bezier-steps current-state seg-length))
-                     [c1 c2] (if cubic
-                               ;; Cubic: Catmull-Rom directions, same distance formula
-                               (let [d0 (nth directions i)
-                                     d1 (nth directions (inc i))]
-                                 [(v+ p0 (v* d0 (* seg-length factor)))
-                                  (v- p3 (v* d1 (* seg-length factor)))])
-                               (auto-control-points-with-target-heading
-                                 p0 (:heading wp0) p3 (:heading wp1) factor))]
-                 (bezier-walk current-state actual-steps
-                              #(cubic-bezier-point p0 c1 c2 p3 %)
-                              #(cubic-bezier-tangent p0 c1 c2 p3 %))))))
+         (fn [current-state segment-data]
+           (if (:degenerate segment-data)
+             ;; Degenerate segment: apply rotations via segment->state
+             (segment->state current-state (nth segments (:segment-index segment-data)))
+             ;; Normal segment: apply walk steps
+             (reduce apply-walk-step current-state (:walk-steps segment-data))))
          state
-         (range (count segments)))))))
+         walk-data)))))
 
 ;; ============================================================
 ;; Path sampling for text-on-path
