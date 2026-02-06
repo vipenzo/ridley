@@ -47,15 +47,15 @@
     ;; Wait for ManifoldModule to be available (ES module loads async)
     (-> (wait-for-manifold-module 50 100)  ; 50 attempts, 100ms each = 5 seconds max
         (.then (fn [Module]
-                 (Module)))
-        (.then (fn [wasm]
+                 (^js Module)))
+        (.then (fn [^js wasm]
                  ;; v3.0 requires setup() to be called before using classes
                  (.setup wasm)
                  (reset! manifold-state
                          {:wasm wasm
-                          :Manifold (.-Manifold wasm)
-                          :Mesh (.-Mesh wasm)
-                          :CrossSection (.-CrossSection wasm)})
+                          :Manifold (.-Manifold ^js wasm)
+                          :Mesh (.-Mesh ^js wasm)
+                          :CrossSection (.-CrossSection ^js wasm)})
                  @manifold-state)))))
 
 (defn ^:export get-manifold-class
@@ -100,7 +100,7 @@
 
 (defn ^:export manifold-mesh->ridley-mesh
   "Convert a Manifold Mesh back to Ridley mesh format."
-  [manifold-mesh]
+  [^js manifold-mesh]
   (let [vert-props (.-vertProperties manifold-mesh)
         tri-verts (.-triVerts manifold-mesh)
         num-prop (.-numProp manifold-mesh)
@@ -131,7 +131,7 @@
    merging nearly-identical vertices. If the input is too broken,
    it may return an empty manifold."
   [ridley-mesh]
-  (when-let [Manifold (get-manifold-class)]
+  (when-let [^js Manifold (get-manifold-class)]
     (when (and (:vertices ridley-mesh) (:faces ridley-mesh))
       (try
         (let [mesh-data (ridley-mesh->manifold-mesh ridley-mesh)
@@ -143,9 +143,9 @@
 
 (defn ^:export manifold->mesh
   "Extract the mesh from a Manifold object back to Ridley format."
-  [manifold]
+  [^js manifold]
   (when manifold
-    (let [mesh (.getMesh manifold)]
+    (let [^js mesh (.getMesh manifold)]
       (manifold-mesh->ridley-mesh mesh))))
 
 (defn manifold?
@@ -216,11 +216,11 @@
     (if (and (:vertices ridley-mesh) (:faces ridley-mesh))
       (try
         (let [mesh-data (ridley-mesh->manifold-mesh ridley-mesh)
-              m1 (new Manifold mesh-data)
-              m2 (new Manifold mesh-data)
+              ^js m1 (new Manifold mesh-data)
+              ^js m2 (new Manifold mesh-data)
               ;; Self-union: A ∪ A resolves self-intersections
-              result (.add m1 m2)
-              clean (.asOriginal result)
+              ^js result (.add m1 m2)
+              ^js clean (.asOriginal result)
               output (manifold->mesh clean)
               output (cond-> output
                        (:creation-pose ridley-mesh) (assoc :creation-pose (:creation-pose ridley-mesh))
@@ -246,8 +246,8 @@
     (let [ma (mesh->manifold mesh-a)
           mb (mesh->manifold mesh-b)]
       (when (and ma mb)
-        (let [raw-result (.add ma mb)
-              result (.asOriginal raw-result)
+        (let [^js raw-result (.add ma mb)
+              ^js result (.asOriginal raw-result)
               output (manifold->mesh result)]
           (.delete ma)
           (.delete mb)
@@ -287,8 +287,8 @@
             (js/console.warn "mesh-difference: mesh-a is not manifold, status:" status-a))
           (when (not (zero? status-b))
             (js/console.warn "mesh-difference: mesh-b is not manifold, status:" status-b)))
-        (let [raw-result (.subtract ma mb)
-              result (.asOriginal raw-result)
+        (let [^js raw-result (.subtract ma mb)
+              ^js result (.asOriginal raw-result)
               output (manifold->mesh result)]
           (.delete ma)
           (.delete mb)
@@ -319,8 +319,8 @@
     (let [ma (mesh->manifold mesh-a)
           mb (mesh->manifold mesh-b)]
       (when (and ma mb)
-        (let [raw-result (.intersect ma mb)
-              result (.asOriginal raw-result)
+        (let [^js raw-result (.intersect ma mb)
+              ^js result (.asOriginal raw-result)
               output (manifold->mesh result)]
           (.delete ma)
           (.delete mb)
@@ -367,8 +367,8 @@
         (try
           (let [;; Manifold.hull() is a static method that takes an array
                 manifold-array (clj->js (vec manifolds))
-                raw-result (.hull Manifold manifold-array)
-                result (.asOriginal raw-result)
+                ^js raw-result (.call (.-hull ^js Manifold) Manifold manifold-array)
+                ^js result (.asOriginal raw-result)
                 output (manifold->mesh result)]
             ;; Clean up
             (doseq [m manifolds]
@@ -417,8 +417,8 @@
                 points-array (js/Array.)
                 _ (doseq [[x y z] all-points]
                     (.push points-array #js [x y z]))
-                raw-result (.hull Manifold points-array)
-                result (.asOriginal raw-result)
+                ^js raw-result (.call (.-hull ^js Manifold) Manifold points-array)
+                ^js result (.asOriginal raw-result)
                 output (manifold->mesh result)]
             (.delete raw-result)
             (.delete result)
@@ -447,7 +447,7 @@
 
    Returns a Ridley mesh."
   [contours height]
-  (let [CrossSection (get-cross-section-class)]
+  (let [^js CrossSection (get-cross-section-class)]
     (if-not CrossSection
       nil
       (if-not (seq contours)
