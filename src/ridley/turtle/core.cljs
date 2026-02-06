@@ -240,7 +240,7 @@
 
 ;; --- Sweep mesh building ---
 
-(defn- build-sweep-mesh
+(defn build-sweep-mesh
   "Build a unified mesh from accumulated sweep rings.
    Each ring is a vector of 3D vertices.
    If closed? is true, connects last ring back to first (torus-like, no caps).
@@ -339,7 +339,7 @@
   [x]
   (and (map? x) (= :shape (:type x))))
 
-(defn- compute-stamp-transform
+(defn compute-stamp-transform
   "Compute transformation parameters for stamping a shape.
    Returns {:plane-x :plane-y :offset :origin}."
   [state shape]
@@ -371,7 +371,7 @@
                          [(- fx) (- fy)]))]
     {:plane-x plane-x :plane-y plane-y :offset offset :origin pos}))
 
-(defn- transform-2d-to-3d
+(defn transform-2d-to-3d
   "Transform 2D points to 3D using stamp parameters."
   [points {:keys [plane-x plane-y offset origin]}]
   (let [[ox oy oz] origin
@@ -386,7 +386,7 @@
                (+ oz (* px' xz) (* py' yz))]))
           points)))
 
-(defn- stamp-shape
+(defn stamp-shape
   "Stamp a shape onto the plane perpendicular to turtle's heading.
    Returns 3D vertices of the stamped shape."
   [state shape]
@@ -503,14 +503,14 @@
 
 ;; --- Corner/Bend calculation ---
 
-(defn- shape-radius
+(defn shape-radius
   "Calculate the radius of a shape (max distance from origin to any point)."
   [shape]
   (if-let [points (:points shape)]
     (reduce max 0 (map (fn [[x y]] (Math/sqrt (+ (* x x) (* y y)))) points))
     0))
 
-(defn- build-segment-mesh
+(defn build-segment-mesh
   "Build a mesh from sweep rings (no caps - for segments that will be joined).
    Returns nil if not enough rings.
    flip-winding? reverses face winding for backward extrusions."
@@ -544,7 +544,7 @@
           :vertices vertices
           :faces side-faces})))))
 
-(defn- build-corner-mesh
+(defn build-corner-mesh
   "Build a corner mesh connecting two rings (no caps).
    ring1 and ring2 must have the same number of vertices.
    flip-winding? reverses face winding for backward extrusions."
@@ -611,7 +611,7 @@
               (v+ centroid scaled)))
           ring)))
 
-(defn- generate-round-corner-rings
+(defn generate-round-corner-rings
   "Generate intermediate rings for a rounded corner.
 
    Parameters:
@@ -672,7 +672,7 @@
               (v+ centroid new-rel)))
           ring)))
 
-(defn- generate-tapered-corner-rings
+(defn generate-tapered-corner-rings
   "Generate intermediate ring for a tapered/beveled corner.
 
    Creates a single intermediate ring at the corner, scaled along the
@@ -2066,19 +2066,19 @@
 ;; Extrude-closed with pre-processed path (clean implementation)
 ;; ============================================================
 
-(defn- is-rotation?
+(defn is-rotation?
   "Check if command is a rotation (or direct heading set)."
   [cmd]
   (#{:th :tv :tr :set-heading} cmd))
 
-(defn- is-corner-rotation?
+(defn is-corner-rotation?
   "Check if command is a corner rotation that requires segment shortening.
    Excludes :set-heading which is used for smooth curves (bezier/arc)
    that don't need corner treatment."
   [cmd]
   (#{:th :tv :tr} cmd))
 
-(defn- is-path?
+(defn is-path?
   "Check if x is a path (internal version to avoid forward reference)."
   [x]
   (and (map? x) (= :path (:type x))))
@@ -2119,7 +2119,7 @@
           tan-half (Math/tan capped-half-angle)]
       (* radius tan-half))))
 
-(defn- analyze-closed-path
+(defn analyze-closed-path
   "Analyze a path for closed extrusion.
    Returns a vector of segments with their adjustments.
 
@@ -2419,12 +2419,13 @@
                                           [[b0 t0 b1] [t0 t1 b1]])))
                                     (range n-verts))))
                                (range n-rings)))
-                  mesh (cond-> {:type :mesh
-                               :primitive :torus
-                               :vertices vertices
-                               :faces side-faces
-                               :creation-pose creation-pose}
-                         (:material state) (assoc :material (:material state)))]
+                  mesh (schema/assert-mesh!
+                        (cond-> {:type :mesh
+                                 :primitive :torus
+                                 :vertices vertices
+                                 :faces side-faces
+                                 :creation-pose creation-pose}
+                          (:material state) (assoc :material (:material state))))]
               (update final-state :meshes conj mesh))))))))
 
 ;; ============================================================
@@ -3332,7 +3333,7 @@
 ;; Extrude with pre-processed path (open path, unified mesh)
 ;; ============================================================
 
-(defn- analyze-open-path
+(defn analyze-open-path
   "Analyze a path for open extrusion.
    Returns a vector of segments with their adjustments.
 
@@ -3394,7 +3395,7 @@
            :rotations-after rotations-after}))
       forwards))))
 
-(defn- is-simple-forward-path?
+(defn is-simple-forward-path?
   "Check if path is a simple straight extrusion (single forward command, no corners)."
   [path]
   (let [commands (:commands path)]
@@ -3640,12 +3641,13 @@
 
                   all-faces (vec (concat bottom-cap-faces side-faces top-cap-faces))
 
-                  mesh (cond-> {:type :mesh
-                               :primitive :extrusion
-                               :vertices vertices
-                               :faces all-faces
-                               :creation-pose creation-pose}
-                         (:material state) (assoc :material (:material state)))]
+                  mesh (schema/assert-mesh!
+                        (cond-> {:type :mesh
+                                 :primitive :extrusion
+                                 :vertices vertices
+                                 :faces all-faces
+                                 :creation-pose creation-pose}
+                          (:material state) (assoc :material (:material state))))]
               (update final-state :meshes conj mesh)))))))))
 
 
@@ -3790,12 +3792,13 @@
            all-faces (if cap-faces
                        (vec (concat side-faces cap-faces))
                        side-faces)
-           mesh (cond-> {:type :mesh
-                         :primitive :revolve
-                         :vertices vertices
-                         :faces all-faces
-                         :creation-pose creation-pose}
-                  (:material state) (assoc :material (:material state)))]
+           mesh (schema/assert-mesh!
+                    (cond-> {:type :mesh
+                             :primitive :revolve
+                             :vertices vertices
+                             :faces all-faces
+                             :creation-pose creation-pose}
+                      (:material state) (assoc :material (:material state))))]
        (update state :meshes conj mesh)))))
 
 
@@ -3803,7 +3806,7 @@
 ;; Loft from path (unified extrusion with transform)
 ;; ============================================================
 
-(defn- analyze-loft-path
+(defn analyze-loft-path
   "Analyze a path for loft operation.
    Similar to analyze-open-path but tracks where corners are without
    pre-computing shorten values (since radius changes along the path).
@@ -4120,8 +4123,10 @@
                  state
                  ;; Add all segment meshes with material to state
                  (let [meshes-with-material (if (:material state)
-                                              (mapv #(assoc % :material (:material state)) segment-meshes)
-                                              segment-meshes)]
+                                              (mapv #(schema/assert-mesh!
+                                                       (assoc % :material (:material state)))
+                                                    segment-meshes)
+                                              (mapv schema/assert-mesh! segment-meshes))]
                    (update final-state :meshes into meshes-with-material)))))))))))
 
 ;; ============================================================
@@ -4427,14 +4432,14 @@
 ;; Attachment system - attach to meshes and faces
 ;; ============================================================
 
-(defn- compute-triangle-normal
+(defn compute-triangle-normal
   "Compute normal vector for a triangle given three vertices."
   [v0 v1 v2]
   (let [edge1 (v- v1 v0)
         edge2 (v- v2 v0)]
     (normalize (cross edge1 edge2))))
 
-(defn- compute-face-info-internal
+(defn compute-face-info-internal
   "Compute normal, heading, and center for a face group.
    Returns {:normal :heading :center :vertices :triangles}."
   [vertices face-triangles]
