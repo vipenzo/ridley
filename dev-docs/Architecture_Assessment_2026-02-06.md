@@ -29,6 +29,8 @@
 - Creato `src/ridley/schema.cljs` con assert dev e collegato a registry e operazioni geometriche (extrude, revolve, loft).
 - Aggiunti test regressione in `test/ridley/geometry/operations_test.cljs`; suite test Shadow verde.
 - Puliti gli infer-warning in `src/ridley/manifold/core.cljs` con hint `^js`/call esplicite; test suite verde e senza warning.
+- Aggiunti contract test per registry in `test/ridley/scene/registry_test.cljs`.
+- Puliti i warning Three.js in viewport/xr/panel; `shadow-cljs compile test` verde senza warning.
 
 **Fase 2**
 - Creare `ridley/state.cljs` (event/state container o re-frame) e migrare gradualmente gli atom globali di UI/viewport/registry/REPL/settings.
@@ -42,6 +44,6 @@
 - Security review per sync P2P (schema messaggi) e per REPL (bloccare fetch/DOM non autorizzati).
 
 ## Prossimi passi consigliati (2–3 ore)
-1) Ripulire warning `manifold/core.cljs` (annotazioni `^js` o `goog.object/get`).
-2) Estendere assert a esport / loft complessi (`sweep-two-shapes-with-holes`, pipeline Manifold) e collegarli al registry.
-3) Aggiungere test property su loft/sweep (winding cap, orientamenti) e su `scene/registry` (id/visibility/update invarianti).
+1) Aggiungere property test su loft/sweep (winding cap, orientamenti) e casi path aperti/chiusi.
+2) Estendere assert al flusso export (STL) e ai dati AI/sync prima del registry.
+3) Valutare introduzione state model centralizzato e migrazione progressiva dagli atom globali.
