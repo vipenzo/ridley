@@ -53,7 +53,7 @@
     (.setPixelRatio renderer js/window.devicePixelRatio)
     renderer))
 
-(defn- create-controls [camera renderer]
+(defn- create-controls [^js camera ^js renderer]
   (let [controls (OrbitControls. camera (.-domElement renderer))]
     (set! (.-enableDamping controls) true)
     (set! (.-dampingFactor controls) 0.05)
@@ -83,7 +83,7 @@
 (defn- rotate-camera-around-axis
   "Rotate camera around a world axis, keeping it looking at the target.
    Also rotates the camera's up vector to maintain consistent orientation."
-  [camera controls axis angle]
+  [^js camera ^js controls axis angle]
   (let [target (.-target controls)
         cam-pos (.-position camera)
         cam-up (.-up camera)
@@ -109,7 +109,7 @@
 
 (defn- setup-axis-rotation
   "Setup keyboard and mouse handlers for axis-constrained rotation."
-  [canvas camera controls]
+  [^js canvas ^js camera ^js controls]
   (let [key->axis {"x" :x "X" :x
                    "y" :y "Y" :y
                    "z" :z "Z" :z}
@@ -178,7 +178,7 @@
     (.fillText ctx text (/ size 2) (/ size 2))
     (let [texture (THREE/CanvasTexture. canvas)
           material (THREE/SpriteMaterial. #js {:map texture})
-          sprite (THREE/Sprite. material)]
+          ^js sprite (THREE/Sprite. material)]
       (set! (.-x (.-scale sprite)) 8)
       (set! (.-y (.-scale sprite)) 8)
       sprite)))
@@ -253,7 +253,7 @@
 
 (defn- update-turtle-indicator-scale
   "Update indicator scale based on camera distance for screen-relative sizing."
-  [indicator camera]
+  [^js indicator ^js camera]
   (when (and indicator (.-visible indicator))
     (let [world-pos (THREE/Vector3.)]
       (.getWorldPosition indicator world-pos)
@@ -266,7 +266,7 @@
 
 (defn- update-turtle-indicator-pose
   "Update turtle indicator position and orientation from pose data."
-  [indicator {:keys [position heading up]}]
+  [^js indicator {:keys [position heading up]}]
   (when indicator
     (let [[px py pz] position
           [hx hy hz] heading
@@ -410,27 +410,27 @@
   [panel-obj panel-data]
   (let [{:keys [canvas texture]} panel-obj]
     (render-panel-canvas canvas panel-data)
-    (set! (.-needsUpdate texture) true)))
+    (set! (.-needsUpdate ^js texture) true)))
 
 (defn- update-panels-billboard
   "Update all panels to face the camera (billboard effect)."
-  [camera]
+  [^js camera]
   (doseq [[_name panel-obj] @panel-objects]
     (when-let [mesh (:mesh panel-obj)]
       ;; Copy camera quaternion for billboard effect
-      (.copy (.-quaternion mesh) (.-quaternion camera)))))
+      (.copy (.-quaternion ^js mesh) (.-quaternion camera)))))
 
 (defn- clear-panels
   "Remove all panel objects from the scene."
-  [world-group]
+  [^js world-group]
   (doseq [[_name panel-obj] @panel-objects]
-    (when-let [mesh (:mesh panel-obj)]
+    (when-let [^js mesh (:mesh panel-obj)]
       (.remove world-group mesh)
       (when-let [geom (.-geometry mesh)]
         (.dispose geom))
       (when-let [mat (.-material mesh)]
         (.dispose mat))
-      (when-let [tex (:texture panel-obj)]
+      (when-let [^js tex (:texture panel-obj)]
         (.dispose tex))))
   (reset! panel-objects {}))
 
@@ -549,7 +549,7 @@
 
 (defn- clear-geometry
   "Remove all user geometry objects from world-group, keeping grid, axes, and highlight-group."
-  [world-group highlight-group]
+  [^js world-group ^js highlight-group]
   ;; Clear panels first (dispose textures properly)
   (clear-panels world-group)
   ;; Clear other geometry
@@ -560,7 +560,7 @@
                                   ;; Keep highlight group
                                   (not (identical? % highlight-group)))
                            (.-children world-group))]
-    (doseq [obj to-remove]
+    (doseq [^js obj to-remove]
       (.remove world-group obj)
       (when-let [geom (.-geometry obj)]
         (.dispose geom))
@@ -677,7 +677,7 @@
   "Update or create the normals visualization object."
   [world-group meshes]
   ;; Remove old normals object
-  (when-let [old-obj @normals-object]
+  (when-let [^js old-obj @normals-object]
     (.remove world-group old-obj)
     (when-let [geom (.-geometry old-obj)]
       (.dispose geom))
@@ -781,30 +781,36 @@
    In WebXR mode, receives (time, xr-frame) parameters."
   [_time xr-frame]
   (when-let [{:keys [renderer scene camera controls]} @state]
-    ;; Update turtle indicator scale for screen-relative sizing
-    (when-let [indicator @turtle-indicator]
-      (update-turtle-indicator-scale indicator camera))
-    ;; Update panels to face camera (billboard effect)
-    (update-panels-billboard camera)
-    (if (xr/xr-presenting? renderer)
-      ;; VR mode: update controller input, pass XR frame for pose data
-      (xr/update-controller xr-frame renderer)
-      ;; Desktop mode: update OrbitControls
-      (.update controls))
-    (.render renderer scene camera)))
+    (let [^js renderer renderer
+          ^js scene scene
+          ^js camera camera
+          ^js controls controls]
+      ;; Update turtle indicator scale for screen-relative sizing
+      (when-let [^js indicator @turtle-indicator]
+        (update-turtle-indicator-scale indicator camera))
+      ;; Update panels to face camera (billboard effect)
+      (update-panels-billboard camera)
+      (if (xr/xr-presenting? renderer)
+        ;; VR mode: update controller input, pass XR frame for pose data
+        (xr/update-controller xr-frame renderer)
+        ;; Desktop mode: update OrbitControls
+        (.update controls))
+      (.render renderer scene camera))))
 
 (defn- start-animation-loop
   "Start the render loop using setAnimationLoop for XR compatibility."
   []
   (when-let [{:keys [renderer]} @state]
-    (.setAnimationLoop renderer render-frame)))
+    (.setAnimationLoop ^js renderer render-frame)))
 
 (defn handle-resize
   "Handle viewport resize - call when panel dimensions change."
   []
   (when-let [{:keys [renderer camera canvas]} @state]
-    ;; Use canvas's own dimensions (set by CSS flex: 1)
-    (let [width (.-clientWidth canvas)
+    (let [^js renderer renderer
+          ^js camera camera
+          ^js canvas canvas
+          width (.-clientWidth canvas)
           height (.-clientHeight canvas)]
       (when (and (pos? width) (pos? height))
         (.setSize renderer width height false)  ; false = don't set CSS style
@@ -895,8 +901,8 @@
   "Remove all highlight objects from the scene."
   []
   (when-let [{:keys [highlight-group]} @state]
-    (doseq [obj @highlight-objects]
-      (.remove highlight-group obj)
+    (doseq [^js obj @highlight-objects]
+      (.remove ^js highlight-group obj)
       (when-let [geom (.-geometry obj)]
         (.dispose geom))
       (when-let [mat (.-material obj)]
@@ -981,7 +987,7 @@
       (fn []
         ;; Remove only the most recently added highlight
         (when-let [{:keys [highlight-group]} @state]
-          (when-let [obj (last @highlight-objects)]
+          (when-let [^js obj (last @highlight-objects)]
             (.remove highlight-group obj)
             (when-let [geom (.-geometry obj)]
               (.dispose geom))
@@ -1071,10 +1077,12 @@
   "Reset camera to default position looking at origin."
   []
   (when-let [{:keys [camera controls]} @state]
-    (.set (.-up camera) 0 0 1)
-    (.set (.-position camera) 100 100 100)
-    (.set (.-target controls) 0 0 0)
-    (.update controls)))
+    (let [^js camera camera
+          ^js controls controls]
+      (.set (.-up camera) 0 0 1)
+      (.set (.-position camera) 100 100 100)
+      (.set (.-target controls) 0 0 0)
+      (.update controls))))
 
 ;; ============================================================
 ;; Turtle indicator visibility and updates
@@ -1114,7 +1122,7 @@
         (update-normals-display world-group @current-meshes))
       ;; Turning off - remove normals object
       (when-let [{:keys [world-group]} @state]
-        (when-let [obj @normals-object]
+        (when-let [^js obj @normals-object]
           (.remove world-group obj)
           (when-let [geom (.-geometry obj)]
             (.dispose geom))
@@ -1178,6 +1186,6 @@
     (clear-highlights)
     (when resize-observer
       (.disconnect resize-observer))
-    (.dispose controls)
-    (.dispose renderer)
+    (.dispose ^js controls)
+    (.dispose ^js renderer)
     (reset! state nil)))

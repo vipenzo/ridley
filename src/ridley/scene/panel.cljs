@@ -177,5 +177,5 @@
   (when-let [texture (:texture panel)]
     (let [canvas (:canvas panel)]
       (render-to-canvas canvas panel)
-      (set! (.-needsUpdate texture) true)))
+      (set! (.-needsUpdate ^js texture) true)))
   panel)

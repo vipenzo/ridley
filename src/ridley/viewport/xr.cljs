@@ -305,9 +305,9 @@
     (set! (.-textAlign ctx) "left")
     (set! (.-textBaseline ctx) "top")
     (.fillText ctx text 5 5)
-    (let [texture (THREE/CanvasTexture. canvas)]
-      (set! (.-map (.-material sprite)) texture)
-      (set! (.-needsUpdate (.-map (.-material sprite))) true))))
+    (let [^js texture (THREE/CanvasTexture. canvas)]
+      (set! (.-map (.-material ^js sprite)) texture)
+      (set! (.-needsUpdate (.-map (.-material ^js sprite))) true))))
 
 ;; ============================================================
 ;; Ray-based drag helpers
@@ -398,8 +398,8 @@
     (.set (.-position btn-reset) 0.06 -0.02 0.01)
     ;; Row 4 (bottom): Exit
     (.set (.-position btn-exit) 0 -0.08 0.01)
-    (set! (.-frustumCulled panel) false)
-    (doseq [btn buttons]
+    (set! (.-frustumCulled ^js panel) false)
+    (doseq [^js btn buttons]
       (set! (.-frustumCulled btn) false))
     (doseq [btn buttons]
       (.add panel btn))
@@ -461,7 +461,7 @@
   "Find a child object by name in the world-group."
   [name]
   (when-let [{:keys [world-group]} @xr-state]
-    (.getObjectByName world-group name)))
+    (.getObjectByName ^js world-group name)))
 
 (defn- toggle-grid-vr
   "Toggle grid visibility in VR."
@@ -533,12 +533,12 @@
 
 (defn- set-button-hover
   "Set button visual hover state."
-  [btn hovered?]
-  (when-let [material (.-material btn)]
+  [^js btn hovered?]
+  (when-let [^js material (.-material btn)]
     (let [btn-text (.-text (.-userData btn))
-          texture (if hovered?
-                    (create-text-texture btn-text 128 64 "#555555" "#00ffff" 0.9)
-                    (create-text-texture btn-text 128 64 "#333333" "#ffffff" 0.8))]
+          ^js texture (if hovered?
+                        (create-text-texture btn-text 128 64 "#555555" "#00ffff" 0.9)
+                        (create-text-texture btn-text 128 64 "#333333" "#ffffff" 0.8))]
       (set! (.-map material) texture)
       (set! (.-needsUpdate material) true))))
 
@@ -767,7 +767,7 @@
                                                (swap! xr-state assoc :b-button-was-pressed true)
                                                (let [new-mode (if (= mode :move) :rotate :move)]
                                                  (swap! xr-state assoc :mode new-mode)
-                                                 (when-let [indicator (:indicator @xr-state)]
+                                                 (when-let [^js indicator (:indicator @xr-state)]
                                                    (let [color (if (= new-mode :move) 0x00ff00 0x6666ff)]
                                                      (set! (.-color (.-material indicator)) (THREE/Color. color))))))
                                              (when (and (not b-pressed) b-button-was-pressed)
@@ -800,9 +800,9 @@
   "Update the mode indicator color based on current mode."
   []
   (when-let [{:keys [indicator mode]} @xr-state]
-    (when indicator
+    (when ^js indicator
       (let [color (if (= mode :move) 0x00ff00 0x6666ff)]
-        (set! (.-color (.-material indicator)) (THREE/Color. color))))))
+        (set! (.-color (.-material ^js indicator)) (THREE/Color. color))))))
 
 (defn get-camera-rig
   "Get the camera rig group for VR positioning."
