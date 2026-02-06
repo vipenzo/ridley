@@ -17,6 +17,7 @@
    - (pen :on) - draw lines (default)
    - (extrude shape movements...) - stamp shape and extrude via movements"
   (:require ["earcut" :default earcut]
+            [ridley.schema :as schema]
             [ridley.math :as math]
             [ridley.manifold.core :as manifold]))
 
@@ -2852,13 +2853,14 @@
             ;; Top cap: vertices ring1-len to end
             top-cap (triangulate-cap-with-holes outer2 holes2 ring1-len top-normal false)]
 
-        {:type :mesh
-         :primitive :sweep-two-holes
-         :vertices vertices
-         :faces (vec (concat all-side-faces bottom-cap top-cap))
-         :creation-pose {:position [0 0 0]
-                         :heading [1 0 0]
-                         :up [0 0 1]}}))))
+        (schema/assert-mesh!
+         {:type :mesh
+          :primitive :sweep-two-holes
+          :vertices vertices
+          :faces (vec (concat all-side-faces bottom-cap top-cap))
+          :creation-pose {:position [0 0 0]
+                          :heading [1 0 0]
+                          :up [0 0 1]}})))))
 
 (defn ^:export sweep-two-shapes
   "Wrapper for sweep-two-shapes-with-holes when shapes have no holes."

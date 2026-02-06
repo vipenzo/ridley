@@ -10,7 +10,8 @@
    - Boolean operations: union, difference, intersection
    - Mesh repair/merge for nearly-manifold meshes
 
-   Uses manifold-3d v3.0 loaded from CDN as an ES module.")
+   Uses manifold-3d v3.0 loaded from CDN as an ES module."
+  (:require [ridley.schema :as schema]))
 
 ;; Manifold WASM module state
 (defonce ^:private manifold-state (atom nil))
@@ -114,10 +115,11 @@
                      [(aget tri-verts i)
                       (aget tri-verts (+ i 1))
                       (aget tri-verts (+ i 2))]))]
-    {:type :mesh
-     :vertices vertices
-     :faces faces
-     :creation-pose default-creation-pose}))
+    (schema/assert-mesh!
+     {:type :mesh
+      :vertices vertices
+      :faces faces
+      :creation-pose default-creation-pose})))
 
 ;; ============================================================
 ;; Manifold operations
@@ -229,7 +231,7 @@
           (.delete m2)
           (.delete result)
           (.delete clean)
-          output)
+          (schema/assert-mesh! output))
         (catch :default e
           (js/console.warn "solidify failed:" e)
           ridley-mesh))
@@ -253,7 +255,7 @@
           (.delete mb)
           (.delete raw-result)
           (.delete result)
-          output)))))
+          (schema/assert-mesh! output))))))
 
 (defn union
   "Compute the union of one or more meshes.
@@ -294,7 +296,7 @@
           (.delete mb)
           (.delete raw-result)
           (.delete result)
-          output)))))
+          (schema/assert-mesh! output))))))
 
 (defn difference
   "Compute the difference of meshes (A - B - C - ...).
@@ -326,7 +328,7 @@
           (.delete mb)
           (.delete raw-result)
           (.delete result)
-          output)))))
+          (schema/assert-mesh! output))))))
 
 (defn intersection
   "Compute the intersection of two or more meshes (A ∩ B ∩ C ∩ ...).
@@ -375,7 +377,7 @@
               (.delete m))
             (.delete raw-result)
             (.delete result)
-            output)
+            (schema/assert-mesh! output))
           (catch :default e
             (js/console.error "Hull operation failed:" e)
             ;; Clean up on error
@@ -422,10 +424,10 @@
                 output (manifold->mesh result)]
             (.delete raw-result)
             (.delete result)
-            output)
+            (schema/assert-mesh! output))
           (catch :default e
             (js/console.error "Hull from points failed:" e)
-            nil))))))
+            nil)))))) 
 
 ;; ============================================================
 ;; CrossSection extrusion (handles holes natively)
@@ -466,7 +468,7 @@
             ;; Clean up
             (.delete cross-section)
             (.delete manifold)
-            result)
+            (schema/assert-mesh! result))
           (catch :default e
             (js/console.error "CrossSection extrusion failed:" e)
             nil))))))
