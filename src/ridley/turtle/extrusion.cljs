@@ -497,13 +497,16 @@
                last-base (* (dec n-rings) n-verts)
 
                ;; Calculate extrusion direction from ring centroids
-               extrusion-dir (normalize (v- (ring-centroid (second rings))
-                                            (ring-centroid first-ring)))
+               ;; Use local direction at each end for correct cap projection
+               bottom-dir (normalize (v- (ring-centroid (second rings))
+                                         (ring-centroid first-ring)))
+               top-dir (normalize (v- (ring-centroid last-ring)
+                                      (ring-centroid (nth rings (- n-rings 2)))))
 
                ;; Generate caps only if caps? is true
                cap-faces (when caps?
-                           (let [bottom-normal (v* extrusion-dir -1)
-                                 top-normal extrusion-dir
+                           (let [bottom-normal (v* bottom-dir -1)
+                                 top-normal top-dir
                                  bottom-cap (triangulate-cap first-ring 0 bottom-normal false)
                                  top-cap (triangulate-cap last-ring last-base top-normal false)]
                              (concat bottom-cap top-cap)))]

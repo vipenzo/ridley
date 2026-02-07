@@ -1388,8 +1388,8 @@
        [th-deg tv-deg]))
 
    ;; Recording version of bezier-as
-   ;; Uses pure functions from turtle/core for computation,
-   ;; then applies walk steps via rec-f* and rec-set-heading*.
+   ;; Uses relative rotations (th/tv) instead of absolute set-heading
+   ;; to produce orientation-independent paths.
    (defn- rec-bezier-as* [p & {:keys [tension steps max-segment-length cubic]}]
      (let [path-segs (path-segments-impl p)
            path-segs (if max-segment-length
@@ -1414,16 +1414,26 @@
                            {:tension (or tension 0.33)
                             :cubic cubic
                             :calc-steps-fn calc-steps-fn})]
-           ;; Apply walk steps to path-recorder
+           ;; Apply walk steps using relative rotations
            (doseq [segment-data walk-data]
              (when-not (:degenerate segment-data)
                (doseq [step (:walk-steps segment-data)]
-                 (let [{:keys [dist chord-heading final-heading final-up]} step]
-                   ;; Use chord heading for accurate position
-                   (rec-set-heading* chord-heading final-up)
+                 (let [{:keys [dist chord-heading final-heading final-up]} step
+                       ;; Convert absolute chord-heading to relative th/tv rotations
+                       current-heading (:heading @path-recorder)
+                       current-up (:up @path-recorder)
+                       [th-angle tv-angle] (rec-compute-rotation-angles current-heading current-up chord-heading)]
+                   ;; Apply rotations then move forward
+                   (when (> (abs th-angle) 0.001) (rec-th* th-angle))
+                   (when (> (abs tv-angle) 0.001) (rec-tv* tv-angle))
                    (rec-f* dist)
-                   ;; Restore tangent heading for continuity
-                   (rec-set-heading* final-heading final-up)))))))))
+                   ;; Rotate to final-heading for tangent continuity
+                   (let [current-heading2 (:heading @path-recorder)
+                         current-up2 (:up @path-recorder)
+                         [th2 tv2] (rec-compute-rotation-angles current-heading2 current-up2 final-heading)]
+                     (when (> (abs th2) 0.001) (rec-th* th2))
+                     (when (> (abs tv2) 0.001) (rec-tv* tv2)))))))))))
+
 
 
 
@@ -1506,8 +1516,12 @@
                                     (if (> right-len 0.001)
                                       (rec-normalize (rec-cross right dir))
                                       current-up)))]
-                     ;; Set heading directly to segment direction with propagated up
-                     (rec-set-heading* dir new-up)
+                     ;; Rotate to segment direction using relative th/tv
+                     (let [cur-heading (:heading @path-recorder)
+                           cur-up (:up @path-recorder)
+                           [th-angle tv-angle] (rec-compute-rotation-angles cur-heading cur-up dir)]
+                       (when (> (abs th-angle) 0.001) (rec-th* th-angle))
+                       (when (> (abs tv-angle) 0.001) (rec-tv* tv-angle)))
                      ;; Move forward
                      (rec-f* dist)
                      ;; Continue with next segment, propagating the up vector
@@ -1607,7 +1621,12 @@
                                           (if (> right-len 0.001)
                                             (rec-normalize (rec-cross right effective-dir))
                                             current-up)))]
-                           (rec-set-heading* effective-dir new-up)
+                           ;; Rotate to segment direction using relative th/tv
+                           (let [cur-heading (:heading @path-recorder)
+                                 cur-up (:up @path-recorder)
+                                 [th-angle tv-angle] (rec-compute-rotation-angles cur-heading cur-up effective-dir)]
+                             (when (> (abs th-angle) 0.001) (rec-th* th-angle))
+                             (when (> (abs tv-angle) 0.001) (rec-tv* tv-angle)))
                            (rec-f* dist)
                            (recur (rest remaining-segments) new-up false))
                          (recur (rest remaining-segments) current-up false))))))))))))
@@ -2020,6 +2039,16 @@
           (seq x)
           (mesh? (first (vals x)))))
 
+   (defn flatten-meshes
+     \"Recursively flatten nested sequences/vectors into a flat vector of meshes.
+      Non-mesh elements are silently skipped.\"
+     [x]
+     (cond
+       (mesh? x) [x]
+       (or (vector? x) (seq? x))
+       (vec (mapcat flatten-meshes x))
+       :else []))
+
    ;; register: define a symbol, add to registry, AND show it
    ;; Works with meshes, paths, shapes, and collections of meshes:
    ;; (register torus (extrude ...))  ; registers and shows a mesh
@@ -2032,10 +2061,22 @@
      `(let [raw-value# ~expr
             name-kw# ~(keyword name)
             hidden?# ~(contains? (set opts) :hidden)
-            ;; Convert lazy seqs to vectors for collections of meshes
-            value# (if (and (seq? raw-value#) (not (map? raw-value#)) (seq raw-value#) (mesh? (first raw-value#)))
-                     (vec raw-value#)
-                     raw-value#)]
+            ;; Convert lazy seqs to vectors, flatten nested sequences of meshes
+            value# (let [v# raw-value#]
+                     (cond
+                       ;; Already a mesh or map — leave as-is
+                       (mesh? v#) v#
+                       (mesh-map? v#) v#
+                       ;; Sequence/vector — must contain only meshes
+                       (and (or (seq? v#) (vector? v#)) (seq v#))
+                       (let [items# (vec v#)]
+                         (when-not (every? mesh? items#)
+                           (throw (js/Error.
+                                   (str \"register: expected a mesh or vector of meshes, but got a vector containing \"
+                                        (type (first (remove mesh? items#)))))))
+                         items#)
+                       ;; Anything else — leave as-is
+                       :else v#))]
         ;; For panels, add :name before def so out/append/clear work
         (if (and (map? value#) (= :panel (:type value#)))
           ;; Panel case - add name to value, def it, register it

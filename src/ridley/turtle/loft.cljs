@@ -728,53 +728,86 @@
                          (map vector ring1 ring2))]
         result))))
 
-(defn- compute-segment-angles
-  "Pre-compute the angle change at each segment by simulating the turtle walk.
-   Returns a vector of angles (in radians) for each segment."
-  [segments initial-state]
-  (loop [seg-idx 0
-         s initial-state
-         angles []]
-    (if (>= seg-idx (count segments))
-      angles
-      (let [seg (nth segments seg-idx)
-            seg-dist (:dist seg)
-            rotations (:rotations-after seg)
-            corner-pos (v+ (:position s) (v* (:heading s) seg-dist))
-            s-at-corner (assoc s :position corner-pos)
-            old-heading (:heading s-at-corner)
-            s-rotated (reduce apply-rotation-to-state s-at-corner rotations)
-            new-heading (:heading s-rotated)
-            angle (if (seq rotations)
-                    (Math/acos (max -1 (min 1 (dot old-heading new-heading))))
-                    0)]
-        (recur (inc seg-idx)
-               s-rotated
-               (conj angles angle))))))
 
-(defn- compute-weighted-seg-steps
-  "Distribute steps among segments weighted by angle (sharper curves get more steps).
-   weight-factor controls how much angle affects distribution (1.0 = linear, 2.0 = quadratic)."
-  [segments angles total-steps weight-factor]
-  (let [n (count segments)
-        total-dist (reduce + 0 (map :dist segments))
-        ;; Combine distance and angle into weights
-        weights (mapv (fn [seg angle]
-                        (let [dist-weight (if (pos? total-dist)
-                                            (/ (:dist seg) total-dist)
-                                            (/ 1.0 n))
-                              angle-weight (Math/pow (+ 1.0 (/ angle Math/PI)) weight-factor)]
-                          (* dist-weight angle-weight)))
-                      segments angles)
-        total-weight (reduce + 0 weights)
-        ;; Distribute steps proportionally
-        raw-steps (mapv (fn [w]
-                          (if (pos? total-weight)
-                            (* total-steps (/ w total-weight))
-                            (/ total-steps n)))
-                        weights)]
-    ;; Ensure at least 1 step per segment, convert to integers
-    (mapv #(max 1 (Math/round %)) raw-steps)))
+(defn- walk-path-poses
+  "Walk a path and sample turtle poses at regular distance intervals.
+   Returns a vector of (n-samples + 1) poses: [{:position :heading :up :t} ...]
+   where t ranges from 0.0 to 1.0.
+
+   By actually walking the path with apply-rotation-to-state, the heading/up
+   frame stays coherent through all rotations — avoiding the degenerate frame
+   that can occur when interpolating within segments."
+  [initial-state path n-samples]
+  (let [commands (vec (:commands path))
+        n-cmds (count commands)
+        ;; Total forward distance
+        total-dist (reduce (fn [acc cmd]
+                             (if (= :f (:cmd cmd))
+                               (+ acc (Math/abs (first (:args cmd))))
+                               acc))
+                           0 commands)
+        sample-interval (if (pos? n-samples)
+                          (/ total-dist n-samples)
+                          total-dist)]
+    (if (<= total-dist 0)
+      [{:position (:position initial-state)
+        :heading (:heading initial-state)
+        :up (:up initial-state)
+        :t 0.0}]
+      ;; Walk the path. For each :f command, check if any sample points fall
+      ;; within it. Re-enter the loop for the same :f until all its samples
+      ;; are emitted, then advance to the next command.
+      (loop [cmd-idx 0
+             s initial-state
+             dist-walked 0.0
+             next-sample-at 0.0
+             poses []]
+        (cond
+          ;; Collected all samples
+          (> (count poses) n-samples)
+          poses
+
+          ;; Ran out of commands — pad to n-samples+1 with final pose
+          (>= cmd-idx n-cmds)
+          (let [final-pose {:position (:position s)
+                            :heading (:heading s)
+                            :up (:up s)
+                            :t 1.0}]
+            (loop [p poses]
+              (if (> (count p) n-samples)
+                p
+                (recur (conj p final-pose)))))
+
+          :else
+          (let [cmd (nth commands cmd-idx)]
+            (if (= :f (:cmd cmd))
+              ;; Forward command — may contain sample points
+              (let [d (first (:args cmd))
+                    abs-d (Math/abs d)
+                    end-dist (+ dist-walked abs-d)]
+                (if (and (<= next-sample-at end-dist)
+                         (<= (count poses) n-samples))
+                  ;; Emit sample point within this segment
+                  (let [frac (if (pos? abs-d)
+                               (/ (- next-sample-at dist-walked) abs-d)
+                               0)
+                        frac (max 0.0 (min 1.0 frac))
+                        sample-pos (v+ (:position s) (v* (:heading s) (* d frac)))
+                        t (/ next-sample-at total-dist)]
+                    ;; Don't advance cmd-idx — there might be more samples in this segment
+                    (recur cmd-idx s dist-walked
+                           (+ next-sample-at sample-interval)
+                           (conj poses {:position sample-pos
+                                        :heading (:heading s)
+                                        :up (:up s)
+                                        :t (min 1.0 t)})))
+                  ;; No more samples in this segment — advance state
+                  (let [new-pos (v+ (:position s) (v* (:heading s) d))]
+                    (recur (inc cmd-idx) (assoc s :position new-pos)
+                           end-dist next-sample-at poses))))
+              ;; Rotation command — apply to state
+              (recur (inc cmd-idx) (apply-rotation-to-state s cmd)
+                     dist-walked next-sample-at poses))))))))
 
 (defn bloft
   "Bezier-safe loft: loft a shape along a bezier path with self-intersection handling.
@@ -802,104 +835,62 @@
      (let [creation-pose {:position (:position state)
                           :heading (:heading state)
                           :up (:up state)}
-           commands (:commands bezier-path)
-           segments (analyze-loft-path commands)
-           n-segments (count segments)
-           total-dist (reduce + 0 (map :dist segments))
            initial-radius (shape-radius shape)
-           angles (compute-segment-angles segments state)
-           weighted-steps (compute-weighted-seg-steps segments angles steps 2.0)]
+           ;; Walk the path properly to get coherent poses at each sample point.
+           ;; This avoids the degenerate heading/up frame that can occur when
+           ;; interpolating positions within segments after tr (roll).
+           poses (walk-path-poses state bezier-path steps)
+           n-poses (count poses)]
 
-       (if (or (< n-segments 1) (<= total-dist 0))
+       (if (< n-poses 2)
          state
          (let [result
-               (loop [seg-idx 0
-                      s state
-                      dist-acc 0
+               (loop [i 0
                       acc-rings []
                       tmp-meshes []
-                      last-ring nil
-                      last-heading nil]
+                      last-ring nil]
 
-                 (if (>= seg-idx n-segments)
-                   {:meshes (if (>= (count acc-rings) 2)
-                              (conj tmp-meshes (build-sweep-mesh acc-rings false creation-pose))
-                              tmp-meshes)
-                    :state s}
+                 (if (>= i n-poses)
+                   ;; Flush remaining rings
+                   (if (>= (count acc-rings) 2)
+                     (conj tmp-meshes (build-sweep-mesh acc-rings false creation-pose))
+                     tmp-meshes)
 
-                   (let [seg (nth segments seg-idx)
-                         seg-dist (:dist seg)
-                         rotations (:rotations-after seg)
-                         t-start (if (pos? total-dist) (/ dist-acc total-dist) 0)
-                         t-end (if (pos? total-dist) (/ (+ dist-acc seg-dist) total-dist) 1)
-                         seg-steps (nth weighted-steps seg-idx 1)
+                   (let [{:keys [position heading up t]} (nth poses i)
+                         current-shape (transform-fn shape t)
+                         temp-state {:position position :heading heading :up up}
+                         current-ring (stamp-shape temp-state current-shape)]
 
-                         seg-result
-                         (loop [step-i 0
-                                s-inner s
-                                inner-acc-rings acc-rings
-                                inner-tmp-meshes tmp-meshes
-                                inner-last-ring last-ring
-                                inner-last-heading last-heading]
+                     (if (nil? last-ring)
+                       ;; First ring
+                       (recur (inc i) (conj acc-rings current-ring)
+                              tmp-meshes current-ring)
 
-                           (if (> step-i seg-steps)
-                             {:acc-rings inner-acc-rings
-                              :tmp-meshes inner-tmp-meshes
-                              :state s-inner
-                              :last-ring inner-last-ring
-                              :last-heading inner-last-heading}
+                       (if (rings-intersect? last-ring current-ring threshold initial-radius)
+                         ;; INTERSECTION: create hull bridge directly from ring vertices
+                         (let [hull-mesh (manifold/hull-from-points (vec (concat last-ring current-ring)))
+                               valid-hull? (and hull-mesh (pos? (count (:vertices hull-mesh))))
+                               section-mesh (when (>= (count acc-rings) 2)
+                                              (build-sweep-mesh acc-rings false creation-pose))
+                               new-tmp-meshes (cond-> tmp-meshes
+                                                section-mesh (conj section-mesh)
+                                                valid-hull? (conj hull-mesh))]
+                           (recur (inc i) [current-ring]
+                                  new-tmp-meshes current-ring))
 
-                             (let [local-t (/ step-i seg-steps)
-                                   global-t (+ t-start (* local-t (- t-end t-start)))
-                                   pos (v+ (:position s) (v* (:heading s) (* local-t seg-dist)))
-                                   current-shape (transform-fn shape global-t)
-                                   temp-state (assoc s :position pos)
-                                   current-ring (stamp-shape temp-state current-shape)
-                                   current-heading (:heading s)
+                         ;; No intersection — accumulate ring
+                         (recur (inc i) (conj acc-rings current-ring)
+                                tmp-meshes current-ring))))))
 
-                                   local-heading
-                                   (if inner-last-ring
-                                     (let [c1 (ring-centroid inner-last-ring)
-                                           c2 (ring-centroid current-ring)
-                                           d (v- c2 c1)
-                                           len (Math/sqrt (dot d d))]
-                                       (if (> len 0.0001)
-                                         (v* d (/ 1.0 len))
-                                         current-heading))
-                                     current-heading)]
-
-                               (if (nil? inner-last-ring)
-                                 (recur (inc step-i) s-inner
-                                        (conj inner-acc-rings current-ring)
-                                        inner-tmp-meshes current-ring local-heading)
-
-                                 (if (rings-intersect? inner-last-ring current-ring threshold initial-radius)
-                                   ;; INTERSECTION: create hull bridge directly from ring vertices
-                                   (let [hull-mesh (manifold/hull-from-points (vec (concat inner-last-ring current-ring)))
-                                         valid-hull? (and hull-mesh (pos? (count (:vertices hull-mesh))))
-                                         section-mesh (when (>= (count inner-acc-rings) 2)
-                                                        (build-sweep-mesh inner-acc-rings false creation-pose))
-                                         new-tmp-meshes (cond-> inner-tmp-meshes
-                                                          section-mesh (conj section-mesh)
-                                                          valid-hull? (conj hull-mesh))]
-                                     (recur (inc step-i) s-inner [current-ring]
-                                            new-tmp-meshes current-ring local-heading))
-
-                                   ;; No intersection - accumulate ring
-                                   (recur (inc step-i) s-inner
-                                          (conj inner-acc-rings current-ring)
-                                          inner-tmp-meshes current-ring local-heading))))))
-
-                         corner-pos (v+ (:position s) (v* (:heading s) seg-dist))
-                         s-at-corner (assoc s :position corner-pos)
-                         s-rotated (reduce apply-rotation-to-state s-at-corner rotations)]
-
-                     (recur (inc seg-idx) s-rotated (+ dist-acc seg-dist)
-                            (:acc-rings seg-result) (:tmp-meshes seg-result)
-                            (:last-ring seg-result) (:last-heading seg-result)))))
-
-               final-meshes (:meshes result)
-               final-state (:state result)
+               final-meshes result
+               ;; Walk the path to get final turtle state
+               final-state (reduce
+                            (fn [s cmd]
+                              (case (:cmd cmd)
+                                :f (update s :position v+ (v* (:heading s) (first (:args cmd))))
+                                (:th :tv :tr :set-heading) (apply-rotation-to-state s cmd)
+                                s))
+                            state (:commands bezier-path))
                _ (js/console.log "bloft: threshold=" threshold
                                  "shape-radius=" (.toFixed initial-radius 2)
                                  "meshes:" (count final-meshes))]
