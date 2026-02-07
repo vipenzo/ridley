@@ -88,15 +88,34 @@
       ;; Not found - add the new mesh
       (update state :meshes conj new-mesh))))
 
+(defn rotate-mesh-around-point
+  "Rotate all vertices of a mesh around a given pivot point by angle (radians) around axis.
+   Also rotates the creation-pose heading and up vectors, and rotates creation-pose position
+   around the pivot."
+  [mesh axis angle pivot]
+  (let [rotate-vertex (fn [pt]
+                        (let [rel (v- pt pivot)
+                              rotated (rotate-point-around-axis rel axis angle)]
+                          (v+ pivot rotated)))]
+    (-> mesh
+        (update :vertices (fn [verts] (mapv rotate-vertex verts)))
+        (update :creation-pose
+                (fn [pose]
+                  (when pose
+                    (-> pose
+                        (update :position rotate-vertex)
+                        (update :heading #(rotate-around-axis % axis angle))
+                        (update :up #(rotate-around-axis % axis angle)))))))))
+
 (defn rotate-attached-mesh
-  "Rotate the attached mesh around its centroid using the given axis.
-   Also rotates the turtle's heading and up vectors so subsequent movements
-   follow the new orientation."
+  "Rotate the attached mesh around the turtle position (attachment point) using the given axis.
+   This ensures objects rotate around their attachment point, not their geometric center."
   [state axis angle-deg]
   (let [attachment (:attached state)
         mesh (:mesh attachment)
         rad (deg->rad angle-deg)
-        new-mesh (rotate-mesh mesh axis rad)
+        pivot (:position state)
+        new-mesh (rotate-mesh-around-point mesh axis rad pivot)
         ;; Also rotate the turtle's heading and up
         new-heading (rotate-around-axis (:heading state) axis rad)
         new-up (rotate-around-axis (:up state) axis rad)]

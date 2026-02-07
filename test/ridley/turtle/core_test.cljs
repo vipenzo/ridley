@@ -680,3 +680,39 @@
             "Y size (start diameter) should be 40")
         (is (approx= (nth (:size bbox) 2) 40)
             "Z size (start diameter) should be 40")))))
+
+;; --- Attach rotation pivot tests ---
+
+(deftest rotate-attached-mesh-uses-attachment-point-as-pivot
+  (testing "Rotation in attach context uses creation-pose position as pivot, not centroid"
+    (let [;; Create a mesh extending from origin along +X (asymmetric)
+          mesh {:type :mesh
+                :vertices [[0 0 0] [10 0 0] [10 1 0] [0 1 0]
+                           [0 0 1] [10 0 1] [10 1 1] [0 1 1]]
+                :faces [[0 1 2] [0 2 3] [4 5 6] [4 6 7]
+                        [0 1 5] [0 5 4] [2 3 7] [2 7 6]
+                        [1 2 6] [1 6 5] [0 4 7] [0 7 3]]
+                :creation-pose {:position [0 0 0]
+                                :heading [1 0 0]
+                                :up [0 0 1]}}
+          ;; Add mesh to state, then attach
+          state (-> (t/make-turtle)
+                    (update :meshes conj mesh)
+                    (t/attach mesh))
+          ;; Rotate 90° around Z axis (up)
+          rotated-state (t/rotate-attached-mesh state [0 0 1] 90)
+          rotated-mesh (get-in rotated-state [:attached :mesh])
+          verts (:vertices rotated-mesh)]
+      ;; Vertex [10 0 0] should rotate to [0 10 0] around origin pivot
+      ;; If it rotated around centroid [5 0.5 0.5], it would end up elsewhere
+      (is (some (fn [[x y _z]]
+                  (and (< (Math/abs x) 0.1)
+                       (< (Math/abs (- y 10)) 0.1)))
+                verts)
+          "Vertex at [10 0 0] should rotate to near [0 10 0] around origin pivot")
+      ;; Vertex [0 0 0] should stay at [0 0 0] (it's the pivot)
+      (is (some (fn [[x y _z]]
+                  (and (< (Math/abs x) 0.1)
+                       (< (Math/abs y) 0.1)))
+                verts)
+          "Vertex at origin (pivot) should remain at origin"))))

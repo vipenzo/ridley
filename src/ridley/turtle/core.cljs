@@ -785,6 +785,19 @@
   [state mode]
   (assoc state :joint-mode mode))
 
+;; --- Creation pose override ---
+
+(defn ^:export set-creation-pose
+  "Set the creation-pose of a mesh to the current turtle pose.
+   This determines where (attach mesh) will place the turtle.
+   Useful after boolean operations when the default inherited pose
+   doesn't match the desired attachment point."
+  [state mesh]
+  (assoc mesh :creation-pose
+    {:position (:position state)
+     :heading (:heading state)
+     :up (:up state)}))
+
 ;; --- Material settings ---
 
 (defn set-color

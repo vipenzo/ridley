@@ -250,7 +250,10 @@
       (when (and ma mb)
         (let [^js raw-result (.add ma mb)
               ^js result (.asOriginal raw-result)
-              output (manifold->mesh result)]
+              output (manifold->mesh result)
+              output (cond-> output
+                       (:creation-pose mesh-a) (assoc :creation-pose (:creation-pose mesh-a))
+                       (:material mesh-a) (assoc :material (:material mesh-a)))]
           (.delete ma)
           (.delete mb)
           (.delete raw-result)
@@ -291,7 +294,10 @@
             (js/console.warn "mesh-difference: mesh-b is not manifold, status:" status-b)))
         (let [^js raw-result (.subtract ma mb)
               ^js result (.asOriginal raw-result)
-              output (manifold->mesh result)]
+              output (manifold->mesh result)
+              output (cond-> output
+                       (:creation-pose mesh-a) (assoc :creation-pose (:creation-pose mesh-a))
+                       (:material mesh-a) (assoc :material (:material mesh-a)))]
           (.delete ma)
           (.delete mb)
           (.delete raw-result)
@@ -323,7 +329,10 @@
       (when (and ma mb)
         (let [^js raw-result (.intersect ma mb)
               ^js result (.asOriginal raw-result)
-              output (manifold->mesh result)]
+              output (manifold->mesh result)
+              output (cond-> output
+                       (:creation-pose mesh-a) (assoc :creation-pose (:creation-pose mesh-a))
+                       (:material mesh-a) (assoc :material (:material mesh-a)))]
           (.delete ma)
           (.delete mb)
           (.delete raw-result)
@@ -371,7 +380,11 @@
                 manifold-array (clj->js (vec manifolds))
                 ^js raw-result (.call (.-hull ^js Manifold) Manifold manifold-array)
                 ^js result (.asOriginal raw-result)
-                output (manifold->mesh result)]
+                output (manifold->mesh result)
+                first-mesh (first meshes)
+                output (cond-> output
+                         (:creation-pose first-mesh) (assoc :creation-pose (:creation-pose first-mesh))
+                         (:material first-mesh) (assoc :material (:material first-mesh)))]
             ;; Clean up
             (doseq [m manifolds]
               (.delete m))
@@ -421,7 +434,14 @@
                     (.push points-array #js [x y z]))
                 ^js raw-result (.call (.-hull ^js Manifold) Manifold points-array)
                 ^js result (.asOriginal raw-result)
-                output (manifold->mesh result)]
+                output (manifold->mesh result)
+                ;; Inherit creation-pose/material from first mesh arg if present
+                first-mesh-arg (first (filter #(and (map? %) (:vertices %))
+                                              (if (and (= 1 (count args)) (vector? (first args)))
+                                                (first args) args)))
+                output (cond-> output
+                         (:creation-pose first-mesh-arg) (assoc :creation-pose (:creation-pose first-mesh-arg))
+                         (:material first-mesh-arg) (assoc :material (:material first-mesh-arg)))]
             (.delete raw-result)
             (.delete result)
             (schema/assert-mesh! output))

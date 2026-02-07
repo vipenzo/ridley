@@ -927,6 +927,8 @@
    'color        implicit-color
    'material     implicit-material
    'reset-material implicit-reset-material
+   ;; Creation pose override
+   'set-creation-pose (fn [mesh] (turtle/set-creation-pose @turtle-atom mesh))
    ;; Arc commands
    'arc-h        implicit-arc-h
    'arc-v        implicit-arc-v
