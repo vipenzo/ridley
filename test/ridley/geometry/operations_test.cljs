@@ -1,3 +1,6 @@
+;; NOTE: These test the LEGACY geometry operations module (path-to-points based).
+;; The current extrusion engine is in turtle/extrusion.cljs, tested by
+;; turtle/extrusion_test.cljs and turtle/internals_test.cljs.
 (ns ridley.geometry.operations-test
   (:require [cljs.test :refer [deftest testing is]]
             [ridley.geometry.operations :as ops]))
