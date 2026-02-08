@@ -44,9 +44,11 @@ To create a custom shape from turtle movements:
 
 CRITICAL: circle, rect, star are ALREADY shapes — do NOT wrap them in path-to-shape!
 WRONG: (path-to-shape (circle 10))
-WRONG: (path-to-shape (star 5 15 7))
 RIGHT: (extrude (circle 10) (f 20))
-RIGHT: (extrude (star 5 15 7) (f 10))
+
+CRITICAL: path-to-shape takes a PATH, not raw turtle commands!
+WRONG: (path-to-shape (f 10) (th 90) (f 5))
+RIGHT: (path-to-shape (path (f 10) (th 90) (f 5)))
 
 PRIMITIVES (3D solids at turtle position):
 (box size)                    - Cube
@@ -61,7 +63,7 @@ All shapes extend along turtle's heading. The 2D profile is perpendicular to hea
 
 Cylinder: (extrude (circle R) (f H))
 Box:      (extrude (rect W H) (f D))    ; W=width, H=height of face, D=depth along heading
-Prism:    (extrude (polygon N R) (f D)) ; N-sided regular polygon
+Prism:    (extrude (circle R N) (f D)) ; N-sided prism (circle with N segments)
 Cone:     (loft (circle R1) #(scale %1 (/ R2 R1)) (f H))
 Sphere:   (sphere R)                    ; exception: sphere is symmetric
 
@@ -71,6 +73,9 @@ Examples:
 
 ; Horizontal beam (box along +X):
 (extrude (rect 10 10) (f 100))
+
+; Hexagonal prism:
+(extrude (circle 10 6) (f 20))         ; circle with 6 segments = hexagon
 
 ; Flat plate on XY plane:
 (tv 90) (extrude (rect 60 60) (f 5))
@@ -110,6 +115,12 @@ BOOLEANS:
 (mesh-union a b)
 (mesh-difference a b)         - Subtract b from a
 (mesh-intersection a b)
+
+CRITICAL: Boolean args must be MESH values, not keywords.
+To get a mesh from the registry, use (get-mesh :name).
+WRONG: (mesh-difference :cube (sphere 12))
+RIGHT: (mesh-difference (get-mesh :cube) (sphere 12))
+RIGHT: (mesh-difference cube (sphere 12))  — if cube is a local variable
 
 CRITICAL: Boolean operations work on meshes, NOT arrays.
 To subtract/union multiple objects, first combine them:
@@ -311,7 +322,12 @@ RIGHT: (def profile ...)
 FINAL MESH - always use register to make visible, not def:
 WRONG: (def my-result (extrude ...))
 RIGHT: (register my-result (extrude ...))
-def is for intermediate values (paths, shapes, cutters), register is for final visible meshes.")
+def is for intermediate values (paths, shapes, cutters), register is for final visible meshes.
+
+PARENTHESES - every ( must have a matching ). Count them!
+WRONG: (register x (mesh-union (for [i (range 4)] (attach (box 10) (th (* i 90)) (f 20))))
+RIGHT: (register x (mesh-union (for [i (range 4)] (attach (box 10) (th (* i 90)) (f 20)))))
+Tip: register( mesh-union( for( attach( box() th() f() ) ) ) ) = 6 open, 6 close")
 
 ;; Backward-compatible alias
 (def system-prompt tier-1-prompt)
@@ -391,7 +407,7 @@ All shapes extend along turtle's heading. The 2D profile is perpendicular to hea
 
 Cylinder: (extrude (circle R) (f H))
 Box:      (extrude (rect W H) (f D))    ; W=width, H=height of face, D=depth along heading
-Prism:    (extrude (polygon N R) (f D)) ; N-sided regular polygon
+Prism:    (extrude (circle R N) (f D)) ; N-sided prism (circle with N segments)
 Cone:     (loft (circle R1) #(scale %1 (/ R2 R1)) (f H))
 Sphere:   (sphere R)                    ; exception: sphere is symmetric
 
@@ -401,6 +417,9 @@ Examples:
 
 ; Horizontal beam (box along +X):
 (extrude (rect 10 10) (f 100))
+
+; Hexagonal prism:
+(extrude (circle 10 6) (f 20))         ; circle with 6 segments = hexagon
 
 ; Flat plate on XY plane:
 (tv 90) (extrude (rect 60 60) (f 5))
@@ -436,6 +455,11 @@ BOOLEANS:
 (mesh-union a b)
 (mesh-difference a b)         - Subtract b from a
 (mesh-intersection a b)
+
+CRITICAL: Boolean args must be MESH values, not keywords.
+To get a mesh from the registry, use (get-mesh :name).
+WRONG: (mesh-difference :cube (sphere 12))
+RIGHT: (mesh-difference (get-mesh :cube) (sphere 12))
 
 CRITICAL: Boolean operations work on meshes, NOT arrays.
 To subtract/union multiple objects, first combine them:
@@ -486,6 +510,10 @@ RIGHT: (def profile ...)
 FINAL MESH - always use register to make visible, not def:
 WRONG: (def my-result (extrude ...))
 RIGHT: (register my-result (extrude ...))
+
+PARENTHESES - every ( must have a matching ). Count them!
+WRONG: (register x (mesh-union (for [i (range 4)] (attach (box 10) (th (* i 90)) (f 20))))
+RIGHT: (register x (mesh-union (for [i (range 4)] (attach (box 10) (th (* i 90)) (f 20)))))
 
 ## Spatial Language
 
@@ -568,7 +596,7 @@ Boolean with multiple cutters:
 
 INPUT: aggiungi un foro cilindrico al centro di base
 OUTPUT:
-{\"type\": \"code\", \"code\": \"(register base (mesh-difference base (cyl 8 42)))\"}
+{\"type\": \"code\", \"code\": \"(register base (mesh-difference (get-mesh :base) (cyl 8 42)))\"}
 
 <script>
 (register cubes
@@ -619,6 +647,10 @@ Use `attach!` to transform registered objects in-place (cleaner than re-register
 (attach! :name transforms...)  ; Modifies :name in registry
 
 Only accepts keywords. Returns the transformed mesh.
+CRITICAL: The object MUST already be registered before using attach!
+WRONG: (attach! :c1 (move-to :base) (f 10))  ; :c1 was never registered!
+RIGHT: (register c1 (extrude (circle 3) (f 30)))
+       (attach! :c1 (move-to :base) (f (height :base)))
 
 Example script evolution:
 (tv 90)

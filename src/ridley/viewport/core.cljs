@@ -49,7 +49,9 @@
     camera))
 
 (defn- create-renderer [canvas]
-  (let [renderer (THREE/WebGLRenderer. #js {:canvas canvas :antialias true})]
+  (let [renderer (THREE/WebGLRenderer. #js {:canvas canvas
+                                             :antialias true
+                                             :preserveDrawingBuffer true})]
     (.setPixelRatio renderer js/window.devicePixelRatio)
     renderer))
 
@@ -1022,6 +1024,19 @@
                 (+ center-z dist))
           (.update controls)
           true)))))
+
+(defn capture-screenshot-blob
+  "Capture the current viewport as a PNG Blob. Forces a render before capture.
+   Returns a Promise<Blob>."
+  []
+  (js/Promise.
+    (fn [resolve reject]
+      (if-let [{:keys [renderer scene camera]} @state]
+        (do (.render ^js renderer ^js scene ^js camera)
+            (.toBlob ^js (.-domElement ^js renderer)
+                     (fn [blob] (resolve blob))
+                     "image/png"))
+        (reject (js/Error. "No renderer"))))))
 
 ;; ============================================================
 ;; Grid/Axes visibility toggles

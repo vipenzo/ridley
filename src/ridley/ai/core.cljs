@@ -107,6 +107,8 @@
    {:role "assistant" :content "{\"type\": \"code\", \"code\": \"(register cube (box 20))\"}"}
    {:role "user"    :content "6 sfere di raggio 10 in cerchio con raggio 40"}
    {:role "assistant" :content "{\"type\": \"code\", \"code\": \"(register spheres\\n  (for [i (range 6)]\\n    (attach (sphere 10) (th (* i 60)) (f 40))))\"}"}
+   {:role "user"    :content "aggiungi un foro sferico al cubo"}
+   {:role "assistant" :content "{\"type\": \"code\", \"code\": \"(register cube (mesh-difference (get-mesh :cube) (sphere 12)))\"}"}
    {:role "user"    :content "aggiungi delle cose"}
    {:role "assistant" :content "{\"type\": \"clarification\", \"question\": \"Cosa vuoi aggiungere? Sfere, cubi, cilindri?\"}"}])
 
@@ -219,19 +221,20 @@
   "Generate code from a natural language prompt using the configured LLM.
    Options:
      :script-content - current script text (for tier-2+ context)
+     :tier-override  - force a specific tier (:tier-1, :tier-2, :tier-3), nil = auto
    Returns a Promise that resolves to:
      {:type :code :code string}           — generated code
      {:type :clarification :question string} — AI needs more info
    Or rejects with an error."
   ([prompt] (generate prompt nil))
-  ([prompt {:keys [script-content]}]
+  ([prompt {:keys [script-content tier-override]}]
    (when-not (settings/ai-configured?)
      (throw (js/Error. "AI not configured. Open Settings to set up a provider and API key.")))
    (let [provider (settings/get-ai-setting :provider)
          provider-name (if (keyword? provider) (name provider) (str provider))
          api-key (settings/get-ai-api-key)
          model (settings/get-ai-model)
-         tier (settings/get-effective-tier)]
+         tier (or tier-override (settings/get-effective-tier))]
      (-> (case provider-name
            "anthropic" (call-anthropic api-key model prompt tier script-content)
            "openai"    (call-openai-compatible

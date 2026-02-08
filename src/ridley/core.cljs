@@ -17,7 +17,8 @@
             [ridley.voice.i18n :as voice-i18n]
             [ridley.voice.help.db :as help-db]
             [ridley.settings :as settings]
-            [ridley.ai.core :as ai]))
+            [ridley.ai.core :as ai]
+            [ridley.ai.batch :as batch]))
 
 (defonce ^:private editor-view (atom nil))
 (defonce ^:private repl-input-el (atom nil))
@@ -167,13 +168,16 @@
   "Handle /ai <prompt> — call LLM and append generated code to the script.
    When auto-run? is true, also evaluates definitions after inserting.
    For tier-2+, passes script context and handles clarification responses.
-   loading-msg overrides the initial REPL entry (nil = 'Generating...')."
-  ([input prompt auto-run?] (handle-ai-command input prompt auto-run? nil))
-  ([input prompt auto-run? loading-msg]
+   loading-msg overrides the initial REPL entry (nil = 'Generating...').
+   tier-override forces a specific tier (nil = use settings)."
+  ([input prompt auto-run?] (handle-ai-command input prompt auto-run? nil nil))
+  ([input prompt auto-run? loading-msg] (handle-ai-command input prompt auto-run? loading-msg nil))
+  ([input prompt auto-run? loading-msg tier-override]
    ;; Show loading in REPL history
    (add-repl-entry input (or loading-msg "Generating...") false)
    (let [script-content (when @editor-view (cm/get-value @editor-view))]
-     (-> (ai/generate prompt {:script-content script-content})
+     (-> (ai/generate prompt (cond-> {:script-content script-content}
+                               tier-override (assoc :tier-override tier-override)))
          (.then (fn [{:keys [type code question]}]
                   (case type
                     :code
@@ -221,6 +225,30 @@
           (do (ai/clear-history!)
               (reset! last-ai-insertion nil)
               (add-repl-entry input "AI history cleared." false))
+
+          ;; /ai-batch — load EDN test suite from file picker
+          (= trimmed "/ai-batch")
+          (batch/start-batch-from-file!
+            (fn [msg] (add-repl-entry "/ai-batch" msg false)))
+
+          ;; /ai-batch-inline prompt1 | prompt2 | prompt3
+          (str/starts-with? trimmed "/ai-batch-inline ")
+          (batch/start-batch-inline!
+            (str/trim (subs trimmed 18))
+            (fn [msg] (add-repl-entry "/ai-batch-inline" msg false)))
+
+          ;; /ai1, /ai1!, /ai2, /ai2!, /ai3, /ai3! — tier-specific AI generation
+          (or (str/starts-with? trimmed "/ai1! ") (str/starts-with? trimmed "/ai1 ")
+              (str/starts-with? trimmed "/ai2! ") (str/starts-with? trimmed "/ai2 ")
+              (str/starts-with? trimmed "/ai3! ") (str/starts-with? trimmed "/ai3 "))
+          (let [tier-num (subs trimmed 3 4)
+                tier-kw (case tier-num "1" :tier-1 "2" :tier-2 "3" :tier-3)
+                has-bang? (= "!" (subs trimmed 4 5))
+                prefix-len (if has-bang? 6 5)
+                prompt (str/trim (subs trimmed prefix-len))]
+            (when (seq prompt)
+              (handle-ai-command input prompt has-bang?
+                                 (str "Generating [" (name tier-kw) "]...") tier-kw)))
 
           ;; /ai or /ai! — AI code generation
           (or (str/starts-with? trimmed "/ai! ")
