@@ -13,6 +13,35 @@
 ;; Scale factor: multiply before sending to Clipper, divide on return.
 (def ^:private SCALE 1000)
 
+;; --- Monkey-patch: fix clipper2-js v1.2.4 offsetPolygon loop bug ---
+;; The JS port has a bug in ClipperOffset.offsetPolygon where the variable
+;; tracking the previous vertex index (k) is never updated in the loop.
+;; Every vertex compares its normal against the LAST edge's normal instead
+;; of the PREVIOUS edge's normal, producing severely distorted offsets.
+;;
+;; C++ original: for (j=0, k=cnt-1; j<cnt; k=j, ++j)
+;; JS (buggy):   const prev=cnt-1; for (i=0; i<cnt; i++) // prev never changes
+;;
+;; This patch restores the correct C++ loop behavior.
+;; See also: offsetOpenPath has the same bug but we only use EndType.Polygon.
+(let [co-proto (.-prototype c2/ClipperOffset)]
+  (set! (.-offsetPolygon co-proto)
+    (fn [group path]
+      (this-as this
+        (let [area (.area c2/Clipper path)]
+          (when-not (and (not= (neg? area) (neg? (.-_groupDelta this)))
+                         (let [rect (.getBounds c2/Clipper path)
+                               min-dim (* (js/Math.abs (.-_groupDelta this)) 2)]
+                           (or (> min-dim (.-width rect))
+                               (> min-dim (.-height rect)))))
+            (set! (.-outPath group) #js [])
+            (let [cnt (.-length path)]
+              (loop [j 0, k (dec cnt)]
+                (when (< j cnt)
+                  (.offsetPoint this group path j k)
+                  (recur (inc j) j))))
+            (.push (.-outPaths group) (.-outPath group))))))))
+
 ;; --- Static method wrappers (preserve `this` binding) ---
 
 (defn- c-intersect [subject clip fill-rule]
@@ -102,25 +131,80 @@
 
 ;; --- Result classification ---
 
+(defn- point-in-polygon?
+  "Ray casting test: is point [px py] inside polygon (vector of [x y])?"
+  [[px py] polygon]
+  (let [n (count polygon)]
+    (loop [i 0 j (dec n) inside false]
+      (if (>= i n)
+        inside
+        (let [[xi yi] (nth polygon i)
+              [xj yj] (nth polygon j)
+              intersects? (and (not= (> yi py) (> yj py))
+                               (< px (+ xi (* (/ (- xj xi) (- yj yi))
+                                              (- py yi)))))]
+          (recur (inc i) i (if intersects? (not inside) inside)))))))
+
+(defn- classify-paths
+  "Classify Clipper result paths into outers (CCW, positive area) and holes (CW, negative area)."
+  [result]
+  (let [path-data (vec (for [i (range (.-length result))]
+                         (let [path (aget result i)
+                               pts (clipper-path->points path)
+                               area (signed-area-2d pts)]
+                           {:points pts :area area})))]
+    {:outers (filterv #(pos? (:area %)) path-data)
+     :holes  (filterv #(neg? (:area %)) path-data)}))
+
 (defn- paths-result->shape
-  "Convert Clipper result Paths64 to a Ridley shape.
+  "Convert Clipper result Paths64 to a single Ridley shape.
    Classifies paths by area: positive area = outer (CCW), negative = hole (CW).
-   Returns the largest outer with all holes, or nil if empty."
+   Returns the largest outer with all holes, or nil if empty.
+   Use paths-result->shapes for operations that can produce multiple outers."
   [result]
   (when (pos? (.-length result))
-    (let [path-data (vec (for [i (range (.-length result))]
-                           (let [path (aget result i)
-                                 pts (clipper-path->points path)
-                                 area (signed-area-2d pts)]
-                             {:points pts :area area})))
-          outers (filterv #(pos? (:area %)) path-data)
-          holes (filterv #(neg? (:area %)) path-data)]
+    (let [{:keys [outers holes]} (classify-paths result)]
       (when (seq outers)
         (let [largest (apply max-key :area outers)
               hole-pts (mapv #(ensure-cw (:points %)) holes)]
           (shape/make-shape (ensure-ccw (:points largest))
                             (cond-> {:centered? true}
                               (seq hole-pts) (assoc :holes hole-pts))))))))
+
+(defn- paths-result->shapes
+  "Convert Clipper result Paths64 to a vector of Ridley shapes.
+   Each outer contour becomes a separate shape with its associated holes.
+   Holes are assigned to the outer that contains them."
+  [result]
+  (when (pos? (.-length result))
+    (let [{:keys [outers holes]} (classify-paths result)]
+      (when (seq outers)
+        (if (= 1 (count outers))
+          ;; Single outer — all holes belong to it
+          (let [hole-pts (mapv #(ensure-cw (:points %)) holes)]
+            [(shape/make-shape (ensure-ccw (:points (first outers)))
+                               (cond-> {:centered? true}
+                                 (seq hole-pts) (assoc :holes hole-pts)))])
+          ;; Multiple outers — assign holes to containing outer
+          (let [outer-pts (mapv #(ensure-ccw (:points %)) outers)
+                hole-assignments (reduce
+                                   (fn [assignments hole]
+                                     (let [hole-pt (first (:points hole))
+                                           outer-idx (some (fn [idx]
+                                                             (when (point-in-polygon? hole-pt (nth outer-pts idx))
+                                                               idx))
+                                                           (range (count outer-pts)))]
+                                       (if outer-idx
+                                         (update assignments outer-idx conj (ensure-cw (:points hole)))
+                                         assignments)))
+                                   (vec (repeat (count outers) []))
+                                   holes)]
+            (mapv (fn [outer-p hole-vecs]
+                    (shape/make-shape outer-p
+                                     (cond-> {:centered? true}
+                                       (seq hole-vecs) (assoc :holes (vec hole-vecs)))))
+                  outer-pts
+                  hole-assignments)))))))
 
 ;; --- Boolean operations ---
 
@@ -154,9 +238,14 @@
 
 (defn ^:export shape-xor
   "Boolean XOR of two 2D shapes.
-   Returns the non-overlapping regions."
+   Returns a vector of shapes (the non-overlapping regions).
+   XOR can produce multiple disconnected regions."
   [shape-a shape-b]
-  (clipper-boolean c-xor shape-a shape-b))
+  (let [subject-paths (shape->clipper-paths shape-a)
+        clip-paths (shape->clipper-paths shape-b)
+        result (c-xor subject-paths clip-paths c2/FillRule.NonZero)]
+    (or (paths-result->shapes result)
+        [shape-a])))
 
 ;; --- Offset ---
 
@@ -167,10 +256,15 @@
 
 (defn ^:export shape-offset
   "Expand (positive delta) or contract (negative delta) a 2D shape.
+   Accepts a single shape or a vector of shapes (from shape-xor).
    join-type: :round (default), :square, :miter"
-  [shape delta & {:keys [join-type] :or {join-type :round}}]
-  (let [paths (shape->clipper-paths shape)
-        jt (get join-type-map join-type c2/JoinType.Round)
-        scaled-delta (* delta SCALE)
-        result (c-inflate-paths paths scaled-delta jt c2/EndType.Polygon)]
-    (paths-result->shape result)))
+  [shape-or-shapes delta & {:keys [join-type] :or {join-type :round}}]
+  (if (and (vector? shape-or-shapes) (seq shape-or-shapes) (map? (first shape-or-shapes)))
+    ;; Vector of shapes — offset each independently
+    (mapv #(shape-offset % delta :join-type join-type) shape-or-shapes)
+    ;; Single shape
+    (let [paths (shape->clipper-paths shape-or-shapes)
+          jt (get join-type-map join-type c2/JoinType.Round)
+          scaled-delta (* delta SCALE)
+          result (c-inflate-paths paths scaled-delta jt c2/EndType.Polygon)]
+      (paths-result->shape result))))

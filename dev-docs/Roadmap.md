@@ -617,6 +617,7 @@ The core turtle system, generative operations, boolean operations, and anchor/na
 4. [x] 2D shape booleans — `(shape-union a b)`, `(shape-difference a b)`, `(shape-intersection a b)`, `(shape-xor a b)`, `(shape-offset shape delta)` via clipper2-js. Shapes with holes extrude correctly (holes-aware extrusion with caps, corners, and tunnel faces).
 
 **Recently completed:**
+- ✓ **Multi-shape XOR & Loft Improvements** — `shape-xor` returns vector of shapes for disconnected regions; `shape-offset`, `loft`, `bloft`, `revolve`, `stamp` accept shape vectors. Loft-from-path generates proper start/end cap meshes. Fixed clipper2-js offsetPolygon bug via monkey-patch. Editor selection fix (opacity-based).
 - ✓ **2D Shape Booleans** — `shape-union`, `shape-difference`, `shape-intersection`, `shape-xor`, `shape-offset` via clipper2-js. Holes-aware extrusion pipeline (simple + complex paths with corners). Shape transforms propagate through holes.
 - ✓ **Library/Namespace System** — User-defined reusable code libraries with localStorage persistence, SCI namespace injection (`shapes/hexagon`), topological sort for dependency ordering, cascade deactivation, drag & drop reordering, import/export as `.clj` files
 - ✓ **Bounds functions** — `bounds`, `height`, `width`, `depth`, `top`, `bottom` for bounding box queries; `info` now includes bounds data

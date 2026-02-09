@@ -211,8 +211,8 @@ The `clipper` module (`ridley/clipper/core.cljs`) provides 2D boolean operations
 (shape-union a b)        ; Combine two shapes
 (shape-difference a b)   ; Cut shape B from shape A (creates holes)
 (shape-intersection a b) ; Keep overlapping region
-(shape-xor a b)          ; Keep non-overlapping regions
-(shape-offset shape d)   ; Expand (d>0) or contract (d<0) a shape
+(shape-xor a b)          ; Non-overlapping regions (returns vector of shapes)
+(shape-offset shape d)   ; Expand (d>0) or contract (d<0) a shape or vector of shapes
 ```
 
 ### How It Works
@@ -226,9 +226,18 @@ The `clipper` module (`ridley/clipper/core.cljs`) provides 2D boolean operations
    (.call (.-Difference c2/Clipper) c2/Clipper subject clip fill-rule)
    ```
 
-4. **Result classification**: Output paths are classified by signed area — positive area = CCW outer, negative area = CW hole. The largest outer is returned with all holes.
+4. **Result classification**: Output paths are classified by signed area — positive area = CCW outer, negative area = CW hole. For single-result ops (`union`, `difference`, `intersection`) the largest outer is returned with all holes. For `xor`, multiple outers are returned as separate shapes with holes assigned by point-in-polygon containment.
 
 5. **FillRule.NonZero**: Used for all operations, matching Ridley's CCW-outer / CW-hole convention.
+
+6. **Monkey-patch**: The clipper2-js v1.2.4 port has a bug in `ClipperOffset.offsetPolygon` where the previous-vertex index is never updated in the loop, producing distorted offsets. A monkey-patch in `clipper/core.cljs` restores the correct C++ loop behavior.
+
+### Multi-Shape Support
+
+`shape-xor` returns a vector of shapes (since XOR can produce disconnected regions). This vector is accepted by:
+- `shape-offset` — offsets each shape independently
+- `extrude`, `loft`, `bloft`, `revolve` — generates a mesh per shape, returns single mesh or vector
+- `stamp` — stamps all shapes at current pose
 
 ### Holes-Aware Extrusion
 

@@ -70,8 +70,8 @@
          :code "(register lens\n  (extrude\n    (shape-intersection (circle 15)\n      (translate-shape (circle 15) 12 0))\n    (f 5)))"}
         {:id :shape-offset-frame
          :code "(register frame\n  (extrude\n    (shape-difference\n      (shape-offset (rect 30 20) 5)\n      (rect 30 20))\n    (f 8)))"}
-        {:id :shape-xor-eyes
-         :code "(register eyes\n  (extrude\n    (shape-xor (circle 12)\n      (translate-shape (circle 12) 15 0))\n    (f 5)))"}]}
+        {:id :shape-xor-cross
+         :code "(register cross\n  (extrude\n    (shape-xor (rect 40 15) (rect 15 40))\n    (f 5)))"}]}
       {:id :reusable-shapes
        :examples
        [{:id :def-shape
@@ -492,8 +492,8 @@ Use `translate-shape` to position shapes before combining:
                                  :description "`shape-intersection` keeps only the area where both circles overlap, creating a lens-shaped cross-section."}
        :shape-offset-frame {:caption "Frame (offset)"
                             :description "`shape-offset` expands a shape outward. Subtracting the original from the expanded version creates a uniform-width frame."}
-       :shape-xor-eyes {:caption "Eyes (xor)"
-                        :description "`shape-xor` keeps the parts of each circle that don't overlap — the symmetric difference. Creates two crescent shapes."}}}
+       :shape-xor-cross {:caption "Cross (xor)"
+                         :description "`shape-xor` keeps the parts that don't overlap — the symmetric difference. Two crossing rectangles produce a cross with the center cut out."}}}
 
      :reusable-shapes
      {:title "Reusable Shapes"
@@ -1351,8 +1351,8 @@ Usa `translate-shape` per posizionare le forme prima di combinarle:
                                  :description "`shape-intersection` mantiene solo l'area in cui entrambi i cerchi si sovrappongono, creando una sezione a forma di lente."}
        :shape-offset-frame {:caption "Cornice (offset)"
                             :description "`shape-offset` espande una forma verso l'esterno. Sottraendo l'originale dalla versione espansa si crea una cornice di larghezza uniforme."}
-       :shape-xor-eyes {:caption "Occhi (xor)"
-                        :description "`shape-xor` mantiene le parti di ogni cerchio che non si sovrappongono — la differenza simmetrica. Crea due forme a mezzaluna."}}}
+       :shape-xor-cross {:caption "Croce (xor)"
+                         :description "`shape-xor` mantiene le parti che non si sovrappongono — la differenza simmetrica. Due rettangoli incrociati producono una croce con il centro ritagliato."}}}
 
      :reusable-shapes
      {:title "Forme Riutilizzabili"

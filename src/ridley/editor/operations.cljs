@@ -100,6 +100,22 @@
                    (into combined-verts new-verts)
                    (into combined-faces new-faces))))))))
 
+(defn- unwrap-shapes
+  "Normalize shape-or-shapes to a vector of individual shapes."
+  [shape-or-shapes]
+  (if (and (vector? shape-or-shapes)
+           (seq shape-or-shapes)
+           (map? (first shape-or-shapes)))
+    shape-or-shapes
+    [shape-or-shapes]))
+
+(defn- wrap-results
+  "Return single result or vector based on count."
+  [results]
+  (if (= 1 (count results))
+    (first results)
+    results))
+
 (defn ^:export pure-loft-path
   "Pure loft function - creates mesh without side effects.
    Starts from current turtle position/orientation.
@@ -108,10 +124,9 @@
 
    At corners, generates separate segment meshes and combines them.
    The resulting mesh may have overlapping/intersecting parts."
-  ([shape transform-fn path] (pure-loft-path shape transform-fn path 16))
-  ([shape transform-fn path steps]
-   (let [;; Start from current turtle position/orientation
-         ;; Also copy joint-mode and resolution settings
+  ([shape-or-shapes transform-fn path] (pure-loft-path shape-or-shapes transform-fn path 16))
+  ([shape-or-shapes transform-fn path steps]
+   (let [shapes (unwrap-shapes shape-or-shapes)
          current-turtle @turtle-atom
          initial-state (if current-turtle
                          (-> (turtle/make-turtle)
@@ -122,31 +137,40 @@
                              (assoc :resolution (:resolution current-turtle))
                              (assoc :material (:material current-turtle)))
                          (turtle/make-turtle))
-         ;; Use loft-from-path which generates separate meshes at corners
-         result-state (turtle/loft-from-path initial-state shape transform-fn path steps)
-         ;; Combine all segment meshes into one
-         meshes (:meshes result-state)]
-     (combine-meshes meshes))))
+         results (reduce
+                  (fn [acc shape]
+                    (let [result-state (turtle/loft-from-path initial-state shape transform-fn path steps)
+                          mesh (combine-meshes (:meshes result-state))]
+                      (if mesh (conj acc mesh) acc)))
+                  []
+                  shapes)]
+     (wrap-results results))))
 
 (defn ^:export pure-loft-two-shapes
   "Pure loft between two shapes - creates mesh that transitions from shape1 to shape2.
    If shapes have different point counts, they are automatically resampled to match.
    Point arrays are aligned angularly for smooth morphing between different topologies.
-   Starts from current turtle position/orientation."
-  ([shape1 shape2 path] (pure-loft-two-shapes shape1 shape2 path 16))
-  ([shape1 shape2 path steps]
-   (let [n1 (count (:points shape1))
-         n2 (count (:points shape2))
-         ;; Auto-resample to the maximum point count
-         [s1 s2] (if (= n1 n2)
-                   [shape1 shape2]
-                   (let [target-n (max n1 n2)]
-                     [(xform/resample shape1 target-n)
-                      (xform/resample shape2 target-n)]))
-         ;; Align s2's starting point to match s1's angular position
-         s2-aligned (xform/align-to-shape s1 s2)
-         transform-fn (shape/make-lerp-fn s1 s2-aligned)]
-     (pure-loft-path s1 transform-fn path steps))))
+   Starts from current turtle position/orientation.
+   If shape1 is a vector of shapes, each is independently lofted to shape2."
+  ([shape1-or-shapes shape2 path] (pure-loft-two-shapes shape1-or-shapes shape2 path 16))
+  ([shape1-or-shapes shape2 path steps]
+   (let [shapes1 (unwrap-shapes shape1-or-shapes)
+         results (reduce
+                  (fn [acc s1]
+                    (let [n1 (count (:points s1))
+                          n2 (count (:points shape2))
+                          [rs1 rs2] (if (= n1 n2)
+                                      [s1 shape2]
+                                      (let [target-n (max n1 n2)]
+                                        [(xform/resample s1 target-n)
+                                         (xform/resample shape2 target-n)]))
+                          s2-aligned (xform/align-to-shape rs1 rs2)
+                          transform-fn (shape/make-lerp-fn rs1 s2-aligned)
+                          mesh (pure-loft-path rs1 transform-fn path steps)]
+                      (if mesh (conj acc mesh) acc)))
+                  []
+                  shapes1)]
+     (wrap-results results))))
 
 (defn ^:export pure-bloft
   "Pure bezier-safe loft - handles self-intersecting paths.
@@ -158,10 +182,11 @@
    threshold: intersection sensitivity 0.0-1.0 (default 0.1)
               Higher = faster but may miss intersections
               Lower = slower but catches more intersections"
-  ([shape transform-fn path] (pure-bloft shape transform-fn path 32 0.1))
-  ([shape transform-fn path steps] (pure-bloft shape transform-fn path steps 0.1))
-  ([shape transform-fn path steps threshold]
-   (let [current-turtle @turtle-atom
+  ([shape-or-shapes transform-fn path] (pure-bloft shape-or-shapes transform-fn path 32 0.1))
+  ([shape-or-shapes transform-fn path steps] (pure-bloft shape-or-shapes transform-fn path steps 0.1))
+  ([shape-or-shapes transform-fn path steps threshold]
+   (let [shapes (unwrap-shapes shape-or-shapes)
+         current-turtle @turtle-atom
          initial-state (if current-turtle
                          (-> (turtle/make-turtle)
                              (assoc :position (:position current-turtle))
@@ -171,9 +196,14 @@
                              (assoc :resolution (:resolution current-turtle))
                              (assoc :material (:material current-turtle)))
                          (turtle/make-turtle))
-         result-state (turtle/bloft initial-state shape transform-fn path steps threshold)
-         meshes (:meshes result-state)]
-     (combine-meshes meshes))))
+         results (reduce
+                  (fn [acc shape]
+                    (let [result-state (turtle/bloft initial-state shape transform-fn path steps threshold)
+                          mesh (combine-meshes (:meshes result-state))]
+                      (if mesh (conj acc mesh) acc)))
+                  []
+                  shapes)]
+     (wrap-results results))))
 
 (defn ^:export pure-revolve
   "Pure revolve function - creates mesh without side effects.
@@ -185,10 +215,9 @@
    - 2D Y = position along axis (in up direction)
 
    angle: rotation angle in degrees (default 360 for full revolution)"
-  ([shape] (pure-revolve shape 360))
-  ([shape angle]
-   (let [;; Start from current turtle position/orientation
-         ;; Also copy resolution settings
+  ([shape-or-shapes] (pure-revolve shape-or-shapes 360))
+  ([shape-or-shapes angle]
+   (let [shapes (unwrap-shapes shape-or-shapes)
          current-turtle @turtle-atom
          initial-state (if current-turtle
                          (-> (turtle/make-turtle)
@@ -198,10 +227,14 @@
                              (assoc :resolution (:resolution current-turtle))
                              (assoc :material (:material current-turtle)))
                          (turtle/make-turtle))
-         ;; Revolve the shape
-         result-state (turtle/revolve-shape initial-state shape angle)
-         mesh (last (:meshes result-state))]
-     mesh)))
+         results (reduce
+                  (fn [acc shape]
+                    (let [result-state (turtle/revolve-shape initial-state shape angle)
+                          mesh (last (:meshes result-state))]
+                      (if mesh (conj acc mesh) acc)))
+                  []
+                  shapes)]
+     (wrap-results results))))
 
 ;; Legacy version for backwards compatibility (modifies global state)
 (defn ^:export implicit-extrude-path [shape-or-shapes path]

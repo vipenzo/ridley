@@ -3,8 +3,6 @@
   (:require [clojure.string :as str]
             ["@codemirror/view" :as view :refer [EditorView ViewPlugin Decoration
                                                   keymap lineNumbers
-                                                  highlightActiveLine
-                                                  highlightActiveLineGutter
                                                   drawSelection
                                                   rectangularSelection
                                                   crosshairCursor
@@ -170,7 +168,10 @@
 
 (defn- create-selection-layer-fix
   "ViewPlugin that applies inline styles to .cm-selectionLayer,
-   bypassing CSS specificity issues with CodeMirror's theme system."
+   bypassing CSS specificity issues with CodeMirror's theme system.
+   z-index 2 lifts the selection above the opaque editor background;
+   opacity makes the selection semi-transparent so text shows through;
+   pointer-events none ensures clicks pass through to the text layer."
   []
   (.define ViewPlugin
     (fn [^js view]
@@ -178,7 +179,8 @@
                         (when-let [layer (.querySelector (.-dom view) ".cm-selectionLayer")]
                           (let [s (.-style layer)]
                             (set! (.-zIndex s) "2")
-                            (set! (.-mixBlendMode s) "screen"))))]
+                            (set! (.-pointerEvents s) "none")
+                            (set! (.-opacity s) "0.4"))))]
         (apply-fix)
         #js {:update (fn [_update] (apply-fix))}))))
 
@@ -229,8 +231,6 @@
                             (autocompletion)
                             (rectangularSelection)
                             (crosshairCursor)
-                            (highlightActiveLine)
-                            (highlightActiveLineGutter)
                             (highlightSelectionMatches)
                             ;; Clojure language support (syntax + paredit)
                             clojure-mode/default_extensions

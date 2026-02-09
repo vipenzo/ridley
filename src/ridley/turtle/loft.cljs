@@ -28,6 +28,7 @@
 (def is-corner-rotation? extrusion/is-corner-rotation?)
 (def calc-shorten-for-angle extrusion/calc-shorten-for-angle)
 (def ring-centroid extrusion/ring-centroid)
+(def triangulate-cap extrusion/triangulate-cap)
 (def generate-round-corner-rings extrusion/generate-round-corner-rings)
 (def generate-tapered-corner-rings extrusion/generate-tapered-corner-rings)
 (def calc-round-steps extrusion/calc-round-steps)
@@ -511,14 +512,41 @@
                           taper-acc 0         ;; effective distance travelled so far (for t)
                           prev-rn 0           ;; carry start offset from previous corner
                           acc-rings []        ;; accumulated rings for current smooth section
-                          finished-meshes []] ;; completed meshes (split at corners)
+                          finished-meshes []  ;; completed meshes (split at corners)
+                          loft-first-ring nil  ;; first ring of entire loft (for start cap)
+                          loft-second-ring nil] ;; second ring (for start cap normal)
                      (if (>= seg-idx n-segments)
-                       ;; Flush any remaining accumulated rings as a final mesh (no internal caps)
-                       {:meshes (if (>= (count acc-rings) 2)
-                                  (conj finished-meshes
-                                        (build-sweep-mesh (vec acc-rings) false creation-pose false))
-                                  finished-meshes)
-                        :state s}
+                       ;; Flush any remaining accumulated rings as a final mesh (no caps on segments)
+                       ;; then generate separate cap meshes for start and end
+                       (let [final-meshes (if (>= (count acc-rings) 2)
+                                            (conj finished-meshes
+                                                  (build-sweep-mesh (vec acc-rings) false creation-pose false))
+                                            finished-meshes)
+                             ;; Generate cap meshes
+                             last-ring (last acc-rings)
+                             second-to-last (when (>= (count acc-rings) 2)
+                                              (nth acc-rings (- (count acc-rings) 2)))
+                             bottom-normal (when (and loft-first-ring loft-second-ring)
+                                             (v* (normalize (v- (ring-centroid loft-second-ring)
+                                                                (ring-centroid loft-first-ring)))
+                                                 -1))
+                             top-normal (when (and last-ring second-to-last)
+                                          (normalize (v- (ring-centroid last-ring)
+                                                         (ring-centroid second-to-last))))
+                             bottom-cap (when (and loft-first-ring bottom-normal
+                                                   (>= (count loft-first-ring) 3))
+                                          {:type :mesh :primitive :cap
+                                           :vertices (vec loft-first-ring)
+                                           :faces (triangulate-cap loft-first-ring 0 bottom-normal false)})
+                             top-cap (when (and last-ring top-normal
+                                               (>= (count last-ring) 3))
+                                       {:type :mesh :primitive :cap
+                                        :vertices (vec last-ring)
+                                        :faces (triangulate-cap last-ring 0 top-normal false)})]
+                         {:meshes (cond-> final-meshes
+                                    bottom-cap (conj bottom-cap)
+                                    top-cap (conj top-cap))
+                          :state s})
                        (let [seg (nth segments seg-idx)
                              seg-dist (:dist seg)
                              has-corner (:has-corner-after seg)
@@ -567,6 +595,12 @@
 
                              ;; Merge into accumulated rings
                              new-acc-rings (into acc-rings seg-rings)
+
+                             ;; Track first/second ring for caps
+                             new-first-ring (or loft-first-ring (first new-acc-rings))
+                             new-second-ring (or loft-second-ring
+                                                (when (>= (count new-acc-rings) 2)
+                                                  (second new-acc-rings)))
 
                              ;; Apply rotations to get new heading (rotate at corner position)
                              s-at-corner (assoc s :position corner-base)
@@ -653,7 +687,9 @@
                                     [next-start-ring]
                                     (cond-> finished-meshes
                                       section-mesh (conj section-mesh)
-                                      corner-mesh (conj corner-mesh))))
+                                      corner-mesh (conj corner-mesh))
+                                    new-first-ring
+                                    new-second-ring))
 
                            ;; No corner: smooth junction — use inner-pivot transition rings
                            ;; to prevent ring overlap on the inner side of tight curves
@@ -683,7 +719,9 @@
                                     new-taper-acc
                                     0
                                     updated-acc
-                                    finished-meshes))))))
+                                    finished-meshes
+                                    new-first-ring
+                                    new-second-ring))))))
 
                    segment-meshes (:meshes result)
                    final-state (:state result)]

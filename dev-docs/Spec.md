@@ -350,7 +350,7 @@ operations (extrude, loft, revolve) correctly handle shapes with holes.
 (shape-union a b)                ; Combined outline of both shapes
 (shape-difference a b)           ; Shape A with shape B cut out
 (shape-intersection a b)         ; Overlapping region only
-(shape-xor a b)                  ; Non-overlapping regions
+(shape-xor a b)                  ; Non-overlapping regions (returns vector of shapes)
 ```
 
 **Offset (expand/contract):**
@@ -381,6 +381,8 @@ operations (extrude, loft, revolve) correctly handle shapes with holes.
 
 **Notes:**
 - Results may contain holes (e.g., `shape-difference` of overlapping shapes)
+- `shape-xor` returns a **vector of shapes** (since XOR can produce disconnected regions)
+- Vectors of shapes are accepted by `shape-offset`, `extrude`, `loft`, `bloft`, `revolve`, and `stamp`
 - Holes are automatically detected from winding direction
 - All shape transforms (`scale`, `rotate-shape`, `translate`, `morph`) propagate holes
 - Internally uses integer coordinates (×1000 scale) for precision
