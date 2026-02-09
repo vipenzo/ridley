@@ -27,6 +27,11 @@
 (defonce ^:private normals-visible (atom false))
 (defonce ^:private normals-object (atom nil))
 
+;; Stamp outlines visualization (debug 2D shape preview)
+(defonce ^:private stamps-visible (atom true))
+(defonce ^:private stamps-object (atom nil))
+(defonce ^:private current-stamps (atom []))
+
 ;; Panel (3D text billboard) objects
 ;; Maps panel name -> {:mesh THREE.Mesh :canvas OffscreenCanvas :texture THREE.CanvasTexture}
 (defonce ^:private panel-objects (atom {}))
@@ -692,14 +697,69 @@
       (reset! normals-object new-obj)
       (.add world-group new-obj))))
 
+;; ============================================================
+;; Stamp surface visualization (debug 2D shape preview)
+;; ============================================================
+
+(defn- create-stamp-mesh
+  "Create a semi-transparent Three.js mesh from pre-triangulated stamp data.
+   Each stamp is {:vertices [[x y z]...] :faces [[i j k]...]}."
+  [{:keys [vertices faces]}]
+  (when (and (seq vertices) (seq faces))
+    (let [geom (THREE/BufferGeometry.)
+          n-verts (count vertices)
+          ;; Expand indexed faces to flat vertex positions
+          face-verts (mapcat (fn [[i0 i1 i2]]
+                               (when (and (< i0 n-verts) (< i1 n-verts) (< i2 n-verts))
+                                 [(nth vertices i0)
+                                  (nth vertices i1)
+                                  (nth vertices i2)]))
+                             faces)
+          flat-coords (mapcat identity face-verts)
+          positions (js/Float32Array. (clj->js flat-coords))
+          material (THREE/MeshBasicMaterial.
+                    #js {:color 0xffaa00
+                         :transparent true
+                         :opacity 0.3
+                         :side THREE/DoubleSide
+                         :depthWrite false})]
+      (.setAttribute geom "position" (THREE/BufferAttribute. positions 3))
+      (.computeVertexNormals geom)
+      (THREE/Mesh. geom material))))
+
+(defn- update-stamps-display
+  "Update or create the stamps visualization objects."
+  [world-group stamps]
+  ;; Remove old stamps group
+  (when-let [^js old-obj @stamps-object]
+    (.remove world-group old-obj)
+    ;; Dispose children
+    (.traverse old-obj (fn [^js child]
+                         (when-let [geom (.-geometry child)]
+                           (.dispose geom))
+                         (when-let [mat (.-material child)]
+                           (.dispose mat))))
+    (reset! stamps-object nil))
+  ;; Create new stamps group if visible and we have stamps
+  (when (and @stamps-visible (seq stamps))
+    (let [group (THREE/Group.)]
+      (doseq [stamp-data stamps]
+        (when-let [mesh (create-stamp-mesh stamp-data)]
+          (.add group mesh)))
+      (when (pos? (.-length (.-children group)))
+        (set! (.-name group) "stamp-surfaces")
+        (reset! stamps-object group)
+        (.add world-group group)))))
+
 (defn update-scene
   "Update viewport with lines, meshes, and panels.
    Options:
      :reset-camera? - if true (default), fit camera to geometry
      :panels - vector of panel data to render"
-  [{:keys [lines meshes panels reset-camera?] :or {reset-camera? true panels []}}]
-  ;; Store meshes for export
+  [{:keys [lines meshes stamps panels reset-camera?] :or {reset-camera? true panels [] stamps []}}]
+  ;; Store meshes and stamps for export/toggle
   (reset! current-meshes (vec meshes))
+  (reset! current-stamps (vec stamps))
   (when-let [{:keys [world-group highlight-group camera controls]} @state]
     (clear-geometry world-group highlight-group)
     ;; Add line segments to world-group
@@ -723,9 +783,12 @@
           (swap! panel-objects assoc name panel-obj))))
     ;; Update normals visualization
     (update-normals-display world-group meshes)
+    ;; Update stamp outlines visualization
+    (update-stamps-display world-group stamps)
     ;; Fit camera to all geometry (only if reset-camera? is true)
     (when reset-camera?
-      (let [all-points (collect-all-points lines meshes)]
+      (let [stamp-points (mapcat :vertices stamps)
+            all-points (concat (collect-all-points lines meshes) stamp-points)]
         (when (seq all-points)
           (let [xs (map first all-points)
                 ys (map second all-points)
@@ -1161,6 +1224,47 @@
       (when-let [obj @normals-object]
         (.remove world-group obj)
         (reset! normals-object nil)))))
+
+;; ============================================================
+;; Stamp surface visibility
+;; ============================================================
+
+(defn- dispose-stamps-object!
+  "Remove and dispose stamps group from scene."
+  [world-group]
+  (when-let [^js obj @stamps-object]
+    (.remove world-group obj)
+    (.traverse obj (fn [^js child]
+                     (when-let [geom (.-geometry child)]
+                       (.dispose geom))
+                     (when-let [mat (.-material child)]
+                       (.dispose mat))))
+    (reset! stamps-object nil)))
+
+(defn toggle-stamps
+  "Toggle stamp surfaces visibility. Returns new visibility state."
+  []
+  (let [new-visible (swap! stamps-visible not)]
+    (if new-visible
+      (when-let [{:keys [world-group]} @state]
+        (update-stamps-display world-group @current-stamps))
+      (when-let [{:keys [world-group]} @state]
+        (dispose-stamps-object! world-group)))
+    new-visible))
+
+(defn stamps-visible?
+  "Return current stamps visibility state."
+  []
+  @stamps-visible)
+
+(defn set-stamps-visible
+  "Set stamps visibility explicitly."
+  [visible?]
+  (reset! stamps-visible visible?)
+  (when-let [{:keys [world-group]} @state]
+    (if visible?
+      (update-stamps-display world-group @current-stamps)
+      (dispose-stamps-object! world-group))))
 
 (defn show-loading!
   "Show loading overlay on viewport."

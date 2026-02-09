@@ -614,9 +614,10 @@ The core turtle system, generative operations, boolean operations, and anchor/na
 1. [ ] Face cutting (draw shape on face)
 2. [ ] Non-uniform scale `(scale [sx sy sz])`
 3. [ ] STL import — load external STL as reusable mesh in Ridley
-4. [ ] 2D shape booleans — `(shape-union a b)`, `(shape-difference a b)`, `(shape-intersection a b)` for shapes with holes (e.g., `(extrude (shape-difference (circle 30) (circle 20)) (f 50))` → hollow tube)
+4. [x] 2D shape booleans — `(shape-union a b)`, `(shape-difference a b)`, `(shape-intersection a b)`, `(shape-xor a b)`, `(shape-offset shape delta)` via clipper2-js. Shapes with holes extrude correctly (holes-aware extrusion with caps, corners, and tunnel faces).
 
 **Recently completed:**
+- ✓ **2D Shape Booleans** — `shape-union`, `shape-difference`, `shape-intersection`, `shape-xor`, `shape-offset` via clipper2-js. Holes-aware extrusion pipeline (simple + complex paths with corners). Shape transforms propagate through holes.
 - ✓ **Library/Namespace System** — User-defined reusable code libraries with localStorage persistence, SCI namespace injection (`shapes/hexagon`), topological sort for dependency ordering, cascade deactivation, drag & drop reordering, import/export as `.clj` files
 - ✓ **Bounds functions** — `bounds`, `height`, `width`, `depth`, `top`, `bottom` for bounding box queries; `info` now includes bounds data
 - ✓ **`attach!` macro** — in-place transform of registered meshes by keyword: `(attach! :name (f 20))`. Removed redundant `clone` macro (attach is already functional)

@@ -838,6 +838,116 @@ The "All" / "Objects" button in the viewport toolbar toggles between:
 
 ---
 
+## Shape Preview (Stamp)
+
+Debug shape placement by visualizing 2D shapes as wireframe outlines at the current turtle pose.
+
+### Basic Stamp
+
+```clojure
+;; Show a circle at the current position
+(stamp (circle 10))
+
+;; Move turtle and stamp at new position
+(f 30)
+(tv 45)
+(stamp (circle 15))
+```
+
+### Stamp with Holes
+
+```clojure
+;; Washer shape shows both outer and inner contours
+(def washer (shape-difference (circle 20) (circle 14)))
+(stamp washer)
+
+;; Move forward and stamp again to preview extrusion endpoints
+(f 40)
+(stamp washer)
+```
+
+### Multiple Stamps Along Path
+
+```clojure
+;; Preview shape at key positions along a path
+(dotimes [i 5]
+  (stamp (circle (+ 5 (* i 2))))
+  (f 15)
+  (th 20))
+```
+
+---
+
+## 2D Shape Booleans
+
+Combine 2D shapes before extrusion to create complex cross-sections with holes.
+
+### Hollow Tube (Washer)
+
+```clojure
+;; Create a washer shape: outer circle minus inner circle
+(def washer (shape-difference (circle 15) (circle 10)))
+
+;; Extrude to create a hollow tube
+(register tube (pure-extrude-path washer (quick-path 40)))
+```
+
+### L-Shaped Tube with Corner
+
+```clojure
+;; Washer extruded along a cornered path
+(def washer (shape-difference (circle 15) (circle 10)))
+
+;; L-shaped path: 30 forward, 90° turn, 30 forward
+(register elbow (pure-extrude-path washer (quick-path 30 90 30)))
+```
+
+### Shape Union
+
+```clojure
+;; Merge two overlapping circles into a single shape
+(def merged (shape-union
+              (translate-shape (circle 10) -5 0)
+              (translate-shape (circle 10) 5 0)))
+
+(register merged-tube (pure-extrude-path merged (quick-path 30)))
+```
+
+### Shape Intersection
+
+```clojure
+;; Keep only the overlapping region of two circles
+(def lens (shape-intersection
+            (translate-shape (circle 15) -5 0)
+            (translate-shape (circle 15) 5 0)))
+
+(register lens-shape (pure-extrude-path lens (quick-path 20)))
+```
+
+### Shape Offset
+
+```clojure
+;; Expand or contract a shape
+(def small-rect (rect 20 10))
+(def rounded (shape-offset small-rect 3))           ;; expanded with rounded corners
+(def shrunk (shape-offset small-rect -2))            ;; contracted
+
+(register expanded (pure-extrude-path rounded (quick-path 15)))
+```
+
+### Complex Profile
+
+```clojure
+;; Rectangular tube with rounded outer, square inner
+(def outer (shape-offset (rect 30 20) 3))    ;; rounded rectangle
+(def inner (rect 24 14))                      ;; square hole
+(def channel (shape-difference outer inner))
+
+(register channel-tube (pure-extrude-path channel (quick-path 50)))
+```
+
+---
+
 ## Custom Shapes from Points
 
 Create shapes from arbitrary 2D point vectors:

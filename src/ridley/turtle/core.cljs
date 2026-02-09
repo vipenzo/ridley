@@ -36,6 +36,7 @@
    :sweep-rings []          ; for :shape mode: accumulated rings for unified mesh
    :geometry []
    :meshes []
+   :stamps []             ; accumulated stamp outlines for debug visualization
    :state-stack []          ; stack for push-state/pop-state
    :anchors {}              ; named poses for mark/goto
    :attached nil            ; attachment state for face/mesh operations
@@ -920,6 +921,26 @@
           (assoc :sweep-initial-heading (:heading state))
           (assoc :sweep-initial-up (:up state))
           (assoc :sweep-closed? true)))    ; Mark as closed extrusion
+    state))
+
+(defn stamp-debug
+  "Visualize a 2D shape at the current turtle position/orientation.
+   Projects the shape into 3D and stores it as a semi-transparent surface.
+   Pre-computes triangulated faces for rendering.
+   Does not modify turtle position or heading."
+  [state shape]
+  (if (shape? shape)
+    (let [stamp-3d (stamp-shape-with-holes state shape)
+          ;; Build combined vertex list: outer ++ holes
+          outer-3d (:outer stamp-3d)
+          holes-3d (or (:holes stamp-3d) [])
+          all-verts (into (vec outer-3d) (apply concat holes-3d))
+          ;; Triangulate using 2D shape points (original, pre-projection)
+          outer-2d (:points shape)
+          holes-2d (or (:holes shape) [])
+          faces (earcut-triangulate outer-2d holes-2d)]
+      (update state :stamps conj {:vertices all-verts
+                                   :faces faces}))
     state))
 
 (defn finalize-sweep

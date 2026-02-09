@@ -561,8 +561,18 @@
       (let [lerp-pt (fn [[x1 y1] [x2 y2]]
                       [(+ x1 (* t (- x2 x1)))
                        (+ y1 (* t (- y2 y1)))])
-            new-pts (mapv lerp-pt pts1 pts2)]
-        (make-shape new-pts {:centered? (:centered? shape1)})))))
+            new-pts (mapv lerp-pt pts1 pts2)
+            ;; Interpolate holes if both shapes have matching holes
+            holes1 (:holes shape1)
+            holes2 (:holes shape2)
+            new-holes (when (and holes1 holes2 (= (count holes1) (count holes2)))
+                        (mapv (fn [h1 h2]
+                                (if (= (count h1) (count h2))
+                                  (mapv lerp-pt h1 h2)
+                                  h1))
+                              holes1 holes2))]
+        (make-shape new-pts (cond-> {:centered? (:centered? shape1)}
+                              new-holes (assoc :holes new-holes)))))))
 
 (defn make-lerp-fn
   "Create a transform function that interpolates from shape1 to shape2.

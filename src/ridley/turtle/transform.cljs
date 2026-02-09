@@ -26,9 +26,12 @@
    (scale shape factor factor))
   ([shape fx fy]
    (assert-shape shape "scale")
-   (let [points (:points shape)
-         scaled (mapv (fn [[x y]] [(* x fx) (* y fy)]) points)]
-     (assoc shape :points scaled))))
+   (let [scale-fn (fn [[x y]] [(* x fx) (* y fy)])
+         scaled (mapv scale-fn (:points shape))
+         new-holes (when (:holes shape)
+                     (mapv (fn [hole] (mapv scale-fn hole)) (:holes shape)))]
+     (cond-> (assoc shape :points scaled)
+       new-holes (assoc :holes new-holes)))))
 
 (defn rotate
   "Rotate a shape by angle (degrees) around origin."
@@ -37,20 +40,25 @@
   (let [angle (/ (* angle-deg Math/PI) 180)
         cos-a (Math/cos angle)
         sin-a (Math/sin angle)
-        points (:points shape)
-        rotated (mapv (fn [[x y]]
-                        [(- (* x cos-a) (* y sin-a))
-                         (+ (* x sin-a) (* y cos-a))])
-                      points)]
-    (assoc shape :points rotated)))
+        rotate-fn (fn [[x y]]
+                    [(- (* x cos-a) (* y sin-a))
+                     (+ (* x sin-a) (* y cos-a))])
+        rotated (mapv rotate-fn (:points shape))
+        new-holes (when (:holes shape)
+                    (mapv (fn [hole] (mapv rotate-fn hole)) (:holes shape)))]
+    (cond-> (assoc shape :points rotated)
+      new-holes (assoc :holes new-holes))))
 
 (defn translate
   "Translate a shape by [dx dy]."
   [shape dx dy]
   (assert-shape shape "translate")
-  (let [points (:points shape)
-        translated (mapv (fn [[x y]] [(+ x dx) (+ y dy)]) points)]
-    (assoc shape :points translated)))
+  (let [translate-fn (fn [[x y]] [(+ x dx) (+ y dy)])
+        translated (mapv translate-fn (:points shape))
+        new-holes (when (:holes shape)
+                    (mapv (fn [hole] (mapv translate-fn hole)) (:holes shape)))]
+    (cond-> (assoc shape :points translated)
+      new-holes (assoc :holes new-holes))))
 
 ;; ============================================================
 ;; Morphing / Interpolation
@@ -66,17 +74,24 @@
   (let [points-a (:points shape-a)
         points-b (:points shape-b)
         n-a (count points-a)
-        n-b (count points-b)]
+        n-b (count points-b)
+        lerp-fn (fn [[ax ay] [bx by]]
+                  [(+ ax (* t (- bx ax)))
+                   (+ ay (* t (- by ay)))])]
     (if (not= n-a n-b)
-      ;; Different point counts - return shape-a unchanged
-      ;; (user should use resample first)
       shape-a
-      ;; Interpolate each point
-      (let [interpolated (mapv (fn [[ax ay] [bx by]]
-                                 [(+ ax (* t (- bx ax)))
-                                  (+ ay (* t (- by ay)))])
-                               points-a points-b)]
-        (assoc shape-a :points interpolated)))))
+      (let [interpolated (mapv lerp-fn points-a points-b)
+            ;; Interpolate holes if both shapes have matching holes
+            holes-a (:holes shape-a)
+            holes-b (:holes shape-b)
+            new-holes (when (and holes-a holes-b (= (count holes-a) (count holes-b)))
+                        (mapv (fn [ha hb]
+                                (if (= (count ha) (count hb))
+                                  (mapv lerp-fn ha hb)
+                                  ha))
+                              holes-a holes-b))]
+        (cond-> (assoc shape-a :points interpolated)
+          new-holes (assoc :holes new-holes))))))
 
 ;; ============================================================
 ;; Resampling

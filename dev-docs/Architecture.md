@@ -58,6 +58,8 @@ ridley/
 │       │   ├── storage.cljs       # localStorage CRUD for user libraries
 │       │   ├── core.cljs          # SCI namespace integration, topo sort
 │       │   └── panel.cljs         # Library management UI panel
+│       ├── clipper/
+│       │   └── core.cljs          # Clipper2 wrapper (2D boolean ops, offset)
 │       ├── scene/
 │       │   └── registry.cljs      # Mesh registry (named meshes, visibility)
 │       ├── viewport/
@@ -199,6 +201,49 @@ User code runs in SCI, not raw ClojureScript. Benefits:
 - No compilation step (instant feedback)
 - Easy to add/restrict functions
 
+## 2D Shape Booleans (Clipper2)
+
+The `clipper` module (`ridley/clipper/core.cljs`) provides 2D boolean operations on shapes using the clipper2-js library (pure TypeScript port of Clipper2).
+
+### Operations
+
+```clojure
+(shape-union a b)        ; Combine two shapes
+(shape-difference a b)   ; Cut shape B from shape A (creates holes)
+(shape-intersection a b) ; Keep overlapping region
+(shape-xor a b)          ; Keep non-overlapping regions
+(shape-offset shape d)   ; Expand (d>0) or contract (d<0) a shape
+```
+
+### How It Works
+
+1. **Coordinate scaling**: Clipper2 works with integer coordinates internally. All points are scaled by 1000× before processing and unscaled on return.
+
+2. **Path conversion**: Ridley shapes (outer + holes) are converted to Clipper `Paths64` arrays. Outer contours are CCW, holes are CW.
+
+3. **Static method binding**: Clipper2's static methods lose `this` context in ClojureScript ES module interop. Solved with `.call` pattern:
+   ```clojure
+   (.call (.-Difference c2/Clipper) c2/Clipper subject clip fill-rule)
+   ```
+
+4. **Result classification**: Output paths are classified by signed area — positive area = CCW outer, negative area = CW hole. The largest outer is returned with all holes.
+
+5. **FillRule.NonZero**: Used for all operations, matching Ridley's CCW-outer / CW-hole convention.
+
+### Holes-Aware Extrusion
+
+Shapes with holes (created by `shape-difference`) are extruded correctly:
+
+- **Simple paths**: `sweep-two-shapes-with-holes` creates a tube with inner bore
+- **Complex paths**: `extrude-with-holes-from-path` handles corners (flat/round/tapered joints)
+- **Vertex layout**: Each combined ring = `[outer-pts... hole0-pts... hole1-pts...]`
+- **Caps**: Triangulated with `earcut.js` using the outer + holes topology
+- **Hole tunnel faces**: Side faces for each hole contour with correct winding
+
+### Shape Transforms with Holes
+
+All 2D shape transforms (`scale`, `rotate`, `translate`, `morph`) propagate through `:holes`, applying the same transformation to both outer contour and hole contours.
+
 ## External Dependencies
 
 ### ClojureScript (shadow-cljs.edn)
@@ -210,7 +255,9 @@ User code runs in SCI, not raw ClojureScript. Benefits:
 ```json
 {
   "dependencies": {
-    "three": "^0.176.0"
+    "three": "^0.176.0",
+    "clipper2-js": "^1.4.1",
+    "earcut": "^3.0.1"
   }
 }
 ```

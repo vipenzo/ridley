@@ -59,6 +59,19 @@
          :code "(register prism\n  (extrude\n    (shape (f 30) (th 120) (f 30) (th 120) (f 30))\n    (f 40)))"}
         {:id :l-shape
          :code "(register l-beam\n  (extrude\n    (shape\n      (f 30) (th 90) (f 10) (th 90)\n      (f 20) (th -90) (f 10) (th 90)\n      (f 10) (th 90) (f 20))\n    (f 50)))"}]}
+      {:id :shape-booleans-2d
+       :see-also [:builtin-shapes :custom-shapes]
+       :examples
+       [{:id :shape-diff-washer
+         :code "(register washer\n  (extrude\n    (shape-difference (circle 20) (circle 15))\n    (f 10)))"}
+        {:id :shape-union-blob
+         :code "(register blob\n  (extrude\n    (shape-union (circle 15)\n      (translate-shape (circle 15) 12 0))\n    (f 10)))"}
+        {:id :shape-intersection-lens
+         :code "(register lens\n  (extrude\n    (shape-intersection (circle 15)\n      (translate-shape (circle 15) 12 0))\n    (f 5)))"}
+        {:id :shape-offset-frame
+         :code "(register frame\n  (extrude\n    (shape-difference\n      (shape-offset (rect 30 20) 5)\n      (rect 30 20))\n    (f 8)))"}
+        {:id :shape-xor-eyes
+         :code "(register eyes\n  (extrude\n    (shape-xor (circle 12)\n      (translate-shape (circle 12) 15 0))\n    (f 5)))"}]}
       {:id :reusable-shapes
        :examples
        [{:id :def-shape
@@ -221,7 +234,16 @@
         {:id :inspect-turtle
          :code "(f 50)\n(println \"pos:\" (turtle-position))\n(th 45)\n(println \"heading:\" (turtle-heading))"}
         {:id :step-by-step
-         :code "(println \"Step 1: create base\")\n(register base (box 40 40 10))\n(println \"Step 2: move up\")\n(f 10)\n(println \"Step 3: create top\")\n(register top (cyl 15 20))"}]}]}
+         :code "(println \"Step 1: create base\")\n(register base (box 40 40 10))\n(println \"Step 2: move up\")\n(f 10)\n(println \"Step 3: create top\")\n(register top (cyl 15 20))"}]}
+      {:id :stamp-preview
+       :see-also [:debug-techniques :builtin-shapes :shape-booleans-2d]
+       :examples
+       [{:id :stamp-basic
+         :code "(stamp (circle 15))"}
+        {:id :stamp-positioned
+         :code "(f 30) (tv 45)\n(stamp (circle 10))\n(f 20)\n(stamp (rect 15 10))"}
+        {:id :stamp-with-holes
+         :code "(stamp\n  (shape-difference\n    (circle 20) (circle 15)))"}]}]}
     {:id :part-6
      :pages
      [{:id :control-structures
@@ -442,6 +464,36 @@ The shape automatically closes — the last point connects back to the first."
                         :description "Three forward movements with 120° turns create an equilateral triangle. Extruded, it becomes a prism."}
        :l-shape {:caption "L-shape"
                  :description "More complex paths create more complex cross-sections. This L-shape becomes an L-beam when extruded."}}}
+
+     :shape-booleans-2d
+     {:title "2D Shape Booleans"
+      :content "Combine 2D shapes using boolean operations before extruding. This lets you create complex cross-sections from simple shapes.
+
+```
+(shape-union a b)        ; merge two shapes
+(shape-difference a b)   ; cut B from A
+(shape-intersection a b) ; keep overlap only
+(shape-xor a b)          ; keep non-overlapping parts
+(shape-offset shape d)   ; expand (d>0) or shrink (d<0)
+```
+
+These operate on 2D shapes (circles, rects, polygons, custom shapes) and return new shapes you can extrude, loft, or revolve.
+
+Use `translate-shape` to position shapes before combining:
+```
+(translate-shape (circle 10) 15 0)  ; move 15 units in X
+```"
+      :examples
+      {:shape-diff-washer {:caption "Washer (difference)"
+                           :description "`shape-difference` subtracts the inner circle from the outer, creating a ring cross-section. Extruded, it becomes a tube with a hollow center."}
+       :shape-union-blob {:caption "Blob (union)"
+                          :description "`shape-union` merges two overlapping circles into one shape. `translate-shape` offsets the second circle before combining."}
+       :shape-intersection-lens {:caption "Lens (intersection)"
+                                 :description "`shape-intersection` keeps only the area where both circles overlap, creating a lens-shaped cross-section."}
+       :shape-offset-frame {:caption "Frame (offset)"
+                            :description "`shape-offset` expands a shape outward. Subtracting the original from the expanded version creates a uniform-width frame."}
+       :shape-xor-eyes {:caption "Eyes (xor)"
+                        :description "`shape-xor` keeps the parts of each circle that don't overlap — the symmetric difference. Creates two crescent shapes."}}}
 
      :reusable-shapes
      {:title "Reusable Shapes"
@@ -869,6 +921,30 @@ Add `println` statements between operations to see the sequence of events. This 
        :step-by-step {:caption "Step-by-step debugging"
                       :description "Add println between operations to trace execution. The output appears in the REPL history."}}}
 
+     :stamp-preview
+     {:title "Shape Preview (Stamp)"
+      :content "The `stamp` command visualizes a 2D shape at the current turtle position and orientation as a semi-transparent surface. It shows exactly where the initial face of an `extrude` or `revolve` would appear.
+
+```
+(stamp shape)
+```
+
+Stamps are purely visual — they don't affect the turtle's position or heading, and they're not exported to STL. They're perfect for debugging: verify your shape and position before committing to an extrusion.
+
+**Visibility control:**
+- Toggle the **Stamps** button in the viewport toolbar
+- Or use DSL commands: `(show-stamps)` / `(hide-stamps)`
+- Query visibility: `(stamps-visible?)`
+
+Stamps support shapes with holes — the holes are rendered correctly as transparent areas within the surface."
+      :examples
+      {:stamp-basic {:caption "Basic stamp"
+                     :description "Place a circle outline at the origin. The stamp appears as a semi-transparent orange surface."}
+       :stamp-positioned {:caption "Stamp at position"
+                          :description "Move and tilt the turtle, then stamp. Each stamp appears at the turtle's current pose — exactly where extrusion would start."}
+       :stamp-with-holes {:caption "Stamp with holes"
+                          :description "Shapes with holes (like this washer from `shape-difference`) render correctly — the inner area is cut out."}}}
+
      :mark-goto-pushpop
      {:title "Marks, Paths, and State Stack"
       :content "When creating complex geometry, you often need to return to previous positions or branch out from a point. Ridley provides two mechanisms:
@@ -1247,6 +1323,36 @@ La forma si chiude automaticamente — l'ultimo punto si ricollega al primo."
                         :description "Tre movimenti avanti con curve di 120° creano un triangolo equilatero. Estruso, diventa un prisma."}
        :l-shape {:caption "Forma a L"
                  :description "Percorsi più complessi creano sezioni più complesse. Questa forma a L diventa una trave a L quando estrusa."}}}
+
+     :shape-booleans-2d
+     {:title "Booleane 2D sulle Forme"
+      :content "Combina forme 2D usando operazioni booleane prima di estrudere. Questo ti permette di creare sezioni trasversali complesse da forme semplici.
+
+```
+(shape-union a b)        ; unisci due forme
+(shape-difference a b)   ; taglia B da A
+(shape-intersection a b) ; tieni solo la sovrapposizione
+(shape-xor a b)          ; tieni le parti non sovrapposte
+(shape-offset forma d)   ; espandi (d>0) o restringi (d<0)
+```
+
+Queste operano su forme 2D (cerchi, rettangoli, poligoni, forme personalizzate) e restituiscono nuove forme che puoi estrudere, loftare o rivolvere.
+
+Usa `translate-shape` per posizionare le forme prima di combinarle:
+```
+(translate-shape (circle 10) 15 0)  ; sposta 15 unità in X
+```"
+      :examples
+      {:shape-diff-washer {:caption "Rondella (differenza)"
+                           :description "`shape-difference` sottrae il cerchio interno da quello esterno, creando una sezione ad anello. Estrusa, diventa un tubo con centro cavo."}
+       :shape-union-blob {:caption "Blob (unione)"
+                          :description "`shape-union` unisce due cerchi sovrapposti in un'unica forma. `translate-shape` sposta il secondo cerchio prima di combinarli."}
+       :shape-intersection-lens {:caption "Lente (intersezione)"
+                                 :description "`shape-intersection` mantiene solo l'area in cui entrambi i cerchi si sovrappongono, creando una sezione a forma di lente."}
+       :shape-offset-frame {:caption "Cornice (offset)"
+                            :description "`shape-offset` espande una forma verso l'esterno. Sottraendo l'originale dalla versione espansa si crea una cornice di larghezza uniforme."}
+       :shape-xor-eyes {:caption "Occhi (xor)"
+                        :description "`shape-xor` mantiene le parti di ogni cerchio che non si sovrappongono — la differenza simmetrica. Crea due forme a mezzaluna."}}}
 
      :reusable-shapes
      {:title "Forme Riutilizzabili"
@@ -1673,6 +1779,30 @@ Aggiungi istruzioni `println` tra le operazioni per vedere la sequenza degli eve
                         :description "Stampa posizione e direzione della turtle in qualsiasi punto per capire dove verrà creata la geometria."}
        :step-by-step {:caption "Debug passo-passo"
                       :description "Aggiungi println tra le operazioni per tracciare l'esecuzione. L'output appare nella cronologia della REPL."}}}
+
+     :stamp-preview
+     {:title "Anteprima Forme (Stamp)"
+      :content "Il comando `stamp` visualizza una forma 2D alla posizione e orientamento correnti della turtle come superficie semitrasparente. Mostra esattamente dove apparirebbe la faccia iniziale di un `extrude` o `revolve`.
+
+```
+(stamp forma)
+```
+
+Gli stamp sono puramente visivi — non influenzano la posizione o la direzione della turtle, e non vengono esportati in STL. Sono perfetti per il debug: verifica la forma e la posizione prima di procedere con un'estrusione.
+
+**Controllo visibilità:**
+- Usa il bottone **Stamps** nella barra del viewport
+- Oppure da DSL: `(show-stamps)` / `(hide-stamps)`
+- Verifica visibilità: `(stamps-visible?)`
+
+Gli stamp supportano forme con buchi — i buchi vengono renderizzati correttamente come aree trasparenti all'interno della superficie."
+      :examples
+      {:stamp-basic {:caption "Stamp base"
+                     :description "Posiziona un cerchio all'origine. Lo stamp appare come superficie semitrasparente arancione."}
+       :stamp-positioned {:caption "Stamp in posizione"
+                          :description "Muovi e inclina la turtle, poi fai stamp. Ogni stamp appare alla posizione corrente della turtle — esattamente dove inizierebbe l'estrusione."}
+       :stamp-with-holes {:caption "Stamp con buchi"
+                          :description "Forme con buchi (come questa rondella da `shape-difference`) vengono renderizzate correttamente — l'area interna viene ritagliata."}}}
 
      :mark-goto-pushpop
      {:title "Marcatori, Path e Stack di Stato"

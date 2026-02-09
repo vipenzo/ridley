@@ -202,11 +202,13 @@
     ;; No holes - use standard triangulation
     (triangulate-cap outer-ring base-idx normal flip?)
     ;; With holes - use earcut
-    (let [[outer-2d _] (project-to-2d outer-ring normal)
+    (let [[outer-2d winding-preserved?] (project-to-2d outer-ring normal)
           holes-2d (mapv #(first (project-to-2d % normal)) hole-rings)
+          ;; Compensate for projection mirror, same as triangulate-cap
+          effective-flip? (if winding-preserved? flip? (not flip?))
           local-tris (earcut-triangulate outer-2d holes-2d)]
       (mapv (fn [[i j k]]
-              (if flip?
+              (if effective-flip?
                 [(+ base-idx i) (+ base-idx k) (+ base-idx j)]
                 [(+ base-idx i) (+ base-idx j) (+ base-idx k)]))
             local-tris))))
@@ -658,6 +660,142 @@
   (sweep-two-shapes-with-holes {:outer ring1 :holes []}
                                {:outer ring2 :holes []}))
 
+;; --- Multi-ring sweep with holes ---
+
+(defn build-sweep-mesh-with-holes
+  "Build a unified mesh from accumulated ring-data entries.
+   Each entry is {:outer <3D-ring> :holes [<3D-ring> ...]}.
+   All entries must have the same number of outer vertices and same hole structure.
+   Generates side faces for outer + each hole, and caps at both ends."
+  [ring-data-vec creation-pose]
+  (let [n-rings (count ring-data-vec)
+        first-data (first ring-data-vec)
+        n-outer (count (:outer first-data))
+        holes-structure (mapv count (or (:holes first-data) []))
+        ;; Combined ring length: outer + all holes
+        ring-len (+ n-outer (reduce + 0 holes-structure))]
+    (when (and (>= n-rings 2) (>= n-outer 3))
+      (let [;; Flatten all ring-data into a single vertex array
+            ;; Each "combined ring" = [outer-pts... hole0-pts... hole1-pts...]
+            vertices
+            (vec (mapcat (fn [rd]
+                           (concat (:outer rd) (apply concat (or (:holes rd) []))))
+                         ring-data-vec))
+
+            ;; Side faces for outer contour
+            outer-side-faces
+            (vec (mapcat
+                  (fn [ring-idx]
+                    (let [base (* ring-idx ring-len)
+                          next-base (* (inc ring-idx) ring-len)]
+                      (mapcat
+                       (fn [i]
+                         (let [next-i (mod (inc i) n-outer)
+                               b0 (+ base i) b1 (+ base next-i)
+                               t0 (+ next-base i) t1 (+ next-base next-i)
+                               db0t1 (v- (nth vertices b0) (nth vertices t1))
+                               db1t0 (v- (nth vertices b1) (nth vertices t0))]
+                           (if (<= (dot db0t1 db0t1) (dot db1t0 db1t0))
+                             [[b0 t0 t1] [b0 t1 b1]]
+                             [[b0 t0 b1] [t0 t1 b1]])))
+                       (range n-outer))))
+                  (range (dec n-rings))))
+
+            ;; Side faces for each hole (same winding as outer — holes are CW
+            ;; so the normals point into the tunnel, which is correct)
+            hole-side-faces
+            (vec (apply concat
+                        (map-indexed
+                         (fn [hole-idx hole-len]
+                           (let [hole-offset (+ n-outer (reduce + 0 (take hole-idx holes-structure)))]
+                             (mapcat
+                              (fn [ring-idx]
+                                (let [base (+ (* ring-idx ring-len) hole-offset)
+                                      next-base (+ (* (inc ring-idx) ring-len) hole-offset)]
+                                  (mapcat
+                                   (fn [i]
+                                     (let [next-i (mod (inc i) hole-len)
+                                           b0 (+ base i) b1 (+ base next-i)
+                                           t0 (+ next-base i) t1 (+ next-base next-i)]
+                                       ;; Same face winding as outer
+                                       [[b0 t0 t1] [b0 t1 b1]]))
+                                   (range hole-len))))
+                              (range (dec n-rings)))))
+                         holes-structure)))
+
+            ;; Caps
+            first-outer (:outer first-data)
+            first-holes (or (:holes first-data) [])
+            last-data (last ring-data-vec)
+            last-outer (:outer last-data)
+            last-holes (or (:holes last-data) [])
+            last-ring-base (* (dec n-rings) ring-len)
+
+            ;; Cap normals from ring centroids
+            second-data (nth ring-data-vec 1)
+            second-to-last-data (nth ring-data-vec (- n-rings 2))
+            bottom-dir (normalize (v- (ring-centroid (:outer second-data))
+                                      (ring-centroid first-outer)))
+            top-dir (normalize (v- (ring-centroid last-outer)
+                                   (ring-centroid (:outer second-to-last-data))))
+            bottom-normal (v* bottom-dir -1)
+            top-normal top-dir
+
+            ;; Bottom cap with holes
+            bottom-cap (triangulate-cap-with-holes first-outer first-holes
+                                                    0 bottom-normal false)
+            ;; Top cap with holes
+            top-cap (triangulate-cap-with-holes last-outer last-holes
+                                                last-ring-base top-normal false)
+
+            all-faces (vec (concat outer-side-faces hole-side-faces
+                                   bottom-cap top-cap))]
+        (schema/assert-mesh!
+         (cond-> {:type :mesh
+                  :primitive :extrusion
+                  :vertices vertices
+                  :faces all-faces}
+           creation-pose (assoc :creation-pose creation-pose)))))))
+
+;; --- Corner generation with holes ---
+
+(defn generate-round-corner-ring-data
+  "Generate intermediate ring-data for a rounded corner (outer + holes).
+   end-data: {:outer ring :holes [ring ...]}
+   Returns a vector of ring-data entries for the corner."
+  [end-data corner-pos old-heading new-heading n-steps radius]
+  (let [outer-corners (generate-round-corner-rings
+                       (:outer end-data) corner-pos old-heading new-heading
+                       n-steps radius)
+        ;; Apply the same rotation to each hole ring
+        hole-corners (when (seq (:holes end-data))
+                       (mapv (fn [hole-ring]
+                               (generate-round-corner-rings
+                                hole-ring corner-pos old-heading new-heading
+                                n-steps radius))
+                             (:holes end-data)))]
+    ;; Zip: for each step i, create {:outer outer-corners[i] :holes [hole0-corners[i] hole1-corners[i] ...]}
+    (vec (for [i (range (count outer-corners))]
+           {:outer (nth outer-corners i)
+            :holes (when hole-corners
+                     (mapv #(nth % i) hole-corners))}))))
+
+(defn generate-tapered-corner-ring-data
+  "Generate intermediate ring-data for a tapered corner (outer + holes).
+   Returns a vector of ring-data entries (usually 1)."
+  [end-data corner-pos old-heading new-heading]
+  (let [outer-corners (generate-tapered-corner-rings
+                       (:outer end-data) corner-pos old-heading new-heading)
+        hole-corners (when (seq (:holes end-data))
+                       (mapv (fn [hole-ring]
+                               (generate-tapered-corner-rings
+                                hole-ring corner-pos old-heading new-heading))
+                             (:holes end-data)))]
+    (vec (for [i (range (count outer-corners))]
+           {:outer (nth outer-corners i)
+            :holes (when hole-corners
+                     (mapv #(nth % i) hole-corners))}))))
+
 ;; --- Path analysis ---
 
 (defn is-rotation?
@@ -839,14 +977,125 @@
             (update :meshes conj mesh-with-pose)))
       state)))
 
+(defn- extrude-with-holes-from-path
+  "Extrude a shape with holes along a complex open path.
+   Uses ring-data accumulation to track both outer and hole rings."
+  [state shape path]
+  (let [creation-pose {:position (:position state)
+                       :heading (:heading state)
+                       :up (:up state)}
+        radius (shape-radius shape)
+        commands (:commands path)
+        segments (analyze-open-path commands radius)
+        n-segments (count segments)]
+    (if (< n-segments 1)
+      state
+      (let [initial-rotations (take-while #(not= :f (:cmd %)) commands)
+            state-with-initial-heading (reduce apply-rotation-to-state state initial-rotations)
+            rings-result
+            (loop [i 0
+                   s state-with-initial-heading
+                   ring-data-vec []
+                   prev-had-corner true]
+              (if (>= i n-segments)
+                {:ring-data ring-data-vec :state s}
+                (let [seg (nth segments i)
+                      dist (:dist seg)
+                      shorten-start (:shorten-start seg)
+                      shorten-end (:shorten-end seg)
+                      rotations (:rotations-after seg)
+                      effective-dist (- dist shorten-start shorten-end)
+                      is-last (= i (dec n-segments))
+                      joint-mode (or (:joint-mode state) :flat)
+                      has-corner-rotation (some #(is-corner-rotation? (:cmd %)) rotations)
+
+                      start-pos (:position s)
+                      s1 (assoc s :position start-pos)
+
+                      emit-start? (or (zero? i) prev-had-corner)
+                      start-data (when emit-start? (stamp-shape-with-holes s1 shape))
+
+                      end-pos (v+ start-pos (v* (:heading s1) effective-dist))
+                      s2 (assoc s1 :position end-pos)
+                      end-data (stamp-shape-with-holes s2 shape)
+
+                      corner-pos (v+ end-pos (v* (:heading s2) shorten-end))
+                      s3 (assoc s2 :position corner-pos)
+
+                      s4 (reduce apply-rotation-to-state s3 rotations)
+                      old-heading (:heading s3)
+                      new-heading (:heading s4)
+
+                      cos-a (dot old-heading new-heading)
+                      heading-angle (when (< cos-a 0.9998)
+                                      (Math/acos (min 1 (max -1 cos-a))))
+
+                      corner-ring-data
+                      (if (and has-corner-rotation (not is-last))
+                        (let [corner-angle-deg (when (= joint-mode :round)
+                                                 (when heading-angle
+                                                   (* heading-angle (/ 180 Math/PI))))
+                              round-steps (when corner-angle-deg
+                                            (calc-round-steps state corner-angle-deg))]
+                          (case joint-mode
+                            :flat []
+                            :round (generate-round-corner-ring-data
+                                    end-data corner-pos old-heading new-heading
+                                    (or round-steps 4) radius)
+                            :tapered (generate-tapered-corner-ring-data
+                                      end-data corner-pos old-heading new-heading)
+                            []))
+                        [])
+
+                      smooth-ring-data
+                      (if (and heading-angle
+                               (not has-corner-rotation)
+                               (not is-last)
+                               (seq rotations))
+                        (let [n-smooth (max 1 (int (Math/ceil (/ heading-angle (/ Math/PI 12)))))]
+                          (generate-round-corner-ring-data
+                           end-data end-pos old-heading new-heading
+                           n-smooth radius))
+                        [])
+
+                      next-shorten-start (if (and (not is-last) has-corner-rotation)
+                                           (:shorten-start (nth segments (inc i)))
+                                           0)
+                      next-start-pos (if (seq smooth-ring-data)
+                                       (ring-centroid (:outer (last smooth-ring-data)))
+                                       (v+ corner-pos (v* (:heading s4) next-shorten-start)))
+                      s-next (assoc s4 :position next-start-pos)
+
+                      new-ring-data (cond-> ring-data-vec
+                                      emit-start? (conj start-data)
+                                      true (conj end-data)
+                                      (seq smooth-ring-data) (into smooth-ring-data)
+                                      (seq corner-ring-data) (into corner-ring-data))]
+                  (recur (inc i) s-next new-ring-data (boolean has-corner-rotation)))))
+
+            all-ring-data (:ring-data rings-result)
+            final-state (:state rings-result)]
+        (if (< (count all-ring-data) 2)
+          state
+          (let [mesh (build-sweep-mesh-with-holes all-ring-data creation-pose)
+                mesh-with-material (when mesh
+                                     (cond-> mesh
+                                       (:material state) (assoc :material (:material state))))]
+            (if mesh-with-material
+              (update final-state :meshes conj mesh-with-material)
+              state)))))))
+
 (defn extrude-from-path
   "Extrude a shape along an open path, creating a SINGLE unified mesh.
    Returns the turtle state with the mesh added."
   [state shape path]
   (if-not (and (shape? shape) (is-path? path))
     state
-    (if (and (:holes shape) (is-simple-forward-path? path))
-      (extrude-simple-with-holes state shape path)
+    (if (:holes shape)
+      ;; Shape with holes — use holes-aware extrusion
+      (if (is-simple-forward-path? path)
+        (extrude-simple-with-holes state shape path)
+        (extrude-with-holes-from-path state shape path))
       (let [creation-pose {:position (:position state)
                            :heading (:heading state)
                            :up (:up state)}

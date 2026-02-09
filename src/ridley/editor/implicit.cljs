@@ -95,6 +95,12 @@
   []
   (swap! turtle-atom turtle/reset-material))
 
+;; Stamp debug visualization
+(defn ^:export implicit-stamp-debug
+  "Visualize a 2D shape at current turtle pose as a wireframe outline."
+  [shape]
+  (swap! turtle-atom turtle/stamp-debug shape))
+
 ;; Arc commands
 (defn ^:export implicit-arc-h [radius angle & {:keys [steps]}]
   (swap! turtle-atom #(turtle/arc-h % radius angle :steps steps)))

@@ -24,6 +24,9 @@
 ;; Lines (geometry) from turtle movements
 (defonce ^:private scene-lines (atom []))
 
+;; Stamps (debug shape outlines) from turtle
+(defonce ^:private scene-stamps (atom []))
+
 ;; Registered paths: [{:path data :name keyword :visible true/false} ...]
 (defonce ^:private scene-paths (atom []))
 
@@ -39,6 +42,7 @@
   []
   (reset! scene-meshes [])
   (reset! scene-lines [])
+  (reset! scene-stamps [])
   (reset! scene-paths [])
   (reset! scene-panels [])
   (reset! scene-shapes []))
@@ -52,6 +56,16 @@
   "Add lines to the current set."
   [lines]
   (swap! scene-lines into lines))
+
+(defn set-stamps!
+  "Set the stamps (debug shape outlines) to display."
+  [stamps]
+  (reset! scene-stamps (vec stamps)))
+
+(defn add-stamps!
+  "Add stamps to the current set."
+  [stamps]
+  (swap! scene-stamps into stamps))
 
 ;; ============================================================
 ;; Path registration (abstract, no visibility)
@@ -370,6 +384,7 @@
   ([] (refresh-viewport! true))
   ([reset-camera?]
    (viewport/update-scene {:lines (vec @scene-lines)
+                           :stamps (vec @scene-stamps)
                            :meshes (visible-meshes)
                            :panels (visible-panels)
                            :reset-camera? reset-camera?})))

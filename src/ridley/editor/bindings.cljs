@@ -13,6 +13,7 @@
             [ridley.geometry.operations :as ops]
             [ridley.geometry.faces :as faces]
             [ridley.manifold.core :as manifold]
+            [ridley.clipper.core :as clipper]
             [ridley.scene.registry :as registry]
             [ridley.scene.panel :as panel]
             [ridley.viewport.core :as viewport]
@@ -77,8 +78,8 @@
    'sphere       impl/sphere-with-resolution
    'cyl          impl/cyl-with-resolution
    'cone         impl/cone-with-resolution
-   ;; NOTE: 'stamp' and 'make' removed - primitives are now created at turtle position
-   ;; Use (register :name mesh) to make mesh visible in scene
+   ;; Debug shape visualization at current turtle pose
+   'stamp        impl/implicit-stamp-debug
    ;; Shape constructors (return shape data, resolution-aware)
    'circle       impl/circle-with-resolution
    'rect         shape/rect-shape
@@ -90,6 +91,12 @@
    'reverse-shape   shape/reverse-shape
    'path-to-shape   shape/path-to-shape
    'stroke-shape    shape/stroke-shape
+   ;; Shape boolean operations (2D, via Clipper2)
+   'shape-union        clipper/shape-union
+   'shape-difference   clipper/shape-difference
+   'shape-intersection clipper/shape-intersection
+   'shape-xor          clipper/shape-xor
+   'shape-offset       clipper/shape-offset
    ;; Text shapes
    'text-shape   text/text-shape
    'text-shapes  text/text-shapes
@@ -214,6 +221,9 @@
    'show-lines          (fn [] (viewport/set-lines-visible true))
    'hide-lines          (fn [] (viewport/set-lines-visible false))
    'lines-visible?      viewport/lines-visible?
+   'show-stamps         (fn [] (viewport/set-stamps-visible true))
+   'hide-stamps         (fn [] (viewport/set-stamps-visible false))
+   'stamps-visible?     viewport/stamps-visible?
    ;; Path registry (abstract, no visibility)
    'register-path!      registry/register-path!
    'get-path            registry/get-path

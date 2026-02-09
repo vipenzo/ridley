@@ -318,6 +318,73 @@ For loft operations that morph shapes:
 (resample shape n)               ; Resample to n points (for morph compatibility)
 ```
 
+### Shape Preview (Stamp)
+
+Visualize a 2D shape at the current turtle position/orientation as a semi-transparent surface.
+Shows exactly where the initial face of an `extrude` or `revolve` would appear.
+Useful for debugging shape placement before committing to an operation.
+
+```clojure
+(stamp shape)                    ; Show shape surface at current turtle pose
+```
+
+Stamps are rendered as semi-transparent orange surfaces (visible from both sides).
+Shapes with holes are correctly triangulated. Stamps do not modify turtle position or heading.
+
+**Visibility control:**
+```clojure
+(show-stamps)                    ; Show stamp outlines
+(hide-stamps)                    ; Hide stamp outlines
+(stamps-visible?)                ; Check visibility
+```
+
+A "Stamps" toggle button is also available in the viewport toolbar.
+
+### 2D Shape Booleans
+
+Combine or modify 2D shapes before extrusion using Clipper2 boolean operations.
+Shapes with holes are fully supported — results preserve holes, and all extrusion
+operations (extrude, loft, revolve) correctly handle shapes with holes.
+
+```clojure
+(shape-union a b)                ; Combined outline of both shapes
+(shape-difference a b)           ; Shape A with shape B cut out
+(shape-intersection a b)         ; Overlapping region only
+(shape-xor a b)                  ; Non-overlapping regions
+```
+
+**Offset (expand/contract):**
+
+```clojure
+(shape-offset shape delta)                   ; Expand (positive) or contract (negative)
+(shape-offset shape delta :join-type :round) ; Round corners (default)
+(shape-offset shape delta :join-type :square); Square corners
+(shape-offset shape delta :join-type :miter) ; Sharp corners
+```
+
+**Examples:**
+
+```clojure
+;; Hollow tube (washer profile)
+(def washer (shape-difference (circle 20) (circle 14)))
+(register tube (extrude washer (f 40)))
+
+;; L-shaped tube with hollow center
+(def outer (shape-union (rect 20 40) (rect 40 20)))
+(def inner (shape-offset outer -3))
+(def l-tube (shape-difference outer inner))
+(register bracket (extrude l-tube (f 10) (th 45) (f 15)))
+
+;; Rounded shape
+(def rounded-rect (shape-offset (rect 30 20) 3 :join-type :round))
+```
+
+**Notes:**
+- Results may contain holes (e.g., `shape-difference` of overlapping shapes)
+- Holes are automatically detected from winding direction
+- All shape transforms (`scale`, `rotate-shape`, `translate`, `morph`) propagate holes
+- Internally uses integer coordinates (×1000 scale) for precision
+
 ---
 
 ## 3D Primitives
@@ -1045,6 +1112,7 @@ src/ridley/
 ├── viewport/
 │   ├── core.cljs            # Three.js rendering
 │   └── xr.cljs              # WebXR/VR
+├── clipper/core.cljs        # Clipper2 2D shape booleans + offset
 ├── manifold/core.cljs       # Manifold WASM booleans + hull
 ├── export/stl.cljs          # STL export
 ├── scene/

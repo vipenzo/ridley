@@ -135,9 +135,11 @@
    Does NOT include registry meshes - those are handled separately by refresh-viewport!."
   [eval-result]
   (let [turtle-state (:result eval-result)
-        turtle-lines (or (:geometry turtle-state) [])]
-    ;; Only return turtle lines (pen traces)
+        turtle-lines (or (:geometry turtle-state) [])
+        turtle-stamps (or (:stamps turtle-state) [])]
+    ;; Only return turtle lines (pen traces) and stamps (debug outlines)
     ;; Meshes from extrude/loft/etc are NOT auto-displayed - use register
-    (when (seq turtle-lines)
+    (when (or (seq turtle-lines) (seq turtle-stamps))
       {:lines (vec turtle-lines)
+       :stamps (vec turtle-stamps)
        :meshes []})))

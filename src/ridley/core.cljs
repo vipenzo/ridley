@@ -160,8 +160,9 @@
                (when-let [print-output (:print-output result)]
                  (add-script-output print-output))
                (when-let [render-data (repl/extract-render-data result)]
-                 ;; Store lines and definition meshes
+                 ;; Store lines, stamps, and definition meshes
                  (registry/set-lines! (:lines render-data))
+                 (registry/set-stamps! (or (:stamps render-data) []))
                  (registry/set-definition-meshes! (:meshes render-data)))
                ;; Refresh viewport, optionally resetting camera
                (registry/refresh-viewport! reset-camera?)
@@ -305,9 +306,10 @@
                   (hide-error)
                   ;; Show result in terminal history (with any print output)
                   (add-repl-entry input (:implicit-result result) false (:print-output result))
-                  ;; Extract lines and meshes from REPL evaluation
+                  ;; Extract lines, stamps, and meshes from REPL evaluation
                   (when-let [render-data (repl/extract-render-data result)]
                     (registry/add-lines! (:lines render-data))
+                    (registry/add-stamps! (or (:stamps render-data) []))
                     (registry/set-definition-meshes! (:meshes render-data)))
                   ;; Update viewport (don't reset camera)
                   (registry/refresh-viewport! false)
@@ -536,6 +538,7 @@
         toggle-turtle-btn (.getElementById js/document "btn-toggle-turtle")
         toggle-lines-btn (.getElementById js/document "btn-toggle-lines")
         toggle-normals-btn (.getElementById js/document "btn-toggle-normals")
+        toggle-stamps-btn (.getElementById js/document "btn-toggle-stamps")
         reset-view-btn (.getElementById js/document "btn-reset-view")
         file-input (.getElementById js/document "file-input")]
     ;; Run button - evaluate definitions
@@ -600,6 +603,16 @@
             (if visible
               (.add (.-classList toggle-normals-btn) "active")
               (.remove (.-classList toggle-normals-btn) "active"))))))
+    ;; Toggle stamp outlines button
+    (when toggle-stamps-btn
+      ;; Stamps visible by default
+      (.add (.-classList toggle-stamps-btn) "active")
+      (.addEventListener toggle-stamps-btn "click"
+        (fn [_]
+          (let [visible (viewport/toggle-stamps)]
+            (if visible
+              (.add (.-classList toggle-stamps-btn) "active")
+              (.remove (.-classList toggle-stamps-btn) "active"))))))
     ;; Reset view button
     (when reset-view-btn
       (.addEventListener reset-view-btn "click"
@@ -655,6 +668,7 @@
           (add-repl-entry command (:implicit-result result) false (:print-output result))
           (when-let [render-data (repl/extract-render-data result)]
             (registry/add-lines! (:lines render-data))
+            (registry/add-stamps! (or (:stamps render-data) []))
             (registry/set-definition-meshes! (:meshes render-data)))
           (registry/refresh-viewport! false))))))
 
@@ -1222,6 +1236,7 @@
           (add-script-output print-output))
         (when-let [render-data (repl/extract-render-data result)]
           (registry/set-lines! (:lines render-data))
+          (registry/set-stamps! (or (:stamps render-data) []))
           (registry/set-definition-meshes! (:meshes render-data)))
         (registry/refresh-viewport! true)  ; Reset camera to show result
         (update-turtle-indicator)))))
