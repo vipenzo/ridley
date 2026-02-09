@@ -2,6 +2,7 @@
   "Main entry point for Ridley application."
   (:require [clojure.string :as str]
             [ridley.editor.repl :as repl]
+            [ridley.editor.state :as editor-state]
             [ridley.editor.codemirror :as cm]
             [ridley.viewport.core :as viewport]
             [ridley.viewport.xr :as xr]
@@ -126,7 +127,7 @@
 (defn- update-turtle-indicator
   "Update the turtle indicator with current pose from REPL."
   []
-  (viewport/update-turtle-pose (repl/get-turtle-pose)))
+  (viewport/update-turtle-pose (editor-state/get-turtle-pose)))
 
 (defn- evaluate-definitions
   "Evaluate only the definitions panel (for Cmd+Enter).

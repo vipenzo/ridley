@@ -627,3 +627,29 @@ The core turtle system, generative operations, boolean operations, and anchor/na
 - ✓ **Path Utilities** — `follow-path` for visualizing paths, `path-total-length` for arc-length calculation, `sample-path-at-distance` for path sampling
 
 The turtle attachment paradigm unifies all 3D operations under the familiar turtle metaphor: attach to an element, use turtle commands to manipulate it, detach when done.
+
+---
+
+## Enhancement Ideas
+
+### Attach on mesh collections (structure-preserving)
+
+Extend `attach` to work on nested vectors of meshes, transforming all meshes while preserving the nesting structure. This enables treating function-composed groups as rigid bodies:
+
+```clojure
+(defn branch [l] ...)              ;; returns a mesh
+(defn ring [l n] ...)              ;; returns [mesh mesh ...]
+(defn tree [l h rings branches]    ;; returns [[mesh ...] [mesh ...] ...]
+  (for [i (range rings)]
+    (do (f (/ h rings)) (ring l branches))))
+
+(def t (tree 50 100 5 5))
+(register T (attach t (f 20) (th 45)))
+;; t2 has same nested structure, all vertices transformed
+```
+
+Key principles:
+- **Preserve structure**: `attach` walks recursively, transforms meshes in-place, returns same nesting shape. No flattening.
+- **Pivot = current turtle position**: the turtle's position at call time is the transformation pivot.
+- **Composability**: since structure is preserved, the result can be passed to another `attach` or used in further function composition.
+- **Revisit `register` flatten**: the current flatten in `register` is a workaround. Ideally the registry and viewport should walk nested structures for rendering without flattening, so that `(hide :T 2)` can address sub-groups by index path.
