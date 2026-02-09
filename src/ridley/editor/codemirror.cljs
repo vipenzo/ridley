@@ -2,14 +2,15 @@
   "CodeMirror 6 integration for Clojure editing with paredit support."
   (:require [clojure.string :as str]
             ["@codemirror/view" :as view :refer [EditorView ViewPlugin Decoration
-                                                  keymap
+                                                  keymap lineNumbers
                                                   highlightActiveLine
                                                   highlightActiveLineGutter
                                                   drawSelection
                                                   rectangularSelection
                                                   crosshairCursor
                                                   highlightSpecialChars]]
-            ["@codemirror/state" :refer [EditorState StateField StateEffect]]
+            ["@codemirror/state" :refer [EditorState StateField StateEffect
+                                          Compartment]]
             ["@codemirror/commands" :as commands :refer [history historyKeymap
                                                          defaultKeymap
                                                          indentWithTab
@@ -25,6 +26,13 @@
             ["@nextjournal/clojure-mode" :as clojure-mode]))
 
 (defonce ^:private editor-instance (atom nil))
+
+;; ============================================================
+;; Line numbers — dynamic toggle via Compartment
+;; ============================================================
+
+(defonce ^:private line-numbers-compartment (Compartment.))
+(defonce ^:private line-numbers-on? (atom false))
 
 ;; ============================================================
 ;; AI Focus Indicator — highlights current form for AI context
@@ -241,7 +249,9 @@
                             (.of keymap defaultKeymap)
                             (.of keymap searchKeymap)
                             (.of keymap foldKeymap)
-                            (.of keymap #js [indentWithTab])]
+                            (.of keymap #js [indentWithTab])
+                            ;; Line numbers (off by default, toggled dynamically)
+                            (.of line-numbers-compartment #js [])]
                      ;; Add change listener if provided
                      on-change (conj (create-change-listener on-change))
                      ;; Add selection change listener if provided
@@ -277,6 +287,21 @@
        #js {:changes #js {:from 0
                           :to (.. view -state -doc -length)
                           :insert (or value "")}}))))
+
+(defn toggle-line-numbers!
+  "Toggle line numbers on/off. Returns new state (true = visible)."
+  []
+  (when-let [view @editor-instance]
+    (let [on? (swap! line-numbers-on? not)
+          ext (if on? (lineNumbers) #js [])]
+      (.dispatch view
+        #js {:effects (.reconfigure line-numbers-compartment ext)})
+      on?)))
+
+(defn line-numbers-visible?
+  "Returns whether line numbers are currently shown."
+  []
+  @line-numbers-on?)
 
 (defn focus
   "Focus the editor."

@@ -1259,7 +1259,15 @@
   ;; Setup Manual button
   (when-let [manual-btn (.getElementById js/document "btn-manual")]
     (.addEventListener manual-btn "click"
-      (fn [_] (manual/toggle-manual!)))))
+      (fn [_] (manual/toggle-manual!))))
+  ;; Setup line numbers toggle button
+  (when-let [ln-btn (.getElementById js/document "btn-line-numbers")]
+    (.addEventListener ln-btn "click"
+      (fn [_]
+        (let [on? (cm/toggle-line-numbers!)]
+          (if on?
+            (.add (.-classList ln-btn) "active")
+            (.remove (.-classList ln-btn) "active")))))))
 
 ;; ============================================================
 ;; Library Panel

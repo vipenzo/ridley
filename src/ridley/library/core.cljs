@@ -94,7 +94,7 @@
 (defn- eval-library
   "Evaluate a single library's source in a fresh SCI context.
    The context includes base-bindings, macros, and previously loaded namespaces.
-   Returns map of {symbol value} for public defs, or nil on error."
+   Returns {:bindings {symbol value}} on success, or {:error \"msg\"} on failure."
   [lib-name source base-bindings macro-defs accumulated-ns]
   (try
     (let [ctx (sci/init {:bindings base-bindings
@@ -116,10 +116,15 @@
                                    (catch :default _
                                      nil))))
                          def-names)]
-      lib-bindings)
+      {:bindings lib-bindings})
     (catch :default e
-      (js/console.error (str "Error loading library '" lib-name "':") (.-message e))
-      nil)))
+      (let [data (ex-data e)
+            line (:line data)
+            col  (:column data)
+            msg  (.-message e)
+            loc  (when line (str " (line " line (when col (str ":" col)) ")"))]
+        (js/console.error (str "Error loading library '" lib-name "':") msg)
+        {:error (str msg loc)}))))
 
 ;; Warnings from the last load — accessible from UI
 (defonce load-warnings (atom []))
@@ -158,13 +163,13 @@
 
                 ;; All good — evaluate
                 :else
-                (let [bindings (eval-library lib-name (:source lib)
-                                             base-bindings macro-defs accumulated-ns)]
-                  (if bindings
+                (let [result (eval-library lib-name (:source lib)
+                                           base-bindings macro-defs accumulated-ns)]
+                  (if-let [bindings (:bindings result)]
                     (recur (rest remaining)
                            (conj loaded-set lib-name)
                            (assoc accumulated-ns (symbol lib-name) bindings))
                     ;; Eval error — skip but continue
                     (do (swap! load-warnings conj
-                               (str "Library '" lib-name "' failed to evaluate"))
+                               (str "Library '" lib-name "': " (:error result)))
                         (recur (rest remaining) loaded-set accumulated-ns))))))))))))
