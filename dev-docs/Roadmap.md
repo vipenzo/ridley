@@ -617,6 +617,7 @@ The core turtle system, generative operations, boolean operations, and anchor/na
 4. [ ] 2D shape booleans — `(shape-union a b)`, `(shape-difference a b)`, `(shape-intersection a b)` for shapes with holes (e.g., `(extrude (shape-difference (circle 30) (circle 20)) (f 50))` → hollow tube)
 
 **Recently completed:**
+- ✓ **Library/Namespace System** — User-defined reusable code libraries with localStorage persistence, SCI namespace injection (`shapes/hexagon`), topological sort for dependency ordering, cascade deactivation, drag & drop reordering, import/export as `.clj` files
 - ✓ **Bounds functions** — `bounds`, `height`, `width`, `depth`, `top`, `bottom` for bounding box queries; `info` now includes bounds data
 - ✓ **`attach!` macro** — in-place transform of registered meshes by keyword: `(attach! :name (f 20))`. Removed redundant `clone` macro (attach is already functional)
 - ✓ **AI Tier System** — Auto-detection of model tier, tier-aware prompts (Tier 1: code-only, Tier 2+: JSON with clarification support), script context for Tier 2+, Settings UI dropdown

@@ -54,6 +54,10 @@ ridley/
 │       │   ├── operations.cljs    # Legacy extrude, revolve, sweep, loft
 │       │   ├── faces.cljs         # Face group identification
 │       │   └── stl.cljs           # STL export
+│       ├── library/
+│       │   ├── storage.cljs       # localStorage CRUD for user libraries
+│       │   ├── core.cljs          # SCI namespace integration, topo sort
+│       │   └── panel.cljs         # Library management UI panel
 │       ├── scene/
 │       │   └── registry.cljs      # Mesh registry (named meshes, visibility)
 │       ├── viewport/
@@ -890,11 +894,63 @@ Script updates are debounced to avoid flooding the connection:
 - Custom PeerJS server for reliability
 - Bidirectional editing (collaborative mode)
 
+## Library/Namespace System
+
+User-defined reusable code libraries that persist across sessions via localStorage. Libraries are injected into SCI as namespaces, enabling prefixed access (e.g., `shapes/hexagon`, `robot/arm`).
+
+### Architecture
+
+```
+┌───────────────────────────────────────────────────────────┐
+│  Library Panel (panel.cljs)                               │
+│  - List with checkboxes, drag & drop reorder              │
+│  - Context menu (edit, duplicate, export, delete)         │
+│  - Edit mode (swap CodeMirror content)                    │
+│  - Cascade deactivation on dependency removal             │
+└─────────────────────┬─────────────────────────────────────┘
+                      │
+┌─────────────────────┴─────────────────────────────────────┐
+│  Storage (storage.cljs)                                    │
+│  localStorage keys:                                        │
+│  - ridley:lib:<name>  → {name, requires, source, ...}     │
+│  - ridley:libs:active → ordered array of active names      │
+│  - ridley:libs:index  → array of all library names         │
+└─────────────────────┬─────────────────────────────────────┘
+                      │
+┌─────────────────────┴─────────────────────────────────────┐
+│  SCI Integration (core.cljs)                               │
+│  - Topological sort (Kahn's algorithm) for load order      │
+│  - Each library evaluated in fresh SCI context with:       │
+│    base-bindings + macros + previously loaded namespaces   │
+│  - Public defs extracted via regex on source                │
+│  - Returns {'shapes {'hexagon fn} 'robot {'arm fn}}        │
+│  - Auto-require so prefixed access works                   │
+└───────────────────────────────────────────────────────────┘
+```
+
+### Dependency Management
+
+- Libraries declare requires (e.g., "parts" requires "shapes")
+- Topological sort ensures correct load order regardless of activation order
+- Deactivating a library cascades to deactivate all dependents
+- Checkbox reflects "effectively loaded" state (active AND deps satisfied)
+- `load-warnings` atom surfaces issues to the UI error panel
+
+### Import/Export
+
+Libraries export as `.clj` files with header comments:
+```clojure
+;; Library: shapes
+;; Requires: []
+;; Exported: 2024-01-15T10:30:00.000Z
+(defn hexagon [r] (circle r 6))
+```
+
 ## Future Considerations
 
 - **Undo/redo** — Since state is immutable, history is just a list of states
 - **Collaborative editing** — CRDT on the script text
-- **Plugin system** — User-defined SCI namespaces
+- ~~**Plugin system** — User-defined SCI namespaces~~ → Implemented as Library/Namespace System
 - **AI assistant** — LLM generates DSL code from natural language, with tier-based prompts:
   - **Tier 1**: Code-only output (small models, few-shot examples)
   - **Tier 2**: JSON output with code or clarification, receives script context (medium models)

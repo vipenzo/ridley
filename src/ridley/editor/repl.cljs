@@ -16,7 +16,8 @@
             [clojure.string :as str]
             [ridley.editor.state :as state]
             [ridley.editor.bindings :refer [base-bindings]]
-            [ridley.editor.macros :refer [macro-defs]]))
+            [ridley.editor.macros :refer [macro-defs]]
+            [ridley.library.core :as library]))
 
 ;; ============================================================
 ;; SCI Context Management
@@ -26,8 +27,13 @@
 (defonce ^:private sci-ctx (atom nil))
 
 (defn- make-sci-ctx []
-  (let [ctx (sci/init {:bindings base-bindings})]
+  (let [lib-ns (library/load-active-libraries base-bindings macro-defs)
+        ctx (sci/init {:bindings base-bindings
+                       :namespaces lib-ns})]
     (sci/eval-string macro-defs ctx)
+    ;; Auto-require library namespaces so prefixed access (shapes/hexagon) works
+    (doseq [ns-sym (keys lib-ns)]
+      (sci/eval-string (str "(require '" ns-sym ")") ctx))
     ctx))
 
 (defn- get-or-create-ctx []

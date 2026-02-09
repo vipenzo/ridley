@@ -19,7 +19,9 @@
             [ridley.voice.help.db :as help-db]
             [ridley.settings :as settings]
             [ridley.ai.core :as ai]
-            [ridley.ai.batch :as batch]))
+            [ridley.ai.batch :as batch]
+            [ridley.library.panel :as lib-panel]
+            [ridley.library.core :as lib-core]))
 
 (defonce ^:private editor-view (atom nil))
 (defonce ^:private repl-input-el (atom nil))
@@ -149,7 +151,11 @@
            (if-let [error (:error result)]
              (show-error error)
              (do
-               (hide-error)
+               ;; Show library load warnings if any
+               (let [lib-warnings @lib-core/load-warnings]
+                 (if (seq lib-warnings)
+                   (show-error (str/join "\n" lib-warnings))
+                   (hide-error)))
                ;; Show print output in REPL history if any
                (when-let [print-output (:print-output result)]
                  (add-script-output print-output))
@@ -1179,11 +1185,13 @@
   (let [editor-section (.getElementById js/document "explicit-section")
         repl-section (.getElementById js/document "repl-section")
         section-divider (.querySelector js/document ".section-divider")
+        library-panel (.getElementById js/document "library-panel")
         manual-container (.getElementById js/document "manual-container")]
     (if (manual/open?)
       ;; Show manual, hide editor
       (do
         (when editor-section (set! (.-style.display editor-section) "none"))
+        (when library-panel (set! (.-style.display library-panel) "none"))
         (when repl-section (set! (.-style.display repl-section) "none"))
         (when section-divider (set! (.-style.display section-divider) "none"))
         (when manual-container
@@ -1194,6 +1202,7 @@
       ;; Hide manual, show editor
       (do
         (when editor-section (set! (.-style.display editor-section) "flex"))
+        (when library-panel (set! (.-style.display library-panel) "flex"))
         (when repl-section (set! (.-style.display repl-section) "flex"))
         (when section-divider (set! (.-style.display section-divider) "block"))
         (when manual-container (set! (.-style.display manual-container) "none"))))))
@@ -1251,6 +1260,25 @@
   (when-let [manual-btn (.getElementById js/document "btn-manual")]
     (.addEventListener manual-btn "click"
       (fn [_] (manual/toggle-manual!)))))
+
+;; ============================================================
+;; Library Panel
+;; ============================================================
+
+(defn- setup-library-panel
+  "Setup the library panel with callbacks for editor integration."
+  []
+  (lib-panel/setup!
+   {:get-editor-content (fn [] (when @editor-view (cm/get-value @editor-view)))
+    :set-editor-content (fn [content]
+                          (when @editor-view
+                            (cm/set-value @editor-view content)))
+    :on-edit (fn [lib-name]
+               (lib-panel/enter-edit-mode! lib-name))
+    :on-change (fn []
+                 ;; Reset SCI context and re-evaluate definitions
+                 (repl/reset-ctx!)
+                 (evaluate-definitions))}))
 
 ;; ============================================================
 ;; Voice Input Integration
@@ -1830,6 +1858,8 @@
     (setup-sync)
     ;; Setup manual panel
     (setup-manual)
+    ;; Setup library panel
+    (setup-library-panel)
     ;; Initialize voice input system
     (voice/init! {:insert ai-insert-code
                   :edit ai-edit-code
