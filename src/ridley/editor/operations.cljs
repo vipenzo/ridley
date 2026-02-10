@@ -182,7 +182,7 @@
    threshold: intersection sensitivity 0.0-1.0 (default 0.1)
               Higher = faster but may miss intersections
               Lower = slower but catches more intersections"
-  ([shape-or-shapes transform-fn path] (pure-bloft shape-or-shapes transform-fn path 32 0.1))
+  ([shape-or-shapes transform-fn path] (pure-bloft shape-or-shapes transform-fn path nil 0.1))
   ([shape-or-shapes transform-fn path steps] (pure-bloft shape-or-shapes transform-fn path steps 0.1))
   ([shape-or-shapes transform-fn path steps threshold]
    (let [shapes (unwrap-shapes shape-or-shapes)

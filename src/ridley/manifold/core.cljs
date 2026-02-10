@@ -260,6 +260,22 @@
           (.delete result)
           (schema/assert-mesh! output))))))
 
+(defn- tree-union
+  "Union meshes using balanced binary tree strategy.
+   Much faster than sequential reduce for large mesh counts."
+  [meshes]
+  (case (count meshes)
+    0 nil
+    1 (first meshes)
+    2 (union-two (first meshes) (second meshes))
+    ;; Split in half, recurse, union the two halves
+    (let [mid (quot (count meshes) 2)
+          left (tree-union (subvec meshes 0 mid))
+          right (tree-union (subvec meshes mid))]
+      (if (and left right)
+        (union-two left right)
+        (or left right)))))
+
 (defn union
   "Compute the union of one or more meshes.
    Returns a new Ridley mesh.
@@ -277,7 +293,7 @@
     (case (count meshes)
       0 nil
       1 (first meshes)
-      (reduce union-two meshes))))
+      (tree-union (vec meshes)))))
 
 (defn- difference-two
   "Compute the difference of exactly two meshes (A - B)."

@@ -32,6 +32,7 @@
 (def generate-round-corner-rings extrusion/generate-round-corner-rings)
 (def generate-tapered-corner-rings extrusion/generate-tapered-corner-rings)
 (def calc-round-steps extrusion/calc-round-steps)
+(def get-resolution extrusion/get-resolution)
 
 ;; ============================================================
 ;; Loft - extrusion with shape transformation
@@ -847,6 +848,144 @@
               (recur (inc cmd-idx) (apply-rotation-to-state s cmd)
                      dist-walked next-sample-at poses))))))))
 
+(defn- heading-angle-deg
+  "Angle in degrees between two unit heading vectors."
+  [h1 h2]
+  (let [cos-a (max -1.0 (min 1.0 (dot h1 h2)))]
+    (* (Math/acos cos-a) (/ 180 Math/PI))))
+
+(defn- scan-path-curvature
+  "Pre-scan a path to compute total distance and curvature.
+   Curvature is measured from actual heading changes between consecutive
+   forward commands — the true geometric curvature of the bezier path,
+   including overshoot and correction from spline fitting."
+  [path]
+  (let [commands (:commands path)
+        n (count commands)
+        init {:heading [1 0 0] :up [0 0 1]}]
+    (loop [i 0, s init, prev-h nil, total-dist 0.0, total-angle 0.0]
+      (if (>= i n)
+        {:total-dist total-dist :total-angle total-angle}
+        (let [cmd (nth commands i)]
+          (cond
+            (= :f (:cmd cmd))
+            (let [d (Math/abs (first (:args cmd)))
+                  h (:heading s)
+                  angle (if prev-h (heading-angle-deg prev-h h) 0.0)]
+              (recur (inc i) s h (+ total-dist d) (+ total-angle angle)))
+
+            (is-rotation? (:cmd cmd))
+            (recur (inc i) (apply-rotation-to-state s cmd)
+                   prev-h total-dist total-angle)
+
+            :else
+            (recur (inc i) s prev-h total-dist total-angle)))))))
+
+(defn- calc-bloft-steps
+  "Calculate bloft steps from resolution settings and path curvature scan."
+  [state {:keys [total-dist total-angle]}]
+  (let [{:keys [mode value]} (get-resolution state)]
+    (case mode
+      :n (max 2 (int (+ (* value (/ total-angle 360)) (* (+ 1 (Math/log value)) total-dist))))
+      :a (max 2 (int (Math/ceil (/ total-angle value))))
+      :s (max 2 (int (Math/ceil (/ total-dist value))))
+      value)))
+
+(defn- walk-path-poses-adaptive
+  "Walk a path and sample poses adaptively based on local curvature.
+   Curvature is measured from actual heading changes between consecutive
+   forward commands (not from rotation command values).
+
+   Rings are distributed proportionally to curvature: curves get ~90%
+   of the ring budget, straight sections ~10%.
+
+   For purely straight paths (no curvature), falls back to uniform distance sampling.
+
+   Returns a vector of (n-samples + 1) poses: [{:position :heading :up :t} ...]"
+  [initial-state path n-samples shape-radius {:keys [total-dist total-angle]}]
+  (let [commands (vec (:commands path))
+        n-cmds (count commands)
+        total-angle-rad (* total-angle (/ Math/PI 180))
+        ;; Distance weight factor: calibrated so straight sections get ~10% of ring budget.
+        ;; CWD_straight = dw * total-dist, CWD_curve = R * total-angle-rad
+        ;; We want CWD_straight / CWD_total = 1/10, so dw = R * total-angle-rad / (9 * total-dist)
+        ;; For straight-only paths (total-angle=0), fall back to pure distance weighting.
+        dist-weight (if (and (pos? total-angle-rad) (pos? total-dist))
+                      (/ (* shape-radius total-angle-rad) (* total-dist 9))
+                      1.0)
+        total-cwd (if (pos? total-angle-rad)
+                    (+ (* dist-weight total-dist) (* shape-radius total-angle-rad))
+                    total-dist)
+        sample-interval (if (pos? n-samples) (/ total-cwd n-samples) total-cwd)]
+    (if (<= total-dist 0)
+      [{:position (:position initial-state)
+        :heading (:heading initial-state)
+        :up (:up initial-state)
+        :t 0.0}]
+      (loop [cmd-idx 0
+             s initial-state
+             dist-walked 0.0
+             cwd-walked 0.0
+             prev-f-heading (:heading initial-state)
+             next-sample-cwd 0.0
+             poses []]
+        (cond
+          ;; Collected all samples
+          (> (count poses) n-samples)
+          poses
+
+          ;; Ran out of commands — pad with final pose
+          (>= cmd-idx n-cmds)
+          (let [final {:position (:position s) :heading (:heading s) :up (:up s) :t 1.0}]
+            (loop [p poses]
+              (if (> (count p) n-samples) p (recur (conj p final)))))
+
+          :else
+          (let [cmd (nth commands cmd-idx)]
+            (cond
+              (= :f (:cmd cmd))
+              (let [d (first (:args cmd))
+                    abs-d (Math/abs d)
+                    ;; True heading change since last :f command
+                    angle-rad (* (heading-angle-deg prev-f-heading (:heading s))
+                                 (/ Math/PI 180))
+                    step-cwd (+ (* dist-weight abs-d) (* shape-radius angle-rad))
+                    end-cwd (+ cwd-walked step-cwd)
+                    end-dist (+ dist-walked abs-d)]
+                (if (and (<= next-sample-cwd end-cwd)
+                         (<= (count poses) n-samples))
+                  ;; Emit sample within this forward step
+                  (let [frac (if (pos? step-cwd)
+                               (/ (- next-sample-cwd cwd-walked) step-cwd)
+                               0)
+                        frac (max 0.0 (min 1.0 frac))
+                        sample-pos (v+ (:position s) (v* (:heading s) (* d frac)))
+                        sample-dist (+ dist-walked (* abs-d frac))
+                        t (/ sample-dist total-dist)]
+                    ;; Don't advance cmd-idx — more samples may fall in this step
+                    (recur cmd-idx s dist-walked cwd-walked prev-f-heading
+                           (+ next-sample-cwd sample-interval)
+                           (conj poses {:position sample-pos
+                                        :heading (:heading s)
+                                        :up (:up s)
+                                        :t (min 1.0 t)})))
+                  ;; No sample here — advance past this :f
+                  (let [new-pos (v+ (:position s) (v* (:heading s) d))]
+                    (recur (inc cmd-idx) (assoc s :position new-pos)
+                           end-dist end-cwd (:heading s) next-sample-cwd poses))))
+
+              ;; Any rotation — apply to state, don't track angle separately
+              (is-rotation? (:cmd cmd))
+              (recur (inc cmd-idx) (apply-rotation-to-state s cmd)
+                     dist-walked cwd-walked prev-f-heading
+                     next-sample-cwd poses)
+
+              ;; Unknown command — skip
+              :else
+              (recur (inc cmd-idx) s
+                     dist-walked cwd-walked prev-f-heading
+                     next-sample-cwd poses))))))))
+
 (defn bloft
   "Bezier-safe loft: loft a shape along a bezier path with self-intersection handling.
 
@@ -857,14 +996,14 @@
    - shape: starting shape
    - transform-fn: (fn [shape t]) for tapering, t goes 0→1
    - bezier-path: a path created with bezier-as
-   - steps: number of steps (default 32)
+   - steps: number of steps (nil = use resolution setting)
    - threshold: intersection sensitivity, 0.0-1.0 (default 0.1)
                 Higher = less sensitive = faster but may miss intersections
                 Lower = more sensitive = slower but catches more intersections
 
    Returns updated state with the resulting mesh."
   ([state shape transform-fn bezier-path]
-   (bloft state shape transform-fn bezier-path 32 0.1))
+   (bloft state shape transform-fn bezier-path nil 0.1))
   ([state shape transform-fn bezier-path steps]
    (bloft state shape transform-fn bezier-path steps 0.1))
   ([state shape transform-fn bezier-path steps threshold]
@@ -874,10 +1013,15 @@
                           :heading (:heading state)
                           :up (:up state)}
            initial-radius (shape-radius shape)
-           ;; Walk the path properly to get coherent poses at each sample point.
-           ;; This avoids the degenerate heading/up frame that can occur when
-           ;; interpolating positions within segments after tr (roll).
-           poses (walk-path-poses state bezier-path steps)
+           scan (scan-path-curvature bezier-path)
+           steps (or steps (calc-bloft-steps state scan))
+           _ (js/console.log "bloft scan:" "total-angle=" (.toFixed (:total-angle scan) 1)
+                             "total-dist=" (.toFixed (:total-dist scan) 1)
+                             "radius=" (.toFixed initial-radius 2)
+                             "steps=" steps)
+           ;; Walk the path with curvature-adaptive sampling.
+           ;; Tighter curves get more rings, straight sections fewer.
+           poses (walk-path-poses-adaptive state bezier-path steps initial-radius scan)
            n-poses (count poses)]
 
        (if (< n-poses 2)

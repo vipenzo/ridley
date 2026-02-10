@@ -1122,7 +1122,7 @@
                           effective-dist (- dist shorten-start shorten-end)
                           is-last (= i (dec n-segments))
                           joint-mode (or (:joint-mode state) :flat)
-                          has-corner-rotation (some #(is-corner-rotation? (:cmd %)) rotations)
+                          any-corner-cmds (some #(is-corner-rotation? (:cmd %)) rotations)
 
                           start-pos (:position s)
                           s1 (assoc s :position start-pos)
@@ -1144,6 +1144,14 @@
                           cos-a (dot old-heading new-heading)
                           heading-angle (when (< cos-a 0.9998)
                                           (Math/acos (min 1 (max -1 cos-a))))
+
+                          ;; Only treat as corner if heading actually changes significantly.
+                          ;; Small rotations from bezier-as walk steps are smooth transitions,
+                          ;; not corners requiring shortening/fillets/duplicate rings.
+                          has-corner-rotation (and any-corner-cmds
+                                                  heading-angle
+                                                  (> heading-angle (* corner-threshold-deg-closed
+                                                                      (/ Math/PI 180))))
 
                           corner-rings (if (and has-corner-rotation (not is-last))
                                          (let [corner-angle-deg (when (= joint-mode :round)

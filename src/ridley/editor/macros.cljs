@@ -706,7 +706,7 @@
    ;; (bloft-n 64 (circle 10) identity my-bezier-path) - more steps
    (defmacro bloft
      ([shape transform-fn bezier-path]
-      `(bloft ~shape ~transform-fn ~bezier-path 32 0.1))
+      `(bloft ~shape ~transform-fn ~bezier-path nil 0.1))
      ([shape transform-fn bezier-path steps]
       `(bloft ~shape ~transform-fn ~bezier-path ~steps 0.1))
      ([shape transform-fn bezier-path steps threshold]

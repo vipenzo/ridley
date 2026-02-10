@@ -661,10 +661,10 @@
   "Walk along a bezier curve, moving directly to each sample point.
    Uses chord directions for drawing (position accuracy), then sets
    the tangent heading for continuity. First step preserves the existing
-   heading, last step uses exact end tangent."
+   heading, last step uses exact end tangent.
+   Uses parallel transport for smooth, twist-free frame evolution."
   [state steps point-fn tangent-fn]
-  (let [initial-up (:up state)
-        last-i (dec steps)
+  (let [last-i (dec steps)
         end-heading (tangent-fn 1)]
     (reduce
      (fn [s i]
@@ -675,18 +675,16 @@
              dist (magnitude move-dir)]
          (if (> dist 0.001)
            (let [chord-heading (normalize move-dir)
+                 prev-heading (:heading s)
                  ;; Final heading for continuity:
                  ;; First step: keep existing heading
                  ;; Last step: use exact end tangent
                  ;; Middle steps: use chord
-                 final-heading (cond (zero? i) (:heading s)
+                 final-heading (cond (zero? i) prev-heading
                                      (= i last-i) end-heading
                                      :else chord-heading)
-                 right (cross final-heading initial-up)
-                 right-mag (magnitude right)
-                 new-up (if (< right-mag 0.001)
-                          initial-up
-                          (normalize (cross right final-heading)))]
+                 ;; Parallel transport: rotate up with the heading change
+                 new-up (bezier/parallel-transport-up (:up s) prev-heading final-heading)]
              ;; Move using chord direction (for accurate position),
              ;; then set final heading for tangent continuity
              (-> s

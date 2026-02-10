@@ -3,7 +3,7 @@
    These are computational functions that don't depend on turtle state or movement commands.
    Higher-level bezier commands (bezier-to, bezier-as, arc-h, arc-v) remain in core.cljs
    as they depend on movement primitives (f, th, tv)."
-  (:require [ridley.math :refer [normalize v- v+ v* magnitude cross]]))
+  (:require [ridley.math :refer [normalize v- v+ v* magnitude cross dot rotate-around-axis]]))
 
 ;; ============================================================
 ;; Bezier point and tangent calculations
@@ -125,6 +125,21 @@
       ;; Heading-based: use auto-control-points
       (auto-control-points-with-target-heading p0 h0 p3 h1 factor))))
 
+(defn parallel-transport-up
+  "Transport up vector from old-heading to new-heading via minimal rotation.
+   Keeps the frame twist-free by rotating up with the same rotation
+   that takes old-heading to new-heading."
+  [up old-heading new-heading]
+  (let [axis (cross old-heading new-heading)
+        axis-mag (magnitude axis)]
+    (if (< axis-mag 0.0001)
+      ;; Headings nearly parallel, keep up as-is
+      up
+      (let [axis-norm (v* axis (/ 1.0 axis-mag))
+            cos-a (max -1 (min 1 (dot old-heading new-heading)))
+            angle (Math/acos cos-a)]
+        (rotate-around-axis up axis-norm angle)))))
+
 (defn sample-bezier-segment
   "Pure function: sample a cubic bezier segment into walk steps.
 
@@ -136,12 +151,17 @@
 
    Returns vector of {:from :to :chord-heading :final-heading :final-up}
    where chord-heading is the direction to move (for drawing)
-   and final-heading is the tangent (for continuity)."
+   and final-heading is the tangent (for continuity).
+
+   Uses parallel transport to evolve the up vector smoothly,
+   preventing twist discontinuities at bends."
   [p0 c1 c2 p3 steps start-heading start-up]
   (let [end-heading (normalize (cubic-bezier-tangent p0 c1 c2 p3 1))
         last-i (dec steps)]
     (loop [i 0
            current-pos p0
+           current-up start-up
+           prev-heading start-heading
            results []]
       (if (>= i steps)
         results
@@ -155,14 +175,13 @@
                   final-heading (cond (zero? i) start-heading
                                       (= i last-i) end-heading
                                       :else chord-heading)
-                  ;; Compute up vector
-                  right (cross final-heading start-up)
-                  right-mag (magnitude right)
-                  final-up (if (< right-mag 0.001)
-                             start-up
-                             (normalize (cross right final-heading)))]
+                  ;; Parallel transport: rotate up by the same rotation
+                  ;; that takes prev-heading to final-heading
+                  final-up (parallel-transport-up current-up prev-heading final-heading)]
               (recur (inc i)
                      new-pos
+                     final-up
+                     final-heading
                      (conj results {:from current-pos
                                     :to new-pos
                                     :dist dist
@@ -170,4 +189,4 @@
                                     :final-heading final-heading
                                     :final-up final-up})))
             ;; Skip degenerate step
-            (recur (inc i) current-pos results)))))))
+            (recur (inc i) current-pos current-up prev-heading results)))))))
