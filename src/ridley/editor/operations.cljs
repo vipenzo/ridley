@@ -7,6 +7,8 @@
             [ridley.turtle.shape :as shape]
             [ridley.turtle.transform :as xform]))
 
+(declare pure-bloft)
+
 (defn ^:export implicit-extrude-closed-path
   "Extrude-closed function - creates closed mesh without side effects.
    Starts from current turtle position/orientation."
@@ -42,36 +44,36 @@
 
 (defn ^:export pure-extrude-path
   "Pure extrude function - creates mesh without side effects.
-   Starts from current turtle position/orientation."
+   Starts from current turtle position/orientation.
+   For bezier paths, automatically uses bloft with identity transform."
   [shape-or-shapes path]
-  ;; Handle both single shape and vector of shapes (from text-shape)
-  (let [shapes (if (vector? shape-or-shapes) shape-or-shapes [shape-or-shapes])
-        ;; Start from current turtle position/orientation (not origin)
-        ;; Also copy joint-mode and resolution settings
-        current-turtle @turtle-atom
-        initial-state (if current-turtle
-                        (-> (turtle/make-turtle)
-                            (assoc :position (:position current-turtle))
-                            (assoc :heading (:heading current-turtle))
-                            (assoc :up (:up current-turtle))
-                            (assoc :joint-mode (:joint-mode current-turtle))
-                            (assoc :resolution (:resolution current-turtle))
-                            (assoc :material (:material current-turtle)))
-                        (turtle/make-turtle))
-        ;; Extrude each shape, collecting results
-        results (reduce
-                 (fn [acc shape]
-                   (let [state (turtle/extrude-from-path initial-state shape path)
-                         mesh (last (:meshes state))]
-                     (if mesh
-                       (conj acc mesh)
-                       acc)))
-                 []
-                 shapes)]
-    ;; Return single mesh or vector of meshes
-    (if (= 1 (count results))
-      (first results)
-      results)))
+  (if (:bezier path)
+    ;; Bezier path: delegate to bloft with identity transform
+    (pure-bloft shape-or-shapes (fn [s _] s) path nil 0.1)
+    ;; Normal path: standard extrude
+    (let [shapes (if (vector? shape-or-shapes) shape-or-shapes [shape-or-shapes])
+          current-turtle @turtle-atom
+          initial-state (if current-turtle
+                          (-> (turtle/make-turtle)
+                              (assoc :position (:position current-turtle))
+                              (assoc :heading (:heading current-turtle))
+                              (assoc :up (:up current-turtle))
+                              (assoc :joint-mode (:joint-mode current-turtle))
+                              (assoc :resolution (:resolution current-turtle))
+                              (assoc :material (:material current-turtle)))
+                          (turtle/make-turtle))
+          results (reduce
+                   (fn [acc shape]
+                     (let [state (turtle/extrude-from-path initial-state shape path)
+                           mesh (last (:meshes state))]
+                       (if mesh
+                         (conj acc mesh)
+                         acc)))
+                   []
+                   shapes)]
+      (if (= 1 (count results))
+        (first results)
+        results))))
 
 (defn- combine-meshes
   "Combine multiple meshes into one by concatenating vertices and reindexing faces.
@@ -126,25 +128,29 @@
    The resulting mesh may have overlapping/intersecting parts."
   ([shape-or-shapes transform-fn path] (pure-loft-path shape-or-shapes transform-fn path 16))
   ([shape-or-shapes transform-fn path steps]
-   (let [shapes (unwrap-shapes shape-or-shapes)
-         current-turtle @turtle-atom
-         initial-state (if current-turtle
-                         (-> (turtle/make-turtle)
-                             (assoc :position (:position current-turtle))
-                             (assoc :heading (:heading current-turtle))
-                             (assoc :up (:up current-turtle))
-                             (assoc :joint-mode (:joint-mode current-turtle))
-                             (assoc :resolution (:resolution current-turtle))
-                             (assoc :material (:material current-turtle)))
-                         (turtle/make-turtle))
-         results (reduce
-                  (fn [acc shape]
-                    (let [result-state (turtle/loft-from-path initial-state shape transform-fn path steps)
-                          mesh (combine-meshes (:meshes result-state))]
-                      (if mesh (conj acc mesh) acc)))
-                  []
-                  shapes)]
-     (wrap-results results))))
+   (if (:bezier path)
+     ;; Bezier path: delegate to bloft (adaptive sampling + hull bridging)
+     (pure-bloft shape-or-shapes transform-fn path nil 0.1)
+     ;; Normal path: standard loft
+     (let [shapes (unwrap-shapes shape-or-shapes)
+           current-turtle @turtle-atom
+           initial-state (if current-turtle
+                           (-> (turtle/make-turtle)
+                               (assoc :position (:position current-turtle))
+                               (assoc :heading (:heading current-turtle))
+                               (assoc :up (:up current-turtle))
+                               (assoc :joint-mode (:joint-mode current-turtle))
+                               (assoc :resolution (:resolution current-turtle))
+                               (assoc :material (:material current-turtle)))
+                           (turtle/make-turtle))
+           results (reduce
+                    (fn [acc shape]
+                      (let [result-state (turtle/loft-from-path initial-state shape transform-fn path steps)
+                            mesh (combine-meshes (:meshes result-state))]
+                        (if mesh (conj acc mesh) acc)))
+                    []
+                    shapes)]
+       (wrap-results results)))))
 
 (defn ^:export pure-loft-two-shapes
   "Pure loft between two shapes - creates mesh that transitions from shape1 to shape2.
@@ -185,6 +191,8 @@
   ([shape-or-shapes transform-fn path] (pure-bloft shape-or-shapes transform-fn path nil 0.1))
   ([shape-or-shapes transform-fn path steps] (pure-bloft shape-or-shapes transform-fn path steps 0.1))
   ([shape-or-shapes transform-fn path steps threshold]
+   (when-not (:bezier path)
+     (throw (js/Error. "bloft requires a bezier path. Use (path (bezier-as ...)) to create one, or use loft/extrude for regular paths.")))
    (let [shapes (unwrap-shapes shape-or-shapes)
          current-turtle @turtle-atom
          initial-state (if current-turtle

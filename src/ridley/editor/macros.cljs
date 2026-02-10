@@ -245,6 +245,7 @@
                        (vec (mapcat #(subdivide-segment-impl % max-segment-length) path-segs))
                        path-segs)]
        (when (seq path-segs)
+         (swap! path-recorder assoc :bezier true)
          (let [init-state @path-recorder
                init-pose (select-keys init-state [:position :heading :up])
                ;; Calculate steps based on resolution settings
@@ -302,6 +303,7 @@
            dz0 (- (nth p3 2) (nth p0 2))
            approx-length (sqrt (+ (* dx0 dx0) (* dy0 dy0) (* dz0 dz0)))]
        (when (> approx-length 0.001)
+         (swap! path-recorder assoc :bezier true)
          (let [res-mode (get-in state [:resolution :mode] :n)
                res-value (get-in state [:resolution :value] 16)
                actual-steps (or steps
@@ -417,6 +419,7 @@
                  dz0 (- (nth p3 2) (nth p0 2))
                  approx-length (sqrt (+ (* dx0 dx0) (* dy0 dy0) (* dz0 dz0)))]
              (when (> approx-length 0.001)
+               (swap! path-recorder assoc :bezier true)
                (let [res-mode (get-in state [:resolution :mode] :n)
                      res-value (get-in state [:resolution :value] 16)
                      actual-steps (or steps
@@ -504,7 +507,9 @@
               ~'mark rec-mark*
               ~'follow rec-follow*]
           ~@body)
-        (let [result# (path-from-recorder @path-recorder)]
+        (let [rec-state# @path-recorder
+              result# (path-from-recorder rec-state#)
+              result# (if (:bezier rec-state#) (assoc result# :bezier true) result#)]
           (reset! path-recorder saved#)
           result#)))
 

@@ -1030,41 +1030,54 @@
                (loop [i 0
                       acc-rings []
                       tmp-meshes []
-                      last-ring nil]
+                      last-ring nil
+                      skipped 0]
 
                  (if (>= i n-poses)
                    ;; Flush remaining rings
-                   (if (>= (count acc-rings) 2)
-                     (conj tmp-meshes (build-sweep-mesh acc-rings false creation-pose))
-                     tmp-meshes)
+                   {:meshes (if (>= (count acc-rings) 2)
+                              (conj tmp-meshes (build-sweep-mesh acc-rings false creation-pose))
+                              tmp-meshes)
+                    :skipped skipped}
 
                    (let [{:keys [position heading up t]} (nth poses i)
                          current-shape (transform-fn shape t)
-                         temp-state {:position position :heading heading :up up}
-                         current-ring (stamp-shape temp-state current-shape)]
+                         current-radius (shape-radius current-shape)]
 
-                     (if (nil? last-ring)
-                       ;; First ring
-                       (recur (inc i) (conj acc-rings current-ring)
-                              tmp-meshes current-ring)
+                     ;; Skip degenerate rings (radius ≈ 0, e.g. from scale-to-zero taper)
+                     (if (< current-radius 0.001)
+                       (recur (inc i) acc-rings tmp-meshes last-ring (inc skipped))
 
-                       (if (rings-intersect? last-ring current-ring threshold initial-radius)
-                         ;; INTERSECTION: create hull bridge directly from ring vertices
-                         (let [hull-mesh (manifold/hull-from-points (vec (concat last-ring current-ring)))
-                               valid-hull? (and hull-mesh (pos? (count (:vertices hull-mesh))))
-                               section-mesh (when (>= (count acc-rings) 2)
-                                              (build-sweep-mesh acc-rings false creation-pose))
-                               new-tmp-meshes (cond-> tmp-meshes
-                                                section-mesh (conj section-mesh)
-                                                valid-hull? (conj hull-mesh))]
-                           (recur (inc i) [current-ring]
-                                  new-tmp-meshes current-ring))
+                       (let [temp-state {:position position :heading heading :up up}
+                             current-ring (stamp-shape temp-state current-shape)]
 
-                         ;; No intersection — accumulate ring
-                         (recur (inc i) (conj acc-rings current-ring)
-                                tmp-meshes current-ring))))))
+                         (if (nil? last-ring)
+                           ;; First valid ring
+                           (recur (inc i) (conj acc-rings current-ring)
+                                  tmp-meshes current-ring skipped)
 
-               final-meshes result
+                           (if (rings-intersect? last-ring current-ring threshold current-radius)
+                             ;; INTERSECTION: create hull bridge directly from ring vertices
+                             (let [hull-mesh (manifold/hull-from-points (vec (concat last-ring current-ring)))
+                                   valid-hull? (and hull-mesh (pos? (count (:vertices hull-mesh))))
+                                   section-mesh (when (>= (count acc-rings) 2)
+                                                  (build-sweep-mesh acc-rings false creation-pose))
+                                   new-tmp-meshes (cond-> tmp-meshes
+                                                    section-mesh (conj section-mesh)
+                                                    valid-hull? (conj hull-mesh))]
+                               (recur (inc i) [current-ring]
+                                      new-tmp-meshes current-ring skipped))
+
+                             ;; No intersection — accumulate ring
+                             (recur (inc i) (conj acc-rings current-ring)
+                                    tmp-meshes current-ring skipped))))))))
+
+               _ (when (pos? (:skipped result))
+                   (println (str "⚠ bloft: skipped " (:skipped result)
+                                 " degenerate rings (shape radius ≈ 0). "
+                                 "The transform function scales the shape to zero — "
+                                 "the mesh will be open at that end.")))
+               final-meshes (:meshes result)
                ;; Walk the path to get final turtle state
                final-state (reduce
                             (fn [s cmd]
@@ -1079,11 +1092,31 @@
 
            (if (empty? final-meshes)
              state
-             ;; Use manifold/union to properly merge meshes and remove internal faces
+             ;; Use manifold/union to properly merge meshes and remove internal faces.
+             ;; Fall back to simple concatenation if union fails (e.g. degenerate hulls).
              (let [unified-mesh (if (= 1 (count final-meshes))
                                   (first final-meshes)
-                                  (manifold/union final-meshes))
-                   mesh-with-material (if (:material state)
-                                        (assoc unified-mesh :material (:material state))
-                                        unified-mesh)]
-               (update final-state :meshes conj mesh-with-material)))))))))
+                                  (try
+                                    (manifold/union final-meshes)
+                                    (catch :default e
+                                      (js/console.warn "bloft: manifold union failed, concatenating meshes:" (.-message e))
+                                      ;; Concatenate vertices and reindex faces
+                                      (loop [remaining (rest final-meshes)
+                                             verts (vec (:vertices (first final-meshes)))
+                                             faces (vec (:faces (first final-meshes)))]
+                                        (if (empty? remaining)
+                                          {:type :mesh :primitive :bloft
+                                           :vertices verts :faces faces
+                                           :creation-pose (:creation-pose (first final-meshes))}
+                                          (let [m (first remaining)
+                                                offset (count verts)]
+                                            (recur (rest remaining)
+                                                   (into verts (:vertices m))
+                                                   (into faces (mapv #(mapv (fn [i] (+ i offset)) %) (:faces m))))))))))
+                   mesh-with-material (when unified-mesh
+                                        (if (:material state)
+                                          (assoc unified-mesh :material (:material state))
+                                          unified-mesh))]
+               (if mesh-with-material
+                 (update final-state :meshes conj mesh-with-material)
+                 final-state)))))))))
