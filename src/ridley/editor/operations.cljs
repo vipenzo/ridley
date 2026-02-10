@@ -5,9 +5,35 @@
   (:require [ridley.editor.state :refer [turtle-atom]]
             [ridley.turtle.core :as turtle]
             [ridley.turtle.shape :as shape]
-            [ridley.turtle.transform :as xform]))
+            [ridley.turtle.transform :as xform]
+            [ridley.turtle.loft :as loft]
+            [ridley.turtle.extrusion :as extrusion]))
 
 (declare pure-bloft)
+
+(defn- bezier-path-has-self-intersection?
+  "Quick check: would extruding this shape along this bezier path cause
+   ring self-intersections? Compares the path's minimum radius of curvature
+   against the shape radius. Uses 32 samples for accurate curvature estimation."
+  [initial-state shape path]
+  (let [radius (extrusion/shape-radius shape)
+        poses (loft/walk-path-poses initial-state path 32)
+        n (count poses)]
+    (when (>= n 2)
+      (loop [i 0]
+        (if (>= i (dec n))
+          false
+          (let [pa (nth poses i)
+                pb (nth poses (inc i))
+                dp (mapv - (:position pb) (:position pa))
+                d (Math/sqrt (reduce + (mapv * dp dp)))]
+            (if (< d 0.0001)
+              (recur (inc i))
+              (let [dot-hh (reduce + (mapv * (:heading pa) (:heading pb)))
+                    angle (Math/acos (min 1.0 (max -1.0 dot-hh)))]
+                (if (> (* radius angle) d)
+                  true
+                  (recur (inc i)))))))))))
 
 (defn ^:export implicit-extrude-closed-path
   "Extrude-closed function - creates closed mesh without side effects.
@@ -45,35 +71,35 @@
 (defn ^:export pure-extrude-path
   "Pure extrude function - creates mesh without side effects.
    Starts from current turtle position/orientation.
-   For bezier paths, automatically uses bloft with identity transform."
+   For bezier paths with self-intersecting rings, automatically uses bloft."
   [shape-or-shapes path]
-  (if (:bezier path)
-    ;; Bezier path: delegate to bloft with identity transform
-    (pure-bloft shape-or-shapes (fn [s _] s) path nil 0.1)
-    ;; Normal path: standard extrude
-    (let [shapes (if (vector? shape-or-shapes) shape-or-shapes [shape-or-shapes])
-          current-turtle @turtle-atom
-          initial-state (if current-turtle
-                          (-> (turtle/make-turtle)
-                              (assoc :position (:position current-turtle))
-                              (assoc :heading (:heading current-turtle))
-                              (assoc :up (:up current-turtle))
-                              (assoc :joint-mode (:joint-mode current-turtle))
-                              (assoc :resolution (:resolution current-turtle))
-                              (assoc :material (:material current-turtle)))
-                          (turtle/make-turtle))
-          results (reduce
-                   (fn [acc shape]
-                     (let [state (turtle/extrude-from-path initial-state shape path)
-                           mesh (last (:meshes state))]
-                       (if mesh
-                         (conj acc mesh)
-                         acc)))
-                   []
-                   shapes)]
-      (if (= 1 (count results))
-        (first results)
-        results))))
+  (let [shapes (if (vector? shape-or-shapes) shape-or-shapes [shape-or-shapes])
+        current-turtle @turtle-atom
+        initial-state (if current-turtle
+                        (-> (turtle/make-turtle)
+                            (assoc :position (:position current-turtle))
+                            (assoc :heading (:heading current-turtle))
+                            (assoc :up (:up current-turtle))
+                            (assoc :joint-mode (:joint-mode current-turtle))
+                            (assoc :resolution (:resolution current-turtle))
+                            (assoc :material (:material current-turtle)))
+                        (turtle/make-turtle))]
+    (if (and (:bezier path)
+             (bezier-path-has-self-intersection? initial-state (first shapes) path))
+      ;; Bezier with tight curves: use bloft
+      (do (js/console.log "extrude: bezier path has self-intersecting rings, using bloft")
+          (pure-bloft shape-or-shapes (fn [s _] s) path nil 0.1))
+      ;; Normal path OR gentle bezier: standard extrude
+      (let [results (reduce
+                     (fn [acc shape]
+                       (let [state (turtle/extrude-from-path initial-state shape path)
+                             mesh (last (:meshes state))]
+                         (if mesh (conj acc mesh) acc)))
+                     []
+                     shapes)]
+        (if (= 1 (count results))
+          (first results)
+          results)))))
 
 (defn- combine-meshes
   "Combine multiple meshes into one by concatenating vertices and reindexing faces.
@@ -128,29 +154,31 @@
    The resulting mesh may have overlapping/intersecting parts."
   ([shape-or-shapes transform-fn path] (pure-loft-path shape-or-shapes transform-fn path 16))
   ([shape-or-shapes transform-fn path steps]
-   (if (:bezier path)
-     ;; Bezier path: delegate to bloft (adaptive sampling + hull bridging)
-     (pure-bloft shape-or-shapes transform-fn path nil 0.1)
-     ;; Normal path: standard loft
-     (let [shapes (unwrap-shapes shape-or-shapes)
-           current-turtle @turtle-atom
-           initial-state (if current-turtle
-                           (-> (turtle/make-turtle)
-                               (assoc :position (:position current-turtle))
-                               (assoc :heading (:heading current-turtle))
-                               (assoc :up (:up current-turtle))
-                               (assoc :joint-mode (:joint-mode current-turtle))
-                               (assoc :resolution (:resolution current-turtle))
-                               (assoc :material (:material current-turtle)))
-                           (turtle/make-turtle))
-           results (reduce
-                    (fn [acc shape]
-                      (let [result-state (turtle/loft-from-path initial-state shape transform-fn path steps)
-                            mesh (combine-meshes (:meshes result-state))]
-                        (if mesh (conj acc mesh) acc)))
-                    []
-                    shapes)]
-       (wrap-results results)))))
+   (let [shapes (unwrap-shapes shape-or-shapes)
+         current-turtle @turtle-atom
+         initial-state (if current-turtle
+                         (-> (turtle/make-turtle)
+                             (assoc :position (:position current-turtle))
+                             (assoc :heading (:heading current-turtle))
+                             (assoc :up (:up current-turtle))
+                             (assoc :joint-mode (:joint-mode current-turtle))
+                             (assoc :resolution (:resolution current-turtle))
+                             (assoc :material (:material current-turtle)))
+                         (turtle/make-turtle))]
+     (if (and (:bezier path)
+              (bezier-path-has-self-intersection? initial-state (first shapes) path))
+       ;; Bezier with tight curves: use bloft
+       (do (js/console.log "loft: bezier path has self-intersecting rings, using bloft")
+           (pure-bloft shape-or-shapes transform-fn path nil 0.1))
+       ;; Normal path OR gentle bezier: standard loft
+       (let [results (reduce
+                      (fn [acc shape]
+                        (let [result-state (turtle/loft-from-path initial-state shape transform-fn path steps)
+                              mesh (combine-meshes (:meshes result-state))]
+                          (if mesh (conj acc mesh) acc)))
+                      []
+                      shapes)]
+         (wrap-results results))))))
 
 (defn ^:export pure-loft-two-shapes
   "Pure loft between two shapes - creates mesh that transitions from shape1 to shape2.
@@ -191,8 +219,6 @@
   ([shape-or-shapes transform-fn path] (pure-bloft shape-or-shapes transform-fn path nil 0.1))
   ([shape-or-shapes transform-fn path steps] (pure-bloft shape-or-shapes transform-fn path steps 0.1))
   ([shape-or-shapes transform-fn path steps threshold]
-   (when-not (:bezier path)
-     (throw (js/Error. "bloft requires a bezier path. Use (path (bezier-as ...)) to create one, or use loft/extrude for regular paths.")))
    (let [shapes (unwrap-shapes shape-or-shapes)
          current-turtle @turtle-atom
          initial-state (if current-turtle

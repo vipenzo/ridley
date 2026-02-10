@@ -741,7 +741,7 @@
 ;; Bezier Loft (bloft) - Self-intersection safe loft for bezier paths
 ;; ============================================================
 
-(defn- rings-intersect?
+(defn rings-intersect?
   "Check if two consecutive rings would intersect.
    Returns true if any vertex in ring2 moved 'backward' significantly
    relative to the direction from ring1's centroid to ring2's centroid.
@@ -768,7 +768,7 @@
         result))))
 
 
-(defn- walk-path-poses
+(defn walk-path-poses
   "Walk a path and sample turtle poses at regular distance intervals.
    Returns a vector of (n-samples + 1) poses: [{:position :heading :up :t} ...]
    where t ranges from 0.0 to 1.0.
