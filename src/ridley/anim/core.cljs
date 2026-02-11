@@ -67,6 +67,32 @@
     (swap! anim-registry assoc name
            (merge anim-data
                   {:name name
+                   :type :preprocessed
+                   :state :stopped
+                   :current-time 0.0}
+                  base-data))))
+
+(defn register-procedural-animation!
+  "Register a procedural animation.
+   A procedural animation evaluates gen-fn every frame with eased t (0→1),
+   which returns a new mesh that replaces the current one.
+   anim-data should contain:
+     :target   - keyword (mesh name)
+     :duration - seconds
+     :easing   - easing keyword (:linear, :in, :out, :in-out, etc.)
+     :loop     - boolean
+     :gen-fn   - (fn [t] ...) returning a mesh"
+  [name anim-data]
+  (let [target (:target anim-data)
+        base-data (when (and (keyword? target) (not= target :camera))
+                    (when-let [mesh (get-mesh target)]
+                      {:base-vertices (:vertices mesh)
+                       :base-faces (:faces mesh)
+                       :base-pose (:creation-pose mesh)}))]
+    (swap! anim-registry assoc name
+           (merge anim-data
+                  {:name name
+                   :type :procedural
                    :state :stopped
                    :current-time 0.0}
                   base-data))))
@@ -138,9 +164,12 @@
            (when-let [base-verts (:base-vertices anim)]
              (when-let [reg-fn @register-mesh-fn]
                (when-let [mesh (get-mesh target)]
-                 (reg-fn target (assoc mesh
-                                       :vertices base-verts
-                                       :creation-pose (:base-pose anim))))))))))))
+                 (reg-fn target (cond-> (assoc mesh
+                                               :vertices base-verts
+                                               :creation-pose (:base-pose anim))
+                                  ;; Procedural animations may change faces too
+                                  (:base-faces anim)
+                                  (assoc :faces (:base-faces anim)))))))))))))
 
 (defn stop-all!
   "Stop all animations."
@@ -165,6 +194,7 @@
   []
   (mapv (fn [[name anim]]
           {:name name
+           :type (:type anim :preprocessed)
            :target (:target anim)
            :duration (:duration anim)
            :state (:state anim)
@@ -255,11 +285,31 @@
 (defn link!
   "Link child target to parent target.
    The child inherits the parent's position delta at playback time.
-   Works for any combination: camera→mesh, mesh→mesh."
-  [child-target parent-target]
-  (swap! link-registry assoc child-target parent-target))
+   Works for any combination: camera→mesh, mesh→mesh.
+   Options:
+     :at anchor-name       — track parent's anchor (not centroid)
+     :from anchor-name     — child attachment point
+     :inherit-rotation bool — inherit parent rotation (default false)"
+  [child-target parent-target & {:keys [at from inherit-rotation]
+                                  :or {inherit-rotation false}}]
+  (swap! link-registry assoc child-target
+         {:parent parent-target
+          :parent-anchor at
+          :child-anchor from
+          :inherit-rotation inherit-rotation}))
 
 (defn unlink!
   "Remove link from child target."
   [child-target]
   (swap! link-registry dissoc child-target))
+
+(defn get-link-parent
+  "Get the parent target for a linked child. Handles both old format
+   (bare keyword) and new format ({:parent ...})."
+  [child-target]
+  (let [entry (get @link-registry child-target)]
+    (cond
+      (nil? entry) nil
+      (keyword? entry) entry           ; old format compat
+      (map? entry) (:parent entry)
+      :else nil)))

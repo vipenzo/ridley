@@ -742,6 +742,83 @@ Define timeline-based animations on registered meshes or the camera:
 (anim-list)             ; list all animations
 ```
 
+### Procedural Animations
+
+Procedural animations call a mesh-generating function every frame:
+
+```clojure
+;; Growing sphere
+(register blob (sphere 1))
+(anim-proc! :grow 3.0 :blob :out
+  (fn [t] (sphere (+ 1 (* 19 t)))))
+(play!)
+
+;; Bending arm
+(register arm (extrude (circle 2) (f 15) (f 12)))
+(anim-proc! :bend 2.0 :arm :in-out
+  (fn [t] (extrude (circle 2) (f 15) (th (* t 90)) (f 12))))
+(play!)
+
+;; Twisting bar
+(register bar (extrude (rect 10 5) (f 40)))
+(anim-proc! :twist 4.0 :bar :linear
+  (fn [t] (loft-n 32 (rect 10 5)
+            #(rotate-shape %1 (* %2 t 180))
+            (f 40))))
+(play!)
+```
+
+### Mesh Anchors and Enhanced Links
+
+```clojure
+;; Define skeleton with marks
+(def arm-sk (path (mark :top) (f 15) (mark :elbow)))
+
+;; Register meshes and attach skeleton
+(register upper (cyl 3 15))
+(register lower (cyl 2.5 12))
+(attach-path :upper arm-sk)
+
+;; Link with anchor and rotation inheritance
+(link! :lower :upper :at :elbow :inherit-rotation true)
+
+;; Animate — lower follows at elbow
+(anim! :swing 1.0 :upper :loop
+  (span 0.5 :in-out (th 30))
+  (span 0.5 :in-out (th -30)))
+(play!)
+```
+
+### Hierarchical Assemblies
+
+```clojure
+(def body-sk (path
+  (mark :shoulder-l) (rt -7)
+  (mark :shoulder-r) (rt 14)))
+
+(def arm-sk (path (mark :top) (f 15) (mark :elbow)))
+
+(with-path body-sk
+  (register puppet
+    {:torso (box 12 6 20)
+     :r-arm (do (goto :shoulder-r)
+                (with-path arm-sk
+                  {:upper (cyl 3 15)
+                   :lower (do (goto :elbow) (cyl 2.5 12))}))
+     :l-arm (do (goto :shoulder-l)
+                (with-path arm-sk
+                  {:upper (cyl 3 15)
+                   :lower (do (goto :elbow) (cyl 2.5 12))}))}))
+
+;; Animate arms
+(anim! :r-swing 1.0 :puppet/r-arm/upper :loop
+  (span 0.5 :in-out (tv 30))
+  (span 0.5 :in-out (tv -30)))
+
+(hide :puppet/l-arm)             ; hide subtree by prefix
+(play!)
+```
+
 ---
 
 ## Text on Path

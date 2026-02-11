@@ -2,6 +2,7 @@
   "Animation playback: render loop integration, mesh/camera pose application.
    Called from viewport's render-frame on every frame."
   (:require [ridley.anim.core :as anim]
+            [ridley.anim.easing :as easing]
             [ridley.math :as math]))
 
 ;; ============================================================
@@ -82,6 +83,30 @@
           (f mesh-name new-verts base-faces))))))
 
 ;; ============================================================
+;; Procedural mesh application
+;; ============================================================
+
+(defn- apply-procedural-mesh!
+  "Replace mesh data in registry and update Three.js geometry.
+   The new-mesh comes from the user's gen-fn."
+  [mesh-name new-mesh _anim-data]
+  (when new-mesh
+    (let [new-verts (:vertices new-mesh)
+          new-faces (:faces new-mesh)]
+      (when (and new-verts new-faces)
+        ;; Update mesh in registry
+        (when-let [get-fn @get-mesh-fn]
+          (when-let [old-mesh (get-fn mesh-name)]
+            (when-let [reg-fn @register-mesh-fn]
+              (reg-fn mesh-name
+                      (assoc old-mesh
+                             :vertices new-verts
+                             :faces new-faces)))))
+        ;; Update Three.js geometry (handles face count changes)
+        (when-let [f @update-geometry-fn]
+          (f mesh-name new-verts new-faces))))))
+
+;; ============================================================
 ;; Camera pose application (deferred — set via callback)
 ;; ============================================================
 
@@ -109,7 +134,7 @@
     (f pose)))
 
 ;; ============================================================
-;; Link support: parent-child position tracking
+;; Link support: parent-child position/rotation tracking
 ;; ============================================================
 
 (defn- get-parent-position-delta
@@ -119,7 +144,8 @@
   [parent-target]
   (let [deltas (keep (fn [[_ parent-anim]]
                        (when (and (= (:target parent-anim) parent-target)
-                                  (not= :stopped (:state parent-anim)))
+                                  (not= :stopped (:state parent-anim))
+                                  (= :preprocessed (:type parent-anim :preprocessed)))
                          (when-let [initial-pos (:position (:initial-pose parent-anim))]
                            (let [frame-idx (anim/time->frame-idx (:current-time parent-anim) parent-anim)
                                  frames (:frames parent-anim)
@@ -132,13 +158,95 @@
     (when (seq deltas)
       (reduce math/v+ [0 0 0] deltas))))
 
+(defn- current-frame-pose
+  "Get the current frame pose for a target from its active animations."
+  [parent-target]
+  (some (fn [[_ anim-data]]
+          (when (and (= (:target anim-data) parent-target)
+                     (not= :stopped (:state anim-data))
+                     (= :preprocessed (:type anim-data :preprocessed)))
+            (let [frame-idx (anim/time->frame-idx (:current-time anim-data) anim-data)
+                  frames (:frames anim-data)
+                  total (count frames)]
+              (when (pos? total)
+                (nth frames (max 0 (min frame-idx (dec total))))))))
+        @anim/anim-registry))
+
+(defn- resolve-anchor-position
+  "Compute current world position of a mesh anchor.
+   Applies the same rotation+translation as the mesh vertices.
+   Returns {:position :heading :up} or nil."
+  [parent-target anchor-name]
+  (when-let [get-fn @get-mesh-fn]
+    (when-let [mesh (get-fn parent-target)]
+      (when-let [anchor (get-in mesh [:anchors anchor-name])]
+        (let [;; Find any active animation for this target to get base/frame pose
+              anim-data (some (fn [[_ ad]]
+                                (when (and (= (:target ad) parent-target)
+                                           (not= :stopped (:state ad)))
+                                  ad))
+                              @anim/anim-registry)
+              base-pose (or (:base-pose anim-data) (:creation-pose mesh))
+              frame-pose (when anim-data (current-frame-pose parent-target))]
+          (if (and base-pose frame-pose)
+            ;; Transform anchor point same as vertices
+            (let [rotate-fn (compute-rotation-matrix base-pose frame-pose)
+                  translation (math/v- (:position frame-pose) (:position base-pose))
+                  base-origin (:position base-pose)
+                  rel (math/v- (:position anchor) base-origin)
+                  rotated (rotate-fn rel)]
+              {:position (math/v+ (math/v+ base-origin rotated) translation)
+               :heading (rotate-fn (:heading anchor))
+               :up (rotate-fn (:up anchor))})
+            ;; No animation — return static anchor
+            anchor))))))
+
+(defn- resolve-link-delta
+  "Resolve the position (and optionally rotation) delta for a linked child.
+   Returns {:position-delta [dx dy dz] :rotation-fn fn-or-nil}."
+  [target]
+  (let [link-entry (get @anim/link-registry target)]
+    (when link-entry
+      (let [;; Support both old format (bare keyword) and new format (map)
+            parent-target (if (keyword? link-entry) link-entry (:parent link-entry))
+            parent-anchor (when (map? link-entry) (:parent-anchor link-entry))
+            inherit-rot? (when (map? link-entry) (:inherit-rotation link-entry))]
+        (if parent-anchor
+          ;; Anchor-based link: track the anchor's world position
+          (when-let [anchor-pose (resolve-anchor-position parent-target parent-anchor)]
+            (let [;; Compute delta from the anchor's rest position to its current position
+                  get-fn @get-mesh-fn
+                  parent-mesh (when get-fn (get-fn parent-target))
+                  rest-anchor (get-in parent-mesh [:anchors parent-anchor])
+                  pos-delta (if rest-anchor
+                              (math/v- (:position anchor-pose) (:position rest-anchor))
+                              [0 0 0])]
+              {:position-delta pos-delta
+               :rotation-fn (when inherit-rot?
+                              (when rest-anchor
+                                (compute-rotation-matrix
+                                  {:heading (:heading rest-anchor) :up (:up rest-anchor)
+                                   :position (:position rest-anchor)}
+                                  anchor-pose)))}))
+          ;; Centroid-based link: track parent's position delta (existing behavior)
+          (let [delta (get-parent-position-delta parent-target)]
+            (when delta
+              {:position-delta delta
+               :rotation-fn (when inherit-rot?
+                              (let [frame-pose (current-frame-pose parent-target)]
+                                (when frame-pose
+                                  (when-let [get-fn @get-mesh-fn]
+                                    (when-let [parent-mesh (get-fn parent-target)]
+                                      (when-let [base-pose (:creation-pose parent-mesh)]
+                                        (compute-rotation-matrix base-pose frame-pose)))))))})))))))
+
 ;; ============================================================
 ;; Frame application dispatch
 ;; ============================================================
 
 (defn- apply-frame!
   "Apply a precomputed frame pose to the animation target.
-   If the target is linked to a parent, adds the parent's position delta."
+   If the target is linked to a parent, adds the parent's position/rotation delta."
   [anim-data frame-idx]
   (let [frames (:frames anim-data)
         total (count frames)]
@@ -146,11 +254,15 @@
       (let [clamped-idx (max 0 (min frame-idx (dec total)))
             pose (nth frames clamped-idx)
             target (:target anim-data)
-            ;; Apply link offset if this target has a parent
-            parent-target (get @anim/link-registry target)
-            delta (when parent-target (get-parent-position-delta parent-target))
-            final-pose (if delta
-                         (update pose :position math/v+ delta)
+            link-result (resolve-link-delta target)
+            final-pose (if link-result
+                         (let [{:keys [position-delta rotation-fn]} link-result
+                               posed (update pose :position math/v+ position-delta)]
+                           (if rotation-fn
+                             (-> posed
+                                 (update :heading #(math/normalize (rotation-fn %)))
+                                 (update :up #(math/normalize (rotation-fn %))))
+                             posed))
                          pose)]
         (cond
           (= target :camera) (apply-camera-pose! final-pose)
@@ -213,10 +325,15 @@
                              :heading norm-heading
                              :up norm-up}
               ;; Apply link offset if this target has a parent
-              parent-target (get @anim/link-registry target)
-              delta (when parent-target (get-parent-position-delta parent-target))
-              final-pose (if delta
-                           (update combined-pose :position math/v+ delta)
+              link-result (resolve-link-delta target)
+              final-pose (if link-result
+                           (let [{:keys [position-delta rotation-fn]} link-result
+                                 posed (update combined-pose :position math/v+ position-delta)]
+                             (if rotation-fn
+                               (-> posed
+                                   (update :heading #(math/normalize (rotation-fn %)))
+                                   (update :up #(math/normalize (rotation-fn %))))
+                               posed))
                            combined-pose)]
           (cond
             (= target :camera) (apply-camera-pose! final-pose)
@@ -233,8 +350,16 @@
   [anim-name fraction]
   (anim/seek! anim-name fraction)
   (when-let [anim-data (get @anim/anim-registry anim-name)]
-    (let [frame-idx (anim/time->frame-idx (:current-time anim-data) anim-data)]
-      (apply-frame! anim-data frame-idx))))
+    (if (= :procedural (:type anim-data))
+      ;; Procedural: call gen-fn with eased t
+      (let [t (max 0.0 (min 1.0 fraction))
+            eased-t (easing/ease (:easing anim-data :linear) t)
+            new-mesh ((:gen-fn anim-data) eased-t)]
+        (when new-mesh
+          (apply-procedural-mesh! (:target anim-data) new-mesh anim-data)))
+      ;; Preprocessed: existing frame lookup
+      (let [frame-idx (anim/time->frame-idx (:current-time anim-data) anim-data)]
+        (apply-frame! anim-data frame-idx)))))
 
 ;; ============================================================
 ;; Tick — called from render loop
@@ -249,58 +374,119 @@
   [f]
   (reset! refresh-fn f))
 
+(defn- compute-execution-order
+  "Topological sort of targets based on link dependencies.
+   Parents are processed before children. Handles arbitrary depth."
+  [link-registry targets]
+  (let [;; Build children-of map: parent -> [children]
+        children-of (reduce-kv (fn [m child entry]
+                                 (let [parent (if (keyword? entry) entry (:parent entry))]
+                                   (update m parent (fnil conj []) child)))
+                               {} link-registry)
+        ;; Roots = targets that have no parent in link-registry
+        roots (remove #(contains? link-registry %) targets)]
+    (loop [queue (vec roots)
+           visited #{}
+           order []]
+      (if (empty? queue)
+        order
+        (let [t (first queue)]
+          (if (visited t)
+            (recur (subvec queue 1) visited order)
+            (recur (into (subvec queue 1) (get children-of t []))
+                   (conj visited t)
+                   (conj order t))))))))
+
 (defn tick-animations!
   "Called from render-frame. Advances all playing animations by dt seconds.
    Groups animations by target for multi-animation composition (delta summing).
    Two-pass ordering: unlinked targets first (parents), then linked (children).
+   Procedural animations call gen-fn each frame instead of looking up frames.
    Returns true if any animation was updated (viewport needs refresh)."
   [dt]
   (let [reg @anim/anim-registry
         links @anim/link-registry
         any-updated? (atom false)
-        frame-data (atom {})   ; anim-name -> {:frame-idx :anim-data}
+        frame-data (atom {})   ; anim-name -> {:frame-idx :anim-data} (preprocessed)
+        proc-data (atom {})    ; anim-name -> {:t :anim-data} (procedural)
         finished (atom [])]
-    ;; Phase 1: Advance all playing animation times, compute frame indices
+    ;; Phase 1: Advance all playing animation times
     (doseq [[anim-name anim-data] reg]
       (when (= :playing (:state anim-data))
         (let [new-time (+ (:current-time anim-data) dt)
               duration (:duration anim-data)
-              looping? (:loop anim-data false)]
+              loop-mode (let [l (:loop anim-data)]
+                          (cond (= true l) :forward  ;; backward compat
+                                (keyword? l) l
+                                :else nil))
+              ;; Bounce has a full cycle of 2*duration (forward + backward)
+              cycle-duration (if (= :bounce loop-mode)
+                               (* 2.0 duration)
+                               duration)
+              procedural? (= :procedural (:type anim-data))]
           (reset! any-updated? true)
           (cond
-            ;; Looping: wrap around
-            (and looping? (>= new-time duration))
-            (let [wrapped-time (mod new-time duration)
-                  frame-idx (anim/time->frame-idx wrapped-time anim-data)]
-              (swap! anim/anim-registry assoc-in [anim-name :current-time] wrapped-time)
-              (swap! frame-data assoc anim-name {:frame-idx frame-idx :anim-data anim-data}))
+            ;; Looping: wrap around using loop mode
+            (and loop-mode (>= new-time cycle-duration))
+            (let [wrapped-raw (mod new-time cycle-duration)
+                  effective-time (case loop-mode
+                                  :forward wrapped-raw
+                                  :reverse (- duration wrapped-raw)
+                                  :bounce  (if (< wrapped-raw duration)
+                                             wrapped-raw
+                                             (- (* 2.0 duration) wrapped-raw)))]
+              (swap! anim/anim-registry assoc-in [anim-name :current-time] wrapped-raw)
+              (if procedural?
+                (swap! proc-data assoc anim-name
+                       {:t (/ effective-time duration) :anim-data anim-data})
+                (let [frame-idx (anim/time->frame-idx effective-time anim-data)]
+                  (swap! frame-data assoc anim-name
+                         {:frame-idx frame-idx :anim-data anim-data}))))
 
-            ;; Finished (non-looping)
-            (>= new-time duration)
-            (let [total-frames (:total-frames anim-data)
-                  frame-idx (if (pos? total-frames) (dec total-frames) 0)]
-              (swap! frame-data assoc anim-name {:frame-idx frame-idx :anim-data anim-data})
+            ;; Finished (non-looping only)
+            (and (not loop-mode) (>= new-time duration))
+            (do
+              (if procedural?
+                (swap! proc-data assoc anim-name {:t 1.0 :anim-data anim-data})
+                (let [total-frames (:total-frames anim-data)
+                      frame-idx (if (pos? total-frames) (dec total-frames) 0)]
+                  (swap! frame-data assoc anim-name
+                         {:frame-idx frame-idx :anim-data anim-data})))
               (swap! finished conj anim-name))
 
-            ;; Normal advance
+            ;; Normal advance (within first cycle)
             :else
-            (let [frame-idx (anim/time->frame-idx new-time anim-data)]
+            (let [effective-time (case loop-mode
+                                  :reverse (- duration new-time)
+                                  :bounce  (if (< new-time duration)
+                                             new-time
+                                             (- (* 2.0 duration) new-time))
+                                  ;; :forward or nil
+                                  new-time)]
               (swap! anim/anim-registry assoc-in [anim-name :current-time] new-time)
-              (swap! frame-data assoc anim-name {:frame-idx frame-idx :anim-data anim-data}))))))
-    ;; Phase 2: Group by target, apply combined poses
-    (when @any-updated?
+              (if procedural?
+                (swap! proc-data assoc anim-name
+                       {:t (/ effective-time duration) :anim-data anim-data})
+                (let [frame-idx (anim/time->frame-idx effective-time anim-data)]
+                  (swap! frame-data assoc anim-name
+                         {:frame-idx frame-idx :anim-data anim-data}))))))))
+    ;; Phase 2a: Apply procedural animations (gen-fn per frame)
+    (doseq [[_anim-name {:keys [t anim-data]}] @proc-data]
+      (let [eased-t (easing/ease (:easing anim-data :linear) t)
+            target (:target anim-data)
+            new-mesh ((:gen-fn anim-data) eased-t)]
+        (when new-mesh
+          (apply-procedural-mesh! target new-mesh anim-data))))
+    ;; Phase 2b: Group preprocessed by target, apply in topological order
+    (when (seq @frame-data)
       (let [by-target (reduce-kv (fn [m _anim-name entry]
                                    (let [target (:target (:anim-data entry))]
                                      (update m target (fnil conj []) entry)))
                                  {}
-                                 @frame-data)]
-        ;; Pass 1: Unlinked targets (parents)
-        (doseq [[target anims] by-target]
-          (when-not (get links target)
-            (apply-target-frame! target anims)))
-        ;; Pass 2: Linked targets (children)
-        (doseq [[target anims] by-target]
-          (when (get links target)
+                                 @frame-data)
+            ordered-targets (compute-execution-order links (keys by-target))]
+        (doseq [target ordered-targets]
+          (when-let [anims (get by-target target)]
             (apply-target-frame! target anims)))))
     ;; Phase 3: Stop finished animations
     (let [had-camera-finish? (atom false)]

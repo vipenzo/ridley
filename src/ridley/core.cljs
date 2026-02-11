@@ -659,7 +659,16 @@
         (when anim-data
           (let [duration (:duration anim-data 0)
                 current (:current-time anim-data 0)
-                frac (if (pos? duration) (/ current duration) 0)]
+                loop-mode (:loop anim-data)
+                ;; For bounce, current-time spans [0, 2*duration] — map to visual fraction
+                effective (if (= :bounce loop-mode)
+                            (if (< current duration)
+                              current
+                              (- (* 2.0 duration) current))
+                            (if (= :reverse loop-mode)
+                              (- duration current)
+                              current))
+                frac (if (pos? duration) (/ effective duration) 0)]
             (set! (.-value slider) (str (int (* frac 1000))))
             (set! (.-textContent time-el)
                   (str (format-time current) " / " (format-time duration)))))))))

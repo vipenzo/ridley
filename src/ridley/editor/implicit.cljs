@@ -196,6 +196,17 @@
   [name]
   (get-in @turtle-atom [:anchors name]))
 
+(defn ^:export implicit-attach-path
+  "Associate a path's marks as anchors on a registered mesh.
+   Resolves the path marks at the mesh's creation-pose."
+  [mesh-name path-data]
+  (when-let [mesh (registry/get-mesh mesh-name)]
+    (let [pose (or (:creation-pose mesh)
+                   {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})
+          anchors (turtle/resolve-marks pose path-data)]
+      (when (seq anchors)
+        (registry/register-mesh! mesh-name (assoc mesh :anchors anchors))))))
+
 (defn ^:export implicit-look-at [name]
   (swap! turtle-atom turtle/look-at name))
 

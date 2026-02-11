@@ -718,6 +718,38 @@ Named objects persist across evaluations. The registry holds two kinds of object
 (mesh torus)                     ; Identity (returns mesh itself)
 ```
 
+### Hierarchical Assemblies
+
+Use `register` with a map literal inside `with-path` to create articulated assemblies with automatic qualified names and link inference:
+
+```clojure
+(def body-sk (path (mark :shoulder-r) (rt 7) (mark :shoulder-l) (rt -14)))
+(def arm-sk (path (mark :top) (f 15) (mark :elbow)))
+
+(with-path body-sk
+  (register puppet
+    {:torso (box 12 6 20)
+     :r-arm (do (goto :shoulder-r)
+                (with-path arm-sk
+                  {:upper (cyl 3 15)
+                   :lower (do (goto :elbow) (cyl 2.5 12))}))}))
+
+;; Creates:
+;;   :puppet/torso                              (root)
+;;   :puppet/r-arm/upper → :puppet/torso at :shoulder-r
+;;   :puppet/r-arm/lower → :puppet/r-arm/upper at :elbow
+;; All links have :inherit-rotation true
+;; Skeletons auto-attached to first mesh in each with-path frame
+```
+
+Show/hide supports prefix matching for assembly subtrees:
+
+```clojure
+(hide :puppet/r-arm)             ; Hide all meshes under :puppet/r-arm
+(show :puppet)                   ; Show all puppet parts
+(hide :puppet/r-arm/hand/thumb)  ; Hide single part
+```
+
 ---
 
 ## Face Operations
@@ -982,7 +1014,7 @@ Define timeline-based animations that preprocess turtle commands into per-frame 
 
 ```clojure
 ;; (anim! :name duration :target [options] spans...)
-;; Options: :loop, :fps N
+;; Options: :loop, :loop-reverse, :loop-bounce, :fps N
 
 ;; Simple rotation
 (anim! :spin 3.0 :gear
@@ -1005,9 +1037,13 @@ Define timeline-based animations that preprocess turtle commands into per-frame 
 (anim! :cam-orbit 5.0 :camera
   (span 1.0 :in-out (rt 360)))
 
-;; Looping
-(anim! :spin-forever 2.0 :gear :loop
+;; Loop modes
+(anim! :spin-forever 2.0 :gear :loop          ;; forward: 0→1, 0→1, ...
   (span 1.0 :linear (tr 360)))
+(anim! :unwind 2.0 :gear :loop-reverse        ;; reverse: 1→0, 1→0, ...
+  (span 1.0 :linear (tr 360)))
+(anim! :sway 2.0 :gear :loop-bounce           ;; bounce: 0→1→0→1, ...
+  (span 1.0 :in-out (tr 90)))
 ```
 
 ### Span
@@ -1038,6 +1074,55 @@ Wrap commands in `parallel` to execute them simultaneously over the same frames:
 
 A parallel group's frame allocation = max of its sub-commands. All sub-commands are applied at the same fractional progress for each frame.
 
+### Procedural Animations
+
+Procedural animations call a mesh-generating function every frame. The function receives eased `t` (0→1) and returns a new mesh:
+
+```clojure
+;; (anim-proc! :name duration :target easing gen-fn)
+;; (anim-proc! :name duration :target easing :loop gen-fn)
+;; (anim-proc! :name duration :target easing :loop-reverse gen-fn)
+;; (anim-proc! :name duration :target easing :loop-bounce gen-fn)
+
+;; Sphere that grows
+(register blob (sphere 1))
+(anim-proc! :grow 3.0 :blob :out
+  (fn [t] (sphere (+ 1 (* 19 t)))))
+
+;; Arm that bends
+(register arm (extrude (circle 2) (f 15) (f 12)))
+(anim-proc! :bend 2.0 :arm :in-out
+  (fn [t] (extrude (circle 2) (f 15) (th (* t 90)) (f 12))))
+
+;; Pulsing box (looping)
+(anim-proc! :pulse 1.0 :heart :in-out :loop
+  (fn [t]
+    (let [s (+ 1.0 (* 0.3 (sin (* t PI 2))))]
+      (box (* 10 s) (* 10 s) (* 10 s)))))
+
+;; Bounce: smooth grow/shrink (t goes 0→1→0→1...)
+(anim-proc! :breathe 2.0 :blob :in-out :loop-bounce
+  (fn [t] (sphere (+ 5 (* 15 t)))))
+```
+
+Performance: `gen-fn` runs every frame (60fps). Keep it fast — avoid `mesh-union`/`mesh-difference` per frame. Keep face count constant when possible for the fast path.
+
+### Mesh Anchors
+
+Associate a path's marks as named anchor points on a mesh:
+
+```clojure
+;; Define a path with marks
+(def arm-sk (path (mark :top) (f 15) (mark :elbow) (f 12) (mark :wrist)))
+
+;; Register mesh and attach anchors
+(register upper (extrude (circle 1.5) (f 15)))
+(attach-path :upper arm-sk)
+;; :upper now has :anchors {:top {...} :elbow {...} :wrist {...}}
+```
+
+Anchors store position, heading, and up vectors relative to the mesh's creation-pose. They are resolved on-demand at playback time.
+
 ### Target Linking
 
 Link a child target to a parent so the child inherits the parent's position delta at playback:
@@ -1046,9 +1131,18 @@ Link a child target to a parent so the child inherits the parent's position delt
 (link! :camera :box)        ; camera follows box's movement
 (link! :moon :planet)       ; moon inherits planet's translation
 (unlink! :camera)           ; remove link
+
+;; Enhanced: link at specific parent anchor
+(link! :lower :upper :at :elbow)
+
+;; With child attachment point
+(link! :lower :upper :at :elbow :from :top)
+
+;; With rotation inheritance (child rotates with parent)
+(link! :lower :upper :at :elbow :inherit-rotation true)
 ```
 
-Preprocessing is unchanged — child frames are computed as if the parent is stationary. The link adds translation at runtime. Parents are always ticked before children.
+Preprocessing is unchanged — child frames are computed as if the parent is stationary. The link adds translation (and optionally rotation) at runtime. Targets are processed in topological order (parents before children).
 
 ### Playback Control
 
@@ -1059,7 +1153,7 @@ Preprocessing is unchanged — child frames are computed as if the parent is sta
 (stop! :spin)           ; stop and reset
 (stop-all!)             ; stop all
 (seek! :spin 0.5)       ; jump to 50%
-(anim-list)             ; list animations with status
+(anim-list)             ; list animations with status/type
 ```
 
 ### Easing

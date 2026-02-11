@@ -904,6 +904,78 @@
                                     :up (vec3-normalize (second args)))))
            nil))))
 
+   ;; ============================================================
+   ;; Assembly context for hierarchical register
+   ;; ============================================================
+
+   ;; Stack of assembly frames for nested with-path + register map.
+   ;; nil = no assembly active. Non-nil = vector of frames.
+   ;; Each frame: {:prefix [:puppet :r-arm]      — name segments
+   ;;              :parent nil                    — parent qualified keyword
+   ;;              :goto nil}                     — last goto anchor name
+   (def ^:private assembly-ctx (atom nil))
+
+   ;; Current with-path skeleton path (for auto-attach in register map).
+   ;; Set by with-path before evaluating body, restored on exit.
+   (def ^:private current-skeleton (atom nil))
+
+   (defn- assembly-active? []
+     (some? @assembly-ctx))
+
+   (defn- asm-push! [frame]
+     (swap! assembly-ctx (fn [s] (conj (or s []) frame))))
+
+   (defn- asm-pop! []
+     (swap! assembly-ctx (fn [s]
+                           (let [s2 (pop s)]
+                             (when (seq s2) s2)))))
+
+   (defn- asm-top []
+     (when-let [s @assembly-ctx] (peek s)))
+
+   (defn- asm-update-top! [f]
+     (swap! assembly-ctx (fn [s] (conj (pop s) (f (peek s))))))
+
+   ;; Wrap goto to also track in assembly context
+   (def ^:private original-goto goto)
+   (defn- assembly-goto [anchor-name]
+     (original-goto anchor-name)
+     (when (assembly-active?)
+       (asm-update-top! #(assoc % :goto anchor-name))))
+
+   (defn- qualified-name
+     \"Build a qualified keyword from segments.
+      E.g. [:puppet :r-arm :upper] => :puppet/r-arm/upper\"
+     [segments]
+     (keyword (clojure.string/join \"/\" (map name segments))))
+
+   (defn- asm-register-mesh!
+     \"Register a mesh in the assembly. Qualified name = prefix ++ [k].
+      Creates links based on parent and goto state.
+      First mesh in a frame gets the skeleton attached and becomes frame parent.\"
+     [k mesh]
+     (let [frame (asm-top)
+           full-name (qualified-name (conj (:prefix frame) k))
+           parent-key (:parent frame)
+           goto-anchor (:goto frame)]
+       ;; Register and show
+       (register-mesh! full-name mesh)
+       (show-mesh! full-name)
+       ;; Create link
+       (when parent-key
+         (if goto-anchor
+           (link! full-name parent-key :at goto-anchor :inherit-rotation true)
+           (link! full-name parent-key :inherit-rotation true)))
+       ;; First mesh in this frame becomes the parent for subsequent entries
+       ;; and gets the skeleton attached for anchor resolution
+       (when-not (:frame-parent-set? frame)
+         (asm-update-top! #(assoc % :parent full-name :frame-parent-set? true))
+         (when-let [skel (:skeleton frame)]
+           (attach-path full-name skel)))
+       ;; Clear goto after use
+       (asm-update-top! #(assoc % :goto nil))
+       full-name))
+
    ;; Helper to check if something is a mesh (has :vertices and :faces)
    (defn mesh? [x]
      (and (map? x) (:vertices x) (:faces x)))
@@ -939,68 +1011,106 @@
    ;; (register robot {:hand m1 :body m2}) ; registers map of meshes
    ;; (register torus (extrude ...) :hidden) ; registers but keeps hidden
    ;; On subsequent evals, updates the value but preserves visibility state
+   ;; Inside with-path, a map literal triggers hierarchical assembly mode:
+   ;;   qualified names, automatic links from goto calls.
    (defmacro register [name expr & opts]
-     `(let [raw-value# ~expr
-            name-kw# ~(keyword name)
-            hidden?# ~(contains? (set opts) :hidden)
-            ;; Convert lazy seqs to vectors, flatten nested sequences of meshes
-            value# (let [v# raw-value#]
-                     (cond
-                       ;; Already a mesh or map — leave as-is
-                       (mesh? v#) v#
-                       (mesh-map? v#) v#
-                       ;; Sequence/vector — must contain only meshes
-                       (and (or (seq? v#) (vector? v#)) (seq v#))
-                       (let [items# (vec v#)]
-                         (when-not (every? mesh? items#)
-                           (throw (js/Error.
-                                   (str \"register: expected a mesh or vector of meshes, but got a vector containing \"
-                                        (type (first (remove mesh? items#)))))))
-                         items#)
-                       ;; Anything else — leave as-is
-                       :else v#))]
-        ;; For panels, add :name before def so out/append/clear work
-        (if (and (map? value#) (= :panel (:type value#)))
-          ;; Panel case - add name to value, def it, register it
-          (let [panel-with-name# (assoc value# :name name-kw#)]
-            (def ~name panel-with-name#)
-            (register-panel! name-kw# panel-with-name#)
-            (when hidden?# (hide-panel! name-kw#))
+     ;; Detect map literal for assembly mode
+     (if (map? expr)
+       ;; Map literal — use assembly system for sequential evaluation
+       (let [name-kw (keyword name)
+             entries (seq expr)]
+         `(do
+            ;; Initialize assembly context with root frame
+            (let [was-active?# (assembly-active?)]
+              (when-not was-active?#
+                (reset! assembly-ctx []))
+              (asm-push! {:prefix [~name-kw] :parent nil :goto nil
+                          :frame-parent-set? false
+                          :skeleton @current-skeleton})
+              ;; Override goto to track anchors
+              (let [~'goto assembly-goto]
+                ~@(map (fn [[k v]]
+                         `(do
+                            ;; Extend prefix for this key's subtree
+                            (let [bp# (:prefix (asm-top))]
+                              (asm-update-top! #(assoc % :prefix (conj bp# ~k)))
+                              ;; Evaluate value (may contain goto, with-path, etc.)
+                              (let [v# ~v]
+                                ;; Restore prefix
+                                (asm-update-top! #(assoc % :prefix bp#))
+                                (when (mesh? v#)
+                                  (asm-register-mesh! ~k v#))))))
+                       entries))
+              (asm-pop!)
+              (when-not was-active?#
+                (reset! assembly-ctx nil)))
+            (def ~name ~(keyword name))
             (refresh-viewport! false)
-            panel-with-name#)
-          ;; Non-panel cases
-          (do
-            (def ~name value#)
-            (cond
-              ;; Single mesh (has :vertices)
-              (and (map? value#) (:vertices value#))
-              (let [already-registered# (contains? (set (registered-names)) name-kw#)]
-                (register-mesh! name-kw# value#)
-                (if hidden?#
-                  (hide-mesh! name-kw#)
-                  (when-not already-registered#
-                    (show-mesh! name-kw#))))
+            ~(keyword name)))
+       ;; Non-map: original behavior
+       `(let [raw-value# ~expr
+              name-kw# ~(keyword name)
+              hidden?# ~(contains? (set opts) :hidden)
+              ;; Convert lazy seqs to vectors, flatten nested sequences of meshes
+              value# (let [v# raw-value#]
+                       (cond
+                         ;; Already a mesh or map — leave as-is
+                         (mesh? v#) v#
+                         (mesh-map? v#) v#
+                         ;; Sequence/vector — must contain only meshes
+                         (and (or (seq? v#) (vector? v#)) (seq v#))
+                         (let [items# (vec v#)]
+                           (when-not (every? mesh? items#)
+                             (throw (js/Error.
+                                     (str \"register: expected a mesh or vector of meshes, but got a vector containing \"
+                                          (type (first (remove mesh? items#)))))))
+                           items#)
+                         ;; Anything else — leave as-is
+                         :else v#))]
+          ;; Store raw value for $ lookup
+          (register-value! name-kw# value#)
+          ;; For panels, add :name before def so out/append/clear work
+          (if (and (map? value#) (= :panel (:type value#)))
+            ;; Panel case - add name to value, def it, register it
+            (let [panel-with-name# (assoc value# :name name-kw#)]
+              (def ~name panel-with-name#)
+              (register-panel! name-kw# panel-with-name#)
+              (when hidden?# (hide-panel! name-kw#))
+              (refresh-viewport! false)
+              panel-with-name#)
+            ;; Non-panel cases
+            (do
+              (def ~name value#)
+              (cond
+                ;; Single mesh (has :vertices)
+                (and (map? value#) (:vertices value#))
+                (let [already-registered# (contains? (set (registered-names)) name-kw#)]
+                  (register-mesh! name-kw# value#)
+                  (if hidden?#
+                    (hide-mesh! name-kw#)
+                    (when-not already-registered#
+                      (show-mesh! name-kw#))))
 
-              ;; Shape (has :type :shape)
-              (and (map? value#) (= :shape (:type value#)))
-              (register-shape! name-kw# value#)
+                ;; Shape (has :type :shape)
+                (and (map? value#) (= :shape (:type value#)))
+                (register-shape! name-kw# value#)
 
-              ;; Vector of meshes - add each anonymously
-              (mesh-vector? value#)
-              (doseq [mesh# value#]
-                (add-mesh! mesh#))
+                ;; Vector of meshes - add each anonymously
+                (mesh-vector? value#)
+                (doseq [mesh# value#]
+                  (add-mesh! mesh#))
 
-              ;; Map of meshes - add each anonymously
-              (mesh-map? value#)
-              (doseq [[_# mesh#] value#]
-                (add-mesh! mesh#))
+                ;; Map of meshes — runtime map, add anonymously
+                (mesh-map? value#)
+                (doseq [[_# mesh#] value#]
+                  (add-mesh! mesh#))
 
-              ;; Path (has :type :path) — abstract, no visibility
-              (and (map? value#) (= :path (:type value#)))
-              (register-path! name-kw# value#))
-            ;; Refresh viewport and return value
-            (refresh-viewport! false)
-            value#))))
+                ;; Path (has :type :path) — abstract, no visibility
+                (and (map? value#) (= :path (:type value#)))
+                (register-path! name-kw# value#))
+              ;; Refresh viewport and return value
+              (refresh-viewport! false)
+              value#)))))
 
    ;; r: short alias for register
    (defmacro r [name expr & opts]
@@ -1009,12 +1119,55 @@
    ;; with-path: pin a path at current turtle pose, resolve marks as anchors
    ;; (with-path skeleton (goto :shoulder) (bezier-to-anchor :elbow))
    ;; Supports nesting — inner with-path shadows outer anchors, restores on exit
+   ;; When the body is a single map literal inside an assembly context,
+   ;; evaluates entries sequentially for link inference.
    (defmacro with-path [path-expr & body]
-     `(let [saved-anchors# (save-anchors*)]
-        (resolve-and-merge-marks* ~path-expr)
-        (let [result# (do ~@body)]
-          (restore-anchors* saved-anchors#)
-          result#)))
+     (let [;; Check if body is a single map literal (assembly sub-map case)
+           single-map? (and (= 1 (count body)) (map? (first body)))]
+       (if single-map?
+         ;; Assembly sub-map: expand entries sequentially within with-path
+         (let [entries (seq (first body))]
+           `(let [saved-anchors# (save-anchors*)
+                  saved-skeleton# @current-skeleton
+                  path-val# ~path-expr]
+              (resolve-and-merge-marks* path-val#)
+              (reset! current-skeleton path-val#)
+              (if (assembly-active?)
+                ;; Inside assembly: push new frame inheriting parent info
+                (do
+                  (let [parent-frame# (asm-top)]
+                    (asm-push! {:prefix (:prefix parent-frame#)
+                                :parent (:parent parent-frame#)
+                                :goto (:goto parent-frame#)
+                                :frame-parent-set? false
+                                :skeleton path-val#}))
+                  (let [~'goto assembly-goto]
+                    ~@(map (fn [[k v]]
+                             `(do
+                                ;; Extend prefix for this key's subtree
+                                (let [bp# (:prefix (asm-top))]
+                                  (asm-update-top! #(assoc % :prefix (conj bp# ~k)))
+                                  (let [v# ~v]
+                                    (asm-update-top! #(assoc % :prefix bp#))
+                                    (when (mesh? v#)
+                                      (asm-register-mesh! ~k v#))))))
+                           entries))
+                  (asm-pop!))
+                ;; Not in assembly: evaluate normally
+                (do ~@(map (fn [[k v]] v) entries)))
+              (reset! current-skeleton saved-skeleton#)
+              (restore-anchors* saved-anchors#)))
+         ;; Normal with-path: no map literal
+         ;; Store path as current-skeleton for assembly auto-attach
+         `(let [saved-anchors# (save-anchors*)
+                saved-skeleton# @current-skeleton
+                path-val# ~path-expr]
+            (resolve-and-merge-marks* path-val#)
+            (reset! current-skeleton path-val#)
+            (let [result# (do ~@body)]
+              (reset! current-skeleton saved-skeleton#)
+              (restore-anchors* saved-anchors#)
+              result#)))))
 
    ;; qp: short alias for quick-path
    (def qp quick-path)
@@ -1323,18 +1476,24 @@
    ;; anim!: define and register an animation
    ;; (anim! :name duration :target spans...)
    ;; (anim! :name duration :target :loop spans...)
+   ;; (anim! :name duration :target :loop-reverse spans...)
+   ;; (anim! :name duration :target :loop-bounce spans...)
    ;; (anim! :name duration :target :fps 30 spans...)
    ;; (anim! :name duration :target :loop :fps 30 spans...)
    (defmacro anim! [name duration target & body]
      (let [[opts spans] (loop [opts {} remaining (vec body)]
                           (cond
-                            (= :loop (first remaining))
-                            (recur (assoc opts :loop true) (vec (rest remaining)))
+                            (#{:loop :loop-reverse :loop-bounce} (first remaining))
+                            (recur (assoc opts :loop (case (first remaining)
+                                                       :loop :forward
+                                                       :loop-reverse :reverse
+                                                       :loop-bounce :bounce))
+                                   (vec (rest remaining)))
                             (= :fps (first remaining))
                             (recur (assoc opts :fps (second remaining)) (vec (drop 2 remaining)))
                             :else [opts remaining]))
            fps (get opts :fps 60)
-           loop? (get opts :loop false)]
+           loop-mode (get opts :loop false)]
        `(let [initial-pose# (cond
                               (= ~target :camera)
                               (get-camera-pose)
@@ -1353,6 +1512,30 @@
                                  {:target ~target
                                   :duration (double ~duration)
                                   :fps ~fps
-                                  :loop ~loop?
+                                  :loop ~loop-mode
                                   :initial-pose initial-pose#
-                                  :spans spans#})))))")
+                                  :spans spans#})))))
+
+   ;; anim-proc!: define and register a procedural animation
+   ;; A procedural animation calls gen-fn every frame with eased t (0→1)
+   ;; and replaces the mesh with the returned value.
+   ;; (anim-proc! :name duration :target easing gen-fn)
+   ;; (anim-proc! :name duration :target easing :loop gen-fn)
+   ;; (anim-proc! :name duration :target easing :loop-reverse gen-fn)
+   ;; (anim-proc! :name duration :target easing :loop-bounce gen-fn)
+   (defmacro anim-proc! [name duration target easing & body]
+     (let [[loop-mode gen-fn-expr]
+           (let [kw (first body)]
+             (if (#{:loop :loop-reverse :loop-bounce} kw)
+               [(case kw
+                  :loop :forward
+                  :loop-reverse :reverse
+                  :loop-bounce :bounce)
+                (second body)]
+               [false (first body)]))]
+       `(anim-proc-register! ~name
+                             {:target ~target
+                              :duration (double ~duration)
+                              :easing ~easing
+                              :loop ~loop-mode
+                              :gen-fn ~gen-fn-expr})))")

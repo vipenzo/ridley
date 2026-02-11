@@ -226,6 +226,8 @@
    'visible-meshes      registry/visible-meshes
    'registered-names    registry/registered-names
    'get-mesh            registry/get-mesh
+   '$                   registry/get-value
+   'register-value!     registry/register-value!
    'refresh-viewport!   registry/refresh-viewport!
    'all-meshes-info     registry/all-meshes-info
    'anonymous-meshes    registry/anonymous-meshes
@@ -299,8 +301,11 @@
    ;; Animation linking (parent-child position tracking)
    'link!               anim/link!
    'unlink!             anim/unlink!
-   ;; Animation internals (used by anim! / span macros)
+   ;; Mesh anchors
+   'attach-path         impl/implicit-attach-path
+   ;; Animation internals (used by anim! / span / anim-proc! macros)
    'anim-register!      anim/register-animation!
+   'anim-proc-register! anim/register-procedural-animation!
    'anim-preprocess     anim-preprocess/preprocess-animation
    'anim-make-span      anim/make-span
    'anim-make-cmd       anim/make-anim-command

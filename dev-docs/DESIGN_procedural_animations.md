@@ -1,4 +1,4 @@
-# Design: Procedural Animations & Mesh Anchors
+# Design: Procedural Animations, Mesh Anchors & Hierarchical Assemblies
 
 ## Context
 
@@ -10,7 +10,10 @@ But it can't:
 - **Articulate** linked parts with shared pivot points
 - **Animate transforms** like scale, inset, or shape morphing
 
-This document proposes **procedural animations** as a complementary system that runs alongside preprocessed animations, plus **mesh anchors** that enable articulated assemblies.
+This document proposes three complementary extensions:
+1. **Procedural animations** (`anim-proc!`) — mesh-regenerating functions alongside preprocessed
+2. **Mesh anchors** (`attach-path`) — named reference points on meshes for joints
+3. **Hierarchical assemblies** — `register` with maps + `with-path` nesting for implicit link hierarchies
 
 ---
 
@@ -21,7 +24,7 @@ This document proposes **procedural animations** as a complementary system that 
 A procedural animation evaluates a function every frame. The function receives `t` (0→1, with easing already applied) and returns a **new mesh** that replaces the current one.
 
 ```clojure
-;; A box that grows
+;; A sphere that grows
 (register blob (sphere 1))
 (anim-proc! :grow 3.0 :blob :out
   (fn [t] (sphere (* 20 t))))
@@ -34,7 +37,7 @@ A procedural animation evaluates a function every frame. The function receives `
 ;; A rectangle that twists progressively
 (register bar (extrude (rect 10 5) (f 40)))
 (anim-proc! :twist 4.0 :bar :linear
-  (fn [t] (loft-n 32 (rect 10 5) 
+  (fn [t] (loft-n 32 (rect 10 5)
             #(rotate-shape %1 (* %2 t 180))
             (f 40))))
 ```
@@ -69,7 +72,7 @@ The `:type` field is the key discriminator. Preprocessed animations have `:type 
 In `playback.cljs`, `tick-animations!` currently computes a frame index and looks up a pose from `:frames`. For procedural animations, it instead:
 
 1. Computes `t` from current-time / duration
-2. Applies the span's easing (or the single easing if no spans)
+2. Applies easing
 3. Calls `(:gen-fn anim) eased-t`
 4. Gets back a mesh
 5. Updates the registry and Three.js geometry in-place
@@ -91,7 +94,7 @@ In `playback.cljs`, `tick-animations!` currently computes a frame index and look
 
 ### `apply-procedural-mesh!`
 
-This replaces the registry mesh AND updates Three.js geometry. It's similar to `apply-mesh-pose!` but replaces vertices entirely rather than transforming base vertices:
+Replaces the registry mesh AND updates Three.js geometry:
 
 ```clojure
 (defn- apply-procedural-mesh!
@@ -100,25 +103,17 @@ This replaces the registry mesh AND updates Three.js geometry. It's similar to `
   [mesh-name new-mesh anim-data]
   (when-let [reg-fn @register-mesh-fn]
     (reg-fn mesh-name new-mesh))
-  ;; Update Three.js geometry in-place
   (when-let [f @update-geometry-fn]
-    ;; NOTE: vertex count may differ from base! See "Geometry Resizing" below.
     (f mesh-name (:vertices new-mesh) (:faces new-mesh))))
 ```
 
 ### Geometry Resizing Problem
 
-With preprocessed animations, the vertex/face count never changes — we just move existing vertices. With procedural animations, `gen-fn` could return a mesh with a **different** number of faces at different `t` values (e.g., a loft with more steps, or a sphere with more segments).
+With preprocessed animations, vertex/face count never changes. With procedural animations, `gen-fn` could return a mesh with a **different** face count at different `t` values.
 
-The current `update-mesh-geometry!` in `viewport/core.cljs` updates `Float32Array` values in-place — it cannot change the array length. If the procedural mesh has a different face count, we need to **rebuild** the `BufferGeometry`.
+The current `update-mesh-geometry!` updates `Float32Array` in-place — it cannot change array length. If face count changes, we need to **rebuild** the `BufferGeometry`.
 
-**Strategy**: 
-
-Compare the new mesh's face count with the current geometry's face count:
-- **Same count**: fast path — update positions in-place (same as preprocessed)
-- **Different count**: slow path — dispose old geometry, create new `BufferGeometry`
-
-This means `update-mesh-geometry!` needs a small extension:
+**Strategy** — compare face counts, two paths:
 
 ```clojure
 (defn update-mesh-geometry!
@@ -138,9 +133,7 @@ This means `update-mesh-geometry!` needs a small extension:
           (set! (.-geometry target-mesh) new-geom))))))
 ```
 
-The slow path is still faster than rebuilding the entire scene — it only touches one mesh object.
-
-**Performance guideline for users**: If possible, keep the face count constant in `gen-fn` (e.g., always use the same resolution for circles/spheres). This ensures the fast path. Document this.
+**Performance guideline**: Keep face count constant in `gen-fn` when possible (same resolution, same segment count). This ensures the fast path.
 
 ### DSL
 
@@ -156,312 +149,344 @@ The slow path is still faster than rebuilding the entire scene — it only touch
   (fn [t] (sphere (* 20 t))))
 
 (anim-proc! :pulse 1.0 :heart :in-out :loop
-  (fn [t] 
+  (fn [t]
     (let [s (+ 1.0 (* 0.3 (Math/sin (* t Math/PI 2))))]
       (box (* 10 s) (* 10 s) (* 10 s)))))
 ```
 
-No spans — a single easing for the whole duration. If users need piecewise behavior, they handle it in the function:
+No spans — a single easing for the whole duration. Users who need piecewise behavior handle it in the function with `cond` on `t`. This is deliberate — keeping `anim-proc!` simple.
+
+### Loop Modes
+
+Both `anim!` and `anim-proc!` support three loop modes via keyword flags:
+
+| Keyword | Registry value | Time mapping | Cycle period |
+|---------|---------------|-------------|--------------|
+| `:loop` | `:forward` | `mod(t, D)` — 0→1, 0→1, ... | D |
+| `:loop-reverse` | `:reverse` | `D - mod(t, D)` — 1→0, 1→0, ... | D |
+| `:loop-bounce` | `:bounce` | triangle wave — 0→1→0→1, ... | 2D |
 
 ```clojure
-(anim-proc! :complex 5.0 :arm :linear
-  (fn [t]
-    (cond
-      (< t 0.3) (extrude (circle 2) (f 15) (th (* (/ t 0.3) 45)) (f 12))
-      (< t 0.7) (extrude (circle 2) (f 15) (th 45) (f (* 12 (/ (- t 0.3) 0.4))) )
-      :else     (extrude (circle 2) (f 15) (th 45) (f 12) (th (* (/ (- t 0.7) 0.3) -45)) (f 8)))))
+;; Forward loop (default)
+(anim! :spin 2.0 :gear :loop (span 1.0 :linear (tr 360)))
+
+;; Reverse: always plays backward
+(anim! :unwind 2.0 :gear :loop-reverse (span 1.0 :linear (tr 360)))
+
+;; Bounce (ping-pong): forward then backward, no discontinuity
+(anim-proc! :breathe 2.0 :blob :in-out :loop-bounce
+  (fn [t] (sphere (+ 5 (* 15 t)))))
 ```
 
-This is deliberate — keeping `anim-proc!` simple. Users who need multi-span procedural control can use time math in the function.
+The `:loop` field in the registry stores `:forward`, `:reverse`, or `:bounce` (or `false` for non-looping). `true` is accepted for backward compatibility and treated as `:forward`.
 
-### Interaction with Preprocessed Animations
+For bounce, `t` in the `gen-fn` goes 0→1→0 — the remapping happens at the playback level before easing is applied, so the user's function always receives a value in `[0, 1]`.
 
-Can a target have both a preprocessed AND a procedural animation? **No** — they conflict. A preprocessed animation applies a rigid transform to base vertices. A procedural animation replaces vertices entirely. The second registration overwrites the first (same as re-registering with `anim!`).
+### Interaction Rules
 
-However, a target CAN have a procedural animation AND be linked to a parent via `link!`. The link adds a position offset to the mesh after `gen-fn` produces it. This works because `link!` operates on the final mesh position, not on individual vertices.
+| Existing animation | New registration | Result |
+|---|---|---|
+| preprocessed | preprocessed | Both run, deltas sum |
+| preprocessed | procedural | Procedural wins, warning |
+| procedural | preprocessed | Preprocessed wins, warning |
+| procedural | procedural | Last wins, warning |
 
-### Interaction with Multi-Animation Composition
-
-Multiple preprocessed animations on the same target sum their deltas (current behavior). A procedural animation on the same target is incompatible — it replaces vertices rather than transforming them. If the user registers both, the procedural one takes priority and a console warning is emitted.
+A target CAN have a procedural animation AND be linked to a parent via `link!`. The link adds a position offset after `gen-fn` produces the mesh.
 
 ### Scrubbing
 
-Scrubbing works naturally — `seek!` sets `current-time`, and on the next tick the `gen-fn` is called with the corresponding `t`. No frame array needed. This is actually simpler than preprocessed animations.
+Works naturally — `seek!` sets `current-time`, next tick calls `gen-fn` with corresponding `t`. Simpler than preprocessed.
 
 ### Performance Considerations
 
-The `gen-fn` runs every frame (60fps). For simple operations this is fine:
+The `gen-fn` runs every frame (60fps). Typical costs:
 - `(sphere (* 20 t))` — microseconds
 - `(extrude (circle 5) (f 30) (th (* t 90)) (f 20))` — ~1ms
 - `(loft-n 64 (circle 20) transform-fn (f 100))` — ~5ms
 
-For complex meshes with boolean operations, it could be too slow. Users should:
-1. Keep `gen-fn` simple — avoid `mesh-union`/`mesh-difference` per frame
-2. Use constant resolution (avoid face count changes for fast path)
-3. Use preprocessed animations for anything that can be expressed as rigid motion
+Avoid `mesh-union`/`mesh-difference` per frame. Use preprocessed for rigid motion.
 
 ### Stop and Restore
 
-`stop!` restores the original mesh from `base-vertices`/`base-faces`, exactly like preprocessed animations. The `gen-fn` is not called at t=0 — the saved base state is used directly.
+`stop!` restores original mesh from `base-vertices`/`base-faces`, same as preprocessed.
 
 ---
 
-## Part 2: Mesh Anchors (`attach-path`)
+## Part 2: Mesh Anchors
 
 ### Problem
 
-To build articulated models (puppets, robots, mechanical assemblies), we need to attach meshes at specific points — a shoulder, a hinge, a socket. The current `link!` system links targets by position delta from centroid/creation-pose. It doesn't support attaching at arbitrary points on a mesh.
+Articulated models need meshes attached at specific points — shoulders, elbows, sockets. The current `link!` tracks position delta from centroid/creation-pose. It doesn't support arbitrary attachment points.
 
 ### Solution: `attach-path`
 
-Associate a path (with its `mark` points) to a mesh. The path's marks become **anchors** stored on the mesh, positioned relative to the mesh's creation-pose.
+Associate a path (with `mark` points) to a mesh. The path's marks become **anchors** stored on the mesh.
 
 ```clojure
-;; 1. Define a path with marks at joint points
-(def torso-skeleton (path 
-  (mark :hip-l) (rt 5)      ;; left hip offset
-  (mark :hip-r) (rt -10)    ;; right hip offset  
-  (mark :spine) (f 20)      ;; along the spine
-  (mark :shoulder-l) (rt 5)
-  (mark :shoulder-r) (rt -10)
-  (mark :neck) (f 5)))
+;; Define a path with joint marks
+(def arm-skeleton (path
+  (mark :shoulder)
+  (f 15)
+  (mark :elbow)
+  (f 12)
+  (mark :wrist)))
 
-;; 2. Build the mesh (independently)
-(register torso (box 10 5 20))
+;; Build and register the mesh
+(register upper-arm (extrude (circle 1.5) (f 15)))
 
-;; 3. Attach the skeleton — marks become mesh anchors
-(attach-path :torso torso-skeleton)
-
-;; Now :torso has anchors: :hip-l, :hip-r, :spine, :shoulder-l, :shoulder-r, :neck
-;; Each anchor has position/heading/up relative to the mesh's creation-pose
+;; Attach — marks become mesh anchors
+(attach-path :upper-arm arm-skeleton)
 ```
 
 ### How It Works
 
-`attach-path` does the following:
-
-1. Takes the mesh's `creation-pose` (position, heading, up)
-2. Resolves the path's marks relative to that pose (same logic as `with-path` / `resolve-and-merge-marks*`)
-3. Stores the resolved anchors on the mesh data under `:anchors`
+`attach-path`:
+1. Takes the mesh's `creation-pose`
+2. Runs the path on a virtual turtle starting at that pose
+3. Collects `mark` commands as anchor poses
+4. Stores them on the mesh under `:anchors`
 
 ```clojure
-;; After attach-path, the mesh in the registry has:
+;; After attach-path, the mesh has:
 {:vertices [...]
  :faces [...]
  :creation-pose {:position [0 0 0] :heading [1 0 0] :up [0 0 1]}
- :anchors {:hip-l    {:position [5 0 0]   :heading [1 0 0] :up [0 0 1]}
-           :hip-r    {:position [-5 0 0]  :heading [1 0 0] :up [0 0 1]}
-           :shoulder-l {:position [5 0 20] :heading [1 0 0] :up [0 0 1]}
-           ...}}
+ :anchors {:shoulder {:position [0 0 0]  :heading [1 0 0] :up [0 0 1]}
+           :elbow    {:position [15 0 0] :heading [1 0 0] :up [0 0 1]}
+           :wrist    {:position [27 0 0] :heading [1 0 0] :up [0 0 1]}}}
 ```
 
-Anchors are in **world coordinates** at registration time, but stored as **offsets from creation-pose** internally. When the mesh moves (via animation), the anchors move with it.
+### On-Demand Anchor Resolution
 
-### Implementation
+Anchors are **not** transformed every frame for every mesh. That would be wasteful — most meshes have anchors that nobody reads on most frames.
 
-In `editor/bindings.cljs`, add:
+Instead, when a `link!` needs the current world position of a parent's anchor, it computes it **on demand** by applying the same transform that was applied to the mesh's vertices:
 
 ```clojure
-'attach-path  attach-path-impl
+(defn- resolve-anchor-position
+  "Compute current world position of a mesh anchor.
+   Applies the same rotation+translation as the mesh vertices."
+  [parent-target anchor-name]
+  (when-let [mesh (get-mesh parent-target)]
+    (when-let [anchor (get-in mesh [:anchors anchor-name])]
+      (let [;; Get the animation's base-pose and current frame-pose
+            anim-data (find-active-animation parent-target)
+            base-pose (or (:base-pose anim-data) (:creation-pose mesh))
+            frame-pose (current-frame-pose parent-target anim-data)]
+        (if (and base-pose frame-pose)
+          ;; Transform anchor point same as vertices
+          (let [rotate-fn (compute-rotation-matrix base-pose frame-pose)
+                translation (math/v- (:position frame-pose) (:position base-pose))
+                base-origin (:position base-pose)
+                rel (math/v- (:position anchor) base-origin)
+                rotated (rotate-fn rel)]
+            {:position (math/v+ (math/v+ base-origin rotated) translation)
+             :heading (rotate-fn (:heading anchor))
+             :up (rotate-fn (:up anchor))})
+          ;; No animation — return static anchor
+          anchor)))))
 ```
 
-The implementation:
-
-```clojure
-(defn attach-path-impl
-  "Attach a path's marks to a registered mesh as anchors.
-   Path marks are resolved at the mesh's creation-pose."
-  [mesh-name-or-kw path-data]
-  (let [kw (if (keyword? mesh-name-or-kw) mesh-name-or-kw (keyword mesh-name-or-kw))
-        mesh (get-mesh kw)]
-    (when (and mesh path-data (:commands path-data))
-      (let [creation-pose (or (:creation-pose mesh)
-                              {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})
-            ;; Run path on a virtual turtle starting at creation-pose
-            ;; Collect mark positions
-            anchors (resolve-path-marks path-data creation-pose)]
-        ;; Store anchors on the mesh
-        (register-mesh! kw (assoc mesh :anchors anchors))))))
-```
-
-`resolve-path-marks` walks the path commands on a virtual turtle and collects `:mark` commands:
-
-```clojure
-(defn- resolve-path-marks
-  "Execute path commands on a virtual turtle starting at initial-pose.
-   Collect mark commands as anchor points."
-  [path-data initial-pose]
-  (loop [cmds (:commands path-data)
-         turtle {:position (:position initial-pose)
-                 :heading (:heading initial-pose)
-                 :up (:up initial-pose)}
-         anchors {}]
-    (if (empty? cmds)
-      anchors
-      (let [{:keys [cmd args]} (first cmds)]
-        (case cmd
-          :f    (recur (rest cmds)
-                       (update turtle :position #(math/v+ % (math/v* (:heading turtle) (first args))))
-                       anchors)
-          :th   (recur (rest cmds)
-                       (update turtle :heading #(math/rotate-around-axis % (:up turtle) (* (first args) deg->rad)))
-                       anchors)
-          :tv   (let [right (math/normalize (math/cross (:heading turtle) (:up turtle)))
-                      rad (* (first args) deg->rad)]
-                  (recur (rest cmds)
-                         (-> turtle
-                             (update :heading #(math/rotate-around-axis % right rad))
-                             (update :up #(math/rotate-around-axis % right rad)))
-                         anchors))
-          :tr   (recur (rest cmds)
-                       (update turtle :up #(math/rotate-around-axis % (:heading turtle) (* (first args) deg->rad)))
-                       anchors)
-          :mark (recur (rest cmds)
-                       turtle
-                       (assoc anchors (first args)
-                              {:position (:position turtle)
-                               :heading (:heading turtle)
-                               :up (:up turtle)}))
-          ;; Skip unknown commands
-          (recur (rest cmds) turtle anchors))))))
-```
-
-### Anchors and Animation
-
-When a mesh is animated (preprocessed or procedural), its anchors must move with it. This is critical for `link!` to work with anchor-based attachments.
-
-**For preprocessed animations**: The anchor positions are transformed using the same rotation matrix and translation as the vertices. In `apply-mesh-pose!`, after computing `new-verts`, also transform anchors:
-
-```clojure
-;; In apply-mesh-pose! (addition):
-(when-let [anchors (:anchors mesh)]
-  (let [transformed-anchors 
-        (into {} (map (fn [[k anchor]]
-                        [k {:position (transform-point (:position anchor) 
-                                                       base-pose frame-pose)
-                            :heading (rotate-fn (math/v- (:heading anchor) 
-                                                         (:position base-pose)))
-                            :up (rotate-fn (math/v- (:up anchor)
-                                                    (:position base-pose)))}])
-                      anchors))]
-    ;; Store transformed anchors for link! to read
-    (swap! current-anchor-positions assoc target transformed-anchors)))
-```
-
-**For procedural animations**: The `gen-fn` returns a new mesh. If the mesh has anchors, they should be part of the returned mesh. But this is impractical — users don't want to recalculate anchor positions in every `gen-fn` call.
-
-Better approach: procedural animations on articulated parts use `link!` with the parent's anchors. The parent's anchor positions are computed from the parent's animation, and the child reads them via `link!`. The child doesn't need its own anchors — it just follows the parent's anchor point.
+This is O(1) per anchor per frame — one rotation + one translation. Called only for anchors that are actually referenced by active links.
 
 ### Enhanced `link!`
 
-Currently `link!` just tracks position delta from the parent's centroid. With mesh anchors, it needs to support attaching at a specific anchor point:
-
 ```clojure
-;; Current: child follows parent's position delta from centroid
+;; Current: child follows parent's centroid delta
 (link! :upper-arm :torso)
 
-;; Enhanced: child is attached at parent's :shoulder-r anchor
+;; Attach at specific parent anchor
 (link! :upper-arm :torso :at :shoulder-r)
 
-;; Full: specify both parent anchor and child anchor
+;; Specify child attachment point too
 (link! :lower-arm :upper-arm :at :elbow :from :top)
 
-;; With rotation inheritance (for joints)
+;; With rotation inheritance (for articulated joints)
 (link! :lower-arm :upper-arm :at :elbow :from :top :inherit-rotation true)
 ```
 
-**`:at`** — the anchor point on the parent where the child is attached. The child's position tracks this anchor's world position (not the parent's centroid).
+**`:at`** — anchor on parent. Child tracks this point's world position.
 
-**`:from`** — the point on the child that sits at the parent's anchor. Defaults to the child's creation-pose position. Could be a face-id (`:top`, `:bottom`) whose center is used, or a child anchor name.
+**`:from`** — anchor on child that sits at the parent's anchor. Defaults to creation-pose origin.
 
-**`:inherit-rotation`** — if true, the child also inherits the parent's orientation changes. Essential for articulated joints. Default false (camera following a character should not rotate with it).
+**`:inherit-rotation`** — child inherits parent's orientation changes. Default true in assemblies (see Part 3), false for explicit `link!` calls.
 
-### Implementation of Enhanced `link!`
-
-The link registry stores more data:
+Link registry stores:
 
 ```clojure
-;; link-registry: child-target → link-config
 {:upper-arm {:parent :torso
-             :parent-anchor :shoulder-r    ;; nil = centroid
-             :child-anchor nil             ;; nil = creation-pose origin
+             :parent-anchor :shoulder-r
+             :child-anchor nil
              :inherit-rotation false}}
 ```
 
-In `get-parent-position-delta` (playback.cljs), when a `:parent-anchor` is specified, read the anchor's current world position instead of the parent mesh's centroid:
+At playback, `get-parent-position-delta` calls `resolve-anchor-position` when `:parent-anchor` is set — no pre-computed atom needed.
+
+---
+
+## Part 3: Hierarchical Assemblies
+
+### Motivation
+
+Building articulated models with explicit `attach-path` + `link!` calls works but is verbose. The skeleton definition, mesh construction, and link wiring are three separate steps that must stay in sync. For complex assemblies (puppets, robots, vehicles), this becomes tedious and error-prone.
+
+### Key Insight: `register` Already Supports Vectors
+
+Today, `register` accepts vectors:
 
 ```clojure
-(defn- get-parent-anchor-position [parent-target anchor-name]
-  ;; Read from current-anchor-positions (updated during animation tick)
-  ;; Falls back to static anchor on the mesh if no animation is running
-  (or (get-in @current-anchor-positions [parent-target anchor-name :position])
-      (when-let [mesh (get-mesh parent-target)]
-        (get-in mesh [:anchors anchor-name :position]))))
+(register many [(box 20) (box 30)])
+(hide many 1)  ;; hide second element
 ```
 
-### Articulated Model Example
+Extending to maps is natural — same logic, keyword keys instead of indices.
+
+### Key Insight: `with-path` Is Already a Stack
+
+`with-path` maintains a stack of contexts. Inside a `with-path`, `goto` moves the turtle to a mark. `mark` commands in the path define positions. Nesting `with-path` pushes a new context. This stack already captures the parent-child relationship.
+
+### Assembly Syntax
 
 ```clojure
-;; === Build the parts ===
-
-;; Torso with skeleton
-(register torso (box 12 6 20))
-(attach-path :torso (path
-  (f 10)                    ;; spine base (bottom of torso is at z=0)
-  (u 10)                    ;; move to top
+(def body-skeleton (path
+  (mark :hip-l) (rt -6)
+  (mark :hip-r) (rt 12)
+  (mark :spine) (f 20)
   (mark :shoulder-l) (rt -7)
   (mark :shoulder-r) (rt 14)
-  (mark :neck)))
+  (mark :neck) (f 5)))
 
-;; Upper arm  
-(register upper-arm-r (extrude (circle 1.5) (f 12)))
-(attach-path :upper-arm-r (path (mark :top) (f 12) (mark :elbow)))
+(def arm-skeleton (path
+  (mark :top)
+  (f 15)
+  (mark :elbow)
+  (f 12)
+  (mark :wrist)))
 
-;; Lower arm
-(register lower-arm-r (extrude (circle 1.2) (f 10)))
-(attach-path :lower-arm-r (path (mark :top) (f 10) (mark :hand)))
+(def hand-skeleton (path
+  (mark :base)
+  (f 4)
+  (mark :thumb-base) (rt -3)
+  (mark :index-base) (rt 2)
+  (mark :middle-base) (rt 2)
+  (mark :ring-base) (rt 2)))
 
-;; === Link the hierarchy ===
+(def finger-skeleton (path
+  (mark :base)
+  (f 3)
+  (mark :mid-knuckle)
+  (f 2.5)
+  (mark :tip-knuckle)
+  (f 2)))
 
-(link! :upper-arm-r :torso :at :shoulder-r :from :top :inherit-rotation true)
-(link! :lower-arm-r :upper-arm-r :at :elbow :from :top :inherit-rotation true)
+(with-path body-skeleton
+  (register puppet
+    {:torso (box 12 6 20)
+     :r-arm (do (goto :shoulder-r)
+                (with-path arm-skeleton
+                  {:upper (cyl 3 15)
+                   :lower (do (goto :elbow) (cyl 2.5 12))
+                   :hand  (do (goto :wrist)
+                              (with-path hand-skeleton
+                                {:palm (box 3 5 1.5)
+                                 :index (do (goto :index-base)
+                                            (with-path finger-skeleton
+                                              {:prox (cyl 0.5 3)
+                                               :mid  (do (goto :mid-knuckle) (cyl 0.4 2.5))
+                                               :tip  (do (goto :tip-knuckle) (cyl 0.3 2))}))
+                                 :thumb (do (goto :thumb-base) (cyl 0.6 3))}))}))}))
+```
 
-;; === Animate ===
+### What Happens Under the Hood
 
-;; Torso walks forward
-(anim! :walk 2.0 :torso :loop
-  (span 1.0 :linear (f 20)))
+When `register` receives a map inside a `with-path` context:
 
-;; Upper arm swings (relative to torso, which is moving)
-(anim! :arm-swing 1.0 :upper-arm-r :loop
+1. **Each map value** is evaluated — turtle commands (`goto`) execute, mesh constructors return meshes
+2. **Each mesh** is registered with a qualified name: `:puppet/torso`, `:puppet/r-arm/upper`, `:puppet/r-arm/hand/index/mid`
+3. **Links are inferred** from the `with-path` stack. The system tracks which `goto` preceded each mesh creation:
+   - `:puppet/r-arm/upper` was created after `(goto :shoulder-r)` in `body-skeleton` → linked to `:puppet/torso` at `:shoulder-r`
+   - `:puppet/r-arm/lower` was created after `(goto :elbow)` in `arm-skeleton` → linked to `:puppet/r-arm/upper` at `:elbow`
+   - `:puppet/r-arm/hand/index/mid` was created after `(goto :mid-knuckle)` in `finger-skeleton` → linked to `:puppet/r-arm/hand/index/prox` at `:mid-knuckle`
+4. **`:inherit-rotation true`** is the default for assembly links (articulated joints need rotation inheritance)
+5. **Anchors** from each `with-path`'s skeleton are attached to the corresponding mesh
+
+### Link Inference Algorithm
+
+The `with-path` stack maintains:
+
+```clojure
+;; Stack frame
+{:path-data path          ;; the skeleton path
+ :parent-mesh-key :puppet/r-arm/upper  ;; the "current" mesh in this with-path
+ :last-goto-anchor :elbow              ;; last goto target (nil if none)
+ :name-prefix [:puppet :r-arm]}        ;; for qualified name construction
+```
+
+When a mesh is created inside a map:
+1. Look at current `with-path` frame's `:last-goto-anchor`
+2. If non-nil → create link from this mesh to the frame's `:parent-mesh-key` at that anchor
+3. If nil (first entry, or no goto before it) → link to parent with no anchor (centroid)
+
+When a nested `with-path` starts:
+1. Push new stack frame
+2. The new frame's `:parent-mesh-key` is the mesh that was current in the outer frame
+
+When a nested map entry starts:
+1. The first mesh created becomes the frame's `:parent-mesh-key`
+2. Subsequent meshes after `goto` link to this parent
+
+### Qualified Names
+
+Map nesting produces path-like names:
+
+| Code position | Registered name |
+|---|---|
+| Top-level `:torso` | `:puppet/torso` |
+| `:r-arm` → `:upper` | `:puppet/r-arm/upper` |
+| `:r-arm` → `:hand` → `:palm` | `:puppet/r-arm/hand/palm` |
+| `:r-arm` → `:hand` → `:index` → `:mid` | `:puppet/r-arm/hand/index/mid` |
+
+These are regular keywords in the registry. Animations target them directly:
+
+```clojure
+(anim! :wave 1.0 :puppet/r-arm/upper :loop
   (span 0.5 :in-out :ang-velocity 10 (tv 30))
   (span 0.5 :in-out :ang-velocity 10 (tv -30)))
 
-;; Lower arm follows due to link — no separate animation needed,
-;; or add a secondary swing:
-(anim-proc! :elbow-bend 1.0 :lower-arm-r :linear :loop
-  (fn [t] 
-    (let [bend (* 45 (Math/sin (* t Math/PI 2)))]
-      (extrude (circle 1.2) (th bend) (f 10)))))
-
-(play!)  ;; all play
+(anim-proc! :finger-curl 0.5 :puppet/r-arm/hand/index/mid :in-out
+  (fn [t] (cyl 0.4 2.5)))
 ```
 
-### Execution Order with Links
+### Show/Hide
 
-The current two-pass system (unlinked first, linked second) needs to extend to deeper hierarchies. With torso → upper-arm → lower-arm, we need three passes.
+```clojure
+;; Hide a single part
+(hide :puppet/r-arm/hand/thumb)
 
-**Solution**: Topological sort on the link graph. Build a dependency graph, sort it, and process in that order:
+;; Hide a whole sub-tree (all keys starting with prefix)
+(hide :puppet/r-arm)
+
+;; Show everything
+(show :puppet)
+
+;; Access via the register binding too
+(hide puppet :r-arm :hand :thumb)  ;; equivalent to (hide :puppet/r-arm/hand/thumb)
+```
+
+The `hide`/`show` with a keyword prefix hides/shows all registered meshes whose name starts with that prefix. Simple `starts-with?` on the keyword string.
+
+### Topology for Playback
+
+The implicit links form a tree. The topological sort for `tick-animations!` walks this tree root-first:
 
 ```clojure
 (defn- compute-execution-order
-  "Topological sort of targets based on link dependencies."
+  "Topological sort of targets based on link dependencies.
+   Handles arbitrary depth."
   [link-registry targets]
-  (let [;; Build adjacency: parent → [children]
-        children-of (reduce-kv (fn [m child {:keys [parent]}]
+  (let [children-of (reduce-kv (fn [m child {:keys [parent]}]
                                  (update m parent (fnil conj []) child))
                                {} link-registry)
-        ;; BFS from roots (targets with no parent)
         roots (remove #(contains? link-registry %) targets)]
     (loop [queue (vec roots)
            visited #{}
@@ -476,13 +501,78 @@ The current two-pass system (unlinked first, linked second) needs to extend to d
                    (conj order t))))))))
 ```
 
-This replaces the current two-pass approach and handles arbitrary depth.
+This replaces the current two-pass (unlinked, then linked) approach.
+
+### Full Assembly + Animation Example
+
+```clojure
+;; === Skeletons ===
+
+(def body-sk (path
+  (mark :shoulder-l) (rt -7)
+  (mark :shoulder-r) (rt 14)
+  (mark :hip-l) (rt -6)
+  (mark :hip-r) (rt 12)))
+
+(def arm-sk (path (mark :top) (f 15) (mark :elbow)))
+
+;; === Assembly ===
+
+(with-path body-sk
+  (register puppet
+    {:torso (box 12 6 20)
+     :r-arm (do (goto :shoulder-r)
+                (with-path arm-sk
+                  {:upper (cyl 3 15)
+                   :lower (do (goto :elbow) (cyl 2.5 12))}))
+     :l-arm (do (goto :shoulder-l)
+                (with-path arm-sk
+                  {:upper (cyl 3 15)
+                   :lower (do (goto :elbow) (cyl 2.5 12))}))}))
+
+;; Implicit links created:
+;;   :puppet/r-arm/upper → :puppet/torso at :shoulder-r (inherit-rotation true)
+;;   :puppet/r-arm/lower → :puppet/r-arm/upper at :elbow (inherit-rotation true)
+;;   :puppet/l-arm/upper → :puppet/torso at :shoulder-l (inherit-rotation true)
+;;   :puppet/l-arm/lower → :puppet/l-arm/upper at :elbow (inherit-rotation true)
+
+;; === Animate ===
+
+;; Torso walks
+(anim! :walk 2.0 :puppet/torso :loop
+  (span 1.0 :linear (f 40)))
+
+;; Right arm swings (preprocessed rigid motion)
+(anim! :r-swing 1.0 :puppet/r-arm/upper :loop
+  (span 0.5 :in-out :ang-velocity 10 (tv 30))
+  (span 0.5 :in-out :ang-velocity 10 (tv -30)))
+
+;; Left arm swings opposite
+(anim! :l-swing 1.0 :puppet/l-arm/upper :loop
+  (span 0.5 :in-out :ang-velocity 10 (tv -30))
+  (span 0.5 :in-out :ang-velocity 10 (tv 30)))
+
+;; Right elbow bends (procedural — shape changes)
+(anim-proc! :r-elbow 1.0 :puppet/r-arm/lower :linear :loop
+  (fn [t]
+    (let [bend (* 30 (Math/sin (* t Math/PI 2)))]
+      (extrude (circle 2.5) (th bend) (f 12)))))
+
+(play!)
+```
+
+Execution order (topological):
+1. `:puppet/torso` (root, no parent)
+2. `:puppet/r-arm/upper`, `:puppet/l-arm/upper` (children of torso)
+3. `:puppet/r-arm/lower`, `:puppet/l-arm/lower` (children of upper arms)
+
+Each child reads its parent's anchor position on-demand via `resolve-anchor-position`.
 
 ---
 
-## Part 3: Procedural + Preprocessed Coexistence
+## Part 4: Summary
 
-### Summary of Animation Types
+### Animation Types
 
 | Aspect | `anim!` (preprocessed) | `anim-proc!` (procedural) |
 |--------|----------------------|--------------------------|
@@ -492,7 +582,6 @@ This replaces the current two-pass approach and handles arbitrary depth.
 | Scrubbing | Index lookup | Function call |
 | Vertex count | Constant (rigid body) | Can vary |
 | Deformation | No | Yes |
-| Boolean ops | No (too slow) | Possible but discouraged |
 | Multi-animation | Delta summing | No (replaces mesh) |
 | `link!` support | Yes | Yes (position offset) |
 | Easing | Per-span | Single for duration |
@@ -502,17 +591,17 @@ This replaces the current two-pass approach and handles arbitrary depth.
 - **Rigid motion** (move, rotate, orbit) → `anim!`
 - **Camera movement** → `anim!` (orbital mode)
 - **Shape change** (bend, twist, grow) → `anim-proc!`
-- **Progressive construction** (build step by step) → `anim-proc!`
-- **Pulsing/breathing** (periodic deformation) → `anim-proc!`
+- **Progressive construction** → `anim-proc!`
+- **Pulsing/breathing** → `anim-proc!`
 
-### Same Target Rules
+### Assembly Approaches (Simple → Complex)
 
-| Existing animation | New registration | Result |
-|---|---|---|
-| preprocessed | preprocessed | Both run, deltas sum |
-| preprocessed | procedural | Procedural wins, warning |
-| procedural | preprocessed | Preprocessed wins, warning |
-| procedural | procedural | Last wins, warning |
+| Approach | When to use |
+|---|---|
+| Single mesh + `anim!` | Simple objects, rigid motion |
+| `attach-path` + explicit `link!` | 2-3 parts, fine control over link params |
+| `with-path` + `register` map | Multi-part assemblies, automatic hierarchy |
+| Nested `with-path` maps | Deep articulated models (puppets, robots, hands) |
 
 ---
 
@@ -520,50 +609,40 @@ This replaces the current two-pass approach and handles arbitrary depth.
 
 ### Phase 1: `anim-proc!` Core
 
-Files to modify:
+1. **`anim/core.cljs`** — Add `:type` field. `register-animation!` → `:type :preprocessed`. New `register-procedural-animation!` → `:type :procedural` with `:gen-fn`.
+2. **`anim/playback.cljs`** — Branch on `:type` in `tick-animations!`.
+3. **`viewport/core.cljs`** — Extend `update-mesh-geometry!` for face count changes (dispose + recreate).
+4. **`editor/macros.cljs`** + **`editor/bindings.cljs`** — `anim-proc!` macro and binding.
 
-1. **`anim/core.cljs`** — Add `:type` field to registry entries. `register-animation!` sets `:type :preprocessed`. New `register-procedural-animation!` sets `:type :procedural` with `:gen-fn`.
+### Phase 2: Mesh Anchors + On-Demand Resolution
 
-2. **`anim/playback.cljs`** — In `tick-animations!`, branch on `:type`:
-   - `:preprocessed` → existing path (frame lookup)
-   - `:procedural` → compute t, apply easing, call gen-fn, update mesh
+5. **`editor/bindings.cljs`** — `attach-path` binding.
+6. **`anim/playback.cljs`** — `resolve-anchor-position` (on-demand, uses same rotation matrix as vertices).
+7. **`anim/core.cljs`** — Extend `link!` with `:at`, `:from`, `:inherit-rotation`.
+8. **`anim/playback.cljs`** — Replace two-pass with topological sort.
 
-3. **`viewport/core.cljs`** — Extend `update-mesh-geometry!` to handle face count changes (dispose + recreate geometry when needed).
+### Phase 3: Hierarchical Assemblies
 
-4. **`editor/macros.cljs`** — Add `anim-proc!` macro.
-
-5. **`editor/bindings.cljs`** — Add `anim-proc!` binding.
-
-### Phase 2: Mesh Anchors
-
-6. **`editor/bindings.cljs`** — Add `attach-path` binding.
-
-7. **`anim/playback.cljs`** or new `anim/anchors.cljs` — `resolve-path-marks` function. `current-anchor-positions` atom for runtime tracking.
-
-8. **`anim/playback.cljs`** — Update `apply-mesh-pose!` to transform anchors alongside vertices.
-
-9. **`scene/registry.cljs`** — Ensure `:anchors` field is preserved across mesh updates.
-
-### Phase 3: Enhanced `link!`
-
-10. **`anim/core.cljs`** — Extend `link!` to accept `:at`, `:from`, `:inherit-rotation` options. Update `link-registry` data structure.
-
-11. **`anim/playback.cljs`** — Update `get-parent-position-delta` to read anchor positions. Add rotation inheritance. Replace two-pass with topological sort.
+9. **`scene/registry.cljs`** — Extend `register` to accept maps. Qualified name generation (`:parent/child/grandchild`). Prefix-based `show`/`hide`.
+10. **`editor/macros.cljs`** — Track `with-path` stack context. On map registration, infer links from `goto` history.
+11. **`editor/bindings.cljs`** — Wire assembly registration with implicit link creation.
 
 ### Phase 4: Integration Testing
 
-12. Build an articulated model (simple puppet: torso + 2 arms + 2 legs) with `attach-path`, `link!`, and mixed `anim!` / `anim-proc!` animations.
+12. Build puppet with 4+ nesting levels. Verify topological sort, on-demand anchor resolution, mixed `anim!`/`anim-proc!`, show/hide by prefix.
 
 ---
 
 ## Open Questions
 
-1. **`anim-proc!` and camera**: Should `anim-proc!` support `:camera` as target? The gen-fn would return a pose `{:position :heading :up}` instead of a mesh. Could be useful for complex camera paths that can't be expressed as orbital commands. But it adds API surface — maybe just support it for meshes initially.
+1. **`anim-proc!` and camera**: Support `:camera` as target? Gen-fn would return `{:position :heading :up}` instead of mesh. Useful but adds API surface — start with meshes only?
 
-2. **Anchor visualization**: Should anchors be visible in the viewport? Small markers at anchor positions would help debugging. Could toggle with `(show-anchors :torso)`.
+2. **Anchor visualization**: `(show-anchors :puppet/torso)` to display small markers at anchor positions. Helpful for debugging.
 
-3. **`attach-path` vs `attach-skeleton`**: Name alternatives. "path" is already overloaded. "skeleton" is evocative but implies bones. Other options: `set-anchors`, `mark-joints`, `pin-path`.
+3. **Naming**: `attach-path` vs `attach-skeleton` vs `set-anchors`. "path" is already overloaded. "skeleton" is evocative but implies bones.
 
-4. **Performance budget**: Should we warn if `gen-fn` takes >16ms? A slow gen-fn drops frames. Could measure and log.
+4. **Performance budget**: Warn in console if `gen-fn` takes >16ms? Slow gen-fn drops frames.
 
-5. **`inherit-rotation` composition**: When a chain has multiple links with `inherit-rotation true`, rotations compose (child gets parent's rotation × grandparent's rotation). This is correct for articulated limbs but could surprise users. Document clearly.
+5. **Explicit override**: Can the user override an implicit assembly link? E.g., `(link! :puppet/r-arm/lower :puppet/torso :at :shoulder-r)` to bypass the elbow and attach directly to torso. Probably yes — explicit `link!` overwrites implicit.
+
+6. **Map evaluation order**: Clojure maps don't guarantee insertion order. For the assembly to work, entries with `goto` must evaluate in the order written. Use `array-map` or a vector-of-pairs syntax? Or rely on small maps (<8 entries) which preserve insertion order in Clojure?

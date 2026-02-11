@@ -1385,35 +1385,59 @@
 ;; Animation support: mesh geometry updates
 ;; ============================================================
 
+(defn- rebuild-buffer-geometry
+  "Create a new BufferGeometry from vertices and faces (unindexed layout)."
+  [new-vertices faces]
+  (let [geom (THREE/BufferGeometry.)
+        n-verts (count new-vertices)
+        face-verts (mapcat (fn [[i0 i1 i2]]
+                             (when (and (< i0 n-verts) (< i1 n-verts) (< i2 n-verts))
+                               [(nth new-vertices i0 [0 0 0])
+                                (nth new-vertices i1 [0 0 0])
+                                (nth new-vertices i2 [0 0 0])]))
+                           faces)
+        flat-coords (mapcat identity face-verts)
+        positions (js/Float32Array. (clj->js flat-coords))]
+    (.setAttribute geom "position" (THREE/BufferAttribute. positions 3))
+    (.computeVertexNormals geom)
+    geom))
+
 (defn update-mesh-geometry!
-  "Update only the vertex positions of a named mesh's Three.js object.
-   Finds the mesh by userData.registryName. Rebuilds the unindexed
-   position buffer from new vertices + faces.
-   Much faster than full scene rebuild."
+  "Update a named mesh's Three.js geometry.
+   Finds the mesh by userData.registryName.
+   Fast path if face count unchanged (update positions in-place).
+   Slow path if face count changed (dispose old geometry, rebuild)."
   [mesh-name new-vertices faces]
   (when-let [{:keys [world-group]} @state]
-    (let [n-verts (count new-vertices)]
+    (let [n-verts (count new-vertices)
+          new-face-count (count faces)]
       ;; Find Three.js mesh by userData.registryName
       (some (fn [^js child]
               (when (and (= (.-type child) "Mesh")
                          (= mesh-name (.. child -userData -registryName)))
                 (let [^js geom (.-geometry child)
                       ^js pos-attr (.getAttribute geom "position")
-                      positions (.-array pos-attr)
-                      idx (atom 0)]
-                  ;; Rebuild unindexed position buffer (matches create-three-mesh layout)
-                  (doseq [[i0 i1 i2] faces]
-                    (when (and (< i0 n-verts) (< i1 n-verts) (< i2 n-verts))
-                      (let [[x0 y0 z0] (nth new-vertices i0)
-                            [x1 y1 z1] (nth new-vertices i1)
-                            [x2 y2 z2] (nth new-vertices i2)
-                            i @idx]
-                        (aset positions i x0) (aset positions (+ i 1) y0) (aset positions (+ i 2) z0)
-                        (aset positions (+ i 3) x1) (aset positions (+ i 4) y1) (aset positions (+ i 5) z1)
-                        (aset positions (+ i 6) x2) (aset positions (+ i 7) y2) (aset positions (+ i 8) z2)
-                        (swap! idx + 9))))
-                  (set! (.-needsUpdate pos-attr) true)
-                  (.computeVertexNormals geom)
+                      current-face-count (/ (.-count pos-attr) 3)]
+                  (if (= current-face-count new-face-count)
+                    ;; Fast path: update positions in-place
+                    (let [positions (.-array pos-attr)
+                          idx (atom 0)]
+                      (doseq [[i0 i1 i2] faces]
+                        (when (and (< i0 n-verts) (< i1 n-verts) (< i2 n-verts))
+                          (let [[x0 y0 z0] (nth new-vertices i0)
+                                [x1 y1 z1] (nth new-vertices i1)
+                                [x2 y2 z2] (nth new-vertices i2)
+                                i @idx]
+                            (aset positions i x0) (aset positions (+ i 1) y0) (aset positions (+ i 2) z0)
+                            (aset positions (+ i 3) x1) (aset positions (+ i 4) y1) (aset positions (+ i 5) z1)
+                            (aset positions (+ i 6) x2) (aset positions (+ i 7) y2) (aset positions (+ i 8) z2)
+                            (swap! idx + 9))))
+                      (set! (.-needsUpdate pos-attr) true)
+                      (.computeVertexNormals geom))
+                    ;; Slow path: face count changed, rebuild geometry
+                    (let [new-geom (rebuild-buffer-geometry new-vertices faces)]
+                      (.dispose geom)
+                      (set! (.-geometry child) new-geom)))
                   true)))
             (.-children world-group)))))
 

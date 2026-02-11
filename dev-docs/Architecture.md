@@ -651,7 +651,10 @@ The turtle maintains a **stack of saved poses**. This enables:
 
 ## Animation System
 
-Timeline-based animation engine that reuses the turtle command paradigm for defining mesh and camera animations.
+Timeline-based animation engine that reuses the turtle command paradigm for defining mesh and camera animations. Supports two animation types:
+
+- **Preprocessed** (`anim!`): Spans → flat pose vector → O(1) frame lookup. Best for rigid-body motion.
+- **Procedural** (`anim-proc!`): User function called each frame with eased `t` (0→1), returns new mesh. Best for deformation, progressive construction, shape changes.
 
 ### Architecture
 
@@ -660,7 +663,7 @@ src/ridley/anim/
 ├── easing.cljs       # Pure math: t ∈ [0,1] → [0,1] (linear, in/out, cubic, spring, bounce)
 ├── preprocess.cljs   # Spans + commands → flat frame pose vector (linear timeline)
 ├── core.cljs         # Animation registry, play/pause/stop/seek, time→frame mapping with easing
-└── playback.cljs     # Render loop integration, mesh/camera pose application
+└── playback.cljs     # Render loop integration, mesh/camera pose application, topological sort
 ```
 
 ### Key Design Decisions
@@ -676,6 +679,34 @@ src/ridley/anim/
 5. **Angular velocity**: Controls how rotations consume time relative to linear movement. `0` = instantaneous (default), `N > 0` = 360° takes same time as `(f N)`.
 
 6. **Camera special handling**: OrbitControls are disabled during camera animation and re-enabled on stop.
+
+7. **Geometry resizing**: Procedural animations may change face count. `update-mesh-geometry!` detects this: same count → fast path (in-place update), different count → slow path (dispose + rebuild BufferGeometry).
+
+### Mesh Anchors
+
+Named reference points on meshes for articulated joints. `attach-path` takes a mesh keyword and a path with `mark` points, resolves mark positions relative to the mesh's creation-pose, and stores them as `:anchors` on the mesh.
+
+Anchors are resolved **on-demand** at playback time — only when a `link!` references an anchor. `resolve-anchor-position` applies the same rotation+translation as the mesh's vertices to compute the anchor's current world position.
+
+### Enhanced Links
+
+`link!` supports keyword options for articulated hierarchies:
+- `:at anchor-name` — track parent's anchor position (not centroid)
+- `:from anchor-name` — child attachment point
+- `:inherit-rotation true` — child inherits parent's orientation changes
+
+### Topological Sort
+
+The playback loop uses `compute-execution-order` (BFS from roots) to process parents before children. Replaces the previous two-pass (unlinked then linked) approach. Handles arbitrary depth hierarchies.
+
+### Hierarchical Assemblies
+
+The `register` macro detects map literals and enters assembly mode:
+- Each entry is evaluated sequentially (for goto tracking)
+- Meshes get qualified names: `:puppet/r-arm/upper` from nesting
+- Links are inferred from `goto` calls within `with-path` context
+- Skeletons are automatically attached to the first mesh in each frame
+- `show`/`hide` with a keyword prefix affects all meshes with matching names
 
 ---
 

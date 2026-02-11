@@ -37,6 +37,10 @@
 ;; Shapes have no visibility concept (not directly renderable)
 (defonce ^:private scene-shapes (atom []))
 
+;; General-purpose value store: {keyword -> any-value}
+;; Stores the raw value passed to register, regardless of type.
+(defonce ^:private scene-values (atom {}))
+
 (defn clear-all!
   "Clear all meshes, lines, paths, panels, and shapes. Called on code re-evaluation."
   []
@@ -45,7 +49,8 @@
   (reset! scene-stamps [])
   (reset! scene-paths [])
   (reset! scene-panels [])
-  (reset! scene-shapes []))
+  (reset! scene-shapes [])
+  (reset! scene-values {}))
 
 (defn set-lines!
   "Set the lines (geometry) to display."
@@ -172,18 +177,57 @@
     (swap! scene-meshes assoc-in [idx :mesh] mesh-with-id)
     mesh-with-id))
 
+(defn- name-has-prefix?
+  "Check if mesh-name starts with prefix.
+   E.g. :puppet/r-arm starts with :puppet."
+  [mesh-name prefix]
+  (let [prefix-str (name prefix)
+        mesh-str (name mesh-name)]
+    (or (= mesh-str prefix-str)
+        (.startsWith mesh-str (str prefix-str "/")))))
+
+(defn show-by-prefix!
+  "Show all meshes whose name starts with the given prefix keyword.
+   E.g. (show-by-prefix! :puppet) shows :puppet/torso, :puppet/r-arm/upper, etc."
+  [prefix]
+  (swap! scene-meshes (fn [meshes]
+                        (mapv (fn [entry]
+                                (if (and (:name entry)
+                                         (name-has-prefix? (:name entry) prefix))
+                                  (assoc entry :visible true)
+                                  entry))
+                              meshes)))
+  nil)
+
+(defn hide-by-prefix!
+  "Hide all meshes whose name starts with the given prefix keyword.
+   E.g. (hide-by-prefix! :puppet) hides :puppet/torso, :puppet/r-arm/upper, etc."
+  [prefix]
+  (swap! scene-meshes (fn [meshes]
+                        (mapv (fn [entry]
+                                (if (and (:name entry)
+                                         (name-has-prefix? (:name entry) prefix))
+                                  (assoc entry :visible false)
+                                  entry))
+                              meshes)))
+  nil)
+
 (defn show-mesh!
-  "Show a mesh by name. Returns nil."
+  "Show a mesh by name. If exact match not found, shows all meshes
+   with matching prefix (for assembly hierarchies)."
   [name]
-  (when-let [idx (find-mesh-index name)]
-    (swap! scene-meshes assoc-in [idx :visible] true))
+  (if-let [idx (find-mesh-index name)]
+    (swap! scene-meshes assoc-in [idx :visible] true)
+    (show-by-prefix! name))
   nil)
 
 (defn hide-mesh!
-  "Hide a mesh by name. Returns nil."
+  "Hide a mesh by name. If exact match not found, hides all meshes
+   with matching prefix (for assembly hierarchies)."
   [name]
-  (when-let [idx (find-mesh-index name)]
-    (swap! scene-meshes assoc-in [idx :visible] false))
+  (if-let [idx (find-mesh-index name)]
+    (swap! scene-meshes assoc-in [idx :visible] false)
+    (hide-by-prefix! name))
   nil)
 
 (defn show-mesh-ref!
@@ -374,6 +418,21 @@
   "Get names of all registered shapes."
   []
   (vec (keep :name @scene-shapes)))
+
+;; ============================================================
+;; General-purpose value store
+;; ============================================================
+
+(defn register-value!
+  "Store any value by name. Called by register macro for all types."
+  [name value]
+  (swap! scene-values assoc name value)
+  value)
+
+(defn get-value
+  "Get the raw stored value by name. Returns whatever was passed to register."
+  [name]
+  (get @scene-values name))
 
 ;; ============================================================
 ;; Cross-type query helpers
