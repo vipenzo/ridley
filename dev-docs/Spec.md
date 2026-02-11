@@ -954,6 +954,122 @@ Use `move-to` whenever positioning relative to another object. Use `:center` mod
 
 ---
 
+## Lateral Movement
+
+Pure translation along the turtle's local axes. No heading/up change, no ring generation.
+
+| Command | Description |
+|---------|-------------|
+| `(u dist)` | Move along up axis |
+| `(d dist)` | Move opposite to up axis |
+| `(rt dist)` | Move along right axis (heading × up) |
+| `(lt dist)` | Move opposite to right axis |
+
+Blocked inside `path`, `extrude`, `loft` (would produce degenerate rings). Allowed at top level, inside `attach`/`attach!`, and in animation spans.
+
+```clojure
+(f 50) (u 30) (th 180)        ; forward, up, face back
+(attach! :gear (rt 10))        ; slide gear right
+```
+
+---
+
+## Animation System
+
+Define timeline-based animations that preprocess turtle commands into per-frame pose arrays for O(1) playback.
+
+### Defining Animations
+
+```clojure
+;; (anim! :name duration :target [options] spans...)
+;; Options: :loop, :fps N
+
+;; Simple rotation
+(anim! :spin 3.0 :gear
+  (span 1.0 :linear (tr 360)))
+
+;; Multi-span with easing
+(anim! :entrance 8.0 :gear
+  (span 0.10 :out (f 6))
+  (span 0.80 :linear (tr 720))
+  (span 0.10 :in (f -6)))
+
+;; Camera animation (orbital mode — automatic when target is :camera)
+;; Commands are reinterpreted as cinematic camera operations:
+;;   rt/lt  = orbit horizontally around pivot (degrees)
+;;   u/d    = orbit vertically around pivot (degrees)
+;;   f      = dolly toward/away from pivot (distance)
+;;   th/tv  = pan/tilt look direction (degrees)
+;;   tr     = roll (degrees)
+;; Pivot = current OrbitControls target at registration time
+(anim! :cam-orbit 5.0 :camera
+  (span 1.0 :in-out (rt 360)))
+
+;; Looping
+(anim! :spin-forever 2.0 :gear :loop
+  (span 1.0 :linear (tr 360)))
+```
+
+### Span
+
+A timeline segment with weight, easing, and turtle commands:
+
+```clojure
+(span weight easing & commands)
+(span weight easing :ang-velocity N & commands)
+```
+
+- **weight**: Fraction of total duration (spans are normalized to sum to 1.0)
+- **easing**: `:linear`, `:in`, `:out`, `:in-out`, `:in-cubic`, `:out-cubic`, `:in-out-cubic`, `:spring`, `:bounce`
+- **:ang-velocity N**: Controls rotation timing. Default 1 (rotations are visible). 0 = instantaneous. N > 0 means 360° takes as long as `(f N)`.
+- **commands**: `(f dist)`, `(th angle)`, `(tv angle)`, `(tr angle)`, `(u dist)`, `(d dist)`, `(rt dist)`, `(lt dist)`, `(parallel cmd1 cmd2 ...)`
+
+### Parallel Commands
+
+Wrap commands in `parallel` to execute them simultaneously over the same frames:
+
+```clojure
+;; Sequential: first orbit, then elevate
+(span 1.0 :linear (rt 360) (u 90))
+
+;; Parallel: diagonal orbit (both at the same time)
+(span 1.0 :linear (parallel (rt 360) (u 90)))
+```
+
+A parallel group's frame allocation = max of its sub-commands. All sub-commands are applied at the same fractional progress for each frame.
+
+### Target Linking
+
+Link a child target to a parent so the child inherits the parent's position delta at playback:
+
+```clojure
+(link! :camera :box)        ; camera follows box's movement
+(link! :moon :planet)       ; moon inherits planet's translation
+(unlink! :camera)           ; remove link
+```
+
+Preprocessing is unchanged — child frames are computed as if the parent is stationary. The link adds translation at runtime. Parents are always ticked before children.
+
+### Playback Control
+
+```clojure
+(play! :spin)           ; start playing
+(play!)                 ; play all
+(pause! :spin)          ; pause
+(stop! :spin)           ; stop and reset
+(stop-all!)             ; stop all
+(seek! :spin 0.5)       ; jump to 50%
+(anim-list)             ; list animations with status
+```
+
+### Easing
+
+```clojure
+(ease :in-out 0.5)      ; => eased value (0-1)
+```
+
+---
+
 ## STL Export
 
 Export meshes to STL files (triggers browser download):

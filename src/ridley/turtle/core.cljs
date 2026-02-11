@@ -474,6 +474,73 @@
       (move state (:heading state) dist))
     (move state (:heading state) dist)))
 
+;; --- Lateral movement commands ---
+
+(defn move-lateral
+  "Move turtle along a local axis without changing heading or up.
+   Does NOT generate sweep rings or trigger corner detection.
+   Draws a line if pen is :on. Throws if in :shape/:loft mode."
+  [state axis dist]
+  (check-num dist "lateral move")
+  (when (#{:shape :loft} (:pen-mode state))
+    (throw (js/Error. "Lateral movement (u/d/rt/lt) is not allowed inside extrude/loft")))
+  (let [offset (v* axis dist)
+        new-pos (v+ (:position state) offset)
+        mode (:pen-mode state)]
+    (case mode
+      :on
+      (-> state
+          (assoc :position new-pos)
+          (update :geometry conj {:type :line
+                                  :from (:position state)
+                                  :to new-pos
+                                  :color (get-in state [:material :color])}))
+      ;; :off or other — just move
+      (assoc state :position new-pos))))
+
+(defn- move-attached-mesh-lateral
+  "Move attached mesh along a given axis (lateral translation)."
+  [state axis dist]
+  (let [attachment (:attached state)
+        mesh (:mesh attachment)
+        offset (v* axis dist)
+        new-mesh (attachment/translate-mesh mesh offset)
+        new-pos (v+ (:position state) offset)]
+    (-> state
+        (replace-mesh-in-state mesh new-mesh)
+        (assoc :position new-pos)
+        (assoc-in [:attached :mesh] new-mesh)
+        (assoc-in [:attached :original-pose :position] new-pos))))
+
+(defn move-up
+  "Move along turtle's up axis without changing heading.
+   Positive dist = up direction. When attached to a mesh, translates it."
+  [state dist]
+  (check-num dist "u")
+  (if (= :pose (get-in state [:attached :type]))
+    (move-attached-mesh-lateral state (:up state) dist)
+    (move-lateral state (:up state) dist)))
+
+(defn move-down
+  "Move opposite to turtle's up axis. Equivalent to (move-up state (- dist))."
+  [state dist]
+  (move-up state (- dist)))
+
+(defn move-right
+  "Move along turtle's right axis (heading × up) without changing heading.
+   Positive dist = right. When attached to a mesh, translates it."
+  [state dist]
+  (check-num dist "rt")
+  (let [right (normalize (cross (:heading state) (:up state)))]
+    (if (= :pose (get-in state [:attached :type]))
+      (move-attached-mesh-lateral state right dist)
+      (move-lateral state right dist))))
+
+(defn move-left
+  "Move opposite to turtle's right axis. Equivalent to (move-right state (- dist))."
+  [state dist]
+  (move-right state (- dist)))
+
 ;; --- Rotation commands ---
 
 (defn- store-pending-rotation

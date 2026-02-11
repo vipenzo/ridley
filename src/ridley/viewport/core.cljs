@@ -3,6 +3,7 @@
   (:require ["three" :as THREE]
             ["three/examples/jsm/controls/OrbitControls.js" :refer [OrbitControls]]
             [ridley.viewport.xr :as xr]
+            [ridley.anim.playback :as anim-playback]
             [clojure.string :as str]))
 
 (defonce ^:private state (atom nil))
@@ -770,9 +771,11 @@
         (set! (.-visible line-obj) @lines-visible)
         (reset! lines-object line-obj)
         (.add world-group line-obj)))
-    ;; Add meshes to world-group
+    ;; Add meshes to world-group (tag with registryName for animation updates)
     (doseq [mesh-data meshes]
-      (let [mesh (create-three-mesh mesh-data)]
+      (let [^js mesh (create-three-mesh mesh-data)]
+        (when-let [reg-name (:registry-name mesh-data)]
+          (set! (.. mesh -userData -registryName) reg-name))
         (.add world-group mesh)))
     ;; Add panels to world-group
     (doseq [panel-data panels]
@@ -841,15 +844,27 @@
               (+ center-z dist))
         (.update controls)))))
 
+;; Track last frame time for dt computation
+(defonce ^:private last-frame-time (atom nil))
+
 (defn- render-frame
   "Single frame render function for setAnimationLoop.
    In WebXR mode, receives (time, xr-frame) parameters."
-  [_time xr-frame]
+  [time xr-frame]
   (when-let [{:keys [renderer scene camera controls]} @state]
     (let [^js renderer renderer
           ^js scene scene
           ^js camera camera
-          ^js controls controls]
+          ^js controls controls
+          ;; Compute dt from real time (time is in ms)
+          now (or time (.now js/Date))
+          last @last-frame-time
+          dt (if last
+               (/ (- now last) 1000.0)
+               (/ 1.0 60.0))]
+      (reset! last-frame-time now)
+      ;; Tick animations (advances playing anims by dt)
+      (anim-playback/tick-animations! dt)
       ;; Update turtle indicator scale for screen-relative sizing
       (when-let [^js indicator @turtle-indicator]
         (update-turtle-indicator-scale indicator camera))
@@ -858,8 +873,9 @@
       (if (xr/xr-presenting? renderer)
         ;; VR mode: update controller input, pass XR frame for pose data
         (xr/update-controller xr-frame renderer)
-        ;; Desktop mode: update OrbitControls
-        (.update controls))
+        ;; Desktop mode: update OrbitControls (skip during camera animation)
+        (when (.-enabled controls)
+          (.update controls)))
       (.render renderer scene camera))))
 
 (defn- start-animation-loop
@@ -867,6 +883,70 @@
   []
   (when-let [{:keys [renderer]} @state]
     (.setAnimationLoop ^js renderer render-frame)))
+
+;; ============================================================
+;; Animation support: camera pose (defined before init to avoid forward ref)
+;; ============================================================
+
+;; Saved orbit target before camera animation (restored on stop)
+(defonce ^:private saved-orbit-target (atom nil))
+
+(defn set-camera-pose!
+  "Set camera position and orientation from a turtle pose.
+   Disables OrbitControls during camera animation."
+  [pose]
+  (when-let [{:keys [camera controls]} @state]
+    (let [^js controls controls
+          {:keys [position heading up]} pose
+          [px py pz] position
+          look-target (mapv + position (mapv #(* % 100) heading))]
+      ;; Save orbit target on first call (before disabling)
+      (when (.-enabled controls)
+        (reset! saved-orbit-target
+                [(.. controls -target -x)
+                 (.. controls -target -y)
+                 (.. controls -target -z)]))
+      (.set (.-position ^js camera) px py pz)
+      (.set (.-up ^js camera) (nth up 0) (nth up 1) (nth up 2))
+      (.lookAt ^js camera (nth look-target 0) (nth look-target 1) (nth look-target 2))
+      ;; Disable orbit controls during camera animation
+      (set! (.-enabled controls) false))))
+
+(defn enable-orbit-controls!
+  "Re-enable OrbitControls after camera animation stops.
+   Restores the orbit target from before the animation started."
+  []
+  (when-let [{:keys [controls]} @state]
+    (let [^js controls controls]
+      ;; Restore saved orbit target (or keep current)
+      (when-let [[tx ty tz] @saved-orbit-target]
+        (.set (.-target controls) tx ty tz)
+        (reset! saved-orbit-target nil))
+      (set! (.-enabled controls) true)
+      (.update controls))))
+
+(defn get-camera-pose
+  "Get the current camera state as a turtle-compatible pose map.
+   Returns {:position [x y z] :heading [x y z] :up [x y z]}."
+  []
+  (when-let [{:keys [camera]} @state]
+    (let [^js camera camera
+          pos (.-position camera)
+          dir (THREE/Vector3.)
+          up (.-up camera)]
+      (.getWorldDirection camera dir)
+      {:position [(.-x pos) (.-y pos) (.-z pos)]
+       :heading [(.-x dir) (.-y dir) (.-z dir)]
+       :up [(.-x up) (.-y up) (.-z up)]})))
+
+(defn get-orbit-target
+  "Get the current OrbitControls target as [x y z].
+   This is the point the camera orbits around."
+  []
+  (when-let [{:keys [controls]} @state]
+    (let [^js controls controls
+          t (.-target controls)]
+      [(.-x t) (.-y t) (.-z t)])))
 
 (defn handle-resize
   "Handle viewport resize - call when panel dimensions change."
@@ -946,6 +1026,9 @@
                        :resize-observer resize-observer})
         ;; Initial resize
         (handle-resize)
+        ;; Setup animation playback callbacks
+        (anim-playback/set-camera-pose-callback! set-camera-pose!)
+        (anim-playback/set-camera-stop-callback! enable-orbit-controls!)
         (start-animation-loop)))))
 
 (defn get-renderer
@@ -1297,6 +1380,42 @@
   [name panel-data]
   (when-let [panel-obj (get @panel-objects name)]
     (update-panel-content panel-obj panel-data)))
+
+;; ============================================================
+;; Animation support: mesh geometry updates
+;; ============================================================
+
+(defn update-mesh-geometry!
+  "Update only the vertex positions of a named mesh's Three.js object.
+   Finds the mesh by userData.registryName. Rebuilds the unindexed
+   position buffer from new vertices + faces.
+   Much faster than full scene rebuild."
+  [mesh-name new-vertices faces]
+  (when-let [{:keys [world-group]} @state]
+    (let [n-verts (count new-vertices)]
+      ;; Find Three.js mesh by userData.registryName
+      (some (fn [^js child]
+              (when (and (= (.-type child) "Mesh")
+                         (= mesh-name (.. child -userData -registryName)))
+                (let [^js geom (.-geometry child)
+                      ^js pos-attr (.getAttribute geom "position")
+                      positions (.-array pos-attr)
+                      idx (atom 0)]
+                  ;; Rebuild unindexed position buffer (matches create-three-mesh layout)
+                  (doseq [[i0 i1 i2] faces]
+                    (when (and (< i0 n-verts) (< i1 n-verts) (< i2 n-verts))
+                      (let [[x0 y0 z0] (nth new-vertices i0)
+                            [x1 y1 z1] (nth new-vertices i1)
+                            [x2 y2 z2] (nth new-vertices i2)
+                            i @idx]
+                        (aset positions i x0) (aset positions (+ i 1) y0) (aset positions (+ i 2) z0)
+                        (aset positions (+ i 3) x1) (aset positions (+ i 4) y1) (aset positions (+ i 5) z1)
+                        (aset positions (+ i 6) x2) (aset positions (+ i 7) y2) (aset positions (+ i 8) z2)
+                        (swap! idx + 9))))
+                  (set! (.-needsUpdate pos-attr) true)
+                  (.computeVertexNormals geom)
+                  true)))
+            (.-children world-group)))))
 
 (defn dispose
   "Clean up Three.js resources."

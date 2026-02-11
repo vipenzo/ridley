@@ -233,7 +233,14 @@
                             (crosshairCursor)
                             (highlightSelectionMatches)
                             ;; Clojure language support (syntax + paredit)
-                            clojure-mode/default_extensions
+                            ;; Use default_extensions minus close_brackets (index 1)
+                            ;; which has a bug: returns JS array for "from-to" but
+                            ;; util.mjs tries to call it as a function.
+                            ;; We use @codemirror/autocomplete's closeBrackets instead.
+                            (aget clojure-mode/default_extensions 0)   ;; syntax
+                            (aget clojure-mode/default_extensions 2)   ;; match_brackets
+                            (aget clojure-mode/default_extensions 3)   ;; sel_history
+                            (aget clojure-mode/default_extensions 4)   ;; format
                             ;; AI focus indicator
                             ai-focus-field
                             ai-focus-plugin

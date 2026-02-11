@@ -61,6 +61,17 @@
         <span id="sync-status" class="sync-status"></span>
         <button id="btn-settings" class="action-btn settings-btn" title="LLM Settings">⚙</button>
       </div>
+      <div id="anim-transport" class="hidden">
+        <button id="btn-anim-play" class="transport-btn" title="Play">&#9654;</button>
+        <button id="btn-anim-pause" class="transport-btn" title="Pause">&#9646;&#9646;</button>
+        <button id="btn-anim-stop" class="transport-btn" title="Stop">&#9632;</button>
+        <input type="range" id="anim-slider" min="0" max="1000" value="0"
+               class="anim-slider" title="Scrub timeline">
+        <span id="anim-time" class="anim-time">0:00 / 0:00</span>
+        <select id="anim-select" class="anim-select" title="Active animation">
+          <option value="">All</option>
+        </select>
+      </div>
       <canvas id="viewport"></canvas>
       <div id="loading-overlay" class="hidden">
         <div class="loading-spinner"></div>

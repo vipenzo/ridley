@@ -17,7 +17,10 @@
             [ridley.scene.registry :as registry]
             [ridley.scene.panel :as panel]
             [ridley.viewport.core :as viewport]
-            [ridley.export.stl :as stl]))
+            [ridley.export.stl :as stl]
+            [ridley.anim.core :as anim]
+            [ridley.anim.easing :as easing]
+            [ridley.anim.preprocess :as anim-preprocess]))
 
 (def base-bindings
   "Bindings available in both explicit and implicit sections."
@@ -43,6 +46,16 @@
    'reset-material impl/implicit-reset-material
    ;; Creation pose override
    'set-creation-pose (fn [mesh] (turtle/set-creation-pose @state/turtle-atom mesh))
+   ;; Lateral movement (pure translation, no heading change)
+   'u            impl/implicit-u
+   'd            impl/implicit-d
+   'rt           impl/implicit-rt
+   'lt           impl/implicit-lt
+   ;; Pure lateral functions (for explicit threading / attach macros)
+   'turtle-u     turtle/move-up
+   'turtle-d     turtle/move-down
+   'turtle-rt    turtle/move-right
+   'turtle-lt    turtle/move-left
    ;; Arc commands
    'arc-h        impl/implicit-arc-h
    'arc-v        impl/implicit-arc-v
@@ -272,4 +285,23 @@
    'register-panel!     registry/register-panel!
    'get-panel           registry/get-panel
    'show-panel!         registry/show-panel!
-   'hide-panel!         registry/hide-panel!})
+   'hide-panel!         registry/hide-panel!
+   ;; Animation system
+   'get-camera-pose     viewport/get-camera-pose
+   'get-orbit-target    viewport/get-orbit-target
+   'play!               anim/play!
+   'pause!              anim/pause!
+   'stop!               anim/stop!
+   'stop-all!           anim/stop-all!
+   'seek!               anim/seek!
+   'anim-list           anim/list-animations
+   'ease                easing/ease
+   ;; Animation linking (parent-child position tracking)
+   'link!               anim/link!
+   'unlink!             anim/unlink!
+   ;; Animation internals (used by anim! / span macros)
+   'anim-register!      anim/register-animation!
+   'anim-preprocess     anim-preprocess/preprocess-animation
+   'anim-make-span      anim/make-span
+   'anim-make-cmd       anim/make-anim-command
+   'anim-clear-all!     anim/clear-all!})

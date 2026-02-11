@@ -574,13 +574,35 @@ src/ridley/manual/
 ---
 
 
+## Phase 11: Animation System ✓
+
+Timeline-based animation engine reusing turtle commands for mesh and camera animations.
+
+**Implemented:**
+- [x] Lateral movement commands (`u`/`d`/`rt`/`lt`)
+- [x] Easing functions (linear, in/out, cubic, spring, bounce)
+- [x] Preprocessing pipeline (spans → frame pose vectors)
+- [x] Animation registry with play/pause/stop/seek
+- [x] Render loop integration with real dt
+- [x] Mesh pose application (rotation matrix + translation from base)
+- [x] Camera animation with OrbitControls disable/enable
+- [x] `anim!` and `span` DSL macros
+- [x] Transport UI (play/pause/stop/scrub/select)
+- [x] Animation clear on code re-evaluation
+
+**Not yet implemented (Phase 2+):**
+- [ ] Light animation targets
+- [ ] Frame-by-frame PNG export
+- [ ] ffmpeg MP4 export (Tauri)
+
+---
+
 ## Future / Someday
 
 - **Undo/redo** — state history
 - **AI assistant** — natural language to DSL
 - **Collaborative editing** — real-time sync
 - **Plugin system** — user-defined namespaces
-- **Animation** — parametric animation for visualization
 - **Constraints** — parametric constraints solver
 - **Standard parts library** — screws, nuts, bearings, gears
 - **Slicer preview** — show layer-by-layer simulation

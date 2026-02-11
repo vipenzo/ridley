@@ -649,6 +649,36 @@ The turtle maintains a **stack of saved poses**. This enables:
 
 ---
 
+## Animation System
+
+Timeline-based animation engine that reuses the turtle command paradigm for defining mesh and camera animations.
+
+### Architecture
+
+```
+src/ridley/anim/
+├── easing.cljs       # Pure math: t ∈ [0,1] → [0,1] (linear, in/out, cubic, spring, bounce)
+├── preprocess.cljs   # Spans + commands → flat frame pose vector (linear timeline)
+├── core.cljs         # Animation registry, play/pause/stop/seek, time→frame mapping with easing
+└── playback.cljs     # Render loop integration, mesh/camera pose application
+```
+
+### Key Design Decisions
+
+1. **Preprocess, don't replay**: Animation spans are preprocessed into a flat vector of poses (`{:position :heading :up}`). Playback is O(1) frame lookup — no re-evaluation.
+
+2. **Easing at playback, not preprocessing**: Frames are stored on a LINEAR timeline. Easing remaps the time-to-frame-index lookup. This means scrubbing works perfectly and easing can be changed without re-preprocessing.
+
+3. **Immutable base pose**: When an animation starts, the target mesh's vertices are saved as `base-vertices`. Every frame recomputes from base — no drift accumulation.
+
+4. **Circular dependency avoidance**: `playback.cljs` needs registry and viewport access but can't require them (would create cycles). Solved with callback atoms set during init in `core.cljs`.
+
+5. **Angular velocity**: Controls how rotations consume time relative to linear movement. `0` = instantaneous (default), `N > 0` = 360° takes same time as `(f N)`.
+
+6. **Camera special handling**: OrbitControls are disabled during camera animation and re-enabled on stop.
+
+---
+
 ## Phase 3: Turtle Attachment System
 
 Phase 3 introduces the ability to "attach" the turtle to existing geometry elements (meshes, faces, edges, vertices) and manipulate them using standard turtle commands.

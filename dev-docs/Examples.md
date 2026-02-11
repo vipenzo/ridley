@@ -648,6 +648,102 @@ Control the smoothness of curves and circular primitives globally.
 
 ---
 
+## Lateral Movement
+
+Pure translations along local axes (no heading change):
+
+```clojure
+;; Position with lateral movement
+(reset)
+(f 50) (u 30) (th 180)    ; forward 50, up 30, face back
+
+;; Slide a registered mesh
+(attach! :gear (rt 10))    ; move gear right by 10
+```
+
+---
+
+## Animation
+
+Define timeline-based animations on registered meshes or the camera:
+
+```clojure
+;; Register a mesh first
+(register gear (extrude (circle 8) (f 3)))
+
+;; Simple spin (3 seconds, linear)
+(anim! :spin 3.0 :gear
+  (span 1.0 :linear (tr 360)))
+
+;; Multi-span entrance with easing
+(anim! :entrance 8.0 :gear
+  (span 0.10 :out (f 6))        ; fast start, slow arrival
+  (span 0.80 :linear (tr 720))  ; steady rotation
+  (span 0.10 :in (f -6)))       ; slow start, fast exit
+
+;; Camera orbital mode (automatic when target is :camera)
+;; Commands reinterpreted as cinematic operations:
+;;   rt/lt = orbit horizontally   u/d = orbit vertically
+;;   f = dolly                    th/tv = pan/tilt
+;;   tr = roll
+;; Pivot = OrbitControls target at registration time
+
+;; 360° horizontal orbit
+(anim! :cam-orbit 5.0 :camera
+  (span 1.0 :in-out (rt 360)))
+
+;; Dolly in, orbit, elevate
+(anim! :cam-dolly 3.0 :camera
+  (span 0.5 :out (f 20))
+  (span 0.3 :linear (rt 45))
+  (span 0.2 :in (u 15)))
+
+;; Cinematic: orbit + pan away from pivot
+(anim! :cam-reveal 4.0 :camera
+  (span 0.6 :in-out (rt 90) (u 20))
+  (span 0.4 :out (th -15)))
+
+;; Looping animation
+(anim! :spin-forever 2.0 :gear :loop
+  (span 1.0 :linear (tr 360)))
+
+;; Slow visible rotation (ang-velocity 20 → 360° takes as long as (f 20))
+(anim! :gear-turn 4.0 :gear
+  (span 0.30 :out :ang-velocity 20 (f 10) (th 45))
+  (span 0.70 :linear (f 20)))
+
+;; Instantaneous rotation (ang-velocity 0 → rotation takes 0 frames)
+(anim! :zigzag 3.0 :gear
+  (span 1.0 :linear :ang-velocity 0 (f 10) (th 90) (f 10)))
+
+;; Parallel: simultaneous commands within a span
+(anim! :diagonal-orbit 5.0 :camera
+  (span 1.0 :in-out (parallel (rt 360) (u 90))))
+
+;; Mix parallel and sequential
+(anim! :cam-complex 4.0 :camera
+  (span 0.5 :out (parallel (rt 180) (u 45)))   ; simultaneous orbit
+  (span 0.5 :in (f -30)))                       ; then dolly out
+
+;; Target linking: child inherits parent's position delta
+(register box-obj (box 20))
+(anim! :box-move 5.0 :box-obj
+  (span 1.0 :linear (f 100)))
+(link! :camera :box-obj)                         ; camera follows box
+(anim! :cam-orbit 5.0 :camera
+  (span 1.0 :linear (rt 360)))
+(unlink! :camera)                                ; remove link
+
+;; Playback control
+(play! :spin)           ; start
+(pause! :spin)          ; pause
+(stop! :spin)           ; stop and reset
+(seek! :spin 0.5)       ; jump to 50%
+(anim-list)             ; list all animations
+```
+
+---
+
 ## Text on Path
 
 Place 3D text along a curved path. Each letter is oriented tangent to the curve.

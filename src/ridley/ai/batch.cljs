@@ -7,6 +7,7 @@
             [ridley.scene.registry :as registry]
             [ridley.editor.repl :as repl]
             [ridley.settings :as settings]
+            [ridley.anim.core :as anim]
             ["jszip" :as JSZip]))
 
 ;; ============================================================
@@ -95,6 +96,7 @@
         ;; Step 1: Reset scene
         (.then (fn [_]
                  (registry/clear-all!)
+                 (anim/clear-all!)
                  (viewport/update-scene {:lines [] :meshes [] :panels []
                                          :reset-camera? false})))
         ;; Step 2: Load pre-existing script if provided
@@ -115,6 +117,7 @@
                                        (str ";; AI: " prompt "\n" code "\n"))]
                      (try
                        (registry/clear-all!)
+                       (anim/clear-all!)
                        (evaluate-script full-script)
                        {:code code :final-script full-script}
                        (catch :default e

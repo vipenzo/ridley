@@ -55,6 +55,47 @@
           (registry/update-mesh-at-index! registry-idx new-mesh)
           (registry/refresh-viewport! false))))))
 
+;; Lateral movement (pure translation, no heading change)
+(defn ^:export implicit-u [dist]
+  (let [old-attached (:attached @turtle-atom)
+        registry-idx (:registry-index old-attached)]
+    (swap! turtle-atom turtle/move-up dist)
+    (when (and registry-idx (= :pose (:type old-attached)))
+      (let [new-mesh (get-in @turtle-atom [:attached :mesh])]
+        (when new-mesh
+          (registry/update-mesh-at-index! registry-idx new-mesh)
+          (registry/refresh-viewport! false))))))
+
+(defn ^:export implicit-d [dist]
+  (let [old-attached (:attached @turtle-atom)
+        registry-idx (:registry-index old-attached)]
+    (swap! turtle-atom turtle/move-down dist)
+    (when (and registry-idx (= :pose (:type old-attached)))
+      (let [new-mesh (get-in @turtle-atom [:attached :mesh])]
+        (when new-mesh
+          (registry/update-mesh-at-index! registry-idx new-mesh)
+          (registry/refresh-viewport! false))))))
+
+(defn ^:export implicit-rt [dist]
+  (let [old-attached (:attached @turtle-atom)
+        registry-idx (:registry-index old-attached)]
+    (swap! turtle-atom turtle/move-right dist)
+    (when (and registry-idx (= :pose (:type old-attached)))
+      (let [new-mesh (get-in @turtle-atom [:attached :mesh])]
+        (when new-mesh
+          (registry/update-mesh-at-index! registry-idx new-mesh)
+          (registry/refresh-viewport! false))))))
+
+(defn ^:export implicit-lt [dist]
+  (let [old-attached (:attached @turtle-atom)
+        registry-idx (:registry-index old-attached)]
+    (swap! turtle-atom turtle/move-left dist)
+    (when (and registry-idx (= :pose (:type old-attached)))
+      (let [new-mesh (get-in @turtle-atom [:attached :mesh])]
+        (when new-mesh
+          (registry/update-mesh-at-index! registry-idx new-mesh)
+          (registry/refresh-viewport! false))))))
+
 (defn ^:export implicit-pen-up []
   (swap! turtle-atom turtle/pen-up))
 

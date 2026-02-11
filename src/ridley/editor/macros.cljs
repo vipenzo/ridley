@@ -21,6 +21,14 @@
      (swap! attach-state (fn [s] (turtle-inset s amount))))
    (defn- att-scale* [factor]
      (swap! attach-state (fn [s] (turtle-scale s factor))))
+   (defn- att-u* [dist]
+     (swap! attach-state (fn [s] (turtle-u s dist))))
+   (defn- att-d* [dist]
+     (swap! attach-state (fn [s] (turtle-d s dist))))
+   (defn- att-rt* [dist]
+     (swap! attach-state (fn [s] (turtle-rt s dist))))
+   (defn- att-lt* [dist]
+     (swap! attach-state (fn [s] (turtle-lt s dist))))
 
    ;; Resolve name-or-mesh to actual mesh (for use before bounds/mesh? are defined)
    (defn- att-resolve-mesh [name-or-mesh]
@@ -775,6 +783,10 @@
               ~'th att-th*
               ~'tv att-tv*
               ~'tr att-tr*
+              ~'u att-u*
+              ~'d att-d*
+              ~'rt att-rt*
+              ~'lt att-lt*
               ~'inset att-inset*
               ~'scale att-scale*
               ~'move-to att-move-to*]
@@ -795,6 +807,10 @@
               ~'th att-th*
               ~'tv att-tv*
               ~'tr att-tr*
+              ~'u att-u*
+              ~'d att-d*
+              ~'rt att-rt*
+              ~'lt att-lt*
               ~'inset att-inset*
               ~'scale att-scale*
               ~'move-to att-move-to*]
@@ -816,6 +832,10 @@
                   ~'th att-th*
                   ~'tv att-tv*
                   ~'tr att-tr*
+                  ~'u att-u*
+                  ~'d att-d*
+                  ~'rt att-rt*
+                  ~'lt att-lt*
                   ~'move-to att-move-to*]
               ~@body)
             ;; Return panel with updated position/heading/up from final attach-state
@@ -833,6 +853,10 @@
                   ~'th att-th*
                   ~'tv att-tv*
                   ~'tr att-tr*
+                  ~'u att-u*
+                  ~'d att-d*
+                  ~'rt att-rt*
+                  ~'lt att-lt*
                   ~'move-to att-move-to*]
               ~@body)
             (or (get-in @attach-state [:attached :mesh]) m#)))))
@@ -851,6 +875,10 @@
               ~'th att-th*
               ~'tv att-tv*
               ~'tr att-tr*
+              ~'u att-u*
+              ~'d att-d*
+              ~'rt att-rt*
+              ~'lt att-lt*
               ~'move-to att-move-to*]
           ~@body)
         (let [result# (or (get-in @attach-state [:attached :mesh]) mesh#)]
@@ -1257,4 +1285,74 @@
       (let [all-args (cons first-arg (cons second-arg more-args))
             meshes (keep resolve-mesh all-args)]
         (when (seq meshes)
-          (save-stl (vec meshes) \"export.stl\")))))")
+          (save-stl (vec meshes) \"export.stl\")))))
+
+   ;; ============================================================
+   ;; Animation macros: span, anim!
+   ;; ============================================================
+
+   ;; Parse a turtle command form into animation command data
+   (defn- anim-parse-cmd [form]
+     (if (and (seq? form) (symbol? (first form)))
+       (let [s (first form)
+             a (second form)]
+         (cond
+           (or (= s 'f) (= s 'u) (= s 'd) (= s 'rt) (= s 'lt))
+           `(anim-make-cmd ~(keyword (name s)) :dist ~a)
+
+           (or (= s 'th) (= s 'tv) (= s 'tr))
+           `(anim-make-cmd ~(keyword (name s)) :angle ~a)
+
+           (= s 'parallel)
+           (let [parsed (mapv anim-parse-cmd (rest form))]
+             `{:type :parallel :commands [~@parsed]})
+
+           :else form))
+       form))
+
+   ;; span: define a timeline segment
+   ;; (span weight easing & commands)
+   ;; (span weight easing :ang-velocity N & commands)
+   (defmacro span [weight easing & body]
+     (let [[ang-vel cmds] (if (= :ang-velocity (first body))
+                            [(second body) (drop 2 body)]
+                            [1 body])
+           parsed-cmds (map anim-parse-cmd cmds)]
+       `(anim-make-span ~weight ~easing :ang-velocity ~ang-vel ~@parsed-cmds)))
+
+   ;; anim!: define and register an animation
+   ;; (anim! :name duration :target spans...)
+   ;; (anim! :name duration :target :loop spans...)
+   ;; (anim! :name duration :target :fps 30 spans...)
+   ;; (anim! :name duration :target :loop :fps 30 spans...)
+   (defmacro anim! [name duration target & body]
+     (let [[opts spans] (loop [opts {} remaining (vec body)]
+                          (cond
+                            (= :loop (first remaining))
+                            (recur (assoc opts :loop true) (vec (rest remaining)))
+                            (= :fps (first remaining))
+                            (recur (assoc opts :fps (second remaining)) (vec (drop 2 remaining)))
+                            :else [opts remaining]))
+           fps (get opts :fps 60)
+           loop? (get opts :loop false)]
+       `(let [initial-pose# (cond
+                              (= ~target :camera)
+                              (get-camera-pose)
+                              :else
+                              (or (when-let [m# (get-mesh ~target)]
+                                    (:creation-pose m#))
+                                  (let [t# (get-turtle)]
+                                    {:position (:position t#) :heading (:heading t#) :up (:up t#)})))
+              pivot# (when (= ~target :camera) (get-orbit-target))
+              spans# (vector ~@spans)
+              result# (anim-preprocess spans# ~duration ~fps initial-pose#
+                                       {:camera-mode (when (= ~target :camera) :orbital)
+                                        :pivot pivot#})]
+          (anim-register! ~name
+                          (merge result#
+                                 {:target ~target
+                                  :duration (double ~duration)
+                                  :fps ~fps
+                                  :loop ~loop?
+                                  :initial-pose initial-pose#
+                                  :spans spans#})))))")

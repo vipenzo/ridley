@@ -231,6 +231,12 @@
   []
   (vec (keep (fn [entry] (when (:visible entry) (:mesh entry))) @scene-meshes)))
 
+(defn visible-meshes-with-names
+  "Get visible meshes as [{:mesh data :name kw-or-nil} ...] for viewport tagging."
+  []
+  (vec (keep (fn [entry] (when (:visible entry) {:mesh (:mesh entry) :name (:name entry)}))
+             @scene-meshes)))
+
 (defn registered-names
   "Get all named mesh names."
   []
@@ -378,13 +384,35 @@
   []
   (vec (keep :name @scene-paths)))
 
+;; ============================================================
+;; Animation support
+;; ============================================================
+
+(defn update-mesh-vertices!
+  "Update the vertices of a registered mesh in-place (for animation).
+   Does not trigger viewport rebuild."
+  [name new-vertices]
+  (when-let [idx (find-mesh-index name)]
+    (swap! scene-meshes update-in [idx :mesh] assoc :vertices new-vertices)))
+
+(defn get-mesh-data
+  "Get the full mesh data map for a registered name."
+  [name]
+  (:mesh (first (filter #(= (:name %) name) @scene-meshes))))
+
 (defn refresh-viewport!
   "Update the viewport with all visible meshes, lines, and panels.
    reset-camera?: if true (default), fit camera to geometry"
   ([] (refresh-viewport! true))
   ([reset-camera?]
-   (viewport/update-scene {:lines (vec @scene-lines)
-                           :stamps (vec @scene-stamps)
-                           :meshes (visible-meshes)
-                           :panels (visible-panels)
-                           :reset-camera? reset-camera?})))
+   ;; Include :registry-name in mesh data so viewport can tag Three.js objects
+   (let [meshes (vec (keep (fn [entry]
+                             (when (:visible entry)
+                               (cond-> (:mesh entry)
+                                 (:name entry) (assoc :registry-name (:name entry)))))
+                           @scene-meshes))]
+     (viewport/update-scene {:lines (vec @scene-lines)
+                             :stamps (vec @scene-stamps)
+                             :meshes meshes
+                             :panels (visible-panels)
+                             :reset-camera? reset-camera?}))))

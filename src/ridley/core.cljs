@@ -21,7 +21,9 @@
             [ridley.ai.core :as ai]
             [ridley.ai.batch :as batch]
             [ridley.library.panel :as lib-panel]
-            [ridley.library.core :as lib-core]))
+            [ridley.library.core :as lib-core]
+            [ridley.anim.core :as anim]
+            [ridley.anim.playback :as anim-playback]))
 
 (defonce ^:private editor-view (atom nil))
 (defonce ^:private repl-input-el (atom nil))
@@ -136,8 +138,9 @@
    Optional reset-camera? parameter controls whether to reset camera view (default false)."
   ([] (evaluate-definitions false))
   ([reset-camera?]
-   ;; Clear registry when re-running definitions (fresh start)
+   ;; Clear registry and animations when re-running definitions (fresh start)
    (registry/clear-all!)
+   (anim/clear-all!)
    ;; Show loading indicator for potentially long operations
    (viewport/show-loading!)
    ;; Use requestAnimationFrame to let the UI render the spinner before blocking
@@ -624,6 +627,159 @@
           (load-definitions file))
         ;; Reset input so same file can be loaded again
         (set! (.-value file-input) "")))))
+
+;; ============================================================
+;; Animation transport UI
+;; ============================================================
+
+(defonce ^:private transport-raf (atom nil))
+(defonce ^:private transport-hide-timer (atom nil))
+
+(defn- format-time
+  "Format seconds as M:SS."
+  [secs]
+  (let [m (int (/ secs 60))
+        s (int (mod secs 60))]
+    (str m ":" (when (< s 10) "0") s)))
+
+(defn- update-transport-ui!
+  "Update slider and time display from current animation state."
+  []
+  (let [slider (.getElementById js/document "anim-slider")
+        time-el (.getElementById js/document "anim-time")
+        select-el (.getElementById js/document "anim-select")
+        selected (when select-el (.-value select-el))
+        reg @anim/anim-registry]
+    (when (and slider time-el (seq reg))
+      (let [;; Pick the selected animation or the first one
+            anim-name (if (and (seq selected) (not= selected ""))
+                        (keyword selected)
+                        (first (keys reg)))
+            anim-data (get reg anim-name)]
+        (when anim-data
+          (let [duration (:duration anim-data 0)
+                current (:current-time anim-data 0)
+                frac (if (pos? duration) (/ current duration) 0)]
+            (set! (.-value slider) (str (int (* frac 1000))))
+            (set! (.-textContent time-el)
+                  (str (format-time current) " / " (format-time duration)))))))))
+
+(defn- transport-tick!
+  "RAF loop for updating transport UI during playback."
+  []
+  (update-transport-ui!)
+  (when (anim/any-playing?)
+    (reset! transport-raf
+            (js/requestAnimationFrame (fn [_] (transport-tick!))))))
+
+(defn- start-transport-tick!
+  "Start the transport UI update loop if not already running."
+  []
+  (when-not @transport-raf
+    (transport-tick!)))
+
+(defn- stop-transport-tick!
+  "Stop the transport UI update loop."
+  []
+  (when-let [raf @transport-raf]
+    (js/cancelAnimationFrame raf)
+    (reset! transport-raf nil)))
+
+(defn- refresh-anim-select!
+  "Populate the animation select dropdown from registry."
+  []
+  (when-let [select-el (.getElementById js/document "anim-select")]
+    (let [reg @anim/anim-registry
+          current-val (.-value select-el)]
+      (set! (.-innerHTML select-el) "")
+      ;; "All" option
+      (let [opt (.createElement js/document "option")]
+        (set! (.-value opt) "")
+        (set! (.-textContent opt) "All")
+        (.appendChild select-el opt))
+      ;; One option per animation
+      (doseq [[anim-name _] reg]
+        (let [opt (.createElement js/document "option")]
+          (set! (.-value opt) (name anim-name))
+          (set! (.-textContent opt) (name anim-name))
+          (.appendChild select-el opt)))
+      ;; Restore selection if still valid
+      (set! (.-value select-el) current-val))))
+
+(defn- setup-transport []
+  (let [transport-el (.getElementById js/document "anim-transport")
+        play-btn (.getElementById js/document "btn-anim-play")
+        pause-btn (.getElementById js/document "btn-anim-pause")
+        stop-btn (.getElementById js/document "btn-anim-stop")
+        slider (.getElementById js/document "anim-slider")
+        select-el (.getElementById js/document "anim-select")]
+    (when (and transport-el play-btn pause-btn stop-btn slider select-el)
+      ;; Play button
+      (.addEventListener play-btn "click"
+        (fn [_]
+          (let [selected (.-value select-el)]
+            (if (and (seq selected) (not= selected ""))
+              (anim/play! (keyword selected))
+              (anim/play!)))
+          (start-transport-tick!)))
+      ;; Pause button
+      (.addEventListener pause-btn "click"
+        (fn [_]
+          (let [selected (.-value select-el)]
+            (if (and (seq selected) (not= selected ""))
+              (anim/pause! (keyword selected))
+              (anim/pause!)))
+          (stop-transport-tick!)
+          (update-transport-ui!)))
+      ;; Stop button
+      (.addEventListener stop-btn "click"
+        (fn [_]
+          (let [selected (.-value select-el)]
+            (if (and (seq selected) (not= selected ""))
+              (anim/stop! (keyword selected))
+              (anim/stop!)))
+          (stop-transport-tick!)
+          (update-transport-ui!)))
+      ;; Slider scrub (seek + visually apply frame)
+      (.addEventListener slider "input"
+        (fn [_]
+          (let [frac (/ (js/parseInt (.-value slider)) 1000.0)
+                selected (.-value select-el)
+                reg @anim/anim-registry]
+            (if (and (seq selected) (not= selected ""))
+              (anim-playback/seek-and-apply! (keyword selected) frac)
+              ;; Seek all
+              (doseq [[anim-name _] reg]
+                (anim-playback/seek-and-apply! anim-name frac))))))
+      ;; Watch registry for show/hide transport and refresh select
+      (add-watch anim/anim-registry ::transport-visibility
+        (fn [_ _ old-val new-val]
+          (let [has-anims (pos? (count new-val))]
+            ;; Show/hide transport bar (debounce hide to avoid flicker on re-eval)
+            (if has-anims
+              (do
+                ;; Cancel pending hide
+                (when-let [t @transport-hide-timer]
+                  (js/clearTimeout t)
+                  (reset! transport-hide-timer nil))
+                (.remove (.-classList transport-el) "hidden"))
+              ;; Delay hide — evaluate-definitions clears then re-registers
+              (reset! transport-hide-timer
+                      (js/setTimeout
+                       (fn []
+                         (reset! transport-hide-timer nil)
+                         (when (zero? (count @anim/anim-registry))
+                           (.add (.-classList transport-el) "hidden")))
+                       100)))
+            ;; Refresh dropdown when animations change
+            (when (not= (set (keys old-val)) (set (keys new-val)))
+              (refresh-anim-select!))
+            ;; Start/stop tick based on playing state
+            (let [any-playing (some #(= :playing (:state (val %))) new-val)]
+              (if any-playing
+                (start-transport-tick!)
+                (do (stop-transport-tick!)
+                    (update-transport-ui!))))))))))
 
 ;; ============================================================
 ;; Sync (Desktop <-> Headset)
@@ -1224,8 +1380,9 @@
 (defn- run-manual-code
   "Execute code from the manual and show result in viewport."
   [code]
-  ;; Clear previous geometry and evaluate fresh
+  ;; Clear previous geometry and animations, evaluate fresh
   (registry/clear-all!)
+  (anim/clear-all!)
   (let [result (repl/evaluate-definitions code)]
     (if-let [error (:error result)]
       (show-error error)
@@ -1844,6 +2001,10 @@
     (reset! repl-history-el repl-history)
     (reset! error-el error-panel)
     (viewport/init canvas)
+    ;; Wire animation callbacks (registry <-> playback, avoids circular dep)
+    (anim-playback/set-mesh-callbacks! registry/get-mesh registry/register-mesh!)
+    (anim-playback/set-update-geometry-callback! viewport/update-mesh-geometry!)
+    (anim-playback/set-refresh-callback! #(registry/refresh-viewport! false))
     ;; Register XR panel callbacks (avoid circular dependency)
     (xr/register-action-callback! :toggle-all-obj
       (fn [show-all?]
@@ -1854,6 +2015,7 @@
               (registry/refresh-viewport! false)))))
     (setup-keybindings)
     (setup-save-load)
+    (setup-transport)
     (setup-vertical-resizer)
     (setup-horizontal-resizer)
     ;; Setup VR and AR buttons in toolbar
@@ -1910,5 +2072,9 @@
     (js/console.log "Ridley initialized. Cmd+Enter for definitions, Enter in REPL.")))
 
 (defn reload []
+  ;; Re-wire animation callbacks (defonce atoms persist, but new ones start nil)
+  (anim-playback/set-mesh-callbacks! registry/get-mesh registry/register-mesh!)
+  (anim-playback/set-update-geometry-callback! viewport/update-mesh-geometry!)
+  (anim-playback/set-refresh-callback! #(registry/refresh-viewport! false))
   ;; Hot reload callback - re-evaluate definitions
   (evaluate-definitions))
