@@ -1684,18 +1684,19 @@
              (let [first-ring (first rings)
                    last-ring (last rings)
                    last-ring-base (* (dec n-rings) n-profile)
-                   ;; For triangulation, we need the normal to the ring PLANE
-                   ;; (not the cap face normal). Ring plane is spanned by up and right,
-                   ;; so plane normal = cross(up, right) = -heading (or heading depending on order)
-                   ;; At theta=0, ring plane normal is along heading direction
-                   start-proj-normal heading
-                   ;; At theta=end, ring plane normal is still along heading
-                   ;; (revolution around up doesn't change the ring plane normal direction)
-                   end-proj-normal heading
-                   ;; Cap flip determines which way the triangles face
-                   ;; Try inverted flip logic
-                   start-cap-flip (not flip-winding?)
-                   end-cap-flip flip-winding?
+                   ;; For triangulation, we need the normal to the ring PLANE.
+                   ;; Ring at angle θ lies in plane spanned by {up, radial(θ)},
+                   ;; where radial(θ) = cos(θ)*right + sin(θ)*heading.
+                   ;; Plane normal = cross(up, radial(θ)) = cos(θ)*heading - sin(θ)*right
+                   start-proj-normal heading  ;; θ=0: cos(0)*heading - sin(0)*right = heading
+                   end-theta (* steps angle-step)
+                   end-proj-normal (let [cos-t (Math/cos end-theta)
+                                         sin-t (Math/sin end-theta)]
+                                     (v- (v* heading cos-t) (v* right sin-t)))
+                   ;; Cap flip: start cap faces backward (opposite revolution),
+                   ;; end cap faces forward (along revolution direction)
+                   start-cap-flip flip-winding?
+                   end-cap-flip (not flip-winding?)
                    ;; Triangulate caps using ring plane normal for projection
                    start-cap (triangulate-cap first-ring 0 start-proj-normal start-cap-flip)
                    end-cap (triangulate-cap last-ring last-ring-base end-proj-normal end-cap-flip)]

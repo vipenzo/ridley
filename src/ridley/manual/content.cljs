@@ -52,7 +52,9 @@
         {:id :polygon-extrude
          :code "(register hex\n  (extrude (polygon 6 15) (f 25)))"}
         {:id :star-extrude
-         :code "(register star-bar\n  (extrude (star 5 20 10) (f 15)))"}]}
+         :code "(register star-bar\n  (extrude (star 5 20 10) (f 15)))"}
+        {:id :poly-extrude
+         :code "(register arrow\n  (extrude\n    (poly -3 -2  5 0  -3 2)\n    (f 15)))"}]}
       {:id :custom-shapes
        :examples
        [{:id :triangle-shape
@@ -437,6 +439,7 @@ The **shape** defines the cross-section. The **movements** define the path the t
 - `(circle radius)` — a circle
 - `(rect width height)` — a rectangle
 - `(polygon n radius)` — regular polygon with n sides
+- `(poly x1 y1 x2 y2 ...)` — arbitrary polygon from coordinate pairs
 - `(star points outer inner)` — a star shape
 
 Each shape becomes the cross-section of your extruded solid."
@@ -448,7 +451,10 @@ Each shape becomes the cross-section of your extruded solid."
        :polygon-extrude {:caption "Polygon"
                          :description "`polygon` creates regular n-sided polygons. A hexagon (6 sides) extruded becomes a hex bar."}
        :star-extrude {:caption "Star"
-                      :description "`star` creates star shapes. The parameters are: points, outer radius, inner radius."}}}
+                      :description "`star` creates star shapes. The parameters are: points, outer radius, inner radius."}
+       :poly-extrude {:caption "Poly"
+                      :description "`poly` creates arbitrary polygons from flat x y coordinate pairs. The origin [0,0] is at the turtle's position. Also accepts a vector: `(poly [x1 y1 x2 y2 ...])`."}}}
+
 
      :custom-shapes
      {:title "Custom Shapes"
@@ -1296,6 +1302,7 @@ La **forma** definisce la sezione trasversale. I **movimenti** definiscono il pe
 - `(circle raggio)` — un cerchio
 - `(rect larghezza altezza)` — un rettangolo
 - `(polygon n raggio)` — poligono regolare con n lati
+- `(poly x1 y1 x2 y2 ...)` — poligono arbitrario da coppie di coordinate
 - `(star punte esterno interno)` — una stella
 
 Ogni forma diventa la sezione trasversale del tuo solido estruso."
@@ -1307,7 +1314,10 @@ Ogni forma diventa la sezione trasversale del tuo solido estruso."
        :polygon-extrude {:caption "Poligono"
                          :description "`polygon` crea poligoni regolari con n lati. Un esagono (6 lati) estruso diventa una barra esagonale."}
        :star-extrude {:caption "Stella"
-                      :description "`star` crea forme a stella. I parametri sono: punte, raggio esterno, raggio interno."}}}
+                      :description "`star` crea forme a stella. I parametri sono: punte, raggio esterno, raggio interno."}
+       :poly-extrude {:caption "Poly"
+                      :description "`poly` crea poligoni arbitrari da coppie di coordinate x y. L'origine [0,0] corrisponde alla posizione della tartaruga. Accetta anche un vettore: `(poly [x1 y1 x2 y2 ...])`."}}}
+
 
      :custom-shapes
      {:title "Forme Personalizzate"

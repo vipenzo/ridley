@@ -252,6 +252,10 @@ Shapes are 2D profiles used for extrusion:
 
 (polygon n radius)                ; Regular n-sided polygon (e.g., 6 for hexagon)
 
+(poly x1 y1 x2 y2 ...)          ; Arbitrary polygon from coordinate pairs
+(poly [x1 y1 x2 y2 ...])        ; Same, from a vector
+(poly coords-var)                ; Same, from a variable
+
 (star n-points outer-r inner-r)  ; Star shape (n tips)
 
 (stroke-shape my-path width)             ; Stroke a path into a 2D outline
@@ -262,6 +266,19 @@ Shapes are 2D profiles used for extrusion:
   :miter-limit 4)
 
 (path-to-shape my-path)                  ; Convert 3D path to 2D shape (XY projection)
+```
+
+### Custom Shapes from Coordinates
+
+Create arbitrary 2D shapes from cartesian coordinate pairs. The origin `[0,0]` is anchored to the turtle's position:
+
+```clojure
+;; Arrow shape (flat args)
+(register arrow (extrude (poly -3 -2  5 0  -3 2) (f 8)))
+
+;; From a vector
+(def diamond-pts [0 5  5 0  0 -5  -5 0])
+(register gem (extrude (poly diamond-pts) (f 10)))
 ```
 
 ### Custom Shapes from Turtle
