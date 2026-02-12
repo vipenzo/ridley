@@ -446,6 +446,57 @@
         (swap! anim/anim-registry assoc-in [anim-name :current-span-idx] span-idx))
       span-idx)))
 
+;; ============================================================
+;; Collision detection
+;; ============================================================
+
+(defn- mesh-centroid
+  "Compute the centroid (average of all vertices) of a mesh."
+  [mesh]
+  (when-let [verts (seq (:vertices mesh))]
+    (let [n (count verts)
+          sum (reduce math/v+ [0 0 0] verts)]
+      (math/v* sum (/ 1.0 n)))))
+
+(defn- vec3-distance
+  "Euclidean distance between two 3D points."
+  [a b]
+  (math/magnitude (math/v- a b)))
+
+(defn- check-collisions!
+  "Check all registered collision pairs. Uses edge-trigger logic:
+   - :outside + within threshold → fire callback, transition to :inside
+   - :inside + beyond threshold → transition back to :outside (re-arm)
+   - :once entries stay :inside permanently after firing."
+  []
+  (when-let [get-fn @get-mesh-fn]
+    (let [collisions @anim/collision-registry]
+      (when (seq collisions)
+        (doseq [[k entry] collisions]
+          (let [{:keys [target-a target-b threshold callback state once fired-once]} entry
+                mesh-a (get-fn target-a)
+                mesh-b (get-fn target-b)]
+            (when (and mesh-a mesh-b)
+              (let [centroid-a (mesh-centroid mesh-a)
+                    centroid-b (mesh-centroid mesh-b)]
+                (when (and centroid-a centroid-b)
+                  (let [dist (vec3-distance centroid-a centroid-b)
+                        within? (< dist threshold)]
+                    (cond
+                      ;; Outside → entering collision zone
+                      (and within? (= state :outside))
+                      (do
+                        (swap! anim/collision-registry assoc-in [k :state] :inside)
+                        (when-not fired-once
+                          (swap! anim/collision-registry assoc-in [k :fired-once] true)
+                          (invoke-span-callback! callback)))
+
+                      ;; Inside → leaving collision zone (re-arm unless :once)
+                      (and (not within?) (= state :inside))
+                      (when-not once
+                        (swap! anim/collision-registry update k
+                               assoc :state :outside :fired-once false)))))))))))))
+
 (defn tick-animations!
   "Called from render-frame. Advances all playing animations by dt seconds.
    Groups animations by target for multi-animation composition (delta summing).
@@ -563,6 +614,9 @@
                                    @anim/anim-registry)]
           (when-not any-cam-still?
             (when-let [f @camera-stop-fn] (f))))))
+    ;; Phase 4: Check collisions (centroid-distance based)
+    (when @any-updated?
+      (check-collisions!))
     ;; Trigger viewport refresh if anything changed
     (when @any-updated?
       (when-let [f @refresh-fn]

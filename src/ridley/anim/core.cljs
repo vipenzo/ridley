@@ -36,11 +36,16 @@
   (reset! get-mesh-fn get-fn)
   (reset! register-mesh-fn register-fn))
 
+;; Collision registry: maps pair-key → collision entry
+;; pair-key is a sorted set of two target keywords, e.g. #{:puppet :box}
+(defonce collision-registry (atom {}))
+
 (defn clear-all!
-  "Clear all animations and links. Called on code re-evaluation."
+  "Clear all animations, links, and collisions. Called on code re-evaluation."
   []
   (reset! anim-registry {})
-  (reset! link-registry {}))
+  (reset! link-registry {})
+  (reset! collision-registry {}))
 
 (defn- get-mesh [target]
   (when-let [f @get-mesh-fn] (f target)))
@@ -332,3 +337,61 @@
       (keyword? entry) entry           ; old format compat
       (map? entry) (:parent entry)
       :else nil)))
+
+;; ============================================================
+;; Collision detection (centroid-distance based)
+;; ============================================================
+
+(defn- collision-pair-key
+  "Create a canonical key for a collision pair (order-independent)."
+  [target-a target-b]
+  (if (neg? (compare (str target-a) (str target-b)))
+    [target-a target-b]
+    [target-b target-a]))
+
+(defn register-collision!
+  "Register a collision check between two targets.
+   When the centroid distance drops below threshold, callback is invoked.
+   Uses edge-trigger: fires on enter, re-arms when targets separate.
+   Options:
+     :once  - if true, fires only once and never re-arms"
+  [target-a target-b threshold callback & {:keys [once] :or {once false}}]
+  (let [k (collision-pair-key target-a target-b)]
+    (swap! collision-registry assoc k
+           {:target-a target-a
+            :target-b target-b
+            :threshold threshold
+            :callback callback
+            :once once
+            :state :outside       ;; :outside -> :triggered -> :inside -> :outside
+            :fired-once false})))
+
+(defn unregister-collision!
+  "Remove a collision check between two targets."
+  [target-a target-b]
+  (let [k (collision-pair-key target-a target-b)]
+    (swap! collision-registry dissoc k)))
+
+(defn reset-collision!
+  "Manually re-arm a collision that was registered with :once true."
+  [target-a target-b]
+  (let [k (collision-pair-key target-a target-b)]
+    (swap! collision-registry update k
+           assoc :state :outside :fired-once false)))
+
+(defn clear-collisions!
+  "Remove all collision checks."
+  []
+  (reset! collision-registry {}))
+
+(defn list-collisions
+  "List all registered collision checks with their status."
+  []
+  (mapv (fn [[_ entry]]
+          {:target-a (:target-a entry)
+           :target-b (:target-b entry)
+           :threshold (:threshold entry)
+           :state (:state entry)
+           :once (:once entry)
+           :fired-once (:fired-once entry)})
+        @collision-registry))

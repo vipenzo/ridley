@@ -97,6 +97,7 @@
    'circle       impl/circle-with-resolution
    'rect         shape/rect-shape
    'polygon      shape/ngon-shape
+   'poly         shape/poly-shape
    'star         shape/star-shape
    ;; Shape transformations
    'translate-shape shape/translate-shape
@@ -309,4 +310,10 @@
    'anim-preprocess     anim-preprocess/preprocess-animation
    'anim-make-span      anim/make-span
    'anim-make-cmd       anim/make-anim-command
-   'anim-clear-all!     anim/clear-all!})
+   'anim-clear-all!     anim/clear-all!
+   ;; Collision detection (centroid-distance based)
+   'on-collide          anim/register-collision!
+   'off-collide         anim/unregister-collision!
+   'reset-collide       anim/reset-collision!
+   'clear-collisions    anim/clear-collisions!
+   'list-collisions     anim/list-collisions})

@@ -74,11 +74,35 @@
   [points]
   (make-shape points {:centered? false}))
 
+(defn poly-shape
+  "Create a shape from flat x y coordinate pairs.
+   Origin [0,0] is anchored to turtle position.
+   Accepts: (poly 0 0 5 0 5 5), (poly [0 0 5 0 5 5]), or (poly v)"
+  ([x] (poly-shape x nil))
+  ([x y & more]
+   (let [nums (if (and (nil? y) (sequential? x))
+                x
+                (cons x (cons y more)))
+         n (count nums)]
+     (when (odd? n)
+       (throw (js/Error. (str "poly: odd number of coordinates (" n "). Coordinates must be x y pairs."))))
+     (when (< n 6)
+       (throw (js/Error. (str "poly: need at least 3 points (6 coordinates), got " n "."))))
+     (let [points (mapv vec (partition 2 nums))]
+       (make-shape points {:centered? true})))))
+
 (defn ngon-shape
   "Create a regular n-sided polygon centered at origin.
    n: number of sides (e.g., 6 for hexagon)
    radius: distance from center to vertices"
   [n radius]
+  (when-not (and (number? n) (number? radius))
+    (throw (js/Error. (str "polygon: expected (polygon sides radius), got ("
+                           (pr-str n) " " (pr-str radius) ")."
+                           (when (sequential? n)
+                             " For custom points use (poly x1 y1 x2 y2 ...) or (make-shape [[x y] ...]).")))))
+  (when (< n 3)
+    (throw (js/Error. (str "polygon: need at least 3 sides, got " n "."))))
   (let [step (/ (* 2 Math/PI) n)
         points (vec (for [i (range n)]
                       (let [angle (- (* i step) (/ Math/PI 2))]  ; Start at top

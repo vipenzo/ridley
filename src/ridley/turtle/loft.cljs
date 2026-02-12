@@ -517,17 +517,21 @@
                           loft-first-ring nil  ;; first ring of entire loft (for start cap)
                           loft-second-ring nil] ;; second ring (for start cap normal)
                      (if (>= seg-idx n-segments)
-                       ;; Flush any remaining accumulated rings as a final mesh (no caps on segments)
-                       ;; then generate separate cap meshes for start and end
-                       (let [final-meshes (if (>= (count acc-rings) 2)
+                       ;; Flush remaining accumulated rings as final mesh.
+                       ;; When no corner segments exist, build WITH caps so cap faces
+                       ;; share vertex indices with side faces (required for manifold mesh).
+                       ;; When corners exist, caps must be separate meshes since intermediate
+                       ;; segments shouldn't have caps at their boundaries.
+                       (let [no-corners (empty? finished-meshes)
+                             final-meshes (if (>= (count acc-rings) 2)
                                             (conj finished-meshes
-                                                  (build-sweep-mesh (vec acc-rings) false creation-pose false))
+                                                  (build-sweep-mesh (vec acc-rings) false creation-pose no-corners))
                                             finished-meshes)
-                             ;; Generate cap meshes
-                             last-ring (last acc-rings)
-                             second-to-last (when (>= (count acc-rings) 2)
+                             ;; Generate separate cap meshes only when corners exist
+                             last-ring (when-not no-corners (last acc-rings))
+                             second-to-last (when (and (not no-corners) (>= (count acc-rings) 2))
                                               (nth acc-rings (- (count acc-rings) 2)))
-                             bottom-normal (when (and loft-first-ring loft-second-ring)
+                             bottom-normal (when (and (not no-corners) loft-first-ring loft-second-ring)
                                              (v* (normalize (v- (ring-centroid loft-second-ring)
                                                                 (ring-centroid loft-first-ring)))
                                                  -1))
