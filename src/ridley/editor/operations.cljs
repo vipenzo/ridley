@@ -2,12 +2,13 @@
   "Pure generative operations: extrude, loft, bloft, revolve.
    These functions read turtle-atom for initial state but don't mutate it
    (except legacy implicit-extrude-path)."
-  (:require [ridley.editor.state :refer [turtle-atom]]
+  (:require [ridley.editor.state :refer [turtle-atom] :as state]
             [ridley.turtle.core :as turtle]
             [ridley.turtle.shape :as shape]
             [ridley.turtle.transform :as xform]
             [ridley.turtle.loft :as loft]
-            [ridley.turtle.extrusion :as extrusion]))
+            [ridley.turtle.extrusion :as extrusion]
+            [ridley.clipper.core :as clipper]))
 
 (declare pure-bloft)
 
@@ -239,6 +240,30 @@
                   shapes)]
      (wrap-results results))))
 
+(defn- clip-shape-for-revolve
+  "Clip a shape to x >= 0 for revolve. Vertices with x < 0 would cross
+   the revolution axis and produce self-intersecting geometry.
+   Returns the clipped shape, or nil if entirely in x < 0."
+  [s]
+  (let [pts (:points s)
+        min-x (apply min (map first pts))]
+    (if (>= min-x 0)
+      s  ;; all points already at x >= 0
+      (let [max-x (apply max (map first pts))
+            max-y (apply max (map #(Math/abs (second %)) pts))
+            half-extent (+ (max max-x max-y) 100)
+            ;; Large rectangle covering x >= 0
+            clip-rect (shape/make-shape
+                       [[0 (- half-extent)]
+                        [half-extent (- half-extent)]
+                        [half-extent half-extent]
+                        [0 half-extent]]
+                       {:centered? true})
+            clipped (clipper/shape-intersection s clip-rect)]
+        (when clipped
+          (state/capture-println "revolve: shape had vertices with x < 0 (crossing revolution axis). Auto-clipped to x >= 0.")
+          clipped)))))
+
 (defn ^:export pure-revolve
   "Pure revolve function - creates mesh without side effects.
    Revolves a 2D profile shape around the turtle's up axis.
@@ -247,6 +272,9 @@
    The profile is interpreted as:
    - 2D X = radial distance from axis
    - 2D Y = position along axis (in up direction)
+
+   Shapes with vertices at x < 0 are automatically clipped at the
+   revolution axis to prevent self-intersecting geometry.
 
    angle: rotation angle in degrees (default 360 for full revolution)"
   ([shape-or-shapes] (pure-revolve shape-or-shapes 360))
@@ -263,9 +291,12 @@
                          (turtle/make-turtle))
          results (reduce
                   (fn [acc shape]
-                    (let [result-state (turtle/revolve-shape initial-state shape angle)
-                          mesh (last (:meshes result-state))]
-                      (if mesh (conj acc mesh) acc)))
+                    (let [safe-shape (clip-shape-for-revolve shape)]
+                      (if safe-shape
+                        (let [result-state (turtle/revolve-shape initial-state safe-shape angle)
+                              mesh (last (:meshes result-state))]
+                          (if mesh (conj acc mesh) acc))
+                        acc)))
                   []
                   shapes)]
      (wrap-results results))))
