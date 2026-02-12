@@ -224,45 +224,91 @@
   [mesh thk]
   (attach mesh (f (- (/ thk 2.0)))))
 
-(defn gear
-  "Spur gear with involute teeth.
-   Uses centered shapes so teeth appear at the correct radius.
-   The base disk fills the center; tooth sectors protrude outward."
+(defn gear-profile
+  "Full gear cross-section as a single 2D polygon.
+   Returns a vector of [x y] points (CCW winding) with all involute
+   teeth and root circle arcs. No boolean operations needed."
   [& {:as opts}]
-  (let [z    (:teeth opts)
-        m    (:module opts)
-        thk  (double (or (:thickness opts) 5.0))
-        bore (double (or (:bore opts) 0.0))
-        rot-cmd (or (:rot opts) :tr)
+  (let [z (:teeth opts)
+        m (:module opts)
+        pressure-angle (double (or (:pressure-angle opts) 20.0))
+        backlash (double (or (:backlash opts) 0.0))
+        nfn (int (or (:fn opts) 10))
+        arcfn (int (or (:arcfn opts) 8))
 
+        alpha (deg->rad pressure-angle)
         r  (/ (* m z) 2.0)
+        rb (* r (cos alpha))
+        ra (+ r m)
         rf (- r (* 1.25 m))
 
-        ;; Base disk slightly beyond root radius for boolean overlap
-        base (center-thickness-x (extrude (circle (+ rf 0.5)) (f thk)) thk)
+        tau (/ (* 2.0 PI) z)
+        backlash-angle (if (pos? r) (/ backlash r) 0.0)
+        half-ang (- (/ tau 4.0) (/ backlash-angle 2.0))
 
-        ;; Tooth sector as CENTERED shape — gear center stays at origin
-        tooth-2d (apply tooth-sector-shape (mapcat identity opts))
-        tooth-centered (assoc tooth-2d :centered? true)
-        tooth (center-thickness-x (extrude tooth-centered (f thk)) thk)
+        rot (involute-rot rb r half-ang)
 
-        step (/ 360.0 z)
+        ;; One tooth's involute curves at angle 0
+        upper (mapv #(rotate-pt % rot) (mapv mirror-x (involute-curve rb ra (max 6 nfn))))
+        lower (mapv mirror-x upper)
 
-        rotate-one (fn [mesh ang]
-                     (case rot-cmd
-                       :th (attach mesh (th ang))
-                       :tr (attach mesh (tr ang))
-                       (attach mesh (tr ang))))
+        ang-b  (atan2 (second (first upper)) (first (first upper)))
+        ang-ou (atan2 (second (last upper)) (first (last upper)))
+        ang-ol (atan2 (second (last lower)) (first (last lower)))
 
-        teeth (mapv (fn [i] (rotate-one tooth (* i step))) (range z))
+        ;; One tooth (CCW): root_l → lower flank → tip arc → upper flank → root_u
+        tooth-0 (vec (concat
+                       [(polar rf (- ang-b))
+                        (first lower)]
+                       (rest lower)
+                       (rest (arc-short ra ang-ol ang-ou (max 3 arcfn)))
+                       (rest (reverse upper))
+                       [(first upper)
+                        (polar rf ang-b)]))
 
-        body (solidify (apply mesh-union base teeth))]
+        ;; Build full profile: all teeth + root arcs between them
+        pts (loop [i 0 acc []]
+              (if (>= i z)
+                acc
+                (let [angle (* i tau)
+                      rotated (mapv #(rotate-pt % angle) tooth-0)
+                      ;; Root arc from this tooth's root_u to next tooth's root_l
+                      root-u-ang (+ angle ang-b)
+                      next-root-l-ang (+ angle tau (- ang-b))
+                      arc-da (- next-root-l-ang root-u-ang)
+                      arc-pts (mapv (fn [j]
+                                      (let [t (/ (double j) 3.0)
+                                            a (+ root-u-ang (* t arc-da))]
+                                        (polar rf a)))
+                                    [1 2])]
+                  (recur (inc i) (into (into acc rotated) arc-pts)))))]
+    (-> pts dedupe-consecutive ensure-ccw)))
 
-    (if (pos? bore)
-      (mesh-difference
-        body
-        (center-thickness-x (extrude (circle (/ bore 2.0)) (f (+ thk 2.0))) (+ thk 2.0)))
-      body)))
+(defn gear
+  "Spur gear with involute teeth.
+   Generates the full gear profile as a single 2D polygon and extrudes once.
+   Bore is extruded as a hole — no boolean operations needed."
+  [& {:as opts}]
+  (let [thk  (double (or (:thickness opts) 5.0))
+        bore (double (or (:bore opts) 0.0))
+
+        ;; Full gear outline as a single polygon
+        profile-pts (apply gear-profile (mapcat identity opts))
+
+        ;; Bore hole (CW winding for inner contour)
+        bore-hole (when (pos? bore)
+                    (let [br (/ bore 2.0)
+                          n 32]
+                      (vec (for [i (range n)]
+                             (let [a (- (* i (/ (* 2.0 PI) n)))]
+                               [(* br (cos a))
+                                (* br (sin a))])))))
+
+        ;; Create shape with optional bore hole
+        shape (if bore-hole
+                (make-shape profile-pts {:centered? true :holes [bore-hole]})
+                (make-shape profile-pts {:centered? true}))]
+    (center-thickness-x (extrude shape (f thk)) thk)))
 
 ;; =========================
 ;; Hobbyist helper
@@ -364,8 +410,10 @@
         r2   (/ (* m z2) 2.0)
         dist (+ r1 r2)
 
-        ;; Phase offset: half a tooth pitch on gear2
-        phase (/ 180.0 z2)
+        ;; Phase offset: align gear2's gap with gear1's tooth at contact
+        phase (let [pitch2 (/ 360.0 z2)
+                    f1 (mod (/ (double z1) 4.0) 1.0)]
+                (mod (+ 90.0 (* (- 0.5 f1) pitch2)) pitch2))
 
         ;; Print summary
         _ (println (str "Module: " m "mm  |  Backlash: " backlash "mm"))
@@ -383,7 +431,7 @@
         common {:pressure-angle 20.0
                 :thickness      thk
                 :backlash       backlash
-                :fn 12  :arcfn 10  :rot :tr}
+                :fn 12  :arcfn 10}
 
         g1 (apply gear (mapcat identity (assoc common :teeth z1 :module m :bore bore1)))
         g2 (apply gear (mapcat identity (assoc common :teeth z2 :module m :bore bore2)))]
