@@ -1466,12 +1466,33 @@
    ;; span: define a timeline segment
    ;; (span weight easing & commands)
    ;; (span weight easing :ang-velocity N & commands)
+   ;; (span weight easing commands... :on-enter expr :on-exit expr)
    (defmacro span [weight easing & body]
-     (let [[ang-vel cmds] (if (= :ang-velocity (first body))
-                            [(second body) (drop 2 body)]
-                            [1 body])
+     (let [;; Parse keyword options and commands from body
+           ;; Options (:ang-velocity, :on-enter, :on-exit) can appear anywhere
+           {:keys [ang-vel on-enter on-exit cmds]}
+           (loop [opts {:ang-vel 1} cmds [] remaining (vec body)]
+             (cond
+               (empty? remaining)
+               (assoc opts :cmds cmds)
+               (= :ang-velocity (first remaining))
+               (recur (assoc opts :ang-vel (second remaining))
+                      cmds (vec (drop 2 remaining)))
+               (= :on-enter (first remaining))
+               (recur (assoc opts :on-enter (second remaining))
+                      cmds (vec (drop 2 remaining)))
+               (= :on-exit (first remaining))
+               (recur (assoc opts :on-exit (second remaining))
+                      cmds (vec (drop 2 remaining)))
+               :else
+               (recur opts (conj cmds (first remaining))
+                      (vec (rest remaining)))))
            parsed-cmds (map anim-parse-cmd cmds)]
-       `(anim-make-span ~weight ~easing :ang-velocity ~ang-vel ~@parsed-cmds)))
+       `(anim-make-span ~weight ~easing
+          :ang-velocity ~ang-vel
+          ~@(when on-enter [:on-enter `(fn [] ~on-enter)])
+          ~@(when on-exit  [:on-exit  `(fn [] ~on-exit)])
+          ~@parsed-cmds)))
 
    ;; anim!: define and register an animation
    ;; (anim! :name duration :target spans...)
@@ -1538,4 +1559,80 @@
                               :duration (double ~duration)
                               :easing ~easing
                               :loop ~loop-mode
-                              :gen-fn ~gen-fn-expr})))")
+                              :gen-fn ~gen-fn-expr})))
+
+   ;; anim-fn: like anim! but returns a function instead of executing immediately.
+   ;; The macro expands span/command parsing at compile time, but wraps the
+   ;; preprocessing + registration in a fn. Each call auto-generates a unique name.
+   ;; Returns a fn that, when called, registers and plays the animation,
+   ;; returning the auto-generated animation name (for later stop!).
+   ;; (anim-fn duration target [opts...] spans...) => (fn [] ...)
+   (defmacro anim-fn [duration target & body]
+     (let [[opts spans] (loop [opts {} remaining (vec body)]
+                          (cond
+                            (#{:loop :loop-reverse :loop-bounce} (first remaining))
+                            (recur (assoc opts :loop (case (first remaining)
+                                                       :loop :forward
+                                                       :loop-reverse :reverse
+                                                       :loop-bounce :bounce))
+                                   (vec (rest remaining)))
+                            (= :fps (first remaining))
+                            (recur (assoc opts :fps (second remaining)) (vec (drop 2 remaining)))
+                            :else [opts remaining]))
+           fps (get opts :fps 60)
+           loop-mode (get opts :loop false)]
+       `(fn []
+          (let [target-val# ~target
+                auto-name# (keyword (str (clojure.string/replace (subs (str target-val#) 1) \"/\" \"-\")
+                                         \"-\" (gensym \"fn\")))
+                initial-pose# (cond
+                                (= target-val# :camera)
+                                (get-camera-pose)
+                                :else
+                                (or (when-let [m# (get-mesh target-val#)]
+                                      (:creation-pose m#))
+                                    (let [t# (get-turtle)]
+                                      {:position (:position t#) :heading (:heading t#) :up (:up t#)})))
+                pivot# (when (= target-val# :camera) (get-orbit-target))
+                spans# (vector ~@spans)
+                result# (anim-preprocess spans# ~duration ~fps initial-pose#
+                                         {:camera-mode (when (= target-val# :camera) :orbital)
+                                          :pivot pivot#})]
+            (anim-register! auto-name#
+                            (merge result#
+                                   {:target target-val#
+                                    :duration (double ~duration)
+                                    :fps ~fps
+                                    :loop ~loop-mode
+                                    :initial-pose initial-pose#
+                                    :spans spans#}))
+            (play! auto-name#)
+            auto-name#))))
+
+   ;; anim-proc-fn: like anim-proc! but returns a function.
+   ;; Each call auto-generates a unique name.
+   ;; Returns a fn that, when called, registers and plays the procedural animation,
+   ;; returning the auto-generated animation name.
+   ;; (anim-proc-fn duration target easing [opts...] gen-fn) => (fn [] ...)
+   (defmacro anim-proc-fn [duration target easing & body]
+     (let [[loop-mode gen-fn-expr]
+           (let [kw (first body)]
+             (if (#{:loop :loop-reverse :loop-bounce} kw)
+               [(case kw
+                  :loop :forward
+                  :loop-reverse :reverse
+                  :loop-bounce :bounce)
+                (second body)]
+               [false (first body)]))]
+       `(fn []
+          (let [target-val# ~target
+                auto-name# (keyword (str (clojure.string/replace (subs (str target-val#) 1) \"/\" \"-\")
+                                         \"-\" (gensym \"pfn\")))]
+            (anim-proc-register! auto-name#
+                                 {:target target-val#
+                                  :duration (double ~duration)
+                                  :easing ~easing
+                                  :loop ~loop-mode
+                                  :gen-fn ~gen-fn-expr})
+            (play! auto-name#)
+            auto-name#))))")

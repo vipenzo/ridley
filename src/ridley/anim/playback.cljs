@@ -3,6 +3,7 @@
    Called from viewport's render-frame on every frame."
   (:require [ridley.anim.core :as anim]
             [ridley.anim.easing :as easing]
+            [ridley.editor.state :as state]
             [ridley.math :as math]))
 
 ;; ============================================================
@@ -367,6 +368,8 @@
 
 ;; Callback to trigger viewport refresh after animation frame
 (defonce ^:private refresh-fn (atom nil))
+;; Callback to push async print output to the REPL UI
+(defonce ^:private async-output-fn (atom nil))
 
 (defn set-refresh-callback!
   "Set the callback for triggering viewport refresh after animation.
@@ -374,18 +377,35 @@
   [f]
   (reset! refresh-fn f))
 
+(defn set-async-output-callback!
+  "Set the callback for displaying async output (from span callbacks) in the REPL.
+   Called by core.cljs during init."
+  [f]
+  (reset! async-output-fn f))
+
 (defn- compute-execution-order
   "Topological sort of targets based on link dependencies.
-   Parents are processed before children. Handles arbitrary depth."
+   Parents are processed before children. Handles arbitrary depth.
+   Targets whose parents are not in the active set are treated as
+   secondary roots so they still get processed."
   [link-registry targets]
   (let [;; Build children-of map: parent -> [children]
         children-of (reduce-kv (fn [m child entry]
                                  (let [parent (if (keyword? entry) entry (:parent entry))]
                                    (update m parent (fnil conj []) child)))
                                {} link-registry)
+        target-set (set targets)
         ;; Roots = targets that have no parent in link-registry
-        roots (remove #(contains? link-registry %) targets)]
-    (loop [queue (vec roots)
+        roots (remove #(contains? link-registry %) targets)
+        ;; Secondary roots = targets whose parent is NOT in the active target set
+        ;; (e.g. arm animated alone — parent torso has no animation this tick)
+        secondary (filter (fn [t]
+                            (and (contains? link-registry t)
+                                 (let [entry (get link-registry t)
+                                       parent (if (keyword? entry) entry (:parent entry))]
+                                   (not (contains? target-set parent)))))
+                          targets)]
+    (loop [queue (vec (concat roots secondary))
            visited #{}
            order []]
       (if (empty? queue)
@@ -396,6 +416,35 @@
             (recur (into (subvec queue 1) (get children-of t []))
                    (conj visited t)
                    (conj order t))))))))
+
+(defn- invoke-span-callback!
+  "Invoke a span callback, flushing any println output to the REPL."
+  [cb]
+  (state/reset-print-buffer!)
+  (try
+    (cb)
+    (catch :default e
+      (js/console.warn "anim span callback error:" e)))
+  (when-let [output (state/get-print-output)]
+    (if-let [f @async-output-fn]
+      (f output)
+      (js/console.log output))))
+
+(defn- fire-span-callbacks!
+  "Detect span boundary crossings and fire :on-enter/:on-exit callbacks.
+   Returns the new span-idx (or prev if unchanged)."
+  [anim-name anim-data effective-time]
+  (when-let [spans (:spans anim-data)]
+    (let [{:keys [span-idx]} (anim/time->span-info effective-time anim-data)
+          prev-span-idx (:current-span-idx anim-data)]
+      (when (not= span-idx prev-span-idx)
+        (when prev-span-idx
+          (when-let [on-exit (:on-exit (nth spans prev-span-idx nil))]
+            (invoke-span-callback! on-exit)))
+        (when-let [on-enter (:on-enter (nth spans span-idx nil))]
+          (invoke-span-callback! on-enter))
+        (swap! anim/anim-registry assoc-in [anim-name :current-span-idx] span-idx))
+      span-idx)))
 
 (defn tick-animations!
   "Called from render-frame. Advances all playing animations by dt seconds.
@@ -439,9 +488,10 @@
               (if procedural?
                 (swap! proc-data assoc anim-name
                        {:t (/ effective-time duration) :anim-data anim-data})
-                (let [frame-idx (anim/time->frame-idx effective-time anim-data)]
-                  (swap! frame-data assoc anim-name
-                         {:frame-idx frame-idx :anim-data anim-data}))))
+                (do (fire-span-callbacks! anim-name anim-data effective-time)
+                    (let [frame-idx (anim/time->frame-idx effective-time anim-data)]
+                      (swap! frame-data assoc anim-name
+                             {:frame-idx frame-idx :anim-data anim-data})))))
 
             ;; Finished (non-looping only)
             (and (not loop-mode) (>= new-time duration))
@@ -450,6 +500,12 @@
                 (swap! proc-data assoc anim-name {:t 1.0 :anim-data anim-data})
                 (let [total-frames (:total-frames anim-data)
                       frame-idx (if (pos? total-frames) (dec total-frames) 0)]
+                  ;; Fire span transition callbacks, then on-exit for the final span
+                  (fire-span-callbacks! anim-name anim-data duration)
+                  (let [final-idx (:current-span-idx (get @anim/anim-registry anim-name))]
+                    (when final-idx
+                      (when-let [on-exit (:on-exit (nth (:spans anim-data) final-idx nil))]
+                        (invoke-span-callback! on-exit))))
                   (swap! frame-data assoc anim-name
                          {:frame-idx frame-idx :anim-data anim-data})))
               (swap! finished conj anim-name))
@@ -467,9 +523,10 @@
               (if procedural?
                 (swap! proc-data assoc anim-name
                        {:t (/ effective-time duration) :anim-data anim-data})
-                (let [frame-idx (anim/time->frame-idx effective-time anim-data)]
-                  (swap! frame-data assoc anim-name
-                         {:frame-idx frame-idx :anim-data anim-data}))))))))
+                (do (fire-span-callbacks! anim-name anim-data effective-time)
+                    (let [frame-idx (anim/time->frame-idx effective-time anim-data)]
+                      (swap! frame-data assoc anim-name
+                             {:frame-idx frame-idx :anim-data anim-data})))))))))
     ;; Phase 2a: Apply procedural animations (gen-fn per frame)
     (doseq [[_anim-name {:keys [t anim-data]}] @proc-data]
       (let [eased-t (easing/ease (:easing anim-data :linear) t)
@@ -494,7 +551,8 @@
         (let [anim-data (get reg anim-name)]
           (swap! anim/anim-registry update anim-name assoc
                  :state :stopped
-                 :current-time 0.0)
+                 :current-time 0.0
+                 :current-span-idx nil)
           (when (= :camera (:target anim-data))
             (reset! had-camera-finish? true))))
       ;; Re-enable OrbitControls if camera animation finished and none still playing

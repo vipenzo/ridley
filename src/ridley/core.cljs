@@ -51,6 +51,7 @@
 (declare sync-voice-state)
 (declare save-to-storage)
 (declare send-script-debounced)
+(declare maybe-update-ai-focus!)
 
 (defn- show-error [msg]
   (when-let [el @error-el]
@@ -1527,8 +1528,8 @@
           (cm/set-cursor-position view {:pos start-pos})
           ;; For other positions, select the range
           (cm/select-range view start-pos end-pos))
-        ;; Update AI focus to the inserted form
-        (cm/update-ai-focus! view)
+        ;; Update AI focus to the inserted form (only when voice active)
+        (maybe-update-ai-focus! view)
         ;; Keep focus on editor
         (cm/focus view))
       ;; Auto-save
@@ -1691,12 +1692,27 @@
       (when-not the-form
         (js/console.warn "AI edit: no form found" (if use-previous? "(looking for previous)" ""))))))
 
-    ;; Update AI focus after edit
-    (cm/update-ai-focus! view)
+    ;; Update AI focus after edit (only when voice active)
+    (maybe-update-ai-focus! view)
 
     ;; Auto-save after edit
     (save-to-storage)
     (send-script-debounced)))
+
+(defn- voice-active-or-continuous?
+  "Check if voice is listening or in continuous mode."
+  []
+  (or (voice/voice-active?) (voice/continuous-active?)))
+
+(defn- maybe-update-ai-focus!
+  "Update AI focus highlight only when voice is active (listening or continuous mode).
+   Clears focus when voice is inactive, to avoid distraction during manual editing."
+  ([] (if (voice-active-or-continuous?)
+        (cm/update-ai-focus!)
+        (cm/clear-ai-focus!)))
+  ([view] (if (voice-active-or-continuous?)
+            (cm/update-ai-focus! view)
+            (cm/clear-ai-focus! view))))
 
 (defn- ai-navigate
   "Navigate cursor based on direction and mode."
@@ -1739,8 +1755,8 @@
 
           ;; Default: text mode
           (cm/move-cursor view direction))))
-    ;; Update AI focus to reflect new position
-    (cm/update-ai-focus! view)
+    ;; Update AI focus to reflect new position (only when voice active)
+    (maybe-update-ai-focus! view)
     (sync-voice-state)))
 
 (defn- sync-voice-state
@@ -1828,9 +1844,12 @@
         (fn [_ _ old-state new-state]
           (let [was-listening (get-in old-state [:voice :listening?])
                 is-listening (get-in new-state [:voice :listening?])
+                was-continuous (get-in old-state [:voice :continuous?])
                 is-continuous (get-in new-state [:voice :continuous?])
                 pending (get-in new-state [:voice :pending-speech])
-                mode (:mode new-state)]
+                mode (:mode new-state)
+                was-active (or was-listening was-continuous)
+                is-active (or is-listening is-continuous)]
             (when (not= was-listening is-listening)
               (if is-listening
                 (.add (.-classList mic-btn) "active")
@@ -1840,6 +1859,12 @@
             (if is-continuous
               (.add (.-classList mic-btn) "continuous")
               (.remove (.-classList mic-btn) "continuous"))
+            ;; Show/hide AI focus when voice activation changes
+            (when (and (not was-active) is-active)
+              (when-let [view @editor-view]
+                (cm/update-ai-focus! view)))
+            (when (and was-active (not is-active))
+              (cm/clear-ai-focus!))
             ;; Show mode + status as tooltip
             (when pending
               (set! (.-title mic-btn) pending))
@@ -2004,7 +2029,7 @@
                       (sync-voice-state))
          :on-run evaluate-definitions
          :on-selection-change (fn []
-                                (cm/update-ai-focus!)
+                                (maybe-update-ai-focus!)
                                 (sync-voice-state))}))
     (reset! repl-input-el repl-input)
     (reset! repl-history-el repl-history)
@@ -2014,6 +2039,7 @@
     (anim-playback/set-mesh-callbacks! registry/get-mesh registry/register-mesh!)
     (anim-playback/set-update-geometry-callback! viewport/update-mesh-geometry!)
     (anim-playback/set-refresh-callback! #(registry/refresh-viewport! false))
+    (anim-playback/set-async-output-callback! add-script-output)
     ;; Register XR panel callbacks (avoid circular dependency)
     (xr/register-action-callback! :toggle-all-obj
       (fn [show-all?]
@@ -2070,7 +2096,7 @@
                                 :undo (cm/editor-undo! view)
                                 :redo (cm/editor-redo! view)
                                 nil))
-                            (cm/update-ai-focus! view)
+                            (maybe-update-ai-focus! view)
                             (save-to-storage)
                             (send-script-debounced)))
                   :get-script (fn [] (when @editor-view (cm/get-value @editor-view)))})
@@ -2085,5 +2111,6 @@
   (anim-playback/set-mesh-callbacks! registry/get-mesh registry/register-mesh!)
   (anim-playback/set-update-geometry-callback! viewport/update-mesh-geometry!)
   (anim-playback/set-refresh-callback! #(registry/refresh-viewport! false))
+  (anim-playback/set-async-output-callback! add-script-output)
   ;; Hot reload callback - re-evaluate definitions
   (evaluate-definitions))

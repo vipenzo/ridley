@@ -69,7 +69,8 @@
                   {:name name
                    :type :preprocessed
                    :state :stopped
-                   :current-time 0.0}
+                   :current-time 0.0
+                   :current-span-idx nil}
                   base-data))))
 
 (defn register-procedural-animation!
@@ -129,7 +130,9 @@
                         {:base-vertices (:vertices mesh)
                          :base-faces (:faces mesh)
                          :base-pose (:creation-pose mesh)})))))))
-     (swap! anim-registry assoc-in [name :state] :playing))))
+     (swap! anim-registry update name merge
+            {:state :playing
+             :current-span-idx nil}))))
 
 (defn pause!
   "Pause an animation (or all if no name given)."
@@ -149,7 +152,8 @@
    (when-let [anim (get @anim-registry name)]
      (swap! anim-registry update name assoc
             :state :stopped
-            :current-time 0.0)
+            :current-time 0.0
+            :current-span-idx nil)
      ;; Restore mesh to base state or re-enable controls for camera
      ;; Only if no other animation is still active on this target
      (let [target (:target anim)
@@ -260,16 +264,31 @@
 (defn make-span
   "Create a span data structure from DSL arguments.
    (make-span weight easing commands)
-   (make-span weight easing :ang-velocity N commands)"
+   (make-span weight easing :ang-velocity N commands)
+   (make-span weight easing :on-enter fn :on-exit fn commands)"
   [weight easing-type & args]
-  (let [;; Parse optional :ang-velocity from args
-        [ang-vel commands] (if (= :ang-velocity (first args))
-                             [(second args) (vec (drop 2 args))]
-                             [1 (vec args)])]
-    {:weight weight
-     :easing easing-type
-     :ang-velocity ang-vel
-     :commands commands}))
+  (let [;; Parse keyword options from args
+        opts-and-cmds (loop [opts {} remaining args]
+                        (cond
+                          (empty? remaining)
+                          [opts []]
+                          (= :ang-velocity (first remaining))
+                          (recur (assoc opts :ang-velocity (second remaining))
+                                 (drop 2 remaining))
+                          (= :on-enter (first remaining))
+                          (recur (assoc opts :on-enter (second remaining))
+                                 (drop 2 remaining))
+                          (= :on-exit (first remaining))
+                          (recur (assoc opts :on-exit (second remaining))
+                                 (drop 2 remaining))
+                          :else [opts (vec remaining)]))
+        [opts commands] opts-and-cmds]
+    (cond-> {:weight weight
+             :easing easing-type
+             :ang-velocity (get opts :ang-velocity 1)
+             :commands commands}
+      (:on-enter opts) (assoc :on-enter (:on-enter opts))
+      (:on-exit opts)  (assoc :on-exit (:on-exit opts)))))
 
 (defn make-anim-command
   "Create a command data structure for animation preprocessing."
