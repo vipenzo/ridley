@@ -1004,15 +1004,23 @@
    ;; (revolve (shape (f 8) (th 90) (f 10) (th 90) (f 8)))  ; solid cylinder
    ;; (revolve (circle 5))         ; torus (circle revolved around axis)
    ;; (revolve profile 180)        ; half revolution
+   ;; (revolve (tapered (circle 20) :to 0.5))  ; shape-fn: profile varies during revolution
    ;; The profile is interpreted as:
    ;; - 2D X = radial distance from axis (perpendicular to heading)
    ;; - 2D Y = position along axis (in heading direction)
+   ;; When a shape-fn is passed, t=0 at the first ring, t→1 at the last ring.
    ;; Returns the created mesh (can be bound with def)
    (defmacro revolve
      ([shape]
-      `(pure-revolve ~shape 360))
+      `(let [s# ~shape]
+         (if (shape-fn? s#)
+           (pure-revolve-shape-fn s# 360)
+           (pure-revolve s# 360))))
      ([shape angle]
-      `(pure-revolve ~shape ~angle)))
+      `(let [s# ~shape]
+         (if (shape-fn? s#)
+           (pure-revolve-shape-fn s# ~angle)
+           (pure-revolve s# ~angle)))))
 
    ;; ============================================================
    ;; Functional attach macros

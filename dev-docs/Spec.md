@@ -342,7 +342,8 @@ separate transform function to `loft`, shape-fns carry the transformation logic
 inside the shape itself, enabling composable, reusable profiles.
 
 A shape-fn is a function `(fn [t] -> shape)` with metadata `{:type :shape-fn}`.
-At each point along a loft path, `t` goes from 0 to 1.
+At each point along a loft path (or revolution step), `t` goes from 0 to 1.
+Shape-fns work with `loft`, `bloft`, and `revolve`.
 
 ```clojure
 ;; Static shape — use extrude (fast, no per-ring evaluation)
@@ -663,6 +664,16 @@ The profile shape is interpreted as:
 - 2D Y = position along axis (in heading direction)
 
 Use `translate-shape` to offset the profile from the axis for hollow shapes (e.g., torus).
+
+**Shape-fn support:** When a shape-fn is passed instead of a static shape, the profile is
+evaluated at each revolution step with `t` going from 0 (first ring) to 1 (last ring):
+
+```clojure
+(revolve (tapered (circle 20) :to 0.5))           ; Profile shrinks during revolution
+(revolve (twisted (rect 20 10) :angle 90))         ; Profile rotates as it revolves
+(revolve (noisy (circle 15 64) :amplitude 2))      ; Organic surface
+(revolve (morphed (square 20) (circle 15 4)) 180)  ; Morph during half-revolution
+```
 
 ---
 

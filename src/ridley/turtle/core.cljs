@@ -1593,6 +1593,8 @@
   ([state shape]
    (revolve-shape state shape 360))
   ([state shape angle]
+   (revolve-shape state shape angle nil))
+  ([state shape angle eval-shape-at-t]
    (if-not (shape? shape)
      state
      (let [;; Save creation pose
@@ -1600,7 +1602,12 @@
                           :heading (:heading state)
                           :up (:up state)}
            ;; Get profile points
-           profile-points (:points shape)
+           ;; When using shape-fn, clamp x >= 0 to prevent crossing revolution axis
+           ;; (polygon clipping would change point count, breaking face generation)
+           clamp-x (fn [pts] (mapv (fn [[x y]] [(max 0 x) y]) pts))
+           profile-points (if eval-shape-at-t
+                            (clamp-x (:points shape))
+                            (:points shape))
            n-profile (count profile-points)
            ;; Calculate shape winding using signed area
            ;; Positive = CCW, Negative = CW
@@ -1646,9 +1653,15 @@
                                 (+ (nth pos 1) (* py (nth up 1)) (* px radial-y))
                                 (+ (nth pos 2) (* py (nth up 2)) (* px radial-z))]))
            ;; Generate all rings
+           ;; When eval-shape-at-t is provided, evaluate it at each step
+           ;; to get varying profiles (for shape-fn support)
            rings (vec (for [i (range n-rings)]
-                        (let [theta (* i angle-step)]
-                          (vec (for [pt profile-points]
+                        (let [theta (* i angle-step)
+                              t (/ (double i) steps)
+                              ring-points (if eval-shape-at-t
+                                            (clamp-x (:points (eval-shape-at-t t)))
+                                            profile-points)]
+                          (vec (for [pt ring-points]
                                  (transform-point pt theta))))))
            ;; Flatten vertices
            vertices (vec (apply concat rings))

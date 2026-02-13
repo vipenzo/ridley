@@ -328,6 +328,26 @@
                   shapes)]
      (wrap-results results))))
 
+(defn ^:export pure-revolve-shape-fn
+  "Pure revolve with a shape-fn. Evaluates shape-fn at each revolution step.
+   Bridges shape-fn API to existing revolve pipeline.
+   t=0 at the first ring, t→1 at the last ring."
+  ([shape-fn-val] (pure-revolve-shape-fn shape-fn-val 360))
+  ([shape-fn-val angle]
+   (let [base-shape (shape-fn-val 0)
+         current-turtle @turtle-atom
+         initial-state (if current-turtle
+                         (-> (turtle/make-turtle)
+                             (assoc :position (:position current-turtle))
+                             (assoc :heading (:heading current-turtle))
+                             (assoc :up (:up current-turtle))
+                             (assoc :resolution (:resolution current-turtle))
+                             (assoc :material (:material current-turtle)))
+                         (turtle/make-turtle))
+         result-state (turtle/revolve-shape initial-state base-shape angle shape-fn-val)
+         mesh (last (:meshes result-state))]
+     mesh)))
+
 ;; Legacy version for backwards compatibility (modifies global state)
 (defn ^:export implicit-extrude-path [shape-or-shapes path]
   ;; Handle both single shape and vector of shapes (from text-shape)

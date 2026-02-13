@@ -229,6 +229,7 @@
    'pure-loft-two-shapes     gen-ops/pure-loft-two-shapes ; Loft between two shapes
    'pure-bloft               gen-ops/pure-bloft         ; Bezier-safe loft (handles self-intersection)
    'pure-revolve             gen-ops/pure-revolve       ; Pure revolve/lathe version
+   'pure-revolve-shape-fn    gen-ops/pure-revolve-shape-fn ; Revolve with shape-fn
    'add-mesh-impl       impl/implicit-add-mesh
    ;; Manifold operations
    'manifold?           manifold/manifold?
