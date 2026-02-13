@@ -388,7 +388,7 @@ At each point along a loft path, `t` goes from 0 to 1.
 
 **`woven` options:** `:warp` (6), `:weft` (4), `:amplitude` (1.0), `:thread` (0.42 — thread width as fraction of cell, 0–0.5)
 
-**`heightmap` options:** `:amplitude` (1.0), `:tile-x` (1), `:tile-y` (1), `:offset-x` (0), `:offset-y` (0)
+**`heightmap` options:** `:amplitude` (1.0), `:tile-x` (1), `:tile-y` (1), `:offset-x` (0), `:offset-y` (0), `:center` (false — when true, shifts sample range to [-0.5, 0.5])
 
 **Noise and heightmap functions** (available globally):
 
@@ -399,7 +399,16 @@ At each point along a loft path, `t` goes from 0 to 1.
 | `(fbm x y octaves)` | fbm with custom octave count |
 | `(fbm x y octaves lacunarity gain)` | fbm with full control |
 | `(mesh-to-heightmap mesh :resolution n)` | Rasterize mesh z-values into a 2D grid |
+| `(weave-heightmap :threads 4 :spacing 5 :radius 2 :resolution 128)` | Analytical weave heightmap generator |
 | `(sample-heightmap hm u v)` | Sample heightmap with bilinear interpolation (auto-tiles) |
+| `(heightmap-to-mesh hm)` | Convert heightmap to a flat XY mesh with Z from values |
+| `(mesh-bounds mesh)` | 3D bounding box `{:x [min max] :y [min max] :z [min max]}` |
+
+**`weave-heightmap` options:** `:threads` (4), `:spacing` (5), `:radius` (2), `:lift` (same as radius), `:resolution` (128), `:profile` (`:round` or `:flat`), `:thickness` (radius * 0.5, for `:flat` profile)
+
+**`mesh-to-heightmap` options:** `:resolution` (128), `:bounds` `[x0 y0 x1 y1]`, `:offset-x`, `:offset-y`, `:length-x`, `:length-y` (custom sampling window)
+
+**`heightmap-to-mesh` options:** `:z-scale` (1.0 — amplify Z), `:size` (fit into NxN square at origin)
 
 **Helpers:**
 
@@ -683,6 +692,15 @@ Check mesh status:
 (manifold? mesh)                 ; true if manifold (watertight)
 (mesh-status mesh)               ; Detailed status info
 ```
+
+Concatenate meshes without boolean operations (no Manifold required):
+
+```clojure
+(concat-meshes m1 m2 m3)        ; Variadic
+(concat-meshes [m1 m2 m3])      ; From a vector
+```
+
+Simply merges vertices and faces. Not manifold-valid, but useful for heightmap sampling, visualization, etc.
 
 ---
 

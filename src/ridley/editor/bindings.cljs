@@ -178,9 +178,12 @@
    'fbm              sfn/fbm
    'noisy            sfn/noisy
    'woven            sfn/woven
+   'weave-heightmap   sfn/weave-heightmap
+   'mesh-bounds       sfn/mesh-bounds
    'mesh-to-heightmap sfn/mesh-to-heightmap
    'sample-heightmap  sfn/sample-heightmap
    'heightmap         sfn/heightmap
+   'heightmap-to-mesh sfn/heightmap-to-mesh
    'pure-loft-shape-fn   gen-ops/pure-loft-shape-fn
    'pure-bloft-shape-fn  gen-ops/pure-bloft-shape-fn
    ;; Face operations
@@ -234,6 +237,7 @@
    'mesh-difference     manifold/difference
    'mesh-intersection   manifold/intersection
    'mesh-hull           manifold/hull
+   'concat-meshes       manifold/concat-meshes
    'solidify            manifold/solidify
    ;; Scene registry
    'add-mesh!           registry/add-mesh!

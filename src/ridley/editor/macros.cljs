@@ -878,79 +878,82 @@
 
           ;; 3-arg: (bloft X Y Z) — shape-fn mode or legacy (bloft shape tfn path)
           (= 2 n)
-          (let [[second-arg bezier-path] rest-args]
-            `(let [fa# ~first-arg]
-               (if (shape-fn? fa#)
-                 (pure-bloft-shape-fn fa# (path ~second-arg ~bezier-path))
+          (let [[second-arg bezier-path] rest-args
+                fa (gensym \"fa\")]
+            `(let [~fa ~first-arg]
+               (if (shape-fn? ~fa)
+                 (pure-bloft-shape-fn ~fa (path ~second-arg ~bezier-path))
                  ~(cond
                     (symbol? bezier-path)
                     `(let [p# ~bezier-path]
                        (if (~'path? p#)
-                         (pure-bloft fa# ~second-arg p# nil 0.1)
-                         (pure-bloft fa# ~second-arg (path ~bezier-path) nil 0.1)))
+                         (pure-bloft ~fa ~second-arg p# nil 0.1)
+                         (pure-bloft ~fa ~second-arg (path ~bezier-path) nil 0.1)))
 
                     (pathf? bezier-path)
-                    `(pure-bloft fa# ~second-arg ~bezier-path nil 0.1)
+                    `(pure-bloft ~fa ~second-arg ~bezier-path nil 0.1)
 
                     (mvmt? bezier-path)
-                    `(pure-bloft fa# ~second-arg (path ~bezier-path) nil 0.1)
+                    `(pure-bloft ~fa ~second-arg (path ~bezier-path) nil 0.1)
 
                     :else
                     `(let [p# ~bezier-path]
                        (if (~'path? p#)
-                         (pure-bloft fa# ~second-arg p# nil 0.1)
-                         (pure-bloft fa# ~second-arg (path ~bezier-path) nil 0.1)))))))
+                         (pure-bloft ~fa ~second-arg p# nil 0.1)
+                         (pure-bloft ~fa ~second-arg (path ~bezier-path) nil 0.1)))))))
 
           ;; 4-arg: (bloft X Y Z steps) — legacy with steps, or shape-fn+3-movements
           (= 3 n)
-          (let [[second-arg third-arg fourth-arg] rest-args]
-            `(let [fa# ~first-arg]
-               (if (shape-fn? fa#)
-                 (pure-bloft-shape-fn fa# (path ~@rest-args))
+          (let [[second-arg third-arg fourth-arg] rest-args
+                fa (gensym \"fa\")]
+            `(let [~fa ~first-arg]
+               (if (shape-fn? ~fa)
+                 (pure-bloft-shape-fn ~fa (path ~@rest-args))
                  ;; Legacy: (bloft shape tfn path steps)
                  ~(cond
                     (symbol? third-arg)
                     `(let [p# ~third-arg]
                        (if (~'path? p#)
-                         (pure-bloft fa# ~second-arg p# ~fourth-arg 0.1)
-                         (pure-bloft fa# ~second-arg (path ~third-arg) ~fourth-arg 0.1)))
+                         (pure-bloft ~fa ~second-arg p# ~fourth-arg 0.1)
+                         (pure-bloft ~fa ~second-arg (path ~third-arg) ~fourth-arg 0.1)))
 
                     (pathf? third-arg)
-                    `(pure-bloft fa# ~second-arg ~third-arg ~fourth-arg 0.1)
+                    `(pure-bloft ~fa ~second-arg ~third-arg ~fourth-arg 0.1)
 
                     (mvmt? third-arg)
-                    `(pure-bloft fa# ~second-arg (path ~third-arg) ~fourth-arg 0.1)
+                    `(pure-bloft ~fa ~second-arg (path ~third-arg) ~fourth-arg 0.1)
 
                     :else
                     `(let [p# ~third-arg]
                        (if (~'path? p#)
-                         (pure-bloft fa# ~second-arg p# ~fourth-arg 0.1)
-                         (pure-bloft fa# ~second-arg (path ~third-arg) ~fourth-arg 0.1)))))))
+                         (pure-bloft ~fa ~second-arg p# ~fourth-arg 0.1)
+                         (pure-bloft ~fa ~second-arg (path ~third-arg) ~fourth-arg 0.1)))))))
 
           ;; 5-arg: (bloft shape tfn path steps threshold) — legacy only
           (= 4 n)
-          (let [[second-arg third-arg fourth-arg fifth-arg] rest-args]
-            `(let [fa# ~first-arg]
-               (if (shape-fn? fa#)
-                 (pure-bloft-shape-fn fa# (path ~@rest-args))
+          (let [[second-arg third-arg fourth-arg fifth-arg] rest-args
+                fa (gensym \"fa\")]
+            `(let [~fa ~first-arg]
+               (if (shape-fn? ~fa)
+                 (pure-bloft-shape-fn ~fa (path ~@rest-args))
                  ~(cond
                     (symbol? third-arg)
                     `(let [p# ~third-arg]
                        (if (~'path? p#)
-                         (pure-bloft fa# ~second-arg p# ~fourth-arg ~fifth-arg)
-                         (pure-bloft fa# ~second-arg (path ~third-arg) ~fourth-arg ~fifth-arg)))
+                         (pure-bloft ~fa ~second-arg p# ~fourth-arg ~fifth-arg)
+                         (pure-bloft ~fa ~second-arg (path ~third-arg) ~fourth-arg ~fifth-arg)))
 
                     (pathf? third-arg)
-                    `(pure-bloft fa# ~second-arg ~third-arg ~fourth-arg ~fifth-arg)
+                    `(pure-bloft ~fa ~second-arg ~third-arg ~fourth-arg ~fifth-arg)
 
                     (mvmt? third-arg)
-                    `(pure-bloft fa# ~second-arg (path ~third-arg) ~fourth-arg ~fifth-arg)
+                    `(pure-bloft ~fa ~second-arg (path ~third-arg) ~fourth-arg ~fifth-arg)
 
                     :else
                     `(let [p# ~third-arg]
                        (if (~'path? p#)
-                         (pure-bloft fa# ~second-arg p# ~fourth-arg ~fifth-arg)
-                         (pure-bloft fa# ~second-arg (path ~third-arg) ~fourth-arg ~fifth-arg)))))))
+                         (pure-bloft ~fa ~second-arg p# ~fourth-arg ~fifth-arg)
+                         (pure-bloft ~fa ~second-arg (path ~third-arg) ~fourth-arg ~fifth-arg)))))))
 
           ;; 6+ args
           :else
@@ -965,17 +968,18 @@
        (cond
          ;; (bloft-n N shape-fn path)
          (= 1 n)
-         (let [arg (first rest-args)]
-           `(let [fa# ~first-arg]
-              (if (shape-fn? fa#)
+         (let [arg (first rest-args)
+               fa (gensym \"fa\")]
+           `(let [~fa ~first-arg]
+              (if (shape-fn? ~fa)
                 ~(cond
                    (symbol? arg)
                    `(let [p# ~arg]
                       (if (~'path? p#)
-                        (pure-bloft-shape-fn fa# p# ~steps)
-                        (pure-bloft-shape-fn fa# (path ~arg) ~steps)))
+                        (pure-bloft-shape-fn ~fa p# ~steps)
+                        (pure-bloft-shape-fn ~fa (path ~arg) ~steps)))
                    :else
-                   `(pure-bloft-shape-fn fa# ~(if (and (list? arg) (= 'path (first arg)))
+                   `(pure-bloft-shape-fn ~fa ~(if (and (list? arg) (= 'path (first arg)))
                                                  arg
                                                  `(path ~arg)) ~steps))
                 (throw (js/Error. \"bloft-n: 2-arg form requires a shape-fn as first argument\")))))

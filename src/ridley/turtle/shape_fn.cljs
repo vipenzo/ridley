@@ -247,6 +247,88 @@
                 (if warp-top? (* under weft-h) weft-h)))))))
 
 ;; ============================================================
+;; Analytical heightmap generators
+;; ============================================================
+
+(defn ^:export weave-heightmap
+  "Generate a weave pattern heightmap analytically (no mesh needed).
+   Returns a heightmap struct usable with (heightmap shape hm ...).
+   Much faster than building tube meshes + rasterizing.
+
+   :threads    - threads per direction in one tile (default 4, must be even for tiling)
+   :spacing    - center-to-center thread distance (default 5)
+   :radius     - thread radius (default 2)
+   :lift       - over/under amplitude (default: same as radius)
+   :resolution - heightmap grid size (default 128)
+   :profile    - :round or :flat (default :round)
+   :thickness  - for :flat profile, ribbon thickness (default: radius * 0.5)"
+  [& {:keys [threads spacing radius lift resolution profile thickness]
+      :or {threads 4, spacing 5, radius 2, resolution 128, profile :round}}]
+  (let [lift (or lift radius)
+        thickness (or thickness (* radius 0.5))
+        size (* threads spacing)
+        w resolution
+        h resolution
+        n (* w h)
+        data (js/Float32Array. n)
+        pi Math/PI
+        inv-s (/ 1.0 spacing)
+        ;; Background Z (below all threads)
+        z-floor (- 0 lift radius)
+        ;; Profile: distance from center → Z above centerline
+        prof (if (= profile :flat)
+               (fn [d] (if (< d radius) (* 0.5 thickness) -1e10))
+               (fn [d] (if (< d radius)
+                         (Math/sqrt (- (* radius radius) (* d d)))
+                         -1e10)))]
+    (dotimes [iy h]
+      (let [y (* (/ (+ iy 0.5) h) size)]
+        (dotimes [ix w]
+          (let [x (* (/ (+ ix 0.5) w) size)
+                ;; Nearest warp thread (runs along X, spaced in Y)
+                wi (int (Math/round (* y inv-s)))
+                dy (Math/abs (- y (* wi spacing)))
+                ;; Nearest weft thread (runs along Y, spaced in X)
+                wj (int (Math/round (* x inv-s)))
+                dx (Math/abs (- x (* wj spacing)))
+                ;; Warp centerline Z: cos gives smooth over/under
+                ;; At crossing (wi,wj): (-1)^wi * cos(πj) = (-1)^(wi+j)
+                ;; Positive = warp on top, negative = warp below
+                warp-z (when (< dy radius)
+                         (+ (* lift
+                               (if (even? wi) 1.0 -1.0)
+                               (Math/cos (* pi x inv-s)))
+                            (prof dy)))
+                ;; Weft centerline Z: opposite phase from warp
+                weft-z (when (< dx radius)
+                         (+ (* lift
+                               (if (odd? wj) 1.0 -1.0)
+                               (Math/cos (* pi y inv-s)))
+                            (prof dx)))
+                z (cond
+                    (and warp-z weft-z) (Math/max warp-z weft-z)
+                    warp-z warp-z
+                    weft-z weft-z
+                    :else z-floor)]
+            (aset data (+ ix (* iy w)) z)))))
+    ;; Normalize to [0,1]
+    (let [z-min (loop [i 0 m js/Number.POSITIVE_INFINITY]
+                  (if (>= i n) m
+                    (recur (inc i) (Math/min m (aget data i)))))
+          z-max (loop [i 0 m js/Number.NEGATIVE_INFINITY]
+                  (if (>= i n) m
+                    (recur (inc i) (Math/max m (aget data i)))))
+          z-range (- z-max z-min)]
+      (when (> z-range 0)
+        (dotimes [i n]
+          (aset data i (/ (- (aget data i) z-min) z-range))))
+      {:type :heightmap
+       :data data
+       :width w :height h
+       :bounds [0 0 size size]
+       :z-min z-min :z-max z-max})))
+
+;; ============================================================
 ;; Heightmap displacement
 ;; ============================================================
 
@@ -260,6 +342,24 @@
           [js/Number.POSITIVE_INFINITY js/Number.POSITIVE_INFINITY
            js/Number.NEGATIVE_INFINITY js/Number.NEGATIVE_INFINITY]
           verts))
+
+(defn ^:export mesh-bounds
+  "Return the 3D axis-aligned bounding box of a mesh.
+   Returns {:x [min max] :y [min max] :z [min max]}."
+  [mesh]
+  (let [verts (:vertices mesh)]
+    (reduce (fn [acc v]
+              (-> acc
+                  (update-in [:x 0] min (nth v 0))
+                  (update-in [:x 1] max (nth v 0))
+                  (update-in [:y 0] min (nth v 1))
+                  (update-in [:y 1] max (nth v 1))
+                  (update-in [:z 0] min (nth v 2))
+                  (update-in [:z 1] max (nth v 2))))
+            {:x [js/Number.POSITIVE_INFINITY js/Number.NEGATIVE_INFINITY]
+             :y [js/Number.POSITIVE_INFINITY js/Number.NEGATIVE_INFINITY]
+             :z [js/Number.POSITIVE_INFINITY js/Number.NEGATIVE_INFINITY]}
+            verts)))
 
 (defn- barycentric
   "Barycentric coordinates of point (px, py) in triangle v0-v1-v2.
@@ -296,11 +396,23 @@
 (defn ^:export mesh-to-heightmap
   "Convert a mesh to a heightmap by rasterizing max-z onto a 2D grid.
    (mesh-to-heightmap mesh :resolution 128)
-   (mesh-to-heightmap mesh :resolution 128 :bounds [x0 y0 x1 y1])"
-  [mesh & {:keys [resolution bounds] :or {resolution 128}}]
+   (mesh-to-heightmap mesh :resolution 128 :bounds [x0 y0 x1 y1])
+   (mesh-to-heightmap mesh :resolution 128 :offset-x 0 :offset-y 0 :length-x 10 :length-y 10)"
+  [mesh & {:keys [resolution bounds offset-x offset-y length-x length-y]
+           :or {resolution 128}}]
   (let [verts (:vertices mesh)
         faces (:faces mesh)
-        [x-min y-min x-max y-max] (or bounds (mesh-xy-bounds verts))
+        auto-bounds (mesh-xy-bounds verts)
+        [x-min y-min x-max y-max]
+        (cond
+          bounds bounds
+          (or offset-x offset-y length-x length-y)
+          (let [ox (or offset-x (nth auto-bounds 0))
+                oy (or offset-y (nth auto-bounds 1))
+                lx (or length-x (- (nth auto-bounds 2) (nth auto-bounds 0)))
+                ly (or length-y (- (nth auto-bounds 3) (nth auto-bounds 1)))]
+            [ox oy (+ ox lx) (+ oy ly)])
+          :else auto-bounds)
         w resolution
         h resolution
         n (* w h)
@@ -363,14 +475,69 @@
        (* (aget data i01) (- 1 fx) fy)
        (* (aget data i11) fx fy))))
 
+(defn ^:export heightmap-to-mesh
+  "Convert a heightmap back to a flat mesh for visualization/debugging.
+   The mesh lies in the XY plane with Z from the heightmap values.
+   Uses the original bounds and z-range stored in the heightmap.
+   (heightmap-to-mesh hm)                  ; original scale
+   (heightmap-to-mesh hm :z-scale 5)       ; amplify Z
+   (heightmap-to-mesh hm :size 20)         ; fit into 20x20 square at origin"
+  [hm & {:keys [z-scale size] :or {z-scale 1.0}}]
+  (let [data (:data hm)
+        w (:width hm)
+        h (:height hm)
+        [x-min y-min x-max y-max] (:bounds hm)
+        x-span (- x-max x-min)
+        y-span (- y-max y-min)
+        z-min (:z-min hm)
+        z-max (:z-max hm)
+        z-range (- z-max z-min)
+        ;; When :size is given, scale XY to fit in [-size/2, size/2]
+        ;; and scale Z proportionally
+        xy-scale (when size (/ size (max x-span y-span)))
+        x-off (if size (* -0.5 size) 0)
+        y-off (if size (* -0.5 size) 0)
+        ;; Build vertices: one per grid cell
+        verts (vec (for [iy (range h)
+                         ix (range w)]
+                     (let [fx (/ (+ ix 0.5) w)
+                           fy (/ (+ iy 0.5) h)
+                           x (if size
+                               (+ x-off (* fx size))
+                               (+ x-min (* fx x-span)))
+                           y (if size
+                               (+ y-off (* fy size))
+                               (+ y-min (* fy y-span)))
+                           val (aget data (+ ix (* iy w)))
+                           raw-z (+ z-min (* val z-range))
+                           z (* z-scale (if size (* raw-z xy-scale) raw-z))]
+                       [x y z])))
+        ;; Build faces: two triangles per grid quad
+        faces (vec (for [iy (range (dec h))
+                         ix (range (dec w))
+                         :let [i00 (+ ix (* iy w))
+                               i10 (+ (inc ix) (* iy w))
+                               i01 (+ ix (* (inc iy) w))
+                               i11 (+ (inc ix) (* (inc iy) w))]
+                         tri [[i00 i10 i11] [i00 i11 i01]]]
+                     tri))]
+    {:type :mesh
+     :vertices verts
+     :faces faces
+     :creation-pose {:position [0 0 0]
+                     :heading [1 0 0]
+                     :up [0 0 1]}}))
+
 (defn ^:export heightmap
   "Heightmap displacement shape-fn.
-   (heightmap (circle 20 128) hm :amplitude 2 :tile-x 4 :tile-y 3)"
-  [shape-or-fn hm & {:keys [amplitude tile-x tile-y offset-x offset-y]
+   (heightmap (circle 20 128) hm :amplitude 2 :tile-x 4 :tile-y 3)
+   (heightmap (circle 20 128) hm :amplitude 2 :center true)  ; centered [-0.5, 0.5]"
+  [shape-or-fn hm & {:keys [amplitude tile-x tile-y offset-x offset-y center]
                       :or {amplitude 1.0 tile-x 1 tile-y 1
-                           offset-x 0 offset-y 0}}]
+                           offset-x 0 offset-y 0 center false}}]
   (displaced shape-or-fn
     (fn [p t]
       (let [u (+ offset-x (* tile-x (/ (+ (angle p) Math/PI) (* 2 Math/PI))))
-            v (+ offset-y (* tile-y t))]
-        (* amplitude (sample-heightmap hm u v))))))
+            v (+ offset-y (* tile-y t))
+            s (sample-heightmap hm u v)]
+        (* amplitude (if center (- s 0.5) s))))))

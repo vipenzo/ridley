@@ -239,12 +239,19 @@ Convert a mesh to a heightmap by sampling maximum z values on a grid:
 ```clojure
 (mesh-to-heightmap mesh :resolution 128)
 (mesh-to-heightmap mesh :resolution 128 :bounds [x-min y-min x-max y-max])
+(mesh-to-heightmap mesh :resolution 128 :offset-x 0 :offset-y 0 :length-x 10 :length-y 10)
 ```
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `:resolution` | 128 | Grid size (NxN cells) |
 | `:bounds` | auto (mesh AABB) | Sampling region `[x-min y-min x-max y-max]` |
+| `:offset-x` | mesh x-min | X origin for cropping region |
+| `:offset-y` | mesh y-min | Y origin for cropping region |
+| `:length-x` | mesh x-span | Width of cropping region |
+| `:length-y` | mesh y-span | Height of cropping region |
+
+The `:offset-x`/`:offset-y`/`:length-x`/`:length-y` parameters provide an alternative to `:bounds` for specifying the sampling region. They define a rectangle starting at `(offset-x, offset-y)` with the given lengths. Any parameter not provided falls back to the mesh's actual extents. This is useful for cropping a heightmap to a specific area of a larger mesh.
 
 Returns a heightmap object:
 
@@ -269,24 +276,87 @@ Read a value from a heightmap with bilinear interpolation:
 Bilinear interpolation between the four surrounding grid cells for smooth results.
 Out-of-range u, v are wrapped (mod 1) for automatic tiling.
 
+#### heightmap-to-mesh
+
+Convert a heightmap back to a flat mesh for visualization or debugging. The mesh lies in the XY plane with Z values from the heightmap:
+
+```clojure
+(heightmap-to-mesh hm)                  ;; original scale and position
+(heightmap-to-mesh hm :z-scale 5)       ;; amplify Z by 5x
+(heightmap-to-mesh hm :size 20)         ;; fit into 20x20 square centered at origin
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `:z-scale` | 1.0 | Multiplier for Z values |
+| `:size` | nil | Normalize XY to a square of this size centered at origin; Z is scaled proportionally |
+
+When `:size` is provided, the mesh is repositioned so the XY extent fits within `[-size/2, size/2]` and Z is scaled proportionally. This is useful for previewing heightmaps at a consistent size regardless of the source mesh dimensions.
+
+#### weave-heightmap
+
+Generate a weave pattern heightmap analytically, without building an intermediate mesh. This is much faster than constructing tube geometry and rasterizing it with `mesh-to-heightmap`. Returns a heightmap struct usable with the `heightmap` shape-fn.
+
+```clojure
+(weave-heightmap)                                          ;; defaults
+(weave-heightmap :threads 6 :spacing 4 :radius 1.5)       ;; custom weave
+(weave-heightmap :threads 8 :profile :flat :thickness 1)   ;; flat ribbons
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `:threads` | 4 | Threads per direction in one tile (must be even for seamless tiling) |
+| `:spacing` | 5 | Center-to-center thread distance |
+| `:radius` | 2 | Thread radius |
+| `:lift` | same as `:radius` | Over/under amplitude (how far threads rise above/below the midline) |
+| `:resolution` | 128 | Heightmap grid size (NxN) |
+| `:profile` | `:round` | Thread cross-section: `:round` (circular) or `:flat` (ribbon) |
+| `:thickness` | `radius * 0.5` | Ribbon thickness (only used with `:profile :flat`) |
+
+The function computes a single tile of size `threads * spacing` in each direction. Each thread follows a sinusoidal over/under path with the specified lift. At crossing points, the thread on top is determined by a checkerboard rule (alternating warp-on-top / weft-on-top). The result is normalized to [0, 1] and can be tiled seamlessly when `:threads` is even.
+
+#### mesh-bounds
+
+Return the 3D axis-aligned bounding box of a mesh. Useful for inspecting mesh extents when setting up heightmap cropping parameters.
+
+```clojure
+(mesh-bounds my-mesh)
+;; => {:x [-10 10] :y [-5 5] :z [0 3]}
+```
+
+Returns a map with `:x`, `:y`, and `:z` keys, each containing a `[min max]` vector.
+
+#### concat-meshes
+
+Concatenate multiple meshes into one by combining their vertices and faces. Unlike `mesh-union`, this does NOT perform boolean operations -- it simply merges the geometry. The result is not manifold-valid but works for heightmap sampling, visualization, and similar use cases where geometric correctness is not required.
+
+```clojure
+(concat-meshes [mesh1 mesh2 mesh3])     ;; vector of meshes
+(concat-meshes mesh1 mesh2 mesh3)       ;; variadic
+```
+
+This is useful when building complex heightmap source patterns from many pieces (e.g., an array of tubes for a weave) where a boolean union would be slow and unnecessary.
+
 #### heightmap (shape-fn)
 
 Create a shape-fn that displaces a shape using a heightmap:
 
 ```clojure
 (heightmap shape hm :amplitude a)
-(heightmap shape hm :amplitude a :tile true)
 (heightmap shape hm :amplitude a :tile-x nx :tile-y ny)
+(heightmap shape hm :amplitude a :center true)
 ```
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `:amplitude` | 1.0 | Maximum displacement distance |
-| `:tile` | false | Repeat pattern to fill surface |
 | `:tile-x` | 1 | Number of horizontal repeats (around profile) |
 | `:tile-y` | 1 | Number of vertical repeats (along path) |
 | `:offset-x` | 0 | Horizontal offset (0-1) for pattern alignment |
 | `:offset-y` | 0 | Vertical offset (0-1) for pattern alignment |
+| `:center` | false | Shift heightmap values from [0, 1] to [-0.5, +0.5] |
+
+When `:center` is `true`, each sampled value is shifted by -0.5 before being multiplied by amplitude. This means the displacement ranges from `-amplitude/2` to `+amplitude/2` instead of `0` to `amplitude`. This is useful for patterns like weaves where the displacement should go both inward and outward from the base surface.
 
 ### Implementation
 
@@ -447,6 +517,30 @@ displacement is computed directly per vertex.
 | `:amplitude` | 1.0 | Maximum radial displacement |
 | `:thread` | 0.42 | Thread width as fraction of cell (0–0.5) |
 
+#### Woven Fabric via Heightmap
+
+An alternative approach uses `weave-heightmap` to generate an analytical weave pattern and applies it with the `heightmap` shape-fn. This is useful when you want to combine the weave with `:center` for symmetric displacement or with tiling control:
+
+```clojure
+;; Generate a weave heightmap tile
+(def whm (weave-heightmap :threads 6 :spacing 4 :radius 1.5))
+
+;; Apply centered (displacement goes both in and out)
+(register woven-vase
+  (loft-n 96
+    (heightmap (circle 18 96) whm
+      :amplitude 2 :tile-x 6 :tile-y 4 :center true)
+    (f 50)))
+
+;; Flat ribbon weave
+(def ribbon-hm (weave-heightmap :threads 4 :profile :flat :thickness 1))
+(register ribbon-basket
+  (loft-n 96
+    (heightmap (circle 20 96) ribbon-hm
+      :amplitude 1.5 :tile-x 8 :tile-y 6 :center true)
+    (f 60)))
+```
+
 #### Embossed Text
 
 ```clojure
@@ -527,6 +621,10 @@ All functions should be registered in the SCI context:
 'fbm                fbm
 'mesh-to-heightmap  mesh-to-heightmap
 'sample-heightmap   sample-heightmap
+'heightmap-to-mesh  heightmap-to-mesh
+'weave-heightmap    weave-heightmap
+'mesh-bounds        mesh-bounds
+'concat-meshes      concat-meshes
 
 ;; Shape-fns (add to existing shape-fn registrations)
 'noisy              noisy

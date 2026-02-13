@@ -466,6 +466,43 @@
             nil)))))) 
 
 ;; ============================================================
+;; Simple mesh concatenation (no Manifold required)
+;; ============================================================
+
+(defn concat-meshes
+  "Concatenate multiple meshes into one by combining vertices and faces.
+   Unlike mesh-union, this does NOT perform boolean operations — it simply
+   merges the geometry. The result is not manifold-valid but works for
+   heightmap sampling, visualization, etc.
+
+   Usage:
+   (concat-meshes [mesh1 mesh2 mesh3])
+   (concat-meshes mesh1 mesh2 mesh3)"
+  [& args]
+  (let [meshes (if (and (= 1 (count args)) (sequential? (first args)))
+                 (first args)
+                 args)]
+    (when (seq meshes)
+      (loop [remaining (seq meshes)
+             all-verts []
+             all-faces []
+             offset 0]
+        (if (not remaining)
+          (schema/assert-mesh!
+           {:type :mesh
+            :vertices all-verts
+            :faces all-faces
+            :creation-pose default-creation-pose})
+          (let [m (first remaining)
+                verts (:vertices m)
+                faces (:faces m)
+                shifted (mapv (fn [face] (mapv #(+ % offset) face)) faces)]
+            (recur (next remaining)
+                   (into all-verts verts)
+                   (into all-faces shifted)
+                   (+ offset (count verts)))))))))
+
+;; ============================================================
 ;; CrossSection extrusion (handles holes natively)
 ;; ============================================================
 
