@@ -20,7 +20,8 @@
             [ridley.export.stl :as stl]
             [ridley.anim.core :as anim]
             [ridley.anim.easing :as easing]
-            [ridley.anim.preprocess :as anim-preprocess]))
+            [ridley.anim.preprocess :as anim-preprocess]
+            [ridley.turtle.shape-fn :as sfn]))
 
 (def base-bindings
   "Bindings available in both explicit and implicit sections."
@@ -161,6 +162,27 @@
    'translate    xform/translate
    'morph        xform/morph
    'resample     xform/resample
+   ;; Shape-fn system (shapes that vary along the extrusion path)
+   'shape-fn         sfn/shape-fn
+   'shape-fn?        sfn/shape-fn?
+   'tapered          sfn/tapered
+   'twisted          sfn/twisted
+   'rugged           sfn/rugged
+   'fluted           sfn/fluted
+   'displaced        sfn/displaced
+   'morphed          sfn/morphed
+   'angle            sfn/angle
+   'displace-radial  sfn/displace-radial
+   ;; Procedural noise and displacement
+   'noise            sfn/noise
+   'fbm              sfn/fbm
+   'noisy            sfn/noisy
+   'woven            sfn/woven
+   'mesh-to-heightmap sfn/mesh-to-heightmap
+   'sample-heightmap  sfn/sample-heightmap
+   'heightmap         sfn/heightmap
+   'pure-loft-shape-fn   gen-ops/pure-loft-shape-fn
+   'pure-bloft-shape-fn  gen-ops/pure-bloft-shape-fn
    ;; Face operations
    'list-faces   faces/list-faces
    'get-face     faces/get-face

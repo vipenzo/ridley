@@ -8,9 +8,11 @@
             [ridley.turtle.transform :as xform]
             [ridley.turtle.loft :as loft]
             [ridley.turtle.extrusion :as extrusion]
+            [ridley.turtle.shape-fn :as sfn]
             [ridley.clipper.core :as clipper]))
 
 (declare pure-bloft)
+(declare pure-loft-path)
 
 (defn- bezier-path-has-self-intersection?
   "Quick check: would extruding this shape along this bezier path cause
@@ -72,35 +74,38 @@
 (defn ^:export pure-extrude-path
   "Pure extrude function - creates mesh without side effects.
    Starts from current turtle position/orientation.
+   For bezier paths, delegates to loft with identity transform (avoids
+   shortening artifacts from micro-rotations in bezier walk steps).
    For bezier paths with self-intersecting rings, automatically uses bloft."
   [shape-or-shapes path]
-  (let [shapes (if (vector? shape-or-shapes) shape-or-shapes [shape-or-shapes])
-        current-turtle @turtle-atom
-        initial-state (if current-turtle
-                        (-> (turtle/make-turtle)
-                            (assoc :position (:position current-turtle))
-                            (assoc :heading (:heading current-turtle))
-                            (assoc :up (:up current-turtle))
-                            (assoc :joint-mode (:joint-mode current-turtle))
-                            (assoc :resolution (:resolution current-turtle))
-                            (assoc :material (:material current-turtle)))
-                        (turtle/make-turtle))]
-    (if (and (:bezier path)
-             (bezier-path-has-self-intersection? initial-state (first shapes) path))
-      ;; Bezier with tight curves: use bloft
-      (do (js/console.log "extrude: bezier path has self-intersecting rings, using bloft")
-          (pure-bloft shape-or-shapes (fn [s _] s) path nil 0.1))
-      ;; Normal path OR gentle bezier: standard extrude
-      (let [results (reduce
-                     (fn [acc shape]
-                       (let [state (turtle/extrude-from-path initial-state shape path)
-                             mesh (last (:meshes state))]
-                         (if mesh (conj acc mesh) acc)))
-                     []
-                     shapes)]
-        (if (= 1 (count results))
-          (first results)
-          results)))))
+  (if (:bezier path)
+    ;; Bezier paths: use loft with identity transform.
+    ;; extrude's analyze-open-path computes shortening from summed absolute
+    ;; rotation angles, but bezier micro-rotations (chord→final→chord) cause
+    ;; excessive shortening even when the net heading change is small.
+    (pure-loft-path shape-or-shapes (fn [s _] s) path)
+    ;; Normal path: standard extrude
+    (let [shapes (if (vector? shape-or-shapes) shape-or-shapes [shape-or-shapes])
+          current-turtle @turtle-atom
+          initial-state (if current-turtle
+                          (-> (turtle/make-turtle)
+                              (assoc :position (:position current-turtle))
+                              (assoc :heading (:heading current-turtle))
+                              (assoc :up (:up current-turtle))
+                              (assoc :joint-mode (:joint-mode current-turtle))
+                              (assoc :resolution (:resolution current-turtle))
+                              (assoc :material (:material current-turtle)))
+                          (turtle/make-turtle))
+          results (reduce
+                   (fn [acc shape]
+                     (let [state (turtle/extrude-from-path initial-state shape path)
+                           mesh (last (:meshes state))]
+                       (if mesh (conj acc mesh) acc)))
+                   []
+                   shapes)]
+      (if (= 1 (count results))
+        (first results)
+        results))))
 
 (defn- combine-meshes
   "Combine multiple meshes into one by concatenating vertices and reindexing faces.
@@ -239,6 +244,28 @@
                   []
                   shapes)]
      (wrap-results results))))
+
+;; ============================================================
+;; Shape-fn adapters
+;; ============================================================
+
+(defn ^:export pure-loft-shape-fn
+  "Pure loft with a shape-fn. Evaluates shape-fn at each step along the path.
+   Bridges shape-fn API to existing loft pipeline."
+  ([shape-fn-val path] (pure-loft-shape-fn shape-fn-val path 16))
+  ([shape-fn-val path steps]
+   (let [base-shape (shape-fn-val 0)
+         transform-fn (fn [_shape t] (shape-fn-val t))]
+     (pure-loft-path base-shape transform-fn path steps))))
+
+(defn ^:export pure-bloft-shape-fn
+  "Bezier-safe loft with a shape-fn. Handles self-intersecting paths."
+  ([shape-fn-val path] (pure-bloft-shape-fn shape-fn-val path nil 0.1))
+  ([shape-fn-val path steps] (pure-bloft-shape-fn shape-fn-val path steps 0.1))
+  ([shape-fn-val path steps threshold]
+   (let [base-shape (shape-fn-val 0)
+         transform-fn (fn [_shape t] (shape-fn-val t))]
+     (pure-bloft base-shape transform-fn path steps threshold))))
 
 (defn- clip-shape-for-revolve
   "Clip a shape to x >= 0 for revolve. Vertices with x < 0 would cross

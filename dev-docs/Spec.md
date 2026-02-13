@@ -335,6 +335,85 @@ For loft operations that morph shapes:
 (resample shape n)               ; Resample to n points (for morph compatibility)
 ```
 
+### Shape Functions (shape-fn)
+
+Shape functions are shapes that vary along the extrusion path. Instead of passing a
+separate transform function to `loft`, shape-fns carry the transformation logic
+inside the shape itself, enabling composable, reusable profiles.
+
+A shape-fn is a function `(fn [t] -> shape)` with metadata `{:type :shape-fn}`.
+At each point along a loft path, `t` goes from 0 to 1.
+
+```clojure
+;; Static shape — use extrude (fast, no per-ring evaluation)
+(extrude (circle 20) (f 30))
+
+;; Shape-fn — use loft (evaluates shape at each step)
+(loft (tapered (circle 20) :to 0) (f 30))
+```
+
+**Built-in shape-fns:**
+
+| Function | Description |
+|----------|-------------|
+| `(tapered shape :to ratio)` | Scale from 1 (or `:from`) to `:to` along path |
+| `(twisted shape :angle deg)` | Rotate progressively (default 360) |
+| `(rugged shape :amplitude a :frequency f)` | Radial sin displacement (constant along t) |
+| `(fluted shape :flutes n :depth d)` | Longitudinal cos grooves |
+| `(displaced shape (fn [p t] -> offset))` | Custom per-vertex radial displacement |
+| `(morphed shape-a shape-b)` | Interpolate between two shapes (same point count) |
+| `(noisy shape :amplitude a :scale s)` | Noise-based displacement (see options below) |
+| `(woven shape :warp n :weft m)` | Interlocking over/under woven fabric pattern |
+| `(heightmap shape hm :amplitude a)` | Displacement from a rasterized heightmap |
+
+**Composition** via `->` threading:
+
+```clojure
+;; Fluted column that tapers
+(-> (circle 15 48) (fluted :flutes 20 :depth 1.5) (tapered :to 0.85))
+
+;; Twisted rectangle that shrinks
+(-> (rect 30 10) (twisted :angle 180) (tapered :to 0.3))
+```
+
+**Custom shape-fn:**
+
+```clojure
+(shape-fn (circle 20)
+  (fn [shape t]
+    (scale shape (+ 0.6 (* 0.4 (sin (* t PI)))))))
+```
+
+**`noisy` options:** `:amplitude` (1.0), `:scale` (3.0), `:scale-x`, `:scale-y`, `:octaves` (1), `:seed` (0)
+
+**`woven` options:** `:warp` (6), `:weft` (4), `:amplitude` (1.0), `:thread` (0.42 — thread width as fraction of cell, 0–0.5)
+
+**`heightmap` options:** `:amplitude` (1.0), `:tile-x` (1), `:tile-y` (1), `:offset-x` (0), `:offset-y` (0)
+
+**Noise and heightmap functions** (available globally):
+
+| Function | Description |
+|----------|-------------|
+| `(noise x y)` | 2D deterministic continuous noise, returns ~[-1, 1] |
+| `(fbm x y)` | Fractal Brownian Motion — layered noise (4 octaves default) |
+| `(fbm x y octaves)` | fbm with custom octave count |
+| `(fbm x y octaves lacunarity gain)` | fbm with full control |
+| `(mesh-to-heightmap mesh :resolution n)` | Rasterize mesh z-values into a 2D grid |
+| `(sample-heightmap hm u v)` | Sample heightmap with bilinear interpolation (auto-tiles) |
+
+**Helpers:**
+
+| Function | Description |
+|----------|-------------|
+| `(shape-fn base transform-fn)` | Create shape-fn from base + `(fn [shape t] -> shape)` |
+| `(shape-fn? x)` | Check if x is a shape-fn |
+| `(angle [x y])` | Angle (radians) of 2D point from origin |
+| `(displace-radial shape offset-fn)` | Displace points radially from centroid |
+
+**Resolution considerations:**
+- Circumferential detail: use `(circle r n)` or `(resample shape n)` — points per ring >= 2 x frequency
+- Longitudinal detail: use `loft-n` with higher step count
+
 ### Shape Preview (Stamp)
 
 Visualize a 2D shape at the current turtle position/orientation as a semi-transparent surface.
@@ -487,7 +566,27 @@ Creates a manifold mesh with no caps — last ring connects to first.
 
 ### Loft
 
-Extrude with shape transformation based on progress:
+Extrude with shape transformation based on progress. Supports two modes:
+
+**Shape-fn mode** (preferred): pass a shape-fn as first argument, remaining args are movements:
+
+```clojure
+;; Cone (tapers to zero)
+(register cone (loft (tapered (circle 20) :to 0) (f 30)))
+
+;; Twist while extruding
+(register twisted (loft (twisted (rect 20 10) :angle 90) (f 30)))
+
+;; Composed: fluted column that tapers
+(register column
+  (loft (-> (circle 15 48) (fluted :flutes 20 :depth 1.5) (tapered :to 0.85))
+    (f 80)))
+
+;; With custom step count
+(register smooth-cone (loft-n 32 (tapered (circle 20) :to 0) (f 30)))
+```
+
+**Legacy mode**: pass a plain shape + transform function + movements:
 
 ```clojure
 ;; Transform function receives (shape t) where t: 0->1
@@ -507,12 +606,6 @@ Extrude with shape transformation based on progress:
   (loft (circle 20)
     (circle 10)                     ; End shape (must be same point count)
     (f 40)))
-
-;; With custom step count for smoother result
-(register smooth-cone
-  (loft-n 32 (circle 20)
-    #(scale %1 (- 1 %2))
-    (f 30)))
 ```
 
 Default: 16 steps. Returns mesh without side effects.
@@ -1332,6 +1425,7 @@ src/ridley/
 ├── turtle/
 │   ├── core.cljs            # Turtle state + movement
 │   ├── shape.cljs           # 2D shape definitions
+│   ├── shape_fn.cljs        # Shape functions (varying profiles)
 │   ├── transform.cljs       # Shape transformations
 │   └── text.cljs            # Text to shape conversion
 ├── geometry/

@@ -434,6 +434,10 @@
                           :heading (:heading state)
                           :up (:up state)}
            commands (:commands path)
+           ;; Apply initial rotations before the first forward command
+           ;; (bezier paths often start with th/tv to orient toward the first chord)
+           initial-rotations (take-while #(not= :f (:cmd %)) commands)
+           state-with-initial-heading (reduce apply-rotation-to-state state initial-rotations)
            segments (analyze-loft-path commands)
            n-segments (count segments)
            initial-radius (shape-radius shape)
@@ -445,7 +449,7 @@
        (letfn [(compute-corner-data []
                  ;; Use visible distances only for taper/radius; hidden distance is only positional
                  (loop [idx 0
-                        s state
+                        s state-with-initial-heading
                         acc-visible 0
                         results []]
                    (if (>= idx n-segments)
@@ -509,7 +513,7 @@
              (let [joint-mode (or (:joint-mode state) :flat)
                    result
                    (loop [seg-idx 0
-                          s state
+                          s state-with-initial-heading
                           taper-acc 0         ;; effective distance travelled so far (for t)
                           prev-rn 0           ;; carry start offset from previous corner
                           acc-rings []        ;; accumulated rings for current smooth section

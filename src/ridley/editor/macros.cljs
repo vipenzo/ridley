@@ -624,130 +624,376 @@
 
    ;; loft: like extrude but with shape transformation based on progress
    ;; PURE: returns mesh without side effects (use register to make visible)
-   ;; (loft (circle 20) #(scale %1 (- 1 %2)) (f 30)) - cone (transform function)
-   ;; (loft (circle 20) (circle 10) (f 40)) - taper (two shapes)
-   ;; (loft (circle 20) #(scale %1 (- 1 %2)) my-path) - cone along path
+   ;;
+   ;; Shape-fn mode (shape varies along path):
+   ;; (loft (tapered (circle 20) :to 0) (f 30))              - cone
+   ;; (loft (twisted (rect 20 10) :angle 90) (f 40))         - twist
+   ;; (loft (-> (circle 20) (fluted :flutes 12) (tapered :to 0)) (f 50))
+   ;;
+   ;; Legacy transform-fn mode:
+   ;; (loft (circle 20) #(scale %1 (- 1 %2)) (f 30))        - cone
    ;; (loft (rect 20 10) #(rotate-shape %1 (* %2 90)) (f 30)) - twist
-   ;; Transform fn receives (shape t) where t goes from 0 to 1
-   ;; Default: 16 steps
+   ;;
+   ;; Two-shape mode:
+   ;; (loft (circle 20) (circle 10) (f 40))                  - taper between shapes
+   ;;
    ;; Returns the created mesh (can be bound with def)
-   (defmacro loft [shape transform-fn-or-shape & movements]
-     (if (= 1 (count movements))
-       (let [arg (first movements)]
-         (cond
-           ;; Symbol - might be a pre-defined path, check at runtime
-           (symbol? arg)
-           `(let [arg# ~arg
-                  tfn# ~transform-fn-or-shape]
-              (if (shape? tfn#)
-                ;; Two-shape loft
-                (if (path? arg#)
-                  (pure-loft-two-shapes ~shape tfn# arg#)
-                  (pure-loft-two-shapes ~shape tfn# (path ~arg)))
-                ;; Transform function loft
-                (if (path? arg#)
-                  (pure-loft-path ~shape tfn# arg#)
-                  (pure-loft-path ~shape tfn# (path ~arg)))))
+   (defmacro loft [first-arg & rest-args]
+     (let [n (count rest-args)
+           mvmt? (fn [x] (and (list? x) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v
+                                                       'bezier-to 'bezier-to-anchor
+                                                       'bezier-as} (first x))))
+           path? (fn [x] (and (list? x) (= 'path (first x))))]
+       (cond
+         ;; 2-arg: (loft shape-fn movement/path)
+         ;; Only shape-fn mode — legacy always requires 3+ args
+         (= 1 n)
+         (let [arg (first rest-args)]
+           (cond
+             (symbol? arg)
+             `(let [fa# ~first-arg
+                    a# ~arg]
+                (if (shape-fn? fa#)
+                  (if (~'path? a#)
+                    (pure-loft-shape-fn fa# a#)
+                    (pure-loft-shape-fn fa# (path ~arg)))
+                  (throw (js/Error. \"loft: 2-arg form requires a shape-fn as first argument. For plain shapes use (loft shape transform-fn movements...)\"))))
 
-           ;; List starting with path - use directly
-           (and (list? arg) (= 'path (first arg)))
-           `(let [tfn# ~transform-fn-or-shape]
-              (if (shape? tfn#)
-                (pure-loft-two-shapes ~shape tfn# ~arg)
-                (pure-loft-path ~shape tfn# ~arg)))
+             (path? arg)
+             `(let [fa# ~first-arg]
+                (if (shape-fn? fa#)
+                  (pure-loft-shape-fn fa# ~arg)
+                  (throw (js/Error. \"loft: 2-arg form requires a shape-fn as first argument\"))))
 
-           ;; List starting with turtle movement - wrap in path
-           (and (list? arg) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v 'bezier-to 'bezier-to-anchor 'bezier-as} (first arg)))
-           `(let [tfn# ~transform-fn-or-shape]
-              (if (shape? tfn#)
-                (pure-loft-two-shapes ~shape tfn# (path ~arg))
-                (pure-loft-path ~shape tfn# (path ~arg))))
+             (mvmt? arg)
+             `(let [fa# ~first-arg]
+                (if (shape-fn? fa#)
+                  (pure-loft-shape-fn fa# (path ~arg))
+                  (throw (js/Error. \"loft: 2-arg form requires a shape-fn as first argument\"))))
 
-           ;; Any other expression - check at runtime if it's a path
-           :else
-           `(let [result# ~arg
-                  tfn# ~transform-fn-or-shape]
-              (if (shape? tfn#)
-                (if (path? result#)
-                  (pure-loft-two-shapes ~shape tfn# result#)
-                  (pure-loft-two-shapes ~shape tfn# (path ~arg)))
-                (if (path? result#)
-                  (pure-loft-path ~shape tfn# result#)
-                  (pure-loft-path ~shape tfn# (path ~arg)))))))
-       ;; Multiple movements - wrap in path macro
-       `(let [tfn# ~transform-fn-or-shape]
-          (if (shape? tfn#)
-            (pure-loft-two-shapes ~shape tfn# (path ~@movements))
-            (pure-loft-path ~shape tfn# (path ~@movements))))))
+             :else
+             `(let [fa# ~first-arg
+                    r# ~arg]
+                (if (shape-fn? fa#)
+                  (if (~'path? r#)
+                    (pure-loft-shape-fn fa# r#)
+                    (pure-loft-shape-fn fa# (path ~arg)))
+                  (throw (js/Error. \"loft: 2-arg form requires a shape-fn as first argument\"))))))
+
+         ;; 3-arg: (loft X Y Z) — shape-fn+2-movements OR legacy+1-movement
+         (= 2 n)
+         (let [[second-arg movement] rest-args]
+           (cond
+             (symbol? movement)
+             `(let [fa# ~first-arg]
+                (if (shape-fn? fa#)
+                  (pure-loft-shape-fn fa# (path ~second-arg ~movement))
+                  (let [arg# ~movement
+                        tfn# ~second-arg]
+                    (if (~'shape? tfn#)
+                      (if (~'path? arg#)
+                        (pure-loft-two-shapes fa# tfn# arg#)
+                        (pure-loft-two-shapes fa# tfn# (path ~movement)))
+                      (if (~'path? arg#)
+                        (pure-loft-path fa# tfn# arg#)
+                        (pure-loft-path fa# tfn# (path ~movement)))))))
+
+             (path? movement)
+             `(let [fa# ~first-arg]
+                (if (shape-fn? fa#)
+                  (pure-loft-shape-fn fa# (path ~second-arg ~movement))
+                  (let [tfn# ~second-arg]
+                    (if (~'shape? tfn#)
+                      (pure-loft-two-shapes fa# tfn# ~movement)
+                      (pure-loft-path fa# tfn# ~movement)))))
+
+             (mvmt? movement)
+             `(let [fa# ~first-arg]
+                (if (shape-fn? fa#)
+                  (pure-loft-shape-fn fa# (path ~second-arg ~movement))
+                  (let [tfn# ~second-arg]
+                    (if (~'shape? tfn#)
+                      (pure-loft-two-shapes fa# tfn# (path ~movement))
+                      (pure-loft-path fa# tfn# (path ~movement))))))
+
+             :else
+             `(let [fa# ~first-arg]
+                (if (shape-fn? fa#)
+                  (pure-loft-shape-fn fa# (path ~second-arg ~movement))
+                  (let [result# ~movement
+                        tfn# ~second-arg]
+                    (if (~'shape? tfn#)
+                      (if (~'path? result#)
+                        (pure-loft-two-shapes fa# tfn# result#)
+                        (pure-loft-two-shapes fa# tfn# (path ~movement)))
+                      (if (~'path? result#)
+                        (pure-loft-path fa# tfn# result#)
+                        (pure-loft-path fa# tfn# (path ~movement)))))))))
+
+         ;; 4+ args: (loft X Y Z W...) — shape-fn+many-movements OR legacy+many-movements
+         :else
+         (let [[second-arg & movements] rest-args]
+           `(let [fa# ~first-arg]
+              (if (shape-fn? fa#)
+                (pure-loft-shape-fn fa# (path ~@rest-args))
+                (let [tfn# ~second-arg]
+                  (if (~'shape? tfn#)
+                    (pure-loft-two-shapes fa# tfn# (path ~@(vec movements)))
+                    (pure-loft-path fa# tfn# (path ~@(vec movements)))))))))))
 
    ;; loft-n: loft with custom step count
-   ;; (loft-n 32 (circle 20) #(scale %1 (- 1 %2)) (f 30)) - smoother cone
+   ;; (loft-n 32 (tapered (circle 20) :to 0) (f 30))         - shape-fn
+   ;; (loft-n 32 (circle 20) #(scale %1 (- 1 %2)) (f 30))   - legacy
    ;; Returns the created mesh (can be bound with def)
-   (defmacro loft-n [steps shape transform-fn & movements]
-     (if (= 1 (count movements))
-       (let [arg (first movements)]
-         (cond
-           ;; Symbol - might be a pre-defined path, check at runtime
-           (symbol? arg)
-           `(let [arg# ~arg]
-              (if (path? arg#)
-                (pure-loft-path ~shape ~transform-fn arg# ~steps)
-                (pure-loft-path ~shape ~transform-fn (path ~arg) ~steps)))
+   (defmacro loft-n [steps first-arg & rest-args]
+     (let [n (count rest-args)
+           mvmt? (fn [x] (and (list? x) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v
+                                                       'bezier-to 'bezier-to-anchor
+                                                       'bezier-as} (first x))))
+           pathf? (fn [x] (and (list? x) (= 'path (first x))))]
+       (cond
+         ;; 2-arg after steps: (loft-n N shape-fn movement)
+         (= 1 n)
+         (let [arg (first rest-args)]
+           (cond
+             (symbol? arg)
+             `(let [fa# ~first-arg
+                    a# ~arg]
+                (if (shape-fn? fa#)
+                  (if (~'path? a#)
+                    (pure-loft-shape-fn fa# a# ~steps)
+                    (pure-loft-shape-fn fa# (path ~arg) ~steps))
+                  (throw (js/Error. \"loft-n: 2-arg form requires a shape-fn as first argument\"))))
 
-           ;; List starting with path - use directly
-           (and (list? arg) (= 'path (first arg)))
-           `(pure-loft-path ~shape ~transform-fn ~arg ~steps)
+             (pathf? arg)
+             `(let [fa# ~first-arg]
+                (if (shape-fn? fa#)
+                  (pure-loft-shape-fn fa# ~arg ~steps)
+                  (throw (js/Error. \"loft-n: 2-arg form requires a shape-fn as first argument\"))))
 
-           ;; List starting with turtle movement - wrap in path
-           (and (list? arg) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v 'bezier-to 'bezier-as} (first arg)))
-           `(pure-loft-path ~shape ~transform-fn (path ~arg) ~steps)
+             (mvmt? arg)
+             `(let [fa# ~first-arg]
+                (if (shape-fn? fa#)
+                  (pure-loft-shape-fn fa# (path ~arg) ~steps)
+                  (throw (js/Error. \"loft-n: 2-arg form requires a shape-fn as first argument\"))))
 
-           ;; Any other expression - check at runtime if it's a path
-           :else
-           `(let [result# ~arg]
-              (if (path? result#)
-                (pure-loft-path ~shape ~transform-fn result# ~steps)
-                (pure-loft-path ~shape ~transform-fn (path ~arg) ~steps)))))
-       ;; Multiple movements - wrap in path macro
-       `(pure-loft-path ~shape ~transform-fn (path ~@movements) ~steps)))
+             :else
+             `(let [fa# ~first-arg
+                    r# ~arg]
+                (if (shape-fn? fa#)
+                  (if (~'path? r#)
+                    (pure-loft-shape-fn fa# r# ~steps)
+                    (pure-loft-shape-fn fa# (path ~arg) ~steps))
+                  (throw (js/Error. \"loft-n: 2-arg form requires a shape-fn as first argument\"))))))
+
+         ;; 3-arg after steps: shape-fn+2-movements OR legacy+1-movement
+         (= 2 n)
+         (let [[second-arg movement] rest-args]
+           (cond
+             (symbol? movement)
+             `(let [fa# ~first-arg]
+                (if (shape-fn? fa#)
+                  (pure-loft-shape-fn fa# (path ~second-arg ~movement) ~steps)
+                  (let [arg# ~movement]
+                    (if (~'path? arg#)
+                      (pure-loft-path fa# ~second-arg arg# ~steps)
+                      (pure-loft-path fa# ~second-arg (path ~movement) ~steps)))))
+
+             (pathf? movement)
+             `(let [fa# ~first-arg]
+                (if (shape-fn? fa#)
+                  (pure-loft-shape-fn fa# (path ~second-arg ~movement) ~steps)
+                  (pure-loft-path fa# ~second-arg ~movement ~steps)))
+
+             (mvmt? movement)
+             `(let [fa# ~first-arg]
+                (if (shape-fn? fa#)
+                  (pure-loft-shape-fn fa# (path ~second-arg ~movement) ~steps)
+                  (pure-loft-path fa# ~second-arg (path ~movement) ~steps)))
+
+             :else
+             `(let [fa# ~first-arg]
+                (if (shape-fn? fa#)
+                  (pure-loft-shape-fn fa# (path ~second-arg ~movement) ~steps)
+                  (let [result# ~movement]
+                    (if (~'path? result#)
+                      (pure-loft-path fa# ~second-arg result# ~steps)
+                      (pure-loft-path fa# ~second-arg (path ~movement) ~steps)))))))
+
+         ;; 4+ args after steps: shape-fn+many-movements OR legacy+many-movements
+         :else
+         (let [[second-arg & movements] rest-args]
+           `(let [fa# ~first-arg]
+              (if (shape-fn? fa#)
+                (pure-loft-shape-fn fa# (path ~@rest-args) ~steps)
+                (pure-loft-path fa# ~second-arg (path ~@(vec movements)) ~steps)))))))
 
    ;; bloft: bezier-safe loft that handles self-intersecting paths
    ;; Uses convex hulls for intersecting sections, then unions all pieces.
    ;; Best for tight curves like (bezier-as (branch-path 30))
-   ;; (bloft (circle 10) identity my-bezier-path)
+   ;; (bloft (tapered (circle 10) :to 0.5) my-bezier-path)    - shape-fn
+   ;; (bloft (circle 10) identity my-bezier-path)              - legacy
    ;; (bloft (rect 3 3) #(scale %1 0.5) (bezier-as (branch-path 30)))
    ;; (bloft-n 64 (circle 10) identity my-bezier-path) - more steps
    (defmacro bloft
-     ([shape transform-fn bezier-path]
-      `(bloft ~shape ~transform-fn ~bezier-path nil 0.1))
-     ([shape transform-fn bezier-path steps]
-      `(bloft ~shape ~transform-fn ~bezier-path ~steps 0.1))
-     ([shape transform-fn bezier-path steps threshold]
-      (cond
-        ;; Symbol - check at runtime if it's a path
-        (symbol? bezier-path)
-        `(let [p# ~bezier-path]
-           (if (path? p#)
-             (pure-bloft ~shape ~transform-fn p# ~steps ~threshold)
-             (pure-bloft ~shape ~transform-fn (path ~bezier-path) ~steps ~threshold)))
+     ([first-arg & rest-args]
+      (let [n (count rest-args)
+            mvmt? (fn [x] (and (list? x) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v
+                                                        'bezier-to 'bezier-as} (first x))))
+            pathf? (fn [x] (and (list? x) (= 'path (first x))))]
+        (cond
+          ;; 2-arg: (bloft shape-fn path) — shape-fn only
+          (= 1 n)
+          (let [arg (first rest-args)]
+            (cond
+              (symbol? arg)
+              `(let [fa# ~first-arg
+                     p# ~arg]
+                 (if (shape-fn? fa#)
+                   (if (~'path? p#)
+                     (pure-bloft-shape-fn fa# p#)
+                     (pure-bloft-shape-fn fa# (path ~arg)))
+                   (throw (js/Error. \"bloft: 2-arg form requires a shape-fn as first argument\"))))
 
-        ;; List starting with path - use directly
-        (and (list? bezier-path) (= 'path (first bezier-path)))
-        `(pure-bloft ~shape ~transform-fn ~bezier-path ~steps ~threshold)
+              (pathf? arg)
+              `(let [fa# ~first-arg]
+                 (if (shape-fn? fa#)
+                   (pure-bloft-shape-fn fa# ~arg)
+                   (throw (js/Error. \"bloft: 2-arg form requires a shape-fn as first argument\"))))
 
-        ;; List starting with bezier-as or other movement - wrap in path
-        (and (list? bezier-path) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v 'bezier-to 'bezier-as} (first bezier-path)))
-        `(pure-bloft ~shape ~transform-fn (path ~bezier-path) ~steps ~threshold)
+              (mvmt? arg)
+              `(let [fa# ~first-arg]
+                 (if (shape-fn? fa#)
+                   (pure-bloft-shape-fn fa# (path ~arg))
+                   (throw (js/Error. \"bloft: 2-arg form requires a shape-fn as first argument\"))))
 
-        ;; Any other expression - check at runtime
-        :else
-        `(let [p# ~bezier-path]
-           (if (path? p#)
-             (pure-bloft ~shape ~transform-fn p# ~steps ~threshold)
-             (pure-bloft ~shape ~transform-fn (path ~bezier-path) ~steps ~threshold))))))
+              :else
+              `(let [fa# ~first-arg
+                     p# ~arg]
+                 (if (shape-fn? fa#)
+                   (if (~'path? p#)
+                     (pure-bloft-shape-fn fa# p#)
+                     (pure-bloft-shape-fn fa# (path ~arg)))
+                   (throw (js/Error. \"bloft: 2-arg form requires a shape-fn as first argument\"))))))
 
-   (defmacro bloft-n [steps shape transform-fn bezier-path]
-     `(bloft ~shape ~transform-fn ~bezier-path ~steps 0.1))
+          ;; 3-arg: (bloft X Y Z) — shape-fn mode or legacy (bloft shape tfn path)
+          (= 2 n)
+          (let [[second-arg bezier-path] rest-args]
+            `(let [fa# ~first-arg]
+               (if (shape-fn? fa#)
+                 (pure-bloft-shape-fn fa# (path ~second-arg ~bezier-path))
+                 ~(cond
+                    (symbol? bezier-path)
+                    `(let [p# ~bezier-path]
+                       (if (~'path? p#)
+                         (pure-bloft fa# ~second-arg p# nil 0.1)
+                         (pure-bloft fa# ~second-arg (path ~bezier-path) nil 0.1)))
+
+                    (pathf? bezier-path)
+                    `(pure-bloft fa# ~second-arg ~bezier-path nil 0.1)
+
+                    (mvmt? bezier-path)
+                    `(pure-bloft fa# ~second-arg (path ~bezier-path) nil 0.1)
+
+                    :else
+                    `(let [p# ~bezier-path]
+                       (if (~'path? p#)
+                         (pure-bloft fa# ~second-arg p# nil 0.1)
+                         (pure-bloft fa# ~second-arg (path ~bezier-path) nil 0.1)))))))
+
+          ;; 4-arg: (bloft X Y Z steps) — legacy with steps, or shape-fn+3-movements
+          (= 3 n)
+          (let [[second-arg third-arg fourth-arg] rest-args]
+            `(let [fa# ~first-arg]
+               (if (shape-fn? fa#)
+                 (pure-bloft-shape-fn fa# (path ~@rest-args))
+                 ;; Legacy: (bloft shape tfn path steps)
+                 ~(cond
+                    (symbol? third-arg)
+                    `(let [p# ~third-arg]
+                       (if (~'path? p#)
+                         (pure-bloft fa# ~second-arg p# ~fourth-arg 0.1)
+                         (pure-bloft fa# ~second-arg (path ~third-arg) ~fourth-arg 0.1)))
+
+                    (pathf? third-arg)
+                    `(pure-bloft fa# ~second-arg ~third-arg ~fourth-arg 0.1)
+
+                    (mvmt? third-arg)
+                    `(pure-bloft fa# ~second-arg (path ~third-arg) ~fourth-arg 0.1)
+
+                    :else
+                    `(let [p# ~third-arg]
+                       (if (~'path? p#)
+                         (pure-bloft fa# ~second-arg p# ~fourth-arg 0.1)
+                         (pure-bloft fa# ~second-arg (path ~third-arg) ~fourth-arg 0.1)))))))
+
+          ;; 5-arg: (bloft shape tfn path steps threshold) — legacy only
+          (= 4 n)
+          (let [[second-arg third-arg fourth-arg fifth-arg] rest-args]
+            `(let [fa# ~first-arg]
+               (if (shape-fn? fa#)
+                 (pure-bloft-shape-fn fa# (path ~@rest-args))
+                 ~(cond
+                    (symbol? third-arg)
+                    `(let [p# ~third-arg]
+                       (if (~'path? p#)
+                         (pure-bloft fa# ~second-arg p# ~fourth-arg ~fifth-arg)
+                         (pure-bloft fa# ~second-arg (path ~third-arg) ~fourth-arg ~fifth-arg)))
+
+                    (pathf? third-arg)
+                    `(pure-bloft fa# ~second-arg ~third-arg ~fourth-arg ~fifth-arg)
+
+                    (mvmt? third-arg)
+                    `(pure-bloft fa# ~second-arg (path ~third-arg) ~fourth-arg ~fifth-arg)
+
+                    :else
+                    `(let [p# ~third-arg]
+                       (if (~'path? p#)
+                         (pure-bloft fa# ~second-arg p# ~fourth-arg ~fifth-arg)
+                         (pure-bloft fa# ~second-arg (path ~third-arg) ~fourth-arg ~fifth-arg)))))))
+
+          ;; 6+ args
+          :else
+          (let [[second-arg & movements] rest-args]
+            `(let [fa# ~first-arg]
+               (if (shape-fn? fa#)
+                 (pure-bloft-shape-fn fa# (path ~@rest-args))
+                 (pure-bloft fa# ~second-arg (path ~@(vec movements)) nil 0.1))))))))
+
+   (defmacro bloft-n [steps first-arg & rest-args]
+     (let [n (count rest-args)]
+       (cond
+         ;; (bloft-n N shape-fn path)
+         (= 1 n)
+         (let [arg (first rest-args)]
+           `(let [fa# ~first-arg]
+              (if (shape-fn? fa#)
+                ~(cond
+                   (symbol? arg)
+                   `(let [p# ~arg]
+                      (if (~'path? p#)
+                        (pure-bloft-shape-fn fa# p# ~steps)
+                        (pure-bloft-shape-fn fa# (path ~arg) ~steps)))
+                   :else
+                   `(pure-bloft-shape-fn fa# ~(if (and (list? arg) (= 'path (first arg)))
+                                                 arg
+                                                 `(path ~arg)) ~steps))
+                (throw (js/Error. \"bloft-n: 2-arg form requires a shape-fn as first argument\")))))
+
+         ;; (bloft-n N shape tfn path) — legacy
+         (= 2 n)
+         (let [[second-arg bezier-path] rest-args]
+           `(let [fa# ~first-arg]
+              (if (shape-fn? fa#)
+                (pure-bloft-shape-fn fa# (path ~@rest-args) ~steps)
+                (bloft fa# ~second-arg ~bezier-path ~steps 0.1))))
+
+         :else
+         (let [[second-arg & movements] rest-args]
+           `(let [fa# ~first-arg]
+              (if (shape-fn? fa#)
+                (pure-bloft-shape-fn fa# (path ~@rest-args) ~steps)
+                (bloft fa# ~second-arg ~@(vec movements))))))))
 
    ;; revolve: create solid of revolution (lathe operation)
    ;; PURE: returns mesh without side effects (use register to make visible)

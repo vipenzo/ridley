@@ -190,15 +190,140 @@ All movements within a single `extrude` produce one unified mesh with proper con
 
 ### Loft (Shape Transformation)
 
-`loft` extrudes a shape while applying a transformation function.
-Works like `extrude` - uses turtle movements to define the path:
+`loft` extrudes a shape while applying a transformation along the path.
+
+#### Shape-fn Mode (Preferred)
+
+Shape functions encode the transformation inside the shape, enabling clean composition:
+
+```clojure
+;; Cone (tapers to zero)
+(register cone (loft (tapered (circle 20) :to 0) (f 30)))
+
+;; Taper to half size
+(register half (loft (tapered (circle 20) :to 0.5) (f 30)))
+
+;; 90° twist
+(register twist (loft (twisted (rect 20 10) :angle 90) (f 40)))
+
+;; Fluted column
+(register column (loft (fluted (circle 20) :flutes 12 :depth 2) (f 80)))
+
+;; Bumpy tube
+(register bumpy (loft (rugged (circle 15) :amplitude 2 :frequency 8) (f 30)))
+
+;; Star morphing into circle
+(register morph-tube
+  (loft (morphed (resample (star 5 20 8) 32) (circle 15 32)) (f 30)))
+
+;; Noisy rough surface
+(register rough
+  (loft-n 64 (noisy (circle 15 64) :amplitude 1.5 :scale 3) (f 60)))
+
+;; Rocky texture with fine detail (multiple octaves)
+(register rocky
+  (loft-n 64 (noisy (circle 15 64) :amplitude 2 :scale 3 :octaves 4) (f 60)))
+
+;; Bark-like texture (different frequency along path vs profile)
+(register bark
+  (loft-n 64
+    (noisy (circle 12 64) :amplitude 1.5 :scale-x 8 :scale-y 3)
+    (f 50)))
+
+;; Heightmap from 3D geometry — embossed text
+(def text-hm (mesh-to-heightmap (extrude (text-shape "HI" :size 20) (f 3)) :resolution 128))
+(register embossed
+  (loft-n 64
+    (heightmap (circle 20 128) text-hm :amplitude 1.5 :tile-x 2)
+    (f 60)))
+
+;; Tileable bump pattern from spheres
+(def bumps (mesh-to-heightmap
+  (mesh-union (sphere 3) (do (reset [8 0 0]) (sphere 3))
+              (do (reset [0 8 0]) (sphere 3)) (do (reset [8 8 0]) (sphere 3)))
+  :resolution 64 :bounds [0 0 8 8]))
+(register dotted
+  (loft-n 64
+    (heightmap (circle 15 96) bumps :amplitude 1 :tile-x 8 :tile-y 6)
+    (f 50)))
+
+;; Woven fabric — interlocking over/under thread pattern
+(register woven
+  (loft-n 96
+    (woven (circle 18 96) :warp 6 :weft 4 :amplitude 1.5)
+    (f 50)))
+
+;; Dense weave with thin threads
+(register fine-weave
+  (loft-n 128
+    (woven (circle 15 128) :warp 12 :weft 10 :amplitude 0.8 :thread 0.38)
+    (f 60)))
+
+;; Woven + taper composition
+(register woven-cone
+  (loft-n 96
+    (-> (circle 20 96) (woven :warp 8 :weft 5 :amplitude 1.2) (tapered :to 0.3))
+    (f 60)))
+```
+
+#### Composition with `->` Threading
+
+Multiple shape-fns compose naturally:
+
+```clojure
+;; Fluted column that tapers
+(register column
+  (loft (-> (circle 15 48) (fluted :flutes 20 :depth 1.5) (tapered :to 0.85))
+    (f 80)))
+
+;; Twisted rectangle that shrinks
+(register candy
+  (loft (-> (rect 30 10) (twisted :angle 180) (tapered :to 0.3))
+    (f 40)))
+
+;; Spiral grooves that taper
+(register spiral
+  (loft-n 64
+    (-> (resample (circle 20) 64)
+        (displaced (fn [p t] (* 2 (sin (+ (* (angle p) 8) (* t 12))))))
+        (tapered :to 0.5))
+    (f 60)))
+
+;; Noisy surface that tapers
+(register rough-column
+  (loft-n 64
+    (-> (circle 15 48)
+        (noisy :amplitude 0.8 :scale 4)
+        (tapered :to 0.85))
+    (f 80)))
+
+;; Heightmap texture on a twisted bar
+(register textured-bar
+  (loft-n 64
+    (-> (resample (rect 20 5) 96)
+        (heightmap bumps :amplitude 0.5 :tile-x 4 :tile-y 3)
+        (twisted :angle 90))
+    (f 60)))
+```
+
+#### Custom shape-fn
+
+```clojure
+;; Vase profile: scale with a sine curve
+(register vase
+  (loft-n 48
+    (shape-fn (circle 20)
+      (fn [s t] (scale s (+ 0.6 (* 0.4 (sin (* t PI)))))))
+    (f 60)))
+```
+
+#### Legacy Mode (Transform Function)
+
+Still supported — pass shape + transform function + movements:
 
 ```clojure
 ;; Basic cone (scale down to 0)
 (loft (circle 20) #(scale %1 (- 1 %2)) (f 30))
-
-;; Cone that tapers to half size
-(loft (circle 20) #(scale %1 (- 1 (* 0.5 %2))) (f 30))
 
 ;; Twist: rectangle rotating 90° during extrusion
 (loft (rect 30 10) #(rotate-shape %1 (* %2 90)) (f 40))
@@ -206,42 +331,23 @@ Works like `extrude` - uses turtle movements to define the path:
 ;; Twist + scale (combined transforms)
 (loft (rect 20 20)
       #(-> %1
-           (scale (- 1 (* 0.5 %2)))      ; scale from 100% to 50%
-           (rotate-shape (* %2 180)))    ; rotate from 0° to 180°
+           (scale (- 1 (* 0.5 %2)))
+           (rotate-shape (* %2 180)))
       (f 30))
-
-;; Scale down to point + twist
-(loft (rect 20 20)
-      #(-> %1 (scale (- 1 %2)) (rotate-shape (* %2 90)))
-      (f 40))
 
 ;; Witch hat: cone with a bend
 (loft (circle 20) #(scale %1 (- 1 %2)) (f 15) (th 30) (f 15))
 
-;; Star morphing to circle
-(loft (star 5 20 8)
-      #(morph %1 (circle 15 10) %2)  ; both need same point count
-      (f 30))
+;; Two-shape loft (morph between shapes)
+(loft (circle 20) (circle 10) (f 40))
 
 ;; With custom step count (smoother)
 (loft-n 32 (circle 20) #(scale %1 (- 1 %2)) (f 30))
 ```
 
-The transform function receives:
-- `shape` - the current 2D shape
-- `t` - progress from 0.0 to 1.0 (based on cumulative distance traveled)
-
 Step count:
 - Default: 16 steps (use `loft`)
 - Custom: use `loft-n` with step count as first argument
-
-Available shape transforms:
-- `(scale shape factor)` - uniform scale
-- `(scale shape fx fy)` - non-uniform scale
-- `(rotate-shape shape angle)` - rotate (degrees)
-- `(translate shape dx dy)` - translate shape
-- `(morph shape-a shape-b t)` - interpolate between shapes
-- `(resample shape n)` - resample to n points
 
 ### Pen Modes
 
