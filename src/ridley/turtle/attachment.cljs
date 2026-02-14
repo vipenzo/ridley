@@ -669,3 +669,47 @@
         (pop-state-fn)
         (assoc :attached nil))
     state))
+
+;; ============================================================
+;; Group (rigid body) transformations
+;; ============================================================
+
+(defn- transform-point-rigid
+  "Apply a rigid body transformation to a point.
+   Maps from initial basis (p0,h0,u0,r0) to final basis (p1,h1,u1,r1)."
+  [point p0 h0 u0 r0 p1 h1 u1 r1]
+  (let [rel (v- point p0)
+        x (dot rel h0)
+        y (dot rel u0)
+        z (dot rel r0)]
+    (v+ p1 (v+ (v* h1 x) (v+ (v* u1 y) (v* r1 z))))))
+
+(defn- transform-direction-rigid
+  "Apply only the rotational part of a rigid transformation to a direction vector."
+  [dir h0 u0 r0 h1 u1 r1]
+  (let [x (dot dir h0)
+        y (dot dir u0)
+        z (dot dir r0)]
+    (normalize (v+ (v* h1 x) (v+ (v* u1 y) (v* r1 z))))))
+
+(defn transform-mesh-rigid
+  "Apply a rigid body transformation to all vertices and creation-pose of a mesh."
+  [mesh p0 h0 u0 r0 p1 h1 u1 r1]
+  (let [xform-pt (fn [v] (transform-point-rigid v p0 h0 u0 r0 p1 h1 u1 r1))
+        xform-dir (fn [d] (transform-direction-rigid d h0 u0 r0 h1 u1 r1))]
+    (cond-> (update mesh :vertices #(mapv xform-pt %))
+      (:creation-pose mesh)
+      (update :creation-pose
+              (fn [pose]
+                {:position (xform-pt (:position pose))
+                 :heading (xform-dir (:heading pose))
+                 :up (xform-dir (:up pose))})))))
+
+(defn group-transform
+  "Apply a rigid body transformation to a vector of meshes.
+   Takes initial pose (p0,h0,u0) and final pose (p1,h1,u1).
+   All meshes are transformed as a single rigid body."
+  [meshes p0 h0 u0 p1 h1 u1]
+  (let [h0 (normalize h0) u0 (normalize u0) r0 (normalize (cross h0 u0))
+        h1 (normalize h1) u1 (normalize u1) r1 (normalize (cross h1 u1))]
+    (mapv #(transform-mesh-rigid % p0 h0 u0 r0 p1 h1 u1 r1) meshes)))

@@ -488,11 +488,19 @@
              all-faces []
              offset 0]
         (if (not remaining)
-          (schema/assert-mesh!
-           {:type :mesh
-            :vertices all-verts
-            :faces all-faces
-            :creation-pose default-creation-pose})
+          (let [base-pose (or (:creation-pose (first meshes)) default-creation-pose)
+                n (count all-verts)
+                centroid (if (pos? n)
+                           (mapv #(/ % n)
+                                 (reduce (fn [acc v] (mapv + acc v))
+                                         [0 0 0] all-verts))
+                           (:position base-pose))]
+            (schema/assert-mesh!
+             (cond-> {:type :mesh
+                      :vertices all-verts
+                      :faces all-faces
+                      :creation-pose (assoc base-pose :position centroid)}
+               (:material (first meshes)) (assoc :material (:material (first meshes))))))
           (let [m (first remaining)
                 verts (:vertices m)
                 faces (:faces m)

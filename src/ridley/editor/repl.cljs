@@ -73,7 +73,12 @@
          :implicit-result nil
          :print-output print-output}))
     (catch :default e
-      {:error (.-message e)})))
+      (let [data (ex-data e)
+            line (:line data)
+            col  (:column data)
+            msg  (.-message e)
+            loc  (when line (str " (line " line (when col (str ":" col)) ")"))]
+        {:error (str msg loc)}))))
 
 (defn evaluate-repl
   "Evaluate REPL input only, using existing context.
@@ -100,7 +105,12 @@
          :implicit-result implicit-result
          :print-output print-output}))
     (catch :default e
-      {:error (.-message e)})))
+      (let [data (ex-data e)
+            line (:line data)
+            col  (:column data)
+            msg  (.-message e)
+            loc  (when line (str " (line " line (when col (str ":" col)) ")"))]
+        {:error (str msg loc)}))))
 
 (defn evaluate
   "Evaluate both explicit and implicit code sections (legacy API).
@@ -126,7 +136,12 @@
          :implicit-result implicit-result
          :print-output print-output}))
     (catch :default e
-      {:error (.-message e)})))
+      (let [data (ex-data e)
+            line (:line data)
+            col  (:column data)
+            msg  (.-message e)
+            loc  (when line (str " (line " line (when col (str ":" col)) ")"))]
+        {:error (str msg loc)}))))
 
 (defn extract-render-data
   "Extract render data from evaluation result.

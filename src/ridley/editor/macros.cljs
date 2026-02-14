@@ -128,6 +128,12 @@
      (swap! path-recorder rec-tr angle))
    (defn- rec-set-heading* [heading up]
      (swap! path-recorder rec-set-heading heading up))
+   (defn- rec-u* [dist]
+     (swap! path-recorder rec-u dist))
+   (defn- rec-rt* [dist]
+     (swap! path-recorder rec-rt dist))
+   (defn- rec-lt* [dist]
+     (swap! path-recorder rec-lt dist))
 
    ;; Recording version of mark - records a named point in the path
    (defn- rec-mark* [name]
@@ -506,6 +512,10 @@
               ~'th rec-th*
               ~'tv rec-tv*
               ~'tr rec-tr*
+              ~'u rec-u*
+              ~'d (fn [dist#] (rec-u* (- dist#)))
+              ~'rt rec-rt*
+              ~'lt rec-lt*
               ~'arc-h rec-arc-h*
               ~'arc-v rec-arc-v*
               ~'bezier-to rec-bezier-to*
@@ -1076,14 +1086,43 @@
         ;; Return modified mesh
         (or (get-in @attach-state [:attached :mesh]) m#)))
 
-   ;; attach: transform mesh/panel in place (modifies original)
+   ;; attach: transform mesh/panel/vector in place
    ;; (attach mesh & body) => transformed mesh
    ;; (attach panel & body) => panel repositioned to final turtle position
+   ;; (attach [m1 m2 ...] & body) => group-style rigid body transform
    ;; Attaches to mesh's creation pose and applies transformations.
    (defmacro attach [mesh & body]
      `(let [m# ~mesh]
-        (if (panel? m#)
-          ;; Panel handling: start from current turtle, run movements, reposition panel
+        (cond
+          ;; Vector of meshes: group-style rigid body transform
+          (sequential? m#)
+          (let [ref-pose# (or (:creation-pose (first m#))
+                              {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})
+                p0# (:position ref-pose#)
+                h0# (:heading ref-pose#)
+                u0# (:up ref-pose#)
+                _# (reset! attach-state
+                           (-> (turtle)
+                               (assoc :position p0#)
+                               (assoc :heading h0#)
+                               (assoc :up u0#)))]
+            (let [~'f att-f*
+                  ~'th att-th*
+                  ~'tv att-tv*
+                  ~'tr att-tr*
+                  ~'u att-u*
+                  ~'d att-d*
+                  ~'rt att-rt*
+                  ~'lt att-lt*
+                  ~'move-to att-move-to*]
+              ~@body)
+            (let [final# @attach-state]
+              (turtle-group-transform
+               m# p0# h0# u0#
+               (:position final#) (:heading final#) (:up final#))))
+
+          ;; Panel handling
+          (panel? m#)
           (do
             (reset! attach-state (turtle))
             (let [~'f att-f*
@@ -1102,7 +1141,9 @@
                 :position (:position final-state)
                 :heading (:heading final-state)
                 :up (:up final-state))))
-          ;; Mesh handling: original behavior
+
+          ;; Single mesh: original behavior
+          :else
           (do
             (reset! attach-state
                     (-> (turtle)

@@ -141,6 +141,8 @@
    'turtle-attach-move  turtle/attach-move
    'turtle-inset        turtle/inset
    'turtle-scale        turtle/scale
+   'turtle-group-transform turtle/group-transform
+   'turtle-transform-mesh turtle/transform-mesh
    ;; NOTE: attach-state and att-* functions are defined in macro-defs
    ;; Path/shape utilities
    'path->data   path/path-from-state
@@ -207,6 +209,9 @@
    'rec-th              turtle/rec-th
    'rec-tv              turtle/rec-tv
    'rec-tr              turtle/rec-tr
+   'rec-u               turtle/rec-u
+   'rec-rt              turtle/rec-rt
+   'rec-lt              turtle/rec-lt
    'rec-set-heading     turtle/rec-set-heading
    'path-from-recorder  turtle/path-from-recorder
    ;; Shape recording functions (2D turtle)
@@ -239,6 +244,7 @@
    'mesh-intersection   manifold/intersection
    'mesh-hull           manifold/hull
    'concat-meshes       manifold/concat-meshes
+   'transform           turtle/transform-mesh
    'solidify            manifold/solidify
    ;; Scene registry
    'add-mesh!           registry/add-mesh!

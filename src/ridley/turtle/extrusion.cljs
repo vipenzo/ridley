@@ -666,96 +666,96 @@
   "Build a unified mesh from accumulated ring-data entries.
    Each entry is {:outer <3D-ring> :holes [<3D-ring> ...]}.
    All entries must have the same number of outer vertices and same hole structure.
-   Generates side faces for outer + each hole, and caps at both ends."
-  [ring-data-vec creation-pose]
-  (let [n-rings (count ring-data-vec)
-        first-data (first ring-data-vec)
-        n-outer (count (:outer first-data))
-        holes-structure (mapv count (or (:holes first-data) []))
-        ;; Combined ring length: outer + all holes
-        ring-len (+ n-outer (reduce + 0 holes-structure))]
-    (when (and (>= n-rings 2) (>= n-outer 3))
-      (let [;; Flatten all ring-data into a single vertex array
-            ;; Each "combined ring" = [outer-pts... hole0-pts... hole1-pts...]
-            vertices
-            (vec (mapcat (fn [rd]
-                           (concat (:outer rd) (apply concat (or (:holes rd) []))))
-                         ring-data-vec))
+   Generates side faces for outer + each hole, and optionally caps at both ends."
+  ([ring-data-vec creation-pose] (build-sweep-mesh-with-holes ring-data-vec creation-pose true))
+  ([ring-data-vec creation-pose caps?]
+   (let [n-rings (count ring-data-vec)
+         first-data (first ring-data-vec)
+         n-outer (count (:outer first-data))
+         holes-structure (mapv count (or (:holes first-data) []))
+         ;; Combined ring length: outer + all holes
+         ring-len (+ n-outer (reduce + 0 holes-structure))]
+     (when (and (>= n-rings 2) (>= n-outer 3))
+       (let [;; Flatten all ring-data into a single vertex array
+             ;; Each "combined ring" = [outer-pts... hole0-pts... hole1-pts...]
+             vertices
+             (vec (mapcat (fn [rd]
+                            (concat (:outer rd) (apply concat (or (:holes rd) []))))
+                          ring-data-vec))
 
-            ;; Side faces for outer contour
-            outer-side-faces
-            (vec (mapcat
-                  (fn [ring-idx]
-                    (let [base (* ring-idx ring-len)
-                          next-base (* (inc ring-idx) ring-len)]
-                      (mapcat
-                       (fn [i]
-                         (let [next-i (mod (inc i) n-outer)
-                               b0 (+ base i) b1 (+ base next-i)
-                               t0 (+ next-base i) t1 (+ next-base next-i)
-                               db0t1 (v- (nth vertices b0) (nth vertices t1))
-                               db1t0 (v- (nth vertices b1) (nth vertices t0))]
-                           (if (<= (dot db0t1 db0t1) (dot db1t0 db1t0))
-                             [[b0 t0 t1] [b0 t1 b1]]
-                             [[b0 t0 b1] [t0 t1 b1]])))
-                       (range n-outer))))
-                  (range (dec n-rings))))
+             ;; Side faces for outer contour
+             outer-side-faces
+             (vec (mapcat
+                   (fn [ring-idx]
+                     (let [base (* ring-idx ring-len)
+                           next-base (* (inc ring-idx) ring-len)]
+                       (mapcat
+                        (fn [i]
+                          (let [next-i (mod (inc i) n-outer)
+                                b0 (+ base i) b1 (+ base next-i)
+                                t0 (+ next-base i) t1 (+ next-base next-i)
+                                db0t1 (v- (nth vertices b0) (nth vertices t1))
+                                db1t0 (v- (nth vertices b1) (nth vertices t0))]
+                            (if (<= (dot db0t1 db0t1) (dot db1t0 db1t0))
+                              [[b0 t0 t1] [b0 t1 b1]]
+                              [[b0 t0 b1] [t0 t1 b1]])))
+                        (range n-outer))))
+                   (range (dec n-rings))))
 
-            ;; Side faces for each hole (same winding as outer — holes are CW
-            ;; so the normals point into the tunnel, which is correct)
-            hole-side-faces
-            (vec (apply concat
-                        (map-indexed
-                         (fn [hole-idx hole-len]
-                           (let [hole-offset (+ n-outer (reduce + 0 (take hole-idx holes-structure)))]
-                             (mapcat
-                              (fn [ring-idx]
-                                (let [base (+ (* ring-idx ring-len) hole-offset)
-                                      next-base (+ (* (inc ring-idx) ring-len) hole-offset)]
-                                  (mapcat
-                                   (fn [i]
-                                     (let [next-i (mod (inc i) hole-len)
-                                           b0 (+ base i) b1 (+ base next-i)
-                                           t0 (+ next-base i) t1 (+ next-base next-i)]
-                                       ;; Same face winding as outer
-                                       [[b0 t0 t1] [b0 t1 b1]]))
-                                   (range hole-len))))
-                              (range (dec n-rings)))))
-                         holes-structure)))
+             ;; Side faces for each hole (same winding as outer — holes are CW
+             ;; so the normals point into the tunnel, which is correct)
+             hole-side-faces
+             (vec (apply concat
+                         (map-indexed
+                          (fn [hole-idx hole-len]
+                            (let [hole-offset (+ n-outer (reduce + 0 (take hole-idx holes-structure)))]
+                              (mapcat
+                               (fn [ring-idx]
+                                 (let [base (+ (* ring-idx ring-len) hole-offset)
+                                       next-base (+ (* (inc ring-idx) ring-len) hole-offset)]
+                                   (mapcat
+                                    (fn [i]
+                                      (let [next-i (mod (inc i) hole-len)
+                                            b0 (+ base i) b1 (+ base next-i)
+                                            t0 (+ next-base i) t1 (+ next-base next-i)]
+                                        ;; Same face winding as outer
+                                        [[b0 t0 t1] [b0 t1 b1]]))
+                                    (range hole-len))))
+                               (range (dec n-rings)))))
+                          holes-structure)))
 
-            ;; Caps
-            first-outer (:outer first-data)
-            first-holes (or (:holes first-data) [])
-            last-data (last ring-data-vec)
-            last-outer (:outer last-data)
-            last-holes (or (:holes last-data) [])
-            last-ring-base (* (dec n-rings) ring-len)
+             ;; Caps (optional)
+             cap-faces
+             (when caps?
+               (let [first-outer (:outer first-data)
+                     first-holes (or (:holes first-data) [])
+                     last-data (last ring-data-vec)
+                     last-outer (:outer last-data)
+                     last-holes (or (:holes last-data) [])
+                     last-ring-base (* (dec n-rings) ring-len)
+                     ;; Cap normals from ring centroids
+                     second-data (nth ring-data-vec 1)
+                     second-to-last-data (nth ring-data-vec (- n-rings 2))
+                     bottom-dir (normalize (v- (ring-centroid (:outer second-data))
+                                               (ring-centroid first-outer)))
+                     top-dir (normalize (v- (ring-centroid last-outer)
+                                            (ring-centroid (:outer second-to-last-data))))
+                     bottom-normal (v* bottom-dir -1)
+                     top-normal top-dir
+                     bottom-cap (triangulate-cap-with-holes first-outer first-holes
+                                                             0 bottom-normal false)
+                     top-cap (triangulate-cap-with-holes last-outer last-holes
+                                                         last-ring-base top-normal false)]
+                 (vec (concat bottom-cap top-cap))))
 
-            ;; Cap normals from ring centroids
-            second-data (nth ring-data-vec 1)
-            second-to-last-data (nth ring-data-vec (- n-rings 2))
-            bottom-dir (normalize (v- (ring-centroid (:outer second-data))
-                                      (ring-centroid first-outer)))
-            top-dir (normalize (v- (ring-centroid last-outer)
-                                   (ring-centroid (:outer second-to-last-data))))
-            bottom-normal (v* bottom-dir -1)
-            top-normal top-dir
-
-            ;; Bottom cap with holes
-            bottom-cap (triangulate-cap-with-holes first-outer first-holes
-                                                    0 bottom-normal false)
-            ;; Top cap with holes
-            top-cap (triangulate-cap-with-holes last-outer last-holes
-                                                last-ring-base top-normal false)
-
-            all-faces (vec (concat outer-side-faces hole-side-faces
-                                   bottom-cap top-cap))]
-        (schema/assert-mesh!
-         (cond-> {:type :mesh
-                  :primitive :extrusion
-                  :vertices vertices
-                  :faces all-faces}
-           creation-pose (assoc :creation-pose creation-pose)))))))
+             all-faces (vec (concat outer-side-faces hole-side-faces
+                                    (or cap-faces [])))]
+         (schema/assert-mesh!
+          (cond-> {:type :mesh
+                   :primitive :extrusion
+                   :vertices vertices
+                   :faces all-faces}
+            creation-pose (assoc :creation-pose creation-pose))))))))
 
 ;; --- Corner generation with holes ---
 

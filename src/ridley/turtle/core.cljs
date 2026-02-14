@@ -1222,6 +1222,15 @@
 (defn rec-tr [state angle]
   (record-cmd state :tr [angle] #(tr % angle)))
 
+(defn rec-u [state dist]
+  (record-cmd state :u [dist] #(move-up % dist)))
+
+(defn rec-rt [state dist]
+  (record-cmd state :rt [dist] #(move-right % dist)))
+
+(defn rec-lt [state dist]
+  (record-cmd state :lt [dist] #(move-left % dist)))
+
 (defn rec-set-heading
   "Record a set-heading command that directly sets heading and up vectors."
   [state heading up]
@@ -1247,6 +1256,9 @@
                 :th (th s (first args))
                 :tv (tv s (first args))
                 :tr (tr s (first args))
+                :u  (move-up s (first args))
+                :lt (move-left s (first args))
+                :rt (move-right s (first args))
                 :set-heading (-> s
                                  (assoc :heading (normalize (first args)))
                                  (assoc :up (normalize (second args))))
@@ -1652,22 +1664,44 @@
                                [(+ (nth pos 0) (* py (nth up 0)) (* px radial-x))
                                 (+ (nth pos 1) (* py (nth up 1)) (* px radial-y))
                                 (+ (nth pos 2) (* py (nth up 2)) (* px radial-z))]))
+           ;; Hole support
+           has-holes? (boolean (:holes shape))
+           hole-profiles (when has-holes?
+                           (if eval-shape-at-t
+                             (mapv clamp-x (:holes shape))
+                             (:holes shape)))
+           hole-lengths (when has-holes? (mapv count hole-profiles))
+           ;; Combined ring length: outer + all holes
+           ring-len (if has-holes?
+                      (+ n-profile (reduce + 0 hole-lengths))
+                      n-profile)
+           ;; Transform all points in a contour at a given angle
+           transform-contour (fn [pts theta]
+                               (vec (for [pt pts] (transform-point pt theta))))
            ;; Generate all rings
            ;; When eval-shape-at-t is provided, evaluate it at each step
            ;; to get varying profiles (for shape-fn support)
+           ;; Each ring = outer-pts ++ hole0-pts ++ hole1-pts ...
            rings (vec (for [i (range n-rings)]
                         (let [theta (* i angle-step)
                               t (/ (double i) steps)
-                              ring-points (if eval-shape-at-t
-                                            (clamp-x (:points (eval-shape-at-t t)))
-                                            profile-points)]
-                          (vec (for [pt ring-points]
-                                 (transform-point pt theta))))))
+                              current-shape (when eval-shape-at-t (eval-shape-at-t t))
+                              ring-outer (if current-shape
+                                           (clamp-x (:points current-shape))
+                                           profile-points)
+                              ring-holes (when has-holes?
+                                           (if current-shape
+                                             (mapv clamp-x (or (:holes current-shape) []))
+                                             hole-profiles))]
+                          (vec (concat
+                                (transform-contour ring-outer theta)
+                                (when ring-holes
+                                  (mapcat #(transform-contour % theta) ring-holes)))))))
            ;; Flatten vertices
            vertices (vec (apply concat rings))
-           ;; Side faces connecting consecutive rings
+           ;; Side faces connecting consecutive rings (outer contour)
            ;; For closed revolve, connect last ring to first
-           side-faces
+           outer-side-faces
            (vec
             (mapcat
              (fn [ring-idx]
@@ -1678,8 +1712,8 @@
                    (mapcat
                     (fn [vert-idx]
                       (let [next-vert (mod (inc vert-idx) n-profile)
-                            base (* ring-idx n-profile)
-                            next-base (* next-ring-idx n-profile)
+                            base (* ring-idx ring-len)
+                            next-base (* next-ring-idx ring-len)
                             b0 (+ base vert-idx)
                             b1 (+ base next-vert)
                             t0 (+ next-base vert-idx)
@@ -1691,12 +1725,46 @@
                           [[b0 t1 t0] [b0 b1 t1]])))
                     (range n-profile)))))
              (range (if is-closed n-rings (dec n-rings)))))
+           ;; Side faces for each hole — same flip as outer.
+           ;; Hole contours are CW (opposite to outer CCW), so with the same
+           ;; face-winding logic the normals naturally point inward (into the
+           ;; tube cavity), matching how build-sweep-mesh-with-holes works.
+           hole-side-faces
+           (when has-holes?
+             (vec (apply concat
+                         (map-indexed
+                          (fn [hole-idx hole-len]
+                            (let [hole-offset (+ n-profile (reduce + 0 (take hole-idx hole-lengths)))]
+                              (mapcat
+                               (fn [ring-idx]
+                                 (let [next-ring-idx (if (and is-closed (= ring-idx (dec n-rings)))
+                                                       0
+                                                       (inc ring-idx))]
+                                   (when (< next-ring-idx n-rings)
+                                     (mapcat
+                                      (fn [vi]
+                                        (let [next-vi (mod (inc vi) hole-len)
+                                              base (+ (* ring-idx ring-len) hole-offset)
+                                              next-base (+ (* next-ring-idx ring-len) hole-offset)
+                                              b0 (+ base vi) b1 (+ base next-vi)
+                                              t0 (+ next-base vi) t1 (+ next-base next-vi)]
+                                          ;; Same flip as outer — CW hole winding
+                                          ;; naturally produces inward normals
+                                          (if flip-winding?
+                                            [[b0 t0 t1] [b0 t1 b1]]
+                                            [[b0 t1 t0] [b0 b1 t1]])))
+                                      (range hole-len)))))
+                               (range (if is-closed n-rings (dec n-rings))))))
+                          hole-lengths))))
+           side-faces (if hole-side-faces
+                        (vec (concat outer-side-faces hole-side-faces))
+                        outer-side-faces)
            ;; Caps for open revolve (angle < 360)
            cap-faces
            (when-not is-closed
-             (let [first-ring (first rings)
-                   last-ring (last rings)
-                   last-ring-base (* (dec n-rings) n-profile)
+             (let [first-combined-ring (first rings)
+                   last-combined-ring (last rings)
+                   last-ring-base (* (dec n-rings) ring-len)
                    ;; For triangulation, we need the normal to the ring PLANE.
                    ;; Ring at angle θ lies in plane spanned by {up, radial(θ)},
                    ;; where radial(θ) = cos(θ)*right + sin(θ)*heading.
@@ -1709,11 +1777,30 @@
                    ;; Cap flip: start cap faces backward (opposite revolution),
                    ;; end cap faces forward (along revolution direction)
                    start-cap-flip flip-winding?
-                   end-cap-flip (not flip-winding?)
-                   ;; Triangulate caps using ring plane normal for projection
-                   start-cap (triangulate-cap first-ring 0 start-proj-normal start-cap-flip)
-                   end-cap (triangulate-cap last-ring last-ring-base end-proj-normal end-cap-flip)]
-               (vec (concat start-cap end-cap))))
+                   end-cap-flip (not flip-winding?)]
+               (if has-holes?
+                 ;; Extract outer and hole sub-rings from combined ring
+                 (let [split-ring (fn [combined-ring]
+                                    (let [outer (subvec combined-ring 0 n-profile)
+                                          holes (loop [idx 0 offset n-profile acc []]
+                                                  (if (>= idx (count hole-lengths))
+                                                    acc
+                                                    (let [hl (nth hole-lengths idx)]
+                                                      (recur (inc idx)
+                                                             (+ offset hl)
+                                                             (conj acc (subvec combined-ring offset (+ offset hl)))))))]
+                                      [outer holes]))
+                       [first-outer first-holes] (split-ring first-combined-ring)
+                       [last-outer last-holes] (split-ring last-combined-ring)
+                       start-cap (triangulate-cap-with-holes first-outer first-holes
+                                                              0 start-proj-normal start-cap-flip)
+                       end-cap (triangulate-cap-with-holes last-outer last-holes
+                                                           last-ring-base end-proj-normal end-cap-flip)]
+                   (vec (concat start-cap end-cap)))
+                 ;; No holes — simple caps
+                 (let [start-cap (triangulate-cap first-combined-ring 0 start-proj-normal start-cap-flip)
+                       end-cap (triangulate-cap last-combined-ring last-ring-base end-proj-normal end-cap-flip)]
+                   (vec (concat start-cap end-cap))))))
            all-faces (if cap-faces
                        (vec (concat side-faces cap-faces))
                        side-faces)
@@ -1898,3 +1985,39 @@
         (pop-state)
         (assoc :attached nil))
     state))
+
+;; ============================================================
+;; Transform: functional mesh/group transformation via path
+;; ============================================================
+
+;; Re-export for SCI macro access
+(def group-transform attachment/group-transform)
+
+(defn ^:export transform-mesh
+  "Apply a path's transformations to a mesh or vector of meshes.
+   Single mesh: attaches and runs path commands (from creation-pose).
+   Vector of meshes: group-style rigid body transformation.
+   Returns transformed mesh or vector of meshes."
+  [mesh-or-meshes path]
+  (if (sequential? mesh-or-meshes)
+    ;; Vector of meshes: group-style rigid body transform
+    (let [first-mesh (first mesh-or-meshes)
+          ref-pose (or (:creation-pose first-mesh)
+                       {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})
+          p0 (:position ref-pose)
+          h0 (normalize (:heading ref-pose))
+          u0 (normalize (:up ref-pose))
+          ;; Run path on virtual turtle at reference pose
+          state (-> (make-turtle)
+                    (assoc :position p0)
+                    (assoc :heading h0)
+                    (assoc :up u0))
+          state (run-path state path)
+          p1 (:position state)
+          h1 (normalize (:heading state))
+          u1 (normalize (:up state))]
+      (attachment/group-transform mesh-or-meshes p0 h0 u0 p1 h1 u1))
+    ;; Single mesh: attach and run path
+    (let [state (-> (make-turtle) (attach mesh-or-meshes))
+          state (run-path state path)]
+      (or (get-in state [:attached :mesh]) mesh-or-meshes))))
