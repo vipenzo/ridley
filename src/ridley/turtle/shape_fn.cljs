@@ -541,3 +541,90 @@
             v (+ offset-y (* tile-y t))
             s (sample-heightmap hm u v)]
         (* amplitude (if center (- s 0.5) s))))))
+
+;; ============================================================
+;; Profile shape-fn (path silhouette → cross-section scaling)
+;; ============================================================
+
+(defn- interpolate-table
+  "Linear interpolation in a sorted [[t value] ...] table.
+   Clamps to first/last values outside the table range."
+  [table t]
+  (let [n (count table)]
+    (cond
+      (<= n 0) 1.0
+      (= n 1) (second (first table))
+      (<= t (ffirst table)) (second (first table))
+      (>= t (first (peek table))) (second (peek table))
+      :else
+      (loop [i 0]
+        (if (>= i (dec n))
+          (second (peek table))
+          (let [[t0 v0] (nth table i)
+                [t1 v1] (nth table (inc i))]
+            (if (<= t t1)
+              (let [frac (if (> (- t1 t0) 0.0001) (/ (- t t0) (- t1 t0)) 0)]
+                (+ v0 (* frac (- v1 v0))))
+              (recur (inc i)))))))))
+
+(defn ^:export profile
+  "Convert a path (silhouette) into a shape-fn that scales the cross-section.
+   The path's X coordinates represent radius at each point along the path.
+   At each loft step t, the cross-section is uniformly scaled to match
+   the silhouette's radius at that position.
+
+   (-> (circle R 64) (profile silhouette-path))
+
+   The path should start at the base radius and trace the silhouette.
+   Uses cumulative arc length for smooth parameterization.
+   Works best with bezier-smoothed paths (bezier-as) for smooth results."
+  [shape-or-fn path]
+  (let [wps (shape/path-to-2d-waypoints path)
+        all-pts (mapv :pos (rest wps))
+        n-all (count all-pts)]
+    (if (< n-all 2)
+      ;; Not enough points — pass through unchanged
+      (shape-fn shape-or-fn (fn [s _t] s))
+      (let [;; Skip the initial horizontal segment (origin → base radius).
+            ;; After bezier-as this segment has many intermediate points.
+            ;; Find the last point where Y hasn't changed from start.
+            y0 (second (first all-pts))
+            y-last (second (peek all-pts))
+            y-range (Math/abs (- y-last y0))
+            y-thresh (max 0.01 (* 0.005 y-range))
+            base-idx (loop [i 0]
+                       (cond
+                         (>= i n-all) (dec n-all)
+                         (> (Math/abs (- (second (nth all-pts i)) y0)) y-thresh)
+                         (max 0 (dec i))
+                         :else (recur (inc i))))
+            ;; Profile starts from base-idx
+            pts (subvec all-pts base-idx)
+            n (count pts)]
+        (if (< n 2)
+          (shape-fn shape-or-fn (fn [s _t] s))
+          (let [;; Compute cumulative arc lengths
+                cum-dists
+                (loop [i 1 acc [0.0]]
+                  (if (>= i n)
+                    acc
+                    (let [[x1 y1] (nth pts (dec i))
+                          [x2 y2] (nth pts i)
+                          dx (- x2 x1) dy (- y2 y1)
+                          d (+ (peek acc) (Math/sqrt (+ (* dx dx) (* dy dy))))]
+                      (recur (inc i) (conj acc d)))))
+                total-dist (peek cum-dists)
+                ;; Normalize to [0, 1]
+                ts (if (> total-dist 0.0001)
+                     (mapv #(/ % total-dist) cum-dists)
+                     (mapv (fn [i] (/ i (max 1 (dec n)))) (range n)))
+                ;; Base X: the base radius (X at profile start)
+                base-x (ffirst pts)
+                ;; Build scale table: [[t scale] ...]
+                scale-table (if (> (Math/abs base-x) 0.0001)
+                              (mapv (fn [t [x _]] [t (/ x base-x)]) ts pts)
+                              [[0 1] [1 1]])]
+            (shape-fn shape-or-fn
+              (fn [s t]
+                (let [sc (interpolate-table scale-table t)]
+                  (xform/scale s sc))))))))))

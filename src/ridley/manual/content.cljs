@@ -287,7 +287,33 @@
        [{:id :repl-quick-test
          :code "(+ 1 2 3)"}
         {:id :repl-println
-         :code "(println \"Hello from REPL!\")\n(println \"2 + 2 =\" (+ 2 2))"}]}]}]})
+         :code "(println \"Hello from REPL!\")\n(println \"2 + 2 =\" (+ 2 2))"}]}]}
+    {:id :gallery
+     :pages
+     [{:id :gallery-twisted-vase
+       :examples
+       [{:id :twisted-vase-code
+         :code "(def n-flutes 12)\n(def twist-amount 90)\n(def height 80)\n(def base-radius 20)\n\n(def vase\n  (loft-n 96\n    (-> (circle base-radius 64)\n        (fluted :flutes n-flutes :depth 0.15)\n        (twisted :angle twist-amount)\n        (shape-fn (fn [shape t]\n                    (let [belly (+ 1.0 (* 0.3 (sin (* t PI))))\n                          neck (- 1.0 (* 0.25 (pow (max 0 (- t 0.6)) 2) 40))\n                          lip (if (> t 0.9)\n                                (+ 1.0 (* 0.15 (- t 0.9) 10))\n                                1.0)\n                          s (* belly neck lip)]\n                      (scale-shape shape s s)))))\n    (f height)))\n\n(register vase vase)"}]}
+      {:id :gallery-recursive-tree
+       :examples
+       [{:id :recursive-tree-code
+         :code "(def max-depth 4)\n(def n-branches 3)\n(def spread-angle 35)\n(def taper 0.65)\n(def golden-angle 137.508)\n\n(defn branch [depth length radius]\n  (when (> depth 0)\n    (cyl radius (- radius (* radius (- 1 taper))) length)\n    (f length)\n    (dotimes [i n-branches]\n      (push-state)\n      (tr (* i (/ 360 n-branches)))\n      (tv spread-angle)\n      (tr (* i golden-angle))\n      (branch (dec depth)\n              (* length taper)\n              (* radius taper))\n      (pop-state))))\n\n(branch max-depth 20 3)"}]}
+      {:id :gallery-dice
+       :examples
+       [{:id :dice-code
+         :code "(def die-size 20)\n(def half (/ die-size 2))\n(def pip-radius 2.0)\n(def pip-depth 1.2)\n(def pip-spread 5.5)\n\n(def body (box die-size))\n\n(defn pip [x-off y-off]\n  (attach (sphere pip-radius)\n    (f (- half pip-depth))\n    (rt x-off)\n    (u y-off)))\n\n(defn face-1 [] [(pip 0 0)])\n(defn face-2 [] [(pip (- pip-spread) pip-spread)\n                  (pip pip-spread (- pip-spread))])\n(defn face-3 [] (concat (face-1) (face-2)))\n(defn face-4 [] [(pip (- pip-spread) pip-spread)\n                  (pip pip-spread pip-spread)\n                  (pip (- pip-spread) (- pip-spread))\n                  (pip pip-spread (- pip-spread))])\n(defn face-5 [] (concat (face-4) (face-1)))\n(defn face-6 [] [(pip (- pip-spread) pip-spread)\n                  (pip (- pip-spread) 0)\n                  (pip (- pip-spread) (- pip-spread))\n                  (pip pip-spread pip-spread)\n                  (pip pip-spread 0)\n                  (pip pip-spread (- pip-spread))])\n\n(def all-pips\n  (concat-meshes\n    (concat\n      (face-1)\n      (map (fn [p] (attach p (th 180))) (face-6))\n      (map (fn [p] (attach p (th -90))) (face-2))\n      (map (fn [p] (attach p (th 90))) (face-5))\n      (map (fn [p] (attach p (tv -90))) (face-3))\n      (map (fn [p] (attach p (tv 90))) (face-4)))))\n\n(def die (mesh-difference body all-pips))\n(register die die)"}]}
+      {:id :gallery-spiral-shell
+       :examples
+       [{:id :spiral-shell-code
+         :code "(def n-turns 3)\n(def steps-per-turn 48)\n(def total-steps (* n-turns steps-per-turn))\n(def initial-radius 3)\n(def growth 2.8)\n(def spiral-radius 15)\n(def tilt 25)\n\n(def helix\n  (path\n    (resolution :n steps-per-turn)\n    (tv tilt)\n    (dotimes [i total-steps]\n      (let [t (/ i total-steps)\n            r (* spiral-radius (+ 1.0 (* t (- growth 1.0))))]\n        (arc-h r (/ 360 steps-per-turn))))))\n\n(def shell\n  (loft-n total-steps\n    (-> (circle initial-radius 24)\n        (tapered :to growth)\n        (noisy :amplitude 0.3 :scale 5 :octaves 2))\n    (follow-path helix)))\n\n(register shell shell)"}]}
+      {:id :gallery-embossed-column
+       :examples
+       [{:id :embossed-column-code
+         :code "(def col-radius 15)\n(def col-height 80)\n(def n-flutes 16)\n(def flute-depth 0.12)\n\n(def letters (text-shape \"RIDLEY\" :size 20))\n(def text-mesh (extrude-z letters 3))\n(def text-bounds (bounds text-mesh))\n(def text-hm\n  (mesh-to-heightmap text-mesh\n    :resolution 128\n    :offset-x (get-in text-bounds [:min 0])\n    :offset-y (get-in text-bounds [:min 1])\n    :length-x (- (get-in text-bounds [:max 0]) (get-in text-bounds [:min 0]))\n    :length-y (- (get-in text-bounds [:max 1]) (get-in text-bounds [:min 1]))))\n\n(def shaft\n  (loft-n 96\n    (-> (circle col-radius 64)\n        (fluted :flutes n-flutes :depth flute-depth)\n        (heightmap text-hm :amplitude 1.5 :center true :tile-x 2 :tile-y 1))\n    (f col-height)))\n\n(def base\n  (attach\n    (loft-n 8\n      (tapered (circle (* col-radius 1.4) 64) :to (/ 1 1.4))\n      (f 6))\n    (tv 180)))\n\n(def capital\n  (attach\n    (loft-n 8\n      (tapered (circle col-radius 64) :to 1.3)\n      (f 5))\n    (f col-height)))\n\n(def column (concat-meshes [base shaft capital]))\n(register column column)"}]}
+      {:id :gallery-canvas-weave
+       :examples
+       [{:id :canvas-weave-code
+         :code "(defn canvas [thickness compactness]\n  (let [step121 (* thickness 1.1314)\n        spacing (* thickness 1.8)\n        wave (+ (* 2 thickness) (* 2 step121 (cos (/ PI 4))))\n        n-strands 6\n        n-waves 4\n\n        make-strands (fn [n]\n                       (concat (for [i (range n)]\n                                 (let [[g ud] (if (odd? i) [180 0] [0 (* -0.5 thickness)])\n                                       pat (path (dotimes [_ n-waves]\n                                                   (f thickness) (tv 45) (f step121) (tv -45)\n                                                   (f thickness) (tv -45) (f step121) (tv 45)))]\n                                   (attach (loft (circle (* thickness compactness)) identity\n                                             (bezier-as pat :tension 0.3))\n                                     (lt (* i spacing)) (tr g) (u ud))))))\n\n        m1 (concat-meshes (make-strands n-strands))\n        m2 (attach m1 (tr 180)\n             (th 90) (rt -1) (f 1)\n             (d (* thickness compactness 0.5)))\n        weave (concat-meshes [m1 m2])\n\n        b (bounds weave)\n        center-x (* 0.5 (+ (get-in b [:min 0]) (get-in b [:max 0])))\n        center-y (* 0.5 (+ (get-in b [:min 1]) (get-in b [:max 1])))\n        tile-x (* 2 wave)\n        tile-y (* 2 wave)\n\n        hm (mesh-to-heightmap weave :resolution 256\n             :offset-x (- center-x (* 0.5 tile-x))\n             :offset-y (- center-y (* 0.5 tile-y))\n             :length-x tile-x\n             :length-y tile-y)]\n    [weave hm]))\n\n(def weave-hm (canvas 2 0.6))\n\n(def tazza\n  (let [esterno (attach\n                  (loft-n 128\n                    (heightmap (circle 30 128) (weave-hm 1)\n                      :amplitude 4 :center true\n                      :tile-x 8 :tile-y 4)\n                    (f 60)))\n        interno (attach (extrude (circle 26 128) (f 60)) (f 4))]\n    (mesh-difference esterno interno)))\n\n(register A tazza)"}]}]}]})
 
 ;; Internationalization - text content for each language
 (def i18n
@@ -298,7 +324,8 @@
      :part-3 {:title "Mesh Manipulation"}
      :part-4 {:title "Advanced Features"}
      :part-5 {:title "Debug Help"}
-     :part-6 {:title "Advanced Clojure"}}
+     :part-6 {:title "Advanced Clojure"}
+     :gallery {:title "Gallery"}}
     :pages
     {:hello-ridley
      {:title "Hello Ridley"
@@ -1152,7 +1179,132 @@ Options for `text-on-path`:
        :text-on-arc {:caption "Text on arc"
                      :description "Place text along a curved path. Each letter follows the curve tangent. Use `:align :center` to center text on the path."}
        :text-on-spiral {:caption "Text on spiral"
-                        :description "Text can follow any path, including complex 3D curves like spirals."}}}}}
+                        :description "Text can follow any path, including complex 3D curves like spirals."}}}
+
+     :gallery-twisted-vase
+     {:title "Twisted Fluted Vase"
+      :content "A parametric vase showcasing **shape-fn composition** with the `->` threading macro.
+
+The profile is a circle that gets **fluted** (scalloped edges), **twisted** along the height, and shaped with a **custom taper function**. The taper uses math to create a belly that widens, a neck that narrows, and a lip that flares.
+
+**Features demonstrated:**
+- `fluted` — adds radial undulations to the cross-section
+- `twisted` — progressively rotates the profile along the path
+- `shape-fn` with a custom `(fn [shape t] ...)` for non-linear scaling
+- `loft-n` for high-resolution extrusion
+- `->` threading to compose multiple shape-fns
+
+**Try changing:**
+- `n-flutes` for more or fewer scallops
+- `twist-amount` for tighter or looser spiral
+- The taper curve math for different silhouettes"
+      :examples
+      {:twisted-vase-code {:caption "Twisted Fluted Vase"}}}
+
+     :gallery-recursive-tree
+     {:title "Recursive Tree"
+      :content "A 3D **fractal tree** built with `push-state` / `pop-state` branching.
+
+At each level of recursion, the trunk splits into several branches. Each branch is thinner and shorter than its parent, angled outward using the **golden angle** for even spatial distribution. Branches are tapered cylinders placed at fork points.
+
+**Features demonstrated:**
+- `push-state` / `pop-state` for branching (save and restore turtle pose)
+- Recursive functions with `defn`
+- Parametric design with `def` variables
+- Tapered `cyl` primitives for natural-looking limbs
+
+**Try changing:**
+- `max-depth` for more or fewer levels (3-6 is a good range)
+- `n-branches` for bushier or sparser trees
+- `spread-angle` for wider or tighter branching
+- `taper` for how quickly branches thin out"
+      :examples
+      {:recursive-tree-code {:caption "Recursive Tree"}}}
+
+     :gallery-dice
+     {:title "Six-Sided Die"
+      :content "A classic **D6 die** with subtracted pips on each face.
+
+The die is built by starting from a `box`, then placing spherical pips on all six faces using `attach` for positioning. The pips are subtracted with `mesh-difference` (boolean CSG). Pip layouts follow the standard Western convention where opposite faces sum to 7.
+
+**Features demonstrated:**
+- `mesh-difference` for boolean subtraction (CSG)
+- `attach` to place geometry at specific positions and orientations
+- Parametric pip placement with functions and loops
+- Building complex objects from simple primitives (`box`, `sphere`)
+
+**Try changing:**
+- `die-size` for a bigger or smaller die
+- `pip-radius` / `pip-depth` for different pip styles
+- Add a `shape-offset` to round the die edges"
+      :examples
+      {:dice-code {:caption "Six-Sided Die"}}}
+
+     :gallery-spiral-shell
+     {:title "Spiral Shell"
+      :content "A logarithmic **spiral shell**, like a snail or nautilus.
+
+The shell is built by lofting a circle along a **helical path** that expands as it spirals. The cross-section grows with each revolution, mimicking the natural growth pattern of mollusks. A `noisy` displacement adds organic surface texture.
+
+The key insight: use `loft-n` with a `tapered` shape-fn that scales the cross-section proportionally to position along the path, combined with a helical path generated by `arc-h` inside a loop.
+
+**Features demonstrated:**
+- `arc-h` for helical paths (horizontal arcs with changing radius)
+- `loft-n` with composed shape-fns (`tapered` + `noisy`)
+- `path` with `resolution` for controlling smoothness
+- Parametric spirals with growth ratio
+
+**Try changing:**
+- `n-turns` for more or fewer revolutions
+- `growth` for how quickly the shell expands
+- `tilt` for the cone angle of the spiral
+- `noisy` amplitude/scale for surface texture"
+      :examples
+      {:spiral-shell-code {:caption "Spiral Shell"}}}
+
+     :gallery-embossed-column
+     {:title "Embossed Column"
+      :content "A classical **column with text embossed** around its surface.
+
+The text is converted to a 2D shape with `text-shape`, extruded into a thin 3D mesh, then **rasterized as a heightmap** with `mesh-to-heightmap`. That heightmap is applied as radial displacement on a cylindrical `loft-n`, making the letters stand out from the surface. The column shaft is also `fluted`, and has a simple capital and base assembled with `attach`.
+
+**Features demonstrated:**
+- `text-shape` for generating 2D letter outlines
+- `mesh-to-heightmap` to rasterize 3D geometry into a displacement map
+- `heightmap` shape-fn for surface displacement
+- Combining multiple shape-fns (`fluted` + `heightmap`)
+- `concat-meshes` for assembling base + shaft + capital
+
+**Try changing:**
+- The text string for different inscriptions
+- `:tile-x` to control how many times the text wraps around
+- `:amplitude` for deeper or shallower embossing
+- `n-flutes` / `flute-depth` for the column shaft"
+      :examples
+      {:embossed-column-code {:caption "Embossed Column"}}}
+
+     :gallery-canvas-weave
+     {:title "Canvas Weave Cup"
+      :content "A cup with **woven canvas texture** on the outside. This is the most complex example in the gallery.
+
+Two sets of strands are lofted along sinusoidal paths with `bezier-as`, then rotated 90 degrees and interlocked with `concat-meshes`. The resulting mesh is sampled as a **2D heightmap tile** with `mesh-to-heightmap`, which is then applied as radial displacement to a cylindrical loft. The tile repeats seamlessly around the cup. Finally, `mesh-difference` hollows out the interior.
+
+**WARNING:** This example is computationally expensive and takes **30-60 seconds** to render. The bottleneck is the heightmap rasterization at 256x256 and the 128-step loft with per-step heightmap sampling.
+
+**Features demonstrated:**
+- Procedural weave generation with interlocking strands
+- `mesh-to-heightmap` to rasterize 3D weave geometry
+- `heightmap` shape-fn with `:tile-x` / `:tile-y` for seamless repetition
+- `mesh-difference` to hollow out the interior
+- `concat-meshes`, `bounds`, `bezier-as`, `attach`
+
+**Try changing:**
+- `thickness` and `compactness` parameters
+- `:tile-x` / `:tile-y` to control pattern repetition
+- `:amplitude` for deeper or shallower texture
+- Replace `circle` with `rect` for flat ribbon strands"
+      :examples
+      {:canvas-weave-code {:caption "Canvas Weave Cup"}}}}}
 
    :it
    {:sections
@@ -1161,7 +1313,8 @@ Options for `text-on-path`:
      :part-3 {:title "Manipolazione Mesh"}
      :part-4 {:title "Funzionalità Avanzate"}
      :part-5 {:title "Aiuto al Debug"}
-     :part-6 {:title "Clojure Avanzato"}}
+     :part-6 {:title "Clojure Avanzato"}
+     :gallery {:title "Galleria"}}
     :pages
     {:hello-ridley
      {:title "Ciao Ridley"
@@ -2015,7 +2168,132 @@ Opzioni per `text-on-path`:
        :text-on-arc {:caption "Testo su arco"
                      :description "Posiziona testo lungo un percorso curvo. Ogni lettera segue la tangente alla curva. Usa `:align :center` per centrare il testo sul percorso."}
        :text-on-spiral {:caption "Testo su spirale"
-                        :description "Il testo può seguire qualsiasi percorso, incluse curve 3D complesse come spirali."}}}}}})
+                        :description "Il testo può seguire qualsiasi percorso, incluse curve 3D complesse come spirali."}}}
+
+     :gallery-twisted-vase
+     {:title "Vaso Torto Scanalato"
+      :content "Un vaso parametrico che mostra la **composizione di shape-fn** con il macro `->`.
+
+Il profilo è un cerchio che viene **scanalato** (bordi smerlati), **torto** lungo l'altezza, e sagomato con una **funzione di rastremazione personalizzata**. La rastremazione usa la matematica per creare una pancia che si allarga, un collo che si stringe e un labbro che si apre.
+
+**Funzionalità dimostrate:**
+- `fluted` — aggiunge ondulazioni radiali alla sezione
+- `twisted` — ruota progressivamente il profilo lungo il percorso
+- `shape-fn` con `(fn [shape t] ...)` personalizzata per scalatura non lineare
+- `loft-n` per estrusione ad alta risoluzione
+- `->` threading per comporre più shape-fn
+
+**Prova a cambiare:**
+- `n-flutes` per più o meno smerlature
+- `twist-amount` per spirale più stretta o larga
+- I coefficienti della curva di rastremazione per sagome diverse"
+      :examples
+      {:twisted-vase-code {:caption "Vaso Torto Scanalato"}}}
+
+     :gallery-recursive-tree
+     {:title "Albero Ricorsivo"
+      :content "Un **albero frattale** 3D costruito con ramificazione `push-state` / `pop-state`.
+
+Ad ogni livello di ricorsione, il tronco si divide in diversi rami. Ogni ramo è più sottile e corto del genitore, angolato verso l'esterno usando l'**angolo aureo** per una distribuzione spaziale uniforme. I rami sono cilindri rastremati posizionati nei punti di biforcazione.
+
+**Funzionalità dimostrate:**
+- `push-state` / `pop-state` per la ramificazione (salva e ripristina la posa della turtle)
+- Funzioni ricorsive con `defn`
+- Design parametrico con variabili `def`
+- Primitive `cyl` rastremate per arti dall'aspetto naturale
+
+**Prova a cambiare:**
+- `max-depth` per più o meno livelli (3-6 è un buon intervallo)
+- `n-branches` per alberi più folti o radi
+- `spread-angle` per ramificazione più larga o stretta
+- `taper` per quanto velocemente i rami si assottigliano"
+      :examples
+      {:recursive-tree-code {:caption "Albero Ricorsivo"}}}
+
+     :gallery-dice
+     {:title "Dado a Sei Facce"
+      :content "Un classico **dado D6** con incavi sottratti su ogni faccia.
+
+Il dado è costruito partendo da un `box`, poi posizionando sfere su tutte e sei le facce con `attach`. Gli incavi sono sottratti con `mesh-difference` (booleana CSG). La disposizione segue la convenzione occidentale dove le facce opposte sommano a 7.
+
+**Funzionalità dimostrate:**
+- `mesh-difference` per sottrazione booleana (CSG)
+- `attach` per posizionare geometria in posizioni e orientamenti specifici
+- Posizionamento parametrico con funzioni e cicli
+- Costruzione di oggetti complessi da primitive semplici (`box`, `sphere`)
+
+**Prova a cambiare:**
+- `die-size` per un dado più grande o piccolo
+- `pip-radius` / `pip-depth` per stili diversi degli incavi
+- Aggiungi `shape-offset` per arrotondare gli spigoli"
+      :examples
+      {:dice-code {:caption "Dado a Sei Facce"}}}
+
+     :gallery-spiral-shell
+     {:title "Conchiglia a Spirale"
+      :content "Una **conchiglia a spirale** logaritmica, come una lumaca o un nautilus.
+
+La conchiglia è costruita loftando un cerchio lungo un **percorso elicoidale** che si espande a spirale. La sezione trasversale cresce ad ogni rivoluzione, imitando il pattern di crescita naturale dei molluschi. Un displacement `noisy` aggiunge texture organica alla superficie.
+
+L'idea chiave: usare `loft-n` con una shape-fn `tapered` che scala la sezione proporzionalmente alla posizione lungo il percorso, combinata con un percorso elicoidale generato da `arc-h` in un loop.
+
+**Funzionalità dimostrate:**
+- `arc-h` per percorsi elicoidali (archi orizzontali con raggio variabile)
+- `loft-n` con shape-fn composte (`tapered` + `noisy`)
+- `path` con `resolution` per controllare la fluidità
+- Spirali parametriche con rapporto di crescita
+
+**Prova a cambiare:**
+- `n-turns` per più o meno rivoluzioni
+- `growth` per quanto velocemente la conchiglia si espande
+- `tilt` per l'angolo del cono della spirale
+- Ampiezza/scala di `noisy` per la texture superficiale"
+      :examples
+      {:spiral-shell-code {:caption "Conchiglia a Spirale"}}}
+
+     :gallery-embossed-column
+     {:title "Colonna con Testo in Rilievo"
+      :content "Una **colonna classica con testo in rilievo** sulla superficie.
+
+Il testo viene convertito in forma 2D con `text-shape`, estruso in una mesh 3D sottile, poi **rasterizzato come heightmap** con `mesh-to-heightmap`. Quella heightmap viene applicata come displacement radiale su un `loft-n` cilindrico, facendo sporgere le lettere dalla superficie. Il fusto della colonna è anche `fluted`, e ha un semplice capitello e base assemblati con `attach`.
+
+**Funzionalità dimostrate:**
+- `text-shape` per generare contorni 2D delle lettere
+- `mesh-to-heightmap` per rasterizzare geometria 3D in una mappa di displacement
+- Shape-fn `heightmap` per displacement superficiale
+- Combinazione di più shape-fn (`fluted` + `heightmap`)
+- `concat-meshes` per assemblare base + fusto + capitello
+
+**Prova a cambiare:**
+- La stringa di testo per iscrizioni diverse
+- `:tile-x` per controllare quante volte il testo si avvolge
+- `:amplitude` per rilievo più profondo o leggero
+- `n-flutes` / `flute-depth` per le scanalature del fusto"
+      :examples
+      {:embossed-column-code {:caption "Colonna con Testo in Rilievo"}}}
+
+     :gallery-canvas-weave
+     {:title "Tazza con Trama a Intreccio"
+      :content "Una tazza con **texture a intreccio** sulla superficie esterna. Questo è l'esempio più complesso della galleria.
+
+Due set di fili vengono loftati lungo percorsi sinusoidali con `bezier-as`, poi ruotati di 90 gradi e intrecciati con `concat-meshes`. La mesh risultante viene campionata come **tile heightmap 2D** con `mesh-to-heightmap`, che viene poi applicata come displacement radiale a un loft cilindrico. Il tile si ripete senza giunture attorno alla tazza. Infine, `mesh-difference` svuota l'interno.
+
+**ATTENZIONE:** Questo esempio è computazionalmente costoso e richiede **30-60 secondi** per il rendering. Il collo di bottiglia è la rasterizzazione heightmap a 256x256 e il loft a 128 step con campionamento heightmap per ogni step.
+
+**Funzionalità dimostrate:**
+- Generazione procedurale di intreccio con fili intrecciati
+- `mesh-to-heightmap` per rasterizzare geometria 3D dell'intreccio
+- Shape-fn `heightmap` con `:tile-x` / `:tile-y` per ripetizione seamless
+- `mesh-difference` per svuotare l'interno
+- `concat-meshes`, `bounds`, `bezier-as`, `attach`
+
+**Prova a cambiare:**
+- Parametri `thickness` e `compactness`
+- `:tile-x` / `:tile-y` per controllare la ripetizione del pattern
+- `:amplitude` per texture più profonda o leggera
+- Sostituisci `circle` con `rect` per fili a nastro piatto"
+      :examples
+      {:canvas-weave-code {:caption "Tazza con Trama a Intreccio"}}}}}})
 
 ;; Helper to find a page in the structure
 (defn- find-page-structure [page-id]

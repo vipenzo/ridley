@@ -271,7 +271,7 @@
              (+ cy (* radius (Math/sin a)))]))
         (range (inc n))))
 
-(defn- path-to-2d-waypoints
+(defn path-to-2d-waypoints
   "Extract 2D waypoints (position + heading direction) from a path.
    Projects XY from 3D turtle state. Returns vector of {:pos [x y] :dir [dx dy]}."
   [path]
@@ -690,3 +690,145 @@
                    (mapv #(transform-points-to-plane % params) holes))]
     {:outer outer-3d
      :holes holes-3d}))
+
+;; ============================================================
+;; Path clipping and transformation
+;; ============================================================
+
+(defn- points-to-path
+  "Convert a sequence of 2D points to a path.
+   Generates set-heading + forward commands to trace from [0,0] through each point."
+  [pts]
+  (when (>= (count pts) 2)
+    (let [commands
+          (loop [i 0 cmds [] pos [0 0]]
+            (if (>= i (count pts))
+              cmds
+              (let [[tx ty] (nth pts i)
+                    dx (- tx (first pos))
+                    dy (- ty (second pos))
+                    dist (Math/sqrt (+ (* dx dx) (* dy dy)))]
+                (if (< dist 0.0001)
+                  (recur (inc i) cmds [tx ty])
+                  (recur (inc i)
+                         (conj cmds
+                               {:cmd :set-heading :args [[(/ dx dist) (/ dy dist) 0] [0 0 1]]}
+                               {:cmd :f :args [dist]})
+                         [tx ty])))))]
+      {:type :path :commands commands})))
+
+(defn ^:export poly-path
+  "Create an open path from flat x y coordinate pairs.
+   Like poly but produces a path instead of a shape.
+   (poly-path 0 0 30 0 45 90)  →  path from (0,0) → (30,0) → (45,90)
+   Accepts: (poly-path 0 0 30 0 ...), (poly-path [0 0 30 0 ...]), or (poly-path v)"
+  ([x] (poly-path x nil))
+  ([x y & more]
+   (let [nums (if (and (nil? y) (sequential? x))
+                x
+                (cons x (cons y more)))
+         n (count nums)]
+     (when (odd? n)
+       (throw (js/Error. (str "poly-path: odd number of coordinates (" n "). Coordinates must be x y pairs."))))
+     (when (< n 4)
+       (throw (js/Error. (str "poly-path: need at least 2 points (4 coordinates), got " n "."))))
+     (let [pts (mapv vec (partition 2 nums))]
+       (points-to-path pts)))))
+
+(defn ^:export poly-path-closed
+  "Create a closed path from flat x y coordinate pairs.
+   Like poly-path but adds a final segment back to the first point.
+   (poly-path-closed 0 0 30 0 45 90 0 90)  →  closed quadrilateral path
+   Useful with bezier-as + path-to-shape for smoothed polygons."
+  ([x] (poly-path-closed x nil))
+  ([x y & more]
+   (let [nums (if (and (nil? y) (sequential? x))
+                x
+                (cons x (cons y more)))
+         n (count nums)]
+     (when (odd? n)
+       (throw (js/Error. (str "poly-path-closed: odd number of coordinates (" n "). Coordinates must be x y pairs."))))
+     (when (< n 6)
+       (throw (js/Error. (str "poly-path-closed: need at least 3 points (6 coordinates), got " n "."))))
+     (let [pts (mapv vec (partition 2 nums))
+           closed-pts (conj pts (first pts))]
+       (points-to-path closed-pts)))))
+
+(defn ^:export subpath-y
+  "Extract the portion of a path within a height range [from-h, to-h].
+   Heights are measured as distance from the path's starting Y position,
+   regardless of whether Y increases or decreases along the path.
+   Clips segments at boundaries and outputs a path with Y starting at 0.
+
+   (subpath-y path 2 13)  ; keep height 2..13, output Y=0..11"
+  [path from-h to-h]
+  (let [wps (path-to-2d-waypoints path)
+        pts (mapv :pos wps)
+        n (count pts)
+        eps 0.0001
+        y-start (second (first pts))
+        y-end (second (peek pts))
+        ;; Detect direction: -1 if path goes downward, +1 if upward
+        y-dir (if (< y-end y-start) -1 1)
+        ;; Convert each point to [x, height] where height >= 0
+        xh-pts (mapv (fn [[x y]] [x (* y-dir (- y y-start))]) pts)
+        in? (fn [[_ h]] (and (>= h (- from-h eps)) (<= h (+ to-h eps))))
+        lerp-h (fn [[x1 h1] [x2 h2] target-h]
+                 (let [dh (- h2 h1)]
+                   (if (< (Math/abs dh) eps)
+                     [x1 target-h]
+                     (let [t (/ (- target-h h1) dh)]
+                       [(+ x1 (* t (- x2 x1))) target-h]))))
+        result
+        (loop [i 0 acc []]
+          (if (>= i n)
+            acc
+            (let [p (nth xh-pts i)]
+              (if (zero? i)
+                (recur 1 (if (in? p) (conj acc p) acc))
+                (let [prev (nth xh-pts (dec i))
+                      pi (in? prev)
+                      ci (in? p)
+                      [_ ph] prev
+                      [_ ch] p]
+                  (cond
+                    ;; Both in range
+                    (and pi ci)
+                    (recur (inc i) (conj acc p))
+
+                    ;; Entering range
+                    (and (not pi) ci)
+                    (let [bh (if (< ph from-h) from-h to-h)]
+                      (recur (inc i) (-> acc (conj (lerp-h prev p bh)) (conj p))))
+
+                    ;; Leaving range
+                    (and pi (not ci))
+                    (let [bh (if (> ch to-h) to-h from-h)]
+                      (recur (inc i) (conj acc (lerp-h prev p bh))))
+
+                    ;; Both outside — check if segment crosses entire range
+                    :else
+                    (if (or (and (< ph from-h) (> ch to-h))
+                            (and (> ph to-h) (< ch from-h)))
+                      (let [bp1 (lerp-h prev p from-h)
+                            bp2 (lerp-h prev p to-h)]
+                        (if (< ph ch)
+                          (recur (inc i) (-> acc (conj bp1) (conj bp2)))
+                          (recur (inc i) (-> acc (conj bp2) (conj bp1)))))
+                      (recur (inc i) acc))))))))]
+    (when (>= (count result) 2)
+      (let [shifted (mapv (fn [[x h]] [x (- h from-h)]) result)]
+        (points-to-path shifted)))))
+
+(defn ^:export offset-x
+  "Shift all X coordinates of a path by dx.
+   Useful for moving a profile inward/outward relative to the revolve axis.
+
+   (offset-x path -2.5)  ; shift profile 2.5 units toward the axis"
+  [path dx]
+  (let [wps (path-to-2d-waypoints path)
+        ;; Skip the implicit [0,0] origin, work with real waypoints
+        real-pts (mapv :pos (rest wps))
+        shifted (mapv (fn [[x y]] [(+ x dx) y]) real-pts)]
+    (when (>= (count shifted) 2)
+      (points-to-path shifted))))

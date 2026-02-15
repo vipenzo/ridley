@@ -106,6 +106,10 @@
    'reverse-shape   shape/reverse-shape
    'path-to-shape   shape/path-to-shape
    'stroke-shape    shape/stroke-shape
+   'poly-path       shape/poly-path
+   'poly-path-closed shape/poly-path-closed
+   'subpath-y       shape/subpath-y
+   'offset-x        shape/offset-x
    ;; Shape boolean operations (2D, via Clipper2)
    'shape-union        clipper/shape-union
    'shape-difference   clipper/shape-difference
@@ -185,6 +189,7 @@
    'mesh-to-heightmap sfn/mesh-to-heightmap
    'sample-heightmap  sfn/sample-heightmap
    'heightmap         sfn/heightmap
+   'profile           sfn/profile
    'heightmap-to-mesh sfn/heightmap-to-mesh
    'pure-loft-shape-fn   gen-ops/pure-loft-shape-fn
    'pure-bloft-shape-fn  gen-ops/pure-bloft-shape-fn
