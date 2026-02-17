@@ -16,20 +16,39 @@
 ; - Tray funnel: separate path + bezier-as + stroke-shape + revolve.
 ; - Tray floor: flat ring (poly + revolve) connecting wall to funnel.
 ;
-; Dimensions: ~240mm diameter, ~180mm height.
+; Parametric: change RTOP, H, wall, tray-gap for size/thickness.
+;             Adjust ratios (bottom-ratio, tray-ratio, etc.) for proportions.
 
 ; =====================
-; Shared dimensions
+; Essential parameters — tweak these
 ; =====================
-(def tray-gap 0.4)
-(def RBOTTOM 100) ; outer bowl bottom radius 
-(def RTOP 150) ; outer bowl top radius (rim radius after fit)
-(def H 120) ; outer bowl height
-(def wall 3) ; wall thickness
-(def tray-wall 1.8) ; tray wall thickness
-(def tray-h 100) ; tray height
-(def leap-w (/ (+ wall tray-wall tray-gap) 2))
-(def leap-h 2)
+(def RTOP 70) ; bowl rim radius (overall size)
+(def H       50)   ; bowl height
+(def wall    3)     ; bowl wall thickness
+(def tray-gap 0.4)  ; gap between bowl and tray (print tolerance)
+
+; =====================
+; Proportions — safe to adjust (0–1 range)
+; =====================
+(def bottom-ratio  0.67)  ; base radius / rim radius
+(def tray-ratio    0.83)  ; tray height / bowl height
+(def funnel-ratio 0.55) ; funnel top radius / base radius
+(def taper-ratio 0.35) ; funnel bottom / funnel top
+
+; =====================
+; Derived dimensions — computed from the above
+; =====================
+(def RBOTTOM    (* RTOP bottom-ratio))
+(def tray-h     (* H tray-ratio))
+(def tray-wall  (* wall 0.6))
+(def funnel-r-top (* RBOTTOM funnel-ratio))
+(def funnel-r-bot (* funnel-r-top taper-ratio))
+(def funnel-wall  tray-wall)
+(def funnel-handle (* funnel-r-top 0.27))
+(def funnel-h   (+ tray-h (* H 0.62)))
+(def hole-r     (- funnel-r-bot funnel-wall))
+(def leap-w     (/ (+ wall tray-wall tray-gap) 2))
+(def leap-h     2)
 ; =====================
 ; Shared silhouette
 ; =====================
@@ -57,14 +76,6 @@
 ; Offset from silhouette centerline to tray centerline.
 ; Ensures constant gap = tray-gap between bowl inner surface and tray outer surface.
 (def tray-offset (+ (/ wall 2) tray-gap (/ tray-wall 2))) ; = 2.8
-
-; Funnel dimensions
-(def funnel-r-top 55) ; funnel rim radius
-(def funnel-r-bot 30) ; funnel base radius
-(def funnel-handle 15)
-(def funnel-wall 1.8) ; funnel wall thickness
-(def funnel-h (+ tray-h 50)) ; funnel height (match tray wall)
-(def hole-r (- funnel-r-bot funnel-wall)) ; hole through floor (~28.2)
 
 
 ; --- Tray outer wall ---
