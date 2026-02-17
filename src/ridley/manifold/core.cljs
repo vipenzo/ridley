@@ -553,3 +553,87 @@
           (catch :default e
             (js/console.error "CrossSection extrusion failed:" e)
             nil))))))
+
+;; ============================================================
+;; Mesh slicing — cross-section at arbitrary plane
+;; ============================================================
+
+(defn- compute-basis
+  "Build an orthonormal basis where Z aligns with the given normal.
+   Returns [right up normal] as 3-element vectors."
+  [[nx ny nz]]
+  (let [;; Pick a non-parallel seed vector for cross product
+        seed (if (> (Math/abs nz) 0.9) [1 0 0] [0 0 1])
+        ;; right = normalize(seed × normal)
+        [sx sy sz] seed
+        rx (- (* sy nz) (* sz ny))
+        ry (- (* sz nx) (* sx nz))
+        rz (- (* sx ny) (* sy nx))
+        rlen (Math/sqrt (+ (* rx rx) (* ry ry) (* rz rz)))
+        right [(/ rx rlen) (/ ry rlen) (/ rz rlen)]
+        ;; up = normalize(normal × right)
+        [rrx rry rrz] right
+        ux (- (* ny rrz) (* nz rry))
+        uy (- (* nz rrx) (* nx rrz))
+        uz (- (* nx rry) (* ny rrx))
+        ulen (Math/sqrt (+ (* ux ux) (* uy uy) (* uz uz)))]
+    [right [(/ ux ulen) (/ uy ulen) (/ uz ulen)] [nx ny nz]]))
+
+(defn ^:export slice-at-plane
+  "Slice a mesh at an arbitrary plane, returning cross-section contours.
+
+   The plane is defined by a point and a normal vector.
+   Optionally accepts explicit right and up vectors for the plane's
+   local coordinate system; if omitted, a basis is auto-computed.
+
+   Returns a vector of shapes (2D contours in the plane's local coordinates,
+   where X = right, Y = up relative to the normal).
+   Shapes have :preserve-position? true so stamp renders them at absolute
+   coordinates in the plane.
+
+   (slice-at-plane mesh [0 0 1] [0 0 90])              ; horizontal slice at Z=90
+   (slice-at-plane mesh [1 0 0] [0 0 0])               ; vertical slice at X=0
+   (slice-at-plane mesh [1 0 0] [0 0 0] [0 1 0] [0 0 1]) ; explicit basis"
+  ([ridley-mesh normal point]
+   (let [[right up _] (compute-basis normal)]
+     (slice-at-plane ridley-mesh normal point right up)))
+  ([ridley-mesh normal point right up]
+   (when (get-manifold-class)
+     (when (and (:vertices ridley-mesh) (:faces ridley-mesh))
+       (try
+         (let [[px py pz] point
+               [rx ry rz] right
+               [ux uy uz] up
+               [nx ny nz] normal
+               ;; Transform vertices: local = R * (v - point)
+               ;; R rows are: right, up, normal
+               xform-vert (fn [[vx vy vz]]
+                            (let [dx (- vx px) dy (- vy py) dz (- vz pz)]
+                              [(+ (* rx dx) (* ry dy) (* rz dz))
+                               (+ (* ux dx) (* uy dy) (* uz dz))
+                               (+ (* nx dx) (* ny dy) (* nz dz))]))
+               xformed-verts (mapv xform-vert (:vertices ridley-mesh))
+               xformed-mesh (assoc ridley-mesh :vertices xformed-verts)
+               ;; Create Manifold from transformed mesh and slice at Z=0
+               ^js m (mesh->manifold xformed-mesh)]
+           (when m
+             (let [^js cs (.slice m 0)
+                   ^js polys (.toPolygons cs)
+                   ;; Convert JS polygons to Ridley shapes
+                   shapes (vec
+                           (for [i (range (.-length polys))
+                                 :let [^js poly (aget polys i)
+                                       pts (vec (for [j (range (.-length poly))
+                                                      :let [^js pt (aget poly j)]]
+                                                  [(aget pt 0) (aget pt 1)]))]
+                                 :when (>= (count pts) 3)]
+                             {:type :shape
+                              :points pts
+                              :centered? false
+                              :preserve-position? true}))]
+               (.delete m)
+               (.delete cs)
+               shapes)))
+         (catch :default e
+           (js/console.error "slice-at-plane failed:" e)
+           nil))))))

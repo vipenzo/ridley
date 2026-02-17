@@ -475,3 +475,22 @@
                              :meshes meshes
                              :panels (visible-panels)
                              :reset-camera? reset-camera?}))))
+
+(defn update-mesh-material!
+  "Update material properties on a named mesh (or all meshes with matching prefix).
+   Merges material-updates into existing material, preserving unspecified properties.
+   Refreshes the viewport after updating."
+  [name material-updates]
+  (let [idx (find-mesh-index name)]
+    (if idx
+      ;; Single mesh — merge material
+      (swap! scene-meshes update-in [idx :mesh :material] merge material-updates)
+      ;; Try prefix match (for assembly hierarchies / vectors of meshes)
+      (swap! scene-meshes (fn [meshes]
+                            (mapv (fn [entry]
+                                    (if (and (:name entry)
+                                             (name-has-prefix? (:name entry) name))
+                                      (update-in entry [:mesh :material] merge material-updates)
+                                      entry))
+                                  meshes)))))
+  (refresh-viewport! false))

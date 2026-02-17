@@ -110,6 +110,11 @@
    'poly-path-closed shape/poly-path-closed
    'subpath-y       shape/subpath-y
    'offset-x        shape/offset-x
+   'fit             shape/fit
+   'mark-pos        shape/mark-pos
+   'mark-x          shape/mark-x
+   'mark-y          shape/mark-y
+   'bounds-2d       shape/bounds-2d
    ;; Shape boolean operations (2D, via Clipper2)
    'shape-union        clipper/shape-union
    'shape-difference   clipper/shape-difference
@@ -251,6 +256,8 @@
    'concat-meshes       manifold/concat-meshes
    'transform           turtle/transform-mesh
    'solidify            manifold/solidify
+   'slice-mesh          impl/implicit-slice-mesh
+   'slice-at-plane      manifold/slice-at-plane
    ;; Scene registry
    'add-mesh!           registry/add-mesh!
    'register-mesh!      registry/register-mesh!

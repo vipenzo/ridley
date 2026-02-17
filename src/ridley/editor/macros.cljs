@@ -1656,11 +1656,15 @@
        (get-mesh (if (keyword? name-or-mesh) name-or-mesh (keyword name-or-mesh)))))
 
    ;; Bounding box functions
-   ;; (bounds :cube)   - by registered name
-   ;; (bounds cube)    - by mesh reference
-   (defn bounds [name-or-mesh]
-     (when-let [m (resolve-mesh name-or-mesh)]
-       (compute-bounds (:vertices m))))
+   ;; (bounds :cube)       - by registered mesh name
+   ;; (bounds cube)        - by mesh reference
+   ;; (bounds my-path)     - by path (2D bounds)
+   ;; (bounds my-shape)    - by shape (2D bounds)
+   (defn bounds [obj]
+     (if (and (map? obj) (#{:path :shape} (:type obj)))
+       (bounds-2d obj)
+       (when-let [m (resolve-mesh obj)]
+         (compute-bounds (:vertices m)))))
 
    (defn height [name-or-mesh]
      (get-in (bounds name-or-mesh) [:size 2]))

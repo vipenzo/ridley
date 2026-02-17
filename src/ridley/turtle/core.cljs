@@ -989,8 +989,9 @@
     state))
 
 (defn- stamp-single-shape
-  "Stamp a single shape at current turtle pose. Returns stamp data map."
-  [state shape]
+  "Stamp a single shape at current turtle pose. Returns stamp data map.
+   Optional color is passed through for rendering."
+  [state shape color]
   (let [stamp-3d (stamp-shape-with-holes state shape)
         outer-3d (:outer stamp-3d)
         holes-3d (or (:holes stamp-3d) [])
@@ -998,22 +999,24 @@
         outer-2d (:points shape)
         holes-2d (or (:holes shape) [])
         faces (earcut-triangulate outer-2d holes-2d)]
-    {:vertices all-verts :faces faces}))
+    (cond-> {:vertices all-verts :faces faces}
+      color (assoc :color color))))
 
 (defn stamp-debug
   "Visualize a 2D shape (or vector of shapes) at the current turtle position/orientation.
    Projects the shape into 3D and stores it as a semi-transparent surface.
    Pre-computes triangulated faces for rendering.
-   Does not modify turtle position or heading."
-  [state shape-or-shapes]
+   Does not modify turtle position or heading.
+   Optional color (hex int) overrides the default orange."
+  [state shape-or-shapes & {:keys [color]}]
   (cond
     ;; Vector of shapes (e.g. from shape-xor)
     (and (vector? shape-or-shapes) (seq shape-or-shapes) (shape? (first shape-or-shapes)))
-    (reduce (fn [s shape] (update s :stamps conj (stamp-single-shape s shape)))
+    (reduce (fn [s shape] (update s :stamps conj (stamp-single-shape s shape color)))
             state shape-or-shapes)
     ;; Single shape
     (shape? shape-or-shapes)
-    (update state :stamps conj (stamp-single-shape state shape-or-shapes))
+    (update state :stamps conj (stamp-single-shape state shape-or-shapes color))
     ;; Not a shape
     :else state))
 

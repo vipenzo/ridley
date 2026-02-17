@@ -303,6 +303,68 @@
         {:pos [0 0] :heading [1 0] :waypoints [{:pos [0 0] :dir [1 0]}]}
         commands)))))
 
+(defn ^:export mark-pos
+  "Get the 2D position [x y] of a named mark within a path.
+   Traces the path commands in 2D and returns the position where the mark was placed.
+   Returns nil if the mark is not found."
+  [path mark-name]
+  (when (and (map? path) (= :path (:type path)))
+    (let [commands (:commands path)]
+      (:result
+       (reduce
+        (fn [{:keys [pos heading result] :as acc} cmd]
+          (if result
+            (reduced acc)
+            (case (:cmd cmd)
+              :f (let [dist (first (:args cmd))
+                       hx (first heading) hy (second heading)]
+                   (assoc acc :pos [(+ (first pos) (* hx dist))
+                                    (+ (second pos) (* hy dist))]))
+              :th (let [angle (first (:args cmd))
+                        rad (* angle (/ Math/PI 180))
+                        hx (first heading) hy (second heading)
+                        cos-a (Math/cos rad) sin-a (Math/sin rad)]
+                    (assoc acc :heading [(- (* hx cos-a) (* hy sin-a))
+                                         (+ (* hx sin-a) (* hy cos-a))]))
+              :set-heading (assoc acc :heading (let [[h _] (:args cmd)]
+                                                 [(first h) (second h)]))
+              :mark (if (= (first (:args cmd)) mark-name)
+                      (assoc acc :result pos)
+                      acc)
+              acc)))
+        {:pos [0 0] :heading [1 0] :result nil}
+        commands)))))
+
+(defn ^:export mark-x
+  "Get the X coordinate of a named mark within a path."
+  [path mark-name]
+  (first (mark-pos path mark-name)))
+
+(defn ^:export mark-y
+  "Get the Y coordinate of a named mark within a path."
+  [path mark-name]
+  (second (mark-pos path mark-name)))
+
+(defn ^:export bounds-2d
+  "Get the 2D bounding box of a path or shape.
+   Returns {:x-min :x-max :y-min :y-max :width :height} or nil.
+   For paths, includes the origin point."
+  [obj]
+  (let [pts (cond
+              (and (map? obj) (= :path (:type obj)))
+              (let [wps (path-to-2d-waypoints obj)]
+                (mapv :pos wps))
+              (and (map? obj) (= :shape (:type obj)))
+              (:points obj))]
+    (when (seq pts)
+      (let [xs (mapv first pts)
+            ys (mapv second pts)
+            x-min (apply min xs) x-max (apply max xs)
+            y-min (apply min ys) y-max (apply max ys)]
+        {:x-min x-min :x-max x-max
+         :y-min y-min :y-max y-max
+         :width (- x-max x-min) :height (- y-max y-min)}))))
+
 (defn- offset-point-2d
   "Offset a 2D point along a normal by a signed distance."
   [[px py] [nx ny] dist]
@@ -697,25 +759,33 @@
 
 (defn- points-to-path
   "Convert a sequence of 2D points to a path.
-   Generates set-heading + forward commands to trace from [0,0] through each point."
-  [pts]
-  (when (>= (count pts) 2)
-    (let [commands
-          (loop [i 0 cmds [] pos [0 0]]
-            (if (>= i (count pts))
-              cmds
-              (let [[tx ty] (nth pts i)
-                    dx (- tx (first pos))
-                    dy (- ty (second pos))
-                    dist (Math/sqrt (+ (* dx dx) (* dy dy)))]
-                (if (< dist 0.0001)
-                  (recur (inc i) cmds [tx ty])
-                  (recur (inc i)
-                         (conj cmds
-                               {:cmd :set-heading :args [[(/ dx dist) (/ dy dist) 0] [0 0 1]]}
-                               {:cmd :f :args [dist]})
-                         [tx ty])))))]
-      {:type :path :commands commands})))
+   Generates set-heading + forward commands to trace from [0,0] through each point.
+   Optional marks is a map of {waypoint-index -> [mark-names...]} to re-inject."
+  ([pts] (points-to-path pts nil))
+  ([pts marks]
+   (when (>= (count pts) 2)
+     (let [commands
+           (loop [i 0 cmds [] pos [0 0]]
+             (if (>= i (count pts))
+               cmds
+               (let [[tx ty] (nth pts i)
+                     dx (- tx (first pos))
+                     dy (- ty (second pos))
+                     dist (Math/sqrt (+ (* dx dx) (* dy dy)))
+                     ;; waypoint index is i+1 (0 is origin)
+                     wp-idx (inc i)
+                     mark-cmds (when marks
+                                 (mapv (fn [name] {:cmd :mark :args [name]})
+                                       (get marks wp-idx)))]
+                 (if (< dist 0.0001)
+                   (recur (inc i) (into cmds mark-cmds) [tx ty])
+                   (recur (inc i)
+                          (into (conj cmds
+                                      {:cmd :set-heading :args [[(/ dx dist) (/ dy dist) 0] [0 0 1]]}
+                                      {:cmd :f :args [dist]})
+                                mark-cmds)
+                          [tx ty])))))]
+       {:type :path :commands commands}))))
 
 (defn ^:export poly-path
   "Create an open path from flat x y coordinate pairs.
@@ -832,3 +902,85 @@
         shifted (mapv (fn [[x y]] [(+ x dx) y]) real-pts)]
     (when (>= (count shifted) 2)
       (points-to-path shifted))))
+
+(defn- fit-scale-factors
+  "Compute scale factors for fitting a set of 2D points to target dimensions.
+   Returns [sx sy] where each is 1.0 if no target was given for that axis.
+   Sign-aware: if target is positive but points go mostly negative (or vice versa),
+   the scale factor is negated to flip the points into the target quadrant.
+   This means (fit path :y 180) always produces positive Y values, regardless
+   of whether the path was drawn upward or downward."
+  [pts target-x target-y]
+  (let [xs (mapv first pts)
+        ys (mapv second pts)
+        x-min (apply min xs) x-max (apply max xs)
+        y-min (apply min ys) y-max (apply max ys)
+        x-extent (- x-max x-min)
+        y-extent (- y-max y-min)
+        ;; Dominant direction: the coordinate farthest from 0
+        x-far (if (>= (Math/abs x-max) (Math/abs x-min)) x-max x-min)
+        y-far (if (>= (Math/abs y-max) (Math/abs y-min)) y-max y-min)
+        ;; Scale magnitude (always positive)
+        sx-mag (if (and target-x (> x-extent 0.0001)) (/ (Math/abs target-x) x-extent) 1.0)
+        sy-mag (if (and target-y (> y-extent 0.0001)) (/ (Math/abs target-y) y-extent) 1.0)
+        ;; Flip sign when target and dominant direction disagree
+        flip-x? (and target-x (> x-extent 0.0001)
+                     (> (Math/abs x-far) 0.0001)
+                     (neg? (* target-x x-far)))
+        flip-y? (and target-y (> y-extent 0.0001)
+                     (> (Math/abs y-far) 0.0001)
+                     (neg? (* target-y y-far)))]
+    [(* (if flip-x? -1 1) sx-mag)
+     (* (if flip-y? -1 1) sy-mag)]))
+
+(defn ^:export fit
+  "Scale a path or shape to fit target dimensions.
+   Works on both paths and shapes. Specify :x and/or :y to set the
+   desired extent for each axis. Scaling is proportional from the origin.
+
+   (fit path :y 180)          ; scale Y to 180, keep X as-is
+   (fit shape :x 200 :y 130)  ; scale both axes independently"
+  [obj & {:keys [x y]}]
+  (when (and (map? obj) (or x y))
+    (cond
+      ;; Path
+      (= :path (:type obj))
+      (let [wps (path-to-2d-waypoints obj)
+            real-pts (mapv :pos (rest wps))
+            ;; Extract marks: scan commands, map each mark name to its waypoint index
+            marks (let [cmds (:commands obj)]
+                    (reduce (fn [{:keys [wp-idx result]} cmd]
+                              (case (:cmd cmd)
+                                :f    {:wp-idx (inc wp-idx) :result result}
+                                :mark {:wp-idx wp-idx
+                                       :result (update result wp-idx (fnil conj []) (first (:args cmd)))}
+                                {:wp-idx wp-idx :result result}))
+                            {:wp-idx 0 :result {}}
+                            cmds))]
+        (when (>= (count real-pts) 2)
+          ;; Include origin [0,0] in extent calculation so scaling from
+          ;; origin doesn't overshoot the target dimensions.
+          (let [all-pts (cons [0 0] real-pts)
+                [sx sy] (fit-scale-factors all-pts x y)
+                scaled (mapv (fn [[px py]]
+                               [(if x (* px sx) px)
+                                (if y (* py sy) py)])
+                             real-pts)]
+            (points-to-path scaled (:result marks)))))
+
+      ;; Shape
+      (= :shape (:type obj))
+      (let [pts (:points obj)]
+        (when (>= (count pts) 2)
+          (let [[sx sy] (fit-scale-factors pts x y)
+                scale-pt (fn [[px py]]
+                           [(if x (* px sx) px)
+                            (if y (* py sy) py)])
+                scaled-pts (mapv scale-pt pts)
+                scaled-holes (when (:holes obj)
+                               (mapv (fn [hole] (mapv scale-pt hole))
+                                     (:holes obj)))]
+            (cond-> (assoc obj :points scaled-pts)
+              scaled-holes (assoc :holes scaled-holes)))))
+
+      :else nil)))

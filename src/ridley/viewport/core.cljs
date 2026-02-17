@@ -704,8 +704,8 @@
 
 (defn- create-stamp-mesh
   "Create a semi-transparent Three.js mesh from pre-triangulated stamp data.
-   Each stamp is {:vertices [[x y z]...] :faces [[i j k]...]}."
-  [{:keys [vertices faces]}]
+   Each stamp is {:vertices [[x y z]...] :faces [[i j k]...] :color hex-int?}."
+  [{:keys [vertices faces color]}]
   (when (and (seq vertices) (seq faces))
     (let [geom (THREE/BufferGeometry.)
           n-verts (count vertices)
@@ -719,7 +719,7 @@
           flat-coords (mapcat identity face-verts)
           positions (js/Float32Array. (clj->js flat-coords))
           material (THREE/MeshBasicMaterial.
-                    #js {:color 0xffaa00
+                    #js {:color (or color 0xffaa00)
                          :transparent true
                          :opacity 0.3
                          :side THREE/DoubleSide

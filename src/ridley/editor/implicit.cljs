@@ -7,6 +7,7 @@
             [ridley.turtle.path :as path]
             [ridley.turtle.transform :as xform]
             [ridley.geometry.primitives :as prims]
+            [ridley.manifold.core :as manifold]
             [ridley.scene.registry :as registry]
             [ridley.scene.panel :as panel]
             [ridley.viewport.core :as viewport]))
@@ -119,17 +120,39 @@
 
 ;; Color and material
 (defn ^:export implicit-color
-  "Set the color for subsequent meshes.
-   Can be called with hex value or RGB components."
-  ([hex-or-r]
-   (swap! turtle-atom turtle/set-color hex-or-r))
+  "Set color globally or on a registered mesh.
+   (color 0xff0000)              — set global color (hex)
+   (color 255 0 0)               — set global color (RGB)
+   (color :my-mesh 0xff0000)     — set color on registered mesh
+   (color :my-mesh 255 0 0)      — set color on registered mesh (RGB)"
+  ([hex]
+   (swap! turtle-atom turtle/set-color hex))
+  ([mesh-name hex]
+   (registry/update-mesh-material! (keyword mesh-name) {:color hex}))
   ([r g b]
-   (swap! turtle-atom turtle/set-color r g b)))
+   (swap! turtle-atom turtle/set-color r g b))
+  ([mesh-name r g b]
+   (let [hex (+ (bit-shift-left (int r) 16)
+                (bit-shift-left (int g) 8)
+                (int b))]
+     (registry/update-mesh-material! (keyword mesh-name) {:color hex}))))
+
+(def ^:private material-props
+  #{:color :metalness :roughness :opacity :flat-shading})
 
 (defn ^:export implicit-material
-  "Set material properties for subsequent meshes."
-  [& {:as opts}]
-  (swap! turtle-atom #(apply turtle/set-material % (mapcat identity opts))))
+  "Set material properties globally or on a registered mesh.
+   (material :metalness 0.8 :roughness 0.2)              — global
+   (material :my-mesh :metalness 0.8 :roughness 0.2)     — per-mesh"
+  [& args]
+  (if (material-props (first args))
+    ;; First arg is a material property → global
+    (let [opts (apply hash-map args)]
+      (swap! turtle-atom #(apply turtle/set-material % (mapcat identity opts))))
+    ;; First arg is mesh name → per-mesh
+    (let [mesh-name (first args)
+          opts (apply hash-map (rest args))]
+      (registry/update-mesh-material! (keyword mesh-name) opts))))
 
 (defn ^:export implicit-reset-material
   "Reset material to default values."
@@ -138,9 +161,14 @@
 
 ;; Stamp debug visualization
 (defn ^:export implicit-stamp-debug
-  "Visualize a 2D shape at current turtle pose as a wireframe outline."
-  [shape]
-  (swap! turtle-atom turtle/stamp-debug shape))
+  "Visualize a 2D shape at current turtle pose as a semi-transparent surface.
+   Accepts a shape or a path (auto-converted via path-to-shape).
+   Optional :color (hex int) overrides the default orange."
+  [shape-or-path & {:keys [color]}]
+  (let [s (if (turtle/path? shape-or-path)
+            (shape/path-to-shape shape-or-path)
+            shape-or-path)]
+    (swap! turtle-atom turtle/stamp-debug s :color color)))
 
 ;; Arc commands
 (defn ^:export implicit-arc-h [radius angle & {:keys [steps]}]
@@ -445,3 +473,27 @@
 (defn ^:export implicit-add-mesh [mesh]
   (swap! turtle-atom update :meshes conj mesh)
   mesh)
+
+(defn ^:export implicit-slice-mesh
+  "Slice a mesh at the plane defined by the turtle's current position and heading.
+   The heading vector is the plane normal. Returns a vector of shapes
+   in the plane's local coordinates (X = turtle right, Y = turtle up).
+   Shapes have :preserve-position? true for absolute coordinate rendering."
+  [mesh]
+  (let [state @turtle-atom
+        pos (:position state)
+        heading (:heading state)
+        up (:up state)
+        ;; Compute right as up × heading (not heading × up)
+        ;; to ensure [right, up, heading] forms a right-handed basis (det=+1)
+        ;; which preserves face winding when transforming for Manifold
+        [hx hy hz] heading
+        [ux uy uz] up
+        rx (- (* uy hz) (* uz hy))
+        ry (- (* uz hx) (* ux hz))
+        rz (- (* ux hy) (* uy hx))
+        rmag (Math/sqrt (+ (* rx rx) (* ry ry) (* rz rz)))
+        right (if (pos? rmag)
+                [(/ rx rmag) (/ ry rmag) (/ rz rmag)]
+                [0 1 0])]
+    (manifold/slice-at-plane mesh heading pos right up)))
