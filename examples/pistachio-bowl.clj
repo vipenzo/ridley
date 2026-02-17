@@ -98,8 +98,8 @@
 ; Bowl groove (bowl coords: Y up to H) — offset by 1mm for clearance.
 ; Tray flange (tray coords: Y up to tray-h) — protrudes from tray wall.
 (def leap-path
-  (let [p1 (- (:width (bounds tray-silhouette)) (/ tray-wall 2))
-        h (:y-max (bounds tray-silhouette))]
+  (let [p1 (- (get-in (bounds tray-silhouette) [:size 0]) (/ tray-wall 2))
+        h (get-in (bounds tray-silhouette) [:max 1])]
     (poly p1 h p1 (- h leap-h) (+ p1 leap-w) (- h leap-h) (+ p1 leap-w) h)))
 
 (def bowl-silhouette (stroke-shape smooth-sil wall
@@ -109,8 +109,8 @@
   (attach
    (revolve
     (shape-offset leap-path tray-gap))
-   (u (- (:y-max (bounds bowl-silhouette))
-         (:y-max (bounds leap-path))))))
+   (u (- (get-in (bounds bowl-silhouette) [:max 1])
+         (get-in (bounds leap-path) [:max 1])))))
 
 
 ; =====================
@@ -209,6 +209,12 @@
 ;(material :bowl :opacity 0.5)
 (color :tray 0x88ff80)
 
+; =====================
+; Animation: tray lifts out and rests beside the bowl
+; =====================
+(anim! :tray-out 2.5 :tray
+  (span 0.35 :out-cubic  (u (* H 1.2)))
+  (span 0.35 :in-out     (rt (* RTOP 2.5)))
+  (span 0.30 :in-cubic   (d (* H 1.2))))
 
-
-
+(play! :tray-out)

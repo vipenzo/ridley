@@ -347,7 +347,7 @@
 
 (defn ^:export bounds-2d
   "Get the 2D bounding box of a path or shape.
-   Returns {:x-min :x-max :y-min :y-max :width :height} or nil.
+   Returns {:min [x y] :max [x y] :center [cx cy] :size [w h]} or nil.
    For paths, includes the origin point."
   [obj]
   (let [pts (cond
@@ -361,9 +361,10 @@
             ys (mapv second pts)
             x-min (apply min xs) x-max (apply max xs)
             y-min (apply min ys) y-max (apply max ys)]
-        {:x-min x-min :x-max x-max
-         :y-min y-min :y-max y-max
-         :width (- x-max x-min) :height (- y-max y-min)}))))
+        {:min [x-min y-min]
+         :max [x-max y-max]
+         :center [(/ (+ x-min x-max) 2) (/ (+ y-min y-max) 2)]
+         :size [(- x-max x-min) (- y-max y-min)]}))))
 
 (defn- offset-point-2d
   "Offset a 2D point along a normal by a signed distance."

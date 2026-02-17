@@ -345,21 +345,21 @@
 
 (defn ^:export mesh-bounds
   "Return the 3D axis-aligned bounding box of a mesh.
-   Returns {:x [min max] :y [min max] :z [min max]}."
+   Returns {:min [x y z] :max [x y z] :center [cx cy cz] :size [sx sy sz]}."
   [mesh]
   (let [verts (:vertices mesh)]
-    (reduce (fn [acc v]
-              (-> acc
-                  (update-in [:x 0] min (nth v 0))
-                  (update-in [:x 1] max (nth v 0))
-                  (update-in [:y 0] min (nth v 1))
-                  (update-in [:y 1] max (nth v 1))
-                  (update-in [:z 0] min (nth v 2))
-                  (update-in [:z 1] max (nth v 2))))
-            {:x [js/Number.POSITIVE_INFINITY js/Number.NEGATIVE_INFINITY]
-             :y [js/Number.POSITIVE_INFINITY js/Number.NEGATIVE_INFINITY]
-             :z [js/Number.POSITIVE_INFINITY js/Number.NEGATIVE_INFINITY]}
-            verts)))
+    (when (seq verts)
+      (let [[min-x min-y min-z max-x max-y max-z]
+            (reduce (fn [[xn yn zn xx yx zx] v]
+                      [(min xn (nth v 0)) (min yn (nth v 1)) (min zn (nth v 2))
+                       (max xx (nth v 0)) (max yx (nth v 1)) (max zx (nth v 2))])
+                    [js/Number.POSITIVE_INFINITY js/Number.POSITIVE_INFINITY js/Number.POSITIVE_INFINITY
+                     js/Number.NEGATIVE_INFINITY js/Number.NEGATIVE_INFINITY js/Number.NEGATIVE_INFINITY]
+                    verts)]
+        {:min [min-x min-y min-z]
+         :max [max-x max-y max-z]
+         :center [(/ (+ min-x max-x) 2) (/ (+ min-y max-y) 2) (/ (+ min-z max-z) 2)]
+         :size [(- max-x min-x) (- max-y min-y) (- max-z min-z)]}))))
 
 (defn- barycentric
   "Barycentric coordinates of point (px, py) in triangle v0-v1-v2.

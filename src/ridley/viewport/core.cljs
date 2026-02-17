@@ -42,6 +42,11 @@
 ;; :drag-start - mouse position at drag start
 (defonce ^:private axis-rotation-state (atom {:axis-key nil :drag-start nil :dragging false}))
 
+;; Pre-allocated temp objects for rigid animation transforms (avoids per-frame GC)
+(def ^:private tmp-mat4 (THREE/Matrix4.))
+(def ^:private tmp-quat (THREE/Quaternion.))
+(def ^:private tmp-vec3 (THREE/Vector3.))
+
 (defn- create-scene []
   (let [scene (THREE/Scene.)]
     (set! (.-background scene) (THREE/Color. 0x252526))
@@ -1440,6 +1445,61 @@
                       (set! (.-geometry child) new-geom)))
                   true)))
             (.-children world-group)))))
+
+(defn set-mesh-rigid-transform!
+  "Apply rigid body transform (position + quaternion) to a named Three.js mesh.
+   Computes rotation R = frame_basis * base_basis^T, extracts quaternion,
+   sets mesh.position = frame_pos - Q * base_pos.
+   O(1) per frame instead of O(V) vertex manipulation."
+  [mesh-name base-pose frame-pose]
+  (when-let [{:keys [world-group]} @state]
+    (let [{[brx bry brz] :right [bhx bhy bhz] :heading [bux buy buz] :up
+           [bpx bpy bpz] :position} base-pose
+          {[frx fry frz] :right [fhx fhy fhz] :heading [fux fuy fuz] :up
+           [fpx fpy fpz] :position} frame-pose
+          ;; R = [fr fh fu] * [br bh bu]^T — 9 dot products
+          ;; R_ij = fr[i]*br[j] + fh[i]*bh[j] + fu[i]*bu[j]
+          r00 (+ (* frx brx) (* fhx bhx) (* fux bux))
+          r01 (+ (* frx bry) (* fhx bhy) (* fux buy))
+          r02 (+ (* frx brz) (* fhx bhz) (* fux buz))
+          r10 (+ (* fry brx) (* fhy bhx) (* fuy bux))
+          r11 (+ (* fry bry) (* fhy bhy) (* fuy buy))
+          r12 (+ (* fry brz) (* fhy bhz) (* fuy buz))
+          r20 (+ (* frz brx) (* fhz bhx) (* fuz bux))
+          r21 (+ (* frz bry) (* fhz bhy) (* fuz buy))
+          r22 (+ (* frz brz) (* fhz bhz) (* fuz buz))]
+      ;; Set rotation matrix (row-major argument order for Matrix4.set)
+      (.set tmp-mat4
+            r00 r01 r02 0
+            r10 r11 r12 0
+            r20 r21 r22 0
+            0   0   0   1)
+      (.setFromRotationMatrix tmp-quat tmp-mat4)
+      ;; mesh.position = frame_pos - Q * base_pos
+      (.set tmp-vec3 bpx bpy bpz)
+      (.applyQuaternion tmp-vec3 tmp-quat)
+      (some (fn [^js child]
+              (when (and (= (.-type child) "Mesh")
+                         (= mesh-name (.. child -userData -registryName)))
+                (.set (.-position child)
+                      (- fpx (.-x tmp-vec3))
+                      (- fpy (.-y tmp-vec3))
+                      (- fpz (.-z tmp-vec3)))
+                (.copy (.-quaternion child) tmp-quat)
+                true))
+            (.-children world-group)))))
+
+(defn reset-mesh-rigid-transform!
+  "Reset a named mesh's Object3D transform to identity."
+  [mesh-name]
+  (when-let [{:keys [world-group]} @state]
+    (some (fn [^js child]
+            (when (and (= (.-type child) "Mesh")
+                       (= mesh-name (.. child -userData -registryName)))
+              (.set (.-position child) 0 0 0)
+              (.identity (.-quaternion child))
+              true))
+          (.-children world-group))))
 
 (defn dispose
   "Clean up Three.js resources."

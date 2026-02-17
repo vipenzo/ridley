@@ -403,7 +403,7 @@ Shape-fns work with `loft`, `bloft`, and `revolve`.
 | `(weave-heightmap :threads 4 :spacing 5 :radius 2 :resolution 128)` | Analytical weave heightmap generator |
 | `(sample-heightmap hm u v)` | Sample heightmap with bilinear interpolation (auto-tiles) |
 | `(heightmap-to-mesh hm)` | Convert heightmap to a flat XY mesh with Z from values |
-| `(mesh-bounds mesh)` | 3D bounding box `{:x [min max] :y [min max] :z [min max]}` |
+| `(mesh-bounds mesh)` | 3D bounding box `{:min [x y z] :max [x y z] :center [cx cy cz] :size [sx sy sz]}` |
 
 **`weave-heightmap` options:** `:threads` (4), `:spacing` (5), `:radius` (2), `:lift` (same as radius), `:resolution` (128), `:profile` (`:round` or `:flat`), `:thickness` (radius * 0.5, for `:flat` profile)
 

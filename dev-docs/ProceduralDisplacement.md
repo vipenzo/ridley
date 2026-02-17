@@ -321,10 +321,10 @@ Return the 3D axis-aligned bounding box of a mesh. Useful for inspecting mesh ex
 
 ```clojure
 (mesh-bounds my-mesh)
-;; => {:x [-10 10] :y [-5 5] :z [0 3]}
+;; => {:min [-10 -5 0] :max [10 5 3] :center [0 0 1.5] :size [20 10 3]}
 ```
 
-Returns a map with `:x`, `:y`, and `:z` keys, each containing a `[min max]` vector.
+Returns a map with `:min`, `:max`, `:center`, and `:size` keys — same format as `bounds`.
 
 #### concat-meshes
 

@@ -2038,6 +2038,7 @@
     ;; Wire animation callbacks (registry <-> playback, avoids circular dep)
     (anim-playback/set-mesh-callbacks! registry/get-mesh registry/register-mesh!)
     (anim-playback/set-update-geometry-callback! viewport/update-mesh-geometry!)
+    (anim-playback/set-rigid-transform-callbacks! viewport/set-mesh-rigid-transform! viewport/reset-mesh-rigid-transform!)
     (anim-playback/set-refresh-callback! #(registry/refresh-viewport! false))
     (anim-playback/set-async-output-callback! add-script-output)
     ;; Register XR panel callbacks (avoid circular dependency)
@@ -2110,6 +2111,7 @@
   ;; Re-wire animation callbacks (defonce atoms persist, but new ones start nil)
   (anim-playback/set-mesh-callbacks! registry/get-mesh registry/register-mesh!)
   (anim-playback/set-update-geometry-callback! viewport/update-mesh-geometry!)
+  (anim-playback/set-rigid-transform-callbacks! viewport/set-mesh-rigid-transform! viewport/reset-mesh-rigid-transform!)
   (anim-playback/set-refresh-callback! #(registry/refresh-viewport! false))
   (anim-playback/set-async-output-callback! add-script-output)
   ;; Hot reload callback - re-evaluate definitions

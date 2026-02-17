@@ -36,6 +36,15 @@
   (reset! get-mesh-fn get-fn)
   (reset! register-mesh-fn register-fn))
 
+;; Callback for resetting Object3D transform when animation stops
+(defonce ^:private reset-mesh-transform-fn (atom nil))
+
+(defn set-reset-mesh-transform-callback!
+  "Set callback for resetting mesh Object3D transform to identity.
+   Called by playback during init."
+  [f]
+  (reset! reset-mesh-transform-fn f))
+
 ;; Collision registry: maps pair-key → collision entry
 ;; pair-key is a sorted set of two target keywords, e.g. #{:puppet :box}
 (defonce collision-registry (atom {}))
@@ -170,15 +179,20 @@
        (when-not others-active?
          (if (= target :camera)
            (when-let [f @on-camera-stop] (f))
-           (when-let [base-verts (:base-vertices anim)]
-             (when-let [reg-fn @register-mesh-fn]
-               (when-let [mesh (get-mesh target)]
-                 (reg-fn target (cond-> (assoc mesh
-                                               :vertices base-verts
-                                               :creation-pose (:base-pose anim))
-                                  ;; Procedural animations may change faces too
-                                  (:base-faces anim)
-                                  (assoc :faces (:base-faces anim)))))))))))))
+           (do
+             ;; Restore mesh data in registry
+             (when-let [base-verts (:base-vertices anim)]
+               (when-let [reg-fn @register-mesh-fn]
+                 (when-let [mesh (get-mesh target)]
+                   (reg-fn target (cond-> (assoc mesh
+                                                 :vertices base-verts
+                                                 :creation-pose (:base-pose anim))
+                                    ;; Procedural animations may change faces too
+                                    (:base-faces anim)
+                                    (assoc :faces (:base-faces anim)))))))
+             ;; Reset Three.js Object3D transform to identity
+             (when-let [f @reset-mesh-transform-fn]
+               (f target)))))))))
 
 (defn stop-all!
   "Stop all animations."

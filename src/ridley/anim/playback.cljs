@@ -29,6 +29,18 @@
   [f]
   (reset! update-geometry-fn f))
 
+;; Callbacks for O(1) rigid transform via Three.js Object3D position/quaternion
+(defonce ^:private set-rigid-transform-fn (atom nil))
+(defonce ^:private reset-rigid-transform-fn (atom nil))
+
+(defn set-rigid-transform-callbacks!
+  "Set callbacks for O(1) rigid body transforms on Three.js meshes.
+   Called by core.cljs during init."
+  [set-fn reset-fn]
+  (reset! set-rigid-transform-fn set-fn)
+  (reset! reset-rigid-transform-fn reset-fn)
+  (anim/set-reset-mesh-transform-callback! reset-fn))
+
 ;; ============================================================
 ;; Mesh pose application
 ;; ============================================================
@@ -56,32 +68,29 @@
                  (math/v* fu comp-u))))))
 
 (defn- apply-mesh-pose!
-  "Transform mesh vertices from base-vertices using the delta between
-   base-pose and frame-pose. Updates the mesh in the registry."
+  "Apply rigid body transform to a mesh using Three.js Object3D position/quaternion.
+   O(1) per frame instead of O(V) per-vertex transformation."
   [mesh-name frame-pose anim-data]
-  (let [base-pose (:base-pose anim-data)
-        base-verts (:base-vertices anim-data)
-        base-faces (:base-faces anim-data)]
-    (when (and base-pose base-verts (seq base-verts))
-      (let [rotate-fn (compute-rotation-matrix base-pose frame-pose)
-            translation (math/v- (:position frame-pose) (:position base-pose))
-            base-origin (:position base-pose)
-            new-verts (mapv (fn [v]
-                              (let [rel (math/v- v base-origin)
-                                    rotated (rotate-fn rel)]
-                                (math/v+ (math/v+ base-origin rotated) translation)))
-                            base-verts)]
-        ;; Update mesh in registry (preserves all other mesh properties)
+  (let [base-pose (:base-pose anim-data)]
+    (when base-pose
+      ;; Compute right vectors (cross product of heading × up)
+      (let [bh (:heading base-pose)
+            bu (:up base-pose)
+            br (math/normalize (math/cross bh bu))
+            fh (:heading frame-pose)
+            fu (:up frame-pose)
+            fr (math/normalize (math/cross fh fu))]
+        ;; Apply O(1) rigid transform via Three.js Object3D
+        (when-let [f @set-rigid-transform-fn]
+          (f mesh-name
+             (assoc base-pose :right br)
+             (assoc frame-pose :right fr)))
+        ;; Update only creation-pose in registry (NOT vertices — they stay at base)
         (when-let [get-fn @get-mesh-fn]
           (when-let [mesh (get-fn mesh-name)]
             (when-let [reg-fn @register-mesh-fn]
               (reg-fn mesh-name
-                      (assoc mesh
-                             :vertices new-verts
-                             :creation-pose frame-pose)))))
-        ;; Update Three.js geometry in-place (visual update)
-        (when-let [f @update-geometry-fn]
-          (f mesh-name new-verts base-faces))))))
+                      (assoc mesh :creation-pose frame-pose)))))))))
 
 ;; ============================================================
 ;; Procedural mesh application
@@ -458,6 +467,35 @@
           sum (reduce math/v+ [0 0 0] verts)]
       (math/v* sum (/ 1.0 n)))))
 
+(defn- animated-centroid
+  "Compute centroid accounting for active preprocessed animation transforms.
+   Registry vertices are no longer updated during preprocessed animations,
+   so we transform the base centroid through the current pose delta."
+  [target-name]
+  (when-let [get-fn @get-mesh-fn]
+    (when-let [mesh (get-fn target-name)]
+      (let [base-centroid (mesh-centroid mesh)]
+        (when base-centroid
+          (if-let [active-anim (some (fn [[_ ad]]
+                                       (when (and (= (:target ad) target-name)
+                                                  (= :preprocessed (:type ad))
+                                                  (not= :stopped (:state ad)))
+                                         ad))
+                                     @anim/anim-registry)]
+            ;; Transform base centroid through current animation pose
+            (let [base-pose (:base-pose active-anim)
+                  frame-pose (current-frame-pose target-name)]
+              (if (and base-pose frame-pose)
+                (let [rotate-fn (compute-rotation-matrix base-pose frame-pose)
+                      base-origin (:position base-pose)
+                      translation (math/v- (:position frame-pose) (:position base-pose))
+                      rel (math/v- base-centroid base-origin)
+                      rotated (rotate-fn rel)]
+                  (math/v+ (math/v+ base-origin rotated) translation))
+                base-centroid))
+            ;; No active animation
+            base-centroid))))))
+
 (defn- vec3-distance
   "Euclidean distance between two 3D points."
   [a b]
@@ -469,16 +507,12 @@
    - :inside + beyond threshold → transition back to :outside (re-arm)
    - :once entries stay :inside permanently after firing."
   []
-  (when-let [get-fn @get-mesh-fn]
-    (let [collisions @anim/collision-registry]
-      (when (seq collisions)
-        (doseq [[k entry] collisions]
-          (let [{:keys [target-a target-b threshold callback state once fired-once]} entry
-                mesh-a (get-fn target-a)
-                mesh-b (get-fn target-b)]
-            (when (and mesh-a mesh-b)
-              (let [centroid-a (mesh-centroid mesh-a)
-                    centroid-b (mesh-centroid mesh-b)]
+  (let [collisions @anim/collision-registry]
+    (when (seq collisions)
+      (doseq [[k entry] collisions]
+        (let [{:keys [target-a target-b threshold callback state once fired-once]} entry
+              centroid-a (animated-centroid target-a)
+              centroid-b (animated-centroid target-b)]
                 (when (and centroid-a centroid-b)
                   (let [dist (vec3-distance centroid-a centroid-b)
                         within? (< dist threshold)]
@@ -495,7 +529,7 @@
                       (and (not within?) (= state :inside))
                       (when-not once
                         (swap! anim/collision-registry update k
-                               assoc :state :outside :fired-once false)))))))))))))
+                               assoc :state :outside :fired-once false))))))))))
 
 (defn tick-animations!
   "Called from render-frame. Advances all playing animations by dt seconds.
@@ -617,8 +651,10 @@
     ;; Phase 4: Check collisions (centroid-distance based)
     (when @any-updated?
       (check-collisions!))
-    ;; Trigger viewport refresh if anything changed
-    (when @any-updated?
+    ;; Trigger viewport refresh only for procedural animations (geometry changes).
+    ;; Preprocessed animations use Object3D transforms and don't need a scene rebuild.
+    ;; Procedural animations update the mesh registry, so refresh rebuilds Three.js objects.
+    (when (seq @proc-data)
       (when-let [f @refresh-fn]
         (f)))
     @any-updated?))
