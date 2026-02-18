@@ -23,7 +23,8 @@
             [ridley.library.panel :as lib-panel]
             [ridley.library.core :as lib-core]
             [ridley.anim.core :as anim]
-            [ridley.anim.playback :as anim-playback]))
+            [ridley.anim.playback :as anim-playback]
+            [ridley.editor.test-mode :as test-mode]))
 
 (defonce ^:private editor-view (atom nil))
 (defonce ^:private repl-input-el (atom nil))
@@ -297,6 +298,9 @@
           ;; Normal REPL evaluation
           :else
           (do
+            ;; Cancel any active test/tweak session
+            (when (test-mode/active?)
+              (test-mode/cancel!))
             ;; Send to connected clients if we're the host
             (when (= :host @sync-mode)
               (sync/send-repl-command input))

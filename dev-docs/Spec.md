@@ -231,11 +231,40 @@ they simply tag the turtle's position and orientation at that point.
 (qp 20 90 30 -45 10)          ; same, shorter
 ```
 
+### Poly Path
+
+Create paths from coordinate pairs (like `poly` for shapes):
+
+```clojure
+(poly-path x1 y1 x2 y2 ...)       ; Open path from coordinate pairs
+(poly-path [x1 y1 x2 y2 ...])     ; Vector form
+
+(poly-path-closed x1 y1 x2 y2 ...)  ; Closed path (returns to start)
+```
+
 ### Path Utilities
 
 ```clojure
 ;; Execute a path on the turtle (draws lines if pen is on)
 (follow-path my-path)
+
+;; Get mark positions within a path (2D)
+(mark-pos path :mark-name)          ; Returns [x y]
+(mark-x path :mark-name)            ; X coordinate only
+(mark-y path :mark-name)            ; Y coordinate only
+
+;; 2D bounding box
+(bounds-2d path)                     ; {:min [x y] :max [x y] :center [cx cy] :size [w h]}
+
+;; Extract portion of path by height
+(subpath-y path from-h to-h)         ; Clip path vertically, output starts at Y=0
+
+;; Shift path horizontally
+(offset-x path dx)                   ; Move profile relative to revolve axis
+
+;; Scale path or shape to fit target dimensions
+(fit path :y 180)                    ; Scale Y extent to 180, keep X
+(fit shape :x 200 :y 130)           ; Scale both axes independently
 ```
 
 ---
@@ -366,6 +395,7 @@ Shape-fns work with `loft`, `bloft`, and `revolve`.
 | `(noisy shape :amplitude a :scale s)` | Noise-based displacement (see options below) |
 | `(woven shape :warp n :weft m)` | Interlocking over/under woven fabric pattern |
 | `(heightmap shape hm :amplitude a)` | Displacement from a rasterized heightmap |
+| `(profile shape path)` | Scale cross-section to match a path silhouette |
 
 **Composition** via `->` threading:
 
@@ -376,6 +406,18 @@ Shape-fns work with `loft`, `bloft`, and `revolve`.
 ;; Twisted rectangle that shrinks
 (-> (rect 30 10) (twisted :angle 180) (tapered :to 0.3))
 ```
+
+**Profile shape-fn:**
+
+```clojure
+;; Define a silhouette path (X = radius, Y = height)
+(def vase-sil (path (f 5) (th 80) (f 15) (arc-h 5 -160) (f 15)))
+
+;; Loft a circle scaled to match the silhouette
+(register vase (loft (-> (circle 20 64) (profile vase-sil)) (f 40)))
+```
+
+The path's X coordinates represent the radius at each point along the extrusion. Works best with bezier-smoothed paths for smooth results.
 
 **Custom shape-fn:**
 
@@ -432,9 +474,10 @@ Useful for debugging shape placement before committing to an operation.
 
 ```clojure
 (stamp shape)                    ; Show shape surface at current turtle pose
+(stamp shape :color 0xff0000)    ; Custom color (hex)
 ```
 
-Stamps are rendered as semi-transparent orange surfaces (visible from both sides).
+Stamps are rendered as semi-transparent surfaces (default orange, visible from both sides).
 Shapes with holes are correctly triangulated. Stamps do not modify turtle position or heading.
 
 **Visibility control:**
@@ -1016,6 +1059,19 @@ Set color and material properties for subsequently created meshes:
 
 Color and material are stored in turtle state and applied to all meshes created after the call (primitives, extrusions, etc.).
 
+### Per-Mesh Color and Material
+
+Change color or material on a specific registered mesh (without re-creating it):
+
+```clojure
+(color :my-mesh 0xff0000)        ; Set color on registered mesh (hex)
+(color :my-mesh 255 0 0)         ; Set color on registered mesh (RGB)
+
+(material :my-mesh :metalness 0.8 :roughness 0.2)  ; Per-mesh material
+```
+
+The first argument is the registered name (keyword). Remaining arguments follow the same format as the global versions.
+
 ---
 
 ## 3D Panels (Text Billboards)
@@ -1197,6 +1253,8 @@ A timeline segment with weight, easing, and turtle commands:
 - **weight**: Fraction of total duration (spans are normalized to sum to 1.0)
 - **easing**: `:linear`, `:in`, `:out`, `:in-out`, `:in-cubic`, `:out-cubic`, `:in-out-cubic`, `:spring`, `:bounce`
 - **:ang-velocity N**: Controls rotation timing. Default 1 (rotations are visible). 0 = instantaneous. N > 0 means 360° takes as long as `(f N)`.
+- **:on-enter expr**: Callback executed when playhead enters this span
+- **:on-exit expr**: Callback executed when playhead exits this span
 - **commands**: `(f dist)`, `(th angle)`, `(tv angle)`, `(tr angle)`, `(u dist)`, `(d dist)`, `(rt dist)`, `(lt dist)`, `(parallel cmd1 cmd2 ...)`
 
 ### Parallel Commands
@@ -1316,6 +1374,37 @@ Export meshes to STL files (triggers browser download):
 (export parts 2)                 ; Export specific element by index
 (export robot :hand)             ; Export specific element by key
 ```
+
+---
+
+## Interactive Tweaking
+
+The `tweak` macro provides interactive parameter exploration with real-time preview. It evaluates an expression, displays the result in the viewport, and creates sliders for numeric literals.
+
+```clojure
+;; Default: slider for first literal only
+(tweak (extrude (circle 15) (f 30)))
+
+;; Specific index (0-based)
+(tweak 2 (extrude (circle 15) (f 30) (th 90) (f 20)))
+
+;; Negative index (from end, Python-style)
+(tweak -1 (extrude (circle 15) (f 30) (th 90) (f 20)))
+
+;; Multiple indices
+(tweak [0 -1] (extrude (circle 15) (f 30) (th 90) (f 20)))
+
+;; All numeric literals
+(tweak :all (extrude (circle 15) (f 30) (th 90) (f 20)))
+```
+
+**Features:**
+- Automatically detects result type (mesh, shape, path) and previews in viewport
+- Slider range: `[value * 0.1, value * 3]` (or `[-50, 50]` for zero)
+- Zoom buttons (`−`/`+`) re-center and narrow/widen the slider range
+- OK confirms and prints the final expression; Cancel (or Escape) discards
+- Auto-cancels when a new REPL command is entered
+- Debounced re-evaluation (~100ms)
 
 ---
 
@@ -1449,12 +1538,20 @@ PI                               ; 3.14159...
 ```
 src/ridley/
 ├── editor/
-│   ├── repl.cljs            # SCI evaluator + macros
+│   ├── repl.cljs            # SCI evaluator
+│   ├── state.cljs           # Shared atoms (turtle, SCI context ref)
+│   ├── bindings.cljs        # SCI context bindings
+│   ├── macros.cljs          # DSL macros (loft, tweak, anim!, etc.)
+│   ├── implicit.cljs        # Implicit turtle commands
+│   ├── operations.cljs      # Generative operations (extrude, loft, etc.)
+│   ├── text_ops.cljs        # Text operations
+│   ├── test_mode.cljs       # Interactive tweak mode
 │   └── codemirror.cljs      # Editor integration
 ├── turtle/
 │   ├── core.cljs            # Turtle state + movement
-│   ├── shape.cljs           # 2D shape definitions
+│   ├── shape.cljs           # 2D shapes + path utilities
 │   ├── shape_fn.cljs        # Shape functions (varying profiles)
+│   ├── path.cljs            # Path recording + replay
 │   ├── transform.cljs       # Shape transformations
 │   └── text.cljs            # Text to shape conversion
 ├── geometry/
@@ -1462,7 +1559,7 @@ src/ridley/
 │   ├── operations.cljs      # Revolve
 │   └── faces.cljs           # Face metadata
 ├── viewport/
-│   ├── core.cljs            # Three.js rendering
+│   ├── core.cljs            # Three.js rendering + preview system
 │   └── xr.cljs              # WebXR/VR
 ├── clipper/core.cljs        # Clipper2 2D shape booleans + offset
 ├── manifold/core.cljs       # Manifold WASM booleans + hull

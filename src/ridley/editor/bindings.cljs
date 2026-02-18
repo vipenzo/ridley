@@ -21,7 +21,8 @@
             [ridley.anim.core :as anim]
             [ridley.anim.easing :as easing]
             [ridley.anim.preprocess :as anim-preprocess]
-            [ridley.turtle.shape-fn :as sfn]))
+            [ridley.turtle.shape-fn :as sfn]
+            [ridley.editor.test-mode :as test-mode]))
 
 (def base-bindings
   "Bindings available in both explicit and implicit sections."
@@ -361,4 +362,6 @@
    'off-collide         anim/unregister-collision!
    'reset-collide       anim/reset-collision!
    'clear-collisions    anim/clear-collisions!
-   'list-collisions     anim/list-collisions})
+   'list-collisions     anim/list-collisions
+   ;; Test/tweak mode
+   'tweak-start!        test-mode/start!})

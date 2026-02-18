@@ -1938,4 +1938,17 @@
                                   :loop ~loop-mode
                                   :gen-fn ~gen-fn-expr})
             (play! auto-name#)
-            auto-name#))))")
+            auto-name#))))
+
+   ;; ============================================================
+   ;; tweak: interactive parameter tweaking with sliders
+   ;; ============================================================
+   ;; (tweak expr)           — slider for first numeric literal only
+   ;; (tweak n expr)         — slider for literal at index n (negative = from end)
+   ;; (tweak [n1 n2] expr)  — sliders for selected literals
+   ;; (tweak :all expr)      — sliders for all literals
+   (defmacro tweak
+     ([expr]
+      `(tweak-start! '~expr nil))
+     ([filter expr]
+      `(tweak-start! '~expr ~filter)))")

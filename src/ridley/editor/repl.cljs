@@ -41,12 +41,15 @@
     ctx
     (let [ctx (make-sci-ctx)]
       (reset! sci-ctx ctx)
+      (reset! state/sci-ctx-ref ctx)
       ctx)))
 
 (defn reset-ctx!
   "Reset the SCI context. Called when definitions are re-evaluated."
   []
-  (reset! sci-ctx (make-sci-ctx)))
+  (let [ctx (make-sci-ctx)]
+    (reset! sci-ctx ctx)
+    (reset! state/sci-ctx-ref ctx)))
 
 ;; ============================================================
 ;; Evaluation

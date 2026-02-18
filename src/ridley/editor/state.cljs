@@ -49,3 +49,7 @@
 
 (defn last-mesh []
   (last (:meshes @turtle-atom)))
+
+;; SCI context reference — set by repl.cljs, read by test_mode.cljs.
+;; This avoids a circular dependency (repl → bindings → test-mode → repl).
+(defonce sci-ctx-ref (atom nil))

@@ -42,6 +42,9 @@
 ;; :drag-start - mouse position at drag start
 (defonce ^:private axis-rotation-state (atom {:axis-key nil :drag-start nil :dragging false}))
 
+;; Preview objects for test mode (temporary visualization, outside registry)
+(defonce ^:private preview-objects (atom []))
+
 ;; Pre-allocated temp objects for rigid animation transforms (avoids per-frame GC)
 (def ^:private tmp-mat4 (THREE/Matrix4.))
 (def ^:private tmp-quat (THREE/Quaternion.))
@@ -1149,6 +1152,43 @@
             (swap! highlight-objects pop))))
       duration-ms)
      true)))
+
+;; ============================================================
+;; Preview system (for test/tweak mode)
+;; ============================================================
+
+(defn clear-preview!
+  "Remove all preview objects from the viewport and dispose resources."
+  []
+  (when-let [{:keys [world-group]} @state]
+    (doseq [^js obj @preview-objects]
+      (.remove world-group obj)
+      (when-let [geom (.-geometry obj)]
+        (.dispose geom))
+      (when-let [mat (.-material obj)]
+        (.dispose mat)))
+    (reset! preview-objects [])))
+
+(defn show-preview!
+  "Show temporary preview objects in the viewport (for test mode).
+   Accepts a vector of items, each being one of:
+     {:type :mesh :data mesh-data}     — standard mesh with vertices/faces
+     {:type :stamp :data stamp-data}   — 2D shape stamp (semi-transparent)
+     {:type :lines :data lines-data}   — line segments [{:from :to :color}...]
+   Clears any previous preview first."
+  [items]
+  (clear-preview!)
+  (when-let [{:keys [world-group]} @state]
+    (doseq [{:keys [type data]} items]
+      (when-let [^js obj
+                 (case type
+                   :mesh (when (and (seq (:vertices data)) (seq (:faces data)))
+                           (create-three-mesh data))
+                   :stamp (create-stamp-mesh data)
+                   :lines (when (seq data) (create-line-segments data))
+                   nil)]
+        (.add world-group obj)
+        (swap! preview-objects conj obj)))))
 
 (defn fit-camera
   "Fit camera to current visible geometry."

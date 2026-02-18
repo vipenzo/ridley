@@ -123,6 +123,95 @@ html, body {
   color: #6a6a6a;
 }
 
+/* Test/tweak slider panel */
+#test-slider-panel {
+  background: #252540;
+  border-top: 1px solid #4a4a6a;
+  padding: 8px 12px;
+  font-family: "SF Mono", "Monaco", "Menlo", "Consolas", monospace;
+  font-size: 12px;
+}
+
+#test-slider-panel .slider-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+#test-slider-panel .slider-label {
+  color: #9cdcfe;
+  min-width: 100px;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#test-slider-panel .test-slider {
+  flex: 1;
+  height: 4px;
+  accent-color: #569cd6;
+  cursor: pointer;
+}
+
+#test-slider-panel .slider-value {
+  color: #ce9178;
+  min-width: 50px;
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+}
+
+#test-slider-panel .test-zoom-btn {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid #4a4a6a;
+  border-radius: 3px;
+  background: #2d2d44;
+  color: #9cdcfe;
+  font-size: 13px;
+  line-height: 18px;
+  text-align: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+#test-slider-panel .test-zoom-btn:hover {
+  background: #3d3d54;
+}
+
+#test-slider-panel .test-buttons {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+  justify-content: flex-end;
+}
+
+#test-slider-panel .test-btn {
+  padding: 3px 14px;
+  border: 1px solid #4a4a6a;
+  border-radius: 3px;
+  background: #2d2d44;
+  color: #d4d4d4;
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+#test-slider-panel .test-btn:hover {
+  background: #3d3d54;
+}
+
+#test-slider-panel .test-btn-ok {
+  background: #264f2e;
+  border-color: #3a7d44;
+}
+
+#test-slider-panel .test-btn-ok:hover {
+  background: #2d6634;
+}
+
 .section-header {
   display: flex;
   align-items: center;
