@@ -971,8 +971,10 @@
         (.updateProjectionMatrix camera)))))
 
 ;; ============================================================
-;; Picking (Alt+Click mesh selection)
+;; Picking (Alt+Click mesh selection + face drill-down)
 ;; ============================================================
+
+(declare create-face-highlight-mesh)
 
 ;; Picking state: tracks which mesh is selected
 (defonce ^:private picking-state
@@ -987,14 +989,202 @@
 (defonce ^:private saved-emissive (atom nil))
 
 ;; External callback for when selection changes.
-;; Set by core.cljs: (fn [registry-name-or-nil] ...)
+;; Set by core.cljs: (fn [pick-info-or-nil] ...)
 (defonce ^:private on-pick-callback (atom nil))
+
+;; Face highlight for picking drill-down (separate from highlight-objects
+;; so clear-highlights on code re-eval doesn't remove the picking face)
+(defonce ^:private picking-face-highlight (atom nil))
+
+;; Current coplanarity tolerance in degrees for flood-fill face resolution
+(defonce ^:private picking-tolerance (atom 2.5))
+
+;; Cache of last drill-down hit for tolerance re-runs via Alt+Scroll
+;; {:mesh-data mesh-data :face-index face-index :three-mesh three-mesh}
+(defonce ^:private picking-hit-cache (atom nil))
 
 (defn set-on-pick-callback!
   "Register a callback invoked when mesh selection changes.
-   Called with registry-name keyword on select, nil on deselect."
+   Called with:
+     nil                              — on deselect
+     {:name kw :level :object}        — object-level selection
+     {:name kw :level :face           — face-level drill-down
+      :face-id id :face-normal [x y z]
+      :face-center [x y z]
+      :tolerance-deg n
+      :tri-count n}"
   [f]
   (reset! on-pick-callback f))
+
+(defn- find-mesh-data-by-name
+  "Find mesh data map in current-meshes by registry name string."
+  [reg-name]
+  (some #(when (= (:registry-name %) reg-name) %) @current-meshes))
+
+;; ------------------------------------------------------------
+;; Face resolution: faceIndex → face-id (face-groups + flood-fill)
+;; ------------------------------------------------------------
+
+(defn- resolve-face-from-hit
+  "Map a Three.js raycaster faceIndex to a face-group ID.
+   Returns {:face-id id :triangles [[i0 i1 i2]...] :source :face-group} or nil."
+  [mesh-data three-face-index]
+  (when (and mesh-data (number? three-face-index))
+    (let [vertices (:vertices mesh-data)
+          n-verts (count vertices)
+          faces (:faces mesh-data)
+          ;; Replay the same bounds-check filter as create-three-mesh
+          valid-faces (into [] (filter (fn [[i0 i1 i2]]
+                                         (and (< i0 n-verts) (< i1 n-verts) (< i2 n-verts))))
+                             faces)
+          hit-triangle (when (< three-face-index (count valid-faces))
+                         (nth valid-faces three-face-index))]
+      (when hit-triangle
+        (when-let [face-groups (:face-groups mesh-data)]
+          (some (fn [[face-id triangles]]
+                  (when (some #(= % hit-triangle) triangles)
+                    {:face-id face-id :triangles triangles :source :face-group}))
+                face-groups))))))
+
+(defn- get-valid-face-index
+  "Get the index of a triangle in the valid-faces list (after bounds filtering)."
+  [mesh-data three-face-index]
+  (let [vertices (:vertices mesh-data)
+        n-verts (count vertices)
+        valid-faces (into [] (filter (fn [[i0 i1 i2]]
+                                       (and (< i0 n-verts) (< i1 n-verts) (< i2 n-verts))))
+                           (:faces mesh-data))]
+    (when (< three-face-index (count valid-faces))
+      {:index three-face-index
+       :triangle (nth valid-faces three-face-index)
+       :valid-faces valid-faces})))
+
+(defn- build-edge-adjacency
+  "Build {normalized-edge → #{face-indices...}} map for flood-fill.
+   faces is a vector of [i0 i1 i2] triangles."
+  [faces]
+  (let [result (volatile! (transient {}))]
+    (doseq [[face-idx [i0 i1 i2]] (map-indexed vector faces)]
+      (doseq [edge [[i0 i1] [i1 i2] [i2 i0]]]
+        (let [edge-key (if (<= (first edge) (second edge)) edge [(second edge) (first edge)])]
+          (vswap! result
+                  (fn [m]
+                    (let [existing (get m edge-key)]
+                      (assoc! m edge-key (if existing (conj existing face-idx) #{face-idx}))))))))
+    (persistent! @result)))
+
+(defn- tri-normal
+  "Compute normal for a triangle given vertices array and index triple."
+  [vertices [i0 i1 i2]]
+  (let [[x0 y0 z0] (nth vertices i0 [0 0 0])
+        [x1 y1 z1] (nth vertices i1 [0 0 0])
+        [x2 y2 z2] (nth vertices i2 [0 0 0])
+        e1x (- x1 x0) e1y (- y1 y0) e1z (- z1 z0)
+        e2x (- x2 x0) e2y (- y2 y0) e2z (- z2 z0)
+        nx (- (* e1y e2z) (* e1z e2y))
+        ny (- (* e1z e2x) (* e1x e2z))
+        nz (- (* e1x e2y) (* e1y e2x))
+        len (js/Math.sqrt (+ (* nx nx) (* ny ny) (* nz nz)))]
+    (if (> len 0.0001)
+      [(/ nx len) (/ ny len) (/ nz len)]
+      [0 1 0])))
+
+(defn- flood-fill-coplanar
+  "BFS from start-face-idx, expanding to adjacent triangles with
+   dot(normal, start-normal) > tolerance-cos.
+   Returns vector of [i0 i1 i2] triangle triples."
+  [valid-faces vertices start-face-idx tolerance-cos]
+  (let [adj (build-edge-adjacency valid-faces)
+        start-tri (nth valid-faces start-face-idx)
+        start-normal (tri-normal vertices start-tri)
+        [snx sny snz] start-normal
+        visited (volatile! #{start-face-idx})
+        queue (volatile! [start-face-idx])
+        result (volatile! [start-tri])]
+    (loop []
+      (when (seq @queue)
+        (let [batch @queue]
+          (vreset! queue [])
+          (doseq [current batch]
+            (let [[i0 i1 i2] (nth valid-faces current)
+                  edges [[i0 i1] [i1 i2] [i2 i0]]]
+              (doseq [edge edges]
+                (let [edge-key (if (<= (first edge) (second edge)) edge [(second edge) (first edge)])
+                      neighbors (get adj edge-key #{})]
+                  (doseq [ni neighbors]
+                    (when-not (contains? @visited ni)
+                      (let [[nx ny nz] (tri-normal vertices (nth valid-faces ni))
+                            dot-val (+ (* snx nx) (* sny ny) (* snz nz))]
+                        (when (> dot-val tolerance-cos)
+                          (vswap! visited conj ni)
+                          (vswap! queue conj ni)
+                          (vswap! result conj (nth valid-faces ni))))))))))
+          (recur))))
+    @result))
+
+(defn- resolve-face-with-flood-fill
+  "Resolve face from hit, using face-groups when available, flood-fill as fallback.
+   Returns {:face-id id-or-nil :triangles [...] :source :face-group|:flood-fill} or nil."
+  [mesh-data three-face-index tolerance-deg]
+  (when-let [{:keys [index valid-faces]} (get-valid-face-index mesh-data three-face-index)]
+    ;; Try face-groups first
+    (let [fg-result (resolve-face-from-hit mesh-data three-face-index)]
+      (if (and fg-result (> (count (:triangles fg-result)) 1))
+        ;; Multi-triangle face-group found → use it
+        fg-result
+        ;; Single-triangle or no face-group → flood-fill
+        (let [tolerance-cos (js/Math.cos (* tolerance-deg (/ js/Math.PI 180)))
+              triangles (flood-fill-coplanar valid-faces (:vertices mesh-data) index tolerance-cos)]
+          {:face-id (when fg-result (:face-id fg-result))
+           :triangles triangles
+           :source :flood-fill})))))
+
+(defn- compute-face-center-and-normal
+  "Compute center and average normal for a set of triangles.
+   Returns {:center [x y z] :normal [x y z]}."
+  [vertices triangles]
+  (when (seq triangles)
+    (let [;; Normal from first triangle
+          normal (tri-normal vertices (first triangles))
+          ;; Center = average of all unique vertex positions
+          all-indices (distinct (mapcat identity triangles))
+          n (count all-indices)
+          [sx sy sz] (reduce (fn [[sx sy sz] idx]
+                               (let [[vx vy vz] (nth vertices idx [0 0 0])]
+                                 [(+ sx vx) (+ sy vy) (+ sz vz)]))
+                             [0.0 0.0 0.0] all-indices)]
+      {:center [(/ sx n) (/ sy n) (/ sz n)]
+       :normal normal})))
+
+;; ------------------------------------------------------------
+;; Face highlight for picking (separate from highlight-objects)
+;; ------------------------------------------------------------
+
+(defn- clear-picking-face-highlight!
+  "Remove the picking face highlight mesh."
+  []
+  (when-let [^js obj @picking-face-highlight]
+    (when-let [{:keys [highlight-group]} @state]
+      (.remove ^js highlight-group obj)
+      (when-let [geom (.-geometry obj)] (.dispose geom))
+      (when-let [mat (.-material obj)] (.dispose mat)))
+    (reset! picking-face-highlight nil)))
+
+(defn- show-picking-face-highlight!
+  "Highlight triangles on the selected mesh for face drill-down.
+   Uses highlight-group (survives scene rebuild), tracked separately
+   from highlight-objects (not cleared by clear-highlights)."
+  [mesh-data triangles ^js three-mesh]
+  (clear-picking-face-highlight!)
+  (when-let [{:keys [highlight-group]} @state]
+    (let [^js hl (create-face-highlight-mesh mesh-data triangles 0xff6600)]
+      ;; Copy transform from source mesh (for animated/transformed meshes)
+      (.copy (.-position hl) (.-position three-mesh))
+      (.copy (.-quaternion hl) (.-quaternion three-mesh))
+      (.copy (.-scale hl) (.-scale three-mesh))
+      (set! (.-renderOrder hl) 998)
+      (.add ^js highlight-group hl)
+      (reset! picking-face-highlight hl))))
 
 (defn- restore-mesh-emissive!
   "Restore the original emissive values on the previously selected mesh."
@@ -1051,27 +1241,93 @@
       (reset! selection-outline outline))))
 
 (defn deselect!
-  "Clear current mesh selection."
+  "Clear current mesh selection and face highlight."
   []
   (clear-selection-outline!)
-  (reset! picking-state {:selected-name nil :selected-three nil :drill-level :object})
+  (clear-picking-face-highlight!)
+  (reset! picking-tolerance 2.5)
+  (reset! picking-hit-cache nil)
+  (reset! picking-state {:selected-name nil :selected-three nil
+                         :drill-level :object :selected-face nil})
   (when-let [cb @on-pick-callback] (cb nil)))
 
+(defn- drill-to-face!
+  "Resolve face under cursor and show face highlight + update state.
+   Used by handle-pick (drill-down) and tolerance/toggle updates."
+  [reg-name ^js three-mesh mesh-data face-index tolerance-deg selected-tris]
+  (when-let [{:keys [face-id triangles source]}
+             (resolve-face-with-flood-fill mesh-data face-index tolerance-deg)]
+    (let [;; Merge with existing selection if provided (Alt+Shift+Click toggle)
+          final-tris (or selected-tris triangles)
+          {:keys [center normal]} (compute-face-center-and-normal
+                                    (:vertices mesh-data) final-tris)
+          face-info {:face-id face-id
+                     :triangles final-tris
+                     :normal normal
+                     :center center
+                     :source source}]
+      (show-picking-face-highlight! mesh-data final-tris three-mesh)
+      (swap! picking-state assoc
+             :drill-level :face
+             :selected-face face-info)
+      (when-let [cb @on-pick-callback]
+        (cb {:name reg-name :level :face
+             :face-id face-id
+             :face-normal normal
+             :face-center center
+             :tolerance-deg tolerance-deg
+             :tri-count (count final-tris)})))))
+
 (defn- handle-pick
-  "Process a raycast hit on a Three.js mesh."
-  [^js three-mesh]
+  "Process a raycast hit on a Three.js mesh.
+   three-mesh: the hit Three.js Mesh object
+   face-index: the triangle index from the raycaster (or nil)
+   shift?: whether Shift key was held (for face toggle)"
+  [^js three-mesh face-index shift?]
   (let [reg-name (.. three-mesh -userData -registryName)]
     (when reg-name
-      ;; If same mesh, ignore (future: drill to face)
-      (when-not (= reg-name (:selected-name @picking-state))
-        (show-selection-outline! three-mesh)
-        (reset! picking-state {:selected-name reg-name
-                               :selected-three three-mesh
-                               :drill-level :object})
-        (when-let [cb @on-pick-callback] (cb reg-name))))))
+      (if (= reg-name (:selected-name @picking-state))
+        ;; Same mesh → drill to face or toggle face
+        (when-let [mesh-data (find-mesh-data-by-name reg-name)]
+          (if (and shift? (= :face (:drill-level @picking-state)))
+            ;; Alt+Shift+Click: toggle face in/out of selection
+            (when-let [{:keys [triangles]} (resolve-face-with-flood-fill
+                                             mesh-data face-index @picking-tolerance)]
+              (let [current-tris (get-in @picking-state [:selected-face :triangles] [])
+                    current-set (set current-tris)
+                    toggle-set (set triangles)
+                    ;; If all toggle tris are already selected → remove, else add
+                    all-selected? (every? current-set triangles)
+                    new-tris (if all-selected?
+                               (vec (remove toggle-set current-tris))
+                               (vec (distinct (concat current-tris triangles))))]
+                (when (seq new-tris)
+                  (drill-to-face! reg-name three-mesh mesh-data face-index
+                                  @picking-tolerance new-tris))))
+            ;; Regular Alt+Click: drill to face (reset selection)
+            (do
+              (reset! picking-tolerance 2.5)
+              (reset! picking-hit-cache {:mesh-data mesh-data
+                                         :face-index face-index
+                                         :three-mesh three-mesh})
+              (drill-to-face! reg-name three-mesh mesh-data face-index 2.5 nil))))
+        ;; Different mesh → select at object level
+        (do
+          (clear-picking-face-highlight!)
+          (reset! picking-tolerance 2.5)
+          (reset! picking-hit-cache nil)
+          (show-selection-outline! three-mesh)
+          (reset! picking-state {:selected-name reg-name
+                                 :selected-three three-mesh
+                                 :drill-level :object
+                                 :selected-face nil})
+          (when-let [cb @on-pick-callback]
+            (cb {:name reg-name :level :object})))))))
 
 (defn- on-viewport-alt-click
-  "Alt+Click handler: raycast into scene and pick mesh."
+  "Alt+Click handler: raycast into scene and pick mesh.
+   Alt+Click: select object or drill to face.
+   Alt+Shift+Click: toggle face in/out of selection."
   [^js event]
   (when (.-altKey event)
     (.preventDefault event)
@@ -1089,19 +1345,23 @@
             raycaster (THREE/Raycaster.)]
         (.setFromCamera raycaster mouse camera)
         (let [hits (.intersectObjects raycaster (.-children world-group) true)
-              ;; Filter to Mesh objects with registryName
-              mesh-hit (some (fn [^js hit]
-                               (let [^js obj (.-object hit)]
-                                 (when (and (instance? THREE/Mesh obj)
-                                            (.. obj -userData -registryName))
-                                   obj)))
-                             hits)]
-          (if mesh-hit
-            (handle-pick mesh-hit)
+              ;; Find first hit on a Mesh with registryName, keep full hit record
+              hit-record (some (fn [^js hit]
+                                 (let [^js obj (.-object hit)]
+                                   (when (and (instance? THREE/Mesh obj)
+                                              (.. obj -userData -registryName))
+                                     hit)))
+                               hits)]
+          (if hit-record
+            (handle-pick (.-object hit-record)
+                         (.-faceIndex hit-record)
+                         (.-shiftKey event))
             (deselect!)))))))
 
 (defn get-picking-state
-  "Return current picking state map."
+  "Return current picking state map.
+   Keys: :selected-name, :selected-three, :drill-level (:object or :face),
+         :selected-face (map with :face-id :triangles :normal :center, or nil)."
   []
   @picking-state)
 
@@ -1109,6 +1369,24 @@
   "Return keyword name of selected mesh, or nil."
   []
   (:selected-name @picking-state))
+
+(defn- on-viewport-alt-wheel
+  "Alt+Scroll handler: adjust coplanarity tolerance when at face drill-down level.
+   Alt+Scroll up → increase tolerance (more permissive, merge more faces).
+   Alt+Scroll down → decrease tolerance (stricter, fewer faces).
+   Without Alt, normal zoom (event passes through to OrbitControls)."
+  [^js event]
+  (when (and (.-altKey event)
+             (= :face (:drill-level @picking-state)))
+    (.preventDefault event)
+    (.stopPropagation event)
+    (let [delta (if (pos? (.-deltaY event)) 5.0 -5.0)
+          new-tol (max 0.0 (min 60.0 (+ @picking-tolerance delta)))]
+      (when (not= new-tol @picking-tolerance)
+        (reset! picking-tolerance new-tol)
+        (when-let [{:keys [mesh-data face-index ^js three-mesh]} @picking-hit-cache]
+          (let [reg-name (:selected-name @picking-state)]
+            (drill-to-face! reg-name three-mesh mesh-data face-index new-tol nil)))))))
 
 (defn init
   "Initialize Three.js viewport on given canvas element."
@@ -1153,8 +1431,9 @@
       (xr/setup-controller renderer scene camera-rig camera world-group)
       ;; Setup axis-constrained rotation (X/Y/Z keys + drag)
       (setup-axis-rotation canvas camera controls)
-      ;; Alt+Click picking
+      ;; Alt+Click picking + Alt+Scroll face tolerance
       (.addEventListener canvas "click" on-viewport-alt-click)
+      (.addEventListener canvas "wheel" on-viewport-alt-wheel #js {:capture true})
       (.addEventListener js/document "keydown"
         (fn [e] (when (= (.-key e) "Escape") (deselect!))))
       ;; Setup ResizeObserver on viewport-panel (parent) for responsive canvas sizing

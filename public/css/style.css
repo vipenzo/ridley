@@ -1716,6 +1716,7 @@ body.resizing-h * {
 }
 .picking-status.visible { display: flex; }
 .picking-name { color: #ff9933; font-weight: bold; }
+.picking-face { color: #aaa; }
 .picking-separator { color: #555; margin: 0 4px; }
 .source-link {
   color: #6cb6ff;

@@ -2045,14 +2045,38 @@
            truncated))))
 
 (defn- update-status-bar!
-  "Update the picking status bar with the selected mesh info."
-  [registry-name]
+  "Update the picking status bar with the selected mesh/face info.
+   pick-info: nil, or {:name kw :level :object/:face :face-id :face-normal
+                        :face-center :tolerance-deg :tri-count}"
+  [pick-info]
   (when-let [bar (.getElementById js/document "picking-status-bar")]
-    (if registry-name
-      (let [mesh (registry/get-mesh registry-name)
-            history (when mesh (:source-history mesh))]
+    (if pick-info
+      (let [{:keys [name level face-id face-normal tolerance-deg tri-count]} pick-info
+            mesh (registry/get-mesh name)
+            history (when mesh (:source-history mesh))
+            ;; Face info span (only at face drill-down level)
+            face-html
+            (when (= :face level)
+              (let [face-label (cond
+                                 (keyword? face-id) (str ":" (clojure.core/name face-id))
+                                 (some? face-id) (str "face " face-id)
+                                 :else (str "face (" tri-count " tris)"))
+                    normal-str (when face-normal
+                                 (let [[nx ny nz] face-normal]
+                                   (str "[" (.toFixed nx 2) " "
+                                        (.toFixed ny 2) " "
+                                        (.toFixed nz 2) "]")))
+                    tol-str (when (and tolerance-deg (not= tolerance-deg 2.5))
+                              (str " &plusmn;" (.toFixed tolerance-deg 1) "&deg;"))]
+                (str "<span class=\"picking-face\">"
+                     face-label
+                     (when normal-str (str " &mdash; normal " normal-str))
+                     tol-str
+                     "</span>")))]
         (set! (.-innerHTML bar)
-              (str "<span class=\"picking-name\">" (name registry-name) "</span>"
+              (str "<span class=\"picking-name\">" (clojure.core/name name) "</span>"
+                   (when face-html
+                     (str "<span class=\"picking-separator\">&mdash;</span>" face-html))
                    (when (seq history)
                      (str "<span class=\"picking-separator\">&mdash;</span>"
                           (render-source-history history)))))
