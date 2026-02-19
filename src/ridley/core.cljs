@@ -2059,7 +2059,7 @@
             (when (= :face level)
               (let [face-label (cond
                                  (keyword? face-id) (str ":" (clojure.core/name face-id))
-                                 (some? face-id) (str "face " face-id)
+                                 (vector? face-id) (str "face (" (count face-id) " tris)")
                                  :else (str "face (" tri-count " tris)"))
                     normal-str (when face-normal
                                  (let [[nx ny nz] face-normal]

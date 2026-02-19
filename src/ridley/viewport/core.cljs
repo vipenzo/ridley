@@ -760,6 +760,8 @@
         (reset! stamps-object group)
         (.add world-group group)))))
 
+(declare restore-selection-after-rebuild!)
+
 (defn update-scene
   "Update viewport with lines, meshes, and panels.
    Options:
@@ -817,7 +819,9 @@
                   (+ center-x dist)
                   (+ center-y dist)
                   (+ center-z dist))
-            (.update controls)))))))
+            (.update controls)))))
+    ;; Restore selection outline + face highlight if active
+    (restore-selection-after-rebuild!)))
 
 (defn update-geometry
   "Update viewport with new turtle geometry (line segments only, legacy)."
@@ -975,6 +979,7 @@
 ;; ============================================================
 
 (declare create-face-highlight-mesh)
+(declare show-selection-outline!)
 
 ;; Picking state: tracks which mesh is selected
 (defonce ^:private picking-state
@@ -1047,17 +1052,24 @@
                 face-groups))))))
 
 (defn- get-valid-face-index
-  "Get the index of a triangle in the valid-faces list (after bounds filtering)."
+  "Get the index of a triangle in the valid-faces list (after bounds filtering).
+   Also returns valid-to-orig mapping for face index translation."
   [mesh-data three-face-index]
   (let [vertices (:vertices mesh-data)
         n-verts (count vertices)
-        valid-faces (into [] (filter (fn [[i0 i1 i2]]
-                                       (and (< i0 n-verts) (< i1 n-verts) (< i2 n-verts))))
-                           (:faces mesh-data))]
+        ;; Build valid-faces and track original indices
+        indexed (keep-indexed
+                  (fn [orig-idx [i0 i1 i2 :as tri]]
+                    (when (and (< i0 n-verts) (< i1 n-verts) (< i2 n-verts))
+                      [orig-idx tri]))
+                  (:faces mesh-data))
+        valid-to-orig (mapv first indexed)
+        valid-faces (mapv second indexed)]
     (when (< three-face-index (count valid-faces))
       {:index three-face-index
        :triangle (nth valid-faces three-face-index)
-       :valid-faces valid-faces})))
+       :valid-faces valid-faces
+       :valid-to-orig valid-to-orig})))
 
 (defn- build-edge-adjacency
   "Build {normalized-edge → #{face-indices...}} map for flood-fill.
@@ -1092,7 +1104,7 @@
 (defn- flood-fill-coplanar
   "BFS from start-face-idx, expanding to adjacent triangles with
    dot(normal, start-normal) > tolerance-cos.
-   Returns vector of [i0 i1 i2] triangle triples."
+   Returns {:triangles [[i0 i1 i2]...] :visited-indices #{valid-face-indices}}."
   [valid-faces vertices start-face-idx tolerance-cos]
   (let [adj (build-edge-adjacency valid-faces)
         start-tri (nth valid-faces start-face-idx)
@@ -1120,13 +1132,16 @@
                           (vswap! queue conj ni)
                           (vswap! result conj (nth valid-faces ni))))))))))
           (recur))))
-    @result))
+    {:triangles @result :visited-indices @visited}))
 
 (defn- resolve-face-with-flood-fill
   "Resolve face from hit, using face-groups when available, flood-fill as fallback.
-   Returns {:face-id id-or-nil :triangles [...] :source :face-group|:flood-fill} or nil."
+   Returns {:face-id id-or-vec :triangles [...] :source :face-group|:flood-fill} or nil.
+   For face-groups, :face-id is the keyword/numeric ID.
+   For flood-fill, :face-id is a vector of original face indices."
   [mesh-data three-face-index tolerance-deg]
-  (when-let [{:keys [index valid-faces]} (get-valid-face-index mesh-data three-face-index)]
+  (when-let [{:keys [index valid-faces valid-to-orig]}
+             (get-valid-face-index mesh-data three-face-index)]
     ;; Try face-groups first
     (let [fg-result (resolve-face-from-hit mesh-data three-face-index)]
       (if (and fg-result (> (count (:triangles fg-result)) 1))
@@ -1134,8 +1149,11 @@
         fg-result
         ;; Single-triangle or no face-group → flood-fill
         (let [tolerance-cos (js/Math.cos (* tolerance-deg (/ js/Math.PI 180)))
-              triangles (flood-fill-coplanar valid-faces (:vertices mesh-data) index tolerance-cos)]
-          {:face-id (when fg-result (:face-id fg-result))
+              {:keys [triangles visited-indices]}
+              (flood-fill-coplanar valid-faces (:vertices mesh-data) index tolerance-cos)
+              ;; Map valid-face indices back to original face indices
+              orig-face-ids (mapv #(nth valid-to-orig %) (sort visited-indices))]
+          {:face-id orig-face-ids
            :triangles triangles
            :source :flood-fill})))))
 
@@ -1185,6 +1203,32 @@
       (set! (.-renderOrder hl) 998)
       (.add ^js highlight-group hl)
       (reset! picking-face-highlight hl))))
+
+(defn- find-three-mesh-by-reg-name
+  "Find a Three.js Mesh in world-group by its userData.registryName."
+  [reg-name]
+  (when-let [{:keys [world-group]} @state]
+    (some (fn [^js child]
+            (when (and (= (.-type child) "Mesh")
+                       (= reg-name (.. child -userData -registryName)))
+              child))
+          (.-children world-group))))
+
+(defn- restore-selection-after-rebuild!
+  "Re-apply selection outline + face highlight after scene rebuild.
+   Called at the end of update-scene when picking-state has an active selection."
+  []
+  (when-let [reg-name (:selected-name @picking-state)]
+    (when-let [^js three-mesh (find-three-mesh-by-reg-name reg-name)]
+      ;; Update the Three.js mesh reference (old one was disposed)
+      (swap! picking-state assoc :selected-three three-mesh)
+      ;; Re-apply outline + emissive tint
+      (show-selection-outline! three-mesh)
+      ;; Re-apply face highlight if at face drill-down level
+      (when (= :face (:drill-level @picking-state))
+        (when-let [mesh-data (find-mesh-data-by-name reg-name)]
+          (when-let [tris (get-in @picking-state [:selected-face :triangles])]
+            (show-picking-face-highlight! mesh-data tris three-mesh)))))))
 
 (defn- restore-mesh-emissive!
   "Restore the original emissive values on the previously selected mesh."
@@ -1253,15 +1297,18 @@
 
 (defn- drill-to-face!
   "Resolve face under cursor and show face highlight + update state.
-   Used by handle-pick (drill-down) and tolerance/toggle updates."
-  [reg-name ^js three-mesh mesh-data face-index tolerance-deg selected-tris]
+   Used by handle-pick (drill-down) and tolerance/toggle updates.
+   selected-tris: override triangles (for toggle merge). nil = use resolved.
+   selected-face-id: override face-id (for toggle merge). nil = use resolved."
+  [reg-name ^js three-mesh mesh-data face-index tolerance-deg selected-tris selected-face-id]
   (when-let [{:keys [face-id triangles source]}
              (resolve-face-with-flood-fill mesh-data face-index tolerance-deg)]
     (let [;; Merge with existing selection if provided (Alt+Shift+Click toggle)
           final-tris (or selected-tris triangles)
+          final-face-id (or selected-face-id face-id)
           {:keys [center normal]} (compute-face-center-and-normal
                                     (:vertices mesh-data) final-tris)
-          face-info {:face-id face-id
+          face-info {:face-id final-face-id
                      :triangles final-tris
                      :normal normal
                      :center center
@@ -1272,7 +1319,7 @@
              :selected-face face-info)
       (when-let [cb @on-pick-callback]
         (cb {:name reg-name :level :face
-             :face-id face-id
+             :face-id final-face-id
              :face-normal normal
              :face-center center
              :tolerance-deg tolerance-deg
@@ -1291,8 +1338,8 @@
         (when-let [mesh-data (find-mesh-data-by-name reg-name)]
           (if (and shift? (= :face (:drill-level @picking-state)))
             ;; Alt+Shift+Click: toggle face in/out of selection
-            (when-let [{:keys [triangles]} (resolve-face-with-flood-fill
-                                             mesh-data face-index @picking-tolerance)]
+            (when-let [{:keys [face-id triangles]} (resolve-face-with-flood-fill
+                                                     mesh-data face-index @picking-tolerance)]
               (let [current-tris (get-in @picking-state [:selected-face :triangles] [])
                     current-set (set current-tris)
                     toggle-set (set triangles)
@@ -1300,17 +1347,27 @@
                     all-selected? (every? current-set triangles)
                     new-tris (if all-selected?
                                (vec (remove toggle-set current-tris))
-                               (vec (distinct (concat current-tris triangles))))]
+                               (vec (distinct (concat current-tris triangles))))
+                    ;; Merge face-ids for toggle
+                    current-face-id (get-in @picking-state [:selected-face :face-id])
+                    new-face-id (cond
+                                  ;; Both are vectors of indices → merge/remove
+                                  (and (vector? current-face-id) (vector? face-id))
+                                  (if all-selected?
+                                    (vec (remove (set face-id) current-face-id))
+                                    (vec (distinct (concat current-face-id face-id))))
+                                  ;; Keyword face-group ids → can't merge meaningfully
+                                  :else face-id)]
                 (when (seq new-tris)
                   (drill-to-face! reg-name three-mesh mesh-data face-index
-                                  @picking-tolerance new-tris))))
+                                  @picking-tolerance new-tris new-face-id))))
             ;; Regular Alt+Click: drill to face (reset selection)
             (do
               (reset! picking-tolerance 2.5)
               (reset! picking-hit-cache {:mesh-data mesh-data
                                          :face-index face-index
                                          :three-mesh three-mesh})
-              (drill-to-face! reg-name three-mesh mesh-data face-index 2.5 nil))))
+              (drill-to-face! reg-name three-mesh mesh-data face-index 2.5 nil nil))))
         ;; Different mesh → select at object level
         (do
           (clear-picking-face-highlight!)
@@ -1455,7 +1512,7 @@
         (reset! picking-tolerance new-tol)
         (when-let [{:keys [mesh-data face-index ^js three-mesh]} @picking-hit-cache]
           (let [reg-name (:selected-name @picking-state)]
-            (drill-to-face! reg-name three-mesh mesh-data face-index new-tol nil)))))))
+            (drill-to-face! reg-name three-mesh mesh-data face-index new-tol nil nil)))))))
 
 (defn init
   "Initialize Three.js viewport on given canvas element."
