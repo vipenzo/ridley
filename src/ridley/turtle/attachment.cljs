@@ -281,7 +281,8 @@
 
 (defn move-attached-face
   "Move the attached face along its normal WITHOUT creating side faces.
-   Updates the vertex positions of the face directly."
+   Updates the vertex positions of the face directly.
+   Moves ALL unique vertices in the face (not just perimeter)."
   [state dist]
   (let [attachment (:attached state)
         mesh (:mesh attachment)
@@ -289,17 +290,17 @@
         normal (:normal face-info)
         offset (v* normal dist)
 
-        ;; Get face vertices (from perimeter)
+        ;; Get ALL unique vertex indices from face triangles
         face-triangles (:triangles face-info)
-        perimeter (extract-face-perimeter face-triangles)
+        all-indices (distinct (mapcat identity face-triangles))
 
-        ;; Move each perimeter vertex by offset
+        ;; Move each face vertex by offset
         vertices (:vertices mesh)
         new-vertices (reduce
                       (fn [verts idx]
                         (assoc verts idx (v+ (nth verts idx) offset)))
                       (vec vertices)
-                      perimeter)
+                      all-indices)
 
         new-mesh (assoc mesh :vertices new-vertices)
         new-center (v+ (:center face-info) offset)

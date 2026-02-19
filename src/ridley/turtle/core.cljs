@@ -1966,47 +1966,53 @@
 
 (defn- resolve-face-triangles
   "Resolve triangles for a face-id, which can be:
-   - keyword or number: single face-group lookup
-   - vector of numbers: collect triangles from multiple face-groups"
-  [face-groups face-id]
+   - keyword or number: single face-group lookup from face-groups
+   - vector of numbers: indices into :faces (or face-groups if present)
+   face-groups may be nil for meshes without semantic faces (e.g. boolean results)."
+  [face-groups faces face-id]
   (cond
     (vector? face-id)
-    (let [tris (mapcat #(get face-groups %) face-id)]
-      (when (seq tris) (vec tris)))
+    (if face-groups
+      ;; Has face-groups: look up each index as a face-group key
+      (let [tris (mapcat #(get face-groups %) face-id)]
+        (when (seq tris) (vec tris)))
+      ;; No face-groups: indices refer to positions in :faces array
+      (let [tris (keep #(nth faces % nil) face-id)]
+        (when (seq tris) (vec (map vec tris)))))
 
     :else
-    (get face-groups face-id)))
+    (when face-groups
+      (get face-groups face-id))))
 
 (defn attach-face
   "Attach to a specific face of a mesh.
    face-id can be a keyword (:top), a number (face index), or a vector of
    numbers (multiple face indices, e.g. from flood-fill picking).
+   For vector face-ids, works even without :face-groups by indexing :faces directly.
    With :clone true, enables extrusion mode (f creates side faces).
    Without :clone, face movement mode (f moves vertices directly).
    Pushes current state, moves turtle to face center,
    sets heading to face normal (outward), up perpendicular.
    Returns state unchanged if face not found."
   [state mesh face-id & {:keys [clone]}]
-  (if-let [face-groups (:face-groups mesh)]
-    (if-let [triangles (resolve-face-triangles face-groups face-id)]
-      (let [info (compute-face-info-internal (:vertices mesh) triangles)
-            normal (:normal info)
-            center (:center info)
-            ;; Derive up vector perpendicular to normal
-            face-heading (:heading info)
-            ;; up = normal × face-heading (perpendicular to both)
-            up (normalize (cross normal face-heading))]
-        (-> state
-            (push-state)
-            (assoc :position center)
-            (assoc :heading normal)
-            (assoc :up up)
-            (assoc :attached {:type :face
-                              :mesh mesh
-                              :face-id face-id
-                              :face-info info
-                              :extrude-mode clone})))  ; flag: if true, f() extrudes
-      state)
+  (if-let [triangles (resolve-face-triangles (:face-groups mesh) (:faces mesh) face-id)]
+    (let [info (compute-face-info-internal (:vertices mesh) triangles)
+          normal (:normal info)
+          center (:center info)
+          ;; Derive up vector perpendicular to normal
+          face-heading (:heading info)
+          ;; up = normal × face-heading (perpendicular to both)
+          up (normalize (cross normal face-heading))]
+      (-> state
+          (push-state)
+          (assoc :position center)
+          (assoc :heading normal)
+          (assoc :up up)
+          (assoc :attached {:type :face
+                            :mesh mesh
+                            :face-id face-id
+                            :face-info info
+                            :extrude-mode clone})))  ; flag: if true, f() extrudes
     state))
 
 (defn ^:export attach-face-extrude
