@@ -1242,6 +1242,46 @@
                    (assoc :heading (normalize heading))
                    (assoc :up (normalize up)))))
 
+;; Record-only commands: these don't affect heading/position during recording
+;; because they are context-dependent (only meaningful in attach/face context).
+(defn rec-inset
+  "Record an inset command. Record-only — no state change during recording."
+  [state amount]
+  (update state :recording conj {:cmd :inset :args [amount]}))
+
+(defn rec-scale
+  "Record a scale command. Record-only — no state change during recording."
+  [state factor]
+  (update state :recording conj {:cmd :scale :args [factor]}))
+
+(defn rec-move-to
+  "Record a move-to command. Record-only — target resolution happens at replay."
+  [state target & [mode]]
+  (update state :recording conj {:cmd :move-to :args (if mode [target mode] [target])}))
+
+(defn rec-play-path
+  "Splice a sub-path's commands into the current recording.
+   Movement commands (f, th, tv, tr, u, rt, lt, set-heading) are both recorded
+   AND executed on the recorder state to keep heading in sync.
+   Record-only commands (inset, scale, move-to, mark) are just appended."
+  [state sub-path]
+  (if (path? sub-path)
+    (reduce (fn [s {:keys [cmd args] :as command}]
+              (case cmd
+                :f  (rec-f s (first args))
+                :th (rec-th s (first args))
+                :tv (rec-tv s (first args))
+                :tr (rec-tr s (first args))
+                :u  (rec-u s (first args))
+                :rt (rec-rt s (first args))
+                :lt (rec-lt s (first args))
+                :set-heading (rec-set-heading s (first args) (second args))
+                ;; record-only: just append
+                (update s :recording conj command)))
+            state
+            (:commands sub-path))
+    state))
+
 (defn path-from-recorder
   "Extract a path from a recorder turtle."
   [recorder]

@@ -245,6 +245,29 @@
                   shapes)]
      (wrap-results results))))
 
+(defn ^:export pure-bloft-two-shapes
+  "Bezier-safe loft between two shapes. Creates lerp transform, then delegates to pure-bloft."
+  ([shape1-or-shapes shape2 path] (pure-bloft-two-shapes shape1-or-shapes shape2 path nil 0.1))
+  ([shape1-or-shapes shape2 path steps] (pure-bloft-two-shapes shape1-or-shapes shape2 path steps 0.1))
+  ([shape1-or-shapes shape2 path steps threshold]
+   (let [shapes1 (unwrap-shapes shape1-or-shapes)
+         results (reduce
+                  (fn [acc s1]
+                    (let [n1 (count (:points s1))
+                          n2 (count (:points shape2))
+                          [rs1 rs2] (if (= n1 n2)
+                                      [s1 shape2]
+                                      (let [target-n (max n1 n2)]
+                                        [(xform/resample s1 target-n)
+                                         (xform/resample shape2 target-n)]))
+                          s2-aligned (xform/align-to-shape rs1 rs2)
+                          transform-fn (shape/make-lerp-fn rs1 s2-aligned)
+                          mesh (pure-bloft rs1 transform-fn path steps threshold)]
+                      (if mesh (conj acc mesh) acc)))
+                  []
+                  shapes1)]
+     (wrap-results results))))
+
 ;; ============================================================
 ;; Shape-fn adapters
 ;; ============================================================

@@ -43,7 +43,12 @@ ridley/
 │   └── ridley/
 │       ├── core.cljs              # App entry point, UI event handling
 │       ├── editor/
-│       │   └── repl.cljs          # SCI-based code evaluation, macros
+│       │   ├── repl.cljs          # SCI-based code evaluation
+│       │   ├── macros.cljs        # SCI macro definitions (string, eval'd into context)
+│       │   ├── bindings.cljs      # SCI context bindings map
+│       │   ├── impl.cljs          # Runtime *-impl functions for macro delegation
+│       │   ├── operations.cljs    # Pure generative operations (extrude, loft, bloft, revolve)
+│       │   └── state.cljs         # Shared atoms (turtle-atom, etc.)
 │       ├── turtle/
 │       │   ├── core.cljs          # Turtle state, movement, extrusion
 │       │   ├── path.cljs          # Path recording and playback
@@ -200,6 +205,49 @@ User code runs in SCI, not raw ClojureScript. Benefits:
 - Controlled namespace exposure
 - No compilation step (instant feedback)
 - Easy to add/restrict functions
+
+## Macro Architecture
+
+The SCI macro system uses a layered delegation pattern:
+
+```
+User code → SCI macros (macros.cljs) → *-impl functions (impl.cljs) → pure operations (operations.cljs)
+```
+
+### `path` as Universal Recorder
+
+The `path` macro is the single entry point for all movement recording. All body-taking macros (extrude, loft, attach, etc.) are thin wrappers that delegate to `path` + a runtime `*-impl` function:
+
+```clojure
+;; Macro definitions (in macro-defs string):
+(defmacro extrude [shape & movements]
+  `(extrude-impl ~shape (path ~@movements)))
+
+(defmacro attach [mesh & body]
+  `(attach-impl ~mesh (path ~@body)))
+```
+
+The `path` macro:
+1. Rebinds movement commands (`f`, `th`, `tv`, `tr`, `arc-h`, `arc-v`, `bezier-to`, `bezier-as`, `inset`, `scale`, `move-to`, `play-path`) to recorder versions
+2. Captures body result; if it's already a path and the recorder is empty, returns it directly (pass-through)
+3. Otherwise, finalizes the recording into a path data structure
+
+### Runtime `*-impl` Functions (impl.cljs)
+
+These handle runtime dispatch that would be complex at macro-expand time:
+- **Extrude family**: `extrude-impl`, `extrude-closed-impl` — validate path, delegate to pure ops
+- **Loft family**: `loft-impl`, `loft-n-impl` — dispatch on shape-fn? / shape? / transform-fn
+- **Bloft family**: `bloft-impl`, `bloft-n-impl` — same dispatch with bezier-safe loft
+- **Revolve**: `revolve-impl` — dispatch on shape-fn?
+- **Attach family**: `attach-impl`, `attach-face-impl`, `clone-face-impl`, `attach!-impl` — replay path commands on turtle state with attached geometry
+
+### Path Validation
+
+The `validate-extrude-path!` function rejects attach-only commands (`:inset`, `:scale`, `:move-to`) in extrude/loft contexts, providing clear error messages.
+
+### Bindings (bindings.cljs)
+
+All SCI symbols are wired to ClojureScript functions in a single `base-bindings` map. Functions exposed to SCI must use `^:export` metadata to survive Google Closure DCE.
 
 ## 2D Shape Booleans (Clipper2)
 

@@ -5,118 +5,6 @@
   ";; Atom to hold recorder during path recording
    (def ^:private path-recorder (atom nil))
 
-   ;; Atom for attach-face and attach macros (functional style)
-   (def ^:private attach-state (atom nil))
-
-   ;; Wrapper functions for attach macros that operate on attach-state
-   (defn- att-f* [dist]
-     (swap! attach-state (fn [s] (turtle-f s dist))))
-   (defn- att-th* [angle]
-     (swap! attach-state (fn [s] (turtle-th s angle))))
-   (defn- att-tv* [angle]
-     (swap! attach-state (fn [s] (turtle-tv s angle))))
-   (defn- att-tr* [angle]
-     (swap! attach-state (fn [s] (turtle-tr s angle))))
-   (defn- att-inset* [amount]
-     (swap! attach-state (fn [s] (turtle-inset s amount))))
-   (defn- att-scale* [factor]
-     (swap! attach-state (fn [s] (turtle-scale s factor))))
-   (defn- att-u* [dist]
-     (swap! attach-state (fn [s] (turtle-u s dist))))
-   (defn- att-d* [dist]
-     (swap! attach-state (fn [s] (turtle-d s dist))))
-   (defn- att-rt* [dist]
-     (swap! attach-state (fn [s] (turtle-rt s dist))))
-   (defn- att-lt* [dist]
-     (swap! attach-state (fn [s] (turtle-lt s dist))))
-
-   ;; Resolve name-or-mesh to actual mesh (for use before bounds/mesh? are defined)
-   (defn- att-resolve-mesh [name-or-mesh]
-     (if (and (map? name-or-mesh) (:vertices name-or-mesh))
-       name-or-mesh
-       (get-mesh (if (keyword? name-or-mesh) name-or-mesh (keyword name-or-mesh)))))
-
-   ;; Compute bounds inline (for use before bounds is defined)
-   (defn- att-compute-bounds [name-or-mesh]
-     (when-let [m (att-resolve-mesh name-or-mesh)]
-       (when-let [vertices (seq (:vertices m))]
-         (let [xs (map #(nth % 0) vertices)
-               ys (map #(nth % 1) vertices)
-               zs (map #(nth % 2) vertices)
-               min-x (apply min xs) max-x (apply max xs)
-               min-y (apply min ys) max-y (apply max ys)
-               min-z (apply min zs) max-z (apply max zs)]
-           {:min [min-x min-y min-z]
-            :max [max-x max-y max-z]
-            :center [(/ (+ min-x max-x) 2)
-                     (/ (+ min-y max-y) 2)
-                     (/ (+ min-z max-z) 2)]
-            :size [(- max-x min-x)
-                   (- max-y min-y)
-                   (- max-z min-z)]}))))
-
-   ;; Move to target object's pose or centroid (works inside attach/attach!)
-   ;; Default: move to creation-pose position AND adopt heading/up
-   ;; With :center flag: move to centroid only, keep current heading
-   (defn- att-move-to-center* [target]
-     (let [dest (:center (att-compute-bounds target))
-           state @attach-state
-           pos (:position state)
-           heading (:heading state)
-           up (:up state)
-           right (vec3-cross heading up)
-           delta (vec3- dest pos)
-           d-fwd (vec3-dot delta heading)
-           d-right (vec3-dot delta right)
-           d-up (vec3-dot delta up)]
-       ;; Move along right axis (th -90, f, th 90)
-       (when-not (zero? d-right)
-         (att-th* -90) (att-f* d-right) (att-th* 90))
-       ;; Move along forward axis
-       (when-not (zero? d-fwd)
-         (att-f* d-fwd))
-       ;; Move along up axis (tv 90, f, tv -90)
-       (when-not (zero? d-up)
-         (att-tv* 90) (att-f* d-up) (att-tv* -90))))
-
-   (defn- att-move-to-pose* [target]
-     (let [m (att-resolve-mesh target)
-           pose (when m (:creation-pose m))]
-       (if pose
-         (let [dest (:position pose)]
-           ;; First move to the pose position using centroid-style movement
-           ;; (this properly translates the attached mesh via att-f*)
-           (let [state @attach-state
-                 pos (:position state)
-                 heading (:heading state)
-                 up (:up state)
-                 right (vec3-cross heading up)
-                 delta (vec3- dest pos)
-                 d-fwd (vec3-dot delta heading)
-                 d-right (vec3-dot delta right)
-                 d-up (vec3-dot delta up)]
-             (when-not (zero? d-right)
-               (att-th* -90) (att-f* d-right) (att-th* 90))
-             (when-not (zero? d-fwd)
-               (att-f* d-fwd))
-             (when-not (zero? d-up)
-               (att-tv* 90) (att-f* d-up) (att-tv* -90)))
-           ;; Then adopt the target's heading and up
-           (swap! attach-state
-                  (fn [s]
-                    (assoc s
-                           :heading (:heading pose)
-                           :up (:up pose)))))
-         ;; Fallback: no creation-pose, use centroid
-         (att-move-to-center* target))))
-
-   (defn- att-move-to*
-     ([target] (att-move-to-pose* target))
-     ([target mode]
-      (case mode
-        :center (att-move-to-center* target)
-        (att-move-to-pose* target))))
-
    ;; Recording versions that work with the path-recorder atom
    (defn- rec-f* [dist]
      (swap! path-recorder rec-f dist))
@@ -148,6 +36,16 @@
    ;; Recording version of resolution - sets resolution in path-recorder
    (defn- rec-resolution* [mode value]
      (swap! path-recorder assoc :resolution {:mode mode :value value}))
+
+   ;; Record-only commands: inset, scale, move-to (meaningful only in attach context)
+   (defn- rec-inset* [amount]
+     (swap! path-recorder rec-inset amount))
+   (defn- rec-scale* [factor]
+     (swap! path-recorder rec-scale factor))
+   (defn- rec-move-to* [target & [mode]]
+     (swap! path-recorder rec-move-to target mode))
+   (defn- rec-play-path* [sub-path]
+     (swap! path-recorder rec-play-path sub-path))
 
    ;; Recording version of arc-h that decomposes into rec-f* and rec-th*
    (defn- rec-arc-h* [radius angle & {:keys [steps]}]
@@ -523,13 +421,21 @@
               ~'bezier-as rec-bezier-as*
               ~'resolution rec-resolution*
               ~'mark rec-mark*
-              ~'follow rec-follow*]
-          ~@body)
-        (let [rec-state# @path-recorder
-              result# (path-from-recorder rec-state#)
-              result# (if (:bezier rec-state#) (assoc result# :bezier true) result#)]
-          (reset! path-recorder saved#)
-          result#)))
+              ~'follow rec-follow*
+              ~'inset rec-inset*
+              ~'scale rec-scale*
+              ~'move-to rec-move-to*
+              ~'play-path rec-play-path*]
+          (let [body-result# (do ~@body)]
+            (let [rec-state# @path-recorder
+                  recorded# (:recording rec-state#)]
+              (reset! path-recorder saved#)
+              ;; Pass-through: if body returned a path and recorder is empty, return it
+              (if (and (path? body-result#) (empty? recorded#))
+                body-result#
+                (let [result# (path-from-recorder rec-state#)
+                      result# (if (:bezier rec-state#) (assoc result# :bezier true) result#)]
+                  result#)))))))
 
    ;; shape: create a 2D shape from turtle movements
    ;; (def tri (shape (f 4) (th 120) (f 4) (th 120) (f 4))) - triangle
@@ -571,66 +477,15 @@
    ;; (extrude (rect 20 10) (f 20) (th 45) (f 20)) - sweep with turns
    ;; Returns the created mesh (bind with def, show with register)
    (defmacro extrude [shape & movements]
-     (if (= 1 (count movements))
-       (let [arg (first movements)]
-         (cond
-           ;; Symbol - might be a pre-defined path, check at runtime
-           (symbol? arg)
-           `(let [arg# ~arg]
-              (if (path? arg#)
-                (pure-extrude-path ~shape arg#)
-                ;; Not a path - wrap in path macro
-                (pure-extrude-path ~shape (path ~arg))))
-
-           ;; List starting with path or path-to - use directly
-           (and (list? arg) (contains? #{'path 'path-to} (first arg)))
-           `(pure-extrude-path ~shape ~arg)
-
-           ;; List starting with turtle movement - wrap in path
-           ;; This avoids evaluating (f 20) directly which would modify turtle-atom
-           (and (list? arg) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v 'bezier-to 'bezier-to-anchor 'bezier-as} (first arg)))
-           `(pure-extrude-path ~shape (path ~arg))
-
-           ;; Any other expression - check at runtime if it's already a path
-           :else
-           `(let [result# ~arg]
-              (if (path? result#)
-                (pure-extrude-path ~shape result#)
-                (pure-extrude-path ~shape (path ~arg))))))
-       ;; Multiple movements - wrap in path macro
-       `(pure-extrude-path ~shape (path ~@movements))))
+     `(extrude-impl ~shape (path ~@movements)))
 
    ;; extrude-closed: like extrude but creates a closed torus-like mesh
    ;; (extrude-closed (circle 5) square-path) - closed torus along path
    ;; The path should return to the starting point for proper closure
    ;; Last ring connects to first ring, no end caps
    ;; Returns the created mesh (can be bound with def)
-   ;; Uses pre-processed path approach for correct corner geometry
    (defmacro extrude-closed [shape & movements]
-     (if (= 1 (count movements))
-       (let [path-expr (first movements)]
-         (cond
-           ;; Symbol - use directly (should be a path)
-           (symbol? path-expr)
-           `(extrude-closed-path-impl ~shape ~path-expr)
-
-           ;; List starting with path - use directly
-           (and (list? path-expr) (= 'path (first path-expr)))
-           `(extrude-closed-path-impl ~shape ~path-expr)
-
-           ;; List starting with turtle movement - wrap in path
-           ;; This avoids evaluating commands directly which would modify turtle-atom
-           (and (list? path-expr) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v 'bezier-to 'bezier-to-anchor 'bezier-as} (first path-expr)))
-           `(extrude-closed-path-impl ~shape (path ~path-expr))
-
-           ;; Other list - check at runtime if it's already a path
-           :else
-           `(let [result# ~path-expr]
-              (if (path? result#)
-                (extrude-closed-path-impl ~shape result#)
-                (extrude-closed-path-impl ~shape (path ~path-expr))))))
-       ;; Multiple movements - wrap in path macro
-       `(extrude-closed-path-impl ~shape (path ~@movements))))
+     `(extrude-closed-impl ~shape (path ~@movements)))
 
    ;; loft: like extrude but with shape transformation based on progress
    ;; PURE: returns mesh without side effects (use register to make visible)
@@ -649,194 +504,45 @@
    ;;
    ;; Returns the created mesh (can be bound with def)
    (defmacro loft [first-arg & rest-args]
-     (let [n (count rest-args)
-           mvmt? (fn [x] (and (list? x) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v
+     (let [mvmt? (fn [x] (and (list? x) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v
                                                        'bezier-to 'bezier-to-anchor
-                                                       'bezier-as} (first x))))
-           path? (fn [x] (and (list? x) (= 'path (first x))))]
+                                                       'bezier-as} (first x))))]
        (cond
-         ;; 2-arg: (loft shape-fn movement/path)
-         ;; Only shape-fn mode — legacy always requires 3+ args
-         (= 1 n)
-         (let [arg (first rest-args)]
-           (cond
-             (symbol? arg)
-             `(let [fa# ~first-arg
-                    a# ~arg]
-                (if (shape-fn? fa#)
-                  (if (~'path? a#)
-                    (pure-loft-shape-fn fa# a#)
-                    (pure-loft-shape-fn fa# (path ~arg)))
-                  (throw (js/Error. \"loft: 2-arg form requires a shape-fn as first argument. For plain shapes use (loft shape transform-fn movements...)\"))))
+         ;; Single rest arg: always 2-arg impl (shape-fn mode)
+         (= 1 (count rest-args))
+         `(loft-impl ~first-arg (path ~(first rest-args)))
 
-             (path? arg)
-             `(let [fa# ~first-arg]
-                (if (shape-fn? fa#)
-                  (pure-loft-shape-fn fa# ~arg)
-                  (throw (js/Error. \"loft: 2-arg form requires a shape-fn as first argument\"))))
+         ;; First rest-arg is a movement: all rest-args are movements → 2-arg impl
+         (mvmt? (first rest-args))
+         `(loft-impl ~first-arg (path ~@rest-args))
 
-             (mvmt? arg)
-             `(let [fa# ~first-arg]
-                (if (shape-fn? fa#)
-                  (pure-loft-shape-fn fa# (path ~arg))
-                  (throw (js/Error. \"loft: 2-arg form requires a shape-fn as first argument\"))))
-
-             :else
-             `(let [fa# ~first-arg
-                    r# ~arg]
-                (if (shape-fn? fa#)
-                  (if (~'path? r#)
-                    (pure-loft-shape-fn fa# r#)
-                    (pure-loft-shape-fn fa# (path ~arg)))
-                  (throw (js/Error. \"loft: 2-arg form requires a shape-fn as first argument\"))))))
-
-         ;; 3-arg: (loft X Y Z) — shape-fn+2-movements OR legacy+1-movement
-         (= 2 n)
-         (let [[second-arg movement] rest-args]
-           (cond
-             (symbol? movement)
-             `(let [fa# ~first-arg]
-                (if (shape-fn? fa#)
-                  (pure-loft-shape-fn fa# (path ~second-arg ~movement))
-                  (let [arg# ~movement
-                        tfn# ~second-arg]
-                    (if (~'shape? tfn#)
-                      (if (~'path? arg#)
-                        (pure-loft-two-shapes fa# tfn# arg#)
-                        (pure-loft-two-shapes fa# tfn# (path ~movement)))
-                      (if (~'path? arg#)
-                        (pure-loft-path fa# tfn# arg#)
-                        (pure-loft-path fa# tfn# (path ~movement)))))))
-
-             (path? movement)
-             `(let [fa# ~first-arg]
-                (if (shape-fn? fa#)
-                  (pure-loft-shape-fn fa# (path ~second-arg ~movement))
-                  (let [tfn# ~second-arg]
-                    (if (~'shape? tfn#)
-                      (pure-loft-two-shapes fa# tfn# ~movement)
-                      (pure-loft-path fa# tfn# ~movement)))))
-
-             (mvmt? movement)
-             `(let [fa# ~first-arg]
-                (if (shape-fn? fa#)
-                  (pure-loft-shape-fn fa# (path ~second-arg ~movement))
-                  (let [tfn# ~second-arg]
-                    (if (~'shape? tfn#)
-                      (pure-loft-two-shapes fa# tfn# (path ~movement))
-                      (pure-loft-path fa# tfn# (path ~movement))))))
-
-             :else
-             `(let [fa# ~first-arg]
-                (if (shape-fn? fa#)
-                  (pure-loft-shape-fn fa# (path ~second-arg ~movement))
-                  (let [result# ~movement
-                        tfn# ~second-arg]
-                    (if (~'shape? tfn#)
-                      (if (~'path? result#)
-                        (pure-loft-two-shapes fa# tfn# result#)
-                        (pure-loft-two-shapes fa# tfn# (path ~movement)))
-                      (if (~'path? result#)
-                        (pure-loft-path fa# tfn# result#)
-                        (pure-loft-path fa# tfn# (path ~movement)))))))))
-
-         ;; 4+ args: (loft X Y Z W...) — shape-fn+many-movements OR legacy+many-movements
+         ;; First rest-arg is NOT a movement: it's a dispatch arg (transform-fn or second shape)
          :else
-         (let [[second-arg & movements] rest-args]
-           `(let [fa# ~first-arg]
-              (if (shape-fn? fa#)
-                (pure-loft-shape-fn fa# (path ~@rest-args))
-                (let [tfn# ~second-arg]
-                  (if (~'shape? tfn#)
-                    (pure-loft-two-shapes fa# tfn# (path ~@(vec movements)))
-                    (pure-loft-path fa# tfn# (path ~@(vec movements)))))))))))
+         (let [[dispatch-arg & movements] rest-args]
+           (if (seq movements)
+             `(loft-impl ~first-arg ~dispatch-arg (path ~@movements))
+             `(loft-impl ~first-arg (path ~dispatch-arg)))))))
 
    ;; loft-n: loft with custom step count
    ;; (loft-n 32 (tapered (circle 20) :to 0) (f 30))         - shape-fn
    ;; (loft-n 32 (circle 20) #(scale %1 (- 1 %2)) (f 30))   - legacy
    ;; Returns the created mesh (can be bound with def)
    (defmacro loft-n [steps first-arg & rest-args]
-     (let [n (count rest-args)
-           mvmt? (fn [x] (and (list? x) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v
+     (let [mvmt? (fn [x] (and (list? x) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v
                                                        'bezier-to 'bezier-to-anchor
-                                                       'bezier-as} (first x))))
-           pathf? (fn [x] (and (list? x) (= 'path (first x))))]
+                                                       'bezier-as} (first x))))]
        (cond
-         ;; 2-arg after steps: (loft-n N shape-fn movement)
-         (= 1 n)
-         (let [arg (first rest-args)]
-           (cond
-             (symbol? arg)
-             `(let [fa# ~first-arg
-                    a# ~arg]
-                (if (shape-fn? fa#)
-                  (if (~'path? a#)
-                    (pure-loft-shape-fn fa# a# ~steps)
-                    (pure-loft-shape-fn fa# (path ~arg) ~steps))
-                  (throw (js/Error. \"loft-n: 2-arg form requires a shape-fn as first argument\"))))
+         (= 1 (count rest-args))
+         `(loft-n-impl ~steps ~first-arg (path ~(first rest-args)))
 
-             (pathf? arg)
-             `(let [fa# ~first-arg]
-                (if (shape-fn? fa#)
-                  (pure-loft-shape-fn fa# ~arg ~steps)
-                  (throw (js/Error. \"loft-n: 2-arg form requires a shape-fn as first argument\"))))
+         (mvmt? (first rest-args))
+         `(loft-n-impl ~steps ~first-arg (path ~@rest-args))
 
-             (mvmt? arg)
-             `(let [fa# ~first-arg]
-                (if (shape-fn? fa#)
-                  (pure-loft-shape-fn fa# (path ~arg) ~steps)
-                  (throw (js/Error. \"loft-n: 2-arg form requires a shape-fn as first argument\"))))
-
-             :else
-             `(let [fa# ~first-arg
-                    r# ~arg]
-                (if (shape-fn? fa#)
-                  (if (~'path? r#)
-                    (pure-loft-shape-fn fa# r# ~steps)
-                    (pure-loft-shape-fn fa# (path ~arg) ~steps))
-                  (throw (js/Error. \"loft-n: 2-arg form requires a shape-fn as first argument\"))))))
-
-         ;; 3-arg after steps: shape-fn+2-movements OR legacy+1-movement
-         (= 2 n)
-         (let [[second-arg movement] rest-args]
-           (cond
-             (symbol? movement)
-             `(let [fa# ~first-arg]
-                (if (shape-fn? fa#)
-                  (pure-loft-shape-fn fa# (path ~second-arg ~movement) ~steps)
-                  (let [arg# ~movement]
-                    (if (~'path? arg#)
-                      (pure-loft-path fa# ~second-arg arg# ~steps)
-                      (pure-loft-path fa# ~second-arg (path ~movement) ~steps)))))
-
-             (pathf? movement)
-             `(let [fa# ~first-arg]
-                (if (shape-fn? fa#)
-                  (pure-loft-shape-fn fa# (path ~second-arg ~movement) ~steps)
-                  (pure-loft-path fa# ~second-arg ~movement ~steps)))
-
-             (mvmt? movement)
-             `(let [fa# ~first-arg]
-                (if (shape-fn? fa#)
-                  (pure-loft-shape-fn fa# (path ~second-arg ~movement) ~steps)
-                  (pure-loft-path fa# ~second-arg (path ~movement) ~steps)))
-
-             :else
-             `(let [fa# ~first-arg]
-                (if (shape-fn? fa#)
-                  (pure-loft-shape-fn fa# (path ~second-arg ~movement) ~steps)
-                  (let [result# ~movement]
-                    (if (~'path? result#)
-                      (pure-loft-path fa# ~second-arg result# ~steps)
-                      (pure-loft-path fa# ~second-arg (path ~movement) ~steps)))))))
-
-         ;; 4+ args after steps: shape-fn+many-movements OR legacy+many-movements
          :else
-         (let [[second-arg & movements] rest-args]
-           `(let [fa# ~first-arg]
-              (if (shape-fn? fa#)
-                (pure-loft-shape-fn fa# (path ~@rest-args) ~steps)
-                (pure-loft-path fa# ~second-arg (path ~@(vec movements)) ~steps)))))))
+         (let [[dispatch-arg & movements] rest-args]
+           (if (seq movements)
+             `(loft-n-impl ~steps ~first-arg ~dispatch-arg (path ~@movements))
+             `(loft-n-impl ~steps ~first-arg (path ~dispatch-arg)))))))
 
    ;; bloft: bezier-safe loft that handles self-intersecting paths
    ;; Uses convex hulls for intersecting sections, then unions all pieces.
@@ -845,169 +551,54 @@
    ;; (bloft (circle 10) identity my-bezier-path)              - legacy
    ;; (bloft (rect 3 3) #(scale %1 0.5) (bezier-as (branch-path 30)))
    ;; (bloft-n 64 (circle 10) identity my-bezier-path) - more steps
-   (defmacro bloft
-     ([first-arg & rest-args]
-      (let [n (count rest-args)
-            mvmt? (fn [x] (and (list? x) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v
-                                                        'bezier-to 'bezier-as} (first x))))
-            pathf? (fn [x] (and (list? x) (= 'path (first x))))]
-        (cond
-          ;; 2-arg: (bloft shape-fn path) — shape-fn only
-          (= 1 n)
-          (let [arg (first rest-args)]
-            (cond
-              (symbol? arg)
-              `(let [fa# ~first-arg
-                     p# ~arg]
-                 (if (shape-fn? fa#)
-                   (if (~'path? p#)
-                     (pure-bloft-shape-fn fa# p#)
-                     (pure-bloft-shape-fn fa# (path ~arg)))
-                   (throw (js/Error. \"bloft: 2-arg form requires a shape-fn as first argument\"))))
-
-              (pathf? arg)
-              `(let [fa# ~first-arg]
-                 (if (shape-fn? fa#)
-                   (pure-bloft-shape-fn fa# ~arg)
-                   (throw (js/Error. \"bloft: 2-arg form requires a shape-fn as first argument\"))))
-
-              (mvmt? arg)
-              `(let [fa# ~first-arg]
-                 (if (shape-fn? fa#)
-                   (pure-bloft-shape-fn fa# (path ~arg))
-                   (throw (js/Error. \"bloft: 2-arg form requires a shape-fn as first argument\"))))
-
-              :else
-              `(let [fa# ~first-arg
-                     p# ~arg]
-                 (if (shape-fn? fa#)
-                   (if (~'path? p#)
-                     (pure-bloft-shape-fn fa# p#)
-                     (pure-bloft-shape-fn fa# (path ~arg)))
-                   (throw (js/Error. \"bloft: 2-arg form requires a shape-fn as first argument\"))))))
-
-          ;; 3-arg: (bloft X Y Z) — shape-fn mode or legacy (bloft shape tfn path)
-          (= 2 n)
-          (let [[second-arg bezier-path] rest-args
-                fa (gensym \"fa\")]
-            `(let [~fa ~first-arg]
-               (if (shape-fn? ~fa)
-                 (pure-bloft-shape-fn ~fa (path ~second-arg ~bezier-path))
-                 ~(cond
-                    (symbol? bezier-path)
-                    `(let [p# ~bezier-path]
-                       (if (~'path? p#)
-                         (pure-bloft ~fa ~second-arg p# nil 0.1)
-                         (pure-bloft ~fa ~second-arg (path ~bezier-path) nil 0.1)))
-
-                    (pathf? bezier-path)
-                    `(pure-bloft ~fa ~second-arg ~bezier-path nil 0.1)
-
-                    (mvmt? bezier-path)
-                    `(pure-bloft ~fa ~second-arg (path ~bezier-path) nil 0.1)
-
-                    :else
-                    `(let [p# ~bezier-path]
-                       (if (~'path? p#)
-                         (pure-bloft ~fa ~second-arg p# nil 0.1)
-                         (pure-bloft ~fa ~second-arg (path ~bezier-path) nil 0.1)))))))
-
-          ;; 4-arg: (bloft X Y Z steps) — legacy with steps, or shape-fn+3-movements
-          (= 3 n)
-          (let [[second-arg third-arg fourth-arg] rest-args
-                fa (gensym \"fa\")]
-            `(let [~fa ~first-arg]
-               (if (shape-fn? ~fa)
-                 (pure-bloft-shape-fn ~fa (path ~@rest-args))
-                 ;; Legacy: (bloft shape tfn path steps)
-                 ~(cond
-                    (symbol? third-arg)
-                    `(let [p# ~third-arg]
-                       (if (~'path? p#)
-                         (pure-bloft ~fa ~second-arg p# ~fourth-arg 0.1)
-                         (pure-bloft ~fa ~second-arg (path ~third-arg) ~fourth-arg 0.1)))
-
-                    (pathf? third-arg)
-                    `(pure-bloft ~fa ~second-arg ~third-arg ~fourth-arg 0.1)
-
-                    (mvmt? third-arg)
-                    `(pure-bloft ~fa ~second-arg (path ~third-arg) ~fourth-arg 0.1)
-
-                    :else
-                    `(let [p# ~third-arg]
-                       (if (~'path? p#)
-                         (pure-bloft ~fa ~second-arg p# ~fourth-arg 0.1)
-                         (pure-bloft ~fa ~second-arg (path ~third-arg) ~fourth-arg 0.1)))))))
-
-          ;; 5-arg: (bloft shape tfn path steps threshold) — legacy only
-          (= 4 n)
-          (let [[second-arg third-arg fourth-arg fifth-arg] rest-args
-                fa (gensym \"fa\")]
-            `(let [~fa ~first-arg]
-               (if (shape-fn? ~fa)
-                 (pure-bloft-shape-fn ~fa (path ~@rest-args))
-                 ~(cond
-                    (symbol? third-arg)
-                    `(let [p# ~third-arg]
-                       (if (~'path? p#)
-                         (pure-bloft ~fa ~second-arg p# ~fourth-arg ~fifth-arg)
-                         (pure-bloft ~fa ~second-arg (path ~third-arg) ~fourth-arg ~fifth-arg)))
-
-                    (pathf? third-arg)
-                    `(pure-bloft ~fa ~second-arg ~third-arg ~fourth-arg ~fifth-arg)
-
-                    (mvmt? third-arg)
-                    `(pure-bloft ~fa ~second-arg (path ~third-arg) ~fourth-arg ~fifth-arg)
-
-                    :else
-                    `(let [p# ~third-arg]
-                       (if (~'path? p#)
-                         (pure-bloft ~fa ~second-arg p# ~fourth-arg ~fifth-arg)
-                         (pure-bloft ~fa ~second-arg (path ~third-arg) ~fourth-arg ~fifth-arg)))))))
-
-          ;; 6+ args
-          :else
-          (let [[second-arg & movements] rest-args]
-            `(let [fa# ~first-arg]
-               (if (shape-fn? fa#)
-                 (pure-bloft-shape-fn fa# (path ~@rest-args))
-                 (pure-bloft fa# ~second-arg (path ~@(vec movements)) nil 0.1))))))))
-
-   (defmacro bloft-n [steps first-arg & rest-args]
-     (let [n (count rest-args)]
+   (defmacro bloft [first-arg & rest-args]
+     (let [mvmt? (fn [x] (and (list? x) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v
+                                                       'bezier-to 'bezier-as} (first x))))]
        (cond
-         ;; (bloft-n N shape-fn path)
-         (= 1 n)
-         (let [arg (first rest-args)
-               fa (gensym \"fa\")]
-           `(let [~fa ~first-arg]
-              (if (shape-fn? ~fa)
-                ~(cond
-                   (symbol? arg)
-                   `(let [p# ~arg]
-                      (if (~'path? p#)
-                        (pure-bloft-shape-fn ~fa p# ~steps)
-                        (pure-bloft-shape-fn ~fa (path ~arg) ~steps)))
-                   :else
-                   `(pure-bloft-shape-fn ~fa ~(if (and (list? arg) (= 'path (first arg)))
-                                                 arg
-                                                 `(path ~arg)) ~steps))
-                (throw (js/Error. \"bloft-n: 2-arg form requires a shape-fn as first argument\")))))
+         (= 1 (count rest-args))
+         `(bloft-impl ~first-arg (path ~(first rest-args)))
 
-         ;; (bloft-n N shape tfn path) — legacy
-         (= 2 n)
-         (let [[second-arg bezier-path] rest-args]
-           `(let [fa# ~first-arg]
-              (if (shape-fn? fa#)
-                (pure-bloft-shape-fn fa# (path ~@rest-args) ~steps)
-                (bloft fa# ~second-arg ~bezier-path ~steps 0.1))))
+         (mvmt? (first rest-args))
+         `(bloft-impl ~first-arg (path ~@rest-args))
 
          :else
-         (let [[second-arg & movements] rest-args]
-           `(let [fa# ~first-arg]
-              (if (shape-fn? fa#)
-                (pure-bloft-shape-fn fa# (path ~@rest-args) ~steps)
-                (bloft fa# ~second-arg ~@(vec movements))))))))
+         (let [[dispatch-arg & rest-movements] rest-args]
+           (if (seq rest-movements)
+             ;; Legacy: (bloft shape tfn path [steps [threshold]])
+             ;; or shape-fn with multiple movement forms
+             (let [args rest-movements]
+               (cond
+                 ;; (bloft shape tfn movements...)
+                 (and (seq args) (mvmt? (first args)))
+                 `(bloft-impl ~first-arg ~dispatch-arg (path ~@args))
+                 ;; (bloft shape tfn path-expr) — 1 extra arg
+                 (= 1 (count args))
+                 `(bloft-impl ~first-arg ~dispatch-arg (path ~(first args)))
+                 ;; (bloft shape tfn path steps) — 2 extra args
+                 (= 2 (count args))
+                 `(bloft-impl ~first-arg ~dispatch-arg (path ~(first args)) ~(second args))
+                 ;; (bloft shape tfn path steps threshold) — 3 extra args
+                 (= 3 (count args))
+                 `(bloft-impl ~first-arg ~dispatch-arg (path ~(first args)) ~(second args) ~(nth args 2))
+                 :else
+                 `(bloft-impl ~first-arg ~dispatch-arg (path ~@args))))
+             `(bloft-impl ~first-arg (path ~dispatch-arg)))))))
+
+   (defmacro bloft-n [steps first-arg & rest-args]
+     (let [mvmt? (fn [x] (and (list? x) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v
+                                                       'bezier-to 'bezier-as} (first x))))]
+       (cond
+         (= 1 (count rest-args))
+         `(bloft-n-impl ~steps ~first-arg (path ~(first rest-args)))
+
+         (mvmt? (first rest-args))
+         `(bloft-n-impl ~steps ~first-arg (path ~@rest-args))
+
+         :else
+         (let [[dispatch-arg & movements] rest-args]
+           (if (seq movements)
+             `(bloft-n-impl ~steps ~first-arg ~dispatch-arg (path ~@movements))
+             `(bloft-n-impl ~steps ~first-arg (path ~dispatch-arg)))))))
 
    ;; revolve: create solid of revolution (lathe operation)
    ;; PURE: returns mesh without side effects (use register to make visible)
@@ -1021,16 +612,8 @@
    ;; When a shape-fn is passed, t=0 at the first ring, t→1 at the last ring.
    ;; Returns the created mesh (can be bound with def)
    (defmacro revolve
-     ([shape]
-      `(let [s# ~shape]
-         (if (shape-fn? s#)
-           (pure-revolve-shape-fn s# 360)
-           (pure-revolve s# 360))))
-     ([shape angle]
-      `(let [s# ~shape]
-         (if (shape-fn? s#)
-           (pure-revolve-shape-fn s# ~angle)
-           (pure-revolve s# ~angle)))))
+     ([shape]       `(revolve-impl ~shape))
+     ([shape angle] `(revolve-impl ~shape ~angle)))
 
    ;; ============================================================
    ;; Functional attach macros
@@ -1038,170 +621,25 @@
 
    ;; attach-face: move existing face vertices (no extrusion)
    ;; (attach-face mesh face-id & body) => modified mesh
-   ;; Body operations (f, th, tv, tr, inset, scale) are rebound to operate
-   ;; on a local attach-state atom, returning the modified mesh at the end.
-   ;; f moves the face vertices directly without creating new geometry.
    (defmacro attach-face [mesh face-id & body]
-     `(let [m# ~mesh
-            _# (reset! attach-state
-                       (-> (turtle)
-                           (turtle-attach-face m# ~face-id)))]
-        ;; Rebind operations to local versions and execute body
-        (let [~'f att-f*
-              ~'th att-th*
-              ~'tv att-tv*
-              ~'tr att-tr*
-              ~'u att-u*
-              ~'d att-d*
-              ~'rt att-rt*
-              ~'lt att-lt*
-              ~'inset att-inset*
-              ~'scale att-scale*
-              ~'move-to att-move-to*]
-          ~@body)
-        ;; Return modified mesh
-        (or (get-in @attach-state [:attached :mesh]) m#)))
+     `(attach-face-impl ~mesh ~face-id (path ~@body)))
 
    ;; clone-face: extrude face creating new vertices and side faces
    ;; (clone-face mesh face-id & body) => modified mesh with extrusion
-   ;; f creates new vertices offset from original and side faces connecting them.
    (defmacro clone-face [mesh face-id & body]
-     `(let [m# ~mesh
-            _# (reset! attach-state
-                       (-> (turtle)
-                           (turtle-attach-face-extrude m# ~face-id)))]
-        ;; Rebind operations to local versions and execute body
-        (let [~'f att-f*
-              ~'th att-th*
-              ~'tv att-tv*
-              ~'tr att-tr*
-              ~'u att-u*
-              ~'d att-d*
-              ~'rt att-rt*
-              ~'lt att-lt*
-              ~'inset att-inset*
-              ~'scale att-scale*
-              ~'move-to att-move-to*]
-          ~@body)
-        ;; Return modified mesh
-        (or (get-in @attach-state [:attached :mesh]) m#)))
+     `(clone-face-impl ~mesh ~face-id (path ~@body)))
 
    ;; attach: transform mesh/panel/vector in place
    ;; (attach mesh & body) => transformed mesh
    ;; (attach panel & body) => panel repositioned to final turtle position
    ;; (attach [m1 m2 ...] & body) => group-style rigid body transform
-   ;; Attaches to mesh's creation pose and applies transformations.
    (defmacro attach [mesh & body]
-     `(let [m# ~mesh]
-        (cond
-          ;; Vector of meshes: group-style rigid body transform
-          (sequential? m#)
-          (let [ref-pose# (or (:creation-pose (first m#))
-                              {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})
-                p0# (:position ref-pose#)
-                h0# (:heading ref-pose#)
-                u0# (:up ref-pose#)
-                _# (reset! attach-state
-                           (-> (turtle)
-                               (assoc :position p0#)
-                               (assoc :heading h0#)
-                               (assoc :up u0#)))]
-            (let [~'f att-f*
-                  ~'th att-th*
-                  ~'tv att-tv*
-                  ~'tr att-tr*
-                  ~'u att-u*
-                  ~'d att-d*
-                  ~'rt att-rt*
-                  ~'lt att-lt*
-                  ~'move-to att-move-to*]
-              ~@body)
-            (let [final# @attach-state]
-              (turtle-group-transform
-               m# p0# h0# u0#
-               (:position final#) (:heading final#) (:up final#))))
-
-          ;; Panel handling
-          (panel? m#)
-          (do
-            (reset! attach-state (turtle))
-            (let [~'f att-f*
-                  ~'th att-th*
-                  ~'tv att-tv*
-                  ~'tr att-tr*
-                  ~'u att-u*
-                  ~'d att-d*
-                  ~'rt att-rt*
-                  ~'lt att-lt*
-                  ~'move-to att-move-to*]
-              ~@body)
-            ;; Return panel with updated position/heading/up from final attach-state
-            (let [final-state @attach-state]
-              (assoc m#
-                :position (:position final-state)
-                :heading (:heading final-state)
-                :up (:up final-state))))
-
-          ;; Single mesh: original behavior
-          :else
-          (do
-            (reset! attach-state
-                    (-> (turtle)
-                        (turtle-attach-move m#)))
-            (let [~'f att-f*
-                  ~'th att-th*
-                  ~'tv att-tv*
-                  ~'tr att-tr*
-                  ~'u att-u*
-                  ~'d att-d*
-                  ~'rt att-rt*
-                  ~'lt att-lt*
-                  ~'move-to att-move-to*]
-              ~@body)
-            (or (get-in @attach-state [:attached :mesh]) m#)))))
+     `(attach-impl ~mesh (path ~@body)))
 
    ;; attach!: transform a registered mesh in-place by keyword
    ;; (attach! :name (f 20) (th 45)) => re-registers the transformed mesh
-   ;; Equivalent to (register name (attach name (f 20) (th 45)))
    (defmacro attach! [kw & body]
-     `(let [mesh# (get-mesh ~kw)
-            _# (when-not mesh#
-                  (throw (js/Error. (str \"attach! - no registered mesh named \" ~kw))))
-            _# (reset! attach-state
-                       (-> (turtle)
-                           (turtle-attach-move mesh#)))]
-        (let [~'f att-f*
-              ~'th att-th*
-              ~'tv att-tv*
-              ~'tr att-tr*
-              ~'u att-u*
-              ~'d att-d*
-              ~'rt att-rt*
-              ~'lt att-lt*
-              ~'move-to att-move-to*]
-          ~@body)
-        (let [result# (or (get-in @attach-state [:attached :mesh]) mesh#)]
-          (register-mesh! ~kw result#)
-          (refresh-viewport! false)
-          result#)))
-
-   ;; play-path: replay a recorded path on the attach-state turtle.
-   ;; Use inside attach/attach! body to follow a pre-built path:
-   ;;   (attach mesh (play-path my-path) (f 10))
-   ;;   (attach! :name (play-path my-path))
-   (defn play-path [p]
-     (when (path? p)
-       (doseq [{:keys [cmd args]} (:commands p)]
-         (case cmd
-           :f  (att-f* (first args))
-           :th (att-th* (first args))
-           :tv (att-tv* (first args))
-           :tr (att-tr* (first args))
-           :set-heading (swap! attach-state
-                          (fn [s] (assoc s
-                                    :heading (vec3-normalize (first args))
-                                    :up (vec3-normalize (second args)))))
-           nil))))
+     `(attach!-impl ~kw (path ~@body)))
 
    ;; ============================================================
    ;; Assembly context for hierarchical register

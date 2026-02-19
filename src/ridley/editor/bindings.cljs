@@ -23,6 +23,7 @@
             [ridley.anim.preprocess :as anim-preprocess]
             [ridley.turtle.shape-fn :as sfn]
             [ridley.editor.test-mode :as test-mode]
+            [ridley.editor.impl :as macro-impl]
             [ridley.geometry.warp :as warp]))
 
 (def base-bindings
@@ -199,7 +200,8 @@
    'profile           sfn/profile
    'heightmap-to-mesh sfn/heightmap-to-mesh
    'pure-loft-shape-fn   gen-ops/pure-loft-shape-fn
-   'pure-bloft-shape-fn  gen-ops/pure-bloft-shape-fn
+   'pure-bloft-shape-fn      gen-ops/pure-bloft-shape-fn
+   'pure-bloft-two-shapes    gen-ops/pure-bloft-two-shapes
    ;; Face operations
    'list-faces   faces/list-faces
    'get-face     faces/get-face
@@ -225,6 +227,10 @@
    'rec-rt              turtle/rec-rt
    'rec-lt              turtle/rec-lt
    'rec-set-heading     turtle/rec-set-heading
+   'rec-inset           turtle/rec-inset
+   'rec-scale           turtle/rec-scale
+   'rec-move-to         turtle/rec-move-to
+   'rec-play-path       turtle/rec-play-path
    'path-from-recorder  turtle/path-from-recorder
    ;; Shape recording functions (2D turtle)
    'shape-rec-f         shape/rec-f
@@ -364,6 +370,18 @@
    'reset-collide       anim/reset-collision!
    'clear-collisions    anim/clear-collisions!
    'list-collisions     anim/list-collisions
+   ;; Macro impl functions (runtime dispatch for slimmed macros)
+   'extrude-impl        macro-impl/extrude-impl
+   'extrude-closed-impl macro-impl/extrude-closed-impl
+   'loft-impl           macro-impl/loft-impl
+   'loft-n-impl         macro-impl/loft-n-impl
+   'bloft-impl          macro-impl/bloft-impl
+   'bloft-n-impl        macro-impl/bloft-n-impl
+   'revolve-impl        macro-impl/revolve-impl
+   'attach-impl         macro-impl/attach-impl
+   'attach-face-impl    macro-impl/attach-face-impl
+   'clone-face-impl     macro-impl/clone-face-impl
+   'attach!-impl        macro-impl/attach!-impl
    ;; Test/tweak mode
    'tweak-start!        test-mode/start!
    ;; Warp — spatial mesh deformation

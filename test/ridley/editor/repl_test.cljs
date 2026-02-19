@@ -447,3 +447,179 @@
             (str "Mean dist from centroid should match 0° vs 120°: " md-0 " vs " md-120))
         (is (approx= md-0 md-240 0.1)
             (str "Mean dist from centroid should match 0° vs 240°: " md-0 " vs " md-240))))))
+
+;; ── 16. Path recording of new commands ─────────────────────
+
+(deftest path-inset-recording
+  (testing "inset inside path records :inset command"
+    (let [{:keys [result error]} (h/eval-dsl "(path (f 10) (inset 3) (f 5))")]
+      (is (nil? error) (str "Should not error: " error))
+      (is (= :path (:type result)))
+      (is (= [:f :inset :f] (mapv :cmd (:commands result))))
+      (is (= [3] (:args (second (:commands result))))))))
+
+(deftest path-scale-recording
+  (testing "scale inside path records :scale command"
+    (let [{:keys [result error]} (h/eval-dsl "(path (f 10) (scale 2) (f 5))")]
+      (is (nil? error) (str "Should not error: " error))
+      (is (= [:f :scale :f] (mapv :cmd (:commands result))))
+      (is (= [2] (:args (second (:commands result))))))))
+
+(deftest path-move-to-recording
+  (testing "move-to inside path records :move-to command"
+    (let [{:keys [result error]} (h/eval-dsl "(path (f 10) (move-to :target) (f 5))")]
+      (is (nil? error) (str "Should not error: " error))
+      (is (= [:f :move-to :f] (mapv :cmd (:commands result))))
+      (is (= [:target] (:args (second (:commands result))))))))
+
+(deftest path-move-to-with-mode-recording
+  (testing "move-to with mode records both target and mode"
+    (let [{:keys [result error]} (h/eval-dsl "(path (move-to :target :center))")]
+      (is (nil? error) (str "Should not error: " error))
+      (is (= [:move-to] (mapv :cmd (:commands result))))
+      (is (= [:target :center] (:args (first (:commands result))))))))
+
+;; ── 17. Path pass-through ──────────────────────────────────
+
+(deftest path-pass-through
+  (testing "path returns existing path object when no recording happens"
+    (let [{:keys [result error]}
+          (h/eval-dsl "(let [p (path (f 10) (th 45) (f 20))]
+                         (path p))")]
+      (is (nil? error) (str "Should not error: " error))
+      (is (= :path (:type result)))
+      (is (= 3 (count (:commands result)))
+          "Pass-through should return original path commands")
+      (is (= [:f :th :f] (mapv :cmd (:commands result)))))))
+
+(deftest path-pass-through-ignores-when-recording
+  (testing "path records normally when body contains both path and movements"
+    (let [{:keys [result error]}
+          (h/eval-dsl "(let [p (path (f 10))]
+                         (path (f 5) (th 30)))")]
+      (is (nil? error))
+      (is (= 2 (count (:commands result))))
+      (is (= [:f :th] (mapv :cmd (:commands result)))))))
+
+;; ── 18. play-path splicing ─────────────────────────────────
+
+(deftest play-path-splices-commands
+  (testing "play-path inside path inlines sub-path commands"
+    (let [{:keys [result error]}
+          (h/eval-dsl "(let [sub (path (f 5) (th 30))]
+                         (path (f 10) (play-path sub) (f 20)))")]
+      (is (nil? error) (str "Should not error: " error))
+      (is (= :path (:type result)))
+      (is (= [:f :f :th :f] (mapv :cmd (:commands result)))
+          "Sub-path commands should be spliced inline")
+      (is (= [10] (:args (first (:commands result)))))
+      (is (= [5] (:args (second (:commands result)))))
+      (is (= [30] (:args (nth (:commands result) 2))))
+      (is (= [20] (:args (nth (:commands result) 3)))))))
+
+(deftest play-path-preserves-heading
+  (testing "play-path keeps heading in sync after spliced turns"
+    ;; Record a sub-path with a turn, then continue recording.
+    ;; The final path should reflect the turn from the sub-path.
+    (let [{:keys [result error]}
+          (h/eval-dsl "(let [turn (path (th 90))]
+                         (path (f 10) (play-path turn) (f 10)))")]
+      (is (nil? error))
+      ;; Should have: f(10), th(90), f(10) — same as if written inline
+      (is (= [:f :th :f] (mapv :cmd (:commands result))))
+      ;; Verify arc-h after play-path respects the heading change
+      ;; (arc-h reads recorder heading to compute curve)
+      (let [{:keys [result error]}
+            (h/eval-dsl "(let [turn (path (th 90))]
+                           (path (f 10) (play-path turn) (arc-h 10 90 :steps 2)))")]
+        (is (nil? error) (str "arc-h after play-path error: " error))
+        ;; Should have f, th from spliced sub-path, then arc-h commands
+        (is (> (count (:commands result)) 2))))))
+
+;; ── 19. Context validation ─────────────────────────────────
+
+(deftest extrude-rejects-inset
+  (testing "extrude with inset throws clear error"
+    (let [{:keys [error]} (h/eval-dsl "(extrude (circle 5) (f 10) (inset 3))")]
+      (is (some? error) "Should error when inset is used in extrude")
+      (is (re-find #"inset" error) "Error message should mention 'inset'"))))
+
+(deftest extrude-rejects-scale-in-path
+  (testing "extrude with scale (path context) throws clear error"
+    (let [{:keys [error]} (h/eval-dsl "(extrude (circle 5) (f 10) (scale 2))")]
+      (is (some? error) "Should error when scale is used in extrude")
+      (is (re-find #"scale" error) "Error message should mention 'scale'"))))
+
+(deftest extrude-rejects-move-to
+  (testing "extrude with move-to throws clear error"
+    (let [{:keys [error]} (h/eval-dsl "(extrude (circle 5) (f 10) (move-to :foo))")]
+      (is (some? error) "Should error when move-to is used in extrude")
+      (is (re-find #"move-to" error) "Error message should mention 'move-to'"))))
+
+(deftest loft-rejects-inset
+  (testing "loft with inset throws clear error"
+    (let [{:keys [error]} (h/eval-dsl "(loft (circle 5) (fn [s t] s) (f 10) (inset 3))")]
+      (is (some? error) "Should error when inset is used in loft"))))
+
+;; ── 20. loft-n smoke test ──────────────────────────────────
+
+(deftest loft-n-basic
+  (testing "loft-n with custom step count produces a mesh"
+    (let [{:keys [result error]}
+          (h/eval-dsl "(loft-n 5 (circle 5) (fn [s t] (scale-shape s (+ 1 t))) (f 20))")]
+      (is (nil? error) (str "loft-n error: " error))
+      (is (map? result))
+      (is (seq (:vertices result))))))
+
+(deftest loft-n-two-shapes
+  (testing "loft-n between two shapes with step count"
+    (let [{:keys [result error]}
+          (h/eval-dsl "(loft-n 8 (circle 5) (circle 10) (f 20))")]
+      (is (nil? error) (str "loft-n two shapes error: " error))
+      (is (map? result))
+      (is (seq (:vertices result))))))
+
+;; ── 21. bloft smoke test ───────────────────────────────────
+
+(deftest bloft-basic
+  (testing "bloft with two shapes along straight path"
+    (let [{:keys [result error]}
+          (h/eval-dsl "(bloft (circle 5) (circle 10) (f 30))")]
+      (is (nil? error) (str "bloft error: " error))
+      (is (map? result))
+      (is (seq (:vertices result))))))
+
+(deftest bloft-n-basic
+  (testing "bloft-n with custom step count"
+    (let [{:keys [result error]}
+          (h/eval-dsl "(bloft-n 6 (circle 5) (circle 10) (f 30))")]
+      (is (nil? error) (str "bloft-n error: " error))
+      (is (map? result))
+      (is (seq (:vertices result))))))
+
+;; ── 22. Attach via SCI ────────────────────────────────────
+
+(deftest attach-translates-mesh
+  (testing "attach with (f N) translates mesh forward"
+    (let [{:keys [result error]}
+          (h/eval-dsl "(let [m (extrude (circle 3) (f 10))]
+                         (attach m (f 20)))")]
+      (is (nil? error) (str "attach error: " error))
+      (is (map? result))
+      (is (seq (:vertices result)))
+      ;; The attached mesh should be translated ~20 units forward
+      ;; Check that min-x of result is shifted compared to original
+      (let [{orig :result} (h/eval-dsl "(extrude (circle 3) (f 10))")
+            orig-max-x (apply max (map first (:vertices orig)))
+            result-min-x (apply min (map first (:vertices result)))]
+        (is (> result-min-x orig-max-x)
+            "Attached mesh should be translated beyond original")))))
+
+(deftest attach-rotates-mesh
+  (testing "attach with (th N) rotates mesh"
+    (let [{:keys [result error]}
+          (h/eval-dsl "(let [m (extrude (circle 3) (f 10))]
+                         (attach m (th 90) (f 20)))")]
+      (is (nil? error) (str "attach with rotation error: " error))
+      (is (map? result))
+      (is (seq (:vertices result))))))
