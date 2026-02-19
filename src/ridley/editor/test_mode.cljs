@@ -179,9 +179,10 @@
   (and (map? x) (:vertices x) (:faces x)))
 
 (defn- evaluate-and-preview!
-  "Re-evaluate the current form with substituted values and update the preview."
+  "Re-evaluate the current form with substituted values and update the preview.
+   Returns true on success, false on error."
   []
-  (when-let [{:keys [current-values saved-turtle]} @test-state]
+  (if-let [{:keys [current-values saved-turtle]} @test-state]
     (let [form (:form @test-state)
           modified-form (substitute-values form current-values)
           form-str (pr-str modified-form)]
@@ -216,9 +217,14 @@
                       :else nil)]
           (if items
             (viewport/show-preview! items)
-            (viewport/clear-preview!)))
+            (viewport/clear-preview!))
+          true)
         (catch :default e
-          (js/console.warn "test eval error:" (.-message e)))))))
+          (let [msg (str "tweak eval error: " (.-message e))]
+            (state/capture-println msg)
+            (js/console.warn msg)
+            false))))
+    false))
 
 ;; ============================================================
 ;; DOM helpers
@@ -416,9 +422,13 @@
                             :saved-turtle saved-turtle})
         ;; Print index map
         (state/capture-println (format-index-map labeled))
-        ;; Initial evaluation and preview
-        (evaluate-and-preview!)
-        ;; Create slider UI (deferred so print output appears first)
-        (js/setTimeout #(create-slider-ui! labeled selected) 0)
-        ;; Return nil (the index map is printed via capture-println)
-        nil))))
+        ;; Initial evaluation and preview — only show sliders if it succeeds
+        (if (evaluate-and-preview!)
+          (do
+            ;; Create slider UI (deferred so print output appears first)
+            (js/setTimeout #(create-slider-ui! labeled selected) 0)
+            nil)
+          ;; Evaluation failed — clean up, don't show sliders
+          (do
+            (reset! test-state nil)
+            nil))))))
