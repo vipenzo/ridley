@@ -646,15 +646,31 @@
 
    ;; attach-face: move existing face vertices (no extrusion)
    ;; (attach-face mesh face-id & body) => modified mesh
-   (defmacro attach-face [mesh face-id & body]
-     (let [{:keys [line column]} (meta &form)]
+   ;; (attach-face selection & body) => selection map from (selected)
+   (defmacro attach-face [first-arg & rest]
+     (let [{:keys [line column]} (meta &form)
+           ;; If second form is keyword/number/vector/symbol, it's face-id.
+           ;; If it's a list (fn call) or absent, first-arg is a selection map.
+           [mesh face-id body]
+           (if (and (seq rest)
+                    (let [f (first rest)]
+                      (or (keyword? f) (number? f) (vector? f) (symbol? f))))
+             [first-arg (first rest) (next rest)]
+             [first-arg nil rest])]
        `(-> (attach-face-impl ~mesh ~face-id (path ~@body))
             (add-source {:op :attach-face :line ~line :col ~column :source *eval-source*}))))
 
    ;; clone-face: extrude face creating new vertices and side faces
    ;; (clone-face mesh face-id & body) => modified mesh with extrusion
-   (defmacro clone-face [mesh face-id & body]
-     (let [{:keys [line column]} (meta &form)]
+   ;; (clone-face selection & body) => selection map from (selected)
+   (defmacro clone-face [first-arg & rest]
+     (let [{:keys [line column]} (meta &form)
+           [mesh face-id body]
+           (if (and (seq rest)
+                    (let [f (first rest)]
+                      (or (keyword? f) (number? f) (vector? f) (symbol? f))))
+             [first-arg (first rest) (next rest)]
+             [first-arg nil rest])]
        `(-> (clone-face-impl ~mesh ~face-id (path ~@body))
             (add-source {:op :clone-face :line ~line :col ~column :source *eval-source*}))))
 

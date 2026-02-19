@@ -285,26 +285,42 @@
       :heading (:heading state)
       :up (:up state))))
 
+(defn- resolve-selection
+  "If mesh-or-sel is a selection map (from (selected)), resolve mesh and face-id.
+   Returns [mesh face-id]. If not a selection map, returns inputs unchanged."
+  [mesh-or-sel face-id]
+  (if (and (nil? face-id) (map? mesh-or-sel) (:name mesh-or-sel))
+    [(registry/get-mesh (:name mesh-or-sel)) (:face-id mesh-or-sel)]
+    [mesh-or-sel face-id]))
+
 (defn ^:export attach-impl
-  "Dispatch attach by target type: sequential, panel, or single mesh."
+  "Dispatch attach by target type: sequential, panel, single mesh, or selection map."
   [target path]
-  (cond
-    (sequential? target) (group-attach-impl target path)
-    (panel/panel? target) (panel-attach-impl target path)
-    :else (mesh-attach-impl target path)))
+  (let [target (if (and (map? target) (:name target) (not (:vertices target)))
+                 ;; Selection map → resolve to mesh
+                 (registry/get-mesh (:name target))
+                 target)]
+    (cond
+      (sequential? target) (group-attach-impl target path)
+      (panel/panel? target) (panel-attach-impl target path)
+      :else (mesh-attach-impl target path))))
 
 (defn ^:export attach-face-impl
-  "Attach to a face (move-only mode) and replay path. Returns modified mesh."
+  "Attach to a face (move-only mode) and replay path. Returns modified mesh.
+   mesh can be a selection map from (selected) when face-id is nil."
   [mesh face-id path]
-  (let [state (-> (turtle/make-turtle)
+  (let [[mesh face-id] (resolve-selection mesh face-id)
+        state (-> (turtle/make-turtle)
                   (turtle/attach-face mesh face-id))
         state (replay-path-commands state path)]
     (or (get-in state [:attached :mesh]) mesh)))
 
 (defn ^:export clone-face-impl
-  "Attach to a face with extrusion (clone), replay path. Returns modified mesh."
+  "Attach to a face with extrusion (clone), replay path. Returns modified mesh.
+   mesh can be a selection map from (selected) when face-id is nil."
   [mesh face-id path]
-  (let [state (-> (turtle/make-turtle)
+  (let [[mesh face-id] (resolve-selection mesh face-id)
+        state (-> (turtle/make-turtle)
                   (turtle/attach-face-extrude mesh face-id))
         state (replay-path-commands state path)]
     (or (get-in state [:attached :mesh]) mesh)))
