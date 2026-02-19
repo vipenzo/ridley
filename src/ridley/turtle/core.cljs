@@ -1964,8 +1964,23 @@
                             :original-pose pose}))
       state)))
 
+(defn- resolve-face-triangles
+  "Resolve triangles for a face-id, which can be:
+   - keyword or number: single face-group lookup
+   - vector of numbers: collect triangles from multiple face-groups"
+  [face-groups face-id]
+  (cond
+    (vector? face-id)
+    (let [tris (mapcat #(get face-groups %) face-id)]
+      (when (seq tris) (vec tris)))
+
+    :else
+    (get face-groups face-id)))
+
 (defn attach-face
   "Attach to a specific face of a mesh.
+   face-id can be a keyword (:top), a number (face index), or a vector of
+   numbers (multiple face indices, e.g. from flood-fill picking).
    With :clone true, enables extrusion mode (f creates side faces).
    Without :clone, face movement mode (f moves vertices directly).
    Pushes current state, moves turtle to face center,
@@ -1973,7 +1988,7 @@
    Returns state unchanged if face not found."
   [state mesh face-id & {:keys [clone]}]
   (if-let [face-groups (:face-groups mesh)]
-    (if-let [triangles (get face-groups face-id)]
+    (if-let [triangles (resolve-face-triangles face-groups face-id)]
       (let [info (compute-face-info-internal (:vertices mesh) triangles)
             normal (:normal info)
             center (:center info)
