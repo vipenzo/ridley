@@ -233,6 +233,14 @@
    'highlight-face  viewport/highlight-face
    'clear-highlights viewport/clear-highlights
    'fit-camera      viewport/fit-camera
+   ;; Picking / selection (read from viewport picking state)
+   'selected        viewport/picking-selected
+   'selected-mesh   viewport/picking-selected-mesh
+   'selected-face   viewport/picking-selected-face
+   'selected-name   viewport/picking-selected-name
+   'source-of       viewport/picking-source-of
+   'origin-of       viewport/picking-origin-of
+   'last-op         viewport/picking-last-op
    ;; Access current turtle state
    'get-turtle   state/get-turtle
    'get-turtle-resolution state/get-turtle-resolution

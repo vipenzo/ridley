@@ -1370,6 +1370,75 @@
   []
   (:selected-name @picking-state))
 
+;; ------------------------------------------------------------
+;; REPL integration: selection accessors & history utilities
+;; ------------------------------------------------------------
+
+(defn ^:export picking-selected
+  "Return full selection data for REPL use.
+   Object level: {:mesh <data> :name kw :source-history [...] :level :object}
+   Face level: adds :face-id, :face-info {:normal :center}
+   Nothing selected: nil"
+  []
+  (let [{:keys [selected-name drill-level selected-face]} @picking-state]
+    (when selected-name
+      (let [mesh-data (find-mesh-data-by-name selected-name)
+            base {:name (keyword selected-name)
+                  :level drill-level
+                  :source-history (when mesh-data (:source-history mesh-data))}]
+        (if (= :face drill-level)
+          (let [{:keys [face-id normal center triangles]} selected-face]
+            (assoc base
+                   :face-id face-id
+                   :face-info {:normal normal :center center
+                               :tri-count (count triangles)}))
+          base)))))
+
+(defn ^:export picking-selected-mesh
+  "Return mesh data for the selected object, or nil."
+  []
+  (when-let [name (:selected-name @picking-state)]
+    (find-mesh-data-by-name name)))
+
+(defn ^:export picking-selected-face
+  "Return face-id of selected face at drill-down level, or nil."
+  []
+  (when (= :face (:drill-level @picking-state))
+    (get-in @picking-state [:selected-face :face-id])))
+
+(defn ^:export picking-selected-name
+  "Return keyword name of selected mesh, or nil."
+  []
+  (when-let [n (:selected-name @picking-state)]
+    (keyword n)))
+
+(defn ^:export picking-source-of
+  "Return formatted source history for a registered mesh name.
+   Prints each entry on its own line. Returns the history vector."
+  [mesh-name]
+  (when-let [mesh-data (find-mesh-data-by-name (name mesh-name))]
+    (let [history (:source-history mesh-data)]
+      (when (seq history)
+        (doseq [{:keys [op line source]} history]
+          (let [src-label (case source
+                            :definitions (str " L:" line)
+                            :repl " (REPL)"
+                            "")]
+            (println (str "  " (clojure.core/name op) src-label))))
+        history))))
+
+(defn ^:export picking-origin-of
+  "Return the first source-history entry for a registered mesh name."
+  [mesh-name]
+  (when-let [mesh-data (find-mesh-data-by-name (name mesh-name))]
+    (first (:source-history mesh-data))))
+
+(defn ^:export picking-last-op
+  "Return the most recent non-register source-history entry for a registered mesh name."
+  [mesh-name]
+  (when-let [mesh-data (find-mesh-data-by-name (name mesh-name))]
+    (last (remove #(= :register (:op %)) (:source-history mesh-data)))))
+
 (defn- on-viewport-alt-wheel
   "Alt+Scroll handler: adjust coplanarity tolerance when at face drill-down level.
    Alt+Scroll up → increase tolerance (more permissive, merge more faces).
