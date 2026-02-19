@@ -1018,6 +1018,60 @@ Operations available inside attach-face/clone-face:
 
 ---
 
+## Spatial Deformation (warp)
+
+Deform mesh vertices inside a volume. The volume shape (sphere, box, cylinder, cone) determines the deformation zone. Positioned via `attach`.
+
+```clojure
+(warp mesh volume deform-fn)
+(warp mesh volume deform-fn1 deform-fn2)       ; Chain multiple deformations
+(warp mesh volume (inflate 3) :subdivide 2)     ; Subdivide before deforming
+```
+
+**Deform-fn signature:** `(fn [pos local-pos dist normal vol] -> new-pos)`
+- `pos` — world position `[x y z]`
+- `local-pos` — normalized position in volume `[-1, 1]` per axis
+- `dist` — normalized distance from center (0=center, 1=boundary)
+- `normal` — estimated vertex normal
+- `vol` — volume bounds map
+
+**Options:**
+- `:subdivide n` — centroid-subdivide triangles inside volume n times before deforming (each pass: 1 triangle → 3). Useful for low-poly meshes that need smooth deformation. Note: drops `:face-groups` metadata.
+
+### Preset Deformations
+
+| Function | Description |
+|----------|-------------|
+| `(inflate amount)` | Push vertices outward along normals |
+| `(dent amount)` | Push vertices inward (opposite of inflate) |
+| `(attract strength)` | Pull toward volume center (0=none, 1=full) |
+| `(twist angle)` | Rotate around axis (auto-detected for cyl/cone) |
+| `(twist angle :x)` | Twist around explicit axis (:x :y :z) |
+| `(squash axis)` | Flatten toward plane through center |
+| `(squash axis amount)` | Partial flatten (0=flat, 1=no effect) |
+| `(roughen amplitude)` | Noise displacement along normals |
+| `(roughen amplitude frequency)` | With spatial frequency control |
+
+All presets use smooth falloff (hermite: `3t² - 2t³`). `smooth-falloff` is available as a standalone function.
+
+### Examples
+
+```clojure
+;; Organic bump on a box
+(register b (warp (box 40) (sphere 25) (inflate 5) :subdivide 2))
+
+;; Dent on a sphere
+(register s (warp (sphere 30 32 16) (attach (sphere 10) (f 15)) (dent 3)))
+
+;; Twisted cylinder
+(register c (warp (cyl 10 40 32) (cyl 12 40) (twist 90)))
+
+;; Roughened surface
+(register r (warp (sphere 20 32 16) (sphere 22) (roughen 2 3)))
+```
+
+---
+
 ## Viewport Control
 
 ### Camera

@@ -22,7 +22,8 @@
             [ridley.anim.easing :as easing]
             [ridley.anim.preprocess :as anim-preprocess]
             [ridley.turtle.shape-fn :as sfn]
-            [ridley.editor.test-mode :as test-mode]))
+            [ridley.editor.test-mode :as test-mode]
+            [ridley.geometry.warp :as warp]))
 
 (def base-bindings
   "Bindings available in both explicit and implicit sections."
@@ -364,4 +365,13 @@
    'clear-collisions    anim/clear-collisions!
    'list-collisions     anim/list-collisions
    ;; Test/tweak mode
-   'tweak-start!        test-mode/start!})
+   'tweak-start!        test-mode/start!
+   ;; Warp — spatial mesh deformation
+   'warp             warp/warp
+   'inflate          warp/inflate
+   'dent             warp/dent
+   'attract          warp/attract
+   'twist            warp/twist
+   'squash           warp/squash
+   'roughen          warp/roughen
+   'smooth-falloff   warp/smooth-falloff})

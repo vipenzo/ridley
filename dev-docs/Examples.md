@@ -1227,6 +1227,61 @@ Combine 2D shapes before extrusion to create complex cross-sections with holes.
 
 ---
 
+## Spatial Deformation (warp)
+
+Deform mesh vertices inside a volume using preset or custom deformation functions.
+
+### Basic Inflate
+
+```clojure
+;; Smooth bump on a sphere
+(register bumpy
+  (warp (sphere 20 32 16)
+    (attach (sphere 10) (f 15))
+    (inflate 5)))
+```
+
+### Subdivide for Low-Poly Meshes
+
+```clojure
+;; Box has only 12 triangles — too few for smooth inflate
+(register blocky (warp (box 40) (sphere 25) (inflate 5)))
+
+;; With subdivide: each pass triples triangles inside volume
+(register smooth (warp (box 40) (sphere 25) (inflate 5) :subdivide 2))
+```
+
+### Twist
+
+```clojure
+;; Twist a cylinder around its axis
+(register twisted-cyl
+  (warp (cyl 10 40 32) (cyl 12 40) (twist 90)))
+```
+
+### Chained Deformations
+
+```clojure
+;; Inflate + roughen for organic look
+(register organic
+  (warp (sphere 20 32 16) (sphere 22)
+    (inflate 3) (roughen 1 5)))
+```
+
+### Attract and Squash
+
+```clojure
+;; Pinch a sphere toward center
+(register pinched
+  (warp (sphere 20 32 16) (sphere 15) (attract 0.6)))
+
+;; Flatten along Z axis
+(register flat-top
+  (warp (box 30) (attach (box 35 35 15) (f 0 0 10)) (squash :z)))
+```
+
+---
+
 ## Custom Shapes from Points
 
 Create shapes from arbitrary 2D point vectors:
