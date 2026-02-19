@@ -26,6 +26,27 @@
             [ridley.editor.impl :as macro-impl]
             [ridley.geometry.warp :as warp]))
 
+;; ============================================================
+;; Source History Helpers
+;; ============================================================
+
+(defn ^:export add-source
+  "Append a source-history entry to a mesh. No-op for non-meshes."
+  [mesh op-info]
+  (if (and (map? mesh) (:vertices mesh))
+    (update mesh :source-history (fnil conj []) op-info)
+    mesh))
+
+(defn ^:export source-ref
+  "Extract a compact reference from a mesh's source-history.
+   Returns the registered name keyword if available, else {:op :line} of last entry."
+  [mesh]
+  (when (and (map? mesh) (:source-history mesh))
+    (if-let [reg (last (filter #(= :register (:op %)) (:source-history mesh)))]
+      (:as reg)
+      (when-let [e (last (:source-history mesh))]
+        (select-keys e [:op :line])))))
+
 (def base-bindings
   "Bindings available in both explicit and implicit sections."
   {;; Implicit turtle commands (mutate atom)
@@ -90,11 +111,11 @@
    'turtle-up       (fn [] (:up @state/turtle-atom))
    ;; NOTE: 'detach' removed - implicit at end of attach/attach-face macro
    'inset        impl/implicit-inset
-   ;; 3D primitives - return mesh data at origin (resolution-aware)
-   'box          impl/pure-box
-   'sphere       impl/sphere-with-resolution
-   'cyl          impl/cyl-with-resolution
-   'cone         impl/cone-with-resolution
+   ;; 3D primitives - *-impl for macro wrappers (source tracking)
+   'box-impl     impl/pure-box
+   'sphere-impl  impl/sphere-with-resolution
+   'cyl-impl     impl/cyl-with-resolution
+   'cone-impl    impl/cone-with-resolution
    ;; Debug shape visualization at current turtle pose
    'stamp        impl/implicit-stamp-debug
    ;; Shape constructors (return shape data, resolution-aware)
@@ -131,7 +152,7 @@
    'load-font!   text/load-font!
    'font-loaded? text/font-loaded?
    'extrude-text text-ops/implicit-extrude-text
-   'text-on-path text-ops/implicit-text-on-path
+   'text-on-path-impl text-ops/implicit-text-on-path
    ;; Pure turtle functions (for explicit threading)
    'turtle       turtle/make-turtle
    'turtle-f     turtle/f
@@ -254,16 +275,16 @@
    'pure-revolve             gen-ops/pure-revolve       ; Pure revolve/lathe version
    'pure-revolve-shape-fn    gen-ops/pure-revolve-shape-fn ; Revolve with shape-fn
    'add-mesh-impl       impl/implicit-add-mesh
-   ;; Manifold operations
+   ;; Manifold operations — *-impl for macro wrappers (source tracking)
    'manifold?           manifold/manifold?
    'mesh-status         manifold/get-mesh-status
-   'mesh-union          manifold/union
-   'mesh-difference     manifold/difference
-   'mesh-intersection   manifold/intersection
-   'mesh-hull           manifold/hull
+   'mesh-union-impl          manifold/union
+   'mesh-difference-impl     manifold/difference
+   'mesh-intersection-impl   manifold/intersection
+   'mesh-hull-impl           manifold/hull
    'concat-meshes       manifold/concat-meshes
    'transform           turtle/transform-mesh
-   'solidify            manifold/solidify
+   'solidify-impl       manifold/solidify
    'slice-mesh          impl/implicit-slice-mesh
    'slice-at-plane      manifold/slice-at-plane
    ;; Scene registry
@@ -384,12 +405,17 @@
    'attach!-impl        macro-impl/attach!-impl
    ;; Test/tweak mode
    'tweak-start!        test-mode/start!
-   ;; Warp — spatial mesh deformation
-   'warp             warp/warp
+   ;; Warp — spatial mesh deformation (*-impl for macro wrapper)
+   'warp-impl        warp/warp
    'inflate          warp/inflate
    'dent             warp/dent
    'attract          warp/attract
    'twist            warp/twist
    'squash           warp/squash
    'roughen          warp/roughen
-   'smooth-falloff   warp/smooth-falloff})
+   'smooth-falloff   warp/smooth-falloff
+   ;; Source tracking
+   '*eval-source*   state/eval-source-var
+   '*eval-text*     state/eval-text-var
+   'add-source      add-source
+   'source-ref      source-ref})

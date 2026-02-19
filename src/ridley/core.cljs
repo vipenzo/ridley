@@ -2005,6 +2005,78 @@
                     (voice/dispatch-action! :help-exit {}))))))))))
 
 ;; ============================================================
+;; Picking status bar
+;; ============================================================
+
+(defn- render-source-history
+  "Build innerHTML for source-history entries.
+   Entries from :definitions with :line become clickable links;
+   :repl entries show the command text as tooltip."
+  [entries]
+  (let [;; Filter out :register ops (shown in the name badge already)
+        display (filterv #(not= :register (:op %)) entries)
+        ;; Show most recent first (right-to-left is confusing, keep chronological)
+        ;; Truncate: if >5, show first 2 + ... + last 2
+        truncated (if (> (count display) 5)
+                    (concat (take 2 display) [{:op :ellipsis}] (take-last 2 display))
+                    display)]
+    (str/join
+      "<span class=\"history-arrow\"> &larr; </span>"
+      (map (fn [entry]
+             (if (= :ellipsis (:op entry))
+               "<span class=\"history-arrow\">...</span>"
+               (let [op-name (name (:op entry))
+                     source (:source entry)
+                     line (:line entry)]
+                 (cond
+                   ;; Definitions with line → clickable link
+                   (and (= :definitions source) line)
+                   (str "<a class=\"source-link\" data-line=\"" line "\">"
+                        op-name " L:" line "</a>")
+                   ;; REPL → show tooltip with code
+                   (= :repl source)
+                   (str "<span class=\"source-repl\" title=\"REPL\">"
+                        op-name "</span>")
+                   ;; Unknown source
+                   :else
+                   (str "<span class=\"source-repl\">" op-name
+                        (when line (str " L:" line))
+                        "</span>")))))
+           truncated))))
+
+(defn- update-status-bar!
+  "Update the picking status bar with the selected mesh info."
+  [registry-name]
+  (when-let [bar (.getElementById js/document "picking-status-bar")]
+    (if registry-name
+      (let [mesh (registry/get-mesh registry-name)
+            history (when mesh (:source-history mesh))]
+        (set! (.-innerHTML bar)
+              (str "<span class=\"picking-name\">" (name registry-name) "</span>"
+                   (when (seq history)
+                     (str "<span class=\"picking-separator\">&mdash;</span>"
+                          (render-source-history history)))))
+        (.add (.-classList bar) "visible"))
+      (do
+        (.remove (.-classList bar) "visible")
+        (set! (.-innerHTML bar) "")))))
+
+(defn- setup-picking-status-bar
+  "Wire viewport picking callback and status bar click handler."
+  []
+  ;; Selection callback: viewport -> status bar
+  (viewport/set-on-pick-callback! update-status-bar!)
+  ;; Click delegation: source-link clicks -> scroll to line
+  (when-let [bar (.getElementById js/document "picking-status-bar")]
+    (.addEventListener bar "click"
+      (fn [e]
+        (when-let [^js link (.closest (.-target e) ".source-link")]
+          (let [line (js/parseInt (.getAttribute link "data-line"))]
+            (when-not (js/isNaN line)
+              (cm/scroll-to-line! line)
+              (cm/flash-line! line 1500))))))))
+
+;; ============================================================
 ;; Initialization
 ;; ============================================================
 
@@ -2085,6 +2157,8 @@
     (setup-manual)
     ;; Setup library panel
     (setup-library-panel)
+    ;; Setup picking status bar (Alt+Click mesh selection)
+    (setup-picking-status-bar)
     ;; Initialize voice input system
     (voice/init! {:insert ai-insert-code
                   :edit ai-edit-code

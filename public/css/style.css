@@ -1692,3 +1692,40 @@ body.resizing-h * {
   outline: none;
   border-color: #4ec9b0;
 }
+
+/* ============================================================
+   Picking status bar
+   ============================================================ */
+
+.picking-status {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 28px;
+  background: rgba(30, 30, 30, 0.92);
+  color: #ccc;
+  font-family: "SF Mono", "Monaco", "Menlo", "Consolas", monospace;
+  font-size: 12px;
+  display: none;
+  align-items: center;
+  padding: 0 12px;
+  gap: 8px;
+  z-index: 100;
+  white-space: nowrap;
+  overflow: hidden;
+  border-top: 1px solid #3c3c3c;
+}
+.picking-status.visible { display: flex; }
+.picking-name { color: #ff9933; font-weight: bold; }
+.picking-separator { color: #555; margin: 0 4px; }
+.source-link {
+  color: #6cb6ff;
+  cursor: pointer;
+  text-decoration: none;
+}
+.source-link:hover { text-decoration: underline; color: #fff; }
+.source-repl { color: #888; cursor: default; }
+.source-repl[title]:hover { color: #aaa; }
+.history-arrow { color: #666; margin: 0 2px; }
+
+/* Flash highlight for navigate-to-source */
+.cm-line-flash { background: rgba(255, 153, 51, 0.3); transition: background 1s; }

@@ -1,7 +1,8 @@
 (ns ridley.editor.state
   "Shared atoms and state accessors for the editor subsystem.
    All modules that need turtle-atom or print-buffer require this namespace."
-  (:require [ridley.turtle.core :as turtle]))
+  (:require [ridley.turtle.core :as turtle]
+            [sci.core :as sci]))
 
 ;; Global turtle state for implicit mode
 (defonce turtle-atom (atom nil))
@@ -53,3 +54,13 @@
 ;; SCI context reference — set by repl.cljs, read by test_mode.cljs.
 ;; This avoids a circular dependency (repl → bindings → test-mode → repl).
 (defonce sci-ctx-ref (atom nil))
+
+;; ============================================================
+;; Source Tracking Dynamic Vars
+;; ============================================================
+
+;; SCI dynamic vars for tracking where code is evaluated from.
+;; Live in state.cljs (not repl.cljs) to avoid circular deps:
+;; repl → bindings → state is fine; repl → bindings → repl is not.
+(def eval-source-var (sci/new-dynamic-var '*eval-source* :unknown))
+(def eval-text-var   (sci/new-dynamic-var '*eval-text*   nil))

@@ -69,7 +69,8 @@
       (state/reset-print-buffer!)
       ;; Evaluate explicit code (definitions, functions, explicit geometry)
       (let [explicit-result (when (and explicit-code (seq (str/trim explicit-code)))
-                              (sci/eval-string explicit-code ctx))
+                              (sci/binding [state/eval-source-var :definitions]
+                                (sci/eval-string explicit-code ctx)))
             print-output (state/get-print-output)]
         {:result @state/turtle-atom
          :explicit-result explicit-result
@@ -101,7 +102,9 @@
       (state/reset-print-buffer!)
       ;; Evaluate REPL code using existing context with definitions
       (let [implicit-result (when (and repl-code (seq (str/trim repl-code)))
-                              (sci/eval-string repl-code ctx))
+                              (sci/binding [state/eval-source-var :repl
+                                            state/eval-text-var   repl-code]
+                                (sci/eval-string repl-code ctx)))
             print-output (state/get-print-output)]
         {:result @state/turtle-atom
          :explicit-result nil
@@ -128,10 +131,13 @@
       (state/reset-print-buffer!)
       ;; Phase 1: Evaluate explicit code (definitions, functions, explicit geometry)
       (let [explicit-result (when (and explicit-code (seq (str/trim explicit-code)))
-                              (sci/eval-string explicit-code ctx))
+                              (sci/binding [state/eval-source-var :definitions]
+                                (sci/eval-string explicit-code ctx)))
             ;; Phase 2: Evaluate implicit code (turtle commands)
             implicit-result (when (and implicit-code (seq (str/trim implicit-code)))
-                              (sci/eval-string implicit-code ctx))
+                              (sci/binding [state/eval-source-var :repl
+                                            state/eval-text-var   implicit-code]
+                                (sci/eval-string implicit-code ctx)))
             print-output (state/get-print-output)]
         ;; Return combined result
         {:result @state/turtle-atom

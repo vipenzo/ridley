@@ -970,6 +970,146 @@
         (set! (.-aspect camera) (/ width height))
         (.updateProjectionMatrix camera)))))
 
+;; ============================================================
+;; Picking (Alt+Click mesh selection)
+;; ============================================================
+
+;; Picking state: tracks which mesh is selected
+(defonce ^:private picking-state
+  (atom {:selected-name nil      ; keyword registry name or nil
+         :selected-three nil     ; Three.js Mesh ref or nil
+         :drill-level :object})) ; :object or :face (future)
+
+;; Edge wireframe overlay for selected mesh (cleaned up on deselect)
+(defonce ^:private selection-outline (atom nil))
+
+;; Saved original material emissive values for selected mesh (restored on deselect)
+(defonce ^:private saved-emissive (atom nil))
+
+;; External callback for when selection changes.
+;; Set by core.cljs: (fn [registry-name-or-nil] ...)
+(defonce ^:private on-pick-callback (atom nil))
+
+(defn set-on-pick-callback!
+  "Register a callback invoked when mesh selection changes.
+   Called with registry-name keyword on select, nil on deselect."
+  [f]
+  (reset! on-pick-callback f))
+
+(defn- restore-mesh-emissive!
+  "Restore the original emissive values on the previously selected mesh."
+  []
+  (when-let [{:keys [^js mesh ^js color intensity]} @saved-emissive]
+    (when-let [^js mat (.-material mesh)]
+      (when (.-emissive mat)
+        (.copy (.-emissive mat) color)
+        (set! (.-emissiveIntensity mat) intensity))))
+  (reset! saved-emissive nil))
+
+(defn- tint-mesh-emissive!
+  "Apply a subtle orange emissive tint to highlight the selected mesh."
+  [^js three-mesh]
+  (when-let [^js mat (.-material three-mesh)]
+    (when (.-emissive mat)
+      ;; Save original values
+      (reset! saved-emissive {:mesh three-mesh
+                              :color (.clone (.-emissive mat))
+                              :intensity (.-emissiveIntensity mat)})
+      ;; Apply warm tint
+      (.set (.-emissive mat) 0xff9933)
+      (set! (.-emissiveIntensity mat) 0.15))))
+
+(defn- clear-selection-outline!
+  "Remove the edge overlay and restore mesh material."
+  []
+  (restore-mesh-emissive!)
+  (when-let [^js outline @selection-outline]
+    (when-let [{:keys [world-group]} @state]
+      (.remove world-group outline)
+      (when-let [geom (.-geometry outline)] (.dispose geom))
+      (when-let [mat (.-material outline)] (.dispose mat)))
+    (reset! selection-outline nil)))
+
+(defn- show-selection-outline!
+  "Add an orange wireframe edge overlay + emissive tint on a Three.js mesh."
+  [^js three-mesh]
+  (clear-selection-outline!)
+  (when-let [{:keys [world-group]} @state]
+    ;; Tint the mesh material
+    (tint-mesh-emissive! three-mesh)
+    ;; Add wireframe edges
+    (let [edges (THREE/EdgesGeometry. (.-geometry three-mesh) 30)
+          mat   (THREE/LineBasicMaterial. #js {:color 0xff9933})
+          ^js outline (THREE/LineSegments. edges mat)]
+      ;; Copy transform from the source mesh
+      (.copy (.-position outline) (.-position three-mesh))
+      (.copy (.-quaternion outline) (.-quaternion three-mesh))
+      (.copy (.-scale outline) (.-scale three-mesh))
+      (set! (.-renderOrder outline) 999)
+      (set! (.. outline -material -depthTest) false)
+      (.add world-group outline)
+      (reset! selection-outline outline))))
+
+(defn deselect!
+  "Clear current mesh selection."
+  []
+  (clear-selection-outline!)
+  (reset! picking-state {:selected-name nil :selected-three nil :drill-level :object})
+  (when-let [cb @on-pick-callback] (cb nil)))
+
+(defn- handle-pick
+  "Process a raycast hit on a Three.js mesh."
+  [^js three-mesh]
+  (let [reg-name (.. three-mesh -userData -registryName)]
+    (when reg-name
+      ;; If same mesh, ignore (future: drill to face)
+      (when-not (= reg-name (:selected-name @picking-state))
+        (show-selection-outline! three-mesh)
+        (reset! picking-state {:selected-name reg-name
+                               :selected-three three-mesh
+                               :drill-level :object})
+        (when-let [cb @on-pick-callback] (cb reg-name))))))
+
+(defn- on-viewport-alt-click
+  "Alt+Click handler: raycast into scene and pick mesh."
+  [^js event]
+  (when (.-altKey event)
+    (.preventDefault event)
+    (when-let [{:keys [camera world-group canvas]} @state]
+      (let [^js canvas canvas
+            rect (.getBoundingClientRect canvas)
+            ;; Normalized device coords [-1, 1]
+            nx (- (* (/ (- (.-clientX event) (.-left rect))
+                        (.-width rect))
+                     2) 1)
+            ny (- 1 (* (/ (- (.-clientY event) (.-top rect))
+                          (.-height rect))
+                       2))
+            mouse (THREE/Vector2. nx ny)
+            raycaster (THREE/Raycaster.)]
+        (.setFromCamera raycaster mouse camera)
+        (let [hits (.intersectObjects raycaster (.-children world-group) true)
+              ;; Filter to Mesh objects with registryName
+              mesh-hit (some (fn [^js hit]
+                               (let [^js obj (.-object hit)]
+                                 (when (and (instance? THREE/Mesh obj)
+                                            (.. obj -userData -registryName))
+                                   obj)))
+                             hits)]
+          (if mesh-hit
+            (handle-pick mesh-hit)
+            (deselect!)))))))
+
+(defn get-picking-state
+  "Return current picking state map."
+  []
+  @picking-state)
+
+(defn get-selected-name
+  "Return keyword name of selected mesh, or nil."
+  []
+  (:selected-name @picking-state))
+
 (defn init
   "Initialize Three.js viewport on given canvas element."
   [canvas]
@@ -1013,6 +1153,10 @@
       (xr/setup-controller renderer scene camera-rig camera world-group)
       ;; Setup axis-constrained rotation (X/Y/Z keys + drag)
       (setup-axis-rotation canvas camera controls)
+      ;; Alt+Click picking
+      (.addEventListener canvas "click" on-viewport-alt-click)
+      (.addEventListener js/document "keydown"
+        (fn [e] (when (= (.-key e) "Escape") (deselect!))))
       ;; Setup ResizeObserver on viewport-panel (parent) for responsive canvas sizing
       ;; Observing the parent catches resize from panel divider drag
       (let [viewport-panel (.-parentElement canvas)

@@ -477,7 +477,9 @@
    ;; (extrude (rect 20 10) (f 20) (th 45) (f 20)) - sweep with turns
    ;; Returns the created mesh (bind with def, show with register)
    (defmacro extrude [shape & movements]
-     `(extrude-impl ~shape (path ~@movements)))
+     (let [{:keys [line column]} (meta &form)]
+       `(-> (extrude-impl ~shape (path ~@movements))
+            (add-source {:op :extrude :line ~line :col ~column :source *eval-source*}))))
 
    ;; extrude-closed: like extrude but creates a closed torus-like mesh
    ;; (extrude-closed (circle 5) square-path) - closed torus along path
@@ -485,7 +487,9 @@
    ;; Last ring connects to first ring, no end caps
    ;; Returns the created mesh (can be bound with def)
    (defmacro extrude-closed [shape & movements]
-     `(extrude-closed-impl ~shape (path ~@movements)))
+     (let [{:keys [line column]} (meta &form)]
+       `(-> (extrude-closed-impl ~shape (path ~@movements))
+            (add-source {:op :extrude-closed :line ~line :col ~column :source *eval-source*}))))
 
    ;; loft: like extrude but with shape transformation based on progress
    ;; PURE: returns mesh without side effects (use register to make visible)
@@ -504,45 +508,57 @@
    ;;
    ;; Returns the created mesh (can be bound with def)
    (defmacro loft [first-arg & rest-args]
-     (let [mvmt? (fn [x] (and (list? x) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v
+     (let [{:keys [line column]} (meta &form)
+           mvmt? (fn [x] (and (list? x) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v
                                                        'bezier-to 'bezier-to-anchor
-                                                       'bezier-as} (first x))))]
+                                                       'bezier-as} (first x))))
+           src `{:op :loft :line ~line :col ~column :source *eval-source*}]
        (cond
          ;; Single rest arg: always 2-arg impl (shape-fn mode)
          (= 1 (count rest-args))
-         `(loft-impl ~first-arg (path ~(first rest-args)))
+         `(-> (loft-impl ~first-arg (path ~(first rest-args)))
+              (add-source ~src))
 
          ;; First rest-arg is a movement: all rest-args are movements → 2-arg impl
          (mvmt? (first rest-args))
-         `(loft-impl ~first-arg (path ~@rest-args))
+         `(-> (loft-impl ~first-arg (path ~@rest-args))
+              (add-source ~src))
 
          ;; First rest-arg is NOT a movement: it's a dispatch arg (transform-fn or second shape)
          :else
          (let [[dispatch-arg & movements] rest-args]
            (if (seq movements)
-             `(loft-impl ~first-arg ~dispatch-arg (path ~@movements))
-             `(loft-impl ~first-arg (path ~dispatch-arg)))))))
+             `(-> (loft-impl ~first-arg ~dispatch-arg (path ~@movements))
+                  (add-source ~src))
+             `(-> (loft-impl ~first-arg (path ~dispatch-arg))
+                  (add-source ~src)))))))
 
    ;; loft-n: loft with custom step count
    ;; (loft-n 32 (tapered (circle 20) :to 0) (f 30))         - shape-fn
    ;; (loft-n 32 (circle 20) #(scale %1 (- 1 %2)) (f 30))   - legacy
    ;; Returns the created mesh (can be bound with def)
    (defmacro loft-n [steps first-arg & rest-args]
-     (let [mvmt? (fn [x] (and (list? x) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v
+     (let [{:keys [line column]} (meta &form)
+           mvmt? (fn [x] (and (list? x) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v
                                                        'bezier-to 'bezier-to-anchor
-                                                       'bezier-as} (first x))))]
+                                                       'bezier-as} (first x))))
+           src `{:op :loft-n :line ~line :col ~column :source *eval-source*}]
        (cond
          (= 1 (count rest-args))
-         `(loft-n-impl ~steps ~first-arg (path ~(first rest-args)))
+         `(-> (loft-n-impl ~steps ~first-arg (path ~(first rest-args)))
+              (add-source ~src))
 
          (mvmt? (first rest-args))
-         `(loft-n-impl ~steps ~first-arg (path ~@rest-args))
+         `(-> (loft-n-impl ~steps ~first-arg (path ~@rest-args))
+              (add-source ~src))
 
          :else
          (let [[dispatch-arg & movements] rest-args]
            (if (seq movements)
-             `(loft-n-impl ~steps ~first-arg ~dispatch-arg (path ~@movements))
-             `(loft-n-impl ~steps ~first-arg (path ~dispatch-arg)))))))
+             `(-> (loft-n-impl ~steps ~first-arg ~dispatch-arg (path ~@movements))
+                  (add-source ~src))
+             `(-> (loft-n-impl ~steps ~first-arg (path ~dispatch-arg))
+                  (add-source ~src)))))))
 
    ;; bloft: bezier-safe loft that handles self-intersecting paths
    ;; Uses convex hulls for intersecting sections, then unions all pieces.
@@ -552,53 +568,56 @@
    ;; (bloft (rect 3 3) #(scale %1 0.5) (bezier-as (branch-path 30)))
    ;; (bloft-n 64 (circle 10) identity my-bezier-path) - more steps
    (defmacro bloft [first-arg & rest-args]
-     (let [mvmt? (fn [x] (and (list? x) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v
-                                                       'bezier-to 'bezier-as} (first x))))]
+     (let [{:keys [line column]} (meta &form)
+           mvmt? (fn [x] (and (list? x) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v
+                                                       'bezier-to 'bezier-as} (first x))))
+           src `{:op :bloft :line ~line :col ~column :source *eval-source*}
+           wrap (fn [expr] `(-> ~expr (add-source ~src)))]
        (cond
          (= 1 (count rest-args))
-         `(bloft-impl ~first-arg (path ~(first rest-args)))
+         (wrap `(bloft-impl ~first-arg (path ~(first rest-args))))
 
          (mvmt? (first rest-args))
-         `(bloft-impl ~first-arg (path ~@rest-args))
+         (wrap `(bloft-impl ~first-arg (path ~@rest-args)))
 
          :else
          (let [[dispatch-arg & rest-movements] rest-args]
            (if (seq rest-movements)
-             ;; Legacy: (bloft shape tfn path [steps [threshold]])
-             ;; or shape-fn with multiple movement forms
              (let [args rest-movements]
                (cond
-                 ;; (bloft shape tfn movements...)
                  (and (seq args) (mvmt? (first args)))
-                 `(bloft-impl ~first-arg ~dispatch-arg (path ~@args))
-                 ;; (bloft shape tfn path-expr) — 1 extra arg
+                 (wrap `(bloft-impl ~first-arg ~dispatch-arg (path ~@args)))
                  (= 1 (count args))
-                 `(bloft-impl ~first-arg ~dispatch-arg (path ~(first args)))
-                 ;; (bloft shape tfn path steps) — 2 extra args
+                 (wrap `(bloft-impl ~first-arg ~dispatch-arg (path ~(first args))))
                  (= 2 (count args))
-                 `(bloft-impl ~first-arg ~dispatch-arg (path ~(first args)) ~(second args))
-                 ;; (bloft shape tfn path steps threshold) — 3 extra args
+                 (wrap `(bloft-impl ~first-arg ~dispatch-arg (path ~(first args)) ~(second args)))
                  (= 3 (count args))
-                 `(bloft-impl ~first-arg ~dispatch-arg (path ~(first args)) ~(second args) ~(nth args 2))
+                 (wrap `(bloft-impl ~first-arg ~dispatch-arg (path ~(first args)) ~(second args) ~(nth args 2)))
                  :else
-                 `(bloft-impl ~first-arg ~dispatch-arg (path ~@args))))
-             `(bloft-impl ~first-arg (path ~dispatch-arg)))))))
+                 (wrap `(bloft-impl ~first-arg ~dispatch-arg (path ~@args)))))
+             (wrap `(bloft-impl ~first-arg (path ~dispatch-arg))))))))
 
    (defmacro bloft-n [steps first-arg & rest-args]
-     (let [mvmt? (fn [x] (and (list? x) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v
-                                                       'bezier-to 'bezier-as} (first x))))]
+     (let [{:keys [line column]} (meta &form)
+           mvmt? (fn [x] (and (list? x) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v
+                                                       'bezier-to 'bezier-as} (first x))))
+           src `{:op :bloft-n :line ~line :col ~column :source *eval-source*}]
        (cond
          (= 1 (count rest-args))
-         `(bloft-n-impl ~steps ~first-arg (path ~(first rest-args)))
+         `(-> (bloft-n-impl ~steps ~first-arg (path ~(first rest-args)))
+              (add-source ~src))
 
          (mvmt? (first rest-args))
-         `(bloft-n-impl ~steps ~first-arg (path ~@rest-args))
+         `(-> (bloft-n-impl ~steps ~first-arg (path ~@rest-args))
+              (add-source ~src))
 
          :else
          (let [[dispatch-arg & movements] rest-args]
            (if (seq movements)
-             `(bloft-n-impl ~steps ~first-arg ~dispatch-arg (path ~@movements))
-             `(bloft-n-impl ~steps ~first-arg (path ~dispatch-arg)))))))
+             `(-> (bloft-n-impl ~steps ~first-arg ~dispatch-arg (path ~@movements))
+                  (add-source ~src))
+             `(-> (bloft-n-impl ~steps ~first-arg (path ~dispatch-arg))
+                  (add-source ~src)))))))
 
    ;; revolve: create solid of revolution (lathe operation)
    ;; PURE: returns mesh without side effects (use register to make visible)
@@ -612,8 +631,14 @@
    ;; When a shape-fn is passed, t=0 at the first ring, t→1 at the last ring.
    ;; Returns the created mesh (can be bound with def)
    (defmacro revolve
-     ([shape]       `(revolve-impl ~shape))
-     ([shape angle] `(revolve-impl ~shape ~angle)))
+     ([shape]
+      (let [{:keys [line column]} (meta &form)]
+        `(-> (revolve-impl ~shape)
+             (add-source {:op :revolve :line ~line :col ~column :source *eval-source*}))))
+     ([shape angle]
+      (let [{:keys [line column]} (meta &form)]
+        `(-> (revolve-impl ~shape ~angle)
+             (add-source {:op :revolve :line ~line :col ~column :source *eval-source*})))))
 
    ;; ============================================================
    ;; Functional attach macros
@@ -622,24 +647,32 @@
    ;; attach-face: move existing face vertices (no extrusion)
    ;; (attach-face mesh face-id & body) => modified mesh
    (defmacro attach-face [mesh face-id & body]
-     `(attach-face-impl ~mesh ~face-id (path ~@body)))
+     (let [{:keys [line column]} (meta &form)]
+       `(-> (attach-face-impl ~mesh ~face-id (path ~@body))
+            (add-source {:op :attach-face :line ~line :col ~column :source *eval-source*}))))
 
    ;; clone-face: extrude face creating new vertices and side faces
    ;; (clone-face mesh face-id & body) => modified mesh with extrusion
    (defmacro clone-face [mesh face-id & body]
-     `(clone-face-impl ~mesh ~face-id (path ~@body)))
+     (let [{:keys [line column]} (meta &form)]
+       `(-> (clone-face-impl ~mesh ~face-id (path ~@body))
+            (add-source {:op :clone-face :line ~line :col ~column :source *eval-source*}))))
 
    ;; attach: transform mesh/panel/vector in place
    ;; (attach mesh & body) => transformed mesh
    ;; (attach panel & body) => panel repositioned to final turtle position
    ;; (attach [m1 m2 ...] & body) => group-style rigid body transform
    (defmacro attach [mesh & body]
-     `(attach-impl ~mesh (path ~@body)))
+     (let [{:keys [line column]} (meta &form)]
+       `(-> (attach-impl ~mesh (path ~@body))
+            (add-source {:op :attach :line ~line :col ~column :source *eval-source*}))))
 
    ;; attach!: transform a registered mesh in-place by keyword
    ;; (attach! :name (f 20) (th 45)) => re-registers the transformed mesh
    (defmacro attach! [kw & body]
-     `(attach!-impl ~kw (path ~@body)))
+     (let [{:keys [line column]} (meta &form)]
+       `(-> (attach!-impl ~kw (path ~@body))
+            (add-source {:op :attach! :line ~line :col ~column :source *eval-source*}))))
 
    ;; ============================================================
    ;; Assembly context for hierarchical register
@@ -752,6 +785,7 @@
    ;;   qualified names, automatic links from goto calls.
    (defmacro register [name expr & opts]
      ;; Detect map literal for assembly mode
+     (let [{reg-line :line reg-col :column} (meta &form)]
      (if (map? expr)
        ;; Map literal — use assembly system for sequential evaluation
        (let [name-kw (keyword name)
@@ -819,9 +853,12 @@
             (do
               (def ~name value#)
               (cond
-                ;; Single mesh (has :vertices)
+                ;; Single mesh (has :vertices) — add :register source entry
                 (and (map? value#) (:vertices value#))
-                (let [already-registered# (contains? (set (registered-names)) name-kw#)]
+                (let [already-registered# (contains? (set (registered-names)) name-kw#)
+                      value# (add-source value# {:op :register :as name-kw#
+                                                  :line ~reg-line :col ~reg-col
+                                                  :source *eval-source*})]
                   (register-mesh! name-kw# value#)
                   (if hidden?#
                     (hide-mesh! name-kw#)
@@ -847,7 +884,7 @@
                 (register-path! name-kw# value#))
               ;; Refresh viewport and return value
               (refresh-viewport! false)
-              value#)))))
+              value#))))))
 
    ;; r: short alias for register
    (defmacro r [name expr & opts]
@@ -1180,6 +1217,80 @@
             meshes (keep resolve-mesh all-args)]
         (when (seq meshes)
           (save-stl (vec meshes) \"export.stl\")))))
+
+   ;; ============================================================
+   ;; Source-tracking macro wrappers for function-bound operations
+   ;; ============================================================
+   ;; These shadow the *-impl function bindings to capture &form metadata.
+
+   ;; 3D primitives
+   (defmacro box [& args]
+     (let [{:keys [line column]} (meta &form)]
+       `(-> (box-impl ~@args)
+            (add-source {:op :box :line ~line :col ~column :source *eval-source*}))))
+   (defmacro sphere [& args]
+     (let [{:keys [line column]} (meta &form)]
+       `(-> (sphere-impl ~@args)
+            (add-source {:op :sphere :line ~line :col ~column :source *eval-source*}))))
+   (defmacro cyl [& args]
+     (let [{:keys [line column]} (meta &form)]
+       `(-> (cyl-impl ~@args)
+            (add-source {:op :cyl :line ~line :col ~column :source *eval-source*}))))
+   (defmacro cone [& args]
+     (let [{:keys [line column]} (meta &form)]
+       `(-> (cone-impl ~@args)
+            (add-source {:op :cone :line ~line :col ~column :source *eval-source*}))))
+
+   ;; Boolean operations (capture operand refs)
+   (defmacro mesh-union [base & more]
+     (let [{:keys [line column]} (meta &form)]
+       `(let [inputs# [~base ~@more]
+              result# (apply mesh-union-impl inputs#)]
+          (add-source result# {:op :mesh-union :line ~line :col ~column
+                               :source *eval-source*
+                               :operands (mapv source-ref inputs#)}))))
+   (defmacro mesh-difference [base & tools]
+     (let [{:keys [line column]} (meta &form)]
+       `(let [inputs# [~base ~@tools]
+              result# (apply mesh-difference-impl inputs#)]
+          (add-source result# {:op :mesh-difference :line ~line :col ~column
+                               :source *eval-source*
+                               :operands (mapv source-ref inputs#)}))))
+   (defmacro mesh-intersection [base & more]
+     (let [{:keys [line column]} (meta &form)]
+       `(let [inputs# [~base ~@more]
+              result# (apply mesh-intersection-impl inputs#)]
+          (add-source result# {:op :mesh-intersection :line ~line :col ~column
+                               :source *eval-source*
+                               :operands (mapv source-ref inputs#)}))))
+   (defmacro mesh-hull [& args]
+     (let [{:keys [line column]} (meta &form)]
+       `(let [inputs# [~@args]
+              result# (apply mesh-hull-impl inputs#)]
+          (add-source result# {:op :mesh-hull :line ~line :col ~column
+                               :source *eval-source*
+                               :operands (mapv source-ref inputs#)}))))
+
+   ;; Warp (single input ref)
+   (defmacro warp [mesh volume & args]
+     (let [{:keys [line column]} (meta &form)]
+       `(let [m# ~mesh
+              result# (warp-impl m# ~volume ~@args)]
+          (add-source result# {:op :warp :line ~line :col ~column
+                               :source *eval-source*
+                               :input (source-ref m#)}))))
+
+   ;; Solidify
+   (defmacro solidify [mesh]
+     (let [{:keys [line column]} (meta &form)]
+       `(-> (solidify-impl ~mesh)
+            (add-source {:op :solidify :line ~line :col ~column :source *eval-source*}))))
+
+   ;; Text on path
+   (defmacro text-on-path [& args]
+     (let [{:keys [line column]} (meta &form)]
+       `(-> (text-on-path-impl ~@args)
+            (add-source {:op :text-on-path :line ~line :col ~column :source *eval-source*}))))
 
    ;; ============================================================
    ;; Animation macros: span, anim!

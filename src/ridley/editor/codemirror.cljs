@@ -968,3 +968,52 @@
   ([view]
    (when view
      (redo #js {:state (.-state view) :dispatch #(.dispatch view %)}))))
+
+;; ============================================================
+;; Navigate-to-source helpers (for picking status bar)
+;; ============================================================
+
+(defn scroll-to-line!
+  "Scroll the editor to bring line-number into view and place cursor there.
+   Graceful no-op if line exceeds document length."
+  ([line-number] (scroll-to-line! @editor-instance line-number))
+  ([view line-number]
+   (when view
+     (let [state (.-state view)
+           doc (.-doc state)
+           n-lines (.-lines doc)]
+       (when (<= line-number n-lines)
+         (let [line-obj (.line doc line-number)
+               pos (.-from line-obj)]
+           (.dispatch view
+             #js {:selection #js {:anchor pos :head pos}
+                  :effects (.scrollIntoView EditorView pos
+                             #js {:y "center"})})))))))
+
+(defn flash-line!
+  "Briefly highlight a line with an orange flash, then fade.
+   Uses a CSS class applied via Decoration.line."
+  ([line-number] (flash-line! @editor-instance line-number 1500))
+  ([line-number duration-ms] (flash-line! @editor-instance line-number duration-ms))
+  ([view line-number duration-ms]
+   (when view
+     (let [state (.-state view)
+           doc (.-doc state)
+           n-lines (.-lines doc)]
+       (when (<= line-number n-lines)
+         ;; Wait for scroll to complete, then flash via DOM
+         (js/requestAnimationFrame
+           (fn []
+             (let [line-obj (.line doc line-number)
+                   pos (.-from line-obj)]
+               ;; Use coordsAtPos to find the DOM line element
+               (when-let [coords (.coordsAtPos view pos)]
+                 (let [^js els (.elementsFromPoint js/document (.-left coords) (.-top coords))
+                       ^js line-dom (some (fn [^js el]
+                                            (when (.contains (.-classList el) "cm-line") el))
+                                          els)]
+                   (when line-dom
+                     (.add (.-classList line-dom) "cm-line-flash")
+                     (js/setTimeout
+                       #(.remove (.-classList line-dom) "cm-line-flash")
+                       duration-ms))))))))))))
