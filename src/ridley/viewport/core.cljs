@@ -14,6 +14,9 @@
 ;; Visibility state for grid, axes, and lines
 (defonce ^:private grid-visible (atom true))
 (defonce ^:private axes-visible (atom true))
+
+;; Adaptive grid state: current power-of-10 level
+(defonce ^:private grid-level (atom nil))
 (defonce ^:private lines-visible (atom true))
 (defonce ^:private lines-object (atom nil))
 
@@ -172,12 +175,58 @@
     (.addEventListener canvas "mouseup" on-mouseup)
     (.addEventListener canvas "mouseleave" on-mouseup)))
 
+(defn- make-grid-helper
+  "Create a GridHelper rotated to XY plane."
+  [size divisions color-center color-grid]
+  (let [g (THREE/GridHelper. size divisions color-center color-grid)]
+    (.rotateX g (/ js/Math.PI 2))
+    g))
+
+(defn- rebuild-grid-children!
+  "Remove old grid children, create major+minor grids for given order."
+  [^js grid-group order]
+  ;; Dispose and remove old children
+  (while (pos? (.-length (.-children grid-group)))
+    (let [child (.remove grid-group (aget (.-children grid-group) 0))]
+      (when (.-geometry child) (.dispose (.-geometry child)))
+      (when (.-material child) (.dispose (.-material child)))))
+  ;; Create new grids for this level
+  (let [major-step (js/Math.pow 10 order)
+        grid-size (* major-step 20)
+        major (make-grid-helper grid-size 20 0x555555 0x444444)
+        minor (make-grid-helper grid-size 200 0x444444 0x333333)]
+    (set! (.-transparent (.-material minor)) true)
+    (set! (.-opacity (.-material minor)) 1.0)
+    (set! (.-name major) "grid-major")
+    (set! (.-name minor) "grid-minor")
+    (.add grid-group major)
+    (.add grid-group minor)))
+
+(defn- update-adaptive-grid
+  "Update grid level and minor-grid opacity based on camera distance."
+  [^js grid-group ^js camera ^js controls]
+  (let [distance (.distanceTo (.-position camera) (.-target controls))
+        distance (max distance 0.1)
+        order (js/Math.floor (js/Math.log10 distance))]
+    ;; Rebuild grids when level changes
+    (when (not= order @grid-level)
+      (rebuild-grid-children! grid-group order)
+      (reset! grid-level order))
+    ;; Fade minor grid based on position within zoom level
+    (let [t (- (js/Math.log10 distance) order) ;; fract part, 0..1
+          minor (.-children grid-group)]
+      (when (>= (.-length minor) 2)
+        (let [^js minor-grid (aget minor 1)]
+          (set! (.-opacity (.-material minor-grid)) (- 1.0 t)))))))
+
 (defn- add-grid [parent]
-  (let [grid (THREE/GridHelper. 200 20 0x444444 0x333333)]
-    (.rotateX grid (/ js/Math.PI 2)) ; XY plane instead of XZ
-    (set! (.-name grid) "grid")
-    (.add parent grid)
-    grid))
+  (let [grid-group (THREE/Group.)]
+    (set! (.-name grid-group) "grid")
+    ;; Build initial grids for default camera distance ~173 (order=2)
+    (rebuild-grid-children! grid-group 2)
+    (reset! grid-level 2)
+    (.add parent grid-group)
+    grid-group))
 
 (defn- create-text-sprite
   "Create a text sprite for axis labels."
@@ -218,6 +267,16 @@
     (set! (.-name axes-group) "axes")
     (.add parent axes-group)
     axes-group))
+
+(def ^:private axes-base-size 50) ;; AxesHelper size parameter
+
+(defn- fit-axes-to-bbox
+  "Scale axes so they extend just past the bounding box of all visible geometry.
+   margin is the fraction beyond the bbox (e.g., 0.15 = 15% bigger)."
+  [^js axes-group max-extent]
+  (let [target-size (* max-extent 0.75)
+        scale (/ target-size axes-base-size)]
+    (.setScalar (.-scale axes-group) scale)))
 
 ;; ============================================================
 ;; Turtle indicator (airplane-shaped orientation marker)
@@ -798,28 +857,32 @@
     (update-normals-display world-group meshes)
     ;; Update stamp outlines visualization
     (update-stamps-display world-group stamps)
-    ;; Fit camera to all geometry (only if reset-camera? is true)
-    (when reset-camera?
-      (let [stamp-points (mapcat :vertices stamps)
-            all-points (concat (collect-all-points lines meshes) stamp-points)]
-        (when (seq all-points)
-          (let [xs (map first all-points)
-                ys (map second all-points)
-                zs (map #(nth % 2) all-points)
-                min-x (apply min xs) max-x (apply max xs)
-                min-y (apply min ys) max-y (apply max ys)
-                min-z (apply min zs) max-z (apply max zs)
-                center-x (/ (+ min-x max-x) 2)
-                center-y (/ (+ min-y max-y) 2)
-                center-z (/ (+ min-z max-z) 2)
-                size (max (- max-x min-x) (- max-y min-y) (- max-z min-z) 10)
-                dist (* size 2)]
+    ;; Compute bounding box for camera fit and axes scaling
+    (let [stamp-points (mapcat :vertices stamps)
+          all-points (concat (collect-all-points lines meshes) stamp-points)]
+      (when (seq all-points)
+        (let [xs (map first all-points)
+              ys (map second all-points)
+              zs (map #(nth % 2) all-points)
+              min-x (apply min xs) max-x (apply max xs)
+              min-y (apply min ys) max-y (apply max ys)
+              min-z (apply min zs) max-z (apply max zs)
+              center-x (/ (+ min-x max-x) 2)
+              center-y (/ (+ min-y max-y) 2)
+              center-z (/ (+ min-z max-z) 2)
+              size (max (- max-x min-x) (- max-y min-y) (- max-z min-z) 10)
+              dist (* size 2)]
+          ;; Fit camera (only if reset-camera? is true)
+          (when reset-camera?
             (.set (.-target controls) center-x center-y center-z)
             (.set (.-position camera)
                   (+ center-x dist)
                   (+ center-y dist)
                   (+ center-z dist))
-            (.update controls)))))
+            (.update controls))
+          ;; Scale axes to extend just past the bounding box
+          (when-let [{:keys [^js axes]} @state]
+            (fit-axes-to-bbox axes size)))))
     ;; Restore selection outline + face highlight if active
     (restore-selection-after-rebuild!)))
 
@@ -880,6 +943,10 @@
       ;; Update turtle indicator scale for screen-relative sizing
       (when-let [^js indicator @turtle-indicator]
         (update-turtle-indicator-scale indicator camera))
+      ;; Adaptive grid: update level and minor opacity
+      (when-let [{:keys [^js grid]} @state]
+        (when (.-visible grid)
+          (update-adaptive-grid grid camera controls)))
       ;; Update panels to face camera (billboard effect)
       (update-panels-billboard camera)
       (if (xr/xr-presenting? renderer)
