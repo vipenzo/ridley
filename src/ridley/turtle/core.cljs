@@ -1691,22 +1691,23 @@
            up (:up state)
            ;; Right vector = heading × up (initial radial direction at θ=0)
            right (normalize (cross heading up))
-           ;; Transform profile point [px py] at angle θ to 3D:
-           ;; pos + py * up + px * (cos(θ) * right + sin(θ) * heading)
-           ;; At θ=0 this matches extrude's stamp: px*right + py*up
-           ;; Revolution axis = up; radial sweeps from right toward heading
-           ;; shape-X = radial distance (swept around up axis)
-           ;; shape-Y = axial position (along up / revolution axis)
-           transform-point (fn [[px py] theta]
-                             (let [cos-t (Math/cos theta)
-                                   sin-t (Math/sin theta)
-                                   ;; Radial direction at this angle (sweeps in right-heading plane)
-                                   radial-x (+ (* cos-t (nth right 0)) (* sin-t (nth heading 0)))
-                                   radial-y (+ (* cos-t (nth right 1)) (* sin-t (nth heading 1)))
-                                   radial-z (+ (* cos-t (nth right 2)) (* sin-t (nth heading 2)))]
-                               [(+ (nth pos 0) (* py (nth up 0)) (* px radial-x))
-                                (+ (nth pos 1) (* py (nth up 1)) (* px radial-y))
-                                (+ (nth pos 2) (* py (nth up 2)) (* px radial-z))]))
+           ;; Destructure orientation vectors once (avoid repeated nth)
+           [pos-x pos-y pos-z] pos
+           [up-x up-y up-z] up
+           [right-x right-y right-z] right
+           [head-x head-y head-z] heading
+           ;; Transform a contour's 2D points to 3D at a given angle.
+           ;; cos-t/sin-t and radial vector are pre-computed per ring,
+           ;; so each point only does 6 mul + 3 add (no trig).
+           transform-contour (fn [pts cos-t sin-t]
+                               (let [rx (+ (* cos-t right-x) (* sin-t head-x))
+                                     ry (+ (* cos-t right-y) (* sin-t head-y))
+                                     rz (+ (* cos-t right-z) (* sin-t head-z))]
+                                 (mapv (fn [[px py]]
+                                         [(+ pos-x (* py up-x) (* px rx))
+                                          (+ pos-y (* py up-y) (* px ry))
+                                          (+ pos-z (* py up-z) (* px rz))])
+                                       pts)))
            ;; Hole support
            has-holes? (boolean (:holes shape))
            hole-profiles (when has-holes?
@@ -1718,15 +1719,14 @@
            ring-len (if has-holes?
                       (+ n-profile (reduce + 0 hole-lengths))
                       n-profile)
-           ;; Transform all points in a contour at a given angle
-           transform-contour (fn [pts theta]
-                               (vec (for [pt pts] (transform-point pt theta))))
            ;; Generate all rings
            ;; When eval-shape-at-t is provided, evaluate it at each step
            ;; to get varying profiles (for shape-fn support)
            ;; Each ring = outer-pts ++ hole0-pts ++ hole1-pts ...
            rings (vec (for [i (range n-rings)]
                         (let [theta (* i angle-step)
+                              cos-t (Math/cos theta)
+                              sin-t (Math/sin theta)
                               t (/ (double i) steps)
                               current-shape (when eval-shape-at-t (eval-shape-at-t t))
                               ring-outer (if current-shape
@@ -1737,68 +1737,49 @@
                                              (mapv clamp-x (or (:holes current-shape) []))
                                              hole-profiles))]
                           (vec (concat
-                                (transform-contour ring-outer theta)
+                                (transform-contour ring-outer cos-t sin-t)
                                 (when ring-holes
-                                  (mapcat #(transform-contour % theta) ring-holes)))))))
-           ;; Flatten vertices
-           vertices (vec (apply concat rings))
-           ;; Side faces connecting consecutive rings (outer contour)
-           ;; For closed revolve, connect last ring to first
-           outer-side-faces
-           (vec
-            (mapcat
-             (fn [ring-idx]
-               (let [next-ring-idx (if (and is-closed (= ring-idx (dec n-rings)))
-                                     0
-                                     (inc ring-idx))]
-                 (when (< next-ring-idx n-rings)
-                   (mapcat
-                    (fn [vert-idx]
-                      (let [next-vert (mod (inc vert-idx) n-profile)
-                            base (* ring-idx ring-len)
-                            next-base (* next-ring-idx ring-len)
-                            b0 (+ base vert-idx)
-                            b1 (+ base next-vert)
-                            t0 (+ next-base vert-idx)
-                            t1 (+ next-base next-vert)]
-                        ;; CCW winding for outward-facing normals
-                        ;; Flip based on shape winding and angle sign
-                        (if flip-winding?
-                          [[b0 t0 t1] [b0 t1 b1]]
-                          [[b0 t1 t0] [b0 b1 t1]])))
-                    (range n-profile)))))
-             (range (if is-closed n-rings (dec n-rings)))))
-           ;; Side faces for each hole — same flip as outer.
-           ;; Hole contours are CW (opposite to outer CCW), so with the same
-           ;; face-winding logic the normals naturally point inward (into the
-           ;; tube cavity), matching how build-sweep-mesh-with-holes works.
+                                  (mapcat #(transform-contour % cos-t sin-t) ring-holes)))))))
+           ;; Flatten vertices (transient for speed)
+           vertices (persistent!
+                      (reduce (fn [a ring] (reduce conj! a ring))
+                              (transient []) rings))
+           ;; Helper: generate side faces for a contour strip using a tight loop.
+           ;; contour-len = number of vertices in the contour,
+           ;; offset = starting index of that contour within each ring.
+           gen-strip-faces
+           (fn [contour-len offset]
+             (let [n-face-rings (if is-closed n-rings (dec n-rings))]
+               (persistent!
+                (loop [ri 0, acc (transient [])]
+                  (if (>= ri n-face-rings)
+                    acc
+                    (let [next-ri (if (and is-closed (= ri (dec n-rings))) 0 (inc ri))
+                          base (+ (* ri ring-len) offset)
+                          next-base (+ (* next-ri ring-len) offset)]
+                      (recur (inc ri)
+                             (loop [vi 0, acc acc]
+                               (if (>= vi contour-len)
+                                 acc
+                                 (let [next-vi (let [v (inc vi)] (if (= v contour-len) 0 v))
+                                       b0 (+ base vi) b1 (+ base next-vi)
+                                       t0 (+ next-base vi) t1 (+ next-base next-vi)]
+                                   (recur (inc vi)
+                                          (if flip-winding?
+                                            (-> acc (conj! [b0 t0 t1]) (conj! [b0 t1 b1]))
+                                            (-> acc (conj! [b0 t1 t0]) (conj! [b0 b1 t1]))))))))))))))
+           ;; Side faces for outer contour
+           outer-side-faces (gen-strip-faces n-profile 0)
+           ;; Side faces for each hole
            hole-side-faces
            (when has-holes?
-             (vec (apply concat
-                         (map-indexed
-                          (fn [hole-idx hole-len]
-                            (let [hole-offset (+ n-profile (reduce + 0 (take hole-idx hole-lengths)))]
-                              (mapcat
-                               (fn [ring-idx]
-                                 (let [next-ring-idx (if (and is-closed (= ring-idx (dec n-rings)))
-                                                       0
-                                                       (inc ring-idx))]
-                                   (when (< next-ring-idx n-rings)
-                                     (mapcat
-                                      (fn [vi]
-                                        (let [next-vi (mod (inc vi) hole-len)
-                                              base (+ (* ring-idx ring-len) hole-offset)
-                                              next-base (+ (* next-ring-idx ring-len) hole-offset)
-                                              b0 (+ base vi) b1 (+ base next-vi)
-                                              t0 (+ next-base vi) t1 (+ next-base next-vi)]
-                                          ;; Same flip as outer — CW hole winding
-                                          ;; naturally produces inward normals
-                                          (if flip-winding?
-                                            [[b0 t0 t1] [b0 t1 b1]]
-                                            [[b0 t1 t0] [b0 b1 t1]])))
-                                      (range hole-len)))))
-                               (range (if is-closed n-rings (dec n-rings))))))
-                          hole-lengths))))
+             (loop [hi 0, offset n-profile, acc (transient [])]
+               (if (>= hi (count hole-lengths))
+                 (persistent! acc)
+                 (let [hl (nth hole-lengths hi)
+                       faces (gen-strip-faces hl offset)]
+                   (recur (inc hi) (+ offset hl)
+                          (reduce conj! acc faces))))))
            side-faces (if hole-side-faces
                         (vec (concat outer-side-faces hole-side-faces))
                         outer-side-faces)

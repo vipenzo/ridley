@@ -89,28 +89,35 @@
     {:position pos :heading heading :up up}))
 
 (defn- find-orientation-at-dist
-  "Find interpolated orientation at a given distance along the path."
+  "Find interpolated orientation at a given distance along the path.
+   Uses binary search (orientations are sorted by :dist)."
   [orientations target-dist total-dist]
   (if (zero? total-dist)
     (first orientations)
-    (let [;; Find the two waypoints that bracket this distance
-          n (count orientations)]
-      (loop [i 0]
-        (if (>= i (dec n))
-          ;; Past end - return last
-          (last orientations)
-          (let [o1 (nth orientations i)
-                o2 (nth orientations (inc i))
-                d1 (or (:dist o1) 0)
-                d2 (:dist o2)]
-            (if (and (<= d1 target-dist) (< target-dist d2))
-              ;; Interpolate between o1 and o2
-              (let [segment-len (- d2 d1)
-                    local-t (if (pos? segment-len)
-                              (/ (- target-dist d1) segment-len)
-                              0)]
-                (interpolate-orientation o1 o2 local-t))
-              (recur (inc i)))))))))
+    (let [n (count orientations)
+          last-idx (dec n)
+          ;; Binary search for the segment containing target-dist
+          i (loop [lo 0, hi last-idx]
+              (if (>= lo hi)
+                (min lo (dec last-idx))
+                (let [mid (unsigned-bit-shift-right (+ lo hi) 1)
+                      d (or (:dist (nth orientations mid)) 0)]
+                  (if (<= d target-dist)
+                    (recur (inc mid) hi)
+                    (recur lo mid)))))
+          ;; i is the last index whose dist <= target-dist; clamp to valid segment
+          i (max 0 (min i (dec last-idx)))
+          o1 (nth orientations i)
+          o2 (nth orientations (inc i))
+          d1 (or (:dist o1) 0)
+          d2 (:dist o2)]
+      (if (>= target-dist d2)
+        (last orientations)
+        (let [segment-len (- d2 d1)
+              local-t (if (pos? segment-len)
+                        (/ (- target-dist d1) segment-len)
+                        0)]
+          (interpolate-orientation o1 o2 local-t))))))
 
 (defn- calculate-loft-corner-shortening
   "Calculate R_p and R_n for a loft corner based on inner edge intersection.

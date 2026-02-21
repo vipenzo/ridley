@@ -84,13 +84,26 @@
   [ridley-mesh]
   (let [vertices (:vertices ridley-mesh)
         faces (:faces ridley-mesh)
-        ;; Flatten vertices to [x,y,z, x,y,z, ...]
-        vert-props (js/Float32Array. (clj->js (mapcat identity vertices)))
-        ;; Flatten faces to [i,j,k, i,j,k, ...]
-        tri-verts (js/Uint32Array. (clj->js (mapcat identity faces)))]
+        vert-arr (js/Float32Array. (* (count vertices) 3))
+        face-arr (js/Uint32Array. (* (count faces) 3))]
+    ;; Fill vertices via reduce: sequential iteration on PersistentVector
+    ;; is much faster than random-access nth (uses internal chunked paths)
+    (reduce (fn [off v]
+              (aset vert-arr off (v 0))
+              (aset vert-arr (+ off 1) (v 1))
+              (aset vert-arr (+ off 2) (v 2))
+              (+ off 3))
+            0 vertices)
+    ;; Fill faces via reduce
+    (reduce (fn [off f]
+              (aset face-arr off (f 0))
+              (aset face-arr (+ off 1) (f 1))
+              (aset face-arr (+ off 2) (f 2))
+              (+ off 3))
+            0 faces)
     #js {:numProp 3
-         :vertProperties vert-props
-         :triVerts tri-verts}))
+         :vertProperties vert-arr
+         :triVerts face-arr}))
 
 ;; Default creation pose for mesh constructors (centered at origin)
 ;; Must match turtle's default orientation: facing +X, up +Z
@@ -105,16 +118,24 @@
   (let [vert-props (.-vertProperties manifold-mesh)
         tri-verts (.-triVerts manifold-mesh)
         num-prop (.-numProp manifold-mesh)
-        ;; Parse vertices (groups of numProp floats)
-        vertices (vec (for [i (range 0 (.-length vert-props) num-prop)]
-                        [(aget vert-props i)
-                         (aget vert-props (+ i 1))
-                         (aget vert-props (+ i 2))]))
-        ;; Parse faces (groups of 3 indices)
-        faces (vec (for [i (range 0 (.-length tri-verts) 3)]
-                     [(aget tri-verts i)
-                      (aget tri-verts (+ i 1))
-                      (aget tri-verts (+ i 2))]))]
+        vlen (.-length vert-props)
+        flen (.-length tri-verts)
+        ;; Parse vertices: tight loop with transient vector
+        vertices (loop [i 0, acc (transient [])]
+                   (if (< i vlen)
+                     (recur (+ i num-prop)
+                            (conj! acc [(aget vert-props i)
+                                        (aget vert-props (+ i 1))
+                                        (aget vert-props (+ i 2))]))
+                     (persistent! acc)))
+        ;; Parse faces: tight loop with transient vector
+        faces (loop [i 0, acc (transient [])]
+                (if (< i flen)
+                  (recur (+ i 3)
+                         (conj! acc [(aget tri-verts i)
+                                     (aget tri-verts (+ i 1))
+                                     (aget tri-verts (+ i 2))]))
+                  (persistent! acc)))]
     (schema/assert-mesh!
      {:type :mesh
       :vertices vertices
@@ -127,21 +148,23 @@
 
 (defn ^:export mesh->manifold
   "Create a Manifold object from a Ridley mesh.
-   Returns nil if the mesh is not valid/manifold.
+   Returns cached Manifold if available (from a previous CSG operation),
+   otherwise creates a new one. Returns nil if the mesh is not valid/manifold.
 
    The Manifold constructor will attempt to create a valid manifold,
    merging nearly-identical vertices. If the input is too broken,
    it may return an empty manifold."
   [ridley-mesh]
-  (when-let [^js Manifold (get-manifold-class)]
-    (when (and (:vertices ridley-mesh) (:faces ridley-mesh))
-      (try
-        (let [mesh-data (ridley-mesh->manifold-mesh ridley-mesh)
-              manifold (new Manifold mesh-data)]
-          manifold)
-        (catch :default e
-          (js/console.error "Failed to create manifold:" e)
-          nil)))))
+  (or (::manifold-cache ridley-mesh)
+      (when-let [^js Manifold (get-manifold-class)]
+        (when (and (:vertices ridley-mesh) (:faces ridley-mesh))
+          (try
+            (let [mesh-data (ridley-mesh->manifold-mesh ridley-mesh)
+                  manifold (new Manifold mesh-data)]
+              manifold)
+            (catch :default e
+              (js/console.error "Failed to create manifold:" e)
+              nil))))))
 
 (defn ^:export manifold->mesh
   "Extract the mesh from a Manifold object back to Ridley format."
@@ -221,17 +244,18 @@
               ^js m1 (new Manifold mesh-data)
               ^js m2 (new Manifold mesh-data)
               ;; Self-union: A ∪ A resolves self-intersections
-              ^js result (.add m1 m2)
-              ^js clean (.asOriginal result)
+              ^js raw-result (.add m1 m2)
+              ^js clean (.asOriginal raw-result)
               output (manifold->mesh clean)
               output (cond-> output
                        (:creation-pose ridley-mesh) (assoc :creation-pose (:creation-pose ridley-mesh))
                        (:material ridley-mesh) (assoc :material (:material ridley-mesh)))]
           (.delete m1)
           (.delete m2)
-          (.delete result)
-          (.delete clean)
-          (schema/assert-mesh! output))
+          (.delete raw-result)
+          ;; Cache result for potential next CSG op in chain
+          (-> (schema/assert-mesh! output)
+              (assoc ::manifold-cache clean)))
         (catch :default e
           (js/console.warn "solidify failed:" e)
           ridley-mesh))
@@ -242,7 +266,8 @@
 ;; ============================================================
 
 (defn- union-two
-  "Compute the union of exactly two meshes."
+  "Compute the union of exactly two meshes.
+   Reuses cached Manifold objects from prior CSG results when available."
   [mesh-a mesh-b]
   (when (get-manifold-class)
     (let [ma (mesh->manifold mesh-a)
@@ -257,8 +282,9 @@
           (.delete ma)
           (.delete mb)
           (.delete raw-result)
-          (.delete result)
-          (schema/assert-mesh! output))))))
+          ;; Cache result Manifold for potential next CSG op in chain
+          (-> (schema/assert-mesh! output)
+              (assoc ::manifold-cache result)))))))
 
 (defn- tree-union
   "Union meshes using balanced binary tree strategy.
@@ -296,7 +322,8 @@
       (tree-union (vec meshes)))))
 
 (defn- difference-two
-  "Compute the difference of exactly two meshes (A - B)."
+  "Compute the difference of exactly two meshes (A - B).
+   Reuses cached Manifold objects from prior CSG results when available."
   [mesh-a mesh-b]
   (when (get-manifold-class)
     (let [ma (mesh->manifold mesh-a)
@@ -317,8 +344,9 @@
           (.delete ma)
           (.delete mb)
           (.delete raw-result)
-          (.delete result)
-          (schema/assert-mesh! output))))))
+          ;; Cache result Manifold for potential next CSG op in chain
+          (-> (schema/assert-mesh! output)
+              (assoc ::manifold-cache result)))))))
 
 (defn difference
   "Compute the difference of meshes (A - B - C - ...).
@@ -337,7 +365,8 @@
       (reduce difference-two meshes))))
 
 (defn- intersection-two
-  "Compute the intersection of exactly two meshes."
+  "Compute the intersection of exactly two meshes.
+   Reuses cached Manifold objects from prior CSG results when available."
   [mesh-a mesh-b]
   (when (get-manifold-class)
     (let [ma (mesh->manifold mesh-a)
@@ -352,8 +381,9 @@
           (.delete ma)
           (.delete mb)
           (.delete raw-result)
-          (.delete result)
-          (schema/assert-mesh! output))))))
+          ;; Cache result Manifold for potential next CSG op in chain
+          (-> (schema/assert-mesh! output)
+              (assoc ::manifold-cache result)))))))
 
 (defn intersection
   "Compute the intersection of two or more meshes (A ∩ B ∩ C ∩ ...).
@@ -401,12 +431,13 @@
                 output (cond-> output
                          (:creation-pose first-mesh) (assoc :creation-pose (:creation-pose first-mesh))
                          (:material first-mesh) (assoc :material (:material first-mesh)))]
-            ;; Clean up
+            ;; Clean up inputs
             (doseq [m manifolds]
               (.delete m))
             (.delete raw-result)
-            (.delete result)
-            (schema/assert-mesh! output))
+            ;; Cache result for potential next CSG op in chain
+            (-> (schema/assert-mesh! output)
+                (assoc ::manifold-cache result)))
           (catch :default e
             (js/console.error "Hull operation failed:" e)
             ;; Clean up on error

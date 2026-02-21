@@ -438,61 +438,51 @@
   ([rings closed? creation-pose] (build-sweep-mesh rings closed? creation-pose true))
   ([rings closed? creation-pose caps?]
    (let [n-rings (count rings)
-         n-verts (count (first rings))]
+         n-verts (count (first rings))
+         ;; Flatten rings into a single vertices vector (transient for speed)
+         flatten-rings (fn [rs]
+                         (persistent!
+                           (reduce (fn [a ring] (reduce conj! a ring))
+                                   (transient []) rs)))
+         ;; Generate side faces with diagonal-flip in a tight loop
+         gen-diag-faces (fn [vertices num-rings n-v wrap?]
+                          (persistent!
+                            (loop [ri 0, acc (transient [])]
+                              (if (>= ri num-rings)
+                                acc
+                                (let [next-ri (if wrap?
+                                                (let [n (inc ri)] (if (= n num-rings) 0 n))
+                                                (inc ri))
+                                      base (* ri n-v)
+                                      next-base (* next-ri n-v)]
+                                  (recur (inc ri)
+                                         (loop [vi 0, acc acc]
+                                           (if (>= vi n-v)
+                                             acc
+                                             (let [next-vi (let [v (inc vi)] (if (= v n-v) 0 v))
+                                                   b0 (+ base vi) b1 (+ base next-vi)
+                                                   t0 (+ next-base vi) t1 (+ next-base next-vi)
+                                                   db0t1 (v- (nth vertices b0) (nth vertices t1))
+                                                   db1t0 (v- (nth vertices b1) (nth vertices t0))]
+                                               (recur (inc vi)
+                                                      (if (<= (dot db0t1 db0t1) (dot db1t0 db1t0))
+                                                        (-> acc (conj! [b0 t0 t1]) (conj! [b0 t1 b1]))
+                                                        (-> acc (conj! [b0 t0 b1]) (conj! [t0 t1 b1])))))))))))))]
      (when (and (>= n-rings 2) (>= n-verts 3))
        (if closed?
          ;; Closed loop: skip last ring (overlaps with first), connect last to first
          (let [effective-rings (butlast rings)
                effective-n-rings (count effective-rings)
-               vertices (vec (apply concat effective-rings))
-               side-faces (vec
-                           (mapcat
-                            (fn [ring-idx]
-                              (let [next-ring-idx (mod (inc ring-idx) effective-n-rings)]
-                                (mapcat
-                                 (fn [vert-idx]
-                                   (let [next-vert (mod (inc vert-idx) n-verts)
-                                         base (* ring-idx n-verts)
-                                         next-base (* next-ring-idx n-verts)
-                                         b0 (+ base vert-idx)
-                                         b1 (+ base next-vert)
-                                         t0 (+ next-base vert-idx)
-                                         t1 (+ next-base next-vert)]
-                                     ;; Choose shorter diagonal for curves
-                                     (let [db0t1 (v- (nth vertices b0) (nth vertices t1))
-                                           db1t0 (v- (nth vertices b1) (nth vertices t0))]
-                                       (if (<= (dot db0t1 db0t1) (dot db1t0 db1t0))
-                                         [[b0 t0 t1] [b0 t1 b1]]
-                                         [[b0 t0 b1] [t0 t1 b1]]))))
-                                 (range n-verts))))
-                            (range effective-n-rings)))]
+               vertices (flatten-rings effective-rings)
+               side-faces (gen-diag-faces vertices effective-n-rings n-verts true)]
            (cond-> {:type :mesh
                     :primitive :sweep-closed
                     :vertices vertices
                     :faces side-faces}
              creation-pose (assoc :creation-pose creation-pose)))
          ;; Open: caps at both ends
-         (let [vertices (vec (apply concat rings))
-               side-faces (vec
-                           (mapcat
-                            (fn [ring-idx]
-                              (mapcat
-                               (fn [vert-idx]
-                                 (let [next-vert (mod (inc vert-idx) n-verts)
-                                       base (* ring-idx n-verts)
-                                       next-base (* (inc ring-idx) n-verts)
-                                       b0 (+ base vert-idx)
-                                       b1 (+ base next-vert)
-                                       t0 (+ next-base vert-idx)
-                                       t1 (+ next-base next-vert)]
-                                   ;; Choose shorter diagonal for curves
-                                   (let [db0t1 (v- (nth vertices b0) (nth vertices t1))
-                                         db1t0 (v- (nth vertices b1) (nth vertices t0))]
-                                     (if (<= (dot db0t1 db0t1) (dot db1t0 db1t0))
-                                       [[b0 t0 t1] [b0 t1 b1]]
-                                       [[b0 t0 b1] [t0 t1 b1]]))))
-                               (range n-verts)))
-                            (range (dec n-rings))))
+         (let [vertices (flatten-rings rings)
+               side-faces (gen-diag-faces vertices (dec n-rings) n-verts false)
                ;; Compute cap normals from ring geometry
                first-ring (first rings)
                last-ring (last rings)
@@ -527,26 +517,26 @@
    (let [n-rings (count rings)
          n-verts (count (first rings))]
      (when (and (>= n-rings 2) (>= n-verts 3))
-       (let [vertices (vec (apply concat rings))
-             side-faces (vec
-                         (mapcat
-                          (fn [ring-idx]
-                            (mapcat
-                             (fn [vert-idx]
-                               (let [next-vert (mod (inc vert-idx) n-verts)
-                                     base (* ring-idx n-verts)
-                                     next-base (* (inc ring-idx) n-verts)
-                                     b0 (+ base vert-idx)
-                                     b1 (+ base next-vert)
-                                     t0 (+ next-base vert-idx)
-                                     t1 (+ next-base next-vert)]
-                                 ;; CCW winding from outside
-                                 ;; Flip when extrusion goes backward
-                                 (if flip-winding?
-                                   [[b0 b1 t1] [b0 t1 t0]]
-                                   [[b0 t1 b1] [b0 t0 t1]])))
-                             (range n-verts)))
-                          (range (dec n-rings))))]
+       (let [vertices (persistent!
+                        (reduce (fn [a ring] (reduce conj! a ring))
+                                (transient []) rings))
+             side-faces (persistent!
+                          (loop [ri 0, acc (transient [])]
+                            (if (>= ri (dec n-rings))
+                              acc
+                              (let [base (* ri n-verts)
+                                    next-base (* (inc ri) n-verts)]
+                                (recur (inc ri)
+                                       (loop [vi 0, acc acc]
+                                         (if (>= vi n-verts)
+                                           acc
+                                           (let [next-vi (let [v (inc vi)] (if (= v n-verts) 0 v))
+                                                 b0 (+ base vi) b1 (+ base next-vi)
+                                                 t0 (+ next-base vi) t1 (+ next-base next-vi)]
+                                             (recur (inc vi)
+                                                    (if flip-winding?
+                                                      (-> acc (conj! [b0 b1 t1]) (conj! [b0 t1 t0]))
+                                                      (-> acc (conj! [b0 t1 b1]) (conj! [b0 t0 t1]))))))))))))]
          {:type :mesh
           :primitive :segment
           :vertices vertices

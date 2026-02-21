@@ -18,7 +18,7 @@
 
 (def default-essential-parameters
   {:rtop 100 ; bowl rim radius (overall size)
-   :h 70 ; bowl height
+   :h 60 ; bowl height
    :wall 2; bowl wall thickness
    :tray-gap 0.4 ; gap between bowl and tray (print tolerance)
    :min-hole 13 ; minumum size of center hole
@@ -54,7 +54,7 @@
         leap-h 1.2
         r-tacco (* rbottom 1.044)
         h-tacco (* (:h m) 0.05)
-        d-tacco (* (:h m) -0.039)]
+        d-tacco (* (:h m) -0.050)]
     (merge m
            {:rbottom rbottom
             :tray-h tray-h
@@ -192,8 +192,7 @@
         ; Hole: carved through the floor for shells to fall into the bowl
         floor-hole (revolve (make-floor-hole-profile m))
         ; Assemble tray
-        tray (-> (mesh-union tray-outer tray-floor tray-leap)
-                 (mesh-union (attach tray-funnel (d 1.5)))
+        tray (-> (mesh-union tray-outer tray-floor tray-leap (attach tray-funnel (d 0.5)))
                  (mesh-difference (attach floor-hole (d 5))))]
     {:tray tray :tray-leap tray-leap}))
 
@@ -234,24 +233,30 @@
         :profile (tweak :all (make-profile params))
         :funnel (tweak :all (make-funnel-shape params))
         :hole (make-floor-hole-profile params)
+        :slices (let [{:keys [bowl tray]} (pistachio-bowl)]
+                  (stamp (slice-mesh tray))
+                  (stamp (slice-mesh bowl)))
         (tweak :all (concat-meshes (vals (pistachio-bowl
                                           params)))))))
   (let [{:keys [bowl tray]} (pistachio-bowl)]
     (register bowl bowl)
     (register tray tray)
     (color :bowl 0xeeefee)
-    (material :bowl :opacity 0.5)
-    (color :tray 0x88ff80)))
+    ;(material :bowl :opacity 0.5)
+    (color :tray 0xeeff80)))
 
 
 
 ; =====================
 ; Animation
 ; =====================
-(comment
+(def animation true)
+(when animation
   (let [{:keys [rtop h]} default-essential-parameters]
-    (anim! :tray-out 2.5 :tray
-           (span 0.35 :out-cubic (u (* h 1.2)))
-           (span 0.35 :in-out (rt (* rtop 2.5)))
-           (span 0.30 :in-cubic (d (* h 1.2))))
+    (anim! :tray-out 6.5 :tray :loop-bounce
+           (span 0.20 :ease-out (u (* h 1.2)))
+           (span 0.15 :in-out (rt (* rtop 2.5)))
+           (span 0.15 :in-out (tr 100))
+           (span 0.15 :in-out (tr -100))
+           (span 0.35 :ease-in (d (* h 1.8))))
     (play! :tray-out)))
