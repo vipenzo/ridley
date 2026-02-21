@@ -144,6 +144,12 @@
          :code "(register p1 (sphere 10))\n(f 40)\n(register p2 (sphere 10))\n(f -20) (th 90) (f 30)\n(register p3 (sphere 10))\n\n(register hull-shape\n  (mesh-hull (get-mesh :p1) (get-mesh :p2) (get-mesh :p3)))"}
         {:id :bool-union-for
          :code "(register row\n  (mesh-union\n    (for [i (range 10)]\n      (attach (cyl 5 30) (f (* i 9))))))"}]}
+      {:id :slice-mesh
+       :examples
+       [{:id :slice-basic
+         :code "(register cup\n  (revolve\n    (shape (f 20) (th -90) (f 30) (th -90) (f 15))))\n(tv 90) (f 15)\n(stamp (slice-mesh :cup))"}
+        {:id :slice-multiple
+         :code "(register donut\n  (attach\n    (extrude (circle 8) (arc-h 25 360))\n    (f 25)))\n(tv 90)\n(stamp (slice-mesh :donut))"}]}
       {:id :attach-meshes
        :examples
        [{:id :attach-basic

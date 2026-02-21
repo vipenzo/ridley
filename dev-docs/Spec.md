@@ -758,6 +758,29 @@ Simply merges vertices and faces. Not manifold-valid, but useful for heightmap s
 
 ---
 
+## Cross-Section (Slice)
+
+Slice a mesh at the plane defined by the turtle's current position and heading.
+Returns a vector of 2D shapes (cross-section contours) in the plane's local coordinates.
+
+```clojure
+(slice-mesh mesh)                   ; Slice mesh reference at turtle plane
+(slice-mesh :bowl)                  ; Slice registered mesh by name
+```
+
+The heading vector acts as the plane normal. The resulting shapes use the turtle's right/up as local X/Y axes.
+
+**Typical usage with stamp:**
+```clojure
+(register cup (revolve (shape (f 20) (th -90) (f 30) (th -90) (f 15))))
+(tv 90) (f 15)                      ; Position turtle at slice plane
+(stamp (slice-mesh :cup))           ; Visualize the cross-section
+```
+
+Shapes returned have `:preserve-position? true` for absolute coordinate rendering in stamp.
+
+---
+
 ## Convex Hull
 
 Compute the convex hull of one or more meshes:
@@ -1125,6 +1148,25 @@ Change color or material on a specific registered mesh (without re-creating it):
 ```
 
 The first argument is the registered name (keyword). Remaining arguments follow the same format as the global versions.
+
+### Pure Color and Material on Mesh Values
+
+`color` and `material` can also take a mesh value (map with `:vertices` and `:faces`) as first argument. In this case they return a **new mesh** with the material properties merged in, without mutating any state:
+
+```clojure
+(color my-mesh 0xff8800)         ; Returns mesh with color set
+(color my-mesh 255 128 0)        ; Returns mesh with color set (RGB)
+
+(material my-mesh :opacity 0.3)  ; Returns mesh with opacity
+(material my-mesh :opacity 0.3 :color 0xff0000)  ; Multiple properties
+```
+
+This is useful for inline use with `register` or `tweak`:
+
+```clojure
+(register bowl (material (make-bowl 30 20) :opacity 0.3))
+(tweak (material (sphere 20) :opacity 0.5))
+```
 
 ---
 

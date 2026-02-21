@@ -495,9 +495,13 @@
   "Slice a mesh at the plane defined by the turtle's current position and heading.
    The heading vector is the plane normal. Returns a vector of shapes
    in the plane's local coordinates (X = turtle right, Y = turtle up).
-   Shapes have :preserve-position? true for absolute coordinate rendering."
-  [mesh]
-  (let [state @turtle-atom
+   Shapes have :preserve-position? true for absolute coordinate rendering.
+   Accepts a mesh map or a keyword (registered mesh name)."
+  [mesh-or-name]
+  (let [mesh (if (keyword? mesh-or-name)
+               (registry/get-mesh mesh-or-name)
+               mesh-or-name)
+        state @turtle-atom
         pos (:position state)
         heading (:heading state)
         up (:up state)
