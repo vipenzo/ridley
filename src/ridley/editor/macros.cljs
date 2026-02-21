@@ -876,6 +876,7 @@
                                                   :line ~reg-line :col ~reg-col
                                                   :source *eval-source*})]
                   (register-mesh! name-kw# value#)
+                  (set-source-form! name-kw# '~expr)
                   (if hidden?#
                     (hide-mesh! name-kw#)
                     (when-not already-registered#
@@ -1508,12 +1509,65 @@
    ;; ============================================================
    ;; tweak: interactive parameter tweaking with sliders
    ;; ============================================================
-   ;; (tweak expr)           — slider for first numeric literal only
-   ;; (tweak n expr)         — slider for literal at index n (negative = from end)
-   ;; (tweak [n1 n2] expr)  — sliders for selected literals
-   ;; (tweak :all expr)      — sliders for all literals
+   ;; (tweak expr)              — slider for first numeric literal only
+   ;; (tweak n expr)            — slider for literal at index n (negative = from end)
+   ;; (tweak [n1 n2] expr)     — sliders for selected literals
+   ;; (tweak :all expr)         — sliders for all literals
+   ;; (tweak :A)                — tweak registered mesh using stored source form
+   ;; (tweak :A expr)           — tweak registered mesh with explicit expression
+   ;; (tweak :all :A)           — tweak registered mesh, all sliders
+   ;; (tweak n :A)              — tweak registered mesh, slider n
+   ;; (tweak :all :A expr)      — tweak registered mesh, explicit expression, all sliders
+
+   ;; Collect non-fn-position symbols from a form (for tweak locals capture).
+   ;; These symbols may be let-bound locals that need to be captured at runtime.
+   (defn- collect-arg-symbols [form]
+     (cond
+       (symbol? form) #{form}
+       (and (list? form) (seq form))
+       (reduce into #{} (map collect-arg-symbols (rest form)))
+       (vector? form)
+       (reduce into #{} (map collect-arg-symbols form))
+       (map? form)
+       (reduce into #{} (map collect-arg-symbols (mapcat identity form)))
+       (set? form)
+       (reduce into #{} (map collect-arg-symbols form))
+       :else #{}))
+
+   (defn- tweak-locals-form
+     \"Generate a (hash-map 'sym1 sym1 'sym2 sym2 ...) form for captured locals.\"
+     [syms]
+     (when (seq syms)
+       `(hash-map ~@(mapcat (fn [s] [(list 'quote s) s]) syms))))
+
    (defmacro tweak
      ([expr]
-      `(tweak-start! '~expr nil))
-     ([filter expr]
-      `(tweak-start! '~expr ~filter)))")
+      (if (keyword? expr)
+        `(tweak-start-registered! ~expr nil nil)
+        (let [locals (tweak-locals-form (collect-arg-symbols expr))]
+          (if locals
+            `(tweak-start! '~expr nil nil ~locals)
+            `(tweak-start! '~expr nil)))))
+     ([a b]
+      (cond
+        ;; (tweak :all :vase), (tweak -1 :vase), (tweak [1 2] :vase)
+        ;; Second arg is keyword → filter + registry
+        (keyword? b)
+        `(tweak-start-registered! ~b nil ~a)
+        ;; (tweak :vase (sphere 20)) — registry + expression
+        (and (keyword? a) (not= :all a))
+        (let [locals (tweak-locals-form (collect-arg-symbols b))]
+          (if locals
+            `(tweak-start-registered! ~a '~b nil ~locals)
+            `(tweak-start-registered! ~a '~b nil)))
+        ;; (tweak :all (sphere 20)), (tweak 2 (sphere 20)) — filter + expression
+        :else
+        (let [locals (tweak-locals-form (collect-arg-symbols b))]
+          (if locals
+            `(tweak-start! '~b ~a nil ~locals)
+            `(tweak-start! '~b ~a)))))
+     ([filt name expr]
+      (let [locals (tweak-locals-form (collect-arg-symbols expr))]
+        (if locals
+          `(tweak-start-registered! ~name '~expr ~filt ~locals)
+          `(tweak-start-registered! ~name '~expr ~filt)))))")

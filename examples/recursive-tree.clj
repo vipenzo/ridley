@@ -19,7 +19,7 @@
 ; - spread-angle for wider or tighter branching
 ; - taper for how quickly branches thin out
 
-(def max-depth 4)
+
 (def n-branches 3)
 (def spread-angle 35)
 (def taper 0.65)
@@ -42,4 +42,4 @@
       (pop-state))))
 
 ; Ground the tree: start with trunk going up
-(branch max-depth 20 3)
+(branch 4 20 3)

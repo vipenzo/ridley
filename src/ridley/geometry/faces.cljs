@@ -144,7 +144,9 @@
    Sphere has no distinct faces, returns single :surface group.
    Uses new vertex layout: [north-pole, ring1..., ring2..., ..., south-pole]"
   [segments rings]
-  (let [north-pole 0
+  (let [segments (int segments)
+        rings (int rings)
+        north-pole 0
         south-pole (+ 1 (* (dec rings) segments))
         ring-start (fn [r] (+ 1 (* (dec r) segments)))]
     {:surface (vec

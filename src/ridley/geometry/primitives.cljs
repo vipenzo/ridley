@@ -144,7 +144,9 @@
    Ring r (1 to rings-1) starts at: 1 + (r-1) * segments
    South pole = last vertex"
   [segments rings]
-  (let [north-pole 0
+  (let [segments (int segments)
+        rings (int rings)
+        north-pole 0
         south-pole (+ 1 (* (dec rings) segments))
         ring-start (fn [r] (+ 1 (* (dec r) segments)))]
     (vec

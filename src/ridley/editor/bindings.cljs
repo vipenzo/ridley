@@ -412,7 +412,11 @@
    'clone-face-impl     macro-impl/clone-face-impl
    'attach!-impl        macro-impl/attach!-impl
    ;; Test/tweak mode
-   'tweak-start!        test-mode/start!
+   'tweak-start!             test-mode/start!
+   'tweak-start-registered!  test-mode/start-registered!
+   ;; Source form storage
+   'set-source-form!    registry/set-source-form!
+   'get-source-form     registry/get-source-form
    ;; Warp — spatial mesh deformation (*-impl for macro wrapper)
    'warp-impl        warp/warp
    'inflate          warp/inflate

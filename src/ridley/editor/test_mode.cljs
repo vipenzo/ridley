@@ -5,6 +5,7 @@
    the expression and updates the preview in real-time."
   (:require [sci.core :as sci]
             [ridley.editor.state :as state]
+            [ridley.scene.registry :as registry]
             [ridley.turtle.core :as turtle]
             [ridley.turtle.shape :as shape]
             [ridley.viewport.core :as viewport]
@@ -57,6 +58,11 @@
                          (fn [i child]
                            (walk child parent-fn parent-form i))
                          form))
+
+                (map? form)
+                (doseq [[k v] form]
+                  (walk k parent-fn form nil)
+                  (walk v (when (keyword? k) k) form nil))
 
                 :else nil))]
       (walk form nil nil nil)
@@ -135,6 +141,9 @@
 
                 (vector? form)
                 (mapv walk form)
+
+                (map? form)
+                (into (empty form) (map (fn [[k v]] [(walk k) (walk v)]) form))
 
                 :else form))]
       (walk form))))
@@ -223,6 +232,7 @@
           (let [msg (str "tweak eval error: " (.-message e))]
             (state/capture-println msg)
             (js/console.warn msg)
+            (js/console.warn "tweak form-str:" form-str)
             false))))
     false))
 
@@ -261,23 +271,47 @@
     (.removeEventListener js/document "keydown" esc-handler)))
 
 (defn cancel!
-  "Cancel test mode: discard changes, clear preview, restore turtle."
+  "Cancel test mode: discard changes, clear preview, restore turtle.
+   In registry mode, re-shows the original mesh."
   []
-  (when-let [{:keys [saved-turtle]} @test-state]
+  (when-let [{:keys [saved-turtle registry-name]} @test-state]
     (reset! state/turtle-atom saved-turtle)
     (viewport/clear-preview!)
+    (when registry-name
+      (registry/show-mesh! registry-name)
+      (registry/refresh-viewport! true))
     (cleanup-ui!)
     (reset! test-state nil)))
 
 (defn confirm!
-  "Confirm test mode: print final expression, clear preview, restore turtle."
+  "Confirm test mode: print final expression, clear preview, restore turtle.
+   In registry mode, re-evaluates and registers the tweaked mesh."
   []
-  (when-let [{:keys [form current-values saved-turtle]} @test-state]
+  (when-let [{:keys [form current-values saved-turtle registry-name]} @test-state]
     (let [final-form (substitute-values form current-values)
           final-str (pr-str final-form)]
-      (add-repl-output! final-str)
       (reset! state/turtle-atom saved-turtle)
       (viewport/clear-preview!)
+      (if registry-name
+        ;; Registry mode: re-evaluate, register, show
+        (try
+          (let [ctx @state/sci-ctx-ref
+                result (sci/eval-string final-str ctx)]
+            (when (mesh? result)
+              (registry/register-mesh! registry-name result)
+              (registry/set-source-form! registry-name final-form)
+              (registry/show-mesh! registry-name)
+              (registry/refresh-viewport! true))
+            (add-repl-output! final-str))
+          (catch :default e
+            (let [msg (str "tweak confirm error: " (.-message e))]
+              (state/capture-println msg)
+              (js/console.warn msg)
+              ;; Re-show original on error
+              (registry/show-mesh! registry-name)
+              (registry/refresh-viewport! true))))
+        ;; Normal mode: just print
+        (add-repl-output! final-str))
       (cleanup-ui!)
       (reset! test-state nil))))
 
@@ -380,6 +414,63 @@
       (.addEventListener js/document "keydown" esc-handler))))
 
 ;; ============================================================
+;; Symbol inlining — resolve def'd data before walking
+;; ============================================================
+
+(defn- data-value?
+  "True if x is a plain data value suitable for inlining (not a fn, mesh, atom, etc.)."
+  [x]
+  (or (number? x) (string? x) (keyword? x) (boolean? x) (nil? x)
+      (and (map? x) (not (:vertices x)) (not (:type x)))  ;; plain map, not mesh/shape/path
+      (vector? x) (set? x)))
+
+(defn- inline-data-symbols
+  "Walk a quoted form, replacing symbols that resolve to data values.
+   Checks locals map first (for let-bound vars), then falls back to SCI context.
+   Symbols in function position (first element of a list) are NOT resolved.
+   Returns the form with data symbols inlined."
+  [form ctx locals]
+  (letfn [(try-resolve [sym]
+            (if (and locals (contains? locals sym))
+              ;; Found in locals map (captured let-bound values)
+              (let [v (get locals sym)]
+                (when (data-value? v) v))
+              ;; Fall back to SCI context (def'd vars)
+              (try
+                (let [v (sci/eval-string (str sym) ctx)]
+                  (when (data-value? v) v))
+                (catch :default _ nil))))
+          (walk [form in-fn-pos?]
+            (cond
+              ;; Symbol not in function position → try to resolve
+              (and (symbol? form) (not in-fn-pos?))
+              (if-let [v (try-resolve form)]
+                v
+                form)
+
+              ;; List (function call) — keep fn symbol, walk args
+              (and (list? form) (seq form))
+              (apply list
+                     (walk (first form) true)  ;; fn position
+                     (map #(walk % false) (rest form)))
+
+              ;; Vector
+              (vector? form)
+              (mapv #(walk % false) form)
+
+              ;; Map
+              (map? form)
+              (into (empty form)
+                    (map (fn [[k v]] [(walk k false) (walk v false)]) form))
+
+              ;; Set
+              (set? form)
+              (into #{} (map #(walk % false) form))
+
+              :else form))]
+    (walk form false)))
+
+;; ============================================================
 ;; Entry point
 ;; ============================================================
 
@@ -391,44 +482,92 @@
 (defn ^:export start!
   "Enter test mode. Called by the test macro via SCI bindings.
    quoted-form: the expression as data (not evaluated)
-   filt: nil (first only), int, neg-int, vector, or :all"
-  [quoted-form filt]
-  ;; Cancel any existing test session
-  (when (active?) (cancel!))
-  (let [;; Find all numeric literals
-        literals (find-numeric-literals quoted-form)
-        total (count literals)]
-    (if (zero? total)
-      ;; No numeric literals — just evaluate and show result
-      (do (state/capture-println "tweak: no numeric literals found")
-          nil)
-      (let [;; Resolve filter to set of indices
-            selected (resolve-filter filt total)
-            ;; Generate labels
-            labeled (mapv (fn [lit]
-                            (assoc lit :label (generate-label lit literals)))
-                          literals)
-            ;; Build initial values map (all literals, not just selected)
-            initial-values (into {} (map (fn [{:keys [index value]}]
-                                           [index value]))
-                                 literals)
-            ;; Save turtle state
-            saved-turtle @state/turtle-atom]
-        ;; Set up state
-        (reset! test-state {:form quoted-form
-                            :literals labeled
-                            :selected selected
-                            :current-values initial-values
-                            :saved-turtle saved-turtle})
-        ;; Print index map
-        (state/capture-println (format-index-map labeled))
-        ;; Initial evaluation and preview — only show sliders if it succeeds
-        (if (evaluate-and-preview!)
-          (do
-            ;; Create slider UI (deferred so print output appears first)
-            (js/setTimeout #(create-slider-ui! labeled selected) 0)
-            nil)
-          ;; Evaluation failed — clean up, don't show sliders
-          (do
-            (reset! test-state nil)
-            nil))))))
+   filt: nil (first only), int, neg-int, vector, or :all
+   registry-name: optional keyword — when set, hides the registered mesh on enter
+                  and re-registers on confirm / re-shows on cancel
+   locals: optional map of {symbol value} for let-bound vars captured by macro"
+  ([quoted-form filt] (start! quoted-form filt nil nil))
+  ([quoted-form filt registry-name] (start! quoted-form filt registry-name nil))
+  ([quoted-form filt registry-name locals]
+   ;; Cancel any existing test session
+   (when (active?) (cancel!))
+   ;; In registry mode, hide the original mesh first
+   (when registry-name
+     (registry/hide-mesh! registry-name)
+     (registry/refresh-viewport! true))
+   (let [;; Inline data symbols (resolve def'd maps/vectors/numbers)
+         ctx @state/sci-ctx-ref
+         resolved-form (if ctx
+                         (inline-data-symbols quoted-form ctx locals)
+                         quoted-form)
+         ;; Find all numeric literals
+         literals (find-numeric-literals resolved-form)
+         total (count literals)]
+     (when (> total 32)
+       (state/capture-println
+         (str "tweak: " total " numeric literals found, max 32 — narrow with (tweak [0 1 2] expr)")))
+     (if (or (zero? total) (> total 32))
+       ;; No numeric literals or too many — just evaluate and show result
+       (do (when (zero? total)
+             (state/capture-println "tweak: no numeric literals found"))
+           ;; Re-show if registry mode
+           (when registry-name
+             (registry/show-mesh! registry-name)
+             (registry/refresh-viewport! true))
+           nil)
+       (let [;; Resolve filter to set of indices
+             selected (resolve-filter filt total)
+             ;; Generate labels
+             labeled (mapv (fn [lit]
+                             (assoc lit :label (generate-label lit literals)))
+                           literals)
+             ;; Build initial values map (all literals, not just selected)
+             initial-values (into {} (map (fn [{:keys [index value]}]
+                                            [index value]))
+                                  literals)
+             ;; Save turtle state
+             saved-turtle @state/turtle-atom]
+         ;; Set up state
+         (reset! test-state {:form resolved-form
+                             :literals labeled
+                             :selected selected
+                             :current-values initial-values
+                             :saved-turtle saved-turtle
+                             :registry-name registry-name})
+         ;; Verify expression evaluates successfully before committing
+         (if (evaluate-and-preview!)
+           (do
+             ;; Success — print index map
+             (state/capture-println (format-index-map labeled))
+             ;; Defer preview re-render + sliders to next tick.
+             ;; Reason: when tweak runs inside evaluate-definitions, the caller
+             ;; calls refresh-viewport! after we return, which wipes the preview.
+             ;; By deferring, our preview renders AFTER that refresh.
+             (js/setTimeout
+               (fn []
+                 (evaluate-and-preview!)
+                 (create-slider-ui! labeled selected))
+               0)
+             nil)
+           ;; Evaluation failed — clean up, don't show sliders
+           (do
+             (when registry-name
+               (registry/show-mesh! registry-name)
+               (registry/refresh-viewport! true))
+             (reset! test-state nil)
+             nil)))))))
+
+(defn ^:export start-registered!
+  "Enter test mode for a registered mesh.
+   name: keyword name in registry
+   quoted-form: quoted expression, or nil to use stored source-form
+   filt: optional filter (nil, int, vector, or :all)
+   locals: optional map of {symbol value} for let-bound vars"
+  ([name quoted-form filt] (start-registered! name quoted-form filt nil))
+  ([name quoted-form filt locals]
+   (let [form (or quoted-form (registry/get-source-form name))]
+     (if (nil? form)
+       (do (state/capture-println
+             (str "tweak: no source form for " name " — use (tweak " name " expr)"))
+           nil)
+       (start! form filt name locals)))))

@@ -1452,6 +1452,28 @@ The `tweak` macro provides interactive parameter exploration with real-time prev
 (tweak :all (extrude (circle 15) (f 30) (th 90) (f 20)))
 ```
 
+### Registry-Aware Mode
+
+When `tweak` receives a keyword, it operates on the named registered mesh: hides the original during tweaking, re-registers the result on OK, and restores the original on Cancel.
+
+```clojure
+;; Tweak using stored source form (set by register)
+(tweak :A)
+
+;; Tweak with explicit expression
+(tweak :A (attach (sphere 20) (f 10)))
+
+;; With filter + registry name
+(tweak :all :A)
+(tweak -1 :A)
+(tweak [0 2] :A)
+
+;; Filter + registry name + explicit expression
+(tweak :all :A (attach (sphere 20) (f 10)))
+```
+
+**Note:** `(tweak :A)` requires a stored source form. `register` stores the source automatically, but the form must be self-contained — if `(register A (make-a 1))` is used, `make-a` must still be defined as a function (not overwritten by `register`). Use distinct names for generator functions and registered meshes (e.g., `make-vase` and `vase`).
+
 **Features:**
 - Automatically detects result type (mesh, shape, path) and previews in viewport
 - Slider range: `[value * 0.1, value * 3]` (or `[-50, 50]` for zero)

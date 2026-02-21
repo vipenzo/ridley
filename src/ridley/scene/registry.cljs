@@ -291,6 +291,17 @@
   [name]
   (:mesh (first (filter #(= (:name %) name) @scene-meshes))))
 
+(defn set-source-form!
+  "Store the source form (quoted expression) for a named mesh."
+  [name form]
+  (when-let [idx (find-mesh-index name)]
+    (swap! scene-meshes assoc-in [idx :source-form] form)))
+
+(defn get-source-form
+  "Get the stored source form for a named mesh."
+  [name]
+  (:source-form (first (filter #(= (:name %) name) @scene-meshes))))
+
 (defn visible-count
   "Get count of visible meshes."
   []

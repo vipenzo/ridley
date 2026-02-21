@@ -315,12 +315,15 @@
                   ;; Show result in terminal history (with any print output)
                   (add-repl-entry input (:implicit-result result) false (:print-output result))
                   ;; Extract lines, stamps, and meshes from REPL evaluation
-                  (when-let [render-data (repl/extract-render-data result)]
-                    (registry/add-lines! (:lines render-data))
-                    (registry/add-stamps! (or (:stamps render-data) []))
-                    (registry/set-definition-meshes! (:meshes render-data)))
-                  ;; Update viewport (don't reset camera)
-                  (registry/refresh-viewport! false)
+                  ;; Skip viewport update when tweak mode is active — its
+                  ;; preview would be clobbered by the refresh.
+                  (when-not (test-mode/active?)
+                    (when-let [render-data (repl/extract-render-data result)]
+                      (registry/add-lines! (:lines render-data))
+                      (registry/add-stamps! (or (:stamps render-data) []))
+                      (registry/set-definition-meshes! (:meshes render-data)))
+                    ;; Update viewport (don't reset camera)
+                    (registry/refresh-viewport! false))
                   ;; Update turtle indicator
                   (update-turtle-indicator)
                   ;; Sync AI state

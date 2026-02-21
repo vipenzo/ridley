@@ -159,7 +159,17 @@
        [{:id :attach-face-frustum
          :code "(register frustum\n  (attach-face (box 30) :top\n    (inset 10) (f 30)))"}
         {:id :clone-face-spike
-         :code "(register spike\n  (clone-face (box 30) :top\n    (inset 10) (f 30)))"}]}]}
+         :code "(register spike\n  (clone-face (box 30) :top\n    (inset 10) (f 30)))"}]}
+      {:id :warp-deformation
+       :see-also [:boolean-operations :attach-meshes]
+       :examples
+       [{:id :warp-inflate
+         :code "(register bump\n  (warp (box 33)\n    (attach (sphere 24.5) (f 13))\n    (inflate 10.5) :subdivide 4))"
+         :auto-run true}
+        {:id :warp-dent
+         :code "(register dented\n  (warp (sphere 30 32 16)\n    (attach (sphere 17.5) (f 23))\n    (dent 11.8)))"}
+        {:id :warp-roughen
+         :code "(register rough\n  (warp (sphere 20 32 16) (sphere 22)\n    (roughen 2 3)))"}]}]}
     {:id :part-4
      :pages
      [{:id :mark-goto-pushpop
@@ -237,6 +247,18 @@
          :code "(f 50)\n(println \"pos:\" (turtle-position))\n(th 45)\n(println \"heading:\" (turtle-heading))"}
         {:id :step-by-step
          :code "(println \"Step 1: create base\")\n(register base (box 40 40 10))\n(println \"Step 2: move up\")\n(f 10)\n(println \"Step 3: create top\")\n(register top (cyl 15 20))"}]}
+      {:id :tweak-interactive
+       :see-also [:debug-techniques]
+       :examples
+       [{:id :tweak-basic
+         :code "(tweak (extrude (circle 15) (f 30)))"
+         :auto-run true}
+        {:id :tweak-indexed
+         :code "(tweak 2 (extrude (circle 15)\n  (f 30) (th 90) (f 20)))"}
+        {:id :tweak-all
+         :code "(tweak :all (extrude (circle 10)\n  (f 30) (th 90) (f 20)))"}
+        {:id :tweak-registered
+         :code "(register A (sphere 20))\n(tweak :A)"}]}
       {:id :stamp-preview
        :see-also [:debug-techniques :builtin-shapes :shape-booleans-2d]
        :examples
@@ -889,6 +911,33 @@ Positive values shrink the face, negative values expand it."
        :clone-face-spike {:caption "Spike (clone-face)"
                           :description "`clone-face` creates new vertices. `inset` creates a smaller inner face, `f` extrudes it. Creates a spike."}}}
 
+     :warp-deformation
+     {:title "Spatial Deformation (Warp)"
+      :content "The `warp` function deforms mesh vertices inside a volume. The volume shape (sphere, box, cylinder) determines the deformation zone. Position the volume using `attach`.
+
+```
+(warp mesh volume deform-fn)
+(warp mesh volume fn1 fn2)          ; chain deformations
+(warp mesh volume (inflate 3) :subdivide 2)  ; subdivide first
+```
+
+**Preset deformations:**
+- `(inflate amount)` — push outward along normals
+- `(dent amount)` — push inward
+- `(attract strength)` — pull toward volume center (0–1)
+- `(twist angle)` — rotate around auto-detected axis
+- `(squash axis)` / `(squash axis amount)` — flatten
+- `(roughen amplitude)` / `(roughen amplitude freq)` — noise
+
+Use `:subdivide n` to add geometry before deforming (each pass: 1→3 triangles). Essential for low-poly meshes."
+      :examples
+      {:warp-inflate {:caption "Inflate"
+                      :description "`inflate` pushes vertices outward along their normals. `:subdivide 2` adds geometry so the box deforms smoothly."}
+       :warp-dent {:caption "Dent"
+                   :description "`dent` pushes vertices inward along their normals. The volume is offset with `attach` to create an asymmetric dent."}
+       :warp-roughen {:caption "Roughen"
+                      :description "`roughen` displaces vertices with Perlin noise. The second argument controls frequency."}}}
+
      :debug-panels
      {:title "3D Text Panels"
       :content "**Panels** are 3D text displays that float in the viewport. They always face the camera (billboard effect) and are perfect for debugging or annotating your models.
@@ -953,6 +1002,36 @@ Add `println` statements between operations to see the sequence of events. This 
                         :description "Print the turtle's position and heading at any point to understand where geometry will be created."}
        :step-by-step {:caption "Step-by-step debugging"
                       :description "Add println between operations to trace execution. The output appears in the REPL history."}}}
+
+     :tweak-interactive
+     {:title "Interactive Tweaking"
+      :content "The `tweak` macro turns numeric literals in your expression into interactive sliders, letting you explore parameter values in real time.
+
+```
+(tweak expr)              ; slider for first literal
+(tweak n expr)            ; slider at index n
+(tweak -1 expr)           ; last literal (Python-style)
+(tweak [0 2] expr)        ; multiple indices
+(tweak :all expr)         ; all literals
+```
+
+**Registry-aware mode** — pass a keyword to tweak a registered mesh directly. The original is hidden during tweaking:
+```
+(tweak :A)                ; uses stored source form
+(tweak :A expr)           ; explicit expression
+(tweak :all :A)           ; all sliders + registry
+```
+
+**Controls:** drag the slider to change a value. Use `−`/`+` to zoom the range. Press **OK** to keep the result or **Cancel** (Esc) to discard."
+      :examples
+      {:tweak-basic {:caption "Tweak first literal"
+                     :description "Drag the slider to change the value `30` (the forward distance). The viewport updates in real time."}
+       :tweak-indexed {:caption "Tweak by index"
+                       :description "Index `2` selects the third numeric literal. Negative indices count from the end."}
+       :tweak-all {:caption "All sliders"
+                   :description "`:all` creates sliders for every numeric literal in the expression."}
+       :tweak-registered {:caption "Tweak registered mesh"
+                          :description "Pass a keyword to tweak a registered mesh. The original is hidden and the slider preview replaces it. OK re-registers; Cancel restores the original."}}}
 
      :stamp-preview
      {:title "Shape Preview (Stamp)"
@@ -1878,6 +1957,33 @@ Valori positivi rimpiccioliscono la faccia, valori negativi la espandono."
        :clone-face-spike {:caption "Punta (clone-face)"
                           :description "`clone-face` crea nuovi vertici. `inset` crea una faccia interna più piccola, `f` la estrude. Crea una punta."}}}
 
+     :warp-deformation
+     {:title "Deformazione Spaziale (Warp)"
+      :content "La funzione `warp` deforma i vertici di una mesh all'interno di un volume. La forma del volume (sfera, box, cilindro) determina la zona di deformazione. Posiziona il volume usando `attach`.
+
+```
+(warp mesh volume deform-fn)
+(warp mesh volume fn1 fn2)          ; concatena deformazioni
+(warp mesh volume (inflate 3) :subdivide 2)  ; suddividi prima
+```
+
+**Deformazioni predefinite:**
+- `(inflate amount)` — spinge verso l'esterno lungo le normali
+- `(dent amount)` — spinge verso l'interno
+- `(attract strength)` — attrae verso il centro del volume (0–1)
+- `(twist angle)` — ruota attorno all'asse auto-rilevato
+- `(squash axis)` / `(squash axis amount)` — appiattisce
+- `(roughen amplitude)` / `(roughen amplitude freq)` — rumore
+
+Usa `:subdivide n` per aggiungere geometria prima di deformare (ogni passaggio: 1→3 triangoli). Essenziale per mesh a bassa risoluzione."
+      :examples
+      {:warp-inflate {:caption "Inflate"
+                      :description "`inflate` spinge i vertici verso l'esterno lungo le normali. `:subdivide 2` aggiunge geometria per una deformazione più fluida."}
+       :warp-dent {:caption "Dent"
+                   :description "`dent` spinge i vertici verso l'interno lungo le normali. Il volume è spostato con `attach` per creare un'ammaccatura asimmetrica."}
+       :warp-roughen {:caption "Roughen"
+                      :description "`roughen` sposta i vertici con rumore Perlin. Il secondo argomento controlla la frequenza."}}}
+
      :debug-panels
      {:title "Pannelli 3D di Testo"
       :content "I **pannelli** sono display di testo 3D che fluttuano nel viewport. Guardano sempre verso la camera (effetto billboard) e sono perfetti per il debug o per annotare i tuoi modelli.
@@ -1942,6 +2048,36 @@ Aggiungi istruzioni `println` tra le operazioni per vedere la sequenza degli eve
                         :description "Stampa posizione e direzione della turtle in qualsiasi punto per capire dove verrà creata la geometria."}
        :step-by-step {:caption "Debug passo-passo"
                       :description "Aggiungi println tra le operazioni per tracciare l'esecuzione. L'output appare nella cronologia della REPL."}}}
+
+     :tweak-interactive
+     {:title "Tweaking Interattivo"
+      :content "La macro `tweak` trasforma i letterali numerici della tua espressione in slider interattivi, permettendoti di esplorare i valori dei parametri in tempo reale.
+
+```
+(tweak expr)              ; slider per il primo letterale
+(tweak n expr)            ; slider all'indice n
+(tweak -1 expr)           ; ultimo letterale (stile Python)
+(tweak [0 2] expr)        ; indici multipli
+(tweak :all expr)         ; tutti i letterali
+```
+
+**Modalità registry** — passa una keyword per tweakare direttamente una mesh registrata. L'originale viene nascosta durante il tweaking:
+```
+(tweak :A)                ; usa il form sorgente memorizzato
+(tweak :A expr)           ; espressione esplicita
+(tweak :all :A)           ; tutti gli slider + registry
+```
+
+**Controlli:** trascina lo slider per cambiare un valore. Usa `−`/`+` per zoomare il range. Premi **OK** per confermare o **Cancel** (Esc) per annullare."
+      :examples
+      {:tweak-basic {:caption "Tweak primo letterale"
+                     :description "Trascina lo slider per cambiare il valore `30` (la distanza in avanti). Il viewport si aggiorna in tempo reale."}
+       :tweak-indexed {:caption "Tweak per indice"
+                       :description "L'indice `2` seleziona il terzo letterale numerico. Indici negativi contano dalla fine."}
+       :tweak-all {:caption "Tutti gli slider"
+                   :description "`:all` crea slider per ogni letterale numerico nell'espressione."}
+       :tweak-registered {:caption "Tweak mesh registrata"
+                          :description "Passa una keyword per tweakare una mesh registrata. L'originale viene nascosta e l'anteprima con slider la sostituisce. OK ri-registra; Cancel ripristina l'originale."}}}
 
      :stamp-preview
      {:title "Anteprima Forme (Stamp)"

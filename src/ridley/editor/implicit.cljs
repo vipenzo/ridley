@@ -119,40 +119,57 @@
   (swap! turtle-atom turtle/resolution mode value))
 
 ;; Color and material
+(defn- mesh-map? [x]
+  (and (map? x) (:vertices x)))
+
 (defn ^:export implicit-color
-  "Set color globally or on a registered mesh.
+  "Set color globally, on a registered mesh, or on a mesh reference.
    (color 0xff0000)              — set global color (hex)
    (color 255 0 0)               — set global color (RGB)
    (color :my-mesh 0xff0000)     — set color on registered mesh
-   (color :my-mesh 255 0 0)      — set color on registered mesh (RGB)"
+   (color :my-mesh 255 0 0)      — set color on registered mesh (RGB)
+   (color my-mesh 0xff0000)      — return mesh with color (pure)
+   (color my-mesh 255 0 0)       — return mesh with color (pure, RGB)"
   ([hex]
    (swap! turtle-atom turtle/set-color hex))
-  ([mesh-name hex]
-   (registry/update-mesh-material! (keyword mesh-name) {:color hex}))
+  ([name-or-mesh hex]
+   (if (mesh-map? name-or-mesh)
+     (update name-or-mesh :material merge {:color hex})
+     (registry/update-mesh-material! (keyword name-or-mesh) {:color hex})))
   ([r g b]
    (swap! turtle-atom turtle/set-color r g b))
-  ([mesh-name r g b]
+  ([name-or-mesh r g b]
    (let [hex (+ (bit-shift-left (int r) 16)
                 (bit-shift-left (int g) 8)
                 (int b))]
-     (registry/update-mesh-material! (keyword mesh-name) {:color hex}))))
+     (if (mesh-map? name-or-mesh)
+       (update name-or-mesh :material merge {:color hex})
+       (registry/update-mesh-material! (keyword name-or-mesh) {:color hex})))))
 
 (def ^:private material-props
   #{:color :metalness :roughness :opacity :flat-shading})
 
 (defn ^:export implicit-material
-  "Set material properties globally or on a registered mesh.
+  "Set material properties globally, on a registered mesh, or on a mesh reference.
    (material :metalness 0.8 :roughness 0.2)              — global
-   (material :my-mesh :metalness 0.8 :roughness 0.2)     — per-mesh"
+   (material :my-mesh :metalness 0.8 :roughness 0.2)     — per-mesh
+   (material my-mesh :opacity 0.3 :color 0xff0000)       — return mesh with material (pure)"
   [& args]
-  (if (material-props (first args))
-    ;; First arg is a material property → global
-    (let [opts (apply hash-map args)]
-      (swap! turtle-atom #(apply turtle/set-material % (mapcat identity opts))))
-    ;; First arg is mesh name → per-mesh
-    (let [mesh-name (first args)
-          opts (apply hash-map (rest args))]
-      (registry/update-mesh-material! (keyword mesh-name) opts))))
+  (let [first-arg (first args)]
+    (cond
+      ;; Mesh reference → pure function, return mesh with material
+      (mesh-map? first-arg)
+      (let [opts (apply hash-map (rest args))]
+        (update first-arg :material merge opts))
+      ;; Material property keyword → global
+      (material-props first-arg)
+      (let [opts (apply hash-map args)]
+        (swap! turtle-atom #(apply turtle/set-material % (mapcat identity opts))))
+      ;; Otherwise → mesh name in registry
+      :else
+      (let [mesh-name first-arg
+            opts (apply hash-map (rest args))]
+        (registry/update-mesh-material! (keyword mesh-name) opts)))))
 
 (defn ^:export implicit-reset-material
   "Reset material to default values."

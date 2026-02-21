@@ -27,20 +27,16 @@
 ; Custom taper: wide belly, narrow neck, flared lip
 (def vase
   (loft-n 96
-    (-> (circle base-radius 64)
-        (fluted :flutes n-flutes :depth 0.15)
-        (twisted :angle twist-amount)
-        (shape-fn (fn [shape t]
-                    (let [; Belly peaks around t=0.35
-                          belly (+ 1.0 (* 0.3 (sin (* t PI))))
-                          ; Neck narrows around t=0.75
-                          neck (- 1.0 (* 0.25 (pow (max 0 (- t 0.6)) 2) 40))
-                          ; Lip flares at t>0.9
-                          lip (if (> t 0.9)
-                                (+ 1.0 (* 0.15 (- t 0.9) 10))
-                                1.0)
-                          s (* belly neck lip)]
-                      (scale-shape shape s s)))))
-    (f height)))
+          (-> (circle base-radius 64)
+              (fluted :flutes n-flutes :depth 0.15)
+              (twisted :angle twist-amount)
+              (shape-fn (fn [shape t]
+                          (let [; Belly peaks around t=0.35
+                                belly (+ 1.0 (* 0.3 (sin (* t PI))))
+                                neck (max 0.1 (- 1.0 (* 0.25 (pow (max 0 (- t 0.6)) 2) 40)))
+                                lip (if (> t 0.9) (* 0.85 (- t 0.9) 10) 0)
+                                s (+ (* belly neck) lip)]
+                            (scale-shape shape s s)))))
+          (f height)))
 
 (register vase vase)
