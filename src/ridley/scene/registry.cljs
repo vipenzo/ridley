@@ -108,15 +108,25 @@
        (swap! scene-meshes conj {:mesh mesh-with-id :name name :visible visible?})
        mesh-with-id))))
 
+;; Meshes claimed by register (sub-named) — skipped by set-definition-meshes!
+(def ^:private claimed-meshes (js/Set.))
+
+(defn claim-mesh!
+  "Mark a mesh as claimed by register, so set-definition-meshes! won't add a duplicate."
+  [mesh]
+  (.add claimed-meshes mesh))
+
 (defn set-definition-meshes!
   "Store meshes created by the definitions panel (anonymous, visible by default).
-   Skips meshes that are already in the scene (e.g. from register)."
+   Skips meshes that are already in the scene (e.g. from register) or claimed."
   [meshes]
   (let [existing-meshes (map :mesh @scene-meshes)]
     (doseq [m meshes]
       (schema/assert-mesh! m)
-      (when-not (some #(identical? % m) existing-meshes)
-        (add-mesh! m nil true)))))
+      (when-not (or (some #(identical? % m) existing-meshes)
+                    (.has claimed-meshes m))
+        (add-mesh! m nil true))))
+  (.clear claimed-meshes))
 
 (defn- find-mesh-index
   "Find index of mesh entry by name."
@@ -177,12 +187,20 @@
     (swap! scene-meshes assoc-in [idx :mesh] mesh-with-id)
     mesh-with-id))
 
+(defn- kw-full-name
+  "Full name of a keyword including namespace.
+   E.g. :puppet/r-arm => \"puppet/r-arm\", :foo => \"foo\"."
+  [kw]
+  (if-let [ns (namespace kw)]
+    (str ns "/" (name kw))
+    (name kw)))
+
 (defn- name-has-prefix?
   "Check if mesh-name starts with prefix.
    E.g. :puppet/r-arm starts with :puppet."
   [mesh-name prefix]
-  (let [prefix-str (name prefix)
-        mesh-str (name mesh-name)]
+  (let [prefix-str (kw-full-name prefix)
+        mesh-str (kw-full-name mesh-name)]
     (or (= mesh-str prefix-str)
         (.startsWith mesh-str (str prefix-str "/")))))
 

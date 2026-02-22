@@ -315,11 +315,11 @@ Create arbitrary 2D shapes from cartesian coordinate pairs. The origin `[0,0]` i
 Create arbitrary 2D shapes using turtle movements:
 
 ```clojure
-;; Triangle (equilateral)
-(def tri (shape
-  (f 10) (th 120)
-  (f 10) (th 120)
-  (f 10)))
+;; Triangle
+(register bar
+  (extrude
+    (shape (th 120) (f 15) (th 150) (f 8) (th -90) (f 20) (th -90) (f 8) (th 150) (f 15))
+    (f 40)))
 
 ;; Right triangle - auto-closes to starting point
 (def right-tri (shape
@@ -335,7 +335,7 @@ Create arbitrary 2D shapes using turtle movements:
   (f 5)))
 
 ;; Use in extrusion
-(register prism (extrude tri (f 20)))
+(register prism (extrude right-tri (f 20)))
 ```
 
 The `shape` macro uses a 2D turtle starting at origin facing +X. Only `f` (forward) and `th` (turn horizontal) are available. The shape is automatically closed.

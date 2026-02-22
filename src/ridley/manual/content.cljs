@@ -58,7 +58,7 @@
       {:id :custom-shapes
        :examples
        [{:id :triangle-shape
-         :code "(register prism\n  (extrude\n    (shape (f 30) (th 120) (f 30) (th 120) (f 30))\n    (f 40)))"}
+         :code "(register bar\n  (extrude\n    (shape (th 120) (f 15) (th 150) (f 8) (th -90) (f 20) (th -90) (f 8) (th 150) (f 15))\n    (f 40)))"}
         {:id :l-shape
          :code "(register l-beam\n  (extrude\n    (shape\n      (f 30) (th 90) (f 10) (th 90)\n      (f 20) (th -90) (f 10) (th 90)\n      (f 10) (th 90) (f 20))\n    (f 50)))"}]}
       {:id :shape-booleans-2d
@@ -143,13 +143,13 @@
         {:id :bool-hull
          :code "(register p1 (sphere 10))\n(f 40)\n(register p2 (sphere 10))\n(f -20) (th 90) (f 30)\n(register p3 (sphere 10))\n\n(register hull-shape\n  (mesh-hull (get-mesh :p1) (get-mesh :p2) (get-mesh :p3)))"}
         {:id :bool-union-for
-         :code "(register row\n  (mesh-union\n    (for [i (range 10)]\n      (attach (cyl 5 30) (f (* i 9))))))"}]}
+         :code "(register row\n  (mesh-union\n    (for [i (range 10)]\n      (attach (cyl 5 30) (lt (* i 9))))))"}]}
       {:id :slice-mesh
        :examples
        [{:id :slice-basic
-         :code "(register cup\n  (revolve\n    (shape (f 20) (th -90) (f 30) (th -90) (f 15))))\n(tv 90) (f 15)\n(stamp (slice-mesh :cup))"}
+         :code "(def cup\n  (revolve\n    (shape (f 20) (th -45) (f 30) (th -90) (f 30) (th -60) (f 15))))\n(stamp (slice-mesh cup))\n(register cup (attach cup (u 50)))"}
         {:id :slice-multiple
-         :code "(register donut\n  (attach\n    (extrude (circle 8) (arc-h 25 360))\n    (f 25)))\n(tv 90)\n(stamp (slice-mesh :donut))"}]}
+         :code "(def donut\n  (attach\n    (extrude (circle 8) (arc-h 25 360))\n    (f 25)))\n(f 20)\n(stamp (slice-mesh donut))\n(tv 90)\n(stamp (slice-mesh donut))"}]}
       {:id :attach-meshes
        :examples
        [{:id :attach-basic
@@ -175,7 +175,7 @@
         {:id :warp-dent
          :code "(register dented\n  (warp (sphere 30 32 16)\n    (attach (sphere 17.5) (f 23))\n    (dent 11.8)))"}
         {:id :warp-roughen
-         :code "(register rough\n  (warp (sphere 20 32 16) (sphere 22)\n    (roughen 2 3)))"}]}]}
+         :code "(register rough\n  (warp (sphere 20 54.2 31.6) (attach (sphere 12) (f 13)) (roughen 4.2 5.3) :subdivide 3))"}]}]}
     {:id :part-4
      :pages
      [{:id :mark-goto-pushpop
@@ -210,7 +210,7 @@
         {:id :bloft-taper
          :code "(def tight-curve\n  (path (f 30) (th 150) (f 25)))\n\n(register tapered\n  (bloft (circle 8)\n    #(scale %1 (- 1 (* 0.6 %2)))\n    (path (bezier-as tight-curve))))"}
         {:id :bloft-steps
-         :code "(def loop-path\n  (path (f 20) (th 90) (f 20) (th 90)\n        (f 20) (th 90) (f 20)))\n\n(register smooth-loop\n  (bloft-n 64 (circle 5) identity\n    (path (bezier-as loop-path))))"}]}
+         :code "(def snake-path\n  (path (f 50) (th 100) (f 20) (th 80)\n    (f 20) (th 50) (f 40)))\n\n(register smooth-loop\n  (bloft-n 128 (tapered (circle 5 64) 0.2)\n    (path (bezier-as snake-path\n            :tension 0.4 :steps 64))))"}]}
       {:id :colors-materials
        :see-also [:extrude-basics :mesh-basics]
        :examples
@@ -232,7 +232,7 @@
         {:id :text-on-arc
          :code "(def arc-path (path (arc-h 50 180)))\n\n(register curved\n  (text-on-path \"CURVED TEXT\" arc-path\n    :size 12 :depth 3 :align :center))"}
         {:id :text-on-spiral
-         :code "(def spiral (path (dotimes [_ 60] (f 3) (th 6) (tv 1))))\n\n(register spiral-text\n  (text-on-path \"SPIRAL\" spiral :size 10 :depth 2))"}]}]}
+         :code "(def spiral (path (dotimes [_ 85] (f 3) (th 8.6) (u 0.5))))\n\n(register spiral-text\n  (text-on-path \"Once upon a time in a galaxy far far away there was a spiral that went up and up and up and never stopped\" spiral :size 6 :depth 1.2))"}]}]}
     {:id :part-5
      :pages
      [{:id :debug-panels
@@ -273,7 +273,14 @@
         {:id :stamp-positioned
          :code "(f 30) (tv 45)\n(stamp (circle 10))\n(f 20)\n(stamp (rect 15 10))"}
         {:id :stamp-with-holes
-         :code "(stamp\n  (shape-difference\n    (circle 20) (circle 15)))"}]}]}
+         :code "(stamp\n  (shape-difference\n    (circle 20) (circle 15)))"}]}
+      {:id :follow-path-lines
+       :see-also [:extrude-basics :debug-techniques]
+       :examples
+       [{:id :follow-basic
+         :code "(def curve\n  (path (f 30) (tv 30) (f 20)\n    (bezier-to [0 60 0] [0 20 30] [0 40 -30])))\n\n(follow-path curve)"}
+        {:id :follow-visibility
+         :code "(def star-path\n  (path (dotimes [_ 5] (f 40) (th 144))))\n\n(follow-path star-path)\n\n;; Toggle visibility:\n;; (hide-lines)\n;; (show-lines)\n;; (lines-visible?)"}]}]}
     {:id :part-6
      :pages
      [{:id :control-structures
@@ -522,7 +529,7 @@ Each shape becomes the cross-section of your extruded solid."
 The shape automatically closes — the last point connects back to the first."
       :examples
       {:triangle-shape {:caption "Triangle"
-                        :description "Three forward movements with 120° turns create an equilateral triangle. Extruded, it becomes a prism."}
+                        :description "Turtle turns and forward movements trace a triangular cross-section. Extruded, it becomes a bar."}
        :l-shape {:caption "L-shape"
                  :description "More complex paths create more complex cross-sections. This L-shape becomes an L-beam when extruded."}}}
 
@@ -876,6 +883,22 @@ These operations require **manifold** meshes (watertight, no self-intersections)
        :bool-union-for {:caption "Union with for"
                         :description "Boolean operations accept vectors, so you can use `for` to generate multiple meshes and combine them in one call."}}}
 
+     :slice-mesh
+     {:title "Slice Mesh"
+      :content "`slice-mesh` cuts a mesh with a horizontal plane, returning a 2D cross-section as a shape. Use `stamp` to display the result.
+
+```
+(stamp (slice-mesh :name))       ; slice at turtle height
+(stamp (slice-mesh :name 10.5))  ; slice at explicit Y
+```
+
+The slicing plane is horizontal at the turtle's current Y position (or at an explicit height). The result is a flat shape you can inspect, extrude, or use in further operations."
+      :examples
+      {:slice-cup {:caption "Slice a cup"
+                   :description "A revolved cup sliced at a given height. The cross-section shows the wall profile at that level."}
+       :slice-donut {:caption "Multiple slices"
+                     :description "The same donut sliced at two different planes. The slice plane is perpendicular to the turtle's heading at its current position."}}}
+
      :attach-meshes
      {:title "Attach Meshes"
       :content "The `attach` function transforms a mesh with turtle movements, returning a new mesh. Use `attach!` to transform a registered mesh in-place by name.
@@ -1063,6 +1086,26 @@ Stamps support shapes with holes — the holes are rendered correctly as transpa
        :stamp-with-holes {:caption "Stamp with holes"
                           :description "Shapes with holes (like this washer from `shape-difference`) render correctly — the inner area is cut out."}}}
 
+     :follow-path-lines
+     {:title "Follow Path"
+      :content "`follow-path` makes the turtle trace a stored path, drawing visible lines in the 3D viewport. Unlike `extrude`, it doesn't create geometry — it just moves the turtle along the path and leaves a visual trail.
+
+```
+(follow-path my-path)
+```
+
+This is useful for visualizing paths before extruding, debugging complex path constructions, or simply drawing 3D wireframes.
+
+**Visibility control:**
+- Toggle the **Lines** button in the viewport toolbar
+- Or use DSL commands: `(show-lines)` / `(hide-lines)`
+- Query visibility: `(lines-visible?)`"
+      :examples
+      {:follow-basic {:caption "Draw a curve"
+                      :description "`follow-path` traces the path in 3D, showing the curve the turtle would follow during an extrusion."}
+       :follow-visibility {:caption "Visibility toggle"
+                           :description "Use `hide-lines` / `show-lines` to toggle the visibility of all path lines. Useful when lines overlap with mesh geometry."}}}
+
      :mark-goto-pushpop
      {:title "Marks, Paths, and State Stack"
       :content "When creating complex geometry, you often need to return to previous positions or branch out from a point. Ridley provides two mechanisms:
@@ -1175,8 +1218,8 @@ A loading spinner appears during long operations.
                      :description "`bloft` lofts a circle along a curved path. Unlike `loft`, it handles tight turns without self-intersection."}
        :bloft-taper {:caption "Tapered bloft"
                      :description "Transform functions work the same as with `loft` — here scaling to create a tapered tube along a tight curve."}
-       :bloft-steps {:caption "Smoother with more steps"
-                     :description "`bloft-n 64` uses more steps for a smoother result. Use higher step counts for final renders."}}}
+       :bloft-steps {:caption "Smooth snake with :steps"
+                     :description "`bezier-as` accepts `:steps` to control the number of interpolation points per bezier segment — higher values produce smoother curves without changing the global `resolution`. Combined with `tapered` and `bloft-n` for a polished result."}}}
 
      :colors-materials
      {:title "Colors and Materials"
@@ -1568,7 +1611,7 @@ Ogni forma diventa la sezione trasversale del tuo solido estruso."
 La forma si chiude automaticamente — l'ultimo punto si ricollega al primo."
       :examples
       {:triangle-shape {:caption "Triangolo"
-                        :description "Tre movimenti avanti con curve di 120° creano un triangolo equilatero. Estruso, diventa un prisma."}
+                        :description "Rotazioni e avanzamenti della tartaruga tracciano una sezione triangolare. Estrusa, diventa una barra."}
        :l-shape {:caption "Forma a L"
                  :description "Percorsi più complessi creano sezioni più complesse. Questa forma a L diventa una trave a L quando estrusa."}}}
 
@@ -1922,6 +1965,22 @@ Queste operazioni richiedono mesh **manifold** (a tenuta stagna, senza auto-inte
        :bool-union-for {:caption "Unione con for"
                         :description "Le operazioni booleane accettano vettori, quindi puoi usare `for` per generare più mesh e combinarle in una sola chiamata."}}}
 
+     :slice-mesh
+     {:title "Sezione Mesh"
+      :content "`slice-mesh` taglia una mesh con un piano orizzontale, restituendo una sezione 2D come shape. Usa `stamp` per visualizzare il risultato.
+
+```
+(stamp (slice-mesh :nome))       ; taglia all'altezza della tartaruga
+(stamp (slice-mesh :nome 10.5))  ; taglia a un'altezza esplicita
+```
+
+Il piano di taglio è orizzontale all'altezza Y corrente della tartaruga (o a un'altezza esplicita). Il risultato è una forma piatta che puoi ispezionare, estrudere o usare in ulteriori operazioni."
+      :examples
+      {:slice-cup {:caption "Sezione di una tazza"
+                   :description "Una tazza ottenuta per rivoluzione, tagliata a una data altezza. La sezione mostra il profilo della parete a quel livello."}
+       :slice-donut {:caption "Sezioni multiple"
+                     :description "Lo stesso toroide tagliato su due piani diversi. Il piano di taglio è perpendicolare alla direzione della tartaruga nella sua posizione corrente."}}}
+
      :attach-meshes
      {:title "Attaccare Mesh"
       :content "La funzione `attach` trasforma una mesh con movimenti turtle, restituendo una nuova mesh. Usa `attach!` per trasformare una mesh registrata in-place per nome.
@@ -2109,6 +2168,26 @@ Gli stamp supportano forme con buchi — i buchi vengono renderizzati correttame
        :stamp-with-holes {:caption "Stamp con buchi"
                           :description "Forme con buchi (come questa rondella da `shape-difference`) vengono renderizzate correttamente — l'area interna viene ritagliata."}}}
 
+     :follow-path-lines
+     {:title "Follow Path"
+      :content "`follow-path` fa tracciare alla tartaruga un percorso memorizzato, disegnando linee visibili nel viewport 3D. A differenza di `extrude`, non crea geometria — muove solo la tartaruga lungo il percorso lasciando una traccia visiva.
+
+```
+(follow-path mio-percorso)
+```
+
+Utile per visualizzare percorsi prima di estrudere, debuggare costruzioni complesse di path, o semplicemente disegnare wireframe 3D.
+
+**Controllo visibilità:**
+- Pulsante **Lines** nella toolbar del viewport
+- Comandi DSL: `(show-lines)` / `(hide-lines)`
+- Stato: `(lines-visible?)`"
+      :examples
+      {:follow-basic {:caption "Disegnare una curva"
+                      :description "`follow-path` traccia il percorso in 3D, mostrando la curva che la tartaruga seguirebbe durante un'estrusione."}
+       :follow-visibility {:caption "Visibilità"
+                           :description "Usa `hide-lines` / `show-lines` per alternare la visibilità di tutte le linee dei percorsi. Utile quando le linee si sovrappongono alla geometria."}}}
+
      :mark-goto-pushpop
      {:title "Marcatori, Path e Stack di Stato"
       :content "Quando crei geometrie complesse, spesso devi tornare a posizioni precedenti o diramarti da un punto. Ridley fornisce due meccanismi:
@@ -2222,8 +2301,8 @@ Eredita dalla globale `(resolution :n ...)`. Per la sperimentazione usa valori b
                      :description "`bloft` fa il loft di un cerchio lungo un path curvo. A differenza di `loft`, gestisce curve strette senza auto-intersezione."}
        :bloft-taper {:caption "Bloft rastremato"
                      :description "Le funzioni di trasformazione funzionano come con `loft` — qui scalando per creare un tubo rastremato lungo una curva stretta."}
-       :bloft-steps {:caption "Più smooth con più step"
-                     :description "`bloft-n 64` usa più step per un risultato più smooth. Usa valori alti per i render finali."}}}
+       :bloft-steps {:caption "Serpente smooth con :steps"
+                     :description "`bezier-as` accetta `:steps` per controllare il numero di punti di interpolazione per segmento bezier — valori più alti producono curve più smooth senza cambiare la `resolution` globale. Combinato con `tapered` e `bloft-n` per un risultato curato."}}}
      :colors-materials
      {:title "Colori e Materiali"
       :content "Ogni mesh può avere le proprie proprietà di colore e materiale. Impostale **prima** di creare la geometria — si applicano a tutte le mesh create successivamente.

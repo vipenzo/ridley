@@ -298,6 +298,7 @@
    ;; Scene registry
    'add-mesh!           registry/add-mesh!
    'register-mesh!      registry/register-mesh!
+   'claim-mesh!         registry/claim-mesh!
    'show-mesh!          registry/show-mesh!
    'hide-mesh!          registry/hide-mesh!
    'show-mesh-ref!      registry/show-mesh-ref!

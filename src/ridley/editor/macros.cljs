@@ -886,15 +886,17 @@
                 (and (map? value#) (= :shape (:type value#)))
                 (register-shape! name-kw# value#)
 
-                ;; Vector of meshes - add each anonymously
+                ;; Vector of meshes — register each with sub-name for prefix matching
                 (mesh-vector? value#)
-                (doseq [mesh# value#]
-                  (add-mesh! mesh#))
+                (doseq [[i# mesh#] (map-indexed vector value#)]
+                  (claim-mesh! mesh#)
+                  (register-mesh! (keyword (str (name name-kw#) \"/\" i#)) mesh#))
 
-                ;; Map of meshes — runtime map, add anonymously
+                ;; Map of meshes — register each with sub-name for prefix matching
                 (mesh-map? value#)
-                (doseq [[_# mesh#] value#]
-                  (add-mesh! mesh#))
+                (doseq [[k# mesh#] value#]
+                  (claim-mesh! mesh#)
+                  (register-mesh! (keyword (str (name name-kw#) \"/\" (name k#))) mesh#))
 
                 ;; Path (has :type :path) — abstract, no visibility
                 (and (map? value#) (= :path (:type value#)))
@@ -972,7 +974,7 @@
    (defn show
      ([name-or-coll]
       (cond
-        ;; Name (keyword/string/symbol) - try mesh and panel
+        ;; Name (keyword/string/symbol) - try mesh, panel, then registered value
         (or (keyword? name-or-coll) (string? name-or-coll) (symbol? name-or-coll))
         (let [kw (if (keyword? name-or-coll) name-or-coll (keyword name-or-coll))]
           (show-mesh! kw)
@@ -998,7 +1000,7 @@
    (defn hide
      ([name-or-coll]
       (cond
-        ;; Name (keyword/string/symbol) - try mesh and panel
+        ;; Name (keyword/string/symbol) - try mesh, panel, then registered value
         (or (keyword? name-or-coll) (string? name-or-coll) (symbol? name-or-coll))
         (let [kw (if (keyword? name-or-coll) name-or-coll (keyword name-or-coll))]
           (hide-mesh! kw)
@@ -1523,7 +1525,7 @@
    ;; These symbols may be let-bound locals that need to be captured at runtime.
    (defn- collect-arg-symbols [form]
      (cond
-       (symbol? form) #{form}
+       (symbol? form) (if (= '_ form) #{} #{form})
        (and (list? form) (seq form))
        (reduce into #{} (map collect-arg-symbols (rest form)))
        (vector? form)

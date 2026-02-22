@@ -516,5 +516,13 @@
         rmag (Math/sqrt (+ (* rx rx) (* ry ry) (* rz rz)))
         right (if (pos? rmag)
                 [(/ rx rmag) (/ ry rmag) (/ rz rmag)]
-                [0 1 0])]
-    (manifold/slice-at-plane mesh heading pos right up)))
+                [0 1 0])
+        shapes (manifold/slice-at-plane mesh heading pos right up)
+        ;; The slice basis uses right = up × heading (det=+1, needed for Manifold),
+        ;; but stamp uses right = heading × up (opposite sign on X axis).
+        ;; Mirror X and reverse point order to match the stamp coordinate frame.
+        mirror (fn [pts] (mapv (fn [[x y]] [(- x) y]) (vec (rseq pts))))]
+    (mapv (fn [shape]
+            (cond-> (update shape :points mirror)
+              (:holes shape) (update :holes (fn [hs] (mapv mirror hs)))))
+          shapes)))

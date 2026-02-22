@@ -650,18 +650,53 @@
            (when m
              (let [^js cs (.slice m 0)
                    ^js polys (.toPolygons cs)
-                   ;; Convert JS polygons to Ridley shapes
-                   shapes (vec
-                           (for [i (range (.-length polys))
-                                 :let [^js poly (aget polys i)
-                                       pts (vec (for [j (range (.-length poly))
-                                                      :let [^js pt (aget poly j)]]
-                                                  [(aget pt 0) (aget pt 1)]))]
-                                 :when (>= (count pts) 3)]
-                             {:type :shape
-                              :points pts
-                              :centered? false
-                              :preserve-position? true}))]
+                   ;; Convert JS polygons to contour vectors
+                   contours (vec
+                             (for [i (range (.-length polys))
+                                   :let [^js poly (aget polys i)
+                                         pts (vec (for [j (range (.-length poly))
+                                                        :let [^js pt (aget poly j)]]
+                                                    [(aget pt 0) (aget pt 1)]))]
+                                   :when (>= (count pts) 3)]
+                               pts))
+                   ;; Signed area: positive = CCW (outer), negative = CW (hole)
+                   signed-area (fn [pts]
+                                 (let [n (count pts)]
+                                   (* 0.5
+                                      (reduce
+                                       (fn [sum i]
+                                         (let [[x1 y1] (nth pts i)
+                                               [x2 y2] (nth pts (mod (inc i) n))]
+                                           (+ sum (- (* x1 y2) (* x2 y1)))))
+                                       0 (range n)))))
+                   ;; Classify contours
+                   outers (filterv #(pos? (signed-area %)) contours)
+                   holes  (filterv #(neg? (signed-area %)) contours)
+                   ;; Point-in-polygon test (ray casting)
+                   point-in-poly? (fn [[px py] poly]
+                                    (let [n (count poly)]
+                                      (loop [i 0, inside? false]
+                                        (if (>= i n)
+                                          inside?
+                                          (let [[xi yi] (nth poly i)
+                                                [xj yj] (nth poly (mod (inc i) n))
+                                                crosses? (and (not= (> yi py) (> yj py))
+                                                              (< px (+ xi (* (/ (- py yi) (- yj yi))
+                                                                             (- xj xi)))))]
+                                            (recur (inc i) (if crosses? (not inside?) inside?)))))))
+                   ;; Assign each hole to its containing outer contour
+                   shapes (mapv
+                           (fn [outer]
+                             (let [my-holes (filterv
+                                            (fn [hole]
+                                              (point-in-poly? (first hole) outer))
+                                            holes)]
+                               (cond-> {:type :shape
+                                        :points outer
+                                        :centered? false
+                                        :preserve-position? true}
+                                 (seq my-holes) (assoc :holes my-holes))))
+                           outers)]
                (.delete m)
                (.delete cs)
                shapes)))

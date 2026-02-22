@@ -1546,13 +1546,12 @@
 ;; ============================================================
 
 (defn ^:export path-total-length
-  "Calculate total arc length of a path by summing positive :f distances."
+  "Calculate total arc length of a path by summing absolute distances of all movement commands."
   [path]
   (if (path? path)
     (->> (:commands path)
-         (filter #(= :f (:cmd %)))
-         (map #(first (:args %)))
-         (filter pos?)
+         (filter #(#{:f :u :rt :lt} (:cmd %)))
+         (map #(Math/abs (first (:args %))))
          (reduce + 0))
     0))
 
@@ -1611,6 +1610,25 @@
                         rad (deg->rad angle)
                         new-up (rotate-around-axis up heading rad)]
                     (recur (rest cmds) pos heading new-up cumulative))
+              ;; Lateral movement commands — contribute to arc length like :f
+              (:u :rt :lt)
+              (let [d (first (:args cmd))
+                    abs-d (Math/abs d)
+                    dir (case (:cmd cmd)
+                          :u  up
+                          :rt (normalize (cross heading up))
+                          :lt (v* (normalize (cross heading up)) -1))]
+                (if (and (pos? abs-d) (>= (+ cumulative abs-d) dist))
+                  ;; Target is in this segment - interpolate position
+                  (let [remaining (- dist cumulative)
+                        frac (/ remaining abs-d)
+                        final-pos (v+ pos (v* dir (* d frac)))]
+                    {:position final-pos :heading heading :up up})
+                  ;; Continue to next segment
+                  (recur (rest cmds)
+                         (v+ pos (v* dir d))
+                         heading up
+                         (+ cumulative abs-d))))
               ;; Unknown command - skip
               (recur (rest cmds) pos heading up cumulative))
             ;; End of commands - return final position if we reached the target
