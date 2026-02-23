@@ -644,7 +644,9 @@
                                (+ (* ux dx) (* uy dy) (* uz dz))
                                (+ (* nx dx) (* ny dy) (* nz dz))]))
                xformed-verts (mapv xform-vert (:vertices ridley-mesh))
-               xformed-mesh (assoc ridley-mesh :vertices xformed-verts)
+               xformed-mesh (-> ridley-mesh
+                                (assoc :vertices xformed-verts)
+                                (dissoc ::manifold-cache))
                ;; Create Manifold from transformed mesh and slice at Z=0
                ^js m (mesh->manifold xformed-mesh)]
            (when m
