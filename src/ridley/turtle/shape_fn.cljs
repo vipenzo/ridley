@@ -439,12 +439,16 @@
                     (let [v (aget data i)]
                       (recur (inc i) (if (js/isFinite v) (max m v) m)))))
           z-range (- z-max z-min)]
-      (when (> z-range 0)
+      (if (> z-range 0)
         (dotimes [i n]
           (let [v (aget data i)]
             (aset data i (if (js/isFinite v)
                            (/ (- v z-min) z-range)
-                           0)))))
+                           0))))
+        ;; z-range = 0: binary heightmap (finite → 1, -Inf → 0)
+        (dotimes [i n]
+          (let [v (aget data i)]
+            (aset data i (if (js/isFinite v) 1.0 0)))))
       {:type :heightmap
        :data data
        :width w :height h

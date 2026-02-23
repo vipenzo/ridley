@@ -1,8 +1,8 @@
 (ns ridley.editor.operations
   "Pure generative operations: extrude, loft, bloft, revolve.
-   These functions read turtle-atom for initial state but don't mutate it
+   These functions read turtle state for initial state but don't mutate it
    (except legacy implicit-extrude-path)."
-  (:require [ridley.editor.state :refer [turtle-atom] :as state]
+  (:require [ridley.editor.state :as state]
             [ridley.turtle.core :as turtle]
             [ridley.turtle.shape :as shape]
             [ridley.turtle.transform :as xform]
@@ -46,7 +46,7 @@
   (let [shapes (if (vector? shape-or-shapes) shape-or-shapes [shape-or-shapes])
         ;; Start from current turtle position/orientation
         ;; Also copy joint-mode and resolution settings
-        current-turtle @turtle-atom
+        current-turtle @@state/turtle-state-var
         initial-state (if current-turtle
                         (-> (turtle/make-turtle)
                             (assoc :position (:position current-turtle))
@@ -54,7 +54,9 @@
                             (assoc :up (:up current-turtle))
                             (assoc :joint-mode (:joint-mode current-turtle))
                             (assoc :resolution (:resolution current-turtle))
-                            (assoc :material (:material current-turtle)))
+                            (assoc :material (:material current-turtle))
+                            (assoc :preserve-up (:preserve-up current-turtle))
+                            (assoc :reference-up (:reference-up current-turtle)))
                         (turtle/make-turtle))
         ;; Extrude each shape, collecting results
         results (reduce
@@ -86,7 +88,7 @@
     (pure-loft-path shape-or-shapes (fn [s _] s) path)
     ;; Normal path: standard extrude
     (let [shapes (if (vector? shape-or-shapes) shape-or-shapes [shape-or-shapes])
-          current-turtle @turtle-atom
+          current-turtle @@state/turtle-state-var
           initial-state (if current-turtle
                           (-> (turtle/make-turtle)
                               (assoc :position (:position current-turtle))
@@ -161,7 +163,7 @@
   ([shape-or-shapes transform-fn path] (pure-loft-path shape-or-shapes transform-fn path 16))
   ([shape-or-shapes transform-fn path steps]
    (let [shapes (unwrap-shapes shape-or-shapes)
-         current-turtle @turtle-atom
+         current-turtle @@state/turtle-state-var
          initial-state (if current-turtle
                          (-> (turtle/make-turtle)
                              (assoc :position (:position current-turtle))
@@ -226,7 +228,7 @@
   ([shape-or-shapes transform-fn path steps] (pure-bloft shape-or-shapes transform-fn path steps 0.1))
   ([shape-or-shapes transform-fn path steps threshold]
    (let [shapes (unwrap-shapes shape-or-shapes)
-         current-turtle @turtle-atom
+         current-turtle @@state/turtle-state-var
          initial-state (if current-turtle
                          (-> (turtle/make-turtle)
                              (assoc :position (:position current-turtle))
@@ -330,14 +332,16 @@
   ([shape-or-shapes] (pure-revolve shape-or-shapes 360))
   ([shape-or-shapes angle]
    (let [shapes (unwrap-shapes shape-or-shapes)
-         current-turtle @turtle-atom
+         current-turtle @@state/turtle-state-var
          initial-state (if current-turtle
                          (-> (turtle/make-turtle)
                              (assoc :position (:position current-turtle))
                              (assoc :heading (:heading current-turtle))
                              (assoc :up (:up current-turtle))
                              (assoc :resolution (:resolution current-turtle))
-                             (assoc :material (:material current-turtle)))
+                             (assoc :material (:material current-turtle))
+                             (assoc :preserve-up (:preserve-up current-turtle))
+                             (assoc :reference-up (:reference-up current-turtle)))
                          (turtle/make-turtle))
          results (reduce
                   (fn [acc shape]
@@ -358,14 +362,16 @@
   ([shape-fn-val] (pure-revolve-shape-fn shape-fn-val 360))
   ([shape-fn-val angle]
    (let [base-shape (shape-fn-val 0)
-         current-turtle @turtle-atom
+         current-turtle @@state/turtle-state-var
          initial-state (if current-turtle
                          (-> (turtle/make-turtle)
                              (assoc :position (:position current-turtle))
                              (assoc :heading (:heading current-turtle))
                              (assoc :up (:up current-turtle))
                              (assoc :resolution (:resolution current-turtle))
-                             (assoc :material (:material current-turtle)))
+                             (assoc :material (:material current-turtle))
+                             (assoc :preserve-up (:preserve-up current-turtle))
+                             (assoc :reference-up (:reference-up current-turtle)))
                          (turtle/make-turtle))
          result-state (turtle/revolve-shape initial-state base-shape angle shape-fn-val)
          mesh (last (:meshes result-state))]
@@ -375,12 +381,12 @@
 (defn ^:export implicit-extrude-path [shape-or-shapes path]
   ;; Handle both single shape and vector of shapes (from text-shape)
   (let [shapes (if (vector? shape-or-shapes) shape-or-shapes [shape-or-shapes])
-        start-pos (:position @turtle-atom)]
+        start-pos (:position @@state/turtle-state-var)]
     (doseq [shape shapes]
       ;; Reset to start position for each shape
-      (swap! turtle-atom assoc :position start-pos)
-      (swap! turtle-atom turtle/extrude-from-path shape path))
+      (swap! @state/turtle-state-var assoc :position start-pos)
+      (swap! @state/turtle-state-var turtle/extrude-from-path shape path))
     ;; Return last mesh (or all meshes for multiple shapes)
     (if (= 1 (count shapes))
-      (last (:meshes @turtle-atom))
-      (vec (take-last (count shapes) (:meshes @turtle-atom))))))
+      (last (:meshes @@state/turtle-state-var))
+      (vec (take-last (count shapes) (:meshes @@state/turtle-state-var))))))

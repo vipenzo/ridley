@@ -623,3 +623,153 @@
       (is (nil? error) (str "attach with rotation error: " error))
       (is (map? result))
       (is (seq (:vertices result))))))
+
+;; ── 23. Turtle scope macro ──────────────────────────────
+
+(deftest turtle-scope-isolation
+  (testing "turtle scope does not affect outer position"
+    (let [{:keys [turtle error]}
+          (h/eval-dsl "(do (f 10) (turtle (f 20)) (turtle-position))")]
+      (is (nil? error) (str "turtle scope error: " error))
+      (is (v-approx= [10 0 0] (:position turtle))
+          "Outer position should be [10 0 0], inner (f 20) should be isolated"))))
+
+(deftest turtle-scope-inherits-pose
+  (testing "turtle scope clones parent pose"
+    (let [{:keys [result error]}
+          (h/eval-dsl "(do (f 10) (th 45) (turtle (turtle-position)))")]
+      (is (nil? error))
+      (is (v-approx= [10 0 0] result)
+          "Child should start at parent's position"))))
+
+(deftest turtle-scope-nested
+  (testing "nested turtle scopes compose correctly"
+    (let [{:keys [result error]}
+          (h/eval-dsl "(do (f 10)
+                           (turtle (f 20)
+                             (turtle (f 30)
+                               (turtle-position))))")]
+      (is (nil? error))
+      (is (v-approx= [60 0 0] result)
+          "Nested scopes should accumulate: 10 + 20 + 30 = 60"))))
+
+(deftest turtle-scope-reset
+  (testing "turtle :reset starts from origin"
+    (let [{:keys [result error]}
+          (h/eval-dsl "(do (f 10) (turtle :reset (turtle-position)))")]
+      (is (nil? error))
+      (is (v-approx= [0 0 0] result)
+          ":reset should start from origin"))))
+
+(deftest turtle-scope-with-position
+  (testing "turtle with position vector overrides starting position"
+    (let [{:keys [result error]}
+          (h/eval-dsl "(turtle [5 5 0] (turtle-position))")]
+      (is (nil? error))
+      (is (v-approx= [5 5 0] result)
+          "Should start at specified position"))))
+
+(deftest turtle-scope-with-options-map
+  (testing "turtle with options map sets position and heading"
+    (let [{:keys [result error]}
+          (h/eval-dsl "(turtle {:pos [0 0 10] :heading [0 0 1] :up [1 0 0]}
+                         (f 5)
+                         (turtle-position))")]
+      (is (nil? error))
+      (is (v-approx= [0 0 15] result)
+          "Should move 5 along [0 0 1] heading from [0 0 10]"))))
+
+(deftest turtle-scope-extrude-works
+  (testing "extrude inside turtle scope produces valid mesh"
+    (let [{:keys [result error]}
+          (h/eval-dsl "(turtle (extrude (circle 5) (f 20)))")]
+      (is (nil? error) (str "extrude in turtle scope error: " error))
+      (is (map? result))
+      (is (seq (:vertices result)))
+      (is (seq (:faces result))))))
+
+(deftest turtle-scope-settings-inherit
+  (testing "turtle scope inherits resolution from parent"
+    (let [{:keys [result error]}
+          (h/eval-dsl "(do (resolution :n 8) (turtle (circle 5)))")]
+      (is (nil? error))
+      (is (= 8 (count (:points result)))
+          "Circle in child scope should use parent's resolution"))))
+
+;; ── 24. Preserve-up mode ──────────────────────────────────
+
+(deftest preserve-up-th-keeps-up-stable
+  (testing "th with preserve-up keeps up vector aligned with reference-up"
+    (let [{:keys [turtle error]}
+          (h/eval-dsl "(turtle :preserve-up (dotimes [_ 100] (th 3.6)) (get-turtle))")]
+      (is (nil? error))
+      ;; After 100 * 3.6 = 360 degrees of yaw, up should still be [0 0 1]
+      (is (v-approx= [0 0 1] (:up turtle) 0.01)
+          "Up should remain [0 0 1] after full rotation with preserve-up"))))
+
+(deftest preserve-up-tv-keeps-up-stable
+  (testing "tv with preserve-up re-orthogonalizes up toward reference-up"
+    (let [{:keys [result error]}
+          (h/eval-dsl
+           "(turtle :preserve-up
+              (tv 45)
+              (turtle-up))")]
+      (is (nil? error))
+      ;; After tv 45, heading pitches up. Up should be re-orthogonalized
+      ;; to stay as close to [0 0 1] as possible while perpendicular to heading
+      (let [[_ux _uy uz] result]
+        (is (> uz 0.5) "Up z-component should remain positive after tv 45")))))
+
+(deftest preserve-up-spiral-no-roll
+  (testing "Spiral with th+tv in preserve-up doesn't accumulate roll"
+    (let [{:keys [result error]}
+          (h/eval-dsl
+           "(turtle :preserve-up
+              (dotimes [_ 85] (f 3) (th 8.6) (tv 0.5))
+              (turtle-up))")]
+      (is (nil? error))
+      ;; After 85 steps of th+tv, without preserve-up the up vector drifts
+      ;; significantly. With preserve-up, it should stay close to [0 0 1]
+      (let [[_ux _uy uz] result]
+        (is (> uz 0.5) "Up z-component should remain significantly positive")))))
+
+(deftest preserve-up-tr-still-works
+  (testing "tr (explicit roll) still works inside preserve-up scope"
+    (let [{:keys [result error]}
+          (h/eval-dsl
+           "(turtle :preserve-up
+              (tr 90)
+              (turtle-up))")]
+      (is (nil? error))
+      ;; tr 90 should rotate up around heading axis
+      ;; heading is [1 0 0], up was [0 0 1], tr 90 → up becomes [0 -1 0]
+      (is (v-approx= [0 -1 0] result 0.01)
+          "tr should still work normally in preserve-up mode"))))
+
+(deftest preserve-up-inherited-by-child
+  (testing "Child turtle scope inherits preserve-up from parent"
+    (let [{:keys [result error]}
+          (h/eval-dsl
+           "(turtle :preserve-up
+              (turtle
+                (dotimes [_ 50] (th 7.2) (tv 1))
+                (turtle-up)))")]
+      (is (nil? error))
+      (let [[_ux _uy uz] result]
+        (is (> uz 0.5)
+            "Child should inherit preserve-up and keep up stable")))))
+
+(deftest preserve-up-not-inherited-with-reset
+  (testing ":reset does not inherit preserve-up"
+    (let [{:keys [result error]}
+          (h/eval-dsl
+           "(turtle :preserve-up
+              (turtle :reset
+                (dotimes [_ 10] (tv 30) (th 90))
+                (turtle-up)))")]
+      (is (nil? error))
+      ;; Without preserve-up, tv 30 + th 90 repeated causes significant roll drift.
+      ;; With preserve-up, up would stay close to [0 0 1]. Without it, up drifts.
+      (let [[_ux _uy uz] result]
+        (is (< uz 0.8)
+            "Reset should not inherit preserve-up, so up should drift")))))

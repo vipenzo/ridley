@@ -1,6 +1,6 @@
 (ns ridley.editor.text-ops
   "Text extrusion and text-on-path operations."
-  (:require [ridley.editor.state :refer [turtle-atom]]
+  (:require [ridley.editor.state :as state]
             [ridley.turtle.core :as turtle]
             [ridley.turtle.text :as text]
             [ridley.manifold.core :as manifold]))
@@ -124,9 +124,9 @@
    Returns vector of meshes, one per character."
   [txt & {:keys [size depth font] :or {size 10 depth 5}}]
   (let [glyph-data (text/text-glyph-data txt :size size :font font)
-        start-pos (:position @turtle-atom)
-        heading (:heading @turtle-atom)
-        up (:up @turtle-atom)
+        start-pos (:position @@state/turtle-state-var)
+        heading (:heading @@state/turtle-state-var)
+        up (:up @@state/turtle-state-var)
         meshes (atom [])]
     (doseq [{:keys [contours x-offset]} glyph-data]
       (when (seq contours)
@@ -158,7 +158,7 @@
                                              :heading heading
                                              :up up})]
                   (swap! meshes conj mesh-with-pose)
-                  (swap! turtle-atom update :meshes conj mesh-with-pose))))))))
+                  (swap! @state/turtle-state-var update :meshes conj mesh-with-pose))))))))
     @meshes))
 
 (defn ^:export implicit-text-on-path
@@ -194,9 +194,11 @@
                        (/ path-len text-len)
                        1.0)
         ;; Get turtle's starting orientation for path sampling
-        turtle-pos (:position @turtle-atom)
-        turtle-heading (:heading @turtle-atom)
-        turtle-up (:up @turtle-atom)
+        turtle-pos (:position @@state/turtle-state-var)
+        turtle-heading (:heading @@state/turtle-state-var)
+        turtle-up (:up @@state/turtle-state-var)
+        turtle-preserve-up (:preserve-up @@state/turtle-state-var)
+        turtle-reference-up (:reference-up @@state/turtle-state-var)
         meshes (atom [])]
     ;; x-offset in glyph-data is already cumulative, so we use it directly
     ;; We only need to add start-offset (for alignment) and apply scale-factor
@@ -213,7 +215,9 @@
                      :wrap? (= overflow :wrap)
                      :start-pos turtle-pos
                      :start-heading turtle-heading
-                     :start-up turtle-up)]
+                     :start-up turtle-up
+                     :preserve-up turtle-preserve-up
+                     :reference-up turtle-reference-up)]
         (when (and sample (seq contours))
           (let [{:keys [position heading up]} sample
                 {:keys [outer holes]} (classify-glyph-contours contours)
@@ -236,5 +240,5 @@
                         with-pose (assoc transformed :creation-pose
                                          {:position glyph-position :heading heading :up up})]
                     (swap! meshes conj with-pose)
-                    (swap! turtle-atom update :meshes conj with-pose)))))))))
+                    (swap! @state/turtle-state-var update :meshes conj with-pose)))))))))
     @meshes))

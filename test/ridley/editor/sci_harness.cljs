@@ -1,6 +1,6 @@
 (ns ridley.editor.sci-harness
   "Minimal SCI evaluation harness for testing DSL macro behavior.
-   Uses production macro-defs and shared turtle-atom, with lightweight
+   Uses production macro-defs and shared turtle-state-var, with lightweight
    implicit commands (no browser/registry/viewport dependencies).
 
    Usage in tests:
@@ -20,71 +20,61 @@
 ;; ── Turtle lifecycle ──────────────────────────────────────
 
 (defn- reset-turtle! []
-  (reset! state/turtle-atom (turtle/make-turtle)))
+  (reset! @state/turtle-state-var (turtle/make-turtle)))
 
 (defn get-turtle []
-  @state/turtle-atom)
+  @@state/turtle-state-var)
 
-;; ── Implicit commands (mutate shared turtle-atom) ─────────
+;; ── Implicit commands (mutate shared turtle-state-var) ────
 ;; Simplified versions without registry/viewport side effects.
 
 (defn- implicit-f [dist]
-  (swap! state/turtle-atom turtle/f dist))
+  (swap! @state/turtle-state-var turtle/f dist))
 
 (defn- implicit-th [angle]
-  (swap! state/turtle-atom turtle/th angle))
+  (swap! @state/turtle-state-var turtle/th angle))
 
 (defn- implicit-tv [angle]
-  (swap! state/turtle-atom turtle/tv angle))
+  (swap! @state/turtle-state-var turtle/tv angle))
 
 (defn- implicit-tr [angle]
-  (swap! state/turtle-atom turtle/tr angle))
+  (swap! @state/turtle-state-var turtle/tr angle))
 
 (defn- implicit-pen [mode]
-  (swap! state/turtle-atom turtle/pen mode))
-
-(defn- implicit-reset
-  ([] (reset-turtle!))
-  ([pos] (reset! state/turtle-atom (turtle/reset-pose (turtle/make-turtle) pos))))
+  (swap! @state/turtle-state-var turtle/pen mode))
 
 (defn- implicit-resolution [mode value]
-  (swap! state/turtle-atom turtle/resolution mode value))
+  (swap! @state/turtle-state-var turtle/resolution mode value))
 
 (defn- implicit-joint-mode [mode]
-  (swap! state/turtle-atom turtle/joint-mode mode))
+  (swap! @state/turtle-state-var turtle/joint-mode mode))
 
 (defn- implicit-arc-h [radius angle & {:keys [steps]}]
-  (swap! state/turtle-atom turtle/arc-h radius angle :steps steps))
+  (swap! @state/turtle-state-var turtle/arc-h radius angle :steps steps))
 
 (defn- implicit-arc-v [radius angle & {:keys [steps]}]
-  (swap! state/turtle-atom turtle/arc-v radius angle :steps steps))
+  (swap! @state/turtle-state-var turtle/arc-v radius angle :steps steps))
 
 (defn- implicit-bezier-to [target & args]
-  (swap! state/turtle-atom #(apply turtle/bezier-to % target args)))
+  (swap! @state/turtle-state-var #(apply turtle/bezier-to % target args)))
 
 (defn- implicit-bezier-as [p & args]
-  (swap! state/turtle-atom #(apply turtle/bezier-as % p args)))
-
-(defn- implicit-push-state []
-  (swap! state/turtle-atom turtle/push-state))
-
-(defn- implicit-pop-state []
-  (swap! state/turtle-atom turtle/pop-state))
+  (swap! @state/turtle-state-var #(apply turtle/bezier-as % p args)))
 
 (defn- implicit-goto [name]
-  (swap! state/turtle-atom turtle/goto name))
+  (swap! @state/turtle-state-var turtle/goto name))
 
 (defn- implicit-look-at [name]
-  (swap! state/turtle-atom turtle/look-at name))
+  (swap! @state/turtle-state-var turtle/look-at name))
 
 (defn- implicit-run-path [p]
-  (swap! state/turtle-atom turtle/run-path p))
+  (swap! @state/turtle-state-var turtle/run-path p))
 
 ;; ── Resolution-aware circle ───────────────────────────────
 
 (defn- circle-with-resolution [radius & [segments]]
   (let [res (or segments
-                (let [{:keys [mode value]} (or (:resolution @state/turtle-atom) {:mode :n :value 16})]
+                (let [{:keys [mode value]} (or (:resolution @@state/turtle-state-var) {:mode :n :value 16})]
                   (case mode :n value :a (max 8 (int (Math/ceil (/ 360 value)))) value)))]
     (shape/circle-shape radius res)))
 
@@ -97,7 +87,6 @@
    'tv           implicit-tv
    'tr           implicit-tr
    'pen-impl     implicit-pen
-   'reset        implicit-reset
    'joint-mode   implicit-joint-mode
    'resolution   implicit-resolution
    ;; Arcs
@@ -106,21 +95,21 @@
    ;; Bezier
    'bezier-to    implicit-bezier-to
    'bezier-as    implicit-bezier-as
-   ;; State stack
-   'push-state   implicit-push-state
-   'pop-state    implicit-pop-state
    ;; Navigation
    'goto         implicit-goto
    'look-at      implicit-look-at
    'follow-path  implicit-run-path
    ;; Turtle state access
-   'turtle       turtle/make-turtle
+   'make-turtle  turtle/make-turtle
    'get-turtle   get-turtle
-   'get-turtle-resolution (fn [] (or (:resolution @state/turtle-atom) {:mode :n :value 16}))
-   'get-turtle-joint-mode (fn [] (or (:joint-mode @state/turtle-atom) :flat))
-   'turtle-position (fn [] (:position @state/turtle-atom))
-   'turtle-heading  (fn [] (:heading @state/turtle-atom))
-   'turtle-up       (fn [] (:up @state/turtle-atom))
+   ;; Turtle scope (SCI dynamic var + init fn for turtle macro)
+   '*turtle-state* state/turtle-state-var
+   'init-turtle  state/init-turtle
+   'get-turtle-resolution (fn [] (or (:resolution @@state/turtle-state-var) {:mode :n :value 16}))
+   'get-turtle-joint-mode (fn [] (or (:joint-mode @@state/turtle-state-var) :flat))
+   'turtle-position (fn [] (:position @@state/turtle-state-var))
+   'turtle-heading  (fn [] (:heading @@state/turtle-state-var))
+   'turtle-up       (fn [] (:up @@state/turtle-state-var))
    ;; Pure turtle functions (used by run-path in macro-defs)
    'turtle-f     turtle/f
    'turtle-th    turtle/th
@@ -218,6 +207,14 @@
                           :tv (implicit-tv (first args))
                           :tr (implicit-tr (first args))
                           nil)))
+   ;; Source tracking (used by macro-defs wrappers)
+   'add-source      (fn [mesh op-info]
+                      (if (and (map? mesh) (:vertices mesh))
+                        (update mesh :source-history (fnil conj []) op-info)
+                        mesh))
+   'source-ref      (fn [_] nil)
+   '*eval-source*   state/eval-source-var
+   '*eval-text*     state/eval-text-var
    ;; Stubs for browser-only symbols referenced by macro-defs
    'register-mesh!      (fn [& _] nil)
    'show-mesh!          (fn [& _] nil)
@@ -282,11 +279,11 @@
       ;; Load production macros
       (sci/eval-string macros/macro-defs ctx)
       (let [result (sci/eval-string code ctx)]
-        {:turtle @state/turtle-atom
+        {:turtle @@state/turtle-state-var
          :result result
          :error nil}))
     (catch :default e
-      {:turtle @state/turtle-atom
+      {:turtle @@state/turtle-state-var
        :result nil
        :error (.-message e)})))
 
@@ -299,10 +296,10 @@
     (let [ctx (sci/init {:bindings base-bindings})]
       (sci/eval-string macros/macro-defs ctx)
       (let [result (last (mapv #(sci/eval-string % ctx) codes))]
-        {:turtle @state/turtle-atom
+        {:turtle @@state/turtle-state-var
          :result result
          :error nil}))
     (catch :default e
-      {:turtle @state/turtle-atom
+      {:turtle @@state/turtle-state-var
        :result nil
        :error (.-message e)})))

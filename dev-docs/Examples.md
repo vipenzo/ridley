@@ -990,15 +990,12 @@ Requires manifold-3d WASM module (loaded automatically from CDN).
 ### Mesh Validation
 
 ```clojure
-;; Create a mesh
-(box 20)
+(def b (box 20))
 
-;; Check if the mesh is valid (watertight, no self-intersections)
-(manifold? (first (:meshes (get-turtle))))
+(manifold? b)
 ;; => true
 
-;; Get detailed status
-(mesh-status (first (:meshes (get-turtle))))
+(mesh-status b)
 ;; => {:manifold? true, :status :ok, :volume 8000, :surface-area 2400}
 ```
 
@@ -1007,17 +1004,9 @@ Requires manifold-3d WASM module (loaded automatically from CDN).
 Combine two meshes into one:
 
 ```clojure
-;; Create first mesh
-(box 20)
-(def mesh-a (first (:meshes (get-turtle))))
-
-;; Create second mesh (overlapping)
-(f 15)
-(sphere 12)
-(def mesh-b (second (:meshes (get-turtle))))
-
-;; Union: A + B
-(mesh-union mesh-a mesh-b)
+(def a (box 30))
+(def b (attach (cyl 12 40) (f 15) (tv 90) (f 15) (tv -90)))
+(register ab (mesh-union a b))
 ```
 
 ### Boolean Difference
@@ -1026,14 +1015,9 @@ Subtract one mesh from another:
 
 ```clojure
 ;; Box with spherical hole
-(box 30)
-(def base (first (:meshes (get-turtle))))
-
-(sphere 18)
-(def cutter (second (:meshes (get-turtle))))
-
-;; Difference: A - B
-(mesh-difference base cutter)
+(def base (box 30))
+(def cutter (sphere 18))
+(register hollow (mesh-difference base cutter))
 ```
 
 ### Boolean Intersection
@@ -1041,31 +1025,20 @@ Subtract one mesh from another:
 Keep only the overlapping region:
 
 ```clojure
-;; Create two overlapping shapes
-(box 25)
-(def a (first (:meshes (get-turtle))))
-
-(f 10)
-(box 25)
-(def b (second (:meshes (get-turtle))))
-
-;; Intersection: A ∩ B
-(mesh-intersection a b)
+(def a (box 25))
+(def b (attach (box 25) (f 10)))
+(register lens (mesh-intersection a b))
 ```
 
-### Practical Example: Dice
+### Practical Example: Rounded Cube
 
 ```clojure
-;; Definitions panel:
-(def dice-size 20)
-(def pip-radius 2.5)
-(def pip-depth 1.5)
-
-;; Create the base cube
-(box dice-size)
-
-;; Note: For a complete dice, you would create spheres at pip positions
-;; and use mesh-difference to subtract them from the cube.
+(def sz 20)
+(def r 5)
+(register dice
+  (mesh-intersection
+    (box sz)
+    (sphere (* sz 0.72))))
 ```
 
 ---

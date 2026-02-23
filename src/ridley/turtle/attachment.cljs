@@ -615,62 +615,6 @@
   [state]
   (some? (:attached state)))
 
-;; Note: attach and attach-face need push-state which is in core.cljs
-;; We'll need to pass push-state as a parameter or use a protocol
-;; For now, these functions will be kept in core.cljs and just call
-;; the helper functions from this module
-
-(defn attach-impl
-  "Implementation of attach - positions turtle at mesh's creation pose.
-   Requires push-state to be passed in since it's defined in core.cljs."
-  [state mesh push-state-fn]
-  (if-let [pose (:creation-pose mesh)]
-    (-> state
-        (push-state-fn)
-        (assoc :position (:position pose))
-        (assoc :heading (:heading pose))
-        (assoc :up (:up pose))
-        (assoc :attached {:type :pose
-                          :mesh mesh
-                          :original-pose pose}))
-    state))
-
-(defn attach-face-impl
-  "Implementation of attach-face - positions turtle at face center.
-   Requires push-state to be passed in since it's defined in core.cljs."
-  [state mesh face-id push-state-fn & {:keys [clone]}]
-  (if-let [face-groups (:face-groups mesh)]
-    (if-let [triangles (get face-groups face-id)]
-      (let [info (compute-face-info-internal (:vertices mesh) triangles)
-            normal (:normal info)
-            center (:center info)
-            ;; Derive up vector perpendicular to normal
-            face-heading (:heading info)
-            ;; up = normal × face-heading (perpendicular to both)
-            up (normalize (cross normal face-heading))]
-        (-> state
-            (push-state-fn)
-            (assoc :position center)
-            (assoc :heading normal)
-            (assoc :up up)
-            (assoc :attached {:type :face
-                              :mesh mesh
-                              :face-id face-id
-                              :face-info info
-                              :extrude-mode clone})))  ; flag: if true, f() extrudes
-      state)
-    state))
-
-(defn detach-impl
-  "Implementation of detach - restores previous position.
-   Requires pop-state to be passed in since it's defined in core.cljs."
-  [state pop-state-fn]
-  (if (:attached state)
-    (-> state
-        (pop-state-fn)
-        (assoc :attached nil))
-    state))
-
 ;; ============================================================
 ;; Group (rigid body) transformations
 ;; ============================================================

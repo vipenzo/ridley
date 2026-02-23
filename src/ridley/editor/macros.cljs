@@ -1480,6 +1480,44 @@
             (play! auto-name#)
             auto-name#))))
 
+   ;; ============================================================
+   ;; turtle: scoped turtle state
+   ;; ============================================================
+   ;; (turtle body...)                    — clone parent pose, isolated geometry
+   ;; (turtle :reset body...)             — fresh turtle at origin
+   ;; (turtle :preserve-up body...)       — enable preserve-up mode
+   ;; (turtle [x y z] body...)            — set position
+   ;; (turtle {:pos p :heading h} body...)— full options map
+
+   (defn- parse-turtle-opts
+     \"Parse turtle macro arguments into {:opts map :body forms}.
+      Consumes leading keywords (:reset, :preserve-up), vector (position),
+      or map with known keys. Everything else is body.\"
+     [args]
+     (loop [opts {} remaining (vec args)]
+       (if (empty? remaining)
+         {:opts opts :body []}
+         (let [x (first remaining)]
+           (cond
+             (= :reset x)
+             (recur (assoc opts :reset true) (subvec remaining 1))
+             (= :preserve-up x)
+             (recur (assoc opts :preserve-up true) (subvec remaining 1))
+             (vector? x)
+             (recur (assoc opts :pos x) (subvec remaining 1))
+             (and (map? x)
+                  (some #{:pos :heading :up :reset :preserve-up} (keys x)))
+             (recur (merge opts x) (subvec remaining 1))
+             :else
+             {:opts opts :body (vec remaining)})))))
+
+   (defmacro turtle [& args]
+     (let [{:keys [opts body]} (parse-turtle-opts args)
+           opts-form (if (empty? opts) {} opts)]
+       `(let [parent-state# @*turtle-state*]
+          (binding [*turtle-state* (atom (init-turtle ~opts-form parent-state#))]
+            ~@body))))
+
    ;; anim-proc-fn: like anim-proc! but returns a function.
    ;; Each call auto-generates a unique name.
    ;; Returns a fn that, when called, registers and plays the procedural animation,

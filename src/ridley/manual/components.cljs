@@ -98,7 +98,8 @@
       (fn [_]
         (when-let [on-copy (:on-copy @callbacks)]
           (on-copy code))))
-    (.appendChild buttons run-btn)
+    (when-not (:no-run example)
+      (.appendChild buttons run-btn))
     (.appendChild buttons copy-btn)
     (.appendChild block buttons)
     ;; Description

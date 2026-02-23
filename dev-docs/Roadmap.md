@@ -72,12 +72,11 @@
 
 **Goal**: Named reference points and navigation commands for complex models.
 
-### 2.5.1 Turtle State Stack ✓
-- [x] Add `:state-stack` to turtle state (vector of saved poses)
-- [x] `(push-state)` — save position/heading/up/pen-mode onto stack
-- [x] `(pop-state)` — restore most recent saved pose from stack
-- [x] `(clear-stack)` — clear stack without restoring
-- [x] Stack saves only pose, not meshes/geometry (those persist)
+### 2.5.1 Turtle State Stack ✓ → Replaced by Turtle Scoping
+- [x] ~~`push-state`/`pop-state`/`clear-stack`~~ (removed — replaced by `turtle` macro scopes)
+- [x] `turtle` macro with SCI dynamic binding for lexical scope isolation
+- [x] `:preserve-up` mode to prevent roll accumulation from th+tv combinations
+- [x] Scene accumulator separates visual output from turtle navigation state
 
 ### 2.5.2 Anchor System ✓
 - [x] Add `:anchors` map to turtle state `{:name {:position :heading :up}}`
@@ -93,7 +92,7 @@
 - [x] `(path-to :name)` — orient toward anchor (implicit look-at), return path with `(f dist)`
 
 ### 2.5.4 Design Decisions
-1. **Stack saves pose only**: position, heading, up, pen-mode. Meshes created during push/pop are kept.
+1. **Turtle scopes isolate state**: `turtle` macro creates lexically-scoped binding via SCI dynamic var
 2. **goto is oriented**: adopts the saved heading/up (no separate goto-oriented needed)
 3. **mark overwrites**: calling twice with same name keeps the latest
 4. **goto draws**: respects pen-mode like any movement command
@@ -611,49 +610,20 @@ Timeline-based animation engine reusing turtle commands for mesh and camera anim
 
 ## Current Focus
 
-**→ Phase 3: Turtle Attachment System** (ACTIVE)
+**→ Post Turtle Scope Refactor**
 
-The core turtle system, generative operations, boolean operations, and anchor/navigation system are complete. Now implementing the attachment system for face-based modeling.
-
-**Recent completions:**
-- ✓ `extrude-closed` with path pre-processing for manifold torus-like meshes
-- ✓ Manifold WASM integration (union, difference, intersection)
-- ✓ Scene registry with named meshes and visibility control
-- ✓ STL export
-- ✓ WebXR basic support
-- ✓ Joint modes for extrusion corners (flat, round, tapered)
-- ✓ CodeMirror editor with syntax highlighting and paredit
-- ✓ State stack (`push-state`, `pop-state`, `clear-stack`)
-- ✓ Anchors and navigation (`mark`, `goto`, `look-at`, `path-to`)
-- ✓ **Phase 3a: Foundation** — creation pose in meshes, inspection commands, face highlighting
-- ✓ **Phase 3b-c: Attachment** — `attach`, `attach-face`, `detach`, mesh move, face extrusion
-- ✓ **Phase 3d: Face inset** — `inset` operation
-- ✓ **Phase 3.5: Mesh manipulation** — `th`, `tv`, `tr` rotate mesh, `scale` mesh
-- ✓ **Convex Hull** — `mesh-hull` via Manifold
-- ✓ **Text Shapes** — `text-shape`, `text-shapes` via opentype.js with bundled Roboto fonts
+The core turtle system, generative operations, boolean operations, anchor/navigation system, and turtle scoping are complete.
 
 **Current sprint:**
 1. [ ] Face cutting (draw shape on face)
 2. [ ] Non-uniform scale `(scale [sx sy sz])`
 3. [ ] STL import — load external STL as reusable mesh in Ridley
-4. [x] 2D shape booleans — `(shape-union a b)`, `(shape-difference a b)`, `(shape-intersection a b)`, `(shape-xor a b)`, `(shape-offset shape delta)` via clipper2-js. Shapes with holes extrude correctly (holes-aware extrusion with caps, corners, and tunnel faces).
 
 **Recently completed:**
+- ✓ **Turtle Scope Refactor** — Major architecture change replacing the global mutable `turtle-atom` with SCI dynamic var `turtle-state-var` + `turtle` macro for lexical scoping. Added scene accumulator to separate visual output (lines, stamps) from turtle navigation state. Implemented `:preserve-up` mode to prevent roll accumulation from combined th+tv rotations. Removed deprecated `push-state`/`pop-state`/`clear-stack`, removed interactive `attach`/`detach` (replaced by functional macros), cleaned up dead code. 159 tests, 0 failures.
 - ✓ **Macro Refactoring: `path` as Universal Recorder** — Slimmed macros from ~630 lines to ~80 by making `path` the single recording macro and delegating to runtime `*-impl` functions in new `impl.cljs`. Extended path recorder with `inset`, `scale`, `move-to`, `play-path` commands. Attach macros now use pure functional path replay instead of atom-based `att-*` wrappers. Added `pure-bloft-two-shapes` for bloft with two shapes. Refactored test harness to share production `macro-defs` and bindings (eliminated ~500 lines of duplicated code). Added 18 new tests (path recording, pass-through, play-path splicing, context validation, loft-n, bloft, attach). 145 tests, 0 failures.
 - ✓ **Procedural Animations, Mesh Anchors & Hierarchical Assemblies** — `anim-proc!` for mesh-generating animations (deform, grow, twist), `attach-path` for mesh anchors, enhanced `link!` with `:at`/`:from`/`:inherit-rotation`, topological sort for parent→child ordering, `register` with map literals for hierarchical assemblies (qualified names like `:puppet/r-arm/upper`, automatic link inference from `goto` calls), prefix-based `show`/`hide` for subtrees, `update-mesh-geometry!` handles face count changes
-- ✓ **Multi-shape XOR & Loft Improvements** — `shape-xor` returns vector of shapes for disconnected regions; `shape-offset`, `loft`, `bloft`, `revolve`, `stamp` accept shape vectors. Loft-from-path generates proper start/end cap meshes. Fixed clipper2-js offsetPolygon bug via monkey-patch. Editor selection fix (opacity-based).
 - ✓ **2D Shape Booleans** — `shape-union`, `shape-difference`, `shape-intersection`, `shape-xor`, `shape-offset` via clipper2-js. Holes-aware extrusion pipeline (simple + complex paths with corners). Shape transforms propagate through holes.
-- ✓ **Library/Namespace System** — User-defined reusable code libraries with localStorage persistence, SCI namespace injection (`shapes/hexagon`), topological sort for dependency ordering, cascade deactivation, drag & drop reordering, import/export as `.clj` files
-- ✓ **Bounds functions** — `bounds`, `height`, `width`, `depth`, `top`, `bottom` for bounding box queries; `info` now includes bounds data
-- ✓ **`attach!` macro** — in-place transform of registered meshes by keyword: `(attach! :name (f 20))`. Removed redundant `clone` macro (attach is already functional)
-- ✓ **AI Tier System** — Auto-detection of model tier, tier-aware prompts (Tier 1: code-only, Tier 2+: JSON with clarification support), script context for Tier 2+, Settings UI dropdown
-- ✓ **Arc Commands** — `arc-h` and `arc-v` for smooth curved paths
-- ✓ **Bezier Commands** — `bezier-to` and `bezier-to-anchor` for bezier curves
-- ✓ **Resolution Control** — `resolution` function inspired by OpenSCAD (`$fn`/`$fa`/`$fs`)
-- ✓ **Text on Path** — `text-on-path` places extruded text along a curved path, with each letter oriented tangent to the curve
-- ✓ **Path Utilities** — `follow-path` for visualizing paths, `path-total-length` for arc-length calculation, `sample-path-at-distance` for path sampling
-
-The turtle attachment paradigm unifies all 3D operations under the familiar turtle metaphor: attach to an element, use turtle commands to manipulate it, detach when done.
 
 ---
 

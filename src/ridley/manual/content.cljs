@@ -131,17 +131,17 @@
         {:id :mesh-info
          :code "(register tube\n  (extrude (circle 10) (f 40)))\n(println (info :tube))"}
         {:id :mesh-get-mesh
-         :code "(register a (box 20))\n(register b (cyl 8 30))\n(hide :a) (hide :b)\n(register ab\n  (mesh-union (get-mesh :a) (get-mesh :b)))"}]}
+         :code "(def a (box 20))\n(def b (cyl 8 30))\n(register ab\n  (mesh-union a b))"}]}
       {:id :boolean-operations
        :examples
        [{:id :bool-union
-         :code "(register a (box 30))\n(f 15) (tv 90) (f 15) (tv -90)\n(register b (cyl 12 40))\n(hide :a)\n(hide :b)\n(register ab\n  (mesh-union (get-mesh :a) (get-mesh :b)))"}
+         :code "(def a (box 30))\n(def b (attach (cyl 12 40)\n  (f 15) (tv 90) (f 15) (tv -90)))\n(register ab (mesh-union a b))"}
         {:id :bool-difference
-         :code "(register a (box 30))\n(f 15) (tv 90) (f 15) (tv -90)\n(register b (cyl 12 40))\n(hide :a)\n(hide :b)\n(register ab\n  (mesh-difference (get-mesh :a) (get-mesh :b)))"}
+         :code "(def a (box 30))\n(def b (attach (cyl 12 40)\n  (f 15) (tv 90) (f 15) (tv -90)))\n(register ab (mesh-difference a b))"}
         {:id :bool-intersection
-         :code "(register a (box 30))\n(f 15) (tv 90) (f 15) (tv -90)\n(register b (cyl 12 40))\n(hide :a)\n(hide :b)\n(register ab\n  (mesh-intersection (get-mesh :a) (get-mesh :b)))"}
+         :code "(def a (box 30))\n(def b (attach (cyl 12 40)\n  (f 15) (tv 90) (f 15) (tv -90)))\n(register ab (mesh-intersection a b))"}
         {:id :bool-hull
-         :code "(register p1 (sphere 10))\n(f 40)\n(register p2 (sphere 10))\n(f -20) (th 90) (f 30)\n(register p3 (sphere 10))\n\n(register hull-shape\n  (mesh-hull (get-mesh :p1) (get-mesh :p2) (get-mesh :p3)))"}
+         :code "(def p1 (sphere 10))\n(def p2 (attach (sphere 10) (f 40)))\n(def p3 (attach (sphere 10) (f 20) (th 90) (f 30)))\n(register hull-shape\n  (mesh-hull p1 p2 p3))"}
         {:id :bool-union-for
          :code "(register row\n  (mesh-union\n    (for [i (range 10)]\n      (attach (cyl 5 30) (lt (* i 9))))))"}]}
       {:id :slice-mesh
@@ -183,8 +183,8 @@
        :examples
        [{:id :mark-goto-basic
          :code ";; Define a layout path with named marks\n(def layout (path (f 50) (mark :top) (th 90) (f 30) (mark :side)))\n\n;; with-path resolves marks as anchors\n(register base (box 20 20 5))\n(with-path layout\n  (goto :top)\n  (register tower (cyl 8 60))\n  (goto :side)\n  (register beacon (cyl 5 30)))"}
-        {:id :push-pop-branch
-         :code "(register trunk (extrude (circle 5) (f 50)))\n(push-state)\n  (th 45) (register b1 (extrude (circle 3) (f 30)))\n(pop-state)\n(push-state)\n  (th -45) (register b2 (extrude (circle 3) (f 30)))\n(pop-state)\n(register top (extrude (circle 3) (f 20)))"}
+        {:id :turtle-branch
+         :code "(register trunk (extrude (circle 5) (f 50)))\n(turtle\n  (th 45) (register b1 (extrude (circle 3) (f 30))))\n(turtle\n  (th -45) (register b2 (extrude (circle 3) (f 30))))\n(register top (extrude (circle 3) (f 20)))"}
         {:id :path-follow
          :code ";; follow splices another path into the current recording\n(def segment (path (f 20) (th 90)))\n(def full (path (follow segment) (follow segment) (follow segment) (follow segment)))\n\n(register square-tube\n  (extrude-closed (circle 5) full))"}]}
       {:id :arcs-beziers
@@ -232,7 +232,7 @@
         {:id :text-on-arc
          :code "(def arc-path (path (arc-h 50 180)))\n\n(register curved\n  (text-on-path \"CURVED TEXT\" arc-path\n    :size 12 :depth 3 :align :center))"}
         {:id :text-on-spiral
-         :code "(def spiral (path (dotimes [_ 85] (f 3) (th 8.6) (u 0.5))))\n\n(register spiral-text\n  (text-on-path \"Once upon a time in a galaxy far far away there was a spiral that went up and up and up and never stopped\" spiral :size 6 :depth 1.2))"}]}]}
+         :code "(def spiral (path (tv 7) (dotimes [_ 500] (f 1) (th 3))))\n\n(register spiral-text\n  (turtle :preserve-up\n    (text-on-path\n      \"Once upon a time in a galaxy far far away there was a spiral that went up and up and up and never stopped and she's buying a stairway to heaven\"\n      spiral :size 6 :depth 1.2)))"}]}]}
     {:id :part-5
      :pages
      [{:id :debug-panels
@@ -248,23 +248,30 @@
        :see-also [:debug-panels :repl-usage]
        :examples
        [{:id :tap-function
-         :code "(register cube\n  (box (T \"size\" (* 10 3))))"}
+         :code "(register cube\n  (box (T \"size\" (* 10 3))))"
+         :no-run true}
         {:id :inspect-turtle
-         :code "(f 50)\n(println \"pos:\" (turtle-position))\n(th 45)\n(println \"heading:\" (turtle-heading))"}
+         :code "(f 50)\n(println \"pos:\" (turtle-position))\n(th 45)\n(println \"heading:\" (turtle-heading))"
+         :no-run true}
         {:id :step-by-step
-         :code "(println \"Step 1: create base\")\n(register base (box 40 40 10))\n(println \"Step 2: move up\")\n(f 10)\n(println \"Step 3: create top\")\n(register top (cyl 15 20))"}]}
+         :code "(println \"Step 1: create base\")\n(register base (box 40 40 10))\n(println \"Step 2: move up\")\n(f 10)\n(println \"Step 3: create top\")\n(register top (cyl 15 20))"
+         :no-run true}]}
       {:id :tweak-interactive
        :see-also [:debug-techniques]
        :examples
        [{:id :tweak-basic
          :code "(tweak (extrude (circle 15) (f 30)))"
-         :auto-run true}
+         :auto-run true
+         :no-run true}
         {:id :tweak-indexed
-         :code "(tweak 2 (extrude (circle 15)\n  (f 30) (th 90) (f 20)))"}
+         :code "(tweak 2 (extrude (circle 15)\n  (f 30) (th 90) (f 20)))"
+         :no-run true}
         {:id :tweak-all
-         :code "(tweak :all (extrude (circle 10)\n  (f 30) (th 90) (f 20)))"}
+         :code "(tweak :all (extrude (circle 10)\n  (f 30) (th 90) (f 20)))"
+         :no-run true}
         {:id :tweak-registered
-         :code "(register A (sphere 20))\n(tweak :A)"}]}
+         :code "(register A (sphere 20))\n(tweak :A)"
+         :no-run true}]}
       {:id :stamp-preview
        :see-also [:debug-techniques :builtin-shapes :shape-booleans-2d]
        :examples
@@ -320,31 +327,29 @@
       {:id :repl-usage
        :examples
        [{:id :repl-quick-test
-         :code "(+ 1 2 3)"}
+         :code "(+ 1 2 3)"
+         :no-run true}
         {:id :repl-println
-         :code "(println \"Hello from REPL!\")\n(println \"2 + 2 =\" (+ 2 2))"}]}]}
+         :code "(println \"Hello from REPL!\")\n(println \"2 + 2 =\" (+ 2 2))"
+         :no-run true}]}]}
     {:id :gallery
      :pages
      [{:id :gallery-twisted-vase
        :examples
        [{:id :twisted-vase-code
-         :code "(def n-flutes 12)\n(def twist-amount 90)\n(def height 80)\n(def base-radius 20)\n\n(def vase\n  (loft-n 96\n    (-> (circle base-radius 64)\n        (fluted :flutes n-flutes :depth 0.15)\n        (twisted :angle twist-amount)\n        (shape-fn (fn [shape t]\n                    (let [belly (+ 1.0 (* 0.3 (sin (* t PI))))\n                          neck (- 1.0 (* 0.25 (pow (max 0 (- t 0.6)) 2) 40))\n                          lip (if (> t 0.9)\n                                (+ 1.0 (* 0.15 (- t 0.9) 10))\n                                1.0)\n                          s (* belly neck lip)]\n                      (scale-shape shape s s)))))\n    (f height)))\n\n(register vase vase)"}]}
+         :code "(def n-flutes 12)\n(def twist-amount 90)\n(def height 80)\n(def base-radius 20)\n\n(def vase\n  (loft-n 96\n    (-> (circle base-radius 64)\n        (fluted :flutes n-flutes :depth 0.15)\n        (twisted :angle twist-amount)\n        (shape-fn (fn [shape t]\n                    (let [belly (+ 1.0 (* 0.3 (sin (* t PI))))\n                          neck (max 0.15 (- 1.0 (* 0.25 (pow (max 0 (- t 0.6)) 2) 40)))\n                          lip (if (> t 0.85)\n                                (+ 1.0 (* 90 (pow (- t 0.85) 2)))\n                                1.0)\n                          s (* belly neck lip)]\n                      (scale-shape shape s s)))))\n    (f height)))\n\n(register vase vase)"}]}
       {:id :gallery-recursive-tree
        :examples
        [{:id :recursive-tree-code
-         :code "(def max-depth 4)\n(def n-branches 3)\n(def spread-angle 35)\n(def taper 0.65)\n(def golden-angle 137.508)\n\n(defn branch [depth length radius]\n  (when (> depth 0)\n    (cyl radius (- radius (* radius (- 1 taper))) length)\n    (f length)\n    (dotimes [i n-branches]\n      (push-state)\n      (tr (* i (/ 360 n-branches)))\n      (tv spread-angle)\n      (tr (* i golden-angle))\n      (branch (dec depth)\n              (* length taper)\n              (* radius taper))\n      (pop-state))))\n\n(branch max-depth 20 3)"}]}
+         :code "(def max-depth 6)\n(def n-branches 3)\n(def spread-angle 35)\n(def taper 0.65)\n(def golden-angle 137.508)\n\n(defn branch [depth length radius]\n  (when (> depth 0)\n    (let [trunk (loft (tapered (circle radius) :to taper) (f length))]\n      (f length)\n      (cons trunk\n        (mapcat (fn [i]\n          (turtle\n            (tr (* i (/ 360 n-branches)))\n            (tv spread-angle)\n            (tr (* i golden-angle))\n            (branch (dec depth)\n                    (* length taper)\n                    (* radius taper))))\n          (range n-branches))))))\n\n(tv 90)\n(register tree (branch max-depth 30 3))"}]}
       {:id :gallery-dice
        :examples
        [{:id :dice-code
-         :code "(def die-size 20)\n(def half (/ die-size 2))\n(def pip-radius 2.0)\n(def pip-depth 1.2)\n(def pip-spread 5.5)\n\n(def body (box die-size))\n\n(defn pip [x-off y-off]\n  (attach (sphere pip-radius)\n    (f (- half pip-depth))\n    (rt x-off)\n    (u y-off)))\n\n(defn face-1 [] [(pip 0 0)])\n(defn face-2 [] [(pip (- pip-spread) pip-spread)\n                  (pip pip-spread (- pip-spread))])\n(defn face-3 [] (concat (face-1) (face-2)))\n(defn face-4 [] [(pip (- pip-spread) pip-spread)\n                  (pip pip-spread pip-spread)\n                  (pip (- pip-spread) (- pip-spread))\n                  (pip pip-spread (- pip-spread))])\n(defn face-5 [] (concat (face-4) (face-1)))\n(defn face-6 [] [(pip (- pip-spread) pip-spread)\n                  (pip (- pip-spread) 0)\n                  (pip (- pip-spread) (- pip-spread))\n                  (pip pip-spread pip-spread)\n                  (pip pip-spread 0)\n                  (pip pip-spread (- pip-spread))])\n\n(def all-pips\n  (concat-meshes\n    (concat\n      (face-1)\n      (map (fn [p] (attach p (th 180))) (face-6))\n      (map (fn [p] (attach p (th -90))) (face-2))\n      (map (fn [p] (attach p (th 90))) (face-5))\n      (map (fn [p] (attach p (tv -90))) (face-3))\n      (map (fn [p] (attach p (tv 90))) (face-4)))))\n\n(def die (mesh-difference body all-pips))\n(register die die)"}]}
-      {:id :gallery-spiral-shell
-       :examples
-       [{:id :spiral-shell-code
-         :code "(def n-turns 3)\n(def steps-per-turn 48)\n(def total-steps (* n-turns steps-per-turn))\n(def initial-radius 3)\n(def growth 2.8)\n(def spiral-radius 15)\n(def tilt 25)\n\n(def helix\n  (path\n    (resolution :n steps-per-turn)\n    (tv tilt)\n    (dotimes [i total-steps]\n      (let [t (/ i total-steps)\n            r (* spiral-radius (+ 1.0 (* t (- growth 1.0))))]\n        (arc-h r (/ 360 steps-per-turn))))))\n\n(def shell\n  (loft-n total-steps\n    (-> (circle initial-radius 24)\n        (tapered :to growth)\n        (noisy :amplitude 0.3 :scale 5 :octaves 2))\n    (follow-path helix)))\n\n(register shell shell)"}]}
+         :code "(def die-size 20)\n(def half (/ die-size 2))\n(def pip-radius 2.0)\n(def pip-depth 1.2)\n(def pip-spread 5.5)\n\n(def body (box die-size))\n\n(defn pip [x-off y-off]\n  (turtle\n    (f (- half pip-depth))\n    (rt x-off) (u y-off)\n    (sphere pip-radius)))\n\n(defn face-1 [] [(pip 0 0)])\n(defn face-2 [] [(pip (- pip-spread) pip-spread)\n                  (pip pip-spread (- pip-spread))])\n(defn face-3 [] (concat (face-1) (face-2)))\n(defn face-4 [] [(pip (- pip-spread) pip-spread)\n                  (pip pip-spread pip-spread)\n                  (pip (- pip-spread) (- pip-spread))\n                  (pip pip-spread (- pip-spread))])\n(defn face-5 [] (concat (face-4) (face-1)))\n(defn face-6 [] [(pip (- pip-spread) pip-spread)\n                  (pip (- pip-spread) 0)\n                  (pip (- pip-spread) (- pip-spread))\n                  (pip pip-spread pip-spread)\n                  (pip pip-spread 0)\n                  (pip pip-spread (- pip-spread))])\n\n(def all-pips\n  (concat-meshes\n    (concat\n      (face-1)\n      (turtle (th 180) (face-6))\n      (turtle (th -90) (face-2))\n      (turtle (th 90) (face-5))\n      (turtle (tv 90) (face-3))\n      (turtle (tv -90) (face-4)))))\n\n(def die (mesh-difference body all-pips))\n(register die die)"}]}
       {:id :gallery-embossed-column
        :examples
        [{:id :embossed-column-code
-         :code "(def col-radius 15)\n(def col-height 80)\n(def n-flutes 16)\n(def flute-depth 0.12)\n\n(def letters (text-shape \"RIDLEY\" :size 20))\n(def text-mesh (extrude-z letters 3))\n(def text-bounds (bounds text-mesh))\n(def text-hm\n  (mesh-to-heightmap text-mesh\n    :resolution 128\n    :offset-x (get-in text-bounds [:min 0])\n    :offset-y (get-in text-bounds [:min 1])\n    :length-x (- (get-in text-bounds [:max 0]) (get-in text-bounds [:min 0]))\n    :length-y (- (get-in text-bounds [:max 1]) (get-in text-bounds [:min 1]))))\n\n(def shaft\n  (loft-n 96\n    (-> (circle col-radius 64)\n        (fluted :flutes n-flutes :depth flute-depth)\n        (heightmap text-hm :amplitude 1.5 :center true :tile-x 2 :tile-y 1))\n    (f col-height)))\n\n(def base\n  (attach\n    (loft-n 8\n      (tapered (circle (* col-radius 1.4) 64) :to (/ 1 1.4))\n      (f 6))\n    (tv 180)))\n\n(def capital\n  (attach\n    (loft-n 8\n      (tapered (circle col-radius 64) :to 1.3)\n      (f 5))\n    (f col-height)))\n\n(def column (concat-meshes [base shaft capital]))\n(register column column)"}]}
+         :code "(def col-radius 15)\n(def col-height 80)\n(def n-flutes 16)\n(def flute-depth 0.12)\n\n(def letters (text-shape \"RIDLEY\" :size 20))\n(def text-mesh (turtle (tv 90) (concat-meshes (extrude letters (f 3)))))\n(def text-bounds (bounds text-mesh))\n(def text-hm\n  (mesh-to-heightmap text-mesh\n    :resolution 128\n    :offset-x (get-in text-bounds [:min 0])\n    :offset-y (get-in text-bounds [:min 1])\n    :length-x (- (get-in text-bounds [:max 0]) (get-in text-bounds [:min 0]))\n    :length-y (- (get-in text-bounds [:max 1]) (get-in text-bounds [:min 1]))))\n\n(def shaft\n  (loft-n 96\n    (-> (circle col-radius 64)\n        (fluted :flutes n-flutes :depth flute-depth)\n        (heightmap text-hm :amplitude 1.5 :center true :tile-x 2 :tile-y 1))\n    (f col-height)))\n\n(def base\n  (attach\n    (loft-n 8\n      (tapered (circle (* col-radius 1.4) 64) :to (/ 1 1.4))\n      (f 6))\n    (tv 180)))\n\n(def capital\n  (attach\n    (loft-n 8\n      (tapered (circle col-radius 64) :to 1.3)\n      (f 5))\n    (f col-height)))\n\n(def column (concat-meshes [base shaft capital]))\n(register column column)"}]}
       {:id :gallery-canvas-weave
        :examples
        [{:id :canvas-weave-code
@@ -856,12 +861,12 @@ All primitives (`box`, `cyl`, `sphere`) and extrusions produce meshes."
                        :description "`register` creates a named mesh that appears in the viewport. The name becomes a keyword you can use later."}
        :mesh-info {:caption "Inspect with info"
                    :description "`info` returns mesh statistics. Wrap with `println` to see the output in the REPL."}
-       :mesh-get-mesh {:caption "Use get-mesh for operations"
-                       :description "`get-mesh` retrieves a registered mesh by name. Use it to pass meshes to boolean operations."}}}
+       :mesh-get-mesh {:caption "Boolean with def"
+                       :description "Use `def` to store intermediate meshes, then combine them with boolean operations. Only `register` the final result."}}}
 
      :boolean-operations
      {:title "Boolean Operations"
-      :content "Boolean operations combine meshes in different ways. Use `get-mesh` to retrieve a mesh by its registered name.
+      :content "Boolean operations combine meshes in different ways. Use `def` to store intermediate meshes, then `register` only the final result.
 
 ```
 (mesh-union a b)        ; combine A and B
@@ -1120,20 +1125,19 @@ Marks are embedded in paths and resolved with `with-path`. This makes paths reus
 **Path composition with follow:**
 - `(follow other-path)` — Inside a `path`, splice another path's commands
 
-**State Stack (push-state/pop-state):**
-- `(push-state)` — Push current turtle state onto an anonymous stack
-- `(pop-state)` — Restore the most recently pushed state
+**Turtle scopes for branching:**
+- `(turtle ...)` — Create an isolated turtle scope: the child inherits the parent's pose and settings, but changes inside don't affect the outer turtle
 
-The stack is perfect for branching: push-state before a branch, create geometry, pop-state to return, then branch again. It's like undo for turtle position.
+Turtle scopes are perfect for branching: open a scope before a branch, create geometry, and the turtle automatically returns to the parent's position when the scope ends. No manual save/restore needed.
 
 **Key difference:**
 - `mark`/`with-path`/`goto` = named layout points for navigation
-- `push-state`/`pop-state` = anonymous stack for branching patterns"
+- `turtle` = lexical scope for branching patterns"
       :examples
       {:mark-goto-basic {:caption "Marks and with-path"
                          :description "Define a path with named marks, then use `with-path` to resolve them as anchors. `goto` navigates to the marked positions. Marks are relative to the turtle's pose when `with-path` is called."}
-       :push-pop-branch {:caption "Branching with push-state/pop-state"
-                         :description "Classic tree pattern: push-state before each branch, pop-state to return to the trunk. Both branches originate from the same point."}
+       :turtle-branch {:caption "Branching with turtle scopes"
+                       :description "Each `turtle` scope inherits the parent's position and settings. Geometry created inside (branches) is visible, but the outer turtle is unchanged — both branches originate from the same point."}
        :path-follow {:caption "Path composition with follow"
                      :description "`follow` splices another path's commands into the current recording. Here we compose a square from a single segment repeated four times."}}}
 
@@ -1289,6 +1293,14 @@ Options for `text-on-path`:
 - `:spacing` — extra letter spacing (default 0)
 - `:overflow` — `:truncate`, `:wrap`, or `:scale`
 
+**3D spiral text with preserve-up:**
+```
+(def spiral (path (tv 7) (dotimes [_ 500] (f 1) (th 3))))
+(turtle :preserve-up
+  (text-on-path \"spiral text\" spiral :size 6 :depth 1.2))
+```
+Use `:preserve-up` to keep letters upright on 3D paths. Set the pitch with `tv` before the horizontal loop.
+
 **Built-in fonts:**
 - `:roboto` — Roboto Regular (default)
 - `:roboto-mono` — Roboto Mono (monospace)
@@ -1307,7 +1319,7 @@ Options for `text-on-path`:
        :text-on-arc {:caption "Text on arc"
                      :description "Place text along a curved path. Each letter follows the curve tangent. Use `:align :center` to center text on the path."}
        :text-on-spiral {:caption "Text on spiral"
-                        :description "Text can follow any path, including complex 3D curves like spirals."}}}
+                        :description "Text on a 3D spiral using `:preserve-up` to keep letters upright. Set pitch once with `tv`, then loop horizontal turns."}}}
 
      :gallery-twisted-vase
      {:title "Twisted Fluted Vase"
@@ -1331,12 +1343,12 @@ The profile is a circle that gets **fluted** (scalloped edges), **twisted** alon
 
      :gallery-recursive-tree
      {:title "Recursive Tree"
-      :content "A 3D **fractal tree** built with `push-state` / `pop-state` branching.
+      :content "A 3D **fractal tree** built with `turtle` scope branching.
 
 At each level of recursion, the trunk splits into several branches. Each branch is thinner and shorter than its parent, angled outward using the **golden angle** for even spatial distribution. Branches are tapered cylinders placed at fork points.
 
 **Features demonstrated:**
-- `push-state` / `pop-state` for branching (save and restore turtle pose)
+- `turtle` scopes for branching (isolated child inherits parent pose)
 - Recursive functions with `defn`
 - Parametric design with `def` variables
 - Tapered `cyl` primitives for natural-looking limbs
@@ -1353,11 +1365,11 @@ At each level of recursion, the trunk splits into several branches. Each branch 
      {:title "Six-Sided Die"
       :content "A classic **D6 die** with subtracted pips on each face.
 
-The die is built by starting from a `box`, then placing spherical pips on all six faces using `attach` for positioning. The pips are subtracted with `mesh-difference` (boolean CSG). Pip layouts follow the standard Western convention where opposite faces sum to 7.
+The die is built by starting from a `box`, then placing spherical pips on all six faces using `turtle` scopes for orientation. The pips are subtracted with `mesh-difference` (boolean CSG). Pip layouts follow the standard Western convention where opposite faces sum to 7.
 
 **Features demonstrated:**
 - `mesh-difference` for boolean subtraction (CSG)
-- `attach` to place geometry at specific positions and orientations
+- `turtle` scopes to orient geometry on each face (`th`, `tv`)
 - Parametric pip placement with functions and loops
 - Building complex objects from simple primitives (`box`, `sphere`)
 
@@ -1367,28 +1379,6 @@ The die is built by starting from a `box`, then placing spherical pips on all si
 - Add a `shape-offset` to round the die edges"
       :examples
       {:dice-code {:caption "Six-Sided Die"}}}
-
-     :gallery-spiral-shell
-     {:title "Spiral Shell"
-      :content "A logarithmic **spiral shell**, like a snail or nautilus.
-
-The shell is built by lofting a circle along a **helical path** that expands as it spirals. The cross-section grows with each revolution, mimicking the natural growth pattern of mollusks. A `noisy` displacement adds organic surface texture.
-
-The key insight: use `loft-n` with a `tapered` shape-fn that scales the cross-section proportionally to position along the path, combined with a helical path generated by `arc-h` inside a loop.
-
-**Features demonstrated:**
-- `arc-h` for helical paths (horizontal arcs with changing radius)
-- `loft-n` with composed shape-fns (`tapered` + `noisy`)
-- `path` with `resolution` for controlling smoothness
-- Parametric spirals with growth ratio
-
-**Try changing:**
-- `n-turns` for more or fewer revolutions
-- `growth` for how quickly the shell expands
-- `tilt` for the cone angle of the spiral
-- `noisy` amplitude/scale for surface texture"
-      :examples
-      {:spiral-shell-code {:caption "Spiral Shell"}}}
 
      :gallery-embossed-column
      {:title "Embossed Column"
@@ -1938,12 +1928,12 @@ Tutte le primitive (`box`, `cyl`, `sphere`) e le estrusioni producono mesh."
                        :description "`register` crea una mesh con nome che appare nel viewport. Il nome diventa una keyword che puoi usare dopo."}
        :mesh-info {:caption "Ispezionare con info"
                    :description "`info` ritorna statistiche della mesh. Usa `println` per vedere l'output nella REPL."}
-       :mesh-get-mesh {:caption "Usare get-mesh per operazioni"
-                       :description "`get-mesh` recupera una mesh registrata per nome. Usalo per passare mesh alle operazioni booleane."}}}
+       :mesh-get-mesh {:caption "Booleane con def"
+                       :description "Usa `def` per salvare mesh intermedie, poi combinale con operazioni booleane. Registra con `register` solo il risultato finale."}}}
 
      :boolean-operations
      {:title "Operazioni Booleane"
-      :content "Le operazioni booleane combinano mesh in modi diversi. Usa `get-mesh` per recuperare una mesh dal suo nome registrato.
+      :content "Le operazioni booleane combinano mesh in modi diversi. Usa `def` per salvare mesh intermedie, poi registra solo il risultato finale.
 
 ```
 (mesh-union a b)        ; combina A e B
@@ -2202,20 +2192,19 @@ I mark sono definiti nei path e risolti con `with-path`. Questo rende i path riu
 **Composizione di path con follow:**
 - `(follow altro-path)` — Dentro un `path`, inserisci i comandi di un altro path
 
-**Stack di Stato (push-state/pop-state):**
-- `(push-state)` — Metti lo stato corrente della turtle su uno stack anonimo
-- `(pop-state)` — Ripristina lo stato più recentemente salvato
+**Scope turtle per le diramazioni:**
+- `(turtle ...)` — Crea uno scope turtle isolato: il figlio eredita la posizione e le impostazioni del genitore, ma le modifiche interne non influenzano la turtle esterna
 
-Lo stack è perfetto per le diramazioni: push-state prima di un ramo, crea la geometria, pop-state per tornare, poi dirama di nuovo. È come un annulla per la posizione della turtle.
+Gli scope turtle sono perfetti per le diramazioni: apri uno scope prima di un ramo, crea la geometria, e la turtle torna automaticamente alla posizione del genitore quando lo scope finisce. Nessun salvataggio/ripristino manuale necessario.
 
 **Differenza chiave:**
 - `mark`/`with-path`/`goto` = punti di layout nominati per la navigazione
-- `push-state`/`pop-state` = stack anonimo per pattern di diramazione"
+- `turtle` = scope lessicale per pattern di diramazione"
       :examples
       {:mark-goto-basic {:caption "Mark e with-path"
                          :description "Definisci un path con mark nominati, poi usa `with-path` per risolverli come ancore. `goto` naviga alle posizioni marcate. I mark sono relativi alla posizione della turtle quando si chiama `with-path`."}
-       :push-pop-branch {:caption "Diramazioni con push-state/pop-state"
-                         :description "Pattern classico ad albero: push-state prima di ogni ramo, pop-state per tornare al tronco. Entrambi i rami originano dallo stesso punto."}
+       :turtle-branch {:caption "Diramazioni con scope turtle"
+                       :description "Ogni scope `turtle` eredita la posizione e le impostazioni del genitore. La geometria creata dentro (rami) è visibile, ma la turtle esterna non cambia — entrambi i rami originano dallo stesso punto."}
        :path-follow {:caption "Composizione di path con follow"
                      :description "`follow` inserisce i comandi di un altro path nella registrazione corrente. Qui componiamo un quadrato da un singolo segmento ripetuto quattro volte."}}}
 
@@ -2371,6 +2360,14 @@ Opzioni per `text-on-path`:
 - `:spacing` — spaziatura extra tra lettere (default 0)
 - `:overflow` — `:truncate`, `:wrap`, o `:scale`
 
+**Testo 3D su spirale con preserve-up:**
+```
+(def spiral (path (tv 7) (dotimes [_ 500] (f 1) (th 3))))
+(turtle :preserve-up
+  (text-on-path \"testo spirale\" spiral :size 6 :depth 1.2))
+```
+Usa `:preserve-up` per mantenere le lettere verticali su percorsi 3D. Imposta l'inclinazione con `tv` prima del loop orizzontale.
+
 **Font integrati:**
 - `:roboto` — Roboto Regular (default)
 - `:roboto-mono` — Roboto Mono (monospace)
@@ -2389,7 +2386,7 @@ Opzioni per `text-on-path`:
        :text-on-arc {:caption "Testo su arco"
                      :description "Posiziona testo lungo un percorso curvo. Ogni lettera segue la tangente alla curva. Usa `:align :center` per centrare il testo sul percorso."}
        :text-on-spiral {:caption "Testo su spirale"
-                        :description "Il testo può seguire qualsiasi percorso, incluse curve 3D complesse come spirali."}}}
+                        :description "Testo su spirale 3D con `:preserve-up` per mantenere le lettere verticali. Imposta il pitch una volta con `tv`, poi gira in orizzontale."}}}
 
      :gallery-twisted-vase
      {:title "Vaso Torto Scanalato"
@@ -2413,12 +2410,12 @@ Il profilo è un cerchio che viene **scanalato** (bordi smerlati), **torto** lun
 
      :gallery-recursive-tree
      {:title "Albero Ricorsivo"
-      :content "Un **albero frattale** 3D costruito con ramificazione `push-state` / `pop-state`.
+      :content "Un **albero frattale** 3D costruito con ramificazione tramite scope `turtle`.
 
 Ad ogni livello di ricorsione, il tronco si divide in diversi rami. Ogni ramo è più sottile e corto del genitore, angolato verso l'esterno usando l'**angolo aureo** per una distribuzione spaziale uniforme. I rami sono cilindri rastremati posizionati nei punti di biforcazione.
 
 **Funzionalità dimostrate:**
-- `push-state` / `pop-state` per la ramificazione (salva e ripristina la posa della turtle)
+- Scope `turtle` per la ramificazione (il figlio eredita la posa del genitore)
 - Funzioni ricorsive con `defn`
 - Design parametrico con variabili `def`
 - Primitive `cyl` rastremate per arti dall'aspetto naturale
@@ -2435,11 +2432,11 @@ Ad ogni livello di ricorsione, il tronco si divide in diversi rami. Ogni ramo è
      {:title "Dado a Sei Facce"
       :content "Un classico **dado D6** con incavi sottratti su ogni faccia.
 
-Il dado è costruito partendo da un `box`, poi posizionando sfere su tutte e sei le facce con `attach`. Gli incavi sono sottratti con `mesh-difference` (booleana CSG). La disposizione segue la convenzione occidentale dove le facce opposte sommano a 7.
+Il dado è costruito partendo da un `box`, poi posizionando sfere su tutte e sei le facce con scope `turtle` per l'orientamento. Gli incavi sono sottratti con `mesh-difference` (booleana CSG). La disposizione segue la convenzione occidentale dove le facce opposte sommano a 7.
 
 **Funzionalità dimostrate:**
 - `mesh-difference` per sottrazione booleana (CSG)
-- `attach` per posizionare geometria in posizioni e orientamenti specifici
+- Scope `turtle` per orientare la geometria su ogni faccia (`th`, `tv`)
 - Posizionamento parametrico con funzioni e cicli
 - Costruzione di oggetti complessi da primitive semplici (`box`, `sphere`)
 
@@ -2449,28 +2446,6 @@ Il dado è costruito partendo da un `box`, poi posizionando sfere su tutte e sei
 - Aggiungi `shape-offset` per arrotondare gli spigoli"
       :examples
       {:dice-code {:caption "Dado a Sei Facce"}}}
-
-     :gallery-spiral-shell
-     {:title "Conchiglia a Spirale"
-      :content "Una **conchiglia a spirale** logaritmica, come una lumaca o un nautilus.
-
-La conchiglia è costruita loftando un cerchio lungo un **percorso elicoidale** che si espande a spirale. La sezione trasversale cresce ad ogni rivoluzione, imitando il pattern di crescita naturale dei molluschi. Un displacement `noisy` aggiunge texture organica alla superficie.
-
-L'idea chiave: usare `loft-n` con una shape-fn `tapered` che scala la sezione proporzionalmente alla posizione lungo il percorso, combinata con un percorso elicoidale generato da `arc-h` in un loop.
-
-**Funzionalità dimostrate:**
-- `arc-h` per percorsi elicoidali (archi orizzontali con raggio variabile)
-- `loft-n` con shape-fn composte (`tapered` + `noisy`)
-- `path` con `resolution` per controllare la fluidità
-- Spirali parametriche con rapporto di crescita
-
-**Prova a cambiare:**
-- `n-turns` per più o meno rivoluzioni
-- `growth` per quanto velocemente la conchiglia si espande
-- `tilt` per l'angolo del cono della spirale
-- Ampiezza/scala di `noisy` per la texture superficiale"
-      :examples
-      {:spiral-shell-code {:caption "Conchiglia a Spirale"}}}
 
      :gallery-embossed-column
      {:title "Colonna con Testo in Rilievo"

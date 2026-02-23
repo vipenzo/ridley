@@ -49,7 +49,8 @@
   []
   (let [ctx (make-sci-ctx)]
     (reset! sci-ctx ctx)
-    (reset! state/sci-ctx-ref ctx)))
+    (reset! state/sci-ctx-ref ctx)
+    (state/reset-turtle!)))
 
 ;; ============================================================
 ;; Evaluation
@@ -64,15 +65,16 @@
     ;; Reset context for fresh definitions evaluation
     (reset-ctx!)
     (let [ctx (get-or-create-ctx)]
-      ;; Reset turtle and print buffer for fresh evaluation
+      ;; Reset turtle, scene accumulator, and print buffer for fresh evaluation
       (state/reset-turtle!)
+      (state/reset-scene-accumulator!)
       (state/reset-print-buffer!)
       ;; Evaluate explicit code (definitions, functions, explicit geometry)
       (let [explicit-result (when (and explicit-code (seq (str/trim explicit-code)))
                               (sci/binding [state/eval-source-var :definitions]
                                 (sci/eval-string explicit-code ctx)))
             print-output (state/get-print-output)]
-        {:result @state/turtle-atom
+        {:result @@state/turtle-state-var
          :explicit-result explicit-result
          :implicit-result nil
          :print-output print-output}))
@@ -93,11 +95,13 @@
   [repl-code]
   (try
     (let [ctx (get-or-create-ctx)]
-      ;; Preserve turtle pose but clear geometry for fresh output
-      (if (nil? @state/turtle-atom)
+      ;; Preserve turtle pose but clear output for fresh render
+      (if (nil? @@state/turtle-state-var)
         (state/reset-turtle!)
-        ;; Keep position/heading/up, clear geometry/meshes
-        (swap! state/turtle-atom assoc :geometry [] :meshes []))
+        ;; Keep position/heading/up, clear leftover geometry/meshes on turtle
+        (swap! @state/turtle-state-var assoc :geometry [] :meshes []))
+      ;; Clear scene accumulator for this command's output
+      (state/reset-scene-accumulator!)
       ;; Reset print buffer for this command
       (state/reset-print-buffer!)
       ;; Evaluate REPL code using existing context with definitions
@@ -106,7 +110,7 @@
                                             state/eval-text-var   repl-code]
                                 (sci/eval-string repl-code ctx)))
             print-output (state/get-print-output)]
-        {:result @state/turtle-atom
+        {:result @@state/turtle-state-var
          :explicit-result nil
          :implicit-result implicit-result
          :print-output print-output}))
@@ -126,8 +130,9 @@
     ;; Reset context for fresh evaluation
     (reset-ctx!)
     (let [ctx (get-or-create-ctx)]
-      ;; Reset turtle and print buffer for fresh evaluation
+      ;; Reset turtle, scene accumulator, and print buffer for fresh evaluation
       (state/reset-turtle!)
+      (state/reset-scene-accumulator!)
       (state/reset-print-buffer!)
       ;; Phase 1: Evaluate explicit code (definitions, functions, explicit geometry)
       (let [explicit-result (when (and explicit-code (seq (str/trim explicit-code)))
@@ -140,7 +145,7 @@
                                 (sci/eval-string implicit-code ctx)))
             print-output (state/get-print-output)]
         ;; Return combined result
-        {:result @state/turtle-atom
+        {:result @@state/turtle-state-var
          :explicit-result explicit-result
          :implicit-result implicit-result
          :print-output print-output}))
@@ -153,17 +158,15 @@
         {:error (str msg loc)}))))
 
 (defn extract-render-data
-  "Extract render data from evaluation result.
-   Returns turtle geometry (lines from pen movements).
+  "Extract render data from the scene accumulator.
+   Returns pen traces (lines) and debug stamps.
    Meshes must be explicitly registered with (register name mesh) to be visible.
    Does NOT include registry meshes - those are handled separately by refresh-viewport!."
-  [eval-result]
-  (let [turtle-state (:result eval-result)
-        turtle-lines (or (:geometry turtle-state) [])
-        turtle-stamps (or (:stamps turtle-state) [])]
-    ;; Only return turtle lines (pen traces) and stamps (debug outlines)
+  [_eval-result]
+  (let [{:keys [lines stamps]} @state/scene-accumulator]
+    ;; Only return lines (pen traces) and stamps (debug outlines)
     ;; Meshes from extrude/loft/etc are NOT auto-displayed - use register
-    (when (or (seq turtle-lines) (seq turtle-stamps))
-      {:lines (vec turtle-lines)
-       :stamps (vec turtle-stamps)
+    (when (or (seq lines) (seq stamps))
+      {:lines (vec lines)
+       :stamps (vec stamps)
        :meshes []})))

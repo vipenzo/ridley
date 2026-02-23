@@ -55,13 +55,12 @@
    'tv           impl/implicit-tv
    'tr           impl/implicit-tr
    'pen-impl     impl/implicit-pen      ; Used by pen macro
-   'stamp-impl   (fn [shape] (swap! state/turtle-atom turtle/stamp shape))
-   'stamp-closed-impl (fn [shape] (swap! state/turtle-atom turtle/stamp-closed shape))
-   'finalize-sweep-impl (fn [] (swap! state/turtle-atom turtle/finalize-sweep))
-   'finalize-sweep-closed-impl (fn [] (swap! state/turtle-atom turtle/finalize-sweep-closed))
+   'stamp-impl   (fn [shape] (swap! @state/turtle-state-var turtle/stamp shape))
+   'stamp-closed-impl (fn [shape] (swap! @state/turtle-state-var turtle/stamp-closed shape))
+   'finalize-sweep-impl (fn [] (swap! @state/turtle-state-var turtle/finalize-sweep))
+   'finalize-sweep-closed-impl (fn [] (swap! @state/turtle-state-var turtle/finalize-sweep-closed))
    'pen-up       impl/implicit-pen-up
    'pen-down     impl/implicit-pen-down
-   'reset        impl/implicit-reset
    'joint-mode   impl/implicit-joint-mode
    ;; Resolution (like OpenSCAD $fn/$fa/$fs)
    'resolution   impl/implicit-resolution
@@ -70,7 +69,7 @@
    'material     impl/implicit-material
    'reset-material impl/implicit-reset-material
    ;; Creation pose override
-   'set-creation-pose (fn [mesh] (turtle/set-creation-pose @state/turtle-atom mesh))
+   'set-creation-pose (fn [mesh] (turtle/set-creation-pose @@state/turtle-state-var mesh))
    ;; Lateral movement (pure translation, no heading change)
    'u            impl/implicit-u
    'd            impl/implicit-d
@@ -88,10 +87,6 @@
    'bezier-to         impl/implicit-bezier-to
    'bezier-to-anchor  impl/implicit-bezier-to-anchor
    'bezier-as         impl/implicit-bezier-as
-   ;; State stack
-   'push-state   impl/implicit-push-state
-   'pop-state    impl/implicit-pop-state
-   'clear-stack  impl/implicit-clear-stack
    ;; Anchors and navigation (mark removed — use inside path macro only)
    'goto         impl/implicit-goto
    'get-anchor   impl/get-anchor
@@ -104,11 +99,11 @@
    ;; Attachment commands (functional versions defined in macro-defs)
    ;; NOTE: Legacy implicit-attach and implicit-attach-face removed
    ;; Use the functional macro: (attach-face mesh :top (f 20))
-   'attached?    (fn [] (turtle/attached? @state/turtle-atom))
+   'attached?    (fn [] (turtle/attached? @@state/turtle-state-var))
    ;; Turtle state inspection (for debugging)
-   'turtle-position (fn [] (:position @state/turtle-atom))
-   'turtle-heading  (fn [] (:heading @state/turtle-atom))
-   'turtle-up       (fn [] (:up @state/turtle-atom))
+   'turtle-position (fn [] (:position @@state/turtle-state-var))
+   'turtle-heading  (fn [] (:heading @@state/turtle-state-var))
+   'turtle-up       (fn [] (:up @@state/turtle-state-var))
    ;; NOTE: 'detach' removed - implicit at end of attach/attach-face macro
    'inset        impl/implicit-inset
    ;; 3D primitives - *-impl for macro wrappers (source tracking)
@@ -154,7 +149,7 @@
    'extrude-text text-ops/implicit-extrude-text
    'text-on-path-impl text-ops/implicit-text-on-path
    ;; Pure turtle functions (for explicit threading)
-   'turtle       turtle/make-turtle
+   'make-turtle   turtle/make-turtle
    'turtle-f     turtle/f
    'turtle-th    turtle/th
    'turtle-tv    turtle/tv
@@ -431,4 +426,7 @@
    '*eval-source*   state/eval-source-var
    '*eval-text*     state/eval-text-var
    'add-source      add-source
-   'source-ref      source-ref})
+   'source-ref      source-ref
+   ;; Turtle scope (SCI dynamic var + init fn for turtle macro)
+   '*turtle-state*  state/turtle-state-var
+   'init-turtle     state/init-turtle})

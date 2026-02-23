@@ -97,13 +97,71 @@ Works both in direct turtle mode and inside `path` recordings.
 | `(pen :off)` | Stop drawing (pen up) |
 | `(pen :on)` | Draw lines (default) |
 
-### State Stack
+### Turtle Scope
+
+The `turtle` macro creates an isolated turtle scope. The child turtle inherits the
+parent's full state (position, heading, up, settings) but operates on its own copy.
+Changes inside the scope don't affect the outer turtle. Lines and meshes created
+inside the scope are visible (shared scene accumulator).
 
 ```clojure
-(push-state)              ; Save position, heading, up, pen-mode
-(pop-state)               ; Restore most recent saved state
-(clear-stack)             ; Clear stack without restoring
+;; Basic scope — child inherits parent's pose and settings
+(turtle
+  (f 20)
+  (th 45)
+  (f 10))
+;; Outer turtle is unchanged
+
+;; :reset — fresh turtle at origin with default settings
+(turtle :reset
+  (f 30))
+
+;; :preserve-up — keep up vector stable (no roll accumulation)
+(turtle :preserve-up
+  (dotimes [_ 85] (f 3) (th 8.6) (tv 0.5)))
+
+;; Nesting — each level is isolated
+(turtle
+  (f 10)
+  (turtle
+    (f 20)
+    (turtle :reset (f 5))))
 ```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `:reset` | Start from origin with default settings (ignores parent state) |
+| `:preserve-up` | Enable preserve-up mode (see below) |
+| `{:pos [x y z]}` | Override position |
+| `{:heading [x y z]}` | Override heading |
+| `{:up [x y z]}` | Override up vector |
+
+**Use cases:**
+- Branching constructions (L-systems, trees) — replaces `push-state`/`pop-state`
+- Temporary exploration without affecting the main turtle
+- Isolation of settings (resolution, joint-mode, material) within a scope
+
+### Preserve-Up Mode
+
+Prevents implicit roll accumulation when combining `th` (yaw) and `tv` (pitch) rotations.
+In standard mode, repeated th+tv combinations cause the up vector to drift unpredictably.
+With `:preserve-up`, the up vector stays as close as possible to the reference up direction
+(captured at scope entry) while remaining perpendicular to the heading.
+
+```clojure
+;; Standard mode — up drifts after many th+tv combinations
+(dotimes [_ 85] (f 3) (th 8.6) (tv 0.5))
+;; up may drift to [-0.26, -0.57, 0.78] — unexpected roll
+
+;; Preserve-up mode — up stays stable
+(turtle :preserve-up
+  (dotimes [_ 85] (f 3) (th 8.6) (tv 0.5)))
+;; up stays close to [0, 0, 1] (reference-up)
+```
+
+`tr` (roll) still works normally inside preserve-up scopes.
 
 ### Reset
 
@@ -1619,21 +1677,19 @@ PI                               ; 3.14159...
     (f 100)))
 ```
 
-### Branching with State Stack
+### Branching with Turtle Scopes
 
 ```clojure
-;; Tree-like structure
+;; Tree-like structure using turtle scopes for isolation
 (defn branch [depth length]
   (when (pos? depth)
     (f length)
-    (push-state)
-    (th 30)
-    (branch (dec depth) (* length 0.7))
-    (pop-state)
-    (push-state)
-    (th -30)
-    (branch (dec depth) (* length 0.7))
-    (pop-state)))
+    (turtle
+      (th 30)
+      (branch (dec depth) (* length 0.7)))
+    (turtle
+      (th -30)
+      (branch (dec depth) (* length 0.7)))))
 
 (reset)
 (branch 5 20)

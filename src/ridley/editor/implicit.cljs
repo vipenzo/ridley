@@ -1,7 +1,9 @@
 (ns ridley.editor.implicit
-  "Implicit turtle functions that mutate the shared turtle-atom.
-   These functions are bound in the SCI context via base-bindings."
-  (:require [ridley.editor.state :refer [turtle-atom]]
+  "Implicit turtle functions that mutate the current turtle atom.
+   These functions are bound in the SCI context via base-bindings.
+   The turtle atom is resolved via state/turtle-state-var, supporting
+   scoped turtle contexts."
+  (:require [ridley.editor.state :as state]
             [ridley.turtle.core :as turtle]
             [ridley.turtle.shape :as shape]
             [ridley.turtle.path :as path]
@@ -12,111 +14,134 @@
             [ridley.scene.panel :as panel]
             [ridley.viewport.core :as viewport]))
 
+;; Local accessor — returns the current turtle atom.
+;; Inside a (turtle ...) scope, returns the scoped atom.
+(defn- turtle-ref [] @state/turtle-state-var)
+
+;; --- Scene accumulator helpers ---
+
+(defn- record-pen-lines!
+  "Flush any pen traces from turtle state :geometry to the shared scene accumulator.
+   Called after every implicit command that can produce lines."
+  []
+  (let [lines (:geometry @(turtle-ref))]
+    (when (seq lines)
+      (swap! state/scene-accumulator update :lines into lines)
+      (swap! (turtle-ref) assoc :geometry []))))
+
+(defn- record-stamps!
+  "Flush any stamps from turtle state :stamps to the shared scene accumulator."
+  []
+  (let [stamps (:stamps @(turtle-ref))]
+    (when (seq stamps)
+      (swap! state/scene-accumulator update :stamps into stamps)
+      (swap! (turtle-ref) assoc :stamps []))))
+
 (defn ^:export implicit-f [dist]
-  (let [old-attached (:attached @turtle-atom)
+  (let [old-attached (:attached @(turtle-ref))
         registry-idx (:registry-index old-attached)]
-    (swap! turtle-atom turtle/f dist)
+    (swap! (turtle-ref) turtle/f dist)
+    (record-pen-lines!)
     ;; If attached with registry index, update the registry directly
     (when registry-idx
-      (let [new-mesh (get-in @turtle-atom [:attached :mesh])]
+      (let [new-mesh (get-in @(turtle-ref) [:attached :mesh])]
         (when new-mesh
           (registry/update-mesh-at-index! registry-idx new-mesh)
           (registry/refresh-viewport! false))))))
 
 (defn ^:export implicit-th [angle]
-  (let [old-attached (:attached @turtle-atom)
+  (let [old-attached (:attached @(turtle-ref))
         registry-idx (:registry-index old-attached)]
-    (swap! turtle-atom turtle/th angle)
+    (swap! (turtle-ref) turtle/th angle)
     ;; If attached to mesh with registry index, update the registry
     (when (and registry-idx (= :pose (:type old-attached)))
-      (let [new-mesh (get-in @turtle-atom [:attached :mesh])]
+      (let [new-mesh (get-in @(turtle-ref) [:attached :mesh])]
         (when new-mesh
           (registry/update-mesh-at-index! registry-idx new-mesh)
           (registry/refresh-viewport! false))))))
 
 (defn ^:export implicit-tv [angle]
-  (let [old-attached (:attached @turtle-atom)
+  (let [old-attached (:attached @(turtle-ref))
         registry-idx (:registry-index old-attached)]
-    (swap! turtle-atom turtle/tv angle)
+    (swap! (turtle-ref) turtle/tv angle)
     ;; If attached to mesh with registry index, update the registry
     (when (and registry-idx (= :pose (:type old-attached)))
-      (let [new-mesh (get-in @turtle-atom [:attached :mesh])]
+      (let [new-mesh (get-in @(turtle-ref) [:attached :mesh])]
         (when new-mesh
           (registry/update-mesh-at-index! registry-idx new-mesh)
           (registry/refresh-viewport! false))))))
 
 (defn ^:export implicit-tr [angle]
-  (let [old-attached (:attached @turtle-atom)
+  (let [old-attached (:attached @(turtle-ref))
         registry-idx (:registry-index old-attached)]
-    (swap! turtle-atom turtle/tr angle)
+    (swap! (turtle-ref) turtle/tr angle)
     ;; If attached to mesh with registry index, update the registry
     (when (and registry-idx (= :pose (:type old-attached)))
-      (let [new-mesh (get-in @turtle-atom [:attached :mesh])]
+      (let [new-mesh (get-in @(turtle-ref) [:attached :mesh])]
         (when new-mesh
           (registry/update-mesh-at-index! registry-idx new-mesh)
           (registry/refresh-viewport! false))))))
 
 ;; Lateral movement (pure translation, no heading change)
 (defn ^:export implicit-u [dist]
-  (let [old-attached (:attached @turtle-atom)
+  (let [old-attached (:attached @(turtle-ref))
         registry-idx (:registry-index old-attached)]
-    (swap! turtle-atom turtle/move-up dist)
+    (swap! (turtle-ref) turtle/move-up dist)
+    (record-pen-lines!)
     (when (and registry-idx (= :pose (:type old-attached)))
-      (let [new-mesh (get-in @turtle-atom [:attached :mesh])]
+      (let [new-mesh (get-in @(turtle-ref) [:attached :mesh])]
         (when new-mesh
           (registry/update-mesh-at-index! registry-idx new-mesh)
           (registry/refresh-viewport! false))))))
 
 (defn ^:export implicit-d [dist]
-  (let [old-attached (:attached @turtle-atom)
+  (let [old-attached (:attached @(turtle-ref))
         registry-idx (:registry-index old-attached)]
-    (swap! turtle-atom turtle/move-down dist)
+    (swap! (turtle-ref) turtle/move-down dist)
+    (record-pen-lines!)
     (when (and registry-idx (= :pose (:type old-attached)))
-      (let [new-mesh (get-in @turtle-atom [:attached :mesh])]
+      (let [new-mesh (get-in @(turtle-ref) [:attached :mesh])]
         (when new-mesh
           (registry/update-mesh-at-index! registry-idx new-mesh)
           (registry/refresh-viewport! false))))))
 
 (defn ^:export implicit-rt [dist]
-  (let [old-attached (:attached @turtle-atom)
+  (let [old-attached (:attached @(turtle-ref))
         registry-idx (:registry-index old-attached)]
-    (swap! turtle-atom turtle/move-right dist)
+    (swap! (turtle-ref) turtle/move-right dist)
+    (record-pen-lines!)
     (when (and registry-idx (= :pose (:type old-attached)))
-      (let [new-mesh (get-in @turtle-atom [:attached :mesh])]
+      (let [new-mesh (get-in @(turtle-ref) [:attached :mesh])]
         (when new-mesh
           (registry/update-mesh-at-index! registry-idx new-mesh)
           (registry/refresh-viewport! false))))))
 
 (defn ^:export implicit-lt [dist]
-  (let [old-attached (:attached @turtle-atom)
+  (let [old-attached (:attached @(turtle-ref))
         registry-idx (:registry-index old-attached)]
-    (swap! turtle-atom turtle/move-left dist)
+    (swap! (turtle-ref) turtle/move-left dist)
+    (record-pen-lines!)
     (when (and registry-idx (= :pose (:type old-attached)))
-      (let [new-mesh (get-in @turtle-atom [:attached :mesh])]
+      (let [new-mesh (get-in @(turtle-ref) [:attached :mesh])]
         (when new-mesh
           (registry/update-mesh-at-index! registry-idx new-mesh)
           (registry/refresh-viewport! false))))))
 
 (defn ^:export implicit-pen-up []
-  (swap! turtle-atom turtle/pen-up))
+  (swap! (turtle-ref) turtle/pen-up))
 
 (defn ^:export implicit-pen-down []
-  (swap! turtle-atom turtle/pen-down))
+  (swap! (turtle-ref) turtle/pen-down))
 
 (defn ^:export implicit-pen [mode]
-  (swap! turtle-atom turtle/pen mode))
-
-(defn ^:export implicit-reset
-  ([] (swap! turtle-atom turtle/reset-pose))
-  ([pos] (swap! turtle-atom turtle/reset-pose pos))
-  ([pos & opts] (swap! turtle-atom #(apply turtle/reset-pose % pos opts))))
+  (swap! (turtle-ref) turtle/pen mode))
 
 (defn ^:export implicit-joint-mode [mode]
-  (swap! turtle-atom turtle/joint-mode mode))
+  (swap! (turtle-ref) turtle/joint-mode mode))
 
 ;; Resolution (like OpenSCAD $fn/$fa/$fs)
 (defn ^:export implicit-resolution [mode value]
-  (swap! turtle-atom turtle/resolution mode value))
+  (swap! (turtle-ref) turtle/resolution mode value))
 
 ;; Color and material
 (defn- mesh-map? [x]
@@ -131,13 +156,13 @@
    (color my-mesh 0xff0000)      — return mesh with color (pure)
    (color my-mesh 255 0 0)       — return mesh with color (pure, RGB)"
   ([hex]
-   (swap! turtle-atom turtle/set-color hex))
+   (swap! (turtle-ref) turtle/set-color hex))
   ([name-or-mesh hex]
    (if (mesh-map? name-or-mesh)
      (update name-or-mesh :material merge {:color hex})
      (registry/update-mesh-material! (keyword name-or-mesh) {:color hex})))
   ([r g b]
-   (swap! turtle-atom turtle/set-color r g b))
+   (swap! (turtle-ref) turtle/set-color r g b))
   ([name-or-mesh r g b]
    (let [hex (+ (bit-shift-left (int r) 16)
                 (bit-shift-left (int g) 8)
@@ -164,7 +189,7 @@
       ;; Material property keyword → global
       (material-props first-arg)
       (let [opts (apply hash-map args)]
-        (swap! turtle-atom #(apply turtle/set-material % (mapcat identity opts))))
+        (swap! (turtle-ref) #(apply turtle/set-material % (mapcat identity opts))))
       ;; Otherwise → mesh name in registry
       :else
       (let [mesh-name first-arg
@@ -174,7 +199,7 @@
 (defn ^:export implicit-reset-material
   "Reset material to default values."
   []
-  (swap! turtle-atom turtle/reset-material))
+  (swap! (turtle-ref) turtle/reset-material))
 
 ;; Stamp debug visualization
 (defn ^:export implicit-stamp-debug
@@ -185,34 +210,30 @@
   (let [s (if (turtle/path? shape-or-path)
             (shape/path-to-shape shape-or-path)
             shape-or-path)]
-    (swap! turtle-atom turtle/stamp-debug s :color color)))
+    (swap! (turtle-ref) turtle/stamp-debug s :color color)
+    (record-stamps!)))
 
 ;; Arc commands
 (defn ^:export implicit-arc-h [radius angle & {:keys [steps]}]
-  (swap! turtle-atom #(turtle/arc-h % radius angle :steps steps)))
+  (swap! (turtle-ref) #(turtle/arc-h % radius angle :steps steps))
+  (record-pen-lines!))
 
 (defn ^:export implicit-arc-v [radius angle & {:keys [steps]}]
-  (swap! turtle-atom #(turtle/arc-v % radius angle :steps steps)))
+  (swap! (turtle-ref) #(turtle/arc-v % radius angle :steps steps))
+  (record-pen-lines!))
 
 ;; Bezier commands
 (defn ^:export implicit-bezier-to [target & args]
-  (swap! turtle-atom #(apply turtle/bezier-to % target args)))
+  (swap! (turtle-ref) #(apply turtle/bezier-to % target args))
+  (record-pen-lines!))
 
 (defn ^:export implicit-bezier-to-anchor [anchor-name & args]
-  (swap! turtle-atom #(apply turtle/bezier-to-anchor % anchor-name args)))
+  (swap! (turtle-ref) #(apply turtle/bezier-to-anchor % anchor-name args))
+  (record-pen-lines!))
 
 (defn ^:export implicit-bezier-as [p & args]
-  (swap! turtle-atom #(apply turtle/bezier-as % p args)))
-
-;; State stack
-(defn ^:export implicit-push-state []
-  (swap! turtle-atom turtle/push-state))
-
-(defn ^:export implicit-pop-state []
-  (swap! turtle-atom turtle/pop-state))
-
-(defn ^:export implicit-clear-stack []
-  (swap! turtle-atom turtle/clear-stack))
+  (swap! (turtle-ref) #(apply turtle/bezier-as % p args))
+  (record-pen-lines!))
 
 ;; Anchors and navigation
 ;; mark removed — marks now exist only inside path recordings.
@@ -220,26 +241,27 @@
 (defn ^:export implicit-save-anchors
   "Save current turtle anchors. Returns the saved anchors map."
   []
-  (get @turtle-atom :anchors {}))
+  (get @(turtle-ref) :anchors {}))
 
 (defn ^:export implicit-restore-anchors
   "Restore turtle anchors to a previously saved state."
   [saved]
-  (swap! turtle-atom assoc :anchors saved))
+  (swap! (turtle-ref) assoc :anchors saved))
 
 (defn ^:export implicit-resolve-and-merge-marks
   "Resolve marks from a path at current turtle pose and merge into anchors."
   [path]
-  (let [marks (turtle/resolve-marks @turtle-atom path)]
-    (swap! turtle-atom update :anchors merge marks)))
+  (let [marks (turtle/resolve-marks @(turtle-ref) path)]
+    (swap! (turtle-ref) update :anchors merge marks)))
 
 (defn ^:export implicit-goto [name]
-  (swap! turtle-atom turtle/goto name))
+  (swap! (turtle-ref) turtle/goto name)
+  (record-pen-lines!))
 
 (defn ^:export get-anchor
   "Get anchor data by name from turtle state. Returns {:position [x y z] :heading [x y z] :up [x y z]} or nil."
   [name]
-  (get-in @turtle-atom [:anchors name]))
+  (get-in @(turtle-ref) [:anchors name]))
 
 (defn ^:export implicit-attach-path
   "Associate a path's marks as anchors on a registered mesh.
@@ -253,67 +275,32 @@
         (registry/register-mesh! mesh-name (assoc mesh :anchors anchors))))))
 
 (defn ^:export implicit-look-at [name]
-  (swap! turtle-atom turtle/look-at name))
+  (swap! (turtle-ref) turtle/look-at name))
 
 (defn ^:export implicit-path-to [name]
   ;; First orient turtle toward anchor, then create path
   ;; This ensures extrusions go in the correct direction
-  (swap! turtle-atom turtle/look-at name)
-  (turtle/path-to @turtle-atom name))
-
-;; Attachment commands
-;; Store registry index in :attached so we can update the real mesh
-(defn ^:export implicit-attach
-  "Implicit attach - saves registry-index for replace-on-detach.
-   With :clone flag, doesn't track registry (the clone is new)."
-  ([mesh] (implicit-attach mesh nil))
-  ([mesh clone-flag]
-   (let [clone? (= clone-flag :clone)
-         idx (when-not clone? (registry/get-mesh-index mesh))
-         ;; Get the current mesh from registry (may have been modified since def)
-         current-mesh (if idx (registry/get-mesh-at-index idx) mesh)]
-     (swap! turtle-atom (fn [state]
-                          (let [state' (turtle/attach state current-mesh :clone clone?)]
-                            (if idx
-                              (assoc-in state' [:attached :registry-index] idx)
-                              state')))))))
-
-(defn ^:export implicit-attach-face
-  "Implicit attach-face - saves registry-index for replace-on-detach.
-   With :clone flag, enables extrusion mode (f creates side faces)."
-  ([mesh face-id] (implicit-attach-face mesh face-id nil))
-  ([mesh face-id clone-flag]
-   (let [clone? (= clone-flag :clone)
-         idx (registry/get-mesh-index mesh)
-         ;; Get the current mesh from registry (may have been modified since def)
-         current-mesh (if idx (registry/get-mesh-at-index idx) mesh)]
-     (swap! turtle-atom (fn [state]
-                          (let [state' (turtle/attach-face state current-mesh face-id :clone clone?)]
-                            (if idx
-                              (assoc-in state' [:attached :registry-index] idx)
-                              state')))))))
-
-(defn ^:export implicit-detach []
-  (swap! turtle-atom turtle/detach))
+  (swap! (turtle-ref) turtle/look-at name)
+  (turtle/path-to @(turtle-ref) name))
 
 (defn ^:export implicit-inset [dist]
-  (let [old-attached (:attached @turtle-atom)
+  (let [old-attached (:attached @(turtle-ref))
         registry-idx (:registry-index old-attached)]
-    (swap! turtle-atom turtle/inset dist)
+    (swap! (turtle-ref) turtle/inset dist)
     ;; If attached with registry index, update the registry directly
     (when registry-idx
-      (let [new-mesh (get-in @turtle-atom [:attached :mesh])]
+      (let [new-mesh (get-in @(turtle-ref) [:attached :mesh])]
         (when new-mesh
           (registry/update-mesh-at-index! registry-idx new-mesh)
           (registry/refresh-viewport! false))))))
 
 (defn ^:export implicit-scale-mesh [factor]
-  (let [old-attached (:attached @turtle-atom)
+  (let [old-attached (:attached @(turtle-ref))
         registry-idx (:registry-index old-attached)]
-    (swap! turtle-atom turtle/scale factor)
+    (swap! (turtle-ref) turtle/scale factor)
     ;; If attached to mesh with registry index, update the registry
     (when (and registry-idx (= :pose (:type old-attached)))
-      (let [new-mesh (get-in @turtle-atom [:attached :mesh])]
+      (let [new-mesh (get-in @(turtle-ref) [:attached :mesh])]
         (when new-mesh
           (registry/update-mesh-at-index! registry-idx new-mesh)
           (registry/refresh-viewport! false))))))
@@ -324,7 +311,7 @@
    - If no args and attached to mesh, scales the attached mesh"
   ([factor]
    ;; No shape provided - try to scale attached mesh
-   (if (= :pose (get-in @turtle-atom [:attached :type]))
+   (if (= :pose (get-in @(turtle-ref) [:attached :type]))
      (implicit-scale-mesh factor)
      (throw (js/Error. "scale requires a shape argument, or attach to a mesh first"))))
   ([shape factor]
@@ -339,7 +326,7 @@
   "Transform a mesh's vertices to current turtle position and orientation.
    Also stores creation-pose and material so mesh can be re-attached later."
   [mesh]
-  (let [turtle @turtle-atom
+  (let [turtle @(turtle-ref)
         position (:position turtle)
         heading (:heading turtle)
         up (:up turtle)
@@ -360,7 +347,7 @@
   "Like transform-mesh-to-turtle but rotates so the mesh extends along the
    turtle's UP axis instead of heading. Used for cyl/cone so height = UP."
   [mesh]
-  (let [turtle @turtle-atom
+  (let [turtle @(turtle-ref)
         position (:position turtle)
         heading (:heading turtle)
         up (:up turtle)
@@ -393,7 +380,7 @@
   "Create circular shape, using resolution from turtle state if segments not provided."
   ([radius]
    (let [circumference (* 2 Math/PI radius)
-         segments (turtle/calc-circle-segments @turtle-atom circumference)]
+         segments (turtle/calc-circle-segments @(turtle-ref) circumference)]
      (shape/circle-shape radius segments)))
   ([radius segments]
    (shape/circle-shape radius segments)))
@@ -401,7 +388,7 @@
 (defn ^:export sphere-with-resolution
   "Create sphere mesh at current turtle position, using resolution from turtle state if not provided."
   ([radius]
-   (let [segments (turtle/calc-circle-segments @turtle-atom (* 2 Math/PI radius))
+   (let [segments (turtle/calc-circle-segments @(turtle-ref) (* 2 Math/PI radius))
          rings (max 4 (int (/ segments 2)))]
      (transform-mesh-to-turtle (prims/sphere-mesh radius segments rings))))
   ([radius segments rings]
@@ -410,16 +397,20 @@
 (defn ^:export cyl-with-resolution
   "Create cylinder mesh at current turtle position, height along turtle's UP axis."
   ([radius height]
-   (let [segments (turtle/calc-circle-segments @turtle-atom (* 2 Math/PI radius))]
+   (let [segments (turtle/calc-circle-segments @(turtle-ref) (* 2 Math/PI radius))]
      (transform-mesh-to-turtle-upright (prims/cyl-mesh radius height segments))))
   ([radius height segments]
+   (when-not (and (int? segments) (pos? segments))
+     (throw (js/Error. (str "cyl expects (radius height) or (radius height segments). "
+                            "Third arg must be an integer segment count. "
+                            "For tapered cylinders, use cone or (loft (tapered (circle r) :to t) (f h))."))))
    (transform-mesh-to-turtle-upright (prims/cyl-mesh radius height segments))))
 
 (defn ^:export cone-with-resolution
   "Create cone mesh at current turtle position, height along turtle's UP axis."
   ([r1 r2 height]
    (let [max-r (max r1 r2)
-         segments (turtle/calc-circle-segments @turtle-atom (* 2 Math/PI max-r))]
+         segments (turtle/calc-circle-segments @(turtle-ref) (* 2 Math/PI max-r))]
      (transform-mesh-to-turtle-upright (prims/cone-mesh r1 r2 height segments))))
   ([r1 r2 height segments]
    (transform-mesh-to-turtle-upright (prims/cone-mesh r1 r2 height segments))))
@@ -433,7 +424,7 @@
                         fg 0xffffff
                         padding 2
                         line-height 1.4}}]
-  (let [t @turtle-atom
+  (let [t @(turtle-ref)
         pos (:position t)
         heading (:heading t)
         up (:up t)]
@@ -474,21 +465,22 @@
 ;; Loft is now a macro - these are the impl functions
 (defn ^:export implicit-stamp-loft
   ([shape transform-fn]
-   (swap! turtle-atom turtle/stamp-loft shape transform-fn))
+   (swap! (turtle-ref) turtle/stamp-loft shape transform-fn))
   ([shape transform-fn steps]
-   (swap! turtle-atom turtle/stamp-loft shape transform-fn steps)))
+   (swap! (turtle-ref) turtle/stamp-loft shape transform-fn steps)))
 
 (defn ^:export implicit-finalize-loft []
-  (swap! turtle-atom turtle/finalize-loft))
+  (swap! (turtle-ref) turtle/finalize-loft))
 
 (defn ^:export implicit-run-path
   "Execute a path's commands on the turtle.
    The turtle will move/turn as if the path commands were executed directly."
   [path]
-  (swap! turtle-atom turtle/run-path path))
+  (swap! (turtle-ref) turtle/run-path path)
+  (record-pen-lines!))
 
 (defn ^:export implicit-add-mesh [mesh]
-  (swap! turtle-atom update :meshes conj mesh)
+  (swap! (turtle-ref) update :meshes conj mesh)
   mesh)
 
 (defn ^:export implicit-slice-mesh
@@ -501,7 +493,7 @@
   (let [mesh (if (keyword? mesh-or-name)
                (registry/get-mesh mesh-or-name)
                mesh-or-name)
-        state @turtle-atom
+        state @(turtle-ref)
         pos (:position state)
         heading (:heading state)
         up (:up state)

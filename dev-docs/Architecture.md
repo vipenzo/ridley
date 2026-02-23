@@ -48,7 +48,7 @@ ridley/
 │       │   ├── bindings.cljs      # SCI context bindings map
 │       │   ├── impl.cljs          # Runtime *-impl functions for macro delegation
 │       │   ├── operations.cljs    # Pure generative operations (extrude, loft, bloft, revolve)
-│       │   └── state.cljs         # Shared atoms (turtle-atom, etc.)
+│       │   └── state.cljs         # Shared atoms (turtle-state-var, scene-accumulator)
 │       ├── turtle/
 │       │   ├── core.cljs          # Turtle state, movement, extrusion
 │       │   ├── path.cljs          # Path recording and playback
@@ -93,10 +93,11 @@ ridley/
 │  │                    SCI Interpreter                   │   │
 │  │   - Evaluates user code (repl.cljs)                 │   │
 │  │   - DSL macros: extrude, loft, path, register       │   │
-│  │   - Returns turtle state with meshes/lines          │   │
+│  │   - Lines/stamps → shared scene accumulator           │   │
+│  │   - Meshes registered via `register`                  │   │
 │  └──────────────────────┬──────────────────────────────┘   │
 │                         │                                   │
-│         Turtle state: {:meshes [...] :lines [...]}         │
+│         Scene accumulator: {:lines [...] :stamps [...]}    │
 │                         ▼                                   │
 │  ┌─────────────────────────────────────────────────────┐   │
 │  │               Scene Registry                         │   │
@@ -134,8 +135,11 @@ The turtle is a pure data structure. Commands are functions that take state and 
  :heading [x y z]               ; Forward direction (unit vector)
  :up [x y z]                    ; Up direction (unit vector)
  :pen-mode nil                  ; nil/:off, :line, :shape, :loft
- :lines [...]                   ; Accumulated line segments
- :meshes [...]                  ; Accumulated 3D meshes
+ :meshes [...]                  ; Accumulated 3D meshes (internal ops only)
+
+ ;; Preserve-up mode (prevents roll accumulation from th+tv)
+ :preserve-up false             ; When true, th rotates around reference-up
+ :reference-up nil              ; Captured at scope entry (e.g. [0 0 1])
 
  ;; Extrusion state (when pen-mode is :shape)
  :sweep-base-shape shape        ; 2D shape being extruded
@@ -152,6 +156,8 @@ The turtle is a pure data structure. Commands are functions that take state and 
  :loft-steps n                  ; Number of interpolation steps
  :loft-progress 0.0}            ; Current progress (0 to 1)
 ```
+
+**Turtle scoping**: The global turtle state is held in a SCI dynamic var (`*turtle-state*`), bound to an atom containing the turtle map. The `turtle` macro creates a new binding with a fresh atom cloned from the parent, providing lexical isolation. Lines and stamps go to a shared scene accumulator (not the turtle state), so they survive scope exit.
 
 ### 2. Face-Based Modeling (Push/Pull Paradigm)
 
@@ -651,29 +657,23 @@ These commands work with anchors resolved by `with-path`:
 (bezier-to-anchor :name)  ; Draw bezier curve to anchor position
 ```
 
-### Turtle State Stack
+### Turtle Scoping (Dynamic Binding)
 
-The turtle maintains a **stack of saved poses**. This enables:
-- Temporary movements with automatic return
-- Branching constructions (L-systems, trees)
-- Attachment/detachment without losing original position
+The turtle state is held in a SCI dynamic var (`*turtle-state*`), bound to an atom containing the turtle map. The `turtle` macro creates a new binding with a fresh atom cloned from the parent, providing lexical isolation:
 
 ```clojure
-;; Pose structure (what gets saved on the stack)
-{:position [x y z]
- :heading [x y z]
- :up [x y z]
- :pen-mode :on}
-
-;; Stack in turtle state
-{:state-stack [pose1 pose2 ...]}  ; vector used as stack (conj/peek/pop)
-
-;; Commands
-(push-state)   ; Save current pose onto stack
-(pop-state)    ; Restore most recent saved pose
+;; turtle macro expansion (simplified)
+(binding [*turtle-state* (atom (init-turtle opts @*turtle-state*))]
+  body...)
 ```
 
-**Important**: The stack saves only the pose, not meshes or geometry. Any meshes created between push and pop are kept.
+**Key properties:**
+- Child inherits parent's full state (position, heading, up, pen-mode, resolution, joint-mode, material, anchors, preserve-up)
+- `:reset` option starts from `make-turtle` defaults instead
+- Lines and stamps go to a shared scene accumulator, not the turtle state — they survive scope exit
+- Internal operations (extrude, loft, revolve) still accumulate `:meshes` on the turtle state via `:shape`/`:loft` pen modes — this is separate from the scene accumulator and works within a single evaluation
+
+**Replaces**: `push-state`/`pop-state`/`clear-stack` (removed). The `turtle` macro provides the same branching capability with lexical scope guarantees.
 
 ### Design Decisions
 
@@ -685,7 +685,7 @@ The turtle maintains a **stack of saved poses**. This enables:
 
 4. **follow-path generates geometry**: The way to "draw" a path. Executes commands on the live turtle, producing visible lines.
 
-5. **Stack saves pose only**: position, heading, up, pen-mode. Meshes created during push/pop persist.
+5. **Turtle scopes isolate state**: The `turtle` macro provides lexical isolation via SCI dynamic binding. No stack, no fragile push/pop mechanics.
 
 6. **goto is oriented**: Adopts the saved heading/up.
 
@@ -694,6 +694,8 @@ The turtle maintains a **stack of saved poses**. This enables:
 8. **look-at adjusts up**: Recalculated to stay orthogonal while preserving the original up direction as much as possible.
 
 9. **path-to orients and returns path**: Implicitly does a `look-at` to orient toward the anchor, then returns a path with `(f dist)`.
+
+10. **Preserve-up prevents roll**: When enabled, `th` rotates around the reference-up vector instead of local up, and `tv` re-orthogonalizes up toward the reference after pitching.
 
 ---
 
@@ -766,20 +768,18 @@ Phase 3 introduces the ability to "attach" the turtle to existing geometry eleme
 
 #### Attachment System
 
-When the turtle attaches to a geometry element, it:
-1. **Pushes** current state onto the stack (automatic)
-2. **Moves** to the element's position/orientation
-3. **Enters attachment mode** where commands affect the attached element
+Attachment is now handled via functional macros (`attach`, `attach!`, `attach-face`, `clone-face`) that create temporary turtles internally and return modified meshes. The interactive `attach`/`detach` flow (with push/pop state) has been removed.
 
 ```clojure
-;; Attach commands (all push state automatically)
-(attach mesh)              ; Attach to mesh at its creation pose
-(attach-face mesh :top)    ; Attach to face center, heading = normal
-(attach-edge mesh edge-id) ; Attach to edge midpoint
-(attach-vertex mesh v-id)  ; Attach to vertex position
+;; Functional attachment — returns modified mesh
+(register b (attach (box 20) (f 10) (th 45)))
 
-;; Detach (pops state, returns to previous position)
-(detach)
+;; In-place attachment — updates registry
+(attach! :b (f 10) (th 45))
+
+;; Face operations — returns modified mesh
+(register b (attach-face b :top (f 10)))
+(register b (clone-face b :top (f 5) (inset 3)))
 ```
 
 #### Mesh Creation Pose
@@ -882,23 +882,20 @@ This allows `(attach mesh)` to position the turtle exactly where it was when the
 
 ### Design Decisions
 
-1. **Stack-based attachment**: Using push/pop instead of explicit save/restore simplifies the mental model and naturally handles nested operations.
+1. **Functional attachment**: `attach`, `attach-face`, `clone-face` are functional macros that return modified meshes. No mutable state, no push/pop.
 
-2. **Automatic push on attach**: `(attach ...)` always pushes state, `(detach)` always pops. This ensures you can't "lose" your position.
+2. **Mesh remembers creation pose**: Enables intuitive "go back to where I made this" workflow.
 
-3. **Mesh remembers creation pose**: Enables intuitive "go back to where I made this" workflow.
-
-4. **No multi-selection**: Complex multi-element operations can be expressed with Clojure:
+3. **No multi-selection**: Complex multi-element operations can be expressed with Clojure:
    ```clojure
-   (doseq [id [:top :bottom :left :right]]
-     (attach-face mesh id)
-     (inset 2)
-     (detach))
+   (-> b
+       (attach-face :top (inset 2))
+       (attach-face :bottom (inset 2)))
    ```
 
-5. **No built-in undo**: The language itself is the undo mechanism — re-evaluate with changes.
+4. **No built-in undo**: The language itself is the undo mechanism — re-evaluate with changes.
 
-6. **Face orientation**: When attached to a face, heading is always the outward normal. This makes `(f 10)` consistently mean "extrude outward" and `(f -10)` mean "extrude inward/cut".
+5. **Face orientation**: When attached to a face, heading is always the outward normal. This makes `(f 10)` consistently mean "extrude outward" and `(f -10)` mean "extrude inward/cut".
 
 ## Desktop-Headset Sync (WebRTC)
 

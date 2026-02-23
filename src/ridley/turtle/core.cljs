@@ -37,7 +37,6 @@
    :geometry []
    :meshes []
    :stamps []             ; accumulated stamp outlines for debug visualization
-   :state-stack []          ; stack for push-state/pop-state
    :anchors {}              ; named poses for mark/goto
    :attached nil            ; attachment state for face/mesh operations
    :resolution {:mode :n :value 16}  ; curve resolution (like OpenSCAD $fn)
@@ -45,42 +44,10 @@
               :metalness 0.3         ; 0-1, PBR metalness
               :roughness 0.7         ; 0-1, PBR roughness
               :opacity 1.0           ; 0-1, transparency
-              :flat-shading true}})  ; flat vs smooth shading
+              :flat-shading true}    ; flat vs smooth shading
+   :preserve-up false                ; when true, th/tv keep up aligned with reference-up
+   :reference-up nil})               ; captured up vector when :preserve-up scope is entered
 
-
-;; --- State stack ---
-
-(defn push-state
-  "Push current turtle pose (position, heading, up, pen-mode) onto the stack.
-   Use pop-state to restore. Useful for branching or temporary movements.
-   Meshes and geometry created between push and pop are kept."
-  [state]
-  (let [pose {:position (:position state)
-              :heading (:heading state)
-              :up (:up state)
-              :pen-mode (:pen-mode state)}]
-    (update state :state-stack conj pose)))
-
-(defn pop-state
-  "Pop and restore the most recently pushed turtle pose from the stack.
-   Returns state unchanged if stack is empty."
-  [state]
-  (let [stack (:state-stack state)]
-    (if (empty? stack)
-      state
-      (let [pose (peek stack)]
-        (-> state
-            (assoc :position (:position pose))
-            (assoc :heading (:heading pose))
-            (assoc :up (:up pose))
-            (assoc :pen-mode (:pen-mode pose))
-            (assoc :state-stack (pop stack)))))))
-
-(defn clear-stack
-  "Clear the state stack without restoring any pose.
-   Useful to reset after complex branching operations."
-  [state]
-  (assoc state :state-stack []))
 
 ;; --- Vector math utilities (shared via ridley.math) ---
 
@@ -215,6 +182,20 @@
 (defn- deg->rad [deg]
   (* deg (/ Math/PI 180)))
 
+(defn- orthogonalize
+  "Project reference-up onto the plane perpendicular to heading, normalize.
+   Returns a unit vector aligned as closely as possible with reference-up
+   while being perpendicular to heading."
+  [reference-up heading]
+  (let [d (dot reference-up heading)
+        proj (v* heading d)
+        result (v- reference-up proj)
+        mag (magnitude result)]
+    (if (< mag 1e-10)
+      ;; Degenerate: heading is parallel to reference-up, fall back
+      reference-up
+      (normalize result))))
+
 (defn- right-vector
   "Calculate the right vector (heading x up)."
   [state]
@@ -224,19 +205,28 @@
   "Apply a list of rotations to heading/up vectors.
    Returns {:heading new-heading :up new-up}"
   [state rotations]
-  (reduce
-   (fn [{:keys [heading up] :as acc} {:keys [type angle]}]
-     (let [rad (deg->rad angle)]
-       (case type
-         :th (assoc acc :heading (rotate-around-axis heading up rad))
-         :tv (let [right (normalize (cross heading up))
-                   new-heading (rotate-around-axis heading right rad)
-                   new-up (rotate-around-axis up right rad)]
-               (assoc acc :heading new-heading :up new-up))
-         :tr (assoc acc :up (rotate-around-axis up heading rad))
-         acc)))
-   {:heading (:heading state) :up (:up state)}
-   rotations))
+  (let [preserve? (:preserve-up state)
+        ref-up (:reference-up state)]
+    (reduce
+     (fn [{:keys [heading up] :as acc} {:keys [type angle]}]
+       (let [rad (deg->rad angle)]
+         (case type
+           :th (if preserve?
+                 (let [new-heading (normalize (rotate-around-axis heading ref-up rad))
+                       new-up (orthogonalize ref-up new-heading)]
+                   (assoc acc :heading new-heading :up new-up))
+                 (assoc acc :heading (rotate-around-axis heading up rad)))
+           :tv (let [right (normalize (cross heading up))
+                     new-heading (normalize (rotate-around-axis heading right rad))]
+                 (if preserve?
+                   (let [new-up (orthogonalize ref-up new-heading)]
+                     (assoc acc :heading new-heading :up new-up))
+                   (let [new-up (rotate-around-axis up right rad)]
+                     (assoc acc :heading new-heading :up new-up))))
+           :tr (assoc acc :up (rotate-around-axis up heading rad))
+           acc)))
+     {:heading (:heading state) :up (:up state)}
+   rotations)))
 
 ;; --- Resolution settings (like OpenSCAD $fn/$fa/$fs) ---
 
@@ -370,7 +360,7 @@
   "Move turtle by distance along a direction vector.
    Behavior depends on pen-mode:
    - :off or nil - just move, no drawing
-   - :on - add line segment to geometry
+   - :on - add line segment to geometry (flushed to scene accumulator by implicit layer)
    - :shape - accumulate ring for sweep mesh"
   [state direction dist]
   (let [pos (:position state)
@@ -578,9 +568,17 @@
 
     ;; Normal mode: apply rotation immediately
     :else
-    (let [rad (deg->rad angle)
-          new-heading (rotate-around-axis (:heading state) (:up state) rad)]
-      (assoc state :heading new-heading))))
+    (if (:preserve-up state)
+      ;; Preserve-up: rotate heading around reference-up, re-orthogonalize up
+      (let [rad (deg->rad angle)
+            ref-up (:reference-up state)
+            new-heading (normalize (rotate-around-axis (:heading state) ref-up rad))
+            new-up (orthogonalize ref-up new-heading)]
+        (assoc state :heading new-heading :up new-up))
+      ;; Standard: rotate heading around local up
+      (let [rad (deg->rad angle)
+            new-heading (rotate-around-axis (:heading state) (:up state) rad)]
+        (assoc state :heading new-heading)))))
 
 (defn tv
   "Turn vertical (pitch) - rotate heading and up around right axis.
@@ -609,11 +607,14 @@
     :else
     (let [rad (deg->rad angle)
           right (right-vector state)
-          new-heading (rotate-around-axis (:heading state) right rad)
-          new-up (rotate-around-axis (:up state) right rad)]
-      (-> state
-          (assoc :heading new-heading)
-          (assoc :up new-up)))))
+          new-heading (normalize (rotate-around-axis (:heading state) right rad))]
+      (if (:preserve-up state)
+        ;; Preserve-up: re-orthogonalize up toward reference-up
+        (let [new-up (orthogonalize (:reference-up state) new-heading)]
+          (assoc state :heading new-heading :up new-up))
+        ;; Standard: up rotates with heading
+        (let [new-up (rotate-around-axis (:up state) right rad)]
+          (assoc state :heading new-heading :up new-up))))))
 
 (defn tr
   "Turn roll - rotate up around heading axis.
@@ -1325,7 +1326,9 @@
                              (assoc :heading (:heading state))
                              (assoc :up (:up state))
                              (assoc :pen-mode :off)
-                             (assoc :anchors {}))
+                             (assoc :anchors {})
+                             (assoc :preserve-up (:preserve-up state))
+                             (assoc :reference-up (:reference-up state)))
           result (run-path virtual-turtle path)]
       (:anchors result))
     {}))
@@ -1563,17 +1566,21 @@
    - :wrap? - if true, wrap distance around for closed paths (default false)
    - :start-pos - starting position (default [0 0 0])
    - :start-heading - starting heading (default [1 0 0])
-   - :start-up - starting up vector (default [0 0 1])"
-  [path distance & {:keys [wrap? start-pos start-heading start-up]
+   - :start-up - starting up vector (default [0 0 1])
+   - :preserve-up - when true, keep up aligned with reference-up (default false)
+   - :reference-up - the reference up vector for preserve-up mode"
+  [path distance & {:keys [wrap? start-pos start-heading start-up preserve-up reference-up]
                     :or {wrap? false
                          start-pos [0 0 0]
                          start-heading [1 0 0]
-                         start-up [0 0 1]}}]
+                         start-up [0 0 1]
+                         preserve-up false}}]
   (when (path? path)
     (let [total (path-total-length path)
           dist (if (and wrap? (> distance total) (pos? total))
                  (mod distance total)
-                 distance)]
+                 distance)
+          ref-up (or reference-up start-up)]
       (when (and (>= dist 0) (<= dist total))
         (loop [cmds (:commands path)
                pos start-pos
@@ -1597,15 +1604,22 @@
                             up
                             (if (pos? d) (+ cumulative d) cumulative))))
               :th (let [angle (first (:args cmd))
-                        rad (deg->rad angle)
-                        new-heading (rotate-around-axis heading up rad)]
-                    (recur (rest cmds) pos new-heading up cumulative))
+                        rad (deg->rad angle)]
+                    (if preserve-up
+                      (let [new-heading (normalize (rotate-around-axis heading ref-up rad))
+                            new-up (orthogonalize ref-up new-heading)]
+                        (recur (rest cmds) pos new-heading new-up cumulative))
+                      (let [new-heading (rotate-around-axis heading up rad)]
+                        (recur (rest cmds) pos new-heading up cumulative))))
               :tv (let [angle (first (:args cmd))
                         rad (deg->rad angle)
                         right (cross heading up)
-                        new-heading (rotate-around-axis heading right rad)
-                        new-up (rotate-around-axis up right rad)]
-                    (recur (rest cmds) pos new-heading new-up cumulative))
+                        new-heading (normalize (rotate-around-axis heading right rad))]
+                    (if preserve-up
+                      (let [new-up (orthogonalize ref-up new-heading)]
+                        (recur (rest cmds) pos new-heading new-up cumulative))
+                      (let [new-up (rotate-around-axis up right rad)]
+                        (recur (rest cmds) pos new-heading new-up cumulative))))
               :tr (let [angle (first (:args cmd))
                         rad (deg->rad angle)
                         new-up (rotate-around-axis up heading rad)]
@@ -1865,7 +1879,7 @@
 
 (defn goto
   "Move to a named anchor position and adopt its heading/up.
-   Draws a line if pen-mode is :on.
+   Draws a line if pen-mode is :on (flushed to scene accumulator by implicit layer).
    Returns state unchanged if anchor doesn't exist."
   [state name]
   (if-let [anchor (get-in state [:anchors name])]
@@ -1944,8 +1958,7 @@
 (defn attach
   "Attach to a mesh's creation pose.
    With :clone true, creates a copy of the mesh first (original unchanged).
-   Pushes current state, moves turtle to the mesh's creation position,
-   adopts its heading and up vectors.
+   Moves turtle to the mesh's creation position, adopts its heading and up vectors.
    Returns state unchanged if mesh has no creation-pose."
   [state mesh & {:keys [clone]}]
   (let [target-mesh (if clone (clone-mesh mesh) mesh)
@@ -1954,7 +1967,6 @@
                 state)]
     (if-let [pose (:creation-pose target-mesh)]
       (-> state
-          (push-state)
           (assoc :position (:position pose))
           (assoc :heading (:heading pose))
           (assoc :up (:up pose))
@@ -1990,8 +2002,7 @@
    For vector face-ids, works even without :face-groups by indexing :faces directly.
    With :clone true, enables extrusion mode (f creates side faces).
    Without :clone, face movement mode (f moves vertices directly).
-   Pushes current state, moves turtle to face center,
-   sets heading to face normal (outward), up perpendicular.
+   Moves turtle to face center, sets heading to face normal (outward), up perpendicular.
    Returns state unchanged if face not found."
   [state mesh face-id & {:keys [clone]}]
   (if-let [triangles (resolve-face-triangles (:face-groups mesh) (:faces mesh) face-id)]
@@ -2003,7 +2014,6 @@
           ;; up = normal × face-heading (perpendicular to both)
           up (normalize (cross normal face-heading))]
       (-> state
-          (push-state)
           (assoc :position center)
           (assoc :heading normal)
           (assoc :up up)
@@ -2039,14 +2049,11 @@
   (attach state mesh))
 
 (defn detach
-  "Detach from current attachment and restore previous position.
-   Equivalent to pop-state but also clears :attached.
-   Returns state unchanged if not attached."
+  "Detach from current attachment.
+   Clears the :attached field. Returns state unchanged if not attached."
   [state]
   (if (:attached state)
-    (-> state
-        (pop-state)
-        (assoc :attached nil))
+    (assoc state :attached nil)
     state))
 
 ;; ============================================================

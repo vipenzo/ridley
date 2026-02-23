@@ -21,7 +21,7 @@
 ;;  :literals        [{:index :value :label :parent-fn :parent-form :arg-idx} ...]
 ;;  :selected        #{0 2}          — indices with sliders
 ;;  :current-values  {0 15.0, 2 90}  — current slider values
-;;  :saved-turtle    <snapshot of turtle-atom>
+;;  :saved-turtle    <snapshot of turtle state>
 ;;  :panel-el        <DOM element>
 ;;  :esc-handler     <fn>}
 
@@ -196,7 +196,7 @@
           modified-form (substitute-values form current-values)
           form-str (pr-str modified-form)]
       ;; Restore turtle state before evaluation
-      (reset! state/turtle-atom saved-turtle)
+      (reset! @state/turtle-state-var saved-turtle)
       (try
         (let [ctx @state/sci-ctx-ref
               _ (when-not ctx (throw (js/Error. "No SCI context — run definitions first")))
@@ -275,7 +275,7 @@
    In registry mode, re-shows the original mesh."
   []
   (when-let [{:keys [saved-turtle registry-name]} @test-state]
-    (reset! state/turtle-atom saved-turtle)
+    (reset! @state/turtle-state-var saved-turtle)
     (viewport/clear-preview!)
     (when registry-name
       (registry/show-mesh! registry-name)
@@ -290,7 +290,7 @@
   (when-let [{:keys [form current-values saved-turtle registry-name]} @test-state]
     (let [final-form (substitute-values form current-values)
           final-str (pr-str final-form)]
-      (reset! state/turtle-atom saved-turtle)
+      (reset! @state/turtle-state-var saved-turtle)
       (viewport/clear-preview!)
       (if registry-name
         ;; Registry mode: re-evaluate, register, show
@@ -526,7 +526,7 @@
                                             [index value]))
                                   literals)
              ;; Save turtle state
-             saved-turtle @state/turtle-atom]
+             saved-turtle @@state/turtle-state-var]
          ;; Set up state
          (reset! test-state {:form resolved-form
                              :literals labeled
