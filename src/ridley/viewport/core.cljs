@@ -4,6 +4,7 @@
             ["three/examples/jsm/controls/OrbitControls.js" :refer [OrbitControls]]
             [ridley.viewport.xr :as xr]
             [ridley.anim.playback :as anim-playback]
+            [ridley.manifold.core :as manifold]
             [clojure.string :as str]))
 
 (defonce ^:private state (atom nil))
@@ -602,25 +603,37 @@
                              (THREE/LineBasicMaterial. #js {:vertexColors true}))))))
 
 (defn- create-three-mesh
-  "Create Three.js mesh from vertices, faces, and optional material."
-  [{:keys [vertices faces material]}]
-  (let [geom (THREE/BufferGeometry.)
-        n-verts (count vertices)
-        ;; Flatten vertices for position attribute, with bounds checking
-        face-verts (mapcat (fn [[i0 i1 i2]]
-                             (when (and (< i0 n-verts) (< i1 n-verts) (< i2 n-verts))
-                               [(nth vertices i0 [0 0 0])
-                                (nth vertices i1 [0 0 0])
-                                (nth vertices i2 [0 0 0])]))
-                           faces)
-        flat-coords (mapcat identity face-verts)
-        positions (js/Float32Array. (clj->js flat-coords))
-        three-material (create-mesh-material material)]
-    (.setAttribute geom "position" (THREE/BufferAttribute. positions 3))
-    ;; With flatShading: true, Three.js computes face normals automatically
-    ;; We still call computeVertexNormals for compatibility, but flatShading overrides
-    (.computeVertexNormals geom)
-    (THREE/Mesh. geom three-material)))
+  "Create Three.js mesh from vertices, faces, and optional material.
+   Fast path: if mesh has ::manifold/raw-arrays (from CSG), uses indexed geometry
+   directly from typed arrays — avoids CLJS→JS conversion entirely."
+  [mesh-data]
+  (let [{:keys [material]} mesh-data
+        three-material (create-mesh-material material)
+        raw (::manifold/raw-arrays mesh-data)]
+    (if (and raw (= 3 (:num-prop raw)))
+      ;; FAST PATH: zero-copy indexed geometry from Manifold typed arrays
+      (let [geom (THREE/BufferGeometry.)]
+        (.setAttribute geom "position"
+                       (THREE/BufferAttribute. (:vert-props raw) 3))
+        (.setIndex geom
+         (THREE/BufferAttribute. (:tri-verts raw) 1))
+        (.computeVertexNormals geom)
+        (THREE/Mesh. geom three-material))
+      ;; SLOW PATH: de-index from CLJS vectors (for non-CSG meshes)
+      (let [{:keys [vertices faces]} mesh-data
+            geom (THREE/BufferGeometry.)
+            n-verts (count vertices)
+            face-verts (mapcat (fn [[i0 i1 i2]]
+                                 (when (and (< i0 n-verts) (< i1 n-verts) (< i2 n-verts))
+                                   [(nth vertices i0 [0 0 0])
+                                    (nth vertices i1 [0 0 0])
+                                    (nth vertices i2 [0 0 0])]))
+                               faces)
+            flat-coords (mapcat identity face-verts)
+            positions (js/Float32Array. (clj->js flat-coords))]
+        (.setAttribute geom "position" (THREE/BufferAttribute. positions 3))
+        (.computeVertexNormals geom)
+        (THREE/Mesh. geom three-material)))))
 
 (defn- clear-geometry
   "Remove all user geometry objects from world-group, keeping grid, axes, and highlight-group."
@@ -665,14 +678,36 @@
             (+ center-z dist))
       (.update controls))))
 
+(defn- raw-arrays-bbox
+  "Compute bounding box [min max] from a Float32Array of xyz triples.
+   Returns [[min-x min-y min-z] [max-x max-y max-z]]."
+  [^js vert-props]
+  (let [n (.-length vert-props)]
+    (when (pos? n)
+      (loop [i 3
+             min-x (aget vert-props 0) min-y (aget vert-props 1) min-z (aget vert-props 2)
+             max-x min-x max-y min-y max-z min-z]
+        (if (< i n)
+          (let [x (aget vert-props i) y (aget vert-props (+ i 1)) z (aget vert-props (+ i 2))]
+            (recur (+ i 3)
+                   (min min-x x) (min min-y y) (min min-z z)
+                   (max max-x x) (max max-y y) (max max-z z)))
+          [[min-x min-y min-z] [max-x max-y max-z]])))))
+
 (defn- collect-all-points
-  "Collect all points from lines and meshes for camera fitting."
+  "Collect all points from lines and meshes for camera fitting.
+   Uses raw typed arrays when available to avoid CLJS vector allocation."
   [lines meshes]
   (concat
    ;; Points from line segments
    (mapcat (fn [{:keys [from to]}] [from to]) lines)
-   ;; Points from mesh vertices
-   (mapcat :vertices meshes)))
+   ;; Points from meshes: fast path for raw arrays, slow path for CLJS vectors
+   (mapcat (fn [mesh-data]
+             (if-let [raw (::manifold/raw-arrays mesh-data)]
+               (when-let [bbox (raw-arrays-bbox (:vert-props raw))]
+                 bbox)  ;; Just 2 points: [min max] — sufficient for bounding box
+               (:vertices mesh-data)))
+           meshes)))
 
 ;; ============================================================
 ;; Face normals visualization

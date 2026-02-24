@@ -113,7 +113,8 @@
    :up [0 0 1]})     ; +Z up
 
 (defn ^:export manifold-mesh->ridley-mesh
-  "Convert a Manifold Mesh back to Ridley mesh format."
+  "Convert a Manifold Mesh back to Ridley mesh format.
+   Also stores raw typed arrays as ::raw-arrays for zero-copy rendering."
   [^js manifold-mesh]
   (let [vert-props (.-vertProperties manifold-mesh)
         tri-verts (.-triVerts manifold-mesh)
@@ -136,11 +137,15 @@
                                      (aget tri-verts (+ i 1))
                                      (aget tri-verts (+ i 2))]))
                   (persistent! acc)))]
-    (schema/assert-mesh!
-     {:type :mesh
-      :vertices vertices
-      :faces faces
-      :creation-pose default-creation-pose})))
+    (-> (schema/assert-mesh!
+         {:type :mesh
+          :vertices vertices
+          :faces faces
+          :creation-pose default-creation-pose})
+        ;; Store raw typed arrays for zero-copy Three.js rendering
+        (assoc ::raw-arrays {:vert-props (.slice vert-props)
+                             :tri-verts (.slice tri-verts)
+                             :num-prop num-prop}))))
 
 ;; ============================================================
 ;; Manifold operations
@@ -646,7 +651,7 @@
                xformed-verts (mapv xform-vert (:vertices ridley-mesh))
                xformed-mesh (-> ridley-mesh
                                 (assoc :vertices xformed-verts)
-                                (dissoc ::manifold-cache))
+                                (dissoc ::manifold-cache ::raw-arrays))
                ;; Create Manifold from transformed mesh and slice at Z=0
                ^js m (mesh->manifold xformed-mesh)]
            (when m

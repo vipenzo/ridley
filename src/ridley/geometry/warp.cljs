@@ -309,7 +309,7 @@
                          pos)))
                    vertices))]
         (-> mesh
-            (dissoc :ridley.manifold.core/manifold-cache)
+            (dissoc :ridley.manifold.core/manifold-cache :ridley.manifold.core/raw-arrays)
             (assoc :vertices new-vertices))))))
 
 ;; ============================================================

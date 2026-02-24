@@ -38,7 +38,7 @@
   "Translate all vertices of a mesh by an offset vector."
   [mesh offset]
   (-> mesh
-      (dissoc :ridley.manifold.core/manifold-cache)
+      (dissoc :ridley.manifold.core/manifold-cache :ridley.manifold.core/raw-arrays)
       (update :vertices (fn [verts] (mapv #(v+ % offset) verts)))
       (update :creation-pose
               (fn [pose]
@@ -55,7 +55,7 @@
                               rotated (rotate-point-around-axis rel axis angle)]
                           (v+ centroid rotated)))]
     (-> mesh
-        (dissoc :ridley.manifold.core/manifold-cache)
+        (dissoc :ridley.manifold.core/manifold-cache :ridley.manifold.core/raw-arrays)
         (update :vertices (fn [verts] (mapv rotate-vertex verts)))
         (update :creation-pose
                 (fn [pose]
@@ -70,7 +70,7 @@
   [mesh factor]
   (let [centroid (mesh-centroid mesh)]
     (-> mesh
-        (dissoc :ridley.manifold.core/manifold-cache)
+        (dissoc :ridley.manifold.core/manifold-cache :ridley.manifold.core/raw-arrays)
         (update :vertices
                 (fn [verts]
                   (mapv (fn [v]
@@ -101,7 +101,7 @@
                               rotated (rotate-point-around-axis rel axis angle)]
                           (v+ pivot rotated)))]
     (-> mesh
-        (dissoc :ridley.manifold.core/manifold-cache)
+        (dissoc :ridley.manifold.core/manifold-cache :ridley.manifold.core/raw-arrays)
         (update :vertices (fn [verts] (mapv rotate-vertex verts)))
         (update :creation-pose
                 (fn [pose]
@@ -647,7 +647,7 @@
   (let [xform-pt (fn [v] (transform-point-rigid v p0 h0 u0 r0 p1 h1 u1 r1))
         xform-dir (fn [d] (transform-direction-rigid d h0 u0 r0 h1 u1 r1))]
     (cond-> (-> mesh
-                (dissoc :ridley.manifold.core/manifold-cache)
+                (dissoc :ridley.manifold.core/manifold-cache :ridley.manifold.core/raw-arrays)
                 (update :vertices #(mapv xform-pt %)))
       (:creation-pose mesh)
       (update :creation-pose
