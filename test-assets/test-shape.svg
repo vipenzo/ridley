@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <!-- A star shape -->
+  <path id="star" d="M100,10 L120,75 L190,75 L135,115 L155,180 L100,145 L45,180 L65,115 L10,75 L80,75 Z" fill="none" stroke="black"/>
+  <!-- An arrow -->
+  <path id="arrow" d="M20,100 L80,100 L80,80 L120,110 L80,140 L80,120 L20,120 Z" fill="none" stroke="black"/>
+  <!-- A path without ID (will become path-2) -->
+  <path d="M150,20 Q180,20 180,50 Q180,80 150,80 Q120,80 120,50 Q120,20 150,20 Z" fill="none" stroke="black"/>
+</svg>

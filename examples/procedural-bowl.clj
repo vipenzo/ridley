@@ -29,7 +29,7 @@
    :tray-ratio 0.683 ; tray height / bowl height
    :funnel-ratio 0.55 ; funnel top radius / base radius
    :taper-ratio 0.535 ; funnel bottom / funnel top
-   :funnel-height-ratio 0.162 ;tray-height / funnel height
+   :funnel-height-ratio 0.152 ;tray-height / funnel height
    :funne-handle-ratio 0.127 ; funnel top / handle top
    })
 
@@ -53,7 +53,7 @@
         leap-w (/ (+ (:wall m) tray-wall (:tray-gap m)) 2)
         leap-h 1.2
         r-tacco (* rbottom 1.044)
-        h-tacco (* (:h m) 0.05)
+        h-tacco (* (:h m) 0.07)
         d-tacco (* (:h m) -0.050)]
     (merge m
            {:rbottom rbottom
@@ -160,11 +160,11 @@
                 w 0
                 w (* (:funnel-h m) 0.3)
                 w (* (:funnel-h m) 0.4)
-                w (* (:funnel-h m) 0.7)
+                w (* (:funnel-h m) 0.60)
                 x-max (* (:funnel-h m) 0.96)
-                (+ w-in (:wall m)) (* (:funnel-h m) 0.8)
-                w-in (* (:funnel-h m) 0.7)
-                w-in (* (:funnel-h m) 0.69))))))]
+                (+ w-in (:wall m)) (* (:funnel-h m) 0.75)
+                w-in (* (:funnel-h m) 0.6)
+                w-in (* (:funnel-h m) 0.5))))))]
     p))
 
 (defn make-floor-hole-profile [m]
@@ -234,6 +234,7 @@
         :funnel (tweak :all (make-funnel-shape params))
         :hole (make-floor-hole-profile params)
         :slices (let [{:keys [bowl tray]} (pistachio-bowl)]
+                  (println "heading before slice:" (turtle-heading))
                   (stamp (slice-mesh tray))
                   (stamp (slice-mesh bowl)))
         (tweak :all (concat-meshes (vals (pistachio-bowl
@@ -241,9 +242,9 @@
   (let [{:keys [bowl tray]} (pistachio-bowl)]
     (register bowl bowl)
     (register tray tray)
-    (color :bowl 0xeeefee)
+    (color :tray 0xeeefee)
     ;(material :bowl :opacity 0.5)
-    (color :tray 0xeeff80)))
+    (color :bowl 0xeeff80)))
 
 
 

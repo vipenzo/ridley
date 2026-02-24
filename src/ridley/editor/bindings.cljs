@@ -24,7 +24,9 @@
             [ridley.turtle.shape-fn :as sfn]
             [ridley.editor.test-mode :as test-mode]
             [ridley.editor.impl :as macro-impl]
-            [ridley.geometry.warp :as warp]))
+            [ridley.geometry.warp :as warp]
+            [ridley.library.svg :as svg]
+            [ridley.library.stl :as stl-import]))
 
 ;; ============================================================
 ;; Source History Helpers
@@ -429,4 +431,10 @@
    'source-ref      source-ref
    ;; Turtle scope (SCI dynamic var + init fn for turtle macro)
    '*turtle-state*  state/turtle-state-var
-   'init-turtle     state/init-turtle})
+   'init-turtle     state/init-turtle
+   ;; SVG import (parse SVG strings into 2D shapes)
+   'svg             svg/svg
+   'svg-shape       svg/svg-shape
+   'svg-shapes      svg/svg-shapes
+   ;; STL import (decode base64-encoded mesh data)
+   'decode-mesh     stl-import/decode-mesh})

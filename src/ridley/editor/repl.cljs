@@ -17,7 +17,8 @@
             [ridley.editor.state :as state]
             [ridley.editor.bindings :refer [base-bindings]]
             [ridley.editor.macros :refer [macro-defs]]
-            [ridley.library.core :as library]))
+            [ridley.library.core :as library]
+            [ridley.library.svg :as svg]))
 
 ;; ============================================================
 ;; SCI Context Management
@@ -47,6 +48,7 @@
 (defn reset-ctx!
   "Reset the SCI context. Called when definitions are re-evaluated."
   []
+  (svg/cleanup!)
   (let [ctx (make-sci-ctx)]
     (reset! sci-ctx ctx)
     (reset! state/sci-ctx-ref ctx)

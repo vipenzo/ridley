@@ -24,7 +24,8 @@
             [ridley.library.core :as lib-core]
             [ridley.anim.core :as anim]
             [ridley.anim.playback :as anim-playback]
-            [ridley.editor.test-mode :as test-mode]))
+            [ridley.editor.test-mode :as test-mode]
+            [ridley.version :as version]))
 
 (defonce ^:private editor-view (atom nil))
 (defonce ^:private repl-input-el (atom nil))
@@ -2207,6 +2208,9 @@
                             (send-script-debounced)))
                   :get-script (fn [] (when @editor-view (cm/get-value @editor-view)))})
     (setup-voice-ui)
+    ;; Display version in toolbar
+    (when-let [vtag (.getElementById js/document "version-tag")]
+      (set! (.-textContent vtag) version/VERSION))
     ;; Focus REPL input
     (when repl-input
       (.focus repl-input))

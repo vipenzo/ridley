@@ -1,6 +1,6 @@
 {
   "name": "ridley",
-  "version": "0.1.0",
+  "version": "1.5.0",
   "description": "3D modeling with turtle graphics",
   "private": true,
   "scripts": {

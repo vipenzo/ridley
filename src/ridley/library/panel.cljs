@@ -11,7 +11,9 @@
    All state lives in localStorage via storage.cljs.
    Panel re-renders from storage on every mutation."
   (:require [clojure.string :as str]
-            [ridley.library.storage :as storage]))
+            [ridley.library.storage :as storage]
+            [ridley.library.svg :as svg]
+            [ridley.library.stl :as stl]))
 
 ;; ============================================================
 ;; Panel State
@@ -250,18 +252,91 @@
           (when-not (.closest (.-target e) ".action-btn")
             (swap! panel-state update :collapsed not)
             (render!))))
-      ;; Add button
+      ;; Add button — opens dropdown with "New library" / "Load SVG"
       (.addEventListener add-btn "click"
         (fn [e]
           (.stopPropagation e)
-          (when-let [name (js/prompt "Library name:")]
-            (let [name (str/trim name)]
-              (when (seq name)
-                (storage/save-library! name "" [])
-                (storage/activate-library! name)
-                (render!)
-                ;; Enter edit mode for new library
-                (when-let [cb (:on-edit @callbacks)] (cb name)))))))
+          ;; Close any existing context menu first
+          (close-context-menu!)
+          (let [rect (.getBoundingClientRect add-btn)
+                menu (el-with "div" "library-context-menu" nil)]
+            (set! (.-style.left menu) (str (.-left rect) "px"))
+            (set! (.-style.top menu) (str (.-bottom rect) "px"))
+            ;; "New library" item
+            (let [new-btn (el-with "button" "library-context-menu-item" "New library")]
+              (.addEventListener new-btn "click"
+                (fn [_]
+                  (close-context-menu!)
+                  (when-let [name (js/prompt "Library name:")]
+                    (let [name (str/trim name)]
+                      (when (seq name)
+                        (storage/save-library! name "" [])
+                        (storage/activate-library! name)
+                        (render!)
+                        (when-let [cb (:on-edit @callbacks)] (cb name)))))))
+              (.appendChild menu new-btn))
+            ;; "Load SVG" item
+            (let [svg-btn (el-with "button" "library-context-menu-item" "Load SVG")]
+              (.addEventListener svg-btn "click"
+                (fn [_]
+                  (close-context-menu!)
+                  (let [input (or (.getElementById js/document "svg-file-input")
+                                  (let [fi (el "input")]
+                                    (set! (.-type fi) "file")
+                                    (set! (.-id fi) "svg-file-input")
+                                    (set! (.-accept fi) ".svg")
+                                    (.appendChild js/document.body fi)
+                                    fi))]
+                    (set! (.-onchange input)
+                      (fn [_]
+                        (when-let [file (aget (.-files input) 0)]
+                          (let [filename (.-name file)
+                                lib-name (svg/filename->lib-name filename)
+                                reader (js/FileReader.)]
+                            (set! (.-onload reader)
+                              (fn [evt]
+                                (let [svg-string (.. evt -target -result)
+                                      source (svg/generate-library-source svg-string)]
+                                  (storage/save-library! lib-name source [])
+                                  (storage/activate-library! lib-name)
+                                  (render!)
+                                  (when-let [cb (:on-edit @callbacks)] (cb lib-name)))
+                                (set! (.-value input) "")))
+                            (.readAsText reader file)))))
+                    (.click input))))
+              (.appendChild menu svg-btn))
+            ;; "Load STL" item
+            (let [stl-btn (el-with "button" "library-context-menu-item" "Load STL")]
+              (.addEventListener stl-btn "click"
+                (fn [_]
+                  (close-context-menu!)
+                  (let [input (or (.getElementById js/document "stl-file-input")
+                                  (let [fi (el "input")]
+                                    (set! (.-type fi) "file")
+                                    (set! (.-id fi) "stl-file-input")
+                                    (set! (.-accept fi) ".stl")
+                                    (.appendChild js/document.body fi)
+                                    fi))]
+                    (set! (.-onchange input)
+                      (fn [_]
+                        (when-let [file (aget (.-files input) 0)]
+                          (let [filename (.-name file)
+                                lib-name (stl/filename->lib-name filename)
+                                reader (js/FileReader.)]
+                            (set! (.-onload reader)
+                              (fn [evt]
+                                (let [array-buffer (.. evt -target -result)
+                                      source (stl/generate-library-source array-buffer filename)]
+                                  (storage/save-library! lib-name source [])
+                                  (storage/activate-library! lib-name)
+                                  (render!)
+                                  (when-let [cb (:on-change @callbacks)] (cb)))
+                                (set! (.-value input) "")))
+                            (.readAsArrayBuffer reader file)))))
+                    (.click input))))
+              (.appendChild menu stl-btn))
+            (.appendChild js/document.body menu)
+            (swap! panel-state assoc :context-menu {:name nil :x (.-left rect) :y (.-bottom rect)}))))
       (append! actions add-btn)
       ;; Import button
       (let [import-btn (el-with "button" "action-btn" "\u2191")]

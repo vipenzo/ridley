@@ -363,6 +363,15 @@ html, body {
   margin: 0 4px;
 }
 
+/* Version tag in toolbar */
+.version-tag {
+  color: #555;
+  font-size: 10px;
+  font-family: "SF Mono", "Monaco", "Menlo", monospace;
+  margin-left: auto;
+  user-select: none;
+}
+
 /* VR Button */
 .vr-btn {
   color: #b48eff;
@@ -1485,6 +1494,12 @@ body.resizing-h * {
 
 .library-context-menu-item.danger:hover {
   background: #5a2d2d;
+}
+
+.library-context-menu-item.disabled {
+  color: #555;
+  cursor: default;
+  pointer-events: none;
 }
 
 .library-context-menu-sep {
