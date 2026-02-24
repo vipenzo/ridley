@@ -35,7 +35,7 @@ jobs:
         run: echo "tag=${GITHUB_REF_NAME:-dev}" >> "$GITHUB_OUTPUT"
 
       - name: Build production
-        run: npx shadow-cljs release app --config-merge "{\"closure-defines\":{\"ridley.version/VERSION\":\"${{ steps.version.outputs.tag }}\"}}"
+        run: npx shadow-cljs release app --config-merge '{:closure-defines {ridley.version/VERSION "${{ steps.version.outputs.tag }}"}}'
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
