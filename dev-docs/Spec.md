@@ -594,6 +594,62 @@ operations (extrude, loft, revolve) correctly handle shapes with holes.
 - All shape transforms (`scale`, `rotate-shape`, `translate`, `morph`) propagate holes
 - Internally uses integer coordinates (×1000 scale) for precision
 
+### Voronoi Shell
+
+Generate a perforated 2D shape with Voronoi cell pattern. Cell borders become material,
+cell interiors become holes. The result is a standard shape with `:holes` — compatible with
+`extrude`, `loft`, `revolve`, and all shape-fns (`tapered`, `twisted`, `noisy`, etc.).
+
+```clojure
+(voronoi-shell shape)                                    ; Default: 20 cells, 1.5 wall
+(voronoi-shell shape :cells 40 :wall 1.5)                ; Custom cell count and wall thickness
+(voronoi-shell shape :cells 30 :wall 2 :seed 42)         ; Reproducible pattern
+(voronoi-shell shape :cells 25 :wall 1.5 :relax 3)       ; More uniform cells (Lloyd relaxation)
+(voronoi-shell shape :cells 20 :wall 1 :resolution 24)   ; Higher-res holes for smoother loft
+```
+
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `:cells` | 20 | Number of Voronoi cells |
+| `:wall` | 1.5 | Wall thickness between cells |
+| `:seed` | 0 | Random seed for reproducibility |
+| `:relax` | 2 | Lloyd relaxation iterations (higher = more uniform cells) |
+| `:resolution` | 16 | Points per hole (affects loft smoothness) |
+
+**Examples:**
+
+```clojure
+;; Perforated tube
+(register voro-tube (extrude (voronoi-shell (circle 20) :cells 40 :wall 1.5) (f 50)))
+
+;; Tapered voronoi cone
+(register voro-cone
+  (loft (tapered (voronoi-shell (circle 20) :cells 30 :wall 2) :to 0.3) (f 80)))
+
+;; Twisted voronoi vase
+(register voro-vase
+  (loft (-> (voronoi-shell (circle 15 64) :cells 25 :wall 1.5 :seed 42)
+            (twisted :angle 45)
+            (tapered :from 0.8 :to 1.2))
+    (f 60)))
+
+;; Decorative face panel
+(register voro-face (extrude (voronoi-shell (rect 30 30) :cells 25 :wall 1.5) (f 2)))
+
+;; Voronoi revolve vase
+(register voro-rev
+  (revolve (voronoi-shell (shape (f 15) (th 90) (f 30) (th 90) (f 15)) :cells 20 :wall 1.5)))
+```
+
+**Notes:**
+- `voronoi-shell` is a 2D operation (not a shape-fn) — it takes a shape and returns a shape with holes
+- The result composes with shape-fns via `->` threading: `(-> (voronoi-shell ...) (tapered ...) (twisted ...))`
+- Same `:seed` always produces the same pattern; different seeds produce different patterns
+- `:relax 0` gives raw Voronoi cells; higher values make cells more uniform via Lloyd relaxation
+- Uses d3-delaunay for Voronoi computation and Clipper2 for cell clipping/inset
+
 ---
 
 ## 3D Primitives

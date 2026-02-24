@@ -26,7 +26,8 @@
             [ridley.editor.impl :as macro-impl]
             [ridley.geometry.warp :as warp]
             [ridley.library.svg :as svg]
-            [ridley.library.stl :as stl-import]))
+            [ridley.library.stl :as stl-import]
+            [ridley.voronoi.core :as voronoi]))
 
 ;; ============================================================
 ;; Source History Helpers
@@ -142,6 +143,8 @@
    'shape-intersection clipper/shape-intersection
    'shape-xor          clipper/shape-xor
    'shape-offset       clipper/shape-offset
+   ;; Voronoi
+   'voronoi-shell      voronoi/voronoi-shell
    ;; Text shapes
    'text-shape   text/text-shape
    'text-shapes  text/text-shapes

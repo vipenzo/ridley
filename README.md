@@ -21,9 +21,11 @@ Ridley combines turtle graphics with full 3D modeling: extrude 2D profiles along
 - **Animation system** — timeline-based keyframe animation with easing, parent-child linking, and procedural animation
 - **Text & typography** — 3D text shapes, text-on-path, custom font loading
 - **2D shape booleans** — union, difference, intersection, offset via Clipper2
-- **Interactive tweaking** — real-time parameter sliders for rapid iteration
-- **SVG import** — parse SVG paths into 2D shapes
-- **STL export** — download meshes for 3D printing
+- **Interactive tweaking** — real-time parameter sliders for rapid design iteration
+- **SVG import** — parse SVG paths into 2D shapes for extrusion and revolution
+- **STL import/export** — import external meshes, export for 3D printing
+- **AI assistant** — LLM-powered code generation and editing from natural language
+- **Voice input** — multilingual voice commands (Italian/English) via Web Speech API
 - **Live REPL** — interactive development with command history
 - **Library system** — persistent user-defined code libraries with dependency management
 - **VR/AR support** — view models on WebXR headsets with passthrough AR

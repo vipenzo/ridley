@@ -4,6 +4,7 @@
    This module contains the core extrusion logic extracted from turtle/core.cljs.
    All functions are pure - they operate on data and return data."
   (:require ["earcut" :default earcut]
+            ["libtess" :as libtess]
             [ridley.schema :as schema]
             [ridley.math :as math]))
 
@@ -151,6 +152,68 @@
     (vec (for [i (range 0 n-indices 3)]
            [(aget result i) (aget result (+ i 1)) (aget result (+ i 2))]))))
 
+(defn- libtess-triangulate
+  "Triangulate a 2D polygon with holes using libtess (GLU tessellator).
+   More robust than earcut for complex polygons with many holes.
+   - outer: vector of [x y] points for outer boundary
+   - holes: vector of hole contours, each is vector of [x y] points
+   Returns vector of [i j k] triangles (indices into combined vertex list).
+   The combined vertex list is: outer ++ hole1 ++ hole2 ++ ..."
+  [outer holes]
+  (let [;; Build combined vertex list for index lookup
+        all-pts (vec (concat outer (apply concat holes)))
+        n-pts (count all-pts)
+        ;; Create tesselator
+        tess (libtess/GluTesselator.)
+        tri-coords #js []
+        _ (.gluTessCallback tess (.-GLU_TESS_VERTEX_DATA libtess/gluEnum)
+            (fn [data poly-arr]
+              (.push poly-arr (aget data 0) (aget data 1))))
+        _ (.gluTessCallback tess (.-GLU_TESS_BEGIN libtess/gluEnum)
+            (fn [_type]))
+        _ (.gluTessCallback tess (.-GLU_TESS_ERROR libtess/gluEnum)
+            (fn [_errno]))
+        _ (.gluTessCallback tess (.-GLU_TESS_COMBINE libtess/gluEnum)
+            (fn [coords _data _weight]
+              #js [(aget coords 0) (aget coords 1) 0]))
+        _ (.gluTessCallback tess (.-GLU_TESS_EDGE_FLAG libtess/gluEnum)
+            (fn [_flag]))
+        _ (.gluTessNormal tess 0 0 1)]
+    ;; Feed contours
+    (.gluTessBeginPolygon tess tri-coords)
+    ;; Outer contour
+    (.gluTessBeginContour tess)
+    (doseq [[x y] outer]
+      (let [c #js [x y 0]]
+        (.gluTessVertex tess c c)))
+    (.gluTessEndContour tess)
+    ;; Hole contours
+    (doseq [hole holes]
+      (.gluTessBeginContour tess)
+      (doseq [[x y] hole]
+        (let [c #js [x y 0]]
+          (.gluTessVertex tess c c)))
+      (.gluTessEndContour tess))
+    (.gluTessEndPolygon tess)
+    ;; Convert output coordinates back to indices
+    ;; Output is flat [x0 y0 x1 y1 x2 y2 ...] — every 6 values = 1 triangle
+    (let [n-coords (.-length tri-coords)]
+      (vec (for [i (range 0 n-coords 6)]
+             (let [find-idx (fn [tx ty]
+                              ;; Find closest matching vertex in combined list
+                              (loop [j 0, best-j 0, best-d js/Infinity]
+                                (if (>= j n-pts)
+                                  best-j
+                                  (let [[px py] (nth all-pts j)
+                                        d (+ (* (- tx px) (- tx px))
+                                             (* (- ty py) (- ty py)))]
+                                    (if (< d best-d)
+                                      (recur (inc j) j d)
+                                      (recur (inc j) best-j best-d))))))]
+               [(find-idx (aget tri-coords i) (aget tri-coords (+ i 1)))
+                (find-idx (aget tri-coords (+ i 2)) (aget tri-coords (+ i 3)))
+                (find-idx (aget tri-coords (+ i 4)) (aget tri-coords (+ i 5)))]))))))
+
 (defn project-to-2d
   "Project 3D points to 2D by dropping the axis most aligned with normal.
    Returns [pts-2d winding-preserved?] where winding-preserved? indicates
@@ -190,7 +253,8 @@
           local-tris)))
 
 (defn triangulate-cap-with-holes
-  "Triangulate a polygon cap with holes using earcut.
+  "Triangulate a polygon cap with holes using libtess (robust GLU tessellator).
+   Falls back to earcut for simple caps without holes.
    - outer-ring: vector of 3D vertex positions for outer boundary
    - hole-rings: vector of 3D vertex vectors for each hole
    - base-idx: starting index in the mesh vertex array
@@ -199,14 +263,13 @@
    Returns vector of [i j k] face triangles with mesh indices."
   [outer-ring hole-rings base-idx normal flip?]
   (if (empty? hole-rings)
-    ;; No holes - use standard triangulation
+    ;; No holes - use standard earcut triangulation
     (triangulate-cap outer-ring base-idx normal flip?)
-    ;; With holes - use earcut
+    ;; With holes - use libtess for robust tessellation
     (let [[outer-2d winding-preserved?] (project-to-2d outer-ring normal)
           holes-2d (mapv #(first (project-to-2d % normal)) hole-rings)
-          ;; Compensate for projection mirror, same as triangulate-cap
           effective-flip? (if winding-preserved? flip? (not flip?))
-          local-tris (earcut-triangulate outer-2d holes-2d)]
+          local-tris (libtess-triangulate outer-2d holes-2d)]
       (mapv (fn [[i j k]]
               (if effective-flip?
                 [(+ base-idx i) (+ base-idx k) (+ base-idx j)]
@@ -577,7 +640,7 @@
    data1 and data2 are {:outer <ring> :holes [<ring> ...]}
    Returns a mesh with:
    - Side faces connecting outer rings
-   - Side faces connecting each hole (reversed winding)
+   - Side faces connecting each hole
    - Caps triangulated with holes"
   [data1 data2]
   (let [outer1 (:outer data1)
@@ -609,7 +672,7 @@
                              [[b0 t1 b1] [b0 t0 t1]]))
                          (range n-outer)))
 
-            ;; Side faces for each hole
+            ;; Side faces for each hole (same winding pattern as outer)
             hole-side-faces
             (vec (apply concat
                         (map-indexed
@@ -692,8 +755,7 @@
                         (range n-outer))))
                    (range (dec n-rings))))
 
-             ;; Side faces for each hole (same winding as outer — holes are CW
-             ;; so the normals point into the tunnel, which is correct)
+             ;; Side faces for each hole (same winding pattern as outer)
              hole-side-faces
              (vec (apply concat
                          (map-indexed
@@ -708,7 +770,6 @@
                                       (let [next-i (mod (inc i) hole-len)
                                             b0 (+ base i) b1 (+ base next-i)
                                             t0 (+ next-base i) t1 (+ next-base next-i)]
-                                        ;; Same face winding as outer
                                         [[b0 t0 t1] [b0 t1 b1]]))
                                     (range hole-len))))
                                (range (dec n-rings)))))

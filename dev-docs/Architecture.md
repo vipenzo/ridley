@@ -307,6 +307,18 @@ Shapes with holes (created by `shape-difference`) are extruded correctly:
 
 All 2D shape transforms (`scale`, `rotate`, `translate`, `morph`) propagate through `:holes`, applying the same transformation to both outer contour and hole contours.
 
+### Voronoi Shell Generation
+
+`voronoi-shell` (`ridley.voronoi.core`) generates perforated 2D shapes with Voronoi cell patterns. The algorithm:
+
+1. **Seed generation** — deterministic PRNG (mulberry32) + rejection sampling to place N points inside the shape boundary
+2. **Lloyd relaxation** — iteratively moves seeds to Voronoi cell centroids (clipped to shape) for uniform distribution
+3. **Voronoi computation** — d3-delaunay computes Delaunay triangulation → Voronoi diagram within bounding box
+4. **Cell → hole conversion** — each Voronoi cell is clipped to the shape boundary (Clipper2 intersection), then inset by `wall/2` (Clipper2 offset with round joins). Cells too small after inset are dropped
+5. **Resampling** — each hole is resampled to a fixed point count (`:resolution`) for loft compatibility, with CW winding enforced
+
+The result is a standard shape map with `:holes` — fully compatible with all downstream operations (extrude, loft, revolve, shape-fns).
+
 ## External Dependencies
 
 ### ClojureScript (shadow-cljs.edn)
@@ -320,6 +332,7 @@ All 2D shape transforms (`scale`, `rotate`, `translate`, `morph`) propagate thro
   "dependencies": {
     "three": "^0.176.0",
     "clipper2-js": "^1.4.1",
+    "d3-delaunay": "^6.0.4",
     "earcut": "^3.0.1"
   }
 }

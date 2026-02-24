@@ -264,6 +264,25 @@ Shape functions encode the transformation inside the shape, enabling clean compo
   (loft-n 96
     (-> (circle 20 96) (woven :warp 8 :weft 5 :amplitude 1.2) (tapered :to 0.3))
     (f 60)))
+
+;; Voronoi perforated tube
+(register voro-tube
+  (extrude (voronoi-shell (circle 20) :cells 40 :wall 1.5) (f 50)))
+
+;; Voronoi tapered cone
+(register voro-cone
+  (loft (tapered (voronoi-shell (circle 20 64) :cells 30 :wall 2) :to 0.3) (f 80)))
+
+;; Voronoi twisted vase — compose with shape-fns
+(register voro-vase
+  (loft (-> (voronoi-shell (circle 15 64) :cells 25 :wall 1.5 :seed 42)
+            (twisted :angle 45)
+            (tapered :from 0.8 :to 1.2))
+    (f 60)))
+
+;; Voronoi revolve vase
+(register voro-rev
+  (revolve (voronoi-shell (shape (f 15) (th 90) (f 30) (th 90) (f 15)) :cells 20 :wall 1.5)))
 ```
 
 #### Composition with `->` Threading

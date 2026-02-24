@@ -131,7 +131,7 @@
 
 ;; --- Result classification ---
 
-(defn- point-in-polygon?
+(defn point-in-polygon?
   "Ray casting test: is point [px py] inside polygon (vector of [x y])?"
   [[px py] polygon]
   (let [n (count polygon)]

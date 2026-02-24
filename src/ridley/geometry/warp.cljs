@@ -308,7 +308,9 @@
                              deform-fns))
                          pos)))
                    vertices))]
-        (assoc mesh :vertices new-vertices)))))
+        (-> mesh
+            (dissoc :ridley.manifold.core/manifold-cache)
+            (assoc :vertices new-vertices))))))
 
 ;; ============================================================
 ;; Preset deformation functions

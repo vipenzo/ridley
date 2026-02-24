@@ -437,6 +437,14 @@
                       result# (if (:bezier rec-state#) (assoc result# :bezier true) result#)]
                   result#)))))))
 
+   ;; smooth-path: convert a path to its bezier-smoothed version
+   ;; (def sp (smooth-path P))                   - smooth with defaults
+   ;; (def sp (smooth-path P :tension 0.5))      - wider curves
+   ;; (def sp (smooth-path P :cubic true))        - Catmull-Rom spline
+   ;; Equivalent to (path (bezier-as P ...)) but more intuitive
+   (defmacro smooth-path [p & opts]
+     `(~'path (~'bezier-as ~p ~@opts)))
+
    ;; shape: create a 2D shape from turtle movements
    ;; (def tri (shape (f 4) (th 120) (f 4) (th 120) (f 4))) - triangle
    ;; (def tri (shape (f 4) (th 120) (f 4))) - same, auto-closes
