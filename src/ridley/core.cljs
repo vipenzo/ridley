@@ -141,9 +141,10 @@
    Optional reset-camera? parameter controls whether to reset camera view (default false)."
   ([] (evaluate-definitions false))
   ([reset-camera?]
-   ;; Clear registry and animations when re-running definitions (fresh start)
+   ;; Clear registry, animations, and measurement overlays on re-run
    (registry/clear-all!)
    (anim/clear-all!)
+   (viewport/clear-rulers!)
    ;; Show loading indicator for potentially long operations
    (viewport/show-loading!)
    ;; Use requestAnimationFrame to let the UI render the spinner before blocking
@@ -1398,9 +1399,10 @@
 (defn- run-manual-code
   "Execute code from the manual and show result in viewport."
   [code]
-  ;; Clear previous geometry and animations, evaluate fresh
+  ;; Clear previous geometry, animations, and rulers, evaluate fresh
   (registry/clear-all!)
   (anim/clear-all!)
+  (viewport/clear-rulers!)
   (let [result (repl/evaluate-definitions code)]
     (if-let [error (:error result)]
       (show-error error)

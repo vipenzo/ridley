@@ -27,7 +27,8 @@
             [ridley.geometry.warp :as warp]
             [ridley.library.svg :as svg]
             [ridley.library.stl :as stl-import]
-            [ridley.voronoi.core :as voronoi]))
+            [ridley.voronoi.core :as voronoi]
+            [ridley.measure.core :as measure]))
 
 ;; ============================================================
 ;; Source History Helpers
@@ -233,6 +234,12 @@
    'highlight-face  viewport/highlight-face
    'clear-highlights viewport/clear-highlights
    'fit-camera      viewport/fit-camera
+   ;; Measurement
+   'distance        measure/distance
+   'ruler           measure/ruler
+   'bounds          measure/bounds
+   'area            measure/area
+   'clear-rulers    measure/clear-rulers
    ;; Picking / selection (read from viewport picking state)
    'selected        viewport/picking-selected
    'selected-mesh   viewport/picking-selected-mesh

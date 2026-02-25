@@ -9,6 +9,7 @@
             [ridley.turtle.core :as turtle]
             [ridley.turtle.shape :as shape]
             [ridley.viewport.core :as viewport]
+            [ridley.measure.core :as measure]
             [clojure.string :as str]))
 
 ;; ============================================================
@@ -227,6 +228,11 @@
           (if items
             (viewport/show-preview! items)
             (viewport/clear-preview!))
+          ;; Live-refresh rulers when tweaking a registered mesh
+          (when-let [reg-name (:registry-name @test-state)]
+            (when (mesh? result)
+              (measure/set-ruler-overrides! {reg-name result})
+              (measure/refresh-rulers!)))
           true)
         (catch :default e
           (let [msg (str "tweak eval error: " (.-message e))]
@@ -277,6 +283,8 @@
   (when-let [{:keys [saved-turtle registry-name]} @test-state]
     (reset! @state/turtle-state-var saved-turtle)
     (viewport/clear-preview!)
+    (measure/clear-ruler-overrides!)
+    (measure/refresh-rulers!)
     (when registry-name
       (registry/show-mesh! registry-name)
       (registry/refresh-viewport! true))
@@ -312,6 +320,8 @@
               (registry/refresh-viewport! true))))
         ;; Normal mode: just print
         (add-repl-output! final-str))
+      (measure/clear-ruler-overrides!)
+      (measure/refresh-rulers!)
       (cleanup-ui!)
       (reset! test-state nil))))
 

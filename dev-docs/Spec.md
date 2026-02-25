@@ -1100,6 +1100,72 @@ Query face information for meshes with face-groups (primitives):
 (clear-highlights)                            ; Remove all highlights
 ```
 
+### Measurement
+
+Query distances, areas, and bounding boxes:
+
+```clojure
+;; Distance between mesh centroids
+(distance :box1 :box2)
+
+;; Distance between face centers
+(distance :box1 :top :box2 :bottom)
+
+;; Distance between arbitrary points
+(distance [0 0 0] [100 0 0])
+
+;; Mixed: face center to point
+(distance :box1 :top [0 0 50])
+
+;; Bounding box
+(bounds :box1)
+;; => {:min [x y z] :max [x y z] :size [x y z] :center [x y z]}
+
+;; Face area
+(area :box1 :top)
+```
+
+#### Visual Rulers
+
+`ruler` has the same argument forms as `distance` but adds a visual overlay:
+
+```clojure
+(ruler :box1 :box2)                ; ruler between centroids
+(ruler :box1 :top [0 0 50])       ; ruler from face to point
+(ruler [0 0 0] [100 0 0])         ; ruler between points
+
+(clear-rulers)                     ; remove all rulers
+```
+
+Rulers show a line with endpoint markers and a floating distance label.
+
+#### Interactive Measurement (Shift+Click)
+
+- **Shift+Click** on a mesh surface: place a measurement marker
+- **Shift+Click** again on another point: create a ruler between the two points
+- **Esc**: clear pending marker and all rulers
+
+#### Lifecycle
+
+- Rulers **persist** across REPL commands (so you can inspect while experimenting)
+- Rulers are **cleared automatically** on code re-evaluation (Cmd+Enter)
+- Call `(clear-rulers)` to remove them manually
+
+#### Live Rulers in Tweak Mode
+
+Rulers update live when using `tweak` on a registered mesh:
+
+```clojure
+(register A (box 30))
+(register B (attach (box 30) (f 140) (u 50)))
+
+;; In REPL:
+(ruler :A :B)
+(tweak :all :B)    ; rulers follow B as you drag sliders
+```
+
+When tweaking `:B`, rulers that reference `:B` re-resolve on each slider change. On confirm, rulers use the final registered mesh; on cancel, they revert.
+
 ### Semantic Face Names (Primitives)
 
 | Primitive | Face IDs |

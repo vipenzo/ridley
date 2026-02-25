@@ -49,6 +49,13 @@
 ;; Preview objects for test mode (temporary visualization, outside registry)
 (defonce ^:private preview-objects (atom []))
 
+;; Ruler measurement overlay objects [{:group THREE.Group} ...]
+(defonce ^:private ruler-objects (atom []))
+
+;; Interactive measurement: pending first point for Shift+Click workflow
+;; nil or {:point [x y z] :marker THREE.Mesh}
+(defonce ^:private measure-pending (atom nil))
+
 ;; Pre-allocated temp objects for rigid animation transforms (avoids per-frame GC)
 (def ^:private tmp-mat4 (THREE/Matrix4.))
 (def ^:private tmp-quat (THREE/Quaternion.))
@@ -1076,6 +1083,12 @@
         (set! (.-aspect camera) (/ width height))
         (.updateProjectionMatrix camera)))))
 
+;; Forward declarations for ruler system (defined after highlights section)
+(declare add-ruler!)
+(declare clear-rulers!)
+(declare clear-measure-pending!)
+(declare create-ruler-endpoint)
+
 ;; ============================================================
 ;; Picking (Alt+Click mesh selection + face drill-down)
 ;; ============================================================
@@ -1517,6 +1530,59 @@
                          (.-shiftKey event))
             (deselect!)))))))
 
+(defn- raycast-point
+  "Raycast from mouse event into scene. Returns [x y z] in world-group
+   local space, or nil if nothing hit."
+  [^js event]
+  (when-let [{:keys [camera world-group canvas]} @state]
+    (let [^js canvas canvas
+          rect (.getBoundingClientRect canvas)
+          nx (- (* (/ (- (.-clientX event) (.-left rect))
+                      (.-width rect))
+                   2) 1)
+          ny (- 1 (* (/ (- (.-clientY event) (.-top rect))
+                        (.-height rect))
+                     2))
+          mouse (THREE/Vector2. nx ny)
+          raycaster (THREE/Raycaster.)]
+      (.setFromCamera raycaster mouse camera)
+      (let [hits (.intersectObjects raycaster (.-children world-group) true)
+            hit (some (fn [^js h]
+                        (when (instance? THREE/Mesh (.-object h)) h))
+                      hits)]
+        (when hit
+          ;; Convert world-space hit point to world-group local space
+          (let [pt (.clone (.-point hit))]
+            (.worldToLocal world-group pt)
+            [(.-x pt) (.-y pt) (.-z pt)]))))))
+
+(defn- on-viewport-shift-click
+  "Shift+Click handler for interactive measurement.
+   First click: place marker. Second click: create ruler between markers."
+  [^js event]
+  (when (and (.-shiftKey event) (not (.-altKey event)))
+    (.preventDefault event)
+    (if-let [hit-point (raycast-point event)]
+      ;; Hit something
+      (if-let [pending @measure-pending]
+        ;; Second click: create ruler from pending to new point
+        (let [p1 (:point pending)
+              dx (- (hit-point 0) (p1 0))
+              dy (- (hit-point 1) (p1 1))
+              dz (- (hit-point 2) (p1 2))
+              dist (js/Math.sqrt (+ (* dx dx) (* dy dy) (* dz dz)))]
+          (clear-measure-pending!)
+          (add-ruler! p1 hit-point dist))
+        ;; First click: place marker
+        (do
+          (clear-measure-pending!)
+          (when-let [{:keys [highlight-group]} @state]
+            (let [marker (create-ruler-endpoint hit-point 1.0 0xffdd00)]
+              (.add highlight-group marker)
+              (reset! measure-pending {:point hit-point :marker marker})))))
+      ;; Missed — clear pending
+      (clear-measure-pending!))))
+
 (defn get-picking-state
   "Return current picking state map.
    Keys: :selected-name, :selected-three, :drill-level (:object or :face),
@@ -1662,8 +1728,13 @@
       ;; Alt+Click picking + Alt+Scroll face tolerance
       (.addEventListener canvas "click" on-viewport-alt-click)
       (.addEventListener canvas "wheel" on-viewport-alt-wheel #js {:capture true})
+      ;; Shift+Click interactive measurement
+      (.addEventListener canvas "click" on-viewport-shift-click)
       (.addEventListener js/document "keydown"
-        (fn [e] (when (= (.-key e) "Escape") (deselect!))))
+        (fn [e] (when (= (.-key e) "Escape")
+                  (deselect!)
+                  (clear-measure-pending!)
+                  (clear-rulers!))))
       ;; Setup ResizeObserver on viewport-panel (parent) for responsive canvas sizing
       ;; Observing the parent catches resize from panel divider drag
       (let [viewport-panel (.-parentElement canvas)
@@ -1803,6 +1874,141 @@
             (swap! highlight-objects pop))))
       duration-ms)
      true)))
+
+;; ============================================================
+;; Ruler measurement overlay
+;; ============================================================
+
+(defn- format-distance
+  "Format a distance value for display."
+  [d]
+  (if (>= d 1)
+    (.toFixed d 2)
+    (.toFixed d 3)))
+
+(defn- create-ruler-text-sprite
+  "Create a billboard text sprite showing a measurement value."
+  [text position scale-factor]
+  (let [canvas (js/document.createElement "canvas")
+        ctx (.getContext canvas "2d")
+        font-size 48]
+    (set! (.-width canvas) 256)
+    (set! (.-height canvas) 64)
+    ;; Background
+    (set! (.-fillStyle ctx) "rgba(40, 40, 40, 0.85)")
+    (let [radius 8]
+      (.beginPath ctx)
+      (.roundRect ctx 0 0 256 64 radius)
+      (.fill ctx))
+    ;; Text
+    (set! (.-fillStyle ctx) "#ffdd00")
+    (set! (.-font ctx) (str "bold " font-size "px monospace"))
+    (set! (.-textAlign ctx) "center")
+    (set! (.-textBaseline ctx) "middle")
+    (.fillText ctx text 128 32)
+    ;; Create sprite
+    (let [texture (THREE/CanvasTexture. canvas)
+          mat (THREE/SpriteMaterial. #js {:map texture
+                                          :depthTest true
+                                          :depthWrite false
+                                          :sizeAttenuation true})
+          sprite (THREE/Sprite. mat)
+          [px py pz] position
+          w (max (* scale-factor 0.2) 5)
+          h (* w 0.25)]
+      (.set (.-position sprite) px py pz)
+      (.set (.-scale sprite) w h 1)
+      (set! (.-renderOrder sprite) 997)
+      sprite)))
+
+(defn- create-ruler-endpoint
+  "Create a small sphere marker at a ruler endpoint."
+  [position radius color]
+  (let [geom (THREE/SphereGeometry. radius 8 6)
+        mat (THREE/MeshBasicMaterial. #js {:color color
+                                            :depthTest true
+                                            :depthWrite false})
+        mesh (THREE/Mesh. geom mat)
+        [px py pz] position]
+    (.set (.-position mesh) px py pz)
+    (set! (.-renderOrder mesh) 997)
+    mesh))
+
+(defn- create-ruler-line
+  "Create a line between two points for a ruler."
+  [p1 p2 color]
+  (let [geom (THREE/BufferGeometry.)
+        [x1 y1 z1] p1
+        [x2 y2 z2] p2
+        points #js [(THREE/Vector3. x1 y1 z1)
+                    (THREE/Vector3. x2 y2 z2)]
+        mat (THREE/LineBasicMaterial. #js {:color color
+                                            :depthTest true
+                                            :depthWrite false})]
+    (.setFromPoints geom points)
+    (let [line (THREE/Line. geom mat)]
+      (set! (.-renderOrder line) 997)
+      line)))
+
+(defn add-ruler!
+  "Add a visual ruler overlay between two points.
+   p1, p2: [x y z] endpoints
+   dist-value: pre-computed distance (number)
+   ruler-args: optional original argument specs for live refresh"
+  ([p1 p2 dist-value] (add-ruler! p1 p2 dist-value nil))
+  ([p1 p2 dist-value ruler-args]
+   (when-let [{:keys [highlight-group]} @state]
+     (let [color 0xffdd00
+           radius (max (* dist-value 0.015) 0.4)
+           ;; Midpoint for text, offset slightly upward
+           mid [(/ (+ (p1 0) (p2 0)) 2)
+                (/ (+ (p1 1) (p2 1)) 2)
+                (+ (/ (+ (p1 2) (p2 2)) 2) (* radius 3))]
+           ;; Create ruler components
+           group (THREE/Group.)
+           line (create-ruler-line p1 p2 color)
+           ep1 (create-ruler-endpoint p1 radius color)
+           ep2 (create-ruler-endpoint p2 radius color)
+           text (create-ruler-text-sprite (format-distance dist-value) mid dist-value)]
+       (.add group line)
+       (.add group ep1)
+       (.add group ep2)
+       (.add group text)
+       (.add highlight-group group)
+       (swap! ruler-objects conj {:group group :args ruler-args})))))
+
+(defn get-ruler-args
+  "Get the argument specs for all current rulers."
+  []
+  (mapv :args @ruler-objects))
+
+(defn clear-rulers!
+  "Remove all ruler overlays and dispose resources."
+  []
+  (when-let [{:keys [highlight-group]} @state]
+    (doseq [{:keys [^js group]} @ruler-objects]
+      (.traverse group
+        (fn [^js child]
+          (when-let [geom (.-geometry child)]
+            (.dispose geom))
+          (when-let [mat (.-material child)]
+            (when-let [tex (.-map mat)]
+              (.dispose tex))
+            (.dispose mat))))
+      (.remove highlight-group group))
+    (reset! ruler-objects [])))
+
+(defn- clear-measure-pending!
+  "Remove the pending measurement marker."
+  []
+  (when-let [{:keys [^js marker]} @measure-pending]
+    (when-let [{:keys [highlight-group]} @state]
+      (.remove highlight-group marker)
+      (when-let [geom (.-geometry marker)]
+        (.dispose geom))
+      (when-let [mat (.-material marker)]
+        (.dispose mat))))
+  (reset! measure-pending nil))
 
 ;; ============================================================
 ;; Preview system (for test/tweak mode)

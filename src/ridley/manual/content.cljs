@@ -287,7 +287,18 @@
        [{:id :follow-basic
          :code "(def curve\n  (path (f 30) (tv 30) (f 20)\n    (bezier-to [0 60 0] [0 20 30] [0 40 -30])))\n\n(follow-path curve)"}
         {:id :follow-visibility
-         :code "(def star-path\n  (path (dotimes [_ 5] (f 40) (th 144))))\n\n(follow-path star-path)\n\n;; Toggle visibility:\n;; (hide-lines)\n;; (show-lines)\n;; (lines-visible?)"}]}]}
+         :code "(def star-path\n  (path (dotimes [_ 5] (f 40) (th 144))))\n\n(follow-path star-path)\n\n;; Toggle visibility:\n;; (hide-lines)\n;; (show-lines)\n;; (lines-visible?)"}]}
+      {:id :measurement
+       :see-also [:debug-techniques :mesh-basics :tweak-interactive]
+       :examples
+       [{:id :distance-basic
+         :code "(register A (box 30))\n(register B\n  (attach (box 20) (f 60)))\n\n(println (distance :A :B))"}
+        {:id :ruler-faces
+         :code "(register A (box 30))\n(register B\n  (attach (box 20) (f 60)))\n\n(ruler :A :top :B :bottom)"}
+        {:id :bounds-info
+         :code "(register A (box 30 20 10))\n(println (bounds :A))"}
+        {:id :area-face
+         :code "(register A (box 30))\n(println (area :A :top))"}]}]}
     {:id :part-6
      :pages
      [{:id :control-structures
@@ -1110,6 +1121,42 @@ This is useful for visualizing paths before extruding, debugging complex path co
                       :description "`follow-path` traces the path in 3D, showing the curve the turtle would follow during an extrusion."}
        :follow-visibility {:caption "Visibility toggle"
                            :description "Use `hide-lines` / `show-lines` to toggle the visibility of all path lines. Useful when lines overlap with mesh geometry."}}}
+
+     :measurement
+     {:title "Measurement"
+      :content "Measure distances, areas, and bounding boxes of your models directly from code or the REPL.
+
+**Distance** between meshes, faces, or arbitrary points:
+```
+(distance :A :B)                  ; centroid to centroid
+(distance :A :top :B :bottom)     ; face center to face center
+(distance [0 0 0] [100 0 0])     ; point to point
+```
+
+**Visual rulers** — same syntax as `distance`, but draws a line in the viewport:
+```
+(ruler :A :top :B :bottom)
+(clear-rulers)
+```
+
+**Bounding box** and **face area**:
+```
+(bounds :A)        ; → {:min [...] :max [...] :size [...] :center [...]}
+(area :A :top)     ; → area of the :top face
+```
+
+**Interactive measurement:** hold **Shift** and click two points on meshes in the viewport to create a ruler. Press **Esc** to cancel or clear.
+
+**Lifecycle:** rulers persist across REPL commands but are cleared automatically when you re-run the editor (Cmd+Enter). In **tweak mode**, rulers update live as you drag sliders."
+      :examples
+      {:distance-basic {:caption "Distance between meshes"
+                        :description "`distance` computes the Euclidean distance between two points. With keyword arguments, it resolves mesh centroids automatically."}
+       :ruler-faces {:caption "Ruler between faces"
+                     :description "`ruler` works like `distance` but also draws a yellow line in the viewport. Here it connects the top face of A to the bottom face of B."}
+       :bounds-info {:caption "Bounding box"
+                     :description "`bounds` returns min, max, size, and center of a mesh. Works on registered meshes (by keyword), mesh data, 2D shapes, and paths."}
+       :area-face {:caption "Face area"
+                   :description "`area` returns the surface area of a named face. Standard face names are `:top`, `:bottom`, `:front`, `:back`, `:left`, `:right`."}}}
 
      :mark-goto-pushpop
      {:title "Marks, Paths, and State Stack"
@@ -2177,6 +2224,42 @@ Utile per visualizzare percorsi prima di estrudere, debuggare costruzioni comple
                       :description "`follow-path` traccia il percorso in 3D, mostrando la curva che la tartaruga seguirebbe durante un'estrusione."}
        :follow-visibility {:caption "Visibilità"
                            :description "Usa `hide-lines` / `show-lines` per alternare la visibilità di tutte le linee dei percorsi. Utile quando le linee si sovrappongono alla geometria."}}}
+
+     :measurement
+     {:title "Misurazione"
+      :content "Misura distanze, aree e bounding box dei tuoi modelli direttamente dal codice o dalla REPL.
+
+**Distanza** tra mesh, facce o punti arbitrari:
+```
+(distance :A :B)                  ; da centroide a centroide
+(distance :A :top :B :bottom)     ; da centro faccia a centro faccia
+(distance [0 0 0] [100 0 0])     ; da punto a punto
+```
+
+**Righelli visivi** — stessa sintassi di `distance`, ma disegna una linea nel viewport:
+```
+(ruler :A :top :B :bottom)
+(clear-rulers)
+```
+
+**Bounding box** e **area della faccia**:
+```
+(bounds :A)        ; → {:min [...] :max [...] :size [...] :center [...]}
+(area :A :top)     ; → area della faccia :top
+```
+
+**Misurazione interattiva:** tieni premuto **Shift** e clicca due punti sulle mesh nel viewport per creare un righello. Premi **Esc** per annullare o cancellare.
+
+**Ciclo di vita:** i righelli persistono tra i comandi REPL ma vengono cancellati automaticamente quando ri-esegui l'editor (Cmd+Enter). In **modalità tweak**, i righelli si aggiornano in tempo reale mentre trascini gli slider."
+      :examples
+      {:distance-basic {:caption "Distanza tra mesh"
+                        :description "`distance` calcola la distanza euclidea tra due punti. Con argomenti keyword, risolve automaticamente i centroidi delle mesh."}
+       :ruler-faces {:caption "Righello tra facce"
+                     :description "`ruler` funziona come `distance` ma disegna anche una linea gialla nel viewport. Qui collega la faccia superiore di A alla faccia inferiore di B."}
+       :bounds-info {:caption "Bounding box"
+                     :description "`bounds` restituisce min, max, dimensione e centro di una mesh. Funziona su mesh registrate (per keyword), dati mesh, forme 2D e path."}
+       :area-face {:caption "Area di una faccia"
+                   :description "`area` restituisce l'area della superficie di una faccia nominata. I nomi standard sono `:top`, `:bottom`, `:front`, `:back`, `:left`, `:right`."}}}
 
      :mark-goto-pushpop
      {:title "Marcatori, Path e Stack di Stato"
