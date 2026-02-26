@@ -1239,7 +1239,7 @@ Deform mesh vertices inside a volume using preset or custom deformation function
 ;; Box has only 12 triangles — too few for smooth inflate
 (register blocky (warp (box 40) (sphere 25) (inflate 5)))
 
-;; With subdivide: each pass triples triangles inside volume
+;; With subdivide: each pass quadruples triangles inside volume
 (register smooth (warp (box 40) (sphere 25) (inflate 5) :subdivide 2))
 ```
 

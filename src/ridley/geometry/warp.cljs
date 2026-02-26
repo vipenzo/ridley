@@ -112,52 +112,120 @@
              (<= (Math/abs lz) hz))))))
 
 ;; ============================================================
+;; Triangle–point closest-point (Ericson, Real-Time Collision Detection)
+;; ============================================================
+
+(defn- closest-point-on-triangle
+  "Return the closest point on triangle (a,b,c) to point p.
+   Uses Voronoi-region test — handles vertex, edge, and face regions."
+  [p a b c]
+  (let [ab (m/v- b a) ac (m/v- c a) ap (m/v- p a)
+        d1 (m/dot ab ap) d2 (m/dot ac ap)]
+    (if (and (<= d1 0) (<= d2 0))
+      a ;; closest to vertex A
+      (let [bp (m/v- p b)
+            d3 (m/dot ab bp) d4 (m/dot ac bp)]
+        (if (and (>= d3 0) (<= d4 d3))
+          b ;; closest to vertex B
+          (let [vc (- (* d1 d4) (* d3 d2))]
+            (if (and (<= vc 0) (>= d1 0) (<= d3 0))
+              (let [v (/ d1 (- d1 d3))]
+                (m/v+ a (m/v* ab v))) ;; edge AB
+              (let [cp (m/v- p c)
+                    d5 (m/dot ab cp) d6 (m/dot ac cp)]
+                (if (and (>= d6 0) (<= d5 d6))
+                  c ;; closest to vertex C
+                  (let [vb (- (* d5 d2) (* d1 d6))]
+                    (if (and (<= vb 0) (>= d2 0) (<= d6 0))
+                      (let [w (/ d2 (- d2 d6))]
+                        (m/v+ a (m/v* ac w))) ;; edge AC
+                      (let [va (- (* d3 d6) (* d5 d4))]
+                        (if (and (<= va 0)
+                                 (>= (- d4 d3) 0)
+                                 (>= (- d5 d6) 0))
+                          (let [w (/ (- d4 d3) (+ (- d4 d3) (- d5 d6)))]
+                            (m/v+ b (m/v* (m/v- c b) w))) ;; edge BC
+                          ;; inside face
+                          (let [denom (/ 1.0 (+ va vb vc))
+                                v (* vb denom)
+                                w (* vc denom)]
+                            (m/v+ a (m/v+ (m/v* ab v) (m/v* ac w)))))))))))))))))
+
+;; ============================================================
 ;; Centroid subdivision
 ;; ============================================================
 
 (defn- triangle-in-volume?
-  "Check if any vertex of a triangle falls inside the volume."
+  "Check if a triangle intersects the volume.
+   Tests: (1) any vertex inside volume, or (2) closest point on triangle
+   to the volume center is inside volume (catches small volumes inside
+   large triangles)."
   [vertices face center right up heading vol]
-  (let [[i0 i1 i2] face]
-    (or (point-in-volume-local?
-          (world-to-local (nth vertices i0) center right up heading) vol)
-        (point-in-volume-local?
-          (world-to-local (nth vertices i1) center right up heading) vol)
-        (point-in-volume-local?
-          (world-to-local (nth vertices i2) center right up heading) vol))))
+  (let [[i0 i1 i2] face
+        v0 (nth vertices i0)
+        v1 (nth vertices i1)
+        v2 (nth vertices i2)
+        l0 (world-to-local v0 center right up heading)
+        l1 (world-to-local v1 center right up heading)
+        l2 (world-to-local v2 center right up heading)]
+    (or (point-in-volume-local? l0 vol)
+        (point-in-volume-local? l1 vol)
+        (point-in-volume-local? l2 vol)
+        ;; Volume center inside a large triangle? Check closest surface point.
+        (let [cp (closest-point-on-triangle center v0 v1 v2)]
+          (point-in-volume-local?
+            (world-to-local cp center right up heading) vol)))))
+
+(defn- get-or-add-midpoint
+  "Return midpoint vertex index for edge [vi0 vi1], creating it if needed.
+   Returns [midpoint-index, updated-vertices, updated-edge-map]."
+  [vi0 vi1 verts edge-map]
+  (let [edge (if (< vi0 vi1) [vi0 vi1] [vi1 vi0])]
+    (if-let [mid-idx (get edge-map edge)]
+      [mid-idx verts edge-map]
+      (let [v0 (nth verts vi0)
+            v1 (nth verts vi1)
+            mid [(/ (+ (nth v0 0) (nth v1 0)) 2.0)
+                 (/ (+ (nth v0 1) (nth v1 1)) 2.0)
+                 (/ (+ (nth v0 2) (nth v1 2)) 2.0)]
+            idx (count verts)]
+        [idx (conj verts mid) (assoc edge-map edge idx)]))))
 
 (defn- subdivide-once
-  "One pass of centroid subdivision on triangles inside the volume.
-   Each affected triangle (1→3): add centroid, replace with 3 sub-triangles.
+  "One pass of midpoint (1→4) subdivision on triangles inside the volume.
+   Each affected triangle splits at edge midpoints into 4 well-shaped
+   sub-triangles.  Shared edges reuse the same midpoint vertex.
    Triangles fully outside the volume are kept unchanged."
   [mesh vol]
   (let [{:keys [center right up heading]} vol
         vertices (vec (:vertices mesh))
         faces (:faces mesh)]
     (loop [remaining faces
-           out-vertices vertices
-           out-faces []]
+           out-verts vertices
+           out-faces []
+           edge-map {}]
       (if (empty? remaining)
-        (assoc mesh :vertices out-vertices :faces out-faces)
+        (assoc mesh :vertices out-verts :faces out-faces)
         (let [face (first remaining)
               [i0 i1 i2] face]
-          (if (triangle-in-volume? out-vertices face center right up heading vol)
-            (let [v0 (nth out-vertices i0)
-                  v1 (nth out-vertices i1)
-                  v2 (nth out-vertices i2)
-                  cx (/ (+ (nth v0 0) (nth v1 0) (nth v2 0)) 3.0)
-                  cy (/ (+ (nth v0 1) (nth v1 1) (nth v2 1)) 3.0)
-                  cz (/ (+ (nth v0 2) (nth v1 2) (nth v2 2)) 3.0)
-                  ic (count out-vertices)]
+          (if (triangle-in-volume? out-verts face center right up heading vol)
+            (let [[m01 out-verts edge-map] (get-or-add-midpoint i0 i1 out-verts edge-map)
+                  [m12 out-verts edge-map] (get-or-add-midpoint i1 i2 out-verts edge-map)
+                  [m20 out-verts edge-map] (get-or-add-midpoint i2 i0 out-verts edge-map)]
               (recur (rest remaining)
-                     (conj out-vertices [cx cy cz])
-                     (into out-faces [[i0 i1 ic] [i1 i2 ic] [i2 i0 ic]])))
+                     out-verts
+                     (into out-faces [[i0 m01 m20]
+                                      [m01 i1 m12]
+                                      [m12 i2 m20]
+                                      [m01 m12 m20]])
+                     edge-map))
             (recur (rest remaining)
-                   out-vertices
-                   (conj out-faces face))))))))
+                   out-verts
+                   (conj out-faces face)
+                   edge-map)))))))
 
 (defn- subdivide-mesh
-  "Apply n passes of centroid subdivision inside the volume."
+  "Apply n passes of midpoint subdivision inside the volume."
   [mesh vol n]
   (loop [m mesh, i 0]
     (if (>= i n)
@@ -214,29 +282,67 @@
      (if (pos? hz) (/ lz hz) 0.0)]))
 
 ;; ============================================================
-;; Vertex normals
+;; Vertex normals (crease-aware)
 ;; ============================================================
 
 (defn- estimate-vertex-normals
-  "Estimate per-vertex normals by averaging adjacent face normals.
-   Area-weighted (larger faces contribute more)."
+  "Estimate per-vertex normals with crease detection.
+   At sharp edges (face normals differ by > ~70°), only faces from the
+   dominant smooth group contribute.  On smooth surfaces, all adjacent
+   faces are averaged as before (area-weighted)."
   [vertices faces]
   (let [n (count vertices)
-        normals (reduce
-                  (fn [acc [i0 i1 i2]]
-                    (let [v0 (nth vertices i0)
-                          v1 (nth vertices i1)
-                          v2 (nth vertices i2)
-                          e1 (m/v- v1 v0)
-                          e2 (m/v- v2 v0)
-                          face-n (m/cross e1 e2)]
-                      (-> acc
-                          (update i0 #(m/v+ % face-n))
-                          (update i1 #(m/v+ % face-n))
-                          (update i2 #(m/v+ % face-n)))))
-                  (vec (repeat n [0 0 0]))
-                  faces)]
-    (mapv m/normalize normals)))
+        ;; Pre-compute per-face unit normals and raw cross products
+        face-data (mapv (fn [[i0 i1 i2]]
+                          (let [v0 (nth vertices i0)
+                                v1 (nth vertices i1)
+                                v2 (nth vertices i2)
+                                e1 (m/v- v1 v0)
+                                e2 (m/v- v2 v0)
+                                cross (m/cross e1 e2)
+                                mag (m/magnitude cross)]
+                            {:cross cross
+                             :normal (if (pos? mag) (m/v* cross (/ 1.0 mag)) [0 0 0])
+                             :area mag}))
+                        faces)
+        ;; Build per-vertex adjacency: vertex-index → [face-indices]
+        vert-adj (reduce-kv
+                   (fn [acc fi [i0 i1 i2]]
+                     (-> acc
+                         (update i0 (fnil conj []) fi)
+                         (update i1 (fnil conj []) fi)
+                         (update i2 (fnil conj []) fi)))
+                   (vec (repeat n nil))
+                   (vec faces))
+        ;; cos(70°) ≈ 0.34 — faces above this angle are separate smooth groups
+        threshold 0.34
+        normals
+        (mapv
+          (fn [vi]
+            (if-let [adj (nth vert-adj vi)]
+              (if (<= (count adj) 1)
+                ;; Single face — just use its normal
+                (:normal (nth face-data (first adj)))
+                ;; Seed: face with largest area
+                (let [seed-fi (reduce (fn [best fi]
+                                        (if (> (:area (nth face-data fi))
+                                               (:area (nth face-data best)))
+                                          fi best))
+                                      (first adj) (rest adj))
+                      seed-n (:normal (nth face-data seed-fi))
+                      ;; Sum cross products of compatible faces only
+                      sum (reduce
+                            (fn [acc fi]
+                              (let [{:keys [normal cross]} (nth face-data fi)]
+                                (if (> (m/dot normal seed-n) threshold)
+                                  (m/v+ acc cross)
+                                  acc)))
+                            [0 0 0]
+                            adj)]
+                  (m/normalize sum)))
+              [0 0 0]))
+          (range n))]
+    normals))
 
 ;; ============================================================
 ;; Falloff

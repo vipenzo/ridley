@@ -1239,7 +1239,7 @@ Deform mesh vertices inside a volume. The volume shape (sphere, box, cylinder, c
 - `vol` — volume bounds map
 
 **Options:**
-- `:subdivide n` — centroid-subdivide triangles inside volume n times before deforming (each pass: 1 triangle → 3). Useful for low-poly meshes that need smooth deformation. Note: drops `:face-groups` metadata.
+- `:subdivide n` — midpoint-subdivide triangles inside volume n times before deforming (each pass: 1 triangle → 4, edges split at midpoints). Useful for low-poly meshes that need smooth deformation. Note: drops `:face-groups` metadata.
 
 ### Preset Deformations
 
