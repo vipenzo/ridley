@@ -20,7 +20,7 @@
         <div class="section-header">
           <span class="section-title">Editor</span>
           <div class="section-actions">
-            <button id="btn-run" class="action-btn run-btn" title="Run (Cmd+Enter)">▶</button>
+            <button id="btn-run" class="action-btn run-btn" title="Run (Cmd+Enter)" aria-label="Run code (Cmd+Enter)">▶</button>
             <button id="btn-save" class="action-btn" title="Save definitions">Save</button>
             <button id="btn-load" class="action-btn" title="Load from disk">Load</button>
             <button id="btn-line-numbers" class="action-btn" title="Toggle line numbers">123</button>
@@ -37,14 +37,14 @@
           <span class="section-hint">Enter to run, ↑↓ history</span>
         </div>
         <div id="repl-terminal">
-          <div id="repl-history"></div>
+          <div id="repl-history" aria-live="polite"></div>
           <div id="repl-input-line">
             <span class="repl-prompt">&gt; </span>
-            <input type="text" id="repl-input" spellcheck="false" placeholder="(+ 1 2)">
+            <input type="text" id="repl-input" spellcheck="false" placeholder="(+ 1 2)" aria-label="REPL input, Enter to evaluate">
           </div>
         </div>
       </div>
-      <div id="error-panel"></div>
+      <div id="error-panel" role="alert" aria-live="assertive"></div>
     </div>
     <div id="viewport-panel">
       <div id="viewport-toolbar">

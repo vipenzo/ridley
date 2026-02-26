@@ -25,7 +25,8 @@
             [ridley.anim.core :as anim]
             [ridley.anim.playback :as anim-playback]
             [ridley.editor.test-mode :as test-mode]
-            [ridley.version :as version]))
+            [ridley.version :as version]
+            [ridley.audio :as audio]))
 
 (defonce ^:private editor-view (atom nil))
 (defonce ^:private repl-input-el (atom nil))
@@ -156,7 +157,9 @@
                result (repl/evaluate-definitions explicit-code)]
            (viewport/hide-loading!)
            (if-let [error (:error result)]
-             (show-error error)
+             (do
+               (show-error error)
+               (audio/play-feedback! false))
              (do
                ;; Show library load warnings if any
                (let [lib-warnings @lib-core/load-warnings]
@@ -166,18 +169,46 @@
                ;; Show print output in REPL history if any
                (when-let [print-output (:print-output result)]
                  (add-script-output print-output))
-               (when-let [render-data (repl/extract-render-data result)]
-                 ;; Store lines, stamps, and definition meshes
-                 (registry/set-lines! (:lines render-data))
-                 (registry/set-stamps! (or (:stamps render-data) []))
-                 (registry/set-definition-meshes! (:meshes render-data)))
-               ;; Refresh viewport, optionally resetting camera
-               (registry/refresh-viewport! reset-camera?)
+               (let [render-data (repl/extract-render-data result)]
+                 (when render-data
+                   ;; Store lines, stamps, and definition meshes
+                   (registry/set-lines! (:lines render-data))
+                   (registry/set-stamps! (or (:stamps render-data) []))
+                   (registry/set-definition-meshes! (:meshes render-data)))
+                 ;; Refresh viewport, optionally resetting camera
+                 (registry/refresh-viewport! reset-camera?)
+                 ;; Announce success for screen readers (via aria-live on repl-history)
+                 (let [mesh-count (count (or (:meshes render-data) []))
+                       line-count (count (or (:lines render-data) []))
+                       summary (cond
+                                 (and (pos? mesh-count) (pos? line-count))
+                                 (str "Evaluation successful: " mesh-count " mesh"
+                                      (when (> mesh-count 1) "es")
+                                      ", " line-count " line"
+                                      (when (> line-count 1) "s"))
+                                 (pos? mesh-count)
+                                 (str "Evaluation successful: " mesh-count " mesh"
+                                      (when (> mesh-count 1) "es"))
+                                 (pos? line-count)
+                                 (str "Evaluation successful: " line-count " line"
+                                      (when (> line-count 1) "s"))
+                                 :else
+                                 "Evaluation successful")]
+                   (add-repl-entry "[Run]" summary false)))
                ;; Update turtle indicator
                (update-turtle-indicator)
                ;; Sync AI state
-               (sync-voice-state)))))
+               (sync-voice-state)
+               ;; Audio feedback
+               (audio/play-feedback! true)))))
        0)))))
+
+(defn ^:export run-definitions!
+  "Run the definitions panel (same as pressing the Run button).
+   Exposed to SCI so screen-reader users can evaluate from the REPL."
+  []
+  (evaluate-definitions)
+  nil)
 
 (defn- handle-ai-command
   "Handle /ai <prompt> — call LLM and append generated code to the script.
@@ -311,7 +342,8 @@
               (if-let [error (:error result)]
                 (do
                   (add-repl-entry input error true)
-                  (show-error error))
+                  (show-error error)
+                  (audio/play-feedback! false))
                 (do
                   (hide-error)
                   ;; Show result in terminal history (with any print output)
@@ -329,7 +361,9 @@
                   ;; Update turtle indicator
                   (update-turtle-indicator)
                   ;; Sync AI state
-                  (sync-voice-state)))))))))))
+                  (sync-voice-state)
+                  ;; Audio feedback
+                  (audio/play-feedback! true)))))))))))
 
 (defn- navigate-history
   "Navigate command history. direction: -1 for older, +1 for newer."
@@ -1242,7 +1276,17 @@
              :ok "<span class='settings-test-ok'>Connected</span>"
              :error (str "<span class='settings-test-error'>" (or (:error conn) "Failed") "</span>")
              "")
-           "</div>")))))))
+           "</div>"))))
+
+     ;; Accessibility section (always visible, not dependent on AI)
+     "<h3 class='settings-section-header'>Accessibility</h3>"
+     "<div class='settings-field'>"
+     "<label class='settings-checkbox-row'>"
+     "<input type='checkbox' id='settings-audio-feedback' "
+     (when (settings/audio-feedback?) "checked") ">"
+     "Audio feedback (sound on eval)"
+     "</label>"
+     "</div>")))
 
 (defn- attach-settings-listeners
   "Attach event listeners to the settings modal content.
@@ -1326,7 +1370,12 @@
                                       (when-not (:testing @settings/connection-status)
                                         (js/clearInterval @poll-id)
                                         (re-render)))
-                                    200)))))))
+                                    200))))))
+  ;; Audio feedback checkbox (accessibility)
+  (when-let [el (.querySelector modal "#settings-audio-feedback")]
+    (.addEventListener el "change"
+                       (fn [e]
+                         (settings/set-audio-feedback! (.. e -target -checked))))))
 
 (defn- show-settings-modal
   "Show the LLM settings modal."
@@ -2155,6 +2204,8 @@
               (registry/refresh-viewport! false))
           (do (registry/show-only-registered!)
               (registry/refresh-viewport! false)))))
+    ;; Expose run-definitions to SCI (breaks circular dep via atom)
+    (reset! editor-state/run-definitions-fn evaluate-definitions)
     (setup-keybindings)
     (setup-save-load)
     (setup-transport)

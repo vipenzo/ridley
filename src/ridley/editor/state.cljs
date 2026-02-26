@@ -97,6 +97,10 @@
 ;; This avoids a circular dependency (repl → bindings → test-mode → repl).
 (defonce sci-ctx-ref (atom nil))
 
+;; Run-definitions callback — set by core.cljs, read by bindings.cljs.
+;; Avoids circular dependency (core → bindings → core).
+(defonce run-definitions-fn (atom nil))
+
 ;; ============================================================
 ;; Scene Accumulator
 ;; ============================================================

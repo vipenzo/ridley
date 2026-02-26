@@ -16,7 +16,8 @@
         :ollama-model "llama3"
         :model "claude-sonnet-4-20250514"
         :groq-model "llama-3.3-70b-versatile"
-        :tier :auto}})        ; :auto | :tier-1 | :tier-2 | :tier-3
+        :tier :auto}          ; :auto | :tier-1 | :tier-2 | :tier-3
+   :audio-feedback true})     ; Play sounds on eval success/error
 
 ;; =============================================================================
 ;; Settings State
@@ -291,3 +292,18 @@
 
       :else
       (set-conn-error! (str "Unknown provider: " provider-name)))))
+
+;; =============================================================================
+;; Audio Feedback
+;; =============================================================================
+
+(defn audio-feedback?
+  "Check if audio feedback on eval is enabled."
+  []
+  (get @settings :audio-feedback true))
+
+(defn set-audio-feedback!
+  "Enable or disable audio feedback on eval and persist."
+  [enabled?]
+  (swap! settings assoc :audio-feedback (boolean enabled?))
+  (save-settings!))

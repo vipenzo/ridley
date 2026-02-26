@@ -28,7 +28,8 @@
             [ridley.library.svg :as svg]
             [ridley.library.stl :as stl-import]
             [ridley.voronoi.core :as voronoi]
-            [ridley.measure.core :as measure]))
+            [ridley.measure.core :as measure]
+            [ridley.settings :as settings]))
 
 ;; ============================================================
 ;; Source History Helpers
@@ -447,4 +448,9 @@
    'svg-shape       svg/svg-shape
    'svg-shapes      svg/svg-shapes
    ;; STL import (decode base64-encoded mesh data)
-   'decode-mesh     stl-import/decode-mesh})
+   'decode-mesh     stl-import/decode-mesh
+   ;; Audio feedback settings (accessibility)
+   'audio-feedback?      settings/audio-feedback?
+   'set-audio-feedback!  settings/set-audio-feedback!
+   ;; Run definitions from REPL (accessibility — same as Run button)
+   'run-definitions!     (fn [] (when-let [f @state/run-definitions-fn] (f) nil))})

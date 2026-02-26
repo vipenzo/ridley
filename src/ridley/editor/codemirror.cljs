@@ -256,7 +256,14 @@
                             (.of keymap defaultKeymap)
                             (.of keymap searchKeymap)
                             (.of keymap foldKeymap)
+                            ;; Tab indentation (standard editor behavior)
                             (.of keymap #js [indentWithTab])
+                            ;; Escape: blur editor so screen readers can navigate away.
+                            ;; JAWS/NVDA users expect Escape to exit edit mode.
+                            (.of keymap #js [#js {:key "Escape"
+                                                  :run (fn [^js view]
+                                                         (.blur (.-contentDOM view))
+                                                         true)}])
                             ;; Line numbers (off by default, toggled dynamically)
                             (.of line-numbers-compartment #js [])]
                      ;; Add change listener if provided
