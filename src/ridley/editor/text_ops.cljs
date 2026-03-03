@@ -109,7 +109,8 @@
               vertices)]
     (-> mesh
         (assoc :vertices transformed-verts)
-        (assoc :faces faces))))
+        (assoc :faces faces)
+        (dissoc ::manifold/raw-arrays ::manifold/manifold-cache))))
 
 (defn ^:export implicit-extrude-text
   "Extrude text along the turtle's heading direction.

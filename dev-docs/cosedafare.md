@@ -37,26 +37,12 @@ Dettagli implementativi
 
     La cosa bella è che si integra naturalmente con tweak — potresti avere un ruler che si aggiorna live quando muovi uno slider.
 
-B - Voronoi procedurale come shape-fn
-  L'idea sarebbe:
-  Generare un pattern Voronoi 2D sulla shape del profilo
-  Usare le celle Voronoi per creare una shape "traforata" (bordi delle celle = materiale, interni = vuoto)
-  Estrudere con loft e una shape-fn che ruota/varia il pattern lungo il percorso
-
-  clojure;; Concept (nuova API)
-  (register voronoi-tube
-    (loft (voronoi-shell (circle 20) :cells 40 :wall 1.5)
-      (f 100)))
-  Questo richiederebbe di implementare Voronoi 2D (tramite Delaunay → duale) e poi shape-offset per creare i "muri" tra le celle. Con Clipper2 che hai già, la parte di offset e boolean 2D è coperta.
-  Implementare Voronoi 2D — Delaunay triangulation → dual graph. Ci sono librerie JS come d3-delaunay che puoi importare
-  voronoi-shape — nuova primitiva che genera una shape traforata da un set di punti seed dentro un contorno
-  Come shape-fn — i seed si spostano leggermente lungo t, dando quella variazione organica che si vede nella stampa
-  bloft per path complesse — visto che il profilo cambia ad ogni step
 
 
-D - Import STL
 
 E - Litofanie
 
 F - Libreria Viti/Threads
+
+G - Estensione libreria gears ai denti angolati e ai gear interni - trovare esempio.
 
