@@ -411,3 +411,139 @@
                    (.click link)
                    (.revokeObjectURL js/URL url)
                    (str "Saved " (count views) " views as " prefix ".zip")))))))
+
+;; ============================================================
+;; save-image — single PNG download
+;; ============================================================
+
+(defn ^:export save-image
+  "Download a data URL as a PNG file.
+   Works with render-view, render-slice, or any base64 data URL.
+   Usage: (save-image (render-slice :cup :z -15) \"cup-z15.png\")"
+  [data-url filename]
+  (let [link (.createElement js/document "a")]
+    (set! (.-href link) data-url)
+    (set! (.-download link) (or filename "image.png"))
+    (.click link)
+    (str "Saved " filename)))
+
+;; ============================================================
+;; Slice rendering
+;; ============================================================
+
+(def ^:private axis-planes
+  "Axis-aligned slice plane definitions.
+   Each maps axis keyword to {normal, right, up} vectors."
+  {:z {:normal [0 0 1] :right [1 0 0] :up [0 1 0]}
+   :x {:normal [1 0 0] :right [0 1 0] :up [0 0 1]}
+   :y {:normal [0 1 0] :right [1 0 0] :up [0 0 1]}})
+
+(defn- contours-bbox-2d
+  "Compute 2D bounding box from slice contours (shapes with :points).
+   Returns {:min [x y] :max [x y]} or nil."
+  [shapes]
+  (let [all-pts (mapcat (fn [s]
+                          (concat (:points s)
+                                  (mapcat identity (:holes s))))
+                        shapes)]
+    (when (seq all-pts)
+      (let [xs (map first all-pts)
+            ys (map second all-pts)]
+        {:min [(apply min xs) (apply min ys)]
+         :max [(apply max xs) (apply max ys)]}))))
+
+(defn- create-contour-line
+  "Create a THREE.Line from a closed contour (vector of [x y] points).
+   Renders in the XY plane at Z=0."
+  [points ^js material]
+  (let [geom (THREE/BufferGeometry.)
+        ;; Close the contour by repeating first point
+        closed (conj (vec points) (first points))
+        coords (js/Float32Array.
+                 (clj->js (mapcat (fn [[x y]] [x y 0]) closed)))]
+    (.setAttribute geom "position" (THREE/BufferAttribute. coords 3))
+    (THREE/Line. geom material)))
+
+(defn- create-slice-scene
+  "Build an offscreen scene with 2D contour lines on white background."
+  [shapes]
+  (let [scene (THREE/Scene.)
+        _ (set! (.-background scene) (THREE/Color. 0xffffff))
+        outer-mat (THREE/LineBasicMaterial. #js {:color 0x222222 :linewidth 2})
+        hole-mat  (THREE/LineBasicMaterial. #js {:color 0x666666 :linewidth 1})]
+    (doseq [shape shapes]
+      (when (seq (:points shape))
+        (.add scene (create-contour-line (:points shape) outer-mat)))
+      (doseq [hole (:holes shape)]
+        (when (seq hole)
+          (.add scene (create-contour-line hole hole-mat)))))
+    scene))
+
+(defn- setup-slice-camera
+  "Create an orthographic camera for a 2D slice view (looking down Z)."
+  [bbox-2d]
+  (let [[min-x min-y] (:min bbox-2d)
+        [max-x max-y] (:max bbox-2d)
+        cx (/ (+ min-x max-x) 2)
+        cy (/ (+ min-y max-y) 2)
+        range-x (- max-x min-x)
+        range-y (- max-y min-y)
+        pad-x (* range-x 0.15)
+        pad-y (* range-y 0.15)
+        range-x (+ range-x (* 2 pad-x))
+        range-y (+ range-y (* 2 pad-y))
+        half (/ (max range-x range-y 0.1) 2)
+        camera (THREE/OrthographicCamera. (- half) half half (- half) 0.1 100)]
+    (.set (.-up camera) 0 1 0)
+    (.set (.-position camera) cx cy 10)
+    (.lookAt camera cx cy 0)
+    (.updateProjectionMatrix camera)
+    camera))
+
+(defn- resolve-single-mesh
+  "Resolve target to a single Ridley mesh data map."
+  [target]
+  (if (keyword? target)
+    (or (registry/get-mesh target)
+        (throw (js/Error. (str "Object " target " not found"))))
+    (if (and (map? target) (:vertices target))
+      target
+      (throw (js/Error. "render-slice requires a specific mesh target (keyword or mesh)")))))
+
+(defn ^:export render-slice
+  "Render a cross-section of a mesh at an axis-aligned plane.
+   Returns a data URL (base64 PNG) of the 2D contour outlines.
+
+   target   — keyword name or mesh reference
+   axis     — :x, :y, or :z
+   position — float, position along axis
+
+   Options:
+   - :width, :height — image dimensions (default 512x512)"
+  [target axis position & {:keys [width height]
+                           :or {width 512 height 512}}]
+  (let [{:keys [renderer]} (viewport/get-capture-context)]
+    (when-not renderer
+      (throw (js/Error. "No renderer available")))
+    (let [plane (or (get axis-planes axis)
+                    (throw (js/Error. (str "Invalid axis: " axis ". Use :x, :y, or :z"))))
+          {:keys [normal right up]} plane
+          [nx ny nz] normal
+          point [(* nx position) (* ny position) (* nz position)]
+          mesh (resolve-single-mesh target)
+          shapes (manifold/slice-at-plane mesh normal point right up)]
+      (if (or (nil? shapes) (empty? shapes))
+        (throw (js/Error. (str "No cross-section at " (name axis) "=" position
+                               ". Slice plane may be outside the object.")))
+        (let [bbox-2d (contours-bbox-2d shapes)
+              _ (when-not bbox-2d
+                  (throw (js/Error. "Could not compute contour bounds")))
+              slice-scene (create-slice-scene shapes)
+              camera (setup-slice-camera bbox-2d)
+              rt (ensure-render-target! width height)]
+          (.setRenderTarget ^js renderer rt)
+          (.render ^js renderer slice-scene camera)
+          (.setRenderTarget ^js renderer nil)
+          (let [data-url (render-target-to-data-url renderer rt width height)]
+            (dispose-capture-scene! slice-scene)
+            data-url))))))

@@ -353,6 +353,8 @@
    'render-view         capture/render-view
    'render-all-views    capture/render-all-views
    'save-views          capture/save-views
+   'render-slice        capture/render-slice
+   'save-image          capture/save-image
    ;; Vector math (used by move-to and available for user code)
    'vec3+               turtle/v+
    'vec3-               turtle/v-
