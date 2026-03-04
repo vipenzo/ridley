@@ -131,7 +131,7 @@
         {:id :shell-lattice
          :code "(register bricks\n  (loft-n 64\n    (shell-lattice (circle 20 64)\n      :thickness 2 :openings 8 :rows 12 :shift 0.5)\n    (f 60)))"}
         {:id :shell-voronoi
-         :code "(register organic\n  (loft-n 64\n    (shell-voronoi (circle 20 64)\n      :thickness 2 :cells 8 :rows 8 :seed 42)\n    (f 60)))"}
+         :code "(register organic\n  (loft-n 256\n    (shell-voronoi (circle 20 256)\n      :thickness 2 :cells 8 :rows 8 :seed 42)\n    (f 60)))"}
         {:id :shell-tapered
          :code "(register tapered-lattice\n  (loft-n 64\n    (-> (circle 20 64)\n        (shell :thickness 2\n          :fn (fn [a t]\n                (max 0 (sin (+ (* a 8) (* t PI 4))))))\n        (tapered :to 0.5))\n    (f 60)))"}
         {:id :woven-diagonal
@@ -351,7 +351,7 @@
        [{:id :map-basic
          :code "(register sizes\n  (for [r (map #(* % 5) [1 2 3 4])]\n    (attach (sphere r) (f (* r 3)))))"}
         {:id :reduce-union
-         :code "(register merged\n  (reduce mesh-union\n    (for [i (range 5)]\n      (attach (box 10) (f (* i 15))))))"}
+         :code "(register merged\n  (reduce (fn [a b] (mesh-union a b))\n    (for [i (range 5)]\n      (attach (box 10) (f (* i 15))))))"}
         {:id :map-indexed
          :code "(register staircase\n  (for [[i size] (map-indexed vector [8 12 16 20])]\n    (attach (extrude (circle size) (f 5))\n      (f (* i 8)))))"}]}
       {:id :repl-usage
@@ -380,6 +380,10 @@
        :examples
        [{:id :embossed-column-code
          :code "(def col-radius 15)\n(def col-height 80)\n(def n-flutes 16)\n(def flute-depth 0.12)\n\n(def letters (text-shape \"RIDLEY\" :size 20))\n(def text-mesh (turtle (tv 90) (concat-meshes (extrude letters (f 3)))))\n(def text-bounds (bounds text-mesh))\n(def text-hm\n  (mesh-to-heightmap text-mesh\n    :resolution 128\n    :offset-x (get-in text-bounds [:min 0])\n    :offset-y (get-in text-bounds [:min 1])\n    :length-x (- (get-in text-bounds [:max 0]) (get-in text-bounds [:min 0]))\n    :length-y (- (get-in text-bounds [:max 1]) (get-in text-bounds [:min 1]))))\n\n(def shaft\n  (loft-n 96\n    (-> (circle col-radius 64)\n        (fluted :flutes n-flutes :depth flute-depth)\n        (heightmap text-hm :amplitude 1.5 :center true :tile-x 2 :tile-y 1))\n    (f col-height)))\n\n(def base\n  (attach\n    (loft-n 8\n      (tapered (circle (* col-radius 1.4) 64) :to (/ 1 1.4))\n      (f 6))\n    (tv 180)))\n\n(def capital\n  (attach\n    (loft-n 8\n      (tapered (circle col-radius 64) :to 1.3)\n      (f 5))\n    (f col-height)))\n\n(def column (concat-meshes [base shaft capital]))\n(register column column)"}]}
+      {:id :gallery-hamiltonian-cycle
+       :examples
+       [{:id :hamiltonian-cycle-code
+         :code ";; Hamiltonian Cycle on a Grid — by u/Eternally_Monika\n;; Config\n(def cols 10)\n(def rows 10)\n(def cell-size 10)\n(def path-width 4)\n(def path-thickness 1)\n(def mixing-steps 1000)\n(def max-search-steps (* rows cols rows cols))\n\n(assert (even? (* cols rows))\n  \"Hamiltonian cycles are impossible on odd-sized grids.\")\n\n;; Logic\n(defn make-snake [c r]\n  (vec (for [y (range r)\n             x (if (even? y) (range c) (reverse (range c)))]\n         [x y])))\n\n(defn in-bounds? [[x y]]\n  (and (>= x 0) (< x cols) (>= y 0) (< y rows)))\n\n(defn on-boundary? [[x y]]\n  (or (= x 0) (= x (dec cols)) (= y 0) (= y (dec rows))))\n\n(defn abs [n] (max n (- n)))\n\n(defn manhattan-dist [p1 p2]\n  (+ (abs (- (first p1) (first p2)))\n     (abs (- (second p1) (second p2)))))\n\n(defn reverse-prefix [path idx]\n  (vec (concat (reverse (take idx path)) (drop idx path))))\n\n(defn find-index [coll target]\n  (first (keep-indexed #(when (= %2 target) %1) coll)))\n\n(defn backbite-step [path]\n  (let [work-path (if (> (rand) 0.5) (vec (reverse path)) path)\n        head (first work-path)\n        neck (second work-path)\n        [hx hy] head\n        candidates [[(inc hx) hy] [(dec hx) hy]\n                    [hx (inc hy)] [hx (dec hy)]]\n        valid-neighbors (filter #(and (in-bounds? %)\n                                      (not= % neck))\n                          candidates)]\n    (if (empty? valid-neighbors)\n      work-path\n      (let [chosen (rand-nth valid-neighbors)\n            cut-idx (find-index work-path chosen)]\n        (reverse-prefix work-path cut-idx)))))\n\n(defn find-cycle [path step limit]\n  (let [head (first path)\n        tail (last path)\n        is-cycle (and (= 1 (manhattan-dist head tail))\n                      (on-boundary? head)\n                      (on-boundary? tail))]\n    (if (or is-cycle (>= step limit))\n      path\n      (recur (backbite-step path) (inc step) limit))))\n\n(defn roll-to-zero [path]\n  (let [idx (find-index path [0 0])]\n    (vec (concat (drop idx path) (take idx path)))))\n\n;; Execution\n(def initial-snake (make-snake cols rows))\n\n(def mixed-path\n  (loop [p initial-snake i 0]\n    (if (< i mixing-steps)\n      (recur (backbite-step p) (inc i))\n      p)))\n\n(def raw-cycle (find-cycle mixed-path 0 max-search-steps))\n(def path-points (roll-to-zero raw-cycle))\n\n;; Rendering\n(def cycle-path\n  (path\n    (loop [pts (conj (vec path-points) (first path-points))\n           curr-heading 0]\n      (when (> (count pts) 1)\n        (let [[[x1 y1] [x2 y2]] pts\n              dx (- x2 x1)\n              dy (- y2 y1)\n              target-heading (cond\n                               (> dx 0) 0   (> dy 0) 90\n                               (< dx 0) 180 (< dy 0) -90\n                               :else curr-heading)\n              diff (mod (- target-heading curr-heading) 360)\n              turn (if (> diff 180) (- diff 360) diff)]\n          (when-not (zero? turn) (th turn))\n          (f cell-size)\n          (recur (rest pts) target-heading))))))\n\n(register cycle-mesh\n  (extrude (rect path-width path-thickness) cycle-path))"}]}
       {:id :gallery-canvas-weave
        :examples
        [{:id :canvas-weave-code
@@ -751,7 +755,7 @@ Both `shell` and `woven-shell` compose with other shape-fns via `->` threading:
        :shell-lattice {:caption "Brick lattice"
                        :description "`shell-lattice` creates a grid of openings. `:shift 0.5` offsets alternate rows for a brick pattern."}
        :shell-voronoi {:caption "Voronoi openings"
-                       :description "`shell-voronoi` creates organic, irregular cell-shaped openings using Voronoi distance."}
+                       :description "`shell-voronoi` creates organic, irregular cell-shaped openings using Voronoi distance. Best at high resolution (256+) — rendering may take a few seconds."}
        :shell-tapered {:caption "Tapered lattice"
                        :description "Shell composes with `tapered` — the lattice narrows toward the end."}
        :woven-diagonal {:caption "Woven diagonal"
@@ -867,7 +871,7 @@ These compose naturally: `(map f (filter pred coll))`. Combined with `for`, they
       {:map-basic {:caption "Map"
                    :description "`map` applies a function to each element. Here we scale a list of values to get radii, then create spheres."}
        :reduce-union {:caption "Reduce"
-                      :description "`reduce` combines elements pairwise. Here we merge multiple boxes into a single mesh with `mesh-union`."}
+                      :description "`reduce` combines elements pairwise. Here we merge multiple boxes into a single mesh with `mesh-union`. Note: `mesh-union` is a macro, so it must be wrapped in `(fn [a b] ...)` to pass it to `reduce`."}
        :map-indexed {:caption "Map-indexed"
                      :description "`map-indexed` pairs each element with its index. Useful for positioning objects along a sequence."}}}
 
@@ -1504,6 +1508,31 @@ The text is converted to a 2D shape with `text-shape`, extruded into a thin 3D m
       :examples
       {:embossed-column-code {:caption "Embossed Column"}}}
 
+     :gallery-hamiltonian-cycle
+     {:title "Hamiltonian Cycle"
+      :content "A **random Hamiltonian cycle** on a grid, rendered as a 3D path. Contributed by **u/Eternally_Monika** on Reddit.
+
+A Hamiltonian cycle visits every node in a grid exactly once, returning to the start. This script generates one algorithmically using the **backbite algorithm**: start with a snake path, then randomly perturb it thousands of times until a valid cycle emerges.
+
+The result is converted to turtle movements and extruded with a flat rectangle cross-section.
+
+This example showcases why having a **real programming language** as a modeling base matters: graph theory algorithms, `loop`/`recur`, `assert`, random number generation — all natively available.
+
+**Features demonstrated:**
+- Algorithmic geometry — path generated by backbite random walk
+- `loop`/`recur` for iterative algorithms
+- `assert` for input validation
+- `path` with dynamic turtle commands from computed data
+- `extrude` along a programmatically generated path
+
+**Try changing:**
+- `cols` / `rows` for different grid sizes (product must be even)
+- `cell-size` for spacing
+- `path-width` / `path-thickness` for the ribbon dimensions
+- `mixing-steps` for more randomization (higher = more shuffled)"
+      :examples
+      {:hamiltonian-cycle-code {:caption "Hamiltonian Cycle"}}}
+
      :gallery-canvas-weave
      {:title "Canvas Weave Cup"
       :content "A cup with **woven canvas texture** on the outside. This is the most complex example in the gallery.
@@ -1891,7 +1920,7 @@ Sia `shell` che `woven-shell` si compongono con altre shape-fn tramite `->`:
        :shell-lattice {:caption "Reticolo a mattone"
                        :description "`shell-lattice` crea una griglia di aperture. `:shift 0.5` sfasa le righe alternate per un effetto mattone."}
        :shell-voronoi {:caption "Aperture Voronoi"
-                       :description "`shell-voronoi` crea aperture organiche e irregolari a forma di cella usando la distanza di Voronoi."}
+                       :description "`shell-voronoi` crea aperture organiche e irregolari a forma di cella usando la distanza di Voronoi. Rende meglio ad alta risoluzione (256+) — il rendering potrebbe richiedere qualche secondo."}
        :shell-tapered {:caption "Reticolo rastremato"
                        :description "Shell si compone con `tapered` — il reticolo si restringe verso la fine."}
        :woven-diagonal {:caption "Tessuto diagonale"
@@ -2007,7 +2036,7 @@ Si compongono naturalmente: `(map f (filter pred coll))`. Combinati con `for`, o
       {:map-basic {:caption "Map"
                    :description "`map` applica una funzione a ogni elemento. Qui scaliamo una lista di valori per ottenere raggi, poi creiamo sfere."}
        :reduce-union {:caption "Reduce"
-                      :description "`reduce` combina elementi a coppie. Qui uniamo più box in una singola mesh con `mesh-union`."}
+                      :description "`reduce` combina elementi a coppie. Qui uniamo più box in una singola mesh con `mesh-union`. Nota: `mesh-union` è una macro, quindi va wrappata in `(fn [a b] ...)` per passarla a `reduce`."}
        :map-indexed {:caption "Map-indexed"
                      :description "`map-indexed` accoppia ogni elemento con il suo indice. Utile per posizionare oggetti lungo una sequenza."}}}
 
@@ -2112,7 +2141,7 @@ Il piano di taglio è orizzontale all'altezza Y corrente della tartaruga (o a un
                      :description "Lo stesso toroide tagliato su due piani diversi. Il piano di taglio è perpendicolare alla direzione della tartaruga nella sua posizione corrente."}}}
 
      :attach-meshes
-     {:title "Attaccare Mesh"
+     {:title "Usare Attach con una Mesh"
       :content "La funzione `attach` trasforma una mesh con movimenti turtle, restituendo una nuova mesh. Usa `attach!` per trasformare una mesh registrata in-place per nome.
 
 ```
@@ -2132,7 +2161,7 @@ Il piano di taglio è orizzontale all'altezza Y corrente della tartaruga (o a un
                              :description "Le copie possono includere rotazioni. Qui `tv` inclina e `tr` ruota la tartaruga prima di posizionare la copia."}}}
 
      :attach-faces
-     {:title "Attaccare alle Facce"
+     {:title "Usare Attach con le Facce"
       :content "La funzione `attach-face` attacca geometria a una faccia specifica di una mesh. Usa keyword (`:top`, `:bottom`, `:front`, `:back`, `:left`, `:right`) o indici 0-5.
 
 ```
@@ -2643,6 +2672,31 @@ Il testo viene convertito in forma 2D con `text-shape`, estruso in una mesh 3D s
 - `n-flutes` / `flute-depth` per le scanalature del fusto"
       :examples
       {:embossed-column-code {:caption "Colonna con Testo in Rilievo"}}}
+
+     :gallery-hamiltonian-cycle
+     {:title "Ciclo Hamiltoniano"
+      :content "Un **ciclo Hamiltoniano casuale** su una griglia, renderizzato come percorso 3D. Contributo di **u/Eternally_Monika** su Reddit.
+
+Un ciclo Hamiltoniano visita ogni nodo della griglia esattamente una volta, tornando al punto di partenza. Questo script ne genera uno algoritmicamente usando l'**algoritmo backbite**: si parte da un percorso a serpentina, poi lo si perturba casualmente migliaia di volte fino a ottenere un ciclo valido.
+
+Il risultato viene convertito in movimenti turtle ed estruso con una sezione rettangolare piatta.
+
+Questo esempio dimostra perché avere un **vero linguaggio di programmazione** come base di modellazione fa la differenza: algoritmi di teoria dei grafi, `loop`/`recur`, `assert`, generazione di numeri casuali — tutto disponibile nativamente.
+
+**Funzionalità dimostrate:**
+- Geometria algoritmica — percorso generato da random walk backbite
+- `loop`/`recur` per algoritmi iterativi
+- `assert` per validazione degli input
+- `path` con comandi turtle dinamici da dati calcolati
+- `extrude` lungo un percorso generato programmaticamente
+
+**Prova a cambiare:**
+- `cols` / `rows` per griglie di dimensioni diverse (il prodotto deve essere pari)
+- `cell-size` per la spaziatura
+- `path-width` / `path-thickness` per le dimensioni del nastro
+- `mixing-steps` per più randomizzazione (più alto = più mescolato)"
+      :examples
+      {:hamiltonian-cycle-code {:caption "Ciclo Hamiltoniano"}}}
 
      :gallery-canvas-weave
      {:title "Tazza con Trama a Intreccio"
