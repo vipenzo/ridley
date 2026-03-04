@@ -1454,3 +1454,120 @@
                                        (:material state) (assoc :material (:material state)))]
               (update final-state :meshes conj mesh-with-material))
             final-state))))))
+
+;; ============================================================
+;; Shell sweep mesh (variable-thickness hollow extrusion)
+;; ============================================================
+
+(defn generate-shell-ring
+  "Displace ring points toward or away from centroid.
+   inward? true  → toward centroid (inner ring)
+   inward? false → away from centroid (outer ring)
+   Each point displaced by (* half-thickness value).
+   Where value = 0 and offset = 0, point stays at base position (opening).
+   Optional offsets vector shifts the wall center radially before applying thickness."
+  [base-ring half-thickness values inward? & {:keys [offsets]}]
+  (let [centroid (ring-centroid base-ring)]
+    (mapv (fn [point value radial-offset]
+            (let [to-centroid (v- centroid point)
+                  outward (normalize (v* to-centroid -1))
+                  ;; Shift base point by radial offset (outward = positive)
+                  shifted (if (zero? radial-offset)
+                            point
+                            (v+ point (v* outward radial-offset)))
+                  ;; Apply thickness displacement from shifted center
+                  dir (if inward? (v* outward -1) outward)
+                  disp (* half-thickness value)]
+              (if (and (zero? value) (zero? radial-offset))
+                point
+                (v+ shifted (v* dir disp)))))
+          base-ring values (or offsets (repeat (count base-ring) 0)))))
+
+(defn generate-shell-inner-ring
+  "Generate inner ring displaced toward centroid. Legacy wrapper."
+  [base-ring thickness values]
+  (generate-shell-ring base-ring thickness values true))
+
+(defn build-shell-sweep-mesh
+  "Build mesh from shell ring data.
+   shell-data: [{:outer <3D ring> :inner <3D ring> :values [v0 v1 ...]} ...]
+   Generates outer + inner faces per-triangle where all 3 vertices have
+   wall (value > 0). Cap faces connect outer to inner at start/end."
+  ([shell-data creation-pose] (build-shell-sweep-mesh shell-data creation-pose true))
+  ([shell-data creation-pose caps?]
+   (let [n-rings (count shell-data)
+         n-pts (count (:outer (first shell-data)))
+         ;; Vertex layout per step: [outer0..outerN inner0..innerN]
+         step-len (* 2 n-pts)
+         vertices (vec (mapcat (fn [{:keys [outer inner]}]
+                                 (concat outer inner))
+                               shell-data))
+         all-values (mapv :values shell-data)]
+     (when (and (>= n-rings 2) (>= n-pts 3))
+       (let [;; Side faces: per-triangle, skip only where ALL 3 vertices = 0
+             side-faces
+             (persistent!
+              (reduce
+               (fn [acc ri]
+                 (let [ob (* ri step-len)
+                       ob1 (* (inc ri) step-len)
+                       ib (+ ob n-pts)
+                       ib1 (+ ob1 n-pts)
+                       vi (nth all-values ri)
+                       vi1 (nth all-values (inc ri))]
+                   (reduce
+                    (fn [acc j]
+                      (let [j1 (mod (inc j) n-pts)
+                            v00 (nth vi j)      ;; (ri, j)
+                            v01 (nth vi j1)     ;; (ri, j+1)
+                            v10 (nth vi1 j)     ;; (ri+1, j)
+                            v11 (nth vi1 j1)    ;; (ri+1, j+1)
+                            ;; Tri A: (ri,j)-(ri+1,j)-(ri+1,j+1) — skip only if all 3 are zero
+                            tri-a? (or (pos? v00) (pos? v10) (pos? v11))
+                            ;; Tri B: (ri,j)-(ri+1,j+1)-(ri,j+1) — skip only if all 3 are zero
+                            tri-b? (or (pos? v00) (pos? v11) (pos? v01))]
+                        (cond-> acc
+                          tri-a?
+                          (-> (conj! [(+ ob j) (+ ob1 j) (+ ob1 j1)])     ;; outer A
+                              (conj! [(+ ib j) (+ ib1 j1) (+ ib1 j)]))   ;; inner A (reversed)
+                          tri-b?
+                          (-> (conj! [(+ ob j) (+ ob1 j1) (+ ob j1)])     ;; outer B
+                              (conj! [(+ ib j) (+ ib j1) (+ ib1 j1)])))))  ;; inner B (reversed)
+                    acc
+                    (range n-pts))))
+               (transient [])
+               (range (dec n-rings))))
+
+             ;; Cap faces: connect outer to inner at start/end where wall exists
+             cap-faces
+             (when caps?
+               (let [gen-cap
+                     (fn [ring-idx flip?]
+                       (let [vs (nth all-values ring-idx)
+                             base (* ring-idx step-len)]
+                         (persistent!
+                          (reduce
+                           (fn [acc j]
+                             (let [j1 (mod (inc j) n-pts)
+                                   v0 (nth vs j)
+                                   v1 (nth vs j1)]
+                               (if (and (zero? v0) (zero? v1))
+                                 acc
+                                 (let [o0 (+ base j) o1 (+ base j1)
+                                       i0 (+ base n-pts j) i1 (+ base n-pts j1)]
+                                   (if flip?
+                                     (-> acc (conj! [o0 i1 i0]) (conj! [o0 o1 i1]))
+                                     (-> acc (conj! [o0 i0 i1]) (conj! [o0 i1 o1])))))))
+                           (transient [])
+                           (range n-pts)))))]
+                 (concat (gen-cap 0 true)
+                         (gen-cap (dec n-rings) false))))]
+
+         (schema/assert-mesh!
+          (cond-> {:type :mesh
+                   :primitive :shell
+                   :vertices vertices
+                   :faces (vec (concat side-faces
+                                       (or cap-faces [])))}
+            creation-pose (assoc :creation-pose creation-pose))))))))
+

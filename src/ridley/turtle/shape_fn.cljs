@@ -632,3 +632,241 @@
               (fn [s t]
                 (let [sc (interpolate-table scale-table t)]
                   (xform/scale s sc))))))))))
+
+;; ============================================================
+;; Shell shape-fn (variable-thickness hollow extrusion)
+;; ============================================================
+
+(defn ^:export shell
+  "Wraps a shape into a shell shape-fn with variable wall thickness.
+   The thickness function (fn [angle t] -> 0..1) controls wall thickness at each
+   point: 1.0 = full thickness, 0.0 = no wall (opening).
+
+   (shell (circle 20 64)
+     :thickness 3
+     :fn (fn [a t] (max 0 (sin (+ (* a 8) (* t PI 6))))))
+
+   Composes with other shape-fns:
+   (-> (circle 20 64) (shell :thickness 3 :fn ...) (tapered :to 0.5))"
+  [shape-or-fn & {:keys [thickness threshold]
+                  :or {thickness 2 threshold 0.05}
+                  :as opts}]
+  (let [thickness-fn (:fn opts)]
+    (when-not thickness-fn
+      (throw (js/Error. "shell: :fn is required — (shell shape :thickness N :fn (fn [angle t] ...))")))
+    (shape-fn shape-or-fn
+      (fn [s t]
+        (let [center (shape-centroid s)
+              pts (:points s)
+              values (mapv (fn [p]
+                            (let [a (Math/atan2 (- (second p) (second center))
+                                               (- (first p) (first center)))
+                                  v (thickness-fn a t)]
+                              (if (< v threshold) 0.0 (max 0.0 (min 1.0 v)))))
+                          pts)]
+          (assoc s
+                 :shell-mode true
+                 :shell-thickness thickness
+                 :shell-values values))))))
+
+(defn ^:export shell-lattice
+  "Convenience shell with a regular grid of openings.
+   (shell-lattice (circle 20 64) :thickness 2 :openings 8 :rows 12)
+   (shell-lattice (circle 20 64) :thickness 2 :openings 6 :rows 8 :open-ratio 0.6 :shift 0.5)"
+  [shape-or-fn & {:keys [thickness openings rows shift]
+                  :or {thickness 2 openings 8 rows 12 shift 0.5}}]
+  (shell shape-or-fn
+    :thickness thickness
+    :fn (fn [a t]
+          (let [row (* t rows)
+                row-idx (int row)
+                phase (* row-idx shift (/ (* 2 Math/PI) openings))
+                circ (Math/sin (+ (* a openings) phase))
+                longit (Math/sin (* row Math/PI))]
+            (max 0 (min circ longit))))))
+
+(defn ^:export shell-checkerboard
+  "Convenience shell with a checkerboard pattern (alternating solid/empty squares).
+   (shell-checkerboard (circle 20 64) :thickness 2 :cols 8 :rows 8)"
+  [shape-or-fn & {:keys [thickness cols rows]
+                  :or {thickness 2 cols 8 rows 8}}]
+  (shell shape-or-fn
+    :thickness thickness
+    :fn (fn [a t]
+          (let [u (/ (+ a Math/PI) (* 2 Math/PI))
+                col (mod (int (* u cols)) cols)
+                row (mod (int (min (* t rows) (dec rows))) rows)]
+            (if (zero? (mod (+ row col) 2)) 1.0 0.0)))))
+
+(defn ^:export shell-weave
+  "Convenience shell with a woven interlocking pattern.
+   Simulates over/under: at crossings, alternates which thread shows.
+   :width controls thread width (0-0.5, default 0.3).
+   (shell-weave (circle 20 64) :thickness 2 :strands 6 :frequency 8)
+   (shell-weave (circle 20 64) :thickness 2 :strands 8 :frequency 8 :width 0.35)"
+  [shape-or-fn & {:keys [thickness strands frequency width]
+                  :or {thickness 2 strands 6 frequency 8 width 0.3}}]
+  (shell shape-or-fn
+    :thickness thickness
+    :fn (fn [a t]
+          (let [u (* (/ (+ a Math/PI) (* 2 Math/PI)) strands)
+                v (* t frequency)
+                col (int (Math/floor u))
+                row (int (Math/floor v))
+                fu (- u (Math/floor u))
+                fv (- v (Math/floor v))
+                on-warp? (< (Math/abs (- fu 0.5)) width)
+                on-weft? (< (Math/abs (- fv 0.5)) width)
+                warp-over? (zero? (mod (+ row col) 2))]
+            (cond
+              (and on-warp? on-weft?) (if warp-over? 1.0 0.0)
+              on-warp? 1.0
+              on-weft? 1.0
+              :else 0.0)))))
+
+(defn- voronoi-hash
+  "Deterministic pseudo-random 2D hash based on cell coordinates and seed.
+   Returns [x y] in [0,1)×[0,1) — the jittered cell center."
+  [ix iy seed]
+  (let [;; Simple hash mixing — produces good spatial distribution
+        h1 (bit-xor (* (+ ix 37) 73856093) (* (+ iy 19) 19349663) (* (+ seed 7) 83492791))
+        h2 (bit-xor (* (+ ix 53) 49979693) (* (+ iy 31) 67867967) (* (+ seed 13) 29986577))
+        fract (fn [x] (- x (Math/floor x)))]
+    [(fract (* (Math/sin h1) 43758.5453))
+     (fract (* (Math/sin h2) 22578.1459))]))
+
+(defn ^:export shell-voronoi
+  "Convenience shell with organic Voronoi-like openings.
+   Cell walls form the solid regions, cell interiors are openings.
+   :cells — approximate number of cells around the circumference (default 6)
+   :rows — approximate number of cell rows along the path (default 6)
+   :seed — random seed for reproducibility (default 42)
+   :wall-width — relative wall width, 0-1 (default 0.3)
+
+   (shell-voronoi (circle 20 64) :thickness 2 :cells 6 :rows 6)
+   (shell-voronoi (circle 20 64) :thickness 2 :cells 10 :rows 10 :wall-width 0.2 :seed 7)"
+  [shape-or-fn & {:keys [thickness cells rows seed wall-width]
+                  :or {thickness 2 cells 6 rows 6 seed 42 wall-width 0.3}}]
+  (let [;; Pre-compute cell centers for all cells in the grid (+neighbors for wrapping)
+        ;; We check 3×3 neighborhood around the query cell for nearest/second-nearest
+        half-wall (* 0.5 wall-width)]
+    (shell shape-or-fn
+      :thickness thickness
+      :fn (fn [a t]
+            (let [;; Map angle to [0, cells) — wrapping coordinate
+                  u (* (/ (+ a Math/PI) (* 2 Math/PI)) cells)
+                  v (* t rows)
+                  ;; Integer cell coordinates
+                  iu (int (Math/floor u))
+                  iv (int (Math/floor v))
+                  ;; Find nearest and second-nearest cell center
+                  [d1 d2]
+                  (reduce
+                   (fn [[best1 best2] [di dj]]
+                     (let [ci (+ iu di)
+                           cj (+ iv dj)
+                           ;; Wrap ci for cylindrical topology
+                           ci-wrapped (mod ci cells)
+                           [jx jy] (voronoi-hash ci-wrapped cj seed)
+                           ;; Cell center in continuous space
+                           cx (+ ci jx)
+                           cy (+ cj jy)
+                           ;; Distance (use wrapped distance for u)
+                           du (- u cx)
+                           dv (- v cy)
+                           dist (Math/sqrt (+ (* du du) (* dv dv)))]
+                       (cond
+                         (< dist best1) [dist best1]
+                         (< dist best2) [best1 dist]
+                         :else [best1 best2])))
+                   [js/Infinity js/Infinity]
+                   [[-1 -1] [-1 0] [-1 1]
+                    [0 -1]  [0 0]  [0 1]
+                    [1 -1]  [1 0]  [1 1]])
+                  ;; Edge distance: difference between 2nd and 1st nearest
+                  ;; Small → on a cell wall, large → cell interior
+                  edge-dist (- d2 d1)]
+              ;; Wall where edge-dist is small (near cell boundary)
+              (if (< edge-dist half-wall) 1.0 0.0))))))
+
+;; ============================================================
+;; Woven shell (thickness + radial offset for true over/under)
+;; ============================================================
+
+(defn ^:export woven-shell
+  "Shell with radial offset for true over/under woven effect.
+   Unlike `shell` (thickness only), this shifts the wall center radially
+   so threads can pass in front of / behind each other at crossings.
+
+   Built-in diagonal weave:
+   (woven-shell (circle 20 128) :thickness 3 :strands 8)
+   (woven-shell (circle 20 128) :thickness 3 :strands 8 :width 0.15 :lift 1.5)
+
+   Custom fn returning {:thickness 0..1, :offset number}:
+   (woven-shell (circle 20 128) :thickness 3
+     :fn (fn [a t] {:thickness 0.8 :offset (* 0.5 (sin (* a 4)))}))
+
+   Composes with other shape-fns:
+   (-> (circle 20 128) (woven-shell :thickness 3 :strands 6) (tapered :to 0.5))"
+  [shape-or-fn & {:keys [thickness threshold strands width lift]
+                  :or {thickness 2 threshold 0.05 strands 8 width 0.12}
+                  :as opts}]
+  (let [custom-fn (:fn opts)
+        lift (or lift (* 0.5 thickness))
+        weave-fn (or custom-fn
+                     ;; Built-in diagonal weave with over/under offset
+                     ;; Each thread undulates sinusoidally along its entire path:
+                     ;; d1 thread offset varies with sin(d2*PI) — peaks at d2 crossings
+                     ;; d2 thread offset varies with sin(d1*PI) — peaks at d1 crossings
+                     ;; cos(col*PI) / cos(row*PI) alternates sign for over/under
+                     (fn [a t]
+                       (let [u (/ (+ a Math/PI) (* 2 Math/PI))
+                             d1 (+ (* u strands) (* t strands))
+                             d2 (- (* u strands) (* t strands))
+                             fd1 (- (mod d1 1) 0.5)
+                             fd2 (- (mod d2 1) 0.5)
+                             on-d1? (< (Math/abs fd1) width)
+                             on-d2? (< (Math/abs fd2) width)
+                             ;; Rounded thread profile: 1 at center, 0 at edges
+                             prof (fn [fd] (Math/cos (* (/ fd width) Math/PI 0.5)))
+                             col (int (Math/floor d1))
+                             row (int (Math/floor d2))
+                             ;; Sinusoidal offset along entire thread path
+                             ;; d1 thread: undulates as it crosses d2 lines
+                             off-d1 (* lift (Math/cos (* col Math/PI))
+                                           (Math/sin (* d2 Math/PI)))
+                             ;; d2 thread: undulates as it crosses d1 lines (opposite sign)
+                             off-d2 (* (- lift) (Math/cos (* row Math/PI))
+                                                (Math/sin (* d1 Math/PI)))
+                             d1-over? (zero? (mod (+ col row) 2))]
+                         (cond
+                           ;; At crossing: show whichever thread is on top
+                           (and on-d1? on-d2?)
+                           (if d1-over?
+                             {:thickness (prof fd1) :offset off-d1}
+                             {:thickness (prof fd2) :offset off-d2})
+                           ;; On d1 thread only — undulating
+                           on-d1? {:thickness (prof fd1) :offset off-d1}
+                           ;; On d2 thread only — undulating
+                           on-d2? {:thickness (prof fd2) :offset off-d2}
+                           ;; Empty space
+                           :else {:thickness 0 :offset 0}))))]
+    (shape-fn shape-or-fn
+      (fn [s t]
+        (let [center (shape-centroid s)
+              pts (:points s)
+              results (mapv (fn [p]
+                              (let [a (Math/atan2 (- (second p) (second center))
+                                                 (- (first p) (first center)))]
+                                (weave-fn a t)))
+                            pts)
+              values (mapv (fn [{:keys [thickness]}]
+                             (let [v thickness]
+                               (if (< v threshold) 0.0 (max 0.0 (min 1.0 v)))))
+                           results)
+              offsets (mapv :offset results)]
+          (assoc s
+                 :shell-mode true
+                 :shell-thickness thickness
+                 :shell-values values
+                 :shell-offsets offsets))))))

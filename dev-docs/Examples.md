@@ -325,6 +325,54 @@ Multiple shape-fns compose naturally:
     (f 60)))
 ```
 
+#### Shell (Variable-Thickness Hollow Extrusion)
+
+Shell wraps a shape into a hollow wall with variable thickness. Where the thickness function returns 0, openings appear.
+
+```clojure
+;; Diagonal lattice tube
+(register lattice
+  (loft-n 64
+    (shell (circle 20 64) :thickness 3
+      :fn (fn [a t] (max 0 (sin (+ (* a 8) (* t PI 6))))))
+    (f 60)))
+
+;; Built-in patterns
+(register checkerboard (loft-n 64 (shell-checkerboard (circle 20 64) :thickness 2 :cols 8 :rows 8) (f 60)))
+(register lattice2 (loft-n 64 (shell-lattice (circle 20 64) :thickness 2 :openings 8 :rows 12) (f 60)))
+(register weave (loft-n 64 (shell-weave (circle 20 64) :thickness 2 :strands 6 :frequency 8) (f 60)))
+(register voronoi (loft-n 64 (shell-voronoi (circle 20 64) :thickness 2 :cells 8 :rows 8) (f 60)))
+
+;; Tapered lattice cone
+(register tapered-lattice
+  (loft-n 64
+    (-> (circle 20 64)
+        (shell :thickness 2 :fn (fn [a t] (max 0 (sin (+ (* a 8) (* t PI 4))))))
+        (tapered :to 0.5))
+    (f 60)))
+
+;; Twisted lattice
+(register twisted-lattice
+  (loft-n 64
+    (-> (circle 20 64)
+        (shell :thickness 2 :fn (fn [a t] (max 0 (sin (+ (* a 6) (* t PI 6))))))
+        (twisted :angle 90))
+    (f 40)))
+
+;; Custom diagonal weave
+(register diag-weave
+  (loft-n 128
+    (shell (circle 20 128) :thickness 3 :fn (fn [a t]
+      (let [u (/ (+ a PI) (* 2 PI))
+            d1 (+ (* u 8) (* t 8))
+            d2 (- (* u 8) (* t 8))
+            w 0.12
+            on-d1? (< (abs (- (mod d1 1) 0.5)) w)
+            on-d2? (< (abs (- (mod d2 1) 0.5)) w)]
+        (if (or on-d1? on-d2?) 1.0 0.0))))
+    (f 60)))
+```
+
 #### Custom shape-fn
 
 ```clojure

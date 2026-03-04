@@ -483,33 +483,79 @@
            n-segments (count segments)
            initial-radius (shape-radius shape)
 
-           ;; Hole-aware helpers (polymorphic over ring vs ring-data)
-           has-holes? (boolean (:holes shape))
-           do-stamp (if has-holes? stamp-shape-with-holes stamp-shape)
-           get-outer (if has-holes? :outer identity)
-           do-build (fn [rings cp caps?]
-                      (if has-holes?
-                        (build-sweep-mesh-with-holes rings cp caps?)
+           ;; Detect shell mode from the first transformed shape
+           ;; (shell shape-fn attaches :shell-mode to the shape)
+           probe-shape (transform-fn shape 0)
+           shell-mode? (boolean (:shell-mode probe-shape))
+
+           ;; Polymorphic helpers (shell vs holes vs plain)
+           has-holes? (and (not shell-mode?) (boolean (:holes shape)))
+           do-stamp (cond
+                      shell-mode?
+                      (fn [state s]
+                        (let [base-ring (stamp-shape state s)
+                              half-t (* 0.5 (:shell-thickness s))
+                              vals (:shell-values s)
+                              offs (:shell-offsets s)
+                              outer (extrusion/generate-shell-ring
+                                     base-ring half-t vals false :offsets offs)
+                              inner (extrusion/generate-shell-ring
+                                     base-ring half-t vals true :offsets offs)]
+                          {:outer outer :inner inner :values vals}))
+                      has-holes? stamp-shape-with-holes
+                      :else stamp-shape)
+           get-outer (if (or shell-mode? has-holes?) :outer identity)
+           do-build (cond
+                      shell-mode?
+                      (fn [rings cp caps?]
+                        (extrusion/build-shell-sweep-mesh rings cp caps?))
+                      has-holes?
+                      (fn [rings cp caps?]
+                        (build-sweep-mesh-with-holes rings cp caps?))
+                      :else
+                      (fn [rings cp caps?]
                         (build-sweep-mesh rings false cp caps?)))
-           do-round-corners (if has-holes? generate-round-corner-ring-data generate-round-corner-rings)
-           do-tapered-corners (if has-holes? generate-tapered-corner-ring-data generate-tapered-corner-rings)
-           midpoint-ring (fn [r1 r2]
-                           (if has-holes?
+           do-round-corners (cond
+                              shell-mode? (fn [& _] nil)
+                              has-holes? generate-round-corner-ring-data
+                              :else generate-round-corner-rings)
+           do-tapered-corners (cond
+                                shell-mode? (fn [& _] nil)
+                                has-holes? generate-tapered-corner-ring-data
+                                :else generate-tapered-corner-rings)
+           midpoint-ring (cond
+                           shell-mode?
+                           (fn [r1 r2]
+                             {:outer (mapv (fn [p1 p2] (v+ p1 (v* (v- p2 p1) 0.5)))
+                                          (:outer r1) (:outer r2))
+                              :inner (mapv (fn [p1 p2] (v+ p1 (v* (v- p2 p1) 0.5)))
+                                          (:inner r1) (:inner r2))
+                              :values (mapv (fn [v1 v2] (* 0.5 (+ v1 v2)))
+                                            (:values r1) (:values r2))})
+                           has-holes?
+                           (fn [r1 r2]
                              {:outer (mapv (fn [p1 p2] (v+ p1 (v* (v- p2 p1) 0.5)))
                                           (:outer r1) (:outer r2))
                               :holes (when (:holes r1)
                                        (mapv (fn [h1 h2]
                                                (mapv (fn [p1 p2] (v+ p1 (v* (v- p2 p1) 0.5))) h1 h2))
-                                             (:holes r1) (:holes r2)))}
+                                             (:holes r1) (:holes r2)))})
+                           :else
+                           (fn [r1 r2]
                              (mapv (fn [p1 p2] (v+ p1 (v* (v- p2 p1) 0.5))) r1 r2)))
-           make-cap-mesh (fn [ring-or-data normal]
-                           (if has-holes?
+           make-cap-mesh (cond
+                           shell-mode?
+                           (fn [& _] nil) ;; shell caps handled inside build-shell-sweep-mesh
+                           has-holes?
+                           (fn [ring-or-data normal]
                              (let [outer (:outer ring-or-data)
                                    holes (or (:holes ring-or-data) [])]
                                (when (>= (count outer) 3)
                                  {:type :mesh :primitive :cap
                                   :vertices (vec (concat outer (apply concat holes)))
-                                  :faces (triangulate-cap-with-holes outer holes 0 normal false)}))
+                                  :faces (triangulate-cap-with-holes outer holes 0 normal false)})))
+                           :else
+                           (fn [ring-or-data normal]
                              (when (>= (count ring-or-data) 3)
                                {:type :mesh :primitive :cap
                                 :vertices (vec ring-or-data)

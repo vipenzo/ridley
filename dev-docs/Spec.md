@@ -454,6 +454,7 @@ Shape-fns work with `loft`, `bloft`, and `revolve`.
 | `(woven shape :warp n :weft m)` | Interlocking over/under woven fabric pattern |
 | `(heightmap shape hm :amplitude a)` | Displacement from a rasterized heightmap |
 | `(profile shape path)` | Scale cross-section to match a path silhouette |
+| `(shell shape :thickness n :fn f)` | Variable-thickness hollow extrusion with openings |
 
 **Composition** via `->` threading:
 
@@ -519,6 +520,41 @@ The path's X coordinates represent the radius at each point along the extrusion.
 | `(shape-fn? x)` | Check if x is a shape-fn |
 | `(angle [x y])` | Angle (radians) of 2D point from origin |
 | `(displace-radial shape offset-fn)` | Displace points radially from centroid |
+
+**Shell shape-fn** — variable-thickness hollow extrusion with openings:
+
+```clojure
+;; Perforated tube with diagonal lattice
+(register lattice
+  (loft-n 64
+    (shell (circle 20 64) :thickness 3
+      :fn (fn [a t] (max 0 (sin (+ (* a 8) (* t PI 6))))))
+    (f 60)))
+```
+
+The thickness function `(fn [angle t] → 0..1)` maps each point to a wall thickness:
+- `1.0` = full wall thickness, `0.0` = no wall (opening)
+- `angle` = angular position on profile (radians), `t` = path progress (0–1)
+- Values below `:threshold` (default 0.05) snap to 0
+
+**`shell` options:** `:thickness` (2 — max wall thickness in units), `:fn` (required), `:threshold` (0.05)
+
+Wall is symmetric: outer ring displaced outward by `thickness/2`, inner ring displaced inward by `thickness/2`. Where thickness is 0, both rings coincide (opening).
+
+**Built-in shell patterns:**
+
+| Function | Description |
+|----------|-------------|
+| `(shell-lattice shape :thickness n :openings k :rows r :shift s)` | Regular grid of openings (brick pattern when shift=0.5) |
+| `(shell-checkerboard shape :thickness n :cols c :rows r)` | Alternating solid/empty squares |
+| `(shell-weave shape :thickness n :strands s :frequency f :width w)` | Warp/weft grid pattern with over/under at crossings |
+| `(shell-voronoi shape :thickness n :cells c :rows r :seed s :wall-width w)` | Organic Voronoi-like irregular openings |
+
+Shell composes with other shape-fns:
+```clojure
+(-> (circle 20 64) (shell :thickness 2 :fn ...) (tapered :to 0.5))  ; tapered lattice
+(-> (circle 20 64) (shell :thickness 2 :fn ...) (twisted :angle 90)) ; twisted lattice
+```
 
 **Resolution considerations:**
 - Circumferential detail: use `(circle r n)` or `(resample shape n)` — points per ring >= 2 x frequency
