@@ -1771,6 +1771,13 @@
   []
   @current-meshes)
 
+(defn get-capture-context
+  "Return state needed by the capture module for offscreen rendering."
+  []
+  (when-let [{:keys [renderer scene world-group]} @state]
+    {:renderer renderer :scene scene :world-group world-group
+     :current-meshes @current-meshes}))
+
 ;; ============================================================
 ;; Face highlighting
 ;; ============================================================

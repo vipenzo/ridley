@@ -29,7 +29,8 @@
             [ridley.library.stl :as stl-import]
             [ridley.voronoi.core :as voronoi]
             [ridley.measure.core :as measure]
-            [ridley.settings :as settings]))
+            [ridley.settings :as settings]
+            [ridley.viewport.capture :as capture]))
 
 ;; ============================================================
 ;; Source History Helpers
@@ -348,6 +349,10 @@
    'shape-names         registry/shape-names
    ;; STL export
    'save-stl            stl/download-stl
+   ;; View capture (for describe/AI and debugging)
+   'render-view         capture/render-view
+   'render-all-views    capture/render-all-views
+   'save-views          capture/save-views
    ;; Vector math (used by move-to and available for user code)
    'vec3+               turtle/v+
    'vec3-               turtle/v-
