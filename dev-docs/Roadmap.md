@@ -631,6 +631,16 @@ The core turtle system, generative operations, boolean operations, anchor/naviga
 
 ## Enhancement Ideas
 
+### 3D Lattice Structures (implicit surface / marching cubes)
+
+Fill a solid volume with procedural internal structure (TPMS, strut lattice, etc.). Pipeline: mesh → bounding box → voxel grid → implicit function evaluation → marching cubes → lattice mesh. Enables lightweight structural parts like those produced by DMLS/SLA 3D printing.
+
+**Key components:**
+- Implicit density functions: Gyroid (`sin(x)*cos(y) + sin(y)*cos(z) + sin(z)*cos(x)`), Schwarz-P, Diamond, strut-based
+- Point-in-mesh test (ray casting or signed distance field)
+- Marching cubes (or dual contouring) for isosurface extraction
+- DSL: `(lattice mesh :type :gyroid :scale 5 :thickness 0.3)` or `(lattice mesh :fn (fn [x y z] ...))`
+
 ### Attach on mesh collections (structure-preserving)
 
 Extend `attach` to work on nested vectors of meshes, transforming all meshes while preserving the nesting structure. This enables treating function-composed groups as rigid bodies:

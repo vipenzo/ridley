@@ -793,14 +793,92 @@
 ;; Woven shell (thickness + radial offset for true over/under)
 ;; ============================================================
 
+(defn- woven-combine-crossing
+  "At a crossing, compute wall that encompasses both threads.
+   Returns {:thickness v :offset o} where v may exceed 1.0."
+  [off-a prof-a off-b prof-b half-t]
+  (let [;; Each thread wall spans [offset - half-t*prof, offset + half-t*prof]
+        top-a (+ off-a (* half-t prof-a))
+        bot-a (- off-a (* half-t prof-a))
+        top-b (+ off-b (* half-t prof-b))
+        bot-b (- off-b (* half-t prof-b))
+        ;; Union: outermost to innermost
+        outer (max top-a top-b)
+        inner (min bot-a bot-b)
+        center (* 0.5 (+ outer inner))
+        half-span (* 0.5 (- outer inner))]
+    {:thickness (if (pos? half-t) (/ half-span half-t) 1.0)
+     :offset center}))
+
+(defn- woven-shell-diagonal
+  "Built-in diagonal weave pattern for woven-shell."
+  [strands width lift half-t]
+  (fn [a t]
+    (let [u (/ (+ a Math/PI) (* 2 Math/PI))
+          d1 (+ (* u strands) (* t strands))
+          d2 (- (* u strands) (* t strands))
+          fd1 (- (mod d1 1) 0.5)
+          fd2 (- (mod d2 1) 0.5)
+          on-d1? (< (Math/abs fd1) width)
+          on-d2? (< (Math/abs fd2) width)
+          prof (fn [fd w] (Math/cos (* (/ fd w) Math/PI 0.5)))
+          col (int (Math/floor d1))
+          row (int (Math/floor d2))
+          off-d1 (* lift (Math/cos (* col Math/PI))
+                        (Math/sin (* d2 Math/PI)))
+          off-d2 (* (- lift) (Math/cos (* row Math/PI))
+                             (Math/sin (* d1 Math/PI)))]
+      (cond
+        (and on-d1? on-d2?)
+        (woven-combine-crossing off-d1 (prof fd1 width)
+                                off-d2 (prof fd2 width) half-t)
+        on-d1? {:thickness (prof fd1 width) :offset off-d1}
+        on-d2? {:thickness (prof fd2 width) :offset off-d2}
+        :else {:thickness 0 :offset 0}))))
+
+(defn- woven-shell-orthogonal
+  "Built-in orthogonal weave pattern for woven-shell.
+   warp = longitudinal threads (along t), weft = circumferential (along u).
+   Each direction has its own count and width."
+  [warp weft warp-width weft-width lift half-t]
+  (fn [a t]
+    (let [u (/ (+ a Math/PI) (* 2 Math/PI))
+          wu (* u warp)              ;; warp coordinate (circumferential position)
+          wv (* t weft)              ;; weft coordinate (longitudinal position)
+          fwu (- (mod wu 1) 0.5)    ;; fractional pos within warp cell
+          fwv (- (mod wv 1) 0.5)    ;; fractional pos within weft cell
+          on-warp? (< (Math/abs fwu) warp-width)
+          on-weft? (< (Math/abs fwv) weft-width)
+          prof (fn [fd w] (Math/cos (* (/ fd w) Math/PI 0.5)))
+          col (int (Math/floor wu))
+          row (int (Math/floor wv))
+          ;; Warp threads undulate as they cross weft lines
+          off-warp (* lift (Math/cos (* col Math/PI))
+                          (Math/sin (* wv Math/PI)))
+          ;; Weft threads undulate as they cross warp lines (opposite sign)
+          off-weft (* (- lift) (Math/cos (* row Math/PI))
+                               (Math/sin (* wu Math/PI)))]
+      (cond
+        (and on-warp? on-weft?)
+        (woven-combine-crossing off-warp (prof fwu warp-width)
+                                off-weft (prof fwv weft-width) half-t)
+        on-warp? {:thickness (prof fwu warp-width) :offset off-warp}
+        on-weft? {:thickness (prof fwv weft-width) :offset off-weft}
+        :else {:thickness 0 :offset 0}))))
+
 (defn ^:export woven-shell
   "Shell with radial offset for true over/under woven effect.
    Unlike `shell` (thickness only), this shifts the wall center radially
    so threads can pass in front of / behind each other at crossings.
 
-   Built-in diagonal weave:
+   Diagonal weave (default):
    (woven-shell (circle 20 128) :thickness 3 :strands 8)
    (woven-shell (circle 20 128) :thickness 3 :strands 8 :width 0.15 :lift 1.5)
+
+   Orthogonal weave (basket/wicker):
+   (woven-shell (circle 20 128) :thickness 3
+     :mode :orthogonal :warp 8 :weft 40
+     :warp-width 0.2 :weft-width 0.08)
 
    Custom fn returning {:thickness 0..1, :offset number}:
    (woven-shell (circle 20 128) :thickness 3
@@ -808,49 +886,21 @@
 
    Composes with other shape-fns:
    (-> (circle 20 128) (woven-shell :thickness 3 :strands 6) (tapered :to 0.5))"
-  [shape-or-fn & {:keys [thickness threshold strands width lift]
+  [shape-or-fn & {:keys [thickness threshold strands width lift
+                         warp weft warp-width weft-width]
                   :or {thickness 2 threshold 0.05 strands 8 width 0.12}
                   :as opts}]
   (let [custom-fn (:fn opts)
+        mode (or (:mode opts) :diagonal)
         lift (or lift (* 0.5 thickness))
+        half-t (* 0.5 thickness)
         weave-fn (or custom-fn
-                     ;; Built-in diagonal weave with over/under offset
-                     ;; Each thread undulates sinusoidally along its entire path:
-                     ;; d1 thread offset varies with sin(d2*PI) — peaks at d2 crossings
-                     ;; d2 thread offset varies with sin(d1*PI) — peaks at d1 crossings
-                     ;; cos(col*PI) / cos(row*PI) alternates sign for over/under
-                     (fn [a t]
-                       (let [u (/ (+ a Math/PI) (* 2 Math/PI))
-                             d1 (+ (* u strands) (* t strands))
-                             d2 (- (* u strands) (* t strands))
-                             fd1 (- (mod d1 1) 0.5)
-                             fd2 (- (mod d2 1) 0.5)
-                             on-d1? (< (Math/abs fd1) width)
-                             on-d2? (< (Math/abs fd2) width)
-                             ;; Rounded thread profile: 1 at center, 0 at edges
-                             prof (fn [fd] (Math/cos (* (/ fd width) Math/PI 0.5)))
-                             col (int (Math/floor d1))
-                             row (int (Math/floor d2))
-                             ;; Sinusoidal offset along entire thread path
-                             ;; d1 thread: undulates as it crosses d2 lines
-                             off-d1 (* lift (Math/cos (* col Math/PI))
-                                           (Math/sin (* d2 Math/PI)))
-                             ;; d2 thread: undulates as it crosses d1 lines (opposite sign)
-                             off-d2 (* (- lift) (Math/cos (* row Math/PI))
-                                                (Math/sin (* d1 Math/PI)))
-                             d1-over? (zero? (mod (+ col row) 2))]
-                         (cond
-                           ;; At crossing: show whichever thread is on top
-                           (and on-d1? on-d2?)
-                           (if d1-over?
-                             {:thickness (prof fd1) :offset off-d1}
-                             {:thickness (prof fd2) :offset off-d2})
-                           ;; On d1 thread only — undulating
-                           on-d1? {:thickness (prof fd1) :offset off-d1}
-                           ;; On d2 thread only — undulating
-                           on-d2? {:thickness (prof fd2) :offset off-d2}
-                           ;; Empty space
-                           :else {:thickness 0 :offset 0}))))]
+                     (case mode
+                       :diagonal (woven-shell-diagonal strands width lift half-t)
+                       :orthogonal (woven-shell-orthogonal
+                                    (or warp 8) (or weft 30)
+                                    (or warp-width 0.2) (or weft-width 0.1)
+                                    lift half-t)))]
     (shape-fn shape-or-fn
       (fn [s t]
         (let [center (shape-centroid s)
@@ -862,7 +912,7 @@
                             pts)
               values (mapv (fn [{:keys [thickness]}]
                              (let [v thickness]
-                               (if (< v threshold) 0.0 (max 0.0 (min 1.0 v)))))
+                               (if (< v threshold) 0.0 (max 0.0 v))))
                            results)
               offsets (mapv :offset results)]
           (assoc s

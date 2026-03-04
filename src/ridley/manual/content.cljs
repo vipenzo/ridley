@@ -120,7 +120,26 @@
         {:id :resolution-a
          :code "(resolution :a 15)\n(register angle-res\n  (extrude (circle 15)\n    (f 20) (arc-h 15 180) (f 20)))"}
         {:id :resolution-steps
-         :code "(register custom-steps\n  (extrude (circle 15)\n    (f 20) (arc-h 15 180 :steps 32) (f 20)))"}]}]}
+         :code "(register custom-steps\n  (extrude (circle 15)\n    (f 20) (arc-h 15 180 :steps 32) (f 20)))"}]}
+      {:id :shell-shape-fn
+       :see-also [:shape-transforms :extrude-basics]
+       :examples
+       [{:id :shell-basic
+         :code "(register lattice\n  (loft-n 64\n    (shell (circle 20 64) :thickness 3\n      :fn (fn [a t]\n            (max 0 (sin (+ (* a 8) (* t PI 6))))))\n    (f 60)))"}
+        {:id :shell-checkerboard
+         :code "(register checker\n  (loft-n 64\n    (shell-checkerboard (circle 20 64)\n      :thickness 2 :cols 8 :rows 8)\n    (f 60)))"}
+        {:id :shell-lattice
+         :code "(register bricks\n  (loft-n 64\n    (shell-lattice (circle 20 64)\n      :thickness 2 :openings 8 :rows 12 :shift 0.5)\n    (f 60)))"}
+        {:id :shell-voronoi
+         :code "(register organic\n  (loft-n 64\n    (shell-voronoi (circle 20 64)\n      :thickness 2 :cells 8 :rows 8 :seed 42)\n    (f 60)))"}
+        {:id :shell-tapered
+         :code "(register tapered-lattice\n  (loft-n 64\n    (-> (circle 20 64)\n        (shell :thickness 2\n          :fn (fn [a t]\n                (max 0 (sin (+ (* a 8) (* t PI 4))))))\n        (tapered :to 0.5))\n    (f 60)))"}
+        {:id :woven-diagonal
+         :code "(register woven-diag\n  (loft-n 128\n    (woven-shell (circle 20 128)\n      :thickness 3 :strands 8)\n    (f 60)))"}
+        {:id :woven-basket
+         :code "(register basket\n  (loft-n 128\n    (woven-shell (circle 20 128) :thickness 3\n      :mode :orthogonal\n      :warp 8 :weft 20\n      :warp-width 0.2 :weft-width 0.12)\n    (f 60)))"}
+        {:id :safety-net
+         :code "(register safety-net\n  (loft-n 128\n    (shell (circle 20 128) :thickness 1\n      :fn (fn [a t]\n            (let [u (/ (+ a PI) (* 2 PI))\n                  cols 6 rows 16\n                  row-idx (int (floor (* t rows)))\n                  shift (if (odd? row-idx) 0.5 0.0)\n                  fu (mod (+ (* u cols) shift) 1)\n                  fv (mod (* t rows) 1)\n                  mx 0.08 my 0.08 r 0.15\n                  dx (max 0 (- mx (min fu (- 1 fu))))\n                  dy (max 0 (- my (min fv (- 1 fv))))\n                  on-edge? (or (< fu mx) (> fu (- 1 mx))\n                               (< fv my) (> fv (- 1 my)))\n                  in-corner? (and (> dx 0) (> dy 0)\n                                  (> (sqrt (+ (* dx dx) (* dy dy))) r))]\n              (if (and on-edge? (not in-corner?)) 1.0 0.0))))\n    (f 60)))"}]}]}
     {:id :part-3
      :pages
      [{:id :mesh-basics
@@ -704,6 +723,43 @@ You can also override resolution per-command using the `:steps` argument:
                       :description "`:a` sets max degrees per segment. Good for consistent smoothness regardless of arc size."}
        :resolution-steps {:caption "Per-command steps"
                           :description "Use `:steps` to override global resolution for a specific command."}}}
+
+     :shell-shape-fn
+     {:title "Shell & Woven Shell"
+      :content "`shell` wraps any shape into a hollow wall with variable thickness. A function `(fn [angle t] → 0..1)` controls wall thickness at each point — where it returns 0, openings appear.
+
+**Parameters:**
+- `:thickness` — max wall thickness in units (default 2)
+- `:fn` — thickness function (required)
+- `:threshold` — values below this snap to 0 (default 0.05)
+
+**Built-in patterns:** `shell-lattice`, `shell-checkerboard`, `shell-voronoi` provide common patterns without writing a custom function.
+
+**`woven-shell`** adds radial offset so threads can pass in front of / behind each other. Two modes:
+- `:diagonal` (default) — threads at 45°, controlled by `:strands` and `:width`
+- `:orthogonal` — longitudinal + circumferential threads, controlled by `:warp`, `:weft`, `:warp-width`, `:weft-width`
+
+Both `shell` and `woven-shell` compose with other shape-fns via `->` threading:
+```
+(-> (circle 20 64) (shell :thickness 2 :fn ...) (tapered :to 0.5))
+```"
+      :examples
+      {:shell-basic {:caption "Diagonal lattice"
+                     :description "A `sin` function of angle and t creates a diagonal lattice of openings. Higher frequencies = more openings."}
+       :shell-checkerboard {:caption "Checkerboard"
+                            :description "`shell-checkerboard` alternates solid and empty squares around the tube."}
+       :shell-lattice {:caption "Brick lattice"
+                       :description "`shell-lattice` creates a grid of openings. `:shift 0.5` offsets alternate rows for a brick pattern."}
+       :shell-voronoi {:caption "Voronoi openings"
+                       :description "`shell-voronoi` creates organic, irregular cell-shaped openings using Voronoi distance."}
+       :shell-tapered {:caption "Tapered lattice"
+                       :description "Shell composes with `tapered` — the lattice narrows toward the end."}
+       :woven-diagonal {:caption "Woven diagonal"
+                        :description "`woven-shell` makes threads undulate over/under each other. Unlike `shell`, threads physically pass in front and behind."}
+       :woven-basket {:caption "Wicker basket"
+                      :description "`:mode :orthogonal` with few thick warp threads and many thin weft threads creates a wicker basket effect."}
+       :safety-net {:caption "Safety net"
+                    :description "A custom shell function creates rounded-rect holes with brick-pattern offset — like an orange construction safety net."}}}
 
      :control-structures
      {:title "Control Structures"
@@ -1807,6 +1863,43 @@ Puoi anche sovrascrivere la risoluzione per singolo comando usando l'argomento `
                       :description "`:a` imposta i gradi massimi per segmento. Buono per levigatezza consistente indipendentemente dalla dimensione dell'arco."}
        :resolution-steps {:caption "Steps per comando"
                           :description "Usa `:steps` per sovrascrivere la risoluzione globale per un comando specifico."}}}
+
+     :shell-shape-fn
+     {:title "Shell e Woven Shell"
+      :content "`shell` trasforma una forma in un guscio cavo con spessore variabile. Una funzione `(fn [angolo t] → 0..1)` controlla lo spessore della parete in ogni punto — dove restituisce 0, si creano aperture.
+
+**Parametri:**
+- `:thickness` — spessore massimo della parete in unità (default 2)
+- `:fn` — funzione di spessore (obbligatoria)
+- `:threshold` — valori sotto questa soglia diventano 0 (default 0.05)
+
+**Pattern predefiniti:** `shell-lattice`, `shell-checkerboard`, `shell-voronoi` offrono pattern comuni senza scrivere una funzione custom.
+
+**`woven-shell`** aggiunge un offset radiale per far passare i fili davanti e dietro gli uni agli altri. Due modalità:
+- `:diagonal` (default) — fili a 45°, controllati da `:strands` e `:width`
+- `:orthogonal` — fili longitudinali + circumferenziali, controllati da `:warp`, `:weft`, `:warp-width`, `:weft-width`
+
+Sia `shell` che `woven-shell` si compongono con altre shape-fn tramite `->`:
+```
+(-> (circle 20 64) (shell :thickness 2 :fn ...) (tapered :to 0.5))
+```"
+      :examples
+      {:shell-basic {:caption "Reticolo diagonale"
+                     :description "Una funzione `sin` di angolo e t crea un reticolo diagonale di aperture. Frequenze più alte = più aperture."}
+       :shell-checkerboard {:caption "Scacchiera"
+                            :description "`shell-checkerboard` alterna quadrati pieni e vuoti attorno al tubo."}
+       :shell-lattice {:caption "Reticolo a mattone"
+                       :description "`shell-lattice` crea una griglia di aperture. `:shift 0.5` sfasa le righe alternate per un effetto mattone."}
+       :shell-voronoi {:caption "Aperture Voronoi"
+                       :description "`shell-voronoi` crea aperture organiche e irregolari a forma di cella usando la distanza di Voronoi."}
+       :shell-tapered {:caption "Reticolo rastremato"
+                       :description "Shell si compone con `tapered` — il reticolo si restringe verso la fine."}
+       :woven-diagonal {:caption "Tessuto diagonale"
+                        :description "`woven-shell` fa ondulare i fili sopra e sotto gli uni agli altri. A differenza di `shell`, i fili passano fisicamente davanti e dietro."}
+       :woven-basket {:caption "Cesto di vimini"
+                      :description "`:mode :orthogonal` con pochi fili warp spessi e molti fili weft sottili crea un effetto cesto di vimini."}
+       :safety-net {:caption "Rete da cantiere"
+                    :description "Una funzione shell custom crea buchi a rettangolo arrotondato con sfalsamento a mattone — come una rete di sicurezza arancione."}}}
 
      :control-structures
      {:title "Strutture di Controllo"

@@ -359,7 +359,7 @@ Shell wraps a shape into a hollow wall with variable thickness. Where the thickn
         (twisted :angle 90))
     (f 40)))
 
-;; Custom diagonal weave
+;; Custom diagonal weave (flat, no over/under)
 (register diag-weave
   (loft-n 128
     (shell (circle 20 128) :thickness 3 :fn (fn [a t]
@@ -370,6 +370,77 @@ Shell wraps a shape into a hollow wall with variable thickness. Where the thickn
             on-d1? (< (abs (- (mod d1 1) 0.5)) w)
             on-d2? (< (abs (- (mod d2 1) 0.5)) w)]
         (if (or on-d1? on-d2?) 1.0 0.0))))
+    (f 60)))
+```
+
+#### Woven Shell (true over/under weave)
+
+Woven shell adds radial offset so threads physically pass in front of / behind each other.
+
+```clojure
+;; Diagonal weave with over/under
+(register woven-diag
+  (loft-n 128
+    (woven-shell (circle 20 128) :thickness 3 :strands 8)
+    (f 60)))
+
+;; Wicker basket: thick longitudinal rods + thin circumferential threads
+(register basket
+  (loft-n 128
+    (woven-shell (circle 20 128) :thickness 3
+      :mode :orthogonal
+      :warp 8 :weft 20
+      :warp-width 0.2 :weft-width 0.12)
+    (f 60)))
+
+;; Tapered woven cone
+(register woven-cone
+  (loft-n 128
+    (-> (circle 20 128)
+        (woven-shell :thickness 3 :strands 6)
+        (tapered :to 0.4))
+    (f 60)))
+
+;; Plastic net with bead-like thickening at crossings
+(register bead-net
+  (loft-n 128
+    (woven-shell (circle 20 128) :thickness 1.5
+      :fn (fn [a t]
+        (let [u (/ (+ a PI) (* 2 PI))
+              cols 12 rows 12 w 0.06
+              fu (- (mod (* u cols) 1) 0.5)
+              fv (- (mod (* t rows) 1) 0.5)
+              on-h? (< (abs fu) w)
+              on-v? (< (abs fv) w)
+              prof (fn [fd] (cos (* (/ fd w) PI 0.5)))
+              d (sqrt (+ (* fu fu) (* fv fv)))]
+          (cond
+            (and on-h? on-v?)
+            {:thickness 1.0 :offset (* 1.0 (max 0 (- 1.0 (/ d w))))}
+            on-h? {:thickness (prof fu) :offset 0}
+            on-v? {:thickness (prof fv) :offset 0}
+            :else {:thickness 0 :offset 0}))))
+    (f 60)))
+
+;; Safety net: rounded-rect holes with brick pattern offset
+(register safety-net
+  (loft-n 128
+    (shell (circle 20 128) :thickness 1
+      :fn (fn [a t]
+        (let [u (/ (+ a PI) (* 2 PI))
+              cols 6 rows 16
+              row-idx (int (floor (* t rows)))
+              shift (if (odd? row-idx) 0.5 0.0)
+              fu (mod (+ (* u cols) shift) 1)
+              fv (mod (* t rows) 1)
+              mx 0.08 my 0.08 r 0.15
+              dx (max 0 (- mx (min fu (- 1 fu))))
+              dy (max 0 (- my (min fv (- 1 fv))))
+              on-edge? (or (< fu mx) (> fu (- 1 mx))
+                           (< fv my) (> fv (- 1 my)))
+              in-corner? (and (> dx 0) (> dy 0)
+                              (> (sqrt (+ (* dx dx) (* dy dy))) r))]
+          (if (and on-edge? (not in-corner?)) 1.0 0.0))))
     (f 60)))
 ```
 

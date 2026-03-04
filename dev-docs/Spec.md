@@ -455,6 +455,7 @@ Shape-fns work with `loft`, `bloft`, and `revolve`.
 | `(heightmap shape hm :amplitude a)` | Displacement from a rasterized heightmap |
 | `(profile shape path)` | Scale cross-section to match a path silhouette |
 | `(shell shape :thickness n :fn f)` | Variable-thickness hollow extrusion with openings |
+| `(woven-shell shape :thickness n ...)` | Shell with radial offset for true over/under weave |
 
 **Composition** via `->` threading:
 
@@ -550,10 +551,38 @@ Wall is symmetric: outer ring displaced outward by `thickness/2`, inner ring dis
 | `(shell-weave shape :thickness n :strands s :frequency f :width w)` | Warp/weft grid pattern with over/under at crossings |
 | `(shell-voronoi shape :thickness n :cells c :rows r :seed s :wall-width w)` | Organic Voronoi-like irregular openings |
 
-Shell composes with other shape-fns:
+**Woven shell** — thickness + radial offset for true 3D over/under:
+
+Unlike `shell` (thickness only), `woven-shell` shifts the wall center radially so threads can pass in front of / behind each other. At crossings, both threads are combined into a single thicker wall.
+
+```clojure
+;; Diagonal weave (default)
+(woven-shell (circle 20 128) :thickness 3 :strands 8)
+(woven-shell (circle 20 128) :thickness 3 :strands 8 :width 0.15 :lift 1.5)
+
+;; Orthogonal weave (basket/wicker)
+(woven-shell (circle 20 128) :thickness 3
+  :mode :orthogonal :warp 8 :weft 20
+  :warp-width 0.2 :weft-width 0.12)
+
+;; Custom fn returning {:thickness 0..1, :offset number}
+(woven-shell (circle 20 128) :thickness 3
+  :fn (fn [a t] {:thickness 0.8 :offset (* 0.5 (sin (* a 4)))}))
+```
+
+**`woven-shell` options:**
+- `:mode` — `:diagonal` (default) or `:orthogonal`
+- `:strands` (8) — threads per direction (diagonal mode)
+- `:width` (0.12) — thread width as fraction of cell (diagonal mode)
+- `:warp` (8), `:weft` (30) — thread counts per direction (orthogonal mode)
+- `:warp-width` (0.2), `:weft-width` (0.1) — thread widths (orthogonal mode)
+- `:lift` (thickness/2) — radial offset amplitude at crossings
+- `:fn` — custom function `(fn [angle t] → {:thickness v :offset o})`
+
+Shell and woven-shell compose with other shape-fns:
 ```clojure
 (-> (circle 20 64) (shell :thickness 2 :fn ...) (tapered :to 0.5))  ; tapered lattice
-(-> (circle 20 64) (shell :thickness 2 :fn ...) (twisted :angle 90)) ; twisted lattice
+(-> (circle 20 128) (woven-shell :thickness 3 :strands 6) (twisted :angle 90))
 ```
 
 **Resolution considerations:**
