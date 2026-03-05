@@ -245,6 +245,22 @@ mesh-union, mesh-difference, mesh-intersection.")
       (.then (fn [^js data]
                (.. data -choices (at 0) -message -content)))))
 
+(defn- call-google
+  "Call Google Gemini generateContent API with multimodal content. Returns Promise<string>."
+  [api-key model contents signal]
+  (let [url (str "https://generativelanguage.googleapis.com/v1beta/models/"
+                 model ":generateContent?key=" api-key)]
+    (-> (fetch-json url
+                    {"Content-Type" "application/json"}
+                    {:system_instruction {:parts [{:text system-prompt}]}
+                     :contents contents
+                     :generationConfig {:maxOutputTokens 4096}}
+                    signal)
+        (.then #(handle-response % "Google"))
+        (.then (fn [^js data]
+                 (let [candidate (aget (.-candidates data) 0)]
+                   (.-text (aget (.. candidate -content -parts) 0))))))))
+
 (defn- call-ollama
   "Call Ollama chat API with multimodal content. Returns Promise<string>."
   [url model messages signal]
@@ -286,7 +302,19 @@ mesh-union, mesh-difference, mesh-intersection.")
       {:role "user"
        :content text
        :images (mapv (fn [[_ du]] (data-url-to-base64 du)) images)}
-      {:role "user" :content text})))
+      {:role "user" :content text})
+
+    "google"
+    ;; Gemini uses "contents" with "parts" — return a content object
+    {:role "user"
+     :parts (if (seq images)
+              (into [{:text text}]
+                    (mapcat (fn [[label data-url]]
+                              [{:text (str "View: " (name label))}
+                               {:inline_data {:mime_type "image/png"
+                                              :data (data-url-to-base64 data-url)}}])
+                            images))
+              [{:text text}])}))
 
 ;; =============================================================================
 ;; Unified vision API
@@ -313,6 +341,7 @@ mesh-union, mesh-difference, mesh-intersection.")
                         api-key model messages signal)
     "ollama" (call-ollama (settings/get-ai-setting :ollama-url)
                           model messages signal)
+    "google" (call-google api-key model messages signal)
     (js/Promise.reject (js/Error. (str "Unknown provider: " provider-name)))))
 
 (defn call-vision

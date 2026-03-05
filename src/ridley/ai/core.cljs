@@ -213,6 +213,34 @@
       (.then (fn [^js data]
                (.. data -message -content)))))
 
+(defn- call-google
+  "Call Google Gemini generateContent API. Returns a Promise<string>."
+  [api-key model prompt tier script-content]
+  (let [url (str "https://generativelanguage.googleapis.com/v1beta/models/"
+                 model ":generateContent?key=" api-key)
+        system-prompt (prompts/get-prompt tier)
+        messages (build-messages-no-system prompt tier script-content)
+        ;; Convert chat messages to Gemini contents format
+        contents (mapv (fn [{:keys [role content]}]
+                         {:role (if (= role "assistant") "model" "user")
+                          :parts [{:text content}]})
+                       messages)]
+    (-> (js/fetch url
+                  (clj->js {:method "POST"
+                            :headers {"Content-Type" "application/json"}
+                            :body (js/JSON.stringify
+                                   (clj->js {:system_instruction {:parts [{:text system-prompt}]}
+                                             :contents contents
+                                             :generationConfig {:maxOutputTokens 1024}}))}))
+        (.then (fn [^js resp]
+                 (if (.-ok resp)
+                   (.json resp)
+                   (-> (.text resp)
+                       (.then (fn [body] (throw (js/Error. (str "Google API error: " body)))))))))
+        (.then (fn [^js data]
+                 (let [candidate (aget (.-candidates data) 0)]
+                   (.-text (aget (.. candidate -content -parts) 0))))))))
+
 ;; =============================================================================
 ;; Public API
 ;; =============================================================================
@@ -242,6 +270,7 @@
            "groq"      (call-openai-compatible
                          "https://api.groq.com/openai/v1/chat/completions" api-key model prompt tier script-content)
            "ollama"    (call-ollama (settings/get-ai-setting :ollama-url) model prompt tier script-content)
+           "google"    (call-google api-key model prompt tier script-content)
            (js/Promise.reject (js/Error. (str "Unknown provider: " provider-name))))
          (.then (fn [raw-text]
                   (if (= tier :tier-1)

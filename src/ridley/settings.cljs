@@ -8,14 +8,16 @@
 
 (def default-settings
   {:ai {:enabled false
-        :provider :anthropic  ; :anthropic | :openai | :groq | :ollama
+        :provider :anthropic  ; :anthropic | :openai | :groq | :ollama | :google
         :anthropic-key ""
         :openai-key ""
         :groq-key ""
+        :google-key ""
         :ollama-url "http://localhost:11434"
         :ollama-model "llama3"
         :model "claude-sonnet-4-20250514"
         :groq-model "llama-3.3-70b-versatile"
+        :google-model "gemini-2.0-flash"
         :tier :auto}          ; :auto | :tier-1 | :tier-2 | :tier-3
    :audio-feedback true})     ; Play sounds on eval success/error
 
@@ -81,14 +83,15 @@
 (defn- match-provider
   "Match the current provider keyword. Uses name comparison
    to avoid ClojureScript case/condp keyword interning issues."
-  [provider anthropic-val openai-val groq-val ollama-val default-val]
+  [provider {:keys [anthropic openai groq ollama google default]}]
   (let [p (if (keyword? provider) (name provider) (str provider))]
-    (cond
-      (= p "anthropic") anthropic-val
-      (= p "openai")    openai-val
-      (= p "groq")      groq-val
-      (= p "ollama")    ollama-val
-      :else             default-val)))
+    (case p
+      "anthropic" anthropic
+      "openai"    openai
+      "groq"      groq
+      "ollama"    ollama
+      "google"    google
+      default)))
 
 (defn ai-configured?
   "Check if AI assistant is properly configured based on provider."
@@ -97,11 +100,12 @@
         provider (:provider ai)]
     (and (:enabled ai)
          (match-provider provider
-           (seq (:anthropic-key ai))
-           (seq (:openai-key ai))
-           (seq (:groq-key ai))
-           (seq (:ollama-url ai))
-           false))))
+           {:anthropic (seq (:anthropic-key ai))
+            :openai    (seq (:openai-key ai))
+            :groq      (seq (:groq-key ai))
+            :ollama    (seq (:ollama-url ai))
+            :google    (seq (:google-key ai))
+            :default   false}))))
 
 (defn get-ai-api-key
   "Get the API key for the current provider."
@@ -109,11 +113,12 @@
   (let [ai (:ai @settings)
         provider (:provider ai)]
     (match-provider provider
-      (:anthropic-key ai)
-      (:openai-key ai)
-      (:groq-key ai)
-      nil
-      nil)))
+      {:anthropic (:anthropic-key ai)
+       :openai    (:openai-key ai)
+       :groq      (:groq-key ai)
+       :google    (:google-key ai)
+       :ollama    nil
+       :default   nil})))
 
 (defn get-ai-model
   "Get the model for the current provider."
@@ -121,11 +126,12 @@
   (let [ai (:ai @settings)
         provider (:provider ai)]
     (match-provider provider
-      (:model ai)
-      (:model ai)
-      (:groq-model ai)
-      (:ollama-model ai)
-      nil)))
+      {:anthropic (:model ai)
+       :openai    (:model ai)
+       :groq      (:groq-model ai)
+       :ollama    (:ollama-model ai)
+       :google    (:google-model ai)
+       :default   nil})))
 
 ;; =============================================================================
 ;; Model → Tier Detection
@@ -157,7 +163,11 @@
    "claude-sonnet-4-20250514" :tier-3
    "claude-opus-4-20250514" :tier-3
    "gpt-4o" :tier-3
-   "gpt-4-turbo" :tier-3})
+   "gpt-4-turbo" :tier-3
+   ;; Google Gemini
+   "gemini-2.0-flash" :tier-3
+   "gemini-2.5-flash-preview-05-20" :tier-3
+   "gemini-2.5-pro-preview-05-06" :tier-3})
 
 (defn detect-tier
   "Detect tier from model name. Uses lookup table first, then pattern matching."
@@ -166,7 +176,7 @@
       (cond
         (re-find #"70b|72b|65b" model-name) :tier-3
         (re-find #"33b|32b|30b|34b" model-name) :tier-3
-        (re-find #"opus|sonnet|gpt-4o(?!-mini)" model-name) :tier-3
+        (re-find #"opus|sonnet|gpt-4o(?!-mini)|gemini" model-name) :tier-3
         (re-find #"13b|14b|15b|8b|7b" model-name) :tier-2
         (re-find #"haiku|mini" model-name) :tier-2
         :else :tier-1)))
@@ -280,6 +290,17 @@
 
       (= provider-name "groq")
       (test-with-get "https://api.groq.com/openai/v1/models" api-key)
+
+      (= provider-name "google")
+      (-> (js/fetch (str "https://generativelanguage.googleapis.com/v1beta/models/"
+                         model "?key=" api-key))
+          (.then (fn [^js resp]
+                   (if (.-ok resp)
+                     (set-conn-ok!)
+                     (.text resp))))
+          (.then (fn [body] (handle-api-error body)))
+          (.catch (fn [e]
+                    (set-conn-error! (str "Network error: " (.-message e))))))
 
       (= provider-name "ollama")
       (-> (check-ollama-connection!)
