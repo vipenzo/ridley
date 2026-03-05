@@ -436,7 +436,7 @@
    Each maps axis keyword to {normal, right, up} vectors."
   {:z {:normal [0 0 1] :right [1 0 0] :up [0 1 0]}
    :x {:normal [1 0 0] :right [0 1 0] :up [0 0 1]}
-   :y {:normal [0 1 0] :right [1 0 0] :up [0 0 1]}})
+   :y {:normal [0 1 0] :right [0 0 1] :up [1 0 0]}})
 
 (defn- contours-bbox-2d
   "Compute 2D bounding box from slice contours (shapes with :points).
