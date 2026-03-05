@@ -1884,6 +1884,113 @@ PI                               ; 3.14159...
 
 ---
 
+## View Capture and Export
+
+Functions for rendering views of the scene to images. Useful for documentation, debugging, and the AI describe feature.
+
+### Rendering Views
+
+| Function | Description |
+|----------|-------------|
+| `(render-view :front)` | Render an orthographic view (returns data URL) |
+| `(render-view :perspective)` | Render a 3/4 perspective view |
+| `(render-view [1 1 0.5])` | Render from a custom direction vector |
+| `(render-all-views)` | Render all 6 ortho + 1 perspective views (returns map) |
+
+Available orthographic views: `:front`, `:back`, `:left`, `:right`, `:top`, `:bottom`.
+
+Options (keyword args):
+- `:width`, `:height` — image dimensions (default 512×512)
+- `:target` — keyword name of a specific object, or nil for all visible
+
+```clojure
+(render-view :top :target :my-object :width 1024 :height 1024)
+```
+
+### Cross-Section Rendering
+
+| Function | Description |
+|----------|-------------|
+| `(render-slice target axis position)` | Render a 2D cross-section at an axis-aligned plane |
+
+- `target` — keyword name or mesh reference
+- `axis` — `:x`, `:y`, or `:z`
+- `position` — float, position along axis
+
+Returns a data URL (PNG) of the 2D contour outlines.
+
+```clojure
+(register cup (revolve (shape (f 20) (th -90) (f 30) (th -90) (f 15))))
+(render-slice :cup :z 15)        ; Cross-section at Z=15
+(render-slice :cup :x 0)         ; Sagittal slice through center
+```
+
+### Saving Images
+
+| Function | Description |
+|----------|-------------|
+| `(save-views)` | Download all 7 views as a ZIP archive |
+| `(save-image data-url "name.png")` | Download any data URL as a PNG file |
+
+```clojure
+(save-views :target :my-object :prefix "cup-views")
+(save-image (render-slice :cup :z 15) "cup-z15.png")
+```
+
+---
+
+## AI Describe (Accessibility)
+
+Interactive AI-powered geometry description for screen reader users. See [Accessibility.md](Accessibility.md) for the full guide.
+
+### Session Commands
+
+| Function | Description |
+|----------|-------------|
+| `(describe)` | Describe all visible geometry |
+| `(describe :name)` | Describe a specific registered object |
+| `(ai-ask "question")` | Ask a follow-up question in the active session |
+| `(end-describe)` | Close the interactive session |
+| `(cancel-ai)` | Cancel the in-progress AI call (session stays active) |
+| `(ai-status)` | Check AI provider configuration |
+
+### Workflow
+
+```clojure
+;; 1. Create some geometry
+(register gear (mesh-difference
+  (mesh-union (cyl 25 10)
+    (mesh-union (for [i (range 12)]
+      (attach (box 4 6 10) (th (* i 30)) (f 22)))))
+  (cyl 6 12)))
+
+;; 2. Start a describe session
+(describe :gear)
+;; → Analyzing geometry... (generating views)
+;; → Sending to AI... (7 images + source code)
+;; → === Description of :gear ===
+;; → [AI-generated description]
+;; → ===
+
+;; 3. Ask follow-up questions
+(ai-ask "How thick are the gear teeth?")
+(ai-ask "Would this print well without supports?")
+
+;; 4. Close the session
+(end-describe)
+```
+
+### Requirements
+
+- A vision-capable AI provider must be configured (Gemini, Claude, GPT-4o)
+- Configure via the Settings panel or from the REPL:
+
+```clojure
+(ai-status)  ;; Check current configuration
+```
+
+---
+
 ## Not Yet Implemented
 
 - Dense syntax parser (string notation like "F20 TH90")
@@ -1921,9 +2028,15 @@ src/ridley/
 │   └── faces.cljs           # Face metadata
 ├── viewport/
 │   ├── core.cljs            # Three.js rendering + preview system
+│   ├── capture.cljs         # Offscreen view/slice capture for describe & export
 │   └── xr.cljs              # WebXR/VR
 ├── clipper/core.cljs        # Clipper2 2D shape booleans + offset
 ├── manifold/core.cljs       # Manifold WASM booleans + hull
+├── ai/
+│   ├── core.cljs            # AI code generation (text LLM)
+│   ├── describe.cljs        # Multimodal LLM calls, prompts, metadata
+│   ├── describe_session.cljs # Describe session orchestration
+│   └── prompts.cljs         # System prompts for code generation
 ├── export/stl.cljs          # STL export
 ├── scene/
 │   ├── registry.cljs        # Named object registry

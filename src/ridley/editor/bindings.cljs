@@ -31,7 +31,8 @@
             [ridley.measure.core :as measure]
             [ridley.settings :as settings]
             [ridley.viewport.capture :as capture]
-            [ridley.ai.describe :as ai-describe]))
+            [ridley.ai.describe :as ai-describe]
+            [ridley.ai.describe-session :as describe-session]))
 
 ;; ============================================================
 ;; Source History Helpers
@@ -358,6 +359,10 @@
    'save-image          capture/save-image
    ;; AI describe (accessibility)
    'ai-status           ai-describe/ai-status
+   'describe            describe-session/describe
+   'ai-ask              describe-session/ai-ask
+   'end-describe        describe-session/end-describe
+   'cancel-ai           describe-session/cancel-ai
    ;; Vector math (used by move-to and available for user code)
    'vec3+               turtle/v+
    'vec3-               turtle/v-

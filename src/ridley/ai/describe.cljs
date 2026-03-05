@@ -320,15 +320,38 @@ mesh-union, mesh-difference, mesh-intersection.")
 ;; Unified vision API
 ;; =============================================================================
 
+(def ^:private vision-capable-providers
+  "Providers known to support multimodal (image) input."
+  #{"anthropic" "openai" "google"})
+
+(def ^:private vision-capable-models
+  "Specific models known to support vision on providers that otherwise don't."
+  #{"llava" "llava:13b" "llava:34b" "llama-3.2-11b-vision-preview"
+    "llama-3.2-90b-vision-preview"})
+
+(defn- vision-capable?
+  "Check if the current provider+model supports multimodal input."
+  [provider-name model]
+  (or (contains? vision-capable-providers provider-name)
+      (some #(str/includes? (or model "") %) ["llava" "vision"])
+      (contains? vision-capable-models model)))
+
 (defn- resolve-provider
-  "Get provider config. Throws if not configured."
+  "Get provider config. Throws if not configured or not vision-capable."
   []
   (when-not (settings/ai-configured?)
     (throw (js/Error. "No AI provider configured. Use (ai-status) to check.")))
-  (let [provider (settings/get-ai-setting :provider)]
-    {:provider-name (if (keyword? provider) (name provider) (str provider))
+  (let [provider (settings/get-ai-setting :provider)
+        provider-name (if (keyword? provider) (name provider) (str provider))
+        model (settings/get-ai-model)]
+    (when-not (vision-capable? provider-name model)
+      (throw (js/Error.
+               (str "(describe) requires a vision-capable model. "
+                    "Current: " provider-name "/" model ". "
+                    "Use Gemini, Claude, or GPT-4o."))))
+    {:provider-name provider-name
      :api-key (settings/get-ai-api-key)
-     :model (settings/get-ai-model)}))
+     :model model}))
 
 (defn- dispatch-call
   "Dispatch a messages array to the configured provider."

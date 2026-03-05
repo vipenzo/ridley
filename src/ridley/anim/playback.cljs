@@ -392,6 +392,14 @@
   [f]
   (reset! async-output-fn f))
 
+(defn emit-async-output!
+  "Push a text message to the REPL UI asynchronously.
+   Used by describe session and other async operations."
+  [text]
+  (if-let [f @async-output-fn]
+    (f text)
+    (js/console.log text)))
+
 (defn- compute-execution-order
   "Topological sort of targets based on link dependencies.
    Parents are processed before children. Handles arbitrary depth.
