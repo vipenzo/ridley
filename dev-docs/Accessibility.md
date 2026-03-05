@@ -26,11 +26,11 @@ This involved multiple tools and many manual steps. `(describe)` replaces all of
 
 | Provider | Model | How to get an API key |
 |----------|-------|-----------------------|
-| **Google Gemini** | `gemini-2.0-flash` | [Google AI Studio](https://aistudio.google.com/apikey) — free tier available |
+| **Google Gemini** | `gemini-2.5-flash` | [Google AI Studio](https://aistudio.google.com/apikey) — pay-per-use |
 | **OpenAI** | `gpt-4o` | [OpenAI Platform](https://platform.openai.com/api-keys) — pay-per-use |
 | **Anthropic** | `claude-sonnet-4-20250514` | [Anthropic Console](https://console.anthropic.com/) — pay-per-use |
 
-**Google Gemini** is recommended for accessibility users because it has a generous free tier.
+**Google Gemini** is a good option for accessibility users due to its low cost and fast response times.
 
 Configure from the REPL (or via the Settings panel):
 
@@ -38,7 +38,7 @@ Configure from the REPL (or via the Settings panel):
 ;; Example: Google Gemini
 (set-ai-setting! :provider :google)
 (set-ai-setting! :google-key "AIza...")
-(set-ai-setting! :google-model "gemini-2.0-flash")
+(set-ai-setting! :google-model "gemini-2.5-flash")
 
 ;; Example: OpenAI
 (set-ai-setting! :provider :openai)
@@ -47,7 +47,7 @@ Configure from the REPL (or via the Settings panel):
 
 ;; Verify configuration
 (ai-status)
-;; => {:provider :google, :model "gemini-2.0-flash", :ready? true, :enabled? true}
+;; => {:provider :google, :model "gemini-2.5-flash", :ready? true, :enabled? true}
 ```
 
 **Note:** API keys are stored in your browser's localStorage. They are never sent anywhere except to the AI provider's API.
@@ -164,17 +164,17 @@ The AI is instructed to write for screen reader consumption:
 
 ## Providers in Detail
 
-### Google Gemini (Recommended)
+### Google Gemini
 
-- **Free tier**: generous quota for `gemini-2.0-flash`
+- **Pricing**: pay-per-use, very low cost (~$0.001 per describe call with Flash)
 - **Setup**: Go to [Google AI Studio](https://aistudio.google.com/apikey), sign in with Google, create an API key
-- **Model**: `gemini-2.0-flash` (fast, good vision capabilities)
-- **Alternative**: `gemini-2.5-pro-preview-05-06` (slower but more detailed)
+- **Model**: `gemini-2.5-flash` (fast, good vision capabilities)
+- **Alternative**: `gemini-2.5-pro` (slower but more detailed)
 
 ```clojure
 (set-ai-setting! :provider :google)
 (set-ai-setting! :google-key "AIza...")
-(set-ai-setting! :google-model "gemini-2.0-flash")
+(set-ai-setting! :google-model "gemini-2.5-flash")
 ```
 
 ### OpenAI

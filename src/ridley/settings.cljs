@@ -17,7 +17,7 @@
         :ollama-model "llama3"
         :model "claude-sonnet-4-20250514"
         :groq-model "llama-3.3-70b-versatile"
-        :google-model "gemini-2.0-flash"
+        :google-model "gemini-2.5-flash"
         :tier :auto}          ; :auto | :tier-1 | :tier-2 | :tier-3
    :audio-feedback true})     ; Play sounds on eval success/error
 
@@ -165,9 +165,9 @@
    "gpt-4o" :tier-3
    "gpt-4-turbo" :tier-3
    ;; Google Gemini
-   "gemini-2.0-flash" :tier-3
-   "gemini-2.5-flash-preview-05-20" :tier-3
-   "gemini-2.5-pro-preview-05-06" :tier-3})
+   "gemini-2.5-flash" :tier-3
+   "gemini-2.5-flash-lite" :tier-2
+   "gemini-2.5-pro" :tier-3})
 
 (defn detect-tier
   "Detect tier from model name. Uses lookup table first, then pattern matching."

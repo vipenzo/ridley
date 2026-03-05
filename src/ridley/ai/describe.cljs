@@ -185,7 +185,7 @@ mesh-union, mesh-difference, mesh-intersection.")
     (js/Error.
       (case status
         401 "AI authentication failed. Check your API key."
-        429 "AI rate limit reached. Wait a moment and try again."
+        429 (str "AI rate limit reached. " (subs body 0 (min 200 (count body))))
         413 "Scene too complex for AI context. Try (describe :single-object)."
         (str provider " API error (" status "): "
              (subs body 0 (min 200 (count body))))))))
@@ -245,11 +245,23 @@ mesh-union, mesh-difference, mesh-intersection.")
       (.then (fn [^js data]
                (.. data -choices (at 0) -message -content)))))
 
+(defn- ensure-google-format
+  "Convert a message to Google format if needed.
+   Google wants {:role :parts [...]}, not {:role :content ...}.
+   Google uses 'model' instead of 'assistant' for the role."
+  [msg]
+  (let [role (if (= (:role msg) "assistant") "model" (:role msg))]
+    (if (:parts msg)
+      (assoc msg :role role)
+      {:role role
+       :parts [{:text (str (:content msg))}]})))
+
 (defn- call-google
   "Call Google Gemini generateContent API with multimodal content. Returns Promise<string>."
   [api-key model contents signal]
   (let [url (str "https://generativelanguage.googleapis.com/v1beta/models/"
-                 model ":generateContent?key=" api-key)]
+                 model ":generateContent?key=" api-key)
+        contents (mapv ensure-google-format contents)]
     (-> (fetch-json url
                     {"Content-Type" "application/json"}
                     {:system_instruction {:parts [{:text system-prompt}]}

@@ -1124,6 +1124,7 @@
         "<option value='openai'" (when (= provider :openai) " selected") ">OpenAI</option>"
         "<option value='groq'" (when (= provider :groq) " selected") ">Groq</option>"
         "<option value='ollama'" (when (= provider :ollama) " selected") ">Ollama</option>"
+        "<option value='google'" (when (= provider :google) " selected") ">Google Gemini</option>"
         "</select>"
         "</div>"
 
@@ -1238,6 +1239,34 @@
                     "placeholder='llama3'>"))
              "</div>")))
 
+        ;; Google Gemini
+        (when (= provider :google)
+          (let [valid-models #{"gemini-2.5-flash" "gemini-2.5-flash-lite" "gemini-2.5-pro"}
+                gm (or (:google-model ai) "gemini-2.5-flash")]
+            (when-not (contains? valid-models gm)
+              (settings/set-ai-setting! :google-model "gemini-2.5-flash")))
+          (str
+           "<div class='settings-field'>"
+           "<label class='settings-label'>API Key</label>"
+           "<div class='settings-api-key-row'>"
+           "<input type='" (if @show-api-key? "text" "password") "' "
+           "id='settings-api-key' class='settings-input' "
+           "placeholder='AIza...' "
+           "value='" (or (:google-key ai) "") "'>"
+           "<button class='settings-toggle-btn' id='settings-toggle-key'>"
+           (if @show-api-key? "Hide" "Show")
+           "</button>"
+           "</div>"
+           "</div>"
+           "<div class='settings-field'>"
+           "<label class='settings-label'>Model</label>"
+           "<select id='settings-google-model' class='settings-select'>"
+           "<option value='gemini-2.5-flash'" (when (= (:google-model ai) "gemini-2.5-flash") " selected") ">Gemini 2.5 Flash</option>"
+           "<option value='gemini-2.5-flash-lite'" (when (= (:google-model ai) "gemini-2.5-flash-lite") " selected") ">Gemini 2.5 Flash Lite</option>"
+           "<option value='gemini-2.5-pro'" (when (= (:google-model ai) "gemini-2.5-pro") " selected") ">Gemini 2.5 Pro</option>"
+           "</select>"
+           "</div>"))
+
         ;; Tier dropdown (shown for all providers)
         (let [current-tier (or (:tier ai) :auto)
               detected (settings/get-detected-tier)
@@ -1314,6 +1343,7 @@
                                            (= p "anthropic") :anthropic-key
                                            (= p "openai") :openai-key
                                            (= p "groq") :groq-key
+                                           (= p "google") :google-key
                                            :else nil)]
                            (when key-field
                              (settings/set-ai-setting! key-field (.. e -target -value)))))))
@@ -1328,6 +1358,11 @@
     (.addEventListener el "change"
                        (fn [e]
                          (settings/set-ai-setting! :model (.. e -target -value)))))
+  ;; Google Gemini model dropdown
+  (when-let [el (.querySelector modal "#settings-google-model")]
+    (.addEventListener el "change"
+                       (fn [e]
+                         (settings/set-ai-setting! :google-model (.. e -target -value)))))
   ;; Groq model text input
   (when-let [el (.querySelector modal "#settings-groq-model")]
     (.addEventListener el "input"
