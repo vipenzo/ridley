@@ -30,7 +30,8 @@
             [ridley.voronoi.core :as voronoi]
             [ridley.measure.core :as measure]
             [ridley.settings :as settings]
-            [ridley.viewport.capture :as capture]))
+            [ridley.viewport.capture :as capture]
+            [ridley.ai.describe :as ai-describe]))
 
 ;; ============================================================
 ;; Source History Helpers
@@ -355,6 +356,8 @@
    'save-views          capture/save-views
    'render-slice        capture/render-slice
    'save-image          capture/save-image
+   ;; AI describe (accessibility)
+   'ai-status           ai-describe/ai-status
    ;; Vector math (used by move-to and available for user code)
    'vec3+               turtle/v+
    'vec3-               turtle/v-
