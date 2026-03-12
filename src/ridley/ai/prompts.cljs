@@ -1,5 +1,6 @@
 (ns ridley.ai.prompts
-  "System prompts for AI code generation.")
+  "System prompts for AI code generation."
+  (:require [ridley.ai.prompt-store :as store]))
 
 ;; =============================================================================
 ;; Tier 1: Code-only output, no reasoning
@@ -936,11 +937,24 @@ When providing corrected code:
 ;; Prompt selection
 ;; =============================================================================
 
-(defn get-prompt
-  "Get the system prompt for a given tier."
+(defn get-default-prompt
+  "Get the hardcoded default prompt for a given tier."
   [tier]
   (case tier
     :tier-1 tier-1-prompt
     :tier-2 tier-2-prompt
     :tier-3 tier-3-prompt
     tier-1-prompt))
+
+(defn- tier->id [tier]
+  (case tier
+    :tier-1 "codegen/tier1"
+    :tier-2 "codegen/tier2"
+    :tier-3 "codegen/tier3"
+    "codegen/tier1"))
+
+(defn get-prompt
+  "Get the system prompt for a given tier.
+   Resolves from localStorage (provider/model cascade) before falling back to default."
+  [tier]
+  (store/resolve-template (tier->id tier) (get-default-prompt tier)))

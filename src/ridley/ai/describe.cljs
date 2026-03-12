@@ -4,6 +4,7 @@
    and metadata collection for geometry description."
   (:require [clojure.string :as str]
             [ridley.settings :as settings]
+            [ridley.ai.prompt-store :as store]
             [ridley.scene.registry :as registry]
             [ridley.measure.core :as measure]
             [ridley.manifold.core :as manifold]
@@ -73,10 +74,12 @@
 ;; Prompt construction
 ;; =============================================================================
 
-(def ^:private system-prompt
-  "You are analyzing a 3D model created with Ridley, a turtle-graphics-based
-parametric CAD tool. Your description will be read by a screen reader for
-a blind user, so be precise, spatial, and concrete.
+(def default-system-prompt
+  "I am assisting a blind user who cannot see the 3D model.
+Please describe the model in as much detail as possible: its shape,
+proportions, features, spatial relationships, symmetry, and likely function.
+Do not describe anything other than the 3D model itself.
+Describe only what is visible in the images.
 
 Use structural and spatial references (\"the cylindrical protrusion on the
 top face\"), never visual-only references (\"the blue part\").
@@ -88,20 +91,19 @@ When describing geometry:
 - Note symmetry, patterns, and repetitions
 - Mention printability concerns (overhangs, thin walls, disconnected parts)
 
-Ridley uses a Z-up coordinate system. The source code uses turtle graphics:
-f (forward), th (turn horizontal), tv (turn vertical), tr (turn roll).
-Shapes are extruded along the turtle path. Boolean operations use
-mesh-union, mesh-difference, mesh-intersection.")
+Ridley uses a Z-up coordinate system.
 
-(defn initial-prompt
-  "Build the initial describe prompt with source code and metadata."
-  [source-code metadata]
-  (str "## Source Code\n<source>\n"
-       (or source-code "(no source available)")
-       "\n</source>\n\n"
-       "## Structural Data\n```json\n"
-       (js/JSON.stringify (clj->js metadata) nil 2)
-       "\n```\n\n"
+{{metadata}}")
+
+(defn- get-system-prompt
+  "Get the resolved describe system prompt, with macros expanded."
+  [context]
+  (-> (store/resolve-template "describe/system" default-system-prompt)
+      (store/expand-macros context)))
+
+(def default-user-prompt
+  "Build the initial describe user prompt template."
+  (str "## Structural Data\n```json\n{{metadata}}\n```\n\n"
        "## Task — Initial Description\n\n"
        "Provide a comprehensive description of this 3D object covering:\n"
        "1. **Overall shape**: What does this look like? Use everyday analogies.\n"
@@ -117,6 +119,14 @@ mesh-union, mesh-difference, mesh-intersection.")
        "  {\"type\": \"view\", \"from\": [1, 1, 0.5], \"label\": \"low-angle front-right\"}\n"
        "]}\n```\n\n"
        "You may include explanatory text before or after the JSON block."))
+
+(defn initial-prompt
+  "Build the initial describe prompt, resolving from store with macro expansion."
+  [_source-code metadata]
+  (let [template (store/resolve-template "describe/user" default-user-prompt)
+        metadata-json (js/JSON.stringify (clj->js metadata) nil 2)
+        context {"metadata" metadata-json}]
+    (store/expand-macros template context)))
 
 (defn follow-up-prompt
   "Build a follow-up prompt with additional images the AI requested."
@@ -215,7 +225,7 @@ mesh-union, mesh-difference, mesh-intersection.")
 
 (defn- call-anthropic
   "Call Anthropic Messages API with multimodal content. Returns Promise<string>."
-  [api-key model messages signal]
+  [api-key model messages sys-prompt signal]
   (-> (fetch-json "https://api.anthropic.com/v1/messages"
                   {"Content-Type" "application/json"
                    "x-api-key" api-key
@@ -223,7 +233,7 @@ mesh-union, mesh-difference, mesh-intersection.")
                    "anthropic-dangerous-direct-browser-access" "true"}
                   {:model model
                    :max_tokens 4096
-                   :system system-prompt
+                   :system sys-prompt
                    :messages messages}
                   signal)
       (.then #(handle-response % "Anthropic"))
@@ -232,13 +242,13 @@ mesh-union, mesh-difference, mesh-intersection.")
 
 (defn- call-openai
   "Call OpenAI-compatible API with multimodal content. Returns Promise<string>."
-  [url api-key model messages signal]
+  [url api-key model messages sys-prompt signal]
   (-> (fetch-json url
                   (cond-> {"Content-Type" "application/json"}
                     api-key (assoc "Authorization" (str "Bearer " api-key)))
                   {:model model
                    :max_tokens 4096
-                   :messages (into [{:role "system" :content system-prompt}]
+                   :messages (into [{:role "system" :content sys-prompt}]
                                    messages)}
                   signal)
       (.then #(handle-response % "OpenAI"))
@@ -258,13 +268,13 @@ mesh-union, mesh-difference, mesh-intersection.")
 
 (defn- call-google
   "Call Google Gemini generateContent API with multimodal content. Returns Promise<string>."
-  [api-key model contents signal]
+  [api-key model contents sys-prompt signal]
   (let [url (str "https://generativelanguage.googleapis.com/v1beta/models/"
                  model ":generateContent?key=" api-key)
         contents (mapv ensure-google-format contents)]
     (-> (fetch-json url
                     {"Content-Type" "application/json"}
-                    {:system_instruction {:parts [{:text system-prompt}]}
+                    {:system_instruction {:parts [{:text sys-prompt}]}
                      :contents contents
                      :generationConfig {:maxOutputTokens 4096}}
                     signal)
@@ -275,12 +285,12 @@ mesh-union, mesh-difference, mesh-intersection.")
 
 (defn- call-ollama
   "Call Ollama chat API with multimodal content. Returns Promise<string>."
-  [url model messages signal]
+  [url model messages sys-prompt signal]
   (-> (fetch-json (str url "/api/chat")
                   {"Content-Type" "application/json"}
                   {:model model
                    :stream false
-                   :messages (into [{:role "system" :content system-prompt}]
+                   :messages (into [{:role "system" :content sys-prompt}]
                                    messages)}
                   signal)
       (.then #(handle-response % "Ollama"))
@@ -367,18 +377,22 @@ mesh-union, mesh-difference, mesh-intersection.")
      :model model}))
 
 (defn dispatch-call
-  "Dispatch a messages array to the configured provider."
-  [provider-name api-key model messages signal]
-  (case provider-name
-    "anthropic" (call-anthropic api-key model messages signal)
-    "openai" (call-openai "https://api.openai.com/v1/chat/completions"
-                          api-key model messages signal)
-    "groq" (call-openai "https://api.groq.com/openai/v1/chat/completions"
-                        api-key model messages signal)
-    "ollama" (call-ollama (settings/get-ai-setting :ollama-url)
-                          model messages signal)
-    "google" (call-google api-key model messages signal)
-    (js/Promise.reject (js/Error. (str "Unknown provider: " provider-name)))))
+  "Dispatch a messages array to the configured provider.
+   sys-prompt is the resolved system prompt (with macros expanded)."
+  ([provider-name api-key model messages signal]
+   (dispatch-call provider-name api-key model messages signal nil))
+  ([provider-name api-key model messages signal context]
+   (let [sys-prompt (get-system-prompt (or context {}))]
+     (case provider-name
+       "anthropic" (call-anthropic api-key model messages sys-prompt signal)
+       "openai" (call-openai "https://api.openai.com/v1/chat/completions"
+                             api-key model messages sys-prompt signal)
+       "groq" (call-openai "https://api.groq.com/openai/v1/chat/completions"
+                           api-key model messages sys-prompt signal)
+       "ollama" (call-ollama (settings/get-ai-setting :ollama-url)
+                             model messages sys-prompt signal)
+       "google" (call-google api-key model messages sys-prompt signal)
+       (js/Promise.reject (js/Error. (str "Unknown provider: " provider-name)))))))
 
 (defn call-vision
   "Send a multimodal (text + images) request to the configured LLM.
@@ -390,20 +404,20 @@ mesh-union, mesh-difference, mesh-intersection.")
   (let [{:keys [provider-name api-key model]} (resolve-provider)
         user-msg (build-user-message provider-name text-prompt images)
         messages [user-msg]]
-    (dispatch-call provider-name api-key model messages (:signal opts))))
+    (dispatch-call provider-name api-key model messages (:signal opts) (:context opts))))
 
 (defn call-vision-with-history
   "Send a multimodal request with conversation history.
    history    — vector of prior messages [{:role :content}]
    new-text   — new user question
    new-images — optional new images
-   opts       — {:signal AbortController.signal}
+   opts       — {:signal AbortController.signal, :context map}
    Returns a Promise<string>."
   [history new-text new-images opts]
   (let [{:keys [provider-name api-key model]} (resolve-provider)
         user-msg (build-user-message provider-name new-text new-images)
         messages (conj (vec history) user-msg)]
-    (dispatch-call provider-name api-key model messages (:signal opts))))
+    (dispatch-call provider-name api-key model messages (:signal opts) (:context opts))))
 
 ;; =============================================================================
 ;; Response parsing

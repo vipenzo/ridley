@@ -21,6 +21,7 @@
             [ridley.ai.core :as ai]
             [ridley.ai.batch :as batch]
             [ridley.ai.auto-session :as auto-session]
+            [ridley.ui.prompt-panel :as prompt-panel]
             [ridley.library.panel :as lib-panel]
             [ridley.library.core :as lib-core]
             [ridley.anim.core :as anim]
@@ -1331,6 +1332,7 @@
              :ok "<span class='settings-test-ok'>Connected</span>"
              :error (str "<span class='settings-test-error'>" (or (:error conn) "Failed") "</span>")
              "")
+           "<button class='settings-test-btn' id='settings-edit-prompts'>Edit Prompts</button>"
            "</div>"))))
 
      ;; Accessibility section (always visible, not dependent on AI)
@@ -1432,6 +1434,16 @@
                                         (js/clearInterval @poll-id)
                                         (re-render)))
                                     200))))))
+  ;; Edit Prompts button — opens the prompt editor, closes settings
+  (when-let [el (.querySelector modal "#settings-edit-prompts")]
+    (.addEventListener el "click"
+                       (fn [_]
+                         ;; Close the settings modal
+                         (when-let [ov (.querySelector js/document ".settings-modal-overlay")]
+                           (.remove ov))
+                         (when-let [m (.querySelector js/document ".settings-modal")]
+                           (.remove m))
+                         (prompt-panel/open!))))
   ;; Audio feedback checkbox (accessibility)
   (when-let [el (.querySelector modal "#settings-audio-feedback")]
     (.addEventListener el "change"
