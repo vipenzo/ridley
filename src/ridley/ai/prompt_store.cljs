@@ -17,9 +17,9 @@
    {:id "codegen/tier3" :name "Code Generation — Tier 3" :category "AI Assistant"
     :macros #{"source-code" "history" "query"}}
    {:id "describe/system" :name "Describe — System Prompt" :category "Accessibility"
-    :macros #{"source-code" "metadata" "screenshots" "object-name" "slices"}}
+    :macros #{}}
    {:id "describe/user" :name "Describe — User Prompt" :category "Accessibility"
-    :macros #{"source-code" "metadata" "screenshots" "object-name" "slices"}}])
+    :macros #{"metadata"}}])
 
 (def prompt-ids-by-id
   "Quick lookup by ID."

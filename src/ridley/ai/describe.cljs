@@ -91,9 +91,7 @@ When describing geometry:
 - Note symmetry, patterns, and repetitions
 - Mention printability concerns (overhangs, thin walls, disconnected parts)
 
-Ridley uses a Z-up coordinate system.
-
-{{metadata}}")
+Ridley uses a Z-up coordinate system.")
 
 (defn- get-system-prompt
   "Get the resolved describe system prompt, with macros expanded."
