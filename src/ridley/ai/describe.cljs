@@ -291,7 +291,7 @@ mesh-union, mesh-difference, mesh-intersection.")
 ;; Message building (per-provider format)
 ;; =============================================================================
 
-(defn- build-user-message
+(defn build-user-message
   "Build a user message with text and optional images, formatted per provider."
   [provider-name text images]
   (case provider-name
@@ -341,15 +341,16 @@ mesh-union, mesh-difference, mesh-intersection.")
   #{"llava" "llava:13b" "llava:34b" "llama-3.2-11b-vision-preview"
     "llama-3.2-90b-vision-preview"})
 
-(defn- vision-capable?
+(defn vision-capable?
   "Check if the current provider+model supports multimodal input."
   [provider-name model]
   (or (contains? vision-capable-providers provider-name)
       (some #(str/includes? (or model "") %) ["llava" "vision"])
       (contains? vision-capable-models model)))
 
-(defn- resolve-provider
-  "Get provider config. Throws if not configured or not vision-capable."
+(defn resolve-provider
+  "Get provider config. Returns {:provider-name :api-key :model}.
+   Throws if not configured or not vision-capable."
   []
   (when-not (settings/ai-configured?)
     (throw (js/Error. "No AI provider configured. Use (ai-status) to check.")))
@@ -365,7 +366,7 @@ mesh-union, mesh-difference, mesh-intersection.")
      :api-key (settings/get-ai-api-key)
      :model model}))
 
-(defn- dispatch-call
+(defn dispatch-call
   "Dispatch a messages array to the configured provider."
   [provider-name api-key model messages signal]
   (case provider-name

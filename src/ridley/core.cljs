@@ -20,6 +20,7 @@
             [ridley.settings :as settings]
             [ridley.ai.core :as ai]
             [ridley.ai.batch :as batch]
+            [ridley.ai.auto-session :as auto-session]
             [ridley.library.panel :as lib-panel]
             [ridley.library.core :as lib-core]
             [ridley.anim.core :as anim]
@@ -47,9 +48,6 @@
 ;; Manual panel state
 (defonce ^:private manual-panel (atom nil))
 
-;; AI history — tracks last insertion for rollback on feedback
-(defonce ^:private last-ai-insertion (atom nil))
-;; {:start-pos int, :prompt string, :code string}
 
 (declare sync-voice-state)
 (declare save-to-storage)
@@ -229,12 +227,9 @@
                     :code
                     (do
                       (when-let [view @editor-view]
-                        (let [start-pos (.. view -state -doc -length)
-                              snippet (str "\n;; AI: " prompt "\n" code "\n")]
-                          (cm/insert-at-end view snippet)
-                          (reset! last-ai-insertion {:start-pos start-pos
-                                                     :prompt prompt
-                                                     :code code}))
+                        (if (cm/find-ai-block view)
+                          (cm/replace-ai-block view code prompt)
+                          (cm/insert-ai-block view code prompt))
                         (save-to-storage)
                         (send-script-debounced))
                       (ai/add-entry! prompt code)
@@ -269,7 +264,8 @@
           ;; /ai-clear — reset AI conversation history
           (= trimmed "/ai-clear")
           (do (ai/clear-history!)
-              (reset! last-ai-insertion nil)
+              (when-let [view @editor-view]
+                (cm/delete-ai-block view))
               (add-repl-entry input "AI history cleared." false))
 
           ;; /ai-batch — load EDN test suite from file picker
@@ -282,6 +278,31 @@
           (batch/start-batch-inline!
             (str/trim (subs trimmed 18))
             (fn [msg] (add-repl-entry "/ai-batch-inline" msg false)))
+
+          ;; /ai-auto-continue [N] [feedback] — continue visual refinement with optional feedback
+          (or (str/starts-with? trimmed "/ai-auto-continue")
+              (= trimmed "/ai-auto-continue"))
+          (let [rest (str/trim (subs trimmed (count "/ai-auto-continue")))
+                [max-rounds feedback]
+                (if-let [[_ n fb] (re-matches #"(\d+)\s+(.*)" rest)]
+                  [(js/parseInt n 10) fb]
+                  (if-let [[_ n] (re-matches #"(\d+)" rest)]
+                    [(js/parseInt n 10) nil]
+                    [3 (when (seq rest) rest)]))]
+            (add-repl-entry input (str "Continuing [auto]..."
+                                       (when feedback (str " " feedback))) false)
+            (auto-session/continue! max-rounds feedback))
+
+          ;; /ai-auto [N] prompt — iterative AI with visual feedback
+          (str/starts-with? trimmed "/ai-auto ")
+          (let [rest (str/trim (subs trimmed 9))
+                [max-rounds prompt] (if-let [[_ n p] (re-matches #"(\d+)\s+(.*)" rest)]
+                                      [(js/parseInt n 10) p]
+                                      [5 rest])
+                script-content (when @editor-view (cm/get-value @editor-view))]
+            (when (seq prompt)
+              (add-repl-entry input (str "Generating [auto, max " max-rounds "]...") false)
+              (auto-session/start! prompt script-content max-rounds)))
 
           ;; /ai1, /ai1!, /ai2, /ai2!, /ai3, /ai3! — tier-specific AI generation
           (or (str/starts-with? trimmed "/ai1! ") (str/starts-with? trimmed "/ai1 ")
@@ -307,7 +328,7 @@
 
           ;; Explicit negative feedback — rollback last AI code and retry
           (and (seq @ai/ai-history)
-               @last-ai-insertion
+               (when-let [view @editor-view] (cm/find-ai-block view))
                (let [lower (str/lower-case trimmed)]
                  (or (= lower "no")
                      (str/starts-with? lower "no,")
@@ -317,14 +338,11 @@
           (do
             ;; Record feedback on last history entry
             (ai/add-feedback! trimmed)
-            ;; Rollback: delete the last AI insertion from the editor
+            ;; Rollback: delete the AI block from the editor
             (when-let [view @editor-view]
-              (let [start-pos (:start-pos @last-ai-insertion)
-                    end-pos (.. view -state -doc -length)]
-                (cm/delete-range view start-pos end-pos))
+              (cm/delete-ai-block view)
               (save-to-storage)
               (send-script-debounced))
-            (reset! last-ai-insertion nil)
             ;; Auto-retry with the feedback text as the new prompt
             (handle-ai-command input trimmed true "Feedback recorded, regenerating..."))
 
@@ -554,6 +572,10 @@
           (do
             (.preventDefault e)
             (navigate-history 1))
+          "Escape"
+          (when (auto-session/active?)
+            (.preventDefault e)
+            (auto-session/cancel!))
           nil))))
   ;; Global Cmd+Enter — run script from anywhere (REPL, viewport, etc.)
   (.addEventListener js/window "keydown"
@@ -1574,58 +1596,47 @@
   (case target
     :script
     (when-let [view @editor-view]
-      (let [insert-pos (case position
-                         :cursor (.. view -state -selection -main -head)
-                         :end (.. view -state -doc -length)
-                         :after-current-form
-                         (if-let [form (cm/get-form-at-cursor view)]
-                           (:to form)
+      ;; If an AI block already exists, replace it regardless of position
+      (if (cm/find-ai-block view)
+        (cm/replace-ai-block view code)
+        ;; No existing block — insert at requested position with markers
+        (let [block (str ";; >>> AI\n" code "\n;; <<< AI")
+              insert-pos (case position
+                           :cursor (.. view -state -selection -main -head)
+                           :end (.. view -state -doc -length)
+                           :after-current-form
+                           (if-let [form (cm/get-form-at-cursor view)]
+                             (:to form)
+                             (.. view -state -selection -main -head))
+                           :before-current-form
+                           (if-let [form (cm/get-form-at-cursor view)]
+                             (:from form)
+                             (.. view -state -selection -main -head))
+                           :append-child
+                           (if-let [form (cm/get-form-at-cursor view)]
+                             (dec (:to form))  ; before closing bracket
+                             (.. view -state -selection -main -head))
+                           ;; Default: at cursor
                            (.. view -state -selection -main -head))
-                         :before-current-form
-                         (if-let [form (cm/get-form-at-cursor view)]
-                           (:from form)
-                           (.. view -state -selection -main -head))
-                         :append-child
-                         (if-let [form (cm/get-form-at-cursor view)]
-                           (dec (:to form))  ; before closing bracket
-                           (.. view -state -selection -main -head))
-                         ;; Default: at cursor
-                         (.. view -state -selection -main -head))
-            ;; Add whitespace for positional insertion
-            actual-code (case position
-                          :after-current-form (str "\n" code)
-                          :before-current-form (str code "\n")
-                          :append-child (str " " code)
-                          code)
-            code-length (count actual-code)
-            start-pos (case position
-                        :after-current-form (inc insert-pos) ; skip the leading newline
-                        :append-child (inc insert-pos)       ; skip the leading space
-                        insert-pos)
-            end-pos (case position
-                      :before-current-form (+ insert-pos (count code)) ; exclude trailing newline
-                      (+ insert-pos code-length))]
-        ;; Insert the code
-        (case position
-          :cursor (cm/insert-at-cursor view actual-code)
-          :end (cm/insert-at-end view actual-code)
-          (:after-current-form :before-current-form :append-child)
-          (do
-            (cm/set-cursor-position view {:pos insert-pos})
-            (cm/insert-at-cursor view actual-code))
-          ;; Default
-          (cm/insert-at-cursor view actual-code))
-        ;; Position cursor on inserted code
-        (case position
-          ;; For form-related positions, place cursor AT the new form
-          (:after-current-form :before-current-form :append-child)
-          (cm/set-cursor-position view {:pos start-pos})
-          ;; For other positions, select the range
-          (cm/select-range view start-pos end-pos))
-        ;; Update AI focus to the inserted form (only when voice active)
-        (maybe-update-ai-focus! view)
-        ;; Keep focus on editor
-        (cm/focus view))
+              actual-code (case position
+                            :after-current-form (str "\n" block)
+                            :before-current-form (str block "\n")
+                            :append-child (str " " block)
+                            block)]
+          ;; Insert the block
+          (case position
+            :cursor (cm/insert-at-cursor view actual-code)
+            :end (cm/insert-at-end view actual-code)
+            (:after-current-form :before-current-form :append-child)
+            (do
+              (cm/set-cursor-position view {:pos insert-pos})
+              (cm/insert-at-cursor view actual-code))
+            ;; Default
+            (cm/insert-at-cursor view actual-code))))
+      ;; Update AI focus to the inserted form (only when voice active)
+      (maybe-update-ai-focus! view)
+      ;; Keep focus on editor
+      (cm/focus view)
       ;; Auto-save
       (save-to-storage)
       (send-script-debounced))
@@ -2296,6 +2307,9 @@
                             (send-script-debounced)))
                   :get-script (fn [] (when @editor-view (cm/get-value @editor-view)))})
     (setup-voice-ui)
+    ;; Initialize auto-session callbacks (avoids circular dep)
+    (auto-session/init! {:editor-view-atom editor-view
+                         :save-fn save-to-storage})
     ;; Display version in toolbar
     (when-let [vtag (.getElementById js/document "version-tag")]
       (set! (.-textContent vtag) version/VERSION))

@@ -2,7 +2,8 @@
   "AI code generation — calls LLM providers and returns generated code."
   (:require [clojure.string :as str]
             [ridley.settings :as settings]
-            [ridley.ai.prompts :as prompts]))
+            [ridley.ai.prompts :as prompts]
+            [ridley.ai.rag :as rag]))
 
 ;; =============================================================================
 ;; Conversation History
@@ -57,6 +58,17 @@
       (str/trim code)
       trimmed)))
 
+(defn- extract-code-from-json
+  "Try to extract the code field from a possibly truncated JSON response.
+   Looks for \"code\": \"...\" and unescapes the string value."
+  [text]
+  (when-let [[_ raw-code] (re-find #"\"code\"\s*:\s*\"((?:[^\"\\]|\\.)*)\"?" text)]
+    (-> raw-code
+        (str/replace "\\n" "\n")
+        (str/replace "\\t" "\t")
+        (str/replace "\\\"" "\"")
+        (str/replace "\\\\" "\\"))))
+
 (defn- parse-tier2-response
   "Parse a Tier 2+ JSON response. Returns {:type :code :code ...} or {:type :clarification :question ...}.
    Falls back to treating the response as raw code if JSON parsing fails."
@@ -74,8 +86,11 @@
           ;; Unknown type — treat as code
           {:type :code :code (extract-code raw-text)}))
       (catch :default _
-        ;; JSON parse failed — treat as raw code (graceful fallback)
-        {:type :code :code (extract-code raw-text)}))))
+        ;; JSON parse failed — try to extract code field from truncated JSON
+        (if-let [code (extract-code-from-json cleaned)]
+          {:type :code :code code}
+          ;; Last resort — treat as raw code
+          {:type :code :code (extract-code raw-text)})))))
 
 ;; =============================================================================
 ;; Few-shot examples — critical for open-source models (llama, etc.)
@@ -99,7 +114,17 @@
   (mesh-union
     (for [i (range 4)]
       (attach (cyl 3 42) (th (* i 90)) (f 12)))))
-(register drilled-cube (mesh-difference (box 40) holes))"}])
+(register drilled-cube (mesh-difference (box 40) holes))"}
+   {:role "user"    :content "un vaso alto 50 largo 20 alla base"}
+   {:role "assistant" :content "(register vaso
+  (revolve
+    (shape
+      (f 10)          ;; base radius
+      (th -15) (f 15) ;; slight inward taper
+      (th -30) (f 10) ;; narrowing (waist)
+      (th 40) (f 15)  ;; widening outward
+      (th 10) (f 10)) ;; slight flare at rim
+    360))"}])
 
 ;; Tier-2 few-shot examples use JSON output format
 (def ^:private few-shot-examples-tier2
@@ -110,20 +135,32 @@
    {:role "user"    :content "aggiungi un foro sferico al cubo"}
    {:role "assistant" :content "{\"type\": \"code\", \"code\": \"(register cube (mesh-difference (get-mesh :cube) (sphere 12)))\"}"}
    {:role "user"    :content "aggiungi delle cose"}
-   {:role "assistant" :content "{\"type\": \"clarification\", \"question\": \"Cosa vuoi aggiungere? Sfere, cubi, cilindri?\"}"}])
+   {:role "assistant" :content "{\"type\": \"clarification\", \"question\": \"Cosa vuoi aggiungere? Sfere, cubi, cilindri?\"}"}
+   {:role "user"    :content "fai un vaso con revolve, alto 50 e largo 20 alla base"}
+   {:role "assistant" :content "{\"type\": \"code\", \"code\": \"(register vaso\\n  (revolve\\n    (shape\\n      (f 10)          ;; base radius\\n      (th -15) (f 15) ;; slight inward taper\\n      (th -30) (f 10) ;; narrowing (waist)\\n      (th 40) (f 15)  ;; widening outward\\n      (th 10) (f 10)) ;; slight flare at rim\\n    360))\"}"}
+   {:role "user"    :content "uno spicchio di 60 gradi di una sfera raggio 25"}
+   {:role "assistant" :content "{\"type\": \"code\", \"code\": \"(register spicchio\\n  (revolve (shape (arc-v 25 180)) 60))\"}"}])
 
 ;; =============================================================================
 ;; Message Building
 ;; =============================================================================
 
 (defn- build-user-content
-  "Build the user message content. For tier-2+, includes history and script context."
-  [prompt tier script-content]
+  "Build the user message content. For tier-2+, includes history and script context.
+   For tier-3, includes RAG reference chunks."
+  [prompt tier script-content reference-chunks]
   (let [tier-2+? (#{:tier-2 :tier-3} tier)
         history (when tier-2+? (history-for-prompt))
         script  (when (and tier-2+? script-content)
                   (str "<script>\n" script-content "\n</script>"))
-        parts   (filterv some? [history script prompt])]
+        refs    (when (seq reference-chunks)
+                  (str "<reference>\n"
+                       (str/join "\n---\n" reference-chunks)
+                       "\n</reference>"))
+        parts   (filterv some? [history script refs prompt])]
+    (when refs
+      (js/console.log (str "RAG: injecting " (count reference-chunks) " reference chunks ("
+                           (count refs) " chars)")))
     (str/join "\n\n" parts)))
 
 (defn- get-few-shot [tier]
@@ -133,19 +170,19 @@
 
 (defn- build-messages
   "Build the messages array with system prompt, few-shot examples, and user prompt."
-  [prompt tier script-content]
+  [prompt tier script-content ref-chunks]
   (let [system-prompt (prompts/get-prompt tier)
         examples (get-few-shot tier)
-        user-content (build-user-content prompt tier script-content)]
+        user-content (build-user-content prompt tier script-content ref-chunks)]
     (into [{:role "system" :content system-prompt}]
           (conj (vec examples)
                 {:role "user" :content user-content}))))
 
 (defn- build-messages-no-system
   "Build messages without system role (for Anthropic which uses separate system param)."
-  [prompt tier script-content]
+  [prompt tier script-content ref-chunks]
   (let [examples (get-few-shot tier)
-        user-content (build-user-content prompt tier script-content)]
+        user-content (build-user-content prompt tier script-content ref-chunks)]
     (conj (vec examples)
           {:role "user" :content user-content})))
 
@@ -155,7 +192,7 @@
 
 (defn- call-anthropic
   "Call Anthropic Messages API. Returns a Promise<string>."
-  [api-key model prompt tier script-content]
+  [api-key model prompt tier script-content ref-chunks]
   (-> (js/fetch "https://api.anthropic.com/v1/messages"
                 (clj->js {:method "POST"
                           :headers {"Content-Type" "application/json"
@@ -164,9 +201,9 @@
                                     "anthropic-dangerous-direct-browser-access" "true"}
                           :body (js/JSON.stringify
                                  (clj->js {:model model
-                                           :max_tokens 1024
+                                           :max_tokens 4096
                                            :system (prompts/get-prompt tier)
-                                           :messages (build-messages-no-system prompt tier script-content)}))}))
+                                           :messages (build-messages-no-system prompt tier script-content ref-chunks)}))}))
       (.then (fn [^js resp]
                (if (.-ok resp)
                  (.json resp)
@@ -178,15 +215,15 @@
 
 (defn- call-openai-compatible
   "Call an OpenAI-compatible Chat Completions API. Returns a Promise<string>."
-  [url api-key model prompt tier script-content]
+  [url api-key model prompt tier script-content ref-chunks]
   (-> (js/fetch url
                 (clj->js {:method "POST"
                           :headers (cond-> {"Content-Type" "application/json"}
                                      api-key (assoc "Authorization" (str "Bearer " api-key)))
                           :body (js/JSON.stringify
                                  (clj->js {:model model
-                                           :max_tokens 1024
-                                           :messages (build-messages prompt tier script-content)}))}))
+                                           :max_tokens 4096
+                                           :messages (build-messages prompt tier script-content ref-chunks)}))}))
       (.then (fn [^js resp]
                (if (.-ok resp)
                  (.json resp)
@@ -197,14 +234,14 @@
 
 (defn- call-ollama
   "Call Ollama chat API. Returns a Promise<string>."
-  [url model prompt tier script-content]
+  [url model prompt tier script-content ref-chunks]
   (-> (js/fetch (str url "/api/chat")
                 (clj->js {:method "POST"
                           :headers {"Content-Type" "application/json"}
                           :body (js/JSON.stringify
                                  (clj->js {:model model
                                            :stream false
-                                           :messages (build-messages prompt tier script-content)}))}))
+                                           :messages (build-messages prompt tier script-content ref-chunks)}))}))
       (.then (fn [^js resp]
                (if (.-ok resp)
                  (.json resp)
@@ -215,11 +252,11 @@
 
 (defn- call-google
   "Call Google Gemini generateContent API. Returns a Promise<string>."
-  [api-key model prompt tier script-content]
+  [api-key model prompt tier script-content ref-chunks]
   (let [url (str "https://generativelanguage.googleapis.com/v1beta/models/"
                  model ":generateContent?key=" api-key)
         system-prompt (prompts/get-prompt tier)
-        messages (build-messages-no-system prompt tier script-content)
+        messages (build-messages-no-system prompt tier script-content ref-chunks)
         ;; Convert chat messages to Gemini contents format
         contents (mapv (fn [{:keys [role content]}]
                          {:role (if (= role "assistant") "model" "user")
@@ -231,15 +268,30 @@
                             :body (js/JSON.stringify
                                    (clj->js {:system_instruction {:parts [{:text system-prompt}]}
                                              :contents contents
-                                             :generationConfig {:maxOutputTokens 1024}}))}))
+                                             :generationConfig
+                                             (cond-> {:maxOutputTokens 8192}
+                                               ;; Tier 2+: force JSON output
+                                               (not= tier :tier-1)
+                                               (assoc :responseMimeType "application/json"
+                                                      :responseSchema
+                                                      {:type "OBJECT"
+                                                       :properties
+                                                       {:type {:type "STRING" :enum ["code" "clarification"]}
+                                                        :code {:type "STRING"}
+                                                        :question {:type "STRING"}}
+                                                       :required ["type"]}))}))}))
         (.then (fn [^js resp]
                  (if (.-ok resp)
                    (.json resp)
                    (-> (.text resp)
                        (.then (fn [body] (throw (js/Error. (str "Google API error: " body)))))))))
         (.then (fn [^js data]
-                 (let [candidate (aget (.-candidates data) 0)]
-                   (.-text (aget (.. candidate -content -parts) 0))))))))
+                 (let [^js candidate (aget (.-candidates data) 0)
+                       reason (.-finishReason candidate)
+                       text (.-text (aget (.. candidate -content -parts) 0))]
+                   (when (not= reason "STOP")
+                     (js/console.warn "Google finishReason:" reason))
+                   text))))))
 
 ;; =============================================================================
 ;; Public API
@@ -262,16 +314,22 @@
          provider-name (if (keyword? provider) (name provider) (str provider))
          api-key (settings/get-ai-api-key)
          model (settings/get-ai-model)
-         tier (or tier-override (settings/get-effective-tier))]
-     (-> (case provider-name
-           "anthropic" (call-anthropic api-key model prompt tier script-content)
-           "openai"    (call-openai-compatible
-                         "https://api.openai.com/v1/chat/completions" api-key model prompt tier script-content)
-           "groq"      (call-openai-compatible
-                         "https://api.groq.com/openai/v1/chat/completions" api-key model prompt tier script-content)
-           "ollama"    (call-ollama (settings/get-ai-setting :ollama-url) model prompt tier script-content)
-           "google"    (call-google api-key model prompt tier script-content)
-           (js/Promise.reject (js/Error. (str "Unknown provider: " provider-name))))
+         tier (or tier-override (settings/get-effective-tier))
+         ;; For tier-3, retrieve relevant Spec.md chunks via RAG
+         rag-promise (if (= tier :tier-3)
+                       (rag/retrieve-chunks prompt script-content)
+                       (js/Promise.resolve nil))]
+     (-> rag-promise
+         (.then (fn [ref-chunks]
+                  (case provider-name
+                    "anthropic" (call-anthropic api-key model prompt tier script-content ref-chunks)
+                    "openai"    (call-openai-compatible
+                                  "https://api.openai.com/v1/chat/completions" api-key model prompt tier script-content ref-chunks)
+                    "groq"      (call-openai-compatible
+                                  "https://api.groq.com/openai/v1/chat/completions" api-key model prompt tier script-content ref-chunks)
+                    "ollama"    (call-ollama (settings/get-ai-setting :ollama-url) model prompt tier script-content ref-chunks)
+                    "google"    (call-google api-key model prompt tier script-content ref-chunks)
+                    (js/Promise.reject (js/Error. (str "Unknown provider: " provider-name))))))
          (.then (fn [raw-text]
                   (if (= tier :tier-1)
                     ;; Tier 1: raw code output

@@ -411,6 +411,59 @@
   ([view from to]
    (replace-range view from to "")))
 
+(def ^:private ai-block-start ";; >>> AI")
+(def ^:private ai-block-end   ";; <<< AI")
+
+(defn find-ai-block
+  "Find the AI-generated code block in the document.
+   Returns {:from :to} of the entire block (including markers), or nil."
+  ([] (find-ai-block @editor-instance))
+  ([view]
+   (when view
+     (let [text (.. view -state -doc (toString))
+           start-idx (.indexOf text ai-block-start)]
+       (when (>= start-idx 0)
+         (let [end-idx (.indexOf text ai-block-end start-idx)]
+           (when (>= end-idx 0)
+             {:from start-idx
+              :to   (+ end-idx (count ai-block-end))})))))))
+
+(defn replace-ai-block
+  "Replace the existing AI block with new code (wrapped in markers).
+   Returns true if a block was found and replaced, false otherwise."
+  ([view code] (replace-ai-block view code nil))
+  ([view code prompt]
+   (if-let [{:keys [from to]} (find-ai-block view)]
+     (let [block (str ai-block-start
+                      (when prompt (str " " prompt))
+                      "\n" code "\n" ai-block-end)]
+       (replace-range view from to block)
+       true)
+     false)))
+
+(defn insert-ai-block
+  "Insert a new AI block with the given code at the end of the document."
+  ([view code] (insert-ai-block view code nil))
+  ([view code prompt]
+   (let [block (str "\n" ai-block-start
+                    (when prompt (str " " prompt))
+                    "\n" code "\n" ai-block-end)]
+     (insert-at-end view block))))
+
+(defn delete-ai-block
+  "Delete the AI block from the document. Returns true if found and deleted."
+  ([] (delete-ai-block @editor-instance))
+  ([view]
+   (if-let [{:keys [from to]} (find-ai-block view)]
+     (let [;; Also consume the preceding newline if present
+           actual-from (if (and (pos? from)
+                                (= "\n" (.sliceDoc (.-state view) (dec from) from)))
+                         (dec from)
+                         from)]
+       (delete-range view actual-from to)
+       true)
+     false)))
+
 (defn get-word-at-cursor
   "Get word under cursor as {:from :to :text}."
   ([] (get-word-at-cursor @editor-instance))

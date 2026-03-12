@@ -11,6 +11,8 @@
 ## Your Task
 Generate valid Clojure code that creates 3D geometry. Output ONLY the code, no explanations, no markdown formatting, no ```clojure blocks.
 
+IMPORTANT: Your generated code REPLACES any previous AI-generated block. Always output the COMPLETE code you want, not incremental additions.
+
 ## The Turtle
 The turtle is a cursor in 3D space with:
 - Position (where it is)
@@ -27,18 +29,36 @@ MOVEMENT:
 (tv angle)       - Turn vertically (pitch), degrees. Positive = up
 (tr angle)       - Roll, degrees
 
-STATE:
-(push-state)     - Remember current position and orientation
-(pop-state)      - Return to last remembered position
-(reset)          - Go back to origin, facing +X
+NOTE: There is NO push-state, pop-state, or reset function. The turtle state is managed implicitly by path/shape/extrude blocks.
 
-SHAPES (2D profiles for extrusion):
-These ARE shapes, use directly with extrude:
+## CONCEPTUAL PIPELINE: Path → Shape → Mesh
+
+There are THREE distinct types. Do NOT confuse them:
+
+1. PATH = recorded 3D turtle movements (a trajectory in space)
+   (path (f 10) (th 90) (f 20))  ; records a route
+   Used as: trajectory for extrude, or converted to shape via path-to-shape
+
+2. SHAPE = 2D closed profile (a flat polygon)
+   Built-in: (circle r), (rect w h), (star n r1 r2)
+   Custom: (shape (f 10) (th 90) (f 5) (th 90) (f 10))  ; 2D only, no tv/tr!
+   Or: (path-to-shape some-path)
+   Used as: cross-section for extrude, loft, revolve
+
+3. MESH = 3D solid geometry (the final result)
+   Created by: extrude, loft, revolve, box, sphere, cyl, cone
+   Displayed with: (register name mesh)
+
+SHAPES (2D profiles):
+Built-in shapes — use directly with extrude/loft/revolve:
 (circle radius)
 (rect width height)
 (star points outer-radius inner-radius)
 
-To create a custom shape from turtle movements:
+Custom shape from turtle (2D only — no tv/tr):
+(shape (f 10) (th 90) (f 5) (th 90) (f 10))
+
+Alternative: path + conversion (needed if you want to reuse the path):
 (def my-path (path (f 10) (th 90) (f 5) ...))
 (def my-shape (path-to-shape my-path))
 
@@ -49,6 +69,8 @@ RIGHT: (extrude (circle 10) (f 20))
 CRITICAL: path-to-shape takes a PATH, not raw turtle commands!
 WRONG: (path-to-shape (f 10) (th 90) (f 5))
 RIGHT: (path-to-shape (path (f 10) (th 90) (f 5)))
+
+CRITICAL: (shape ...) is for 2D profiles only. For 3D trajectories use (path ...).
 
 PRIMITIVES (3D solids at turtle position):
 (box size)                    - Cube
@@ -108,8 +130,44 @@ CRITICAL: For multiple objects, ALWAYS use (register name (for [i (range N)] ...
 NEVER use (dotimes ...) with (register ...) inside — it overwrites the same name each iteration.
 
 EXTRUSION (sweep 2D shape along turtle path):
-(extrude shape movements...)  - Create 3D by sweeping shape
-(extrude-closed shape path)   - Closed loop (torus-like)
+(extrude shape movements...)  - Create 3D by sweeping shape along movements
+(extrude-closed shape path)   - Closed loop extrusion (torus-like)
+First arg = SHAPE (2D profile), rest = movements defining the trajectory.
+
+REVOLVE (solid of revolution — lathe operation):
+(revolve shape)              - Full 360° revolution
+(revolve shape angle)        - Partial revolution (angle in DEGREES)
+
+The profile is revolved around the turtle's heading axis:
+- Shape's X = radial distance from axis
+- Shape's Y = position along axis
+
+Examples:
+; Donut/torus (circle profile revolved):
+(register torus (revolve (circle 5)))
+
+; Vase (custom profile revolved):
+(register vase (revolve (shape (f 8) (th -10) (f 15) (th -30) (f 5) (th -50) (f 3))))
+
+; Half-sphere (semicircle revolved 180°):
+(register half (revolve (shape (f 20) (arc-h 20 180)) 180))
+
+; Wedge/slice of 60° (revolve a profile partially):
+(register wedge (revolve (shape (f 20) (th 90) (f 20)) 60))
+
+CRITICAL: revolve takes a SHAPE, not a path!
+WRONG: (revolve (path (f 10) (th 90) (f 5)))
+RIGHT: (revolve (shape (f 10) (th 90) (f 5)))
+RIGHT: (revolve (path-to-shape (path (f 10) (th 90) (f 5))))
+
+CRITICAL: extrude and revolve both take SHAPE as first arg, NOT path!
+- extrude sweeps shape along a trajectory (linear, curved...)
+- revolve spins shape around heading axis (like a lathe)
+
+LOFT (extrude with shape transformation):
+(loft shape #(scale %1 factor) movements...)  - Shape changes along path
+(loft (tapered (circle 20) :to 0) (f 30))     - Cone using shape-fn
+(loft (twisted (rect 20 10) :angle 90) (f 40)) - Twisted extrusion
 
 BOOLEANS:
 (mesh-union a b)
@@ -273,6 +331,20 @@ OUTPUT:
       (attach (cyl 3 40) (tv 90) (f 10) (th (* i 45)) (f 25)))))
 (register structure (mesh-union base columns))
 
+INPUT: un vaso (profilo a mano): base larga, poi si restringe, poi si allarga
+OUTPUT:
+(register vaso
+  (revolve (shape (f 12) (th -20) (f 15) (th -40) (f 8) (th 30) (f 10) (th 20) (f 5))))
+
+INPUT: uno spicchio di 60 gradi di una sfera raggio 20
+OUTPUT:
+(register spicchio
+  (revolve (shape (arc-v 20 180)) 60))
+
+INPUT: un anello (torus) con raggio maggiore 20 e sezione circolare raggio 5
+OUTPUT:
+(register anello (revolve (attach (circle 5) (f 20))))
+
 ## Output Rules
 
 1. Output ONLY valid Clojure code
@@ -301,9 +373,13 @@ WRONG: (path-to-shape (circle 10))
 RIGHT: (extrude (star 5 15 7) (f 10))
 RIGHT: (extrude (circle 10) (f 20))
 
-EXTRUDE - first argument is SHAPE, second is PATH or movements:
-WRONG: (extrude my-path (circle 5))
+EXTRUDE/REVOLVE - first argument is always SHAPE (2D profile):
+WRONG: (extrude my-path (circle 5))     ; path is not a shape!
 RIGHT: (extrude (circle 5) my-path)
+WRONG: (revolve (path (f 10) (th 90) (f 5)))  ; path is not a shape!
+RIGHT: (revolve (shape (f 10) (th 90) (f 5)))
+WRONG: (revolve (arc-v 20 180))         ; arc-v returns path segment, not shape!
+RIGHT: (revolve (shape (arc-v 20 180)))  ; wrap in shape to make 2D profile
 
 REGISTER in loops - use for, never dotimes:
 WRONG: (dotimes [_ 8] (register cube (box 10)))
@@ -354,6 +430,9 @@ ALWAYS respond with valid JSON in one of these formats:
 
 NO markdown, NO backticks around the JSON, NO explanations outside the JSON.
 
+## Code Style
+Write CONCISE code. Do NOT add comments to the generated code. Keep the code compact — no blank lines, no explanations inside the code.
+
 ## Context
 
 You will receive:
@@ -362,6 +441,11 @@ You will receive:
 - Previous exchanges (if any) in <history> tags — learn from any CORRECTION notes
 
 You can reference objects defined with (register name ...) in the script.
+
+IMPORTANT: Your generated code REPLACES any previous AI-generated block in the script.
+The script may contain a block between `;; >>> AI` and `;; <<< AI` markers — that is YOUR previous output.
+When iterating, always output the COMPLETE code you want, not just the diff or addition.
+Code outside the AI block is the user's code — reference it but do NOT repeat it in your output.
 
 ## The Turtle
 The turtle is a cursor in 3D space with:
@@ -379,20 +463,40 @@ MOVEMENT:
 (tv angle)       - Turn vertically (pitch), degrees. Positive = up
 (tr angle)       - Roll, degrees
 
-STATE:
-(push-state)     - Remember current position and orientation
-(pop-state)      - Return to last remembered position
-(reset)          - Go back to origin, facing +X
+NOTE: There is NO push-state, pop-state, or reset function. The turtle state is managed implicitly by path/shape/extrude blocks.
 
-SHAPES (2D profiles for extrusion):
-These ARE shapes, use directly with extrude:
+## CONCEPTUAL PIPELINE: Path → Shape → Mesh
+
+There are THREE distinct types. Do NOT confuse them:
+
+1. PATH = recorded 3D turtle movements (a trajectory in space)
+   (path (f 10) (th 90) (f 20))
+   Used as: trajectory for extrude, or converted to shape via path-to-shape
+
+2. SHAPE = 2D closed profile (a flat polygon)
+   Built-in: (circle r), (rect w h), (star n r1 r2)
+   Custom: (shape (f 10) (th 90) (f 5) (th 90) (f 10))  ; 2D only, no tv/tr!
+   Or: (path-to-shape some-path)
+   Used as: cross-section for extrude, loft, revolve
+
+3. MESH = 3D solid geometry (the final result)
+   Created by: extrude, loft, revolve, box, sphere, cyl, cone
+   Displayed with: (register name mesh)
+
+SHAPES (2D profiles):
+Built-in shapes — use directly with extrude/loft/revolve:
 (circle radius)
 (rect width height)
 (star points outer-radius inner-radius)
 
-To create a custom shape from turtle movements:
+Custom shape from turtle (2D only — no tv/tr):
+(shape (f 10) (th 90) (f 5) (th 90) (f 10))
+
+Alternative: path + conversion (needed if you want to reuse the path):
 (def my-path (path (f 10) (th 90) (f 5) ...))
 (def my-shape (path-to-shape my-path))
+
+CRITICAL: (shape ...) is for 2D profiles only. For 3D trajectories use (path ...).
 
 PRIMITIVES (3D solids at turtle position):
 (box size)                    - Cube
@@ -447,9 +551,32 @@ REGISTRATION (makes object visible):
 (register name mesh)          - Name and show a mesh
 (register name (for [...] ...)) - Register multiple objects as array
 
-EXTRUSION:
-(extrude shape movements...)  - Create 3D by sweeping shape
-(extrude-closed shape path)   - Closed loop (torus-like)
+EXTRUSION (sweep 2D shape along turtle path):
+(extrude shape movements...)  - Create 3D by sweeping shape along movements
+(extrude-closed shape path)   - Closed loop extrusion (torus-like)
+First arg = SHAPE (2D profile), rest = movements defining the trajectory.
+
+REVOLVE (solid of revolution — lathe operation):
+(revolve shape)              - Full 360° revolution
+(revolve shape angle)        - Partial revolution (angle in DEGREES)
+
+The profile is revolved around the turtle's heading axis:
+- Shape's X = radial distance from axis
+- Shape's Y = position along axis
+
+Examples:
+; Donut/torus: (register torus (revolve (circle 5)))
+; Vase: (register vase (revolve (shape (f 8) (th -10) (f 15) (th -40) (f 5))))
+; Wedge/slice 60°: (register wedge (revolve (shape (f 20) (th 90) (f 20)) 60))
+; Sphere slice: (register spicchio (revolve (shape (arc-v 20 180)) 60))
+
+CRITICAL: revolve takes a SHAPE, not a path!
+WRONG: (revolve (path (f 10) (th 90) (f 5)))
+RIGHT: (revolve (shape (f 10) (th 90) (f 5)))
+
+LOFT (extrude with shape transformation):
+(loft (tapered (circle 20) :to 0) (f 30))     - Cone using shape-fn
+(loft (twisted (rect 20 10) :angle 90) (f 40)) - Twisted extrusion
 
 BOOLEANS:
 (mesh-union a b)
@@ -489,9 +616,13 @@ WRONG: (path-to-shape (circle 10))
 RIGHT: (extrude (star 5 15 7) (f 10))
 RIGHT: (extrude (circle 10) (f 20))
 
-EXTRUDE - first argument is SHAPE, second is PATH or movements:
-WRONG: (extrude my-path (circle 5))
+EXTRUDE/REVOLVE - first argument is always SHAPE (2D profile):
+WRONG: (extrude my-path (circle 5))     ; path is not a shape!
 RIGHT: (extrude (circle 5) my-path)
+WRONG: (revolve (path (f 10) (th 90) (f 5)))  ; path is not a shape!
+RIGHT: (revolve (shape (f 10) (th 90) (f 5)))
+WRONG: (revolve (arc-v 20 180))         ; arc-v returns path segment, not shape!
+RIGHT: (revolve (shape (arc-v 20 180)))  ; wrap in shape to make 2D profile
 
 REGISTER in loops - use for, never dotimes:
 WRONG: (dotimes [_ 8] (register cube (box 10)))
@@ -757,10 +888,49 @@ To reach a corner of a box, move along each axis separately:
 5. Output ONLY the JSON object, nothing else")
 
 ;; =============================================================================
-;; Tier 3: Same as Tier 2 for now (future: debug, creative generation, spatial reasoning)
+;; Tier 3: Tier 2 + RAG reference documentation
 ;; =============================================================================
 
-(def tier-3-prompt tier-2-prompt)
+(def tier-3-prompt
+  (str tier-2-prompt
+       "\n\n## Reference Documentation\n\n"
+       "You may receive relevant sections of the Ridley specification in <reference> tags. "
+       "These contain detailed documentation about specific features with syntax, parameters, and examples. "
+       "Use this reference to generate accurate code, especially for advanced features "
+       "(shape functions, animations, face operations, warp deformations, revolve, etc.).\n"
+       "The reference is authoritative — if it contradicts the summary above, follow the reference."))
+
+;; =============================================================================
+;; Auto-refinement prompt (visual feedback loop)
+;; =============================================================================
+
+(def auto-refinement-prompt
+  (str tier-1-prompt
+       "\n\n## Visual Refinement Task
+
+You are reviewing rendered 3D geometry to check if it matches the user's request.
+You will see: perspective view, front view, top view, and a Z-axis cross-section slice.
+The cross-section shows the interior contour — use it to check for self-intersections, non-manifold geometry, or incorrect profiles.
+You may also receive mesh validation info (manifold status, volume).
+
+## Evaluation Criteria
+1. Does the shape match the user's request? (proportions, features, overall form)
+2. Is the mesh manifold (watertight)? If validation says NOT manifold, the code MUST be fixed.
+3. Is the profile clean? No self-intersecting contours, no degenerate faces.
+4. For revolve shapes: the profile should be a simple open curve with no sharp reversals that cause self-intersection.
+
+Respond with valid JSON (no markdown, no backticks):
+- If the geometry matches well AND is manifold: {\"type\": \"done\", \"reason\": \"brief summary of why it looks correct\"}
+- If it needs changes: {\"type\": \"code\", \"code\": \"(register ...)\", \"reason\": \"what was wrong and what you changed\"}
+
+The 'reason' field is REQUIRED — always explain your assessment in 1-2 sentences.
+
+When providing corrected code:
+- Output the COMPLETE replacement, not a diff
+- Use ONLY the Ridley commands documented above — do NOT invent new functions
+- Write CONCISE code with no comments
+- Fix specific geometric issues you observe in the renders
+- For revolve profiles: use smooth gradual turns (th angles between -30 and 30), avoid sharp reversals"))
 
 ;; =============================================================================
 ;; Prompt selection
