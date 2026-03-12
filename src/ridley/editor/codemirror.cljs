@@ -1,6 +1,7 @@
 (ns ridley.editor.codemirror
   "CodeMirror 6 integration for Clojure editing with paredit support."
-  (:require [clojure.string :as str]
+  (:require [ridley.ai.history :as history]
+            [clojure.string :as str]
             ["@codemirror/view" :as view :refer [EditorView ViewPlugin Decoration
                                                   keymap lineNumbers
                                                   drawSelection
@@ -463,6 +464,63 @@
        (delete-range view actual-from to)
        true)
      false)))
+
+(defn get-ai-block-code
+  "Extract the code content inside the AI block (without markers). Returns nil if no block."
+  ([] (get-ai-block-code @editor-instance))
+  ([view]
+   (when-let [{:keys [from to]} (find-ai-block view)]
+     (let [text (.sliceDoc (.-state view) from to)
+           ;; Strip the marker lines, keep only the inner code
+           lines (str/split-lines text)
+           ;; Drop first line (>>> AI ...) and last line (<<< AI)
+           inner (subvec (vec lines) 1 (dec (count lines)))]
+       (str/join "\n" inner)))))
+
+(defn promote-ai-block-to-step!
+  "Comment the current AI block code as a numbered history step, inserted just before the AI block.
+   Returns the step number used, or nil if no AI block exists."
+  ([] (promote-ai-block-to-step! @editor-instance))
+  ([view]
+   (when-let [code (get-ai-block-code view)]
+     (when-not (str/blank? code)
+       (let [source (.. view -state -doc (toString))
+             step-num (history/next-step-number source)
+             block (str (history/step-block code step-num) "\n\n")
+             {:keys [from]} (find-ai-block view)]
+         ;; Insert the commented step block just before the AI block
+         (replace-range view from from block)
+         step-num)))))
+
+(defn clear-ai-history!
+  "Delete all history step blocks and the AI block from the document."
+  ([] (clear-ai-history! @editor-instance))
+  ([view]
+   (when view
+     (let [source (.. view -state -doc (toString))
+           step-ranges (history/find-all-step-ranges source)
+           ai-block (find-ai-block view)
+           ;; Collect all ranges to delete (steps + AI block), sorted by position descending
+           ;; so we can delete from end to start without invalidating positions
+           all-ranges (cond-> (vec (or step-ranges []))
+                        ai-block (conj ai-block))
+           sorted (sort-by :from > all-ranges)]
+       (doseq [{:keys [from to]} sorted]
+         ;; Also consume surrounding whitespace
+         (let [doc-len (.. view -state -doc -length)
+               ;; Consume preceding newlines
+               actual-from (loop [pos from]
+                             (if (and (pos? pos)
+                                      (= "\n" (.sliceDoc (.-state view) (dec pos) pos)))
+                               (recur (dec pos))
+                               pos))
+               ;; Consume trailing newline
+               actual-to (if (and (< to doc-len)
+                                  (= "\n" (.sliceDoc (.-state view) to (inc to))))
+                           (inc to)
+                           to)]
+           (delete-range view actual-from actual-to)))
+       (some? (seq all-ranges))))))
 
 (defn get-word-at-cursor
   "Get word under cursor as {:from :to :text}."

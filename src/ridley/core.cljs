@@ -227,6 +227,9 @@
                     :code
                     (do
                       (when-let [view @editor-view]
+                        ;; Promote existing AI block to a numbered history step
+                        (cm/promote-ai-block-to-step! view)
+                        ;; Insert or replace the AI block with new code
                         (if (cm/find-ai-block view)
                           (cm/replace-ai-block view code prompt)
                           (cm/insert-ai-block view code prompt))
@@ -265,7 +268,9 @@
           (= trimmed "/ai-clear")
           (do (ai/clear-history!)
               (when-let [view @editor-view]
-                (cm/delete-ai-block view))
+                (cm/clear-ai-history! view)
+                (save-to-storage)
+                (send-script-debounced))
               (add-repl-entry input "AI history cleared." false))
 
           ;; /ai-batch — load EDN test suite from file picker
@@ -327,8 +332,7 @@
               (handle-ai-command input prompt auto-run?)))
 
           ;; Explicit negative feedback — rollback last AI code and retry
-          (and (seq @ai/ai-history)
-               (when-let [view @editor-view] (cm/find-ai-block view))
+          (and (when-let [view @editor-view] (cm/find-ai-block view))
                (let [lower (str/lower-case trimmed)]
                  (or (= lower "no")
                      (str/starts-with? lower "no,")

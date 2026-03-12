@@ -138,14 +138,18 @@
       nil)))
 
 (defn- insert-code!
-  "Insert or replace AI block in the editor."
-  [code prompt]
-  (when-let [view (when-let [a (:editor-view-atom @callbacks)] @a)]
-    (if (cm/find-ai-block view)
-      (cm/replace-ai-block view code prompt)
-      (cm/insert-ai-block view code prompt))
-    (when-let [save-fn (:save-fn @callbacks)]
-      (save-fn))))
+  "Insert or replace AI block in the editor.
+   When promote? is true, the existing AI block is first archived as a history step."
+  ([code prompt] (insert-code! code prompt false))
+  ([code prompt promote?]
+   (when-let [view (when-let [a (:editor-view-atom @callbacks)] @a)]
+     (when promote?
+       (cm/promote-ai-block-to-step! view))
+     (if (cm/find-ai-block view)
+       (cm/replace-ai-block view code prompt)
+       (cm/insert-ai-block view code prompt))
+     (when-let [save-fn (:save-fn @callbacks)]
+       (save-fn)))))
 
 (defn- parse-refinement-response
   "Parse the vision LLM response. Returns {:type :done/:code :reason str :code str}."
@@ -376,7 +380,7 @@
                        nil)
 
                    :code
-                   (do (insert-code! code prompt)
+                   (do (insert-code! code prompt true) ;; promote existing block
                        (ai/add-entry! prompt code)
                        (emit! "[1/" max-rounds "] Code generated, rendering...")
                        (-> (execute-and-render!)

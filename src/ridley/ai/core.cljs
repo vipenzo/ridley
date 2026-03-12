@@ -3,6 +3,7 @@
   (:require [clojure.string :as str]
             [ridley.settings :as settings]
             [ridley.ai.prompts :as prompts]
+            [ridley.ai.history :as history]
             [ridley.ai.rag :as rag]))
 
 ;; =============================================================================
@@ -33,18 +34,22 @@
         h))))
 
 (defn history-for-prompt
-  "Format recent history entries as a <history> block for the prompt.
-   Returns nil if history is empty."
-  []
-  (let [recent (take-last 5 @ai-history)]
-    (when (seq recent)
-      (str "<history>\n"
-           (str/join "\n---\n"
-             (map (fn [{:keys [input output feedback]}]
-                    (str "USER: " input "\nAI: " output
-                         (when feedback (str "\nCORRECTION: " feedback))))
-                  recent))
-           "\n</history>"))))
+  "Build a <history> block from the source text (explicit history steps + current AI block).
+   Falls back to atom-based history if no steps are found in source."
+  ([] (history-for-prompt nil))
+  ([script-content]
+   (or (when script-content
+         (history/history-for-prompt script-content))
+       ;; Fallback: atom-based history (for backward compat during transition)
+       (let [recent (take-last 5 @ai-history)]
+         (when (seq recent)
+           (str "<history>\n"
+                (str/join "\n---\n"
+                  (map (fn [{:keys [input output feedback]}]
+                         (str "USER: " input "\nAI: " output
+                              (when feedback (str "\nCORRECTION: " feedback))))
+                       recent))
+                "\n</history>"))))))
 
 ;; =============================================================================
 ;; Response Parsing
@@ -150,7 +155,7 @@
    For tier-3, includes RAG reference chunks."
   [prompt tier script-content reference-chunks]
   (let [tier-2+? (#{:tier-2 :tier-3} tier)
-        history (when tier-2+? (history-for-prompt))
+        history (when tier-2+? (history-for-prompt script-content))
         script  (when (and tier-2+? script-content)
                   (str "<script>\n" script-content "\n</script>"))
         refs    (when (seq reference-chunks)
