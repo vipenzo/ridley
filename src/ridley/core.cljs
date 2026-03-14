@@ -19,6 +19,8 @@
             [ridley.voice.help.db :as help-db]
             [ridley.settings :as settings]
             [ridley.ai.core :as ai]
+            [ridley.ai.describe :as ai-vision]
+            [ridley.ai.capture-directives :as directives]
             [ridley.ai.batch :as batch]
             [ridley.ai.auto-session :as auto-session]
             [ridley.ui.prompt-panel :as prompt-panel]
@@ -214,42 +216,51 @@
    When auto-run? is true, also evaluates definitions after inserting.
    For tier-2+, passes script context and handles clarification responses.
    loading-msg overrides the initial REPL entry (nil = 'Generating...').
-   tier-override forces a specific tier (nil = use settings)."
+   tier-override forces a specific tier (nil = use settings).
+   Capture directives like [view: front] [slice: z=30] are parsed from the
+   prompt, images are captured, and the generation switches to multimodal."
   ([input prompt auto-run?] (handle-ai-command input prompt auto-run? nil nil))
   ([input prompt auto-run? loading-msg] (handle-ai-command input prompt auto-run? loading-msg nil))
   ([input prompt auto-run? loading-msg tier-override]
-   ;; Show loading in REPL history
-   (add-repl-entry input (or loading-msg "Generating...") false)
-   (let [script-content (when @editor-view (cm/get-value @editor-view))]
-     (-> (ai/generate prompt (cond-> {:script-content script-content}
-                               tier-override (assoc :tier-override tier-override)))
-         (.then (fn [{:keys [type code question]}]
-                  (case type
-                    :code
-                    (do
-                      (when-let [view @editor-view]
-                        ;; Promote existing AI block to a numbered history step
-                        (cm/promote-ai-block-to-step! view)
-                        ;; Insert or replace the AI block with new code
-                        (if (cm/find-ai-block view)
-                          (cm/replace-ai-block view code prompt)
-                          (cm/insert-ai-block view code prompt))
-                        (save-to-storage)
-                        (send-script-debounced))
-                      (ai/add-entry! prompt code)
-                      (add-repl-entry input "Code added to script." false)
-                      (when auto-run?
-                        (evaluate-definitions)))
+   ;; Parse capture directives from the prompt
+   (let [{:keys [clean-text images has-directives?]} (directives/process prompt)]
+     ;; Show loading in REPL history
+     (add-repl-entry input (or loading-msg
+                               (if has-directives?
+                                 (str "Generating... (" (count images) " captures)")
+                                 "Generating..."))
+                      false)
+     (let [script-content (when @editor-view (cm/get-value @editor-view))]
+       (-> (ai/generate clean-text (cond-> {:script-content script-content
+                                            :images (when (seq images) images)}
+                                     tier-override (assoc :tier-override tier-override)))
+           (.then (fn [{:keys [type code question]}]
+                    (case type
+                      :code
+                      (do
+                        (when-let [view @editor-view]
+                          ;; Promote existing AI block to a numbered history step
+                          (cm/promote-ai-block-to-step! view)
+                          ;; Insert or replace the AI block with new code
+                          (if (cm/find-ai-block view)
+                            (cm/replace-ai-block view code prompt)
+                            (cm/insert-ai-block view code prompt))
+                          (save-to-storage)
+                          (send-script-debounced))
+                        (ai/add-entry! prompt code)
+                        (add-repl-entry input "Code added to script." false)
+                        (when auto-run?
+                          (evaluate-definitions)))
 
-                    :clarification
-                    (add-repl-entry input (str "\uD83E\uDD16 " question) false)
+                      :clarification
+                      (add-repl-entry input (str "\uD83E\uDD16 " question) false)
 
-                    ;; Unknown type fallback
-                    (add-repl-entry input "Unexpected AI response." true))))
-         (.catch (fn [err]
-                   (let [msg (or (.-message err) (str err))]
-                     (add-repl-entry input msg true)
-                     (show-error msg))))))))
+                      ;; Unknown type fallback
+                      (add-repl-entry input "Unexpected AI response." true))))
+           (.catch (fn [err]
+                     (let [msg (or (.-message err) (str err))]
+                       (add-repl-entry input msg true)
+                       (show-error msg)))))))))
 
 (defn- evaluate-repl-input
   "Evaluate the REPL input and show result in history."

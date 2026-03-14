@@ -148,6 +148,8 @@
    'shape-intersection clipper/shape-intersection
    'shape-xor          clipper/shape-xor
    'shape-offset       clipper/shape-offset
+   'shape-hull         clipper/shape-hull
+   'shape-bridge       clipper/shape-bridge
    ;; Voronoi
    'voronoi-shell      voronoi/voronoi-shell
    ;; Text shapes

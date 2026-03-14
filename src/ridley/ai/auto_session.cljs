@@ -6,6 +6,7 @@
             [ridley.ai.core :as ai]
             [ridley.ai.describe :as vision]
             [ridley.ai.prompts :as prompts]
+            [ridley.ai.capture-directives :as directives]
             [ridley.viewport.capture :as capture]
             [ridley.editor.codemirror :as cm]
             [ridley.editor.repl :as repl]
@@ -25,7 +26,8 @@
          :round 0
          :max-rounds 5
          :abort-controller nil
-         :history []}))
+         :history []
+         :user-captures nil}))
 
 ;; Callbacks injected from core.cljs to avoid circular deps
 (defonce ^:private callbacks (atom nil))
@@ -95,7 +97,7 @@
                   (reject e))))
             0))))))
 
-(defn- capture-views
+(defn- capture-default-views
   "Capture perspective + front + top views, plus a Z-slice at mid-height.
    Returns seq of [label data-url] pairs."
   []
@@ -118,6 +120,18 @@
     (catch :default e
       (js/console.warn "Capture failed:" (.-message e))
       nil)))
+
+(defn- capture-views
+  "Capture views for the refinement loop.
+   If user specified capture directives, execute those (+ defaults unless suppressed).
+   Otherwise fall back to the standard 3+1 views."
+  []
+  (if-let [{:keys [parsed suppress-defaults?]} (:user-captures @session)]
+    (let [user-images (directives/execute parsed {:width 256 :height 256})
+          defaults (when-not suppress-defaults? (capture-default-views))]
+      (or (seq (concat user-images defaults))
+          (capture-default-views)))
+    (capture-default-views)))
 
 (defn- check-mesh-status
   "Check manifold status of visible meshes. Returns a status string for the prompt."
@@ -355,22 +369,30 @@
     (throw (js/Error. "Auto session already active")))
 
   (let [ac (js/AbortController.)
+        ;; Parse capture directives from the prompt
+        {:keys [clean-text directives suppress-defaults? has-directives?]}
+        (directives/parse prompt)
         ;; Check if vision is available for refinement
         has-vision? (try (vision/resolve-provider) true
                          (catch :default _ false))]
 
     (reset! session {:active? true
-                     :prompt prompt
+                     :prompt clean-text
                      :round 0
                      :max-rounds max-rounds
                      :abort-controller ac
-                     :history []})
+                     :history []
+                     :user-captures (when has-directives?
+                                      {:parsed directives
+                                       :suppress-defaults? suppress-defaults?})})
 
+    (when has-directives?
+      (emit! "Capture directives: " (count directives) " custom view(s)"))
     (emit! "Generating [auto]...")
 
     ;; Round 1: generate with tier-3
-    (-> (ai/generate prompt {:script-content script-content
-                             :tier-override :tier-3})
+    (-> (ai/generate clean-text {:script-content script-content
+                                 :tier-override :tier-3})
         (.then (fn [{:keys [type code question]}]
                  (when (aborted?) (throw (js/Error. "Cancelled")))
                  (case type

@@ -4,6 +4,7 @@
    into a screen-reader-friendly interactive session."
   (:require [clojure.string :as str]
             [ridley.ai.describe :as ai]
+            [ridley.ai.capture-directives :as directives]
             [ridley.viewport.capture :as capture]
             [ridley.anim.playback :as playback]
             [ridley.scene.registry :as registry]))
@@ -208,12 +209,18 @@
 
   (let [ac (js/AbortController.)
         start-ms (js/Date.now)
-        cancel-timer (start-timer! start-ms)]
+        cancel-timer (start-timer! start-ms)
+        ;; Parse capture directives from the question
+        {:keys [clean-text images has-directives?]}
+        (directives/process question {:target (:target @session)})
+        user-images (when has-directives? (seq images))]
     (swap! session assoc :abort-controller ac)
+    (when has-directives?
+      (emit! "Capturing " (count images) " user-requested view(s)..."))
     (emit! "Asking AI...")
     ;; Fire-and-forget: output goes through emit!, return nil to REPL
     (-> (ai/call-vision-with-history
-          (:messages @session) question nil {:signal (.-signal ac)})
+          (:messages @session) clean-text user-images {:signal (.-signal ac)})
         (.then (fn [raw]
                  (let [parsed (ai/parse-response raw)]
                    (if (= (:type parsed) :need-more)

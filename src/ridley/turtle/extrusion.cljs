@@ -346,10 +346,16 @@
 ;; --- Shape/Corner utilities ---
 
 (defn shape-radius
-  "Calculate the radius of a shape (max distance from origin to any point)."
+  "Calculate the radius of a shape (max distance from centroid to any point)."
   [shape]
   (if-let [points (:points shape)]
-    (reduce max 0 (map (fn [[x y]] (Math/sqrt (+ (* x x) (* y y)))) points))
+    (let [n (count points)
+          cx (/ (reduce + (map first points)) n)
+          cy (/ (reduce + (map second points)) n)]
+      (reduce max 0 (map (fn [[x y]]
+                            (let [dx (- x cx) dy (- y cy)]
+                              (Math/sqrt (+ (* dx dx) (* dy dy)))))
+                         points)))
     0))
 
 (defn ring-centroid

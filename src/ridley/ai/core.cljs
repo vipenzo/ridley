@@ -4,7 +4,8 @@
             [ridley.settings :as settings]
             [ridley.ai.prompts :as prompts]
             [ridley.ai.history :as history]
-            [ridley.ai.rag :as rag]))
+            [ridley.ai.rag :as rag]
+            [ridley.ai.describe :as vision]))
 
 ;; =============================================================================
 ;; Conversation History
@@ -197,7 +198,7 @@
 
 (defn- call-anthropic
   "Call Anthropic Messages API. Returns a Promise<string>."
-  [api-key model prompt tier script-content ref-chunks]
+  [api-key model system-prompt messages]
   (-> (js/fetch "https://api.anthropic.com/v1/messages"
                 (clj->js {:method "POST"
                           :headers {"Content-Type" "application/json"
@@ -207,8 +208,8 @@
                           :body (js/JSON.stringify
                                  (clj->js {:model model
                                            :max_tokens 4096
-                                           :system (prompts/get-prompt tier)
-                                           :messages (build-messages-no-system prompt tier script-content ref-chunks)}))}))
+                                           :system system-prompt
+                                           :messages messages}))}))
       (.then (fn [^js resp]
                (if (.-ok resp)
                  (.json resp)
@@ -220,7 +221,7 @@
 
 (defn- call-openai-compatible
   "Call an OpenAI-compatible Chat Completions API. Returns a Promise<string>."
-  [url api-key model prompt tier script-content ref-chunks]
+  [url api-key model messages]
   (-> (js/fetch url
                 (clj->js {:method "POST"
                           :headers (cond-> {"Content-Type" "application/json"}
@@ -228,7 +229,7 @@
                           :body (js/JSON.stringify
                                  (clj->js {:model model
                                            :max_tokens 4096
-                                           :messages (build-messages prompt tier script-content ref-chunks)}))}))
+                                           :messages messages}))}))
       (.then (fn [^js resp]
                (if (.-ok resp)
                  (.json resp)
@@ -239,14 +240,14 @@
 
 (defn- call-ollama
   "Call Ollama chat API. Returns a Promise<string>."
-  [url model prompt tier script-content ref-chunks]
+  [url model messages]
   (-> (js/fetch (str url "/api/chat")
                 (clj->js {:method "POST"
                           :headers {"Content-Type" "application/json"}
                           :body (js/JSON.stringify
                                  (clj->js {:model model
                                            :stream false
-                                           :messages (build-messages prompt tier script-content ref-chunks)}))}))
+                                           :messages messages}))}))
       (.then (fn [^js resp]
                (if (.-ok resp)
                  (.json resp)
@@ -257,16 +258,9 @@
 
 (defn- call-google
   "Call Google Gemini generateContent API. Returns a Promise<string>."
-  [api-key model prompt tier script-content ref-chunks]
+  [api-key model system-prompt contents tier]
   (let [url (str "https://generativelanguage.googleapis.com/v1beta/models/"
-                 model ":generateContent?key=" api-key)
-        system-prompt (prompts/get-prompt tier)
-        messages (build-messages-no-system prompt tier script-content ref-chunks)
-        ;; Convert chat messages to Gemini contents format
-        contents (mapv (fn [{:keys [role content]}]
-                         {:role (if (= role "assistant") "model" "user")
-                          :parts [{:text content}]})
-                       messages)]
+                 model ":generateContent?key=" api-key)]
     (-> (js/fetch url
                   (clj->js {:method "POST"
                             :headers {"Content-Type" "application/json"}
@@ -302,17 +296,41 @@
 ;; Public API
 ;; =============================================================================
 
+(defn- attach-images
+  "When images are present, replace the last user message with a multimodal
+   message built via the vision module's provider-specific formatter."
+  [messages provider-name images]
+  (if-not (seq images)
+    messages
+    (let [last-idx (dec (count messages))
+          last-msg (peek messages)
+          text (:content last-msg)
+          multimodal (vision/build-user-message provider-name text images)]
+      (assoc messages last-idx multimodal))))
+
+(defn- to-google-contents
+  "Convert chat messages to Gemini contents format."
+  [messages]
+  (mapv (fn [msg]
+          (if (:parts msg)
+            ;; Already in Google format (from attach-images for google)
+            (update msg :role #(if (= % "assistant") "model" %))
+            {:role (if (= (:role msg) "assistant") "model" (:role msg))
+             :parts [{:text (:content msg)}]}))
+        messages))
+
 (defn generate
   "Generate code from a natural language prompt using the configured LLM.
    Options:
      :script-content - current script text (for tier-2+ context)
      :tier-override  - force a specific tier (:tier-1, :tier-2, :tier-3), nil = auto
+     :images         - optional seq of [label data-url] pairs for multimodal input
    Returns a Promise that resolves to:
      {:type :code :code string}           — generated code
      {:type :clarification :question string} — AI needs more info
    Or rejects with an error."
   ([prompt] (generate prompt nil))
-  ([prompt {:keys [script-content tier-override]}]
+  ([prompt {:keys [script-content tier-override images]}]
    (when-not (settings/ai-configured?)
      (throw (js/Error. "AI not configured. Open Settings to set up a provider and API key.")))
    (let [provider (settings/get-ai-setting :provider)
@@ -320,21 +338,30 @@
          api-key (settings/get-ai-api-key)
          model (settings/get-ai-model)
          tier (or tier-override (settings/get-effective-tier))
+         system-prompt (prompts/get-prompt tier)
          ;; For tier-3, retrieve relevant Spec.md chunks via RAG
          rag-promise (if (= tier :tier-3)
                        (rag/retrieve-chunks prompt script-content)
                        (js/Promise.resolve nil))]
      (-> rag-promise
          (.then (fn [ref-chunks]
-                  (case provider-name
-                    "anthropic" (call-anthropic api-key model prompt tier script-content ref-chunks)
-                    "openai"    (call-openai-compatible
-                                  "https://api.openai.com/v1/chat/completions" api-key model prompt tier script-content ref-chunks)
-                    "groq"      (call-openai-compatible
-                                  "https://api.groq.com/openai/v1/chat/completions" api-key model prompt tier script-content ref-chunks)
-                    "ollama"    (call-ollama (settings/get-ai-setting :ollama-url) model prompt tier script-content ref-chunks)
-                    "google"    (call-google api-key model prompt tier script-content ref-chunks)
-                    (js/Promise.reject (js/Error. (str "Unknown provider: " provider-name))))))
+                  (let [;; Build messages (without system for Anthropic/Google, with for others)
+                        no-sys (attach-images
+                                 (vec (build-messages-no-system prompt tier script-content ref-chunks))
+                                 provider-name images)
+                        with-sys (attach-images
+                                   (vec (build-messages prompt tier script-content ref-chunks))
+                                   provider-name images)]
+                    (case provider-name
+                      "anthropic" (call-anthropic api-key model system-prompt no-sys)
+                      "openai"    (call-openai-compatible
+                                    "https://api.openai.com/v1/chat/completions" api-key model with-sys)
+                      "groq"      (call-openai-compatible
+                                    "https://api.groq.com/openai/v1/chat/completions" api-key model with-sys)
+                      "ollama"    (call-ollama (settings/get-ai-setting :ollama-url) model with-sys)
+                      "google"    (call-google api-key model system-prompt
+                                               (to-google-contents no-sys) tier)
+                      (js/Promise.reject (js/Error. (str "Unknown provider: " provider-name)))))))
          (.then (fn [raw-text]
                   (if (= tier :tier-1)
                     ;; Tier 1: raw code output

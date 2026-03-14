@@ -129,6 +129,26 @@
     (vec (reverse points))
     points))
 
+;; --- Deduplication helper ---
+
+(defn- dedup-consecutive
+  "Remove consecutive duplicate points from a contour.
+   Clipper2 can produce duplicate vertices at corners/cusps,
+   which breaks libtess triangulation in extrusion caps."
+  [points]
+  (if (< (count points) 2)
+    points
+    (let [result (reduce (fn [acc pt]
+                           (if (= pt (peek acc))
+                             acc
+                             (conj acc pt)))
+                         [(first points)]
+                         (rest points))]
+      ;; Also check wrap-around: last == first
+      (if (= (peek result) (first result))
+        (pop result)
+        result))))
+
 ;; --- Result classification ---
 
 (defn point-in-polygon?
@@ -166,8 +186,8 @@
     (let [{:keys [outers holes]} (classify-paths result)]
       (when (seq outers)
         (let [largest (apply max-key :area outers)
-              hole-pts (mapv #(ensure-cw (:points %)) holes)]
-          (shape/make-shape (ensure-ccw (:points largest))
+              hole-pts (mapv #(dedup-consecutive (ensure-cw (:points %))) holes)]
+          (shape/make-shape (dedup-consecutive (ensure-ccw (:points largest)))
                             (cond-> {:centered? true}
                               (seq hole-pts) (assoc :holes hole-pts))))))))
 
@@ -181,12 +201,12 @@
       (when (seq outers)
         (if (= 1 (count outers))
           ;; Single outer — all holes belong to it
-          (let [hole-pts (mapv #(ensure-cw (:points %)) holes)]
-            [(shape/make-shape (ensure-ccw (:points (first outers)))
+          (let [hole-pts (mapv #(dedup-consecutive (ensure-cw (:points %))) holes)]
+            [(shape/make-shape (dedup-consecutive (ensure-ccw (:points (first outers))))
                                (cond-> {:centered? true}
                                  (seq hole-pts) (assoc :holes hole-pts)))])
           ;; Multiple outers — assign holes to containing outer
-          (let [outer-pts (mapv #(ensure-ccw (:points %)) outers)
+          (let [outer-pts (mapv #(dedup-consecutive (ensure-ccw (:points %))) outers)
                 hole-assignments (reduce
                                    (fn [assignments hole]
                                      (let [hole-pt (first (:points hole))
@@ -195,7 +215,7 @@
                                                                idx))
                                                            (range (count outer-pts)))]
                                        (if outer-idx
-                                         (update assignments outer-idx conj (ensure-cw (:points hole)))
+                                         (update assignments outer-idx conj (dedup-consecutive (ensure-cw (:points hole))))
                                          assignments)))
                                    (vec (repeat (count outers) []))
                                    holes)]
@@ -268,3 +288,64 @@
           scaled-delta (* delta SCALE)
           result (c-inflate-paths paths scaled-delta jt c2/EndType.Polygon)]
       (paths-result->shape result))))
+
+;; --- Convex hull ---
+
+(defn- cross-2d
+  "2D cross product of vectors OA and OB."
+  [[ox oy] [ax ay] [bx by]]
+  (- (* (- ax ox) (- by oy))
+     (* (- ay oy) (- bx ox))))
+
+(defn- convex-hull-points
+  "Convex hull via Andrew's monotone chain. Returns points in CCW order."
+  [points]
+  (let [pts (vec (sort-by (fn [[x y]] [x y]) points))
+        n (count pts)]
+    (if (<= n 2)
+      pts
+      (let [build (fn [pts]
+                    (reduce
+                      (fn [hull p]
+                        (let [hull (loop [h hull]
+                                     (if (and (>= (count h) 2)
+                                              (<= (cross-2d (nth h (- (count h) 2))
+                                                            (peek h) p) 0))
+                                       (recur (pop h))
+                                       h))]
+                          (conj hull p)))
+                      [] pts))
+            lower (build pts)
+            upper (build (rseq pts))]
+        (vec (concat (butlast lower) (butlast upper)))))))
+
+(defn ^:export shape-hull
+  "Convex hull of N 2D shapes. Collects outer contour points and returns
+   a single convex hull shape. Points keep their original coordinates.
+   Usage: (shape-hull shape-a shape-b)
+          (shape-hull shape-a shape-b shape-c)"
+  [& shapes]
+  (let [all-points (into [] (mapcat :points) shapes)]
+    (when (>= (count all-points) 3)
+      (shape/make-shape (convex-hull-points all-points)
+                        {:centered? true}))))
+
+;; --- Bridge (offset-union-unoffset) ---
+
+(defn ^:export shape-bridge
+  "Connect N shapes by offset-union-unoffset. Offsets all shapes outward
+   by :radius, unions them, then offsets back by -radius — creating smooth
+   bridges between nearby shapes.
+   Usage: (shape-bridge shape-a shape-b :radius 5)
+          (shape-bridge shape-a shape-b shape-c :radius 3 :join-type :round)"
+  [& args]
+  (let [shapes (vec (take-while map? args))
+        opts (apply hash-map (drop-while map? args))
+        radius (or (:radius opts) 1)
+        join-type (or (:join-type opts) :round)]
+    (if (< (count shapes) 2)
+      (first shapes)
+      (let [expanded (keep #(shape-offset % radius :join-type join-type) shapes)
+            merged (reduce shape-union (first expanded) (rest expanded))]
+        (when merged
+          (shape-offset merged (- radius) :join-type join-type))))))

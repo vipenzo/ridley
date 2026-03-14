@@ -77,8 +77,16 @@ PRIMITIVES (3D solids at turtle position):
 (box size)                    - Cube
 (box width depth height)      - Rectangular box
 (sphere radius)
-(cyl radius height)           - Cylinder
+(cyl radius height)           - Cylinder along heading (default: horizontal along X)
 (cone bottom-radius top-radius height)
+
+CRITICAL: Primitives extend along the turtle's HEADING. Default heading is +X (horizontal).
+To orient a primitive vertically (along Z), use (tv 90) BEFORE creation or wrap with attach:
+  (attach (cyl 8 32) (tv 90))    ; vertical cylinder
+  (attach (box 10 10 40) (tv 90)) ; vertical box
+
+There is NO rotate-x, rotate-y, rotate-z, pitch, yaw, or roll function.
+Orientation is ONLY controlled through turtle commands: (th angle), (tv angle), (tr angle).
 
 CREATING 3D SHAPES (turtle-oriented):
 
@@ -90,12 +98,18 @@ Prism:    (extrude (circle R N) (f D)) ; N-sided prism (circle with N segments)
 Cone:     (loft (circle R1) #(scale %1 (/ R2 R1)) (f H))
 Sphere:   (sphere R)                    ; exception: sphere is symmetric
 
-Examples:
-; Vertical pillar (cylinder along +Z):
+ORIENTATION EXAMPLES:
+; Vertical cylinder (along +Z):
+(attach (cyl 5 40) (tv 90))
+
+; Vertical pillar via extrude:
 (tv 90) (extrude (circle 5) (f 40))
 
-; Horizontal beam (box along +X):
+; Horizontal beam (along +X, default heading):
 (extrude (rect 10 10) (f 100))
+
+; Vertical hole through a box (for mesh-difference):
+(attach (cyl 8 32) (tv 90))
 
 ; Hexagonal prism:
 (extrude (circle 10 6) (f 20))         ; circle with 6 segments = hexagon
@@ -283,12 +297,19 @@ OUTPUT:
 (def forma (path-to-shape elle))
 (register staffa (extrude forma (f 30)))
 
-INPUT: cubo di lato 30 con un foro cilindrico passante di raggio 8
+INPUT: cubo di lato 30 con un foro cilindrico passante orizzontale di raggio 8
 OUTPUT:
 (register cubo-forato
   (mesh-difference
     (box 30)
     (cyl 8 32)))
+
+INPUT: cubo di lato 30 con un foro cilindrico passante verticale di raggio 8
+OUTPUT:
+(register cubo-forato
+  (mesh-difference
+    (box 30)
+    (attach (cyl 8 32) (tv 90))))
 
 INPUT: spirale: 30 passi, avanza 3, gira 12 gradi, estrudendo un cerchio raggio 2
 OUTPUT:
@@ -503,8 +524,16 @@ PRIMITIVES (3D solids at turtle position):
 (box size)                    - Cube
 (box width depth height)      - Rectangular box
 (sphere radius)
-(cyl radius height)           - Cylinder
+(cyl radius height)           - Cylinder along heading (default: horizontal along X)
 (cone bottom-radius top-radius height)
+
+CRITICAL: Primitives extend along the turtle's HEADING. Default heading is +X (horizontal).
+To orient a primitive vertically (along Z), use (tv 90) BEFORE creation or wrap with attach:
+  (attach (cyl 8 32) (tv 90))    ; vertical cylinder
+  (attach (box 10 10 40) (tv 90)) ; vertical box
+
+There is NO rotate-x, rotate-y, rotate-z, pitch, yaw, or roll function.
+Orientation is ONLY controlled through turtle commands: (th angle), (tv angle), (tr angle).
 
 CREATING 3D SHAPES (turtle-oriented):
 
@@ -516,12 +545,18 @@ Prism:    (extrude (circle R N) (f D)) ; N-sided prism (circle with N segments)
 Cone:     (loft (circle R1) #(scale %1 (/ R2 R1)) (f H))
 Sphere:   (sphere R)                    ; exception: sphere is symmetric
 
-Examples:
-; Vertical pillar (cylinder along +Z):
+ORIENTATION EXAMPLES:
+; Vertical cylinder (along +Z):
+(attach (cyl 5 40) (tv 90))
+
+; Vertical pillar via extrude:
 (tv 90) (extrude (circle 5) (f 40))
 
-; Horizontal beam (box along +X):
+; Horizontal beam (along +X, default heading):
 (extrude (rect 10 10) (f 100))
+
+; Vertical hole through a box (for mesh-difference):
+(attach (cyl 8 32) (tv 90))
 
 ; Hexagonal prism:
 (extrude (circle 10 6) (f 20))         ; circle with 6 segments = hexagon

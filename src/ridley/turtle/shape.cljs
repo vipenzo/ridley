@@ -142,15 +142,23 @@
         new-holes (assoc :holes new-holes)))))
 
 (defn scale-shape
-  "Scale a shape by [sx sy]. Returns a new shape with scaled points."
-  [shape sx sy]
-  (when (shape? shape)
-    (let [scale-point (fn [[x y]] [(* x sx) (* y sy)])
-          new-points (mapv scale-point (:points shape))
-          new-holes (when (:holes shape)
-                      (mapv (fn [hole] (mapv scale-point hole)) (:holes shape)))]
-      (cond-> (assoc shape :points new-points)
-        new-holes (assoc :holes new-holes)))))
+  "Scale a shape by [sx sy] or uniformly by s, around its centroid.
+   Returns a new shape with scaled points."
+  ([shape s] (scale-shape shape s s))
+  ([shape sx sy]
+   (when (shape? shape)
+     (let [pts (:points shape)
+           n (count pts)
+           cx (/ (reduce + (map first pts)) n)
+           cy (/ (reduce + (map second pts)) n)
+           scale-point (fn [[x y]]
+                         [(+ cx (* (- x cx) sx))
+                          (+ cy (* (- y cy) sy))])
+           new-points (mapv scale-point pts)
+           new-holes (when (:holes shape)
+                       (mapv (fn [hole] (mapv scale-point hole)) (:holes shape)))]
+       (cond-> (assoc shape :points new-points)
+         new-holes (assoc :holes new-holes))))))
 
 (defn reverse-shape
   "Reverse the winding order of a shape's points.
@@ -364,6 +372,7 @@
         {:min [x-min y-min]
          :max [x-max y-max]
          :center [(/ (+ x-min x-max) 2) (/ (+ y-min y-max) 2)]
+         :centroid [(/ (reduce + xs) (count xs)) (/ (reduce + ys) (count ys))]
          :size [(- x-max x-min) (- y-max y-min)]}))))
 
 (defn- offset-point-2d

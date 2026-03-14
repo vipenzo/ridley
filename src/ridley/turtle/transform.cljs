@@ -3,7 +3,7 @@
 
    All functions work on shapes: {:type :shape :points [[x y]...] :centered? bool}
    Transform functions take a shape and return a new shape with transformed points."
-  (:require [ridley.turtle.shape :refer [shape?]]))
+  (:require [ridley.turtle.shape :as shape :refer [shape?]]))
 
 (defn- assert-shape
   "Validate that x is a 2D shape, throw descriptive error if not."
@@ -23,15 +23,11 @@
    (scale shape factor)      - uniform scale
    (scale shape fx fy)       - non-uniform scale"
   ([shape factor]
-   (scale shape factor factor))
+   (assert-shape shape "scale")
+   (shape/scale-shape shape factor))
   ([shape fx fy]
    (assert-shape shape "scale")
-   (let [scale-fn (fn [[x y]] [(* x fx) (* y fy)])
-         scaled (mapv scale-fn (:points shape))
-         new-holes (when (:holes shape)
-                     (mapv (fn [hole] (mapv scale-fn hole)) (:holes shape)))]
-     (cond-> (assoc shape :points scaled)
-       new-holes (assoc :holes new-holes)))))
+   (shape/scale-shape shape fx fy)))
 
 (defn rotate
   "Rotate a shape by angle (degrees) around origin."
