@@ -1,4 +1,4 @@
-(def tolleranza 0.3)
+(def tolleranza 0.8)
 (def spessore 2.5)
 (defn neg [x] (* x -1))
 (def H 50)
@@ -15,76 +15,48 @@
 (def s3 (translate (circle b4) bb (* aa -0.2)))
 (def spessore-gabbia 8)
 
-
 (def base-shape (shape-hull s3 s1 s2))
-(def tray-shape
-  (shape-difference
-   (shape-offset base-shape (neg (+ tolleranza spessore)))
-   (scale-shape s2 1.1)))
-
+(def n-pts (count (:points base-shape)))
 (def gabbia-shape (shape-offset base-shape spessore-gabbia))
 
-
-
-(def bordo
-  (shape-offset tray-shape (+ tolleranza spessore)))
-(def bordo-tray-shape
-  (shape-difference
-   (shape-offset bordo (neg tolleranza))
-   (shape-offset bordo (neg (+ spessore tolleranza)))))
-(stamp bordo-tray-shape)
-
-(def bordo-bowl-shape (shape-offset bordo tolleranza))
-
-(def bordo-tray (extrude bordo-tray-shape (f spessore)))
-(def bordo-bowl (extrude bordo-bowl-shape (f (+ spessore tolleranza))))
-
-;(stamp base-shape)
-;(stamp s1)
-;(stamp s2)
-;(stamp s3)
-
-
 (defn forma-factor [t]
   (+ 0.3 (* 0.7 (cos (* t PI 0.5)))))
 
-(defn forma-factor [t]
-  (+ 0.3 (* 0.7 (cos (* t PI 0.5)))))
-
-
-;(stamp tray-shape :color 0x00ff00)
-;(stamp base-shape :color 0x00ffff)
-
+;; Bowl: shell of base-shape scaled by forma-factor
 (defn make-forma [z0 z1]
   (fn [shape t]
     (let [z (+ z0 (* t (- z1 z0)))]
       (scale shape (forma-factor (/ z H))))))
 
+;; Tray: same scaling, then offset inward by (spessore + tolleranza)
+;; Guarantees: tray outer wall = bowl outer wall - (spessore + tolleranza)
+;;             gap between bowl inner and tray outer = tolleranza
+(defn make-forma-tray [z0 z1]
+  (fn [shape t]
+    (let [z (+ z0 (* t (- z1 z0)))
+          scaled (scale shape (forma-factor (/ z H)))
+          inset (shape-offset scaled (neg (+ spessore tolleranza)))]
+      (resample inset n-pts))))
 
-
-
-;(register bowl (mesh-difference body buco))
-(defn conchiglia [start-shape h]
+;; Bowl = shell of base-shape, full height
+(def _bowl
   (turtle
-   (let [walls (loft
-                (shell
-                 (shape-fn start-shape (make-forma 0 h))
-                 :thickness spessore
-                 :fn (fn [a t] 1.0))
-                (f h))
-         _ (f (- h spessore))
-         cap (loft (shape-fn start-shape (make-forma (- h spessore) h))
-                   (f spessore))]
-     (mesh-union walls cap))))
-
-
-(def _bowl (mesh-difference
-            (conchiglia base-shape H)
-            bordo-bowl))
+   (loft (shell (shape-fn base-shape (make-forma 0 H))
+                :thickness spessore
+                :fn (fn [a t] 1.0)
+                :cap-top spessore)
+         (f H))))
 (register bowl _bowl)
-(register tray (mesh-union
-                (conchiglia tray-shape tray-H)
-                bordo-tray))
+
+;; Tray = shell of base-shape offset inward, tray height
+(def _tray
+  (turtle
+   (loft (shell (shape-fn base-shape (make-forma-tray 0 tray-H))
+                :thickness spessore
+                :fn (fn [a t] 1.0)
+                :cap-top spessore)
+         (f tray-H))))
+(register tray _tray)
 
 (def max-gabbia 500)
 (def sz-gabbia 2)
@@ -106,7 +78,11 @@
                (f H))
          (mesh-union gabbia-raw-h gabbia-raw-v)))
 
-(def gabbia (mesh-difference G0 _bowl))
+(def bowl-solid
+  (loft (shape-fn base-shape (make-forma 0 H))
+        (f H)))
+
+(def gabbia (mesh-difference G0 bowl-solid))
 
 (register G gabbia)
 
@@ -119,7 +95,13 @@
 (stamp (slice-mesh bowl))
 (stamp (slice-mesh tray) :color 0xff0000)
 
-
+(color :G 0)
+(color :bowl 0xffff00)
+(color :tray 0x888888)
+;(hide :bowl)
+;(hide :tray)
+;(register A bordo-tray)
+(hide :G)
 (hide :bowl)
 (hide :tray)
-;(register A bordo-tray)
+(register I (mesh-intersection _tray _bowl))
