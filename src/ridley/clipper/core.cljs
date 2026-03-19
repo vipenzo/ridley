@@ -349,3 +349,75 @@
             merged (reduce shape-union (first expanded) (rest expanded))]
         (when merged
           (shape-offset merged (- radius) :join-type join-type))))))
+
+;; --- Pattern tiling ---
+
+(defn- bounding-box
+  "Compute [xmin ymin xmax ymax] of a set of 2D points."
+  [points]
+  (reduce (fn [[xn yn xx yx] [x y]]
+            [(min xn x) (min yn y) (max xx x) (max yx y)])
+          [js/Number.POSITIVE_INFINITY js/Number.POSITIVE_INFINITY
+           js/Number.NEGATIVE_INFINITY js/Number.NEGATIVE_INFINITY]
+          points))
+
+(defn- translate-shape
+  "Translate a shape by [dx dy]."
+  [s dx dy]
+  (let [translated-pts (mapv (fn [[x y]] [(+ x dx) (+ y dy)]) (:points s))]
+    (shape/make-shape translated-pts {:centered? true})))
+
+(defn ^:export pattern-tile
+  "Tile a pattern shape (or vector of shapes) across a target shape, then
+   subtract — producing a shape with holes.
+
+   The pattern is repeated on a grid covering the target's bounding box.
+   :spacing [sx sy] controls the tile period (default: pattern bounding box size).
+   :inset shrinks each pattern copy before subtraction (default 0).
+
+   (pattern-tile (circle 50 64) (circle 3 16) :spacing [8 8])
+   (pattern-tile base-shape (svg-shape my-svg) :spacing [12 12])
+   (pattern-tile base-shape [star1 star2] :spacing [10 10])"
+  [target-shape pattern & {:keys [spacing inset]
+                           :or {inset 0}}]
+  (let [;; Normalize pattern to vector of shapes
+        patterns (if (and (vector? pattern) (seq pattern) (map? (first pattern)))
+                   pattern
+                   [pattern])
+        ;; Compute pattern bounding box for default spacing
+        all-pat-pts (into [] (mapcat :points) patterns)
+        [pxmin pymin pxmax pymax] (bounding-box all-pat-pts)
+        pw (- pxmax pxmin)
+        ph (- pymax pymin)
+        [sx sy] (or spacing [pw ph])
+        ;; Target bounding box
+        [txmin tymin txmax tymax] (bounding-box (:points target-shape))
+        ;; Compute grid range with margin
+        nx (int (Math/ceil (/ (- txmax txmin) sx)))
+        ny (int (Math/ceil (/ (- tymax tymin) sy)))
+        ;; Center of target bbox
+        tcx (* 0.5 (+ txmin txmax))
+        tcy (* 0.5 (+ tymin tymax))
+        ;; Start offset so grid is centered on target
+        x0 (- tcx (* 0.5 nx sx))
+        y0 (- tcy (* 0.5 ny sy))
+        ;; Generate all tile copies, optionally inset
+        tiles (for [ix (range (inc nx))
+                    iy (range (inc ny))
+                    pat patterns]
+                (let [dx (+ x0 (* ix sx))
+                      dy (+ y0 (* iy sy))
+                      shifted (translate-shape pat dx dy)]
+                  (if (pos? inset)
+                    (shape-offset shifted (- inset))
+                    shifted)))
+        ;; Union all tiles into one compound clip shape
+        ;; Use Clipper directly for efficiency: add all tile paths as clip
+        clip-paths (c2/Paths64.)]
+    (doseq [tile tiles]
+      (when tile
+        (.push clip-paths (points->clipper-path (:points tile)))))
+    (let [subject-paths (shape->clipper-paths target-shape)
+          result (c-difference subject-paths clip-paths c2/FillRule.NonZero)]
+      (or (paths-result->shape result)
+          target-shape))))

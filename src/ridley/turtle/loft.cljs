@@ -468,11 +468,15 @@
 (defn- generate-cap-mesh
   "Generate a cap sweep mesh for a shell cap section.
    cap-end is :top or :bottom.
-   If the shell has openings (woven), generates a shell cap preserving the pattern.
-   If the shell is solid (all values > 0), generates a solid cap.
+   cap-spec is either a number (thickness → solid cap) or a map
+   {:thickness N :shape decorated-shape} where decorated-shape has :holes.
    Returns a mesh or nil."
-  [state shape transform-fn total-eff-dist cap-thickness cap-end creation-pose steps]
-  (let [cap-ratio (/ cap-thickness total-eff-dist)
+  [state shape transform-fn total-eff-dist cap-spec cap-end creation-pose steps]
+  (let [;; cap-spec: number → solid cap, map → decorated cap
+        decorated? (map? cap-spec)
+        cap-thickness (if decorated? (:thickness cap-spec) cap-spec)
+        cap-shape (when decorated? (:shape cap-spec))
+        cap-ratio (/ cap-thickness total-eff-dist)
         [t-start t-end] (if (= cap-end :top)
                           [(max 0 (- 1 cap-ratio)) 1]
                           [0 (min 1 cap-ratio)])
@@ -483,19 +487,26 @@
         [pos0 pos1] (if (= cap-end :top)
                       [start-pos end-pos]
                       [end-pos (v+ end-pos (v* heading cap-thickness))])
-        ;; Cap is always solid (fills between outer and inner walls).
-        ;; Even for woven shells — the cap is the "floor" that closes the vessel.
         rings (vec
                (for [i (range (inc cap-steps))]
                  (let [local-t (/ i cap-steps)
                        t (+ t-start (* local-t (- t-end t-start)))
                        pos (v+ pos0 (v* (v- pos1 pos0) local-t))
+                       ;; For decorated caps, merge holes from cap-shape
+                       ;; into the transformed shape at this t
                        raw-shape (strip-shell (transform-fn shape t))
+                       decorated-shape (if (and decorated? cap-shape)
+                                         (assoc raw-shape :holes (:holes cap-shape))
+                                         raw-shape)
                        temp-state (assoc state :position pos)]
-                   (if (:holes raw-shape)
-                     (stamp-shape-with-holes temp-state raw-shape)
-                     (stamp-shape temp-state raw-shape)))))
-        has-holes? (boolean (:holes (strip-shell (transform-fn shape t-start))))]
+                   (if (:holes decorated-shape)
+                     (stamp-shape-with-holes temp-state decorated-shape)
+                     (stamp-shape temp-state decorated-shape)))))
+        first-shape (let [raw (strip-shell (transform-fn shape t-start))]
+                      (if (and decorated? cap-shape)
+                        (assoc raw :holes (:holes cap-shape))
+                        raw))
+        has-holes? (boolean (:holes first-shape))]
     (when (>= (count rings) 2)
       (if has-holes?
         (build-sweep-mesh-with-holes rings creation-pose true)

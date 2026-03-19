@@ -150,6 +150,7 @@
    'shape-offset       clipper/shape-offset
    'shape-hull         clipper/shape-hull
    'shape-bridge       clipper/shape-bridge
+   'pattern-tile       clipper/pattern-tile
    ;; Voronoi
    'voronoi-shell      voronoi/voronoi-shell
    ;; Text shapes
@@ -229,6 +230,7 @@
    'heightmap-to-mesh sfn/heightmap-to-mesh
    ;; Shell shape-fn (variable-thickness hollow extrusion)
    'shell             sfn/shell
+   'make-cap          sfn/make-cap
    'shell-lattice     sfn/shell-lattice
    'shell-checkerboard sfn/shell-checkerboard
    'shell-weave       sfn/shell-weave

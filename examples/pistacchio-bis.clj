@@ -58,6 +58,25 @@
           (f tray-H)))
 (register tray _tray)
 
+(register safety-net
+          (loft-n 128
+                  (shell (circle 20 128) :thickness 1
+                         :fn (fn [a t]
+                               (let [u (/ (+ a PI) (* 2 PI))
+                                     cols 6 rows 16
+                                     row-idx (int (floor (* t rows)))
+                                     shift (if (odd? row-idx) 0.5 0.0)
+                                     fu (mod (+ (* u cols) shift) 1)
+                                     fv (mod (* t rows) 1)
+                                     mx 0.08 my 0.08 r 0.15
+                                     dx (max 0 (- mx (min fu (- 1 fu))))
+                                     dy (max 0 (- my (min fv (- 1 fv))))
+                                     on-edge? (or (< fu mx) (> fu (- 1 mx))
+                                                  (< fv my) (> fv (- 1 my)))
+                                     in-corner? (and (> dx 0) (> dy 0)
+                                                     (> (sqrt (+ (* dx dx) (* dy dy))) r))]
+                                 (if (and on-edge? (not in-corner?)) 1.0 0.0))))
+                  (f 60)))
 
 (comment
   (def max-gabbia 500)

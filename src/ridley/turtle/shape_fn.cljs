@@ -646,14 +646,19 @@
      :thickness 3
      :fn (fn [a t] (max 0 (sin (+ (* a 8) (* t PI 6))))))
 
-   Optional caps — solid plugs at the ends of the shell:
+   Optional caps at the ends of the shell:
    :cap-top N     - solid cap of thickness N at t=1 (end)
    :cap-bottom N  - solid cap of thickness N at t=0 (start)
+   :cap-top (make-cap decorated-shape N) - decorated cap with holes
 
    (shell (shape-fn (circle 20) my-transform)
      :thickness 3
      :fn (fn [a t] 1.0)
      :cap-top 3)
+
+   Decorated cap (e.g. voronoi pattern):
+   (shell (circle 20 64) :thickness 3 :fn (fn [a t] 1.0)
+     :cap-top (make-cap (voronoi-shell (circle 20 64) :cells 30 :wall 1.5) 3))
 
    Composes with other shape-fns:
    (-> (circle 20 64) (shell :thickness 3 :fn ...) (tapered :to 0.5))"
@@ -679,6 +684,16 @@
                          :shell-values values)
             cap-top    (assoc :shell-cap-top cap-top)
             cap-bottom (assoc :shell-cap-bottom cap-bottom)))))))
+
+(defn ^:export make-cap
+  "Create a decorated cap spec for use with shell/woven-shell :cap-top/:cap-bottom.
+   decorated-shape is a shape with :holes (e.g. from voronoi-shell or pattern-tile).
+   thickness is the cap extrusion height.
+
+   (shell (circle 20 64) :thickness 3 :fn (fn [a t] 1.0)
+     :cap-top (make-cap (voronoi-shell (circle 20 64) :cells 30 :wall 1.5) 3))"
+  [decorated-shape thickness]
+  {:thickness thickness :shape decorated-shape})
 
 (defn ^:export shell-lattice
   "Convenience shell with a regular grid of openings.

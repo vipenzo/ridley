@@ -538,9 +538,34 @@ The thickness function `(fn [angle t] → 0..1)` maps each point to a wall thick
 - `angle` = angular position on profile (radians), `t` = path progress (0–1)
 - Values below `:threshold` (default 0.05) snap to 0
 
-**`shell` options:** `:thickness` (2 — max wall thickness in units), `:fn` (required), `:threshold` (0.05)
+**`shell` options:** `:thickness` (2 — max wall thickness in units), `:fn` (required), `:threshold` (0.05), `:cap-top`, `:cap-bottom`
 
 Wall is symmetric: outer ring displaced outward by `thickness/2`, inner ring displaced inward by `thickness/2`. Where thickness is 0, both rings coincide (opening).
+
+**Shell caps** — close the ends of a shell with a solid or decorated cap:
+
+```clojure
+;; Solid cap (simple thickness value)
+(shell (circle 20 64) :thickness 2 :fn my-fn :cap-top 3)
+(shell (circle 20 64) :thickness 2 :fn my-fn :cap-bottom 2 :cap-top 3)
+
+;; Decorated cap with pattern holes (using make-cap)
+(def patterned (pattern-tile (circle 20 64) (circle 1.5 16) :spacing [5 5]))
+(shell (circle 20 64) :thickness 2 :fn my-fn
+  :cap-top (make-cap patterned 3))
+
+;; Voronoi cap
+(shell (circle 20 64) :thickness 2 :fn my-fn
+  :cap-top (make-cap (voronoi-shell (circle 20 64) :cells 25 :wall 1.5) 3))
+```
+
+`make-cap` takes a decorated shape (with `:holes`) and a thickness:
+
+```clojure
+(make-cap decorated-shape thickness) ; → {:thickness N :shape decorated-shape}
+```
+
+The decorated shape can come from `voronoi-shell`, `pattern-tile`, `shape-difference`, or any operation that produces a shape with holes. The cap is extruded along the shell's heading for the given thickness, preserving the hole pattern.
 
 **Built-in shell patterns:**
 
@@ -649,6 +674,36 @@ operations (extrude, loft, revolve) correctly handle shapes with holes.
 
 ;; Rounded shape
 (def rounded-rect (shape-offset (rect 30 20) 3 :join-type :round))
+```
+
+**Pattern tiling:**
+
+Tile a pattern shape across a target shape and subtract — producing a shape with holes.
+The pattern is repeated on a grid covering the target's bounding box.
+
+```clojure
+(pattern-tile target pattern :spacing [sx sy])   ; Tile pattern on grid, subtract from target
+(pattern-tile target pattern :spacing [8 8])      ; 8×8 grid of holes
+(pattern-tile target pattern :spacing [6 6] :inset 0.5) ; Shrink each tile copy by 0.5
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `:spacing` | pattern bbox size | Tile period `[sx sy]` |
+| `:inset` | 0 | Shrink each pattern copy before subtraction |
+
+The pattern can be a single shape or a vector of shapes. Works with any shape: circles, SVG imports, custom polygons.
+
+```clojure
+;; Grid of circular holes
+(pattern-tile (circle 30 64) (circle 2 16) :spacing [6 6])
+
+;; Tiled SVG motif
+(def motif (svg-shape (svg "<svg>...</svg>")))
+(pattern-tile (rect 40 40) motif :spacing [12 12])
+
+;; Use as cap (see Shell caps below)
+(make-cap (pattern-tile base-shape (circle 2 16) :spacing [6 6]) 3)
 ```
 
 **Notes:**
