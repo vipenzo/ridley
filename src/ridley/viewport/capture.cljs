@@ -119,38 +119,58 @@
         (.computeVertexNormals geom)
         (THREE/Mesh. geom material)))))
 
+(def ^:private capture-palette
+  "Bright, high-contrast colors for AI capture views.
+   Chosen for maximum mutual distinguishability on white background."
+  [0x2196F3   ; blue
+   0xF44336   ; red
+   0x4CAF50   ; green
+   0xFF9800   ; orange
+   0x9C27B0   ; purple
+   0x00BCD4   ; cyan
+   0xFFEB3B   ; yellow
+   0xE91E63]) ; pink
+
+(defn- mesh-material
+  "Create a MeshStandardMaterial with a bright capture-palette color by index.
+   Ignores user colors — capture views prioritize AI readability.
+   Uses shading to convey 3D form (concavity, depth, curvature)."
+  [_mesh-data idx]
+  (THREE/MeshStandardMaterial.
+    #js {:color (nth capture-palette (mod idx (count capture-palette)))
+         :metalness 0.0
+         :roughness 0.6
+         :flatShading false
+         :side THREE/DoubleSide}))
+
 (defn- create-capture-scene
   "Build a minimal Scene for capture: white background, even lighting,
-   dark uniform material with edge wireframes. No grid/axes/turtle/panels."
+   per-object colors with edge wireframes. No grid/axes/turtle/panels."
   [meshes]
   (let [scene (THREE/Scene.)
         _ (set! (.-background scene) (THREE/Color. 0xffffff))
-        ;; Even lighting from multiple directions
-        hemi (THREE/HemisphereLight. 0xffffff 0x888888 0.9)
-        main (THREE/DirectionalLight. 0xffffff 0.8)
-        fill (THREE/DirectionalLight. 0xffffff 0.5)
-        top  (THREE/DirectionalLight. 0xffffff 0.6)
-        dark-material (THREE/MeshStandardMaterial.
-                        #js {:color 0x555555
-                             :metalness 0.1
-                             :roughness 0.8
-                             :flatShading true
-                             :side THREE/FrontSide})]
+        ;; Strong ambient + directional from all sides for flat, readable renders
+        ambient (THREE/AmbientLight. 0xffffff 0.6)
+        main (THREE/DirectionalLight. 0xffffff 0.5)
+        fill (THREE/DirectionalLight. 0xffffff 0.4)
+        back (THREE/DirectionalLight. 0xffffff 0.4)
+        top  (THREE/DirectionalLight. 0xffffff 0.3)
+        bottom (THREE/DirectionalLight. 0xffffff 0.3)]
     (.set (.-position main) 100 150 100)
-    (.set (.-position fill) -80 -50 80)
+    (.set (.-position fill) -100 -80 80)
+    (.set (.-position back) -50 50 -100)
     (.set (.-position top) 0 0 200)
-    (.add scene hemi)
+    (.set (.-position bottom) 0 0 -200)
+    (.add scene ambient)
     (.add scene main)
     (.add scene fill)
+    (.add scene back)
     (.add scene top)
-    (doseq [mesh-data meshes]
-      (let [^js three-mesh (create-capture-mesh mesh-data dark-material)]
-        (.add scene three-mesh)
-        ;; Edge wireframe overlay for clarity
-        (let [edges (THREE/EdgesGeometry. (.-geometry three-mesh) 30)
-              edge-mat (THREE/LineBasicMaterial. #js {:color 0x222222})
-              edge-lines (THREE/LineSegments. edges edge-mat)]
-          (.add scene edge-lines))))
+    (.add scene bottom)
+    (doseq [[idx mesh-data] (map-indexed vector meshes)]
+      (let [mat (mesh-material mesh-data idx)
+            ^js three-mesh (create-capture-mesh mesh-data mat)]
+        (.add scene three-mesh)))
     scene))
 
 (defn- dispose-capture-scene!
@@ -465,18 +485,22 @@
     (THREE/Line. geom material)))
 
 (defn- create-slice-scene
-  "Build an offscreen scene with 2D contour lines on white background."
-  [shapes]
+  "Build an offscreen scene with 2D contour lines on white background.
+   groups is a seq of {:shapes [...] :color hex-or-nil :idx n}."
+  [groups]
   (let [scene (THREE/Scene.)
-        _ (set! (.-background scene) (THREE/Color. 0xffffff))
-        outer-mat (THREE/LineBasicMaterial. #js {:color 0x222222 :linewidth 2})
-        hole-mat  (THREE/LineBasicMaterial. #js {:color 0x666666 :linewidth 1})]
-    (doseq [shape shapes]
-      (when (seq (:points shape))
-        (.add scene (create-contour-line (:points shape) outer-mat)))
-      (doseq [hole (:holes shape)]
-        (when (seq hole)
-          (.add scene (create-contour-line hole hole-mat)))))
+        _ (set! (.-background scene) (THREE/Color. 0xffffff))]
+    (doseq [{:keys [shapes color idx]} groups]
+      (let [c (nth capture-palette (mod idx (count capture-palette)))
+            outer-mat (THREE/LineBasicMaterial. #js {:color c :linewidth 2})
+            hole-mat  (THREE/LineBasicMaterial.
+                        #js {:color c :linewidth 1 :opacity 0.5 :transparent true})]
+        (doseq [shape shapes]
+          (when (seq (:points shape))
+            (.add scene (create-contour-line (:points shape) outer-mat)))
+          (doseq [hole (:holes shape)]
+            (when (seq hole)
+              (.add scene (create-contour-line hole hole-mat)))))))
     scene))
 
 (defn- setup-slice-camera
@@ -510,11 +534,25 @@
       target
       (throw (js/Error. "render-slice requires a specific mesh target (keyword or mesh)")))))
 
+(defn- resolve-slice-groups
+  "Resolve target to a seq of {:mesh mesh-data :idx n}.
+   When target is nil, includes all visible meshes."
+  [target]
+  (if target
+    (let [m (resolve-single-mesh target)]
+      [{:mesh m :idx 0}])
+    (let [names (registry/visible-names)]
+      (when (empty? names)
+        (throw (js/Error. "No geometry to slice. Create some shapes first.")))
+      (map-indexed (fn [i nm]
+                     {:mesh (registry/get-mesh nm) :idx i})
+                   names))))
+
 (defn ^:export render-slice
-  "Render a cross-section of a mesh at an axis-aligned plane.
+  "Render a cross-section of one or all meshes at an axis-aligned plane.
    Returns a data URL (base64 PNG) of the 2D contour outlines.
 
-   target   — keyword name or mesh reference
+   target   — keyword name, mesh reference, or nil for all visible
    axis     — :x, :y, or :z
    position — float, position along axis
 
@@ -530,15 +568,20 @@
           {:keys [normal right up]} plane
           [nx ny nz] normal
           point [(* nx position) (* ny position) (* nz position)]
-          mesh (resolve-single-mesh target)
-          shapes (manifold/slice-at-plane mesh normal point right up)]
-      (if (or (nil? shapes) (empty? shapes))
+          groups (resolve-slice-groups target)
+          slice-groups (keep (fn [{:keys [mesh color idx]}]
+                              (let [shapes (manifold/slice-at-plane mesh normal point right up)]
+                                (when (seq shapes)
+                                  {:shapes shapes :color color :idx idx})))
+                            groups)
+          all-shapes (mapcat :shapes slice-groups)]
+      (if (empty? all-shapes)
         (throw (js/Error. (str "No cross-section at " (name axis) "=" position
-                               ". Slice plane may be outside the object.")))
-        (let [bbox-2d (contours-bbox-2d shapes)
+                               ". Slice plane may be outside the object(s).")))
+        (let [bbox-2d (contours-bbox-2d all-shapes)
               _ (when-not bbox-2d
                   (throw (js/Error. "Could not compute contour bounds")))
-              slice-scene (create-slice-scene shapes)
+              slice-scene (create-slice-scene slice-groups)
               camera (setup-slice-camera bbox-2d)
               rt (ensure-render-target! width height)]
           (.setRenderTarget ^js renderer rt)

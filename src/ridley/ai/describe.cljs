@@ -59,7 +59,17 @@
           (seq face-groups)
           (assoc :face-groups (mapv name face-groups))
           (not single?)
-          (assoc :registered-objects (mapv (comp name :name) meshes)))))))
+          (assoc :registered-objects
+                 (map-indexed
+                   (fn [i {obj-name :name m :mesh}]
+                     (let [palette [0x2196F3 0xF44336 0x4CAF50 0xFF9800
+                                    0x9C27B0 0x00BCD4 0xFFEB3B 0xE91E63]
+                           c (nth palette (mod i (count palette)))
+                           ob (measure/bounds m)]
+                       (cond-> {:name (name obj-name)
+                                :color (str "#" (.padStart (.toString c 16) 6 "0"))}
+                         ob (assoc :bounds {:min (:min ob) :max (:max ob) :size (:size ob)}))))
+                   meshes)))))))
 
 ;; =============================================================================
 ;; Source code retrieval
@@ -81,14 +91,20 @@ proportions, features, spatial relationships, symmetry, and likely function.
 Do not describe anything other than the 3D model itself.
 Describe only what is visible in the images.
 
-Use structural and spatial references (\"the cylindrical protrusion on the
-top face\"), never visual-only references (\"the blue part\").
+Each registered object is rendered in a distinct color for identification
+purposes only. Always refer to objects by their name (from the
+`registered-objects` list in the metadata), NEVER by their render color.
+The render colors are internal and meaningless to the user.
+
+Per-object bounding boxes are provided in the prompt. Use them to choose
+slice positions that actually intersect the objects you want to examine.
 
 When describing geometry:
 - Use everyday analogies (\"shaped like a donut\", \"resembles a gear\")
 - Give approximate proportions and absolute sizes
 - Describe spatial relationships (above, beside, through, concentric)
 - Note symmetry, patterns, and repetitions
+- Identify separate objects by name, using bounding boxes to describe overlap
 - Mention printability concerns (overhangs, thin walls, disconnected parts)
 
 Ridley uses a Z-up coordinate system.")
@@ -102,6 +118,9 @@ Ridley uses a Z-up coordinate system.")
 (def default-user-prompt
   "Build the initial describe user prompt template."
   (str "## Structural Data\n```json\n{{metadata}}\n```\n\n"
+       "## Per-Object Bounding Boxes\n{{object-bounds}}\n\n"
+       "Use these ranges to choose meaningful slice positions that intersect "
+       "each object. For example, slice at Z values within each object's Z range.\n\n"
        "## Task — Initial Description\n\n"
        "Provide a comprehensive description of this 3D object covering:\n"
        "1. **Overall shape**: What does this look like? Use everyday analogies.\n"
@@ -118,12 +137,35 @@ Ridley uses a Z-up coordinate system.")
        "]}\n```\n\n"
        "You may include explanatory text before or after the JSON block."))
 
+(defn- format-object-bounds
+  "Format per-object bounding boxes as a readable text block.
+   Used as the {{object-bounds}} macro value."
+  [metadata]
+  (if-let [objects (:registered-objects metadata)]
+    (str/join "\n"
+      (map (fn [obj]
+             (let [n (:name obj)
+                   b (:bounds obj)]
+               (if b
+                 (let [[xn yn zn] (:min b)
+                       [xx yx zx] (:max b)
+                       [sx sy sz] (:size b)]
+                   (str n ": "
+                        "X [" (.toFixed xn 1) " .. " (.toFixed xx 1) "] "
+                        "Y [" (.toFixed yn 1) " .. " (.toFixed yx 1) "] "
+                        "Z [" (.toFixed zn 1) " .. " (.toFixed zx 1) "] "
+                        "size " (.toFixed sx 1) " × " (.toFixed sy 1) " × " (.toFixed sz 1)))
+                 (str n ": bounds unavailable"))))
+           objects))
+    "Single object — see main bounds in metadata."))
+
 (defn initial-prompt
   "Build the initial describe prompt, resolving from store with macro expansion."
   [_source-code metadata]
   (let [template (store/resolve-template "describe/user" default-user-prompt)
         metadata-json (js/JSON.stringify (clj->js metadata) nil 2)
-        context {"metadata" metadata-json}]
+        context {"metadata" metadata-json
+                 "object-bounds" (format-object-bounds metadata)}]
     (store/expand-macros template context)))
 
 (defn follow-up-prompt
@@ -230,7 +272,7 @@ Ridley uses a Z-up coordinate system.")
                    "anthropic-version" "2023-06-01"
                    "anthropic-dangerous-direct-browser-access" "true"}
                   {:model model
-                   :max_tokens 4096
+                   :max_tokens 8192
                    :system sys-prompt
                    :messages messages}
                   signal)
@@ -245,7 +287,7 @@ Ridley uses a Z-up coordinate system.")
                   (cond-> {"Content-Type" "application/json"}
                     api-key (assoc "Authorization" (str "Bearer " api-key)))
                   {:model model
-                   :max_tokens 4096
+                   :max_tokens 8192
                    :messages (into [{:role "system" :content sys-prompt}]
                                    messages)}
                   signal)
@@ -274,7 +316,7 @@ Ridley uses a Z-up coordinate system.")
                     {"Content-Type" "application/json"}
                     {:system_instruction {:parts [{:text sys-prompt}]}
                      :contents contents
-                     :generationConfig {:maxOutputTokens 4096}}
+                     :generationConfig {:maxOutputTokens 8192}}
                     signal)
         (.then #(handle-response % "Google"))
         (.then (fn [^js data]

@@ -59,10 +59,11 @@ Plus one perspective 3/4 view (isometric-style) for overall shape context.
 
 **Rendering settings:**
 - Orthographic camera (no perspective distortion)
-- White background, dark mesh color
-- Edge rendering enabled for clarity
+- White background
+- Each registered object rendered in a distinct, high-contrast color from a fixed palette (blue, red, green, orange, purple, cyan, yellow, pink) — colors are for AI identification only, not shown to the user
+- `MeshStandardMaterial` with strong ambient + directional lighting for 3D shape perception
 - Auto-fit camera to geometry bounds with padding
-- Resolution: 512×512px per view (sufficient for LLM vision, small enough for fast upload)
+- Resolution: 1024×1024px per view (higher resolution helps AI distinguish fine details)
 - Grid and axes disabled in captures
 
 #### C. Structural Metadata (JSON)
@@ -77,8 +78,16 @@ Plus one perspective 3/4 view (isometric-style) for overall shape context.
   "manifold": true,
   "volume": 45678.9,
   "face_groups": [":top", ":bottom", ":side"],
-  "registered_objects_in_scene": [":base", ":arm", ":connector"]
+  "registered_objects": [
+    {"name": "base", "color": "#2196f3",
+     "bounds": {"min": [x,y,z], "max": [x,y,z], "size": [sx,sy,sz]}},
+    {"name": "arm",  "color": "#f44336",
+     "bounds": {"min": [x,y,z], "max": [x,y,z], "size": [sx,sy,sz]}}
+  ]
 }
+```
+
+Per-object bounding boxes let the AI choose slice positions that actually intersect each object, solving the problem of slices that miss smaller or nested components.
 ```
 
 ### Prompt Construction
@@ -97,6 +106,12 @@ a blind user, so be precise, spatial, and concrete.
 
 ## Structural Data
 {JSON metadata}
+
+## Per-Object Bounding Boxes
+{{object-bounds}}
+
+Use these ranges to choose meaningful slice positions that intersect
+each object. For example, slice at Z values within each object's Z range.
 
 ## Views
 {7 images: 6 orthographic + 1 perspective, each labeled}
@@ -154,17 +169,18 @@ After the initial description, the user enters an interactive session. The conve
 ### User Interaction
 
 ```clojure
-;; The session is active after (describe)
-;; User types questions as strings in the REPL:
+;; The session is active after (describe) or /ai-describe
+;; User can ask follow-up questions via function call or slash command:
 
 (ai-ask "What does the back look like?")
+/ai-ask What does the back look like?
+
 (ai-ask "Is the hole on the left side a through-hole?")
-(ai-ask "Show me a cross section at height 15")
-(ai-ask "How thick is the wall near the bottom?")
-(ai-ask "Would this print well upside down?")
+/ai-ask Is the hole on the left side a through-hole?
 
 ;; End the session
 (end-describe)
+/ai-end
 ```
 
 ### How It Works
@@ -305,12 +321,13 @@ description and the request asks for more data to complete it.
 
 | Function | Description |
 |----------|-------------|
-| `(describe)` | Describe all visible geometry |
-| `(describe :name)` | Describe a specific registered object |
-| `(describe mesh)` | Describe a mesh by reference |
-| `(ai-ask "question")` | Ask a follow-up question in the active session |
-| `(end-describe)` | Close the interactive session |
-| `(cancel-describe)` | Cancel an in-progress describe/ai-ask call |
+| `(describe)` or `/ai-describe` | Describe all visible geometry |
+| `(describe :name)` or `/ai-describe :name` | Describe a specific registered object |
+| `(ai-ask "question")` or `/ai-ask question` | Ask a follow-up question in the active session |
+| `(end-describe)` or `/ai-end` | Close the interactive session |
+| `(cancel-ai)` | Cancel an in-progress AI call without closing the session |
+
+The `/ai-*` slash command variants provide a more consistent UX — `/ai-describe`, `/ai-ask`, `/ai-end` — especially for screen reader users who don't need to worry about parentheses and quoting.
 
 ### Configuration
 
@@ -429,11 +446,11 @@ accumulated images. To prevent context overflow:
   === Description of :my-object ===
   [description text]
   ===
-  Type (ai-ask "your question") for follow-up, (end-describe) to close.
+  Type /ai-ask your question for follow-up, /ai-end to close.
   ```
 - During long waits, periodic updates: `"Still waiting... (12s elapsed)"`
   every 10 seconds, so screen reader users know the system isn't frozen
-- Descriptions avoid visual-only references ("the blue part") — instead use spatial/structural references ("the cylindrical protrusion on the top face")
+- Descriptions avoid visual-only references ("the blue part") — the AI is instructed to refer to objects by name only, never by render color (which is internal and meaningless to the user)
 - The system prompt explicitly instructs the AI to write for screen reader consumption
 
 ---
@@ -489,14 +506,40 @@ A full JAWS keybinding audit should be done with Edis to identify all conflicts.
 
 ---
 
+## Prompt Macros
+
+The describe prompts support `{{macro}}` placeholders that are expanded at runtime with live data. Users can reference these macros in custom prompt templates via the Prompt Editor.
+
+### Available Macros
+
+| Macro | Description | Example Output |
+|-------|-------------|----------------|
+| `{{metadata}}` | Full structural metadata as JSON | `{"target": "all visible", "bounds": {...}, ...}` |
+| `{{object-bounds}}` | Per-object bounding boxes as readable text | `bowl: X [-37.5 .. 37.5] Y [-276.0 .. 38.0] Z [0.0 .. 192.0] size 75.0 × 314.0 × 192.0` |
+
+### Usage in Custom Prompts
+
+Users can create custom describe prompts in the Prompt Editor that reference these macros. For example, a custom `describe/user` prompt could include:
+
+```
+## Object Ranges
+{{object-bounds}}
+
+Focus your slices on the overlap regions between objects.
+```
+
+The `{{object-bounds}}` macro is particularly useful for guiding the AI to choose slice positions that actually intersect each object, solving the problem of slices that miss smaller or nested components.
+
+---
+
 ## Open Questions
 
-1. **Image format**: PNG data URLs are large for multimodal APIs. Should we use JPEG for smaller payloads? Or resize to 256×256 for faster API calls at the cost of detail?
+1. **Image format**: PNG data URLs are large for multimodal APIs. Consider JPEG for smaller payloads, though PNG preserves sharp edges better for CAD geometry.
 
-2. **Token budget**: 7 images + source code + metadata can consume significant context. Should the first round send fewer images (e.g., only 3 orthographic + 1 perspective) and let the AI request more?
+2. **Ollama multimodal**: Local models like LLaVA have significantly weaker spatial reasoning than cloud models. Should `(describe)` warn if using a local model, or adapt its prompt strategy?
 
-3. **Ollama multimodal**: Local models like LLaVA have significantly weaker spatial reasoning than cloud models. Should `(describe)` warn if using a local model, or adapt its prompt strategy?
+3. **Cost**: Cloud API calls with multiple images can be expensive. Consider a budget/limit configuration or a "quick describe" mode that sends only the source code (no images).
 
-4. **Cost**: Cloud API calls with multiple images can be expensive. Should there be a budget/limit configuration? Or a "quick describe" mode that sends only the source code (no images)?
+4. **Curb-cut features**: Which aspects of `(describe)` should be surfaced as general-purpose tools? E.g., `(render-view)` for documentation, `(slice-mesh)` for debugging, AI-based printability analysis for all users.
 
-5. **Curb-cut features**: Which aspects of `(describe)` should be surfaced as general-purpose tools? E.g., `(render-view)` for documentation, `(slice-mesh)` for debugging, AI-based printability analysis for all users.
+5. **Slice visibility**: When the AI requests slices, the slice images show cross-section contours for all objects at that plane. If objects don't overlap at the chosen position, only one object's contour appears. The per-object bounding boxes help the AI choose better positions, but further improvements could include rendering each object's slice in its assigned color.

@@ -23,6 +23,7 @@
             [ridley.ai.capture-directives :as directives]
             [ridley.ai.batch :as batch]
             [ridley.ai.auto-session :as auto-session]
+            [ridley.ai.describe-session :as describe-session]
             [ridley.ui.prompt-panel :as prompt-panel]
             [ridley.library.panel :as lib-panel]
             [ridley.library.core :as lib-core]
@@ -276,6 +277,33 @@
         ;; Check for special commands
         (let [trimmed (str/trim input)]
         (cond
+          ;; /ai-describe [target] — start a describe session
+          (or (= trimmed "/ai-describe")
+              (str/starts-with? trimmed "/ai-describe "))
+          (let [rest (str/trim (subs trimmed (count "/ai-describe")))
+                target (when (seq rest) (keyword rest))]
+            (add-repl-entry input "Starting describe session..." false)
+            (try
+              (describe-session/describe target)
+              (catch :default e
+                (add-repl-entry input (.-message e) true))))
+
+          ;; /ai-ask question — follow-up in active describe session
+          (str/starts-with? trimmed "/ai-ask ")
+          (let [question (str/trim (subs trimmed 8))]
+            (if (seq question)
+              (do
+                (add-repl-entry input (str "Asking: " question) false)
+                (try
+                  (describe-session/ai-ask question)
+                  (catch :default e
+                    (add-repl-entry input (.-message e) true))))
+              (add-repl-entry input "Usage: /ai-ask your question here" true)))
+
+          ;; /ai-end — close describe session
+          (= trimmed "/ai-end")
+          (add-repl-entry input (describe-session/end-describe) false)
+
           ;; /ai-clear — reset AI conversation history
           (= trimmed "/ai-clear")
           (do (ai/clear-history!)

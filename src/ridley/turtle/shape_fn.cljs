@@ -646,9 +646,18 @@
      :thickness 3
      :fn (fn [a t] (max 0 (sin (+ (* a 8) (* t PI 6))))))
 
+   Optional caps — solid plugs at the ends of the shell:
+   :cap-top N     - solid cap of thickness N at t=1 (end)
+   :cap-bottom N  - solid cap of thickness N at t=0 (start)
+
+   (shell (shape-fn (circle 20) my-transform)
+     :thickness 3
+     :fn (fn [a t] 1.0)
+     :cap-top 3)
+
    Composes with other shape-fns:
    (-> (circle 20 64) (shell :thickness 3 :fn ...) (tapered :to 0.5))"
-  [shape-or-fn & {:keys [thickness threshold]
+  [shape-or-fn & {:keys [thickness threshold cap-top cap-bottom]
                   :or {thickness 2 threshold 0.05}
                   :as opts}]
   (let [thickness-fn (:fn opts)]
@@ -664,10 +673,12 @@
                                   v (thickness-fn a t)]
                               (if (< v threshold) 0.0 (max 0.0 (min 1.0 v)))))
                           pts)]
-          (assoc s
-                 :shell-mode true
-                 :shell-thickness thickness
-                 :shell-values values))))))
+          (cond-> (assoc s
+                         :shell-mode true
+                         :shell-thickness thickness
+                         :shell-values values)
+            cap-top    (assoc :shell-cap-top cap-top)
+            cap-bottom (assoc :shell-cap-bottom cap-bottom)))))))
 
 (defn ^:export shell-lattice
   "Convenience shell with a regular grid of openings.
@@ -887,7 +898,7 @@
    Composes with other shape-fns:
    (-> (circle 20 128) (woven-shell :thickness 3 :strands 6) (tapered :to 0.5))"
   [shape-or-fn & {:keys [thickness threshold strands width lift
-                         warp weft warp-width weft-width]
+                         warp weft warp-width weft-width cap-top cap-bottom]
                   :or {thickness 2 threshold 0.05 strands 8 width 0.12}
                   :as opts}]
   (let [custom-fn (:fn opts)
@@ -915,8 +926,10 @@
                                (if (< v threshold) 0.0 (max 0.0 v))))
                            results)
               offsets (mapv :offset results)]
-          (assoc s
-                 :shell-mode true
-                 :shell-thickness thickness
-                 :shell-values values
-                 :shell-offsets offsets))))))
+          (cond-> (assoc s
+                         :shell-mode true
+                         :shell-thickness thickness
+                         :shell-values values
+                         :shell-offsets offsets)
+            cap-top    (assoc :shell-cap-top cap-top)
+            cap-bottom (assoc :shell-cap-bottom cap-bottom)))))))

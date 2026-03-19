@@ -1498,7 +1498,8 @@
   "Build mesh from shell ring data.
    shell-data: [{:outer <3D ring> :inner <3D ring> :values [v0 v1 ...]} ...]
    Generates outer + inner faces per-triangle where all 3 vertices have
-   wall (value > 0). Cap faces connect outer to inner at start/end."
+   wall (value > 0). Cap faces connect outer to inner at start/end.
+   caps? can be: true (both), false (none), :start (start only), :end (end only)."
   ([shell-data creation-pose] (build-shell-sweep-mesh shell-data creation-pose true))
   ([shell-data creation-pose caps?]
    (let [n-rings (count shell-data)
@@ -1545,8 +1546,11 @@
                (range (dec n-rings))))
 
              ;; Cap faces: connect outer to inner at start/end where wall exists
+             ;; caps? can be: true (both), false (none), :start, :end
+             cap-start? (or (true? caps?) (= caps? :start))
+             cap-end?   (or (true? caps?) (= caps? :end))
              cap-faces
-             (when caps?
+             (when (or cap-start? cap-end?)
                (let [gen-cap
                      (fn [ring-idx flip?]
                        (let [vs (nth all-values ring-idx)
@@ -1566,8 +1570,8 @@
                                      (-> acc (conj! [o0 i0 i1]) (conj! [o0 i1 o1])))))))
                            (transient [])
                            (range n-pts)))))]
-                 (concat (gen-cap 0 true)
-                         (gen-cap (dec n-rings) false))))]
+                 (concat (when cap-start? (gen-cap 0 true))
+                         (when cap-end? (gen-cap (dec n-rings) false)))))]
 
          (schema/assert-mesh!
           (cond-> {:type :mesh

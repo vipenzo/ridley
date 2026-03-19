@@ -57,13 +57,9 @@
     (case type
       "slice"
       (let [axis-kw (keyword axis)
-            target (:target @session)
-            target-name (or target
-                            (first (registry/registered-names))
-                            (first (registry/visible-names)))]
-        (when target-name
-          [(keyword (str "slice-" axis "-" position))
-           (capture/render-slice target-name axis-kw position)]))
+            target (:target @session)]
+        [(keyword (str "slice-" axis "-" position))
+         (capture/render-slice target axis-kw position)])
 
       "view"
       (let [dir-vec (vec from)
@@ -185,7 +181,7 @@
                           " ===\n"
                           description
                           "\n===\n"
-                          "Type (ai-ask \"your question\") for follow-up, (end-describe) to close.")))
+                          "Type /ai-ask your question for follow-up, /ai-end to close.")))
           (.catch (fn [err]
                     (cancel-timer)
                     (let [msg (.-message err)]
@@ -213,14 +209,23 @@
         ;; Parse capture directives from the question
         {:keys [clean-text images has-directives?]}
         (directives/process question {:target (:target @session)})
-        user-images (when has-directives? (seq images))]
+        user-images (when has-directives? (seq images))
+        prompt-text (str clean-text
+                        "\n\nIf you need additional views or cross-sections to answer "
+                        "accurately, respond with a JSON request in a fenced code block:\n"
+                        "```json\n"
+                        "{\"need_more\": true, \"requests\": [\n"
+                        "  {\"type\": \"slice\", \"axis\": \"z\", \"position\": 25.0},\n"
+                        "  {\"type\": \"view\", \"from\": [1, 1, 0.5], \"label\": \"low-angle\"}\n"
+                        "]}\n```\n"
+                        "Otherwise, answer the question directly.")]
     (swap! session assoc :abort-controller ac)
     (when has-directives?
       (emit! "Capturing " (count images) " user-requested view(s)..."))
     (emit! "Asking AI...")
     ;; Fire-and-forget: output goes through emit!, return nil to REPL
     (-> (ai/call-vision-with-history
-          (:messages @session) clean-text user-images {:signal (.-signal ac)})
+          (:messages @session) prompt-text user-images {:signal (.-signal ac)})
         (.then (fn [raw]
                  (let [parsed (ai/parse-response raw)]
                    (if (= (:type parsed) :need-more)

@@ -459,6 +459,48 @@
     (/ dist total-dist)
     0))
 
+(defn- strip-shell
+  "Remove shell metadata from a shape, returning a plain shape for solid loft."
+  [s]
+  (dissoc s :shell-mode :shell-thickness :shell-values :shell-offsets
+            :shell-cap-top :shell-cap-bottom))
+
+(defn- generate-cap-mesh
+  "Generate a cap sweep mesh for a shell cap section.
+   cap-end is :top or :bottom.
+   If the shell has openings (woven), generates a shell cap preserving the pattern.
+   If the shell is solid (all values > 0), generates a solid cap.
+   Returns a mesh or nil."
+  [state shape transform-fn total-eff-dist cap-thickness cap-end creation-pose steps]
+  (let [cap-ratio (/ cap-thickness total-eff-dist)
+        [t-start t-end] (if (= cap-end :top)
+                          [(max 0 (- 1 cap-ratio)) 1]
+                          [0 (min 1 cap-ratio)])
+        cap-steps (max 2 (Math/round (* steps cap-ratio)))
+        heading (:heading state)
+        end-pos (:position state)
+        start-pos (v- end-pos (v* heading cap-thickness))
+        [pos0 pos1] (if (= cap-end :top)
+                      [start-pos end-pos]
+                      [end-pos (v+ end-pos (v* heading cap-thickness))])
+        ;; Cap is always solid (fills between outer and inner walls).
+        ;; Even for woven shells — the cap is the "floor" that closes the vessel.
+        rings (vec
+               (for [i (range (inc cap-steps))]
+                 (let [local-t (/ i cap-steps)
+                       t (+ t-start (* local-t (- t-end t-start)))
+                       pos (v+ pos0 (v* (v- pos1 pos0) local-t))
+                       raw-shape (strip-shell (transform-fn shape t))
+                       temp-state (assoc state :position pos)]
+                   (if (:holes raw-shape)
+                     (stamp-shape-with-holes temp-state raw-shape)
+                     (stamp-shape temp-state raw-shape)))))
+        has-holes? (boolean (:holes (strip-shell (transform-fn shape t-start))))]
+    (when (>= (count rings) 2)
+      (if has-holes?
+        (build-sweep-mesh-with-holes rings creation-pose true)
+        (build-sweep-mesh rings false creation-pose true)))))
+
 (defn loft-from-path
   "Loft a shape along a path with a transform function.
 
@@ -487,6 +529,8 @@
            ;; (shell shape-fn attaches :shell-mode to the shape)
            probe-shape (transform-fn shape 0)
            shell-mode? (boolean (:shell-mode probe-shape))
+           shell-cap-top (:shell-cap-top probe-shape)
+           shell-cap-bottom (:shell-cap-bottom probe-shape)
 
            ;; Polymorphic helpers (shell vs holes vs plain)
            has-holes? (and (not shell-mode?) (boolean (:holes shape)))
@@ -664,10 +708,35 @@
                              bottom-cap (when (and loft-first-ring bottom-normal)
                                           (make-cap-mesh loft-first-ring bottom-normal))
                              top-cap (when (and last-ring top-normal)
-                                       (make-cap-mesh last-ring top-normal))]
-                         {:meshes (cond-> final-meshes
-                                    bottom-cap (conj bottom-cap)
-                                    top-cap (conj top-cap))
+                                       (make-cap-mesh last-ring top-normal))
+                             ;; Generate thick caps for shell mode
+                             solid-cap-top
+                             (when (and shell-mode? shell-cap-top (pos? total-effective-dist))
+                               (let [m (generate-cap-mesh
+                                        s shape transform-fn total-effective-dist
+                                        shell-cap-top :top creation-pose steps)]
+                                 (js/console.log "shell cap-top:" (if m
+                                                                    (str (count (:vertices m)) " verts, "
+                                                                         (count (:faces m)) " faces")
+                                                                    "nil"))
+                                 m))
+                             solid-cap-bottom
+                             (when (and shell-mode? shell-cap-bottom (pos? total-effective-dist))
+                               (let [m (generate-cap-mesh
+                                        state-with-initial-heading shape transform-fn total-effective-dist
+                                        shell-cap-bottom :bottom creation-pose steps)]
+                                 (js/console.log "shell cap-bottom:" (if m
+                                                                       (str (count (:vertices m)) " verts, "
+                                                                            (count (:faces m)) " faces")
+                                                                       "nil"))
+                                 m))
+                             ;; Combine shell + caps (just concatenate — no boolean union)
+                             all-meshes (cond-> final-meshes
+                                          bottom-cap (conj bottom-cap)
+                                          top-cap (conj top-cap)
+                                          solid-cap-top (conj solid-cap-top)
+                                          solid-cap-bottom (conj solid-cap-bottom))]
+                         {:meshes all-meshes
                           :state s})
                        (let [seg (nth segments seg-idx)
                              seg-dist (:dist seg)

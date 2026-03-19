@@ -224,30 +224,39 @@
 (defn render!
   "Re-render the prompt editor panel."
   []
-  (when-let [panel (.getElementById js/document "prompt-panel")]
-    (set! (.-innerHTML panel) "")
+  (when-let [overlay (.getElementById js/document "prompt-panel")]
+    (set! (.-innerHTML overlay) "")
     (when (:open? @state)
-      ;; Header
-      (let [header (el "div" "prompt-panel-header")
-            title (el "h2" "prompt-panel-title" "Prompt Editor")
-            close-btn (el "button" "prompt-panel-close" "×")]
-        (.addEventListener close-btn "click" (fn [_] (close!)))
-        (append! header title close-btn)
-        (append! panel header))
-      ;; Body
-      (let [body (el "div" "prompt-panel-body")
-            sidebar (el "div" "prompt-panel-sidebar")
-            main (el "div" "prompt-panel-main")
-            variant-row (el "div" "prompt-panel-variant-row")
-            editor-area (el "div" "prompt-panel-editor-area")
-            actions-row (el "div" "prompt-panel-actions")]
-        (render-prompt-list sidebar)
-        (render-variant-selector variant-row)
-        (render-editor editor-area)
-        (render-actions actions-row)
-        (append! main variant-row editor-area actions-row)
-        (append! body sidebar main)
-        (append! panel body)))))
+      ;; Click on overlay backdrop closes the panel
+      (.addEventListener overlay "click"
+        (fn [e] (when (= (.-target e) overlay) (close!))))
+      ;; Escape key closes the panel
+      (.addEventListener overlay "keydown"
+        (fn [e] (when (= (.-key e) "Escape") (close!))))
+      ;; Dialog container (the visible box inside the overlay)
+      (let [dialog (el "div" "prompt-panel-dialog")]
+        ;; Header
+        (let [header (el "div" "prompt-panel-header")
+              title (el "h2" "prompt-panel-title" "Prompt Editor")
+              close-btn (el "button" "prompt-panel-close" "×")]
+          (.addEventListener close-btn "click" (fn [_] (close!)))
+          (append! header title close-btn)
+          (append! dialog header))
+        ;; Body
+        (let [body (el "div" "prompt-panel-body")
+              sidebar (el "div" "prompt-panel-sidebar")
+              main (el "div" "prompt-panel-main")
+              variant-row (el "div" "prompt-panel-variant-row")
+              editor-area (el "div" "prompt-panel-editor-area")
+              actions-row (el "div" "prompt-panel-actions")]
+          (render-prompt-list sidebar)
+          (render-variant-selector variant-row)
+          (render-editor editor-area)
+          (render-actions actions-row)
+          (append! main variant-row editor-area actions-row)
+          (append! body sidebar main)
+          (append! dialog body))
+        (append! overlay dialog)))))
 
 ;; =============================================================================
 ;; Public API

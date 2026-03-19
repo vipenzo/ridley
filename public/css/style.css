@@ -1760,6 +1760,20 @@ body.resizing-h * {
   justify-content: center;
 }
 
+.prompt-panel-dialog {
+  display: flex;
+  flex-direction: column;
+  width: 80vw;
+  max-width: 900px;
+  height: 80vh;
+  max-height: 700px;
+  background: #1e1e1e;
+  border: 1px solid #3c3c3c;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
 .prompt-panel-header {
   display: flex;
   justify-content: space-between;
