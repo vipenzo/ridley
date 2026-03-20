@@ -186,34 +186,34 @@
 ;; Built-in shell patterns
 ;; ═══════════════════════════════════════════════════════════
 
-(deftest shell-lattice-creates-mesh
-  (testing "shell-lattice convenience creates valid shell mesh"
+(deftest shell-lattice-style-creates-mesh
+  (testing "shell :style :lattice creates valid shell mesh"
     (let [circ (shape/circle-shape 20 16)
-          sfn (sfn/shell-lattice circ :thickness 2 :openings 8 :rows 12)
+          sfn (sfn/shell circ :thickness 2 :style :lattice :openings 8 :rows 12)
           path (t/make-path [{:cmd :f :args [40]}])
           turtle (loft/loft-from-path (t/make-turtle) circ (sfn->transform sfn) path 32)
           mesh (last (:meshes turtle))]
-      (is (some? mesh) "shell-lattice creates mesh")
+      (is (some? mesh) "shell :lattice creates mesh")
       (is (= :shell (:primitive mesh))))))
 
-(deftest shell-checkerboard-creates-mesh
-  (testing "shell-checkerboard creates valid mesh"
+(deftest shell-checkerboard-style-creates-mesh
+  (testing "shell :style :checkerboard creates valid mesh"
     (let [circ (shape/circle-shape 20 16)
-          sfn (sfn/shell-checkerboard circ :thickness 2 :cols 6 :rows 6)
+          sfn (sfn/shell circ :thickness 2 :style :checkerboard :cols 6 :rows 6)
           path (t/make-path [{:cmd :f :args [40]}])
           turtle (loft/loft-from-path (t/make-turtle) circ (sfn->transform sfn) path 32)
           mesh (last (:meshes turtle))]
-      (is (some? mesh) "shell-checkerboard creates mesh")
+      (is (some? mesh) "shell :checkerboard creates mesh")
       (is (= :shell (:primitive mesh))))))
 
-(deftest shell-voronoi-creates-mesh
-  (testing "shell-voronoi creates valid mesh"
+(deftest shell-voronoi-style-creates-mesh
+  (testing "shell :style :voronoi creates valid mesh"
     (let [circ (shape/circle-shape 20 16)
-          sfn (sfn/shell-voronoi circ :thickness 2 :cells 6 :rows 6)
+          sfn (sfn/shell circ :thickness 2 :style :voronoi :cells 6 :rows 6)
           path (t/make-path [{:cmd :f :args [40]}])
           turtle (loft/loft-from-path (t/make-turtle) circ (sfn->transform sfn) path 32)
           mesh (last (:meshes turtle))]
-      (is (some? mesh) "shell-voronoi creates mesh")
+      (is (some? mesh) "shell :voronoi creates mesh")
       (is (= :shell (:primitive mesh))))))
 
 ;; ═══════════════════════════════════════════════════════════

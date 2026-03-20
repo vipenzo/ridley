@@ -6,7 +6,10 @@
   (:require [ridley.schema :as schema]
             [ridley.math :as math]
             [ridley.manifold.core :as manifold]
-            [ridley.turtle.extrusion :as extrusion]))
+            [ridley.turtle.extrusion :as extrusion]
+            [ridley.clipper.core :as clipper]
+            [ridley.voronoi.core :as voronoi]
+            [ridley.turtle.shape :as shape]))
 
 ;; --- Re-export math utilities used throughout ---
 (def v+ math/v+)
@@ -465,17 +468,52 @@
   (dissoc s :shell-mode :shell-thickness :shell-values :shell-offsets
             :shell-cap-top :shell-cap-bottom))
 
+(defn- resolve-cap-shape
+  "Resolve a cap-spec into a decorated shape at a given base shape.
+   cap-spec can be:
+   - a number → nil (solid cap, no decoration)
+   - a map with :shape → use provided shape directly
+   - a map with :style → generate pattern on base-shape automatically
+   base-shape is the shell shape at the cap's t position, already stripped.
+   shell-thickness is the shell wall thickness (for expanding to outer wall)."
+  [cap-spec base-shape shell-thickness]
+  (when (map? cap-spec)
+    (if (:shape cap-spec)
+      ;; Legacy: pre-built decorated shape
+      (:shape cap-spec)
+      ;; Style-based: generate pattern on the actual shape at this t
+      (let [style (:style cap-spec)
+            half-t (* 0.5 shell-thickness)
+            ;; Expand shape to match outer wall radius
+            expanded (clipper/shape-offset base-shape half-t)]
+        (when expanded
+          (case style
+            :voronoi (voronoi/voronoi-shell expanded
+                       :cells (or (:cells cap-spec) 20)
+                       :wall (or (:wall cap-spec) 1.5)
+                       :seed (or (:seed cap-spec) 0)
+                       :relax (or (:relax cap-spec) 2)
+                       :resolution (or (:resolution cap-spec) 16))
+            :grid    (clipper/pattern-tile expanded
+                       (shape/circle-shape
+                         (or (:hole cap-spec) 1.5)
+                         (or (:hole-segments cap-spec) 16))
+                       :spacing (or (:spacing cap-spec) [5 5])
+                       :inset (or (:inset cap-spec) 0))
+            :solid   nil
+            (throw (js/Error. (str "Unknown cap :style " style)))))))))
+
 (defn- generate-cap-mesh
   "Generate a cap sweep mesh for a shell cap section.
    cap-end is :top or :bottom.
-   cap-spec is either a number (thickness → solid cap) or a map
-   {:thickness N :shape decorated-shape} where decorated-shape has :holes.
+   cap-spec is either:
+   - a number (thickness → solid cap)
+   - a map with :style (auto-generated pattern on actual shape)
+   - a map with :shape (pre-built decorated shape, legacy)
    Returns a mesh or nil."
   [state shape transform-fn total-eff-dist cap-spec cap-end creation-pose steps]
-  (let [;; cap-spec: number → solid cap, map → decorated cap
-        decorated? (map? cap-spec)
+  (let [decorated? (map? cap-spec)
         cap-thickness (if decorated? (:thickness cap-spec) cap-spec)
-        cap-shape (when decorated? (:shape cap-spec))
         cap-ratio (/ cap-thickness total-eff-dist)
         [t-start t-end] (if (= cap-end :top)
                           [(max 0 (- 1 cap-ratio)) 1]
@@ -487,26 +525,29 @@
         [pos0 pos1] (if (= cap-end :top)
                       [start-pos end-pos]
                       [end-pos (v+ end-pos (v* heading cap-thickness))])
+        ;; Get shell thickness for shape expansion
+        probe (transform-fn shape (if (= cap-end :top) 1 0))
+        shell-thickness (or (:shell-thickness probe) 0)
+        ;; Resolve cap shape at the reference t
+        ref-t (if (= cap-end :top) t-start t-end)
+        ref-base (strip-shell (transform-fn shape ref-t))
+        cap-shape (when decorated?
+                    (resolve-cap-shape cap-spec ref-base shell-thickness))
         rings (vec
                (for [i (range (inc cap-steps))]
                  (let [local-t (/ i cap-steps)
                        t (+ t-start (* local-t (- t-end t-start)))
                        pos (v+ pos0 (v* (v- pos1 pos0) local-t))
-                       ;; For decorated caps, merge holes from cap-shape
-                       ;; into the transformed shape at this t
                        raw-shape (strip-shell (transform-fn shape t))
-                       decorated-shape (if (and decorated? cap-shape)
-                                         (assoc raw-shape :holes (:holes cap-shape))
-                                         raw-shape)
+                       final-shape (if cap-shape
+                                     (assoc cap-shape
+                                            :centered? (:centered? raw-shape))
+                                     raw-shape)
                        temp-state (assoc state :position pos)]
-                   (if (:holes decorated-shape)
-                     (stamp-shape-with-holes temp-state decorated-shape)
-                     (stamp-shape temp-state decorated-shape)))))
-        first-shape (let [raw (strip-shell (transform-fn shape t-start))]
-                      (if (and decorated? cap-shape)
-                        (assoc raw :holes (:holes cap-shape))
-                        raw))
-        has-holes? (boolean (:holes first-shape))]
+                   (if (:holes final-shape)
+                     (stamp-shape-with-holes temp-state final-shape)
+                     (stamp-shape temp-state final-shape)))))
+        has-holes? (boolean (:holes (or cap-shape ref-base)))]
     (when (>= (count rings) 2)
       (if has-holes?
         (build-sweep-mesh-with-holes rings creation-pose true)

@@ -454,7 +454,8 @@ Shape-fns work with `loft`, `bloft`, and `revolve`.
 | `(woven shape :warp n :weft m)` | Interlocking over/under woven fabric pattern |
 | `(heightmap shape hm :amplitude a)` | Displacement from a rasterized heightmap |
 | `(profile shape path)` | Scale cross-section to match a path silhouette |
-| `(shell shape :thickness n :fn f)` | Variable-thickness hollow extrusion with openings |
+| `(shell shape :thickness n :style s)` | Hollow extrusion with wall pattern (`:solid` `:voronoi` `:lattice` `:checkerboard` `:weave`) |
+| `(shell shape :thickness n :fn f)` | Hollow extrusion with custom thickness function |
 | `(woven-shell shape :thickness n ...)` | Shell with radial offset for true over/under weave |
 
 **Composition** via `->` threading:
@@ -525,12 +526,16 @@ The path's X coordinates represent the radius at each point along the extrusion.
 **Shell shape-fn** — variable-thickness hollow extrusion with openings:
 
 ```clojure
-;; Perforated tube with diagonal lattice
-(register lattice
-  (loft-n 64
-    (shell (circle 20 64) :thickness 3
-      :fn (fn [a t] (max 0 (sin (+ (* a 8) (* t PI 6))))))
-    (f 60)))
+;; Built-in styles
+(shell (circle 20 64) :thickness 2 :style :solid)                          ; Solid walls (default)
+(shell (circle 20 64) :thickness 2 :style :voronoi :cells 8 :rows 6)      ; Voronoi openings
+(shell (circle 20 64) :thickness 2 :style :lattice :openings 8 :rows 12)  ; Grid openings
+(shell (circle 20 64) :thickness 2 :style :checkerboard :cols 8 :rows 8)  ; Checkerboard
+(shell (circle 20 64) :thickness 2 :style :weave :strands 6 :frequency 8) ; Woven pattern
+
+;; Custom thickness function
+(shell (circle 20 64) :thickness 3
+  :fn (fn [a t] (max 0 (sin (+ (* a 8) (* t PI 6))))))
 ```
 
 The thickness function `(fn [angle t] → 0..1)` maps each point to a wall thickness:
@@ -538,43 +543,48 @@ The thickness function `(fn [angle t] → 0..1)` maps each point to a wall thick
 - `angle` = angular position on profile (radians), `t` = path progress (0–1)
 - Values below `:threshold` (default 0.05) snap to 0
 
-**`shell` options:** `:thickness` (2 — max wall thickness in units), `:fn` (required), `:threshold` (0.05), `:cap-top`, `:cap-bottom`
+**`shell` options:** `:thickness` (2), `:style` (`:solid`), `:fn` (custom, overrides style), `:threshold` (0.05), `:cap-top`, `:cap-bottom`
 
 Wall is symmetric: outer ring displaced outward by `thickness/2`, inner ring displaced inward by `thickness/2`. Where thickness is 0, both rings coincide (opening).
 
-**Shell caps** — close the ends of a shell with a solid or decorated cap:
+**Style-specific options:**
+
+| Style | Options |
+|-------|---------|
+| `:solid` | (none) |
+| `:lattice` | `:openings` (8), `:rows` (12), `:shift` (0.5) |
+| `:checkerboard` | `:cols` (8), `:rows` (8) |
+| `:weave` | `:strands` (6), `:frequency` (8), `:width` (0.3) |
+| `:voronoi` | `:cells` (6), `:rows` (6), `:seed` (42), `:wall-width` (0.3) |
+
+**Shell caps** — close the ends of a shell with a solid or patterned cap:
 
 ```clojure
 ;; Solid cap (simple thickness value)
-(shell (circle 20 64) :thickness 2 :fn my-fn :cap-top 3)
-(shell (circle 20 64) :thickness 2 :fn my-fn :cap-bottom 2 :cap-top 3)
+(shell shape :thickness 2 :style :voronoi :cells 8 :rows 6
+  :cap-top 3)
 
-;; Decorated cap with pattern holes (using make-cap)
-(def patterned (pattern-tile (circle 20 64) (circle 1.5 16) :spacing [5 5]))
-(shell (circle 20 64) :thickness 2 :fn my-fn
-  :cap-top (make-cap patterned 3))
+;; Patterned cap (automatic — uses actual shape at cap position, expanded to outer wall)
+(shell shape :thickness 2 :style :voronoi :cells 8 :rows 6
+  :cap-top {:thickness 3 :style :voronoi :cells 25 :wall 1.5})
 
-;; Voronoi cap
-(shell (circle 20 64) :thickness 2 :fn my-fn
-  :cap-top (make-cap (voronoi-shell (circle 20 64) :cells 25 :wall 1.5) 3))
+;; Grid cap
+(shell shape :thickness 2 :style :lattice :openings 8 :rows 12
+  :cap-top {:thickness 3 :style :grid :spacing [5 5] :hole 1.5})
+
+;; Both caps
+(shell shape :thickness 2 :style :voronoi :cells 8 :rows 6
+  :cap-top {:thickness 3 :style :voronoi :cells 25 :wall 1.5}
+  :cap-bottom 2)
 ```
 
-`make-cap` takes a decorated shape (with `:holes`) and a thickness:
+Cap styles automatically match the shape at the cap's position (accounting for shape-fn transforms like tapering) and expand to the outer wall radius. Available cap styles:
 
-```clojure
-(make-cap decorated-shape thickness) ; → {:thickness N :shape decorated-shape}
-```
-
-The decorated shape can come from `voronoi-shell`, `pattern-tile`, `shape-difference`, or any operation that produces a shape with holes. The cap is extruded along the shell's heading for the given thickness, preserving the hole pattern.
-
-**Built-in shell patterns:**
-
-| Function | Description |
-|----------|-------------|
-| `(shell-lattice shape :thickness n :openings k :rows r :shift s)` | Regular grid of openings (brick pattern when shift=0.5) |
-| `(shell-checkerboard shape :thickness n :cols c :rows r)` | Alternating solid/empty squares |
-| `(shell-weave shape :thickness n :strands s :frequency f :width w)` | Warp/weft grid pattern with over/under at crossings |
-| `(shell-voronoi shape :thickness n :cells c :rows r :seed s :wall-width w)` | Organic Voronoi-like irregular openings |
+| Cap style | Options |
+|-----------|---------|
+| `:voronoi` | `:cells` (20), `:wall` (1.5), `:seed` (0), `:relax` (2), `:resolution` (16) |
+| `:grid` | `:spacing` `[sx sy]` ([5 5]), `:hole` (1.5), `:inset` (0) |
+| `:solid` | (none — same as passing a number) |
 
 **Woven shell** — thickness + radial offset for true 3D over/under:
 
@@ -603,10 +613,11 @@ Unlike `shell` (thickness only), `woven-shell` shifts the wall center radially s
 - `:warp-width` (0.2), `:weft-width` (0.1) — thread widths (orthogonal mode)
 - `:lift` (thickness/2) — radial offset amplitude at crossings
 - `:fn` — custom function `(fn [angle t] → {:thickness v :offset o})`
+- `:cap-top`, `:cap-bottom` — same cap syntax as `shell`
 
 Shell and woven-shell compose with other shape-fns:
 ```clojure
-(-> (circle 20 64) (shell :thickness 2 :fn ...) (tapered :to 0.5))  ; tapered lattice
+(-> (circle 20 64) (shell :thickness 2 :style :voronoi :cells 8 :rows 6) (tapered :to 0.5))
 (-> (circle 20 128) (woven-shell :thickness 3 :strands 6) (twisted :angle 90))
 ```
 
@@ -702,8 +713,8 @@ The pattern can be a single shape or a vector of shapes. Works with any shape: c
 (def motif (svg-shape (svg "<svg>...</svg>")))
 (pattern-tile (rect 40 40) motif :spacing [12 12])
 
-;; Use as cap (see Shell caps below)
-(make-cap (pattern-tile base-shape (circle 2 16) :spacing [6 6]) 3)
+;; Use as shell cap style (see Shell caps)
+;; :cap-top {:thickness 3 :style :grid :spacing [6 6] :hole 2}
 ```
 
 **Notes:**

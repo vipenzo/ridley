@@ -637,37 +637,119 @@
 ;; Shell shape-fn (variable-thickness hollow extrusion)
 ;; ============================================================
 
+(defn- voronoi-hash
+  "Deterministic pseudo-random 2D hash based on cell coordinates and seed.
+   Returns [x y] in [0,1)×[0,1) — the jittered cell center."
+  [ix iy seed]
+  (let [h1 (bit-xor (* (+ ix 37) 73856093) (* (+ iy 19) 19349663) (* (+ seed 7) 83492791))
+        h2 (bit-xor (* (+ ix 53) 49979693) (* (+ iy 31) 67867967) (* (+ seed 13) 29986577))
+        fract (fn [x] (- x (Math/floor x)))]
+    [(fract (* (Math/sin h1) 43758.5453))
+     (fract (* (Math/sin h2) 22578.1459))]))
+
+(defn- style->thickness-fn
+  "Convert a :style keyword + options to a thickness function (fn [a t] → 0..1)."
+  [style opts]
+  (case style
+    :solid (fn [_a _t] 1.0)
+
+    :lattice
+    (let [{:keys [openings rows shift]
+           :or {openings 8 rows 12 shift 0.5}} opts]
+      (fn [a t]
+        (let [row (* t rows)
+              row-idx (int row)
+              phase (* row-idx shift (/ (* 2 Math/PI) openings))
+              circ (Math/sin (+ (* a openings) phase))
+              longit (Math/sin (* row Math/PI))]
+          (max 0 (min circ longit)))))
+
+    :checkerboard
+    (let [{:keys [cols rows] :or {cols 8 rows 8}} opts]
+      (fn [a t]
+        (let [u (/ (+ a Math/PI) (* 2 Math/PI))
+              col (mod (int (* u cols)) cols)
+              row (mod (int (min (* t rows) (dec rows))) rows)]
+          (if (zero? (mod (+ row col) 2)) 1.0 0.0))))
+
+    :weave
+    (let [{:keys [strands frequency width]
+           :or {strands 6 frequency 8 width 0.3}} opts]
+      (fn [a t]
+        (let [u (* (/ (+ a Math/PI) (* 2 Math/PI)) strands)
+              v (* t frequency)
+              col (int (Math/floor u))
+              row (int (Math/floor v))
+              fu (- u (Math/floor u))
+              fv (- v (Math/floor v))
+              on-warp? (< (Math/abs (- fu 0.5)) width)
+              on-weft? (< (Math/abs (- fv 0.5)) width)
+              warp-over? (zero? (mod (+ row col) 2))]
+          (cond
+            (and on-warp? on-weft?) (if warp-over? 1.0 0.0)
+            on-warp? 1.0
+            on-weft? 1.0
+            :else 0.0))))
+
+    :voronoi
+    (let [{:keys [cells rows seed wall-width]
+           :or {cells 6 rows 6 seed 42 wall-width 0.3}} opts
+          half-wall (* 0.5 wall-width)]
+      (fn [a t]
+        (let [u (* (/ (+ a Math/PI) (* 2 Math/PI)) cells)
+              v (* t rows)
+              iu (int (Math/floor u))
+              iv (int (Math/floor v))
+              [d1 d2]
+              (reduce
+               (fn [[best1 best2] [di dj]]
+                 (let [ci (+ iu di)
+                       cj (+ iv dj)
+                       ci-wrapped (mod ci cells)
+                       [jx jy] (voronoi-hash ci-wrapped cj seed)
+                       cx (+ ci jx)
+                       cy (+ cj jy)
+                       du (- u cx)
+                       dv (- v cy)
+                       dist (Math/sqrt (+ (* du du) (* dv dv)))]
+                   (cond
+                     (< dist best1) [dist best1]
+                     (< dist best2) [best1 dist]
+                     :else [best1 best2])))
+               [js/Infinity js/Infinity]
+               [[-1 -1] [-1 0] [-1 1]
+                [0 -1]  [0 0]  [0 1]
+                [1 -1]  [1 0]  [1 1]])
+              edge-dist (- d2 d1)]
+          (if (< edge-dist half-wall) 1.0 0.0))))
+
+    ;; Unknown style
+    (throw (js/Error. (str "shell: unknown :style " style
+                           ". Valid styles: :solid :lattice :checkerboard :weave :voronoi")))))
+
 (defn ^:export shell
-  "Wraps a shape into a shell shape-fn with variable wall thickness.
-   The thickness function (fn [angle t] -> 0..1) controls wall thickness at each
-   point: 1.0 = full thickness, 0.0 = no wall (opening).
+  "Variable-thickness hollow shell with optional patterned walls and caps.
 
-   (shell (circle 20 64)
-     :thickness 3
-     :fn (fn [a t] (max 0 (sin (+ (* a 8) (* t PI 6))))))
+   Wall pattern via :style or :fn:
+   (shell shape :thickness 2 :style :solid)                        ; Solid walls (default)
+   (shell shape :thickness 2 :style :voronoi :cells 8 :rows 6)    ; Voronoi openings
+   (shell shape :thickness 2 :style :lattice :openings 8 :rows 12); Grid openings
+   (shell shape :thickness 2 :style :checkerboard :cols 8 :rows 8); Checkerboard
+   (shell shape :thickness 2 :style :weave :strands 6 :frequency 8); Woven pattern
+   (shell shape :thickness 2 :fn (fn [a t] ...))                   ; Custom function
 
-   Optional caps at the ends of the shell:
-   :cap-top N     - solid cap of thickness N at t=1 (end)
-   :cap-bottom N  - solid cap of thickness N at t=0 (start)
-   :cap-top (make-cap decorated-shape N) - decorated cap with holes
-
-   (shell (shape-fn (circle 20) my-transform)
-     :thickness 3
-     :fn (fn [a t] 1.0)
-     :cap-top 3)
-
-   Decorated cap (e.g. voronoi pattern):
-   (shell (circle 20 64) :thickness 3 :fn (fn [a t] 1.0)
-     :cap-top (make-cap (voronoi-shell (circle 20 64) :cells 30 :wall 1.5) 3))
+   Caps at the ends:
+   :cap-top N                                          ; Solid cap of thickness N
+   :cap-top {:thickness N :style :voronoi :cells 10 :wall 1}  ; Patterned cap
+   :cap-bottom N                                       ; Solid cap at start
 
    Composes with other shape-fns:
-   (-> (circle 20 64) (shell :thickness 3 :fn ...) (tapered :to 0.5))"
-  [shape-or-fn & {:keys [thickness threshold cap-top cap-bottom]
+   (-> (circle 20 64) (shell :thickness 3 :style :voronoi :cells 8 :rows 6) (tapered :to 0.5))"
+  [shape-or-fn & {:keys [thickness threshold style cap-top cap-bottom]
                   :or {thickness 2 threshold 0.05}
                   :as opts}]
-  (let [thickness-fn (:fn opts)]
-    (when-not thickness-fn
-      (throw (js/Error. "shell: :fn is required — (shell shape :thickness N :fn (fn [angle t] ...))")))
+  (let [thickness-fn (or (:fn opts)
+                         (style->thickness-fn (or style :solid) opts))]
     (shape-fn shape-or-fn
       (fn [s t]
         (let [center (shape-centroid s)
@@ -684,136 +766,6 @@
                          :shell-values values)
             cap-top    (assoc :shell-cap-top cap-top)
             cap-bottom (assoc :shell-cap-bottom cap-bottom)))))))
-
-(defn ^:export make-cap
-  "Create a decorated cap spec for use with shell/woven-shell :cap-top/:cap-bottom.
-   decorated-shape is a shape with :holes (e.g. from voronoi-shell or pattern-tile).
-   thickness is the cap extrusion height.
-
-   (shell (circle 20 64) :thickness 3 :fn (fn [a t] 1.0)
-     :cap-top (make-cap (voronoi-shell (circle 20 64) :cells 30 :wall 1.5) 3))"
-  [decorated-shape thickness]
-  {:thickness thickness :shape decorated-shape})
-
-(defn ^:export shell-lattice
-  "Convenience shell with a regular grid of openings.
-   (shell-lattice (circle 20 64) :thickness 2 :openings 8 :rows 12)
-   (shell-lattice (circle 20 64) :thickness 2 :openings 6 :rows 8 :open-ratio 0.6 :shift 0.5)"
-  [shape-or-fn & {:keys [thickness openings rows shift]
-                  :or {thickness 2 openings 8 rows 12 shift 0.5}}]
-  (shell shape-or-fn
-    :thickness thickness
-    :fn (fn [a t]
-          (let [row (* t rows)
-                row-idx (int row)
-                phase (* row-idx shift (/ (* 2 Math/PI) openings))
-                circ (Math/sin (+ (* a openings) phase))
-                longit (Math/sin (* row Math/PI))]
-            (max 0 (min circ longit))))))
-
-(defn ^:export shell-checkerboard
-  "Convenience shell with a checkerboard pattern (alternating solid/empty squares).
-   (shell-checkerboard (circle 20 64) :thickness 2 :cols 8 :rows 8)"
-  [shape-or-fn & {:keys [thickness cols rows]
-                  :or {thickness 2 cols 8 rows 8}}]
-  (shell shape-or-fn
-    :thickness thickness
-    :fn (fn [a t]
-          (let [u (/ (+ a Math/PI) (* 2 Math/PI))
-                col (mod (int (* u cols)) cols)
-                row (mod (int (min (* t rows) (dec rows))) rows)]
-            (if (zero? (mod (+ row col) 2)) 1.0 0.0)))))
-
-(defn ^:export shell-weave
-  "Convenience shell with a woven interlocking pattern.
-   Simulates over/under: at crossings, alternates which thread shows.
-   :width controls thread width (0-0.5, default 0.3).
-   (shell-weave (circle 20 64) :thickness 2 :strands 6 :frequency 8)
-   (shell-weave (circle 20 64) :thickness 2 :strands 8 :frequency 8 :width 0.35)"
-  [shape-or-fn & {:keys [thickness strands frequency width]
-                  :or {thickness 2 strands 6 frequency 8 width 0.3}}]
-  (shell shape-or-fn
-    :thickness thickness
-    :fn (fn [a t]
-          (let [u (* (/ (+ a Math/PI) (* 2 Math/PI)) strands)
-                v (* t frequency)
-                col (int (Math/floor u))
-                row (int (Math/floor v))
-                fu (- u (Math/floor u))
-                fv (- v (Math/floor v))
-                on-warp? (< (Math/abs (- fu 0.5)) width)
-                on-weft? (< (Math/abs (- fv 0.5)) width)
-                warp-over? (zero? (mod (+ row col) 2))]
-            (cond
-              (and on-warp? on-weft?) (if warp-over? 1.0 0.0)
-              on-warp? 1.0
-              on-weft? 1.0
-              :else 0.0)))))
-
-(defn- voronoi-hash
-  "Deterministic pseudo-random 2D hash based on cell coordinates and seed.
-   Returns [x y] in [0,1)×[0,1) — the jittered cell center."
-  [ix iy seed]
-  (let [;; Simple hash mixing — produces good spatial distribution
-        h1 (bit-xor (* (+ ix 37) 73856093) (* (+ iy 19) 19349663) (* (+ seed 7) 83492791))
-        h2 (bit-xor (* (+ ix 53) 49979693) (* (+ iy 31) 67867967) (* (+ seed 13) 29986577))
-        fract (fn [x] (- x (Math/floor x)))]
-    [(fract (* (Math/sin h1) 43758.5453))
-     (fract (* (Math/sin h2) 22578.1459))]))
-
-(defn ^:export shell-voronoi
-  "Convenience shell with organic Voronoi-like openings.
-   Cell walls form the solid regions, cell interiors are openings.
-   :cells — approximate number of cells around the circumference (default 6)
-   :rows — approximate number of cell rows along the path (default 6)
-   :seed — random seed for reproducibility (default 42)
-   :wall-width — relative wall width, 0-1 (default 0.3)
-
-   (shell-voronoi (circle 20 64) :thickness 2 :cells 6 :rows 6)
-   (shell-voronoi (circle 20 64) :thickness 2 :cells 10 :rows 10 :wall-width 0.2 :seed 7)"
-  [shape-or-fn & {:keys [thickness cells rows seed wall-width]
-                  :or {thickness 2 cells 6 rows 6 seed 42 wall-width 0.3}}]
-  (let [;; Pre-compute cell centers for all cells in the grid (+neighbors for wrapping)
-        ;; We check 3×3 neighborhood around the query cell for nearest/second-nearest
-        half-wall (* 0.5 wall-width)]
-    (shell shape-or-fn
-      :thickness thickness
-      :fn (fn [a t]
-            (let [;; Map angle to [0, cells) — wrapping coordinate
-                  u (* (/ (+ a Math/PI) (* 2 Math/PI)) cells)
-                  v (* t rows)
-                  ;; Integer cell coordinates
-                  iu (int (Math/floor u))
-                  iv (int (Math/floor v))
-                  ;; Find nearest and second-nearest cell center
-                  [d1 d2]
-                  (reduce
-                   (fn [[best1 best2] [di dj]]
-                     (let [ci (+ iu di)
-                           cj (+ iv dj)
-                           ;; Wrap ci for cylindrical topology
-                           ci-wrapped (mod ci cells)
-                           [jx jy] (voronoi-hash ci-wrapped cj seed)
-                           ;; Cell center in continuous space
-                           cx (+ ci jx)
-                           cy (+ cj jy)
-                           ;; Distance (use wrapped distance for u)
-                           du (- u cx)
-                           dv (- v cy)
-                           dist (Math/sqrt (+ (* du du) (* dv dv)))]
-                       (cond
-                         (< dist best1) [dist best1]
-                         (< dist best2) [best1 dist]
-                         :else [best1 best2])))
-                   [js/Infinity js/Infinity]
-                   [[-1 -1] [-1 0] [-1 1]
-                    [0 -1]  [0 0]  [0 1]
-                    [1 -1]  [1 0]  [1 1]])
-                  ;; Edge distance: difference between 2nd and 1st nearest
-                  ;; Small → on a cell wall, large → cell interior
-                  edge-dist (- d2 d1)]
-              ;; Wall where edge-dist is small (near cell boundary)
-              (if (< edge-dist half-wall) 1.0 0.0))))))
 
 ;; ============================================================
 ;; Woven shell (thickness + radial offset for true over/under)

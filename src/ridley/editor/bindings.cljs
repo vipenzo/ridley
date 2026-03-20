@@ -230,11 +230,6 @@
    'heightmap-to-mesh sfn/heightmap-to-mesh
    ;; Shell shape-fn (variable-thickness hollow extrusion)
    'shell             sfn/shell
-   'make-cap          sfn/make-cap
-   'shell-lattice     sfn/shell-lattice
-   'shell-checkerboard sfn/shell-checkerboard
-   'shell-weave       sfn/shell-weave
-   'shell-voronoi     sfn/shell-voronoi
    'woven-shell       sfn/woven-shell
    'pure-loft-shape-fn   gen-ops/pure-loft-shape-fn
    'pure-bloft-shape-fn      gen-ops/pure-bloft-shape-fn

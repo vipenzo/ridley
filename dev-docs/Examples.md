@@ -337,12 +337,12 @@ Shell wraps a shape into a hollow wall with variable thickness. Where the thickn
       :fn (fn [a t] (max 0 (sin (+ (* a 8) (* t PI 6))))))
     (f 60)))
 
-;; Built-in patterns
-(register checkerboard (loft-n 64 (shell-checkerboard (circle 20 64) :thickness 2 :cols 8 :rows 8) (f 60)))
-(register lattice2 (loft-n 64 (shell-lattice (circle 20 64) :thickness 2 :openings 8 :rows 12) (f 60)))
-(register weave (loft-n 64 (shell-weave (circle 20 64) :thickness 2 :strands 6 :frequency 8) (f 60)))
+;; Built-in styles
+(register checkerboard (loft-n 64 (shell (circle 20 64) :thickness 2 :style :checkerboard :cols 8 :rows 8) (f 60)))
+(register lattice2 (loft-n 64 (shell (circle 20 64) :thickness 2 :style :lattice :openings 8 :rows 12) (f 60)))
+(register weave (loft-n 64 (shell (circle 20 64) :thickness 2 :style :weave :strands 6 :frequency 8) (f 60)))
 ;; Note: Voronoi needs high resolution (256+) for best results — may take a few seconds
-(register voronoi (loft-n 256 (shell-voronoi (circle 20 256) :thickness 2 :cells 8 :rows 8) (f 60)))
+(register voronoi (loft-n 256 (shell (circle 20 256) :thickness 2 :style :voronoi :cells 8 :rows 8) (f 60)))
 
 ;; Tapered lattice cone
 (register tapered-lattice
