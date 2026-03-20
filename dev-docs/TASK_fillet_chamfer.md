@@ -139,6 +139,27 @@ The inset amount at each step: `shape-offset(shape, -radius × (1 - u))`
 
 ---
 
+## Blocking Issues: Loft + shape-fn producing varying shapes
+
+`capped` works correctly as a shape-fn (verified via REPL), but the loft pipeline has issues when the shape-fn produces shapes of different sizes:
+
+### Issue 1: Segmented mesh output
+The loft creates 2-3 separate disconnected segments instead of one continuous sweep mesh. Visible as gaps/seams in the rendered output. Happens with both `loft` and `loft-n`.
+
+### Issue 2: Non-manifold cap triangulation with holes
+When lofting a shape with holes (e.g., annulus from `shape-difference`), the cap triangulation produces non-manifold geometry. Manifold WASM rejects the mesh, preventing `mesh-union`/`mesh-difference`.
+
+### Issue 3: shape-offset changes point topology
+`shape-offset` (Clipper2) can change the number of points and their distribution. Even with `resample` to restore count, the point alignment between rings may shift, causing twisted faces.
+
+### Workaround (current)
+For the pipe-clamp example, we use `tapered` (which only scales, preserving topology) + separate mesh parts + `mesh-union`. This works but is more verbose than the intended `capped` one-liner.
+
+### Proposed fix direction
+The root cause is likely in `loft.cljs` — the path analysis splits a simple `(f 25)` path into segments when it detects shape size changes between rings. The fix should ensure that a single straight segment stays as one continuous sweep regardless of shape-fn output variation.
+
+---
+
 ## Phase 3: 3D Edge Fillet/Chamfer (Future)
 
 ### Problem
