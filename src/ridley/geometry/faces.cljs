@@ -272,3 +272,73 @@
                  (zipmap (range (count (:faces mesh)))
                          (map vector (:faces mesh))))]
     (assoc mesh :face-groups groups)))
+
+;; ============================================================
+;; Sharp edge detection
+;; ============================================================
+
+(defn- dot [[x1 y1 z1] [x2 y2 z2]]
+  (+ (* x1 x2) (* y1 y2) (* z1 z2)))
+
+(defn- build-edge-adjacency
+  "Build a map of edge [v0 v1] (sorted) → vector of triangle indices.
+   Each edge maps to the 1 or 2 triangles that share it."
+  [faces]
+  (reduce-kv
+    (fn [acc tri-idx [i j k]]
+      (let [add-edge (fn [m a b]
+                       (let [edge (if (< a b) [a b] [b a])]
+                         (update m edge (fnil conj []) tri-idx)))]
+        (-> acc
+            (add-edge i j)
+            (add-edge j k)
+            (add-edge k i))))
+    {}
+    (vec faces)))
+
+(defn ^:export find-sharp-edges
+  "Find edges where adjacent triangle normals differ by more than angle-deg degrees.
+   Returns a vector of {:edge [v0 v1] :positions [p0 p1] :angle degrees :midpoint [x y z]}.
+
+   Options:
+   - :angle  minimum dihedral angle in degrees (default 30)
+   - :where  predicate fn called with [x y z] for BOTH edge endpoints;
+             edge is included only if (where p0) AND (where p1) are truthy
+
+   Usage:
+     (find-sharp-edges mesh :angle 80)
+     (find-sharp-edges mesh :angle 80 :where #(> (first %) 0))"
+  [mesh & {:keys [angle where] :or {angle 30}}]
+  (let [vertices (:vertices mesh)
+        faces (:faces mesh)
+        ;; Precompute triangle normals
+        tri-normals (mapv (fn [[i j k]]
+                            (compute-triangle-normal
+                              (nth vertices i)
+                              (nth vertices j)
+                              (nth vertices k)))
+                          faces)
+        ;; Build edge → [tri-a, tri-b] adjacency
+        edge-adj (build-edge-adjacency faces)]
+    (->> edge-adj
+         (keep (fn [[edge tri-indices]]
+                 ;; Only boundary edges have 1 triangle, interior have 2
+                 (when (= 2 (count tri-indices))
+                   (let [n1 (nth tri-normals (first tri-indices))
+                         n2 (nth tri-normals (second tri-indices))
+                         cos-a (dot n1 n2)
+                         ;; Dihedral angle: supplement of angle between normals
+                         ;; For a 90° edge, normals are perpendicular → dot=0 → angle=90°
+                         edge-angle-rad (Math/acos (max -1 (min 1 cos-a)))
+                         edge-angle-deg (* edge-angle-rad (/ 180 Math/PI))
+                         [v0 v1] edge
+                         p0 (nth vertices v0)
+                         p1 (nth vertices v1)]
+                     (when (and (> edge-angle-deg angle)
+                                (or (nil? where)
+                                    (and (where p0) (where p1))))
+                       {:edge edge
+                        :positions [p0 p1]
+                        :angle edge-angle-deg
+                        :midpoint (v* (v+ p0 p1) 0.5)})))))
+         vec)))

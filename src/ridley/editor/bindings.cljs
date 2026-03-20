@@ -240,6 +240,7 @@
    'pure-bloft-shape-fn      gen-ops/pure-bloft-shape-fn
    'pure-bloft-two-shapes    gen-ops/pure-bloft-two-shapes
    ;; Face operations
+   'find-sharp-edges faces/find-sharp-edges
    'list-faces   faces/list-faces
    'get-face     faces/get-face
    'face-info    faces/face-info
