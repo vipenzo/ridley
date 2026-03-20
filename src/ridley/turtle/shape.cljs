@@ -173,6 +173,164 @@
       (cond-> (assoc shape :points new-points)
         new-holes (assoc :holes new-holes)))))
 
+;; ============================================================
+;; Fillet and Chamfer
+;; ============================================================
+
+(defn- v2-dist
+  "Euclidean distance between two 2D points."
+  [[x1 y1] [x2 y2]]
+  (let [dx (- x2 x1) dy (- y2 y1)]
+    (Math/sqrt (+ (* dx dx) (* dy dy)))))
+
+(defn- v2-lerp
+  "Linear interpolation between two 2D points."
+  [[x1 y1] [x2 y2] t]
+  [(+ x1 (* t (- x2 x1)))
+   (+ y1 (* t (- y2 y1)))])
+
+(defn- corner-angle
+  "Angle (in radians) between edges prev->curr and curr->next.
+   Returns 0..PI. Small = sharp corner, PI = straight (no corner)."
+  [[px py] [cx cy] [nx ny]]
+  (let [ax (- px cx) ay (- py cy)
+        bx (- nx cx) by (- ny cy)
+        dot (+ (* ax bx) (* ay by))
+        ma (Math/sqrt (+ (* ax ax) (* ay ay)))
+        mb (Math/sqrt (+ (* bx bx) (* by by)))
+        denom (* ma mb)]
+    (if (< denom 1e-10)
+      Math/PI
+      (Math/acos (max -1 (min 1 (/ dot denom)))))))
+
+(defn- chamfer-corner
+  "Replace a corner vertex with two points, cutting the corner at distance d
+   along each adjacent edge. Returns [point-a point-b] or nil if edge too short."
+  [prev curr nxt d]
+  (let [d-prev (v2-dist prev curr)
+        d-next (v2-dist curr nxt)]
+    (when (and (> d-prev (* d 1.001)) (> d-next (* d 1.001)))
+      (let [t-prev (/ d d-prev)
+            t-next (/ d d-next)
+            pa (v2-lerp curr prev t-prev)
+            pb (v2-lerp curr nxt t-next)]
+        [pa pb]))))
+
+(defn- fillet-corner-arc
+  "Replace a corner with a true circular arc.
+   Computes the inscribed circle center and sweeps an arc from pa to pb."
+  [prev curr nxt d n]
+  (let [d-prev (v2-dist prev curr)
+        d-next (v2-dist curr nxt)]
+    (when (and (> d-prev (* d 1.001)) (> d-next (* d 1.001)))
+      (let [t-prev (/ d d-prev)
+            t-next (/ d d-next)
+            pa (v2-lerp curr prev t-prev)
+            pb (v2-lerp curr nxt t-next)
+            half-angle (/ (corner-angle prev curr nxt) 2)
+            sin-ha (Math/sin half-angle)]
+        (if (< sin-ha 1e-6)
+          [curr]
+          (let [radius (/ d (Math/tan half-angle))
+                [ax ay] [(- (first prev) (first curr)) (- (second prev) (second curr))]
+                [bx by] [(- (first nxt) (first curr)) (- (second nxt) (second curr))]
+                ma (Math/sqrt (+ (* ax ax) (* ay ay)))
+                mb (Math/sqrt (+ (* bx bx) (* by by)))
+                nax (/ ax ma) nay (/ ay ma)
+                nbx (/ bx mb) nby (/ by mb)
+                bsx (+ nax nbx) bsy (+ nay nby)
+                bm (Math/sqrt (+ (* bsx bsx) (* bsy bsy)))
+                center-dist (/ radius sin-ha)
+                cx (+ (first curr) (* (/ bsx bm) center-dist))
+                cy (+ (second curr) (* (/ bsy bm) center-dist))
+                a-start (Math/atan2 (- (second pa) cy) (- (first pa) cx))
+                a-end (Math/atan2 (- (second pb) cy) (- (first pb) cx))
+                diff (- a-end a-start)
+                diff (cond
+                       (> diff Math/PI) (- diff (* 2 Math/PI))
+                       (< diff (- Math/PI)) (+ diff (* 2 Math/PI))
+                       :else diff)]
+            (vec (for [i (range (inc n))]
+                   (let [t (/ i n)
+                         a (+ a-start (* t diff))]
+                     [(+ cx (* radius (Math/cos a)))
+                      (+ cy (* radius (Math/sin a)))])))))))))
+
+(defn- apply-corner-op
+  "Apply a corner operation (chamfer or fillet) to a polygon's points.
+   op-fn: (fn [prev curr next] -> [replacement-points] or nil)
+   indices: set of vertex indices to process, or nil for all.
+   Returns new points vector."
+  [points op-fn indices]
+  (let [n (count points)]
+    (into []
+      (mapcat
+        (fn [i]
+          (if (and indices (not (contains? indices i)))
+            [(nth points i)]
+            (let [prev (nth points (mod (dec (+ i n)) n))
+                  curr (nth points i)
+                  nxt  (nth points (mod (inc i) n))
+                  replacement (op-fn prev curr nxt)]
+              (or replacement [curr]))))
+        (range n)))))
+
+(defn ^:export chamfer-shape
+  "Cut corners of a 2D shape by replacing each vertex with a flat cut
+   at distance d along each adjacent edge.
+
+   Options:
+   - :indices [0 2 5] — only chamfer specific vertex indices (default: all)
+
+   Usage:
+     (chamfer-shape (rect 40 20) 3)         ; all corners
+     (chamfer-shape (rect 40 20) 3 :indices [0 1])  ; only first two corners"
+  [shape d & {:keys [indices]}]
+  (when (and (map? shape) (= :shape (:type shape)) (pos? d))
+    (let [idx-set (when indices (set indices))
+          op-fn (fn [prev curr nxt]
+                  (chamfer-corner prev curr nxt d))
+          new-points (apply-corner-op (:points shape) op-fn idx-set)
+          new-holes (when (:holes shape)
+                      (mapv (fn [hole]
+                              (apply-corner-op hole
+                                (fn [prev curr nxt] (chamfer-corner prev curr nxt d))
+                                nil))
+                            (:holes shape)))]
+      (cond-> (assoc shape :points new-points)
+        new-holes (assoc :holes new-holes)))))
+
+(defn ^:export fillet-shape
+  "Round corners of a 2D shape with circular arcs at distance d from each vertex.
+
+   Options:
+   - :segments n — arc segments per corner (default: 8)
+   - :indices [0 2 5] — only fillet specific vertex indices (default: all)
+
+   Usage:
+     (fillet-shape (rect 40 20) 3)                     ; all corners, 8 segments
+     (fillet-shape (rect 40 20) 3 :segments 16)        ; smoother arcs
+     (fillet-shape (rect 40 20) 3 :indices [0 1])      ; only first two corners"
+  [shape d & {:keys [segments indices] :or {segments 8}}]
+  (when (and (map? shape) (= :shape (:type shape)) (pos? d))
+    (let [idx-set (when indices (set indices))
+          op-fn (fn [prev curr nxt]
+                  (fillet-corner-arc prev curr nxt d segments))
+          new-points (apply-corner-op (:points shape) op-fn idx-set)
+          new-holes (when (:holes shape)
+                      (mapv (fn [hole]
+                              (apply-corner-op hole
+                                (fn [prev curr nxt]
+                                  (fillet-corner-arc prev curr nxt d segments))
+                                nil))
+                            (:holes shape)))]
+      (cond-> (assoc shape :points new-points)
+        new-holes (assoc :holes new-holes)))))
+
+;; ============================================================
+;; Winding order utilities
+;; ============================================================
+
 (defn- signed-area-2d
   "Calculate the signed area of a 2D polygon.
    Positive = CCW (counter-clockwise), Negative = CW (clockwise).

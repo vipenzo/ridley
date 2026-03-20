@@ -11,7 +11,8 @@
    Use with loft:
      (loft (tapered (circle 20) :to 0) (f 30))"
   (:require [ridley.turtle.transform :as xform]
-            [ridley.turtle.shape :as shape]))
+            [ridley.turtle.shape :as shape]
+            [ridley.clipper.core :as clipper]))
 
 ;; ============================================================
 ;; 2D vector math (private)
@@ -900,3 +901,80 @@
                          :shell-offsets offsets)
             cap-top    (assoc :shell-cap-top cap-top)
             cap-bottom (assoc :shell-cap-bottom cap-bottom)))))))
+
+;; ============================================================
+;; Cap fillet (smooth edge transition at extrusion ends)
+;; ============================================================
+
+(defn ^:export capped
+  "Add a fillet or chamfer transition at the start and/or end of an extrusion.
+   Insets the 2D profile at the caps and transitions smoothly to the full shape.
+
+   radius: fillet/chamfer distance (how far the edge is inset at the cap).
+          Positive = shrink at caps, negative = expand at caps.
+
+   Options:
+   - :mode     :fillet (default) or :chamfer
+   - :start    true/false — apply at t=0 (default true)
+   - :end      true/false — apply at t=1 (default true)
+   - :fraction number — fraction of path for transition (default 0.08)
+   - :end-radius number — override radius at the end (default: same as radius)
+   - :preserve-holes true/false — keep holes unchanged (default true)
+
+   Usage:
+     (loft (capped (rect 40 20) 3) (f 50))                ; fillet both caps
+     (loft (capped (rect 40 20) 3 :mode :chamfer) (f 50)) ; chamfer both caps
+     (loft (capped (rect 40 20) 3 :end false) (f 50))     ; fillet start only
+     (loft (capped shape -7 :end-radius 1.5) (f 50))      ; expand at base, shrink at top
+
+   Composes with other shape-fns:
+     (-> (circle 20) (fluted :flutes 8 :depth 2) (capped 3))
+
+   Negative radius expands the shape at the caps (useful for reinforcement fillets).
+   With shapes that have holes, :preserve-holes true (default) keeps holes unchanged
+   so only the outer boundary is affected."
+  [shape-or-fn radius & {:keys [mode start end fraction end-radius preserve-holes]
+                          :or {mode :fillet start true end true fraction 0.08
+                               preserve-holes true}}]
+  (let [ease-fn (case mode
+                  :fillet  (fn [u] (Math/sin (* u (/ Math/PI 2))))
+                  :chamfer (fn [u] u))
+        start-radius radius
+        end-radius (or end-radius radius)]
+    (shape-fn shape-or-fn
+      (fn [s t]
+        (let [[in-transition? u active-radius]
+              (cond
+                (and start (< t fraction))
+                [true (ease-fn (/ t fraction)) start-radius]
+
+                (and end (> t (- 1 fraction)))
+                [true (ease-fn (/ (- 1 t) fraction)) end-radius]
+
+                :else [false 1.0 0])]
+          (if (or (not in-transition?) (>= u 0.999))
+            s
+            (let [inset-amount (* (- active-radius) (- 1 u))
+                  inset-shape (clipper/shape-offset s inset-amount)]
+              (if inset-shape
+                (let [n-outer (count (:points s))
+                      resampled (xform/resample inset-shape n-outer)
+                      orig-holes (:holes s)]
+                  (if orig-holes
+                    (if preserve-holes
+                      ;; Keep original holes unchanged — only outer boundary changes
+                      (assoc resampled :holes orig-holes)
+                      ;; Resample new holes to match original point counts
+                      (let [new-holes (or (:holes resampled) (:holes inset-shape))
+                            matched-holes
+                            (when (and new-holes (= (count new-holes) (count orig-holes)))
+                              (mapv (fn [orig-hole new-hole]
+                                      (let [n-h (count orig-hole)]
+                                        (:points (xform/resample
+                                                   (shape/make-shape new-hole {:centered? true})
+                                                   n-h))))
+                                    orig-holes new-holes))]
+                        (cond-> resampled
+                          matched-holes (assoc :holes matched-holes))))
+                    resampled))
+                s))))))))

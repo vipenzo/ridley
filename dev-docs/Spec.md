@@ -687,6 +687,56 @@ operations (extrude, loft, revolve) correctly handle shapes with holes.
 (def rounded-rect (shape-offset (rect 30 20) 3 :join-type :round))
 ```
 
+**Fillet & Chamfer (corner rounding/cutting):**
+
+```clojure
+(fillet-shape shape radius)                        ; Round all corners with circular arcs
+(fillet-shape shape radius :segments 16)           ; Smoother arcs (default 8)
+(fillet-shape shape radius :indices [0 2])         ; Only specific vertices
+(chamfer-shape shape distance)                     ; Cut all corners flat
+(chamfer-shape shape distance :indices [0 1])      ; Only specific vertices
+```
+
+**Examples:**
+
+```clojure
+;; Rounded rectangle
+(register pill (extrude (fillet-shape (rect 40 20) 5) (f 10)))
+
+;; Chamfered hexagon
+(register hex (extrude (chamfer-shape (polygon 6 20) 3) (f 15)))
+
+;; Selective: only round two corners of a rect
+(register tab (extrude (fillet-shape (rect 30 15) 4 :indices [2 3]) (f 8)))
+```
+
+**Cap fillet (round edges at extrusion caps):**
+
+```clojure
+(loft (capped shape radius) path)                      ; Fillet both caps (quarter-circle easing)
+(loft (capped shape radius :mode :chamfer) path)       ; Chamfer both caps (linear)
+(loft (capped shape radius :start false) path)         ; Fillet end cap only
+(loft (capped shape radius :end false) path)           ; Fillet start cap only
+(loft (capped shape radius :fraction 0.15) path)       ; Wider transition zone (default 0.08)
+```
+
+**Examples:**
+
+```clojure
+;; Fully rounded box: 2D corner rounding + 3D cap rounding
+(register rounded-box (loft (-> (rect 40 20) (fillet-shape 5) (capped 3)) (f 50)))
+
+;; Tapered with rounded caps
+(register drop (loft (-> (circle 20) (tapered :to 0.3) (capped 2)) (f 40)))
+```
+
+**Notes:**
+- `fillet-shape` / `chamfer-shape` operate on 2D corners (edges along extrusion direction)
+- `capped` operates on 3D cap edges (where profile meets top/bottom face)
+- Both compose freely with all shape-fns and with each other
+- Distance must be less than half the shortest adjacent edge to avoid overlapping cuts
+- Works on any shape including shapes with holes
+
 **Pattern tiling:**
 
 Tile a pattern shape across a target shape and subtract — producing a shape with holes.
@@ -2060,8 +2110,7 @@ Interactive AI-powered geometry description for screen reader users. See [Access
 ## Not Yet Implemented
 
 - Dense syntax parser (string notation like "F20 TH90")
-- Fillet/chamfer modifiers in paths
-- Boolean ops with fillet/chamfer
+- Fillet/chamfer on 3D mesh edges (2D shape fillet/chamfer is available via `fillet-shape`/`chamfer-shape`)
 - OBJ/3MF export (STL export is available via `export`)
 - Backward movement command `(b dist)` — use `(f -dist)` instead
 

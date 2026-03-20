@@ -142,6 +142,9 @@
    'mark-x          shape/mark-x
    'mark-y          shape/mark-y
    'bounds-2d       shape/bounds-2d
+   ;; Fillet and chamfer (2D shape corners)
+   'fillet-shape    shape/fillet-shape
+   'chamfer-shape   shape/chamfer-shape
    ;; Shape boolean operations (2D, via Clipper2)
    'shape-union        clipper/shape-union
    'shape-difference   clipper/shape-difference
@@ -231,6 +234,8 @@
    ;; Shell shape-fn (variable-thickness hollow extrusion)
    'shell             sfn/shell
    'woven-shell       sfn/woven-shell
+   ;; Cap fillet (smooth edge transition at extrusion ends)
+   'capped            sfn/capped
    'pure-loft-shape-fn   gen-ops/pure-loft-shape-fn
    'pure-bloft-shape-fn      gen-ops/pure-bloft-shape-fn
    'pure-bloft-two-shapes    gen-ops/pure-bloft-two-shapes

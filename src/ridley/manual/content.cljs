@@ -74,6 +74,17 @@
          :code "(register frame\n  (extrude\n    (shape-difference\n      (shape-offset (rect 30 20) 5)\n      (rect 30 20))\n    (f 8)))"}
         {:id :shape-xor-cross
          :code "(register cross\n  (extrude\n    (shape-xor (rect 40 15) (rect 15 40))\n    (f 5)))"}]}
+      {:id :fillet-chamfer
+       :see-also [:shape-booleans-2d :builtin-shapes]
+       :examples
+       [{:id :chamfer-box
+         :code "(register chamfered\n  (extrude (chamfer-shape (rect 40 20) 3) (f 30)))"}
+        {:id :fillet-box
+         :code "(register filleted\n  (extrude (fillet-shape (rect 40 20) 5) (f 30)))"}
+        {:id :fillet-selective
+         :code "(register selective\n  (extrude\n    (fillet-shape (rect 40 20) 5 :indices [0 1])\n    (f 30)))"}
+        {:id :capped-box
+         :code "(register capped-box\n  (loft (capped (fillet-shape (rect 40 20) 5) 3) (f 30)))"}]}
       {:id :reusable-shapes
        :examples
        [{:id :def-shape
@@ -601,6 +612,45 @@ Use `translate-shape` to position shapes before combining:
                             :description "`shape-offset` expands a shape outward. Subtracting the original from the expanded version creates a uniform-width frame."}
        :shape-xor-cross {:caption "Cross (xor)"
                          :description "`shape-xor` keeps the parts that don't overlap — the symmetric difference. Two crossing rectangles produce a cross with the center cut out."}}}
+
+     :fillet-chamfer
+     {:title "Fillet & Chamfer"
+      :content "Round or cut the corners of any 2D shape before extruding.
+
+```
+(fillet-shape (rect 40 20) 5)              ; round all corners, radius 5
+(fillet-shape (rect 40 20) 5 :segments 16) ; smoother arcs
+(chamfer-shape (rect 40 20) 3)             ; cut all corners at 3
+```
+
+Both accept `:indices` to target specific vertices:
+```
+(fillet-shape (rect 40 20) 5 :indices [0 1])  ; only first two corners
+```
+
+Works with any shape — rectangles, polygons, stars, custom shapes, and even holes.
+
+### Cap Fillet
+
+Use `capped` to round the edges where the profile meets the top/bottom cap:
+```
+(loft (capped (rect 40 20) 3) (f 50))               ; fillet both caps
+(loft (capped (rect 40 20) 3 :mode :chamfer) (f 50)) ; chamfer caps
+```
+
+Composes with everything:
+```
+(loft (-> (rect 40 20) (fillet-shape 5) (capped 3)) (f 50))
+```"
+      :examples
+      {:chamfer-box {:caption "Chamfer"
+                     :description "`chamfer-shape` cuts each corner flat at the given distance along both adjacent edges."}
+       :fillet-box {:caption "Fillet"
+                    :description "`fillet-shape` replaces each corner with a circular arc of the given radius. Use `:segments` for smoother curves."}
+       :fillet-selective {:caption "Selective fillet"
+                          :description "Pass `:indices [0 1]` to fillet only specific corners. Vertex indices start at 0 and follow the shape's point order."}
+       :capped-box {:caption "Cap fillet"
+                    :description "`capped` adds a smooth fillet transition where the profile meets the top/bottom cap. Combines with `fillet-shape` for fully rounded edges."}}}
 
      :reusable-shapes
      {:title "Reusable Shapes"
@@ -1766,6 +1816,45 @@ Usa `translate-shape` per posizionare le forme prima di combinarle:
                             :description "`shape-offset` espande una forma verso l'esterno. Sottraendo l'originale dalla versione espansa si crea una cornice di larghezza uniforme."}
        :shape-xor-cross {:caption "Croce (xor)"
                          :description "`shape-xor` mantiene le parti che non si sovrappongono — la differenza simmetrica. Due rettangoli incrociati producono una croce con il centro ritagliato."}}}
+
+     :fillet-chamfer
+     {:title "Raccordi e Smussi"
+      :content "Arrotonda o smussa gli angoli di qualsiasi forma 2D prima di estrudere.
+
+```
+(fillet-shape (rect 40 20) 5)              ; arrotonda tutti gli angoli, raggio 5
+(fillet-shape (rect 40 20) 5 :segments 16) ; archi più lisci
+(chamfer-shape (rect 40 20) 3)             ; smussa tutti gli angoli a 3
+```
+
+Entrambi accettano `:indices` per selezionare vertici specifici:
+```
+(fillet-shape (rect 40 20) 5 :indices [0 1])  ; solo i primi due angoli
+```
+
+Funziona con qualsiasi forma — rettangoli, poligoni, stelle, forme personalizzate e anche fori.
+
+### Raccordo sui Cap
+
+Usa `capped` per arrotondare gli spigoli dove il profilo incontra il cap superiore/inferiore:
+```
+(loft (capped (rect 40 20) 3) (f 50))               ; raccordo su entrambi i cap
+(loft (capped (rect 40 20) 3 :mode :chamfer) (f 50)) ; smusso sui cap
+```
+
+Si compone con tutto:
+```
+(loft (-> (rect 40 20) (fillet-shape 5) (capped 3)) (f 50))
+```"
+      :examples
+      {:chamfer-box {:caption "Smusso"
+                     :description "`chamfer-shape` taglia ogni angolo piatto alla distanza data lungo entrambi i lati adiacenti."}
+       :fillet-box {:caption "Raccordo"
+                    :description "`fillet-shape` sostituisce ogni angolo con un arco circolare del raggio dato. Usa `:segments` per curve più lisce."}
+       :fillet-selective {:caption "Raccordo selettivo"
+                          :description "Passa `:indices [0 1]` per raccordare solo angoli specifici. Gli indici dei vertici partono da 0 e seguono l'ordine dei punti della forma."}
+       :capped-box {:caption "Raccordo sui cap"
+                    :description "`capped` aggiunge una transizione arrotondata dove il profilo incontra il cap superiore/inferiore. Combinabile con `fillet-shape` per spigoli completamente raccordati."}}}
 
      :reusable-shapes
      {:title "Forme Riutilizzabili"
