@@ -9,6 +9,8 @@
             [ridley.turtle.shape-fn :as sfn]
             [ridley.scene.registry :as registry]
             [ridley.scene.panel :as panel]
+            [ridley.manifold.core :as manifold]
+            [ridley.geometry.faces :as faces]
             [ridley.math :as math]))
 
 ;; ============================================================
@@ -335,3 +337,28 @@
       (registry/register-mesh! kw result)
       (registry/refresh-viewport! false)
       result)))
+
+;; ============================================================
+;; Chamfer/fillet on mesh edges (CSG approach)
+;; ============================================================
+
+(defn ^:export chamfer-edges-impl
+  "Chamfer sharp edges of a mesh by CSG subtraction.
+   Generates prisms along each sharp edge, unions them into one solid,
+   then subtracts from the original mesh.
+
+   distance: chamfer size in mm
+   Options:
+   - :angle  minimum dihedral angle in degrees (default 80)
+   - :where  predicate fn on [x y z] vertex positions (both endpoints must match)"
+  [mesh distance & {:keys [angle where debug] :or {angle 80}}]
+  (when-let [prisms (faces/chamfer-prisms mesh distance :angle angle :where where)]
+    (if debug
+      ;; Debug: return first prism as-is for visual inspection
+      (first prisms)
+      ;; Apply each prism cut individually
+      (reduce (fn [current-mesh prism]
+                (or (manifold/difference current-mesh prism)
+                    current-mesh))
+              mesh
+              prisms))))

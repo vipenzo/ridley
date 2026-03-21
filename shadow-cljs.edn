@@ -1,4 +1,5 @@
-{:source-paths ["src" "test"]
+{:source-paths ["src" "src/dev" "test"]
+ :nrepl {:port 7888}
  :dependencies [[org.babashka/sci "0.8.43"]
                 [thi.ng/geom "1.0.1"]]
  :dev-http {9000 "public"}

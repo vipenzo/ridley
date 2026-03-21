@@ -339,6 +339,91 @@
                                     (and (where p0) (where p1))))
                        {:edge edge
                         :positions [p0 p1]
+                        :normals [n1 n2]
                         :angle edge-angle-deg
                         :midpoint (v* (v+ p0 p1) 0.5)})))))
          vec)))
+
+;; ============================================================
+;; Chamfer/fillet geometry generation
+;; ============================================================
+
+(defn ^:export make-prism-along-edge
+  "Create a triangular prism (wedge) along an edge for CSG chamfer.
+   The prism sits in the corner between the two faces, with its
+   cutting face at 45° to both surfaces.
+
+   p0, p1: edge endpoints
+   n1, n2: normals of the two adjacent faces
+   d: chamfer distance
+
+   Returns a mesh {:vertices [...] :faces [...]}."
+  [p0 p1 n1 n2 d]
+  (let [;; Edge direction
+        edge-dir (normalize (v- p1 p0))
+        ;; Extend slightly beyond edge to avoid gaps
+        margin 0.01
+        ep0 (v+ p0 (v* edge-dir (- margin)))
+        ep1 (v+ p1 (v* edge-dir margin))
+        ;; The prism straddles the corner:
+        ;; - corner: outside the mesh (along bisector)
+        ;; - face1-pt: d INTO face-1 surface (along -n2, perpendicular to face-1)
+        ;; - face2-pt: d INTO face-2 surface (along -n1, perpendicular to face-2)
+        ;; The triangle covers the corner wedge from outside to d inside each face.
+        bisector (normalize (v+ n1 n2))
+        off-corner (v* bisector (* d 1.5))
+        ;; Face points: d along the other face's inward normal (along the surface),
+        ;; plus a margin OUTWARD past the surface (along own normal).
+        ;; All 3 prism vertices end up OUTSIDE the mesh.
+        ;; Their triangle's intersection with the mesh volume IS the corner wedge.
+        margin (* d 0.5)
+        off-f1 (v+ (v* n2 (- d)) (v* n1 margin))
+        off-f2 (v+ (v* n1 (- d)) (v* n2 margin))
+        ;; 6 vertices: 3 at each end of the prism
+        v0 (v+ ep0 off-corner)   ;; corner (slightly outside)
+        v1 (v+ ep0 off-f1)       ;; on face-1, d from edge
+        v2 (v+ ep0 off-f2)       ;; on face-2, d from edge
+        v3 (v+ ep1 off-corner)
+        v4 (v+ ep1 off-f1)
+        v5 (v+ ep1 off-f2)
+        ;; Determine correct winding via signed volume.
+        ;; If signed volume is negative, faces are inverted.
+        base-faces [[0 2 1] [3 4 5]
+                     [0 1 4] [0 4 3]
+                     [0 3 5] [0 5 2]
+                     [1 2 5] [1 5 4]]
+        verts [v0 v1 v2 v3 v4 v5]
+        signed-vol (reduce (fn [acc [i j k]]
+                             (let [a (nth verts i)
+                                   b (nth verts j)
+                                   c (nth verts k)]
+                               (+ acc (dot a (cross b c)))))
+                           0 base-faces)
+        faces (if (neg? signed-vol)
+                (mapv (fn [[a b c]] [a c b]) base-faces)
+                base-faces)]
+    {:type :mesh
+     :primitive :chamfer-prism
+     :vertices verts
+     :faces faces})) ;; n1-n2 side (the cutting face)
+
+(defn ^:export chamfer-prisms
+  "Generate individual triangular prism meshes along sharp edges.
+   Returns a vector of prism meshes, or nil if no edges found.
+
+   These prisms should be union'd together (via mesh-union) and then
+   subtracted from the original mesh (via mesh-difference) to create chamfers.
+   Use chamfer-edges for the complete workflow.
+
+   distance: chamfer size in mm
+   Options (same as find-sharp-edges):
+   - :angle  minimum dihedral angle (default 30)
+   - :where  predicate on vertex positions (both endpoints must match)"
+  [mesh distance & {:keys [angle where] :or {angle 30}}]
+  (let [edges (find-sharp-edges mesh :angle angle :where where)]
+    (when (seq edges)
+      (mapv (fn [{:keys [positions normals]}]
+              (let [[p0 p1] positions
+                    [n1 n2] normals]
+                (make-prism-along-edge p0 p1 n1 n2 distance)))
+            edges))))
