@@ -450,3 +450,48 @@
                               current-mesh))
                         mesh
                         prisms)))))))))
+
+(defn ^:export fillet-impl
+  "Fillet (round) edges selected by turtle-oriented direction.
+   Same API as chamfer but produces rounded edges instead of flat cuts.
+
+   direction: :top :bottom :up :down :left :right :all
+   radius: fillet radius in mm
+   Options:
+   - :angle      minimum dihedral angle (default 80)
+   - :min-radius exclude edges closer than r to the extrusion axis
+   - :segments   arc resolution (default 8)
+   - :where      additional predicate on vertex positions"
+  [mesh direction radius & {:keys [angle min-radius segments where]
+                             :or {angle 80 segments 8}}]
+  (let [dir-vec (direction-vec mesh direction)
+        align-threshold 0.85
+        pose (or (:creation-pose mesh)
+                 {:heading [1 0 0] :up [0 0 1] :position [0 0 0]})
+        origin (:position pose)
+        heading (:heading pose)
+        radius-check (when min-radius
+                       (let [r2 (* min-radius 1.01 min-radius 1.01)]
+                         (fn [p]
+                           (let [v (mapv - p origin)
+                                 axial (dot3 v heading)
+                                 radial (mapv - v (mapv #(* axial %) heading))
+                                 dist2 (dot3 radial radial)]
+                             (> dist2 r2)))))
+        combined-where (fn [p]
+                         (and (or (nil? radius-check) (radius-check p))
+                              (or (nil? where) (where p))))]
+    (when-let [edges (faces/find-sharp-edges mesh :angle angle :where combined-where)]
+      (let [dir-edges (if dir-vec
+                        (filterv (fn [{:keys [normals]}]
+                                   (let [[n1 n2] normals]
+                                     (or (> (dot3 n1 dir-vec) align-threshold)
+                                         (> (dot3 n2 dir-vec) align-threshold))))
+                                 edges)
+                        edges)]
+        (when (seq dir-edges)
+          ;; Fillet: strip with arc cross-section (segments > 1)
+          (let [strip (faces/build-chamfer-strip dir-edges radius :segments segments)]
+            (if strip
+              (or (manifold/difference mesh strip) mesh)
+              mesh)))))))

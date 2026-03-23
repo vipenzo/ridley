@@ -35,10 +35,8 @@
   (mesh-difference
    base
    (concat-meshes
-    (attach screw-hole (u si) (rt si))
-    (attach screw-hole (u si) (rt (neg si)))
-    (attach screw-hole (u (neg si)) (rt si))
-    (attach screw-hole (u (neg si)) (rt (neg si))))))
+    (for [x [1 -1] y [1 -1]]
+      (attach screw-hole (u (* si x)) (rt (* si y)))))))
 
 ;; --- Clamp ring ---
 (def ring-section
@@ -51,5 +49,4 @@
       (chamfer :top wall :min-radius ring-r)))
 
 ;; --- Assembly ---
-;(register support (mesh-union [base-mesh (attach clamp-mesh (f (- base-h 1)))]))
-(register AA base-mesh)
+(register support (mesh-union [base-mesh (attach clamp-mesh (f (- base-h 1)))]))
