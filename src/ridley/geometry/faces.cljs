@@ -460,10 +460,10 @@
 
 (defn- compute-strip-offsets
   "For a vertex on an edge loop, compute offset points for the strip cross-section.
-   segments=1: chamfer → returns [corner f1 f2]
-   segments>1: fillet → returns [corner arc0 arc1 ... arcN] where arc0=f1, arcN=f2
-   The arc curves toward the corner, creating a concave cutting surface.
-   When subtracted, the result has a convex fillet."
+   segments=1: chamfer → returns [corner f1 f2] (3 points)
+   segments>1: fillet → returns [corner f1 A arc₁..arc_{N-1} B f2] (segments+4 points)
+     where A,B are mesh-surface tangent points and the arc is a true quarter-circle
+     from fillet center C with radius d. The cross-section has a concave arc face."
   [position normals d segments]
   (let [[n1 n2] normals
         bisector (normalize (v+ n1 n2))
@@ -474,31 +474,29 @@
     (if (<= segments 1)
       ;; Chamfer: triangle cross-section
       [corner f1 f2]
-      ;; Fillet: arc from f1 to f2 curving toward corner.
-      ;; The bulge is scaled so the INTERSECTION with the mesh
-      ;; produces a quarter-circle fillet on the mesh edge.
-      (let [mid-chord (v* (v+ f1 f2) 0.5)
-            toward-corner (normalize (v- corner mid-chord))
-            dist-corner-to-chord (magnitude (v- corner mid-chord))
-            dist-edge-to-chord (magnitude (v- position mid-chord))
-            ;; Sagitta for quarter-circle on the mesh surface
-            cos-a (max -1 (min 1 (dot (normalize n1) (normalize n2))))
-            half-angle (/ (Math/acos cos-a) 2)
-            sagitta-on-mesh (* d (- 1 (Math/cos half-angle)))
-            ;; Scale sagitta from mesh space to cutter space
-            scale (if (> dist-edge-to-chord 0.001)
-                    (/ dist-corner-to-chord dist-edge-to-chord)
-                    1)
-            ;; Cap bulge to keep the strip intersecting the mesh
-            max-bulge (min (* sagitta-on-mesh scale)
-                           (* 0.3 dist-corner-to-chord))
+      ;; Fillet: concave arc cross-section
+      ;; C = fillet center (inside mesh, distance d from both faces)
+      ;; A = C + d*n1 (tangent point on face 1, on mesh surface)
+      ;; B = C + d*n2 (tangent point on face 2, on mesh surface)
+      ;; Arc from A to B via slerp on n1→n2, radius d from C
+      (let [cos-a (dot n1 n2)
+            denom (max 0.01 (+ 1 cos-a))
+            center (v- position (v* (v+ n1 n2) (/ d denom)))
+            theta (Math/acos (max -1 (min 1 cos-a)))
+            sin-theta (Math/sin theta)
+            ;; Arc points from A (tangent on face 1) to B (tangent on face 2)
             arc-pts (mapv (fn [i]
-                            (let [u (/ i segments)
-                                  base (v+ f1 (v* (v- f2 f1) u))
-                                  bulge (* max-bulge (Math/sin (* u Math/PI)))]
-                              (v+ base (v* toward-corner bulge))))
-                          (range (inc segments)))]
-        (into [corner] arc-pts)))))
+                            (let [t (/ i (dec segments))
+                                  dir (if (< (Math/abs sin-theta) 0.001)
+                                        (normalize (v+ (v* n1 (- 1 t)) (v* n2 t)))
+                                        (let [s1 (/ (Math/sin (* (- 1 t) theta)) sin-theta)
+                                              s2 (/ (Math/sin (* t theta)) sin-theta)]
+                                          (v+ (v* n1 s1) (v* n2 s2))))]
+                              (v+ center (v* (normalize dir) d))))
+                          (range segments))]
+        ;; Cross-section: corner, f1, A, arc..., B, f2
+        ;; = corner, f1, arc[0]=A, arc[1], ..., arc[N-1]=B, f2
+        (into [corner f1] (conj arc-pts f2))))))
 
 (defn- compute-fillet-arc
   "Compute arc points from f1 to f2 for the fillet fill solid.
@@ -628,6 +626,138 @@
            :vertices verts
            :faces faces})))))
 
+;; ============================================================
+;; Fillet tube (cylinder-along-edge approach)
+;; ============================================================
+
+(defn- compute-tube-offsets
+  "For a vertex on an edge loop, compute the fillet tube cross-section.
+   Returns [center arc0 arc1 ... arcN] where:
+   - center is inside the mesh (at distance r from both faces)
+   - arc0..arcN form a circular arc from face1 tangent to face2 tangent"
+  [position normals r segments]
+  (let [[n1 n2] normals
+        ;; Center of fillet circle: inside mesh, distance r from both face planes
+        ;; Solve: dot(C - P, n1) = -r AND dot(C - P, n2) = -r
+        ;; => C = P - r/(1 + n1·n2) * (n1 + n2)
+        cos-a (dot n1 n2)
+        denom (max 0.01 (+ 1 cos-a))
+        center (v- position (v* (v+ n1 n2) (/ r denom)))
+        ;; Arc sweeps from n1 direction to n2 direction around center
+        ;; using spherical linear interpolation (slerp)
+        theta (Math/acos (max -1 (min 1 cos-a)))
+        sin-theta (Math/sin theta)
+        arc-pts (mapv (fn [i]
+                        (let [t (/ i segments)
+                              dir (if (< (Math/abs sin-theta) 0.001)
+                                    (normalize (v+ (v* n1 (- 1 t)) (v* n2 t)))
+                                    (let [s1 (/ (Math/sin (* (- 1 t) theta)) sin-theta)
+                                          s2 (/ (Math/sin (* t theta)) sin-theta)]
+                                      (v+ (v* n1 s1) (v* n2 s2))))]
+                          (v+ center (v* (normalize dir) r))))
+                      (range (inc segments)))]
+    (into [center] arc-pts)))
+
+(defn- make-tube-segment
+  "Create a single closed tube segment (pie-slice cylinder) along one edge.
+   Returns a manifold mesh {:vertices [...] :faces [...]}.
+   Face winding is explicitly computed for outward normals (no signed-vol flip)."
+  [p0 p1 n1 n2 r segments]
+  (let [edge-dir (normalize (v- p1 p0))
+        edge-margin (* r 0.3)
+        ep0 (v+ p0 (v* edge-dir (- edge-margin)))
+        ep1 (v+ p1 (v* edge-dir edge-margin))
+        ;; Compute tube cross-section at each endpoint
+        station0 (compute-tube-offsets ep0 [n1 n2] r segments)
+        station1 (compute-tube-offsets ep1 [n1 n2] r segments)
+        ;; Vertex layout: station0 (indices 0..pts-1) then station1 (indices pts..2*pts-1)
+        ;; Each station: [center, arc0, arc1, ..., arcN] = segments+2 points
+        pts (+ 2 segments)
+        verts (into (vec station0) station1)
+        last-arc (inc segments)
+        ;; Build faces with explicit outward-normal winding.
+        ;; Walls/arc: outward normals point away from pie-slice interior.
+        ;; Caps: outward normals point along ±edge direction.
+        faces (atom [])
+        ;; Wall 1 (center→arc[0] side): normal points away from arc interior
+        _ (swap! faces into [[(+ pts 1) pts 0] [1 (+ pts 1) 0]])
+        ;; Wall 2 (center→arc[N] side): normal points away from arc interior
+        _ (swap! faces into [[(+ pts last-arc) last-arc 0] [pts (+ pts last-arc) 0]])
+        ;; Arc surface: normals point outward (away from center)
+        _ (doseq [k (range segments)]
+            (let [k1 (inc k) k2 (+ k 2)]
+              (swap! faces into [[(+ pts k2) (+ pts k1) k1] [(+ pts k2) k1 k2]])))
+        ;; End cap at ep0 (normal points toward -edge_dir)
+        _ (doseq [k (range segments)]
+            (swap! faces conj [0 (+ k 2) (+ k 1)]))
+        ;; End cap at ep1 (normal points toward +edge_dir)
+        _ (doseq [k (range segments)]
+            (swap! faces conj [pts (+ pts k 1) (+ pts k 2)]))]
+    {:type :mesh
+     :primitive :fillet-tube-segment
+     :vertices verts
+     :faces (vec @faces)}))
+
+(defn- make-fillet-cutter
+  "Create a single closed fillet cutter prism along one edge.
+   Cross-section: [corner, f1, A, arc₁..arc_{N-1}, B, f2] — a polygon with
+   a concave arc face that produces a convex fillet when subtracted from mesh.
+   Returns a manifold mesh."
+  [p0 p1 n1 n2 d segments]
+  (let [edge-dir (normalize (v- p1 p0))
+        edge-margin (* d 0.3)
+        ep0 (v+ p0 (v* edge-dir (- edge-margin)))
+        ep1 (v+ p1 (v* edge-dir edge-margin))
+        ;; Compute cross-section at each endpoint
+        station0 (compute-strip-offsets ep0 [n1 n2] d segments)
+        station1 (compute-strip-offsets ep1 [n1 n2] d segments)
+        ;; Vertex layout: station0 then station1
+        ;; Cross-section: [corner, f1, arc₀...arc_{N-1}, f2] = segments+3 points
+        pts (count station0)
+        verts (into (vec station0) station1)
+        ;; Build faces: quad for each polygon edge between stations
+        ;; + end caps (fan from corner vertex)
+        faces (atom [])
+        ;; Side walls: connect polygon edges between stations
+        _ (doseq [e (range pts)]
+            (let [e1 (mod (inc e) pts)]
+              (swap! faces into
+                     [[(+ e pts) e e1] [(+ e pts) e1 (+ e1 pts)]])))
+        ;; End cap at ep0 (fan from vertex 0 = corner)
+        _ (doseq [k (range 1 (dec pts))]
+            (swap! faces conj [0 (inc k) k]))
+        ;; End cap at ep1 (fan from vertex pts = corner)
+        _ (doseq [k (range 1 (dec pts))]
+            (swap! faces conj [pts (+ pts k) (+ pts k 1)]))
+        base-faces (vec @faces)
+        ;; Signed volume winding check
+        signed-vol (reduce (fn [acc [i j k]]
+                             (let [a (nth verts i)
+                                   b (nth verts j)
+                                   c (nth verts k)]
+                               (+ acc (dot a (cross b c)))))
+                           0 base-faces)
+        final-faces (if (neg? signed-vol)
+                      (mapv (fn [[a b c]] [a c b]) base-faces)
+                      base-faces)]
+    {:type :mesh
+     :primitive :fillet-cutter
+     :vertices verts
+     :faces final-faces}))
+
+(defn ^:export build-fillet-cutters
+  "Build individual fillet cutter prisms, one per edge.
+   Each cutter has a concave arc cross-section.
+   Returns a vector of manifold meshes, or nil."
+  [edges distance segments]
+  (when (seq edges)
+    (let [cutters (mapv (fn [{:keys [positions normals]}]
+                          (let [[p0 p1] positions
+                                [n1 n2] normals]
+                            (make-fillet-cutter p0 p1 n1 n2 distance segments)))
+                        edges)]
+      (when (seq cutters) cutters))))
+
 (defn ^:export chamfer-strip
   "Generate a single continuous strip mesh along sharp edges for CSG chamfer.
    More robust and smoother than individual prisms on curved edges.
@@ -713,10 +843,10 @@
       (when (seq loops)
         (let [all-verts (atom [])
               all-faces (atom [])
-              ;; Points per station: 1 (corner) + segments + 1 (for fillet arc endpoints)
-              ;; For segments=1: 3 points (corner, f1, f2)
-              ;; For segments=N: N+2 points (corner, arc0, arc1, ..., arcN)
-              pts-per-station (+ 2 segments)
+              ;; Points per station:
+              ;; segments=1: 3 points [corner, f1, f2]
+              ;; segments>1: segments+3 points [corner, f1, arc₀..arc_{N-1}, f2]
+              pts-per-station (if (<= segments 1) 3 (+ 3 segments))
               _ (doseq [loop-path loops]
                   (let [n (count loop-path)
                         p-first (:position (first loop-path))
@@ -726,45 +856,31 @@
                                         (compute-strip-offsets position normals distance segments))
                                       loop-path)
                         base-idx (count @all-verts)
-                        ;; Add all vertices
                         _ (doseq [station stations]
                             (swap! all-verts into station))
                         seg-count (if closed? n (dec n))]
-                    ;; Connect adjacent stations
+                    ;; Connect adjacent stations: quad for each edge of the polygon
+                    ;; Polygon vertices: 0, 1, ..., M-1 (wrap: M-1 → 0)
                     (doseq [i (range seg-count)]
                       (let [j (mod (inc i) n)
-                            ;; Base indices for station i and j
                             bi (+ base-idx (* i pts-per-station))
                             bj (+ base-idx (* j pts-per-station))]
-                        ;; Corner-to-first-arc-point side wall
-                        (swap! all-faces into
-                               [[(+ bi 0) (+ bj 0) (+ bj 1)]
-                                [(+ bi 0) (+ bj 1) (+ bi 1)]])
-                        ;; Corner-to-last-arc-point side wall
-                        (let [last-arc segments]
-                          (swap! all-faces into
-                                 [[(+ bi 0) (+ bi (inc last-arc)) (+ bj (inc last-arc))]
-                                  [(+ bi 0) (+ bj (inc last-arc)) (+ bj 0)]]))
-                        ;; Arc surface: connect arc points between stations
-                        (doseq [k (range segments)]
-                          (let [k1 (inc k)  ;; arc indices are 1-based (0 is corner)
-                                k2 (+ k 2)]
+                        (doseq [e (range pts-per-station)]
+                          (let [e1 (mod (inc e) pts-per-station)]
                             (swap! all-faces into
-                                   [[(+ bi k1) (+ bj k1) (+ bj k2)]
-                                    [(+ bi k1) (+ bj k2) (+ bi k2)]])))))
-                    ;; Cap open loops
+                                   [[(+ bi e) (+ bj e) (+ bj e1)]
+                                    [(+ bi e) (+ bj e1) (+ bi e1)]])))))
+                    ;; Cap open loops: fan triangulation from vertex 0
                     (when-not closed?
-                      (let [;; Start cap: fan from corner to arc points
-                            b0 base-idx
-                            _ (doseq [k (range segments)]
+                      (let [b0 base-idx
+                            _ (doseq [k (range 1 (dec pts-per-station))]
                                 (swap! all-faces conj
-                                       [(+ b0 0) (+ b0 (+ k 2)) (+ b0 (+ k 1))]))
-                            ;; End cap
+                                       [(+ b0 0) (+ b0 (inc k)) (+ b0 k)]))
                             last-i (dec n)
                             bn (+ base-idx (* last-i pts-per-station))
-                            _ (doseq [k (range segments)]
+                            _ (doseq [k (range 1 (dec pts-per-station))]
                                 (swap! all-faces conj
-                                       [(+ bn 0) (+ bn (+ k 1)) (+ bn (+ k 2))]))]))))
+                                       [(+ bn 0) (+ bn k) (+ bn (inc k))]))]))))
               verts (vec @all-verts)
               base-faces (vec @all-faces)
               signed-vol (reduce (fn [acc [i j k]]

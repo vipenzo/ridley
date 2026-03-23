@@ -490,8 +490,11 @@
                                  edges)
                         edges)]
         (when (seq dir-edges)
-          ;; Fillet: strip with arc cross-section (segments > 1)
-          (let [strip (faces/build-chamfer-strip dir-edges radius :segments segments)]
-            (if strip
-              (or (manifold/difference mesh strip) mesh)
+          ;; Fillet = per-edge concave cutters subtracted from mesh
+          ;; Each cutter has a concave arc face (quarter-circle fillet)
+          (let [cutters (faces/build-fillet-cutters dir-edges radius segments)]
+            (if (seq cutters)
+              (reduce (fn [m cutter]
+                        (or (manifold/difference m cutter) m))
+                      mesh cutters)
               mesh)))))))

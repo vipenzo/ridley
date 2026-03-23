@@ -8,7 +8,7 @@
 | `capped` shape-fn | ✅ Done | Fillet/chamfer on loft cap transitions |
 | `find-sharp-edges` | ✅ Done | Edge detection by dihedral angle + filters |
 | `chamfer` (3D post-processing) | ✅ Done | Turtle selectors, strip mesh, CSG subtraction |
-| `fillet` (3D post-processing) | ❌ WIP | Arc geometry needs rethinking |
+| `fillet` (3D post-processing) | ⚠️ WIP | Per-edge cutters work, vertex blending missing |
 
 ---
 
@@ -36,38 +36,57 @@ Negative radius expands the profile (reinforcement fillet).
 Turtle-oriented selectors: `:top` `:bottom` `:up` `:down` `:left` `:right` `:all`.
 Strip mesh for continuous cutting solid. Single `mesh-difference`.
 
+### 3D edges: `fillet`
+```clojure
+(-> mesh (fillet :top 3 :segments 8))              ; top edges with radius 3
+```
+Per-edge concave cutters. Each cutter has a cross-section with a quarter-circle
+arc from the fillet center. Sequential `mesh-difference` per edge.
+
 ---
 
-## Fillet 3D: What Went Wrong
+## Fillet 3D: Implementation History
 
-### Approach tried: arc in the cutting solid
+### Approach 1: Arc in the cutting solid (FAILED)
 Modified the chamfer strip's flat f1-f2 face into an arc.
-The arc should curve toward the corner, making the cutting solid smaller
-at the midpoint, leaving a convex fillet after subtraction.
+Failed due to scale mismatch: cutter extends 1.5d outside mesh, so arc changes
+in cutter space produce negligible effects on the mesh surface.
 
-### Problems encountered:
-1. **Scale mismatch**: The cutter extends well beyond the mesh (corner at 1.5d outside).
-   A small arc change in cutter space produces a tiny effect on the mesh surface.
-2. **Too much bulge → non-manifold**: Full geometric sagitta makes the strip degenerate
-   (faces near corner collapse to zero area). Manifold rejects it.
-3. **Too little bulge → invisible**: Reduced bulge produces a barely visible curve,
-   indistinguishable from chamfer.
-4. **Scale correction attempt**: Scaling by dist_corner/dist_edge ratio overcorrects
-   (bulge 3.08mm on a 3.71mm triangle → nearly collapsed → Manifold rejects).
+### Approach 2: Cylinder along edge + chamfer strip (FAILED)
+Generate quarter-cylinder tubes along edges, use `(mesh - strip) ∪ (mesh ∩ tube)`.
+Failed because strip (outside mesh) and tube (inside mesh) don't overlap enough —
+the strip's margin pushes f1/f2 beyond the tube's tangent points.
 
-### Root cause insight (from user)
-The curvature must be calculated on the **intersection** of the cutter with the mesh,
-not on the cutter itself. Since the cutter is much larger than the mesh, the mapping
-is non-linear and the simple linear scaling doesn't work.
+### Approach 3: Continuous strip with concave arc (PARTIALLY WORKED)
+Integrate the arc directly into the strip cross-section: `[corner, f1, A, arc..., B, f2]`.
+Works for single edges but at loop corners (where two edges meet), the cross-section
+transitions between different normal orientations, creating twisted/distorted geometry
+that only cuts properly at one vertex of each edge.
 
-### Proposed alternative approaches:
-1. **Cylinder along edge**: Generate an actual cylinder (tube with quarter-circle profile)
-   positioned at the fillet center (r from both faces, inside the mesh).
-   Subtract: `mesh - (chamfer_cutter - cylinder)` or `mesh ∩ (mesh + cylinder)`.
-2. **Profile-based for extrusions**: Since we know the 2D profile, generate the fillet
-   directly from `shape-offset` transitions (like `capped` but as post-processing).
-3. **Manifold smooth()**: Use Manifold's built-in subdivision surface with per-edge
-   sharpness control. Requires mapping selected edges to Manifold halfedge indices.
+### Approach 4: Per-edge concave cutters (CURRENT — WORKS)
+Generate individual closed prisms per edge, each with the concave arc cross-section.
+Sequential `mesh-difference` per cutter. Avoids corner transition issues entirely.
+Edge margins (0.3d) ensure overlap between adjacent cutters.
+
+**Key functions:**
+- `compute-strip-offsets` — cross-section with arc for segments > 1
+- `make-fillet-cutter` — closed prism per edge with end caps
+- `build-fillet-cutters` — generates vector of per-edge cutters
+- `fillet-impl` — reduces `mesh-difference` over all cutters
+
+---
+
+## Known Limitations
+
+### Vertex blending (not implemented)
+At vertices where 3+ faces meet (e.g., box corners), each edge's fillet ends
+abruptly. A proper fillet should have a spherical patch (⅛ sphere for 90° corners)
+blending the adjacent edge fillets. This is "vertex blending" in CAD terminology.
+
+### Performance
+Sequential `mesh-difference` per edge is slower than a single strip operation.
+For meshes with many edges, this could be slow. A possible optimization:
+union all cutters first, then single `mesh-difference`.
 
 ---
 
