@@ -361,10 +361,11 @@
   [p0 p1 n1 n2 d]
   (let [;; Edge direction
         edge-dir (normalize (v- p1 p0))
-        ;; Extend slightly beyond edge to avoid gaps
-        margin 0.01
-        ep0 (v+ p0 (v* edge-dir (- margin)))
-        ep1 (v+ p1 (v* edge-dir margin))
+        ;; Extend beyond edge endpoints so adjacent prisms overlap,
+        ;; preventing gaps on curved edges (circles, fillets)
+        edge-margin (* d 0.3)
+        ep0 (v+ p0 (v* edge-dir (- edge-margin)))
+        ep1 (v+ p1 (v* edge-dir edge-margin))
         ;; The prism straddles the corner:
         ;; - corner: outside the mesh (along bisector)
         ;; - face1-pt: d INTO face-1 surface (along -n2, perpendicular to face-1)

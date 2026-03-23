@@ -362,3 +362,86 @@
                     current-mesh))
               mesh
               prisms))))
+
+(defn- direction-vec
+  "Resolve a turtle-oriented direction keyword to a 3D unit vector
+   using the mesh's creation-pose."
+  [mesh direction]
+  (let [pose (or (:creation-pose mesh)
+                 {:heading [1 0 0] :up [0 0 1]})
+        h (:heading pose)
+        u (:up pose)
+        ;; right = cross(heading, up)
+        r [(- (* (nth h 1) (nth u 2)) (* (nth h 2) (nth u 1)))
+           (- (* (nth h 2) (nth u 0)) (* (nth h 0) (nth u 2)))
+           (- (* (nth h 0) (nth u 1)) (* (nth h 1) (nth u 0)))]]
+    (case direction
+      :top h
+      :bottom (mapv - h)
+      :up u
+      :down (mapv - u)
+      :right r
+      :left (mapv - r)
+      :all nil)))
+
+(defn- dot3 [a b]
+  (+ (* (nth a 0) (nth b 0))
+     (* (nth a 1) (nth b 1))
+     (* (nth a 2) (nth b 2))))
+
+(defn ^:export chamfer-impl
+  "Chamfer edges selected by turtle-oriented direction.
+
+   direction: :top :bottom :up :down :left :right :all
+   distance: chamfer size in mm
+   Options:
+   - :angle      minimum dihedral angle (default 80)
+   - :min-radius exclude edges closer than r to the extrusion axis
+   - :where      additional predicate on vertex positions"
+  [mesh direction distance & {:keys [angle min-radius where] :or {angle 80}}]
+  (let [dir-vec (direction-vec mesh direction)
+        ;; Threshold for normal alignment (cos ~30° ≈ 0.85)
+        align-threshold 0.85
+        ;; Build the :where predicate combining direction + min-radius + custom where
+        pose (or (:creation-pose mesh)
+                 {:heading [1 0 0] :up [0 0 1] :position [0 0 0]})
+        origin (:position pose)
+        heading (:heading pose)
+        ;; For min-radius: project vertex onto plane perpendicular to heading
+        ;; Add 1% tolerance to min-radius to handle floating-point edge cases
+        ;; (vertices exactly on the boundary are excluded)
+        radius-check (when min-radius
+                       (let [r2 (* min-radius 1.01 min-radius 1.01)]
+                         (fn [p]
+                           (let [;; Vector from origin to point
+                                 v (mapv - p origin)
+                                 ;; Project onto heading to get axial component
+                                 axial (dot3 v heading)
+                                 ;; Subtract axial component to get radial
+                                 radial (mapv - v (mapv #(* axial %) heading))
+                                 dist2 (dot3 radial radial)]
+                             (> dist2 r2)))))
+        combined-where (fn [p]
+                         (and (or (nil? radius-check) (radius-check p))
+                              (or (nil? where) (where p))))]
+    ;; Find sharp edges, then filter by direction
+    (when-let [edges (faces/find-sharp-edges mesh :angle angle :where combined-where)]
+      (let [;; Filter edges by direction: one of the normals must align with dir-vec
+            dir-edges (if dir-vec
+                        (filterv (fn [{:keys [normals]}]
+                                   (let [[n1 n2] normals]
+                                     (or (> (dot3 n1 dir-vec) align-threshold)
+                                         (> (dot3 n2 dir-vec) align-threshold))))
+                                 edges)
+                        edges)]
+        (when (seq dir-edges)
+          (let [prisms (mapv (fn [{:keys [positions normals]}]
+                               (let [[p0 p1] positions
+                                     [n1 n2] normals]
+                                 (faces/make-prism-along-edge p0 p1 n1 n2 distance)))
+                             dir-edges)]
+            (reduce (fn [current-mesh prism]
+                      (or (manifold/difference current-mesh prism)
+                          current-mesh))
+                    mesh
+                    prisms)))))))

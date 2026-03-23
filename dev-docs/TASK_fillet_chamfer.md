@@ -160,22 +160,61 @@ The root cause is likely in `loft.cljs` — the path analysis splits a simple `(
 
 ---
 
-## Phase 3: 3D Edge Fillet/Chamfer (Future)
+## Phase 3: 3D Edge Chamfer via CSG ✅
 
-### Problem
+### Implemented: `chamfer-edges` (low-level) + `chamfer` (high-level, in progress)
 
-After boolean operations (mesh-difference, mesh-union), the resulting mesh has sharp edges that may need filleting. These edges are not on a 2D profile — they exist in 3D space on arbitrary mesh geometry.
+### Low-level: `chamfer-edges`
 
-### Possible approaches
+Per-edge prism CSG approach:
+1. `find-sharp-edges` detects edges by dihedral angle threshold + `:where` predicate
+2. `chamfer-prisms` generates triangular prisms along each selected edge
+3. Sequential `mesh-difference` subtracts each prism from the mesh
 
-**A. Manifold smooth/refine** — Manifold v3.0 has `smooth()` and `refine()` for subdivision surfaces with per-halfedge sharpness control. Requires mapping from face groups/picking to halfedge indices.
+```clojure
+(chamfer-edges mesh 1.5 :angle 80 :where #(> (first %) 4))
+```
 
-**B. Edge selection + geometry** — Detect edges from triangle mesh, let user select via viewport picking (extend current face picking to edge picking: "select two adjacent faces"), then geometrically modify the edge region.
+**Prism geometry**: all 3 cross-section vertices are OUTSIDE the mesh. Their triangle's
+intersection with the mesh volume IS the corner wedge to remove:
+- corner: along bisector of the two face normals (outside the mesh corner)
+- face1-pt: d along face-1 surface + margin past it (along n1)
+- face2-pt: d along face-2 surface + margin past it (along n2)
 
-**C. Proxy object (CSG-based)** — User positions a volume (cylinder, box) along the edge, then `fillet-at model proxy radius` uses boolean operations to create the fillet. Most flexible for scripting, but harder to get right for curved edges.
+**Winding**: signed volume check ensures correct face orientation for all edge directions.
 
-### Edge selection UX ideas
+### Known limitations
+- Curved edges (circles, fillets) show slight faceting — each prism is flat
+- Edge margin overlap helps but doesn't fully eliminate seams on tight curves
+- Increasing shape resolution (more segments) improves curve quality
 
-- Extend viewport picking: Alt+Click selects face, Alt+Double-Click or Alt+Shift+Click selects edge (shared boundary between two faces)
-- Programmatic: `(edges-of mesh :face-a :face-b)` returns edge data
-- By normal angle: `(sharp-edges mesh :angle 45)` finds all edges where face normals differ by more than 45°
+### High-level: `chamfer` with turtle-oriented selectors (in progress)
+
+Turtle-oriented face selectors derived from `:creation-pose`:
+
+```clojure
+(chamfer :top 1.5)        ; edges at end of extrusion (heading direction)
+(chamfer :bottom 1.5)     ; edges at start of extrusion (-heading)
+(chamfer :up 1.5)         ; edges on up-facing side
+(chamfer :down 1.5)       ; edges on down-facing side
+(chamfer :left 1.5)       ; edges on left side
+(chamfer :right 1.5)      ; edges on right side
+(chamfer :all 1.5)        ; all sharp edges
+
+;; Additional filters:
+(chamfer :top 1.5 :min-radius 15)   ; exclude holes
+(chamfer :top 1.5 :where pred)      ; custom filter (fallback)
+```
+
+Direction mapping from `:creation-pose`:
+- `:top` / `:bottom` → ±heading
+- `:up` / `:down` → ±up
+- `:left` / `:right` → ±cross(heading, up)
+
+An edge matches a direction selector if one of its adjacent face normals
+aligns with that direction (dot product > threshold).
+
+### Future improvements
+- Strip mesh approach for smoother curved chamfers (single continuous cutting solid per edge loop)
+- Fillet variant (cylindrical cut instead of flat chamfer)
+- Viewport edge picking for interactive selection

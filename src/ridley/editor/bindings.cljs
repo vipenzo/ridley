@@ -243,6 +243,7 @@
    'find-sharp-edges faces/find-sharp-edges
    'chamfer-prisms   faces/chamfer-prisms
    'chamfer-edges    macro-impl/chamfer-edges-impl
+   'chamfer          macro-impl/chamfer-impl
    'list-faces   faces/list-faces
    'get-face     faces/get-face
    'face-info    faces/face-info
