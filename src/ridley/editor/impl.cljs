@@ -435,13 +435,18 @@
                                  edges)
                         edges)]
         (when (seq dir-edges)
-          (let [prisms (mapv (fn [{:keys [positions normals]}]
-                               (let [[p0 p1] positions
-                                     [n1 n2] normals]
-                                 (faces/make-prism-along-edge p0 p1 n1 n2 distance)))
-                             dir-edges)]
-            (reduce (fn [current-mesh prism]
-                      (or (manifold/difference current-mesh prism)
-                          current-mesh))
-                    mesh
-                    prisms)))))))
+          ;; Build strip mesh from pre-filtered edges, then subtract
+          (let [strip (faces/build-chamfer-strip dir-edges distance)]
+            (if strip
+              (or (manifold/difference mesh strip) mesh)
+              ;; Fallback to sequential prisms if strip fails
+              (let [prisms (mapv (fn [{:keys [positions normals]}]
+                                  (let [[p0 p1] positions
+                                        [n1 n2] normals]
+                                    (faces/make-prism-along-edge p0 p1 n1 n2 distance)))
+                                dir-edges)]
+                (reduce (fn [current-mesh prism]
+                          (or (manifold/difference current-mesh prism)
+                              current-mesh))
+                        mesh
+                        prisms)))))))))

@@ -408,6 +408,201 @@
      :vertices verts
      :faces faces})) ;; n1-n2 side (the cutting face)
 
+;; ============================================================
+;; Edge loop ordering
+;; ============================================================
+
+(defn- edges->loops
+  "Order a collection of edges into connected loops.
+   Each edge is {:edge [v0 v1] :positions [p0 p1] :normals [n1 n2] ...}.
+   Returns a vector of loops, where each loop is a vector of
+   {:position [x y z] :normals [n1 n2]} for each vertex in order.
+   Closed loops have first vertex = last vertex."
+  [edges]
+  (when (seq edges)
+    (let [;; Build adjacency: vertex-idx → vector of edge records
+          adj (reduce (fn [m {:keys [edge] :as e}]
+                        (let [[v0 v1] edge]
+                          (-> m
+                              (update v0 (fnil conj []) e)
+                              (update v1 (fnil conj []) e))))
+                      {} edges)
+          ;; Walk from an edge, following shared vertices
+          walk-loop (fn [start-edge used]
+                      (loop [current-edge start-edge
+                             current-v (first (:edge start-edge))
+                             path [{:position (first (:positions start-edge))
+                                    :normals (:normals start-edge)}]
+                             used (conj used (:edge start-edge))]
+                        (let [;; Other vertex of current edge
+                              [v0 v1] (:edge current-edge)
+                              next-v (if (= current-v v0) v1 v0)
+                              next-pos (if (= current-v v0)
+                                         (second (:positions current-edge))
+                                         (first (:positions current-edge)))
+                              path (conj path {:position next-pos
+                                               :normals (:normals current-edge)})
+                              ;; Find next unused edge at next-v
+                              candidates (filterv #(not (used (:edge %)))
+                                                  (get adj next-v []))
+                              next-edge (first candidates)]
+                          (if next-edge
+                            (recur next-edge next-v path (conj used (:edge next-edge)))
+                            {:path path :used used}))))]
+      ;; Collect all loops
+      (loop [remaining edges
+             used #{}
+             loops []]
+        (if-let [start (first (remove #(used (:edge %)) remaining))]
+          (let [{:keys [path used]} (walk-loop start used)]
+            (recur remaining used (conj loops path)))
+          loops)))))
+
+(defn- compute-strip-offsets
+  "For a vertex on an edge loop, compute the 3 offset points for the
+   chamfer strip cross-section. Returns [corner f1 f2]."
+  [position normals d]
+  (let [[n1 n2] normals
+        bisector (normalize (v+ n1 n2))
+        corner (v+ position (v* bisector (* d 1.5)))
+        margin (* d 0.5)
+        f1 (v+ position (v+ (v* n2 (- d)) (v* n1 margin)))
+        f2 (v+ position (v+ (v* n1 (- d)) (v* n2 margin)))]
+    [corner f1 f2]))
+
+(defn ^:export chamfer-strip
+  "Generate a single continuous strip mesh along sharp edges for CSG chamfer.
+   More robust and smoother than individual prisms on curved edges.
+
+   Returns a single mesh, or nil if no edges found.
+   Options same as find-sharp-edges."
+  [mesh distance & {:keys [angle where] :or {angle 30}}]
+  (let [edges (find-sharp-edges mesh :angle angle :where where)]
+    (when (seq edges)
+      (let [loops (edges->loops edges)
+            ;; Build one strip mesh from all loops
+            all-verts (atom [])
+            all-faces (atom [])
+            _ (doseq [loop-path loops]
+                (let [n (count loop-path)
+                      ;; Is it a closed loop? Check if first and last positions are close
+                      p-first (:position (first loop-path))
+                      p-last (:position (last loop-path))
+                      closed? (< (magnitude (v- p-first p-last)) 0.01)
+                      ;; For each vertex, compute 3 offset points
+                      stations (mapv (fn [{:keys [position normals]}]
+                                      (compute-strip-offsets position normals distance))
+                                    loop-path)
+                      base-idx (count @all-verts)
+                      ;; Add all vertices: 3 per station (corner, f1, f2)
+                      _ (doseq [[corner f1 f2] stations]
+                          (swap! all-verts into [corner f1 f2]))
+                      ;; Connect adjacent stations with 6 triangles each
+                      ;; Station i has vertices at base-idx + i*3 + {0,1,2}
+                      seg-count (if closed? n (dec n))]
+                  (doseq [i (range seg-count)]
+                    (let [j (mod (inc i) n)
+                          ;; Vertex indices for station i and j
+                          ci (+ base-idx (* i 3))       ; corner i
+                          f1i (+ base-idx (* i 3) 1)    ; f1 i
+                          f2i (+ base-idx (* i 3) 2)    ; f2 i
+                          cj (+ base-idx (* j 3))       ; corner j
+                          f1j (+ base-idx (* j 3) 1)    ; f1 j
+                          f2j (+ base-idx (* j 3) 2)]   ; f2 j
+                      ;; 3 quads = 6 triangles between stations
+                      (swap! all-faces into
+                             [[ci cj f1j] [ci f1j f1i]      ;; corner-f1 side
+                              [ci f2i f2j] [ci f2j cj]      ;; corner-f2 side
+                              [f1i f1j f2j] [f1i f2j f2i]]) ;; f1-f2 side (cutting face)
+                      ))
+                  ;; Cap open loops at both ends
+                  (when-not closed?
+                    (let [;; Start cap
+                          c0 base-idx f10 (+ base-idx 1) f20 (+ base-idx 2)
+                          ;; End cap
+                          last-i (dec n)
+                          cn (+ base-idx (* last-i 3))
+                          f1n (+ base-idx (* last-i 3) 1)
+                          f2n (+ base-idx (* last-i 3) 2)]
+                      (swap! all-faces into
+                             [[c0 f20 f10]       ;; start cap
+                              [cn f1n f2n]])))))  ;; end cap
+            verts (vec @all-verts)
+            base-faces (vec @all-faces)
+            ;; Signed volume winding check
+            signed-vol (reduce (fn [acc [i j k]]
+                                 (let [a (nth verts i)
+                                       b (nth verts j)
+                                       c (nth verts k)]
+                                   (+ acc (dot a (cross b c)))))
+                               0 base-faces)
+            faces (if (neg? signed-vol)
+                    (mapv (fn [[a b c]] [a c b]) base-faces)
+                    base-faces)]
+        {:type :mesh
+         :primitive :chamfer-strip
+         :vertices verts
+         :faces faces}))))
+
+(defn ^:export build-chamfer-strip
+  "Build a continuous strip mesh from pre-filtered edge records.
+   Takes a vector of {:edge :positions :normals ...} as returned by find-sharp-edges.
+   Returns a single manifold mesh for CSG subtraction, or nil."
+  [edges distance]
+  (when (seq edges)
+    (let [loops (edges->loops edges)]
+      (when (seq loops)
+        (let [all-verts (atom [])
+              all-faces (atom [])
+              _ (doseq [loop-path loops]
+                  (let [n (count loop-path)
+                        p-first (:position (first loop-path))
+                        p-last (:position (last loop-path))
+                        closed? (< (magnitude (v- p-first p-last)) 0.01)
+                        stations (mapv (fn [{:keys [position normals]}]
+                                        (compute-strip-offsets position normals distance))
+                                      loop-path)
+                        base-idx (count @all-verts)
+                        _ (doseq [[corner f1 f2] stations]
+                            (swap! all-verts into [corner f1 f2]))
+                        seg-count (if closed? n (dec n))]
+                    (doseq [i (range seg-count)]
+                      (let [j (mod (inc i) n)
+                            ci (+ base-idx (* i 3))
+                            f1i (+ base-idx (* i 3) 1)
+                            f2i (+ base-idx (* i 3) 2)
+                            cj (+ base-idx (* j 3))
+                            f1j (+ base-idx (* j 3) 1)
+                            f2j (+ base-idx (* j 3) 2)]
+                        (swap! all-faces into
+                               [[ci cj f1j] [ci f1j f1i]
+                                [ci f2i f2j] [ci f2j cj]
+                                [f1i f1j f2j] [f1i f2j f2i]])))
+                    (when-not closed?
+                      (let [c0 base-idx f10 (+ base-idx 1) f20 (+ base-idx 2)
+                            last-i (dec n)
+                            cn (+ base-idx (* last-i 3))
+                            f1n (+ base-idx (* last-i 3) 1)
+                            f2n (+ base-idx (* last-i 3) 2)]
+                        (swap! all-faces into
+                               [[c0 f20 f10]
+                                [cn f1n f2n]])))))
+              verts (vec @all-verts)
+              base-faces (vec @all-faces)
+              signed-vol (reduce (fn [acc [i j k]]
+                                   (let [a (nth verts i)
+                                         b (nth verts j)
+                                         c (nth verts k)]
+                                     (+ acc (dot a (cross b c)))))
+                                 0 base-faces)
+              faces (if (neg? signed-vol)
+                      (mapv (fn [[a b c]] [a c b]) base-faces)
+                      base-faces)]
+          {:type :mesh
+           :primitive :chamfer-strip
+           :vertices verts
+           :faces faces})))))
+
 (defn ^:export chamfer-prisms
   "Generate individual triangular prism meshes along sharp edges.
    Returns a vector of prism meshes, or nil if no edges found.
