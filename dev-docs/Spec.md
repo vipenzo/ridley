@@ -1051,6 +1051,21 @@ Concatenate meshes without boolean operations (no Manifold required):
 
 Simply merges vertices and faces. Not manifold-valid, but useful for heightmap sampling, visualization, etc.
 
+### 3D Chamfer & Fillet
+
+Post-processing operations that detect sharp edges by dihedral angle and modify them via CSG. See [FilletChamfer3D.md](FilletChamfer3D.md) for full documentation.
+
+```clojure
+(-> mesh (chamfer :top 2))                          ; Flat bevel on top edges
+(-> mesh (chamfer :all 1.5 :angle 60))              ; All edges > 60°
+
+(-> mesh (fillet :top 3 :segments 8))               ; Rounded top edges
+(-> mesh (fillet :all 2 :segments 8))               ; All sharp edges
+(-> mesh (fillet :top 3 :blend-vertices true))      ; With spherical corner blend
+```
+
+Direction selectors: `:top` `:bottom` `:up` `:down` `:left` `:right` `:all`.
+
 ---
 
 ## Cross-Section (Slice)
@@ -2110,7 +2125,7 @@ Interactive AI-powered geometry description for screen reader users. See [Access
 ## Not Yet Implemented
 
 - Dense syntax parser (string notation like "F20 TH90")
-- Fillet/chamfer on 3D mesh edges (2D shape fillet/chamfer is available via `fillet-shape`/`chamfer-shape`)
+- Fillet/chamfer vertex blending on 3D mesh edges (edge fillet/chamfer works, vertex blending is experimental — see [FilletChamfer3D.md](FilletChamfer3D.md))
 - OBJ/3MF export (STL export is available via `export`)
 - Backward movement command `(b dist)` — use `(f -dist)` instead
 
