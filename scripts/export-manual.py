@@ -125,7 +125,7 @@ def get_i18n_section(lang, section_id, port):
     return section_id
 
 
-def evaluate_and_capture(code, port, img_width=600, img_height=400):
+def evaluate_and_capture(code, port, img_width=1024, img_height=768):
     """Evaluate example code and capture a screenshot. Returns base64 PNG or None."""
     # Reset scene
     nrepl_eval('(js/eval "ridley.editor.repl.reset_ctx_BANG_()") (ridley.scene.registry/clear-all!)',
