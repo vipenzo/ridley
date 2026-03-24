@@ -174,6 +174,15 @@
          :code "(def p1 (sphere 10))\n(def p2 (attach (sphere 10) (f 40)))\n(def p3 (attach (sphere 10) (f 20) (th 90) (f 30)))\n(register hull-shape\n  (mesh-hull p1 p2 p3))"}
         {:id :bool-union-for
          :code "(register row\n  (mesh-union\n    (for [i (range 10)]\n      (attach (cyl 5 30) (lt (* i 9))))))"}]}
+      {:id :fillet-chamfer-3d
+       :see-also [:fillet-chamfer :boolean-operations]
+       :examples
+       [{:id :chamfer-3d
+         :code "(register chamfered\n  (-> (box 30 30 30)\n      (chamfer :top 2)))"}
+        {:id :fillet-3d
+         :code "(register filleted\n  (-> (box 30 30 30)\n      (fillet :top 3 :segments 8)))"}
+        {:id :fillet-3d-rounded
+         :code "(register rounded\n  (-> (rect 40 20)\n      (fillet-shape 5)\n      (extrude (f 30))\n      (fillet :top 2 :segments 8)))"}]}
       {:id :slice-mesh
        :examples
        [{:id :slice-basic
@@ -614,7 +623,7 @@ Use `translate-shape` to position shapes before combining:
                          :description "`shape-xor` keeps the parts that don't overlap — the symmetric difference. Two crossing rectangles produce a cross with the center cut out."}}}
 
      :fillet-chamfer
-     {:title "Fillet & Chamfer"
+     {:title "Fillet & Chamfer — 2D"
       :content "Round or cut the corners of any 2D shape before extruding.
 
 ```
@@ -651,6 +660,41 @@ Composes with everything:
                           :description "Pass `:indices [0 1]` to fillet only specific corners. Vertex indices start at 0 and follow the shape's point order."}
        :capped-box {:caption "Cap fillet"
                     :description "`capped` adds a smooth fillet transition where the profile meets the top/bottom cap. Combines with `fillet-shape` for fully rounded edges."}}}
+
+     :fillet-chamfer-3d
+     {:title "Fillet & Chamfer — 3D"
+      :content "Round or cut the **edges of a 3D mesh** after creation. These are post-processing operations that use CSG (boolean subtraction).
+
+### Chamfer (flat cut)
+```
+(-> mesh (chamfer :top 2))           ; flat bevel on top edges
+(-> mesh (chamfer :all 1.5))         ; all sharp edges
+```
+
+### Fillet (rounded)
+```
+(-> mesh (fillet :top 3 :segments 8))  ; rounded top edges
+(-> mesh (fillet :all 2 :segments 8))  ; all sharp edges
+```
+
+**Direction selectors** are relative to the turtle pose at creation: `:top` `:bottom` `:up` `:down` `:left` `:right` `:all`.
+
+### Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `:angle` | 80 | Min dihedral angle for edge detection |
+| `:segments` | 8 | Arc resolution (fillet only) |
+| `:min-radius` | nil | Exclude edges near holes |
+| `:where` | nil | Custom vertex predicate |
+| `:blend-vertices` | false | Spherical corners (experimental) |"
+      :examples
+      {:chamfer-3d {:caption "3D Chamfer"
+                    :description "`chamfer` detects sharp edges on the mesh and cuts them flat. `:top` selects edges adjacent to the face along the turtle's heading direction."}
+       :fillet-3d {:caption "3D Fillet"
+                   :description "`fillet` rounds sharp edges with a circular profile. `:segments` controls the smoothness of the curve."}
+       :fillet-3d-rounded {:caption "Combined 2D + 3D"
+                           :description "First `fillet-shape` rounds the 2D profile corners. Then the extrusion is filleted in 3D for fully smooth edges."}}}
 
      :reusable-shapes
      {:title "Reusable Shapes"
@@ -1818,7 +1862,7 @@ Usa `translate-shape` per posizionare le forme prima di combinarle:
                          :description "`shape-xor` mantiene le parti che non si sovrappongono — la differenza simmetrica. Due rettangoli incrociati producono una croce con il centro ritagliato."}}}
 
      :fillet-chamfer
-     {:title "Raccordi e Smussi"
+     {:title "Raccordi e Smussi — 2D"
       :content "Arrotonda o smussa gli angoli di qualsiasi forma 2D prima di estrudere.
 
 ```
@@ -1855,6 +1899,41 @@ Si compone con tutto:
                           :description "Passa `:indices [0 1]` per raccordare solo angoli specifici. Gli indici dei vertici partono da 0 e seguono l'ordine dei punti della forma."}
        :capped-box {:caption "Raccordo sui cap"
                     :description "`capped` aggiunge una transizione arrotondata dove il profilo incontra il cap superiore/inferiore. Combinabile con `fillet-shape` per spigoli completamente raccordati."}}}
+
+     :fillet-chamfer-3d
+     {:title "Raccordi e Smussi — 3D"
+      :content "Arrotonda o smussa gli **spigoli di una mesh 3D** dopo la creazione. Sono operazioni di post-processing che usano CSG (sottrazione booleana).
+
+### Smusso (taglio piatto)
+```
+(-> mesh (chamfer :top 2))           ; smusso piatto sugli spigoli superiori
+(-> mesh (chamfer :all 1.5))         ; tutti gli spigoli vivi
+```
+
+### Raccordo (arrotondato)
+```
+(-> mesh (fillet :top 3 :segments 8))  ; spigoli superiori arrotondati
+(-> mesh (fillet :all 2 :segments 8))  ; tutti gli spigoli vivi
+```
+
+I **selettori di direzione** sono relativi alla posa della tartaruga alla creazione: `:top` `:bottom` `:up` `:down` `:left` `:right` `:all`.
+
+### Opzioni
+
+| Opzione | Default | Descrizione |
+|---------|---------|-------------|
+| `:angle` | 80 | Angolo diedro minimo per rilevamento spigoli |
+| `:segments` | 8 | Risoluzione arco (solo fillet) |
+| `:min-radius` | nil | Escludi spigoli vicini a fori |
+| `:where` | nil | Predicato personalizzato sui vertici |
+| `:blend-vertices` | false | Angoli sferici (sperimentale) |"
+      :examples
+      {:chamfer-3d {:caption "Smusso 3D"
+                    :description "`chamfer` rileva gli spigoli vivi della mesh e li taglia piatti. `:top` seleziona gli spigoli adiacenti alla faccia nella direzione del heading della tartaruga."}
+       :fillet-3d {:caption "Raccordo 3D"
+                   :description "`fillet` arrotonda gli spigoli vivi con un profilo circolare. `:segments` controlla la levigatezza della curva."}
+       :fillet-3d-rounded {:caption "Combinato 2D + 3D"
+                           :description "Prima `fillet-shape` arrotonda gli angoli del profilo 2D. Poi l'estrusione viene raccordata in 3D per spigoli completamente lisci."}}}
 
      :reusable-shapes
      {:title "Forme Riutilizzabili"
