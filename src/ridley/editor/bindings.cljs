@@ -32,7 +32,8 @@
             [ridley.settings :as settings]
             [ridley.viewport.capture :as capture]
             [ridley.ai.describe :as ai-describe]
-            [ridley.ai.describe-session :as describe-session]))
+            [ridley.ai.describe-session :as describe-session]
+            [ridley.manual.export :as manual-export]))
 
 ;; ============================================================
 ;; Source History Helpers
@@ -366,6 +367,10 @@
    'save-views          capture/save-views
    'render-slice        capture/render-slice
    'save-image          capture/save-image
+   ;; Manual export
+   'export-manual-en    manual-export/generate-manual-en
+   'export-manual-it    manual-export/generate-manual-it
+   'export-manual       manual-export/generate-both
    ;; AI describe (accessibility)
    'ai-status           ai-describe/ai-status
    'describe            describe-session/describe
