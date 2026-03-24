@@ -149,13 +149,13 @@
   [meshes]
   (let [scene (THREE/Scene.)
         _ (set! (.-background scene) (THREE/Color. 0xffffff))
-        ;; Strong ambient + directional from all sides for flat, readable renders
-        ambient (THREE/AmbientLight. 0xffffff 0.6)
-        main (THREE/DirectionalLight. 0xffffff 0.5)
-        fill (THREE/DirectionalLight. 0xffffff 0.4)
+        ;; Strong ambient + directional from all sides for readable renders
+        ambient (THREE/AmbientLight. 0xffffff 0.7)
+        main (THREE/DirectionalLight. 0xffffff 0.7)
+        fill (THREE/DirectionalLight. 0xffffff 0.5)
         back (THREE/DirectionalLight. 0xffffff 0.4)
-        top  (THREE/DirectionalLight. 0xffffff 0.3)
-        bottom (THREE/DirectionalLight. 0xffffff 0.3)]
+        top  (THREE/DirectionalLight. 0xffffff 0.5)
+        bottom (THREE/DirectionalLight. 0xffffff 0.2)]
     (.set (.-position main) 100 150 100)
     (.set (.-position fill) -100 -80 80)
     (.set (.-position back) -50 50 -100)
@@ -296,7 +296,7 @@
         len (js/Math.sqrt (+ (* dx dx) (* dy dy) (* dz dz)))
         dx (/ dx len) dy (/ dy len) dz (/ dz len)
         size (max sx sy sz 10)
-        dist (* size 2.5)
+        dist (* size 1.8)
         camera (THREE/PerspectiveCamera. 45 (/ width height) 0.1 10000)]
     (.set (.-up camera) 0 0 1)
     (.set (.-position camera)
