@@ -243,30 +243,125 @@ def generate_manual(lang, with_images, port):
         print(f"  {img_count} images in {img_dir}")
 
 
+def check_examples(port):
+    """Run all manual examples as a non-regression test.
+    Returns (passed, failed, errors) counts and details."""
+    print("\nFetching manual structure...")
+    structure = get_manual_structure(port)
+
+    total_examples = sum(
+        len(page.get("examples", []))
+        for section in structure["sections"]
+        for page in section.get("pages", [])
+    )
+
+    passed = []
+    failed = []
+    example_num = 0
+
+    for section in structure["sections"]:
+        for page in section.get("pages", []):
+            page_id = page["id"]
+            for example in page.get("examples", []):
+                example_num += 1
+                ex_id = example["id"]
+                code = example["code"]
+                label = f"{page_id}/{ex_id}"
+                progress = f"[{example_num}/{total_examples}]"
+
+                print(f"  {progress} {label}", end="", flush=True)
+
+                # Reset
+                nrepl_eval(
+                    '(js/eval "ridley.editor.repl.reset_ctx_BANG_()") '
+                    '(ridley.scene.registry/clear-all!)',
+                    port, timeout=10)
+                time.sleep(0.1)
+
+                # Evaluate
+                eval_code = f'(ridley.editor.repl/evaluate nil {json.dumps(code)})'
+                result = nrepl_eval(eval_code, port, timeout=20)
+
+                if result is None:
+                    failed.append((label, "timeout"))
+                    print(" ✗ TIMEOUT")
+                    continue
+
+                if ":error" in str(result):
+                    failed.append((label, "eval error"))
+                    print(" ✗ EVAL ERROR")
+                    continue
+
+                time.sleep(0.1)
+
+                # Try to render (verifies geometry was created)
+                nrepl_eval("(ridley.scene.registry/refresh-viewport! true)", port, timeout=5)
+                capture = nrepl_eval(
+                    "(ridley.viewport.capture/render-view :perspective :width 200 :height 150)",
+                    port, timeout=10)
+
+                if capture and "data:image/png;base64," in str(capture):
+                    # Check image isn't completely empty (very small = likely blank)
+                    b64 = str(capture).strip('"').split(",", 1)
+                    if len(b64) > 1 and len(b64[1]) > 500:
+                        passed.append(label)
+                        print(" ✓")
+                    else:
+                        failed.append((label, "empty image"))
+                        print(" ✗ EMPTY IMAGE")
+                else:
+                    failed.append((label, "no render"))
+                    print(" ✗ NO RENDER")
+
+    return passed, failed
+
+
 def main():
     parser = argparse.ArgumentParser(description="Export Ridley manual to Markdown")
     parser.add_argument("--lang", default="both", choices=["en", "it", "both"],
                         help="Language (default: both)")
     parser.add_argument("--no-images", action="store_true",
                         help="Skip screenshot generation")
+    parser.add_argument("--check", action="store_true",
+                        help="Non-regression test: run all examples, report failures")
     parser.add_argument("--port", type=int, default=7888,
                         help="nREPL port (default: 7888)")
     args = parser.parse_args()
 
-    print("Ridley Manual Export")
-    print(f"  Port: {args.port}")
-    print(f"  Images: {'no' if args.no_images else 'yes'}")
+    if args.check:
+        print("Ridley Manual — Non-Regression Check")
+        print(f"  Port: {args.port}")
+        print("\nConnecting to nREPL...")
+        ensure_cljs_mode(args.port)
+        print("Connected!")
 
-    # Verify nREPL connection
-    print("\nConnecting to nREPL...")
-    ensure_cljs_mode(args.port)
-    print("Connected!")
+        passed, failed = check_examples(args.port)
 
-    langs = ["en", "it"] if args.lang == "both" else [args.lang]
-    for lang in langs:
-        generate_manual(lang, not args.no_images, args.port)
+        print(f"\n{'=' * 50}")
+        print(f"Results: {len(passed)} passed, {len(failed)} failed")
+        if failed:
+            print(f"\nFailed examples:")
+            for label, reason in failed:
+                print(f"  ✗ {label} — {reason}")
+            sys.exit(1)
+        else:
+            print("All examples passed! ✓")
+            sys.exit(0)
+    else:
+        print("Ridley Manual Export")
+        print(f"  Port: {args.port}")
+        print(f"  Images: {'no' if args.no_images else 'yes'}")
 
-    print("\nDone!")
+        # Verify nREPL connection
+        print("\nConnecting to nREPL...")
+        ensure_cljs_mode(args.port)
+        print("Connected!")
+
+        langs = ["en", "it"] if args.lang == "both" else [args.lang]
+        for lang in langs:
+            generate_manual(lang, not args.no_images, args.port)
+
+        print("\nDone!")
 
 
 if __name__ == "__main__":
