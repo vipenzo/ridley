@@ -1849,6 +1849,26 @@ Export meshes to STL files (triggers browser download):
 
 ---
 
+## Manual Export
+
+Generate downloadable Markdown manuals from the online manual content:
+
+```clojure
+(export-manual-en)               ; Download Manual_en.md
+(export-manual-it)               ; Download Manuale_it.md
+(export-manual)                  ; Download both
+```
+
+Text-only (no screenshots). For manuals with screenshots, use the Python script:
+
+```bash
+python3 scripts/export-manual.py --lang en          # With screenshots
+python3 scripts/export-manual.py --no-images        # Text only
+python3 scripts/export-manual.py --check            # Non-regression test
+```
+
+---
+
 ## Interactive Tweaking
 
 The `tweak` macro provides interactive parameter exploration with real-time preview. It evaluates an expression, displays the result in the viewport, and creates sliders for numeric literals.
