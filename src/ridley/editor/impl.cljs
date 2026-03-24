@@ -11,6 +11,7 @@
             [ridley.scene.panel :as panel]
             [ridley.manifold.core :as manifold]
             [ridley.geometry.faces :as faces]
+            [ridley.geometry.primitives :as primitives]
             [ridley.math :as math]))
 
 ;; ============================================================
@@ -458,12 +459,13 @@
    direction: :top :bottom :up :down :left :right :all
    radius: fillet radius in mm
    Options:
-   - :angle      minimum dihedral angle (default 80)
-   - :min-radius exclude edges closer than r to the extrusion axis
-   - :segments   arc resolution (default 8)
-   - :where      additional predicate on vertex positions"
-  [mesh direction radius & {:keys [angle min-radius segments where]
-                             :or {angle 80 segments 8}}]
+   - :angle           minimum dihedral angle (default 80)
+   - :min-radius      exclude edges closer than r to the extrusion axis
+   - :segments        arc resolution (default 8)
+   - :where           additional predicate on vertex positions
+   - :blend-vertices  spherical blend at corners where 3+ faces meet (default false)"
+  [mesh direction radius & {:keys [angle min-radius segments where blend-vertices]
+                             :or {angle 80 segments 8 blend-vertices false}}]
   (let [dir-vec (direction-vec mesh direction)
         align-threshold 0.85
         pose (or (:creation-pose mesh)
@@ -490,11 +492,53 @@
                                  edges)
                         edges)]
         (when (seq dir-edges)
-          ;; Fillet = per-edge concave cutters subtracted from mesh
-          ;; Each cutter has a concave arc face (quarter-circle fillet)
-          (let [cutters (faces/build-fillet-cutters dir-edges radius segments)]
-            (if (seq cutters)
-              (reduce (fn [m cutter]
-                        (or (manifold/difference m cutter) m))
-                      mesh cutters)
-              mesh)))))))
+          ;; Fillet = per-edge concave cutters + vertex sphere cutters
+          (let [cutters (faces/build-fillet-cutters dir-edges radius segments)
+                ;; Apply edge cutters
+                edge-result (if (seq cutters)
+                              (reduce (fn [m cutter]
+                                        (or (manifold/difference m cutter) m))
+                                      mesh cutters)
+                              mesh)
+                ;; Apply vertex sphere cutters at corners where 3+ faces meet
+                fillet-verts (when blend-vertices
+                               (faces/find-fillet-vertices dir-edges))]
+            (if (seq fillet-verts)
+              (reduce
+                (fn [m {:keys [position normals]}]
+                  (let [center (faces/compute-fillet-vertex-center position normals radius)
+                        ;; Sphere at fillet center
+                        sphere (-> (primitives/sphere-mesh radius segments (max 6 (quot segments 2)))
+                                   (update :vertices
+                                           (fn [vs] (mapv (fn [[x y z]]
+                                                            [(+ x (nth center 0))
+                                                             (+ y (nth center 1))
+                                                             (+ z (nth center 2))]) vs))))
+                        ;; Box covering the corner: from center to vertex+margin
+                        margin (* radius 0.5)
+                        sum-n (reduce (fn [[ax ay az] [bx by bz]]
+                                        [(+ ax bx) (+ ay by) (+ az bz)])
+                                      normals)
+                        extent [(+ (nth position 0) (* (nth sum-n 0) margin))
+                                (+ (nth position 1) (* (nth sum-n 1) margin))
+                                (+ (nth position 2) (* (nth sum-n 2) margin))]
+                        [mnx mny mnz] [(min (nth center 0) (nth extent 0))
+                                        (min (nth center 1) (nth extent 1))
+                                        (min (nth center 2) (nth extent 2))]
+                        [mxx mxy mxz] [(max (nth center 0) (nth extent 0))
+                                        (max (nth center 1) (nth extent 1))
+                                        (max (nth center 2) (nth extent 2))]
+                        corner-box {:type :mesh
+                                    :vertices [[mnx mny mnz] [mxx mny mnz] [mxx mxy mnz] [mnx mxy mnz]
+                                               [mnx mny mxz] [mxx mny mxz] [mxx mxy mxz] [mnx mxy mxz]]
+                                    :faces [[0 2 1] [0 3 2] [4 5 6] [4 6 7]
+                                            [0 1 5] [0 5 4] [2 3 7] [2 7 6]
+                                            [1 2 6] [1 6 5] [0 4 7] [0 7 3]]}
+                        ;; Vertex cutter = box - sphere
+                        vertex-cutter (manifold/difference corner-box sphere)]
+                    (if vertex-cutter
+                      (or (manifold/difference m vertex-cutter) m)
+                      m)))
+                edge-result fillet-verts)
+              edge-result)))))))
+

@@ -758,6 +758,44 @@
                         edges)]
       (when (seq cutters) cutters))))
 
+(defn ^:export find-fillet-vertices
+  "Find vertices where 2+ selected edges converge.
+   Returns a seq of {:position [...] :normals [n1 n2 n3...]} for vertices
+   that need spherical vertex blending."
+  [edges]
+  (let [;; Group edges by vertex position (rounded to avoid floating point issues)
+        vertex-map (atom {})]
+    (doseq [{:keys [positions normals]} edges
+            [pos _] (map vector positions (repeat normals))]
+      (let [k (mapv #(Math/round (* % 1000)) pos)]
+        (swap! vertex-map update k
+               (fn [old]
+                 (let [entry (or old {:position pos :normal-set #{}})
+                       [n1 n2] normals]
+                   (-> entry
+                       (update :normal-set conj
+                               (mapv #(Math/round (* % 100)) n1)
+                               (mapv #(Math/round (* % 100)) n2))))))))
+    ;; Return vertices with 3+ unique normals (meaning 2+ edges converge)
+    (->> (vals @vertex-map)
+         (filter #(>= (count (:normal-set %)) 3))
+         (mapv (fn [{:keys [position normal-set]}]
+                 {:position position
+                  :normals (mapv (fn [rn] (mapv #(/ % 100.0) rn))
+                                (vec normal-set))})))))
+
+(defn ^:export compute-fillet-vertex-center
+  "Compute the sphere center for a fillet vertex where N faces meet.
+   The center is at distance r from each face plane.
+   Works for any face angles, not just orthogonal."
+  [position normals r]
+  (let [n-count (count normals)
+        sum-n (reduce v+ normals)
+        ;; For orthogonal normals, avg-dot = 1. For non-orthogonal, adjust.
+        avg-dot (/ (reduce + (map #(dot sum-n %) normals)) n-count)
+        correction (max 0.5 avg-dot)]
+    (v- position (v* sum-n (/ r correction)))))
+
 (defn ^:export chamfer-strip
   "Generate a single continuous strip mesh along sharp edges for CSG chamfer.
    More robust and smoother than individual prisms on curved edges.
