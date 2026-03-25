@@ -10,9 +10,9 @@
 (def b4 (/ b 3))
 (def bb 130)
 (def aa (* 2 a))
-(def s1 (translate (circle b 128) bb (* aa 0.1)))
-(def s2 (circle b2 128))
-(def s3 (translate (circle b4 128) bb (* aa -0.2)))
+(def s1 (translate (circle b 512) bb (* aa 0.1)))
+(def s2 (circle b2 512))
+(def s3 (translate (circle b4 512) bb (* aa -0.2)))
 (def spessore-gabbia 8)
 
 (def base-shape (shape-hull s3 s1 s2))
@@ -48,12 +48,14 @@
          (f H))))
 (register bowl _bowl)
 
+
 ;; Tray = shell of base-shape offset inward, tray height
 (def _tray
   (loft-n 512
           (shell (shape-fn base-shape (make-forma-tray 0 tray-H))
-                 :thickness spessore :style :voronoi :cells 10 :rows 4 :seed 42
-                 :cap-top {:thickness spessore :style :voronoi :cells 10 :wall 1})
+                 :style :voronoi
+                 :thickness spessore :cells 10 :rows 4 :seed 42
+                 :cap-top {:style :voronoi :thickness spessore})
           (f tray-H)))
 (register tray _tray)
 
