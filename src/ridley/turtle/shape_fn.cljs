@@ -12,7 +12,16 @@
      (loft (tapered (circle 20) :to 0) (f 30))"
   (:require [ridley.turtle.transform :as xform]
             [ridley.turtle.shape :as shape]
-            [ridley.clipper.core :as clipper]))
+))
+
+;; ============================================================
+;; Path-length context (set by loft at runtime)
+;; ============================================================
+
+(def ^:dynamic *path-length*
+  "Total path length in world units, bound by loft during shape-fn evaluation.
+   Used by capped to auto-calculate transition fraction."
+  nil)
 
 ;; ============================================================
 ;; 2D vector math (private)
@@ -934,16 +943,25 @@
    With shapes that have holes, :preserve-holes true (default) keeps holes unchanged
    so only the outer boundary is affected."
   [shape-or-fn radius & {:keys [mode start end fraction end-radius preserve-holes]
-                          :or {mode :fillet start true end true fraction 0.08
+                          :or {mode :fillet start true end true
                                preserve-holes true}}]
   (let [ease-fn (case mode
-                  :fillet  (fn [u] (Math/sin (* u (/ Math/PI 2))))
+                  :fillet  (fn [u] (Math/sqrt (- (* 2 u) (* u u))))
                   :chamfer (fn [u] u))
         start-radius radius
-        end-radius (or end-radius radius)]
+        end-radius (or end-radius radius)
+        explicit-fraction fraction]
     (shape-fn shape-or-fn
       (fn [s t]
-        (let [[in-transition? u active-radius]
+        ;; Auto-calculate fraction from path length when not explicitly set
+        (let [fraction (or explicit-fraction
+                           (when *path-length*
+                             (let [max-r (max (Math/abs start-radius) (Math/abs (or end-radius start-radius)))
+                                   ideal (/ max-r *path-length*)]
+                               ;; Cap at 0.45 to leave room for the middle section
+                               (min 0.45 ideal)))
+                           0.08)
+              [in-transition? u active-radius]
               (cond
                 (and start (< t fraction))
                 [true (ease-fn (/ t fraction)) start-radius]
@@ -954,26 +972,23 @@
                 :else [false 1.0 0])]
           (if (or (not in-transition?) (>= u 0.999))
             s
-            (let [inset-amount (* (- active-radius) (- 1 u))
-                  inset-shape (clipper/shape-offset s inset-amount)]
-              (if inset-shape
-                (let [resampled (xform/resample-matched s inset-shape)
-                      orig-holes (:holes s)]
-                  (if orig-holes
-                    (if preserve-holes
-                      ;; Keep original holes unchanged — only outer boundary changes
-                      (assoc resampled :holes orig-holes)
-                      ;; Resample new holes to match original point counts
-                      (let [new-holes (or (:holes resampled) (:holes inset-shape))
-                            matched-holes
-                            (when (and new-holes (= (count new-holes) (count orig-holes)))
-                              (mapv (fn [orig-hole new-hole]
-                                      (let [n-h (count orig-hole)]
-                                        (:points (xform/resample
-                                                   (shape/make-shape new-hole {:centered? true})
-                                                   n-h))))
-                                    orig-holes new-holes))]
-                        (cond-> resampled
-                          matched-holes (assoc :holes matched-holes))))
-                    resampled))
-                s))))))))
+            ;; Scale shape toward centroid — preserves proportions (fillet radii etc.)
+            ;; The radius parameter controls how much the nearest edge moves inward.
+            (let [inset-amount (* (Math/abs active-radius) (- 1 u))
+                  inradius (xform/shape-inradius s)
+                  scale (if (> inradius 0.001)
+                          (max 0.001 (/ (- inradius inset-amount) inradius))
+                          1.0)
+                  pts (:points s)
+                  n (count pts)
+                  cx (/ (reduce + (map first pts)) n)
+                  cy (/ (reduce + (map second pts)) n)
+                  scale-pt (fn [[x y]]
+                             [(+ cx (* scale (- x cx)))
+                              (+ cy (* scale (- y cy)))])
+                  scaled-points (mapv scale-pt pts)
+                  orig-holes (:holes s)]
+              (cond-> (assoc s :points scaled-points)
+                (and orig-holes (not preserve-holes))
+                (assoc :holes (mapv (fn [hole] (mapv scale-pt hole))
+                                    orig-holes))))))))))

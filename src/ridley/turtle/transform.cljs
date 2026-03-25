@@ -105,6 +105,72 @@
   [(+ x1 (* t (- x2 x1)))
    (+ y1 (* t (- y2 y1)))])
 
+(defn shape-inradius
+  "Approximate inradius: minimum distance from centroid to any edge.
+   This is the maximum safe inset before the shape degenerates."
+  [shape]
+  (let [points (:points shape)
+        n (count points)
+        cx (/ (reduce + (map first points)) n)
+        cy (/ (reduce + (map second points)) n)]
+    (reduce
+     (fn [min-d i]
+       (let [[ax ay] (nth points i)
+             [bx by] (nth points (mod (inc i) n))
+             ;; Distance from centroid to edge segment (a→b)
+             dx (- bx ax) dy (- by ay)
+             len-sq (+ (* dx dx) (* dy dy))
+             d (if (< len-sq 0.0001)
+                 (Math/sqrt (+ (* (- cx ax) (- cx ax)) (* (- cy ay) (- cy ay))))
+                 (let [t (/ (+ (* (- cx ax) dx) (* (- cy ay) dy)) len-sq)
+                       t (max 0 (min 1 t))
+                       px (+ ax (* t dx)) py (+ ay (* t dy))]
+                   (Math/sqrt (+ (* (- cx px) (- cx px)) (* (- cy py) (- cy py))))))]
+         (min min-d d)))
+     js/Infinity
+     (range n))))
+
+(defn inset-vertices
+  "Move each vertex inward along its local normal by `amount`.
+   Positive amount shrinks the shape, negative expands it.
+   Preserves exact vertex count and correspondence."
+  [points amount]
+  (let [n (count points)]
+    (mapv (fn [i]
+            (let [[px py] (nth points i)
+                  [ax ay] (nth points (mod (dec (+ i n)) n))
+                  [bx by] (nth points (mod (inc i) n))
+                  ;; Edge normals (pointing inward for CCW winding)
+                  e1x (- px ax) e1y (- py ay)
+                  e2x (- bx px) e2y (- by py)
+                  ;; Perpendicular inward normals (CW winding)
+                  n1x (- e1y)   n1y e1x
+                  n2x (- e2y)   n2y e2x
+                  ;; Normalize
+                  len1 (Math/sqrt (+ (* n1x n1x) (* n1y n1y)))
+                  len2 (Math/sqrt (+ (* n2x n2x) (* n2y n2y)))
+                  n1x (if (> len1 0) (/ n1x len1) 0)
+                  n1y (if (> len1 0) (/ n1y len1) 0)
+                  n2x (if (> len2 0) (/ n2x len2) 0)
+                  n2y (if (> len2 0) (/ n2y len2) 0)
+                  ;; Bisector
+                  bx (+ n1x n2x) by (+ n1y n2y)
+                  blen (Math/sqrt (+ (* bx bx) (* by by)))]
+              (if (< blen 0.0001)
+                ;; Degenerate (collinear edges) — use either normal
+                [(- px (* amount n1x))
+                 (- py (* amount n1y))]
+                ;; Scale bisector so the perpendicular distance to each edge = amount
+                (let [bx (/ bx blen) by (/ by blen)
+                      ;; cos of half-angle between the two edge normals
+                      cos-half (+ (* bx n1x) (* by n1y))
+                      scale (if (> (Math/abs cos-half) 0.01)
+                              (/ amount cos-half)
+                              amount)]
+                  [(- px (* scale bx))
+                   (- py (* scale by))]))))
+          (range n))))
+
 (defn- sample-at-perimeter-fractions
   "Walk a closed contour and sample points at given perimeter fractions (0-1).
    Returns a vector of [x y] points, one per fraction."

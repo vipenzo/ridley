@@ -279,18 +279,28 @@
    Bridges shape-fn API to existing loft pipeline."
   ([shape-fn-val path] (pure-loft-shape-fn shape-fn-val path 16))
   ([shape-fn-val path steps]
-   (let [base-shape (shape-fn-val 0)
-         transform-fn (fn [_shape t] (shape-fn-val t))]
-     (pure-loft-path base-shape transform-fn path steps))))
+   (let [path-length (reduce + 0 (keep (fn [cmd]
+                                          (when (= :f (:cmd cmd))
+                                            (first (:args cmd))))
+                                        (:commands path)))]
+     (binding [sfn/*path-length* path-length]
+       (let [base-shape (shape-fn-val 0)
+             transform-fn (fn [_shape t] (shape-fn-val t))]
+         (pure-loft-path base-shape transform-fn path steps))))))
 
 (defn ^:export pure-bloft-shape-fn
   "Bezier-safe loft with a shape-fn. Handles self-intersecting paths."
   ([shape-fn-val path] (pure-bloft-shape-fn shape-fn-val path nil 0.1))
   ([shape-fn-val path steps] (pure-bloft-shape-fn shape-fn-val path steps 0.1))
   ([shape-fn-val path steps threshold]
-   (let [base-shape (shape-fn-val 0)
-         transform-fn (fn [_shape t] (shape-fn-val t))]
-     (pure-bloft base-shape transform-fn path steps threshold))))
+   (let [path-length (reduce + 0 (keep (fn [cmd]
+                                          (when (= :f (:cmd cmd))
+                                            (first (:args cmd))))
+                                        (:commands path)))]
+     (binding [sfn/*path-length* path-length]
+       (let [base-shape (shape-fn-val 0)
+             transform-fn (fn [_shape t] (shape-fn-val t))]
+         (pure-bloft base-shape transform-fn path steps threshold))))))
 
 (defn- clip-shape-for-revolve
   "Clip a shape to x >= 0 for revolve. Vertices with x < 0 would cross
