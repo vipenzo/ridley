@@ -957,8 +957,7 @@
             (let [inset-amount (* (- active-radius) (- 1 u))
                   inset-shape (clipper/shape-offset s inset-amount)]
               (if inset-shape
-                (let [n-outer (count (:points s))
-                      resampled (xform/resample inset-shape n-outer)
+                (let [resampled (xform/resample-matched s inset-shape)
                       orig-holes (:holes s)]
                   (if orig-holes
                     (if preserve-holes

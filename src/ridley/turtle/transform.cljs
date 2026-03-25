@@ -105,6 +105,85 @@
   [(+ x1 (* t (- x2 x1)))
    (+ y1 (* t (- y2 y1)))])
 
+(defn- sample-at-perimeter-fractions
+  "Walk a closed contour and sample points at given perimeter fractions (0-1).
+   Returns a vector of [x y] points, one per fraction."
+  [points fractions]
+  (let [n-orig (count points)
+        segments (map vector points (concat (rest points) [(first points)]))
+        lengths (mapv (fn [[p1 p2]] (segment-length p1 p2)) segments)
+        total-length (reduce + lengths)
+        ;; Build cumulative distance array for efficient lookup
+        cum-lengths (vec (reductions + 0 lengths))]
+    (mapv (fn [frac]
+            (let [target (* frac total-length)
+                  ;; Binary-search-like: find segment containing target distance
+                  seg-idx (loop [i 0]
+                            (if (or (>= i n-orig)
+                                    (> (nth cum-lengths (inc i)) target))
+                              (min i (dec n-orig))
+                              (recur (inc i))))
+                  seg-start (nth cum-lengths seg-idx)
+                  seg-len (nth lengths seg-idx)
+                  [p1 p2] (nth segments seg-idx)
+                  local-t (if (> seg-len 0)
+                            (/ (- target seg-start) seg-len)
+                            0)]
+              (interpolate-point p1 p2 (min 1.0 (max 0.0 local-t)))))
+          fractions)))
+
+(defn perimeter-fractions
+  "Compute the perimeter fraction (0-1) of each vertex in a closed shape.
+   Returns a vector of fractions, one per point."
+  [shape]
+  (assert-shape shape "perimeter-fractions")
+  (let [points (:points shape)
+        n (count points)
+        segments (map vector points (concat (rest points) [(first points)]))
+        lengths (mapv (fn [[p1 p2]] (segment-length p1 p2)) segments)
+        total-length (reduce + lengths)
+        cum-lengths (vec (reductions + 0 lengths))]
+    (if (zero? total-length)
+      (vec (repeat n 0))
+      (mapv #(/ % total-length) (subvec cum-lengths 0 n)))))
+
+(defn resample-matched
+  "Resample target-shape so each point corresponds to the same perimeter
+   fraction as the reference-shape's points. Both shapes must be closed
+   contours. The reference-shape's point distribution is preserved."
+  [reference-shape target-shape]
+  (assert-shape reference-shape "resample-matched (reference)")
+  (assert-shape target-shape "resample-matched (target)")
+  (let [fracs (perimeter-fractions reference-shape)
+        ;; Find the starting point on target that best matches reference's first point angle
+        ref-angle (Math/atan2 (second (first (:points reference-shape)))
+                              (first (first (:points reference-shape))))
+        tgt-points (:points target-shape)
+        n-tgt (count tgt-points)
+        best-idx (reduce
+                  (fn [best i]
+                    (let [p (nth tgt-points i)
+                          a (Math/atan2 (second p) (first p))
+                          diff-curr (Math/abs (let [d (- a ref-angle)]
+                                                (cond (> d Math/PI) (- d (* 2 Math/PI))
+                                                      (< d (- Math/PI)) (+ d (* 2 Math/PI))
+                                                      :else d)))
+                          p-best (nth tgt-points best)
+                          a-best (Math/atan2 (second p-best) (first p-best))
+                          diff-best (Math/abs (let [d (- a-best ref-angle)]
+                                                (cond (> d Math/PI) (- d (* 2 Math/PI))
+                                                      (< d (- Math/PI)) (+ d (* 2 Math/PI))
+                                                      :else d)))]
+                      (if (< diff-curr diff-best) i best)))
+                  0
+                  (range n-tgt))
+        ;; Rotate target points to align starting position
+        rotated-pts (vec (concat (drop best-idx tgt-points) (take best-idx tgt-points)))
+        rotated-shape (assoc target-shape :points rotated-pts)
+        ;; Sample at the reference's perimeter fractions
+        new-points (sample-at-perimeter-fractions (:points rotated-shape) fracs)]
+    (assoc target-shape :points new-points)))
+
 (defn resample
   "Resample a shape to have exactly n points.
    Points are distributed evenly along the perimeter."
