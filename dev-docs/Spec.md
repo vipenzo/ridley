@@ -717,8 +717,10 @@ operations (extrude, loft, revolve) correctly handle shapes with holes.
 (loft (capped shape radius :mode :chamfer) path)       ; Chamfer both caps (linear)
 (loft (capped shape radius :start false) path)         ; Fillet end cap only
 (loft (capped shape radius :end false) path)           ; Fillet start cap only
-(loft (capped shape radius :fraction 0.15) path)       ; Wider transition zone (default 0.08)
+(loft (capped shape radius :fraction 0.15) path)       ; Override auto-fraction
 ```
+
+The transition `fraction` is auto-calculated as `radius / path-length` (geometrically correct fillet). Override with `:fraction` if needed. Radius is clamped to the shape's inradius to prevent degenerate geometry.
 
 **Examples:**
 
@@ -734,7 +736,7 @@ operations (extrude, loft, revolve) correctly handle shapes with holes.
 - `fillet-shape` / `chamfer-shape` operate on 2D corners (edges along extrusion direction)
 - `capped` operates on 3D cap edges (where profile meets top/bottom face)
 - Both compose freely with all shape-fns and with each other
-- Distance must be less than half the shortest adjacent edge to avoid overlapping cuts
+- Cap transition uses centroid scaling — shape proportions (including fillet radii) are preserved
 - Works on any shape including shapes with holes
 
 **Pattern tiling:**

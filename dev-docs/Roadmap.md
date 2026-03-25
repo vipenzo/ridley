@@ -629,6 +629,13 @@ The core turtle system, generative operations, boolean operations, anchor/naviga
 
 ---
 
+## Pending Improvements
+
+### Adaptive loft step density for shape-fn transitions
+The `capped` shape-fn concentrates shape changes in narrow transition zones (fraction of the path). With uniform loft steps, only 2-3 rings may fall in the cap zone, producing coarse faceting. Implement non-uniform `t` sampling: `capped` declares transition zones via shape-fn metadata, and the loft generates denser rings in those zones. Similar to the existing `walk-path-poses-adaptive` (curvature-based density for bloft), but driven by shape-fn change rate rather than path curvature.
+
+---
+
 ## Enhancement Ideas
 
 ### 3D Lattice Structures (implicit surface / marching cubes)
