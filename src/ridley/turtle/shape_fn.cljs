@@ -946,8 +946,11 @@
                           :or {mode :fillet start true end true
                                preserve-holes true}}]
   (let [ease-fn (case mode
-                  :fillet  (fn [u] (Math/sqrt (- (* 2 u) (* u u))))
-                  :chamfer (fn [u] u))
+                  :fillet  (fn [u r]
+                             (if (neg? r)
+                               (Math/sin (* u (/ Math/PI 2)))
+                               (Math/sqrt (- (* 2 u) (* u u)))))
+                  :chamfer (fn [u _r] u))
         start-radius radius
         end-radius (or end-radius radius)
         explicit-fraction fraction]
@@ -964,17 +967,17 @@
               [in-transition? u active-radius]
               (cond
                 (and start (< t fraction))
-                [true (ease-fn (/ t fraction)) start-radius]
+                [true (ease-fn (/ t fraction) start-radius) start-radius]
 
                 (and end (> t (- 1 fraction)))
-                [true (ease-fn (/ (- 1 t) fraction)) end-radius]
+                [true (ease-fn (/ (- 1 t) fraction) end-radius) end-radius]
 
                 :else [false 1.0 0])]
           (if (or (not in-transition?) (>= u 0.999))
             s
             ;; Scale shape toward centroid — preserves proportions (fillet radii etc.)
             ;; The radius parameter controls how much the nearest edge moves inward.
-            (let [inset-amount (* (Math/abs active-radius) (- 1 u))
+            (let [inset-amount (* active-radius (- 1 u))
                   inradius (xform/shape-inradius s)
                   scale (if (> inradius 0.001)
                           (max 0.001 (/ (- inradius inset-amount) inradius))
