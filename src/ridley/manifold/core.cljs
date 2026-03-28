@@ -29,7 +29,7 @@
    (fn [resolve reject]
      (let [attempts (atom 0)]
        (letfn [(check []
-                 (if-let [Module js/window.ManifoldModule]
+                 (if-let [Module (unchecked-get js/globalThis "ManifoldModule")]
                    (resolve Module)
                    (do
                      (swap! attempts inc)
