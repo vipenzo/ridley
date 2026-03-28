@@ -18,6 +18,9 @@ out/
 .lsp/
 .claude/
 
+# Tauri
+desktop/src-tauri/target/
+
 # OS
 .DS_Store
 Thumbs.db

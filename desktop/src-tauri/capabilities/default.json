@@ -1,0 +1,9 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nickkadutskyi/jb-tauri-plugin-schemas/main/capability.schema.json",
+  "identifier": "default",
+  "description": "Default capabilities for Ridley Desktop",
+  "windows": ["*"],
+  "permissions": [
+    "core:default"
+  ]
+}
