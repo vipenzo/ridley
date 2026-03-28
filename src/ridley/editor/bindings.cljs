@@ -28,6 +28,7 @@
             [ridley.library.svg :as svg]
             [ridley.library.stl :as stl-import]
             [ridley.voronoi.core :as voronoi]
+            [ridley.manifold.native :as native-manifold]
             [ridley.measure.core :as measure]
             [ridley.settings :as settings]
             [ridley.viewport.capture :as capture]
@@ -319,6 +320,11 @@
    'mesh-intersection-impl   manifold/intersection
    'mesh-hull-impl           manifold/hull
    'concat-meshes       manifold/concat-meshes
+   ;; Native Manifold (Rust backend via Tauri IPC) — async, return Promises
+   'native-union        native-manifold/native-union
+   'native-difference   native-manifold/native-difference
+   'native-intersection native-manifold/native-intersection
+   'native-hull         native-manifold/native-hull
    'transform           turtle/transform-mesh
    'solidify-impl       manifold/solidify
    'slice-mesh          impl/implicit-slice-mesh
