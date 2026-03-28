@@ -1,6 +1,7 @@
 // Prevents additional console window on Windows in release
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod geo_server;
 mod manifold_ops;
 
 use manifold_ops::MeshData;
@@ -31,6 +32,9 @@ fn manifold_hull(meshes: Vec<MeshData>) -> Result<MeshData, String> {
 }
 
 fn main() {
+    // Start local HTTP server for synchronous geometry ops
+    geo_server::start();
+
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             ping,

@@ -10,6 +10,7 @@
     "beforeBuildCommand": "npm run release"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "title": "Ridley",
@@ -20,7 +21,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com; connect-src 'self' https: wss: ws:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; worker-src 'self' blob:"
+      "csp": "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:12321 https: wss: ws:; img-src 'self' data: blob: asset: https://asset.localhost; style-src 'self' 'unsafe-inline'; font-src 'self' data:; worker-src 'self' blob:"
     }
   },
   "bundle": {
