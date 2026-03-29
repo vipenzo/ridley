@@ -55,6 +55,16 @@
                  meshes-or-vec)]
     (js->mesh (invoke-sync "/intersection" (into-array (map mesh->js meshes))))))
 
+(defn bench
+  "Benchmark: run a zero-arg function, print elapsed time, return result.
+   (bench \"wasm union\" #(mesh-union a b))"
+  [label f]
+  (let [t0 (.now js/performance)
+        result (f)
+        t1 (.now js/performance)]
+    (println (str label ": " (.toFixed (- t1 t0) 1) "ms"))
+    result))
+
 (defn native-hull
   "Convex hull using native Rust Manifold backend. Synchronous — returns a mesh."
   [& meshes-or-vec]

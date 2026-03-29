@@ -321,6 +321,7 @@
    'mesh-hull-impl           manifold/hull
    'concat-meshes       manifold/concat-meshes
    ;; Native Manifold (Rust backend via Tauri IPC) — async, return Promises
+   'bench               native-manifold/bench
    'native-union        native-manifold/native-union
    'native-difference   native-manifold/native-difference
    'native-intersection native-manifold/native-intersection

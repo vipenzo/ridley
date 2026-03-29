@@ -1,14 +1,15 @@
-;; ── Multiboard Library for Ridley ────────────────────────────────
-;; Ported from: Stacked Parametric Multiboard Tiles (OpenSCAD)
+;; ── Multiboard Native Benchmark ──────────────────────────────────
+;; Same as multiboard.clj but uses native Rust Manifold for CSG ops.
+;; Run inside Tauri desktop app to compare WASM vs Native performance.
 
 ;; ── Parametri fondamentali ──────────────────────────────────────
 (def cell-size 25)
-(def height 6.2)   ; STL ufficiale = 6.2mm (OpenSCAD usa 6.4 per stacking)
+(def height 6.2)
 
 (def side-l (/ cell-size (+ 1 (* 2 (cos (/ PI 4))))))
 (def size-offset (* 0.5 (- cell-size side-l)))
 
-;; ── Forma base della cella (quadrato con angoli tagliati) ───────
+;; ── Forma base della cella ──────────────────────────────────────
 (def cell-shape
   (poly (- cell-size size-offset) cell-size
         size-offset               cell-size
@@ -18,19 +19,6 @@
         (- cell-size size-offset) 0
         cell-size                 size-offset
         cell-size                 (- cell-size size-offset)))
-
-;; Shape estesa: 2 vertici extra per la tacca peg-hole nell'angolo
-(def cell-shape-peg
-  (poly (- cell-size size-offset) cell-size
-        size-offset               cell-size
-        0                         (- cell-size size-offset)
-        0                         size-offset
-        size-offset               0
-        (- cell-size size-offset) 0
-        cell-size                 size-offset
-        cell-size                 (- cell-size size-offset)
-        (+ cell-size size-offset) cell-size
-        cell-size                 (+ cell-size size-offset)))
 
 ;; ── Multihole ───────────────────────────────────────────────────
 (def hole-thick      3.6)
@@ -63,12 +51,7 @@
                 (hole-r-at (* %2 height)))
         (f height)))
 
-;; ── Thread (filettatura trapezoidale a spirale) ─────────────────
-;; Costruzione diretta del polyhedron come in OpenSCAD.
-;; Asse della spirale lungo +X (direzione heading del multihole).
-;; d1/d2 = diametri ext/int, h1/h2 = altezze profilo ext/int,
-;; thread-len = lunghezza assiale, pitch = passo, n = segmenti/giro.
-
+;; ── Thread ──────────────────────────────────────────────────────
 (defn trapz-thread [d1 d2 h1 h2 thread-len pitch n x-off]
   (let [profile [[(/ d1 2) (/ h1 -2)]
                  [(/ d1 2) (/ h1  2)]
@@ -76,7 +59,6 @@
                  [(/ d2 2) (/ h2 -2)]]
         ppc     4
         n-steps (round (* n (/ thread-len pitch)))
-        ;; Vertici: (n-steps+1) sezioni × 4 punti
         verts
         (vec
          (for [i (range (inc n-steps))
@@ -86,7 +68,6 @@
              [(+ ax hz)
               (* r (cos theta))
               (* r (sin theta))])))
-        ;; Facce laterali: quad [a b c d] → 2 tri (winding invertito per volume positivo)
         sides
         (vec
          (mapcat identity
@@ -97,7 +78,6 @@
                          c (+ (* seg ppc) pt ppc)
                          d (+ (* seg ppc) pt)]
                      [[a c b] [a d c]]))))
-        ;; Cap iniziale e finale (invertite)
         start [[0 1 2] [0 2 3]]
         lb    (* n-steps ppc)
         end   [[(+ lb 2) (+ lb 1) (+ lb 0)]
@@ -107,24 +87,19 @@
      :faces (vec (concat start sides end))
      :creation-pose {:position [0 0 0] :heading [1 0 0] :up [0 0 1]}}))
 
-;; ── Parametri thread ────────────────────────────────────────────
-;; Large thread (multihole) — valori da OpenSCAD / specifiche ufficiali
 (def lg-d1 22.5)    (def lg-d2 hole-thick-size)
 (def lg-h1 0.5)     (def lg-h2 1.583)
 (def lg-pitch 2.5)  (def lg-fn 32)
 
-;; Small thread (peg hole)
 (def sm-d1 7.025)   (def sm-d2 6.069)
 (def sm-h1 0.768)   (def sm-h2 2.5)
 (def sm-pitch 3.0)  (def sm-fn 32)
 
-;; ── Thread mesh ─────────────────────────────────────────────────
 (def multihole-thread
   (trapz-thread lg-d1 lg-d2 lg-h1 lg-h2
                 (+ height lg-h2) lg-pitch lg-fn
                 (/ lg-h2 -2)))
 
-;; ── Peg hole ────────────────────────────────────────────────────
 (def peg-hole-d 6.094)
 (def peg-hole-r (/ peg-hole-d 2))
 
@@ -136,42 +111,17 @@
                 (+ height sm-h2) sm-pitch sm-fn
                 (/ sm-h2 -2)))
 
-;; ── Cella singola ───────────────────────────────────────────────
-;; Sottrae ogni pezzo separatamente — evita mesh-union su thread raw
-(defn multiboard-cell [with-peg-hole]
-  (let [base   (extrude (if with-peg-hole cell-shape-peg cell-shape) (f height))
-        center-rt (/ cell-size 2)
-        center-u  (/ cell-size 2)]
-    (if with-peg-hole
-      (mesh-difference base
-                       (attach multihole-base   (rt center-rt) (u center-u))
-                       (attach multihole-thread (rt center-rt) (u center-u))
-                       (attach peg-hole-base    (rt cell-size) (u cell-size))
-                       (attach peg-hole-thread  (rt cell-size) (u cell-size)))
-      (mesh-difference base
-                       (attach multihole-base   (rt center-rt) (u center-u))
-                       (attach multihole-thread (rt center-rt) (u center-u))))))
+;; ── Parametri border slot ───────────────────────────────────────
+(def slot-neck-width 6.0)
+(def slot-head-width 7.0)
+(def slot-neck-depth 2.0)
+(def slot-head-depth 3.0)
+(def slot-height 3.4)
+(def slot-h-center 3.1)
 
-;; ── Tile v2: contorno solido + sottrai fori ─────────────────────
-;; Approccio: un blocco ottagonale unico, poi sottrai tutti i fori.
-;; Elimina i gap tra celle al bordo.
+(def channel-r 1.08)
 
-;; Parametri border slot (da analisi STL ufficiale)
-;; Profilo a T: collo stretto + camera interna più larga
-(def slot-neck-width 6.0)   ; larghezza collo (stretto)
-(def slot-head-width 7.0)   ; larghezza camera interna (larga)
-(def slot-neck-depth 2.0)   ; profondità collo (dal bordo esterno)
-(def slot-head-depth 3.0)   ; profondità camera interna
-(def slot-height 3.4)       ; altezza (z 1.4→4.8 nell'STL)
-(def slot-h-center 3.1)     ; centro altezza slot
-(def slot-total-depth (+ slot-neck-depth slot-head-depth))
-
-;; Parametri canale cilindrico
-(def channel-r 1.08)      ; raggio ~1.08mm
-
-(defn tile-outline
-  "Contorno ottagonale del tile NxM celle, centrato all'origine."
-  [x-cells y-cells]
+(defn tile-outline [x-cells y-cells]
   (let [w (* x-cells cell-size)
         h (* y-cells cell-size)
         ox (/ w 2)
@@ -185,17 +135,13 @@
           (- w ox)                 (- size-offset oy)
           (- w ox)                 (- (- h size-offset) oy))))
 
-(defn multiboard-single-tile
-  "Genera un tile Multiboard NxM centrato all'origine.
-   Blocco solido con multihole, peg hole, border slot e canali."
-  [x-cells y-cells]
+;; ── Tile with benchmarking ──────────────────────────────────────
+(defn multiboard-bench [x-cells y-cells]
   (let [w (* x-cells cell-size)
         h (* y-cells cell-size)
         ox (/ w 2)
         oy (/ h 2)
-        ;; 1. Blocco solido
         base (extrude (tile-outline x-cells y-cells) (f height))
-        ;; 2. Multihole + thread per ogni cella
         multiholes
         (for [i (range x-cells)
               j (range y-cells)]
@@ -203,7 +149,6 @@
                 cy (- (+ (* j cell-size) (/ cell-size 2)) oy)]
             [(attach multihole-base   (rt cx) (u cy))
              (attach multihole-thread (rt cx) (u cy))]))
-        ;; 3. Peg holes solo ai vertici interni
         peg-holes
         (for [i (range 1 x-cells)
               j (range 1 y-cells)]
@@ -211,12 +156,8 @@
                 py (- (* j cell-size) oy)]
             [(attach peg-hole-base   (rt px) (u py))
              (attach peg-hole-thread (rt px) (u py))]))
-        ;; 4. Border slots a T: collo stretto + camera larga
-        ;;    box(sx sy sz) → sx=right(Y), sy=up(Z), sz=heading(X)
         x-bounds (for [i (range 1 x-cells)] (- (* i cell-size) ox))
         y-bounds (for [j (range 1 y-cells)] (- (* j cell-size) oy))
-        ;; Per ogni slot: 2 box (collo + camera) uniti
-        ;; Right edge slots
         right-slots
         (mapcat identity
                 (for [yb y-bounds]
@@ -228,7 +169,6 @@
                            (f slot-h-center)
                            (rt (- ox slot-neck-depth (/ slot-head-depth 2)))
                            (u yb))]))
-        ;; Left edge slots
         left-slots
         (mapcat identity
                 (for [yb y-bounds]
@@ -240,7 +180,6 @@
                            (f slot-h-center)
                            (rt (+ (- ox) slot-neck-depth (/ slot-head-depth 2)))
                            (u yb))]))
-        ;; Top edge slots
         top-slots
         (mapcat identity
                 (for [xb x-bounds]
@@ -252,7 +191,6 @@
                            (f slot-h-center)
                            (rt xb)
                            (u (- oy slot-neck-depth (/ slot-head-depth 2))))]))
-        ;; Bottom edge slots
         bottom-slots
         (mapcat identity
                 (for [xb x-bounds]
@@ -264,11 +202,9 @@
                            (f slot-h-center)
                            (rt xb)
                            (u (+ (- oy) slot-neck-depth (/ slot-head-depth 2))))]))
-        ;; 5. Canali cilindrici (1 per lato, tra primo e ultimo slot)
-        ;;    Posizionato a ~3.2mm dal bordo esterno
-        ch-offset 3.2           ; distanza dal bordo
-        ch-margin (* size-offset 1.5)  ; margine dagli angoli
-        ch-y-len (- h (* 2 ch-margin))  ; più corto: si ferma prima della diagonale
+        ch-offset 3.2
+        ch-margin (* size-offset 1.5)
+        ch-y-len (- h (* 2 ch-margin))
         ch-x-len (- w (* 2 ch-margin))
         ch-right  (attach (cyl channel-r ch-y-len) (f slot-h-center)
                           (rt (- ox ch-offset)) (tv 90))
@@ -278,60 +214,61 @@
                           (u (- oy ch-offset)) (tv -90) (th 90))
         ch-bottom (attach (cyl channel-r ch-x-len) (f slot-h-center)
                           (u (- ch-offset oy)) (tv -90) (th 90))
-        ;; 6. Corner slots (meno profondi, sulla faccia diagonale dell'ottagono)
-        ;;    Ruotati di 45° per allinearsi alla diagonale
-        corner-w 7.0           ; lunghezza lungo la diagonale
-        corner-d 0.8 ; profondità (appena una tacca, ~diametro canale in larghezza)
-        so2 (* size-offset 0.5) ; metà offset per centrare sulla diagonale
+        corner-w 7.0
+        corner-d 0.8
+        so2 (* size-offset 0.5)
         hhh (* slot-height 0.7)
         corners
-        [;; Top-right diagonal
-         (attach (box corner-w corner-d hhh)
+        [(attach (box corner-w corner-d hhh)
                  (f slot-h-center)
                  (rt (- ox so2)) (u (- oy so2)) (tr 45))
-         ;; Top-left diagonal
          (attach (box corner-w corner-d hhh)
                  (f slot-h-center)
                  (rt (- so2 ox)) (u (- oy so2)) (tr -45))
-         ;; Bottom-left diagonal
          (attach (box corner-w corner-d hhh)
                  (f slot-h-center)
                  (rt (- so2 ox)) (u (- so2 oy)) (tr 45))
-         ;; Bottom-right diagonal
          (attach (box corner-w corner-d hhh)
                  (f slot-h-center)
                  (rt (- ox so2)) (u (- so2 oy)) (tr -45))]
-        ;; Unisci tutti i cutter
+
         all-cutters (vec (concat
                           (mapcat identity multiholes)
                           (mapcat identity peg-holes)
                           right-slots left-slots top-slots bottom-slots
                           [ch-right ch-left ch-top ch-bottom]
                           corners))
-        cutter (mesh-union all-cutters)]
-    (attach (mesh-difference base cutter) (tv 90))))
+        _ (println (str "Cutters: " (count all-cutters) " meshes"))
+        _ (println "--- cutter generation done, starting booleans ---")
+        ;; ── BENCHMARK ───────────────────────────────────────────
+        _ (println (str "Cutters: " (count all-cutters) " meshes"))
 
-(defn multiboard-tile
-  "Genera uno stack di tile Multiboard per la stampa.
-   (multiboard-tile 4 2)           → singolo tile
-   (multiboard-tile 4 2 3)         → 3 tile impilati (gap 0.2mm)
-   (multiboard-tile 4 2 3 0.3)     → 3 tile impilati (gap 0.3mm)"
-  ([x-cells y-cells]
-   (multiboard-single-tile x-cells y-cells))
-  ([x-cells y-cells n-layers]
-   (multiboard-tile x-cells y-cells n-layers 0.2))
-  ([x-cells y-cells n-layers separation]
-   (let [tile (multiboard-single-tile x-cells y-cells)
-         step (+ height separation)  ; altezza tile + gap
-         tiles (for [i (range n-layers)]
-                 (if (zero? i)
-                   tile
-                   (attach tile (f (* i step)))))]
-     (concat-meshes (vec tiles)))))
+        ;; WASM path
+        wasm-cutter (if WASM (bench "WASM union"
+                                    #(mesh-union all-cutters)))
+        wasm-tile   (if WASM (bench "WASM diff"
+                                    #(mesh-difference base wasm-cutter)))
 
-;; ── Preview ─────────────────────────────────────────────────────
-;; Singola cella (per test veloci)
-;; (register Cell (multiboard-cell true))
+        ;; Native path
+        native-cutter (if (not WASM) (bench "Native union"
+                                            #(native-union all-cutters)))
+        native-tile   (if (not WASM) (bench "Native diff"
+                                            #(native-difference base native-cutter)))]
 
-(register Tile (bench "Wasm" (multiboard-tile 4 4)))
+    (if WASM
+      (do
+        (println "---")
+        (println (str "WASM result:   " (count (:vertices wasm-tile)) " verts, "
+                      (count (:faces wasm-tile)) " faces"))
+        (attach wasm-tile (tv 90)))
+      (do
+        (println (str "Native result: " (count (:vertices native-tile)) " verts, "
+                      (count (:faces native-tile)) " faces"))
+        (attach native-tile (tv 90))))
+
+    ;; Show native result
+    ))
+
+;; ── Run ─────────────────────────────────────────────────────────
+(register Tile (multiboard-bench 4 4))
 (color :Tile 0xffffff)

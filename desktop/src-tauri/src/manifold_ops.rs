@@ -1,7 +1,7 @@
 //! Native Manifold CSG operations exposed via Tauri IPC.
 //!
-//! Works directly with manifold3d's C FFI (via sys bindings) since the
-//! safe Rust wrapper doesn't expose MeshGL construction from raw data.
+//! Uses the 64-bit MeshGL API (f64 vertices, u64 indices) to match
+//! JavaScript's native double precision and avoid f32 rounding artifacts.
 
 use manifold3d::sys::*;
 use serde::{Deserialize, Serialize};
@@ -10,7 +10,7 @@ use std::os::raw::c_void;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MeshData {
-    pub vertices: Vec<[f32; 3]>,
+    pub vertices: Vec<[f64; 3]>,
     pub faces: Vec<[u32; 3]>,
 }
 
@@ -25,13 +25,13 @@ impl Drop for ManifoldHandle {
     }
 }
 
-/// Opaque MeshGL handle with Drop.
-struct MeshGLHandle(*mut ManifoldMeshGL);
+/// Opaque MeshGL64 handle with Drop.
+struct MeshGL64Handle(*mut ManifoldMeshGL64);
 
-impl Drop for MeshGLHandle {
+impl Drop for MeshGL64Handle {
     fn drop(&mut self) {
         if !self.0.is_null() {
-            unsafe { manifold_delete_meshgl(self.0) }
+            unsafe { manifold_delete_meshgl64(self.0) }
         }
     }
 }
@@ -40,22 +40,24 @@ fn mesh_to_manifold(mesh: &MeshData) -> Result<ManifoldHandle, String> {
     let n_verts = mesh.vertices.len();
     let n_tris = mesh.faces.len();
 
-    // Flatten vertices: [x,y,z, x,y,z, ...]
-    let mut vert_props: Vec<f32> = Vec::with_capacity(n_verts * 3);
+    // Flatten vertices: [x,y,z, x,y,z, ...] as f64
+    let mut vert_props: Vec<f64> = Vec::with_capacity(n_verts * 3);
     for v in &mesh.vertices {
         vert_props.extend_from_slice(v);
     }
 
-    // Flatten faces: [i,j,k, i,j,k, ...]
-    let mut tri_verts: Vec<u32> = Vec::with_capacity(n_tris * 3);
+    // Flatten faces: [i,j,k, i,j,k, ...] as u64 (meshgl64 uses u64 indices)
+    let mut tri_verts: Vec<u64> = Vec::with_capacity(n_tris * 3);
     for f in &mesh.faces {
-        tri_verts.extend_from_slice(f);
+        tri_verts.push(f[0] as u64);
+        tri_verts.push(f[1] as u64);
+        tri_verts.push(f[2] as u64);
     }
 
-    // Create MeshGL
+    // Create MeshGL64
     let mesh_gl = unsafe {
-        manifold_meshgl(
-            manifold_alloc_meshgl() as *mut c_void,
+        manifold_meshgl64(
+            manifold_alloc_meshgl64() as *mut c_void,
             vert_props.as_mut_ptr(),
             n_verts,
             3, // num_prop = 3 (x, y, z)
@@ -63,11 +65,11 @@ fn mesh_to_manifold(mesh: &MeshData) -> Result<ManifoldHandle, String> {
             n_tris,
         )
     };
-    let _mesh_gl_guard = MeshGLHandle(mesh_gl);
+    let _mesh_gl_guard = MeshGL64Handle(mesh_gl);
 
-    // Create Manifold from MeshGL
+    // Create Manifold from MeshGL64
     let manifold_ptr =
-        unsafe { manifold_of_meshgl(manifold_alloc_manifold() as *mut c_void, mesh_gl) };
+        unsafe { manifold_of_meshgl64(manifold_alloc_manifold() as *mut c_void, mesh_gl) };
 
     // Check status
     let status = unsafe { manifold_status(manifold_ptr) };
@@ -79,29 +81,29 @@ fn mesh_to_manifold(mesh: &MeshData) -> Result<ManifoldHandle, String> {
 }
 
 fn manifold_to_mesh(m: &ManifoldHandle) -> MeshData {
-    // Get MeshGL from Manifold
+    // Get MeshGL64 from Manifold
     let mesh_gl =
-        unsafe { manifold_get_meshgl(manifold_alloc_meshgl() as *mut c_void, m.0) };
-    let _mesh_gl_guard = MeshGLHandle(mesh_gl);
+        unsafe { manifold_get_meshgl64(manifold_alloc_meshgl64() as *mut c_void, m.0) };
+    let _mesh_gl_guard = MeshGL64Handle(mesh_gl);
 
-    let n_props = unsafe { manifold_meshgl_num_prop(mesh_gl) } as usize;
-    let n_verts = unsafe { manifold_meshgl_num_vert(mesh_gl) } as usize;
-    let vert_prop_count = unsafe { manifold_meshgl_vert_properties_length(mesh_gl) };
-    let tri_count = unsafe { manifold_meshgl_tri_length(mesh_gl) };
+    let n_props = unsafe { manifold_meshgl64_num_prop(mesh_gl) };
+    let n_verts = unsafe { manifold_meshgl64_num_vert(mesh_gl) };
+    let vert_prop_count = unsafe { manifold_meshgl64_vert_properties_length(mesh_gl) };
+    let tri_count = unsafe { manifold_meshgl64_tri_length(mesh_gl) };
 
-    // Extract vertex properties
+    // Extract vertex properties as f64
     let vert_props = unsafe {
-        let layout = Layout::array::<f32>(vert_prop_count).unwrap();
-        let ptr = alloc(layout) as *mut f32;
-        manifold_meshgl_vert_properties(ptr as *mut c_void, mesh_gl);
+        let layout = Layout::array::<f64>(vert_prop_count).unwrap();
+        let ptr = alloc(layout) as *mut f64;
+        manifold_meshgl64_vert_properties(ptr as *mut c_void, mesh_gl);
         Vec::from_raw_parts(ptr, vert_prop_count, vert_prop_count)
     };
 
-    // Extract triangle indices
+    // Extract triangle indices as u64
     let tri_verts = unsafe {
-        let layout = Layout::array::<u32>(tri_count).unwrap();
-        let ptr = alloc(layout) as *mut u32;
-        manifold_meshgl_tri_verts(ptr as *mut c_void, mesh_gl);
+        let layout = Layout::array::<u64>(tri_count).unwrap();
+        let ptr = alloc(layout) as *mut u64;
+        manifold_meshgl64_tri_verts(ptr as *mut c_void, mesh_gl);
         Vec::from_raw_parts(ptr, tri_count, tri_count)
     };
 
@@ -112,10 +114,10 @@ fn manifold_to_mesh(m: &ManifoldHandle) -> MeshData {
         vertices.push([vert_props[base], vert_props[base + 1], vert_props[base + 2]]);
     }
 
-    // Pack faces
+    // Pack faces (u64 -> u32, safe for any reasonable mesh)
     let mut faces = Vec::with_capacity(tri_verts.len() / 3);
     for chunk in tri_verts.chunks(3) {
-        faces.push([chunk[0], chunk[1], chunk[2]]);
+        faces.push([chunk[0] as u32, chunk[1] as u32, chunk[2] as u32]);
     }
 
     MeshData { vertices, faces }
