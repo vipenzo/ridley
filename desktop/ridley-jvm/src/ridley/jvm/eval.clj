@@ -14,7 +14,9 @@
             [ridley.geometry.operations :as ops]
             [ridley.geometry.faces :as faces]
             [ridley.manifold.native :as manifold]
-            [ridley.clipper.core :as clipper]))
+            [ridley.clipper.core :as clipper]
+            [ridley.io.stl :as stl]
+            [ridley.io.svg :as svg]))
 
 ;; ── Turtle state (global, reset per eval) ───────────────────────
 (def turtle-state (atom (turtle/make-turtle)))
@@ -200,6 +202,10 @@
    ;; Register
    'register  register-impl
    'color     (fn [& _] nil)
+   ;; File I/O (JVM native — direct filesystem access)
+   'save-stl  (fn [mesh path] (stl/save-stl mesh path))
+   'load-stl  stl/load-stl
+   'load-svg  svg/load-svg
    ;; Utility
    'bench     bench
    ;; Turtle state
