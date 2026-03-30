@@ -116,15 +116,34 @@
    Bound from turtle state's :resolution :value."
   15)
 
+(defn- resolution-for-bounds
+  "Convert turtle-style resolution (segments per circle, ~20 default) to
+   voxels-per-unit for SDF meshing, capped so the longest axis gets at most
+   grid-size voxels. This keeps mesh size reasonable."
+  [bounds turtle-res]
+  (let [spans (map (fn [[lo hi]] (- hi lo)) bounds)
+        max-span (apply max spans)
+        ;; Map turtle res 10-80 → grid 50-300 voxels on longest axis
+        grid-size (+ 50 (* 3 (max 0 (- turtle-res 10))))
+        voxels-per-unit (if (pos? max-span)
+                          (/ (double grid-size) max-span)
+                          2.0)]
+    voxels-per-unit))
+
 (defn ensure-mesh
   "If x is an SDF node, materialize it. If it's already a mesh, return as-is.
    When a reference mesh is provided, use its bounds to guide SDF meshing.
    Resolution comes from *sdf-resolution* (set by the eval engine from turtle state)."
-  ([x] (if (sdf-node? x) (materialize x nil *sdf-resolution*) x))
+  ([x] (if (sdf-node? x)
+         (let [bounds (auto-bounds x)
+               res (resolution-for-bounds bounds *sdf-resolution*)]
+           (materialize x bounds res))
+         x))
   ([x reference-mesh]
    (if (sdf-node? x)
      (let [bounds (if reference-mesh
                     (expand-bounds (mesh-bounds reference-mesh) 1.3)
-                    (auto-bounds x))]
-       (materialize x bounds *sdf-resolution*))
+                    (auto-bounds x))
+           res (resolution-for-bounds bounds *sdf-resolution*)]
+       (materialize x bounds res))
      x)))

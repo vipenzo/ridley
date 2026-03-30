@@ -6,8 +6,8 @@
   "build": {
     "devUrl": "http://localhost:9000",
     "frontendDist": "../../public",
-    "beforeDevCommand": "cd ../.. && npm run dev",
-    "beforeBuildCommand": "cd ../.. && npm run release"
+    "beforeDevCommand": "",
+    "beforeBuildCommand": ""
   },
   "app": {
     "withGlobalTauri": true,
