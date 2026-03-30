@@ -36,6 +36,15 @@
 (defn implicit-d [dist] (swap! turtle-state turtle/move-down dist))
 (defn implicit-rt [dist] (swap! turtle-state turtle/move-right dist))
 (defn implicit-lt [dist] (swap! turtle-state turtle/move-left dist))
+(defn implicit-arc-h [radius angle] (swap! turtle-state turtle/arc-h radius angle))
+(defn implicit-arc-v [radius angle] (swap! turtle-state turtle/arc-v radius angle))
+(defn implicit-pen [mode shape] (swap! turtle-state turtle/pen mode shape))
+(defn implicit-stamp [shape] (swap! turtle-state turtle/stamp shape))
+(defn implicit-finalize-sweep [] (swap! turtle-state turtle/finalize-sweep))
+(defn implicit-finalize-sweep-closed [] (swap! turtle-state turtle/finalize-sweep-closed))
+(defn implicit-resolution
+  ([mode value] (swap! turtle-state assoc :resolution {:mode mode :value value}))
+  ([value] (swap! turtle-state assoc :resolution {:mode :n :value value})))
 
 ;; ── Geometry helpers ────────────────────────────────────────────
 
@@ -78,6 +87,21 @@
     result))
 
 ;; ── Extrude/Loft impl functions (called from macros) ────────────
+
+(defn extrude-closed-impl
+  "extrude-closed: shape + path-data → closed mesh (no caps, torus-like)"
+  [shape path-data]
+  (let [current @turtle-state
+        initial (-> (turtle/make-turtle)
+                    (assoc :position (:position current))
+                    (assoc :heading (:heading current))
+                    (assoc :up (:up current))
+                    (assoc :resolution (:resolution current)))
+        state (turtle/extrude-closed-from-path initial shape path-data)
+        mesh (last (:meshes state))]
+    (when mesh
+      (assoc mesh :creation-pose
+             {:position (:position current) :heading (:heading current) :up (:up current)}))))
 
 (defn extrude-impl
   "extrude-impl: shape + path-data → mesh"
@@ -152,6 +176,18 @@
    'd    implicit-d
    'rt   implicit-rt
    'lt   implicit-lt
+   ;; Arc
+   'arc-h  implicit-arc-h
+   'arc-v  implicit-arc-v
+   ;; Pen / sweep
+   'pen          implicit-pen
+   'pen-up       (fn [] (swap! turtle-state turtle/pen-up))
+   'pen-down     (fn [] (swap! turtle-state turtle/pen-down))
+   'stamp        implicit-stamp
+   'finalize-sweep implicit-finalize-sweep
+   'finalize-sweep-closed implicit-finalize-sweep-closed
+   ;; Resolution
+   'resolution   implicit-resolution
    ;; 3D primitives
    'box    box-impl
    'sphere sphere-impl
@@ -257,29 +293,95 @@
             ~'tr (fn [a#] (swap! rec# ridley.turtle.core/rec-tr a#))
             ~'u  (fn [d#] (swap! rec# ridley.turtle.core/rec-u d#))
             ~'rt (fn [d#] (swap! rec# ridley.turtle.core/rec-rt d#))
-            ~'lt (fn [d#] (swap! rec# ridley.turtle.core/rec-lt d#))]
+            ~'lt (fn [d#] (swap! rec# ridley.turtle.core/rec-lt d#))
+            ~'arc-h (fn [r# a#]
+                      ;; Decompose arc into th+f steps in recorder
+                      (when-not (or (zero? r#) (zero? a#))
+                        (let [angle-rad# (* (Math/abs (double a#)) (/ Math/PI 180))
+                              step-count# (max 4 (int (* 16 (/ (Math/abs (double a#)) 360))))
+                              step-angle# (/ (double a#) step-count#)
+                              step-rad# (/ angle-rad# step-count#)
+                              step-dist# (* 2 (double r#) (Math/sin (/ step-rad# 2)))
+                              half# (/ step-angle# 2)]
+                          (swap! rec# ridley.turtle.core/rec-th half#)
+                          (swap! rec# ridley.turtle.core/rec-f step-dist#)
+                          (dotimes [_# (dec step-count#)]
+                            (swap! rec# ridley.turtle.core/rec-th step-angle#)
+                            (swap! rec# ridley.turtle.core/rec-f step-dist#))
+                          (swap! rec# ridley.turtle.core/rec-th half#))))
+            ~'arc-v (fn [r# a#]
+                      (when-not (or (zero? r#) (zero? a#))
+                        (let [angle-rad# (* (Math/abs (double a#)) (/ Math/PI 180))
+                              step-count# (max 4 (int (* 16 (/ (Math/abs (double a#)) 360))))
+                              step-angle# (/ (double a#) step-count#)
+                              step-rad# (/ angle-rad# step-count#)
+                              step-dist# (* 2 (double r#) (Math/sin (/ step-rad# 2)))
+                              half# (/ step-angle# 2)]
+                          (swap! rec# ridley.turtle.core/rec-tv half#)
+                          (swap! rec# ridley.turtle.core/rec-f step-dist#)
+                          (dotimes [_# (dec step-count#)]
+                            (swap! rec# ridley.turtle.core/rec-tv step-angle#)
+                            (swap! rec# ridley.turtle.core/rec-f step-dist#))
+                          (swap! rec# ridley.turtle.core/rec-tv half#))))
+            ~'follow (fn [p#] (swap! rec# ridley.turtle.core/rec-play-path p#))
+            ~'mark (fn [name#] (swap! rec# (fn [s#] (update s# :recording conj {:cmd :mark :args [name#]}))))]
         ~@body
-        (ridley.turtle.core/path-from-recorder @rec#)))")
+        (let [result# @rec#
+              body-result# ~(last body)]
+          (if (and (map? body-result#) (= :path (:type body-result#)))
+            body-result#
+            (ridley.turtle.core/path-from-recorder result#)))))")
+
+(def ^:private extrude-closed-macro-source
+  "(defmacro extrude-closed [shape & movements]
+     (if (= 1 (count movements))
+       `(let [arg# ~(first movements)]
+          (if (and (map? arg#) (= :path (:type arg#)))
+            (ridley.jvm.eval/extrude-closed-impl ~shape arg#)
+            (ridley.jvm.eval/extrude-closed-impl ~shape (path ~(first movements)))))
+       `(ridley.jvm.eval/extrude-closed-impl ~shape (path ~@movements))))")
 
 (def ^:private extrude-macro-source
   "(defmacro extrude [shape & movements]
-     `(ridley.jvm.eval/extrude-impl ~shape (path ~@movements)))")
+     (if (= 1 (count movements))
+       ;; Single arg: might be a path value or a single movement
+       `(let [arg# ~(first movements)]
+          (if (and (map? arg#) (= :path (:type arg#)))
+            (ridley.jvm.eval/extrude-impl ~shape arg#)
+            (ridley.jvm.eval/extrude-impl ~shape (path ~(first movements)))))
+       ;; Multiple movements: always wrap in path
+       `(ridley.jvm.eval/extrude-impl ~shape (path ~@movements))))")
+
+(defn- ensure-path
+  "If x is already a path, return it. Otherwise wrap in path recorder."
+  [x]
+  (if (and (map? x) (= :path (:type x)))
+    x
+    ;; Not a path — can't record here, caller should use (path ...) macro
+    (throw (Exception. (str "Expected a path, got " (type x))))))
 
 (def ^:private loft-macro-source
   "(defmacro loft [first-arg & rest-args]
      (let [mvmt? (fn [x#] (and (list? x#) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v} (first x#))))]
        (cond
          (= 1 (count rest-args))
-         `(ridley.jvm.eval/loft-impl ~first-arg (path ~(first rest-args)))
+         (let [arg (first rest-args)]
+           `(let [a# ~arg]
+              (if (and (map? a#) (= :path (:type a#)))
+                (ridley.jvm.eval/loft-impl ~first-arg a#)
+                (ridley.jvm.eval/loft-impl ~first-arg (path ~arg)))))
 
          (mvmt? (first rest-args))
          `(ridley.jvm.eval/loft-impl ~first-arg (path ~@rest-args))
 
          :else
          (let [[dispatch-arg# & movements#] rest-args]
-           (if (seq movements#)
-             `(ridley.jvm.eval/loft-impl ~first-arg ~dispatch-arg# (path ~@movements#))
-             `(ridley.jvm.eval/loft-impl ~first-arg (path ~dispatch-arg#)))))))")
+           (if (= 1 (count movements#))
+             `(let [a# ~(first movements#)]
+                (if (and (map? a#) (= :path (:type a#)))
+                  (ridley.jvm.eval/loft-impl ~first-arg ~dispatch-arg# a#)
+                  (ridley.jvm.eval/loft-impl ~first-arg ~dispatch-arg# (path ~(first movements#)))))
+             `(ridley.jvm.eval/loft-impl ~first-arg ~dispatch-arg# (path ~@movements#)))))))")
 
 (def ^:private attach-macro-source
   "(defmacro attach [mesh & body]
@@ -317,6 +419,7 @@
       (binding [*ns* ns-obj]
         (load-string path-macro-source)
         (load-string extrude-macro-source)
+        (load-string extrude-closed-macro-source)
         (load-string loft-macro-source)
         (load-string attach-macro-source))
       ;; Eval script
