@@ -221,22 +221,52 @@
    ;; Shape transforms
    'scale         xform/scale
    'rotate-shape  xform/rotate
+   'translate     xform/translate
    'translate-shape shape/translate-shape
    'scale-shape   shape/scale-shape
+   'morph         xform/morph
+   'resample      xform/resample
+   'reverse-shape shape/reverse-shape
+   'stroke-shape  shape/stroke-shape
+   'path-to-shape shape/path-to-shape
+   'fillet-shape  shape/fillet-shape
+   'chamfer-shape shape/chamfer-shape
+   'fit           shape/fit
+   'poly-path     shape/poly-path
+   'poly-path-closed shape/poly-path-closed
+   'subpath-y     shape/subpath-y
+   'offset-x      shape/offset-x
+   'bounds-2d     shape/bounds-2d
+   'mark-pos      shape/mark-pos
+   'mark-x        shape/mark-x
+   'mark-y        shape/mark-y
    ;; Shape-fn
-   'tapered  sfn/tapered
-   'twisted  sfn/twisted
-   'rugged   sfn/rugged
-   'fluted   sfn/fluted
-   'displaced sfn/displaced
-   'morphed  sfn/morphed
-   'noisy    sfn/noisy
-   'woven    sfn/woven
-   'profile  sfn/profile
-   'capped   sfn/capped
-   'shell    sfn/shell
+   'shape-fn     sfn/shape-fn
+   'shape-fn?    sfn/shape-fn?
+   'tapered      sfn/tapered
+   'twisted      sfn/twisted
+   'rugged       sfn/rugged
+   'fluted       sfn/fluted
+   'displaced    sfn/displaced
+   'morphed      sfn/morphed
+   'angle        sfn/angle
+   'displace-radial sfn/displace-radial
+   'noise        sfn/noise
+   'fbm          sfn/fbm
+   'noisy        sfn/noisy
+   'woven        sfn/woven
+   'weave-heightmap sfn/weave-heightmap
+   'mesh-bounds  sfn/mesh-bounds
+   'mesh-to-heightmap sfn/mesh-to-heightmap
+   'sample-heightmap  sfn/sample-heightmap
+   'heightmap    sfn/heightmap
+   'heightmap-to-mesh sfn/heightmap-to-mesh
+   'profile      sfn/profile
+   'capped       sfn/capped
+   'shell        sfn/shell
+   'woven-shell  sfn/woven-shell
    ;; transform
-   'transform turtle/transform-mesh
+   'transform    turtle/transform-mesh
    ;; Boolean ops (via Rust HTTP server)
    'mesh-union       manifold/union
    'mesh-difference  manifold/difference
@@ -249,11 +279,24 @@
    'concat-meshes    manifold/concat-meshes
    'solidify         manifold/solidify
    'manifold?        manifold/manifold?
-   ;; 2D booleans (stubs)
+   ;; Generative ops
+   'revolve      ops/revolve
+   ;; Turtle extras
+   'joint-mode   (fn [mode] (swap! turtle-state assoc :joint-mode mode))
+   'inset        (fn [dist] (swap! turtle-state attachment/inset dist))
+   'get-anchor   (fn [name] (get-in @turtle-state [:anchors name]))
+   'follow-path  (fn [p] (swap! turtle-state turtle/run-path p))
+   'path?        turtle/path?
+   'shape?       shape/shape?
+   ;; 2D booleans
    'shape-union        clipper/shape-union
    'shape-difference   clipper/shape-difference
    'shape-intersection clipper/shape-intersection
+   'shape-xor          clipper/shape-xor
    'shape-offset       clipper/shape-offset
+   'shape-hull         clipper/shape-hull
+   'shape-bridge       clipper/shape-bridge
+   'pattern-tile       clipper/pattern-tile
    ;; Register is a macro (injected separately) — register-impl is the backing fn
    'color     (fn [& _] nil)
    ;; File I/O (JVM native — direct filesystem access)
