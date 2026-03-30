@@ -7,8 +7,9 @@
             [ridley.turtle.extrusion :as extrusion]
             [ridley.turtle.loft :as loft]
             [ridley.turtle.shape-fn :as sfn]
-            [ridley.turtle.path :as path]
+            [ridley.turtle.path :as path-ns]
             [ridley.turtle.transform :as xform]
+            [ridley.turtle.attachment :as attachment]
             [ridley.geometry.primitives :as prims]
             [ridley.geometry.operations :as ops]
             [ridley.geometry.faces :as faces]
@@ -25,70 +26,43 @@
 
 ;; ── Implicit turtle commands (mutate global state) ──────────────
 
-(defn- implicit-f [dist]
-  (swap! turtle-state turtle/f dist))
-
-(defn- implicit-th [angle]
-  (swap! turtle-state turtle/th angle))
-
-(defn- implicit-tv [angle]
-  (swap! turtle-state turtle/tv angle))
-
-(defn- implicit-tr [angle]
-  (swap! turtle-state turtle/tr angle))
-
-(defn- implicit-u [dist]
-  (swap! turtle-state turtle/move-up dist))
-
-(defn- implicit-d [dist]
-  (swap! turtle-state turtle/move-down dist))
-
-(defn- implicit-rt [dist]
-  (swap! turtle-state turtle/move-right dist))
-
-(defn- implicit-lt [dist]
-  (swap! turtle-state turtle/move-left dist))
-
-(defn- implicit-pen-up []
-  (swap! turtle-state turtle/pen-up))
-
-(defn- implicit-pen-down []
-  (swap! turtle-state turtle/pen-down))
+(defn implicit-f [dist] (swap! turtle-state turtle/f dist))
+(defn implicit-th [angle] (swap! turtle-state turtle/th angle))
+(defn implicit-tv [angle] (swap! turtle-state turtle/tv angle))
+(defn implicit-tr [angle] (swap! turtle-state turtle/tr angle))
+(defn implicit-u [dist] (swap! turtle-state turtle/move-up dist))
+(defn implicit-d [dist] (swap! turtle-state turtle/move-down dist))
+(defn implicit-rt [dist] (swap! turtle-state turtle/move-right dist))
+(defn implicit-lt [dist] (swap! turtle-state turtle/move-left dist))
 
 ;; ── Geometry helpers ────────────────────────────────────────────
 
 (defn- with-creation-pose [mesh]
   (let [t @turtle-state]
     (assoc mesh :creation-pose
-           {:position (:position t)
-            :heading (:heading t)
-            :up (:up t)})))
+           {:position (:position t) :heading (:heading t) :up (:up t)})))
 
-(defn- box-impl [sx sy sz]
-  (with-creation-pose (prims/box-mesh sx sy sz)))
+(defn box-impl [sx sy sz] (with-creation-pose (prims/box-mesh sx sy sz)))
 
-(defn- sphere-impl
+(defn sphere-impl
   ([r] (sphere-impl r 16 12))
-  ([r segments rings]
-   (with-creation-pose (prims/sphere-mesh r segments rings))))
+  ([r segs rings] (with-creation-pose (prims/sphere-mesh r segs rings))))
 
-(defn- cyl-impl
+(defn cyl-impl
   ([r h] (cyl-impl r h 32))
-  ([r h n]
-   (with-creation-pose (prims/cyl-mesh r h n))))
+  ([r h n] (with-creation-pose (prims/cyl-mesh r h n))))
 
-(defn- cone-impl
+(defn cone-impl
   ([r h] (cone-impl r h 32))
-  ([r h n]
-   (with-creation-pose (prims/cone-mesh r h n))))
+  ([r h n] (with-creation-pose (prims/cone-mesh r h n))))
 
-(defn- circle-impl
+(defn circle-impl
   ([r] (circle-impl r 32))
   ([r n] (shape/circle-shape r n)))
 
 ;; ── Register ────────────────────────────────────────────────────
 
-(defn- register-impl [name mesh]
+(defn register-impl [name mesh]
   (swap! registered-meshes assoc name mesh)
   mesh)
 
@@ -101,11 +75,73 @@
     (println (str label ": " (format "%.1f" (/ (- t1 t0) 1e6)) "ms"))
     result))
 
-;; ── DSL Namespace Setup ─────────────────────────────────────────
+;; ── Extrude/Loft impl functions (called from macros) ────────────
+
+(defn extrude-impl
+  "extrude-impl: shape + path-data → mesh"
+  [shape path-data]
+  (let [current @turtle-state
+        initial (-> (turtle/make-turtle)
+                    (assoc :position (:position current))
+                    (assoc :heading (:heading current))
+                    (assoc :up (:up current))
+                    (assoc :resolution (:resolution current)))
+        state (turtle/extrude-from-path initial shape path-data)
+        mesh (last (:meshes state))]
+    (when mesh
+      (assoc mesh :creation-pose
+             {:position (:position current) :heading (:heading current) :up (:up current)}))))
+
+(defn loft-impl
+  "loft-impl: dispatch based on args"
+  ([first-arg path-data]
+   (let [current @turtle-state
+         initial (-> (turtle/make-turtle)
+                     (assoc :position (:position current))
+                     (assoc :heading (:heading current))
+                     (assoc :up (:up current))
+                     (assoc :resolution (:resolution current)))]
+     (cond
+       (sfn/shape-fn? first-arg)
+       (let [state (loft/loft-from-path initial first-arg nil path-data)
+             mesh (last (:meshes state))]
+         (when mesh
+           (assoc mesh :creation-pose
+                  {:position (:position current) :heading (:heading current) :up (:up current)})))
+
+       :else
+       (throw (Exception. "loft: 2-arg form requires a shape-fn as first argument")))))
+  ([first-arg second-arg path-data]
+   (let [current @turtle-state
+         initial (-> (turtle/make-turtle)
+                     (assoc :position (:position current))
+                     (assoc :heading (:heading current))
+                     (assoc :up (:up current))
+                     (assoc :resolution (:resolution current)))]
+     (cond
+       (sfn/shape-fn? first-arg)
+       (loft-impl first-arg path-data)
+
+       (shape/shape? second-arg)
+       ;; Two-shape loft: use loft-from-path with a morphed shape-fn
+       (let [morphed (sfn/morphed first-arg second-arg)
+             state (loft/loft-from-path initial morphed nil path-data)
+             mesh (last (:meshes state))]
+         (when mesh
+           (assoc mesh :creation-pose
+                  {:position (:position current) :heading (:heading current) :up (:up current)})))
+
+       :else  ;; legacy transform-fn mode
+       (let [state (loft/loft-from-path initial first-arg second-arg path-data)
+             mesh (last (:meshes state))]
+         (when mesh
+           (assoc mesh :creation-pose
+                  {:position (:position current) :heading (:heading current) :up (:up current)})))))))
+
+;; ── DSL bindings (non-macro) ────────────────────────────────────
 
 (def dsl-bindings
-  "Map of symbol → value for the DSL namespace."
-  {;; Turtle movement (implicit, mutate state)
+  {;; Turtle movement
    'f    implicit-f
    'th   implicit-th
    'tv   implicit-tv
@@ -114,9 +150,6 @@
    'd    implicit-d
    'rt   implicit-rt
    'lt   implicit-lt
-   ;; Pen
-   'pen-up    implicit-pen-up
-   'pen-down  implicit-pen-down
    ;; 3D primitives
    'box    box-impl
    'sphere sphere-impl
@@ -145,7 +178,7 @@
    'profile  sfn/profile
    'capped   sfn/capped
    'shell    sfn/shell
-   ;; transform-mesh
+   ;; transform
    'transform turtle/transform-mesh
    ;; Boolean ops (via Rust HTTP server)
    'mesh-union       manifold/union
@@ -206,54 +239,62 @@
                              {:min [(apply min xs) (apply min ys) (apply min zs)]
                               :max [(apply max xs) (apply max ys) (apply max zs)]}))})
 
-;; ── Attach macro source ─────────────────────────────────────────
-;; attach must be a macro because (attach mesh (f 10) (th 90))
-;; needs to execute f/th in the context of the attached turtle state.
+;; ── Macro sources (injected into eval namespace) ────────────────
+;; These macros rebind f/th/tv etc. to recorder versions inside their body.
+
+(def ^:private path-macro-source
+  "(defmacro path [& body]
+     `(let [rec# (atom (ridley.turtle.core/make-recorder))
+            ~'f  (fn [d#] (swap! rec# ridley.turtle.core/rec-f d#))
+            ~'th (fn [a#] (swap! rec# ridley.turtle.core/rec-th a#))
+            ~'tv (fn [a#] (swap! rec# ridley.turtle.core/rec-tv a#))
+            ~'tr (fn [a#] (swap! rec# ridley.turtle.core/rec-tr a#))
+            ~'u  (fn [d#] (swap! rec# ridley.turtle.core/rec-u d#))
+            ~'rt (fn [d#] (swap! rec# ridley.turtle.core/rec-rt d#))
+            ~'lt (fn [d#] (swap! rec# ridley.turtle.core/rec-lt d#))]
+        ~@body
+        (ridley.turtle.core/path-from-recorder @rec#)))")
+
+(def ^:private extrude-macro-source
+  "(defmacro extrude [shape & movements]
+     `(ridley.jvm.eval/extrude-impl ~shape (path ~@movements)))")
+
+(def ^:private loft-macro-source
+  "(defmacro loft [first-arg & rest-args]
+     (let [mvmt? (fn [x#] (and (list? x#) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v} (first x#))))]
+       (cond
+         (= 1 (count rest-args))
+         `(ridley.jvm.eval/loft-impl ~first-arg (path ~(first rest-args)))
+
+         (mvmt? (first rest-args))
+         `(ridley.jvm.eval/loft-impl ~first-arg (path ~@rest-args))
+
+         :else
+         (let [[dispatch-arg# & movements#] rest-args]
+           (if (seq movements#)
+             `(ridley.jvm.eval/loft-impl ~first-arg ~dispatch-arg# (path ~@movements#))
+             `(ridley.jvm.eval/loft-impl ~first-arg (path ~dispatch-arg#)))))))")
 
 (def ^:private attach-macro-source
   "(defmacro attach [mesh & body]
      `(let [saved# @ridley.jvm.eval/turtle-state
-            ;; Get creation pose from mesh (or default)
             pose# (or (:creation-pose ~mesh)
                        {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})
             p0# (:position pose#)
             h0# (ridley.math/normalize (:heading pose#))
             u0# (ridley.math/normalize (:up pose#))]
-        ;; Set turtle to mesh's creation pose, execute body movements
         (reset! ridley.jvm.eval/turtle-state
                 (assoc (ridley.turtle.core/make-turtle)
                        :position p0# :heading h0# :up u0#))
         ~@body
-        ;; Turtle now at final pose — transform mesh vertices
         (let [t# @ridley.jvm.eval/turtle-state
               p1# (:position t#)
               h1# (ridley.math/normalize (:heading t#))
               u1# (ridley.math/normalize (:up t#))
-              result# (ridley.turtle.attachment/group-transform
-                        [~mesh] p0# h0# u0# p1# h1# u1#)]
+              result# (first (ridley.turtle.attachment/group-transform
+                               [~mesh] p0# h0# u0# p1# h1# u1#))]
           (reset! ridley.jvm.eval/turtle-state saved#)
-          (first result#))))")
-
-;; Extrude/loft macros — they need path (which captures turtle movements)
-(def ^:private extrude-macro-source
-  "(defmacro extrude [shape & movements]
-     `(let [saved# @ridley.jvm.eval/turtle-state
-            fresh# (ridley.turtle.core/make-turtle)]
-        (reset! ridley.jvm.eval/turtle-state fresh#)
-        ~@movements
-        (let [path-data# (ridley.turtle.path/path-from-state @ridley.jvm.eval/turtle-state)]
-          (reset! ridley.jvm.eval/turtle-state saved#)
-          (ridley.turtle.extrusion/extrude-from-path ~shape path-data# {}))))")
-
-(def ^:private loft-macro-source
-  "(defmacro loft [shape transform-fn & movements]
-     `(let [saved# @ridley.jvm.eval/turtle-state
-            fresh# (ridley.turtle.core/make-turtle)]
-        (reset! ridley.jvm.eval/turtle-state fresh#)
-        ~@movements
-        (let [path-data# (ridley.turtle.path/path-from-state @ridley.jvm.eval/turtle-state)]
-          (reset! ridley.jvm.eval/turtle-state saved#)
-          (ridley.turtle.loft/loft-from-path ~shape ~transform-fn path-data# {}))))")
+          result#)))")
 
 (defn eval-script
   "Evaluate a DSL script string. Returns map of registered meshes."
@@ -262,18 +303,17 @@
   (let [ns-sym (gensym "ridley-eval-")
         ns-obj (create-ns ns-sym)]
     (try
-      ;; Intern Clojure core
       (binding [*ns* ns-obj]
         (refer 'clojure.core))
-      ;; Intern all DSL bindings
       (doseq [[sym val] dsl-bindings]
         (intern ns-obj sym val))
-      ;; Inject macros (attach, extrude, loft)
+      ;; Inject macros
       (binding [*ns* ns-obj]
-        (load-string attach-macro-source)
+        (load-string path-macro-source)
         (load-string extrude-macro-source)
-        (load-string loft-macro-source))
-      ;; Eval the script
+        (load-string loft-macro-source)
+        (load-string attach-macro-source))
+      ;; Eval script
       (binding [*ns* ns-obj]
         (load-string script-text))
       @registered-meshes

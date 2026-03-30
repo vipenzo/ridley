@@ -18,11 +18,15 @@
      :creation-pose {:position [0 0 0] :heading [1 0 0] :up [0 0 1]}}))
 
 (defn- invoke [endpoint payload]
-  (let [resp (http/post (str server-url endpoint)
-               {:body (json/write-str payload)
+  (let [body-str (json/write-str payload)
+        resp (http/post (str server-url endpoint)
+               {:body body-str
                 :content-type :json
-                :as :string})]
-    (json->mesh (:body resp))))
+                :as :string
+                :throw-exceptions false})]
+    (if (= 200 (:status resp))
+      (json->mesh (:body resp))
+      (throw (Exception. (str "Rust server " endpoint " returned " (:status resp) ": " (:body resp)))))))
 
 (defn union
   "Union meshes via native Rust Manifold."

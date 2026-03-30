@@ -24,10 +24,10 @@
   "Validate that a value is a finite number. Throws with a clear message if not.
    Catches NaN and non-numeric values early, before they corrupt geometry."
   [value command-name]
-  (when-not (and (number? value) ((fn [x] (Double/isFinite (double x))) value))
+  (when-not (and (number? value) (Double/isFinite (double value)))
     (throw (Exception. (str "(" command-name " " (pr-str value) "): expected a number, got "
                            (cond
-                             ((fn [x] (Double/isNaN (double x))) value) "NaN (bad arithmetic?)"
+                             (Double/isNaN (double value)) "NaN (bad arithmetic?)"
                              (not (number? value)) (str (type value))
                              :else "Infinity"))))))
 
@@ -122,20 +122,95 @@
 
 ;; --- Triangulation (earcut) ---
 
+;; --- Ear-clipping triangulation (pure Clojure) ---
+
+(defn- signed-area-2d
+  "Signed area of a 2D polygon. Positive = CCW, negative = CW."
+  [pts]
+  (let [n (count pts)]
+    (* 0.5 (reduce + (for [i (range n)]
+                        (let [[x1 y1] (nth pts i)
+                              [x2 y2] (nth pts (mod (inc i) n))]
+                          (- (* x1 y2) (* x2 y1))))))))
+
+(defn- point-in-triangle?
+  "Test if point p is inside triangle [a b c] using barycentric coords."
+  [[px py] [ax ay] [bx by] [cx cy]]
+  (let [v0x (- cx ax) v0y (- cy ay)
+        v1x (- bx ax) v1y (- by ay)
+        v2x (- px ax) v2y (- py ay)
+        dot00 (+ (* v0x v0x) (* v0y v0y))
+        dot01 (+ (* v0x v1x) (* v0y v1y))
+        dot02 (+ (* v0x v2x) (* v0y v2y))
+        dot11 (+ (* v1x v1x) (* v1y v1y))
+        dot12 (+ (* v1x v2x) (* v1y v2y))
+        inv-denom (/ 1.0 (- (* dot00 dot11) (* dot01 dot01)))
+        u (* (- (* dot11 dot02) (* dot01 dot12)) inv-denom)
+        v (* (- (* dot00 dot12) (* dot01 dot02)) inv-denom)]
+    (and (>= u 0) (>= v 0) (< (+ u v) 1))))
+
+(defn- is-ear?
+  "Check if vertex at index i is an ear (convex and no other vertex inside)."
+  [pts indices i]
+  (let [n (count indices)
+        prev-idx (nth indices (mod (dec i) n))
+        curr-idx (nth indices i)
+        next-idx (nth indices (mod (inc i) n))
+        a (nth pts prev-idx)
+        b (nth pts curr-idx)
+        c (nth pts next-idx)
+        ;; Check convexity (cross product > 0 for CCW)
+        cross (- (* (- (a 0) (b 0)) (- (c 1) (b 1)))
+                  (* (- (a 1) (b 1)) (- (c 0) (b 0))))]
+    (when (> cross 0)
+      ;; Check no other vertex inside this triangle
+      (not (some (fn [j]
+                   (when (and (not= j (mod (dec i) n))
+                              (not= j i)
+                              (not= j (mod (inc i) n)))
+                     (point-in-triangle? (nth pts (nth indices j)) a b c)))
+                 (range n))))))
+
 (defn earcut-triangulate
-  "Triangulate a 2D polygon with holes.
-   JVM spike: uses fan triangulation (correct for convex polygons).
-   TODO: integrate earcut4j for concave polygon support."
+  "Triangulate a 2D polygon using ear-clipping algorithm.
+   Returns vector of [i j k] triangles (indices into original vertex list).
+   Handles concave polygons correctly. Holes not yet supported."
   [outer holes]
-  (if (seq holes)
-    ;; With holes: fan-triangulate just the outer, ignoring holes for now
-    (do (when (seq holes)
-          (println "WARN: earcut-triangulate ignoring" (count holes) "holes (JVM spike)"))
-        (vec (for [i (range 1 (dec (count outer)))]
-               [0 i (inc i)])))
-    ;; Simple case: fan triangulation
-    (vec (for [i (range 1 (dec (count outer)))]
-           [0 i (inc i)]))))
+  (when (seq holes)
+    (println "WARN: earcut-triangulate ignoring" (count holes) "holes (JVM spike)"))
+  (let [n (count outer)
+        ;; Ensure CCW winding
+        pts (if (neg? (signed-area-2d outer))
+              (vec (reverse outer))
+              outer)
+        ccw? (not (neg? (signed-area-2d outer)))
+        ;; Original indices (for mapping back)
+        orig-indices (if ccw? (vec (range n)) (vec (reverse (range n))))]
+    (if (<= n 3)
+      (if (= n 3) [[0 1 2]] [])
+      (loop [indices (vec (range n))
+             tris []]
+        (if (<= (count indices) 3)
+          (if (= (count indices) 3)
+            (conj tris [(orig-indices (indices 0))
+                        (orig-indices (indices 1))
+                        (orig-indices (indices 2))])
+            tris)
+          (let [ear-idx (first (filter #(is-ear? pts indices %) (range (count indices))))]
+            (if ear-idx
+              (let [n-idx (count indices)
+                    prev (nth indices (mod (dec ear-idx) n-idx))
+                    curr (nth indices ear-idx)
+                    next-i (nth indices (mod (inc ear-idx) n-idx))
+                    tri [(orig-indices prev) (orig-indices curr) (orig-indices next-i)]
+                    new-indices (into (subvec indices 0 ear-idx)
+                                     (subvec indices (inc ear-idx)))]
+                (recur new-indices (conj tris tri)))
+              ;; No ear found — fallback to fan
+              (into tris (for [i (range 1 (dec (count indices)))]
+                           [(orig-indices (indices 0))
+                            (orig-indices (indices i))
+                            (orig-indices (indices (inc i)))])))))))))
 
 (defn- libtess-triangulate
   "Triangulate a 2D polygon with holes.

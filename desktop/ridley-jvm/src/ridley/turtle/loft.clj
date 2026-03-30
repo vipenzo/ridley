@@ -518,7 +518,7 @@
         [t-start t-end] (if (= cap-end :top)
                           [(max 0 (- 1 cap-ratio)) 1]
                           [0 (min 1 cap-ratio)])
-        cap-steps (max 2 (Math/round (* steps cap-ratio)))
+        cap-steps (max 2 (Math/round (double (* steps cap-ratio))))
         heading (:heading state)
         end-pos (:position state)
         start-pos (v- end-pos (v* heading cap-thickness))
@@ -803,7 +803,7 @@
                              ;; the path already provides fine-grained sampling. Forcing max 4
                              ;; creates 64+ overlapping rings on tight curves.
                              min-seg-steps (if has-corner 4 1)
-                             seg-steps (max min-seg-steps (Math/round (* steps (/ seg-dist total-visible-dist))))
+                             seg-steps (max min-seg-steps (Math/round (double (* steps (/ seg-dist total-visible-dist)))))
 
                              ;; Remaining distance to the original corner after start offset
                              remaining-to-corner (max 0.0 (- seg-dist prev-rn))
