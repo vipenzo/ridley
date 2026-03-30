@@ -111,14 +111,20 @@
           :creation-pose {:position [0 0 0] :heading [1 0 0] :up [0 0 1]}})
        (throw (Exception. (str "SDF mesh failed: " (:body resp))))))))
 
+(def ^:dynamic *sdf-resolution*
+  "Default SDF meshing resolution (voxels per unit).
+   Bound from turtle state's :resolution :value."
+  15)
+
 (defn ensure-mesh
   "If x is an SDF node, materialize it. If it's already a mesh, return as-is.
-   When a reference mesh is provided, use its bounds to guide SDF meshing."
-  ([x] (if (sdf-node? x) (materialize x) x))
+   When a reference mesh is provided, use its bounds to guide SDF meshing.
+   Resolution comes from *sdf-resolution* (set by the eval engine from turtle state)."
+  ([x] (if (sdf-node? x) (materialize x nil *sdf-resolution*) x))
   ([x reference-mesh]
    (if (sdf-node? x)
      (let [bounds (if reference-mesh
                     (expand-bounds (mesh-bounds reference-mesh) 1.3)
                     (auto-bounds x))]
-       (materialize x bounds))
+       (materialize x bounds *sdf-resolution*))
      x)))

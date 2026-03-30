@@ -75,7 +75,9 @@
 ;; ── Register ────────────────────────────────────────────────────
 
 (defn register-impl [name value]
-  (let [mesh (sdf/ensure-mesh value)]
+  (let [res (get-in @turtle-state [:resolution :value] 15)
+        mesh (binding [sdf/*sdf-resolution* res]
+               (sdf/ensure-mesh value))]
     (swap! registered-meshes assoc name mesh)
     mesh))
 
