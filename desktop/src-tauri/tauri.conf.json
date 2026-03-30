@@ -6,8 +6,8 @@
   "build": {
     "devUrl": "http://localhost:9000",
     "frontendDist": "../../public",
-    "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run release"
+    "beforeDevCommand": "cd ../.. && npm run dev",
+    "beforeBuildCommand": "cd ../.. && npm run release"
   },
   "app": {
     "withGlobalTauri": true,
@@ -21,7 +21,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:12321 https: wss: ws:; img-src 'self' data: blob: asset: https://asset.localhost; style-src 'self' 'unsafe-inline'; font-src 'self' data:; worker-src 'self' blob:"
+      "csp": "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:12321 http://127.0.0.1:12322 https: wss: ws:; img-src 'self' data: blob: asset: https://asset.localhost; style-src 'self' 'unsafe-inline'; font-src 'self' data:; worker-src 'self' blob:"
     }
   },
   "bundle": {

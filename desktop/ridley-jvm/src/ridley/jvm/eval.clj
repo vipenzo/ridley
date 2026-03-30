@@ -47,6 +47,15 @@
   ([mode value] (swap! turtle-state assoc :resolution {:mode mode :value value}))
   ([value] (swap! turtle-state assoc :resolution {:mode :n :value value})))
 
+(defn implicit-bezier-to [target & args]
+  (swap! turtle-state #(apply turtle/bezier-to % target args)))
+(defn implicit-bezier-as [p & args]
+  (swap! turtle-state #(apply turtle/bezier-as % p args)))
+(defn implicit-goto [anchor-name]
+  (swap! turtle-state turtle/goto anchor-name))
+(defn implicit-look-at [anchor-name]
+  (swap! turtle-state turtle/look-at anchor-name))
+
 ;; ── Geometry helpers ────────────────────────────────────────────
 
 (defn- with-creation-pose [mesh]
@@ -85,7 +94,7 @@
 
 (defn bench [label f]
   (let [t0 (System/nanoTime)
-        result (f)
+        result (if (fn? f) (f) f)
         t1 (System/nanoTime)]
     (println (str label ": " (format "%.1f" (/ (- t1 t0) 1e6)) "ms"))
     result))
@@ -183,6 +192,12 @@
    ;; Arc
    'arc-h  implicit-arc-h
    'arc-v  implicit-arc-v
+   ;; Bezier
+   'bezier-to  implicit-bezier-to
+   'bezier-as  implicit-bezier-as
+   ;; Navigation
+   'goto       implicit-goto
+   'look-at    implicit-look-at
    ;; Pen / sweep
    'pen          implicit-pen
    'pen-up       (fn [] (swap! turtle-state turtle/pen-up))
@@ -239,8 +254,7 @@
    'shape-difference   clipper/shape-difference
    'shape-intersection clipper/shape-intersection
    'shape-offset       clipper/shape-offset
-   ;; Register
-   'register  register-impl
+   ;; Register is a macro (injected separately) — register-impl is the backing fn
    'color     (fn [& _] nil)
    ;; File I/O (JVM native — direct filesystem access)
    'save-stl  (fn [value path] (stl/save-stl (sdf/ensure-mesh value) path))
@@ -432,12 +446,20 @@
               (reset! ridley.jvm.eval/turtle-state saved#)
               result#)))))")
 
+(def ^:private register-macro-source
+  "(defmacro register [name expr & opts]
+     `(let [v# ~expr]
+        (ridley.jvm.eval/register-impl '~name v#)
+        (def ~name v#)
+        v#))")
+
 (defn eval-script
-  "Evaluate a DSL script string. Returns map of registered meshes."
+  "Evaluate a DSL script string. Returns {:meshes map :print-output str}."
   [script-text]
   (reset-state!)
   (let [ns-sym (gensym "ridley-eval-")
-        ns-obj (create-ns ns-sym)]
+        ns-obj (create-ns ns-sym)
+        output (java.io.StringWriter.)]
     (try
       (binding [*ns* ns-obj]
         (refer 'clojure.core))
@@ -449,10 +471,13 @@
         (load-string extrude-macro-source)
         (load-string extrude-closed-macro-source)
         (load-string loft-macro-source)
-        (load-string attach-macro-source))
-      ;; Eval script
-      (binding [*ns* ns-obj]
+        (load-string attach-macro-source)
+        (load-string register-macro-source))
+      ;; Eval script, capturing print output
+      (binding [*ns* ns-obj
+                *out* output]
         (load-string script-text))
-      @registered-meshes
+      {:meshes @registered-meshes
+       :print-output (str output)}
       (finally
         (remove-ns ns-sym)))))

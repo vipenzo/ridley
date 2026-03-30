@@ -17,13 +17,18 @@
         t0 (System/nanoTime)
         result (eval-engine/eval-script script)
         t1 (System/nanoTime)
-        elapsed-ms (/ (- t1 t0) 1e6)]
-    (println (format "eval: %.1fms, %d mesh(es) registered" elapsed-ms (count result)))
+        elapsed-ms (/ (- t1 t0) 1e6)
+        meshes (:meshes result)
+        print-output (:print-output result)]
+    (println (format "eval: %.1fms, %d mesh(es) registered" elapsed-ms (count meshes)))
+    (when (seq print-output)
+      (println "  output:" (.substring print-output 0 (min 200 (count print-output)))))
     (cors-headers
       {:status 200
        :body (json/write-str
-               {:meshes result
-                :elapsed_ms elapsed-ms})})))
+               {:meshes meshes
+                :elapsed_ms elapsed-ms
+                :print_output print-output})})))
 
 (defn handler [request]
   (cond
@@ -37,9 +42,16 @@
     (try
       (handle-eval (slurp (:body request)))
       (catch Exception e
-        (cors-headers
-          {:status 500
-           :body (json/write-str {:error (.getMessage e)})})))
+        (let [root (loop [ex e]
+                     (if-let [cause (.getCause ex)]
+                       (recur cause)
+                       ex))
+              msg (str (.getMessage e)
+                       (when (not= root e)
+                         (str "\nCaused by: " (.getMessage root))))]
+          (cors-headers
+            {:status 500
+             :body (json/write-str {:error msg})}))))
 
     ;; Ping
     (= "/ping" (:uri request))

@@ -372,6 +372,29 @@ html, body {
   user-select: none;
 }
 
+/* JVM Toggle Button */
+.jvm-toggle {
+  color: #a0a0a0;
+  font-size: 10px;
+  font-weight: bold;
+  letter-spacing: 0.5px;
+}
+
+.jvm-toggle:hover {
+  background: #3c3c3c;
+  color: #d4d4d4;
+}
+
+.jvm-toggle.active {
+  color: #4ec9b0;
+  border-color: #4ec9b0;
+}
+
+.jvm-toggle.active:hover {
+  background: #2d4a3e;
+  color: #4ec9b0;
+}
+
 /* VR Button */
 .vr-btn {
   color: #b48eff;

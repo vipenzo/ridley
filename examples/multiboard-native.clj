@@ -271,5 +271,5 @@
     ))
 
 ;; ── Run ─────────────────────────────────────────────────────────
-(register Tile (bench "Tile 15x15" (multiboard-bench 15 15)))
+(register Tile (bench "Tile 15x15" #(multiboard-bench 15 15)))
 (color :Tile 0xffffff)

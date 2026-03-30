@@ -18,7 +18,8 @@
             [ridley.editor.bindings :refer [base-bindings]]
             [ridley.editor.macros :refer [macro-defs]]
             [ridley.library.core :as library]
-            [ridley.library.svg :as svg]))
+            [ridley.library.svg :as svg]
+            [ridley.jvm.client :as jvm]))
 
 ;; ============================================================
 ;; SCI Context Management
@@ -172,3 +173,14 @@
       {:lines (vec lines)
        :stamps (vec stamps)
        :meshes []})))
+
+;; ============================================================
+;; JVM Sidecar Evaluation
+;; ============================================================
+
+(defn evaluate-definitions-jvm
+  "Evaluate definitions by sending the script to the JVM sidecar.
+   The JVM evaluates the full DSL, returns registered meshes.
+   Returns {:meshes {name mesh} :print-output str :elapsed-ms num} or {:error str}."
+  [code]
+  (jvm/eval-script code))

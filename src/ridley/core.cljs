@@ -31,12 +31,16 @@
             [ridley.anim.playback :as anim-playback]
             [ridley.editor.test-mode :as test-mode]
             [ridley.version :as version]
-            [ridley.audio :as audio]))
+            [ridley.audio :as audio]
+            [ridley.jvm.client :as jvm]))
 
 (defonce ^:private editor-view (atom nil))
 (defonce ^:private repl-input-el (atom nil))
 (defonce ^:private repl-history-el (atom nil))
 (defonce ^:private error-el (atom nil))
+
+;; JVM sidecar mode — when true, scripts are sent to JVM instead of SCI
+(defonce jvm-mode (atom false))
 
 ;; Command history
 (defonce ^:private command-history (atom []))
@@ -139,8 +143,90 @@
   []
   (viewport/update-turtle-pose (editor-state/get-turtle-pose)))
 
+(defn- evaluate-definitions-sci
+  "Evaluate definitions via SCI (browser-side). The standard path."
+  [reset-camera?]
+  (let [explicit-code (cm/get-value @editor-view)
+        result (repl/evaluate-definitions explicit-code)]
+    (viewport/hide-loading!)
+    (if-let [error (:error result)]
+      (do
+        (show-error error)
+        (audio/play-feedback! false))
+      (do
+        ;; Show library load warnings if any
+        (let [lib-warnings @lib-core/load-warnings]
+          (if (seq lib-warnings)
+            (show-error (str/join "\n" lib-warnings))
+            (hide-error)))
+        ;; Show print output in REPL history if any
+        (when-let [print-output (:print-output result)]
+          (add-script-output print-output))
+        (let [render-data (repl/extract-render-data result)]
+          (when render-data
+            ;; Store lines, stamps, and definition meshes
+            (registry/set-lines! (:lines render-data))
+            (registry/set-stamps! (or (:stamps render-data) []))
+            (registry/set-definition-meshes! (:meshes render-data)))
+          ;; Refresh viewport, optionally resetting camera
+          (registry/refresh-viewport! reset-camera?)
+          ;; Announce success for screen readers (via aria-live on repl-history)
+          (let [mesh-count (count (or (:meshes render-data) []))
+                line-count (count (or (:lines render-data) []))
+                summary (cond
+                          (and (pos? mesh-count) (pos? line-count))
+                          (str "Evaluation successful: " mesh-count " mesh"
+                               (when (> mesh-count 1) "es")
+                               ", " line-count " line"
+                               (when (> line-count 1) "s"))
+                          (pos? mesh-count)
+                          (str "Evaluation successful: " mesh-count " mesh"
+                               (when (> mesh-count 1) "es"))
+                          (pos? line-count)
+                          (str "Evaluation successful: " line-count " line"
+                               (when (> line-count 1) "s"))
+                          :else
+                          "Evaluation successful")]
+            (add-repl-entry "[Run]" summary false)))
+        ;; Update turtle indicator
+        (update-turtle-indicator)
+        ;; Sync AI state
+        (sync-voice-state)
+        ;; Audio feedback
+        (audio/play-feedback! true)))))
+
+(defn- evaluate-definitions-jvm
+  "Evaluate definitions via JVM sidecar. Sends full script, receives meshes."
+  [reset-camera?]
+  (let [code (cm/get-value @editor-view)
+        result (repl/evaluate-definitions-jvm code)]
+    (viewport/hide-loading!)
+    (if-let [error (:error result)]
+      (do
+        (show-error error)
+        (audio/play-feedback! false))
+      (let [{:keys [meshes print-output elapsed-ms]} result]
+        (hide-error)
+        ;; Show print output
+        (when (seq print-output)
+          (add-script-output print-output))
+        ;; Register each mesh from JVM in the scene registry
+        (doseq [[name mesh] meshes]
+          (registry/register-mesh! name mesh))
+        ;; Refresh viewport
+        (registry/refresh-viewport! reset-camera?)
+        ;; Summary
+        (let [mesh-count (count meshes)
+              summary (str "JVM eval: " mesh-count " mesh"
+                          (when (> mesh-count 1) "es")
+                          " in " (.toFixed (or elapsed-ms 0) 0) "ms")]
+          (add-repl-entry "[Run/JVM]" summary false))
+        ;; Audio feedback
+        (audio/play-feedback! true)))))
+
 (defn- evaluate-definitions
   "Evaluate only the definitions panel (for Cmd+Enter).
+   Routes to JVM sidecar when jvm-mode is active, otherwise SCI.
    Optional reset-camera? parameter controls whether to reset camera view (default false)."
   ([] (evaluate-definitions false))
   ([reset-camera?]
@@ -155,54 +241,9 @@
     (fn []
       (js/setTimeout
        (fn []
-         (let [explicit-code (cm/get-value @editor-view)
-               result (repl/evaluate-definitions explicit-code)]
-           (viewport/hide-loading!)
-           (if-let [error (:error result)]
-             (do
-               (show-error error)
-               (audio/play-feedback! false))
-             (do
-               ;; Show library load warnings if any
-               (let [lib-warnings @lib-core/load-warnings]
-                 (if (seq lib-warnings)
-                   (show-error (str/join "\n" lib-warnings))
-                   (hide-error)))
-               ;; Show print output in REPL history if any
-               (when-let [print-output (:print-output result)]
-                 (add-script-output print-output))
-               (let [render-data (repl/extract-render-data result)]
-                 (when render-data
-                   ;; Store lines, stamps, and definition meshes
-                   (registry/set-lines! (:lines render-data))
-                   (registry/set-stamps! (or (:stamps render-data) []))
-                   (registry/set-definition-meshes! (:meshes render-data)))
-                 ;; Refresh viewport, optionally resetting camera
-                 (registry/refresh-viewport! reset-camera?)
-                 ;; Announce success for screen readers (via aria-live on repl-history)
-                 (let [mesh-count (count (or (:meshes render-data) []))
-                       line-count (count (or (:lines render-data) []))
-                       summary (cond
-                                 (and (pos? mesh-count) (pos? line-count))
-                                 (str "Evaluation successful: " mesh-count " mesh"
-                                      (when (> mesh-count 1) "es")
-                                      ", " line-count " line"
-                                      (when (> line-count 1) "s"))
-                                 (pos? mesh-count)
-                                 (str "Evaluation successful: " mesh-count " mesh"
-                                      (when (> mesh-count 1) "es"))
-                                 (pos? line-count)
-                                 (str "Evaluation successful: " line-count " line"
-                                      (when (> line-count 1) "s"))
-                                 :else
-                                 "Evaluation successful")]
-                   (add-repl-entry "[Run]" summary false)))
-               ;; Update turtle indicator
-               (update-turtle-indicator)
-               ;; Sync AI state
-               (sync-voice-state)
-               ;; Audio feedback
-               (audio/play-feedback! true)))))
+         (if @jvm-mode
+           (evaluate-definitions-jvm reset-camera?)
+           (evaluate-definitions-sci reset-camera?)))
        0)))))
 
 (defn ^:export run-definitions!
@@ -2326,6 +2367,33 @@
     (-> (manifold/init!)
         (.then #(js/console.log "Manifold WASM initialized"))
         (.catch #(js/console.warn "Manifold WASM failed to initialize:" %)))
+    ;; Detect JVM sidecar availability (desktop mode)
+    (js/console.log "JVM sidecar: pinging :12322...")
+    (let [jvm-ok? (jvm/ping!)]
+      (js/console.log "JVM sidecar ping result:" jvm-ok?)
+      (when jvm-ok?
+        (reset! jvm-mode true)
+        (js/console.log "JVM eval mode enabled")
+        ;; Add JVM toggle indicator to toolbar (before version tag)
+        (when-let [toolbar (.getElementById js/document "viewport-toolbar")]
+          (let [btn (.createElement js/document "button")
+                version-tag (.getElementById js/document "version-tag")]
+            (set! (.-className btn) "action-btn jvm-toggle active")
+            (set! (.-id btn) "btn-jvm-toggle")
+            (set! (.-textContent btn) "JVM")
+            (set! (.-title btn) "Toggle JVM evaluation (currently: ON)")
+            (.addEventListener btn "click"
+              (fn []
+                (swap! jvm-mode not)
+                (let [on? @jvm-mode]
+                  (if on?
+                    (do (.add (.-classList btn) "active")
+                        (set! (.-title btn) "Toggle JVM evaluation (currently: ON)"))
+                    (do (.remove (.-classList btn) "active")
+                        (set! (.-title btn) "Toggle JVM evaluation (currently: OFF)"))))))
+            (if version-tag
+              (.insertBefore toolbar btn version-tag)
+              (.appendChild toolbar btn))))))
     ;; Initialize default font for text shapes (async)
     (-> (text/init-default-font!)
         (.then #(js/console.log "Default font loaded"))
