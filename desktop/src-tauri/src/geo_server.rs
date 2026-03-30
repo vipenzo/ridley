@@ -3,6 +3,7 @@
 //! The frontend calls it via synchronous XMLHttpRequest.
 
 use crate::manifold_ops::{self, MeshData};
+use crate::sdf_ops;
 use std::thread;
 use tiny_http::{Header, Method, Response, Server};
 
@@ -68,6 +69,11 @@ pub fn start() {
                     serde_json::from_str::<Vec<MeshData>>(&body)
                         .map_err(|e| format!("JSON parse error: {}", e))
                         .and_then(|meshes| manifold_ops::hull(&meshes))
+                }
+                "/sdf-mesh" => {
+                    serde_json::from_str::<sdf_ops::SdfMeshRequest>(&body)
+                        .map_err(|e| format!("JSON parse error: {}", e))
+                        .and_then(|req| sdf_ops::sdf_to_mesh(&req))
                 }
                 "/ping" => Ok(MeshData {
                     vertices: vec![],

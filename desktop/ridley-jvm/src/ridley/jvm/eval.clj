@@ -16,7 +16,8 @@
             [ridley.manifold.native :as manifold]
             [ridley.clipper.core :as clipper]
             [ridley.io.stl :as stl]
-            [ridley.io.svg :as svg]))
+            [ridley.io.svg :as svg]
+            [ridley.sdf.core :as sdf]))
 
 ;; ── Turtle state (global, reset per eval) ───────────────────────
 (def turtle-state (atom (turtle/make-turtle)))
@@ -73,9 +74,10 @@
 
 ;; ── Register ────────────────────────────────────────────────────
 
-(defn register-impl [name mesh]
-  (swap! registered-meshes assoc name mesh)
-  mesh)
+(defn register-impl [name value]
+  (let [mesh (sdf/ensure-mesh value)]
+    (swap! registered-meshes assoc name mesh)
+    mesh))
 
 ;; ── Bench ───────────────────────────────────────────────────────
 
@@ -239,9 +241,22 @@
    'register  register-impl
    'color     (fn [& _] nil)
    ;; File I/O (JVM native — direct filesystem access)
-   'save-stl  (fn [mesh path] (stl/save-stl mesh path))
+   'save-stl  (fn [value path] (stl/save-stl (sdf/ensure-mesh value) path))
    'load-stl  stl/load-stl
    'load-svg  svg/load-svg
+   ;; SDF operations (libfive via Rust backend)
+   'sdf-sphere       sdf/sdf-sphere
+   'sdf-box          sdf/sdf-box
+   'sdf-cyl          sdf/sdf-cyl
+   'sdf-union        sdf/sdf-union
+   'sdf-difference   sdf/sdf-difference
+   'sdf-intersection sdf/sdf-intersection
+   'sdf-blend        sdf/sdf-blend
+   'sdf-shell        sdf/sdf-shell
+   'sdf-offset       sdf/sdf-offset
+   'sdf-morph        sdf/sdf-morph
+   'sdf-move         sdf/sdf-move
+   'sdf->mesh        sdf/materialize     ;; explicit meshing (for resolution control)
    ;; Utility
    'bench     bench
    ;; Turtle state
@@ -386,23 +401,34 @@
 (def ^:private attach-macro-source
   "(defmacro attach [mesh & body]
      `(let [saved# @ridley.jvm.eval/turtle-state
-            pose# (or (:creation-pose ~mesh)
-                       {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})
-            p0# (:position pose#)
-            h0# (ridley.math/normalize (:heading pose#))
-            u0# (ridley.math/normalize (:up pose#))]
-        (reset! ridley.jvm.eval/turtle-state
-                (assoc (ridley.turtle.core/make-turtle)
-                       :position p0# :heading h0# :up u0#))
-        ~@body
-        (let [t# @ridley.jvm.eval/turtle-state
-              p1# (:position t#)
-              h1# (ridley.math/normalize (:heading t#))
-              u1# (ridley.math/normalize (:up t#))
-              result# (first (ridley.turtle.attachment/group-transform
-                               [~mesh] p0# h0# u0# p1# h1# u1#))]
-          (reset! ridley.jvm.eval/turtle-state saved#)
-          result#)))")
+            obj# ~mesh]
+        ;; SDF nodes: capture displacement as sdf-move
+        (if (and (map? obj#) (:op obj#))
+          (do
+            (reset! ridley.jvm.eval/turtle-state (ridley.turtle.core/make-turtle))
+            ~@body
+            (let [t# @ridley.jvm.eval/turtle-state
+                  p# (:position t#)]
+              (reset! ridley.jvm.eval/turtle-state saved#)
+              (ridley.sdf.core/sdf-move obj# (p# 0) (p# 1) (p# 2))))
+          ;; Mesh: use group-transform
+          (let [pose# (or (:creation-pose obj#)
+                           {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})
+                p0# (:position pose#)
+                h0# (ridley.math/normalize (:heading pose#))
+                u0# (ridley.math/normalize (:up pose#))]
+            (reset! ridley.jvm.eval/turtle-state
+                    (assoc (ridley.turtle.core/make-turtle)
+                           :position p0# :heading h0# :up u0#))
+            ~@body
+            (let [t# @ridley.jvm.eval/turtle-state
+                  p1# (:position t#)
+                  h1# (ridley.math/normalize (:heading t#))
+                  u1# (ridley.math/normalize (:up t#))
+                  result# (first (ridley.turtle.attachment/group-transform
+                                   [obj#] p0# h0# u0# p1# h1# u1#))]
+              (reset! ridley.jvm.eval/turtle-state saved#)
+              result#)))))")
 
 (defn eval-script
   "Evaluate a DSL script string. Returns map of registered meshes."

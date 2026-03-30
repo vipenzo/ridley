@@ -3,6 +3,7 @@
 
 mod geo_server;
 mod manifold_ops;
+mod sdf_ops;
 
 use manifold_ops::MeshData;
 

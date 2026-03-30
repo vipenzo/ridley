@@ -1,8 +1,10 @@
 (ns ridley.manifold.native
   "Manifold CSG operations via HTTP to the Rust backend on :12321.
-   Synchronous calls — the JVM thread blocks until Rust responds."
+   Synchronous calls — the JVM thread blocks until Rust responds.
+   Automatically materializes SDF nodes when mixed with mesh ops."
   (:require [clj-http.client :as http]
-            [clojure.data.json :as json]))
+            [clojure.data.json :as json]
+            [ridley.sdf.core :as sdf]))
 
 (def ^:private server-url "http://127.0.0.1:12321")
 
@@ -28,42 +30,63 @@
       (json->mesh (:body resp))
       (throw (Exception. (str "Rust server " endpoint " returned " (:status resp) ": " (:body resp)))))))
 
+(defn- ensure-all-mesh
+  "Materialize any SDF nodes in a list of operands.
+   Uses the first mesh found as bounds reference for SDF nodes."
+  [items]
+  (let [first-mesh (first (remove sdf/sdf-node? items))]
+    (mapv #(sdf/ensure-mesh % first-mesh) items)))
+
 (defn union
-  "Union meshes via native Rust Manifold."
+  "Union meshes/SDF via native Rust Manifold. SDF nodes auto-materialized."
   [first-arg & more]
   (let [meshes (if (and (empty? more) (sequential? first-arg))
                  (vec first-arg)
-                 (into [first-arg] more))]
-    (if (<= (count meshes) 1)
-      (first meshes)
-      (invoke "/union" (mapv mesh->json meshes)))))
+                 (into [first-arg] more))
+        ;; If ALL are SDF, combine as SDF tree
+        all-sdf? (every? sdf/sdf-node? meshes)]
+    (if all-sdf?
+      (reduce sdf/sdf-union meshes)
+      (let [meshes (ensure-all-mesh meshes)]
+        (if (<= (count meshes) 1)
+          (first meshes)
+          (invoke "/union" (mapv mesh->json meshes)))))))
 
 (defn difference
-  "Difference meshes via native Rust Manifold."
+  "Difference meshes/SDF via native Rust Manifold. SDF nodes auto-materialized."
   [first-arg & more]
   (let [meshes (if (and (empty? more) (sequential? first-arg))
                  (vec first-arg)
-                 (into [first-arg] more))]
-    (when (>= (count meshes) 2)
-      (invoke "/difference" {:base (mesh->json (first meshes))
-                             :cutters (mapv mesh->json (rest meshes))}))))
+                 (into [first-arg] more))
+        all-sdf? (every? sdf/sdf-node? meshes)]
+    (if all-sdf?
+      (reduce sdf/sdf-difference meshes)
+      (let [meshes (ensure-all-mesh meshes)]
+        (when (>= (count meshes) 2)
+          (invoke "/difference" {:base (mesh->json (first meshes))
+                                 :cutters (mapv mesh->json (rest meshes))}))))))
 
 (defn intersection
-  "Intersection meshes via native Rust Manifold."
+  "Intersection meshes/SDF via native Rust Manifold."
   [first-arg & more]
   (let [meshes (if (and (empty? more) (sequential? first-arg))
                  (vec first-arg)
-                 (into [first-arg] more))]
-    (if (<= (count meshes) 1)
-      (first meshes)
-      (invoke "/intersection" (mapv mesh->json meshes)))))
+                 (into [first-arg] more))
+        all-sdf? (every? sdf/sdf-node? meshes)]
+    (if all-sdf?
+      (reduce sdf/sdf-intersection meshes)
+      (let [meshes (ensure-all-mesh meshes)]
+        (if (<= (count meshes) 1)
+          (first meshes)
+          (invoke "/intersection" (mapv mesh->json meshes)))))))
 
 (defn hull
   "Convex hull via native Rust Manifold."
   [& args]
   (let [meshes (if (and (= 1 (count args)) (sequential? (first args)))
                  (first args)
-                 args)]
+                 args)
+        meshes (ensure-all-mesh meshes)]
     (invoke "/hull" (mapv mesh->json meshes))))
 
 (defn manifold? [_mesh] true) ;; Stub — assume valid for spike
