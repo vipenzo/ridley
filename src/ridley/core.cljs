@@ -2368,32 +2368,35 @@
         (.then #(js/console.log "Manifold WASM initialized"))
         (.catch #(js/console.warn "Manifold WASM failed to initialize:" %)))
     ;; Detect JVM sidecar availability (desktop mode)
-    (js/console.log "JVM sidecar: pinging :12322...")
-    (let [jvm-ok? (jvm/ping!)]
-      (js/console.log "JVM sidecar ping result:" jvm-ok?)
-      (when jvm-ok?
-        (reset! jvm-mode true)
-        (js/console.log "JVM eval mode enabled")
-        ;; Add JVM toggle indicator to toolbar (before version tag)
-        (when-let [toolbar (.getElementById js/document "viewport-toolbar")]
-          (let [btn (.createElement js/document "button")
-                version-tag (.getElementById js/document "version-tag")]
-            (set! (.-className btn) "action-btn jvm-toggle active")
-            (set! (.-id btn) "btn-jvm-toggle")
-            (set! (.-textContent btn) "JVM")
-            (set! (.-title btn) "Toggle JVM evaluation (currently: ON)")
-            (.addEventListener btn "click"
-              (fn []
-                (swap! jvm-mode not)
-                (let [on? @jvm-mode]
-                  (if on?
-                    (do (.add (.-classList btn) "active")
-                        (set! (.-title btn) "Toggle JVM evaluation (currently: ON)"))
-                    (do (.remove (.-classList btn) "active")
-                        (set! (.-title btn) "Toggle JVM evaluation (currently: OFF)"))))))
-            (if version-tag
-              (.insertBefore toolbar btn version-tag)
-              (.appendChild toolbar btn))))))
+    ;; Retry a few times — JVM takes ~5s to start when Tauri spawns it
+    (letfn [(enable-jvm! []
+              (reset! jvm-mode true)
+              (js/console.log "JVM eval mode enabled")
+              (when-let [toolbar (.getElementById js/document "viewport-toolbar")]
+                (let [btn (.createElement js/document "button")
+                      version-tag (.getElementById js/document "version-tag")]
+                  (set! (.-className btn) "action-btn jvm-toggle active")
+                  (set! (.-id btn) "btn-jvm-toggle")
+                  (set! (.-textContent btn) "JVM")
+                  (set! (.-title btn) "Toggle JVM evaluation (currently: ON)")
+                  (.addEventListener btn "click"
+                    (fn []
+                      (swap! jvm-mode not)
+                      (let [on? @jvm-mode]
+                        (if on?
+                          (do (.add (.-classList btn) "active")
+                              (set! (.-title btn) "Toggle JVM evaluation (currently: ON)"))
+                          (do (.remove (.-classList btn) "active")
+                              (set! (.-title btn) "Toggle JVM evaluation (currently: OFF)"))))))
+                  (if version-tag
+                    (.insertBefore toolbar btn version-tag)
+                    (.appendChild toolbar btn)))))
+            (try-ping! [attempt]
+              (if (jvm/ping!)
+                (enable-jvm!)
+                (when (< attempt 5)
+                  (js/setTimeout #(try-ping! (inc attempt)) 2000))))]
+      (try-ping! 0))
     ;; Initialize default font for text shapes (async)
     (-> (text/init-default-font!)
         (.then #(js/console.log "Default font loaded"))
