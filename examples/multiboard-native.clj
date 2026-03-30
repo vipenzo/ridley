@@ -135,6 +135,7 @@
           (- w ox)                 (- size-offset oy)
           (- w ox)                 (- (- h size-offset) oy))))
 
+(def WASM false)
 ;; ── Tile with benchmarking ──────────────────────────────────────
 (defn multiboard-bench [x-cells y-cells]
   (let [w (* x-cells cell-size)
@@ -270,5 +271,5 @@
     ))
 
 ;; ── Run ─────────────────────────────────────────────────────────
-(register Tile (multiboard-bench 4 4))
+(register Tile (bench "Tile 15x15" (multiboard-bench 15 15)))
 (color :Tile 0xffffff)
