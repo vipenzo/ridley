@@ -50,15 +50,20 @@
       (.send xhr (js/JSON.stringify #js {:script script-text}))
       (if (= 200 (.-status xhr))
         (let [^js result (js/JSON.parse (.-responseText xhr))
-              ^js meshes-js (.-meshes result)
+              ^js meshes-js (aget result "meshes")
+              keys (js/Object.keys meshes-js)
               mesh-map (reduce
                         (fn [acc k]
-                          (assoc acc (keyword k) (js->mesh (aget meshes-js k))))
+                          (let [m (aget meshes-js k)]
+                            (if m
+                              (assoc acc (keyword k) (js->mesh m))
+                              (do (js/console.warn "JVM: null mesh for key" k)
+                                  acc))))
                         {}
-                        (js/Object.keys meshes-js))]
+                        keys)]
           {:meshes mesh-map
-           :print-output (or (.-print_output result) "")
-           :elapsed-ms (.-elapsed_ms result)})
+           :print-output (or (aget result "print_output") "")
+           :elapsed-ms (aget result "elapsed_ms")})
         ;; Error response
         (let [^js err (try (js/JSON.parse (.-responseText xhr))
                            (catch :default _ nil))]
