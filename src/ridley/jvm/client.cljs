@@ -1,6 +1,7 @@
 (ns ridley.jvm.client
   "HTTP client for the JVM sidecar at port 12322.
-   Sends DSL scripts for server-side evaluation, receives mesh results.")
+   Sends DSL scripts for server-side evaluation, receives mesh results.
+   Uses binary transfer (base64 float64/int32) for mesh data.")
 
 (def ^:private server-url "http://127.0.0.1:12322")
 
@@ -22,16 +23,48 @@
       (reset! jvm-available? false)
       false)))
 
-(defn- js->mesh
-  "Convert a JS mesh object from the JVM response to a Ridley mesh map.
-   JSON keys use hyphens (from Clojure keywords), so we use aget for access."
+(defn- b64->float64-vec
+  "Decode base64 string → array of [x y z] float64 triplets."
+  [^js b64-str n]
+  (let [binary (js/atob b64-str)
+        buf (js/ArrayBuffer. (* n 3 8))
+        u8 (js/Uint8Array. buf)]
+    ;; Copy decoded bytes into ArrayBuffer
+    (dotimes [i (.-length binary)]
+      (aset u8 i (.charCodeAt binary i)))
+    (let [f64 (js/Float64Array. buf)]
+      (loop [i 0 out (transient [])]
+        (if (< i n)
+          (let [off (* i 3)]
+            (recur (inc i)
+                   (conj! out [(aget f64 off) (aget f64 (+ off 1)) (aget f64 (+ off 2))])))
+          (persistent! out))))))
+
+(defn- b64->int32-vec
+  "Decode base64 string → array of [a b c] int32 triplets."
+  [^js b64-str n]
+  (let [binary (js/atob b64-str)
+        buf (js/ArrayBuffer. (* n 3 4))
+        u8 (js/Uint8Array. buf)]
+    (dotimes [i (.-length binary)]
+      (aset u8 i (.charCodeAt binary i)))
+    (let [i32 (js/Int32Array. buf)]
+      (loop [i 0 out (transient [])]
+        (if (< i n)
+          (let [off (* i 3)]
+            (recur (inc i)
+                   (conj! out [(aget i32 off) (aget i32 (+ off 1)) (aget i32 (+ off 2))])))
+          (persistent! out))))))
+
+(defn- bin->mesh
+  "Decode a binary-encoded mesh from JVM response."
   [^js m]
-  (let [verts (aget m "vertices")
-        faces (aget m "faces")
-        cp    (aget m "creation-pose")]
+  (let [nv (aget m "vertex_count")
+        nf (aget m "face_count")
+        cp (aget m "creation-pose")]
     {:type :mesh
-     :vertices (vec (map (fn [^js v] [(aget v 0) (aget v 1) (aget v 2)]) verts))
-     :faces (vec (map (fn [^js f] [(int (aget f 0)) (int (aget f 1)) (int (aget f 2))]) faces))
+     :vertices (b64->float64-vec (aget m "vertices_b64") nv)
+     :faces (b64->int32-vec (aget m "faces_b64") nf)
      :creation-pose (if cp
                       {:position (vec (aget cp "position"))
                        :heading (vec (aget cp "heading"))
@@ -40,12 +73,13 @@
 
 (defn eval-script
   "Send a DSL script to the JVM sidecar for evaluation.
+   Uses /eval-bin for binary mesh transfer.
    Returns {:meshes {name mesh} :print-output str :elapsed-ms number}
    or {:error str}."
   [script-text]
   (try
     (let [xhr (js/XMLHttpRequest.)]
-      (.open xhr "POST" (str server-url "/eval") false)
+      (.open xhr "POST" (str server-url "/eval-bin") false)
       (.setRequestHeader xhr "Content-Type" "application/json")
       (.send xhr (js/JSON.stringify #js {:script script-text}))
       (if (= 200 (.-status xhr))
@@ -56,7 +90,7 @@
                         (fn [acc k]
                           (let [m (aget meshes-js k)]
                             (if m
-                              (assoc acc (keyword k) (js->mesh m))
+                              (assoc acc (keyword k) (bin->mesh m))
                               (do (js/console.warn "JVM: null mesh for key" k)
                                   acc))))
                         {}
