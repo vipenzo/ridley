@@ -19,17 +19,23 @@ This eliminates the need for separate boolean operations in most cases, while ke
 
 ### Core
 - **ClojureScript** — Main application language
-- **SCI** (Small Clojure Interpreter) — Embedded interpreter for user scripts
+- **SCI** (Small Clojure Interpreter) — Embedded interpreter for user scripts (browser)
 - **Custom geometry engine** — Mesh generation, face operations, extrusion
-- **Manifold** (WASM) — Boolean operations for complex CSG (future)
+- **Manifold** (WASM) — Boolean operations in browser mode
+- **Manifold** (native, via Rust) — Boolean operations in desktop mode (7x faster)
+
+### Desktop Backend (Tauri)
+- **Rust geo-server** (:12321) — Native Manifold CSG + libfive SDF meshing via tiny_http
+- **JVM sidecar** (:12322) — Full DSL evaluation server (Clojure), calls Rust for booleans
+- **Binary file transfer** — JVM writes mesh data as flat float64/int32, frontend fetches via HTTP
 
 ### Rendering
 - **Three.js** — 3D rendering engine
 - **WebXR** — VR/AR support (Quest 3, other headsets)
 
 ### Application Shell
-- **Tauri** — Desktop app packaging (macOS, lighter than Electron)
-- **Web** — Browser-based version (same codebase)
+- **Tauri v2** — Desktop app (macOS), auto-spawns JVM sidecar and frontend
+- **Web** — Browser-based version (SCI + WASM, same codebase)
 
 ### Development
 - **shadow-cljs** — ClojureScript build tool
@@ -75,6 +81,23 @@ ridley/
 │   ├── index.html
 │   ├── css/style.css
 │   └── scripts/                   # WebXR polyfill
+├── desktop/
+│   ├── src-tauri/
+│   │   ├── src/
+│   │   │   ├── main.rs            # Tauri app, spawns JVM sidecar + frontend
+│   │   │   ├── geo_server.rs      # HTTP geometry server (:12321)
+│   │   │   ├── manifold_ops.rs    # Native Manifold CSG (f64 precision)
+│   │   │   └── sdf_ops.rs         # libfive SDF tree → mesh
+│   │   └── tauri.conf.json        # Tauri config, CSP, frontendDist
+│   └── ridley-jvm/
+│       └── src/ridley/
+│           ├── jvm/
+│           │   ├── eval.clj       # DSL eval engine, macros, 146 bindings
+│           │   └── server.clj     # HTTP server (:12322), binary file transfer
+│           ├── turtle/            # Ported from CLJS (core, shape, loft, etc.)
+│           ├── geometry/          # Ported primitives and operations
+│           ├── sdf/core.clj       # SDF tree construction, calls Rust for meshing
+│           └── manifold/native.clj # HTTP client for Rust boolean ops
 ├── docs/                          # GitHub Pages deployment
 ├── dev-docs/                      # Development documentation
 ├── shadow-cljs.edn                # Build config
@@ -122,6 +145,34 @@ ridley/
 │  │   - Manifold boolean ops for CSG                    │   │
 │  └─────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
+```
+
+### Desktop Mode (JVM Evaluation)
+
+When the JVM sidecar is detected (ping to :12322), a JVM toggle button appears in the toolbar. In JVM mode:
+
+```
+User Code (Cmd+Enter)
+       │
+       ▼ async POST to :12322/eval-bin
+┌──────────────────────────────────────────────┐
+│              JVM Sidecar (:12322)             │
+│  - Creates isolated namespace per eval       │
+│  - DSL macros: path, extrude, loft, attach   │
+│  - 146 function bindings                     │
+│  - Captures println output                   │
+│  - Writes mesh binary to /tmp/               │
+│  - Calls Rust (:12321) for boolean ops       │
+└──────────────┬───────────────────────────────┘
+               │ JSON metadata + binary file path
+               ▼
+┌──────────────────────────────────────────────┐
+│            Frontend (browser)                 │
+│  - Fetches /mesh-file/:id → ArrayBuffer      │
+│  - DataView.getFloat64/getInt32 → vectors    │
+│  - Registers meshes in scene registry        │
+│  - Three.js renders                          │
+└──────────────────────────────────────────────┘
 ```
 
 ## Key Design Decisions
