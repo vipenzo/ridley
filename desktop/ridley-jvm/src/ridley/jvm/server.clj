@@ -4,8 +4,7 @@
   (:require [ring.adapter.jetty :as jetty]
             [clojure.data.json :as json]
             [ridley.jvm.eval :as eval-engine])
-  (:import [java.nio ByteBuffer ByteOrder]
-           [java.util Base64])
+  (:import [java.nio ByteBuffer ByteOrder])
   (:gen-class))
 
 (defn- cors-headers [response]
@@ -14,38 +13,41 @@
       (assoc-in [:headers "Access-Control-Allow-Headers"] "Content-Type")
       (assoc-in [:headers "Content-Type"] "application/json")))
 
-(defn- mesh->binary
-  "Encode mesh vertices as base64 float64 LE, faces as base64 int32 LE.
-   Returns map with :vertex_count, :face_count, :vertices_b64, :faces_b64, :creation-pose."
-  [mesh]
-  (when mesh
-    (let [verts (:vertices mesh)
-          faces (:faces mesh)
-          encoder (Base64/getEncoder)
-          ;; Vertices: flat float64 little-endian
-          vbuf (doto (ByteBuffer/allocate (* (count verts) 3 8))
-                 (.order ByteOrder/LITTLE_ENDIAN))
-          _ (doseq [v verts]
-              (.putDouble vbuf (double (v 0)))
-              (.putDouble vbuf (double (v 1)))
-              (.putDouble vbuf (double (v 2))))
-          vb64 (.encodeToString encoder (.array vbuf))
-          ;; Faces: flat int32 little-endian
-          fbuf (doto (ByteBuffer/allocate (* (count faces) 3 4))
-                 (.order ByteOrder/LITTLE_ENDIAN))
-          _ (doseq [f faces]
-              (.putInt fbuf (int (f 0)))
-              (.putInt fbuf (int (f 1)))
-              (.putInt fbuf (int (f 2))))
-          fb64 (.encodeToString encoder (.array fbuf))]
-      {:vertex_count (count verts)
-       :face_count (count faces)
-       :vertices_b64 vb64
-       :faces_b64 fb64
-       :creation-pose (:creation-pose mesh)})))
+(def ^:private mesh-file-counter (atom 0))
+
+(defn- write-mesh-binary
+  "Write all meshes to a single binary file. Returns the file path.
+   Format: for each mesh, vertices (flat float64 LE) then faces (flat int32 LE),
+   packed contiguously in the order of mesh-meta."
+  [meshes]
+  (let [id (swap! mesh-file-counter inc)
+        path (str (System/getProperty "java.io.tmpdir") "/ridley-meshes-" id ".bin")
+        total-bytes (reduce-kv
+                     (fn [acc _ mesh]
+                       (if mesh
+                         (+ acc
+                            (* (count (:vertices mesh)) 3 8)
+                            (* (count (:faces mesh)) 3 4))
+                         acc))
+                     0 meshes)
+        buf (doto (ByteBuffer/allocate total-bytes)
+              (.order ByteOrder/LITTLE_ENDIAN))]
+    (doseq [[_ mesh] meshes]
+      (when mesh
+        (doseq [v (:vertices mesh)]
+          (.putDouble buf (double (v 0)))
+          (.putDouble buf (double (v 1)))
+          (.putDouble buf (double (v 2))))
+        (doseq [f (:faces mesh)]
+          (.putInt buf (int (f 0)))
+          (.putInt buf (int (f 1)))
+          (.putInt buf (int (f 2))))))
+    (with-open [out (java.io.FileOutputStream. path)]
+      (.write out (.array buf)))
+    path))
 
 (defn- handle-eval-bin
-  "Eval endpoint with binary mesh encoding (base64)."
+  "Eval endpoint: writes mesh data to a binary file, returns metadata JSON."
   [body]
   (let [{:keys [script]} (json/read-str body :key-fn keyword)
         t0 (System/nanoTime)
@@ -54,16 +56,25 @@
         elapsed-ms (/ (- t1 t0) 1e6)
         meshes (:meshes result)
         print-output (:print-output result)
-        bin-meshes (reduce-kv (fn [m k v] (assoc m k (mesh->binary v)))
-                              {} meshes)]
-    (println (format "eval-bin: %.1fms, %d mesh(es)" elapsed-ms (count meshes)))
+        ;; Build metadata (vertex/face counts + creation poses, no geometry data)
+        mesh-meta (reduce-kv
+                   (fn [m k v]
+                     (assoc m k (when v
+                                  {:vertex_count (count (:vertices v))
+                                   :face_count (count (:faces v))
+                                   :creation-pose (:creation-pose v)})))
+                   {} meshes)
+        ;; Write binary file
+        mesh-file (when (seq meshes) (write-mesh-binary meshes))]
+    (println (format "eval-bin: %.1fms, %d mesh(es), file: %s"
+                     elapsed-ms (count meshes) (or mesh-file "none")))
     (cors-headers
       {:status 200
        :body (json/write-str
-               {:meshes bin-meshes
+               {:meshes mesh-meta
                 :elapsed_ms elapsed-ms
                 :print_output print-output
-                :binary true})})))
+                :mesh_file mesh-file})})))
 
 (defn- handle-eval [body]
   (let [{:keys [script]} (json/read-str body :key-fn keyword)
@@ -122,6 +133,18 @@
           (cors-headers
             {:status 500
              :body (json/write-str {:error msg})}))))
+
+    ;; Serve mesh binary file
+    (and (= :get (:request-method request))
+         (.startsWith (:uri request) "/mesh-file/"))
+    (let [id (subs (:uri request) (count "/mesh-file/"))
+          path (str (System/getProperty "java.io.tmpdir") "/ridley-meshes-" id ".bin")]
+      (if (.exists (java.io.File. path))
+        (-> {:status 200
+             :body (java.io.FileInputStream. path)}
+            (assoc-in [:headers "Access-Control-Allow-Origin"] "*")
+            (assoc-in [:headers "Content-Type"] "application/octet-stream"))
+        (cors-headers {:status 404 :body "mesh file not found"})))
 
     ;; Ping
     (= "/ping" (:uri request))

@@ -1,7 +1,8 @@
 (ns ridley.jvm.client
   "HTTP client for the JVM sidecar at port 12322.
    Sends DSL scripts for server-side evaluation, receives mesh results.
-   Uses binary transfer (base64 float64/int32) for mesh data.")
+   Uses binary file transfer for mesh data — JVM writes binary to disk,
+   frontend fetches it as ArrayBuffer.")
 
 (def ^:private server-url "http://127.0.0.1:12322")
 
@@ -23,104 +24,100 @@
       (reset! jvm-available? false)
       false)))
 
-(defn- json->mesh
-  "Decode a JSON-encoded mesh (legacy /eval endpoint)."
-  [^js m]
-  (let [verts (aget m "vertices")
-        faces (aget m "faces")
-        cp    (aget m "creation-pose")]
-    {:type :mesh
-     :vertices (vec (map (fn [^js v] [(aget v 0) (aget v 1) (aget v 2)]) verts))
-     :faces (vec (map (fn [^js f] [(int (aget f 0)) (int (aget f 1)) (int (aget f 2))]) faces))
-     :creation-pose (if cp
-                      {:position (vec (aget cp "position"))
-                       :heading (vec (aget cp "heading"))
-                       :up (vec (aget cp "up"))}
-                      {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})}))
-
-(defn- b64->arraybuffer
-  "Decode base64 string → ArrayBuffer using charCodeAt (safe for 0-255 bytes)."
-  [^js b64-str]
-  (let [binary (js/atob b64-str)
-        len (.-length binary)
-        buf (js/ArrayBuffer. len)
-        u8 (js/Uint8Array. buf)]
-    (dotimes [i len]
-      (aset u8 i (bit-and (.charCodeAt binary i) 0xff)))
-    buf))
-
-(defn- b64->float64-vec
-  "Decode base64 string → array of [x y z] float64 triplets."
-  [^js b64-str n]
-  (let [buf (b64->arraybuffer b64-str)
-        f64 (js/Float64Array. buf)]
-    (loop [i 0 out (transient [])]
-      (if (< i n)
-        (let [off (* i 3)]
-          (recur (inc i)
-                 (conj! out [(aget f64 off) (aget f64 (+ off 1)) (aget f64 (+ off 2))])))
-        (persistent! out)))))
-
-(defn- b64->int32-vec
-  "Decode base64 string → array of [a b c] int32 triplets."
-  [^js b64-str n]
-  (let [buf (b64->arraybuffer b64-str)
-        i32 (js/Int32Array. buf)]
-    (loop [i 0 out (transient [])]
-      (if (< i n)
-        (let [off (* i 3)]
-          (recur (inc i)
-                 (conj! out [(aget i32 off) (aget i32 (+ off 1)) (aget i32 (+ off 2))])))
-        (persistent! out)))))
-
-(defn- bin->mesh
-  "Decode a binary-encoded mesh from JVM response."
-  [^js m]
-  (let [nv (aget m "vertex_count")
-        nf (aget m "face_count")
-        cp (aget m "creation-pose")]
-    {:type :mesh
-     :vertices (b64->float64-vec (aget m "vertices_b64") nv)
-     :faces (b64->int32-vec (aget m "faces_b64") nf)
-     :creation-pose (if cp
-                      {:position (vec (aget cp "position"))
-                       :heading (vec (aget cp "heading"))
-                       :up (vec (aget cp "up"))}
-                      {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})}))
+(defn- parse-meshes-from-buffer
+  "Parse mesh data from an ArrayBuffer using metadata (vertex/face counts).
+   meshes-meta is a seq of [name {:vertex_count n :face_count m :creation-pose cp}].
+   Data layout: for each mesh, flat float64 LE vertices then flat int32 LE faces."
+  [^js buffer meshes-meta]
+  (let [dv (js/DataView. buffer)]
+    (loop [pairs meshes-meta
+           offset 0
+           result {}]
+      (if-let [[name meta] (first pairs)]
+        (if (nil? meta)
+          (recur (rest pairs) offset result)
+          (let [nv (aget meta "vertex_count")
+                nf (aget meta "face_count")
+                cp (aget meta "creation-pose")
+                ;; Read vertices: nv * 3 float64 LE
+                verts (loop [i 0 off offset out (transient [])]
+                        (if (< i nv)
+                          (let [x (.getFloat64 dv off true)
+                                y (.getFloat64 dv (+ off 8) true)
+                                z (.getFloat64 dv (+ off 16) true)]
+                            (recur (inc i) (+ off 24) (conj! out [x y z])))
+                          [(persistent! out) off]))
+                vert-data (first verts)
+                offset-after-verts (second verts)
+                ;; Read faces: nf * 3 int32 LE
+                faces (loop [i 0 off offset-after-verts out (transient [])]
+                        (if (< i nf)
+                          (let [a (.getInt32 dv off true)
+                                b (.getInt32 dv (+ off 4) true)
+                                c (.getInt32 dv (+ off 8) true)]
+                            (recur (inc i) (+ off 12) (conj! out [a b c])))
+                          [(persistent! out) off]))
+                face-data (first faces)
+                offset-after-faces (second faces)
+                mesh {:type :mesh
+                      :vertices vert-data
+                      :faces face-data
+                      :creation-pose (if cp
+                                       {:position (vec (aget cp "position"))
+                                        :heading (vec (aget cp "heading"))
+                                        :up (vec (aget cp "up"))}
+                                       {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})}]
+            (recur (rest pairs) offset-after-faces (assoc result (keyword name) mesh))))
+        result))))
 
 (defn eval-script
-  "Send a DSL script to the JVM sidecar for evaluation.
-   Uses /eval-bin for binary mesh transfer.
-   Returns {:meshes {name mesh} :print-output str :elapsed-ms number}
-   or {:error str}."
-  [script-text]
-  (try
-    (let [xhr (js/XMLHttpRequest.)]
-      (.open xhr "POST" (str server-url "/eval-bin") false)
-      (.setRequestHeader xhr "Content-Type" "application/json")
-      (.send xhr (js/JSON.stringify #js {:script script-text}))
-      (if (= 200 (.-status xhr))
-        (let [^js result (js/JSON.parse (.-responseText xhr))
-              ^js meshes-js (aget result "meshes")
-              keys (js/Object.keys meshes-js)
-              binary? (aget result "binary")
-              mesh-map (reduce
-                        (fn [acc k]
-                          (let [m (aget meshes-js k)]
-                            (if m
-                              (assoc acc (keyword k) (if binary? (bin->mesh m) (json->mesh m)))
-                              (do (js/console.warn "JVM: null mesh for key" k)
-                                  acc))))
-                        {}
-                        keys)]
-          {:meshes mesh-map
-           :print-output (or (aget result "print_output") "")
-           :elapsed-ms (aget result "elapsed_ms")})
-        ;; Error response
-        (let [^js err (try (js/JSON.parse (.-responseText xhr))
-                           (catch :default _ nil))]
-          {:error (if err
-                    (or (.-error err) (.-responseText xhr))
-                    (str "JVM eval failed: HTTP " (.-status xhr)))})))
-    (catch :default e
-      {:error (str "JVM connection error: " (.-message e))})))
+  "Send a DSL script to the JVM sidecar for evaluation (async).
+   Calls on-result with {:meshes ... :print-output ... :elapsed-ms ...}
+   or {:error ...}."
+  [script-text on-result]
+  (let [xhr (js/XMLHttpRequest.)]
+    (.open xhr "POST" (str server-url "/eval-bin") true)
+    (.setRequestHeader xhr "Content-Type" "application/json")
+    (set! (.-timeout xhr) 300000)
+    (set! (.-onload xhr)
+      (fn []
+        (if (= 200 (.-status xhr))
+          (try
+            (let [^js result (js/JSON.parse (.-responseText xhr))
+                  ^js meshes-meta-js (aget result "meshes")
+                  mesh-file (aget result "mesh_file")
+                  print-output (or (aget result "print_output") "")
+                  elapsed-ms (aget result "elapsed_ms")]
+              (if mesh-file
+                ;; Fetch binary file from JVM server
+                (let [;; Extract file ID from path like /tmp/ridley-meshes-42.bin
+                      file-id (second (re-find #"ridley-meshes-(\d+)\.bin" mesh-file))]
+                  (-> (js/fetch (str server-url "/mesh-file/" file-id))
+                      (.then (fn [resp]
+                               (if (.-ok resp)
+                                 (.arrayBuffer resp)
+                                 (throw (js/Error. (str "Mesh file fetch failed: " (.-status resp)))))))
+                      (.then (fn [buf]
+                               (let [keys (js/Object.keys meshes-meta-js)
+                                     pairs (map (fn [k] [k (aget meshes-meta-js k)]) keys)
+                                     meshes (parse-meshes-from-buffer buf pairs)]
+                                 (on-result {:meshes meshes
+                                             :print-output print-output
+                                             :elapsed-ms elapsed-ms}))))
+                      (.catch (fn [e]
+                                (on-result {:error (str "Mesh file error: " (.-message e))})))))
+                ;; No mesh file (empty result)
+                (on-result {:meshes {}
+                            :print-output print-output
+                            :elapsed-ms elapsed-ms})))
+            (catch :default e
+              (on-result {:error (str "Parse error: " (.-message e))})))
+          ;; Error response
+          (let [^js err (try (js/JSON.parse (.-responseText xhr))
+                             (catch :default _ nil))]
+            (on-result {:error (if err
+                                 (or (.-error err) (.-responseText xhr))
+                                 (str "JVM eval failed: HTTP " (.-status xhr)))})))))
+    (set! (.-onerror xhr) (fn [] (on-result {:error "JVM connection error"})))
+    (set! (.-ontimeout xhr) (fn [] (on-result {:error "JVM eval timed out"})))
+    (.send xhr (js/JSON.stringify #js {:script script-text}))))

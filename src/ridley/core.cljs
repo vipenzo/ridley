@@ -196,33 +196,34 @@
         (audio/play-feedback! true)))))
 
 (defn- evaluate-definitions-jvm
-  "Evaluate definitions via JVM sidecar. Sends full script, receives meshes."
+  "Evaluate definitions via JVM sidecar (async). Sends full script, receives meshes."
   [reset-camera?]
-  (let [code (cm/get-value @editor-view)
-        result (repl/evaluate-definitions-jvm code)]
-    (viewport/hide-loading!)
-    (if-let [error (:error result)]
-      (do
-        (show-error error)
-        (audio/play-feedback! false))
-      (let [{:keys [meshes print-output elapsed-ms]} result]
-        (hide-error)
-        ;; Show print output
-        (when (seq print-output)
-          (add-script-output print-output))
-        ;; Register each mesh from JVM in the scene registry
-        (doseq [[name mesh] meshes]
-          (registry/register-mesh! name mesh))
-        ;; Refresh viewport
-        (registry/refresh-viewport! reset-camera?)
-        ;; Summary
-        (let [mesh-count (count meshes)
-              summary (str "JVM eval: " mesh-count " mesh"
-                          (when (> mesh-count 1) "es")
-                          " in " (.toFixed (or elapsed-ms 0) 0) "ms")]
-          (add-repl-entry "[Run/JVM]" summary false))
-        ;; Audio feedback
-        (audio/play-feedback! true)))))
+  (let [code (cm/get-value @editor-view)]
+    (repl/evaluate-definitions-jvm code
+      (fn [result]
+        (viewport/hide-loading!)
+        (if-let [error (:error result)]
+          (do
+            (show-error error)
+            (audio/play-feedback! false))
+          (let [{:keys [meshes print-output elapsed-ms]} result]
+            (hide-error)
+            ;; Show print output
+            (when (seq print-output)
+              (add-script-output print-output))
+            ;; Register each mesh from JVM in the scene registry
+            (doseq [[name mesh] meshes]
+              (registry/register-mesh! name mesh))
+            ;; Refresh viewport
+            (registry/refresh-viewport! reset-camera?)
+            ;; Summary
+            (let [mesh-count (count meshes)
+                  summary (str "JVM eval: " mesh-count " mesh"
+                              (when (> mesh-count 1) "es")
+                              " in " (.toFixed (or elapsed-ms 0) 0) "ms")]
+              (add-repl-entry "[Run/JVM]" summary false))
+            ;; Audio feedback
+            (audio/play-feedback! true)))))))
 
 (defn- evaluate-definitions
   "Evaluate only the definitions panel (for Cmd+Enter).

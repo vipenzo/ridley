@@ -16,3 +16,7 @@ tiny_http = "0.12"
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+
+# Optimize dependencies in dev mode (Manifold is 7x slower unoptimized)
+[profile.dev.package."*"]
+opt-level = 3

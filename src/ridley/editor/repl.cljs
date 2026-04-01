@@ -179,8 +179,8 @@
 ;; ============================================================
 
 (defn evaluate-definitions-jvm
-  "Evaluate definitions by sending the script to the JVM sidecar.
-   The JVM evaluates the full DSL, returns registered meshes.
-   Returns {:meshes {name mesh} :print-output str :elapsed-ms num} or {:error str}."
-  [code]
-  (jvm/eval-script code))
+  "Evaluate definitions by sending the script to the JVM sidecar (async).
+   Calls on-result with {:meshes {name mesh} :print-output str :elapsed-ms num}
+   or {:error str}."
+  [code on-result]
+  (jvm/eval-script code on-result))
