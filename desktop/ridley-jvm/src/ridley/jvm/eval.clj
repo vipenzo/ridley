@@ -408,54 +408,31 @@
 
 (def ^:private extrude-closed-macro-source
   "(defmacro extrude-closed [shape & movements]
-     (if (= 1 (count movements))
-       `(let [arg# ~(first movements)]
-          (if (and (map? arg#) (= :path (:type arg#)))
-            (ridley.jvm.eval/extrude-closed-impl ~shape arg#)
-            (ridley.jvm.eval/extrude-closed-impl ~shape (path ~(first movements)))))
-       `(ridley.jvm.eval/extrude-closed-impl ~shape (path ~@movements))))")
+     `(ridley.jvm.eval/extrude-closed-impl ~shape (path ~@movements)))")
 
 (def ^:private extrude-macro-source
   "(defmacro extrude [shape & movements]
-     (if (= 1 (count movements))
-       ;; Single arg: might be a path value or a single movement
-       `(let [arg# ~(first movements)]
-          (if (and (map? arg#) (= :path (:type arg#)))
-            (ridley.jvm.eval/extrude-impl ~shape arg#)
-            (ridley.jvm.eval/extrude-impl ~shape (path ~(first movements)))))
-       ;; Multiple movements: always wrap in path
-       `(ridley.jvm.eval/extrude-impl ~shape (path ~@movements))))")
-
-(defn- ensure-path
-  "If x is already a path, return it. Otherwise wrap in path recorder."
-  [x]
-  (if (and (map? x) (= :path (:type x)))
-    x
-    ;; Not a path — can't record here, caller should use (path ...) macro
-    (throw (Exception. (str "Expected a path, got " (type x))))))
+     ;; Always wrap movements in path — never evaluate them bare,
+     ;; as (f x) would mutate the global turtle state.
+     ;; If a pre-built path is passed, path macro returns it as-is.
+     `(ridley.jvm.eval/extrude-impl ~shape (path ~@movements)))")
 
 (def ^:private loft-macro-source
   "(defmacro loft [first-arg & rest-args]
      (let [mvmt? (fn [x#] (and (list? x#) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v} (first x#))))]
        (cond
+         ;; Single rest arg: always shape-fn + path
          (= 1 (count rest-args))
-         (let [arg (first rest-args)]
-           `(let [a# ~arg]
-              (if (and (map? a#) (= :path (:type a#)))
-                (ridley.jvm.eval/loft-impl ~first-arg a#)
-                (ridley.jvm.eval/loft-impl ~first-arg (path ~arg)))))
+         `(ridley.jvm.eval/loft-impl ~first-arg (path ~(first rest-args)))
 
+         ;; First rest-arg is a movement: all are movements
          (mvmt? (first rest-args))
          `(ridley.jvm.eval/loft-impl ~first-arg (path ~@rest-args))
 
+         ;; Otherwise: first rest-arg is dispatch (transform-fn or shape), rest are movements
          :else
          (let [[dispatch-arg# & movements#] rest-args]
-           (if (= 1 (count movements#))
-             `(let [a# ~(first movements#)]
-                (if (and (map? a#) (= :path (:type a#)))
-                  (ridley.jvm.eval/loft-impl ~first-arg ~dispatch-arg# a#)
-                  (ridley.jvm.eval/loft-impl ~first-arg ~dispatch-arg# (path ~(first movements#)))))
-             `(ridley.jvm.eval/loft-impl ~first-arg ~dispatch-arg# (path ~@movements#)))))))")
+           `(ridley.jvm.eval/loft-impl ~first-arg ~dispatch-arg# (path ~@movements#))))))")
 
 (def ^:private attach-macro-source
   "(defmacro attach [mesh & body]
