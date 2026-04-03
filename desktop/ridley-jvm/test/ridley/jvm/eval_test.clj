@@ -641,3 +641,116 @@
               (println (count (face-ids b)))
               (println (some? (face-info b :top)))")]
       (is (= "6\ntrue\n" (:print-output r))))))
+
+;; ============================================================
+;; Warp — spatial mesh deformation
+;; ============================================================
+
+(deftest warp-inflate
+  (testing "inflate increases vertex distance from center"
+    (let [r (eval/eval-script "
+              (def b (box 10 10 10))
+              (def vol (sphere 20))
+              (def warped (warp b vol (inflate 5)))
+              ;; Warped vertices should be farther from origin than original
+              (let [orig-max (apply max (map (fn [[x y z]] (+ (* x x) (* y y) (* z z))) (:vertices b)))
+                    warp-max (apply max (map (fn [[x y z]] (+ (* x x) (* y y) (* z z))) (:vertices warped)))]
+                (println (> warp-max orig-max)))")]
+      (is (= "true\n" (:print-output r))))))
+
+(deftest warp-dent
+  (testing "dent decreases vertex distance from center"
+    (let [r (eval/eval-script "
+              (def b (box 10 10 10))
+              (def vol (sphere 20))
+              (def warped (warp b vol (dent 3)))
+              (let [orig-max (apply max (map (fn [[x y z]] (+ (* x x) (* y y) (* z z))) (:vertices b)))
+                    warp-max (apply max (map (fn [[x y z]] (+ (* x x) (* y y) (* z z))) (:vertices warped)))]
+                (println (< warp-max orig-max)))")]
+      (is (= "true\n" (:print-output r))))))
+
+(deftest warp-attract
+  (testing "attract pulls vertices toward center"
+    (let [r (eval/eval-script "
+              (def b (box 10 10 10))
+              (def vol (sphere 20))
+              (def warped (warp b vol (attract 0.5)))
+              (let [orig-max (apply max (map (fn [[x y z]] (+ (* x x) (* y y) (* z z))) (:vertices b)))
+                    warp-max (apply max (map (fn [[x y z]] (+ (* x x) (* y y) (* z z))) (:vertices warped)))]
+                (println (< warp-max orig-max)))")]
+      (is (= "true\n" (:print-output r))))))
+
+(deftest warp-twist
+  (testing "twist rotates vertices around axis"
+    (let [r (eval/eval-script "
+              (def b (extrude (rect 5 5) (f 30)))
+              (def vol (attach (cyl 20 40) (f 15)))
+              (def warped (warp b vol (twist 90)))
+              ;; Vertex count should stay the same
+              (println (= (count (:vertices b)) (count (:vertices warped))))
+              ;; But positions should differ
+              (println (not= (:vertices b) (:vertices warped)))")]
+      (is (= "true\ntrue\n" (:print-output r))))))
+
+(deftest warp-squash
+  (testing "squash flattens along an axis"
+    (let [r (eval/eval-script "
+              (def b (sphere 10 8 6))
+              (def vol (sphere 20))
+              (def warped (warp b vol (squash :z)))
+              ;; Z range should be smaller after squash
+              (let [zs-orig (map #(nth % 2) (:vertices b))
+                    zs-warp (map #(nth % 2) (:vertices warped))
+                    range-orig (- (apply max zs-orig) (apply min zs-orig))
+                    range-warp (- (apply max zs-warp) (apply min zs-warp))]
+                (println (< range-warp range-orig)))")]
+      (is (= "true\n" (:print-output r))))))
+
+(deftest warp-roughen
+  (testing "roughen displaces vertices along normals"
+    (let [r (eval/eval-script "
+              (def b (sphere 10 16 12))
+              (def vol (sphere 20))
+              (def warped (warp b vol (roughen 2 5)))
+              (println (= (count (:vertices b)) (count (:vertices warped))))
+              (println (not= (:vertices b) (:vertices warped)))")]
+      (is (= "true\ntrue\n" (:print-output r))))))
+
+(deftest warp-preserves-vertex-count
+  (testing "warp doesn't change vertex count (without subdivide)"
+    (let [r (eval/eval-script "
+              (def b (box 10 10 10))
+              (def vol (sphere 20))
+              (def warped (warp b vol (inflate 3)))
+              (println (= (count (:vertices b)) (count (:vertices warped))))
+              (println (= (count (:faces b)) (count (:faces warped))))")]
+      (is (= "true\ntrue\n" (:print-output r))))))
+
+(deftest warp-with-subdivide
+  (testing "warp with :subdivide increases vertex count"
+    (let [r (eval/eval-script "
+              (def b (box 10 10 10))
+              (def vol (sphere 20))
+              (def warped (warp b vol :subdivide 2 (inflate 3)))
+              (println (> (count (:vertices warped)) (count (:vertices b))))")]
+      (is (= "true\n" (:print-output r))))))
+
+(deftest warp-multiple-deformations
+  (testing "warp with multiple deform functions"
+    (let [r (eval/eval-script "
+              (def b (sphere 10 8 6))
+              (def vol (sphere 20))
+              (def warped (warp b vol (inflate 2) (roughen 1 3)))
+              (println (= (count (:vertices b)) (count (:vertices warped))))
+              (println (not= (:vertices b) (:vertices warped)))")]
+      (is (= "true\ntrue\n" (:print-output r))))))
+
+(deftest warp-outside-volume-unchanged
+  (testing "vertices outside volume are unchanged"
+    (let [r (eval/eval-script "
+              (def b (attach (box 10 10 10) (f 100)))
+              (def vol (sphere 5))  ;; small sphere at origin
+              (def warped (warp b vol (inflate 50)))
+              ;; Box is at f=100, sphere radius=5 at origin — no overlap
+              (println (= (:vertices b) (:vertices warped)))")]
+      (is (= "true\n" (:print-output r))))))

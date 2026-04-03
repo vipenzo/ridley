@@ -17,6 +17,7 @@
             [ridley.clipper.core :as clipper]
             [ridley.io.stl :as stl]
             [ridley.io.svg :as svg]
+            [ridley.geometry.warp :as warp]
             [ridley.sdf.core :as sdf]))
 
 ;; ── Forward declarations ────────────────────────────────────────
@@ -598,6 +599,15 @@
    'turtle-inset           turtle/inset
    'turtle-scale           turtle/scale
    'turtle-group-transform attachment/group-transform
+   ;; Warp — spatial mesh deformation
+   'warp-impl        warp/warp
+   'inflate          warp/inflate
+   'dent             warp/dent
+   'attract          warp/attract
+   'twist            warp/twist
+   'squash           warp/squash
+   'roughen          warp/roughen
+   'smooth-falloff   warp/smooth-falloff
    ;; 2D booleans
    'shape-union        clipper/shape-union
    'shape-difference   clipper/shape-difference
@@ -898,6 +908,10 @@
             (finally
               (reset! ridley.jvm.eval/turtle-state saved#))))))")
 
+(def ^:private warp-macro-source
+  "(defmacro warp [mesh volume & args]
+     `(warp-impl ~mesh ~volume ~@args))")
+
 (def ^:private register-macro-source
   "(defmacro register [name expr & opts]
      `(let [v# ~expr]
@@ -930,6 +944,7 @@
         (load-string shape-macro-source)
         (load-string pen-macro-source)
         (load-string smooth-path-macro-source)
+        (load-string warp-macro-source)
         (load-string attach-macro-source)
         (load-string attach-face-macro-source)
         (load-string clone-face-macro-source)
