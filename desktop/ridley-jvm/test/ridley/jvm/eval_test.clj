@@ -754,3 +754,86 @@
               ;; Box is at f=100, sphere radius=5 at origin — no overlap
               (println (= (:vertices b) (:vertices warped)))")]
       (is (= "true\n" (:print-output r))))))
+
+;; ============================================================
+;; Registry: get-mesh, $, show/hide, color
+;; ============================================================
+
+(deftest get-mesh-by-keyword
+  (testing "get-mesh retrieves registered mesh by keyword"
+    (let [r (eval/eval-script "
+              (register Foo (box 10 10 10))
+              (def m (get-mesh :Foo))
+              (println (= (count (:vertices m)) (count (:vertices Foo))))")]
+      (is (= "true\n" (:print-output r))))))
+
+(deftest get-mesh-returns-nil-for-missing
+  (testing "get-mesh returns nil for unregistered name"
+    (let [r (eval/eval-script "(println (nil? (get-mesh :Nonexistent)))")]
+      (is (= "true\n" (:print-output r))))))
+
+(deftest dollar-shorthand
+  (testing "$ retrieves registered mesh or value"
+    (let [r (eval/eval-script "
+              (register Foo (box 10 10 10))
+              (println (some? ($ :Foo)))")]
+      (is (= "true\n" (:print-output r))))))
+
+(deftest register-value-test
+  (testing "register-value! stores non-mesh values"
+    (let [r (eval/eval-script "
+              (register-value! :my-path (path (f 30) (th 90)))
+              (println (path? ($ :my-path)))")]
+      (is (= "true\n" (:print-output r))))))
+
+(deftest registered-names-test
+  (testing "registered-names returns all registered mesh names"
+    (let [r (eval/eval-script "
+              (register A (box 10 10 10))
+              (register B (sphere 5))
+              (println (count (registered-names)))")]
+      (is (= "2\n" (:print-output r))))))
+
+(deftest hide-show-metadata
+  (testing "hide-mesh! and show-mesh! set :visible metadata"
+    (let [r (eval/eval-script "
+              (register Foo (box 10 10 10))
+              (hide-mesh! :Foo)
+              (println (:visible (get-mesh :Foo)))
+              (show-mesh! :Foo)
+              (println (:visible (get-mesh :Foo)))")]
+      (is (= "false\ntrue\n" (:print-output r))))))
+
+(deftest hide-all-show-all
+  (testing "hide-all! and show-all! affect all meshes"
+    (let [r (eval/eval-script "
+              (register A (box 10 10 10))
+              (register B (sphere 5))
+              (hide-all!)
+              (println (count (visible-names)))
+              (show-all!)
+              (println (count (visible-names)))")]
+      (is (= "0\n2\n" (:print-output r))))))
+
+(deftest visible-meshes-test
+  (testing "visible-meshes returns only non-hidden meshes"
+    (let [r (eval/eval-script "
+              (register A (box 10 10 10))
+              (register B (sphere 5))
+              (hide-mesh! :A)
+              (println (count (visible-meshes)))")]
+      (is (= "1\n" (:print-output r))))))
+
+(deftest color-sets-metadata
+  (testing "color sets :color on registered mesh"
+    (let [r (eval/eval-script "
+              (register Foo (box 10 10 10))
+              (color :Foo 0xff0000)
+              (println (:color (get-mesh :Foo)))")]
+      (is (= "16711680\n" (:print-output r))))))
+
+(deftest get-mesh-in-attach
+  (testing "get-mesh works in attach pipeline"
+    (is (has-mesh? "
+      (register A (box 10 10 10))
+      (register B (attach (get-mesh :A) (f 30) (th 45)))" 'B))))

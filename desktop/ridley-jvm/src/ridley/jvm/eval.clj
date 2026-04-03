@@ -26,10 +26,12 @@
 ;; ── Turtle state (global, reset per eval) ───────────────────────
 (def turtle-state (atom (turtle/make-turtle)))
 (def registered-meshes (atom {}))
+(def registered-values (atom {}))
 
 (defn reset-state! []
   (reset! turtle-state (turtle/make-turtle))
-  (reset! registered-meshes {}))
+  (reset! registered-meshes {})
+  (reset! registered-values {}))
 
 ;; ── Implicit turtle commands (mutate global state) ──────────────
 
@@ -147,7 +149,7 @@
                    (#(assoc % :reference-up (or (:reference-up %) (:up %))))))]
     base))
 
-;; ── Register ────────────────────────────────────────────────────
+;; ── Register & Registry ────────────────────────────────────────
 
 (defn register-impl [name value]
   (let [res (get-in @turtle-state [:resolution :value] 15)
@@ -155,6 +157,71 @@
                (sdf/ensure-mesh value))]
     (swap! registered-meshes assoc name mesh)
     mesh))
+
+(defn get-mesh
+  "Look up a registered mesh by keyword or symbol."
+  [name-kw]
+  (let [sym (if (keyword? name-kw) (symbol (name name-kw)) name-kw)]
+    (get @registered-meshes sym)))
+
+(defn get-value
+  "Look up a registered value (mesh or non-mesh) by keyword or symbol.
+   Checks meshes first, then values."
+  [name-kw]
+  (let [sym (if (keyword? name-kw) (symbol (name name-kw)) name-kw)]
+    (or (get @registered-meshes sym)
+        (get @registered-values sym))))
+
+(defn register-value!
+  "Register a non-mesh value (path, shape, number, etc.)."
+  [name-kw value]
+  (let [sym (if (keyword? name-kw) (symbol (name name-kw)) name-kw)]
+    (swap! registered-values assoc sym value)
+    value))
+
+(defn registered-names
+  "Return set of all registered mesh names."
+  []
+  (set (keys @registered-meshes)))
+
+(defn show-mesh!
+  "Mark a registered mesh as visible (metadata)."
+  [name-kw]
+  (let [sym (if (keyword? name-kw) (symbol (name name-kw)) name-kw)]
+    (when-let [m (get @registered-meshes sym)]
+      (swap! registered-meshes assoc sym (assoc m :visible true)))))
+
+(defn hide-mesh!
+  "Mark a registered mesh as hidden (metadata)."
+  [name-kw]
+  (let [sym (if (keyword? name-kw) (symbol (name name-kw)) name-kw)]
+    (when-let [m (get @registered-meshes sym)]
+      (swap! registered-meshes assoc sym (assoc m :visible false)))))
+
+(defn show-all! []
+  (swap! registered-meshes
+         (fn [ms] (into {} (map (fn [[k v]] [k (assoc v :visible true)]) ms)))))
+
+(defn hide-all! []
+  (swap! registered-meshes
+         (fn [ms] (into {} (map (fn [[k v]] [k (assoc v :visible false)]) ms)))))
+
+(defn show-only-registered!
+  "Mark all registered meshes visible; doesn't affect anonymous geometry."
+  []
+  (show-all!))
+
+(defn visible-names
+  "Return names of meshes that are not explicitly hidden."
+  []
+  (set (keep (fn [[k v]] (when (get v :visible true) k))
+             @registered-meshes)))
+
+(defn visible-meshes
+  "Return vector of meshes that are not explicitly hidden."
+  []
+  (vec (keep (fn [[_ v]] (when (get v :visible true) v))
+             @registered-meshes)))
 
 ;; ── Bench ───────────────────────────────────────────────────────
 
@@ -618,7 +685,23 @@
    'shape-bridge       clipper/shape-bridge
    'pattern-tile       clipper/pattern-tile
    ;; Register is a macro (injected separately) — register-impl is the backing fn
-   'color     (fn [& _] nil)
+   ;; Registry lookup
+   'get-mesh          get-mesh
+   '$                 get-value
+   'register-value!   register-value!
+   'registered-names  registered-names
+   ;; Visibility (metadata-based)
+   'show-mesh!        show-mesh!
+   'hide-mesh!        hide-mesh!
+   'show-all!         show-all!
+   'hide-all!         hide-all!
+   'show-only-registered! show-only-registered!
+   'visible-names     visible-names
+   'visible-meshes    visible-meshes
+   'color     (fn [name-kw color-val]
+                (let [sym (if (keyword? name-kw) (symbol (name name-kw)) name-kw)]
+                  (when-let [m (get @registered-meshes sym)]
+                    (swap! registered-meshes assoc sym (assoc m :color color-val)))))
    ;; File I/O (JVM native — direct filesystem access)
    'save-stl  (fn [value path] (stl/save-stl (sdf/ensure-mesh value) path))
    'load-stl  stl/load-stl
