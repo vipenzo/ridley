@@ -837,3 +837,130 @@
     (is (has-mesh? "
       (register A (box 10 10 10))
       (register B (attach (get-mesh :A) (f 30) (th 45)))" 'B))))
+
+;; ============================================================
+;; 2D shape booleans (Clipper2 / JTS)
+;; ============================================================
+
+(deftest shape-union-test
+  (testing "shape-union combines two overlapping shapes"
+    (let [r (eval/eval-script "
+              (def c1 (circle 10 32))
+              (def c2 (translate-shape (circle 10 32) 8 0))
+              (def u (shape-union c1 c2))
+              (println (shape? u))
+              ;; Union should have more points than either input
+              (println (> (count (:points u)) (count (:points c1))))")]
+      (is (= "true\ntrue\n" (:print-output r))))))
+
+(deftest shape-difference-test
+  (testing "shape-difference subtracts one shape from another"
+    (let [r (eval/eval-script "
+              (def c1 (circle 10 32))
+              (def c2 (translate-shape (circle 10 32) 8 0))
+              (def d (shape-difference c1 c2))
+              (println (shape? d))
+              (println (pos? (count (:points d))))")]
+      (is (= "true\ntrue\n" (:print-output r))))))
+
+(deftest shape-intersection-test
+  (testing "shape-intersection returns overlap region"
+    (let [r (eval/eval-script "
+              (def c1 (circle 10 32))
+              (def c2 (translate-shape (circle 10 32) 8 0))
+              (def i (shape-intersection c1 c2))
+              (println (shape? i))
+              (println (pos? (count (:points i))))")]
+      (is (= "true\ntrue\n" (:print-output r))))))
+
+(deftest shape-intersection-no-overlap
+  (testing "shape-intersection returns nil when no overlap"
+    (let [r (eval/eval-script "
+              (def c1 (circle 5 16))
+              (def c2 (translate-shape (circle 5 16) 100 0))
+              (println (nil? (shape-intersection c1 c2)))")]
+      (is (= "true\n" (:print-output r))))))
+
+(deftest shape-xor-test
+  (testing "shape-xor returns non-overlapping regions"
+    (let [r (eval/eval-script "
+              (def c1 (circle 10 32))
+              (def c2 (translate-shape (circle 10 32) 8 0))
+              (def x (shape-xor c1 c2))
+              (println (vector? x))
+              (println (pos? (count x)))")]
+      (is (= "true\ntrue\n" (:print-output r))))))
+
+(deftest shape-offset-expand
+  (testing "shape-offset expands a shape"
+    (let [r (eval/eval-script "
+              (def sq (rect 20 20))
+              (def bigger (shape-offset sq 3))
+              (println (shape? bigger))
+              ;; Expanded shape should have points further from center
+              (let [max-x (apply max (map first (:points bigger)))]
+                (println (> max-x 10)))")]
+      (is (= "true\ntrue\n" (:print-output r))))))
+
+(deftest shape-offset-shrink
+  (testing "shape-offset shrinks a shape with negative delta"
+    (let [r (eval/eval-script "
+              (def sq (rect 20 20))
+              (def smaller (shape-offset sq -3))
+              (println (shape? smaller))
+              (let [max-x (apply max (map first (:points smaller)))]
+                (println (< max-x 10)))")]
+      (is (= "true\ntrue\n" (:print-output r))))))
+
+(deftest shape-hull-test
+  (testing "shape-hull computes convex hull of multiple shapes"
+    (let [r (eval/eval-script "
+              (def h (shape-hull (circle 5 8) (translate-shape (circle 5 8) 20 0)))
+              (println (shape? h))
+              ;; Hull should span from -5 to 25 in X
+              (let [xs (map first (:points h))]
+                (println (> (- (apply max xs) (apply min xs)) 20)))")]
+      (is (= "true\ntrue\n" (:print-output r))))))
+
+(deftest shape-bridge-test
+  (testing "shape-bridge connects shapes with smooth bridge"
+    (let [r (eval/eval-script "
+              (def b (shape-bridge (circle 5 16) (translate-shape (circle 5 16) 15 0) :radius 3))
+              (println (shape? b))
+              (println (pos? (count (:points b))))")]
+      (is (= "true\ntrue\n" (:print-output r))))))
+
+(deftest shape-boolean-in-extrude
+  (testing "2D boolean result works with extrude"
+    (is (has-mesh? "
+      (def u (shape-union (circle 10 16) (translate-shape (circle 10 16) 8 0)))
+      (register T (extrude u (f 20)))" 'T))))
+
+(deftest shape-difference-creates-holes
+  (testing "shape-difference can create shapes with holes"
+    (let [r (eval/eval-script "
+              (def outer (circle 20 32))
+              (def inner (circle 10 32))
+              (def ring (shape-difference outer inner))
+              (println (shape? ring))
+              (println (some? (:holes ring)))")]
+      (is (= "true\ntrue\n" (:print-output r))))))
+
+(deftest pattern-tile-test
+  (testing "pattern-tile creates tiled subtraction"
+    (let [r (eval/eval-script "
+              (def base (rect 40 40))
+              (def pat (circle 2 8))
+              (def tiled (pattern-tile base pat :spacing [8 8]))
+              (println (shape? tiled))
+              ;; Tiled shape should have holes
+              (println (some? (:holes tiled)))")]
+      (is (= "true\ntrue\n" (:print-output r))))))
+
+(deftest point-in-polygon-test
+  (testing "point-in-polygon? works correctly"
+    (let [r (eval/eval-script "
+              (def sq (:points (rect 10 10)))
+              (println (ridley.clipper.core/point-in-polygon? [0 0] sq))
+              (println (ridley.clipper.core/point-in-polygon? [100 100] sq))")]
+      (is (= "true\nfalse\n" (:print-output r))))))
