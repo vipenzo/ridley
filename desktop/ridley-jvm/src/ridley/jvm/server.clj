@@ -60,9 +60,11 @@
         mesh-meta (reduce-kv
                    (fn [m k v]
                      (assoc m k (when v
-                                  {:vertex_count (count (:vertices v))
-                                   :face_count (count (:faces v))
-                                   :creation-pose (:creation-pose v)})))
+                                  (cond-> {:vertex_count (count (:vertices v))
+                                           :face_count (count (:faces v))
+                                           :creation-pose (:creation-pose v)}
+                                    (contains? v :visible) (assoc :visible (:visible v))
+                                    (contains? v :color)   (assoc :color (:color v))))))
                    {} meshes)
         ;; Write binary file
         mesh-file (when (seq meshes) (write-mesh-binary meshes))]

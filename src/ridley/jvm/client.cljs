@@ -59,14 +59,18 @@
                           [(persistent! out) off]))
                 face-data (first faces)
                 offset-after-faces (second faces)
-                mesh {:type :mesh
-                      :vertices vert-data
-                      :faces face-data
-                      :creation-pose (if cp
-                                       {:position (vec (aget cp "position"))
-                                        :heading (vec (aget cp "heading"))
-                                        :up (vec (aget cp "up"))}
-                                       {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})}]
+                visible (aget meta "visible")
+                color (aget meta "color")
+                mesh (cond-> {:type :mesh
+                              :vertices vert-data
+                              :faces face-data
+                              :creation-pose (if cp
+                                               {:position (vec (aget cp "position"))
+                                                :heading (vec (aget cp "heading"))
+                                                :up (vec (aget cp "up"))}
+                                               {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})}
+                       (some? visible) (assoc :visible visible)
+                       (some? color)   (assoc :color color))]
             (recur (rest pairs) offset-after-faces (assoc result (keyword name) mesh))))
         result))))
 

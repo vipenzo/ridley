@@ -685,8 +685,8 @@ Replaced stubs with JTS (Java Topology Suite) backend. All 2D boolean operations
 #### 4. Text shapes (medium effort)
 `text-shape`, `char-shape`, `extrude-text` — need a JVM font parser (opentype.js equivalent). Could use Apache Batik or java.awt.font for glyph outline extraction.
 
-#### 5. Frontend visibility protocol (low effort)
-The JVM now sets `:visible` and `:color` as mesh metadata. The frontend (`jvm/client.cljs`) needs to read these when rendering meshes received from `/eval`. Minor change — filter by `:visible` in the mesh rendering loop, apply `:color` to material.
+#### 5. ~~Frontend visibility protocol~~ ✓ Done
+JVM sets `:visible` and `:color` as mesh metadata. Server includes them in `/eval-bin` response metadata. Frontend client reads them, applies `:color` as `:material`, and calls `hide-mesh!` for `:visible false`.
 
 #### 6. SVG import enhancement (low effort)
 `load-svg` exists but uses a basic parser. Could leverage Batik for full SVG path support (cubic/quadratic beziers, arcs).

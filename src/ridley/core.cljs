@@ -213,7 +213,14 @@
               (add-script-output print-output))
             ;; Register each mesh from JVM in the scene registry
             (doseq [[name mesh] meshes]
-              (registry/register-mesh! name mesh))
+              ;; Apply :color as material if present
+              (let [mesh (if-let [c (:color mesh)]
+                           (assoc mesh :material {:color c})
+                           mesh)]
+                (registry/register-mesh! name mesh)
+                ;; Respect :visible metadata from JVM
+                (when (false? (:visible mesh))
+                  (registry/hide-mesh! name))))
             ;; Refresh viewport
             (registry/refresh-viewport! reset-camera?)
             ;; Summary
