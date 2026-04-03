@@ -964,3 +964,70 @@
               (println (ridley.clipper.core/point-in-polygon? [0 0] sq))
               (println (ridley.clipper.core/point-in-polygon? [100 100] sq))")]
       (is (= "true\nfalse\n" (:print-output r))))))
+
+;; ============================================================
+;; Chamfer / Fillet (edge detection — no CSG server needed)
+;; ============================================================
+
+(deftest chamfer-find-edges
+  (testing "find-sharp-edges finds all 12 edges of a box"
+    (let [r (eval/eval-script "
+              (def b (box 10 10 10))
+              (def edges (find-sharp-edges b))
+              (println (count edges))")]
+      (is (= "12\n" (:print-output r))))))
+
+(deftest chamfer-direction-filter
+  (testing "chamfer with direction filters edges correctly"
+    ;; We can test edge filtering by checking that find-sharp-edges
+    ;; combined with direction filter produces fewer edges
+    (let [r (eval/eval-script "
+              (def b (box 10 10 10))
+              (def all-edges (find-sharp-edges b))
+              ;; Filter edges where at least one normal aligns with heading (:top)
+              (def pose (or (:creation-pose b) {:heading [1 0 0] :up [0 0 1]}))
+              (def dir (:heading pose))
+              (def filtered (filter (fn [e]
+                                      (let [[n1 n2] (:normals e)
+                                            dot-fn (fn [a b] (+ (* (a 0) (b 0)) (* (a 1) (b 1)) (* (a 2) (b 2))))]
+                                        (or (> (dot-fn n1 dir) 0.85)
+                                            (> (dot-fn n2 dir) 0.85))))
+                                    all-edges))
+              (println (count all-edges))
+              (println (count filtered))
+              (println (< (count filtered) (count all-edges)))")]
+      (is (re-find #"true" (:print-output r))))))
+
+(deftest chamfer-prisms-generation
+  (testing "chamfer-prisms generates cutter meshes"
+    (let [r (eval/eval-script "
+              (def b (box 10 10 10))
+              (def prisms (chamfer-prisms b 1))
+              (println (pos? (count prisms)))
+              (println (every? #(pos? (count (:vertices %))) prisms))")]
+      (is (= "true\ntrue\n" (:print-output r))))))
+
+(deftest fillet-cutters-generation
+  (testing "build-fillet-cutters generates cutter meshes"
+    (let [r (eval/eval-script "
+              (def b (box 10 10 10))
+              (def edges (find-sharp-edges b))
+              (def cutters (build-fillet-cutters edges 1 8))
+              (println (pos? (count cutters)))
+              (println (every? #(pos? (count (:vertices %))) cutters))")]
+      (is (= "true\ntrue\n" (:print-output r))))))
+
+(deftest chamfer-strip-generation
+  (testing "build-chamfer-strip generates a single strip mesh"
+    (let [r (eval/eval-script "
+              (def b (box 10 10 10))
+              (def edges (find-sharp-edges b))
+              (def strip (build-chamfer-strip edges 1))
+              (println (some? strip))
+              (println (pos? (count (:vertices strip))))")]
+      (is (= "true\ntrue\n" (:print-output r))))))
+
+;; NOTE: chamfer/fillet end-to-end tests require the Rust Manifold server
+;; running on :12321. Run manually with:
+;;   (chamfer (box 20 20 20) :top 2)
+;;   (fillet (extrude (circle 10 32) (f 20)) :top 2 :min-radius 5)

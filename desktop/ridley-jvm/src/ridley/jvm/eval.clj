@@ -108,6 +108,170 @@
           state
           (:commands path)))
 
+;; ── Chamfer / Fillet impl ──────────────────────────────────────
+
+(defn- direction-vec
+  "Resolve a turtle-oriented direction keyword to a 3D unit vector."
+  [mesh direction]
+  (let [pose (or (:creation-pose mesh)
+                 {:heading [1 0 0] :up [0 0 1]})
+        h (:heading pose)
+        u (:up pose)
+        r (math/cross h u)]
+    (case direction
+      :top h
+      :bottom (mapv - h)
+      :up u
+      :down (mapv - u)
+      :right r
+      :left (mapv - r)
+      :all nil)))
+
+(defn- dot3 [a b]
+  (+ (* (nth a 0) (nth b 0))
+     (* (nth a 1) (nth b 1))
+     (* (nth a 2) (nth b 2))))
+
+(defn chamfer-edges-impl
+  "Chamfer sharp edges by CSG subtraction of prisms.
+   distance: chamfer size in mm
+   Options: :angle (default 80), :where predicate, :debug (return first prism)"
+  [mesh distance & {:keys [angle where debug] :or {angle 80}}]
+  (when-let [prisms (faces/chamfer-prisms mesh distance :angle angle :where where)]
+    (if debug
+      (first prisms)
+      (reduce (fn [current-mesh prism]
+                (or (manifold/difference current-mesh prism)
+                    current-mesh))
+              mesh
+              prisms))))
+
+(defn chamfer-impl
+  "Chamfer edges selected by turtle-oriented direction.
+   direction: :top :bottom :up :down :left :right :all
+   distance: chamfer size in mm
+   Options: :angle (default 80), :min-radius, :where"
+  [mesh direction distance & {:keys [angle min-radius where] :or {angle 80}}]
+  (let [dir-vec (direction-vec mesh direction)
+        align-threshold 0.85
+        pose (or (:creation-pose mesh)
+                 {:heading [1 0 0] :up [0 0 1] :position [0 0 0]})
+        origin (:position pose)
+        heading (:heading pose)
+        radius-check (when min-radius
+                       (let [r2 (* min-radius 1.01 min-radius 1.01)]
+                         (fn [p]
+                           (let [v (mapv - p origin)
+                                 axial (dot3 v heading)
+                                 radial (mapv - v (mapv #(* axial %) heading))
+                                 dist2 (dot3 radial radial)]
+                             (> dist2 r2)))))
+        combined-where (fn [p]
+                         (and (or (nil? radius-check) (radius-check p))
+                              (or (nil? where) (where p))))]
+    (when-let [edges (faces/find-sharp-edges mesh :angle angle :where combined-where)]
+      (let [dir-edges (if dir-vec
+                        (filterv (fn [{:keys [normals]}]
+                                   (let [[n1 n2] normals]
+                                     (or (> (dot3 n1 dir-vec) align-threshold)
+                                         (> (dot3 n2 dir-vec) align-threshold))))
+                                 edges)
+                        edges)]
+        (when (seq dir-edges)
+          (let [strip (faces/build-chamfer-strip dir-edges distance)]
+            (if strip
+              (or (manifold/difference mesh strip) mesh)
+              (let [prisms (mapv (fn [{:keys [positions normals]}]
+                                  (let [[p0 p1] positions
+                                        [n1 n2] normals]
+                                    (faces/make-prism-along-edge p0 p1 n1 n2 distance)))
+                                dir-edges)]
+                (reduce (fn [current-mesh prism]
+                          (or (manifold/difference current-mesh prism)
+                              current-mesh))
+                        mesh
+                        prisms)))))))))
+
+(defn fillet-impl
+  "Fillet (round) edges selected by turtle-oriented direction.
+   direction: :top :bottom :up :down :left :right :all
+   radius: fillet radius in mm
+   Options: :angle (default 80), :min-radius, :segments (default 8),
+            :where, :blend-vertices (default false)"
+  [mesh direction radius & {:keys [angle min-radius segments where blend-vertices]
+                             :or {angle 80 segments 8 blend-vertices false}}]
+  (let [dir-vec (direction-vec mesh direction)
+        align-threshold 0.85
+        pose (or (:creation-pose mesh)
+                 {:heading [1 0 0] :up [0 0 1] :position [0 0 0]})
+        origin (:position pose)
+        heading (:heading pose)
+        radius-check (when min-radius
+                       (let [r2 (* min-radius 1.01 min-radius 1.01)]
+                         (fn [p]
+                           (let [v (mapv - p origin)
+                                 axial (dot3 v heading)
+                                 radial (mapv - v (mapv #(* axial %) heading))
+                                 dist2 (dot3 radial radial)]
+                             (> dist2 r2)))))
+        combined-where (fn [p]
+                         (and (or (nil? radius-check) (radius-check p))
+                              (or (nil? where) (where p))))]
+    (when-let [edges (faces/find-sharp-edges mesh :angle angle :where combined-where)]
+      (let [dir-edges (if dir-vec
+                        (filterv (fn [{:keys [normals]}]
+                                   (let [[n1 n2] normals]
+                                     (or (> (dot3 n1 dir-vec) align-threshold)
+                                         (> (dot3 n2 dir-vec) align-threshold))))
+                                 edges)
+                        edges)]
+        (when (seq dir-edges)
+          (let [cutters (faces/build-fillet-cutters dir-edges radius segments)
+                edge-result (if (seq cutters)
+                              (reduce (fn [m cutter]
+                                        (or (manifold/difference m cutter) m))
+                                      mesh cutters)
+                              mesh)
+                fillet-verts (when blend-vertices
+                               (faces/find-fillet-vertices dir-edges))]
+            (if (seq fillet-verts)
+              (reduce
+                (fn [m {:keys [position normals]}]
+                  (let [center (faces/compute-fillet-vertex-center position normals radius)
+                        sphere (-> (prims/sphere-mesh radius segments (max 6 (quot segments 2)))
+                                   (update :vertices
+                                           (fn [vs] (mapv (fn [[x y z]]
+                                                            [(+ x (nth center 0))
+                                                             (+ y (nth center 1))
+                                                             (+ z (nth center 2))]) vs))))
+                        margin (* radius 0.5)
+                        sum-n (reduce (fn [[ax ay az] [bx by bz]]
+                                        [(+ ax bx) (+ ay by) (+ az bz)])
+                                      normals)
+                        extent [(+ (nth position 0) (* (nth sum-n 0) margin))
+                                (+ (nth position 1) (* (nth sum-n 1) margin))
+                                (+ (nth position 2) (* (nth sum-n 2) margin))]
+                        [mnx mny mnz] [(min (nth center 0) (nth extent 0))
+                                        (min (nth center 1) (nth extent 1))
+                                        (min (nth center 2) (nth extent 2))]
+                        [mxx mxy mxz] [(max (nth center 0) (nth extent 0))
+                                        (max (nth center 1) (nth extent 1))
+                                        (max (nth center 2) (nth extent 2))]
+                        corner-box {:type :mesh
+                                    :vertices [[mnx mny mnz] [mxx mny mnz] [mxx mxy mnz] [mnx mxy mnz]
+                                               [mnx mny mxz] [mxx mny mxz] [mxx mxy mxz] [mnx mxy mxz]]
+                                    :faces [[0 2 1] [0 3 2] [4 5 6] [4 6 7]
+                                            [0 1 5] [0 5 4] [2 3 7] [2 7 6]
+                                            [1 2 6] [1 6 5] [0 4 7] [0 7 3]]}
+                        vertex-cutter (manifold/difference corner-box sphere)]
+                    (if vertex-cutter
+                      (or (manifold/difference m vertex-cutter) m)
+                      m)))
+                edge-result fillet-verts)
+              edge-result)))))))
+
+;; ── Attach-face / Clone-face impl ──────────────────────────────
+
 (defn attach-face-impl
   "Attach to a face and replay path. Returns modified mesh."
   [mesh face-id path]
@@ -752,8 +916,14 @@
    'get-face         faces/get-face
    'face-info        faces/face-info
    'face-ids         faces/face-ids
-   'find-sharp-edges faces/find-sharp-edges
-   'chamfer-prisms   faces/chamfer-prisms
+   'find-sharp-edges  faces/find-sharp-edges
+   'chamfer-prisms    faces/chamfer-prisms
+   'chamfer-edges     chamfer-edges-impl
+   'chamfer           chamfer-impl
+   'fillet            fillet-impl
+   'build-chamfer-strip   faces/build-chamfer-strip
+   'build-fillet-cutters  faces/build-fillet-cutters
+   'make-prism-along-edge faces/make-prism-along-edge
    ;; Measurement
    'bounds     (fn [mesh] (let [vs (:vertices mesh)
                                  xs (map #(% 0) vs) ys (map #(% 1) vs) zs (map #(% 2) vs)]
