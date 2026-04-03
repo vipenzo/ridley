@@ -19,6 +19,9 @@
             [ridley.io.svg :as svg]
             [ridley.sdf.core :as sdf]))
 
+;; ── Forward declarations ────────────────────────────────────────
+(declare pure-loft-path pure-loft-two-shapes pure-loft-shape-fn)
+
 ;; ── Turtle state (global, reset per eval) ───────────────────────
 (def turtle-state (atom (turtle/make-turtle)))
 (def registered-meshes (atom {}))
@@ -81,6 +84,68 @@
   ([r] (circle-impl r 32))
   ([r n] (shape/circle-shape r n)))
 
+;; ── Attach-face / Clone-face impl ──────────────────────────────
+
+(defn- replay-path-commands
+  "Replay path commands on a turtle state."
+  [state path]
+  (reduce (fn [s {:keys [cmd args]}]
+            (case cmd
+              :f  (turtle/f s (first args))
+              :th (turtle/th s (first args))
+              :tv (turtle/tv s (first args))
+              :tr (turtle/tr s (first args))
+              :u  (turtle/move-up s (first args))
+              :rt (turtle/move-right s (first args))
+              :lt (turtle/move-left s (first args))
+              :inset (turtle/inset s (first args))
+              :scale (turtle/scale s (first args))
+              :mark s
+              s))
+          state
+          (:commands path)))
+
+(defn attach-face-impl
+  "Attach to a face and replay path. Returns modified mesh."
+  [mesh face-id path]
+  (let [state (-> (turtle/make-turtle)
+                  (turtle/attach-face mesh face-id))
+        state (replay-path-commands state path)]
+    (or (get-in state [:attached :mesh]) mesh)))
+
+(defn clone-face-impl
+  "Attach to a face with extrusion (clone), replay path. Returns modified mesh."
+  [mesh face-id path]
+  (let [state (-> (turtle/make-turtle)
+                  (turtle/attach-face-extrude mesh face-id))
+        state (replay-path-commands state path)]
+    (or (get-in state [:attached :mesh]) mesh)))
+
+;; ── Init-turtle (for turtle scoping macro) ────────────────────
+
+(defn init-turtle
+  "Create a new turtle state for a turtle scope.
+   Clones parent by default; :reset true starts fresh."
+  [opts parent]
+  (let [base (if (:reset opts)
+               (turtle/make-turtle)
+               (select-keys parent
+                 [:position :heading :up :pen-mode :resolution
+                  :joint-mode :material :anchors
+                  :preserve-up :reference-up]))
+        base (cond-> base
+               (not (:reset opts))
+               (merge {:geometry [] :meshes [] :stamps []
+                       :stamped-shape nil :sweep-rings []
+                       :pending-rotation nil :attached nil})
+               (:pos opts)     (assoc :position (:pos opts))
+               (:heading opts) (assoc :heading (:heading opts))
+               (:up opts)      (assoc :up (:up opts))
+               (:preserve-up opts)
+               (-> (assoc :preserve-up true)
+                   (#(assoc % :reference-up (or (:reference-up %) (:up %))))))]
+    base))
+
 ;; ── Register ────────────────────────────────────────────────────
 
 (defn register-impl [name value]
@@ -132,50 +197,239 @@
              {:position (:position current) :heading (:heading current) :up (:up current)}))))
 
 (defn loft-impl
-  "loft-impl: dispatch based on args"
+  "loft-impl: dispatch based on args.
+   2-arg: shape-fn + path
+   3-arg: shape-fn + path (ignores 2nd), or shape + shape2 + path, or shape + transform-fn + path"
   ([first-arg path-data]
+   (if (sfn/shape-fn? first-arg)
+     (pure-loft-shape-fn first-arg path-data)
+     (throw (Exception. "loft: 2-arg form requires a shape-fn as first argument"))))
+  ([first-arg second-arg path-data]
+   (cond
+     (sfn/shape-fn? first-arg)
+     (pure-loft-shape-fn first-arg path-data)
+
+     (shape/shape? second-arg)
+     (pure-loft-two-shapes first-arg second-arg path-data)
+
+     :else
+     (pure-loft-path first-arg second-arg path-data))))
+
+;; ── Loft-n impl ───────────────────────────────────────────────
+
+(defn loft-n-impl
+  "loft-n-impl: loft with custom step count."
+  ([steps first-arg path]
+   (if (sfn/shape-fn? first-arg)
+     (pure-loft-shape-fn first-arg path steps)
+     (throw (Exception. "loft-n: 2-arg form requires a shape-fn as first argument"))))
+  ([steps first-arg second-arg path]
+   (cond
+     (sfn/shape-fn? first-arg)
+     (pure-loft-shape-fn first-arg path steps)
+
+     (shape/shape? second-arg)
+     (pure-loft-two-shapes first-arg second-arg path steps)
+
+     :else
+     (pure-loft-path first-arg second-arg path steps))))
+
+;; ── Bloft impl ─────────────────────────────────────────────────
+
+(defn bloft-impl
+  "bloft-impl: bezier-safe loft — handles self-intersecting paths."
+  ([first-arg path]
+   (bloft-impl first-arg nil path nil 0.1))
+  ([first-arg second-arg path]
+   (bloft-impl first-arg second-arg path nil 0.1))
+  ([first-arg second-arg path steps]
+   (bloft-impl first-arg second-arg path steps 0.1))
+  ([first-arg second-arg path steps threshold]
    (let [current @turtle-state
          initial (-> (turtle/make-turtle)
                      (assoc :position (:position current))
                      (assoc :heading (:heading current))
                      (assoc :up (:up current))
-                     (assoc :resolution (:resolution current)))]
+                     (assoc :resolution (:resolution current)))
+         creation-pose {:position (:position current) :heading (:heading current) :up (:up current)}]
      (cond
        (sfn/shape-fn? first-arg)
-       (let [state (loft/loft-from-path initial first-arg nil path-data)
+       (let [path-length (reduce + 0 (keep (fn [cmd]
+                                              (when (= :f (:cmd cmd))
+                                                (first (:args cmd))))
+                                            (:commands path)))]
+         (binding [sfn/*path-length* path-length]
+           (let [base-shape (first-arg 0)
+                 transform-fn (fn [_shape t] (first-arg t))
+                 state (loft/bloft initial base-shape transform-fn path steps threshold)
+                 mesh (last (:meshes state))]
+             (when mesh (assoc mesh :creation-pose creation-pose)))))
+
+       (and second-arg (shape/shape? second-arg))
+       (let [n1 (count (:points first-arg))
+             n2 (count (:points second-arg))
+             [rs1 rs2] (if (= n1 n2)
+                          [first-arg second-arg]
+                          (let [target-n (max n1 n2)]
+                            [(xform/resample first-arg target-n)
+                             (xform/resample second-arg target-n)]))
+             s2-aligned (xform/align-to-shape rs1 rs2)
+             transform-fn (shape/make-lerp-fn rs1 s2-aligned)
+             state (loft/bloft initial rs1 transform-fn path steps threshold)
              mesh (last (:meshes state))]
-         (when mesh
-           (assoc mesh :creation-pose
-                  {:position (:position current) :heading (:heading current) :up (:up current)})))
+         (when mesh (assoc mesh :creation-pose creation-pose)))
 
        :else
-       (throw (Exception. "loft: 2-arg form requires a shape-fn as first argument")))))
-  ([first-arg second-arg path-data]
+       (let [transform-fn (or second-arg (fn [s _] s))
+             state (loft/bloft initial first-arg transform-fn path steps threshold)
+             mesh (last (:meshes state))]
+         (when mesh (assoc mesh :creation-pose creation-pose)))))))
+
+;; ── Revolve impl ──────────────────────────────────────────────
+
+(defn revolve-impl
+  "revolve-impl: revolve shape or shape-fn around turtle's axis."
+  ([shape-or-fn]
+   (revolve-impl shape-or-fn 360))
+  ([shape-or-fn angle]
    (let [current @turtle-state
          initial (-> (turtle/make-turtle)
                      (assoc :position (:position current))
                      (assoc :heading (:heading current))
                      (assoc :up (:up current))
-                     (assoc :resolution (:resolution current)))]
-     (cond
-       (sfn/shape-fn? first-arg)
-       (loft-impl first-arg path-data)
-
-       (shape/shape? second-arg)
-       ;; Two-shape loft: use loft-from-path with a morphed shape-fn
-       (let [morphed (sfn/morphed first-arg second-arg)
-             state (loft/loft-from-path initial morphed nil path-data)
+                     (assoc :resolution (:resolution current)))
+         creation-pose {:position (:position current) :heading (:heading current) :up (:up current)}]
+     (if (sfn/shape-fn? shape-or-fn)
+       (let [base-shape (shape-or-fn 0)
+             state (turtle/revolve-shape initial base-shape angle shape-or-fn)
              mesh (last (:meshes state))]
-         (when mesh
-           (assoc mesh :creation-pose
-                  {:position (:position current) :heading (:heading current) :up (:up current)})))
-
-       :else  ;; legacy transform-fn mode
-       (let [state (loft/loft-from-path initial first-arg second-arg path-data)
+         (when mesh (assoc mesh :creation-pose creation-pose)))
+       (let [state (turtle/revolve-shape initial shape-or-fn angle)
              mesh (last (:meshes state))]
-         (when mesh
-           (assoc mesh :creation-pose
-                  {:position (:position current) :heading (:heading current) :up (:up current)})))))))
+         (when mesh (assoc mesh :creation-pose creation-pose)))))))
+
+;; ── Pure helper functions (no side effects, read turtle state) ─
+
+(defn- make-initial-state []
+  (let [current @turtle-state]
+    (-> (turtle/make-turtle)
+        (assoc :position (:position current))
+        (assoc :heading (:heading current))
+        (assoc :up (:up current))
+        (assoc :resolution (:resolution current)))))
+
+(defn- creation-pose-from-current []
+  (let [current @turtle-state]
+    {:position (:position current) :heading (:heading current) :up (:up current)}))
+
+(defn pure-extrude-path
+  "Pure extrude: shape + path → mesh (no side effects)."
+  [shape path]
+  (let [initial (make-initial-state)
+        pose (creation-pose-from-current)
+        state (turtle/extrude-from-path initial shape path)
+        mesh (last (:meshes state))]
+    (when mesh (assoc mesh :creation-pose pose))))
+
+(defn pure-loft-path
+  "Pure loft: shape + transform-fn + path → mesh."
+  ([shape transform-fn path] (pure-loft-path shape transform-fn path 16))
+  ([shape transform-fn path steps]
+   (let [initial (make-initial-state)
+         pose (creation-pose-from-current)
+         state (loft/loft-from-path initial shape transform-fn path steps)
+         mesh (last (:meshes state))]
+     (when mesh (assoc mesh :creation-pose pose)))))
+
+(defn pure-loft-two-shapes
+  "Pure loft between two shapes."
+  ([shape1 shape2 path] (pure-loft-two-shapes shape1 shape2 path 16))
+  ([shape1 shape2 path steps]
+   (let [n1 (count (:points shape1))
+         n2 (count (:points shape2))
+         [rs1 rs2] (if (= n1 n2)
+                      [shape1 shape2]
+                      (let [target-n (max n1 n2)]
+                        [(xform/resample shape1 target-n)
+                         (xform/resample shape2 target-n)]))
+         s2-aligned (xform/align-to-shape rs1 rs2)
+         transform-fn (shape/make-lerp-fn rs1 s2-aligned)]
+     (pure-loft-path rs1 transform-fn path steps))))
+
+(defn pure-loft-shape-fn
+  "Pure loft with shape-fn."
+  ([shape-fn-val path] (pure-loft-shape-fn shape-fn-val path 16))
+  ([shape-fn-val path steps]
+   (let [path-length (reduce + 0 (keep (fn [cmd]
+                                          (when (= :f (:cmd cmd))
+                                            (first (:args cmd))))
+                                        (:commands path)))]
+     (binding [sfn/*path-length* path-length]
+       (let [base-shape (shape-fn-val 0)
+             transform-fn (fn [_shape t] (shape-fn-val t))]
+         (pure-loft-path base-shape transform-fn path steps))))))
+
+(defn pure-bloft
+  "Pure bezier-safe loft."
+  ([shape transform-fn path] (pure-bloft shape transform-fn path nil 0.1))
+  ([shape transform-fn path steps] (pure-bloft shape transform-fn path steps 0.1))
+  ([shape transform-fn path steps threshold]
+   (let [initial (make-initial-state)
+         pose (creation-pose-from-current)
+         state (loft/bloft initial shape transform-fn path steps threshold)
+         mesh (last (:meshes state))]
+     (when mesh (assoc mesh :creation-pose pose)))))
+
+(defn pure-bloft-two-shapes
+  "Pure bezier-safe loft between two shapes."
+  ([shape1 shape2 path] (pure-bloft-two-shapes shape1 shape2 path nil 0.1))
+  ([shape1 shape2 path steps] (pure-bloft-two-shapes shape1 shape2 path steps 0.1))
+  ([shape1 shape2 path steps threshold]
+   (let [n1 (count (:points shape1))
+         n2 (count (:points shape2))
+         [rs1 rs2] (if (= n1 n2)
+                      [shape1 shape2]
+                      (let [target-n (max n1 n2)]
+                        [(xform/resample shape1 target-n)
+                         (xform/resample shape2 target-n)]))
+         s2-aligned (xform/align-to-shape rs1 rs2)
+         transform-fn (shape/make-lerp-fn rs1 s2-aligned)]
+     (pure-bloft rs1 transform-fn path steps threshold))))
+
+(defn pure-bloft-shape-fn
+  "Pure bezier-safe loft with shape-fn."
+  ([shape-fn-val path] (pure-bloft-shape-fn shape-fn-val path nil 0.1))
+  ([shape-fn-val path steps] (pure-bloft-shape-fn shape-fn-val path steps 0.1))
+  ([shape-fn-val path steps threshold]
+   (let [path-length (reduce + 0 (keep (fn [cmd]
+                                          (when (= :f (:cmd cmd))
+                                            (first (:args cmd))))
+                                        (:commands path)))]
+     (binding [sfn/*path-length* path-length]
+       (let [base-shape (shape-fn-val 0)
+             transform-fn (fn [_shape t] (shape-fn-val t))]
+         (pure-bloft base-shape transform-fn path steps threshold))))))
+
+(defn pure-revolve
+  "Pure revolve."
+  ([shape] (pure-revolve shape 360))
+  ([shape angle]
+   (let [initial (make-initial-state)
+         pose (creation-pose-from-current)
+         state (turtle/revolve-shape initial shape angle)
+         mesh (last (:meshes state))]
+     (when mesh (assoc mesh :creation-pose pose)))))
+
+(defn pure-revolve-shape-fn
+  "Pure revolve with shape-fn."
+  ([shape-fn-val] (pure-revolve-shape-fn shape-fn-val 360))
+  ([shape-fn-val angle]
+   (let [base-shape (shape-fn-val 0)
+         initial (make-initial-state)
+         pose (creation-pose-from-current)
+         state (turtle/revolve-shape initial base-shape angle shape-fn-val)
+         mesh (last (:meshes state))]
+     (when mesh (assoc mesh :creation-pose pose)))))
 
 ;; ── DSL bindings (non-macro) ────────────────────────────────────
 
@@ -279,8 +533,25 @@
    'concat-meshes    manifold/concat-meshes
    'solidify         manifold/solidify
    'manifold?        manifold/manifold?
-   ;; Generative ops
-   'revolve      ops/revolve
+   ;; Generative ops (legacy — prefer revolve macro)
+   'ops-revolve  ops/revolve
+   ;; Impl functions (used by macros)
+   'extrude-impl        extrude-impl
+   'extrude-closed-impl extrude-closed-impl
+   'loft-impl           loft-impl
+   'loft-n-impl         loft-n-impl
+   'bloft-impl          bloft-impl
+   'revolve-impl        revolve-impl
+   ;; Pure functions (no side effects, for direct use)
+   'pure-extrude-path       pure-extrude-path
+   'pure-loft-path          pure-loft-path
+   'pure-loft-two-shapes    pure-loft-two-shapes
+   'pure-loft-shape-fn      pure-loft-shape-fn
+   'pure-bloft              pure-bloft
+   'pure-bloft-two-shapes   pure-bloft-two-shapes
+   'pure-bloft-shape-fn     pure-bloft-shape-fn
+   'pure-revolve            pure-revolve
+   'pure-revolve-shape-fn   pure-revolve-shape-fn
    ;; Turtle extras
    'joint-mode   (fn [mode] (swap! turtle-state assoc :joint-mode mode))
    'inset        (fn [dist] (swap! turtle-state attachment/inset dist))
@@ -288,6 +559,29 @@
    'follow-path  (fn [p] (swap! turtle-state turtle/run-path p))
    'path?        turtle/path?
    'shape?       shape/shape?
+   ;; Attach-face / clone-face impl (used by macros)
+   'attach-face-impl  attach-face-impl
+   'clone-face-impl   clone-face-impl
+   ;; Turtle scoping
+   'init-turtle  init-turtle
+   ;; Shape recording (used by shape macro)
+   'recording-turtle       shape/recording-turtle
+   'shape-rec-f            shape/rec-f
+   'shape-rec-th           shape/rec-th
+   'shape-from-recording   shape/shape-from-recording
+   ;; Pure turtle functions (for attach macros / explicit use)
+   'make-turtle            turtle/make-turtle
+   'turtle-f               turtle/f
+   'turtle-th              turtle/th
+   'turtle-tv              turtle/tv
+   'turtle-tr              turtle/tr
+   'turtle-attach          turtle/attach
+   'turtle-attach-face     turtle/attach-face
+   'turtle-attach-face-extrude turtle/attach-face-extrude
+   'turtle-attach-move     turtle/attach-move
+   'turtle-inset           turtle/inset
+   'turtle-scale           turtle/scale
+   'turtle-group-transform attachment/group-transform
    ;; 2D booleans
    'shape-union        clipper/shape-union
    'shape-difference   clipper/shape-difference
@@ -466,6 +760,118 @@
               (reset! ridley.jvm.eval/turtle-state saved#)
               result#)))))")
 
+(def ^:private loft-n-macro-source
+  "(defmacro loft-n [steps first-arg & rest-args]
+     (let [mvmt? (fn [x#] (and (list? x#) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v} (first x#))))]
+       (cond
+         (= 1 (count rest-args))
+         `(ridley.jvm.eval/loft-n-impl ~steps ~first-arg (path ~(first rest-args)))
+
+         (mvmt? (first rest-args))
+         `(ridley.jvm.eval/loft-n-impl ~steps ~first-arg (path ~@rest-args))
+
+         :else
+         (let [[dispatch-arg# & movements#] rest-args]
+           `(ridley.jvm.eval/loft-n-impl ~steps ~first-arg ~dispatch-arg# (path ~@movements#))))))")
+
+(def ^:private bloft-macro-source
+  "(defmacro bloft [first-arg & rest-args]
+     (let [mvmt? (fn [x#] (and (list? x#) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v} (first x#))))]
+       (cond
+         (= 1 (count rest-args))
+         `(ridley.jvm.eval/bloft-impl ~first-arg (path ~(first rest-args)))
+
+         (mvmt? (first rest-args))
+         `(ridley.jvm.eval/bloft-impl ~first-arg (path ~@rest-args))
+
+         :else
+         (let [[dispatch-arg# & args#] rest-args]
+           (cond
+             (and (seq args#) (mvmt? (first args#)))
+             `(ridley.jvm.eval/bloft-impl ~first-arg ~dispatch-arg# (path ~@args#))
+
+             (= 1 (count args#))
+             `(ridley.jvm.eval/bloft-impl ~first-arg ~dispatch-arg# (path ~(first args#)))
+
+             :else
+             `(ridley.jvm.eval/bloft-impl ~first-arg ~dispatch-arg# (path ~@args#)))))))")
+
+(def ^:private bloft-n-macro-source
+  "(defmacro bloft-n [steps first-arg & rest-args]
+     (let [mvmt? (fn [x#] (and (list? x#) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v} (first x#))))]
+       (cond
+         (= 1 (count rest-args))
+         `(ridley.jvm.eval/bloft-impl ~first-arg nil (path ~(first rest-args)) ~steps)
+
+         (mvmt? (first rest-args))
+         `(ridley.jvm.eval/bloft-impl ~first-arg nil (path ~@rest-args) ~steps)
+
+         :else
+         (let [[dispatch-arg# & movements#] rest-args]
+           `(ridley.jvm.eval/bloft-impl ~first-arg ~dispatch-arg# (path ~@movements#) ~steps)))))")
+
+(def ^:private revolve-macro-source
+  "(defmacro revolve
+     ([shape]
+      `(ridley.jvm.eval/revolve-impl ~shape))
+     ([shape angle]
+      `(ridley.jvm.eval/revolve-impl ~shape ~angle)))")
+
+(def ^:private shape-macro-source
+  "(defmacro shape [& body]
+     `(let [state# (atom (ridley.turtle.shape/recording-turtle))
+            ~'f (fn [d#] (swap! state# ridley.turtle.shape/rec-f d#))
+            ~'th (fn [a#] (swap! state# ridley.turtle.shape/rec-th a#))
+            ~'tv (fn [& _#] (throw (Exception. \"tv not allowed in shape - 2D only\")))
+            ~'tr (fn [& _#] (throw (Exception. \"tr not allowed in shape - 2D only\")))]
+        ~@body
+        (ridley.turtle.shape/shape-from-recording @state#)))")
+
+(def ^:private attach-face-macro-source
+  "(defmacro attach-face [first-arg & rest]
+     (let [[mesh# face-id# body#]
+           (if (and (seq rest)
+                    (let [f# (first rest)]
+                      (or (keyword? f#) (number? f#) (vector? f#) (symbol? f#))))
+             [first-arg (first rest) (next rest)]
+             [first-arg nil rest])]
+       `(ridley.jvm.eval/attach-face-impl ~mesh# ~face-id# (path ~@body#))))")
+
+(def ^:private clone-face-macro-source
+  "(defmacro clone-face [first-arg & rest]
+     (let [[mesh# face-id# body#]
+           (if (and (seq rest)
+                    (let [f# (first rest)]
+                      (or (keyword? f#) (number? f#) (vector? f#) (symbol? f#))))
+             [first-arg (first rest) (next rest)]
+             [first-arg nil rest])]
+       `(ridley.jvm.eval/clone-face-impl ~mesh# ~face-id# (path ~@body#))))")
+
+(def ^:private turtle-macro-source
+  "(defmacro turtle [& args]
+     ;; Parse optional leading keyword args: :reset, :preserve-up, [x y z] position
+     (let [args-vec (vec args)
+           parse (fn parse [opts remaining]
+                   (if (empty? remaining)
+                     {:opts opts :body []}
+                     (let [x (first remaining)]
+                       (cond
+                         (= :reset x) (recur (assoc opts :reset true) (subvec remaining 1))
+                         (= :preserve-up x) (recur (assoc opts :preserve-up true) (subvec remaining 1))
+                         (vector? x) (recur (assoc opts :pos x) (subvec remaining 1))
+                         (and (map? x) (some #{:pos :heading :up :reset :preserve-up} (keys x)))
+                         (recur (merge opts x) (subvec remaining 1))
+                         :else {:opts opts :body (vec remaining)}))))
+           {:keys [opts body]} (parse {} args-vec)
+           opts-form (if (empty? opts) {} opts)]
+       `(let [saved# @ridley.jvm.eval/turtle-state]
+          (reset! ridley.jvm.eval/turtle-state
+                  (ridley.jvm.eval/init-turtle ~opts-form saved#))
+          (try
+            ~@body
+            (finally
+              (reset! ridley.jvm.eval/turtle-state saved#))))))")
+
 (def ^:private register-macro-source
   "(defmacro register [name expr & opts]
      `(let [v# ~expr]
@@ -491,7 +897,15 @@
         (load-string extrude-macro-source)
         (load-string extrude-closed-macro-source)
         (load-string loft-macro-source)
+        (load-string loft-n-macro-source)
+        (load-string bloft-macro-source)
+        (load-string bloft-n-macro-source)
+        (load-string revolve-macro-source)
+        (load-string shape-macro-source)
         (load-string attach-macro-source)
+        (load-string attach-face-macro-source)
+        (load-string clone-face-macro-source)
+        (load-string turtle-macro-source)
         (load-string register-macro-source))
       ;; Eval script, capturing print output
       (binding [*ns* ns-obj
