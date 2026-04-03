@@ -10,6 +10,7 @@
             [ridley.turtle.path :as path-ns]
             [ridley.turtle.transform :as xform]
             [ridley.turtle.attachment :as attachment]
+            [ridley.turtle.text :as text]
             [ridley.geometry.primitives :as prims]
             [ridley.geometry.operations :as ops]
             [ridley.geometry.faces :as faces]
@@ -21,7 +22,8 @@
             [ridley.sdf.core :as sdf]))
 
 ;; ── Forward declarations ────────────────────────────────────────
-(declare pure-loft-path pure-loft-two-shapes pure-loft-shape-fn)
+(declare pure-loft-path pure-loft-two-shapes pure-loft-shape-fn
+         make-initial-state creation-pose-from-current)
 
 ;; ── Turtle state (global, reset per eval) ───────────────────────
 (def turtle-state (atom (turtle/make-turtle)))
@@ -315,10 +317,39 @@
 
 ;; ── Register & Registry ────────────────────────────────────────
 
+(defn- flatten-meshes
+  "Recursively flatten nested vectors/seqs of meshes into a single vector."
+  [x]
+  (cond
+    (and (map? x) (:vertices x)) [x]
+    (sequential? x) (vec (mapcat flatten-meshes x))
+    :else []))
+
+(defn- concat-mesh-vec
+  "Concatenate multiple meshes into one by merging vertices and reindexing faces."
+  [meshes]
+  (when (seq meshes)
+    (if (= 1 (count meshes))
+      (first meshes)
+      (loop [remaining (rest meshes)
+             verts (vec (:vertices (first meshes)))
+             faces (vec (:faces (first meshes)))]
+        (if (empty? remaining)
+          {:type :mesh :vertices verts :faces faces
+           :creation-pose (:creation-pose (first meshes))}
+          (let [m (first remaining)
+                offset (count verts)]
+            (recur (rest remaining)
+                   (into verts (:vertices m))
+                   (into faces (mapv (fn [f] (mapv #(+ % offset) f)) (:faces m))))))))))
+
 (defn register-impl [name value]
   (let [res (get-in @turtle-state [:resolution :value] 15)
         mesh (binding [sdf/*sdf-resolution* res]
-               (sdf/ensure-mesh value))]
+               (if (and (sequential? value) (not (map? value)))
+                 ;; Vector of meshes — flatten and concatenate
+                 (concat-mesh-vec (flatten-meshes value))
+                 (sdf/ensure-mesh value)))]
     (swap! registered-meshes assoc name mesh)
     mesh))
 
@@ -414,19 +445,25 @@
              {:position (:position current) :heading (:heading current) :up (:up current)}))))
 
 (defn extrude-impl
-  "extrude-impl: shape + path-data → mesh"
-  [shape path-data]
-  (let [current @turtle-state
-        initial (-> (turtle/make-turtle)
-                    (assoc :position (:position current))
-                    (assoc :heading (:heading current))
-                    (assoc :up (:up current))
-                    (assoc :resolution (:resolution current)))
-        state (turtle/extrude-from-path initial shape path-data)
-        mesh (last (:meshes state))]
-    (when mesh
-      (assoc mesh :creation-pose
-             {:position (:position current) :heading (:heading current) :up (:up current)}))))
+  "extrude-impl: shape-or-shapes + path-data → mesh or vector of meshes"
+  [shape-or-shapes path-data]
+  (let [shapes (if (and (vector? shape-or-shapes)
+                        (seq shape-or-shapes)
+                        (map? (first shape-or-shapes)))
+                 shape-or-shapes
+                 [shape-or-shapes])
+        initial (make-initial-state)
+        pose (creation-pose-from-current)
+        results (reduce
+                  (fn [acc s]
+                    (let [state (turtle/extrude-from-path initial s path-data)
+                          mesh (last (:meshes state))]
+                      (if mesh (conj acc (assoc mesh :creation-pose pose)) acc)))
+                  []
+                  shapes)]
+    (if (= 1 (count results))
+      (first results)
+      results)))
 
 (defn loft-impl
   "loft-impl: dispatch based on args.
@@ -871,6 +908,13 @@
    'load-stl  stl/load-stl
    'load-svg  svg/load-svg
    'svg-path  svg/svg-path
+   ;; Text shapes (java.awt font rendering)
+   'text-shape   text/text-shape
+   'text-shapes  text/text-shapes
+   'char-shape   text/char-shape
+   'text-width   text/text-width
+   'load-font!   text/load-font!
+   'font-loaded? text/font-loaded?
    ;; SDF operations (libfive via Rust backend)
    'sdf-sphere       sdf/sdf-sphere
    'sdf-box          sdf/sdf-box

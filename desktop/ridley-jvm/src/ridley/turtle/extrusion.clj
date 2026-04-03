@@ -3,10 +3,10 @@
 
    This module contains the core extrusion logic extracted from turtle/core.cljs.
    All functions are pure - they operate on data and return data."
-  (:require 
-            
-            [ridley.schema :as schema]
-            [ridley.math :as math]))
+  (:require [ridley.schema :as schema]
+            [ridley.math :as math])
+  (:import [org.locationtech.jts.geom GeometryFactory Coordinate LinearRing Polygon]
+           [org.locationtech.jts.triangulate.polygon ConstrainedDelaunayTriangulator]))
 
 ;; --- Re-export math utilities used throughout ---
 (def v+ math/v+)
@@ -171,20 +171,15 @@
                      (point-in-triangle? (nth pts (nth indices j)) a b c)))
                  (range n))))))
 
-(defn earcut-triangulate
-  "Triangulate a 2D polygon using ear-clipping algorithm.
-   Returns vector of [i j k] triangles (indices into original vertex list).
-   Handles concave polygons correctly. Holes not yet supported."
-  [outer holes]
-  (when (seq holes)
-    (println "WARN: earcut-triangulate ignoring" (count holes) "holes (JVM spike)"))
+(defn- earcut-simple
+  "Ear-clipping triangulation for simple polygons (no holes).
+   Returns vector of [i j k] triangles (indices into original vertex list)."
+  [outer]
   (let [n (count outer)
-        ;; Ensure CCW winding
         pts (if (neg? (signed-area-2d outer))
               (vec (reverse outer))
               outer)
         ccw? (not (neg? (signed-area-2d outer)))
-        ;; Original indices (for mapping back)
         orig-indices (if ccw? (vec (range n)) (vec (reverse (range n))))]
     (if (<= n 3)
       (if (= n 3) [[0 1 2]] [])
@@ -212,10 +207,82 @@
                             (orig-indices (indices i))
                             (orig-indices (indices (inc i)))])))))))))
 
+(defn- jts-triangulate-with-holes
+  "Triangulate a 2D polygon with holes using JTS ConstrainedDelaunayTriangulator.
+   All points (outer + holes) are combined into one vertex list.
+   JTS may add Steiner points — these are appended to the vertex list.
+   Returns {:vertices all-pts :faces [[i j k] ...]}."
+  [outer holes]
+  (let [gf (GeometryFactory.)
+        close (fn [pts]
+                (let [pts (vec pts)]
+                  (if (= (first pts) (last pts))
+                    pts
+                    (conj pts (first pts)))))
+        outer-coords (into-array Coordinate
+                       (mapv (fn [[x y]] (Coordinate. (double x) (double y)))
+                             (close outer)))
+        outer-ring (.createLinearRing gf outer-coords)
+        hole-rings (when (seq holes)
+                     (into-array LinearRing
+                       (mapv (fn [h]
+                               (.createLinearRing gf
+                                 (into-array Coordinate
+                                   (mapv (fn [[x y]] (Coordinate. (double x) (double y)))
+                                         (close h)))))
+                             holes)))
+        ^Polygon poly (if hole-rings
+                        (.createPolygon gf outer-ring hole-rings)
+                        (.createPolygon gf outer-ring nil))
+        tri-geom (ConstrainedDelaunayTriangulator/triangulate poly)
+        n-tris (.getNumGeometries tri-geom)
+        ;; Build vertex list and spatial lookup
+        all-pts (atom (vec (concat outer (mapcat identity holes))))
+        ;; Key: quantized coordinate string → index
+        coord-index (atom
+                      (reduce-kv (fn [m i [x y]]
+                                   (let [k (str (long (Math/round (* x 1e4))) ","
+                                                (long (Math/round (* y 1e4))))]
+                                     (if (contains? m k) m (assoc m k i))))
+                                 {} @all-pts))
+        lookup (fn [^Coordinate c]
+                 (let [x (.-x c) y (.-y c)
+                       k (str (long (Math/round (* x 1e4))) ","
+                              (long (Math/round (* y 1e4))))]
+                   (if-let [idx (get @coord-index k)]
+                     idx
+                     ;; Steiner point — add to vertex list
+                     (let [idx (count @all-pts)]
+                       (swap! all-pts conj [x y])
+                       (swap! coord-index assoc k idx)
+                       idx))))]
+    {:vertices @all-pts
+     :faces (vec (keep (fn [gi]
+                         (let [g (.getGeometryN tri-geom gi)
+                               coords (.getCoordinates g)]
+                           (when (>= (alength coords) 3)
+                             [(lookup (aget coords 0))
+                              (lookup (aget coords 1))
+                              (lookup (aget coords 2))])))
+                       (range n-tris)))}))
+
+(defn earcut-triangulate
+  "Triangulate a 2D polygon, optionally with holes.
+   Uses ear-clipping for simple polygons, JTS for polygons with holes.
+   Falls back to ear-clipping (ignoring holes) if JTS fails on degenerate geometry."
+  [outer holes]
+  (if (seq holes)
+    (try
+      (:faces (jts-triangulate-with-holes outer holes))
+      (catch Exception _
+        ;; JTS can fail on degenerate geometry (hole touching outer boundary, etc.)
+        ;; Fall back to simple triangulation without holes
+        (earcut-simple outer)))
+    (earcut-simple outer)))
+
 (defn- libtess-triangulate
-  "Triangulate a 2D polygon with holes.
-   JVM spike: delegates to earcut-triangulate (fan triangulation).
-   TODO: integrate JOGL GLU tessellator for proper hole support."
+  "Triangulate a 2D polygon with holes. Delegates to earcut-triangulate
+   which uses JTS for holes."
   [outer holes]
   (earcut-triangulate outer holes))
 

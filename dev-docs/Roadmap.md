@@ -682,8 +682,8 @@ Replaced stubs with JTS (Java Topology Suite) backend. All 2D boolean operations
 #### 3. ~~Chamfer/fillet impl~~ ✓ Done
 `chamfer`, `fillet`, `chamfer-edges` fully ported with direction filtering, min-radius, and strip/cutter generation. End-to-end CSG requires the Rust server.
 
-#### 4. Text shapes (medium effort)
-`text-shape`, `char-shape`, `extrude-text` — need a JVM font parser (opentype.js equivalent). Could use Apache Batik or java.awt.font for glyph outline extraction.
+#### 4. ~~Text shapes~~ ✓ Done
+`text-shape`, `char-shape`, `text-shapes`, `text-width`, `load-font!`, `font-loaded?` — using java.awt.Font + PathIterator for glyph outline extraction. Supports any TTF/OTF file. JTS triangulation with holes for letters like O, A, B (fallback to ear-clipping on degenerate geometry).
 
 #### 5. ~~Frontend visibility protocol~~ ✓ Done
 JVM sets `:visible` and `:color` as mesh metadata. Server includes them in `/eval-bin` response metadata. Frontend client reads them, applies `:color` as `:material`, and calls `hide-mesh!` for `:visible false`.

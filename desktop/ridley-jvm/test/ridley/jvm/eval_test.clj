@@ -1145,3 +1145,72 @@
               (println (shape? s))
               (println (count (:points s)))")]
       (is (= "true\n9\n" (:print-output r))))))
+
+;; ============================================================
+;; Text shapes (java.awt font rendering)
+;; ============================================================
+
+(deftest text-shape-basic
+  (testing "text-shape produces shapes for each glyph"
+    (let [r (eval/eval-script "
+              (def shapes (text-shape \"Hi\" :size 20))
+              (println (vector? shapes))
+              (println (count shapes))
+              (println (every? shape? shapes))")]
+      (is (= "true\n2\ntrue\n" (:print-output r))))))
+
+(deftest text-shape-with-holes
+  (testing "text-shape produces holes for letters like O, A, B"
+    (let [r (eval/eval-script "
+              (def shapes (text-shape \"OAB\" :size 30))
+              ;; O, A, B all have holes (counters)
+              (println (every? #(some? (:holes %)) shapes))")]
+      (is (= "true\n" (:print-output r))))))
+
+(deftest text-shape-extrude
+  (testing "text-shape result can be extruded"
+    (is (has-mesh? "
+      (register T (extrude (text-shape \"XY\" :size 20) (f 5)))" 'T))))
+
+(deftest text-shape-custom-font
+  (testing "text-shape with loaded font"
+    (let [r (eval/eval-script "
+              (def f (load-font! \"/Volumes/Rogue/Progetti/Ridley/public/fonts/RobotoMono-Regular.ttf\"))
+              (def shapes (text-shape \"AB\" :size 25 :font f))
+              (println (count shapes))
+              (println (every? shape? shapes))
+              (register T (extrude shapes (f 3)))")]
+      (is (re-find #"^2\ntrue\n" (:print-output r)))
+      (is (pos? (count (:vertices (get (:meshes r) 'T))))))))
+
+(deftest char-shape-test
+  (testing "char-shape extracts a single character"
+    (let [r (eval/eval-script "
+              (def s (char-shape \"R\" :size 30))
+              (println (shape? s))
+              (println (pos? (count (:points s))))
+              (println (some? (:holes s)))")]
+      (is (= "true\ntrue\ntrue\n" (:print-output r))))))
+
+(deftest text-shapes-test
+  (testing "text-shapes returns one shape per character"
+    (let [r (eval/eval-script "
+              (def ss (text-shapes \"Hi\" :size 20))
+              (println (count ss))
+              (println (every? shape? ss))")]
+      (is (= "2\ntrue\n" (:print-output r))))))
+
+(deftest font-loaded-test
+  (testing "font-loaded? returns true after init"
+    (let [r (eval/eval-script "
+              ;; Trigger init by calling text-shape
+              (text-shape \"x\" :size 10)
+              (println (font-loaded?))")]
+      (is (= "true\n" (:print-output r))))))
+
+(deftest text-width-test
+  (testing "text-width returns positive number"
+    (let [r (eval/eval-script "
+              (text-shape \"x\" :size 10)  ;; ensure font loaded
+              (println (pos? (text-width \"Hello\" nil 20)))")]
+      (is (= "true\n" (:print-output r))))))
