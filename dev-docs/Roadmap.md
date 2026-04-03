@@ -676,11 +676,11 @@ The core turtle system, generative operations, boolean operations, anchor/naviga
 #### 1. Animation preprocessing (medium effort)
 Port easing functions and `preprocess-animation` to JVM. The macro `anim!`/`span` generates declarative timeline data — pure computation. Playback stays in the frontend. This enables the JVM to define animations that the webview renders.
 
-#### 2. Clipper2 Java port (high effort)
-2D shape booleans (`shape-union`, `shape-difference`, etc.) are currently stubbed in JVM — they throw "not available". Need a Java Clipper2 binding or pure-Clojure implementation. Blocks: voronoi-shell, shape-offset, any script using 2D booleans.
+#### 2. ~~Clipper2 Java port~~ ✓ Done
+Replaced stubs with JTS (Java Topology Suite) backend. All 2D boolean operations functional.
 
-#### 3. Chamfer/fillet impl wiring (low effort)
-`find-sharp-edges` and `chamfer-prisms` are ported, but the high-level `chamfer` and `fillet` functions (which do CSG subtraction per edge) need wiring. Requires the Rust Manifold server to be running for tests.
+#### 3. ~~Chamfer/fillet impl~~ ✓ Done
+`chamfer`, `fillet`, `chamfer-edges` fully ported with direction filtering, min-radius, and strip/cutter generation. End-to-end CSG requires the Rust server.
 
 #### 4. Text shapes (medium effort)
 `text-shape`, `char-shape`, `extrude-text` — need a JVM font parser (opentype.js equivalent). Could use Apache Batik or java.awt.font for glyph outline extraction.
