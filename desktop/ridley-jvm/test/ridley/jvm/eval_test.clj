@@ -541,3 +541,103 @@
   (testing "script with error throws"
     (is (thrown? Exception
           (eval/eval-script "(undefined-fn 42)")))))
+
+;; ============================================================
+;; Misc bindings (solidify, concat, extrude-z/y, helpers)
+;; ============================================================
+
+(deftest quick-path-test
+  (testing "quick-path creates a path from compact notation"
+    (let [r (eval/eval-script "
+              (def p (quick-path 30 90 20))
+              (println (path? p))
+              (println (count (:commands p)))")]
+      (is (= "true\n3\n" (:print-output r))))))
+
+(deftest extrude-z-test
+  (testing "extrude-z is available as a legacy binding"
+    ;; extrude-z/y are legacy ops that take turtle geometry, not shapes
+    (let [r (eval/eval-script "(println (fn? extrude-z))")]
+      (is (= "true\n" (:print-output r))))))
+
+(deftest extrude-y-test
+  (testing "extrude-y is available as a legacy binding"
+    (let [r (eval/eval-script "(println (fn? extrude-y))")]
+      (is (= "true\n" (:print-output r))))))
+
+(deftest set-creation-pose-test
+  (testing "set-creation-pose stamps current turtle pose onto mesh"
+    (let [r (eval/eval-script "
+              (def b (box 10 10 10))
+              (f 50) (th 90)
+              (def b2 (set-creation-pose b))
+              (println (= (:creation-pose b2) (:creation-pose b)))")]
+      ;; b was created at origin, then we moved; set-creation-pose uses new position
+      (is (= "false\n" (:print-output r))))))
+
+(deftest last-mesh-test
+  (testing "last-mesh returns nil for pure extrude (no turtle state mutation)"
+    ;; Pure extrude doesn't add to turtle state meshes — this is expected
+    (let [r (eval/eval-script "
+              (extrude (circle 5 8) (f 10))
+              (println (nil? (last-mesh)))")]
+      (is (= "true\n" (:print-output r))))))
+
+(deftest get-turtle-resolution-test
+  (testing "resolution getter works"
+    (let [r (eval/eval-script "
+              (resolution :n 32)
+              (println (get-turtle-resolution))")]
+      (is (= "32\n" (:print-output r))))))
+
+(deftest concat-meshes-test
+  (testing "concat-meshes merges meshes without boolean"
+    (let [r (eval/eval-script "
+              (def a (box 10 10 10))
+              (def b (attach (box 5 5 5) (f 20)))
+              (register T (concat-meshes [a b]))")]
+      (is (has-mesh? "(def a (box 10 10 10))
+                       (def b (attach (box 5 5 5) (f 20)))
+                       (register T (concat-meshes [a b]))" 'T))
+      ;; concat should have 8+8=16 vertices
+      (is (= 16 (verts "(def a (box 10 10 10))
+                         (def b (attach (box 5 5 5) (f 20)))
+                         (register T (concat-meshes [a b]))" 'T))))))
+
+(deftest solidify-test
+  (testing "solidify self-unions a mesh"
+    (is (has-mesh? "(register T (solidify (box 10 10 10)))" 'T))))
+
+(deftest pen-macro-test
+  (testing "pen macro changes pen mode"
+    (let [r (eval/eval-script "
+              (pen :off)
+              (f 10)
+              (pen :on)
+              (f 10)
+              (println :ok)")]
+      (is (= ":ok\n" (:print-output r))))))
+
+(deftest find-sharp-edges-test
+  (testing "find-sharp-edges on a box"
+    (let [r (eval/eval-script "
+              (def b (box 10 10 10))
+              (def edges (find-sharp-edges b))
+              (println (pos? (count edges)))")]
+      (is (= "true\n" (:print-output r))))))
+
+(deftest mesh-status-test
+  (testing "mesh-status returns status map"
+    (let [r (eval/eval-script "
+              (def b (box 10 10 10))
+              (def s (mesh-status b))
+              (println (:manifold? s))")]
+      (is (= "true\n" (:print-output r))))))
+
+(deftest face-ops-integration
+  (testing "list-faces + face-info on box"
+    (let [r (eval/eval-script "
+              (def b (box 10 10 10))
+              (println (count (face-ids b)))
+              (println (some? (face-info b :top)))")]
+      (is (= "6\ntrue\n" (:print-output r))))))

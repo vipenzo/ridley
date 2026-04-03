@@ -42,7 +42,7 @@
 (defn implicit-lt [dist] (swap! turtle-state turtle/move-left dist))
 (defn implicit-arc-h [radius angle] (swap! turtle-state turtle/arc-h radius angle))
 (defn implicit-arc-v [radius angle] (swap! turtle-state turtle/arc-v radius angle))
-(defn implicit-pen [mode shape] (swap! turtle-state turtle/pen mode shape))
+(defn implicit-pen [mode _shape] (swap! turtle-state turtle/pen mode))
 (defn implicit-stamp [shape] (swap! turtle-state turtle/stamp shape))
 (defn implicit-finalize-sweep [] (swap! turtle-state turtle/finalize-sweep))
 (defn implicit-finalize-sweep-closed [] (swap! turtle-state turtle/finalize-sweep-closed))
@@ -552,6 +552,11 @@
    'pure-bloft-shape-fn     pure-bloft-shape-fn
    'pure-revolve            pure-revolve
    'pure-revolve-shape-fn   pure-revolve-shape-fn
+   ;; Generative ops (legacy direct calls)
+   'ops-extrude  ops/extrude
+   'extrude-z    ops/extrude-z
+   'extrude-y    ops/extrude-y
+   'ops-loft     ops/loft
    ;; Turtle extras
    'joint-mode   (fn [mode] (swap! turtle-state assoc :joint-mode mode))
    'inset        (fn [dist] (swap! turtle-state attachment/inset dist))
@@ -559,6 +564,17 @@
    'follow-path  (fn [p] (swap! turtle-state turtle/run-path p))
    'path?        turtle/path?
    'shape?       shape/shape?
+   'quick-path   turtle/quick-path
+   'set-creation-pose (fn [mesh] (turtle/set-creation-pose @turtle-state mesh))
+   'last-mesh    (fn [] (last (:meshes @turtle-state)))
+   'get-turtle-resolution (fn [] (get-in @turtle-state [:resolution :value] 15))
+   'get-turtle-joint-mode (fn [] (:joint-mode @turtle-state :miter))
+   ;; Path utilities
+   'run-path-impl  turtle/run-path
+   'path-segments-impl turtle/path-segments
+   'subdivide-segment-impl turtle/subdivide-segment
+   ;; Mesh validation
+   'mesh-status    manifold/get-mesh-status
    ;; Attach-face / clone-face impl (used by macros)
    'attach-face-impl  attach-face-impl
    'clone-face-impl   clone-face-impl
@@ -639,10 +655,12 @@
    'cross    math/cross
    'normalize math/normalize
    ;; Face ops
-   'list-faces faces/list-faces
-   'get-face   faces/get-face
-   'face-info  faces/face-info
-   'face-ids   faces/face-ids
+   'list-faces       faces/list-faces
+   'get-face         faces/get-face
+   'face-info        faces/face-info
+   'face-ids         faces/face-ids
+   'find-sharp-edges faces/find-sharp-edges
+   'chamfer-prisms   faces/chamfer-prisms
    ;; Measurement
    'bounds     (fn [mesh] (let [vs (:vertices mesh)
                                  xs (map #(% 0) vs) ys (map #(% 1) vs) zs (map #(% 2) vs)]
@@ -827,6 +845,14 @@
         ~@body
         (ridley.turtle.shape/shape-from-recording @state#)))")
 
+(def ^:private pen-macro-source
+  "(defmacro pen [mode]
+     `(ridley.jvm.eval/implicit-pen ~mode nil))")
+
+(def ^:private smooth-path-macro-source
+  "(defmacro smooth-path [p & opts]
+     `(~'path (~'bezier-as ~p ~@opts)))")
+
 (def ^:private attach-face-macro-source
   "(defmacro attach-face [first-arg & rest]
      (let [[mesh# face-id# body#]
@@ -902,6 +928,8 @@
         (load-string bloft-n-macro-source)
         (load-string revolve-macro-source)
         (load-string shape-macro-source)
+        (load-string pen-macro-source)
+        (load-string smooth-path-macro-source)
         (load-string attach-macro-source)
         (load-string attach-face-macro-source)
         (load-string clone-face-macro-source)
