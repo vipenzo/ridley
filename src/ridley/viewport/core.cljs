@@ -1737,12 +1737,13 @@
                   (clear-rulers!))))
       ;; Setup ResizeObserver on viewport-panel (parent) for responsive canvas sizing
       ;; Observing the parent catches resize from panel divider drag
+      ;; Also listen to window resize for Tauri window resizing
       (let [viewport-panel (.-parentElement canvas)
-            resize-observer (js/ResizeObserver.
-                              (fn [_entries]
-                                ;; Use requestAnimationFrame to ensure layout is updated
-                                (js/requestAnimationFrame handle-resize)))]
+            on-resize (fn [& _]
+                        (js/requestAnimationFrame handle-resize))
+            resize-observer (js/ResizeObserver. on-resize)]
         (.observe resize-observer viewport-panel)
+        (.addEventListener js/window "resize" on-resize)
         (reset! state {:scene scene
                        :camera camera
                        :camera-rig camera-rig
