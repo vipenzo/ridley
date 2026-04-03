@@ -688,8 +688,8 @@ Replaced stubs with JTS (Java Topology Suite) backend. All 2D boolean operations
 #### 5. ~~Frontend visibility protocol~~ ✓ Done
 JVM sets `:visible` and `:color` as mesh metadata. Server includes them in `/eval-bin` response metadata. Frontend client reads them, applies `:color` as `:material`, and calls `hide-mesh!` for `:visible false`.
 
-#### 6. SVG import enhancement (low effort)
-`load-svg` exists but uses a basic parser. Could leverage Batik for full SVG path support (cubic/quadratic beziers, arcs).
+#### 6. ~~SVG import enhancement~~ ✓ Done
+Full SVG path parser: all commands (M, L, H, V, C, S, Q, T, A, Z), both absolute and relative, implicit repeated parameters. Arc endpoint-to-center conversion. Added `svg-path` binding for parsing path strings without file I/O.
 
 ---
 

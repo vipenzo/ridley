@@ -1031,3 +1031,117 @@
 ;; running on :12321. Run manually with:
 ;;   (chamfer (box 20 20 20) :top 2)
 ;;   (fillet (extrude (circle 10 32) (f 20)) :top 2 :min-radius 5)
+
+;; ============================================================
+;; SVG path parser
+;; ============================================================
+
+(deftest svg-path-basic
+  (testing "svg-path parses M/L/Z into a shape"
+    (let [r (eval/eval-script "
+              (def s (svg-path \"M 0 0 L 10 0 L 10 10 L 0 10 Z\"))
+              (println (shape? s))
+              (println (count (:points s)))")]
+      (is (= "true\n4\n" (:print-output r))))))
+
+(deftest svg-path-implicit-lineto
+  (testing "svg-path handles implicit repeated L commands"
+    (let [r (eval/eval-script "
+              ;; After M, implicit coords become L
+              (def s (svg-path \"M 0 0 10 0 10 10 0 10 Z\"))
+              (println (shape? s))
+              (println (count (:points s)))")]
+      (is (= "true\n4\n" (:print-output r))))))
+
+(deftest svg-path-relative
+  (testing "svg-path handles relative commands (m/l/h/v)"
+    (let [r (eval/eval-script "
+              (def s (svg-path \"m 0 0 l 10 0 l 0 10 l -10 0 z\"))
+              (println (shape? s))
+              (println (count (:points s)))")]
+      (is (= "true\n4\n" (:print-output r))))))
+
+(deftest svg-path-hv
+  (testing "svg-path handles H and V commands"
+    (let [r (eval/eval-script "
+              (def s (svg-path \"M 0 0 H 10 V 10 H 0 Z\"))
+              (println (shape? s))
+              (println (count (:points s)))")]
+      (is (= "true\n4\n" (:print-output r))))))
+
+(deftest svg-path-cubic-bezier
+  (testing "svg-path samples cubic bezier (C) into multiple points"
+    (let [r (eval/eval-script "
+              (def s (svg-path \"M 0 0 C 10 0 10 10 0 10\"))
+              (println (shape? s))
+              ;; 1 moveto + 8 bezier samples = 9 points
+              (println (count (:points s)))")]
+      (is (= "true\n9\n" (:print-output r))))))
+
+(deftest svg-path-smooth-cubic
+  (testing "svg-path handles smooth cubic (S) with reflected control point"
+    (let [r (eval/eval-script "
+              (def s (svg-path \"M 0 0 C 5 0 10 5 10 10 S 15 20 20 20\"))
+              (println (shape? s))
+              ;; 1 moveto + 8 (C) + 8 (S) = 17
+              (println (count (:points s)))")]
+      (is (= "true\n17\n" (:print-output r))))))
+
+(deftest svg-path-quadratic-bezier
+  (testing "svg-path samples quadratic bezier (Q) into multiple points"
+    (let [r (eval/eval-script "
+              (def s (svg-path \"M 0 0 Q 10 5 10 10\"))
+              (println (shape? s))
+              ;; 1 moveto + 8 samples = 9
+              (println (count (:points s)))")]
+      (is (= "true\n9\n" (:print-output r))))))
+
+(deftest svg-path-smooth-quadratic
+  (testing "svg-path handles smooth quadratic (T) with reflected control"
+    (let [r (eval/eval-script "
+              (def s (svg-path \"M 0 0 Q 5 10 10 10 T 20 0\"))
+              (println (shape? s))
+              ;; 1 moveto + 8 (Q) + 8 (T) = 17
+              (println (count (:points s)))")]
+      (is (= "true\n17\n" (:print-output r))))))
+
+(deftest svg-path-arc
+  (testing "svg-path samples arc (A) into multiple points"
+    (let [r (eval/eval-script "
+              (def s (svg-path \"M 10 0 A 10 10 0 0 1 0 10\"))
+              (println (shape? s))
+              ;; 1 moveto + 16 arc samples = 17
+              (println (count (:points s)))")]
+      (is (= "true\n17\n" (:print-output r))))))
+
+(deftest svg-path-arc-large
+  (testing "svg-path handles large-arc-flag"
+    (let [r (eval/eval-script "
+              ;; Large arc: goes the long way around
+              (def s (svg-path \"M 10 0 A 10 10 0 1 1 0 10\"))
+              (println (shape? s))
+              (println (pos? (count (:points s))))")]
+      (is (= "true\ntrue\n" (:print-output r))))))
+
+(deftest svg-path-complex
+  (testing "svg-path handles mixed commands from real SVG"
+    (let [r (eval/eval-script "
+              ;; A realistic path with multiple command types
+              (def s (svg-path \"M 10 80 C 40 10 65 10 95 80 S 150 150 180 80\"))
+              (println (shape? s))
+              (println (pos? (count (:points s))))")]
+      (is (= "true\ntrue\n" (:print-output r))))))
+
+(deftest svg-path-in-extrude
+  (testing "svg-path result can be extruded"
+    (is (has-mesh? "
+      (def s (svg-path \"M 0 0 L 10 0 L 10 10 L 0 10 Z\"))
+      (register T (extrude s (f 5)))" 'T))))
+
+(deftest svg-path-relative-cubic
+  (testing "svg-path handles relative cubic (c)"
+    (let [r (eval/eval-script "
+              (def s (svg-path \"M 0 0 c 5 0 10 5 10 10\"))
+              (println (shape? s))
+              (println (count (:points s)))")]
+      (is (= "true\n9\n" (:print-output r))))))

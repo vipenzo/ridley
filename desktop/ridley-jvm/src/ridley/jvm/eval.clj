@@ -870,6 +870,7 @@
    'save-stl  (fn [value path] (stl/save-stl (sdf/ensure-mesh value) path))
    'load-stl  stl/load-stl
    'load-svg  svg/load-svg
+   'svg-path  svg/svg-path
    ;; SDF operations (libfive via Rust backend)
    'sdf-sphere       sdf/sdf-sphere
    'sdf-box          sdf/sdf-box
