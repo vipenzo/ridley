@@ -629,6 +629,70 @@ The core turtle system, generative operations, boolean operations, anchor/naviga
 
 ---
 
+## JVM Sidecar — DSL Binding Porting
+
+**Goal**: Full DSL parity between CLJS (SCI) and JVM eval engines, so user scripts produce identical geometry regardless of backend.
+
+### Current State (2026-04-03)
+
+- **215 function bindings** + **17 macros** in JVM eval
+- **96 tests, 111 assertions** — `clj -M:test` from `desktop/ridley-jvm/`
+- CLJS has ~360 bindings total; ~120 are UI/viewport/animation-only
+
+### Ported ✓
+
+| Area | Bindings | Notes |
+|---|---|---|
+| Turtle movement | 16 | f, th, tv, tr, u, d, rt, lt, arc-h/v, bezier, goto, look-at |
+| 2D shapes | 17 | circle, rect, poly, star, shape macro, fillet/chamfer-shape, booleans |
+| Shape-fn system | 18 | tapered, twisted, rugged, fluted, displaced, morphed, noise, shell, capped... |
+| Extrusion/loft | 28 | extrude, extrude-closed, loft, loft-n, bloft, bloft-n + pure-* variants |
+| Revolve | 4 | revolve macro + impl, pure-revolve, pure-revolve-shape-fn |
+| Attachment | 14 | attach, attach-face, clone-face macros + pure turtle functions |
+| Turtle scoping | 2 | turtle macro, init-turtle |
+| CSG (via Rust) | 10 | mesh-union/difference/intersection/hull, solidify, concat-meshes, manifold? |
+| Warp | 8 | warp macro, inflate, dent, attract, twist, squash, roughen, smooth-falloff |
+| SDF (via Rust) | 12 | sdf-sphere/box/cyl, boolean ops, blend, shell, offset, morph, move, materialize |
+| Scene registry | 13 | register, get-mesh, $, show/hide, visible-names/meshes, color |
+| Face ops | 6 | list-faces, face-ids, face-info, get-face, find-sharp-edges, chamfer-prisms |
+| Path recording | 12 | path macro, follow, quick-path, path-segments, subdivide-segment |
+| File I/O | 3 | save-stl, load-stl, load-svg |
+| Math/vectors | 19 | PI, trig, vec3 ops |
+| Misc | 15 | bench, pen, resolution, joint-mode, get-turtle, bounds... |
+
+### Not Ported (intentionally)
+
+| Area | ~Count | Reason |
+|---|---|---|
+| Animation playback | 20 | Requires Three.js render loop (play!, pause!, stop!, seek!, link!) |
+| Viewport/camera | 12 | Three.js scene management (fit-camera, flash-face, highlight) |
+| Picking/selection | 11 | WebGL raycasting (selected, selected-mesh, source-of) |
+| Panels (3D text) | 8 | Three.js billboard rendering |
+| AI/describe | 8 | Browser-side AI integration |
+| Editor state | 5 | SCI context, run-definitions, eval-source tracking |
+
+### Next Steps
+
+#### 1. Animation preprocessing (medium effort)
+Port easing functions and `preprocess-animation` to JVM. The macro `anim!`/`span` generates declarative timeline data — pure computation. Playback stays in the frontend. This enables the JVM to define animations that the webview renders.
+
+#### 2. Clipper2 Java port (high effort)
+2D shape booleans (`shape-union`, `shape-difference`, etc.) are currently stubbed in JVM — they throw "not available". Need a Java Clipper2 binding or pure-Clojure implementation. Blocks: voronoi-shell, shape-offset, any script using 2D booleans.
+
+#### 3. Chamfer/fillet impl wiring (low effort)
+`find-sharp-edges` and `chamfer-prisms` are ported, but the high-level `chamfer` and `fillet` functions (which do CSG subtraction per edge) need wiring. Requires the Rust Manifold server to be running for tests.
+
+#### 4. Text shapes (medium effort)
+`text-shape`, `char-shape`, `extrude-text` — need a JVM font parser (opentype.js equivalent). Could use Apache Batik or java.awt.font for glyph outline extraction.
+
+#### 5. Frontend visibility protocol (low effort)
+The JVM now sets `:visible` and `:color` as mesh metadata. The frontend (`jvm/client.cljs`) needs to read these when rendering meshes received from `/eval`. Minor change — filter by `:visible` in the mesh rendering loop, apply `:color` to material.
+
+#### 6. SVG import enhancement (low effort)
+`load-svg` exists but uses a basic parser. Could leverage Batik for full SVG path support (cubic/quadratic beziers, arcs).
+
+---
+
 ## Pending Improvements
 
 ### Adaptive loft step density for shape-fn transitions
