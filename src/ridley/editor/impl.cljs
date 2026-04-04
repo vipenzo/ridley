@@ -313,6 +313,7 @@
    mesh can be a selection map from (selected) when face-id is nil."
   [mesh face-id path]
   (let [[mesh face-id] (resolve-selection mesh face-id)
+        mesh (faces/ensure-face-groups mesh)
         state (-> (turtle/make-turtle)
                   (turtle/attach-face mesh face-id))
         state (replay-path-commands state path)]
@@ -323,6 +324,7 @@
    mesh can be a selection map from (selected) when face-id is nil."
   [mesh face-id path]
   (let [[mesh face-id] (resolve-selection mesh face-id)
+        mesh (faces/ensure-face-groups mesh)
         state (-> (turtle/make-turtle)
                   (turtle/attach-face-extrude mesh face-id))
         state (replay-path-commands state path)]
