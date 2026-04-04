@@ -30,6 +30,22 @@
       (json->mesh (:body resp))
       (throw (Exception. (str "Rust server " endpoint " returned " (:status resp) ": " (:body resp)))))))
 
+(defn- invoke-with-retry
+  "Invoke Rust endpoint; on failure, self-union each input mesh to fix
+   non-manifold status, then retry once."
+  [endpoint build-payload meshes]
+  (try
+    (invoke endpoint (build-payload meshes))
+    (catch Exception _
+      ;; Retry: solidify each mesh via self-union, then re-invoke
+      (let [fixed (mapv (fn [m]
+                          (try
+                            (let [r (invoke "/union" [(mesh->json m)])]
+                              (assoc r :creation-pose (:creation-pose m)))
+                            (catch Exception _ m)))
+                        meshes)]
+        (invoke endpoint (build-payload fixed))))))
+
 (defn- ensure-all-mesh
   "Materialize any SDF nodes in a list of operands.
    Uses the first mesh found as bounds reference for SDF nodes."
@@ -50,7 +66,9 @@
       (let [meshes (ensure-all-mesh meshes)]
         (if (<= (count meshes) 1)
           (first meshes)
-          (invoke "/union" (mapv mesh->json meshes)))))))
+          (invoke-with-retry "/union"
+            (fn [ms] (mapv mesh->json ms))
+            meshes))))))
 
 (defn difference
   "Difference meshes/SDF via native Rust Manifold. SDF nodes auto-materialized."
@@ -63,8 +81,10 @@
       (reduce sdf/sdf-difference meshes)
       (let [meshes (ensure-all-mesh meshes)]
         (when (>= (count meshes) 2)
-          (invoke "/difference" {:base (mesh->json (first meshes))
-                                 :cutters (mapv mesh->json (rest meshes))}))))))
+          (invoke-with-retry "/difference"
+            (fn [ms] {:base (mesh->json (first ms))
+                      :cutters (mapv mesh->json (rest ms))})
+            meshes))))))
 
 (defn intersection
   "Intersection meshes/SDF via native Rust Manifold."
@@ -78,7 +98,9 @@
       (let [meshes (ensure-all-mesh meshes)]
         (if (<= (count meshes) 1)
           (first meshes)
-          (invoke "/intersection" (mapv mesh->json meshes)))))))
+          (invoke-with-retry "/intersection"
+            (fn [ms] (mapv mesh->json ms))
+            meshes))))))
 
 (defn hull
   "Convex hull via native Rust Manifold."

@@ -325,7 +325,7 @@
           local-tris)))
 
 (defn triangulate-cap-with-holes
-  "Triangulate a polygon cap with holes using libtess (robust GLU tessellator).
+  "Triangulate a polygon cap with holes using JTS.
    Falls back to earcut for simple caps without holes.
    - outer-ring: vector of 3D vertex positions for outer boundary
    - hole-rings: vector of 3D vertex vectors for each hole
@@ -337,13 +337,24 @@
   (if (empty? hole-rings)
     ;; No holes - use standard earcut triangulation
     (triangulate-cap outer-ring base-idx normal flip?)
-    ;; With holes - use libtess for robust tessellation
-    (let [[outer-2d winding-preserved?] (project-to-2d outer-ring normal)
+    ;; With holes - use JTS triangulation
+    (let [[outer-2d _] (project-to-2d outer-ring normal)
           holes-2d (mapv #(first (project-to-2d % normal)) hole-rings)
-          effective-flip? (if winding-preserved? flip? (not flip?))
-          local-tris (libtess-triangulate outer-2d holes-2d)]
+          local-tris (libtess-triangulate outer-2d holes-2d)
+          ;; Combine all 3D points: outer then holes (matching index order)
+          all-3d (vec (concat outer-ring (mapcat identity hole-rings)))
+          ;; Check winding of first triangle against desired normal
+          ;; JTS/earcut produce their own winding — verify and correct
+          needs-flip? (when (seq local-tris)
+                        (let [[i j k] (first local-tris)
+                              a (nth all-3d i) b (nth all-3d j) c (nth all-3d k)
+                              e1 (math/v- b a) e2 (math/v- c a)
+                              face-n (math/cross e1 e2)
+                              dot (math/dot face-n normal)]
+                          ;; If dot < 0, face normal opposes cap normal → flip
+                          (if flip? (>= dot 0) (< dot 0))))]
       (mapv (fn [[i j k]]
-              (if effective-flip?
+              (if needs-flip?
                 [(+ base-idx i) (+ base-idx k) (+ base-idx j)]
                 [(+ base-idx i) (+ base-idx j) (+ base-idx k)]))
             local-tris))))
