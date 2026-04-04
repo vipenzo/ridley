@@ -29,11 +29,17 @@
 (def turtle-state (atom (turtle/make-turtle)))
 (def registered-meshes (atom {}))
 (def registered-values (atom {}))
+(def registered-paths (atom {}))
+(def registered-shapes-store (atom {}))
+(def source-forms (atom {}))
 
 (defn reset-state! []
   (reset! turtle-state (turtle/make-turtle))
   (reset! registered-meshes {})
-  (reset! registered-values {}))
+  (reset! registered-values {})
+  (reset! registered-paths {})
+  (reset! registered-shapes-store {})
+  (reset! source-forms {}))
 
 ;; ── Implicit turtle commands (mutate global state) ──────────────
 
@@ -417,6 +423,59 @@
   []
   (vec (keep (fn [[_ v]] (when (get v :visible true) v))
              @registered-meshes)))
+
+;; ── Path/Shape registry ────────────────────────────────────────
+
+(defn register-path! [name-kw path]
+  (let [sym (if (keyword? name-kw) (symbol (name name-kw)) name-kw)]
+    (swap! registered-paths assoc sym path)
+    path))
+
+(defn get-path [name-kw]
+  (let [sym (if (keyword? name-kw) (symbol (name name-kw)) name-kw)]
+    (get @registered-paths sym)))
+
+(defn path-names [] (set (keys @registered-paths)))
+
+(defn register-shape! [name-kw s]
+  (let [sym (if (keyword? name-kw) (symbol (name name-kw)) name-kw)]
+    (swap! registered-shapes-store assoc sym s)
+    s))
+
+(defn get-shape [name-kw]
+  (let [sym (if (keyword? name-kw) (symbol (name name-kw)) name-kw)]
+    (get @registered-shapes-store sym)))
+
+(defn shape-names [] (set (keys @registered-shapes-store)))
+
+(defn set-source-form! [name-kw form]
+  (let [sym (if (keyword? name-kw) (symbol (name name-kw)) name-kw)]
+    (swap! source-forms assoc sym form)))
+
+(defn get-source-form [name-kw]
+  (let [sym (if (keyword? name-kw) (symbol (name name-kw)) name-kw)]
+    (get @source-forms sym)))
+
+;; ── Measurement ───────────────────────────────────────────────
+
+(defn distance-3d
+  "Euclidean distance between two 3D points."
+  [a b]
+  (let [dx (- (nth b 0) (nth a 0))
+        dy (- (nth b 1) (nth a 1))
+        dz (- (nth b 2) (nth a 2))]
+    (Math/sqrt (+ (* dx dx) (* dy dy) (* dz dz)))))
+
+(defn mesh-area
+  "Total surface area of a mesh (sum of triangle areas)."
+  [mesh]
+  (let [verts (:vertices mesh)]
+    (reduce + (map (fn [[i j k]]
+                     (let [a (nth verts i) b (nth verts j) c (nth verts k)
+                           ab (mapv - b a) ac (mapv - c a)
+                           cross (math/cross ab ac)]
+                       (* 0.5 (math/magnitude cross))))
+                   (:faces mesh)))))
 
 ;; ── Bench ───────────────────────────────────────────────────────
 
@@ -915,6 +974,45 @@
    'text-width   text/text-width
    'load-font!   text/load-font!
    'font-loaded? text/font-loaded?
+   ;; Path registry
+   'register-path!  register-path!
+   'get-path        get-path
+   'path-names      path-names
+   ;; Shape registry
+   'register-shape! register-shape!
+   'get-shape       get-shape
+   'shape-names     shape-names
+   ;; Source form tracking (for tweak)
+   'set-source-form! set-source-form!
+   'get-source-form  get-source-form
+   ;; Measurement
+   'distance        distance-3d
+   'area            mesh-area
+   ;; Material
+   'material        (fn [opts] (swap! turtle-state assoc :material opts))
+   'reset-material  (fn [] (swap! turtle-state dissoc :material))
+   ;; Missing aliases
+   'attached?       (fn [] (some? (:attached @turtle-state)))
+   'make-shape      shape/make-shape
+   'bezier-to-anchor (fn [anchor-name & args]
+                       (swap! turtle-state
+                              #(apply turtle/bezier-to-anchor % anchor-name args)))
+   'path-to         (fn [anchor-name]
+                      (swap! turtle-state turtle/look-at anchor-name)
+                      (let [t2 @turtle-state
+                            dist (math/magnitude (math/v- (:position (get-in t2 [:anchors anchor-name]))
+                                                          (:position t2)))]
+                        (turtle/quick-path [dist])))
+   'stamp-impl      (fn [shape] (swap! turtle-state turtle/stamp shape))
+   'stamp-closed-impl (fn [shape] (swap! turtle-state turtle/stamp-closed shape))
+   'finalize-sweep-impl (fn [] (swap! turtle-state turtle/finalize-sweep))
+   'finalize-sweep-closed-impl (fn [] (swap! turtle-state turtle/finalize-sweep-closed))
+   'turtle-u        turtle/move-up
+   'turtle-d        turtle/move-down
+   'turtle-rt       turtle/move-right
+   'turtle-lt       turtle/move-left
+   ;; Voronoi (if available — stubbed in clipper)
+   ;; 'voronoi-shell — requires d3-delaunay, not available in JVM
    ;; SDF operations (libfive via Rust backend)
    'sdf-sphere       sdf/sdf-sphere
    'sdf-box          sdf/sdf-box

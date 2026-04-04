@@ -633,11 +633,11 @@ The core turtle system, generative operations, boolean operations, anchor/naviga
 
 **Goal**: Full DSL parity between CLJS (SCI) and JVM eval engines, so user scripts produce identical geometry regardless of backend.
 
-### Current State (2026-04-03)
+### Current State (2026-04-04)
 
-- **215 function bindings** + **17 macros** in JVM eval
-- **96 tests, 111 assertions** — `clj -M:test` from `desktop/ridley-jvm/`
-- CLJS has ~360 bindings total; ~120 are UI/viewport/animation-only
+- **252 function bindings** + **17 macros** in JVM eval
+- **145 tests, 161 assertions** — `clj -M:test` from `desktop/ridley-jvm/`
+- CLJS has ~360 bindings total; ~90 are UI/viewport/animation-only
 
 ### Ported ✓
 
@@ -653,12 +653,18 @@ The core turtle system, generative operations, boolean operations, anchor/naviga
 | CSG (via Rust) | 10 | mesh-union/difference/intersection/hull, solidify, concat-meshes, manifold? |
 | Warp | 8 | warp macro, inflate, dent, attract, twist, squash, roughen, smooth-falloff |
 | SDF (via Rust) | 12 | sdf-sphere/box/cyl, boolean ops, blend, shell, offset, morph, move, materialize |
+| CSG edge ops | 9 | chamfer, fillet, chamfer-edges, build-chamfer-strip, fillet-cutters... |
 | Scene registry | 13 | register, get-mesh, $, show/hide, visible-names/meshes, color |
+| Path/shape registry | 6 | register-path!, get-path, register-shape!, get-shape, path/shape-names |
 | Face ops | 6 | list-faces, face-ids, face-info, get-face, find-sharp-edges, chamfer-prisms |
 | Path recording | 12 | path macro, follow, quick-path, path-segments, subdivide-segment |
-| File I/O | 3 | save-stl, load-stl, load-svg |
+| Text shapes | 6 | text-shape, text-shapes, char-shape, text-width, load-font!, font-loaded? |
+| File I/O | 4 | save-stl, load-stl, load-svg, svg-path |
+| Measurement | 2 | distance, area |
+| Material | 2 | material, reset-material |
+| Source tracking | 2 | set-source-form!, get-source-form |
 | Math/vectors | 19 | PI, trig, vec3 ops |
-| Misc | 15 | bench, pen, resolution, joint-mode, get-turtle, bounds... |
+| Misc | 25 | bench, pen, resolution, attached?, make-shape, path-to, bounds... |
 
 ### Not Ported (intentionally)
 
@@ -687,6 +693,28 @@ Replaced stubs with JTS (Java Topology Suite) backend. All 2D boolean operations
 
 #### 5. ~~Frontend visibility protocol~~ ✓ Done
 JVM sets `:visible` and `:color` as mesh metadata. Server includes them in `/eval-bin` response metadata. Frontend client reads them, applies `:color` as `:material`, and calls `hide-mesh!` for `:visible false`.
+
+#### 7. Tweak mode (high effort)
+
+Interactive slider-based parameter tuning. CLJS version uses DOM directly + SCI re-eval. JVM version needs a client-server protocol:
+
+**JVM side (pure computation):**
+- AST walk: `find-numeric-literals` — extract numbers with parent context
+- `substitute-values` — replace nth numeric literal in quoted form
+- `inline-data-symbols` — resolve def'd data before walking
+- Source form storage already ported (`set-source-form!`, `get-source-form`)
+
+**Protocol:**
+- `POST /tweak-analyze {form}` → `{literals: [{index, value, label, parent-fn}...], resolved-form}`
+- `POST /tweak-eval {form, values: {0: 15.5, 2: 90}}` → `{meshes, print_output}` (same as /eval-bin)
+
+**Frontend:**
+- Build slider panel from `/tweak-analyze` response
+- On slider change: call `/tweak-eval` with updated values map
+- On confirm: print final expression, re-register mesh
+- On cancel: restore original mesh
+
+**Scope:** ~3 files (JVM endpoint, frontend tweak UI, eval.clj tweak functions). The AST walk is pure Clojure, the slider DOM is vanilla JS/CLJS.
 
 #### 6. ~~SVG import enhancement~~ ✓ Done
 Full SVG path parser: all commands (M, L, H, V, C, S, Q, T, A, Z), both absolute and relative, implicit repeated parameters. Arc endpoint-to-center conversion. Added `svg-path` binding for parsing path strings without file I/O.
