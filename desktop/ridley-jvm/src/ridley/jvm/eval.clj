@@ -301,7 +301,8 @@
 (defn attach-face-impl
   "Attach to a face and replay path. Returns modified mesh."
   [mesh face-id path]
-  (let [state (-> (turtle/make-turtle)
+  (let [mesh (faces/ensure-face-groups mesh)
+        state (-> (turtle/make-turtle)
                   (turtle/attach-face mesh face-id))
         state (replay-path-commands state path)]
     (or (get-in state [:attached :mesh]) mesh)))
@@ -309,7 +310,8 @@
 (defn clone-face-impl
   "Attach to a face with extrusion (clone), replay path. Returns modified mesh."
   [mesh face-id path]
-  (let [state (-> (turtle/make-turtle)
+  (let [mesh (faces/ensure-face-groups mesh)
+        state (-> (turtle/make-turtle)
                   (turtle/attach-face-extrude mesh face-id))
         state (replay-path-commands state path)]
     (or (get-in state [:attached :mesh]) mesh)))

@@ -244,7 +244,8 @@
         all-faces (vec (concat remaining-faces side-faces new-top-triangles))
 
         ;; Update face-groups
-        side-face-id (keyword (str (name face-id) "-sides-" (count vertices)))
+        side-face-id (keyword (str (if (keyword? face-id) (name face-id) (str face-id))
+                                    "-sides-" (count vertices)))
         new-face-groups (-> face-groups
                            (assoc face-id new-top-triangles)
                            (assoc side-face-id side-faces))]
