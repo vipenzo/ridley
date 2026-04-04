@@ -54,7 +54,24 @@
 (defn implicit-arc-h [radius angle] (swap! turtle-state turtle/arc-h radius angle))
 (defn implicit-arc-v [radius angle] (swap! turtle-state turtle/arc-v radius angle))
 (defn implicit-pen [mode _shape] (swap! turtle-state turtle/pen mode))
-(defn implicit-stamp [shape] (swap! turtle-state turtle/stamp shape))
+(defn implicit-stamp
+  "Stamp a shape at current turtle pose. Creates a flat mesh and adds to
+   turtle meshes so it appears in the output."
+  [shape]
+  (swap! turtle-state
+         (fn [state]
+           (let [stamped (turtle/stamp-debug state shape)
+                 new-stamps (:stamps stamped)
+                 flat-meshes (keep (fn [s]
+                                     (when (and (:vertices s) (seq (:faces s)))
+                                       {:type :mesh
+                                        :vertices (vec (:vertices s))
+                                        :faces (vec (:faces s))
+                                        :creation-pose {:position (:position state)
+                                                        :heading (:heading state)
+                                                        :up (:up state)}}))
+                                   new-stamps)]
+             (update stamped :meshes into flat-meshes)))))
 (defn implicit-finalize-sweep [] (swap! turtle-state turtle/finalize-sweep))
 (defn implicit-finalize-sweep-closed [] (swap! turtle-state turtle/finalize-sweep-closed))
 (defn implicit-resolution
@@ -1350,7 +1367,14 @@
       (binding [*ns* ns-obj
                 *out* output]
         (load-string script-text))
-      {:meshes @registered-meshes
-       :print-output (str output)}
+      ;; Collect stamped meshes from turtle state (stamp generates meshes
+      ;; directly in the turtle state, not via register)
+      (let [turtle-meshes (:meshes @turtle-state)
+            stamp-meshes (when (seq turtle-meshes)
+                           (reduce (fn [m [i mesh]]
+                                     (assoc m (symbol (str "__stamp_" i)) mesh))
+                                   {} (map-indexed vector turtle-meshes)))]
+        {:meshes (merge @registered-meshes stamp-meshes)
+         :print-output (str output)})
       (finally
         (remove-ns ns-sym)))))

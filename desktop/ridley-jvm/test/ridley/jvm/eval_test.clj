@@ -527,6 +527,12 @@
 ;; Edge cases
 ;; ============================================================
 
+(deftest stamp-produces-mesh
+  (testing "stamp generates a flat mesh visible in results"
+    (let [r (eval/eval-script "(stamp (circle 10 8))")]
+      (is (pos? (count (:meshes r)))
+          "stamp should produce at least one mesh in results"))))
+
 (deftest extrude-zero-distance
   (testing "extrude with (f 0) doesn't crash"
     ;; Should return nil or a degenerate mesh, not throw
