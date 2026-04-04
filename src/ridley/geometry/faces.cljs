@@ -274,6 +274,163 @@
     (assoc mesh :face-groups groups)))
 
 ;; ============================================================
+;; Auto face grouping (coplanar adjacency)
+;; ============================================================
+
+(defn- triangle-normal [vertices [i j k]]
+  (let [v0 (nth vertices i) v1 (nth vertices j) v2 (nth vertices k)]
+    (normalize (cross (v- v1 v0) (v- v2 v0)))))
+
+(defn- normals-similar? [n1 n2 threshold]
+  (> (js/Math.abs (+ (* (n1 0) (n2 0)) (* (n1 1) (n2 1)) (* (n1 2) (n2 2))))
+     threshold))
+
+(defn- build-tri-adjacency
+  "Build adjacency: for each triangle index, which other triangles share an edge."
+  [faces]
+  (let [edge-tris (reduce-kv
+                    (fn [m ti [i j k]]
+                      (let [add (fn [m a b] (update m (if (< a b) [a b] [b a]) (fnil conj []) ti))]
+                        (-> m (add i j) (add j k) (add k i))))
+                    {} (vec faces))]
+    (reduce-kv
+      (fn [adj _ tris]
+        (reduce (fn [a t1]
+                  (reduce (fn [a2 t2]
+                            (if (= t1 t2) a2
+                              (update a2 t1 (fnil conj #{}) t2)))
+                          a tris))
+                adj tris))
+      {} edge-tris)))
+
+(defn auto-face-groups
+  "Group mesh triangles into coplanar faces by flood-fill.
+   Two adjacent triangles belong to the same face if their normals
+   are within threshold (default cos(5°) ≈ 0.996)."
+  ([mesh] (auto-face-groups mesh 0.996))
+  ([mesh threshold]
+   (let [faces (vec (:faces mesh))
+         vertices (:vertices mesh)
+         n (count faces)
+         normals (mapv #(triangle-normal vertices %) faces)
+         adj (build-tri-adjacency faces)
+         visited (volatile! #{})]
+     (loop [ti 0, group-id 0, groups {}]
+       (if (>= ti n)
+         groups
+         (if (@visited ti)
+           (recur (inc ti) group-id groups)
+           (let [group-tris
+                 (loop [queue [ti], result []]
+                   (if (empty? queue)
+                     result
+                     (let [t (first queue)
+                           rest-q (subvec queue 1)]
+                       (if (@visited t)
+                         (recur rest-q result)
+                         (do (vswap! visited conj t)
+                             (let [neighbors (get adj t #{})
+                                   tn (nth normals t)
+                                   compatible (filterv (fn [nb]
+                                                         (and (not (@visited nb))
+                                                              (normals-similar? tn (nth normals nb) threshold)))
+                                                       neighbors)]
+                               (recur (into rest-q compatible)
+                                      (conj result (nth faces t)))))))))]
+             (recur (inc ti)
+                    (inc group-id)
+                    (assoc groups group-id (vec group-tris))))))))))
+
+(defn ensure-face-groups
+  "Ensure mesh has :face-groups. If missing, compute via auto-face-groups."
+  [mesh]
+  (if (:face-groups mesh)
+    mesh
+    (assoc mesh :face-groups (auto-face-groups mesh))))
+
+;; ============================================================
+;; Face selection by query
+;; ============================================================
+
+(defn- face-group-info
+  "Compute info for each face group."
+  [mesh]
+  (let [mesh (ensure-face-groups mesh)
+        vertices (:vertices mesh)]
+    (mapv (fn [[face-id triangles]]
+            (let [info (compute-face-info vertices triangles)
+                  area (reduce + 0 (map (fn [[i j k]]
+                                          (let [v0 (nth vertices i) v1 (nth vertices j) v2 (nth vertices k)]
+                                            (/ (magnitude (cross (v- v1 v0) (v- v2 v0))) 2)))
+                                        triangles))]
+              (assoc info :id face-id :area area)))
+          (:face-groups mesh))))
+
+(defn find-faces
+  "Find faces by direction relative to the mesh's creation-pose.
+   direction: :top :bottom :up :down :left :right :all
+   Options:
+     :threshold  — alignment cos threshold (default 0.7 ≈ 45°)
+     :where      — extra predicate on face info map"
+  [mesh direction & {:keys [threshold where] :or {threshold 0.7}}]
+  (let [all (face-group-info mesh)
+        pose (or (:creation-pose mesh)
+                 {:heading [1 0 0] :up [0 0 1]})
+        h (:heading pose)
+        u (:up pose)
+        r (cross h u)
+        dir-vec (case direction
+                  :top h :bottom (v* h -1)
+                  :up u :down (v* u -1)
+                  :right r :left (v* r -1)
+                  :all nil)
+        filtered (if dir-vec
+                   (filterv (fn [f]
+                              (let [n (:normal f)
+                                    d (+ (* (n 0) (dir-vec 0)) (* (n 1) (dir-vec 1)) (* (n 2) (dir-vec 2)))]
+                                (> d threshold)))
+                            all)
+                   all)]
+    (if where
+      (filterv where filtered)
+      filtered)))
+
+(defn face-at
+  "Find the face whose plane is closest to a 3D point."
+  [mesh point]
+  (let [all (face-group-info mesh)
+        [px py pz] point]
+    (when (seq all)
+      (apply min-key
+             (fn [f]
+               (let [[nx ny nz] (:normal f)
+                     [cx cy cz] (:center f)]
+                 (js/Math.abs (+ (* nx (- px cx)) (* ny (- py cy)) (* nz (- pz cz))))))
+             all))))
+
+(defn face-nearest
+  "Find the face whose centroid is nearest to a 3D point."
+  [mesh point]
+  (let [all (face-group-info mesh)
+        [px py pz] point]
+    (when (seq all)
+      (apply min-key
+             (fn [f]
+               (let [[cx cy cz] (:center f)]
+                 (+ (* (- px cx) (- px cx))
+                    (* (- py cy) (- py cy))
+                    (* (- pz cz) (- pz cz)))))
+             all))))
+
+(defn largest-face
+  "Find the face with the largest area, optionally filtered by direction."
+  ([mesh] (largest-face mesh :all))
+  ([mesh direction]
+   (let [faces (find-faces mesh direction)]
+     (when (seq faces)
+       (apply max-key :area faces)))))
+
+;; ============================================================
 ;; Sharp edge detection
 ;; ============================================================
 

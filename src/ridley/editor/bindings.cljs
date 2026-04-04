@@ -251,6 +251,13 @@
    'get-face     faces/get-face
    'face-info    faces/face-info
    'face-ids     faces/face-ids
+   ;; Face selection (query-based)
+   'find-faces        faces/find-faces
+   'face-at           faces/face-at
+   'face-nearest      faces/face-nearest
+   'largest-face      faces/largest-face
+   'auto-face-groups  faces/auto-face-groups
+   'ensure-face-groups faces/ensure-face-groups
    ;; Face highlighting
    'flash-face      viewport/flash-face
    'highlight-face  viewport/highlight-face
