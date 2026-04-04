@@ -64,7 +64,8 @@
                                            :face_count (count (:faces v))
                                            :creation-pose (:creation-pose v)}
                                     (contains? v :visible) (assoc :visible (:visible v))
-                                    (contains? v :color)   (assoc :color (:color v))))))
+                                    (contains? v :color)   (assoc :color (:color v))
+                                    (contains? v :material) (assoc :material (:material v))))))
                    {} meshes)
         ;; Write binary file
         mesh-file (when (seq meshes) (write-mesh-binary meshes))]

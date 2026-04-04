@@ -213,9 +213,9 @@
               (add-script-output print-output))
             ;; Register each mesh from JVM in the scene registry
             (doseq [[name mesh] meshes]
-              ;; Apply :color as material if present
+              ;; Merge :color into :material if present (don't overwrite existing material)
               (let [mesh (if-let [c (:color mesh)]
-                           (assoc mesh :material {:color c})
+                           (update mesh :material merge {:color c})
                            mesh)]
                 (registry/register-mesh! name mesh)
                 ;; Respect :visible metadata from JVM

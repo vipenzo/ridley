@@ -61,6 +61,15 @@
                 offset-after-faces (second faces)
                 visible (aget meta "visible")
                 color (aget meta "color")
+                mat-js (aget meta "material")
+                mat (when mat-js
+                      (let [m {}]
+                        (cond-> m
+                          (some? (aget mat-js "color"))        (assoc :color (aget mat-js "color"))
+                          (some? (aget mat-js "metalness"))    (assoc :metalness (aget mat-js "metalness"))
+                          (some? (aget mat-js "roughness"))    (assoc :roughness (aget mat-js "roughness"))
+                          (some? (aget mat-js "opacity"))      (assoc :opacity (aget mat-js "opacity"))
+                          (some? (aget mat-js "double-sided")) (assoc :double-sided (aget mat-js "double-sided")))))
                 mesh (cond-> {:type :mesh
                               :vertices vert-data
                               :faces face-data
@@ -70,7 +79,8 @@
                                                 :up (vec (aget cp "up"))}
                                                {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})}
                        (some? visible) (assoc :visible visible)
-                       (some? color)   (assoc :color color))]
+                       (some? color)   (assoc :color color)
+                       (some? mat)     (assoc :material mat))]
             (recur (rest pairs) offset-after-faces (assoc result (keyword name) mesh))))
         result))))
 
