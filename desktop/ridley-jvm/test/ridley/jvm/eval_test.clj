@@ -1033,6 +1033,83 @@
               (println (pos? (count (:vertices strip))))")]
       (is (= "true\ntrue\n" (:print-output r))))))
 
+;; ============================================================
+;; Face selection (query-based)
+;; ============================================================
+
+(deftest auto-face-groups-test
+  (testing "auto-face-groups groups coplanar triangles"
+    (let [r (eval/eval-script "
+              (def b (box 20 20 10))
+              ;; Box has face-groups already, strip them and auto-detect
+              (def bare (dissoc b :face-groups))
+              (def groups (auto-face-groups bare))
+              (println (count groups))")]
+      ;; A box should produce 6 face groups
+      (is (= "6\n" (:print-output r))))))
+
+(deftest find-faces-direction
+  (testing "find-faces :top returns faces aligned with heading"
+    (let [r (eval/eval-script "
+              (def b (extrude (rect 20 20) (f 10)))
+              (def top-faces (find-faces b :top))
+              (println (pos? (count top-faces)))
+              ;; All top faces should have normal close to heading
+              (println (every? #(> (let [n (:normal %)]
+                                     (+ (* (n 0) 1) (* (n 1) 0) (* (n 2) 0)))
+                                   0.7) top-faces))")]
+      (is (= "true\ntrue\n" (:print-output r))))))
+
+(deftest find-faces-all
+  (testing "find-faces :all returns all face groups"
+    (let [r (eval/eval-script "
+              (def b (extrude (rect 20 20) (f 10)))
+              (def all (find-faces b :all))
+              (println (pos? (count all)))")]
+      (is (= "true\n" (:print-output r))))))
+
+(deftest face-at-test
+  (testing "face-at finds face whose plane passes through point"
+    (let [r (eval/eval-script "
+              (def b (extrude (rect 20 20) (f 10)))
+              ;; Origin is on the bottom cap (x=0 plane)
+              (def f (face-at b [0 0 0]))
+              (println (some? f))
+              (println (some? (:id f)))
+              ;; Normal should be roughly [-1 0 0] (bottom)
+              (println (< (first (:normal f)) -0.5))")]
+      (is (= "true\ntrue\ntrue\n" (:print-output r))))))
+
+(deftest face-nearest-test
+  (testing "face-nearest finds face closest to point"
+    (let [r (eval/eval-script "
+              (def b (extrude (rect 20 20) (f 10)))
+              ;; Point far in +X should find top face
+              (def f (face-nearest b [100 0 0]))
+              (println (some? f))
+              ;; Normal should point in +X (top/heading direction)
+              (println (> (first (:normal f)) 0.5))")]
+      (is (= "true\ntrue\n" (:print-output r))))))
+
+(deftest largest-face-test
+  (testing "largest-face finds the biggest face"
+    (let [r (eval/eval-script "
+              (def b (extrude (rect 40 20) (f 10)))
+              (def f (largest-face b :all))
+              (println (some? f))
+              ;; The largest face of a 40x20x10 box is 40x20 = top or bottom
+              (println (> (:area f) 700))")]
+      (is (= "true\ntrue\n" (:print-output r))))))
+
+(deftest face-selection-with-attach-face
+  (testing "face-at result can be used with attach-face"
+    (let [r (eval/eval-script "
+              (def b (extrude (rect 20 20) (f 10)))
+              (def face-id (:id (face-at b [0 0 0])))
+              (def result (attach-face b face-id (f -3)))
+              (println (= (count (:vertices b)) (count (:vertices result))))")]
+      (is (= "true\n" (:print-output r))))))
+
 ;; NOTE: chamfer/fillet end-to-end tests require the Rust Manifold server
 ;; running on :12321. Run manually with:
 ;;   (chamfer (box 20 20 20) :top 2)
