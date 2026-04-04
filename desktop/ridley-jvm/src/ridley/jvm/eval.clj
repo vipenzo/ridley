@@ -67,6 +67,7 @@
                                        {:type :mesh
                                         :vertices (vec (:vertices s))
                                         :faces (vec (:faces s))
+                                        :material {:double-sided true}
                                         :creation-pose {:position (:position state)
                                                         :heading (:heading state)
                                                         :up (:up state)}}))

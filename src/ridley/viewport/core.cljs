@@ -546,7 +546,7 @@
   "Create mesh material from optional material map or use defaults."
   ([] (create-mesh-material nil))
   ([material]
-   (let [{:keys [color metalness roughness opacity flat-shading]
+   (let [{:keys [color metalness roughness opacity flat-shading double-sided]
           :or {color 0x00aaff metalness 0.3 roughness 0.7 opacity 1.0 flat-shading true}} material
          needs-transparency (< opacity 1.0)]
      (THREE/MeshStandardMaterial.
@@ -555,7 +555,7 @@
            :roughness roughness
            :opacity opacity
            :transparent needs-transparency
-           :side THREE/FrontSide
+           :side (if double-sided THREE/DoubleSide THREE/FrontSide)
            :flatShading flat-shading}))))
 
 (defn- create-highlight-material
