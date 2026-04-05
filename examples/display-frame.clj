@@ -36,8 +36,8 @@
     pareti)
    (attach buco-cavi (f 2) (rt (/ frame-l 2)))))
 
-
+(def tilt -30)
 (def bottom (:id (face-at scivolo [0 0 0])))
-(def result (clone-face scivolo bottom (th -30) (f 20)))
+(def result (attach (clone-face scivolo bottom (inset 50) (th tilt) (f 30)) (tr tilt) (u 35)))
 
-(register tutto result)
+(register tutto (attach result (tv 90)))
