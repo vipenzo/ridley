@@ -1005,6 +1005,19 @@ The profile shape is interpreted as:
 
 Use `translate-shape` to offset the profile from the axis for hollow shapes (e.g., torus).
 
+Shapes with vertices at x < 0 are auto-clipped at the revolution axis to prevent self-intersecting geometry.
+
+**Pivot option:** For corner/bend modeling, `:pivot` shifts the shape so one edge sits on the revolution axis, then compensates the mesh position:
+
+```clojure
+(revolve shape 30 :pivot :left)   ; Left edge becomes pivot
+(revolve shape 30 :pivot :right)  ; Right edge becomes pivot
+(revolve shape 30 :pivot :up)     ; Top edge becomes pivot
+(revolve shape 30 :pivot :down)   ; Bottom edge becomes pivot
+```
+
+The pivot direction is relative to the shape's 2D coordinate frame (X = right, Y = up in the turtle frame). Use `:pivot` for bend/corner geometry — it keeps the shape's holes intact (no clipping).
+
 **Shape-fn support:** When a shape-fn is passed instead of a static shape, the profile is
 evaluated at each revolution step with `t` going from 0 (first ring) to 1 (last ring):
 
@@ -1014,6 +1027,53 @@ evaluated at each revolution step with `t` going from 0 (first ring) to 1 (last 
 (revolve (noisy (circle 15 64) :amplitude 2))      ; Organic surface
 (revolve (morphed (square 20) (circle 15 4)) 180)  ; Morph during half-revolution
 ```
+
+---
+
+## Chainable Operations (extrude+, revolve+, transform+)
+
+Variants of `extrude` and `revolve` that return `{:mesh :end-face}` for chaining multi-segment geometry. The `:end-face` contains the shape and pose of the final face, which can be used as input for the next operation.
+
+**JVM only** (not yet available in SCI/CLJS).
+
+### extrude+ / revolve+
+
+```clojure
+;; extrude+ returns {:mesh <mesh> :end-face {:shape <shape> :pose {...}}}
+(def seg1 (extrude+ shape (f 20)))
+(:mesh seg1)                       ; The mesh
+(:end-face seg1)                   ; {:shape <shape> :pose {:pos :heading :up}}
+
+;; revolve+ with :pivot for corner bends
+(def corner (turtle (:pose (:end-face seg1))
+              (revolve+ (:shape (:end-face seg1)) 30 :pivot :left)))
+
+;; Chain: next segment from previous end-face
+(def seg2 (turtle (:pose (:end-face corner))
+            (extrude+ (:shape (:end-face corner)) (f 30))))
+
+;; Combine
+(register tutto (mesh-union (:mesh seg1) (:mesh corner) (:mesh seg2)))
+```
+
+### transform+
+
+Macro that automates the chaining pattern. Takes an initial shape and a sequence of `extrude+`/`revolve+` steps. Each step receives the shape and pose from the previous step's end-face. All meshes are combined via `mesh-union`.
+
+```clojure
+(register frame
+  (transform+ (shape-difference (rect 40 40) (rect 30 30))
+    (extrude+ (f 20))              ; Straight segment
+    (revolve+ 30 :pivot :left)     ; Corner bend (30 degrees)
+    (extrude+ (f 30))              ; Another straight segment
+    (revolve+ -30 :pivot :right)   ; Bend back
+    (extrude+ (f 20))))            ; Final segment
+```
+
+Notes:
+- Inside `transform+`, operations do NOT take a shape argument — it's passed automatically
+- `:pivot` on `revolve+` determines which edge of the shape sits on the revolution axis
+- The standard `extrude`/`revolve` remain unchanged (return just the mesh)
 
 ---
 
@@ -1284,6 +1344,50 @@ Query face information for meshes with face-groups (primitives):
 (get-face mesh :top)             ; Basic face info
 (face-info mesh :top)            ; Detailed: includes area, edges, vertex positions
 ```
+
+### Face Selection (query-based)
+
+For meshes without pre-defined face-groups (e.g. CSG results), faces can be selected by geometric queries. Face groups are auto-detected by coplanar adjacency.
+
+```clojure
+;; Find faces by direction (relative to mesh creation-pose)
+(find-faces mesh :top)           ; Faces aligned with heading direction
+(find-faces mesh :bottom)        ; Opposite heading
+(find-faces mesh :up)            ; Aligned with up
+(find-faces mesh :all)           ; All face groups
+(find-faces mesh :top :threshold 0.9)  ; Stricter alignment (default 0.7)
+(find-faces mesh :top :where #(> (:area %) 100))  ; With predicate
+
+;; Find face by position
+(face-at mesh [0 0 0])           ; Face whose plane passes closest to point
+(face-nearest mesh [10 0 0])     ; Face whose centroid is nearest to point
+
+;; Find largest face
+(largest-face mesh)              ; Largest face overall
+(largest-face mesh :top)         ; Largest face in a direction
+
+;; Auto face grouping
+(auto-face-groups mesh)          ; Group triangles by coplanar adjacency
+(ensure-face-groups mesh)        ; Add :face-groups if missing
+```
+
+All selection functions return face info maps with `:id` that can be passed to `attach-face`, `clone-face`, etc.
+
+### face-shape
+
+Extract a face boundary as a 2D shape for re-extrusion. Pure function — does not modify turtle state.
+
+```clojure
+(def top (face-shape mesh (:id (largest-face mesh :top))))
+;; => {:shape <ridley-shape>
+;;     :pose {:pos [x y z] :heading [hx hy hz] :up [ux uy uz]}}
+
+;; Use with turtle scope for positioning
+(turtle (:pose top)
+  (extrude (:shape top) (f 20)))
+```
+
+The pose uses `:pos` (not `:position`) for compatibility with the `turtle` macro. The up vector is derived from the mesh's creation-pose, projected perpendicular to the face normal.
 
 ### Face Highlighting
 
