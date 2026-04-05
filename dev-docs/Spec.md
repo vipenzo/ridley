@@ -1030,7 +1030,7 @@ evaluated at each revolution step with `t` going from 0 (first ring) to 1 (last 
 
 ---
 
-## Chainable Operations (extrude+, revolve+, transform+)
+## Chainable Operations (extrude+, revolve+, transform->)
 
 Variants of `extrude` and `revolve` that return `{:mesh :end-face}` for chaining multi-segment geometry. The `:end-face` contains the shape and pose of the final face, which can be used as input for the next operation.
 
@@ -1056,13 +1056,13 @@ Variants of `extrude` and `revolve` that return `{:mesh :end-face}` for chaining
 (register tutto (mesh-union (:mesh seg1) (:mesh corner) (:mesh seg2)))
 ```
 
-### transform+
+### transform->
 
-Macro that automates the chaining pattern. Takes an initial shape and a sequence of `extrude+`/`revolve+` steps. Each step receives the shape and pose from the previous step's end-face. All meshes are combined via `mesh-union`.
+Macro that automates the chaining pattern. Takes an initial shape (or an end-face map from a previous `extrude+`/`revolve+`) and a sequence of steps. Each step receives the shape and pose from the previous step's end-face. All meshes are combined via `mesh-union`.
 
 ```clojure
 (register frame
-  (transform+ (shape-difference (rect 40 40) (rect 30 30))
+  (transform-> (shape-difference (rect 40 40) (rect 30 30))
     (extrude+ (f 20))              ; Straight segment
     (revolve+ 30 :pivot :left)     ; Corner bend (30 degrees)
     (extrude+ (f 30))              ; Another straight segment
@@ -1071,7 +1071,19 @@ Macro that automates the chaining pattern. Takes an initial shape and a sequence
 ```
 
 Notes:
-- Inside `transform+`, operations do NOT take a shape argument — it's passed automatically
+The first argument can also be an end-face from a previous operation:
+
+```clojure
+;; Chain from a previous extrude+
+(def base (extrude+ frame-shape (f 10)))
+(register result
+  (mesh-union (:mesh base)
+    (transform-> (:end-face base)
+      (revolve+ 30 :pivot :left)
+      (extrude+ (f 20)))))
+```
+
+- Inside `transform->`, operations do NOT take a shape argument — it's passed automatically
 - `:pivot` on `revolve+` determines which edge of the shape sits on the revolution axis
 - The standard `extrude`/`revolve` remain unchanged (return just the mesh)
 

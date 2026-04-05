@@ -768,38 +768,40 @@
          (cond-> {:mesh mesh}
            end-face (assoc :end-face end-face)))))))
 
-;; ── transform+ : chainable pipeline ───────────────────────────
+;; ── transform-> : chainable pipeline ──────────────────────────
 
-(defn transform+-step
-  "Execute a single step in a transform+ pipeline.
-   step is {:op :extrude+ :args [...]} or {:op :revolve+ :args [...]}
-   prev-end is {:shape ... :pose ...} from previous step.
-   Returns {:mesh ... :end-face {:shape ... :pose ...}}."
+(defn- transform->step
+  "Execute a single step in a transform-> pipeline."
   [prev-end step]
   (let [shape (:shape prev-end)
         pose (:pose prev-end)
         op (:op step)
-        args (:args step)]
-    (let [saved @turtle-state]
-      (reset! turtle-state (init-turtle pose saved))
-      (try
-        (case op
-          :extrude+ (extrude+-impl shape (first args))
-          :revolve+ (apply revolve+-impl shape args)
-          (throw (Exception. (str "transform+: unknown op " op))))
-        (finally
-          (reset! turtle-state saved))))))
+        args (:args step)
+        saved @turtle-state]
+    (reset! turtle-state (init-turtle pose saved))
+    (try
+      (case op
+        :extrude+ (extrude+-impl shape (first args))
+        :revolve+ (apply revolve+-impl shape args)
+        (throw (Exception. (str "transform->: unknown op " op))))
+      (finally
+        (reset! turtle-state saved)))))
 
-(defn transform+-impl
-  "Execute a transform+ pipeline. shape is the initial shape.
+(defn transform->impl
+  "Execute a transform-> pipeline.
+   shape-or-end-face: either a shape or an end-face map {:shape :pose}.
    steps is a vector of {:op ... :args ...}.
    Returns the mesh-union of all steps."
-  [shape steps]
-  (let [current @turtle-state
-        initial-end {:shape shape
-                     :pose {:pos (:position current)
-                            :heading (:heading current)
-                            :up (:up current)}}]
+  [shape-or-end-face steps]
+  (let [initial-end (if (and (map? shape-or-end-face) (:shape shape-or-end-face) (:pose shape-or-end-face))
+                      ;; Already an end-face map
+                      shape-or-end-face
+                      ;; Plain shape — use current turtle pose
+                      (let [current @turtle-state]
+                        {:shape shape-or-end-face
+                         :pose {:pos (:position current)
+                                :heading (:heading current)
+                                :up (:up current)}}))]
     (loop [remaining steps
            prev-end initial-end
            meshes []]
@@ -807,7 +809,7 @@
         (if (= 1 (count meshes))
           (first meshes)
           (apply manifold/union meshes))
-        (let [result (transform+-step prev-end (first remaining))
+        (let [result (transform->step prev-end (first remaining))
               mesh (:mesh result)
               end-face (:end-face result)]
           (recur (rest remaining)
@@ -1050,7 +1052,7 @@
    'revolve-impl        revolve-impl
    'extrude+-impl       extrude+-impl
    'revolve+-impl       revolve+-impl
-   'transform+-impl     transform+-impl
+   'transform->impl     transform->impl
    ;; Pure functions (no side effects, for direct use)
    'pure-extrude-path       pure-extrude-path
    'pure-loft-path          pure-loft-path
@@ -1327,8 +1329,8 @@
      ;; If a pre-built path is passed, path macro returns it as-is.
      `(ridley.jvm.eval/extrude-impl ~shape (path ~@movements)))")
 
-(def ^:private transform+-macro-source
-  "(defmacro transform+ [shape & steps]
+(def ^:private transform->macro-source
+  "(defmacro transform-> [shape-or-end-face & steps]
      (let [step-forms (mapv (fn [form]
                               (if (and (list? form) (seq form))
                                 (let [op (first form)
@@ -1336,10 +1338,10 @@
                                   (case op
                                     extrude+ `{:op :extrude+ :args [(path ~@args)]}
                                     revolve+ `{:op :revolve+ :args [~@args]}
-                                    (throw (Exception. (str \"transform+: unknown op \" op)))))
-                                (throw (Exception. (str \"transform+: expected (op args...), got \" form)))))
+                                    (throw (Exception. (str \"transform->: unknown op \" op)))))
+                                (throw (Exception. (str \"transform->: expected (op args...), got \" form)))))
                             steps)]
-       `(ridley.jvm.eval/transform+-impl ~shape ~step-forms)))")
+       `(ridley.jvm.eval/transform->impl ~shape-or-end-face ~step-forms)))")
 
 (def ^:private extrude+-macro-source
   "(defmacro extrude+ [shape & movements]
@@ -1579,7 +1581,7 @@
         (load-string revolve-macro-source)
         (load-string extrude+-macro-source)
         (load-string revolve+-macro-source)
-        (load-string transform+-macro-source)
+        (load-string transform->macro-source)
         (load-string shape-macro-source)
         (load-string pen-macro-source)
         (load-string smooth-path-macro-source)
