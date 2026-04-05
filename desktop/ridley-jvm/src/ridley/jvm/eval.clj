@@ -636,29 +636,31 @@
 
 ;; ── Revolve impl ──────────────────────────────────────────────
 
-(defn- apply-pivot
-  "Shift a shape so the specified edge sits on the revolution axis (X=0 in shape coords).
-   :right → shift +X (right edge becomes pivot, shape goes left)
-   :left  → shift -X (left edge becomes pivot, shape goes right)
-   :up    → shift +Y (top edge becomes pivot)
-   :down  → shift -Y (bottom edge becomes pivot)
-   Returns the shifted shape."
+(defn- compute-pivot-offset
+  "Compute the 2D offset needed to place the specified edge on the revolution axis.
+   Returns [dx dy] — the amount the shape was shifted."
   [s pivot]
-  (when (and s pivot)
-    (let [pts (:points s)
-          xs (map first pts)
-          ys (map second pts)]
-      (case pivot
-        :right (shape/translate-shape s (- (apply max xs)) 0)
-        :left  (shape/translate-shape s (- (apply min xs)) 0)
-        :up    (shape/translate-shape s 0 (- (apply max ys)))
-        :down  (shape/translate-shape s 0 (- (apply min ys)))
-        s))))
+  (let [pts (:points s)
+        xs (map first pts)
+        ys (map second pts)]
+    (case pivot
+      :right [(- (apply max xs)) 0]
+      :left  [(- (apply min xs)) 0]
+      :up    [0 (- (apply max ys))]
+      :down  [0 (- (apply min ys))]
+      [0 0])))
+
+(defn- translate-mesh-3d
+  "Translate all vertices of a mesh by a 3D offset."
+  [mesh offset]
+  (update mesh :vertices
+          (fn [vs] (mapv (fn [v] (math/v+ v offset)) vs))))
 
 (defn revolve-impl
   "revolve-impl: revolve shape or shape-fn around turtle's axis.
    Optional :pivot (:right/:left/:up/:down) shifts the shape so
-   the specified edge sits on the revolution axis."
+   the specified edge sits on the revolution axis, then compensates
+   the mesh position so it appears at the correct location."
   ([shape-or-fn]
    (revolve-impl shape-or-fn 360))
   ([shape-or-fn angle & {:keys [pivot]}]
@@ -669,18 +671,34 @@
                      (assoc :up (:up current))
                      (assoc :resolution (:resolution current)))
          creation-pose {:position (:position current) :heading (:heading current) :up (:up current)}
-         ;; Apply pivot shift if specified
-         shape-or-fn (if (and pivot (shape/shape? shape-or-fn))
-                       (apply-pivot shape-or-fn pivot)
-                       shape-or-fn)]
-     (if (sfn/shape-fn? shape-or-fn)
-       (let [base-shape (shape-or-fn 0)
-             state (turtle/revolve-shape initial base-shape angle shape-or-fn)
-             mesh (last (:meshes state))]
-         (when mesh (assoc mesh :creation-pose creation-pose)))
-       (let [state (turtle/revolve-shape initial shape-or-fn angle)
-             mesh (last (:meshes state))]
-         (when mesh (assoc mesh :creation-pose creation-pose)))))))
+         ;; Compute pivot offset and shift shape
+         [dx dy] (if (and pivot (shape/shape? shape-or-fn))
+                   (compute-pivot-offset shape-or-fn pivot)
+                   [0 0])
+         shifted-shape (if (and pivot (shape/shape? shape-or-fn))
+                         (shape/translate-shape shape-or-fn dx dy)
+                         shape-or-fn)
+         ;; Do the revolve
+         mesh (if (sfn/shape-fn? shifted-shape)
+                (let [base-shape (shifted-shape 0)
+                      state (turtle/revolve-shape initial base-shape angle shifted-shape)]
+                  (last (:meshes state)))
+                (let [state (turtle/revolve-shape initial shifted-shape angle)]
+                  (last (:meshes state))))]
+     (when mesh
+       (let [mesh (assoc mesh :creation-pose creation-pose)]
+         ;; Compensate: translate mesh back by the pivot offset in 3D
+         ;; Shape X maps to turtle "right" direction
+         ;; Shape Y maps to turtle "up" direction
+         (if (or (not= dx 0) (not= dy 0))
+           (let [heading (:heading current)
+                 up (:up current)
+                 right (math/cross heading up)
+                 ;; Reverse the pivot shift in 3D space
+                 offset-3d (math/v+ (math/v* right (- dx))
+                                    (math/v* up (- dy)))]
+             (translate-mesh-3d mesh offset-3d))
+           mesh))))))
 
 ;; ── Pure helper functions (no side effects, read turtle state) ─
 
