@@ -756,17 +756,21 @@
          (assoc mesh :creation-pose creation-pose))))))
 
 (defn revolve+-impl
-  "Like revolve-impl but returns {:mesh :end-face} for chaining."
+  "Like revolve-impl but returns {:mesh :end-face} for chaining.
+   Uses the original shape (not re-extracted) to avoid axis swap from 2D projection."
   ([shape-or-fn]
    (revolve+-impl shape-or-fn 360))
   ([shape-or-fn angle & {:keys [pivot]}]
    (let [mesh (revolve-impl shape-or-fn angle :pivot pivot)]
      (when mesh
-       (let [end-face (when (< (Math/abs (double angle)) 360)
-                        (faces/face-shape mesh
-                          (:id (faces/largest-face mesh :top))))]
-         (cond-> {:mesh mesh}
-           end-face (assoc :end-face end-face)))))))
+       (if (>= (Math/abs (double angle)) 360)
+         {:mesh mesh}
+         ;; Compute end-face pose from mesh geometry, but keep original shape
+         (let [face-data (faces/face-shape mesh
+                           (:id (faces/largest-face mesh :top)))]
+           {:mesh mesh
+            :end-face {:shape shape-or-fn  ;; original shape, not re-projected
+                       :pose (:pose face-data)}}))))))
 
 ;; ── transform-> : chainable pipeline ──────────────────────────
 
