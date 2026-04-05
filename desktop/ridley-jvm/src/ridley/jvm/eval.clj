@@ -711,35 +711,20 @@
        (let [heading (:heading current)
              up (:up current)
              right (math/cross heading up)
-             ;; Compensate pivot offset on mesh
-             offset-3d (if (or (not= dx 0) (not= dy 0))
-                         (math/v+ (math/v* right (- dx)) (math/v* up (- dy)))
-                         [0 0 0])
+             ;; 3D offset from pivot shift: shape X → right, shape Y → up
+             pivot-offset (if (or (not= dx 0) (not= dy 0))
+                            (math/v+ (math/v* right (- dx)) (math/v* up (- dy)))
+                            [0 0 0])
+             ;; Compensate pivot offset on mesh vertices
              mesh (if (or (not= dx 0) (not= dy 0))
-                    (translate-mesh-3d mesh offset-3d)
+                    (translate-mesh-3d mesh pivot-offset)
                     mesh)
-             ;; Compute end-face: heading rotated by angle around up
-             angle-rad (* (double angle) (/ Math/PI 180.0))
-             cos-a (Math/cos angle-rad)
-             sin-a (Math/sin angle-rad)
-             end-heading (math/normalize
-                           (math/v+ (math/v* heading cos-a)
-                                    (math/v* right sin-a)))
-             ;; End position: pivot center + rotated offset
-             ;; Pivot center in 3D = current pos + offset-3d (reversed)
-             pivot-3d (math/v- (:position current) offset-3d)
-             ;; End pos = pivot + rotated(-offset)
-             neg-offset (math/v* offset-3d -1)
-             end-offset (math/v+ (math/v* neg-offset cos-a)
-                                 (math/v* (math/cross up neg-offset) sin-a))
-             end-pos (math/v+ pivot-3d end-offset)
-             end-up (derive-end-up end-heading up)]
-         (assoc mesh
-                :creation-pose creation-pose
-                :end-face {:shape shape-or-fn  ;; original (non-shifted) shape
-                           :pose {:pos end-pos
-                                  :heading end-heading
-                                  :up end-up}}))))))
+             ;; For partial revolves, compute end-face from the compensated mesh
+             end-face (when (< (Math/abs (double angle)) 360)
+                         (faces/face-shape mesh
+                           (:id (faces/largest-face mesh :top))))]
+         (cond-> (assoc mesh :creation-pose creation-pose)
+           end-face (assoc :end-face end-face)))))))
 
 ;; ── Pure helper functions (no side effects, read turtle state) ─
 
