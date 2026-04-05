@@ -1076,8 +1076,13 @@
     (let [^js renderer renderer
           ^js camera camera
           ^js canvas canvas
-          width (.-clientWidth canvas)
-          height (.-clientHeight canvas)]
+          ;; Read dimensions from parent container, not canvas itself.
+          ;; The canvas doesn't have intrinsic CSS dimensions — it gets
+          ;; its size from renderer.setSize. Reading from parent avoids
+          ;; a circular dependency where the canvas never grows.
+          parent (.-parentElement canvas)
+          width (.-clientWidth parent)
+          height (.-clientHeight parent)]
       (when (and (pos? width) (pos? height))
         (.setSize renderer width height false)  ; false = don't set CSS style
         (set! (.-aspect camera) (/ width height))
