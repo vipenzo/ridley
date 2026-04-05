@@ -555,7 +555,8 @@
                   outer-pts
                   (cond-> {:centered? true}
                     (seq holes) (assoc :holes holes)))
-         :pose {:position center
+         ;; :pos (not :position) for compatibility with turtle macro
+         :pose {:pos center
                 :heading normal
                 :up up}}))))
 

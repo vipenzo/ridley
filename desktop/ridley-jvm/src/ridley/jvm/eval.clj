@@ -1337,7 +1337,8 @@
 
 (def ^:private turtle-macro-source
   "(defmacro turtle [& args]
-     ;; Parse optional leading keyword args: :reset, :preserve-up, [x y z] position
+     ;; Parse compile-time keyword args: :reset, :preserve-up, [x y z] literal
+     ;; For runtime pose maps: (turtle (:pose top) body...) or (turtle my-pose body...)
      (let [args-vec (vec args)
            parse (fn parse [opts remaining]
                    (if (empty? remaining)
@@ -1351,14 +1352,36 @@
                          (recur (merge opts x) (subvec remaining 1))
                          :else {:opts opts :body (vec remaining)}))))
            {:keys [opts body]} (parse {} args-vec)
-           opts-form (if (empty? opts) {} opts)]
-       `(let [saved# @ridley.jvm.eval/turtle-state]
-          (reset! ridley.jvm.eval/turtle-state
-                  (ridley.jvm.eval/init-turtle ~opts-form saved#))
-          (try
-            ~@body
-            (finally
-              (reset! ridley.jvm.eval/turtle-state saved#))))))")
+           opts-form (if (empty? opts) {} opts)
+           ;; If no compile-time opts and first body form looks like a pose reference
+           ;; (symbol or keyword-access, not a function call like (f 30))
+           first-form (when (seq body) (first body))
+           runtime-pose? (and (empty? opts) (> (count body) 1)
+                              (or (symbol? first-form)
+                                  ;; (:keyword expr) accessor pattern
+                                  (and (list? first-form) (keyword? (first first-form)))))]
+       (if runtime-pose?
+         (let [pose-expr (first body)
+               rest-body (rest body)]
+           `(let [saved# @ridley.jvm.eval/turtle-state
+                  maybe-pose# ~pose-expr
+                  opts# (if (and (map? maybe-pose#)
+                                 (some #{:pos :heading :up} (keys maybe-pose#)))
+                           maybe-pose#
+                           {})]
+              (reset! ridley.jvm.eval/turtle-state
+                      (ridley.jvm.eval/init-turtle opts# saved#))
+              (try
+                (do ~@rest-body)
+                (finally
+                  (reset! ridley.jvm.eval/turtle-state saved#)))))
+         `(let [saved# @ridley.jvm.eval/turtle-state]
+            (reset! ridley.jvm.eval/turtle-state
+                    (ridley.jvm.eval/init-turtle ~opts-form saved#))
+            (try
+              (do ~@body)
+              (finally
+                (reset! ridley.jvm.eval/turtle-state saved#)))))))")
 
 (def ^:private warp-macro-source
   "(defmacro warp [mesh volume & args]

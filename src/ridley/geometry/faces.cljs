@@ -528,7 +528,7 @@
                   outer-pts
                   (cond-> {:centered? true}
                     (seq holes) (assoc :holes holes)))
-         :pose {:position center
+         :pose {:pos center
                 :heading normal
                 :up up}}))))
 
