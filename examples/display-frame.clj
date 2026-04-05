@@ -15,7 +15,7 @@
 (def spessore 2)
 (def fondo (extrude bigframe (f altezzafondo)))
 (def shape-pareti (shape-difference bigframe (shape-offset bigframe (* spessore -1))))
-(def pareti (extrude shape-pareti (f altezzacornice)))
+(def pareti (extrude+ shape-pareti (f altezzacornice)))
 (def buco (extrude (circle 1) (f 10)))
 (def supporto-vite (mesh-difference
                     (extrude (rect 20 20) (f 10))
@@ -26,18 +26,18 @@
 (def viti (mesh-union (for [x [-1 1] y [-1 1]]
                         (attach supporto-vite (u (* x (/ d-viti-h 2))) (rt (* y (/ d-viti-v 2)))))))
 
+(def tilt 30)
+(println "end-face:" (:end-face fondo))
+
+(register scivolo
+          (mesh-difference
+           (mesh-union
+            viti
+            fondo
+            (:mesh pareti)
+            (transform-> (:end-face pareti)
+                         (revolve+ tilt :pivot :left)
+                         (extrude+ (f 30))))
+           (attach buco-cavi (f 2) (rt (/ frame-l 2)))))
 
 
-(def scivolo
-  (mesh-difference
-   (mesh-union
-    viti
-    fondo
-    pareti)
-   (attach buco-cavi (f 2) (rt (/ frame-l 2)))))
-
-(def tilt -30)
-(def bottom (:id (face-at scivolo [0 0 0])))
-(def result (attach (clone-face scivolo bottom (inset 50) (th tilt) (f 30)) (tr tilt) (u 35)))
-
-(register tutto (attach result (tv 90)))
