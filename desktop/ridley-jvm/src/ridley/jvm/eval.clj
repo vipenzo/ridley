@@ -535,8 +535,28 @@
       [0 0 1])))
 
 (defn extrude-impl
-  "extrude-impl: shape-or-shapes + path-data → mesh or vector of meshes.
-   Attaches :end-face {:shape :pose} to the mesh for chaining."
+  "extrude-impl: shape-or-shapes + path-data → mesh or vector of meshes."
+  [shape-or-shapes path-data]
+  (let [shapes (if (and (vector? shape-or-shapes)
+                        (seq shape-or-shapes)
+                        (map? (first shape-or-shapes)))
+                 shape-or-shapes
+                 [shape-or-shapes])
+        initial (make-initial-state)
+        pose (creation-pose-from-current)
+        results (reduce
+                  (fn [acc s]
+                    (let [state (turtle/extrude-from-path initial s path-data)
+                          mesh (last (:meshes state))]
+                      (if mesh (conj acc (assoc mesh :creation-pose pose)) acc)))
+                  []
+                  shapes)]
+    (if (= 1 (count results))
+      (first results)
+      results)))
+
+(defn extrude+-impl
+  "Like extrude-impl but returns {:mesh :end-face} for chaining."
   [shape-or-shapes path-data]
   (let [shapes (if (and (vector? shape-or-shapes)
                         (seq shape-or-shapes)
@@ -554,12 +574,11 @@
                               end-pos (:position state)
                               end-up (derive-end-up end-heading
                                        (or (:up pose) [0 0 1]))]
-                          (conj acc (assoc mesh
-                                     :creation-pose pose
+                          (conj acc {:mesh (assoc mesh :creation-pose pose)
                                      :end-face {:shape s
                                                 :pose {:pos end-pos
                                                        :heading end-heading
-                                                       :up end-up}})))
+                                                       :up end-up}}}))
                         acc)))
                   []
                   shapes)]
@@ -719,11 +738,20 @@
              mesh (if (or (not= dx 0) (not= dy 0))
                     (translate-mesh-3d mesh pivot-offset)
                     mesh)
-             ;; For partial revolves, compute end-face from the compensated mesh
-             end-face (when (< (Math/abs (double angle)) 360)
-                         (faces/face-shape mesh
-                           (:id (faces/largest-face mesh :top))))]
-         (cond-> (assoc mesh :creation-pose creation-pose)
+]
+         (assoc mesh :creation-pose creation-pose))))))
+
+(defn revolve+-impl
+  "Like revolve-impl but returns {:mesh :end-face} for chaining."
+  ([shape-or-fn]
+   (revolve+-impl shape-or-fn 360))
+  ([shape-or-fn angle & {:keys [pivot]}]
+   (let [mesh (revolve-impl shape-or-fn angle :pivot pivot)]
+     (when mesh
+       (let [end-face (when (< (Math/abs (double angle)) 360)
+                        (faces/face-shape mesh
+                          (:id (faces/largest-face mesh :top))))]
+         (cond-> {:mesh mesh}
            end-face (assoc :end-face end-face)))))))
 
 ;; ── Pure helper functions (no side effects, read turtle state) ─
@@ -960,6 +988,8 @@
    'loft-n-impl         loft-n-impl
    'bloft-impl          bloft-impl
    'revolve-impl        revolve-impl
+   'extrude+-impl       extrude+-impl
+   'revolve+-impl       revolve+-impl
    ;; Pure functions (no side effects, for direct use)
    'pure-extrude-path       pure-extrude-path
    'pure-loft-path          pure-loft-path
@@ -1236,6 +1266,17 @@
      ;; If a pre-built path is passed, path macro returns it as-is.
      `(ridley.jvm.eval/extrude-impl ~shape (path ~@movements)))")
 
+(def ^:private extrude+-macro-source
+  "(defmacro extrude+ [shape & movements]
+     `(ridley.jvm.eval/extrude+-impl ~shape (path ~@movements)))")
+
+(def ^:private revolve+-macro-source
+  "(defmacro revolve+
+     ([shape]
+      `(ridley.jvm.eval/revolve+-impl ~shape))
+     ([shape angle & opts]
+      `(ridley.jvm.eval/revolve+-impl ~shape ~angle ~@opts)))")
+
 (def ^:private loft-macro-source
   "(defmacro loft [first-arg & rest-args]
      (let [mvmt? (fn [x#] (and (list? x#) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v} (first x#))))]
@@ -1461,6 +1502,8 @@
         (load-string bloft-macro-source)
         (load-string bloft-n-macro-source)
         (load-string revolve-macro-source)
+        (load-string extrude+-macro-source)
+        (load-string revolve+-macro-source)
         (load-string shape-macro-source)
         (load-string pen-macro-source)
         (load-string smooth-path-macro-source)
