@@ -1091,9 +1091,17 @@
                                      (get (:face-groups mesh) face-id))
                               normal (:normal info)
                               center (:center info)
-                              heading (:heading info)
-                              up (math/normalize (math/cross normal heading))]
-                          ;; Move turtle to face center, heading = face normal
+                              ;; Derive up: prefer mesh's creation-pose up if available,
+                              ;; otherwise use world Z, projected perpendicular to normal
+                              ref-up (or (get-in mesh [:creation-pose :up]) [0 0 1])
+                              ;; Remove component of ref-up along normal
+                              dot-nu (math/dot ref-up normal)
+                              up-raw (math/v- ref-up (math/v* normal dot-nu))
+                              up (let [m (math/magnitude up-raw)]
+                                   (if (> m 0.001)
+                                     (math/v* up-raw (/ 1.0 m))
+                                     ;; Fallback: use cross with heading
+                                     (math/normalize (math/cross normal (:heading info)))))]
                           (swap! turtle-state assoc
                                  :position center
                                  :heading normal
