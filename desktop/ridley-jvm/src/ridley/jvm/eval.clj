@@ -524,8 +524,19 @@
       (assoc mesh :creation-pose
              {:position (:position current) :heading (:heading current) :up (:up current)}))))
 
+(defn- derive-end-up
+  "Compute up vector for end-face pose, perpendicular to heading."
+  [heading ref-up]
+  (let [dot-hu (math/dot ref-up heading)
+        up-raw (math/v- ref-up (math/v* heading dot-hu))
+        m (math/magnitude up-raw)]
+    (if (> m 0.001)
+      (math/v* up-raw (/ 1.0 m))
+      [0 0 1])))
+
 (defn extrude-impl
-  "extrude-impl: shape-or-shapes + path-data → mesh or vector of meshes"
+  "extrude-impl: shape-or-shapes + path-data → mesh or vector of meshes.
+   Attaches :end-face {:shape :pose} to the mesh for chaining."
   [shape-or-shapes path-data]
   (let [shapes (if (and (vector? shape-or-shapes)
                         (seq shape-or-shapes)
@@ -538,7 +549,18 @@
                   (fn [acc s]
                     (let [state (turtle/extrude-from-path initial s path-data)
                           mesh (last (:meshes state))]
-                      (if mesh (conj acc (assoc mesh :creation-pose pose)) acc)))
+                      (if mesh
+                        (let [end-heading (:heading state)
+                              end-pos (:position state)
+                              end-up (derive-end-up end-heading
+                                       (or (:up pose) [0 0 1]))]
+                          (conj acc (assoc mesh
+                                     :creation-pose pose
+                                     :end-face {:shape s
+                                                :pose {:pos end-pos
+                                                       :heading end-heading
+                                                       :up end-up}})))
+                        acc)))
                   []
                   shapes)]
     (if (= 1 (count results))
@@ -686,19 +708,38 @@
                 (let [state (turtle/revolve-shape initial shifted-shape angle)]
                   (last (:meshes state))))]
      (when mesh
-       (let [mesh (assoc mesh :creation-pose creation-pose)]
-         ;; Compensate: translate mesh back by the pivot offset in 3D
-         ;; Shape X maps to turtle "right" direction
-         ;; Shape Y maps to turtle "up" direction
-         (if (or (not= dx 0) (not= dy 0))
-           (let [heading (:heading current)
-                 up (:up current)
-                 right (math/cross heading up)
-                 ;; Reverse the pivot shift in 3D space
-                 offset-3d (math/v+ (math/v* right (- dx))
-                                    (math/v* up (- dy)))]
-             (translate-mesh-3d mesh offset-3d))
-           mesh))))))
+       (let [heading (:heading current)
+             up (:up current)
+             right (math/cross heading up)
+             ;; Compensate pivot offset on mesh
+             offset-3d (if (or (not= dx 0) (not= dy 0))
+                         (math/v+ (math/v* right (- dx)) (math/v* up (- dy)))
+                         [0 0 0])
+             mesh (if (or (not= dx 0) (not= dy 0))
+                    (translate-mesh-3d mesh offset-3d)
+                    mesh)
+             ;; Compute end-face: heading rotated by angle around up
+             angle-rad (* (double angle) (/ Math/PI 180.0))
+             cos-a (Math/cos angle-rad)
+             sin-a (Math/sin angle-rad)
+             end-heading (math/normalize
+                           (math/v+ (math/v* heading cos-a)
+                                    (math/v* right sin-a)))
+             ;; End position: pivot center + rotated offset
+             ;; Pivot center in 3D = current pos + offset-3d (reversed)
+             pivot-3d (math/v- (:position current) offset-3d)
+             ;; End pos = pivot + rotated(-offset)
+             neg-offset (math/v* offset-3d -1)
+             end-offset (math/v+ (math/v* neg-offset cos-a)
+                                 (math/v* (math/cross up neg-offset) sin-a))
+             end-pos (math/v+ pivot-3d end-offset)
+             end-up (derive-end-up end-heading up)]
+         (assoc mesh
+                :creation-pose creation-pose
+                :end-face {:shape shape-or-fn  ;; original (non-shifted) shape
+                           :pose {:pos end-pos
+                                  :heading end-heading
+                                  :up end-up}}))))))
 
 ;; ── Pure helper functions (no side effects, read turtle state) ─
 
