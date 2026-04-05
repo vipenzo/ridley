@@ -438,7 +438,8 @@
         ;; Update face-groups
         ;; The inner face keeps the original face-id
         ;; Side faces get a new id
-        side-face-id (keyword (str (name face-id) "-inset-sides-" (count vertices)))
+        side-face-id (keyword (str (if (keyword? face-id) (name face-id) (str face-id))
+                                    "-inset-sides-" (count vertices)))
         new-face-groups (-> face-groups
                            (assoc face-id new-inner-triangles)
                            (assoc side-face-id side-faces))]

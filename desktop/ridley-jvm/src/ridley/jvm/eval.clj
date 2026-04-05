@@ -1144,7 +1144,9 @@
                             (swap! rec# ridley.turtle.core/rec-f step-dist#))
                           (swap! rec# ridley.turtle.core/rec-tv half#))))
             ~'follow (fn [p#] (swap! rec# ridley.turtle.core/rec-play-path p#))
-            ~'mark (fn [name#] (swap! rec# (fn [s#] (update s# :recording conj {:cmd :mark :args [name#]}))))]
+            ~'mark (fn [name#] (swap! rec# (fn [s#] (update s# :recording conj {:cmd :mark :args [name#]}))))
+            ~'inset (fn [amount#] (swap! rec# ridley.turtle.core/rec-inset amount#))
+            ~'scale (fn [factor#] (swap! rec# ridley.turtle.core/rec-scale factor#))]
         ~@body
         (let [result# @rec#
               body-result# ~(last body)]
