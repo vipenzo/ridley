@@ -487,9 +487,9 @@
        2.0)))
 
 (defn face-shape
-  "Extract a face as a 2D shape suitable for extrude/revolve/loft.
-   Projects the face boundary into the face plane and returns a Ridley shape.
-   For faces with holes, the holes are preserved."
+  "Extract a face as a 2D shape with pose information.
+   Returns {:shape <ridley-shape> :pose {:position :heading :up}}
+   Pure function — does not modify turtle state."
   [mesh face-id]
   (let [mesh (ensure-face-groups mesh)
         triangles (get (:face-groups mesh) face-id)
@@ -498,6 +498,14 @@
       (let [info (compute-face-info vertices triangles)
             center (:center info)
             normal (:normal info)
+            ;; Derive up from creation-pose or world Z
+            ref-up (or (get-in mesh [:creation-pose :up]) [0 0 1])
+            dot-nu (+ (* (ref-up 0) (normal 0)) (* (ref-up 1) (normal 1)) (* (ref-up 2) (normal 2)))
+            up-raw (v- ref-up (v* normal dot-nu))
+            up-mag (magnitude up-raw)
+            up (if (> up-mag 0.001)
+                 (v* up-raw (/ 1.0 up-mag))
+                 (normalize (cross normal (:heading info))))
             loops (extract-boundary-loops triangles)
             loop-positions (mapv (fn [loop-indices]
                                    (mapv #(nth vertices %) loop-indices))
@@ -516,10 +524,13 @@
                                 (vec (reverse pts))
                                 pts)))
                           (rest sorted)))]
-        (shape/make-shape
-          outer-pts
-          (cond-> {:centered? true}
-            (seq holes) (assoc :holes holes)))))))
+        {:shape (shape/make-shape
+                  outer-pts
+                  (cond-> {:centered? true}
+                    (seq holes) (assoc :holes holes)))
+         :pose {:position center
+                :heading normal
+                :up up}}))))
 
 ;; ============================================================
 ;; Sharp edge detection

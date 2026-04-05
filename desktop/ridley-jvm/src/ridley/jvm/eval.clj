@@ -635,18 +635,43 @@
 
 ;; ── Revolve impl ──────────────────────────────────────────────
 
+(defn- apply-pivot
+  "Shift a shape so the specified edge sits on the revolution axis (X=0 in shape coords).
+   :right → shift +X (right edge becomes pivot, shape goes left)
+   :left  → shift -X (left edge becomes pivot, shape goes right)
+   :up    → shift +Y (top edge becomes pivot)
+   :down  → shift -Y (bottom edge becomes pivot)
+   Returns the shifted shape."
+  [s pivot]
+  (when (and s pivot)
+    (let [pts (:points s)
+          xs (map first pts)
+          ys (map second pts)]
+      (case pivot
+        :right (shape/translate-shape s (- (apply max xs)) 0)
+        :left  (shape/translate-shape s (- (apply min xs)) 0)
+        :up    (shape/translate-shape s 0 (- (apply max ys)))
+        :down  (shape/translate-shape s 0 (- (apply min ys)))
+        s))))
+
 (defn revolve-impl
-  "revolve-impl: revolve shape or shape-fn around turtle's axis."
+  "revolve-impl: revolve shape or shape-fn around turtle's axis.
+   Optional :pivot (:right/:left/:up/:down) shifts the shape so
+   the specified edge sits on the revolution axis."
   ([shape-or-fn]
    (revolve-impl shape-or-fn 360))
-  ([shape-or-fn angle]
+  ([shape-or-fn angle & {:keys [pivot]}]
    (let [current @turtle-state
          initial (-> (turtle/make-turtle)
                      (assoc :position (:position current))
                      (assoc :heading (:heading current))
                      (assoc :up (:up current))
                      (assoc :resolution (:resolution current)))
-         creation-pose {:position (:position current) :heading (:heading current) :up (:up current)}]
+         creation-pose {:position (:position current) :heading (:heading current) :up (:up current)}
+         ;; Apply pivot shift if specified
+         shape-or-fn (if (and pivot (shape/shape? shape-or-fn))
+                       (apply-pivot shape-or-fn pivot)
+                       shape-or-fn)]
      (if (sfn/shape-fn? shape-or-fn)
        (let [base-shape (shape-or-fn 0)
              state (turtle/revolve-shape initial base-shape angle shape-or-fn)
@@ -1084,29 +1109,7 @@
    'face-at           faces/face-at
    'face-nearest      faces/face-nearest
    'largest-face      faces/largest-face
-   'face-shape        (fn [mesh face-id]
-                        (let [mesh (faces/ensure-face-groups mesh)
-                              s (faces/face-shape mesh face-id)
-                              info (faces/compute-face-info (:vertices mesh)
-                                     (get (:face-groups mesh) face-id))
-                              normal (:normal info)
-                              center (:center info)
-                              ;; Derive up: prefer mesh's creation-pose up if available,
-                              ;; otherwise use world Z, projected perpendicular to normal
-                              ref-up (or (get-in mesh [:creation-pose :up]) [0 0 1])
-                              ;; Remove component of ref-up along normal
-                              dot-nu (math/dot ref-up normal)
-                              up-raw (math/v- ref-up (math/v* normal dot-nu))
-                              up (let [m (math/magnitude up-raw)]
-                                   (if (> m 0.001)
-                                     (math/v* up-raw (/ 1.0 m))
-                                     ;; Fallback: use cross with heading
-                                     (math/normalize (math/cross normal (:heading info)))))]
-                          (swap! turtle-state assoc
-                                 :position center
-                                 :heading normal
-                                 :up up)
-                          s))
+   'face-shape        faces/face-shape
    'auto-face-groups  faces/auto-face-groups
    'ensure-face-groups faces/ensure-face-groups
    ;; Edge analysis
@@ -1291,8 +1294,8 @@
   "(defmacro revolve
      ([shape]
       `(ridley.jvm.eval/revolve-impl ~shape))
-     ([shape angle]
-      `(ridley.jvm.eval/revolve-impl ~shape ~angle)))")
+     ([shape angle & opts]
+      `(ridley.jvm.eval/revolve-impl ~shape ~angle ~@opts)))")
 
 (def ^:private shape-macro-source
   "(defmacro shape [& body]

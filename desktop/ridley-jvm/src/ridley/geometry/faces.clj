@@ -509,11 +509,13 @@
        2.0)))
 
 (defn face-shape
-  "Extract a face as a 2D shape suitable for extrude/revolve/loft.
-   Accepts a mesh and face-id (from face-at, find-faces, etc.).
-   Projects the face boundary into the face plane and returns a Ridley shape.
-   For faces with holes (e.g. frame cross-sections), the holes are preserved.
-   Also positions the turtle at the face center with heading = face normal."
+  "Extract a face as a 2D shape with pose information.
+   Returns {:shape <ridley-shape> :pose {:position :heading :up}}
+   Pure function — does not modify turtle state.
+
+   The pose positions at the face center with heading = face normal
+   and up derived from the mesh's creation-pose (or world Z fallback),
+   projected perpendicular to the face normal."
   [mesh face-id]
   (let [mesh (ensure-face-groups mesh)
         triangles (get (:face-groups mesh) face-id)
@@ -522,15 +524,20 @@
       (let [info (compute-face-info vertices triangles)
             center (:center info)
             normal (:normal info)
+            ;; Derive up from creation-pose or world Z
+            ref-up (or (get-in mesh [:creation-pose :up]) [0 0 1])
+            dot-nu (+ (* (ref-up 0) (normal 0)) (* (ref-up 1) (normal 1)) (* (ref-up 2) (normal 2)))
+            up-raw (v- ref-up (v* normal dot-nu))
+            up-mag (magnitude up-raw)
+            up (if (> up-mag 0.001)
+                 (v* up-raw (/ 1.0 up-mag))
+                 (normalize (cross normal (:heading info))))
             ;; Extract boundary loops
             loops (extract-boundary-loops triangles)
-            ;; Get 3D positions for each loop
             loop-positions (mapv (fn [loop-indices]
                                    (mapv #(nth vertices %) loop-indices))
                                  loops)
-            ;; Project each loop to 2D
             loop-2d (mapv #(project-3d-to-2d % center normal) loop-positions)
-            ;; Classify: largest absolute area = outer, rest = holes
             areas (mapv (fn [pts] {:points pts :area (signed-area-2d pts)}) loop-2d)
             sorted (sort-by #(- (Math/abs (:area %))) areas)
             outer-pts (let [pts (:points (first sorted))]
@@ -544,10 +551,13 @@
                                 (vec (reverse pts))
                                 pts)))
                           (rest sorted)))]
-        (shape/make-shape
-          outer-pts
-          (cond-> {:centered? true}
-            (seq holes) (assoc :holes holes)))))))
+        {:shape (shape/make-shape
+                  outer-pts
+                  (cond-> {:centered? true}
+                    (seq holes) (assoc :holes holes)))
+         :pose {:position center
+                :heading normal
+                :up up}}))))
 
 ;; ============================================================
 ;; Sharp edge detection
