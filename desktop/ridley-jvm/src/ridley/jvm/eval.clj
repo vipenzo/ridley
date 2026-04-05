@@ -32,6 +32,7 @@
 (def registered-paths (atom {}))
 (def registered-shapes-store (atom {}))
 (def source-forms (atom {}))
+(def stamp-accumulator (atom []))
 
 (defn reset-state! []
   (reset! turtle-state (turtle/make-turtle))
@@ -39,7 +40,8 @@
   (reset! registered-values {})
   (reset! registered-paths {})
   (reset! registered-shapes-store {})
-  (reset! source-forms {}))
+  (reset! source-forms {})
+  (reset! stamp-accumulator []))
 
 ;; ── Implicit turtle commands (mutate global state) ──────────────
 
@@ -56,23 +58,22 @@
 (defn implicit-pen [mode _shape] (swap! turtle-state turtle/pen mode))
 (defn implicit-stamp
   "Stamp a shape at current turtle pose. Creates a flat mesh and adds to
-   turtle meshes so it appears in the output."
+   the global stamp accumulator (survives turtle scopes)."
   [shape]
-  (swap! turtle-state
-         (fn [state]
-           (let [stamped (turtle/stamp-debug state shape)
-                 new-stamps (:stamps stamped)
-                 flat-meshes (keep (fn [s]
-                                     (when (and (:vertices s) (seq (:faces s)))
-                                       {:type :mesh
-                                        :vertices (vec (:vertices s))
-                                        :faces (vec (:faces s))
-                                        :material {:double-sided true}
-                                        :creation-pose {:position (:position state)
-                                                        :heading (:heading state)
-                                                        :up (:up state)}}))
-                                   new-stamps)]
-             (update stamped :meshes into flat-meshes)))))
+  (let [state @turtle-state
+        stamped (turtle/stamp-debug state shape)
+        new-stamps (:stamps stamped)
+        flat-meshes (keep (fn [s]
+                            (when (and (:vertices s) (seq (:faces s)))
+                              {:type :mesh
+                               :vertices (vec (:vertices s))
+                               :faces (vec (:faces s))
+                               :material {:double-sided true}
+                               :creation-pose {:position (:position state)
+                                               :heading (:heading state)
+                                               :up (:up state)}}))
+                          new-stamps)]
+    (swap! stamp-accumulator into flat-meshes)))
 (defn implicit-finalize-sweep [] (swap! turtle-state turtle/finalize-sweep))
 (defn implicit-finalize-sweep-closed [] (swap! turtle-state turtle/finalize-sweep-closed))
 (defn implicit-resolution
@@ -1429,13 +1430,12 @@
       (binding [*ns* ns-obj
                 *out* output]
         (load-string script-text))
-      ;; Collect stamped meshes from turtle state (stamp generates meshes
-      ;; directly in the turtle state, not via register)
-      (let [turtle-meshes (:meshes @turtle-state)
-            stamp-meshes (when (seq turtle-meshes)
+      ;; Collect stamps from global accumulator (survives turtle scopes)
+      (let [stamps @stamp-accumulator
+            stamp-meshes (when (seq stamps)
                            (reduce (fn [m [i mesh]]
                                      (assoc m (symbol (str "__stamp_" i)) mesh))
-                                   {} (map-indexed vector turtle-meshes)))]
+                                   {} (map-indexed vector stamps)))]
         {:meshes (merge @registered-meshes stamp-meshes)
          :print-output (str output)})
       (finally
