@@ -3,7 +3,8 @@
 
    Face groups are collections of triangles that form a logical face.
    For primitives, faces have semantic names (:top, :bottom, :front, etc).
-   For complex meshes, faces have numeric IDs.")
+   For complex meshes, faces have numeric IDs."
+  (:require [ridley.turtle.shape :as shape]))
 
 ;; ============================================================
 ;; Vector math utilities
@@ -439,6 +440,114 @@
    (let [faces (find-faces mesh direction)]
      (when (seq faces)
        (apply max-key :area faces)))))
+
+;; ============================================================
+;; Face → 2D shape extraction
+;; ============================================================
+
+(defn- extract-boundary-loops
+  "Extract boundary edge loops from a set of triangles.
+   Boundary edges are shared by exactly 1 triangle.
+   Returns a vector of ordered vertex-index loops."
+  [triangles]
+  (let [;; Count edge usage
+        edge-counts
+        (reduce (fn [m [i j k]]
+                  (let [add (fn [m a b]
+                              (let [e (if (< a b) [a b] [b a])]
+                                (update m e (fnil inc 0))))]
+                    (-> m (add i j) (add j k) (add k i))))
+                {} triangles)
+        ;; Boundary edges: count = 1
+        boundary-edges (keep (fn [[e c]] (when (= 1 c) e)) edge-counts)
+        ;; Build adjacency: vertex → set of connected boundary vertices
+        adj (reduce (fn [m [a b]]
+                      (-> m
+                          (update a (fnil conj #{}) b)
+                          (update b (fnil conj #{}) a)))
+                    {} boundary-edges)
+        ;; Walk loops
+        all-verts (set (keys adj))]
+    (loop [remaining all-verts, loops []]
+      (if (empty? remaining)
+        loops
+        (let [start (first remaining)
+              loop-verts
+              (loop [current start, prev nil, result [start], visited #{start}]
+                (let [neighbors (get adj current)
+                      next-v (first (remove #(or (= % prev) (visited %)) neighbors))]
+                  (if (or (nil? next-v) (= next-v start))
+                    result
+                    (recur next-v current (conj result next-v) (conj visited next-v)))))]
+          (recur (reduce disj remaining (set loop-verts))
+                 (conj loops loop-verts)))))))
+
+(defn- project-3d-to-2d
+  "Project 3D points onto a face plane, returning 2D coordinates.
+   Uses the face normal and a derived right/up basis."
+  [points-3d center normal]
+  (let [;; Choose a reference vector not parallel to normal
+        ref (if (> (Math/abs (double (nth normal 1))) 0.9)
+              [1 0 0]
+              [0 1 0])
+        ;; right = normalize(ref × normal)
+        right (normalize (cross ref normal))
+        ;; up = normal × right
+        up (cross normal right)]
+    (mapv (fn [p]
+            (let [d (v- p center)]
+              [(+ (* (d 0) (right 0)) (* (d 1) (right 1)) (* (d 2) (right 2)))
+               (+ (* (d 0) (up 0)) (* (d 1) (up 1)) (* (d 2) (up 2)))]))
+          points-3d)))
+
+(defn- signed-area-2d [points]
+  (let [n (count points)]
+    (/ (reduce + (for [i (range n)]
+                   (let [[x1 y1] (nth points i)
+                         [x2 y2] (nth points (mod (inc i) n))]
+                     (- (* x1 y2) (* x2 y1)))))
+       2.0)))
+
+(defn face-shape
+  "Extract a face as a 2D shape suitable for extrude/revolve/loft.
+   Accepts a mesh and face-id (from face-at, find-faces, etc.).
+   Projects the face boundary into the face plane and returns a Ridley shape.
+   For faces with holes (e.g. frame cross-sections), the holes are preserved.
+   Also positions the turtle at the face center with heading = face normal."
+  [mesh face-id]
+  (let [mesh (ensure-face-groups mesh)
+        triangles (get (:face-groups mesh) face-id)
+        vertices (:vertices mesh)]
+    (when (seq triangles)
+      (let [info (compute-face-info vertices triangles)
+            center (:center info)
+            normal (:normal info)
+            ;; Extract boundary loops
+            loops (extract-boundary-loops triangles)
+            ;; Get 3D positions for each loop
+            loop-positions (mapv (fn [loop-indices]
+                                   (mapv #(nth vertices %) loop-indices))
+                                 loops)
+            ;; Project each loop to 2D
+            loop-2d (mapv #(project-3d-to-2d % center normal) loop-positions)
+            ;; Classify: largest absolute area = outer, rest = holes
+            areas (mapv (fn [pts] {:points pts :area (signed-area-2d pts)}) loop-2d)
+            sorted (sort-by #(- (Math/abs (:area %))) areas)
+            outer-pts (let [pts (:points (first sorted))]
+                        (if (neg? (signed-area-2d pts))
+                          (vec (reverse pts))
+                          pts))
+            holes (when (> (count sorted) 1)
+                    (mapv (fn [h]
+                            (let [pts (:points h)]
+                              (if (pos? (signed-area-2d pts))
+                                (vec (reverse pts))
+                                pts)))
+                          (rest sorted)))]
+        (shape/make-shape
+          outer-pts
+          (cond-> {:centered? true}
+            (seq holes) (assoc :holes holes)))))))
 
 ;; ============================================================
 ;; Sharp edge detection

@@ -1084,6 +1084,21 @@
    'face-at           faces/face-at
    'face-nearest      faces/face-nearest
    'largest-face      faces/largest-face
+   'face-shape        (fn [mesh face-id]
+                        (let [mesh (faces/ensure-face-groups mesh)
+                              s (faces/face-shape mesh face-id)
+                              info (faces/compute-face-info (:vertices mesh)
+                                     (get (:face-groups mesh) face-id))
+                              normal (:normal info)
+                              center (:center info)
+                              heading (:heading info)
+                              up (math/normalize (math/cross normal heading))]
+                          ;; Move turtle to face center, heading = face normal
+                          (swap! turtle-state assoc
+                                 :position center
+                                 :heading normal
+                                 :up up)
+                          s))
    'auto-face-groups  faces/auto-face-groups
    'ensure-face-groups faces/ensure-face-groups
    ;; Edge analysis
