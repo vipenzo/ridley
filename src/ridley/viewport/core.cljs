@@ -1084,7 +1084,10 @@
           width (.-clientWidth parent)
           height (.-clientHeight parent)]
       (when (and (pos? width) (pos? height))
-        (.setSize renderer width height false)  ; false = don't set CSS style
+        ;; Set canvas CSS size to fill parent, then update renderer buffer
+        (set! (.. canvas -style -width) (str width "px"))
+        (set! (.. canvas -style -height) (str height "px"))
+        (.setSize renderer width height false)
         (set! (.-aspect camera) (/ width height))
         (.updateProjectionMatrix camera)))))
 
