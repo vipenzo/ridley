@@ -1382,6 +1382,18 @@
    ;; File I/O (JVM native — direct filesystem access)
    'save-stl  (fn [value path] (stl/save-stl (sdf/ensure-mesh value) path))
    'save-3mf  (fn [value path] (threemf/save-3mf (sdf/ensure-mesh value) path))
+   'export    (fn [name-kw & [fmt]]
+                (let [fmt (or fmt :stl)
+                      mesh (get-mesh name-kw)]
+                  (if mesh
+                    (let [downloads (str (System/getProperty "user.home") "/Downloads/")
+                          filename (str downloads (name name-kw) "." (name fmt))]
+                      (case fmt
+                        :stl (stl/save-stl mesh filename)
+                        :3mf (threemf/save-3mf mesh filename)
+                        (throw (Exception. (str "Unknown format: " (name fmt)))))
+                      (str "Exported " filename))
+                    (str "No mesh named " name-kw))))
    'merge-vertices merge-vertices
    'load-stl  stl/load-stl
    'load-svg  svg/load-svg
