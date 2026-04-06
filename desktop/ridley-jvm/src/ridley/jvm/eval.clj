@@ -498,6 +498,97 @@
                        (* 0.5 (math/magnitude cross))))
                    (:faces mesh)))))
 
+;; ── Lay-flat ────────────────────────────────────────────────────
+
+(defn- lay-flat-with-normal
+  "Rotate and translate mesh so that a face with given normal and center
+   sits on the XY plane (z=0), centered."
+  [mesh normal face-center-fn]
+  (let [;; Target: normal → [0, 0, -1] (face points down)
+        target [0.0 0.0 -1.0]
+        dot-nt (math/dot normal target)
+        vertices (:vertices mesh)
+        rotated-verts
+        (if (> (Math/abs dot-nt) 0.9999)
+          (if (neg? dot-nt)
+            vertices
+            (let [perp (if (> (Math/abs (nth normal 0)) 0.9) [0 1 0] [1 0 0])]
+              (mapv #(math/rotate-point-around-axis % perp Math/PI) vertices)))
+          (let [axis (math/normalize (math/cross normal target))
+                angle (Math/acos (max -1.0 (min 1.0 dot-nt)))]
+            (mapv #(math/rotate-point-around-axis % axis angle) vertices)))
+        ;; Compute center after rotation
+        center (face-center-fn rotated-verts)
+        offset [(- (center 0)) (- (center 1)) (- (center 2))]
+        final-verts (mapv #(math/v+ % offset) rotated-verts)]
+    (assoc mesh
+           :vertices final-verts
+           :creation-pose {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})))
+
+(defn lay-flat-impl
+  "Position a mesh so a specified face sits on the XY plane (z=0), centered.
+
+   Accepts:
+   - keyword anchor name → uses pose saved by :mark in extrude+/revolve+
+   - :top/:bottom/:up/:down → finds largest face in that direction
+   - face-id (number) → specific face group
+   - nil → default :bottom
+
+   The face normal will point down (-Z), the face center at the XY origin."
+  ([mesh] (lay-flat-impl mesh nil))
+  ([mesh target]
+   (cond
+     ;; Anchor keyword from :mark
+     (and (keyword? target)
+          (not (#{:top :bottom :up :down :left :right} target)))
+     (let [pose (get-in @turtle-state [:anchors target])]
+       (if pose
+         (lay-flat-with-normal mesh
+           (:heading pose)  ;; heading = face normal
+           (fn [rotated-verts]
+             ;; Rotate the original pose position the same way
+             (let [normal (:heading pose)
+                   tgt [0.0 0.0 -1.0]
+                   dot-nt (math/dot normal tgt)]
+               (if (> (Math/abs dot-nt) 0.9999)
+                 (if (neg? dot-nt)
+                   (:pos pose)
+                   (math/rotate-point-around-axis (:pos pose)
+                     (if (> (Math/abs (nth normal 0)) 0.9) [0 1 0] [1 0 0])
+                     Math/PI))
+                 (let [axis (math/normalize (math/cross normal tgt))
+                       angle (Math/acos (max -1.0 (min 1.0 dot-nt)))]
+                   (math/rotate-point-around-axis (:pos pose) axis angle))))))
+         (throw (Exception. (str "lay-flat: no anchor named " target)))))
+
+     ;; Direction keyword
+     (keyword? target)
+     (let [mesh (faces/ensure-face-groups mesh)
+           face (faces/largest-face mesh target)]
+       (when face
+         (let [info (faces/compute-face-info (:vertices mesh)
+                      (get (:face-groups mesh) (:id face)))
+               face-indices (:vertices info)]
+           (lay-flat-with-normal mesh (:normal info)
+             (fn [rotated-verts]
+               (let [fv (mapv #(nth rotated-verts %) face-indices)]
+                 (math/v* (reduce math/v+ fv) (/ 1.0 (count fv)))))))))
+
+     ;; Numeric face-id
+     (number? target)
+     (let [mesh (faces/ensure-face-groups mesh)
+           info (faces/compute-face-info (:vertices mesh)
+                  (get (:face-groups mesh) target))
+           face-indices (:vertices info)]
+       (lay-flat-with-normal mesh (:normal info)
+         (fn [rotated-verts]
+           (let [fv (mapv #(nth rotated-verts %) face-indices)]
+             (math/v* (reduce math/v+ fv) (/ 1.0 (count fv)))))))
+
+     ;; Default: bottom
+     :else
+     (lay-flat-impl mesh :bottom))))
+
 ;; ── Bench ───────────────────────────────────────────────────────
 
 (defn bench [label f]
@@ -556,8 +647,10 @@
       results)))
 
 (defn extrude+-impl
-  "Like extrude-impl but returns {:mesh :end-face} for chaining."
-  [shape-or-shapes path-data]
+  "Like extrude-impl but returns {:mesh :end-face} for chaining.
+   Optional :mark name cap — saves cap pose as anchor in global turtle state.
+   cap is :start-cap or :end-cap."
+  [shape-or-shapes path-data & {:keys [mark mark-cap]}]
   (let [shapes (if (and (vector? shape-or-shapes)
                         (seq shape-or-shapes)
                         (map? (first shape-or-shapes)))
@@ -565,6 +658,7 @@
                  [shape-or-shapes])
         initial (make-initial-state)
         pose (creation-pose-from-current)
+        start-up (derive-end-up (:heading pose) (or (:up pose) [0 0 1]))
         results (reduce
                   (fn [acc s]
                     (let [state (turtle/extrude-from-path initial s path-data)
@@ -578,13 +672,24 @@
                                      :end-face {:shape s
                                                 :pose {:pos end-pos
                                                        :heading end-heading
-                                                       :up end-up}}}))
+                                                       :up end-up}}
+                                     :start-face {:shape s
+                                                  :pose {:pos (:position pose)
+                                                         :heading (:heading pose)
+                                                         :up start-up}}}))
                         acc)))
                   []
-                  shapes)]
-    (if (= 1 (count results))
-      (first results)
-      results)))
+                  shapes)
+        result (if (= 1 (count results)) (first results) results)]
+    ;; Save mark as anchor if requested
+    (when (and mark mark-cap result)
+      (let [face-pose (case mark-cap
+                        :start-cap (:pose (:start-face result))
+                        :end-cap (:pose (:end-face result))
+                        nil)]
+        (when face-pose
+          (swap! turtle-state assoc-in [:anchors mark] face-pose))))
+    result))
 
 (defn loft-impl
   "loft-impl: dispatch based on args.
@@ -757,20 +862,36 @@
 
 (defn revolve+-impl
   "Like revolve-impl but returns {:mesh :end-face} for chaining.
-   Uses the original shape (not re-extracted) to avoid axis swap from 2D projection."
+   Uses the original shape (not re-extracted) to avoid axis swap from 2D projection.
+   Optional :mark name cap — saves cap pose as anchor."
   ([shape-or-fn]
    (revolve+-impl shape-or-fn 360))
-  ([shape-or-fn angle & {:keys [pivot]}]
-   (let [mesh (revolve-impl shape-or-fn angle :pivot pivot)]
+  ([shape-or-fn angle & {:keys [pivot mark mark-cap]}]
+   (let [current @turtle-state
+         start-pose {:pos (:position current)
+                     :heading (:heading current)
+                     :up (:up current)}
+         mesh (revolve-impl shape-or-fn angle :pivot pivot)]
      (when mesh
-       (if (>= (Math/abs (double angle)) 360)
-         {:mesh mesh}
-         ;; Compute end-face pose from mesh geometry, but keep original shape
-         (let [face-data (faces/face-shape mesh
-                           (:id (faces/largest-face mesh :top)))]
-           {:mesh mesh
-            :end-face {:shape shape-or-fn  ;; original shape, not re-projected
-                       :pose (:pose face-data)}}))))))
+       (let [result
+             (if (>= (Math/abs (double angle)) 360)
+               {:mesh mesh
+                :start-face {:shape shape-or-fn :pose start-pose}}
+               (let [face-data (faces/face-shape mesh
+                                 (:id (faces/largest-face mesh :top)))]
+                 {:mesh mesh
+                  :start-face {:shape shape-or-fn :pose start-pose}
+                  :end-face {:shape shape-or-fn
+                             :pose (:pose face-data)}}))]
+         ;; Save mark as anchor if requested
+         (when (and mark mark-cap)
+           (let [face-pose (case mark-cap
+                             :start-cap (:pose (:start-face result))
+                             :end-cap (:pose (:end-face result))
+                             nil)]
+             (when face-pose
+               (swap! turtle-state assoc-in [:anchors mark] face-pose))))
+         result)))))
 
 ;; ── transform-> : chainable pipeline ──────────────────────────
 
@@ -781,15 +902,26 @@
         pose (:pose prev-end)
         op (:op step)
         args (:args step)
+        mark (:mark step)
+        mark-cap (:mark-cap step)
         saved @turtle-state]
     (reset! turtle-state (init-turtle pose saved))
-    (try
-      (case op
-        :extrude+ (extrude+-impl shape (first args))
-        :revolve+ (apply revolve+-impl shape args)
-        (throw (Exception. (str "transform->: unknown op " op))))
-      (finally
-        (reset! turtle-state saved)))))
+    (let [result (try
+                   (case op
+                     :extrude+ (extrude+-impl shape (first args))
+                     :revolve+ (apply revolve+-impl shape args)
+                     (throw (Exception. (str "transform->: unknown op " op))))
+                   (finally
+                     (reset! turtle-state saved)))]
+      ;; Save mark AFTER restoring turtle state so it persists
+      (when (and mark mark-cap result)
+        (let [face-pose (case mark-cap
+                          :start-cap (:pose (:start-face result))
+                          :end-cap (:pose (:end-face result))
+                          nil)]
+          (when face-pose
+            (swap! turtle-state assoc-in [:anchors mark] face-pose))))
+      result)))
 
 (defn transform->impl
   "Execute a transform-> pipeline.
@@ -1175,6 +1307,7 @@
    ;; Measurement
    'distance        distance-3d
    'area            mesh-area
+   'lay-flat        lay-flat-impl
    ;; Material
    'material        (fn [opts] (swap! turtle-state assoc :material opts))
    'reset-material  (fn [] (swap! turtle-state dissoc :material))
@@ -1345,16 +1478,29 @@
 
 (def ^:private transform->macro-source
   "(defmacro transform-> [shape-or-end-face & steps]
-     (let [step-forms (mapv (fn [form]
-                              (if (and (list? form) (seq form))
-                                (let [op (first form)
-                                      args (rest form)]
-                                  (case op
-                                    extrude+ `{:op :extrude+ :args [(path ~@args)]}
-                                    revolve+ `{:op :revolve+ :args [~@args]}
-                                    (throw (Exception. (str \"transform->: unknown op \" op)))))
-                                (throw (Exception. (str \"transform->: expected (op args...), got \" form)))))
-                            steps)]
+     (let [step-forms
+           (mapv (fn [form]
+                   (if (and (list? form) (seq form))
+                     (let [op (first form)
+                           all-args (rest form)
+                           ;; Split args: movement args before :mark, then :mark name cap
+                           mark-idx (some (fn [i] (when (= :mark (nth (vec all-args) i nil)) i))
+                                         (range (count all-args)))
+                           [main-args mark-args] (if mark-idx
+                                                   [(take mark-idx all-args) (drop mark-idx all-args)]
+                                                   [all-args nil])
+                           mark-name (when mark-args (second mark-args))
+                           mark-cap (when mark-args (nth (vec mark-args) 2 nil))]
+                       (case op
+                         extrude+ (cond-> `{:op :extrude+ :args [(path ~@main-args)]}
+                                    mark-name (assoc :mark mark-name)
+                                    mark-cap (assoc :mark-cap mark-cap))
+                         revolve+ (cond-> `{:op :revolve+ :args [~@main-args]}
+                                    mark-name (assoc :mark mark-name)
+                                    mark-cap (assoc :mark-cap mark-cap))
+                         (throw (Exception. (str \"transform->: unknown op \" op)))))
+                     (throw (Exception. (str \"transform->: expected (op args...), got \" form)))))
+                 steps)]
        `(ridley.jvm.eval/transform->impl ~shape-or-end-face ~step-forms)))")
 
 (def ^:private extrude+-macro-source
