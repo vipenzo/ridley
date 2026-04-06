@@ -87,13 +87,23 @@
 (defn implicit-bezier-as [p & args]
   (swap! turtle-state #(apply turtle/bezier-as % p args)))
 (defn implicit-goto [anchor-name]
-  ;; Check mark-anchors first, copy to turtle state if found
-  (when-let [mark-pose (get @mark-anchors anchor-name)]
-    (swap! turtle-state assoc-in [:anchors anchor-name]
-           {:position (:pos mark-pose)
-            :heading (:heading mark-pose)
-            :up (:up mark-pose)}))
-  (swap! turtle-state turtle/goto anchor-name))
+  ;; Built-in anchors
+  (if (#{:origin :ground} anchor-name)
+    (let [[h u] (case anchor-name
+                  :origin [[1 0 0] [0 0 1]]
+                  :ground [[0 0 -1] [0 1 0]])]
+      (swap! turtle-state #(-> %
+                               (assoc :position [0 0 0])
+                               (assoc :heading h)
+                               (assoc :up u))))
+    (do
+      ;; Check mark-anchors, copy to turtle state if found
+      (when-let [mark-pose (get @mark-anchors anchor-name)]
+        (swap! turtle-state assoc-in [:anchors anchor-name]
+               {:position (:pos mark-pose)
+                :heading (:heading mark-pose)
+                :up (:up mark-pose)}))
+      (swap! turtle-state turtle/goto anchor-name))))
 (defn implicit-look-at [anchor-name]
   (when-let [mark-pose (get @mark-anchors anchor-name)]
     (swap! turtle-state assoc-in [:anchors anchor-name]
@@ -1246,7 +1256,18 @@
    'path?        turtle/path?
    'shape?       shape/shape?
    'quick-path   turtle/quick-path
-   'set-creation-pose (fn [mesh] (turtle/set-creation-pose @turtle-state mesh))
+   'set-creation-pose (fn [mesh & [mark-name]]
+                        (if mark-name
+                          ;; Use mark pose as creation-pose
+                          (if-let [pose (or (get @mark-anchors mark-name)
+                                           (get-in @turtle-state [:anchors mark-name]))]
+                            (assoc mesh :creation-pose
+                                   {:position (or (:pos pose) (:position pose))
+                                    :heading (:heading pose)
+                                    :up (:up pose)})
+                            (throw (Exception. (str "set-creation-pose: no mark named " mark-name))))
+                          ;; Use current turtle pose
+                          (turtle/set-creation-pose @turtle-state mesh)))
    'last-mesh    (fn [] (last (:meshes @turtle-state)))
    'get-turtle-resolution (fn [] (get-in @turtle-state [:resolution :value] 15))
    'get-turtle-joint-mode (fn [] (:joint-mode @turtle-state :miter))
