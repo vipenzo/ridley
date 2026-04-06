@@ -33,6 +33,7 @@
 (def registered-shapes-store (atom {}))
 (def source-forms (atom {}))
 (def stamp-accumulator (atom []))
+(def mark-anchors (atom {}))
 
 (defn reset-state! []
   (reset! turtle-state (turtle/make-turtle))
@@ -41,7 +42,8 @@
   (reset! registered-paths {})
   (reset! registered-shapes-store {})
   (reset! source-forms {})
-  (reset! stamp-accumulator []))
+  (reset! stamp-accumulator [])
+  (reset! mark-anchors {}))
 
 ;; ── Implicit turtle commands (mutate global state) ──────────────
 
@@ -541,7 +543,8 @@
      ;; Anchor keyword from :mark
      (and (keyword? target)
           (not (#{:top :bottom :up :down :left :right} target)))
-     (let [pose (get-in @turtle-state [:anchors target])]
+     (let [pose (or (get @mark-anchors target)
+                    (get-in @turtle-state [:anchors target]))]
        (if pose
          (lay-flat-with-normal mesh
            (:heading pose)  ;; heading = face normal
@@ -688,7 +691,7 @@
                         :end-cap (:pose (:end-face result))
                         nil)]
         (when face-pose
-          (swap! turtle-state assoc-in [:anchors mark] face-pose))))
+          (swap! mark-anchors assoc mark face-pose))))
     result))
 
 (defn loft-impl
@@ -890,7 +893,7 @@
                              :end-cap (:pose (:end-face result))
                              nil)]
              (when face-pose
-               (swap! turtle-state assoc-in [:anchors mark] face-pose))))
+               (swap! mark-anchors assoc mark face-pose))))
          result)))))
 
 ;; ── transform-> : chainable pipeline ──────────────────────────
@@ -913,14 +916,14 @@
                      (throw (Exception. (str "transform->: unknown op " op))))
                    (finally
                      (reset! turtle-state saved)))]
-      ;; Save mark AFTER restoring turtle state so it persists
+      ;; Save mark to GLOBAL atom (survives turtle scopes)
       (when (and mark mark-cap result)
         (let [face-pose (case mark-cap
                           :start-cap (:pose (:start-face result))
                           :end-cap (:pose (:end-face result))
                           nil)]
           (when face-pose
-            (swap! turtle-state assoc-in [:anchors mark] face-pose))))
+            (swap! mark-anchors assoc mark face-pose))))
       result)))
 
 (defn transform->impl
