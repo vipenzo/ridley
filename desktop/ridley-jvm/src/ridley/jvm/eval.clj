@@ -1379,22 +1379,7 @@
                   (when-let [m (get @registered-meshes sym)]
                     (swap! registered-meshes assoc sym (assoc m :color color-val)))))
    ;; File I/O (JVM native — direct filesystem access)
-   'save-stl  (fn [value path]
-                (let [mesh (sdf/ensure-mesh value)
-                      ;; Merge duplicate vertices then remove duplicate faces
-                      ;; This simulates what slicers do on STL import, fixing
-                      ;; non-manifold edges from CSG T-junctions
-                      merged (merge-vertices mesh)
-                      seen (volatile! #{})
-                      clean-faces (filterv (fn [[a b c]]
-                                             (if (or (= a b) (= b c) (= a c))
-                                               false ;; degenerate
-                                               (let [key (sort [a b c])]
-                                                 (if (@seen key) false
-                                                   (do (vswap! seen conj key) true)))))
-                                          (:faces merged))
-                      clean (assoc merged :faces clean-faces)]
-                  (stl/save-stl clean path)))
+   'save-stl  (fn [value path] (stl/save-stl (sdf/ensure-mesh value) path))
    'merge-vertices merge-vertices
    'load-stl  stl/load-stl
    'load-svg  svg/load-svg
