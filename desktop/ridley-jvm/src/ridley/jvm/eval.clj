@@ -1264,10 +1264,20 @@
    'build-fillet-cutters  faces/build-fillet-cutters
    'make-prism-along-edge faces/make-prism-along-edge
    ;; Measurement
-   'bounds     (fn [mesh] (let [vs (:vertices mesh)
-                                 xs (map #(% 0) vs) ys (map #(% 1) vs) zs (map #(% 2) vs)]
-                             {:min [(apply min xs) (apply min ys) (apply min zs)]
-                              :max [(apply max xs) (apply max ys) (apply max zs)]}))})
+   'bounds     (fn [obj]
+                 (cond
+                   ;; 2D shape or path
+                   (and (map? obj) (#{:shape :path} (:type obj)))
+                   (shape/bounds-2d obj)
+                   ;; 3D mesh
+                   (and (map? obj) (:vertices obj))
+                   (let [vs (:vertices obj)
+                         xs (map #(% 0) vs) ys (map #(% 1) vs) zs (map #(% 2) vs)
+                         min-pt [(apply min xs) (apply min ys) (apply min zs)]
+                         max-pt [(apply max xs) (apply max ys) (apply max zs)]]
+                     {:min min-pt :max max-pt
+                      :size (math/v- max-pt min-pt)
+                      :center (math/v* (math/v+ min-pt max-pt) 0.5)})))})
 
 ;; ── Macro sources (injected into eval namespace) ────────────────
 ;; These macros rebind f/th/tv etc. to recorder versions inside their body.
