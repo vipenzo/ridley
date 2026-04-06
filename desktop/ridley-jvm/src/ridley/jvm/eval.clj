@@ -521,20 +521,27 @@
                        angle (Math/acos (max -1.0 (min 1.0 dot-nt)))]
                    #(math/rotate-point-around-axis % axis angle)))
         rotated-verts (mapv rot-fn vertices)
-        ;; Step 2: if up-ref given, rotate around Z to align it with +Y
+        ;; Step 2: rotate around Z to orient nicely
+        ;; If up-ref given AND it's not pure Z, use it to align with +Y
+        ;; Otherwise, align the longest XY dimension of the mesh with X axis
         rotated-verts
-        (if up-ref
-          (let [;; Rotate the up-ref vector the same way
-                up-rotated (rot-fn up-ref)
-                ;; Project to XY plane (drop Z)
-                ux (nth up-rotated 0)
-                uy (nth up-rotated 1)
-                ;; Angle from +Y axis
-                z-angle (- (Math/atan2 ux uy))]
-            (if (< (Math/abs z-angle) 0.001)
-              rotated-verts
-              (mapv #(math/rotate-point-around-axis % [0 0 1] z-angle) rotated-verts)))
-          rotated-verts)
+        (let [z-angle
+              (if (and up-ref
+                       (let [uz (Math/abs (double (nth up-ref 2)))]
+                         (< uz 0.99)))  ;; up-ref is not pure Z
+                (let [up-rotated (rot-fn up-ref)
+                      ux (nth up-rotated 0)
+                      uy (nth up-rotated 1)]
+                  (- (Math/atan2 ux uy)))
+                ;; Fallback: align bounding box longest side with X
+                (let [xs (map #(nth % 0) rotated-verts)
+                      ys (map #(nth % 1) rotated-verts)
+                      dx (- (apply max xs) (apply min xs))
+                      dy (- (apply max ys) (apply min ys))]
+                  (if (> dy dx) (/ Math/PI 2) 0.0)))]
+          (if (< (Math/abs z-angle) 0.001)
+            rotated-verts
+            (mapv #(math/rotate-point-around-axis % [0 0 1] z-angle) rotated-verts)))
         ;; Step 3: translate so face center is at origin
         center (face-center-fn rotated-verts)
         offset [(- (center 0)) (- (center 1)) (- (center 2))]
