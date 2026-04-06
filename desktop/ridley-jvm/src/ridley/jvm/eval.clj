@@ -19,6 +19,7 @@
             [ridley.io.stl :as stl]
             [ridley.io.svg :as svg]
             [ridley.geometry.warp :as warp]
+            [ridley.io.threemf :as threemf]
             [ridley.sdf.core :as sdf]))
 
 ;; ── Forward declarations ────────────────────────────────────────
@@ -1380,6 +1381,7 @@
                     (swap! registered-meshes assoc sym (assoc m :color color-val)))))
    ;; File I/O (JVM native — direct filesystem access)
    'save-stl  (fn [value path] (stl/save-stl (sdf/ensure-mesh value) path))
+   'save-3mf  (fn [value path] (threemf/save-3mf (sdf/ensure-mesh value) path))
    'merge-vertices merge-vertices
    'load-stl  stl/load-stl
    'load-svg  svg/load-svg
