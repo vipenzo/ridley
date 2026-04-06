@@ -633,6 +633,48 @@
      :else
      (lay-flat-impl mesh :bottom))))
 
+;; ── Merge duplicate vertices ────────────────────────────────────
+
+(defn merge-vertices
+  "Merge duplicate vertices in a mesh (same position within epsilon).
+   Remaps face indices to use the first occurrence of each position.
+   Fixes non-manifold issues from CSG operations with coincident vertices."
+  ([mesh] (merge-vertices mesh 1e-6))
+  ([mesh epsilon]
+   (let [vs (:vertices mesh)
+         ;; Build map: quantized position → first vertex index
+         scale (/ 1.0 epsilon)
+         pos->idx (volatile! {})
+         remap (mapv (fn [i]
+                       (let [v (nth vs i)
+                             key [(Math/round (* (v 0) scale))
+                                  (Math/round (* (v 1) scale))
+                                  (Math/round (* (v 2) scale))]]
+                         (if-let [existing (get @pos->idx key)]
+                           existing
+                           (do (vswap! pos->idx assoc key i)
+                               i))))
+                     (range (count vs)))
+         ;; Remap faces
+         new-faces (mapv (fn [[a b c]]
+                           [(nth remap a) (nth remap b) (nth remap c)])
+                         (:faces mesh))
+         ;; Remove degenerate faces (two or more identical indices)
+         clean-faces (filterv (fn [[a b c]]
+                                (and (not= a b) (not= b c) (not= a c)))
+                              new-faces)
+         ;; Compact: renumber vertices to remove unused ones
+         used (set (mapcat identity clean-faces))
+         old->new (into {} (map-indexed (fn [new-i old-i] [old-i new-i])
+                                        (sort used)))
+         final-verts (mapv #(nth vs %) (sort used))
+         final-faces (mapv (fn [[a b c]]
+                             [(old->new a) (old->new b) (old->new c)])
+                           clean-faces)]
+     (assoc mesh
+            :vertices final-verts
+            :faces final-faces))))
+
 ;; ── Bench ───────────────────────────────────────────────────────
 
 (defn bench [label f]
@@ -1338,6 +1380,7 @@
                     (swap! registered-meshes assoc sym (assoc m :color color-val)))))
    ;; File I/O (JVM native — direct filesystem access)
    'save-stl  (fn [value path] (stl/save-stl (sdf/ensure-mesh value) path))
+   'merge-vertices merge-vertices
    'load-stl  stl/load-stl
    'load-svg  svg/load-svg
    'svg-path  svg/svg-path
