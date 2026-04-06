@@ -506,7 +506,7 @@
   "Rotate and translate mesh so that a face with given normal and center
    sits on the XY plane (z=0), centered.
    Optional up-ref: a 3D vector that should point toward +Y after layout."
-  [mesh normal face-center-fn & [up-ref]]
+  [mesh normal face-center-fn & [_up-ref]]
   (let [;; Step 1: rotate so face normal → [0, 0, -1]
         target [0.0 0.0 -1.0]
         dot-nt (math/dot normal target)
@@ -521,24 +521,21 @@
                        angle (Math/acos (max -1.0 (min 1.0 dot-nt)))]
                    #(math/rotate-point-around-axis % axis angle)))
         rotated-verts (mapv rot-fn vertices)
-        ;; Step 2: rotate around Z to orient nicely
-        ;; If up-ref given AND it's not pure Z, use it to align with +Y
-        ;; Otherwise, align the longest XY dimension of the mesh with X axis
+        ;; Step 2: rotate around Z to align with axes
+        ;; Use the mesh's creation-pose heading as reference direction
+        ;; After rotation, this heading should point along +X or +Y
         rotated-verts
-        (let [z-angle
-              (if (and up-ref
-                       (let [uz (Math/abs (double (nth up-ref 2)))]
-                         (< uz 0.99)))  ;; up-ref is not pure Z
-                (let [up-rotated (rot-fn up-ref)
-                      ux (nth up-rotated 0)
-                      uy (nth up-rotated 1)]
-                  (- (Math/atan2 ux uy)))
-                ;; Fallback: align bounding box longest side with X
-                (let [xs (map #(nth % 0) rotated-verts)
-                      ys (map #(nth % 1) rotated-verts)
-                      dx (- (apply max xs) (apply min xs))
-                      dy (- (apply max ys) (apply min ys))]
-                  (if (> dy dx) (/ Math/PI 2) 0.0)))]
+        (let [;; Get creation-pose heading (or default [1,0,0])
+              cp-heading (or (get-in mesh [:creation-pose :heading]) [1.0 0.0 0.0])
+              ;; Rotate it the same way as the mesh
+              ref-rotated (rot-fn cp-heading)
+              ;; Project to XY plane
+              rx (nth ref-rotated 0)
+              ry (nth ref-rotated 1)
+              ;; Angle to align this direction with +X
+              z-angle (if (> (+ (* rx rx) (* ry ry)) 0.001)
+                        (- (Math/atan2 ry rx))
+                        0.0)]
           (if (< (Math/abs z-angle) 0.001)
             rotated-verts
             (mapv #(math/rotate-point-around-axis % [0 0 1] z-angle) rotated-verts)))
