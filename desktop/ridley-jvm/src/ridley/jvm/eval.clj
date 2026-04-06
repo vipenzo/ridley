@@ -504,22 +504,38 @@
 
 (defn- lay-flat-with-normal
   "Rotate and translate mesh so that a face with given normal and center
-   sits on the XY plane (z=0), centered."
-  [mesh normal face-center-fn]
-  (let [;; Target: normal → [0, 0, -1] (face points down)
+   sits on the XY plane (z=0), centered.
+   Optional up-ref: a 3D vector that should point toward +Y after layout."
+  [mesh normal face-center-fn & [up-ref]]
+  (let [;; Step 1: rotate so face normal → [0, 0, -1]
         target [0.0 0.0 -1.0]
         dot-nt (math/dot normal target)
         vertices (:vertices mesh)
+        ;; Build the rotation that maps normal → -Z
+        rot-fn (if (> (Math/abs dot-nt) 0.9999)
+                 (if (neg? dot-nt)
+                   identity
+                   (let [perp (if (> (Math/abs (nth normal 0)) 0.9) [0 1 0] [1 0 0])]
+                     #(math/rotate-point-around-axis % perp Math/PI)))
+                 (let [axis (math/normalize (math/cross normal target))
+                       angle (Math/acos (max -1.0 (min 1.0 dot-nt)))]
+                   #(math/rotate-point-around-axis % axis angle)))
+        rotated-verts (mapv rot-fn vertices)
+        ;; Step 2: if up-ref given, rotate around Z to align it with +Y
         rotated-verts
-        (if (> (Math/abs dot-nt) 0.9999)
-          (if (neg? dot-nt)
-            vertices
-            (let [perp (if (> (Math/abs (nth normal 0)) 0.9) [0 1 0] [1 0 0])]
-              (mapv #(math/rotate-point-around-axis % perp Math/PI) vertices)))
-          (let [axis (math/normalize (math/cross normal target))
-                angle (Math/acos (max -1.0 (min 1.0 dot-nt)))]
-            (mapv #(math/rotate-point-around-axis % axis angle) vertices)))
-        ;; Compute center after rotation
+        (if up-ref
+          (let [;; Rotate the up-ref vector the same way
+                up-rotated (rot-fn up-ref)
+                ;; Project to XY plane (drop Z)
+                ux (nth up-rotated 0)
+                uy (nth up-rotated 1)
+                ;; Angle from +Y axis
+                z-angle (- (Math/atan2 ux uy))]
+            (if (< (Math/abs z-angle) 0.001)
+              rotated-verts
+              (mapv #(math/rotate-point-around-axis % [0 0 1] z-angle) rotated-verts)))
+          rotated-verts)
+        ;; Step 3: translate so face center is at origin
         center (face-center-fn rotated-verts)
         offset [(- (center 0)) (- (center 1)) (- (center 2))]
         final-verts (mapv #(math/v+ % offset) rotated-verts)]
@@ -549,19 +565,19 @@
          (lay-flat-with-normal mesh
            (:heading pose)  ;; heading = face normal
            (fn [rotated-verts]
-             ;; Rotate the original pose position the same way
              (let [normal (:heading pose)
                    tgt [0.0 0.0 -1.0]
-                   dot-nt (math/dot normal tgt)]
-               (if (> (Math/abs dot-nt) 0.9999)
-                 (if (neg? dot-nt)
-                   (:pos pose)
-                   (math/rotate-point-around-axis (:pos pose)
-                     (if (> (Math/abs (nth normal 0)) 0.9) [0 1 0] [1 0 0])
-                     Math/PI))
-                 (let [axis (math/normalize (math/cross normal tgt))
-                       angle (Math/acos (max -1.0 (min 1.0 dot-nt)))]
-                   (math/rotate-point-around-axis (:pos pose) axis angle))))))
+                   dot-nt (math/dot normal tgt)
+                   rot-fn (if (> (Math/abs dot-nt) 0.9999)
+                            (if (neg? dot-nt)
+                              identity
+                              (let [perp (if (> (Math/abs (nth normal 0)) 0.9) [0 1 0] [1 0 0])]
+                                #(math/rotate-point-around-axis % perp Math/PI)))
+                            (let [axis (math/normalize (math/cross normal tgt))
+                                  angle (Math/acos (max -1.0 (min 1.0 dot-nt)))]
+                              #(math/rotate-point-around-axis % axis angle)))]
+               (rot-fn (:pos pose))))
+           (:up pose))  ;; pass up vector for Z-rotation alignment
          (throw (Exception. (str "lay-flat: no anchor named " target)))))
 
      ;; Direction keyword
