@@ -119,7 +119,10 @@
 
 (defn concat-meshes
   "Concatenate meshes without boolean (just merge vertex/face arrays)."
-  [meshes]
+  [first-arg & more]
+  (let [meshes (if (and (empty? more) (sequential? first-arg) (not (:vertices first-arg)))
+                 first-arg
+                 (into [first-arg] more))]
   (reduce (fn [acc m]
             (let [offset (count (:vertices acc))]
               {:type :mesh
@@ -129,4 +132,4 @@
                :creation-pose (:creation-pose acc)}))
           {:type :mesh :vertices [] :faces []
            :creation-pose {:position [0 0 0] :heading [1 0 0] :up [0 0 1]}}
-          meshes))
+          meshes)))
