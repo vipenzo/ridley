@@ -87,8 +87,19 @@
 (defn implicit-bezier-as [p & args]
   (swap! turtle-state #(apply turtle/bezier-as % p args)))
 (defn implicit-goto [anchor-name]
+  ;; Check mark-anchors first, copy to turtle state if found
+  (when-let [mark-pose (get @mark-anchors anchor-name)]
+    (swap! turtle-state assoc-in [:anchors anchor-name]
+           {:position (:pos mark-pose)
+            :heading (:heading mark-pose)
+            :up (:up mark-pose)}))
   (swap! turtle-state turtle/goto anchor-name))
 (defn implicit-look-at [anchor-name]
+  (when-let [mark-pose (get @mark-anchors anchor-name)]
+    (swap! turtle-state assoc-in [:anchors anchor-name]
+           {:position (:pos mark-pose)
+            :heading (:heading mark-pose)
+            :up (:up mark-pose)}))
   (swap! turtle-state turtle/look-at anchor-name))
 
 ;; ── Geometry helpers ────────────────────────────────────────────
