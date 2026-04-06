@@ -255,7 +255,20 @@
     (swap! (turtle-ref) update :anchors merge marks)))
 
 (defn ^:export implicit-goto [name]
-  (swap! (turtle-ref) turtle/goto name)
+  ;; Built-in anchors
+  (if (#{:origin :ground} name)
+    (let [[h u] (case name
+                  :origin [[1 0 0] [0 0 1]]
+                  :ground [[0 0 -1] [0 1 0]])]
+      (swap! (turtle-ref) #(-> % (assoc :position [0 0 0]) (assoc :heading h) (assoc :up u))))
+    (do
+      ;; Check mark-anchors, copy to turtle state if found
+      (when-let [mark-pose (get @state/mark-anchors name)]
+        (swap! (turtle-ref) assoc-in [:anchors name]
+               {:position (or (:pos mark-pose) (:position mark-pose))
+                :heading (:heading mark-pose)
+                :up (:up mark-pose)}))
+      (swap! (turtle-ref) turtle/goto name)))
   (record-pen-lines!))
 
 (defn ^:export get-anchor
@@ -275,6 +288,11 @@
         (registry/register-mesh! mesh-name (assoc mesh :anchors anchors))))))
 
 (defn ^:export implicit-look-at [name]
+  (when-let [mark-pose (get @state/mark-anchors name)]
+    (swap! (turtle-ref) assoc-in [:anchors name]
+           {:position (or (:pos mark-pose) (:position mark-pose))
+            :heading (:heading mark-pose)
+            :up (:up mark-pose)}))
   (swap! (turtle-ref) turtle/look-at name))
 
 (defn ^:export implicit-path-to [name]

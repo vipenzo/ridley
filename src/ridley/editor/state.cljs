@@ -108,9 +108,11 @@
 ;; Visual output (pen traces, stamps) shared across all turtle scopes.
 ;; Cleared at the start of each evaluation cycle.
 (defonce scene-accumulator (atom {:lines [] :stamps []}))
+(defonce mark-anchors (atom {}))
 
 (defn reset-scene-accumulator! []
-  (reset! scene-accumulator {:lines [] :stamps []}))
+  (reset! scene-accumulator {:lines [] :stamps []})
+  (reset! mark-anchors {}))
 
 ;; ============================================================
 ;; Source Tracking Dynamic Vars

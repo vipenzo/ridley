@@ -10,6 +10,7 @@
             [ridley.scene.registry :as registry]
             [ridley.scene.panel :as panel]
             [ridley.manifold.core :as manifold]
+            [ridley.clipper.core :as clipper]
             [ridley.geometry.faces :as faces]
             [ridley.geometry.primitives :as primitives]
             [ridley.math :as math]))
@@ -141,6 +142,283 @@
    (if (sfn/shape-fn? shape-or-fn)
      (ops/pure-revolve-shape-fn shape-or-fn angle)
      (ops/pure-revolve shape-or-fn angle))))
+
+;; ============================================================
+;; Extrude+ / Revolve+ (chainable variants)
+;; ============================================================
+
+(defn- derive-end-up [heading ref-up]
+  (let [dot-hu (math/dot ref-up heading)
+        up-raw (math/v- ref-up (math/v* heading dot-hu))
+        m (math/magnitude up-raw)]
+    (if (> m 0.001)
+      (math/v* up-raw (/ 1.0 m))
+      [0 0 1])))
+
+(defn- current-pose []
+  (let [t @@state/turtle-state-var]
+    {:position (:position t) :heading (:heading t) :up (:up t)}))
+
+(defn ^:export extrude+-impl
+  "Like extrude-impl but returns {:mesh :end-face :start-face} for chaining."
+  [shape-or-shapes path-data & {:keys [mark mark-cap]}]
+  (validate-extrude-path! "extrude+" path-data)
+  (let [shapes (if (and (vector? shape-or-shapes)
+                        (seq shape-or-shapes)
+                        (map? (first shape-or-shapes)))
+                 shape-or-shapes
+                 [shape-or-shapes])
+        pose (current-pose)
+        current-turtle @@state/turtle-state-var
+        initial-state (if current-turtle
+                        (-> (turtle/make-turtle)
+                            (assoc :position (:position current-turtle))
+                            (assoc :heading (:heading current-turtle))
+                            (assoc :up (:up current-turtle))
+                            (assoc :joint-mode (:joint-mode current-turtle))
+                            (assoc :resolution (:resolution current-turtle))
+                            (assoc :material (:material current-turtle)))
+                        (turtle/make-turtle))
+        start-up (derive-end-up (:heading pose) (or (:up pose) [0 0 1]))
+        results (reduce
+                  (fn [acc s]
+                    (let [state (turtle/extrude-from-path initial-state s path-data)
+                          mesh (last (:meshes state))]
+                      (if mesh
+                        (let [end-heading (:heading state)
+                              end-pos (:position state)
+                              end-up (derive-end-up end-heading (or (:up pose) [0 0 1]))]
+                          (conj acc {:mesh (assoc mesh :creation-pose pose)
+                                     :end-face {:shape s
+                                                :pose {:pos end-pos
+                                                       :heading end-heading
+                                                       :up end-up}}
+                                     :start-face {:shape s
+                                                  :pose {:pos (:position pose)
+                                                         :heading (:heading pose)
+                                                         :up start-up}}}))
+                        acc)))
+                  []
+                  shapes)
+        result (if (= 1 (count results)) (first results) results)]
+    (when (and mark mark-cap result)
+      (let [face-pose (case mark-cap
+                        :start-cap (:pose (:start-face result))
+                        :end-cap (:pose (:end-face result))
+                        nil)]
+        (when face-pose
+          (swap! state/mark-anchors assoc mark face-pose))))
+    result))
+
+(defn- compute-pivot-offset [s pivot]
+  (let [pts (:points s)
+        xs (map first pts)
+        ys (map second pts)]
+    (case pivot
+      :right [(- (apply max xs)) 0]
+      :left  [(- (apply min xs)) 0]
+      :up    [0 (- (apply max ys))]
+      :down  [0 (- (apply min ys))]
+      [0 0])))
+
+(defn- translate-mesh-3d [mesh offset]
+  (update mesh :vertices
+          (fn [vs] (mapv (fn [v] (math/v+ v offset)) vs))))
+
+(defn ^:export revolve+-impl
+  "Like revolve-impl but returns {:mesh :end-face} for chaining.
+   Supports :pivot and :mark."
+  ([shape-or-fn]
+   (revolve+-impl shape-or-fn 360))
+  ([shape-or-fn angle & {:keys [pivot mark mark-cap]}]
+   (let [current-turtle @@state/turtle-state-var
+         start-pose {:pos (:position current-turtle)
+                     :heading (:heading current-turtle)
+                     :up (:up current-turtle)}
+         ;; Clip shape to x >= 0 if no pivot (prevents crossing revolution axis)
+         shape-or-fn (if (and (not pivot) (shape/shape? shape-or-fn))
+                       (let [min-x (apply min (map first (:points shape-or-fn)))]
+                         (if (neg? min-x)
+                           (let [max-x (apply max (map first (:points shape-or-fn)))
+                                 max-y (apply max (map #(js/Math.abs (second %)) (:points shape-or-fn)))
+                                 half (+ (max max-x max-y) 100)
+                                 clip-rect (shape/make-shape [[0 (- half)] [half (- half)] [half half] [0 half]]
+                                             {:centered? true})]
+                             (or (clipper/shape-intersection shape-or-fn clip-rect)
+                                 shape-or-fn))
+                           shape-or-fn))
+                       shape-or-fn)
+         ;; Compute pivot offset
+         [dx dy] (if (and pivot (shape/shape? shape-or-fn))
+                   (compute-pivot-offset shape-or-fn pivot)
+                   [0 0])
+         shifted-shape (if (and pivot (shape/shape? shape-or-fn))
+                         (shape/translate-shape shape-or-fn dx dy)
+                         shape-or-fn)
+         ;; Do the revolve
+         mesh (if (sfn/shape-fn? shifted-shape)
+                (ops/pure-revolve-shape-fn shifted-shape angle)
+                (ops/pure-revolve shifted-shape angle))]
+     (when mesh
+       (let [heading (:heading current-turtle)
+             up (:up current-turtle)
+             right (math/cross heading up)
+             pivot-offset (if (or (not= dx 0) (not= dy 0))
+                            (math/v+ (math/v* right (- dx)) (math/v* up (- dy)))
+                            [0 0 0])
+             mesh (if (or (not= dx 0) (not= dy 0))
+                    (translate-mesh-3d mesh pivot-offset)
+                    mesh)
+             creation-pose {:position (:position current-turtle)
+                            :heading heading :up up}
+             mesh (assoc mesh :creation-pose creation-pose)
+             result (if (>= (js/Math.abs angle) 360)
+                      {:mesh mesh :start-face {:shape shape-or-fn :pose start-pose}}
+                      (let [face-data (faces/face-shape mesh
+                                        (:id (faces/largest-face mesh :top)))]
+                        {:mesh mesh
+                         :start-face {:shape shape-or-fn :pose start-pose}
+                         :end-face {:shape shape-or-fn
+                                    :pose (:pose face-data)}}))]
+         (when (and mark mark-cap)
+           (let [face-pose (case mark-cap
+                             :start-cap (:pose (:start-face result))
+                             :end-cap (:pose (:end-face result))
+                             nil)]
+             (when face-pose
+               (swap! state/mark-anchors assoc mark face-pose))))
+         result)))))
+
+;; ============================================================
+;; transform-> : chainable pipeline
+;; ============================================================
+
+(defn- transform->step [prev-end step]
+  (let [s (:shape prev-end)
+        pose (:pose prev-end)
+        op (:op step)
+        args (:args step)
+        mark (:mark step)
+        mark-cap (:mark-cap step)
+        saved @@state/turtle-state-var]
+    (reset! @state/turtle-state-var
+            (state/init-turtle pose saved))
+    (let [result (try
+                   (case op
+                     :extrude+ (extrude+-impl s (first args))
+                     :revolve+ (apply revolve+-impl s args)
+                     (throw (js/Error. (str "transform->: unknown op " op))))
+                   (finally
+                     (reset! @state/turtle-state-var saved)))]
+      (when (and mark mark-cap result)
+        (let [face-pose (case mark-cap
+                          :start-cap (:pose (:start-face result))
+                          :end-cap (:pose (:end-face result))
+                          nil)]
+          (when face-pose
+            (swap! state/mark-anchors assoc mark face-pose))))
+      result)))
+
+(defn ^:export transform->impl [shape-or-end-face steps]
+  (let [initial-end (if (and (map? shape-or-end-face) (:shape shape-or-end-face) (:pose shape-or-end-face))
+                      shape-or-end-face
+                      (let [t @@state/turtle-state-var]
+                        {:shape shape-or-end-face
+                         :pose {:pos (:position t)
+                                :heading (:heading t)
+                                :up (:up t)}}))]
+    (loop [remaining steps
+           prev-end initial-end
+           meshes []]
+      (if (empty? remaining)
+        (if (= 1 (count meshes))
+          (first meshes)
+          (apply manifold/union meshes))
+        (let [result (transform->step prev-end (first remaining))
+              mesh (:mesh result)
+              end-face (:end-face result)]
+          (recur (rest remaining)
+                 (or end-face prev-end)
+                 (conj meshes mesh)))))))
+
+;; ============================================================
+;; lay-flat
+;; ============================================================
+
+(defn- lay-flat-with-normal [mesh normal face-center-fn]
+  (let [target [0.0 0.0 -1.0]
+        dot-nt (math/dot normal target)
+        vertices (:vertices mesh)
+        rot-fn (if (> (js/Math.abs dot-nt) 0.9999)
+                 (if (neg? dot-nt)
+                   identity
+                   (let [perp (if (> (js/Math.abs (nth normal 0)) 0.9) [0 1 0] [1 0 0])]
+                     #(math/rotate-point-around-axis % perp js/Math.PI)))
+                 (let [axis (math/normalize (math/cross normal target))
+                       angle (js/Math.acos (max -1.0 (min 1.0 dot-nt)))]
+                   #(math/rotate-point-around-axis % axis angle)))
+        rotated-verts (mapv rot-fn vertices)
+        ;; Align Z rotation using creation-pose heading
+        cp-heading (or (get-in mesh [:creation-pose :heading]) [1.0 0.0 0.0])
+        ref-rotated (rot-fn cp-heading)
+        rx (nth ref-rotated 0)
+        ry (nth ref-rotated 1)
+        z-angle (if (> (+ (* rx rx) (* ry ry)) 0.001)
+                  (- (js/Math.atan2 ry rx))
+                  0.0)
+        final-rotated (if (< (js/Math.abs z-angle) 0.001)
+                        rotated-verts
+                        (mapv #(math/rotate-point-around-axis % [0 0 1] z-angle) rotated-verts))
+        center (face-center-fn final-rotated)
+        offset [(- (center 0)) (- (center 1)) (- (center 2))]
+        final-verts (mapv #(math/v+ % offset) final-rotated)]
+    (assoc mesh
+           :vertices final-verts
+           :creation-pose {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})))
+
+(defn ^:export lay-flat-impl
+  ([mesh] (lay-flat-impl mesh nil))
+  ([mesh target]
+   (cond
+     ;; Anchor keyword from :mark
+     (and (keyword? target)
+          (not (#{:top :bottom :up :down :left :right} target)))
+     (let [pose (or (get @state/mark-anchors target)
+                    (get-in @@state/turtle-state-var [:anchors target]))]
+       (if pose
+         (lay-flat-with-normal mesh
+           (:heading pose)
+           (fn [rotated-verts]
+             (let [normal (:heading pose)
+                   tgt [0.0 0.0 -1.0]
+                   dot-nt (math/dot normal tgt)
+                   rot-fn (if (> (js/Math.abs dot-nt) 0.9999)
+                            (if (neg? dot-nt)
+                              identity
+                              (let [perp (if (> (js/Math.abs (nth normal 0)) 0.9) [0 1 0] [1 0 0])]
+                                #(math/rotate-point-around-axis % perp js/Math.PI)))
+                            (let [axis (math/normalize (math/cross normal tgt))
+                                  angle (js/Math.acos (max -1.0 (min 1.0 dot-nt)))]
+                              #(math/rotate-point-around-axis % axis angle)))]
+               (rot-fn (or (:pos pose) (:position pose))))))
+         (throw (js/Error. (str "lay-flat: no anchor named " target)))))
+
+     ;; Direction keyword
+     (keyword? target)
+     (let [mesh (faces/ensure-face-groups mesh)
+           face (faces/largest-face mesh target)]
+       (when face
+         (let [info (faces/compute-face-info (:vertices mesh)
+                      (get (:face-groups mesh) (:id face)))
+               face-indices (:vertices info)]
+           (lay-flat-with-normal mesh (:normal info)
+             (fn [rotated-verts]
+               (let [fv (mapv #(nth rotated-verts %) face-indices)]
+                 (math/v* (reduce math/v+ fv) (/ 1.0 (count fv)))))))))
+
+     ;; Default: bottom
+     :else
+     (lay-flat-impl mesh :bottom))))
 
 ;; ============================================================
 ;; Attach: helpers for move-to replay

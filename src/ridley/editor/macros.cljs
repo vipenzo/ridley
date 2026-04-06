@@ -648,6 +648,42 @@
         `(-> (revolve-impl ~shape ~angle)
              (add-source {:op :revolve :line ~line :col ~column :source *eval-source*})))))
 
+   ;; ── Chainable operations ──────────────────────────────────
+
+   (defmacro extrude+ [shape & movements]
+     `(extrude+-impl ~shape (path ~@movements)))
+
+   (defmacro revolve+
+     ([shape]
+      `(revolve+-impl ~shape))
+     ([shape angle & opts]
+      `(revolve+-impl ~shape ~angle ~@opts)))
+
+   (defmacro transform-> [shape-or-end-face & steps]
+     (let [step-forms
+           (mapv (fn [form]
+                   (if (and (list? form) (seq form))
+                     (let [op (first form)
+                           all-args (rest form)
+                           mark-idx (some (fn [i] (when (= :mark (nth (vec all-args) i nil)) i))
+                                         (range (count all-args)))
+                           [main-args mark-args] (if mark-idx
+                                                   [(take mark-idx all-args) (drop mark-idx all-args)]
+                                                   [all-args nil])
+                           mark-name (when mark-args (second mark-args))
+                           mark-cap (when mark-args (nth (vec mark-args) 2 nil))]
+                       (case op
+                         extrude+ (cond-> `{:op :extrude+ :args [(path ~@main-args)]}
+                                    mark-name (assoc :mark mark-name)
+                                    mark-cap (assoc :mark-cap mark-cap))
+                         revolve+ (cond-> `{:op :revolve+ :args [~@main-args]}
+                                    mark-name (assoc :mark mark-name)
+                                    mark-cap (assoc :mark-cap mark-cap))
+                         nil))
+                     nil))
+                 steps)]
+       `(transform->impl ~shape-or-end-face ~step-forms)))
+
    ;; ============================================================
    ;; Functional attach macros
    ;; ============================================================
