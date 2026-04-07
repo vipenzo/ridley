@@ -277,12 +277,11 @@
               ^js result (.asOriginal raw-result)
               output (manifold->mesh result)
               output (cond-> output
-                       (:creation-pose mesh-a) (assoc :creation-pose (:creation-pose mesh-a))
+                       true (assoc :creation-pose default-creation-pose)
                        (:material mesh-a) (assoc :material (:material mesh-a)))]
           (.delete ma)
           (.delete mb)
           (.delete raw-result)
-          ;; Cache result Manifold for potential next CSG op in chain
           (-> (schema/assert-mesh! output)
               (assoc ::_discarded-cache result)))))))
 
@@ -339,12 +338,11 @@
               ^js result (.asOriginal raw-result)
               output (manifold->mesh result)
               output (cond-> output
-                       (:creation-pose mesh-a) (assoc :creation-pose (:creation-pose mesh-a))
+                       true (assoc :creation-pose default-creation-pose)
                        (:material mesh-a) (assoc :material (:material mesh-a)))]
           (.delete ma)
           (.delete mb)
           (.delete raw-result)
-          ;; Cache result Manifold for potential next CSG op in chain
           (-> (schema/assert-mesh! output)
               (assoc ::_discarded-cache result)))))))
 
