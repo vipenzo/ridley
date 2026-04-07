@@ -897,8 +897,22 @@
   ([shape-or-fn]
    (revolve-impl shape-or-fn 360))
   ([shape-or-fn angle & {:keys [pivot]}]
-   (let [;; No clip needed — revolve-shape has internal clamp-x that handles x<0
-         ;; by clamping to x=0, preserving topology (holes survive)
+   (let [;; Clip shape to x >= 0 for revolve (prevents crossing revolution axis)
+         ;; Skip clip when pivot is used (pivot already ensures x >= 0)
+         shape-or-fn (if (and (not pivot) (shape/shape? shape-or-fn))
+                       (let [min-x (apply min (map first (:points shape-or-fn)))]
+                         (if (neg? min-x)
+                           ;; Clip outer and each hole independently to preserve topology
+                           (let [clip-fn (fn [pts]
+                                          (mapv (fn [[x y]] [(max 0.0 x) y]) pts))
+                                 clipped-outer (clip-fn (:points shape-or-fn))
+                                 clipped-holes (when (:holes shape-or-fn)
+                                                 (mapv clip-fn (:holes shape-or-fn)))]
+                             (shape/make-shape clipped-outer
+                               (cond-> {:centered? true}
+                                 (seq clipped-holes) (assoc :holes clipped-holes))))
+                           shape-or-fn))
+                       shape-or-fn)
          current @turtle-state
          initial (-> (turtle/make-turtle)
                      (assoc :position (:position current))
