@@ -153,23 +153,18 @@
 
 (defn ^:export mesh->manifold
   "Create a Manifold object from a Ridley mesh.
-   Returns cached Manifold if available (from a previous CSG operation),
-   otherwise creates a new one. Returns nil if the mesh is not valid/manifold.
-
-   The Manifold constructor will attempt to create a valid manifold,
-   merging nearly-identical vertices. If the input is too broken,
-   it may return an empty manifold."
+   Always creates a new Manifold object — does not reuse cache,
+   because cached objects may have been deleted by prior CSG ops."
   [ridley-mesh]
-  (or (::manifold-cache ridley-mesh)
-      (when-let [^js Manifold (get-manifold-class)]
-        (when (and (:vertices ridley-mesh) (:faces ridley-mesh))
-          (try
-            (let [mesh-data (ridley-mesh->manifold-mesh ridley-mesh)
-                  manifold (new Manifold mesh-data)]
-              manifold)
-            (catch :default e
-              (js/console.error "Failed to create manifold:" e)
-              nil))))))
+  (when-let [^js Manifold (get-manifold-class)]
+    (when (and (:vertices ridley-mesh) (:faces ridley-mesh))
+      (try
+        (let [mesh-data (ridley-mesh->manifold-mesh ridley-mesh)
+              manifold (new Manifold mesh-data)]
+          manifold)
+        (catch :default e
+          (js/console.error "Failed to create manifold:" e)
+          nil)))))
 
 (defn ^:export manifold->mesh
   "Extract the mesh from a Manifold object back to Ridley format."
@@ -260,7 +255,7 @@
           (.delete raw-result)
           ;; Cache result for potential next CSG op in chain
           (-> (schema/assert-mesh! output)
-              (assoc ::manifold-cache clean)))
+              (assoc ::_discarded-cache clean)))
         (catch :default e
           (js/console.warn "solidify failed:" e)
           ridley-mesh))
@@ -289,7 +284,7 @@
           (.delete raw-result)
           ;; Cache result Manifold for potential next CSG op in chain
           (-> (schema/assert-mesh! output)
-              (assoc ::manifold-cache result)))))))
+              (assoc ::_discarded-cache result)))))))
 
 (defn- tree-union
   "Union meshes using balanced binary tree strategy.
@@ -351,7 +346,7 @@
           (.delete raw-result)
           ;; Cache result Manifold for potential next CSG op in chain
           (-> (schema/assert-mesh! output)
-              (assoc ::manifold-cache result)))))))
+              (assoc ::_discarded-cache result)))))))
 
 (defn difference
   "Compute the difference of meshes (A - B - C - ...).
@@ -388,7 +383,7 @@
           (.delete raw-result)
           ;; Cache result Manifold for potential next CSG op in chain
           (-> (schema/assert-mesh! output)
-              (assoc ::manifold-cache result)))))))
+              (assoc ::_discarded-cache result)))))))
 
 (defn intersection
   "Compute the intersection of two or more meshes (A ∩ B ∩ C ∩ ...).
@@ -442,7 +437,7 @@
             (.delete raw-result)
             ;; Cache result for potential next CSG op in chain
             (-> (schema/assert-mesh! output)
-                (assoc ::manifold-cache result)))
+                (assoc ::_discarded-cache result)))
           (catch :default e
             (js/console.error "Hull operation failed:" e)
             ;; Clean up on error
