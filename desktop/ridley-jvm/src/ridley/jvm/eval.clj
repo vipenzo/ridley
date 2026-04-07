@@ -897,20 +897,8 @@
   ([shape-or-fn]
    (revolve-impl shape-or-fn 360))
   ([shape-or-fn angle & {:keys [pivot]}]
-   (let [;; Clip shape to x >= 0 for revolve (prevents crossing revolution axis)
-         ;; Skip clip when pivot is used (pivot already ensures x >= 0)
-         shape-or-fn (if (and (not pivot) (shape/shape? shape-or-fn))
-                       (let [min-x (apply min (map first (:points shape-or-fn)))]
-                         (if (neg? min-x)
-                           (let [max-x (apply max (map first (:points shape-or-fn)))
-                                 max-y (apply max (map #(Math/abs (double (second %))) (:points shape-or-fn)))
-                                 half (+ (max max-x max-y) 100)
-                                 clip-rect (shape/make-shape [[0 (- half)] [half (- half)] [half half] [0 half]]
-                                             {:centered? true})]
-                             (or (clipper/shape-intersection shape-or-fn clip-rect)
-                                 shape-or-fn))
-                           shape-or-fn))
-                       shape-or-fn)
+   (let [;; No clip needed — revolve-shape has internal clamp-x that handles x<0
+         ;; by clamping to x=0, preserving topology (holes survive)
          current @turtle-state
          initial (-> (turtle/make-turtle)
                      (assoc :position (:position current))
