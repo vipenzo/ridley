@@ -372,9 +372,11 @@
         center (face-center-fn final-rotated)
         offset [(- (center 0)) (- (center 1)) (- (center 2))]
         final-verts (mapv #(math/v+ % offset) final-rotated)]
-    (assoc mesh
-           :vertices final-verts
-           :creation-pose {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})))
+    (-> mesh
+        (assoc :vertices final-verts
+               :creation-pose {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})
+        ;; Remove raw-arrays cache so viewport uses the transformed CLJS vertices
+        (dissoc :ridley.manifold.core/raw-arrays :ridley.manifold.core/manifold-cache))))
 
 (defn ^:export lay-flat-impl
   ([mesh] (lay-flat-impl mesh nil))
