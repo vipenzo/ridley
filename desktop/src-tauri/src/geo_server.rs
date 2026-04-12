@@ -16,6 +16,32 @@ struct DifferenceRequest {
     cutters: Vec<MeshData>,
 }
 
+/// Request body for smooth (mesh + sharp angle threshold + refine count).
+#[derive(serde::Deserialize)]
+struct SmoothRequest {
+    mesh: MeshData,
+    #[serde(default = "default_min_sharp_angle")]
+    min_sharp_angle: f64,
+    #[serde(default)]
+    min_smoothness: f64,
+    #[serde(default = "default_refine")]
+    refine: i32,
+}
+
+fn default_min_sharp_angle() -> f64 {
+    100.0
+}
+fn default_refine() -> i32 {
+    3
+}
+
+/// Request body for refine (mesh + n).
+#[derive(serde::Deserialize)]
+struct RefineRequest {
+    mesh: MeshData,
+    n: i32,
+}
+
 pub fn start() {
     thread::spawn(|| {
         let server =
@@ -69,6 +95,23 @@ pub fn start() {
                     serde_json::from_str::<Vec<MeshData>>(&body)
                         .map_err(|e| format!("JSON parse error: {}", e))
                         .and_then(|meshes| manifold_ops::hull(&meshes))
+                }
+                "/smooth" => {
+                    serde_json::from_str::<SmoothRequest>(&body)
+                        .map_err(|e| format!("JSON parse error: {}", e))
+                        .and_then(|req| {
+                            manifold_ops::smooth(
+                                &req.mesh,
+                                req.min_sharp_angle,
+                                req.min_smoothness,
+                                req.refine,
+                            )
+                        })
+                }
+                "/refine" => {
+                    serde_json::from_str::<RefineRequest>(&body)
+                        .map_err(|e| format!("JSON parse error: {}", e))
+                        .and_then(|req| manifold_ops::refine(&req.mesh, req.n))
                 }
                 "/sdf-mesh" => {
                     serde_json::from_str::<sdf_ops::SdfMeshRequest>(&body)

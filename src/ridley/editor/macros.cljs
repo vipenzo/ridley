@@ -1237,49 +1237,120 @@
    ;; (export :torus :cube) - multiple by name
    ;; (export torus cube)   - multiple by reference
    ;; (export (objects))    - export all visible objects
+   ;; A trailing :stl/:3mf keyword in any arity selects the file format.
+   ;; The default file name is derived from the first registered name when
+   ;; available, or from the first map key — never a generic 'export.<ext>'.
+   (defn- export-format? [x] (#{:stl :3mf} x))
+   (defn- export-default-name [arg]
+     (cond
+       (keyword? arg) (name arg)
+       (string? arg) arg
+       (symbol? arg) (name arg)
+       (map? arg) (or (some-> (first (keys arg)) name) \"model\")
+       :else \"model\"))
+
+   (defn- export-do
+     \"Internal: dispatch a normalized export call.
+      args is a non-empty seq of mesh-refs or names; format is :stl or :3mf.\"
+     [args fmt]
+     (cond
+       ;; Single keyword/string/symbol — single named mesh
+       (and (= 1 (count args))
+            (or (keyword? (first args))
+                (string? (first args))
+                (symbol? (first args))))
+       (let [arg (first args)
+             kw (if (keyword? arg) arg (keyword (str arg)))]
+         (when-let [m (get-mesh kw)]
+           (save-mesh [m] (str (name kw) \".\" (name fmt)) fmt)))
+
+       ;; Single sequential of names
+       (and (= 1 (count args))
+            (sequential? (first args))
+            (seq (first args))
+            (or (keyword? (ffirst args))
+                (string? (ffirst args))
+                (symbol? (ffirst args))))
+       (let [names (first args)
+             meshes (keep #(resolve-mesh %) names)]
+         (when (seq meshes)
+           (save-mesh (vec meshes)
+                      (str (clojure.string/join \"-\" (map #(name (if (keyword? %) % (keyword (str %)))) names))
+                           \".\" (name fmt))
+                      fmt)))
+
+       ;; Single vector of meshes
+       (and (= 1 (count args)) (mesh-vector? (first args)))
+       (save-mesh (vec (first args))
+                  (str (export-default-name (first args)) \".\" (name fmt))
+                  fmt)
+
+       ;; Single map of meshes
+       (and (= 1 (count args)) (mesh-map? (first args)))
+       (save-mesh (vec (vals (first args)))
+                  (str (export-default-name (first args)) \".\" (name fmt))
+                  fmt)
+
+       ;; Single mesh ref
+       (and (= 1 (count args)) (mesh? (first args)))
+       (save-mesh [(first args)] (str \"model.\" (name fmt)) fmt)
+
+       ;; Vector + numeric index — pick by index
+       (and (= 2 (count args))
+            (mesh-vector? (first args))
+            (number? (second args)))
+       (when-let [m (get (first args) (second args))]
+         (save-mesh [m] (str \"model-\" (second args) \".\" (name fmt)) fmt))
+
+       ;; Map + key — pick by key
+       (and (= 2 (count args))
+            (mesh-map? (first args))
+            (or (keyword? (second args)) (string? (second args)) (symbol? (second args))))
+       (when-let [m (get (first args) (second args))]
+         (let [k (second args)
+               kn (if (keyword? k) (name k) (str k))]
+           (save-mesh [m] (str kn \".\" (name fmt)) fmt)))
+
+       ;; Otherwise: treat all args as a heterogeneous list of meshes/names
+       :else
+       (let [meshes (keep resolve-mesh args)
+             default-name (or (some #(when (or (keyword? %) (string? %) (symbol? %))
+                                       (name (if (keyword? %) % (keyword (str %)))))
+                                    args)
+                              \"model\")]
+         (when (seq meshes)
+           (save-mesh (vec meshes) (str default-name \".\" (name fmt)) fmt)))))
+
    (defn export
-     ([name-or-coll]
-      (cond
-        ;; Single keyword
-        (keyword? name-or-coll)
-        (when-let [m (get-mesh name-or-coll)]
-          (save-stl [m] (str (name name-or-coll) \".stl\")))
-        ;; List of keywords
-        (and (sequential? name-or-coll) (seq name-or-coll) (keyword? (first name-or-coll)))
-        (let [meshes (keep get-mesh name-or-coll)]
-          (when (seq meshes)
-            (save-stl (vec meshes)
-                      (str (clojure.string/join \"-\" (map name name-or-coll)) \".stl\"))))
-        ;; Vector of meshes
-        (mesh-vector? name-or-coll)
-        (save-stl (vec name-or-coll) \"export.stl\")
-        ;; Map of meshes
-        (mesh-map? name-or-coll)
-        (save-stl (vec (vals name-or-coll)) \"export.stl\")
-        ;; Single mesh
-        (mesh? name-or-coll)
-        (save-stl [name-or-coll] \"export.stl\")))
-     ([first-arg second-arg]
-      ;; Check if it's collection + key access
-      (cond
-        ;; Vector + index
-        (and (mesh-vector? first-arg) (number? second-arg))
-        (when-let [m (get first-arg second-arg)]
-          (save-stl [m] (str \"export-\" second-arg \".stl\")))
-        ;; Map + key
-        (and (mesh-map? first-arg) (keyword? second-arg))
-        (when-let [m (get first-arg second-arg)]
-          (save-stl [m] (str \"export-\" (name second-arg) \".stl\")))
-        ;; Otherwise treat as multiple meshes/names
-        :else
-        (let [meshes (keep resolve-mesh [first-arg second-arg])]
-          (when (seq meshes)
-            (save-stl (vec meshes) \"export.stl\")))))
-     ([first-arg second-arg & more-args]
-      (let [all-args (cons first-arg (cons second-arg more-args))
-            meshes (keep resolve-mesh all-args)]
-        (when (seq meshes)
-          (save-stl (vec meshes) \"export.stl\")))))
+     \"Export mesh(es) to disk in STL or 3MF format.
+
+      The trailing argument may be :stl (default) or :3mf to select the
+      format. The user is shown the native save picker, which lets them
+      override both the directory and the file name; if they pick a name
+      with the other extension, the format follows the extension.
+
+      Forms:
+        (export :tray)            -> tray.stl
+        (export :tray :3mf)       -> tray.3mf
+        (export tray)             -> mesh ref, model.stl
+        (export :tray :bowl)      -> tray-bowl.stl
+        (export parts)            -> all meshes in vector/map
+        (export parts 2)          -> element by index
+        (export robot :hand)      -> map element by key
+        (export (objects))        -> all visible objects\"
+     ([a]
+      (export-do [a] :stl))
+     ([a b]
+      (if (export-format? b)
+        (export-do [a] b)
+        (export-do [a b] :stl)))
+     ([a b & more]
+      (let [args (cons a (cons b more))
+            last-arg (last args)
+            [items fmt] (if (export-format? last-arg)
+                          [(butlast args) last-arg]
+                          [args :stl])]
+        (export-do (vec items) fmt))))
 
    ;; ============================================================
    ;; Source-tracking macro wrappers for function-bound operations

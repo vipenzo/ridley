@@ -173,6 +173,68 @@ pub fn intersection(meshes: &[MeshData]) -> Result<MeshData, String> {
     Ok(manifold_to_mesh(&result))
 }
 
+/// Smooth a mesh via tangent-based subdivision.
+///
+/// Internally calls `manifold_smooth_out` to populate halfedge tangents
+/// (edges with dihedral angle <= `min_sharp_angle` are flagged smooth),
+/// then `manifold_refine(refine)` to subdivide each triangle into
+/// `refine^2` sub-triangles, placing the new vertices on the tangent
+/// curves rather than along straight lines. The result is a denser mesh
+/// whose surface is C^1 wherever the original dihedral was below the
+/// sharp threshold.
+///
+/// `refine = 1` skips the subdivision step (no-op for the smoothing,
+/// since smooth_out only sets tangents). `refine >= 2` is the typical
+/// use.
+pub fn smooth(
+    mesh: &MeshData,
+    min_sharp_angle: f64,
+    min_smoothness: f64,
+    refine: i32,
+) -> Result<MeshData, String> {
+    let m = mesh_to_manifold(mesh)?;
+    let smoothed = unsafe {
+        manifold_smooth_out(
+            manifold_alloc_manifold() as *mut c_void,
+            m.0,
+            min_sharp_angle,
+            min_smoothness,
+        )
+    };
+    let smoothed = ManifoldHandle(smoothed);
+    let result = if refine >= 2 {
+        let refined = unsafe {
+            manifold_refine(
+                manifold_alloc_manifold() as *mut c_void,
+                smoothed.0,
+                refine as ::std::os::raw::c_int,
+            )
+        };
+        ManifoldHandle(refined)
+    } else {
+        smoothed
+    };
+    Ok(manifold_to_mesh(&result))
+}
+
+/// Refine a mesh by splitting every edge into `n` pieces (each triangle
+/// becomes `n^2` sub-triangles). Without prior tangent data this is a
+/// linear (planar) subdivision — the shape is unchanged, just denser.
+pub fn refine(mesh: &MeshData, n: i32) -> Result<MeshData, String> {
+    if n < 2 {
+        return Ok(mesh.clone());
+    }
+    let m = mesh_to_manifold(mesh)?;
+    let refined = unsafe {
+        manifold_refine(
+            manifold_alloc_manifold() as *mut c_void,
+            m.0,
+            n as ::std::os::raw::c_int,
+        )
+    };
+    Ok(manifold_to_mesh(&ManifoldHandle(refined)))
+}
+
 pub fn hull(meshes: &[MeshData]) -> Result<MeshData, String> {
     if meshes.is_empty() {
         return Err("No meshes provided".into());

@@ -65,7 +65,6 @@
   (when-let [state @manifold-state]
     (:Manifold state)))
 
-
 ;; ============================================================
 ;; Mesh conversion: Ridley -> Manifold
 ;; ============================================================
@@ -443,6 +442,98 @@
               (.delete m))
             nil))))))
 
+;; ============================================================
+;; Smoothing & refinement (Manifold tangent-based subdivision)
+;; ============================================================
+
+(defn ^:export mesh-refine
+  "Subdivide each triangle of a mesh into n^2 sub-triangles via Manifold's
+   refine. With no preceding mesh-smooth call this is a linear (planar)
+   subdivision — the shape is unchanged, you just get more vertices.
+   When chained after mesh-smooth, the same call uses the stored halfedge
+   tangents to interpolate curved vertex positions, which is what produces
+   the rounded result.
+
+   (mesh-refine m 2)   ; each triangle -> 4 sub-triangles
+   (mesh-refine m 3)   ; each triangle -> 9 sub-triangles"
+  [ridley-mesh n]
+  (when-let [_ (get-manifold-class)]
+    (when (and (:vertices ridley-mesh) (:faces ridley-mesh) (>= n 2))
+      (try
+        (let [^js m (mesh->manifold ridley-mesh)
+              ^js refined (.refine m n)
+              output (manifold->mesh refined)
+              output (cond-> output
+                       (:creation-pose ridley-mesh) (assoc :creation-pose (:creation-pose ridley-mesh))
+                       (:material ridley-mesh) (assoc :material (:material ridley-mesh)))]
+          (.delete m)
+          (.delete refined)
+          (schema/assert-mesh! output))
+        (catch :default e
+          (js/console.error "mesh-refine failed:" e)
+          ridley-mesh)))))
+
+(defn ^:export mesh-smooth
+  "Round off non-sharp edges of a mesh using Manifold's tangent-based
+   smoothing + subdivision. The right tool when a procedurally generated
+   mesh has visible staircase aliasing along a regular grid (such as the
+   silhouette of a voronoi shell), or when you want to soften every crease
+   softer than a given dihedral angle while preserving sharper intentional
+   edges.
+
+   How it works: smoothOut stores Bezier-tangent data on each halfedge
+   based on the dihedral angle of its two adjacent faces; refine then
+   subdivides each triangle into n^2 sub-triangles, placing the new
+   vertices along the tangent curves instead of straight lines. The result
+   is a denser mesh whose surface is C^1 wherever the dihedral angle was
+   <= :sharp-angle.
+
+   Options:
+     :sharp-angle  threshold in degrees (default 100). Edges whose dihedral
+                   angle is GREATER than this stay sharp; the rest get
+                   smoothed. Manifold's stock default is 60, but for
+                   typical procedural meshes you'll want 90-120 so that
+                   right-angle wall corners (e.g. the hole edges of a
+                   voronoi shell) get smoothed instead of preserved. Set
+                   to 180 to smooth absolutely everything.
+     :smoothness   0..1 (default 0). How much fillet to apply at the edges
+                   that survive as sharp. 0 leaves them perfectly sharp;
+                   1 turns them fully smooth (equivalent to :sharp-angle 180).
+     :refine       subdivision count after smoothing (default 3). Each
+                   triangle becomes n^2 sub-triangles. Higher = visually
+                   smoother but quadratically more triangles.
+
+   (mesh-smooth m)                                  ; sharp-angle 100, refine 3
+   (mesh-smooth m :sharp-angle 120 :refine 4)       ; smooth more, denser
+   (mesh-smooth m :sharp-angle 60)                  ; preserve all >60deg corners
+   (mesh-smooth m :sharp-angle 180)                 ; round absolutely everything
+
+   Note: vertex/face count grows by n^2 per refine pass — start with the
+   defaults and only crank :refine if you still see facets."
+  [ridley-mesh & {:keys [sharp-angle smoothness refine]
+                  :or {sharp-angle 100 smoothness 0 refine 3}}]
+  (when-let [_ (get-manifold-class)]
+    (when (and (:vertices ridley-mesh) (:faces ridley-mesh))
+      (try
+        (let [^js m (mesh->manifold ridley-mesh)
+              ;; smoothOut stores tangents but does NOT change geometry —
+              ;; you must call refine() afterward to materialize the smoothing.
+              ^js smoothed (.smoothOut m sharp-angle smoothness)
+              ^js refined  (if (and refine (>= refine 2))
+                             (.refine smoothed refine)
+                             smoothed)
+              output (manifold->mesh refined)
+              output (cond-> output
+                       (:creation-pose ridley-mesh) (assoc :creation-pose (:creation-pose ridley-mesh))
+                       (:material ridley-mesh) (assoc :material (:material ridley-mesh)))]
+          (.delete m)
+          (when-not (identical? smoothed refined) (.delete smoothed))
+          (.delete refined)
+          (schema/assert-mesh! output))
+        (catch :default e
+          (js/console.error "mesh-smooth failed:" e)
+          ridley-mesh)))))
+
 (defn hull-from-points
   "Compute the convex hull from raw vertex points.
    Unlike `hull`, this doesn't require manifold input meshes.
@@ -492,7 +583,7 @@
             (schema/assert-mesh! output))
           (catch :default e
             (js/console.error "Hull from points failed:" e)
-            nil)))))) 
+            nil))))))
 
 ;; ============================================================
 ;; Simple mesh concatenation (no Manifold required)
@@ -688,9 +779,9 @@
                    shapes (mapv
                            (fn [outer]
                              (let [my-holes (filterv
-                                            (fn [hole]
-                                              (point-in-poly? (first hole) outer))
-                                            holes)]
+                                             (fn [hole]
+                                               (point-in-poly? (first hole) outer))
+                                             holes)]
                                (cond-> {:type :shape
                                         :points outer
                                         :centered? false

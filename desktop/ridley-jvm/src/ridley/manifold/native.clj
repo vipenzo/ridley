@@ -22,10 +22,10 @@
 (defn- invoke [endpoint payload]
   (let [body-str (json/write-str payload)
         resp (http/post (str server-url endpoint)
-               {:body body-str
-                :content-type :json
-                :as :string
-                :throw-exceptions false})]
+                        {:body body-str
+                         :content-type :json
+                         :as :string
+                         :throw-exceptions false})]
     (if (= 200 (:status resp))
       (json->mesh (:body resp))
       (throw (Exception. (str "Rust server " endpoint " returned " (:status resp) ": " (:body resp)))))))
@@ -67,8 +67,8 @@
         (if (<= (count meshes) 1)
           (first meshes)
           (invoke-with-retry "/union"
-            (fn [ms] (mapv mesh->json ms))
-            meshes))))))
+                             (fn [ms] (mapv mesh->json ms))
+                             meshes))))))
 
 (defn difference
   "Difference meshes/SDF via native Rust Manifold. SDF nodes auto-materialized."
@@ -82,9 +82,9 @@
       (let [meshes (ensure-all-mesh meshes)]
         (when (>= (count meshes) 2)
           (invoke-with-retry "/difference"
-            (fn [ms] {:base (mesh->json (first ms))
-                      :cutters (mapv mesh->json (rest ms))})
-            meshes))))))
+                             (fn [ms] {:base (mesh->json (first ms))
+                                       :cutters (mapv mesh->json (rest ms))})
+                             meshes))))))
 
 (defn intersection
   "Intersection meshes/SDF via native Rust Manifold."
@@ -99,8 +99,8 @@
         (if (<= (count meshes) 1)
           (first meshes)
           (invoke-with-retry "/intersection"
-            (fn [ms] (mapv mesh->json ms))
-            meshes))))))
+                             (fn [ms] (mapv mesh->json ms))
+                             meshes))))))
 
 (defn hull
   "Convex hull via native Rust Manifold."
@@ -110,6 +110,68 @@
                  args)
         meshes (ensure-all-mesh meshes)]
     (invoke "/hull" (mapv mesh->json meshes))))
+
+(defn- preserve-meta
+  "Carry creation-pose and material from the input mesh onto the result."
+  [result source]
+  (cond-> result
+    (:creation-pose source) (assoc :creation-pose (:creation-pose source))
+    (:material source)      (assoc :material (:material source))))
+
+(defn smooth
+  "Round off non-sharp edges of a mesh via Manifold's tangent-based smoothing
+   + subdivision (smoothOut + refine) on the Rust backend.
+
+   The right tool when a procedurally generated mesh shows visible staircase
+   aliasing along a regular ring/segment grid (e.g. the silhouette of a
+   :voronoi shell).
+
+   Options (keyword args):
+     :sharp-angle  threshold in degrees (default 100). Edges whose dihedral
+                   angle is GREATER than this stay sharp; the rest get
+                   smoothed. Manifold's stock default is 60, but for typical
+                   procedural meshes 90-120 gives better results because
+                   right-angle wall corners (e.g. voronoi shell hole edges)
+                   become smooth instead of preserved.
+     :smoothness   0..1 (default 0). Fillet at the edges that survive sharp.
+     :refine       subdivision count (default 3). Each triangle becomes n^2
+                   sub-triangles. Higher = smoother visual at quadratic cost."
+  [mesh & {:keys [sharp-angle smoothness refine]
+           :or {sharp-angle 100 smoothness 0 refine 3}}]
+  (let [m (sdf/ensure-mesh mesh)
+        body-str (json/write-str
+                  {:mesh (mesh->json m)
+                   :min_sharp_angle sharp-angle
+                   :min_smoothness smoothness
+                   :refine refine})
+        resp (http/post (str server-url "/smooth")
+                        {:body body-str
+                         :content-type :json
+                         :as :string
+                         :throw-exceptions false})]
+    (if (= 200 (:status resp))
+      (preserve-meta (json->mesh (:body resp)) m)
+      (throw (Exception. (str "Rust /smooth returned " (:status resp) ": " (:body resp)))))))
+
+(defn refine
+  "Subdivide each triangle into n^2 sub-triangles via the Rust backend.
+   Without prior tangent data this is a planar subdivision — the shape is
+   unchanged, just denser. When chained after `smooth` (which sets tangents)
+   refine reuses the cached tangent data; using `smooth` directly with
+   :refine N is the same call in one step."
+  [mesh n]
+  (if (< n 2)
+    mesh
+    (let [m (sdf/ensure-mesh mesh)
+          body-str (json/write-str {:mesh (mesh->json m) :n n})
+          resp (http/post (str server-url "/refine")
+                          {:body body-str
+                           :content-type :json
+                           :as :string
+                           :throw-exceptions false})]
+      (if (= 200 (:status resp))
+        (preserve-meta (json->mesh (:body resp)) m)
+        (throw (Exception. (str "Rust /refine returned " (:status resp) ": " (:body resp))))))))
 
 (defn manifold? [_mesh] true) ;; Stub — assume valid for spike
 
@@ -123,13 +185,13 @@
   (let [meshes (if (and (empty? more) (sequential? first-arg) (not (:vertices first-arg)))
                  first-arg
                  (into [first-arg] more))]
-  (reduce (fn [acc m]
-            (let [offset (count (:vertices acc))]
-              {:type :mesh
-               :vertices (into (:vertices acc) (:vertices m))
-               :faces (into (:faces acc)
-                            (mapv (fn [f] (mapv #(+ % offset) f)) (:faces m)))
-               :creation-pose (:creation-pose acc)}))
-          {:type :mesh :vertices [] :faces []
-           :creation-pose {:position [0 0 0] :heading [1 0 0] :up [0 0 1]}}
-          meshes)))
+    (reduce (fn [acc m]
+              (let [offset (count (:vertices acc))]
+                {:type :mesh
+                 :vertices (into (:vertices acc) (:vertices m))
+                 :faces (into (:faces acc)
+                              (mapv (fn [f] (mapv #(+ % offset) f)) (:faces m)))
+                 :creation-pose (:creation-pose acc)}))
+            {:type :mesh :vertices [] :faces []
+             :creation-pose {:position [0 0 0] :heading [1 0 0] :up [0 0 1]}}
+            meshes)))

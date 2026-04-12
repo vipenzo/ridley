@@ -94,44 +94,139 @@
     (.setRequestHeader xhr "Content-Type" "application/json")
     (set! (.-timeout xhr) 300000)
     (set! (.-onload xhr)
-      (fn []
-        (if (= 200 (.-status xhr))
-          (try
-            (let [^js result (js/JSON.parse (.-responseText xhr))
-                  ^js meshes-meta-js (aget result "meshes")
-                  mesh-file (aget result "mesh_file")
-                  print-output (or (aget result "print_output") "")
-                  elapsed-ms (aget result "elapsed_ms")]
-              (if mesh-file
+          (fn []
+            (if (= 200 (.-status xhr))
+              (try
+                (let [^js result (js/JSON.parse (.-responseText xhr))
+                      ^js meshes-meta-js (aget result "meshes")
+                      mesh-file (aget result "mesh_file")
+                      print-output (or (aget result "print_output") "")
+                      elapsed-ms (aget result "elapsed_ms")]
+                  (if mesh-file
                 ;; Fetch binary file from JVM server
-                (let [;; Extract file ID from path like /tmp/ridley-meshes-42.bin
-                      file-id (second (re-find #"ridley-meshes-(\d+)\.bin" mesh-file))]
-                  (-> (js/fetch (str server-url "/mesh-file/" file-id))
-                      (.then (fn [resp]
-                               (if (.-ok resp)
-                                 (.arrayBuffer resp)
-                                 (throw (js/Error. (str "Mesh file fetch failed: " (.-status resp)))))))
-                      (.then (fn [buf]
-                               (let [keys (js/Object.keys meshes-meta-js)
-                                     pairs (map (fn [k] [k (aget meshes-meta-js k)]) keys)
-                                     meshes (parse-meshes-from-buffer buf pairs)]
-                                 (on-result {:meshes meshes
-                                             :print-output print-output
-                                             :elapsed-ms elapsed-ms}))))
-                      (.catch (fn [e]
-                                (on-result {:error (str "Mesh file error: " (.-message e))})))))
+                    (let [;; Extract file ID from path like /tmp/ridley-meshes-42.bin
+                          file-id (second (re-find #"ridley-meshes-(\d+)\.bin" mesh-file))]
+                      (-> (js/fetch (str server-url "/mesh-file/" file-id))
+                          (.then (fn [resp]
+                                   (if (.-ok resp)
+                                     (.arrayBuffer resp)
+                                     (throw (js/Error. (str "Mesh file fetch failed: " (.-status resp)))))))
+                          (.then (fn [buf]
+                                   (let [keys (js/Object.keys meshes-meta-js)
+                                         pairs (map (fn [k] [k (aget meshes-meta-js k)]) keys)
+                                         meshes (parse-meshes-from-buffer buf pairs)]
+                                     (on-result {:meshes meshes
+                                                 :print-output print-output
+                                                 :elapsed-ms elapsed-ms}))))
+                          (.catch (fn [e]
+                                    (on-result {:error (str "Mesh file error: " (.-message e))})))))
                 ;; No mesh file (empty result)
-                (on-result {:meshes {}
-                            :print-output print-output
-                            :elapsed-ms elapsed-ms})))
-            (catch :default e
-              (on-result {:error (str "Parse error: " (.-message e))})))
+                    (on-result {:meshes {}
+                                :print-output print-output
+                                :elapsed-ms elapsed-ms})))
+                (catch :default e
+                  (on-result {:error (str "Parse error: " (.-message e))})))
           ;; Error response
-          (let [^js err (try (js/JSON.parse (.-responseText xhr))
-                             (catch :default _ nil))]
-            (on-result {:error (if err
-                                 (or (.-error err) (.-responseText xhr))
-                                 (str "JVM eval failed: HTTP " (.-status xhr)))})))))
+              (let [^js err (try (js/JSON.parse (.-responseText xhr))
+                                 (catch :default _ nil))]
+                (on-result {:error (if err
+                                     (or (.-error err) (.-responseText xhr))
+                                     (str "JVM eval failed: HTTP " (.-status xhr)))})))))
     (set! (.-onerror xhr) (fn [] (on-result {:error "JVM connection error"})))
     (set! (.-ontimeout xhr) (fn [] (on-result {:error "JVM eval timed out"})))
     (.send xhr (js/JSON.stringify #js {:script script-text}))))
+
+(defn eval-script-with-libraries
+  "Like eval-script but includes active library names so the sidecar
+   aliases only those namespaces into the eval context."
+  [script-text active-library-names on-result]
+  (let [xhr (js/XMLHttpRequest.)]
+    (.open xhr "POST" (str server-url "/eval-bin") true)
+    (.setRequestHeader xhr "Content-Type" "application/json")
+    (set! (.-timeout xhr) 300000)
+    (set! (.-onload xhr)
+          (fn []
+            (if (= 200 (.-status xhr))
+              (try
+                (let [^js result (js/JSON.parse (.-responseText xhr))
+                      ^js meshes-meta-js (aget result "meshes")
+                      mesh-file (aget result "mesh_file")
+                      print-output (or (aget result "print_output") "")
+                      elapsed-ms (aget result "elapsed_ms")]
+                  (if mesh-file
+                    (let [file-id (second (re-find #"ridley-meshes-(\d+)\.bin" mesh-file))]
+                      (-> (js/fetch (str server-url "/mesh-file/" file-id))
+                          (.then (fn [resp]
+                                   (if (.-ok resp)
+                                     (.arrayBuffer resp)
+                                     (throw (js/Error. (str "Mesh file fetch failed: " (.-status resp)))))))
+                          (.then (fn [buf]
+                                   (let [keys (js/Object.keys meshes-meta-js)
+                                         pairs (map (fn [k] [k (aget meshes-meta-js k)]) keys)
+                                         meshes (parse-meshes-from-buffer buf pairs)]
+                                     (on-result {:meshes meshes
+                                                 :print-output print-output
+                                                 :elapsed-ms elapsed-ms}))))
+                          (.catch (fn [e]
+                                    (on-result {:error (str "Mesh file error: " (.-message e))})))))
+                    (on-result {:meshes {}
+                                :print-output print-output
+                                :elapsed-ms elapsed-ms})))
+                (catch :default e
+                  (on-result {:error (str "Parse error: " (.-message e))})))
+              (let [^js err (try (js/JSON.parse (.-responseText xhr))
+                                 (catch :default _ nil))]
+                (on-result {:error (if err
+                                     (or (.-error err) (.-responseText xhr))
+                                     (str "JVM eval failed: HTTP " (.-status xhr)))})))))
+    (set! (.-onerror xhr) (fn [] (on-result {:error "JVM connection error"})))
+    (set! (.-ontimeout xhr) (fn [] (on-result {:error "JVM eval timed out"})))
+    (.send xhr (js/JSON.stringify
+                #js {:script script-text
+                     :active_libraries (clj->js (or active-library-names []))}))))
+
+(defn import-stl-file
+  "Upload an STL file (as ArrayBuffer) to the JVM sidecar's library system.
+   The sidecar saves it to ~/.ridley/libraries/ and creates the namespace.
+   Calls on-result with {:name :access_path :faces :vertices} or {:error}."
+  [^js array-buffer filename on-result]
+  (let [;; Convert ArrayBuffer to base64
+        bytes (js/Uint8Array. array-buffer)
+        len (.-length bytes)
+        parts (js/Array. len)
+        _ (dotimes [i len] (aset parts i (.fromCharCode js/String (aget bytes i))))
+        b64 (js/btoa (.join parts ""))
+        xhr (js/XMLHttpRequest.)]
+    (.open xhr "POST" (str server-url "/import-stl") true)
+    (.setRequestHeader xhr "Content-Type" "application/json")
+    (set! (.-timeout xhr) 60000)
+    (set! (.-onload xhr)
+          (fn []
+            (let [^js result (try (js/JSON.parse (.-responseText xhr))
+                                  (catch :default _ nil))]
+              (if (= 200 (.-status xhr))
+                (on-result (js->clj result :keywordize-keys true))
+                (on-result {:error (or (and result (.-error result))
+                                       (str "Import failed: HTTP " (.-status xhr)))})))))
+    (set! (.-onerror xhr) (fn [] (on-result {:error "JVM connection error"})))
+    (set! (.-ontimeout xhr) (fn [] (on-result {:error "Import timed out"})))
+    (.send xhr (js/JSON.stringify #js {:filename filename
+                                       :data_base64 b64}))))
+
+(defn list-libraries
+  "Fetch library names from the JVM sidecar. Returns a Promise<vector>."
+  []
+  (js/Promise.
+   (fn [resolve _reject]
+     (let [xhr (js/XMLHttpRequest.)]
+       (.open xhr "GET" (str server-url "/libraries") true)
+       (set! (.-timeout xhr) 5000)
+       (set! (.-onload xhr)
+             (fn []
+               (if (= 200 (.-status xhr))
+                 (let [^js result (js/JSON.parse (.-responseText xhr))]
+                   (resolve (vec (aget result "libraries"))))
+                 (resolve []))))
+       (set! (.-onerror xhr) (fn [] (resolve [])))
+       (set! (.-ontimeout xhr) (fn [] (resolve [])))
+       (.send xhr)))))

@@ -339,28 +339,28 @@
           (let [has-holes? (boolean (:holes base-shape))
                 mesh (if has-holes?
                        (let [ring-data-vec (vec
-                                           (for [i (range (inc steps))]
-                                             (let [t (/ i steps)
-                                                   target-dist (* t total-dist)
-                                                   orientation (find-orientation-at-dist orientations target-dist total-dist)
-                                                   transformed-2d (transform-fn base-shape t)
-                                                   temp-state (-> state
-                                                                  (assoc :position (:position orientation))
-                                                                  (assoc :heading (:heading orientation))
-                                                                  (assoc :up (:up orientation)))]
-                                               (stamp-shape-with-holes temp-state transformed-2d))))]
+                                            (for [i (range (inc steps))]
+                                              (let [t (/ i steps)
+                                                    target-dist (* t total-dist)
+                                                    orientation (find-orientation-at-dist orientations target-dist total-dist)
+                                                    transformed-2d (transform-fn base-shape t)
+                                                    temp-state (-> state
+                                                                   (assoc :position (:position orientation))
+                                                                   (assoc :heading (:heading orientation))
+                                                                   (assoc :up (:up orientation)))]
+                                                (stamp-shape-with-holes temp-state transformed-2d))))]
                          (build-sweep-mesh-with-holes ring-data-vec creation-pose))
                        (let [new-rings (vec
-                                       (for [i (range (inc steps))]
-                                         (let [t (/ i steps)
-                                               target-dist (* t total-dist)
-                                               orientation (find-orientation-at-dist orientations target-dist total-dist)
-                                               transformed-2d (transform-fn base-shape t)
-                                               temp-state (-> state
-                                                              (assoc :position (:position orientation))
-                                                              (assoc :heading (:heading orientation))
-                                                              (assoc :up (:up orientation)))]
-                                           (stamp-shape temp-state transformed-2d))))]
+                                        (for [i (range (inc steps))]
+                                          (let [t (/ i steps)
+                                                target-dist (* t total-dist)
+                                                orientation (find-orientation-at-dist orientations target-dist total-dist)
+                                                transformed-2d (transform-fn base-shape t)
+                                                temp-state (-> state
+                                                               (assoc :position (:position orientation))
+                                                               (assoc :heading (:heading orientation))
+                                                               (assoc :up (:up orientation)))]
+                                            (stamp-shape temp-state transformed-2d))))]
                          (build-sweep-mesh new-rings false creation-pose)))
                 mesh-with-material (when mesh
                                      (cond-> mesh
@@ -466,7 +466,26 @@
   "Remove shell metadata from a shape, returning a plain shape for solid loft."
   [s]
   (dissoc s :shell-mode :shell-thickness :shell-values :shell-offsets
-            :shell-cap-top :shell-cap-bottom))
+          :shell-cap-top :shell-cap-bottom))
+
+(defn- radial-expand-shape
+  "Expand a 2D shape by displacing each point radially from the centroid
+   by `offset`. This matches the method used by generate-shell-ring for
+   the outer wall, ensuring cap and body contours coincide exactly."
+  [shape offset]
+  (let [pts (:points shape)
+        n (count pts)
+        cx (/ (reduce + (map first pts)) n)
+        cy (/ (reduce + (map second pts)) n)
+        expanded (mapv (fn [[x y]]
+                         (let [dx (- x cx) dy (- y cy)
+                               len (Math/sqrt (+ (* dx dx) (* dy dy)))]
+                           (if (> len 1e-10)
+                             [(+ x (* (/ dx len) offset))
+                              (+ y (* (/ dy len) offset))]
+                             [x y])))
+                       pts)]
+    (assoc shape :points expanded)))
 
 (defn- resolve-cap-shape
   "Resolve a cap-spec into a decorated shape at a given base shape.
@@ -482,26 +501,26 @@
       ;; Legacy: pre-built decorated shape
       (:shape cap-spec)
       ;; Style-based: generate pattern on the actual shape at this t
+      ;; Use radial expansion (same method as generate-shell-ring) instead
+      ;; of shape-offset (Minkowski) to ensure cap and body contours match.
       (let [style (:style cap-spec)
             half-t (* 0.5 shell-thickness)
-            ;; Expand shape to match outer wall radius
-            expanded (clipper/shape-offset base-shape half-t)]
-        (when expanded
-          (case style
-            :voronoi (voronoi/voronoi-shell expanded
-                       :cells (or (:cells cap-spec) 20)
-                       :wall (or (:wall cap-spec) 1.5)
-                       :seed (or (:seed cap-spec) 0)
-                       :relax (or (:relax cap-spec) 2)
-                       :resolution (or (:resolution cap-spec) 16))
-            :grid    (clipper/pattern-tile expanded
-                       (shape/circle-shape
-                         (or (:hole cap-spec) 1.5)
-                         (or (:hole-segments cap-spec) 16))
-                       :spacing (or (:spacing cap-spec) [5 5])
-                       :inset (or (:inset cap-spec) 0))
-            :solid   nil
-            (throw (Exception. (str "Unknown cap :style " style)))))))))
+            expanded (radial-expand-shape base-shape half-t)]
+        (case style
+          :voronoi (voronoi/voronoi-shell expanded
+                                          :cells (or (:cells cap-spec) 20)
+                                          :wall (or (:wall cap-spec) 1.5)
+                                          :seed (or (:seed cap-spec) 0)
+                                          :relax (or (:relax cap-spec) 2)
+                                          :resolution (or (:resolution cap-spec) 16))
+          :grid    (clipper/pattern-tile expanded
+                                         (shape/circle-shape
+                                          (or (:hole cap-spec) 1.5)
+                                          (or (:hole-segments cap-spec) 16))
+                                         :spacing (or (:spacing cap-spec) [5 5])
+                                         :inset (or (:inset cap-spec) 0))
+          :solid   nil
+          (throw (Exception. (str "Unknown cap :style " style))))))))
 
 (defn- generate-cap-mesh
   "Generate a cap sweep mesh for a shell cap section.
@@ -539,9 +558,43 @@
                        t (+ t-start (* local-t (- t-end t-start)))
                        pos (v+ pos0 (v* (v- pos1 pos0) local-t))
                        raw-shape (strip-shell (transform-fn shape t))
+                       ;; Use the outer contour from raw-shape (matches body
+                       ;; shell at the same t) but keep the voronoi holes
+                       ;; from cap-shape. This ensures cap and body contours
+                       ;; coincide — previously cap-shape was fixed at ref-t
+                       ;; which had a different scale than the body at the
+                       ;; same height.
+                       ;; Scale cap-shape (outer + holes) uniformly so its
+                       ;; outer contour matches the size of raw-shape at this t.
+                       ;; This preserves the point count, winding, and hole
+                       ;; alignment from cap-shape while tracking the body's
+                       ;; tapering profile at each step.
                        final-shape (if cap-shape
-                                     (assoc cap-shape
-                                            :centered? (:centered? raw-shape))
+                                     (let [;; Compute scale ratio from ref-base to raw-shape
+                                           ;; using the bounding box width as proxy
+                                           ref-pts (:points ref-base)
+                                           raw-pts (:points raw-shape)
+                                           bb-width (fn [pts]
+                                                      (let [xs (map first pts)]
+                                                        (- (apply max xs) (apply min xs))))
+                                           ref-w (bb-width ref-pts)
+                                           raw-w (bb-width raw-pts)
+                                           ratio (if (pos? ref-w) (/ raw-w ref-w) 1.0)
+                                           ;; Scale cap-shape around its centroid
+                                           cap-pts (:points cap-shape)
+                                           cn (count cap-pts)
+                                           ccx (/ (reduce + (map first cap-pts)) cn)
+                                           ccy (/ (reduce + (map second cap-pts)) cn)
+                                           scale-pt (fn [[x y]]
+                                                      [(+ ccx (* ratio (- x ccx)))
+                                                       (+ ccy (* ratio (- y ccy)))])
+                                           scaled-cap (-> cap-shape
+                                                          (update :points #(mapv scale-pt %))
+                                                          (cond->
+                                                           (:holes cap-shape)
+                                                            (update :holes
+                                                                    #(mapv (fn [h] (mapv scale-pt h)) %))))]
+                                       (assoc scaled-cap :centered? (:centered? raw-shape)))
                                      raw-shape)
                        temp-state (assoc state :position pos)]
                    (if (:holes final-shape)
@@ -623,15 +676,15 @@
                            shell-mode?
                            (fn [r1 r2]
                              {:outer (mapv (fn [p1 p2] (v+ p1 (v* (v- p2 p1) 0.5)))
-                                          (:outer r1) (:outer r2))
+                                           (:outer r1) (:outer r2))
                               :inner (mapv (fn [p1 p2] (v+ p1 (v* (v- p2 p1) 0.5)))
-                                          (:inner r1) (:inner r2))
+                                           (:inner r1) (:inner r2))
                               :values (mapv (fn [v1 v2] (* 0.5 (+ v1 v2)))
                                             (:values r1) (:values r2))})
                            has-holes?
                            (fn [r1 r2]
                              {:outer (mapv (fn [p1 p2] (v+ p1 (v* (v- p2 p1) 0.5)))
-                                          (:outer r1) (:outer r2))
+                                           (:outer r1) (:outer r2))
                               :holes (when (:holes r1)
                                        (mapv (fn [h1 h2]
                                                (mapv (fn [p1 p2] (v+ p1 (v* (v- p2 p1) 0.5))) h1 h2))
@@ -768,9 +821,9 @@
                                         s shape transform-fn total-effective-dist
                                         shell-cap-top :top creation-pose steps)]
                                  (println "shell cap-top:" (if m
-                                                                (str (count (:vertices m)) " verts, "
-                                                                     (count (:faces m)) " faces")
-                                                                "nil"))
+                                                             (str (count (:vertices m)) " verts, "
+                                                                  (count (:faces m)) " faces")
+                                                             "nil"))
                                  m))
                              solid-cap-bottom
                              (when (and shell-mode? shell-cap-bottom (pos? total-effective-dist))
@@ -778,9 +831,9 @@
                                         state-with-initial-heading shape transform-fn total-effective-dist
                                         shell-cap-bottom :bottom creation-pose steps)]
                                  (println "shell cap-bottom:" (if m
-                                                                   (str (count (:vertices m)) " verts, "
-                                                                        (count (:faces m)) " faces")
-                                                                   "nil"))
+                                                                (str (count (:vertices m)) " verts, "
+                                                                     (count (:faces m)) " faces")
+                                                                "nil"))
                                  m))
                              ;; Combine shell + caps (just concatenate — no boolean union)
                              all-meshes (cond-> final-meshes
@@ -842,8 +895,8 @@
                              ;; Track first/second ring for caps
                              new-first-ring (or loft-first-ring (first new-acc-rings))
                              new-second-ring (or loft-second-ring
-                                                (when (>= (count new-acc-rings) 2)
-                                                  (second new-acc-rings)))
+                                                 (when (>= (count new-acc-rings) 2)
+                                                   (second new-acc-rings)))
 
                              ;; Apply rotations to get new heading (rotate at corner position)
                              s-at-corner (assoc s :position corner-base)
@@ -972,7 +1025,7 @@
                  ;; Add all segment meshes with material to state
                  (let [meshes-with-material (if (:material state)
                                               (mapv #(schema/assert-mesh!
-                                                       (assoc % :material (:material state)))
+                                                      (assoc % :material (:material state)))
                                                     segment-meshes)
                                               (mapv schema/assert-mesh! segment-meshes))]
                    (update final-state :meshes into meshes-with-material)))))))))))
@@ -1006,7 +1059,6 @@
                              (< forward threshold)))
                          (map vector ring1 ring2))]
         result))))
-
 
 (defn walk-path-poses
   "Walk a path and sample turtle poses at regular distance intervals.

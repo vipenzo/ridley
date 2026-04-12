@@ -14,17 +14,22 @@
             [ridley.geometry.primitives :as prims]
             [ridley.geometry.operations :as ops]
             [ridley.geometry.faces :as faces]
+            [ridley.geometry.diagnose :as diagnose]
+            [ridley.geometry.smooth :as smooth]
+            [ridley.geometry.simplify :as simplify]
             [ridley.manifold.native :as manifold]
             [ridley.clipper.core :as clipper]
             [ridley.io.stl :as stl]
             [ridley.io.svg :as svg]
             [ridley.geometry.warp :as warp]
             [ridley.io.threemf :as threemf]
-            [ridley.sdf.core :as sdf]))
+            [ridley.sdf.core :as sdf]
+            [ridley.voronoi.core :as voronoi]
+            [ridley.jvm.library :as library]))
 
 ;; ── Forward declarations ────────────────────────────────────────
 (declare pure-loft-path pure-loft-two-shapes pure-loft-shape-fn
-         make-initial-state creation-pose-from-current)
+         make-initial-state creation-pose-from-current combine-meshes)
 
 ;; ── Turtle state (global, reset per eval) ───────────────────────
 (def turtle-state (atom (turtle/make-turtle)))
@@ -233,10 +238,10 @@
             (if strip
               (or (manifold/difference mesh strip) mesh)
               (let [prisms (mapv (fn [{:keys [positions normals]}]
-                                  (let [[p0 p1] positions
-                                        [n1 n2] normals]
-                                    (faces/make-prism-along-edge p0 p1 n1 n2 distance)))
-                                dir-edges)]
+                                   (let [[p0 p1] positions
+                                         [n1 n2] normals]
+                                     (faces/make-prism-along-edge p0 p1 n1 n2 distance)))
+                                 dir-edges)]
                 (reduce (fn [current-mesh prism]
                           (or (manifold/difference current-mesh prism)
                               current-mesh))
@@ -250,7 +255,7 @@
    Options: :angle (default 80), :min-radius, :segments (default 8),
             :where, :blend-vertices (default false)"
   [mesh direction radius & {:keys [angle min-radius segments where blend-vertices]
-                             :or {angle 80 segments 8 blend-vertices false}}]
+                            :or {angle 80 segments 8 blend-vertices false}}]
   (let [dir-vec (direction-vec mesh direction)
         align-threshold 0.85
         pose (or (:creation-pose mesh)
@@ -287,38 +292,38 @@
                                (faces/find-fillet-vertices dir-edges))]
             (if (seq fillet-verts)
               (reduce
-                (fn [m {:keys [position normals]}]
-                  (let [center (faces/compute-fillet-vertex-center position normals radius)
-                        sphere (-> (prims/sphere-mesh radius segments (max 6 (quot segments 2)))
-                                   (update :vertices
-                                           (fn [vs] (mapv (fn [[x y z]]
-                                                            [(+ x (nth center 0))
-                                                             (+ y (nth center 1))
-                                                             (+ z (nth center 2))]) vs))))
-                        margin (* radius 0.5)
-                        sum-n (reduce (fn [[ax ay az] [bx by bz]]
-                                        [(+ ax bx) (+ ay by) (+ az bz)])
-                                      normals)
-                        extent [(+ (nth position 0) (* (nth sum-n 0) margin))
-                                (+ (nth position 1) (* (nth sum-n 1) margin))
-                                (+ (nth position 2) (* (nth sum-n 2) margin))]
-                        [mnx mny mnz] [(min (nth center 0) (nth extent 0))
-                                        (min (nth center 1) (nth extent 1))
-                                        (min (nth center 2) (nth extent 2))]
-                        [mxx mxy mxz] [(max (nth center 0) (nth extent 0))
-                                        (max (nth center 1) (nth extent 1))
-                                        (max (nth center 2) (nth extent 2))]
-                        corner-box {:type :mesh
-                                    :vertices [[mnx mny mnz] [mxx mny mnz] [mxx mxy mnz] [mnx mxy mnz]
-                                               [mnx mny mxz] [mxx mny mxz] [mxx mxy mxz] [mnx mxy mxz]]
-                                    :faces [[0 2 1] [0 3 2] [4 5 6] [4 6 7]
-                                            [0 1 5] [0 5 4] [2 3 7] [2 7 6]
-                                            [1 2 6] [1 6 5] [0 4 7] [0 7 3]]}
-                        vertex-cutter (manifold/difference corner-box sphere)]
-                    (if vertex-cutter
-                      (or (manifold/difference m vertex-cutter) m)
-                      m)))
-                edge-result fillet-verts)
+               (fn [m {:keys [position normals]}]
+                 (let [center (faces/compute-fillet-vertex-center position normals radius)
+                       sphere (-> (prims/sphere-mesh radius segments (max 6 (quot segments 2)))
+                                  (update :vertices
+                                          (fn [vs] (mapv (fn [[x y z]]
+                                                           [(+ x (nth center 0))
+                                                            (+ y (nth center 1))
+                                                            (+ z (nth center 2))]) vs))))
+                       margin (* radius 0.5)
+                       sum-n (reduce (fn [[ax ay az] [bx by bz]]
+                                       [(+ ax bx) (+ ay by) (+ az bz)])
+                                     normals)
+                       extent [(+ (nth position 0) (* (nth sum-n 0) margin))
+                               (+ (nth position 1) (* (nth sum-n 1) margin))
+                               (+ (nth position 2) (* (nth sum-n 2) margin))]
+                       [mnx mny mnz] [(min (nth center 0) (nth extent 0))
+                                      (min (nth center 1) (nth extent 1))
+                                      (min (nth center 2) (nth extent 2))]
+                       [mxx mxy mxz] [(max (nth center 0) (nth extent 0))
+                                      (max (nth center 1) (nth extent 1))
+                                      (max (nth center 2) (nth extent 2))]
+                       corner-box {:type :mesh
+                                   :vertices [[mnx mny mnz] [mxx mny mnz] [mxx mxy mnz] [mnx mxy mnz]
+                                              [mnx mny mxz] [mxx mny mxz] [mxx mxy mxz] [mnx mxy mxz]]
+                                   :faces [[0 2 1] [0 3 2] [4 5 6] [4 6 7]
+                                           [0 1 5] [0 5 4] [2 3 7] [2 7 6]
+                                           [1 2 6] [1 6 5] [0 4 7] [0 7 3]]}
+                       vertex-cutter (manifold/difference corner-box sphere)]
+                   (if vertex-cutter
+                     (or (manifold/difference m vertex-cutter) m)
+                     m)))
+               edge-result fillet-verts)
               edge-result)))))))
 
 ;; ── Attach-face / Clone-face impl ──────────────────────────────
@@ -350,9 +355,9 @@
   (let [base (if (:reset opts)
                (turtle/make-turtle)
                (select-keys parent
-                 [:position :heading :up :pen-mode :resolution
-                  :joint-mode :material :anchors
-                  :preserve-up :reference-up]))
+                            [:position :heading :up :pen-mode :resolution
+                             :joint-mode :material :anchors
+                             :preserve-up :reference-up]))
         base (cond-> base
                (not (:reset opts))
                (merge {:geometry [] :meshes [] :stamps []
@@ -443,6 +448,114 @@
   (let [sym (if (keyword? name-kw) (symbol (name name-kw)) name-kw)]
     (when-let [m (get @registered-meshes sym)]
       (swap! registered-meshes assoc sym (assoc m :visible false)))))
+
+;; ── Mesh-ref helpers (find a registered entry by identity) ─────
+
+(defn- mesh? [x]
+  (and (map? x) (contains? x :vertices)))
+
+(defn- mesh-vector? [x]
+  (and (or (vector? x) (seq? x))
+       (seq x)
+       (mesh? (first x))))
+
+(defn- mesh-map? [x]
+  (and (map? x)
+       (not (contains? x :vertices))
+       (seq x)
+       (mesh? (first (vals x)))))
+
+(defn- find-mesh-name-by-ref
+  "Find the registered name of a mesh by identity (same vertices+faces).
+   Returns the symbol key or nil."
+  [mesh]
+  (when (mesh? mesh)
+    (some (fn [[sym m]]
+            (when (and (identical? (:vertices mesh) (:vertices m))
+                       (identical? (:faces mesh) (:faces m)))
+              sym))
+          @registered-meshes)))
+
+(defn show-mesh-ref!
+  "Show a mesh by reference. Returns nil."
+  [mesh]
+  (when-let [sym (find-mesh-name-by-ref mesh)]
+    (show-mesh! sym))
+  nil)
+
+(defn hide-mesh-ref!
+  "Hide a mesh by reference. Returns nil."
+  [mesh]
+  (when-let [sym (find-mesh-name-by-ref mesh)]
+    (hide-mesh! sym))
+  nil)
+
+(defn show
+  "Show by name (keyword/string/symbol), mesh reference, or collection."
+  ([name-or-coll]
+   (cond
+     (or (keyword? name-or-coll) (string? name-or-coll) (symbol? name-or-coll))
+     (show-mesh! (keyword name-or-coll))
+     (mesh-vector? name-or-coll)
+     (doseq [m name-or-coll] (show-mesh-ref! m))
+     (mesh-map? name-or-coll)
+     (doseq [[_ m] name-or-coll] (show-mesh-ref! m))
+     :else (show-mesh-ref! name-or-coll))
+   nil)
+  ([coll key]
+   (when-let [m (get coll key)] (show-mesh-ref! m))
+   nil))
+
+(defn hide
+  "Hide by name (keyword/string/symbol), mesh reference, or collection."
+  ([name-or-coll]
+   (cond
+     (or (keyword? name-or-coll) (string? name-or-coll) (symbol? name-or-coll))
+     (hide-mesh! (keyword name-or-coll))
+     (mesh-vector? name-or-coll)
+     (doseq [m name-or-coll] (hide-mesh-ref! m))
+     (mesh-map? name-or-coll)
+     (doseq [[_ m] name-or-coll] (hide-mesh-ref! m))
+     :else (hide-mesh-ref! name-or-coll))
+   nil)
+  ([coll key]
+   (when-let [m (get coll key)] (hide-mesh-ref! m))
+   nil))
+
+;; ── Color (mirrors implicit-color in CLJS) ─────────────────────
+
+(defn- update-mesh-material!
+  "Merge material opts into a registered mesh by name (keyword/symbol)."
+  [name-kw opts]
+  (let [sym (if (keyword? name-kw) (symbol (name name-kw)) name-kw)]
+    (when-let [m (get @registered-meshes sym)]
+      (swap! registered-meshes assoc sym
+             (update m :material merge opts)))))
+
+(defn color-impl
+  "Set color globally (turtle), on a registered mesh by name, or on a mesh ref.
+   Single hex form: (color 0xff0000)
+   RGB form:        (color 255 0 0)
+   Per-mesh hex:    (color :name 0xff0000) or (color mesh 0xff0000)
+   Per-mesh RGB:    (color :name 255 0 0)  or (color mesh 255 0 0)"
+  ([hex]
+   (swap! turtle-state assoc-in [:material :color] hex))
+  ([name-or-mesh hex]
+   (if (mesh? name-or-mesh)
+     (update name-or-mesh :material merge {:color hex})
+     (update-mesh-material! name-or-mesh {:color hex})))
+  ([r g b]
+   (let [hex (+ (bit-shift-left (int r) 16)
+                (bit-shift-left (int g) 8)
+                (int b))]
+     (swap! turtle-state assoc-in [:material :color] hex)))
+  ([name-or-mesh r g b]
+   (let [hex (+ (bit-shift-left (int r) 16)
+                (bit-shift-left (int g) 8)
+                (int b))]
+     (if (mesh? name-or-mesh)
+       (update name-or-mesh :material merge {:color hex})
+       (update-mesh-material! name-or-mesh {:color hex})))))
 
 (defn show-all! []
   (swap! registered-meshes
@@ -589,21 +702,21 @@
                     (get-in @turtle-state [:anchors target]))]
        (if pose
          (lay-flat-with-normal mesh
-           (:heading pose)  ;; heading = face normal
-           (fn [rotated-verts]
-             (let [normal (:heading pose)
-                   tgt [0.0 0.0 -1.0]
-                   dot-nt (math/dot normal tgt)
-                   rot-fn (if (> (Math/abs dot-nt) 0.9999)
-                            (if (neg? dot-nt)
-                              identity
-                              (let [perp (if (> (Math/abs (nth normal 0)) 0.9) [0 1 0] [1 0 0])]
-                                #(math/rotate-point-around-axis % perp Math/PI)))
-                            (let [axis (math/normalize (math/cross normal tgt))
-                                  angle (Math/acos (max -1.0 (min 1.0 dot-nt)))]
-                              #(math/rotate-point-around-axis % axis angle)))]
-               (rot-fn (:pos pose))))
-           (:up pose))  ;; pass up vector for Z-rotation alignment
+                               (:heading pose)  ;; heading = face normal
+                               (fn [rotated-verts]
+                                 (let [normal (:heading pose)
+                                       tgt [0.0 0.0 -1.0]
+                                       dot-nt (math/dot normal tgt)
+                                       rot-fn (if (> (Math/abs dot-nt) 0.9999)
+                                                (if (neg? dot-nt)
+                                                  identity
+                                                  (let [perp (if (> (Math/abs (nth normal 0)) 0.9) [0 1 0] [1 0 0])]
+                                                    #(math/rotate-point-around-axis % perp Math/PI)))
+                                                (let [axis (math/normalize (math/cross normal tgt))
+                                                      angle (Math/acos (max -1.0 (min 1.0 dot-nt)))]
+                                                  #(math/rotate-point-around-axis % axis angle)))]
+                                   (rot-fn (:pos pose))))
+                               (:up pose))  ;; pass up vector for Z-rotation alignment
          (throw (Exception. (str "lay-flat: no anchor named " target)))))
 
      ;; Direction keyword
@@ -612,23 +725,23 @@
            face (faces/largest-face mesh target)]
        (when face
          (let [info (faces/compute-face-info (:vertices mesh)
-                      (get (:face-groups mesh) (:id face)))
+                                             (get (:face-groups mesh) (:id face)))
                face-indices (:vertices info)]
            (lay-flat-with-normal mesh (:normal info)
-             (fn [rotated-verts]
-               (let [fv (mapv #(nth rotated-verts %) face-indices)]
-                 (math/v* (reduce math/v+ fv) (/ 1.0 (count fv)))))))))
+                                 (fn [rotated-verts]
+                                   (let [fv (mapv #(nth rotated-verts %) face-indices)]
+                                     (math/v* (reduce math/v+ fv) (/ 1.0 (count fv)))))))))
 
      ;; Numeric face-id
      (number? target)
      (let [mesh (faces/ensure-face-groups mesh)
            info (faces/compute-face-info (:vertices mesh)
-                  (get (:face-groups mesh) target))
+                                         (get (:face-groups mesh) target))
            face-indices (:vertices info)]
        (lay-flat-with-normal mesh (:normal info)
-         (fn [rotated-verts]
-           (let [fv (mapv #(nth rotated-verts %) face-indices)]
-             (math/v* (reduce math/v+ fv) (/ 1.0 (count fv)))))))
+                             (fn [rotated-verts]
+                               (let [fv (mapv #(nth rotated-verts %) face-indices)]
+                                 (math/v* (reduce math/v+ fv) (/ 1.0 (count fv)))))))
 
      ;; Default: bottom
      :else
@@ -723,12 +836,12 @@
         initial (make-initial-state)
         pose (creation-pose-from-current)
         results (reduce
-                  (fn [acc s]
-                    (let [state (turtle/extrude-from-path initial s path-data)
-                          mesh (last (:meshes state))]
-                      (if mesh (conj acc (assoc mesh :creation-pose pose)) acc)))
-                  []
-                  shapes)]
+                 (fn [acc s]
+                   (let [state (turtle/extrude-from-path initial s path-data)
+                         mesh (last (:meshes state))]
+                     (if mesh (conj acc (assoc mesh :creation-pose pose)) acc)))
+                 []
+                 shapes)]
     (if (= 1 (count results))
       (first results)
       results)))
@@ -747,26 +860,26 @@
         pose (creation-pose-from-current)
         start-up (derive-end-up (:heading pose) (or (:up pose) [0 0 1]))
         results (reduce
-                  (fn [acc s]
-                    (let [state (turtle/extrude-from-path initial s path-data)
-                          mesh (last (:meshes state))]
-                      (if mesh
-                        (let [end-heading (:heading state)
-                              end-pos (:position state)
-                              end-up (derive-end-up end-heading
-                                       (or (:up pose) [0 0 1]))]
-                          (conj acc {:mesh (assoc mesh :creation-pose pose)
-                                     :end-face {:shape s
-                                                :pose {:pos end-pos
-                                                       :heading end-heading
-                                                       :up end-up}}
-                                     :start-face {:shape s
-                                                  :pose {:pos (:position pose)
-                                                         :heading (:heading pose)
-                                                         :up start-up}}}))
-                        acc)))
-                  []
-                  shapes)
+                 (fn [acc s]
+                   (let [state (turtle/extrude-from-path initial s path-data)
+                         mesh (last (:meshes state))]
+                     (if mesh
+                       (let [end-heading (:heading state)
+                             end-pos (:position state)
+                             end-up (derive-end-up end-heading
+                                                   (or (:up pose) [0 0 1]))]
+                         (conj acc {:mesh (assoc mesh :creation-pose pose)
+                                    :end-face {:shape s
+                                               :pose {:pos end-pos
+                                                      :heading end-heading
+                                                      :up end-up}}
+                                    :start-face {:shape s
+                                                 :pose {:pos (:position pose)
+                                                        :heading (:heading pose)
+                                                        :up start-up}}}))
+                       acc)))
+                 []
+                 shapes)
         result (if (= 1 (count results)) (first results) results)]
     ;; Save mark as anchor if requested
     (when (and mark mark-cap result)
@@ -837,34 +950,34 @@
      (cond
        (sfn/shape-fn? first-arg)
        (let [path-length (reduce + 0 (keep (fn [cmd]
-                                              (when (= :f (:cmd cmd))
-                                                (first (:args cmd))))
-                                            (:commands path)))]
+                                             (when (= :f (:cmd cmd))
+                                               (first (:args cmd))))
+                                           (:commands path)))]
          (binding [sfn/*path-length* path-length]
            (let [base-shape (first-arg 0)
                  transform-fn (fn [_shape t] (first-arg t))
                  state (loft/bloft initial base-shape transform-fn path steps threshold)
-                 mesh (last (:meshes state))]
+                 mesh (combine-meshes (:meshes state))]
              (when mesh (assoc mesh :creation-pose creation-pose)))))
 
        (and second-arg (shape/shape? second-arg))
        (let [n1 (count (:points first-arg))
              n2 (count (:points second-arg))
              [rs1 rs2] (if (= n1 n2)
-                          [first-arg second-arg]
-                          (let [target-n (max n1 n2)]
-                            [(xform/resample first-arg target-n)
-                             (xform/resample second-arg target-n)]))
+                         [first-arg second-arg]
+                         (let [target-n (max n1 n2)]
+                           [(xform/resample first-arg target-n)
+                            (xform/resample second-arg target-n)]))
              s2-aligned (xform/align-to-shape rs1 rs2)
              transform-fn (shape/make-lerp-fn rs1 s2-aligned)
              state (loft/bloft initial rs1 transform-fn path steps threshold)
-             mesh (last (:meshes state))]
+             mesh (combine-meshes (:meshes state))]
          (when mesh (assoc mesh :creation-pose creation-pose)))
 
        :else
        (let [transform-fn (or second-arg (fn [s _] s))
              state (loft/bloft initial first-arg transform-fn path steps threshold)
-             mesh (last (:meshes state))]
+             mesh (combine-meshes (:meshes state))]
          (when mesh (assoc mesh :creation-pose creation-pose)))))))
 
 ;; ── Revolve impl ──────────────────────────────────────────────
@@ -904,13 +1017,13 @@
                          (if (neg? min-x)
                            ;; Clip outer and each hole independently to preserve topology
                            (let [clip-fn (fn [pts]
-                                          (mapv (fn [[x y]] [(max 0.0 x) y]) pts))
+                                           (mapv (fn [[x y]] [(max 0.0 x) y]) pts))
                                  clipped-outer (clip-fn (:points shape-or-fn))
                                  clipped-holes (when (:holes shape-or-fn)
                                                  (mapv clip-fn (:holes shape-or-fn)))]
                              (shape/make-shape clipped-outer
-                               (cond-> {:centered? true}
-                                 (seq clipped-holes) (assoc :holes clipped-holes))))
+                                               (cond-> {:centered? true}
+                                                 (seq clipped-holes) (assoc :holes clipped-holes))))
                            shape-or-fn))
                        shape-or-fn)
          current @turtle-state
@@ -945,8 +1058,7 @@
              ;; Compensate pivot offset on mesh vertices
              mesh (if (or (not= dx 0) (not= dy 0))
                     (translate-mesh-3d mesh pivot-offset)
-                    mesh)
-]
+                    mesh)]
          (assoc mesh :creation-pose creation-pose))))))
 
 (defn revolve+-impl
@@ -967,7 +1079,7 @@
                {:mesh mesh
                 :start-face {:shape shape-or-fn :pose start-pose}}
                (let [face-data (faces/face-shape mesh
-                                 (:id (faces/largest-face mesh :top)))]
+                                                 (:id (faces/largest-face mesh :top)))]
                  {:mesh mesh
                   :start-face {:shape shape-or-fn :pose start-pose}
                   :end-face {:shape shape-or-fn
@@ -1064,14 +1176,43 @@
         mesh (last (:meshes state))]
     (when mesh (assoc mesh :creation-pose pose))))
 
+(defn- combine-meshes
+  "Combine multiple meshes into one by concatenating vertices and reindexing faces.
+   Returns nil for an empty seq, the single mesh for a one-element seq.
+   Preserves :material and :creation-pose from the first mesh.
+   Mirrors src/ridley/editor/operations.cljs combine-meshes."
+  [meshes]
+  (when (seq meshes)
+    (if (= 1 (count meshes))
+      (first meshes)
+      (loop [remaining (rest meshes)
+             combined-verts (vec (:vertices (first meshes)))
+             combined-faces (vec (:faces (first meshes)))]
+        (if (empty? remaining)
+          (cond-> {:type :mesh
+                   :primitive :combined
+                   :vertices combined-verts
+                   :faces combined-faces
+                   :creation-pose (:creation-pose (first meshes))}
+            (:material (first meshes)) (assoc :material (:material (first meshes))))
+          (let [m (first remaining)
+                offset (count combined-verts)
+                new-verts (:vertices m)
+                new-faces (mapv (fn [face] (mapv #(+ % offset) face))
+                                (:faces m))]
+            (recur (rest remaining)
+                   (into combined-verts new-verts)
+                   (into combined-faces new-faces))))))))
+
 (defn pure-loft-path
-  "Pure loft: shape + transform-fn + path → mesh."
+  "Pure loft: shape + transform-fn + path → mesh.
+   Combines multi-mesh results (shell walls + caps, corner segments) into one."
   ([shape transform-fn path] (pure-loft-path shape transform-fn path 16))
   ([shape transform-fn path steps]
    (let [initial (make-initial-state)
          pose (creation-pose-from-current)
          state (loft/loft-from-path initial shape transform-fn path steps)
-         mesh (last (:meshes state))]
+         mesh (combine-meshes (:meshes state))]
      (when mesh (assoc mesh :creation-pose pose)))))
 
 (defn pure-loft-two-shapes
@@ -1081,10 +1222,10 @@
    (let [n1 (count (:points shape1))
          n2 (count (:points shape2))
          [rs1 rs2] (if (= n1 n2)
-                      [shape1 shape2]
-                      (let [target-n (max n1 n2)]
-                        [(xform/resample shape1 target-n)
-                         (xform/resample shape2 target-n)]))
+                     [shape1 shape2]
+                     (let [target-n (max n1 n2)]
+                       [(xform/resample shape1 target-n)
+                        (xform/resample shape2 target-n)]))
          s2-aligned (xform/align-to-shape rs1 rs2)
          transform-fn (shape/make-lerp-fn rs1 s2-aligned)]
      (pure-loft-path rs1 transform-fn path steps))))
@@ -1094,23 +1235,23 @@
   ([shape-fn-val path] (pure-loft-shape-fn shape-fn-val path 16))
   ([shape-fn-val path steps]
    (let [path-length (reduce + 0 (keep (fn [cmd]
-                                          (when (= :f (:cmd cmd))
-                                            (first (:args cmd))))
-                                        (:commands path)))]
+                                         (when (= :f (:cmd cmd))
+                                           (first (:args cmd))))
+                                       (:commands path)))]
      (binding [sfn/*path-length* path-length]
        (let [base-shape (shape-fn-val 0)
              transform-fn (fn [_shape t] (shape-fn-val t))]
          (pure-loft-path base-shape transform-fn path steps))))))
 
 (defn pure-bloft
-  "Pure bezier-safe loft."
+  "Pure bezier-safe loft. Combines multi-mesh results into one."
   ([shape transform-fn path] (pure-bloft shape transform-fn path nil 0.1))
   ([shape transform-fn path steps] (pure-bloft shape transform-fn path steps 0.1))
   ([shape transform-fn path steps threshold]
    (let [initial (make-initial-state)
          pose (creation-pose-from-current)
          state (loft/bloft initial shape transform-fn path steps threshold)
-         mesh (last (:meshes state))]
+         mesh (combine-meshes (:meshes state))]
      (when mesh (assoc mesh :creation-pose pose)))))
 
 (defn pure-bloft-two-shapes
@@ -1121,10 +1262,10 @@
    (let [n1 (count (:points shape1))
          n2 (count (:points shape2))
          [rs1 rs2] (if (= n1 n2)
-                      [shape1 shape2]
-                      (let [target-n (max n1 n2)]
-                        [(xform/resample shape1 target-n)
-                         (xform/resample shape2 target-n)]))
+                     [shape1 shape2]
+                     (let [target-n (max n1 n2)]
+                       [(xform/resample shape1 target-n)
+                        (xform/resample shape2 target-n)]))
          s2-aligned (xform/align-to-shape rs1 rs2)
          transform-fn (shape/make-lerp-fn rs1 s2-aligned)]
      (pure-bloft rs1 transform-fn path steps threshold))))
@@ -1135,9 +1276,9 @@
   ([shape-fn-val path steps] (pure-bloft-shape-fn shape-fn-val path steps 0.1))
   ([shape-fn-val path steps threshold]
    (let [path-length (reduce + 0 (keep (fn [cmd]
-                                          (when (= :f (:cmd cmd))
-                                            (first (:args cmd))))
-                                        (:commands path)))]
+                                         (when (= :f (:cmd cmd))
+                                           (first (:args cmd))))
+                                       (:commands path)))]
      (binding [sfn/*path-length* path-length]
        (let [base-shape (shape-fn-val 0)
              transform-fn (fn [_shape t] (shape-fn-val t))]
@@ -1259,10 +1400,35 @@
    'mesh-difference  manifold/difference
    'mesh-intersection manifold/intersection
    'mesh-hull        manifold/hull
+   'mesh-smooth      manifold/smooth
+   'mesh-refine      manifold/refine
+   'mesh-diagnose    diagnose/diagnose
+   'mesh-laplacian   smooth/taubin-smooth
+   'mesh-simplify    simplify/simplify
+   'import-stl       (fn []
+                       (let [result (library/import-stl!)]
+                         (when result
+                           ;; Alias the new library namespace into the current eval namespace
+                           (let [lib-name (subs result 0 (.indexOf result "/"))
+                                 lib-sym (symbol lib-name)]
+                             (when (find-ns lib-sym)
+                               (.addAlias ^clojure.lang.Namespace *ns* lib-sym (the-ns lib-sym)))))
+                         result))
+   'import-file      (fn [path]
+                       (let [result (library/import-file! path)]
+                         (when result
+                           (let [lib-name (subs result 0 (.indexOf result "/"))
+                                 lib-sym (symbol lib-name)]
+                             (when (find-ns lib-sym)
+                               (.addAlias ^clojure.lang.Namespace *ns* lib-sym (the-ns lib-sym)))))
+                         result))
+   'list-libraries   library/list-libraries
    'native-union     manifold/union
    'native-difference manifold/difference
    'native-intersection manifold/intersection
    'native-hull      manifold/hull
+   'native-smooth    manifold/smooth
+   'native-refine    manifold/refine
    'concat-meshes    manifold/concat-meshes
    'solidify         manifold/solidify
    'manifold?        manifold/manifold?
@@ -1305,7 +1471,7 @@
                         (if mark-name
                           ;; Use mark pose as creation-pose
                           (if-let [pose (or (get @mark-anchors mark-name)
-                                           (get-in @turtle-state [:anchors mark-name]))]
+                                            (get-in @turtle-state [:anchors mark-name]))]
                             (assoc mesh :creation-pose
                                    {:position (or (:pos pose) (:position pose))
                                     :heading (:heading pose)
@@ -1372,15 +1538,22 @@
    ;; Visibility (metadata-based)
    'show-mesh!        show-mesh!
    'hide-mesh!        hide-mesh!
+   'show-mesh-ref!    show-mesh-ref!
+   'hide-mesh-ref!    hide-mesh-ref!
    'show-all!         show-all!
    'hide-all!         hide-all!
    'show-only-registered! show-only-registered!
    'visible-names     visible-names
    'visible-meshes    visible-meshes
-   'color     (fn [name-kw color-val]
-                (let [sym (if (keyword? name-kw) (symbol (name name-kw)) name-kw)]
-                  (when-let [m (get @registered-meshes sym)]
-                    (swap! registered-meshes assoc sym (assoc m :color color-val)))))
+   ;; Convenience shortcuts (mirror SCI macros from src/ridley/editor/macros.cljs)
+   'show              show
+   'hide              hide
+   'show-all          (fn [] (show-all!) nil)
+   'hide-all          (fn [] (hide-all!) nil)
+   'show-only-objects (fn [] (show-only-registered!) nil)
+   'objects           visible-names
+   'registered        registered-names
+   'color             color-impl
    ;; File I/O (JVM native — direct filesystem access)
    'save-stl  (fn [value path] (stl/save-stl (sdf/ensure-mesh value) path))
    'save-3mf  (fn [value path] (threemf/save-3mf (sdf/ensure-mesh value) path))
@@ -1388,13 +1561,44 @@
                 (let [fmt (or fmt :stl)
                       mesh (get-mesh name-kw)]
                   (if mesh
-                    (let [downloads (str (System/getProperty "user.home") "/Downloads/")
-                          filename (str downloads (name name-kw) "." (name fmt))]
-                      (case fmt
-                        :stl (stl/save-stl mesh filename)
-                        :3mf (threemf/save-3mf mesh filename)
-                        (throw (Exception. (str "Unknown format: " (name fmt)))))
-                      (str "Exported " filename))
+                    (let [default-name (str (name name-kw) "." (name fmt))
+                          ;; Open native save dialog on AWT thread, return chosen path
+                          chosen-path (atom nil)
+                          _ (javax.swing.SwingUtilities/invokeAndWait
+                             (fn []
+                               (let [frame (doto (javax.swing.JFrame.)
+                                             (.setUndecorated true)
+                                             (.setVisible true)
+                                             (.setAlwaysOnTop true)
+                                             (.toFront))
+                                     chooser (doto (javax.swing.JFileChooser.
+                                                    (java.io.File. (str (System/getProperty "user.home") "/Downloads")))
+                                               (.setSelectedFile (java.io.File. default-name))
+                                               (.setDialogTitle (str "Export " (name name-kw)))
+                                               (.setFileFilter
+                                                (javax.swing.filechooser.FileNameExtensionFilter.
+                                                 (str (.toUpperCase (name fmt)) " files")
+                                                 (into-array String [(name fmt)]))))
+                                     r (.showSaveDialog chooser frame)]
+                                 (.dispose frame)
+                                 (when (= r javax.swing.JFileChooser/APPROVE_OPTION)
+                                   (reset! chosen-path (.getAbsolutePath (.getSelectedFile chooser)))))))
+                          path @chosen-path]
+                      (if path
+                        (let [actual-fmt (cond
+                                           (.endsWith (.toLowerCase path) ".3mf") :3mf
+                                           (.endsWith (.toLowerCase path) ".stl") :stl
+                                           :else fmt)
+                              path (if (or (.endsWith (.toLowerCase path) ".stl")
+                                           (.endsWith (.toLowerCase path) ".3mf"))
+                                     path
+                                     (str path "." (name actual-fmt)))]
+                          (case actual-fmt
+                            :stl (stl/save-stl mesh path)
+                            :3mf (threemf/save-3mf mesh path)
+                            (throw (Exception. (str "Unknown format: " (name actual-fmt)))))
+                          (str "Exported " path))
+                        "Export cancelled"))
                     (str "No mesh named " name-kw))))
    'merge-vertices merge-vertices
    'load-stl  stl/load-stl
@@ -1445,8 +1649,8 @@
    'turtle-d        turtle/move-down
    'turtle-rt       turtle/move-right
    'turtle-lt       turtle/move-left
-   ;; Voronoi (if available — stubbed in clipper)
-   ;; 'voronoi-shell — requires d3-delaunay, not available in JVM
+   ;; Voronoi (JTS-based)
+   'voronoi-shell    voronoi/voronoi-shell
    ;; SDF operations (libfive via Rust backend)
    'sdf-sphere       sdf/sdf-sphere
    'sdf-box          sdf/sdf-box
@@ -1831,51 +2035,87 @@
         (def ~name v#)
         v#))")
 
+(def all-macro-sources
+  "All macro source strings, used by library loader to inject macros
+   into library namespaces."
+  [path-macro-source
+   extrude-macro-source
+   extrude-closed-macro-source
+   loft-macro-source
+   loft-n-macro-source
+   bloft-macro-source
+   bloft-n-macro-source
+   revolve-macro-source
+   extrude+-macro-source
+   revolve+-macro-source
+   transform->macro-source
+   shape-macro-source
+   pen-macro-source
+   smooth-path-macro-source
+   warp-macro-source
+   attach-macro-source
+   attach-face-macro-source
+   clone-face-macro-source
+   turtle-macro-source
+   register-macro-source])
+
 (defn eval-script
-  "Evaluate a DSL script string. Returns {:meshes map :print-output str}."
-  [script-text]
-  (reset-state!)
-  (let [ns-sym (gensym "ridley-eval-")
-        ns-obj (create-ns ns-sym)
-        output (java.io.StringWriter.)]
-    (try
-      (binding [*ns* ns-obj]
-        (refer 'clojure.core))
-      (doseq [[sym val] dsl-bindings]
-        (intern ns-obj sym val))
-      ;; Inject macros
-      (binding [*ns* ns-obj]
-        (load-string path-macro-source)
-        (load-string extrude-macro-source)
-        (load-string extrude-closed-macro-source)
-        (load-string loft-macro-source)
-        (load-string loft-n-macro-source)
-        (load-string bloft-macro-source)
-        (load-string bloft-n-macro-source)
-        (load-string revolve-macro-source)
-        (load-string extrude+-macro-source)
-        (load-string revolve+-macro-source)
-        (load-string transform->macro-source)
-        (load-string shape-macro-source)
-        (load-string pen-macro-source)
-        (load-string smooth-path-macro-source)
-        (load-string warp-macro-source)
-        (load-string attach-macro-source)
-        (load-string attach-face-macro-source)
-        (load-string clone-face-macro-source)
-        (load-string turtle-macro-source)
-        (load-string register-macro-source))
+  "Evaluate a DSL script string. Returns {:meshes map :print-output str}.
+   Optional active-libraries is a seq of library name strings to alias
+   into the eval namespace (only those with existing namespaces are aliased)."
+  ([script-text] (eval-script script-text nil))
+  ([script-text active-libraries]
+   (reset-state!)
+   (let [ns-sym (gensym "ridley-eval-")
+         ns-obj (create-ns ns-sym)
+         output (java.io.StringWriter.)]
+     (try
+       (binding [*ns* ns-obj]
+         (refer 'clojure.core))
+       (doseq [[sym val] dsl-bindings]
+         (intern ns-obj sym val))
+       ;; Inject macros
+       (binding [*ns* ns-obj]
+         (load-string path-macro-source)
+         (load-string extrude-macro-source)
+         (load-string extrude-closed-macro-source)
+         (load-string loft-macro-source)
+         (load-string loft-n-macro-source)
+         (load-string bloft-macro-source)
+         (load-string bloft-n-macro-source)
+         (load-string revolve-macro-source)
+         (load-string extrude+-macro-source)
+         (load-string revolve+-macro-source)
+         (load-string transform->macro-source)
+         (load-string shape-macro-source)
+         (load-string pen-macro-source)
+         (load-string smooth-path-macro-source)
+         (load-string warp-macro-source)
+         (load-string attach-macro-source)
+         (load-string attach-face-macro-source)
+         (load-string clone-face-macro-source)
+         (load-string turtle-macro-source)
+         (load-string register-macro-source))
+       ;; Alias library namespaces: if active-libraries provided, alias only
+       ;; those; otherwise alias all loaded libraries (backward compat).
+       (if (seq active-libraries)
+         (let [eval-ns (the-ns ns-sym)]
+           (doseq [lib-name active-libraries]
+             (let [lib-sym (symbol lib-name)]
+               (when (find-ns lib-sym)
+                 (.addAlias ^clojure.lang.Namespace eval-ns lib-sym (the-ns lib-sym))))))
+         (library/inject-library-namespaces! ns-sym))
       ;; Eval script, capturing print output
-      (binding [*ns* ns-obj
-                *out* output]
-        (load-string script-text))
+       (binding [*ns* ns-obj
+                 *out* output]
+         (load-string script-text))
       ;; Collect stamps from global accumulator (survives turtle scopes)
-      (let [stamps @stamp-accumulator
-            stamp-meshes (when (seq stamps)
-                           (reduce (fn [m [i mesh]]
-                                     (assoc m (symbol (str "__stamp_" i)) mesh))
-                                   {} (map-indexed vector stamps)))]
-        {:meshes (merge @registered-meshes stamp-meshes)
-         :print-output (str output)})
-      (finally
-        (remove-ns ns-sym)))))
+       (let [stamps @stamp-accumulator
+             stamp-meshes (when (seq stamps)
+                            (reduce (fn [m [i mesh]]
+                                      (assoc m (symbol (str "__stamp_" i)) mesh))
+                                    {} (map-indexed vector stamps)))]
+         {:meshes (merge @registered-meshes stamp-meshes)
+          :print-output (str output)})
+       (finally
+         (remove-ns ns-sym))))))

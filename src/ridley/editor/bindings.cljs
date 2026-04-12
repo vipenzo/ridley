@@ -82,7 +82,7 @@
    'set-creation-pose (fn [mesh & [mark-name]]
                         (if mark-name
                           (if-let [pose (or (get @state/mark-anchors mark-name)
-                                           (get-in @@state/turtle-state-var [:anchors mark-name]))]
+                                            (get-in @@state/turtle-state-var [:anchors mark-name]))]
                             (assoc mesh :creation-pose
                                    {:position (or (:pos pose) (:position pose))
                                     :heading (:heading pose)
@@ -336,6 +336,8 @@
    'mesh-difference-impl     manifold/difference
    'mesh-intersection-impl   manifold/intersection
    'mesh-hull-impl           manifold/hull
+   'mesh-smooth         manifold/mesh-smooth
+   'mesh-refine         manifold/mesh-refine
    'concat-meshes       manifold/concat-meshes
    ;; Native Manifold (Rust backend via Tauri IPC) — async, return Promises
    'bench               native-manifold/bench
@@ -383,8 +385,10 @@
    'register-shape!     registry/register-shape!
    'get-shape           registry/get-shape
    'shape-names         registry/shape-names
-   ;; STL export
+   ;; STL/3MF export
    'save-stl            stl/download-stl
+   'save-3mf            stl/download-3mf
+   'save-mesh           stl/download-mesh
    ;; View capture (for describe/AI and debugging)
    'render-view         capture/render-view
    'render-all-views    capture/render-all-views

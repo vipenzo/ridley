@@ -7,8 +7,13 @@
    - For each triangle:
      - 12 bytes: normal vector (3x float32 LE)
      - 36 bytes: 3 vertices (3x 3x float32 LE)
-     - 2 bytes: attribute byte count (usually 0)"
-  (:require [ridley.manifold.core :as manifold]))
+     - 2 bytes: attribute byte count (usually 0)
+
+   Also exposes `download-mesh` — a format-aware downloader that lets the
+   user pick the destination file name and STL/3MF format via the native
+   file picker (or falls back to a download link)."
+  (:require [ridley.export.threemf :as threemf]
+            [ridley.manifold.core :as manifold]))
 
 (defn- compute-normal
   "Compute normal for a triangle from three vertices."
@@ -170,28 +175,109 @@
     (.click link)
     (js/URL.revokeObjectURL url)))
 
+(defn- normalize-meshes
+  "Coerce a mesh or seq of meshes into a vector of meshes."
+  [mesh-or-meshes]
+  (cond
+    (and (map? mesh-or-meshes) (:vertices mesh-or-meshes))
+    [mesh-or-meshes]
+
+    (and (sequential? mesh-or-meshes) (seq mesh-or-meshes))
+    (vec mesh-or-meshes)
+
+    :else
+    [mesh-or-meshes]))
+
+(defn- ext->fmt [filename]
+  (let [lower (.toLowerCase (str filename))]
+    (cond
+      (.endsWith lower ".3mf") :3mf
+      (.endsWith lower ".stl") :stl
+      :else nil)))
+
+(defn- swap-ext [filename ext]
+  (let [dot (.lastIndexOf filename ".")]
+    (if (pos? dot)
+      (str (.substring filename 0 dot) "." (name ext))
+      (str filename "." (name ext)))))
+
+(defn- meshes->stl-blob [meshes]
+  (let [buffer (meshes->stl-binary meshes)]
+    (js/Blob. #js [buffer] #js {:type "application/octet-stream"})))
+
+(defn- pick-and-write
+  "Open native showSaveFilePicker offering both STL and 3MF, build the blob
+   based on the picked filename, and write it. Falls back to anchor download.
+   Returns a Promise<string> describing the result, or a string when no
+   picker is available."
+  [meshes suggested-name preferred-fmt]
+  (let [;; Always offer both formats; default the suggested name to the
+        ;; preferred extension so the picker preselects the right type.
+        suggested (swap-ext suggested-name preferred-fmt)
+        types #js [#js {:description "3D models"
+                        :accept #js {"application/octet-stream" #js [".stl" ".3mf"]
+                                     "model/3mf" #js [".3mf"]}}]
+        build-blob (fn [filename]
+                     (case (or (ext->fmt filename) preferred-fmt :stl)
+                       :3mf (threemf/meshes->3mf-blob meshes)
+                       (js/Promise.resolve (meshes->stl-blob meshes))))]
+    (if (exists? js/window.showSaveFilePicker)
+      (-> (js/window.showSaveFilePicker
+           #js {:suggestedName suggested
+                :types types})
+          (.then (fn [handle]
+                   (let [filename (.-name handle)]
+                     (-> (build-blob filename)
+                         (.then (fn [blob]
+                                  (-> (.createWritable handle)
+                                      (.then (fn [writable]
+                                               (-> (.write writable blob)
+                                                   (.then #(.close writable))
+                                                   (.then (fn [_]
+                                                            (str "Exported "
+                                                                 (count meshes)
+                                                                 " mesh(es) to "
+                                                                 filename)))))))))))))
+          (.catch (fn [err]
+                    (when-not (and err (= "AbortError" (.-name err)))
+                      (js/console.warn "save picker error:" err))
+                    nil)))
+      ;; Fallback: anchor download with the suggested filename and preferred fmt
+      (let [filename suggested]
+        (-> (build-blob filename)
+            (.then (fn [blob]
+                     (download-blob-fallback blob filename)
+                     (str "Exported " (count meshes) " mesh(es) to " filename))))))))
+
+(defn download-mesh
+  "Download mesh(es) in STL or 3MF format via the native save picker.
+   - mesh-or-meshes: single mesh or vector of meshes
+   - filename: suggested name (extension is normalized to the chosen format)
+   - format: :stl (default) or :3mf — used as the suggested extension and
+             as the writer when the user keeps the suggested name.
+   The user can override the format by typing a different extension in the
+   picker (.stl ↔ .3mf)."
+  ([mesh-or-meshes]
+   (download-mesh mesh-or-meshes "model.stl" :stl))
+  ([mesh-or-meshes filename]
+   (download-mesh mesh-or-meshes filename
+                  (or (ext->fmt filename) :stl)))
+  ([mesh-or-meshes filename format]
+   (let [meshes (normalize-meshes mesh-or-meshes)]
+     (pick-and-write meshes filename format))))
+
 (defn download-stl
-  "Download mesh(es) as an STL file.
+  "Download mesh(es) as an STL file (back-compat wrapper around download-mesh).
    mesh-or-meshes: single mesh or vector of meshes
    filename: name for the downloaded file (default 'model.stl')"
   ([mesh-or-meshes]
-   (download-stl mesh-or-meshes "model.stl"))
+   (download-mesh mesh-or-meshes "model.stl" :stl))
   ([mesh-or-meshes filename]
-   (let [meshes (if (vector? (first (:vertices mesh-or-meshes)))
-                  [mesh-or-meshes]
-                  mesh-or-meshes)
-         buffer (meshes->stl-binary meshes)
-         blob (js/Blob. #js [buffer] #js {:type "application/octet-stream"})]
-     (if (exists? js/window.showSaveFilePicker)
-       (-> (js/window.showSaveFilePicker
-             #js {:suggestedName filename
-                  :types #js [#js {:description "STL files"
-                                   :accept #js {"application/octet-stream" #js [".stl"]}}]})
-           (.then (fn [handle] (.createWritable handle)))
-           (.then (fn [writable]
-                    (-> (.write writable blob)
-                        (.then #(.close writable)))))
-           (.then (fn [_] (str "Exported " (count meshes) " mesh(es) to " filename)))
-           (.catch (fn [_err] nil)))
-       (do (download-blob-fallback blob filename)
-           (str "Exported " (count meshes) " mesh(es) to " filename))))))
+   (download-mesh mesh-or-meshes filename :stl)))
+
+(defn download-3mf
+  "Download mesh(es) as a 3MF file."
+  ([mesh-or-meshes]
+   (download-mesh mesh-or-meshes "model.3mf" :3mf))
+  ([mesh-or-meshes filename]
+   (download-mesh mesh-or-meshes filename :3mf)))

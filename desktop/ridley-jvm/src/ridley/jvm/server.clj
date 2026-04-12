@@ -3,7 +3,8 @@
    Receives DSL scripts, evals them, returns mesh JSON."
   (:require [ring.adapter.jetty :as jetty]
             [clojure.data.json :as json]
-            [ridley.jvm.eval :as eval-engine])
+            [ridley.jvm.eval :as eval-engine]
+            [ridley.jvm.library :as library])
   (:import [java.nio ByteBuffer ByteOrder])
   (:gen-class))
 
@@ -46,12 +47,39 @@
       (.write out (.array buf)))
     path))
 
-(defn- handle-eval-bin
-  "Eval endpoint: writes mesh data to a binary file, returns metadata JSON."
+(defn- handle-import-stl
+  "Import STL: receives {filename, data_base64}, saves to ~/.ridley/libraries/,
+   loads namespace immediately. Returns {name, access_path}."
   [body]
-  (let [{:keys [script]} (json/read-str body :key-fn keyword)
+  (let [{:keys [filename data_base64]} (json/read-str body :key-fn keyword)
+        decoded (java.util.Base64/getDecoder)
+        bytes (.decode decoded ^String data_base64)
+        lib-name (library/sanitize-name filename)
+        dest (java.io.File. (str (System/getProperty "user.home") "/.ridley/libraries/" filename))]
+    (.mkdirs (.getParentFile dest))
+    (with-open [out (java.io.FileOutputStream. dest)]
+      (.write out ^bytes bytes))
+    ;; Load namespace immediately
+    (let [mesh ((requiring-resolve 'ridley.io.stl/load-stl) (.getAbsolutePath dest))
+          ns-sym (symbol lib-name)
+          lib-ns (create-ns ns-sym)]
+      (intern lib-ns (symbol lib-name) mesh)
+      (println (str "import-stl: " lib-name " (" (count (:faces mesh)) " faces)"))
+      (cors-headers
+       {:status 200
+        :body (json/write-str {:name lib-name
+                               :access_path (str lib-name "/" lib-name)
+                               :faces (count (:faces mesh))
+                               :vertices (count (:vertices mesh))})}))))
+
+(defn- handle-eval-bin
+  "Eval endpoint: writes mesh data to a binary file, returns metadata JSON.
+   Accepts optional active_libraries: [\"name1\", \"name2\"] to alias
+   library namespaces into the eval context."
+  [body]
+  (let [{:keys [script active_libraries]} (json/read-str body :key-fn keyword)
         t0 (System/nanoTime)
-        result (eval-engine/eval-script script)
+        result (eval-engine/eval-script script active_libraries)
         t1 (System/nanoTime)
         elapsed-ms (/ (- t1 t0) 1e6)
         meshes (:meshes result)
@@ -72,12 +100,12 @@
     (println (format "eval-bin: %.1fms, %d mesh(es), file: %s"
                      elapsed-ms (count meshes) (or mesh-file "none")))
     (cors-headers
-      {:status 200
-       :body (json/write-str
-               {:meshes mesh-meta
-                :elapsed_ms elapsed-ms
-                :print_output print-output
-                :mesh_file mesh-file})})))
+     {:status 200
+      :body (json/write-str
+             {:meshes mesh-meta
+              :elapsed_ms elapsed-ms
+              :print_output print-output
+              :mesh_file mesh-file})})))
 
 (defn- handle-eval [body]
   (let [{:keys [script]} (json/read-str body :key-fn keyword)
@@ -91,11 +119,11 @@
     (when (seq print-output)
       (println "  output:" (.substring print-output 0 (min 200 (count print-output)))))
     (cors-headers
-      {:status 200
-       :body (json/write-str
-               {:meshes meshes
-                :elapsed_ms elapsed-ms
-                :print_output print-output})})))
+     {:status 200
+      :body (json/write-str
+             {:meshes meshes
+              :elapsed_ms elapsed-ms
+              :print_output print-output})})))
 
 (defn handler [request]
   (cond
@@ -117,8 +145,8 @@
                        (when (not= root e)
                          (str "\nCaused by: " (.getMessage root))))]
           (cors-headers
-            {:status 500
-             :body (json/write-str {:error msg})}))))
+           {:status 500
+            :body (json/write-str {:error msg})}))))
 
     ;; Eval script (JSON mesh encoding, legacy)
     (and (= :post (:request-method request))
@@ -134,8 +162,8 @@
                        (when (not= root e)
                          (str "\nCaused by: " (.getMessage root))))]
           (cors-headers
-            {:status 500
-             :body (json/write-str {:error msg})}))))
+           {:status 500
+            :body (json/write-str {:error msg})}))))
 
     ;; Serve mesh binary file
     (and (= :get (:request-method request))
@@ -149,6 +177,21 @@
             (assoc-in [:headers "Content-Type"] "application/octet-stream"))
         (cors-headers {:status 404 :body "mesh file not found"})))
 
+    ;; Import STL to library
+    (and (= :post (:request-method request))
+         (= "/import-stl" (:uri request)))
+    (try
+      (handle-import-stl (slurp (:body request)))
+      (catch Exception e
+        (cors-headers {:status 500
+                       :body (json/write-str {:error (.getMessage e)})})))
+
+    ;; List libraries
+    (and (= :get (:request-method request))
+         (= "/libraries" (:uri request)))
+    (cors-headers {:status 200
+                   :body (json/write-str {:libraries (library/list-libraries)})})
+
     ;; Ping
     (= "/ping" (:uri request))
     (cors-headers {:status 200 :body (json/write-str {:status "ok"})})
@@ -158,4 +201,6 @@
 
 (defn -main [& _args]
   (println "ridley-jvm: starting on http://127.0.0.1:12322")
+  ;; Load libraries from ~/.ridley/libraries/ at startup
+  (library/load-libraries! eval-engine/dsl-bindings eval-engine/all-macro-sources)
   (jetty/run-jetty handler {:port 12322 :join? true}))

@@ -739,6 +739,39 @@ The transition `fraction` is auto-calculated as `radius / path-length` (geometri
 - Cap transition uses centroid scaling — shape proportions (including fillet radii) are preserved
 - Works on any shape including shapes with holes
 
+**Convex hull (`shape-hull`):**
+
+Compute the 2D convex hull of N input shapes — useful for fairing complex outlines from a few seed circles or for capsules and lozenge profiles.
+
+```clojure
+(shape-hull a b)             ; Hull of two shapes
+(shape-hull a b c)           ; Variadic — any number of shapes
+```
+
+`shape-hull` is variadic and takes shapes as positional arguments only — **there is no `:segments` option**. The output is the true convex hull of the union of all input points: it picks only the points that lie on the convex boundary and connects them with straight edges. Output point count = number of hull vertices.
+
+To control the resolution of the result:
+
+- **More hull vertices** → use input shapes with more segments (e.g., `(circle r 256)` instead of `(circle r 32)`). Only the points already on the boundary survive, so denser inputs give a smoother hull along their convex arcs. The straight tangent segments between two distinct shapes are always 2-vertex lines, regardless of input density.
+- **Exact point count** → wrap the result in `(resample hull n)` to redistribute the hull edge uniformly to `n` points. This is the recommended way to get a predictable point count for downstream loft/extrude operations.
+
+```clojure
+;; Capsule from two circles
+(register pill (extrude (shape-hull (circle 10) (translate (circle 10) 30 0)) (f 5)))
+
+;; Pistachio outline from three circles, normalized to 256 hull points
+(def s1 (translate (circle 50 128) 130 20))
+(def s2 (circle 25 128))
+(def s3 (translate (circle 16 128) 130 -20))
+(def base (resample (shape-hull s3 s1 s2) 256))
+(register bowl (loft base (f 50)))
+```
+
+**Notes:**
+- Holes on input shapes are ignored — only the outer contour participates in the hull.
+- Returned shape is centered (`:centered? true`) regardless of input position.
+- For 3D mesh hulls, see [Convex Hull](#convex-hull) below — `mesh-hull` is the 3D analogue.
+
 **Pattern tiling:**
 
 Tile a pattern shape across a target shape and subtract — producing a shape with holes.
@@ -1178,6 +1211,55 @@ Compute the convex hull of one or more meshes:
 ;; Can also pass a vector
 (mesh-hull [s1 s2 s3])
 ```
+
+---
+
+## Mesh Smoothing & Refinement
+
+Round off non-sharp edges of a 3D mesh using Manifold's tangent-based subdivision. Useful when you want to fillet every crease softer than a chosen dihedral angle while keeping intentionally sharp design edges — typically applied after a CSG pipeline (boolean operations produce mostly right-angle corners that look synthetic).
+
+```clojure
+(mesh-smooth m)                                  ; defaults: sharp-angle 100, refine 3
+(mesh-smooth m :sharp-angle 120 :refine 4)       ; smooth more, denser
+(mesh-smooth m :sharp-angle 60)                  ; preserve all corners > 60deg
+(mesh-smooth m :sharp-angle 180)                 ; round absolutely everything
+
+;; Lower-level: refine without smoothing (just denser triangulation)
+(mesh-refine m 2)                                ; each triangle -> 4 sub-triangles
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `:sharp-angle` | 100 | Edges with dihedral angle GREATER than this stay sharp; the rest get smoothed. Manifold's stock default is 60, but for procedural meshes 90-120 typically gives better results because right-angle wall corners become smooth instead of preserved. Set to 180 to smooth everything. |
+| `:smoothness` | 0 | 0..1 fillet at the edges that survive as sharp. 0 leaves them perfectly sharp; 1 turns them fully smooth. |
+| `:refine` | 3 | Subdivision count after smoothing. Each triangle becomes n² sub-triangles. Higher = visually smoother but quadratically more triangles. |
+
+**How it works:** `smoothOut` stores Bezier-tangent vectors on each halfedge based on the dihedral angle of its adjacent faces (without changing geometry); `refine` then subdivides each triangle into n² sub-triangles, placing the new vertices on the tangent curves rather than along straight lines. The result is a denser mesh whose surface is C¹-continuous wherever the dihedral was ≤ `:sharp-angle`.
+
+```clojure
+;; CSG box with rounded edges — the canonical use case
+(register rounded-widget
+  (-> (mesh-difference (box 40 40 20) (cyl 12 30))
+      (mesh-smooth :sharp-angle 100 :refine 3)))
+
+;; Loft solid with smoothed creases
+(register smooth-bead
+  (-> (turtle (loft (rect 20 10) (f 40) (th 90) (f 30)))
+      (mesh-smooth :sharp-angle 80 :refine 3)))
+```
+
+**Important — the input must be a manifold (watertight, closed) mesh.**
+
+Manifold's `smoothOut` requires a valid manifold as input. This means:
+
+- ✅ **Works on**: primitives (box, sphere, cyl, cone), solid extrudes/lofts/revolves, results of `mesh-union`/`mesh-difference`/`mesh-intersection`/`mesh-hull`, SDF-materialized meshes.
+- ❌ **Does NOT work on**: perforated meshes with open edges. In particular, `shell :style :voronoi` / `:lattice` / `:checkerboard` and any other shell with open wall apertures produce non-manifold geometry — Manifold rejects them with `status 2 (NotManifold)`. For those cases you can either (a) rebuild the shape as a CSG of solids, or (b) raise the generation resolution so the staircase artifact becomes less visible.
+
+**Notes:**
+- `mesh-smooth` is a heavy operation: vertex/face count grows by `refine²`. Start with the defaults and only crank `:refine` if you still see facets.
+- The smoothing happens in 3D world coordinates, so it works equally on extrudes, lofts, revolves, and CSG results.
+- For sharper control over which edges to round (by direction or position), use `fillet` instead — it operates only on edges you select rather than every non-sharp edge in the mesh, and works on non-manifold input too.
+- Calling `mesh-refine` without a preceding `mesh-smooth` produces planar subdivision (the shape is unchanged, just denser) — useful only if you intend to feed the result into another operation that needs the extra density.
 
 ---
 

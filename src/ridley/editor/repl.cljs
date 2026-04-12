@@ -18,6 +18,7 @@
             [ridley.editor.bindings :refer [base-bindings]]
             [ridley.editor.macros :refer [macro-defs]]
             [ridley.library.core :as library]
+            [ridley.library.storage :as lib-storage]
             [ridley.library.svg :as svg]
             [ridley.jvm.client :as jvm]))
 
@@ -180,7 +181,11 @@
 
 (defn evaluate-definitions-jvm
   "Evaluate definitions by sending the script to the JVM sidecar (async).
+   Includes active library names so the sidecar aliases their namespaces.
    Calls on-result with {:meshes {name mesh} :print-output str :elapsed-ms num}
    or {:error str}."
   [code on-result]
-  (jvm/eval-script code on-result))
+  (let [active-libs (lib-storage/get-active-libraries)]
+    (if (seq active-libs)
+      (jvm/eval-script-with-libraries code active-libs on-result)
+      (jvm/eval-script code on-result))))

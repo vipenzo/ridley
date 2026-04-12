@@ -26,10 +26,10 @@
   [value command-name]
   (when-not (and (number? value) (Double/isFinite (double value)))
     (throw (Exception. (str "(" command-name " " (pr-str value) "): expected a number, got "
-                           (cond
-                             (Double/isNaN (double value)) "NaN (bad arithmetic?)"
-                             (not (number? value)) (str (type value))
-                             :else "Infinity"))))))
+                            (cond
+                              (Double/isNaN (double value)) "NaN (bad arithmetic?)"
+                              (not (number? value)) (str (type value))
+                              :else "Infinity"))))))
 
 ;; --- Basic helpers ---
 
@@ -129,9 +129,9 @@
   [pts]
   (let [n (count pts)]
     (* 0.5 (reduce + (for [i (range n)]
-                        (let [[x1 y1] (nth pts i)
-                              [x2 y2] (nth pts (mod (inc i) n))]
-                          (- (* x1 y2) (* x2 y1))))))))
+                       (let [[x1 y1] (nth pts i)
+                             [x2 y2] (nth pts (mod (inc i) n))]
+                         (- (* x1 y2) (* x2 y1))))))))
 
 (defn- point-in-triangle?
   "Test if point p is inside triangle [a b c] using barycentric coords."
@@ -161,7 +161,7 @@
         c (nth pts next-idx)
         ;; Check convexity (cross product > 0 for CCW)
         cross (- (* (- (a 0) (b 0)) (- (c 1) (b 1)))
-                  (* (- (a 1) (b 1)) (- (c 0) (b 0))))]
+                 (* (- (a 1) (b 1)) (- (c 0) (b 0))))]
     (when (> cross 0)
       ;; Check no other vertex inside this triangle
       (not (some (fn [j]
@@ -199,7 +199,7 @@
                     next-i (nth indices (mod (inc ear-idx) n-idx))
                     tri [(orig-indices prev) (orig-indices curr) (orig-indices next-i)]
                     new-indices (into (subvec indices 0 ear-idx)
-                                     (subvec indices (inc ear-idx)))]
+                                      (subvec indices (inc ear-idx)))]
                 (recur new-indices (conj tris tri)))
               ;; No ear found — fallback to fan
               (into tris (for [i (range 1 (dec (count indices)))]
@@ -220,17 +220,17 @@
                     pts
                     (conj pts (first pts)))))
         outer-coords (into-array Coordinate
-                       (mapv (fn [[x y]] (Coordinate. (double x) (double y)))
-                             (close outer)))
+                                 (mapv (fn [[x y]] (Coordinate. (double x) (double y)))
+                                       (close outer)))
         outer-ring (.createLinearRing gf outer-coords)
         hole-rings (when (seq holes)
                      (into-array LinearRing
-                       (mapv (fn [h]
-                               (.createLinearRing gf
-                                 (into-array Coordinate
-                                   (mapv (fn [[x y]] (Coordinate. (double x) (double y)))
-                                         (close h)))))
-                             holes)))
+                                 (mapv (fn [h]
+                                         (.createLinearRing gf
+                                                            (into-array Coordinate
+                                                                        (mapv (fn [[x y]] (Coordinate. (double x) (double y)))
+                                                                              (close h)))))
+                                       holes)))
         ^Polygon poly (if hole-rings
                         (.createPolygon gf outer-ring hole-rings)
                         (.createPolygon gf outer-ring nil))
@@ -240,11 +240,11 @@
         all-pts (atom (vec (concat outer (mapcat identity holes))))
         ;; Key: quantized coordinate string → index
         coord-index (atom
-                      (reduce-kv (fn [m i [x y]]
-                                   (let [k (str (long (Math/round (* x 1e4))) ","
-                                                (long (Math/round (* y 1e4))))]
-                                     (if (contains? m k) m (assoc m k i))))
-                                 {} @all-pts))
+                     (reduce-kv (fn [m i [x y]]
+                                  (let [k (str (long (Math/round (* x 1e4))) ","
+                                               (long (Math/round (* y 1e4))))]
+                                    (if (contains? m k) m (assoc m k i))))
+                                {} @all-pts))
         lookup (fn [^Coordinate c]
                  (let [x (.-x c) y (.-y c)
                        k (str (long (Math/round (* x 1e4))) ","
@@ -436,8 +436,8 @@
           cx (/ (reduce + (map first points)) n)
           cy (/ (reduce + (map second points)) n)]
       (reduce max 0 (map (fn [[x y]]
-                            (let [dx (- x cx) dy (- y cy)]
-                              (Math/sqrt (+ (* dx dx) (* dy dy)))))
+                           (let [dx (- x cx) dy (- y cy)]
+                             (Math/sqrt (+ (* dx dx) (* dy dy)))))
                          points)))
     0))
 
@@ -594,32 +594,32 @@
          ;; Flatten rings into a single vertices vector (transient for speed)
          flatten-rings (fn [rs]
                          (persistent!
-                           (reduce (fn [a ring] (reduce conj! a ring))
-                                   (transient []) rs)))
+                          (reduce (fn [a ring] (reduce conj! a ring))
+                                  (transient []) rs)))
          ;; Generate side faces with diagonal-flip in a tight loop
          gen-diag-faces (fn [vertices num-rings n-v wrap?]
                           (persistent!
-                            (loop [ri 0, acc (transient [])]
-                              (if (>= ri num-rings)
-                                acc
-                                (let [next-ri (if wrap?
-                                                (let [n (inc ri)] (if (= n num-rings) 0 n))
-                                                (inc ri))
-                                      base (* ri n-v)
-                                      next-base (* next-ri n-v)]
-                                  (recur (inc ri)
-                                         (loop [vi 0, acc acc]
-                                           (if (>= vi n-v)
-                                             acc
-                                             (let [next-vi (let [v (inc vi)] (if (= v n-v) 0 v))
-                                                   b0 (+ base vi) b1 (+ base next-vi)
-                                                   t0 (+ next-base vi) t1 (+ next-base next-vi)
-                                                   db0t1 (v- (nth vertices b0) (nth vertices t1))
-                                                   db1t0 (v- (nth vertices b1) (nth vertices t0))]
-                                               (recur (inc vi)
-                                                      (if (<= (dot db0t1 db0t1) (dot db1t0 db1t0))
-                                                        (-> acc (conj! [b0 t0 t1]) (conj! [b0 t1 b1]))
-                                                        (-> acc (conj! [b0 t0 b1]) (conj! [t0 t1 b1])))))))))))))]
+                           (loop [ri 0, acc (transient [])]
+                             (if (>= ri num-rings)
+                               acc
+                               (let [next-ri (if wrap?
+                                               (let [n (inc ri)] (if (= n num-rings) 0 n))
+                                               (inc ri))
+                                     base (* ri n-v)
+                                     next-base (* next-ri n-v)]
+                                 (recur (inc ri)
+                                        (loop [vi 0, acc acc]
+                                          (if (>= vi n-v)
+                                            acc
+                                            (let [next-vi (let [v (inc vi)] (if (= v n-v) 0 v))
+                                                  b0 (+ base vi) b1 (+ base next-vi)
+                                                  t0 (+ next-base vi) t1 (+ next-base next-vi)
+                                                  db0t1 (v- (nth vertices b0) (nth vertices t1))
+                                                  db1t0 (v- (nth vertices b1) (nth vertices t0))]
+                                              (recur (inc vi)
+                                                     (if (<= (dot db0t1 db0t1) (dot db1t0 db1t0))
+                                                       (-> acc (conj! [b0 t0 t1]) (conj! [b0 t1 b1]))
+                                                       (-> acc (conj! [b0 t0 b1]) (conj! [t0 t1 b1])))))))))))))]
      (when (and (>= n-rings 2) (>= n-verts 3))
        (if closed?
          ;; Closed loop: skip last ring (overlaps with first), connect last to first
@@ -670,25 +670,25 @@
          n-verts (count (first rings))]
      (when (and (>= n-rings 2) (>= n-verts 3))
        (let [vertices (persistent!
-                        (reduce (fn [a ring] (reduce conj! a ring))
-                                (transient []) rings))
+                       (reduce (fn [a ring] (reduce conj! a ring))
+                               (transient []) rings))
              side-faces (persistent!
-                          (loop [ri 0, acc (transient [])]
-                            (if (>= ri (dec n-rings))
-                              acc
-                              (let [base (* ri n-verts)
-                                    next-base (* (inc ri) n-verts)]
-                                (recur (inc ri)
-                                       (loop [vi 0, acc acc]
-                                         (if (>= vi n-verts)
-                                           acc
-                                           (let [next-vi (let [v (inc vi)] (if (= v n-verts) 0 v))
-                                                 b0 (+ base vi) b1 (+ base next-vi)
-                                                 t0 (+ next-base vi) t1 (+ next-base next-vi)]
-                                             (recur (inc vi)
-                                                    (if flip-winding?
-                                                      (-> acc (conj! [b0 b1 t1]) (conj! [b0 t1 t0]))
-                                                      (-> acc (conj! [b0 t1 b1]) (conj! [b0 t0 t1]))))))))))))]
+                         (loop [ri 0, acc (transient [])]
+                           (if (>= ri (dec n-rings))
+                             acc
+                             (let [base (* ri n-verts)
+                                   next-base (* (inc ri) n-verts)]
+                               (recur (inc ri)
+                                      (loop [vi 0, acc acc]
+                                        (if (>= vi n-verts)
+                                          acc
+                                          (let [next-vi (let [v (inc vi)] (if (= v n-verts) 0 v))
+                                                b0 (+ base vi) b1 (+ base next-vi)
+                                                t0 (+ next-base vi) t1 (+ next-base next-vi)]
+                                            (recur (inc vi)
+                                                   (if flip-winding?
+                                                     (-> acc (conj! [b0 b1 t1]) (conj! [b0 t1 t0]))
+                                                     (-> acc (conj! [b0 t1 b1]) (conj! [b0 t0 t1]))))))))))))]
          {:type :mesh
           :primitive :segment
           :vertices vertices
@@ -889,7 +889,7 @@
                      bottom-normal (v* bottom-dir -1)
                      top-normal top-dir
                      bottom-cap (triangulate-cap-with-holes first-outer first-holes
-                                                             0 bottom-normal false)
+                                                            0 bottom-normal false)
                      top-cap (triangulate-cap-with-holes last-outer last-holes
                                                          last-ring-base top-normal false)]
                  (vec (concat bottom-cap top-cap))))
@@ -1120,7 +1120,7 @@
         mesh (sweep-two-shapes-with-holes d1 d2)]
     (if mesh
       (let [mesh-with-pose (cond-> (assoc mesh :creation-pose creation-pose)
-                            (:material state) (assoc :material (:material state)))]
+                             (:material state) (assoc :material (:material state)))]
         (-> state
             (assoc :position end-pos)
             (update :meshes conj mesh-with-pose)))
@@ -1298,9 +1298,9 @@
                           ;; Small rotations from bezier-as walk steps are smooth transitions,
                           ;; not corners requiring shortening/fillets/duplicate rings.
                           has-corner-rotation (and any-corner-cmds
-                                                  heading-angle
-                                                  (> heading-angle (* corner-threshold-deg-closed
-                                                                      (/ Math/PI 180))))
+                                                   heading-angle
+                                                   (> heading-angle (* corner-threshold-deg-closed
+                                                                       (/ Math/PI 180))))
 
                           corner-rings (if (and has-corner-rotation (not is-last))
                                          (let [corner-angle-deg (when (= joint-mode :round)
@@ -1663,13 +1663,55 @@
                            (transient [])
                            (range n-pts)))))]
                  (concat (when cap-start? (gen-cap 0 true))
-                         (when cap-end? (gen-cap (dec n-rings) false)))))]
+                         (when cap-end? (gen-cap (dec n-rings) false)))))
+
+             ;; ── Manifold repair: merge value-0 inner verts onto outer ──
+             ;;
+             ;; At every (ring, j) where the shell value is 0, generate-shell-ring
+             ;; leaves outer and inner at the SAME 3D position but with two
+             ;; distinct vertex indices. The triangulator emits an outer triangle
+             ;; AND its inner mirror whenever the skip rule passes; both touch
+             ;; these zero-thickness vertex pairs. Manifold sees the duplicated
+             ;; positions as non-manifold edges (two parallel edges in 3D).
+             ;;
+             ;; The fix is to canonicalize: rewrite every reference to the inner
+             ;; copy of a value-0 vertex with its outer twin. After this pass each
+             ;; aperture in the wall is closed automatically because outer and
+             ;; inner walls share the same boundary loop of vertices. No new
+             ;; triangles needed.
+             value-of (fn [v]
+                        (let [ri (quot v step-len)
+                              j  (mod v n-pts)]
+                          (nth (nth all-values ri) j)))
+             remap-vertex (fn [v]
+                            (let [j (mod v n-pts)
+                                  ri (quot v step-len)
+                                  in-inner-half? (>= (- v (* ri step-len)) n-pts)]
+                              (if (and in-inner-half? (zero? (value-of v)))
+                                ;; Inner copy at a zero-thickness point: use the
+                                ;; outer twin within the same ring.
+                                (- v n-pts)
+                                v)))
+             remap-face (fn [face]
+                          [(remap-vertex (nth face 0))
+                           (remap-vertex (nth face 1))
+                           (remap-vertex (nth face 2))])
+             repaired-side (mapv remap-face side-faces)
+             repaired-caps (when cap-faces (mapv remap-face cap-faces))
+             ;; Drop any face that became degenerate after remapping (two
+             ;; vertices collapsed to the same index). This happens on tris
+             ;; whose outer and inner copies were both zero-thickness — they
+             ;; were already coincident in 3D and now also share the same
+             ;; index, so dropping them is geometrically a no-op.
+             non-degenerate? (fn [[a b c]] (not (or (= a b) (= b c) (= a c))))
+             repaired-side (filterv non-degenerate? repaired-side)
+             repaired-caps (when repaired-caps (filterv non-degenerate? repaired-caps))]
 
          (schema/assert-mesh!
           (cond-> {:type :mesh
                    :primitive :shell
                    :vertices vertices
-                   :faces (vec (concat side-faces
-                                       (or cap-faces [])))}
+                   :faces (vec (concat repaired-side
+                                       (or repaired-caps [])))}
             creation-pose (assoc :creation-pose creation-pose))))))))
 

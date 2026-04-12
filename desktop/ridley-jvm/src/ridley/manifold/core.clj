@@ -10,6 +10,8 @@
 (def get-mesh-status native/get-mesh-status)
 (def solidify native/solidify)
 (def concat-meshes native/concat-meshes)
+(def smooth native/smooth)
+(def refine native/refine)
 
 (defn hull-from-points [points]
   ;; Wrap points as a single mesh and hull it
