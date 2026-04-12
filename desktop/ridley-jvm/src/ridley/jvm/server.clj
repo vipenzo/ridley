@@ -192,6 +192,18 @@
     (cors-headers {:status 200
                    :body (json/write-str {:libraries (library/list-libraries)})})
 
+    ;; Delete library
+    (and (= :post (:request-method request))
+         (= "/delete-library" (:uri request)))
+    (try
+      (let [{:keys [name]} (json/read-str (slurp (:body request)) :key-fn keyword)]
+        (library/delete-library! name)
+        (cors-headers {:status 200
+                       :body (json/write-str {:ok true})}))
+      (catch Exception e
+        (cors-headers {:status 500
+                       :body (json/write-str {:error (.getMessage e)})})))
+
     ;; Ping
     (= "/ping" (:uri request))
     (cors-headers {:status 200 :body (json/write-str {:status "ok"})})

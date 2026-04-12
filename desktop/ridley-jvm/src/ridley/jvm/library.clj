@@ -167,6 +167,22 @@
                     lib-name "/" lib-name)))
     (str lib-name "/" lib-name)))
 
+(defn delete-library!
+  "Delete a library: remove file from ~/.ridley/libraries/ and remove namespace."
+  [lib-name]
+  (let [files (.listFiles lib-dir)
+        matching (filter (fn [^java.io.File f]
+                           (= lib-name (sanitize-name (.getName f))))
+                         files)]
+    (doseq [^java.io.File f matching]
+      (.delete f)
+      (println (str "library: deleted " (.getName f))))
+    ;; Remove namespace if it exists
+    (let [ns-sym (symbol lib-name)]
+      (when (find-ns ns-sym)
+        (remove-ns ns-sym)))
+    (println (str "library: removed namespace " lib-name))))
+
 (defn inject-library-namespaces!
   "Make library namespaces accessible from the eval namespace.
    Call after creating the eval namespace: aliases each library ns

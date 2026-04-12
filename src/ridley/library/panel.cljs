@@ -126,9 +126,23 @@
              (make-item "Delete" "danger"
                         (fn []
                           (when (js/confirm (str "Delete library '" lib-name "'?"))
-                            (storage/delete-library! lib-name)
-                            (when-let [cb (:on-change @callbacks)] (cb))
-                            (render!)))))
+                            (if (jvm-mode?)
+                              ;; JVM mode: delete from sidecar + update local cache
+                              (jvm/delete-library
+                               lib-name
+                               (fn [_]
+                                 (let [new-active (disj (:active @jvm-lib-cache) lib-name)]
+                                   (jvm-write-active! new-active)
+                                   (swap! jvm-lib-cache
+                                          (fn [c] (-> c
+                                                      (update :libraries #(vec (remove #{lib-name} %)))
+                                                      (assoc :active new-active))))
+                                   (when-let [cb (:on-change @callbacks)] (cb))
+                                   (render!))))
+                              ;; SCI mode: delete from localStorage
+                              (do (storage/delete-library! lib-name)
+                                  (when-let [cb (:on-change @callbacks)] (cb))
+                                  (render!)))))))
     (.appendChild js/document.body menu)
     (swap! panel-state assoc :context-menu {:name lib-name :x x :y y})))
 

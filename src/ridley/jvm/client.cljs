@@ -213,6 +213,26 @@
     (.send xhr (js/JSON.stringify #js {:filename filename
                                        :data_base64 b64}))))
 
+(defn delete-library
+  "Delete a library from the JVM sidecar. Removes file + namespace.
+   Calls on-result with {:ok true} or {:error ...}."
+  [lib-name on-result]
+  (let [xhr (js/XMLHttpRequest.)]
+    (.open xhr "POST" (str server-url "/delete-library") true)
+    (.setRequestHeader xhr "Content-Type" "application/json")
+    (set! (.-timeout xhr) 10000)
+    (set! (.-onload xhr)
+          (fn []
+            (let [^js result (try (js/JSON.parse (.-responseText xhr))
+                                  (catch :default _ nil))]
+              (if (= 200 (.-status xhr))
+                (on-result {:ok true})
+                (on-result {:error (or (and result (.-error result))
+                                       (str "Delete failed: HTTP " (.-status xhr)))})))))
+    (set! (.-onerror xhr) (fn [] (on-result {:error "Connection error"})))
+    (set! (.-ontimeout xhr) (fn [] (on-result {:error "Timeout"})))
+    (.send xhr (js/JSON.stringify #js {:name lib-name}))))
+
 (defn list-libraries
   "Fetch library names from the JVM sidecar. Returns a Promise<vector>."
   []
