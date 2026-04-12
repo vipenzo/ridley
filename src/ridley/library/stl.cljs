@@ -68,7 +68,8 @@
                   (persistent! acc)))]
     {:type :mesh
      :vertices vertices
-     :faces faces}))
+     :faces faces
+     :creation-pose {:position [0 0 0] :heading [1 0 0] :up [0 0 1]}}))
 
 ;; ============================================================
 ;; STL format detection
