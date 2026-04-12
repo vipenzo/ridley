@@ -18,7 +18,6 @@
             [ridley.editor.bindings :refer [base-bindings]]
             [ridley.editor.macros :refer [macro-defs]]
             [ridley.library.core :as library]
-            [ridley.library.storage :as lib-storage]
             [ridley.library.svg :as svg]
             [ridley.jvm.client :as jvm]))
 
@@ -179,13 +178,20 @@
 ;; JVM Sidecar Evaluation
 ;; ============================================================
 
+(defn- jvm-read-active-libs
+  "Read active JVM library names from localStorage (separate from SCI libs)."
+  []
+  (when-let [raw (.getItem js/localStorage "ridley:jvm-libs:active")]
+    (try (vec (js->clj (.parse js/JSON raw)))
+         (catch :default _ []))))
+
 (defn evaluate-definitions-jvm
   "Evaluate definitions by sending the script to the JVM sidecar (async).
    Includes active library names so the sidecar aliases their namespaces.
    Calls on-result with {:meshes {name mesh} :print-output str :elapsed-ms num}
    or {:error str}."
   [code on-result]
-  (let [active-libs (lib-storage/get-active-libraries)]
+  (let [active-libs (or (jvm-read-active-libs) [])]
     (if (seq active-libs)
       (jvm/eval-script-with-libraries code active-libs on-result)
       (jvm/eval-script code on-result))))

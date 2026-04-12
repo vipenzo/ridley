@@ -29,7 +29,34 @@
 ;; Callbacks provided by core.cljs at setup time
 (defonce ^:private callbacks (atom nil))
 
+;; JVM mode library cache: populated from sidecar, used for rendering
+(defonce ^:private jvm-lib-cache (atom {:libraries [] :active #{}}))
+
+(defn- jvm-mode? []
+  (when-let [f (:jvm-mode? @callbacks)] (f)))
+
+(defn- jvm-active-key [] "ridley:jvm-libs:active")
+
+(defn- jvm-read-active []
+  (or (when-let [raw (.getItem js/localStorage (jvm-active-key))]
+        (try (set (js->clj (.parse js/JSON raw)))
+             (catch :default _ #{})))
+      #{}))
+
+(defn- jvm-write-active! [active-set]
+  (.setItem js/localStorage (jvm-active-key)
+            (.stringify js/JSON (clj->js (vec active-set)))))
+
 (declare render!)
+
+(defn refresh-jvm-libraries!
+  "Fetch library list from JVM sidecar and update cache. Then re-render."
+  []
+  (-> (jvm/list-libraries)
+      (.then (fn [libs]
+               (let [active (jvm-read-active)]
+                 (reset! jvm-lib-cache {:libraries (vec libs) :active active})
+                 (render!))))))
 
 ;; ============================================================
 ;; DOM Helpers
@@ -451,15 +478,22 @@
                                           #(.addEventListener js/document "click" @close-fn) 0)))))))
             (.appendChild req-row add-req))
           (.appendChild panel-el req-row))))
-    ;; Library list
+    ;; Library list — in JVM mode read from sidecar cache, else localStorage
     (let [list-el (el-with "div" "library-list" nil)
-          all-libs (storage/list-libraries)
-          active-set (set (storage/get-active-libraries))]
+          jvm? (jvm-mode?)
+          all-libs (if jvm?
+                     (:libraries @jvm-lib-cache)
+                     (storage/list-libraries))
+          active-set (if jvm?
+                       (:active @jvm-lib-cache)
+                       (set (storage/get-active-libraries)))]
       (if (empty? all-libs)
         (let [empty-msg (el-with "div" "library-list-empty" "No libraries yet. Click + to create one.")]
           (.appendChild list-el empty-msg))
         (doseq [lib-name all-libs]
-          (let [lib (storage/get-library lib-name)
+          (let [lib (if jvm?
+                      {:name lib-name :requires []}
+                      (storage/get-library lib-name))
                 active? (contains? active-set lib-name)
                 ;; A library is "effectively loaded" only if active AND all deps satisfied
                 deps-satisfied? (every? active-set (or (:requires lib) []))
@@ -481,16 +515,23 @@
             (set! (.-checked checkbox) loaded?)
             (.addEventListener checkbox "change"
                                (fn [_]
-                                 (if (.-checked checkbox)
-                                   (storage/activate-library! lib-name)
-                                   (do
-                    ;; Cascade deactivate: also deactivate libs that depend on this one
-                                     (storage/deactivate-library! lib-name)
-                                     (let [all-active (storage/get-active-libraries)]
-                                       (doseq [other all-active]
-                                         (when-let [other-lib (storage/get-library other)]
-                                           (when (some #{lib-name} (:requires other-lib))
-                                             (storage/deactivate-library! other)))))))
+                                 (if jvm?
+                                   ;; JVM mode: update local active set + cache
+                                   (let [new-active (if (.-checked checkbox)
+                                                      (conj (:active @jvm-lib-cache) lib-name)
+                                                      (disj (:active @jvm-lib-cache) lib-name))]
+                                     (jvm-write-active! new-active)
+                                     (swap! jvm-lib-cache assoc :active new-active))
+                                   ;; SCI mode: update localStorage
+                                   (if (.-checked checkbox)
+                                     (storage/activate-library! lib-name)
+                                     (do
+                                       (storage/deactivate-library! lib-name)
+                                       (let [all-active (storage/get-active-libraries)]
+                                         (doseq [other all-active]
+                                           (when-let [other-lib (storage/get-library other)]
+                                             (when (some #{lib-name} (:requires other-lib))
+                                               (storage/deactivate-library! other))))))))
                                  (when-let [cb (:on-change @callbacks)] (cb))
                                  (render!)))
             ;; Dependency indicators

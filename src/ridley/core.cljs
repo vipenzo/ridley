@@ -2381,6 +2381,8 @@
     (letfn [(enable-jvm! []
               (reset! jvm-mode true)
               (js/console.log "JVM eval mode enabled")
+              ;; Populate library panel from sidecar
+              (lib-panel/refresh-jvm-libraries!)
               (when-let [toolbar (.getElementById js/document "viewport-toolbar")]
                 (let [btn (.createElement js/document "button")
                       version-tag (.getElementById js/document "version-tag")]
@@ -2394,9 +2396,13 @@
                                        (let [on? @jvm-mode]
                                          (if on?
                                            (do (.add (.-classList btn) "active")
-                                               (set! (.-title btn) "Toggle JVM evaluation (currently: ON)"))
+                                               (set! (.-title btn) "Toggle JVM evaluation (currently: ON)")
+                                               ;; Refresh library panel from sidecar
+                                               (lib-panel/refresh-jvm-libraries!))
                                            (do (.remove (.-classList btn) "active")
-                                               (set! (.-title btn) "Toggle JVM evaluation (currently: OFF)"))))))
+                                               (set! (.-title btn) "Toggle JVM evaluation (currently: OFF)")
+                                               ;; Re-render panel from localStorage
+                                               (lib-panel/render!))))))
                   (if version-tag
                     (.insertBefore toolbar btn version-tag)
                     (.appendChild toolbar btn)))))
