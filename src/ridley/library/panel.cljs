@@ -102,43 +102,42 @@
         sep (fn [] (el-with "div" "library-context-menu-sep" nil))]
     (set! (.-style.left menu) (str x "px"))
     (set! (.-style.top menu) (str y "px"))
+    ;; In JVM mode, only show Delete (STL files can't be edited/duplicated/exported as .clj)
+    (when-not (jvm-mode?)
+      (append! menu
+               (make-item "Edit" nil
+                          (fn [] (when-let [cb (:on-edit @callbacks)] (cb lib-name))))
+               (make-item "Duplicate" nil
+                          (fn []
+                            (when-let [lib (storage/get-library lib-name)]
+                              (let [new-name (str lib-name "-copy")]
+                                (storage/save-library! new-name (:source lib) (:requires lib))
+                                (render!)))))
+               (sep)
+               (make-item "Export .clj" nil
+                          (fn []
+                            (when-let [content (storage/export-library lib-name)]
+                              (let [blob (js/Blob. #js [content] #js {:type "text/plain"})
+                                    url (.createObjectURL js/URL blob)
+                                    a (el "a")]
+                                (set! (.-href a) url)
+                                (set! (.-download a) (str lib-name ".clj"))
+                                (.click a)
+                                (.revokeObjectURL js/URL url)))))
+               (sep)))
     (append! menu
-             (make-item "Edit" nil
-                        (fn [] (when-let [cb (:on-edit @callbacks)] (cb lib-name))))
-             (make-item "Duplicate" nil
-                        (fn []
-                          (when-let [lib (storage/get-library lib-name)]
-                            (let [new-name (str lib-name "-copy")]
-                              (storage/save-library! new-name (:source lib) (:requires lib))
-                              (render!)))))
-             (sep)
-             (make-item "Export .clj" nil
-                        (fn []
-                          (when-let [content (storage/export-library lib-name)]
-                            (let [blob (js/Blob. #js [content] #js {:type "text/plain"})
-                                  url (.createObjectURL js/URL blob)
-                                  a (el "a")]
-                              (set! (.-href a) url)
-                              (set! (.-download a) (str lib-name ".clj"))
-                              (.click a)
-                              (.revokeObjectURL js/URL url)))))
-             (sep)
              (make-item "Delete" "danger"
                         (fn []
                           (when (js/confirm (str "Delete library '" lib-name "'?"))
                             (if (jvm-mode?)
-                              ;; JVM mode: delete from sidecar + update local cache
+                              ;; JVM mode: delete from sidecar, then refresh panel
                               (jvm/delete-library
                                lib-name
                                (fn [_]
-                                 (let [new-active (disj (:active @jvm-lib-cache) lib-name)]
-                                   (jvm-write-active! new-active)
-                                   (swap! jvm-lib-cache
-                                          (fn [c] (-> c
-                                                      (update :libraries #(vec (remove #{lib-name} %)))
-                                                      (assoc :active new-active))))
-                                   (when-let [cb (:on-change @callbacks)] (cb))
-                                   (render!))))
+                                 (let [new-active (disj (jvm-read-active) lib-name)]
+                                   (jvm-write-active! new-active))
+                                 (refresh-jvm-libraries!)
+                                 (when-let [cb (:on-change @callbacks)] (cb))))
                               ;; SCI mode: delete from localStorage
                               (do (storage/delete-library! lib-name)
                                   (when-let [cb (:on-change @callbacks)] (cb))
@@ -370,19 +369,18 @@
                                                                           (let [array-buffer (.. evt -target -result)]
                                                                             (if (and (:jvm-mode? @callbacks)
                                                                                      ((:jvm-mode? @callbacks)))
-                                                                              ;; JVM mode: upload to sidecar
+                                                                              ;; JVM mode: upload to sidecar, then refresh panel from sidecar
                                                                               (jvm/import-stl-file
                                                                                array-buffer filename
                                                                                (fn [result]
                                                                                  (if (:error result)
                                                                                    (js/console.error "STL import error:" (:error result))
                                                                                    (do
-                                                                                     ;; Also save a stub in localStorage so the panel shows it
-                                                                                     (storage/save-library! lib-name
-                                                                                                            (str ";; JVM library: " lib-name "\n;; Loaded from STL on sidecar\n")
-                                                                                                            [])
-                                                                                     (storage/activate-library! lib-name)
-                                                                                     (render!)
+                                                                                     ;; Auto-activate the new library
+                                                                                     (let [new-active (conj (jvm-read-active) lib-name)]
+                                                                                       (jvm-write-active! new-active))
+                                                                                     ;; Refresh panel from sidecar
+                                                                                     (refresh-jvm-libraries!)
                                                                                      (when-let [cb (:on-change @callbacks)] (cb))))))
                                                                               ;; SCI mode: generate source locally
                                                                               (let [source (stl/generate-library-source array-buffer filename)]
