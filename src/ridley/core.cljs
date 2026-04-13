@@ -214,15 +214,45 @@
 
 (defonce ^:private jvm-tweak-state (atom nil))
 
-(defn- cleanup-jvm-tweak! []
+(defn- jvm-tweak-cancel! []
+  "Cancel tweak: discard changes, restore original meshes."
   (when-let [{:keys [panel-el esc-handler]} @jvm-tweak-state]
     (when panel-el (.remove panel-el))
     (when esc-handler (.removeEventListener js/document "keydown" esc-handler)))
-  ;; Clear preview overlay and restore registered meshes
   (viewport/clear-preview!)
   (registry/show-all!)
   (registry/refresh-viewport! false)
+  (add-repl-entry "[Tweak]" "Cancelled" false)
   (reset! jvm-tweak-state nil))
+
+(defn- jvm-tweak-confirm!
+  "Confirm tweak: log the final expression with tweaked values, re-eval to register."
+  []
+  (when-let [{:keys [form current-values panel-el esc-handler script active-libs]} @jvm-tweak-state]
+    (when panel-el (.remove panel-el))
+    (when esc-handler (.removeEventListener js/document "keydown" esc-handler))
+    (viewport/clear-preview!)
+    ;; Build the final expression string with substituted values
+    ;; by sending one last tweak-update and using the result
+    (let [result (jvm/tweak-update script form current-values active-libs)]
+      (when result
+        (let [meshes (:meshes result)]
+          (doseq [[name mesh] meshes]
+            (registry/register-mesh! name mesh)))))
+    (registry/show-all!)
+    (registry/refresh-viewport! false)
+    ;; Log the final form: replace numbers in order with tweaked values
+    (let [sorted-vals (map second (sort-by first current-values))
+          idx (atom 0)
+          final-form (str/replace form #"-?\d+\.?\d*"
+                                  (fn [match]
+                                    (let [i @idx]
+                                      (swap! idx inc)
+                                      (if-let [v (nth sorted-vals i nil)]
+                                        (str v)
+                                        match))))]
+      (add-repl-entry "[Tweak]" final-form false))
+    (reset! jvm-tweak-state nil)))
 
 (defn- slider-range [value]
   (let [abs-val (Math/abs (double value))
@@ -252,7 +282,7 @@
 (defn- create-jvm-tweak-panel!
   "Create slider panel for a JVM tweak session."
   [tweak-session script active-libs]
-  (cleanup-jvm-tweak!)
+  (jvm-tweak-cancel!)
   (let [{:keys [form literals]} tweak-session
         panel (.createElement js/document "div")
         current-values (into {} (map (fn [lit] [(:index lit) (:value lit)]) literals))]
@@ -325,13 +355,27 @@
           (.appendChild row zoom-out)
           (.appendChild row value-el))
         (.appendChild panel row)))
+    ;; OK / Cancel buttons
+    (let [btn-row (.createElement js/document "div")
+          ok-btn (.createElement js/document "button")
+          cancel-btn (.createElement js/document "button")]
+      (.add (.-classList btn-row) "test-buttons")
+      (set! (.-textContent ok-btn) "OK")
+      (set! (.-textContent cancel-btn) "Cancel")
+      (.add (.-classList ok-btn) "test-btn" "test-btn-ok")
+      (.add (.-classList cancel-btn) "test-btn" "test-btn-cancel")
+      (.addEventListener ok-btn "click" (fn [_] (jvm-tweak-confirm!)))
+      (.addEventListener cancel-btn "click" (fn [_] (jvm-tweak-cancel!)))
+      (.appendChild btn-row ok-btn)
+      (.appendChild btn-row cancel-btn)
+      (.appendChild panel btn-row))
     ;; Insert panel into the REPL area
     (when-let [terminal (.getElementById js/document "repl-terminal")]
       (.insertBefore terminal panel (.-firstChild terminal)))
     ;; Esc handler
     (let [esc-handler (fn [e]
                         (when (= "Escape" (.-key e))
-                          (cleanup-jvm-tweak!)))]
+                          (jvm-tweak-cancel!)))]
       (.addEventListener js/document "keydown" esc-handler)
       (reset! jvm-tweak-state {:form form
                                :script script
