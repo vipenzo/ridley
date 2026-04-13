@@ -54,11 +54,16 @@
     (mapv #(sdf/ensure-mesh % first-mesh) items)))
 
 (defn union
-  "Union meshes/SDF via native Rust Manifold. SDF nodes auto-materialized."
+  "Union meshes/SDF via native Rust Manifold. SDF nodes auto-materialized.
+   Accepts any mix of meshes and sequences of meshes — all are flattened."
   [first-arg & more]
-  (let [meshes (if (and (empty? more) (sequential? first-arg))
-                 (vec first-arg)
-                 (into [first-arg] more))
+  (let [all-args (into [first-arg] more)
+        ;; Flatten: if any arg is a sequential (but not a mesh map), expand it
+        meshes (vec (mapcat (fn [x]
+                              (if (and (sequential? x) (not (map? x)))
+                                x
+                                [x]))
+                            all-args))
         ;; If ALL are SDF, combine as SDF tree
         all-sdf? (every? sdf/sdf-node? meshes)]
     (if all-sdf?
@@ -73,9 +78,11 @@
 (defn difference
   "Difference meshes/SDF via native Rust Manifold. SDF nodes auto-materialized."
   [first-arg & more]
-  (let [meshes (if (and (empty? more) (sequential? first-arg))
-                 (vec first-arg)
-                 (into [first-arg] more))
+  (let [all-args (into [first-arg] more)
+        meshes (vec (mapcat (fn [x]
+                              (if (and (sequential? x) (not (map? x)))
+                                x [x]))
+                            all-args))
         all-sdf? (every? sdf/sdf-node? meshes)]
     (if all-sdf?
       (reduce sdf/sdf-difference meshes)
@@ -89,9 +96,11 @@
 (defn intersection
   "Intersection meshes/SDF via native Rust Manifold."
   [first-arg & more]
-  (let [meshes (if (and (empty? more) (sequential? first-arg))
-                 (vec first-arg)
-                 (into [first-arg] more))
+  (let [all-args (into [first-arg] more)
+        meshes (vec (mapcat (fn [x]
+                              (if (and (sequential? x) (not (map? x)))
+                                x [x]))
+                            all-args))
         all-sdf? (every? sdf/sdf-node? meshes)]
     (if all-sdf?
       (reduce sdf/sdf-intersection meshes)
