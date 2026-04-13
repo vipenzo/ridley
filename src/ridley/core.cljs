@@ -218,6 +218,10 @@
   (when-let [{:keys [panel-el esc-handler]} @jvm-tweak-state]
     (when panel-el (.remove panel-el))
     (when esc-handler (.removeEventListener js/document "keydown" esc-handler)))
+  ;; Clear preview overlay and restore registered meshes
+  (viewport/clear-preview!)
+  (registry/show-all!)
+  (registry/refresh-viewport! false)
   (reset! jvm-tweak-state nil))
 
 (defn- slider-range [value]
@@ -249,6 +253,9 @@
         panel (.createElement js/document "div")
         current-values (into {} (map (fn [lit] [(:index lit) (:value lit)]) literals))]
     (set! (.-id panel) "test-slider-panel")
+    ;; Hide registered meshes so only the tweak preview is visible
+    (registry/hide-all!)
+    (registry/refresh-viewport! false)
     ;; Header
     (let [header (.createElement js/document "div")]
       (.add (.-classList header) "slider-header")
