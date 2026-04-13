@@ -1666,6 +1666,7 @@
    'sdf->mesh        sdf/materialize     ;; explicit meshing (for resolution control)
    ;; Utility
    'bench     bench
+   'T         (fn [label x] (println (str label ": " x)) x)
    ;; Turtle state
    'get-turtle       (fn [] @turtle-state)
    'turtle-position  (fn [] (:position @turtle-state))
