@@ -225,13 +225,17 @@
   (reset! jvm-tweak-state nil))
 
 (defn- slider-range [value]
-  (let [abs-val (Math/abs (double value))]
-    (cond
-      (zero? value) [-100 100 1]
-      (< abs-val 1) [(* value -5) (* value 5) (/ abs-val 100)]
-      (< abs-val 10) [(- value (* abs-val 3)) (+ value (* abs-val 3)) 0.1]
-      (< abs-val 100) [(- value (* abs-val 2)) (+ value (* abs-val 2)) 0.5]
-      :else [(- value (* abs-val 1.5)) (+ value (* abs-val 1.5)) 1])))
+  (let [abs-val (Math/abs (double value))
+        [raw-min raw-max step]
+        (cond
+          (zero? value) [-100 100 1]
+          (< abs-val 1) [(* value -5) (* value 5) (/ abs-val 100)]
+          (< abs-val 10) [(- value (* abs-val 3)) (+ value (* abs-val 3)) 0.1]
+          (< abs-val 100) [(- value (* abs-val 2)) (+ value (* abs-val 2)) 0.5]
+          :else [(- value (* abs-val 1.5)) (+ value (* abs-val 1.5)) 1])
+        ;; Clamp min to 0 for positive values (dimensions shouldn't go negative)
+        smin (if (pos? value) (max 0 raw-min) raw-min)]
+    [smin raw-max step]))
 
 (defn- do-tweak-update! []
   (when-let [{:keys [form script active-libs current-values]} @jvm-tweak-state]
@@ -308,7 +312,9 @@
                                :active-libs active-libs
                                :current-values current-values
                                :panel-el panel
-                               :esc-handler esc-handler}))))
+                               :esc-handler esc-handler})
+      ;; Initial kick: show the mesh with original values immediately
+      (do-tweak-update!))))
 
 (defn- evaluate-definitions-jvm
   "Evaluate definitions via JVM sidecar (async). Sends full script, receives meshes."
