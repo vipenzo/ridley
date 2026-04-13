@@ -231,9 +231,15 @@
 
 (defn- do-tweak-update! []
   (when-let [{:keys [form script active-libs current-values]} @jvm-tweak-state]
-    (when-let [result (jvm/tweak-update script form current-values active-libs)]
-      (let [meshes (:meshes result)]
-        (register-jvm-meshes! meshes false)))))
+    (let [result (jvm/tweak-update script form current-values active-libs)]
+      (when result
+        (let [meshes (:meshes result)
+              items (vec (keep (fn [[_name mesh]]
+                                 (when (and (:vertices mesh) (:faces mesh))
+                                   {:type :mesh :data mesh}))
+                               meshes))]
+          (when (seq items)
+            (viewport/show-preview! items)))))))
 
 (defn- create-jvm-tweak-panel!
   "Create slider panel for a JVM tweak session."
@@ -319,6 +325,8 @@
                                                                    (try (vec (js->clj (.parse js/JSON raw)))
                                                                         (catch :default _ [])))
                                                                  [])]
+                                             ;; Pass the full editor script — the server replaces
+                                             ;; (tweak <form>) with the modified form on each update
                                              (create-jvm-tweak-panel! tweak-session code active-libs)
                                              (add-repl-entry "[Run/JVM]" "Tweak mode active — move sliders" false))
                                            ;; Normal summary

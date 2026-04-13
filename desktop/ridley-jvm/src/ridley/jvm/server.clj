@@ -3,6 +3,7 @@
    Receives DSL scripts, evals them, returns mesh JSON."
   (:require [ring.adapter.jetty :as jetty]
             [clojure.data.json :as json]
+            [clojure.string :as str]
             [ridley.jvm.eval :as eval-engine]
             [ridley.jvm.library :as library]
             [ridley.jvm.tweak :as tweak])
@@ -207,38 +208,26 @@
         (cors-headers {:status 500
                        :body (json/write-str {:error (.getMessage e)})})))
 
-    ;; Tweak update: re-eval script with substituted values
+    ;; Tweak update: re-eval script with substituted values.
+    ;; Returns full mesh JSON (not binary) for WebKit sync XHR compatibility.
     (and (= :post (:request-method request))
          (= "/tweak-update" (:uri request)))
     (try
       (let [{:keys [script form values active_libraries]}
             (json/read-str (slurp (:body request)) :key-fn keyword)
-            ;; Parse original form, substitute values
             parsed-form (read-string form)
             values-map (into {} (map (fn [[k v]] [(Integer/parseInt (name k)) v]) values))
             modified-form (tweak/substitute-values parsed-form values-map)
-            ;; Build full script: editor content + modified expression
-            full-script (str script "\n" (pr-str modified-form))
-            ;; Eval
+            modified-str (pr-str modified-form)
+            ;; Replace (tweak <original-form>) with <modified-form> in the script
+            ;; This preserves the (register name ...) wrapper around it
+            tweak-pattern (str "(tweak " form ")")
+            full-script (clojure.string/replace script tweak-pattern modified-str)
             result (eval-engine/eval-script full-script active_libraries)
-            meshes (:meshes result)
-            mesh-file (when (seq meshes) (write-mesh-binary meshes))
-            mesh-meta (reduce-kv
-                       (fn [m k v]
-                         (assoc m k (when v
-                                      (cond-> {:vertex_count (count (:vertices v))
-                                               :face_count (count (:faces v))
-                                               :creation-pose (:creation-pose v)}
-                                        (contains? v :visible) (assoc :visible (:visible v))
-                                        (contains? v :color) (assoc :color (:color v))
-                                        (contains? v :material) (assoc :material (:material v))))))
-                       {} meshes)]
+            meshes (:meshes result)]
         (cors-headers
          {:status 200
-          :body (json/write-str
-                 {:meshes mesh-meta
-                  :mesh_file mesh-file
-                  :print_output (:print-output result)})}))
+          :body (json/write-str {:meshes meshes})}))
       (catch Exception e
         (cors-headers {:status 500
                        :body (json/write-str {:error (.getMessage e)})})))
