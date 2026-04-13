@@ -154,7 +154,10 @@
                       ^js meshes-meta-js (aget result "meshes")
                       mesh-file (aget result "mesh_file")
                       print-output (or (aget result "print_output") "")
-                      elapsed-ms (aget result "elapsed_ms")]
+                      elapsed-ms (aget result "elapsed_ms")
+                      tweak-session-js (aget result "tweak_session")
+                      tweak-session (when tweak-session-js
+                                      (js->clj tweak-session-js :keywordize-keys true))]
                   (if mesh-file
                     (let [file-id (second (re-find #"ridley-meshes-(\d+)\.bin" mesh-file))]
                       (-> (js/fetch (str server-url "/mesh-file/" file-id))
@@ -166,14 +169,16 @@
                                    (let [keys (js/Object.keys meshes-meta-js)
                                          pairs (map (fn [k] [k (aget meshes-meta-js k)]) keys)
                                          meshes (parse-meshes-from-buffer buf pairs)]
-                                     (on-result {:meshes meshes
-                                                 :print-output print-output
-                                                 :elapsed-ms elapsed-ms}))))
+                                     (on-result (cond-> {:meshes meshes
+                                                         :print-output print-output
+                                                         :elapsed-ms elapsed-ms}
+                                                  tweak-session (assoc :tweak-session tweak-session))))))
                           (.catch (fn [e]
                                     (on-result {:error (str "Mesh file error: " (.-message e))})))))
-                    (on-result {:meshes {}
-                                :print-output print-output
-                                :elapsed-ms elapsed-ms})))
+                    (on-result (cond-> {:meshes {}
+                                        :print-output print-output
+                                        :elapsed-ms elapsed-ms}
+                                 tweak-session (assoc :tweak-session tweak-session)))))
                 (catch :default e
                   (on-result {:error (str "Parse error: " (.-message e))})))
               (let [^js err (try (js/JSON.parse (.-responseText xhr))
