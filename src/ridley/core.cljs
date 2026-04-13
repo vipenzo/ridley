@@ -295,9 +295,35 @@
                                          (js/setTimeout
                                           (fn [] (do-tweak-update!))
                                           150))))))
-        (.appendChild row label-el)
-        (.appendChild row slider)
-        (.appendChild row value-el)
+        ;; Zoom buttons: + widens range, − narrows (more precise)
+        (let [zoom-fn (fn [factor]
+                        (let [cur (js/parseFloat (.-value slider))
+                              old-min (js/parseFloat (.-min slider))
+                              old-max (js/parseFloat (.-max slider))
+                              half-span (/ (* (- old-max old-min) factor) 2)
+                              old-step (js/parseFloat (.-step slider))
+                              new-step (if (> factor 1)
+                                         (* old-step 2)
+                                         (max 0.01 (/ old-step 2)))]
+                          (set! (.-min slider) (str (if (pos? cur) (max 0 (- cur half-span)) (- cur half-span))))
+                          (set! (.-max slider) (str (+ cur half-span)))
+                          (set! (.-step slider) (str new-step))
+                          (set! (.-value slider) (str cur))))
+              zoom-out (.createElement js/document "button")
+              zoom-in (.createElement js/document "button")]
+          (.add (.-classList zoom-out) "test-zoom-btn")
+          (.add (.-classList zoom-in) "test-zoom-btn")
+          (set! (.-textContent zoom-out) "+")
+          (set! (.-textContent zoom-in) "\u2212")
+          (set! (.-title zoom-out) "Wider range")
+          (set! (.-title zoom-in) "Narrower range (more precise)")
+          (.addEventListener zoom-out "click" (fn [_] (zoom-fn 2)))
+          (.addEventListener zoom-in "click" (fn [_] (zoom-fn 0.5)))
+          (.appendChild row label-el)
+          (.appendChild row zoom-in)
+          (.appendChild row slider)
+          (.appendChild row zoom-out)
+          (.appendChild row value-el))
         (.appendChild panel row)))
     ;; Insert panel into the REPL area
     (when-let [terminal (.getElementById js/document "repl-terminal")]
