@@ -195,3 +195,12 @@
     (if (seq active-libs)
       (jvm/eval-script-with-libraries code active-libs on-result)
       (jvm/eval-script code on-result))))
+
+(defn evaluate-repl-jvm
+  "Evaluate a REPL command via the JVM sidecar (async).
+   Uses persistent namespace — turtle state survives between calls.
+   Calls on-result with {:meshes ... :lines ... :print-output ... :result ... :elapsed-ms ...}
+   or {:error str}."
+  [command on-result]
+  (let [active-libs (or (jvm-read-active-libs) [])]
+    (jvm/eval-repl command active-libs on-result)))

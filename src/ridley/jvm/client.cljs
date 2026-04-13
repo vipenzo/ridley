@@ -84,6 +84,31 @@
             (recur (rest pairs) offset-after-faces (assoc result (keyword name) mesh))))
         result))))
 
+(defn- parse-lines
+  "Parse pen line data from JSON response."
+  [lines-js]
+  (when (and lines-js (pos? (.-length lines-js)))
+    (vec (map (fn [l]
+                {:type  (keyword (aget l "type"))
+                 :from  (vec (aget l "from"))
+                 :to    (vec (aget l "to"))
+                 :color (aget l "color")})
+              lines-js))))
+
+(defn- parse-stamps
+  "Parse stamp data from JSON response.
+   Each stamp is {:vertices [[x y z]...] :faces [[i j k]...] :color hex-int?}."
+  [stamps-js]
+  (when (and stamps-js (pos? (.-length stamps-js)))
+    (vec (map (fn [s]
+                (let [verts-js (aget s "vertices")
+                      faces-js (aget s "faces")
+                      color    (aget s "color")]
+                  (cond-> {:vertices (vec (map vec verts-js))
+                           :faces    (vec (map (fn [f] [(aget f 0) (aget f 1) (aget f 2)]) faces-js))}
+                    color (assoc :color color))))
+              stamps-js))))
+
 (defn eval-script
   "Send a DSL script to the JVM sidecar for evaluation (async).
    Calls on-result with {:meshes ... :print-output ... :elapsed-ms ...}
@@ -104,7 +129,8 @@
                       elapsed-ms (aget result "elapsed_ms")
                       tweak-session-js (aget result "tweak_session")
                       tweak-session (when tweak-session-js
-                                      (js->clj tweak-session-js :keywordize-keys true))]
+                                      (js->clj tweak-session-js :keywordize-keys true))
+                      stamps (parse-stamps (aget result "stamps"))]
                   (if mesh-file
                     (let [file-id (second (re-find #"ridley-meshes-(\d+)\.bin" mesh-file))]
                       (-> (js/fetch (str server-url "/mesh-file/" file-id))
@@ -117,12 +143,14 @@
                                          pairs (map (fn [k] [k (aget meshes-meta-js k)]) keys)
                                          meshes (parse-meshes-from-buffer buf pairs)]
                                      (on-result (cond-> {:meshes meshes
+                                                         :stamps stamps
                                                          :print-output print-output
                                                          :elapsed-ms elapsed-ms}
                                                   tweak-session (assoc :tweak-session tweak-session))))))
                           (.catch (fn [e]
                                     (on-result {:error (str "Mesh file error: " (.-message e))})))))
                     (on-result (cond-> {:meshes {}
+                                        :stamps stamps
                                         :print-output print-output
                                         :elapsed-ms elapsed-ms}
                                  tweak-session (assoc :tweak-session tweak-session)))))
@@ -137,6 +165,78 @@
     (set! (.-onerror xhr) (fn [] (on-result {:error "JVM connection error"})))
     (set! (.-ontimeout xhr) (fn [] (on-result {:error "JVM eval timed out"})))
     (.send xhr (js/JSON.stringify #js {:script script-text}))))
+
+(defn eval-repl
+  "Send a REPL command to the JVM sidecar for evaluation (async).
+   Uses persistent namespace — turtle state survives between calls.
+   Calls on-result with {:meshes ... :lines ... :print-output ... :result ... :elapsed-ms ...}
+   or {:error ...}."
+  [command-text active-library-names on-result]
+  (let [xhr (js/XMLHttpRequest.)]
+    (.open xhr "POST" (str server-url "/eval-repl") true)
+    (.setRequestHeader xhr "Content-Type" "application/json")
+    (set! (.-timeout xhr) 300000)
+    (set! (.-onload xhr)
+          (fn []
+            (if (= 200 (.-status xhr))
+              (try
+                (let [^js resp (js/JSON.parse (.-responseText xhr))
+                      ^js meshes-meta-js (aget resp "meshes")
+                      mesh-file (aget resp "mesh_file")
+                      print-output (or (aget resp "print_output") "")
+                      elapsed-ms (aget resp "elapsed_ms")
+                      eval-result (aget resp "result")
+                      lines (parse-lines (aget resp "lines"))
+                      stamps (parse-stamps (aget resp "stamps"))
+                      turtle-pose-js (aget resp "turtle_pose")
+                      turtle-pose (when turtle-pose-js
+                                    {:position (vec (aget turtle-pose-js "position"))
+                                     :heading  (vec (aget turtle-pose-js "heading"))
+                                     :up       (vec (aget turtle-pose-js "up"))})
+                      tweak-session-js (aget resp "tweak_session")
+                      tweak-session (when tweak-session-js
+                                      (js->clj tweak-session-js :keywordize-keys true))]
+                  (if mesh-file
+                    (let [file-id (second (re-find #"ridley-meshes-(\d+)\.bin" mesh-file))]
+                      (-> (js/fetch (str server-url "/mesh-file/" file-id))
+                          (.then (fn [r]
+                                   (if (.-ok r)
+                                     (.arrayBuffer r)
+                                     (throw (js/Error. (str "Mesh file fetch failed: " (.-status r)))))))
+                          (.then (fn [buf]
+                                   (let [keys (js/Object.keys meshes-meta-js)
+                                         pairs (map (fn [k] [k (aget meshes-meta-js k)]) keys)
+                                         meshes (parse-meshes-from-buffer buf pairs)]
+                                     (on-result (cond-> {:meshes meshes
+                                                         :lines lines
+                                                         :stamps stamps
+                                                         :print-output print-output
+                                                         :result eval-result
+                                                         :elapsed-ms elapsed-ms
+                                                         :turtle-pose turtle-pose}
+                                                  tweak-session (assoc :tweak-session tweak-session))))))
+                          (.catch (fn [e]
+                                    (on-result {:error (str "Mesh file error: " (.-message e))})))))
+                    (on-result (cond-> {:meshes {}
+                                        :lines lines
+                                        :stamps stamps
+                                        :print-output print-output
+                                        :result eval-result
+                                        :elapsed-ms elapsed-ms
+                                        :turtle-pose turtle-pose}
+                                 tweak-session (assoc :tweak-session tweak-session)))))
+                (catch :default e
+                  (on-result {:error (str "Parse error: " (.-message e))})))
+              (let [^js err (try (js/JSON.parse (.-responseText xhr))
+                                 (catch :default _ nil))]
+                (on-result {:error (if err
+                                     (or (.-error err) (.-responseText xhr))
+                                     (str "JVM REPL failed: HTTP " (.-status xhr)))})))))
+    (set! (.-onerror xhr) (fn [] (on-result {:error "JVM connection error"})))
+    (set! (.-ontimeout xhr) (fn [] (on-result {:error "JVM REPL timed out"})))
+    (.send xhr (js/JSON.stringify
+                #js {:command command-text
+                     :active_libraries (clj->js (or active-library-names []))}))))
 
 (defn eval-script-with-libraries
   "Like eval-script but includes active library names so the sidecar
@@ -158,7 +258,8 @@
                       elapsed-ms (aget result "elapsed_ms")
                       tweak-session-js (aget result "tweak_session")
                       tweak-session (when tweak-session-js
-                                      (js->clj tweak-session-js :keywordize-keys true))]
+                                      (js->clj tweak-session-js :keywordize-keys true))
+                      stamps (parse-stamps (aget result "stamps"))]
 
                   (if mesh-file
                     (let [file-id (second (re-find #"ridley-meshes-(\d+)\.bin" mesh-file))]
@@ -175,6 +276,7 @@
                                          meshes (parse-meshes-from-buffer buf pairs)]
 
                                      (on-result (cond-> {:meshes meshes
+                                                         :stamps stamps
                                                          :print-output print-output
                                                          :elapsed-ms elapsed-ms}
                                                   tweak-session (assoc :tweak-session tweak-session))))))
@@ -182,6 +284,7 @@
                                     (js/console.error "[eval-with-libs] fetch error:" e)
                                     (on-result {:error (str "Mesh file error: " (.-message e))})))))
                     (on-result (cond-> {:meshes {}
+                                        :stamps stamps
                                         :print-output print-output
                                         :elapsed-ms elapsed-ms}
                                  tweak-session (assoc :tweak-session tweak-session)))))
@@ -262,6 +365,41 @@
                                 mesh-keys))}))))
     (catch :default e
       (js/console.warn "tweak-update error:" e)
+      nil)))
+
+(defn tweak-repl-update
+  "Send a tweak slider update for a REPL command (sync).
+   Uses /tweak-repl-update which re-evals via eval-repl (persistent namespace).
+   Returns {:meshes {name mesh}} or nil on error."
+  [command form values-map active-libraries]
+  (try
+    (let [xhr (js/XMLHttpRequest.)]
+      (.open xhr "POST" (str server-url "/tweak-repl-update") false)
+      (.setRequestHeader xhr "Content-Type" "application/json")
+      (.send xhr (js/JSON.stringify
+                  #js {:command command
+                       :form form
+                       :values (clj->js values-map)
+                       :active_libraries (clj->js (or active-libraries []))}))
+      (when (= 200 (.-status xhr))
+        (let [^js result (js/JSON.parse (.-responseText xhr))
+              meshes-js (aget result "meshes")
+              mesh-keys (when meshes-js (js/Object.keys meshes-js))]
+          (when (and mesh-keys (pos? (.-length mesh-keys)))
+            {:meshes (into {}
+                           (map (fn [k]
+                                  (let [^js m (aget meshes-js k)
+                                        verts-js (aget m "vertices")
+                                        faces-js (aget m "faces")]
+                                    (when (and verts-js faces-js)
+                                      [(keyword k)
+                                       {:type :mesh
+                                        :vertices (vec (map (fn [v] [(aget v 0) (aget v 1) (aget v 2)]) verts-js))
+                                        :faces (vec (map (fn [f] [(int (aget f 0)) (int (aget f 1)) (int (aget f 2))]) faces-js))
+                                        :creation-pose {:position [0 0 0] :heading [1 0 0] :up [0 0 1]}}])))
+                                mesh-keys))}))))
+    (catch :default e
+      (js/console.warn "tweak-repl-update error:" e)
       nil)))
 
 (defn delete-library

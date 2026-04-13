@@ -79,6 +79,7 @@
    Accepts optional active_libraries: [\"name1\", \"name2\"] to alias
    library namespaces into the eval context."
   [body]
+  (eval-engine/reset-repl!) ;; Reset REPL namespace when definitions are re-evaluated
   (let [{:keys [script active_libraries]} (json/read-str body :key-fn keyword)
         t0 (System/nanoTime)
         result (eval-engine/eval-script script active_libraries)
@@ -107,7 +108,60 @@
              (cond-> {:meshes mesh-meta
                       :elapsed_ms elapsed-ms
                       :print_output print-output
-                      :mesh_file mesh-file}
+                      :mesh_file mesh-file
+                      :stamps (:stamps result)}
+               (:tweak-session result)
+               (assoc :tweak_session (:tweak-session result))))})))
+
+(defn- serialize-lines
+  "Convert pen line data to JSON-safe format."
+  [lines]
+  (mapv (fn [l]
+          {"type"  (:type l)
+           "from"  (:from l)
+           "to"    (:to l)
+           "color" (:color l)})
+        lines))
+
+(defn- handle-eval-repl
+  "REPL eval endpoint: persistent namespace, preserves turtle state.
+   Returns binary meshes + lines/stamps/result as JSON."
+  [body]
+  (let [{:keys [command active_libraries]} (json/read-str body :key-fn keyword)
+        t0 (System/nanoTime)
+        result (eval-engine/eval-repl command active_libraries)
+        t1 (System/nanoTime)
+        elapsed-ms (/ (- t1 t0) 1e6)
+        meshes (:meshes result)
+        lines  (:lines result)
+        stamps (:stamps result)
+        print-output (:print-output result)
+        eval-result  (:result result)
+        ;; Build mesh metadata
+        mesh-meta (reduce-kv
+                   (fn [m k v]
+                     (assoc m k (when v
+                                  (cond-> {:vertex_count (count (:vertices v))
+                                           :face_count (count (:faces v))
+                                           :creation-pose (:creation-pose v)}
+                                    (contains? v :visible) (assoc :visible (:visible v))
+                                    (contains? v :color)   (assoc :color (:color v))
+                                    (contains? v :material) (assoc :material (:material v))))))
+                   {} meshes)
+        mesh-file (when (seq meshes) (write-mesh-binary meshes))]
+    (println (format "eval-repl: %.1fms, %d mesh(es), %d line(s)"
+                     elapsed-ms (count meshes) (count lines)))
+    (cors-headers
+     {:status 200
+      :body (json/write-str
+             (cond-> {:meshes mesh-meta
+                      :mesh_file mesh-file
+                      :elapsed_ms elapsed-ms
+                      :print_output print-output
+                      :result eval-result
+                      :lines (serialize-lines lines)
+                      :stamps (:stamps result)
+                      :turtle_pose (:turtle-pose result)}
                (:tweak-session result)
                (assoc :tweak_session (:tweak-session result))))})))
 
@@ -140,6 +194,23 @@
          (= "/eval-bin" (:uri request)))
     (try
       (handle-eval-bin (slurp (:body request)))
+      (catch Exception e
+        (let [root (loop [ex e]
+                     (if-let [cause (.getCause ex)]
+                       (recur cause)
+                       ex))
+              msg (str (.getMessage e)
+                       (when (not= root e)
+                         (str "\nCaused by: " (.getMessage root))))]
+          (cors-headers
+           {:status 500
+            :body (json/write-str {:error msg})}))))
+
+    ;; REPL eval (persistent namespace, preserves turtle state)
+    (and (= :post (:request-method request))
+         (= "/eval-repl" (:uri request)))
+    (try
+      (handle-eval-repl (slurp (:body request)))
       (catch Exception e
         (let [root (loop [ex e]
                      (if-let [cause (.getCause ex)]
@@ -224,6 +295,28 @@
             tweak-pattern (str "(tweak " form ")")
             full-script (clojure.string/replace script tweak-pattern modified-str)
             result (eval-engine/eval-script full-script active_libraries)
+            meshes (:meshes result)]
+        (cors-headers
+         {:status 200
+          :body (json/write-str {:meshes meshes})}))
+      (catch Exception e
+        (cors-headers {:status 500
+                       :body (json/write-str {:error (.getMessage e)})})))
+
+    ;; Tweak REPL update: re-eval REPL command with substituted values.
+    ;; Uses eval-repl (persistent namespace) instead of eval-script.
+    (and (= :post (:request-method request))
+         (= "/tweak-repl-update" (:uri request)))
+    (try
+      (let [{:keys [command form values active_libraries]}
+            (json/read-str (slurp (:body request)) :key-fn keyword)
+            parsed-form (read-string form)
+            values-map (into {} (map (fn [[k v]] [(Integer/parseInt (name k)) v]) values))
+            modified-form (tweak/substitute-values parsed-form values-map)
+            modified-str (pr-str modified-form)
+            tweak-pattern (str "(tweak " form ")")
+            full-command (clojure.string/replace command tweak-pattern modified-str)
+            result (eval-engine/eval-repl full-command active_libraries)
             meshes (:meshes result)]
         (cors-headers
          {:status 200

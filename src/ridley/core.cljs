@@ -228,13 +228,15 @@
 (defn- jvm-tweak-confirm!
   "Confirm tweak: log the final expression with tweaked values, re-eval to register."
   []
-  (when-let [{:keys [form current-values panel-el esc-handler script active-libs]} @jvm-tweak-state]
+  (when-let [{:keys [form current-values panel-el esc-handler script command active-libs mode]} @jvm-tweak-state]
     (when panel-el (.remove panel-el))
     (when esc-handler (.removeEventListener js/document "keydown" esc-handler))
     (viewport/clear-preview!)
     ;; Build the final expression string with substituted values
     ;; by sending one last tweak-update and using the result
-    (let [result (jvm/tweak-update script form current-values active-libs)]
+    (let [result (if (= mode :repl)
+                   (jvm/tweak-repl-update command form current-values active-libs)
+                   (jvm/tweak-update script form current-values active-libs))]
       (when result
         (let [meshes (:meshes result)]
           (doseq [[name mesh] meshes]
@@ -268,8 +270,10 @@
     [smin raw-max step]))
 
 (defn- do-tweak-update! []
-  (when-let [{:keys [form script active-libs current-values]} @jvm-tweak-state]
-    (let [result (jvm/tweak-update script form current-values active-libs)]
+  (when-let [{:keys [form script command active-libs current-values mode]} @jvm-tweak-state]
+    (let [result (if (= mode :repl)
+                   (jvm/tweak-repl-update command form current-values active-libs)
+                   (jvm/tweak-update script form current-values active-libs))]
       (when result
         (let [meshes (:meshes result)
               items (vec (keep (fn [[_name mesh]]
@@ -280,8 +284,9 @@
             (viewport/show-preview! items)))))))
 
 (defn- create-jvm-tweak-panel!
-  "Create slider panel for a JVM tweak session."
-  [tweak-session script active-libs]
+  "Create slider panel for a JVM tweak session.
+   mode: :definitions (default) or :repl. command: original REPL command (for :repl mode)."
+  [tweak-session script active-libs & {:keys [mode command] :or {mode :definitions}}]
   (jvm-tweak-cancel!)
   (let [{:keys [form literals]} tweak-session
         panel (.createElement js/document "div")
@@ -379,6 +384,8 @@
       (.addEventListener js/document "keydown" esc-handler)
       (reset! jvm-tweak-state {:form form
                                :script script
+                               :command command
+                               :mode mode
                                :active-libs active-libs
                                :current-values current-values
                                :panel-el panel
@@ -397,10 +404,12 @@
                                        (do
                                          (show-error error)
                                          (audio/play-feedback! false))
-                                       (let [{:keys [meshes print-output elapsed-ms tweak-session]} result]
+                                       (let [{:keys [meshes stamps print-output elapsed-ms tweak-session]} result]
                                          (hide-error)
                                          (when (seq print-output)
                                            (add-script-output print-output))
+                                         (when (seq stamps)
+                                           (registry/set-stamps! stamps))
                                          (register-jvm-meshes! meshes reset-camera?)
                                          ;; Check for tweak session
                                          (if tweak-session
@@ -636,33 +645,61 @@
             ;; Send to connected clients if we're the host
               (when (= :host @sync-mode)
                 (sync/send-repl-command input))
-            ;; Evaluate REPL input only (definitions already in context)
-              (let [result (repl/evaluate-repl input)]
-                (if-let [error (:error result)]
-                  (do
-                    (add-repl-entry input error true)
-                    (show-error error)
-                    (audio/play-feedback! false))
-                  (do
-                    (hide-error)
-                  ;; Show result in terminal history (with any print output)
-                    (add-repl-entry input (:implicit-result result) false (:print-output result))
-                  ;; Extract lines, stamps, and meshes from REPL evaluation
-                  ;; Skip viewport update when tweak mode is active — its
-                  ;; preview would be clobbered by the refresh.
-                    (when-not (test-mode/active?)
-                      (when-let [render-data (repl/extract-render-data result)]
-                        (registry/add-lines! (:lines render-data))
-                        (registry/add-stamps! (or (:stamps render-data) []))
-                        (registry/set-definition-meshes! (:meshes render-data)))
-                    ;; Update viewport (don't reset camera)
-                      (registry/refresh-viewport! false))
-                  ;; Update turtle indicator
-                    (update-turtle-indicator)
-                  ;; Sync AI state
-                    (sync-voice-state)
-                  ;; Audio feedback
-                    (audio/play-feedback! true)))))))))))
+            ;; Route to JVM or SCI
+              (if @jvm-mode
+                ;; JVM REPL (async)
+                (repl/evaluate-repl-jvm input
+                                        (fn [result]
+                                          (if-let [error (:error result)]
+                                            (do
+                                              (add-repl-entry input error true)
+                                              (show-error error)
+                                              (audio/play-feedback! false))
+                                            (do
+                                              (hide-error)
+                                              (add-repl-entry input (:result result) false (:print-output result))
+                                              (when-not (test-mode/active?)
+                          ;; Register meshes from JVM result
+                                                (when (seq (:meshes result))
+                                                  (register-jvm-meshes! (:meshes result) false))
+                          ;; Add pen lines
+                                                (when (seq (:lines result))
+                                                  (registry/add-lines! (:lines result)))
+                          ;; Add stamps
+                                                (when (seq (:stamps result))
+                                                  (registry/add-stamps! (:stamps result)))
+                                                (registry/refresh-viewport! false))
+                                              (when-let [pose (:turtle-pose result)]
+                                                (viewport/update-turtle-pose pose))
+                                              ;; Check for tweak session
+                                              (when-let [tweak-session (:tweak-session result)]
+                                                (let [active-libs (or (when-let [raw (.getItem js/localStorage "ridley:jvm-libs:active")]
+                                                                        (try (vec (js->clj (.parse js/JSON raw)))
+                                                                             (catch :default _ [])))
+                                                                      [])]
+                                                  (create-jvm-tweak-panel! tweak-session nil active-libs
+                                                                           :mode :repl :command input)))
+                                              (sync-voice-state)
+                                              (audio/play-feedback! true)))))
+                ;; SCI REPL (sync)
+                (let [result (repl/evaluate-repl input)]
+                  (if-let [error (:error result)]
+                    (do
+                      (add-repl-entry input error true)
+                      (show-error error)
+                      (audio/play-feedback! false))
+                    (do
+                      (hide-error)
+                      (add-repl-entry input (:implicit-result result) false (:print-output result))
+                      (when-not (test-mode/active?)
+                        (when-let [render-data (repl/extract-render-data result)]
+                          (registry/add-lines! (:lines render-data))
+                          (registry/add-stamps! (or (:stamps render-data) []))
+                          (registry/set-definition-meshes! (:meshes render-data)))
+                        (registry/refresh-viewport! false))
+                      (update-turtle-indicator)
+                      (sync-voice-state)
+                      (audio/play-feedback! true))))))))))))
 
 (defn- navigate-history
   "Navigate command history. direction: -1 for older, +1 for newer."
@@ -1172,19 +1209,38 @@
   "Called when we receive a REPL command from host. Execute it and show in history."
   [command]
   (when (seq (str/trim command))
-    (let [result (repl/evaluate-repl command)]
-      (if-let [error (:error result)]
-        (do
-          (add-repl-entry command error true)
-          (show-error error))
-        (do
-          (hide-error)
-          (add-repl-entry command (:implicit-result result) false (:print-output result))
-          (when-let [render-data (repl/extract-render-data result)]
-            (registry/add-lines! (:lines render-data))
-            (registry/add-stamps! (or (:stamps render-data) []))
-            (registry/set-definition-meshes! (:meshes render-data)))
-          (registry/refresh-viewport! false))))))
+    (if @jvm-mode
+      (repl/evaluate-repl-jvm command
+                              (fn [result]
+                                (if-let [error (:error result)]
+                                  (do
+                                    (add-repl-entry command error true)
+                                    (show-error error))
+                                  (do
+                                    (hide-error)
+                                    (add-repl-entry command (:result result) false (:print-output result))
+                                    (when (seq (:meshes result))
+                                      (register-jvm-meshes! (:meshes result) false))
+                                    (when (seq (:lines result))
+                                      (registry/add-lines! (:lines result)))
+                                    (when (seq (:stamps result))
+                                      (registry/add-stamps! (:stamps result)))
+                                    (registry/refresh-viewport! false)
+                                    (when-let [pose (:turtle-pose result)]
+                                      (viewport/update-turtle-pose pose))))))
+      (let [result (repl/evaluate-repl command)]
+        (if-let [error (:error result)]
+          (do
+            (add-repl-entry command error true)
+            (show-error error))
+          (do
+            (hide-error)
+            (add-repl-entry command (:implicit-result result) false (:print-output result))
+            (when-let [render-data (repl/extract-render-data result)]
+              (registry/add-lines! (:lines render-data))
+              (registry/add-stamps! (or (:stamps render-data) []))
+              (registry/set-definition-meshes! (:meshes render-data)))
+            (registry/refresh-viewport! false)))))))
 
 (defn- update-sync-status-text
   "Update the sync status text in toolbar."

@@ -40,6 +40,7 @@
 (def registered-shapes-store (atom {}))
 (def source-forms (atom {}))
 (def stamp-accumulator (atom []))
+(def line-accumulator (atom []))
 (def mark-anchors (atom {}))
 
 (defn reset-state! []
@@ -50,11 +51,22 @@
   (reset! registered-shapes-store {})
   (reset! source-forms {})
   (reset! stamp-accumulator [])
+  (reset! line-accumulator [])
   (reset! mark-anchors {}))
 
 ;; ── Implicit turtle commands (mutate global state) ──────────────
 
-(defn implicit-f [dist] (swap! turtle-state turtle/f dist))
+(defn- record-pen-lines!
+  "Flush any pen traces from turtle state :geometry to the line accumulator."
+  []
+  (let [lines (:geometry @turtle-state)]
+    (when (seq lines)
+      (swap! line-accumulator into lines)
+      (swap! turtle-state assoc :geometry []))))
+
+(defn implicit-f [dist]
+  (swap! turtle-state turtle/f dist)
+  (record-pen-lines!))
 (defn implicit-th [angle] (swap! turtle-state turtle/th angle))
 (defn implicit-tv [angle] (swap! turtle-state turtle/tv angle))
 (defn implicit-tr [angle] (swap! turtle-state turtle/tr angle))
@@ -62,8 +74,12 @@
 (defn implicit-d [dist] (swap! turtle-state turtle/move-down dist))
 (defn implicit-rt [dist] (swap! turtle-state turtle/move-right dist))
 (defn implicit-lt [dist] (swap! turtle-state turtle/move-left dist))
-(defn implicit-arc-h [radius angle] (swap! turtle-state turtle/arc-h radius angle))
-(defn implicit-arc-v [radius angle] (swap! turtle-state turtle/arc-v radius angle))
+(defn implicit-arc-h [radius angle]
+  (swap! turtle-state turtle/arc-h radius angle)
+  (record-pen-lines!))
+(defn implicit-arc-v [radius angle]
+  (swap! turtle-state turtle/arc-v radius angle)
+  (record-pen-lines!))
 (defn implicit-pen [mode _shape] (swap! turtle-state turtle/pen mode))
 (defn implicit-stamp
   "Stamp a shape at current turtle pose. Creates a flat mesh and adds to
@@ -2103,7 +2119,7 @@
          output (java.io.StringWriter.)]
      (try
        (binding [*ns* ns-obj]
-         (refer 'clojure.core))
+         (refer 'clojure.core :exclude '[abs]))
        (doseq [[sym val] dsl-bindings]
          (intern ns-obj sym val))
        ;; Inject macros
@@ -2142,14 +2158,115 @@
        (binding [*ns* ns-obj
                  *out* output]
          (load-string script-text))
-      ;; Collect stamps from global accumulator (survives turtle scopes)
+      ;; Collect stamps and lines from global accumulators
        (let [stamps @stamp-accumulator
-             stamp-meshes (when (seq stamps)
-                            (reduce (fn [m [i mesh]]
-                                      (assoc m (symbol (str "__stamp_" i)) mesh))
-                                    {} (map-indexed vector stamps)))]
-         (cond-> {:meshes (merge @registered-meshes stamp-meshes)
-                  :print-output (str output)}
+             lines @line-accumulator]
+         (cond-> {:meshes @registered-meshes
+                  :print-output (str output)
+                  :lines lines
+                  :stamps stamps}
            @tweak/tweak-session (assoc :tweak-session @tweak/tweak-session)))
        (finally
          (remove-ns ns-sym))))))
+
+;; ── Persistent REPL namespace (survives between commands) ──────
+
+(def ^:private repl-ns-sym (atom nil))
+
+(defn- ensure-repl-ns!
+  "Ensure the persistent REPL namespace exists with DSL bindings and macros.
+   Re-creates it if nil (first call or after reset)."
+  [active-libraries]
+  (when (or (nil? @repl-ns-sym)
+            (nil? (find-ns @repl-ns-sym)))
+    (let [ns-sym (gensym "ridley-repl-")]
+      (reset! repl-ns-sym ns-sym)
+      (let [ns-obj (create-ns ns-sym)]
+        (binding [*ns* ns-obj]
+          (refer 'clojure.core :exclude '[abs]))
+        (doseq [[sym val] dsl-bindings]
+          (intern ns-obj sym val))
+        ;; Inject macros
+        (binding [*ns* ns-obj]
+          (load-string path-macro-source)
+          (load-string extrude-macro-source)
+          (load-string extrude-closed-macro-source)
+          (load-string loft-macro-source)
+          (load-string loft-n-macro-source)
+          (load-string bloft-macro-source)
+          (load-string bloft-n-macro-source)
+          (load-string revolve-macro-source)
+          (load-string extrude+-macro-source)
+          (load-string revolve+-macro-source)
+          (load-string transform->macro-source)
+          (load-string shape-macro-source)
+          (load-string pen-macro-source)
+          (load-string smooth-path-macro-source)
+          (load-string warp-macro-source)
+          (load-string attach-macro-source)
+          (load-string attach-face-macro-source)
+          (load-string clone-face-macro-source)
+          (load-string turtle-macro-source)
+          (load-string register-macro-source)
+          (load-string tweak-macro-source)))))
+  ;; Always update library aliases (they may change between commands)
+  (let [ns-sym @repl-ns-sym]
+    (if (seq active-libraries)
+      (let [eval-ns (the-ns ns-sym)]
+        (doseq [lib-name active-libraries]
+          (let [lib-sym (symbol lib-name)]
+            (when (find-ns lib-sym)
+              (.addAlias ^clojure.lang.Namespace eval-ns lib-sym (the-ns lib-sym)))))
+        (library/inject-library-namespaces! ns-sym)))
+    @repl-ns-sym))
+
+(defn reset-repl!
+  "Reset the persistent REPL namespace. Called when definitions are re-evaluated."
+  []
+  (when-let [ns-sym @repl-ns-sym]
+    (try (remove-ns ns-sym) (catch Exception _)))
+  (reset! repl-ns-sym nil)
+  (reset-state!))
+
+(defn eval-repl
+  "Evaluate a REPL command in the persistent namespace.
+   Preserves turtle state (position, heading, up) between commands.
+   Clears geometry and accumulators each command for fresh output.
+   Returns {:meshes map :lines vec :stamps vec :print-output str :result any}."
+  ([repl-text] (eval-repl repl-text nil))
+  ([repl-text active-libraries]
+   (reset! registered-meshes {})
+   (reset! stamp-accumulator [])
+   (reset! line-accumulator [])
+   (reset! tweak/tweak-session nil)
+   (swap! turtle-state assoc :geometry [] :meshes [])
+   (let [ns-sym (ensure-repl-ns! active-libraries)
+         ns-obj (the-ns ns-sym)
+         output (java.io.StringWriter.)
+         result (binding [*ns* ns-obj
+                          *out* output]
+                  (load-string repl-text))
+         stamps @stamp-accumulator
+         lines  @line-accumulator
+         t      @turtle-state
+         ;; If result is a mesh but not registered, include it as __result
+         meshes (if (and (map? result) (:vertices result) (:faces result)
+                         (empty? @registered-meshes))
+                  {'__result result}
+                  @registered-meshes)
+         ;; Format result for display — summarize meshes
+         display-result (cond
+                          (and (map? result) (:vertices result))
+                          (str "#mesh [" (count (:vertices result)) " verts, "
+                               (count (:faces result)) " faces]")
+                          :else (pr-str result))]
+     (cond-> {:meshes meshes
+              :lines lines
+              :stamps stamps
+              :print-output (str output)
+              :result display-result
+              :raw-result result
+              :turtle-pose {:position (:position t)
+                            :heading  (:heading t)
+                            :up       (:up t)}}
+       @tweak/tweak-session (assoc :tweak-session @tweak/tweak-session)))))
