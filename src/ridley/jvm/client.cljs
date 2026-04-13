@@ -101,11 +101,12 @@
                       ^js meshes-meta-js (aget result "meshes")
                       mesh-file (aget result "mesh_file")
                       print-output (or (aget result "print_output") "")
-                      elapsed-ms (aget result "elapsed_ms")]
+                      elapsed-ms (aget result "elapsed_ms")
+                      tweak-session-js (aget result "tweak_session")
+                      tweak-session (when tweak-session-js
+                                      (js->clj tweak-session-js :keywordize-keys true))]
                   (if mesh-file
-                ;; Fetch binary file from JVM server
-                    (let [;; Extract file ID from path like /tmp/ridley-meshes-42.bin
-                          file-id (second (re-find #"ridley-meshes-(\d+)\.bin" mesh-file))]
+                    (let [file-id (second (re-find #"ridley-meshes-(\d+)\.bin" mesh-file))]
                       (-> (js/fetch (str server-url "/mesh-file/" file-id))
                           (.then (fn [resp]
                                    (if (.-ok resp)
@@ -115,15 +116,16 @@
                                    (let [keys (js/Object.keys meshes-meta-js)
                                          pairs (map (fn [k] [k (aget meshes-meta-js k)]) keys)
                                          meshes (parse-meshes-from-buffer buf pairs)]
-                                     (on-result {:meshes meshes
-                                                 :print-output print-output
-                                                 :elapsed-ms elapsed-ms}))))
+                                     (on-result (cond-> {:meshes meshes
+                                                         :print-output print-output
+                                                         :elapsed-ms elapsed-ms}
+                                                  tweak-session (assoc :tweak-session tweak-session))))))
                           (.catch (fn [e]
                                     (on-result {:error (str "Mesh file error: " (.-message e))})))))
-                ;; No mesh file (empty result)
-                    (on-result {:meshes {}
-                                :print-output print-output
-                                :elapsed-ms elapsed-ms})))
+                    (on-result (cond-> {:meshes {}
+                                        :print-output print-output
+                                        :elapsed-ms elapsed-ms}
+                                 tweak-session (assoc :tweak-session tweak-session)))))
                 (catch :default e
                   (on-result {:error (str "Parse error: " (.-message e))})))
           ;; Error response
@@ -212,6 +214,39 @@
     (set! (.-ontimeout xhr) (fn [] (on-result {:error "Import timed out"})))
     (.send xhr (js/JSON.stringify #js {:filename filename
                                        :data_base64 b64}))))
+
+(defn tweak-update
+  "Send a tweak slider update to the JVM sidecar (sync for interactive feel).
+   Returns {:meshes ...} or nil on error."
+  [script form values-map active-libraries]
+  (try
+    (let [xhr (js/XMLHttpRequest.)]
+      (.open xhr "POST" (str server-url "/tweak-update") false) ;; synchronous
+      (.setRequestHeader xhr "Content-Type" "application/json")
+      (.send xhr (js/JSON.stringify
+                  #js {:script script
+                       :form form
+                       :values (clj->js values-map)
+                       :active_libraries (clj->js (or active-libraries []))}))
+      (when (= 200 (.-status xhr))
+        (let [^js result (js/JSON.parse (.-responseText xhr))
+              mesh-file (aget result "mesh_file")]
+          (when mesh-file
+            (let [file-id (second (re-find #"ridley-meshes-(\d+)\.bin" mesh-file))
+                  ;; Fetch binary synchronously too
+                  xhr2 (js/XMLHttpRequest.)]
+              (.open xhr2 "GET" (str server-url "/mesh-file/" file-id) false)
+              (set! (.-responseType xhr2) "arraybuffer")
+              (.send xhr2)
+              (when (= 200 (.-status xhr2))
+                (let [buf (.-response xhr2)
+                      meshes-meta-js (aget result "meshes")
+                      keys (js/Object.keys meshes-meta-js)
+                      pairs (map (fn [k] [k (aget meshes-meta-js k)]) keys)]
+                  {:meshes (parse-meshes-from-buffer buf pairs)})))))))
+    (catch :default e
+      (js/console.warn "tweak-update error:" e)
+      nil)))
 
 (defn delete-library
   "Delete a library from the JVM sidecar. Removes file + namespace.

@@ -198,6 +198,105 @@
         ;; Audio feedback
         (audio/play-feedback! true)))))
 
+(defn- register-jvm-meshes!
+  "Register meshes from JVM eval result in the scene registry."
+  [meshes reset-camera?]
+  (doseq [[name mesh] meshes]
+    (let [mesh (if-let [c (:color mesh)]
+                 (update mesh :material merge {:color c})
+                 mesh)]
+      (registry/register-mesh! name mesh)
+      (when (false? (:visible mesh))
+        (registry/hide-mesh! name))))
+  (registry/refresh-viewport! reset-camera?))
+
+;; ── JVM Tweak slider UI ──────────────────────────────────────
+
+(defonce ^:private jvm-tweak-state (atom nil))
+
+(defn- cleanup-jvm-tweak! []
+  (when-let [{:keys [panel-el esc-handler]} @jvm-tweak-state]
+    (when panel-el (.remove panel-el))
+    (when esc-handler (.removeEventListener js/document "keydown" esc-handler)))
+  (reset! jvm-tweak-state nil))
+
+(defn- slider-range [value]
+  (let [abs-val (Math/abs (double value))]
+    (cond
+      (zero? value) [-100 100 1]
+      (< abs-val 1) [(* value -5) (* value 5) (/ abs-val 100)]
+      (< abs-val 10) [(- value (* abs-val 3)) (+ value (* abs-val 3)) 0.1]
+      (< abs-val 100) [(- value (* abs-val 2)) (+ value (* abs-val 2)) 0.5]
+      :else [(- value (* abs-val 1.5)) (+ value (* abs-val 1.5)) 1])))
+
+(defn- do-tweak-update! []
+  (when-let [{:keys [form script active-libs current-values]} @jvm-tweak-state]
+    (when-let [result (jvm/tweak-update script form current-values active-libs)]
+      (let [meshes (:meshes result)]
+        (register-jvm-meshes! meshes false)))))
+
+(defn- create-jvm-tweak-panel!
+  "Create slider panel for a JVM tweak session."
+  [tweak-session script active-libs]
+  (cleanup-jvm-tweak!)
+  (let [{:keys [form literals]} tweak-session
+        panel (.createElement js/document "div")
+        current-values (into {} (map (fn [lit] [(:index lit) (:value lit)]) literals))]
+    (set! (.-id panel) "test-slider-panel")
+    ;; Header
+    (let [header (.createElement js/document "div")]
+      (.add (.-classList header) "slider-header")
+      (set! (.-innerHTML header) "<b>Tweak</b> <span style='opacity:0.6'>(Esc to close)</span>")
+      (.appendChild panel header))
+    ;; Sliders
+    (doseq [{:keys [index value label]} literals]
+      (let [[smin smax step] (slider-range value)
+            row (.createElement js/document "div")
+            label-el (.createElement js/document "span")
+            slider (.createElement js/document "input")
+            value-el (.createElement js/document "span")]
+        (.add (.-classList row) "slider-row")
+        (.add (.-classList label-el) "slider-label")
+        (set! (.-textContent label-el) (or label (str value)))
+        (.add (.-classList value-el) "slider-value")
+        (set! (.-textContent value-el) (str value))
+        (set! (.-type slider) "range")
+        (set! (.-min slider) (str smin))
+        (set! (.-max slider) (str smax))
+        (set! (.-step slider) (str step))
+        (set! (.-value slider) (str value))
+        (.add (.-classList slider) "test-slider")
+        ;; Debounced input handler
+        (let [timeout (atom nil)]
+          (.addEventListener slider "input"
+                             (fn [_]
+                               (let [new-val (js/parseFloat (.-value slider))]
+                                 (set! (.-textContent value-el) (str new-val))
+                                 (swap! jvm-tweak-state assoc-in [:current-values index] new-val)
+                                 (when-let [t @timeout] (js/clearTimeout t))
+                                 (reset! timeout
+                                         (js/setTimeout
+                                          (fn [] (do-tweak-update!))
+                                          150))))))
+        (.appendChild row label-el)
+        (.appendChild row slider)
+        (.appendChild row value-el)
+        (.appendChild panel row)))
+    ;; Insert panel into the REPL area
+    (when-let [terminal (.getElementById js/document "repl-terminal")]
+      (.insertBefore terminal panel (.-firstChild terminal)))
+    ;; Esc handler
+    (let [esc-handler (fn [e]
+                        (when (= "Escape" (.-key e))
+                          (cleanup-jvm-tweak!)))]
+      (.addEventListener js/document "keydown" esc-handler)
+      (reset! jvm-tweak-state {:form form
+                               :script script
+                               :active-libs active-libs
+                               :current-values current-values
+                               :panel-el panel
+                               :esc-handler esc-handler}))))
+
 (defn- evaluate-definitions-jvm
   "Evaluate definitions via JVM sidecar (async). Sends full script, receives meshes."
   [reset-camera?]
@@ -209,30 +308,25 @@
                                        (do
                                          (show-error error)
                                          (audio/play-feedback! false))
-                                       (let [{:keys [meshes print-output elapsed-ms]} result]
+                                       (let [{:keys [meshes print-output elapsed-ms tweak-session]} result]
                                          (hide-error)
-            ;; Show print output
                                          (when (seq print-output)
                                            (add-script-output print-output))
-            ;; Register each mesh from JVM in the scene registry
-                                         (doseq [[name mesh] meshes]
-              ;; Merge :color into :material if present (don't overwrite existing material)
-                                           (let [mesh (if-let [c (:color mesh)]
-                                                        (update mesh :material merge {:color c})
-                                                        mesh)]
-                                             (registry/register-mesh! name mesh)
-                ;; Respect :visible metadata from JVM
-                                             (when (false? (:visible mesh))
-                                               (registry/hide-mesh! name))))
-            ;; Refresh viewport
-                                         (registry/refresh-viewport! reset-camera?)
-            ;; Summary
-                                         (let [mesh-count (count meshes)
-                                               summary (str "JVM eval: " mesh-count " mesh"
-                                                            (when (> mesh-count 1) "es")
-                                                            " in " (.toFixed (or elapsed-ms 0) 0) "ms")]
-                                           (add-repl-entry "[Run/JVM]" summary false))
-            ;; Audio feedback
+                                         (register-jvm-meshes! meshes reset-camera?)
+                                         ;; Check for tweak session
+                                         (if tweak-session
+                                           (let [active-libs (or (when-let [raw (.getItem js/localStorage "ridley:jvm-libs:active")]
+                                                                   (try (vec (js->clj (.parse js/JSON raw)))
+                                                                        (catch :default _ [])))
+                                                                 [])]
+                                             (create-jvm-tweak-panel! tweak-session code active-libs)
+                                             (add-repl-entry "[Run/JVM]" "Tweak mode active — move sliders" false))
+                                           ;; Normal summary
+                                           (let [mesh-count (count meshes)
+                                                 summary (str "JVM eval: " mesh-count " mesh"
+                                                              (when (> mesh-count 1) "es")
+                                                              " in " (.toFixed (or elapsed-ms 0) 0) "ms")]
+                                             (add-repl-entry "[Run/JVM]" summary false)))
                                          (audio/play-feedback! true)))))))
 
 (defn- evaluate-definitions

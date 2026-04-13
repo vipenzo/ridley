@@ -25,7 +25,8 @@
             [ridley.io.threemf :as threemf]
             [ridley.sdf.core :as sdf]
             [ridley.voronoi.core :as voronoi]
-            [ridley.jvm.library :as library]))
+            [ridley.jvm.library :as library]
+            [ridley.jvm.tweak :as tweak]))
 
 ;; ── Forward declarations ────────────────────────────────────────
 (declare pure-loft-path pure-loft-two-shapes pure-loft-shape-fn
@@ -1669,6 +1670,14 @@
    ;; Utility
    'bench     bench
    'T         (fn [label x] (println (str label ": " x)) x)
+   ;; Tweak: signals a tweak session. Returns the eval result but also
+   ;; stores tweak metadata in the tweak-session atom for the server to pick up.
+   'tweak-start (fn [form-str]
+                  (let [form (read-string form-str)
+                        info (tweak/extract-tweak-info form)]
+                    (reset! tweak/tweak-session info)
+                    ;; Eval the expression normally and return its result
+                    nil))
    ;; Turtle state
    'get-turtle       (fn [] @turtle-state)
    'turtle-position  (fn [] (:position @turtle-state))
@@ -2038,6 +2047,24 @@
         (def ~name v#)
         v#))")
 
+(def ^:private tweak-macro-source
+  "(defmacro tweak
+     ([expr]
+      `(do (reset! ridley.jvm.tweak/tweak-session
+                   (ridley.jvm.tweak/extract-tweak-info '~expr))
+           ~expr))
+     ([filter-or-name expr]
+      `(do (reset! ridley.jvm.tweak/tweak-session
+                   (assoc (ridley.jvm.tweak/extract-tweak-info '~expr)
+                          :filter ~filter-or-name))
+           ~expr))
+     ([filter-spec name expr]
+      `(do (reset! ridley.jvm.tweak/tweak-session
+                   (assoc (ridley.jvm.tweak/extract-tweak-info '~expr)
+                          :filter ~filter-spec
+                          :registry-name ~name))
+           ~expr)))")
+
 (def all-macro-sources
   "All macro source strings, used by library loader to inject macros
    into library namespaces."
@@ -2060,7 +2087,8 @@
    attach-face-macro-source
    clone-face-macro-source
    turtle-macro-source
-   register-macro-source])
+   register-macro-source
+   tweak-macro-source])
 
 (defn eval-script
   "Evaluate a DSL script string. Returns {:meshes map :print-output str}.
@@ -2069,6 +2097,7 @@
   ([script-text] (eval-script script-text nil))
   ([script-text active-libraries]
    (reset-state!)
+   (reset! tweak/tweak-session nil) ;; clear any previous tweak session
    (let [ns-sym (gensym "ridley-eval-")
          ns-obj (create-ns ns-sym)
          output (java.io.StringWriter.)]
@@ -2098,7 +2127,8 @@
          (load-string attach-face-macro-source)
          (load-string clone-face-macro-source)
          (load-string turtle-macro-source)
-         (load-string register-macro-source))
+         (load-string register-macro-source)
+         (load-string tweak-macro-source))
        ;; Alias library namespaces: if active-libraries provided, alias only
        ;; those; otherwise alias all loaded libraries (backward compat).
        (if (seq active-libraries)
@@ -2118,7 +2148,8 @@
                             (reduce (fn [m [i mesh]]
                                       (assoc m (symbol (str "__stamp_" i)) mesh))
                                     {} (map-indexed vector stamps)))]
-         {:meshes (merge @registered-meshes stamp-meshes)
-          :print-output (str output)})
+         (cond-> {:meshes (merge @registered-meshes stamp-meshes)
+                  :print-output (str output)}
+           @tweak/tweak-session (assoc :tweak-session @tweak/tweak-session)))
        (finally
          (remove-ns ns-sym))))))

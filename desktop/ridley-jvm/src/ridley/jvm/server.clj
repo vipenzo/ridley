@@ -4,7 +4,8 @@
   (:require [ring.adapter.jetty :as jetty]
             [clojure.data.json :as json]
             [ridley.jvm.eval :as eval-engine]
-            [ridley.jvm.library :as library])
+            [ridley.jvm.library :as library]
+            [ridley.jvm.tweak :as tweak])
   (:import [java.nio ByteBuffer ByteOrder])
   (:gen-class))
 
@@ -102,10 +103,12 @@
     (cors-headers
      {:status 200
       :body (json/write-str
-             {:meshes mesh-meta
-              :elapsed_ms elapsed-ms
-              :print_output print-output
-              :mesh_file mesh-file})})))
+             (cond-> {:meshes mesh-meta
+                      :elapsed_ms elapsed-ms
+                      :print_output print-output
+                      :mesh_file mesh-file}
+               (:tweak-session result)
+               (assoc :tweak_session (:tweak-session result))))})))
 
 (defn- handle-eval [body]
   (let [{:keys [script]} (json/read-str body :key-fn keyword)
@@ -200,6 +203,42 @@
         (library/delete-library! name)
         (cors-headers {:status 200
                        :body (json/write-str {:ok true})}))
+      (catch Exception e
+        (cors-headers {:status 500
+                       :body (json/write-str {:error (.getMessage e)})})))
+
+    ;; Tweak update: re-eval script with substituted values
+    (and (= :post (:request-method request))
+         (= "/tweak-update" (:uri request)))
+    (try
+      (let [{:keys [script form values active_libraries]}
+            (json/read-str (slurp (:body request)) :key-fn keyword)
+            ;; Parse original form, substitute values
+            parsed-form (read-string form)
+            values-map (into {} (map (fn [[k v]] [(Integer/parseInt (name k)) v]) values))
+            modified-form (tweak/substitute-values parsed-form values-map)
+            ;; Build full script: editor content + modified expression
+            full-script (str script "\n" (pr-str modified-form))
+            ;; Eval
+            result (eval-engine/eval-script full-script active_libraries)
+            meshes (:meshes result)
+            mesh-file (when (seq meshes) (write-mesh-binary meshes))
+            mesh-meta (reduce-kv
+                       (fn [m k v]
+                         (assoc m k (when v
+                                      (cond-> {:vertex_count (count (:vertices v))
+                                               :face_count (count (:faces v))
+                                               :creation-pose (:creation-pose v)}
+                                        (contains? v :visible) (assoc :visible (:visible v))
+                                        (contains? v :color) (assoc :color (:color v))
+                                        (contains? v :material) (assoc :material (:material v))))))
+                       {} meshes)]
+        (cors-headers
+         {:status 200
+          :body (json/write-str
+                 {:meshes mesh-meta
+                  :mesh_file mesh-file
+                  :print_output (:print-output result)})}))
       (catch Exception e
         (cors-headers {:status 500
                        :body (json/write-str {:error (.getMessage e)})})))
