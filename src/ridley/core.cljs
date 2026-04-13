@@ -42,6 +42,11 @@
 ;; JVM sidecar mode — when true, scripts are sent to JVM instead of SCI
 (defonce jvm-mode (atom false))
 
+;; Sync jvm-mode to editor-state for test_mode.cljs access
+(add-watch jvm-mode :sync-state
+           (fn [_ _ _ new-val]
+             (reset! editor-state/jvm-mode? new-val)))
+
 ;; Command history
 (defonce ^:private command-history (atom []))
 (defonce ^:private history-index (atom -1))
@@ -2337,6 +2342,9 @@
               :on-selection-change (fn []
                                      (maybe-update-ai-focus!)
                                      (sync-voice-state))}))
+    ;; Wire editor content getter for test_mode JVM eval
+    (reset! editor-state/get-editor-content
+            (fn [] (when @editor-view (cm/get-value @editor-view))))
     (reset! repl-input-el repl-input)
     (reset! repl-history-el repl-history)
     (reset! error-el error-panel)
