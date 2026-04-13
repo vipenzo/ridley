@@ -125,7 +125,9 @@
     (assoc mesh :creation-pose
            {:position (:position t) :heading (:heading t) :up (:up t)})))
 
-(defn box-impl [sx sy sz] (with-creation-pose (prims/box-mesh sx sy sz)))
+(defn box-impl
+  ([size] (with-creation-pose (prims/box-mesh size size size)))
+  ([sx sy sz] (with-creation-pose (prims/box-mesh sx sy sz))))
 
 (defn sphere-impl
   ([r] (sphere-impl r 16 12))
