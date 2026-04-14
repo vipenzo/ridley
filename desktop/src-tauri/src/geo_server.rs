@@ -42,6 +42,55 @@ struct RefineRequest {
     n: i32,
 }
 
+/// Open a native save dialog, return the chosen path (no data written yet).
+fn handle_pick_save_path(request: &mut tiny_http::Request) -> Result<String, String> {
+    let mut body = String::new();
+    request
+        .as_reader()
+        .read_to_string(&mut body)
+        .map_err(|e| format!("read error: {}", e))?;
+
+    #[derive(serde::Deserialize)]
+    struct Req {
+        suggested_name: String,
+    }
+    let req: Req =
+        serde_json::from_str(&body).map_err(|e| format!("JSON parse error: {}", e))?;
+
+    let dialog = rfd::FileDialog::new()
+        .set_title("Export")
+        .set_file_name(&req.suggested_name)
+        .add_filter("STL files", &["stl"])
+        .add_filter("3MF files", &["3mf"]);
+
+    match dialog.save_file() {
+        Some(path) => Ok(format!(
+            "{{\"path\":\"{}\"}}",
+            path.to_string_lossy().replace('\\', "\\\\").replace('"', "\\\"")
+        )),
+        None => Ok("null".to_string()),
+    }
+}
+
+/// Write raw bytes to a given path (from X-File-Path header).
+fn handle_write_file(request: &mut tiny_http::Request) -> Result<String, String> {
+    let path = request
+        .headers()
+        .iter()
+        .find(|h| h.field.as_str() == "X-File-Path")
+        .map(|h| h.value.as_str().to_string())
+        .ok_or_else(|| "missing X-File-Path header".to_string())?;
+
+    let mut bytes = Vec::new();
+    request
+        .as_reader()
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("read error: {}", e))?;
+
+    std::fs::write(&path, &bytes).map_err(|e| format!("write error: {}", e))?;
+    Ok(format!("{{\"written\":{}}}", bytes.len()))
+}
+
 pub fn start() {
     thread::spawn(|| {
         let server =
@@ -50,7 +99,7 @@ pub fn start() {
 
         let cors = Header::from_bytes("Access-Control-Allow-Origin", "*").unwrap();
         let cors_headers =
-            Header::from_bytes("Access-Control-Allow-Headers", "Content-Type").unwrap();
+            Header::from_bytes("Access-Control-Allow-Headers", "Content-Type, X-File-Path").unwrap();
         let content_type = Header::from_bytes("Content-Type", "application/json").unwrap();
 
         for mut request in server.incoming_requests() {
@@ -63,7 +112,37 @@ pub fn start() {
                 continue;
             }
 
-            // Read body
+            let path = request.url().to_string();
+
+            // /pick-save-path — open native dialog, return chosen path (JSON body)
+            if path == "/pick-save-path" {
+                let (status, json) = match handle_pick_save_path(&mut request) {
+                    Ok(json) => (200, json),
+                    Err(e) => (500, format!("{{\"error\":\"{}\"}}", e)),
+                };
+                let resp = Response::from_string(json)
+                    .with_status_code(status)
+                    .with_header(cors.clone())
+                    .with_header(content_type.clone());
+                let _ = request.respond(resp);
+                continue;
+            }
+
+            // /write-file — write raw binary body to path from header
+            if path == "/write-file" {
+                let (status, json) = match handle_write_file(&mut request) {
+                    Ok(json) => (200, json),
+                    Err(e) => (500, format!("{{\"error\":\"{}\"}}", e)),
+                };
+                let resp = Response::from_string(json)
+                    .with_status_code(status)
+                    .with_header(cors.clone())
+                    .with_header(content_type.clone());
+                let _ = request.respond(resp);
+                continue;
+            }
+
+            // Read body as UTF-8 string for JSON endpoints
             let mut body = String::new();
             if let Err(e) = request.as_reader().read_to_string(&mut body) {
                 let resp = Response::from_string(format!("{{\"error\":\"{}\"}}", e))
@@ -74,7 +153,6 @@ pub fn start() {
                 continue;
             }
 
-            let path = request.url().to_string();
             let result: Result<MeshData, String> = match path.as_str() {
                 "/union" => {
                     serde_json::from_str::<Vec<MeshData>>(&body)

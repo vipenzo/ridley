@@ -205,6 +205,62 @@
   (let [buffer (meshes->stl-binary meshes)]
     (js/Blob. #js [buffer] #js {:type "application/octet-stream"})))
 
+(def ^:private geo-server-url "http://127.0.0.1:12321")
+
+(defonce ^:private desktop-mode-cache (atom nil))
+
+(defn- desktop-mode? []
+  (if-some [v @desktop-mode-cache]
+    v
+    (let [result (try
+                   (let [xhr (js/XMLHttpRequest.)]
+                     (.open xhr "POST" (str geo-server-url "/ping") false)
+                     (.send xhr "{}")
+                     (= 200 (.-status xhr)))
+                   (catch :default _ false))]
+      (reset! desktop-mode-cache result)
+      result)))
+
+(defn- desktop-pick-save-path
+  "Open native save dialog via Rust geo_server. Returns Promise<string|nil> (path or nil if cancelled)."
+  [suggested-name]
+  (js/Promise.
+   (fn [resolve reject]
+     (let [xhr (js/XMLHttpRequest.)]
+       (.open xhr "POST" (str geo-server-url "/pick-save-path") true)
+       (.setRequestHeader xhr "Content-Type" "application/json")
+       (set! (.-onload xhr)
+             (fn [_]
+               (if (= 200 (.-status xhr))
+                 (let [resp (js/JSON.parse (.-responseText xhr))]
+                   (if (nil? resp)
+                     (resolve nil)
+                     (resolve (.-path resp))))
+                 (reject (js/Error. (.-responseText xhr))))))
+       (set! (.-onerror xhr)
+             (fn [_] (reject (js/Error. "pick-save-path request failed"))))
+       (.send xhr (js/JSON.stringify #js {:suggested_name suggested-name}))))))
+
+(defn- desktop-write-file
+  "Write binary blob to a file path via Rust geo_server. Returns Promise<nil>."
+  [blob file-path]
+  (-> (.arrayBuffer blob)
+      (.then (fn [ab]
+               (js/Promise.
+                (fn [resolve reject]
+                  (let [xhr (js/XMLHttpRequest.)]
+                    (.open xhr "POST" (str geo-server-url "/write-file") true)
+                    (.setRequestHeader xhr "Content-Type" "application/octet-stream")
+                    (.setRequestHeader xhr "X-File-Path" file-path)
+                    (set! (.-onload xhr)
+                          (fn [_]
+                            (if (= 200 (.-status xhr))
+                              (resolve nil)
+                              (reject (js/Error. (.-responseText xhr))))))
+                    (set! (.-onerror xhr)
+                          (fn [_] (reject (js/Error. "write-file request failed"))))
+                    (.send xhr (js/Uint8Array. ab)))))))))
+
 (defn- pick-and-write
   "Open native showSaveFilePicker offering both STL and 3MF, build the blob
    based on the picked filename, and write it. Falls back to anchor download.
@@ -221,7 +277,24 @@
                      (case (or (ext->fmt filename) preferred-fmt :stl)
                        :3mf (threemf/meshes->3mf-blob meshes)
                        (js/Promise.resolve (meshes->stl-blob meshes))))]
-    (if (exists? js/window.showSaveFilePicker)
+    (cond
+      ;; Desktop mode: pick path first, then build correct format, then write
+      (desktop-mode?)
+      (-> (desktop-pick-save-path suggested)
+          (.then (fn [chosen-path]
+                   (when chosen-path
+                     (-> (build-blob chosen-path)
+                         (.then (fn [blob]
+                                  (-> (desktop-write-file blob chosen-path)
+                                      (.then (fn [_]
+                                               (str "Exported " (count meshes)
+                                                    " mesh(es) to " chosen-path))))))))))
+          (.catch (fn [err]
+                    (js/console.warn "native save error:" err)
+                    nil)))
+
+      ;; Chrome/Edge: File System Access API
+      (exists? js/window.showSaveFilePicker)
       (-> (js/window.showSaveFilePicker
            #js {:suggestedName suggested
                 :types types})
@@ -242,7 +315,9 @@
                     (when-not (and err (= "AbortError" (.-name err)))
                       (js/console.warn "save picker error:" err))
                     nil)))
+
       ;; Fallback: anchor download with the suggested filename and preferred fmt
+      :else
       (let [filename suggested]
         (-> (build-blob filename)
             (.then (fn [blob]

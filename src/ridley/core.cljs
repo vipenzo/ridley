@@ -909,19 +909,22 @@
                              (.preventDefault e)
                              (evaluate-definitions)))))))
 
-(defn- export-mesh []
+(defn- export-mesh [fmt]
   (let [meshes (viewport/get-current-meshes)]
     (if (seq meshes)
-      ;; Open the native picker; the user picks .stl or .3mf and the
-      ;; downloader builds the right blob from the chosen extension.
-      (stl/download-mesh meshes "ridley-model.stl" :stl)
+      (let [fname (or (first (registry/registered-names)) "model")
+            ext (name fmt)]
+        (stl/download-mesh meshes (str (name fname) "." ext) fmt))
       (js/alert "No meshes to export. Run some code first!"))))
 
 (defn- setup-save-load []
   (let [run-btn (.getElementById js/document "btn-run")
         save-btn (.getElementById js/document "btn-save")
         load-btn (.getElementById js/document "btn-load")
+        export-btn (.getElementById js/document "btn-export")
+        export-menu (.getElementById js/document "export-menu")
         export-stl-btn (.getElementById js/document "btn-export-stl")
+        export-3mf-btn (.getElementById js/document "btn-export-3mf")
         toggle-grid-btn (.getElementById js/document "btn-toggle-grid")
         toggle-axes-btn (.getElementById js/document "btn-toggle-axes")
         toggle-turtle-btn (.getElementById js/document "btn-toggle-turtle")
@@ -939,10 +942,25 @@
     ;; Load button - open file picker for local files
     (.addEventListener load-btn "click"
                        (fn [_] (.click file-input)))
-    ;; Export button (STL or 3MF — picked via native save dialog)
+    ;; Export dropdown menu
+    (when export-btn
+      (.addEventListener export-btn "click"
+                         (fn [e]
+                           (.stopPropagation e)
+                           (.toggle (.-classList export-menu) "hidden")))
+      (.addEventListener js/document "click"
+                         (fn [_]
+                           (.add (.-classList export-menu) "hidden"))))
     (when export-stl-btn
       (.addEventListener export-stl-btn "click"
-                         (fn [_] (export-mesh))))
+                         (fn [_]
+                           (.add (.-classList export-menu) "hidden")
+                           (export-mesh :stl))))
+    (when export-3mf-btn
+      (.addEventListener export-3mf-btn "click"
+                         (fn [_]
+                           (.add (.-classList export-menu) "hidden")
+                           (export-mesh :3mf))))
     ;; Toggle grid button
     (when toggle-grid-btn
       ;; Set initial active state (grid is visible by default)

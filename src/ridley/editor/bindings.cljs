@@ -389,6 +389,28 @@
    'save-stl            stl/download-stl
    'save-3mf            stl/download-3mf
    'save-mesh           stl/download-mesh
+   'export              (fn export-smart
+                          ([] (let [meshes (viewport/get-current-meshes)
+                                    fname  (or (first (registry/registered-names)) "model")]
+                                (if (seq meshes)
+                                  (stl/download-mesh meshes (str (name fname) ".stl") :stl)
+                                  (throw (js/Error. "No meshes to export. Run some code first!")))))
+                          ([target] (let [[mesh fname]
+                                          (cond
+                                            (keyword? target)
+                                            [(registry/get-mesh target) (name target)]
+
+                                            (and (map? target) (:vertices target))
+                                            [target "model"]
+
+                                            (sequential? target)
+                                            [target "model"]
+
+                                            :else
+                                            (throw (js/Error. (str "export: expected keyword, mesh, or vector of meshes, got " (type target)))))]
+                                      (if (nil? mesh)
+                                        (throw (js/Error. (str "export: no mesh registered as " target)))
+                                        (stl/download-mesh mesh (str fname ".stl") :stl)))))
    ;; View capture (for describe/AI and debugging)
    'render-view         capture/render-view
    'render-all-views    capture/render-all-views

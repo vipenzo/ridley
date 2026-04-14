@@ -2235,12 +2235,12 @@
    Returns {:meshes map :lines vec :stamps vec :print-output str :result any}."
   ([repl-text] (eval-repl repl-text nil))
   ([repl-text active-libraries]
-   (reset! registered-meshes {})
-   (reset! stamp-accumulator [])
-   (reset! line-accumulator [])
-   (reset! tweak/tweak-session nil)
-   (swap! turtle-state assoc :geometry [] :meshes [])
-   (let [ns-sym (ensure-repl-ns! active-libraries)
+   (let [prev-keys (set (keys @registered-meshes))
+         _ (reset! stamp-accumulator [])
+         _ (reset! line-accumulator [])
+         _ (reset! tweak/tweak-session nil)
+         _ (swap! turtle-state assoc :geometry [] :meshes [])
+         ns-sym (ensure-repl-ns! active-libraries)
          ns-obj (the-ns ns-sym)
          output (java.io.StringWriter.)
          result (binding [*ns* ns-obj
@@ -2249,11 +2249,13 @@
          stamps @stamp-accumulator
          lines  @line-accumulator
          t      @turtle-state
-         ;; If result is a mesh but not registered, include it as __result
+         ;; Meshes newly registered by this REPL command
+         new-meshes (into {} (remove (fn [[k _]] (prev-keys k)) @registered-meshes))
+         ;; If result is a mesh but nothing new was registered, include it as __result
          meshes (if (and (map? result) (:vertices result) (:faces result)
-                         (empty? @registered-meshes))
+                         (empty? new-meshes))
                   {'__result result}
-                  @registered-meshes)
+                  new-meshes)
          ;; Format result for display — summarize meshes
          display-result (cond
                           (and (map? result) (:vertices result))
