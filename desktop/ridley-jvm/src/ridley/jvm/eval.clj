@@ -1367,6 +1367,7 @@
    'star   shape/star-shape
    ;; Shape transforms
    'scale         xform/scale
+   'mesh-scale    attachment/scale-mesh
    'rotate-shape  xform/rotate
    'translate     xform/translate
    'translate-shape shape/translate-shape
@@ -1573,6 +1574,10 @@
    'objects           visible-names
    'registered        registered-names
    'color             color-impl
+   ;; Animation stubs (viewport-only, no-op on JVM)
+   'play!             (fn [& _] (println "[warn] play! is not supported in JVM mode") nil)
+   'stop!             (fn [& _] (println "[warn] stop! is not supported in JVM mode") nil)
+   'span              (fn [& _] nil)
    ;; File I/O (JVM native — direct filesystem access)
    'save-stl  (fn [value path] (stl/save-stl (sdf/ensure-mesh value) path))
    'save-3mf  (fn [value path] (threemf/save-3mf (sdf/ensure-mesh value) path))
@@ -1682,7 +1687,14 @@
    'sdf-offset       sdf/sdf-offset
    'sdf-morph        sdf/sdf-morph
    'sdf-move         sdf/sdf-move
-   'sdf->mesh        sdf/materialize     ;; explicit meshing (for resolution control)
+   'sdf-rotate       sdf/sdf-rotate
+   'sdf-scale        sdf/sdf-scale
+   'sdf->mesh        sdf/materialize
+   'sdf-formula      sdf/compile-expr
+   'sdf-displace     sdf/sdf-displace
+   'sdf-gyroid       sdf/sdf-gyroid
+   'sdf-schwarz-p    sdf/sdf-schwarz-p
+   'sdf-diamond      sdf/sdf-diamond     ;; explicit meshing (for resolution control)
    ;; Utility
    'bench     bench
    'T         (fn [label x] (println (str label ": " x)) x)
@@ -1801,6 +1813,7 @@
                             (swap! rec# ridley.turtle.core/rec-f step-dist#))
                           (swap! rec# ridley.turtle.core/rec-tv half#))))
             ~'follow (fn [p#] (swap! rec# ridley.turtle.core/rec-play-path p#))
+            ~'bezier-as (fn [p# & args#] (swap! rec# #(apply ridley.turtle.core/rec-bezier-as % p# args#)))
             ~'mark (fn [name#] (swap! rec# (fn [s#] (update s# :recording conj {:cmd :mark :args [name#]}))))
             ~'inset (fn [amount#] (swap! rec# ridley.turtle.core/rec-inset amount#))
             ~'scale (fn [factor#] (swap! rec# ridley.turtle.core/rec-scale factor#))]
@@ -2063,6 +2076,10 @@
         (def ~name v#)
         v#))")
 
+(def ^:private anim-macro-source
+  "(defmacro anim! [name duration target & body]
+     `(println \"[warn] anim! is not supported in JVM mode (requires browser viewport)\"))")
+
 (def ^:private tweak-macro-source
   "(defmacro tweak
      ([expr]
@@ -2104,7 +2121,8 @@
    clone-face-macro-source
    turtle-macro-source
    register-macro-source
-   tweak-macro-source])
+   tweak-macro-source
+   anim-macro-source])
 
 (defn eval-script
   "Evaluate a DSL script string. Returns {:meshes map :print-output str}.
@@ -2144,7 +2162,8 @@
          (load-string clone-face-macro-source)
          (load-string turtle-macro-source)
          (load-string register-macro-source)
-         (load-string tweak-macro-source))
+         (load-string tweak-macro-source)
+         (load-string anim-macro-source))
        ;; Alias library namespaces: if active-libraries provided, alias only
        ;; those; otherwise alias all loaded libraries (backward compat).
        (if (seq active-libraries)
@@ -2208,7 +2227,8 @@
           (load-string clone-face-macro-source)
           (load-string turtle-macro-source)
           (load-string register-macro-source)
-          (load-string tweak-macro-source)))))
+          (load-string tweak-macro-source)
+          (load-string anim-macro-source)))))
   ;; Always update library aliases (they may change between commands)
   (let [ns-sym @repl-ns-sym]
     (if (seq active-libraries)

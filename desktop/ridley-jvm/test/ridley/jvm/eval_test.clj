@@ -2,7 +2,8 @@
   "Test suite for the JVM DSL eval engine.
    Tests cover: extrude, loft, bloft, revolve, SDF tree construction,
    path recording, attach, and register."
-  (:require [clojure.test :refer [deftest testing is are]]
+  (:require [clojure.string :as str]
+            [clojure.test :refer [deftest testing is are]]
             [ridley.jvm.eval :as eval]))
 
 ;; ── Helpers ─────────────────────────────────────────────────────
@@ -151,8 +152,8 @@
 (deftest revolve-profile
   (testing "revolve a drawn profile using shape macro"
     (is (has-mesh?
-          "(register T (revolve (shape (f 8) (th 90) (f 10) (th 90) (f 8))))"
-          'T))))
+         "(register T (revolve (shape (f 8) (th 90) (f 10) (th 90) (f 8))))"
+         'T))))
 
 ;; ============================================================
 ;; SDF tree construction (pure data, no Rust server needed)
@@ -205,6 +206,27 @@
               (println (:op m) (:dx m) (:dy m) (:dz m))")]
       (is (= "move 10.0 20.0 30.0\n" (:print-output r))))))
 
+(deftest sdf-rotate
+  (testing "SDF rotate creates rotate node"
+    (let [r (eval/eval-script "
+              (def m (sdf-rotate (sdf-sphere 5) :z 45))
+              (println (:op m) (:axis m) (:angle m))")]
+      (is (= "rotate z 45.0\n" (:print-output r))))))
+
+(deftest sdf-scale-uniform
+  (testing "SDF uniform scale"
+    (let [r (eval/eval-script "
+              (def m (sdf-scale (sdf-sphere 5) 2))
+              (println (:op m) (:sx m) (:sy m) (:sz m))")]
+      (is (= "scale 2.0 2.0 2.0\n" (:print-output r))))))
+
+(deftest sdf-scale-per-axis
+  (testing "SDF per-axis scale"
+    (let [r (eval/eval-script "
+              (def m (sdf-scale (sdf-box 10 10 10) 2 1 0.5))
+              (println (:op m) (:sx m) (:sy m) (:sz m))")]
+      (is (= "scale 2.0 1.0 0.5\n" (:print-output r))))))
+
 (deftest sdf-complex-tree
   (testing "Complex SDF tree with multiple operations"
     (let [r (eval/eval-script "
@@ -228,6 +250,184 @@
       ;; f moves along heading (x), u moves along up (z)
       (is (= "move\n10.0 5.0\n" (:print-output r))))))
 
+(deftest sdf-formula-basic
+  (testing "sdf-formula compiles quoted expression to SDF tree"
+    (let [r (eval/eval-script "
+              (def f (sdf-formula '(+ (* (sin x) (cos y)) z)))
+              (println (:op f))")]
+      (is (= "binary\n" (:print-output r)))))
+  (testing "sdf-formula with constant"
+    (let [r (eval/eval-script "
+              (def f (sdf-formula '(- z 5)))
+              (println (:op f) (:fn_name f))")]
+      (is (= "binary sub\n" (:print-output r))))))
+
+(deftest sdf-formula-vars
+  (testing "sdf-formula x/y/z become var nodes"
+    (let [r (eval/eval-script "
+              (def f (sdf-formula 'x))
+              (println (:op f) (:name f))")]
+      (is (= "var x\n" (:print-output r))))))
+
+(deftest sdf-formula-composable
+  (testing "sdf-formula works with functions that return expressions"
+    (let [r (eval/eval-script "
+              (defn mk-wave [freq] (list '- 'z (list '* freq (list 'sin 'x))))
+              (def f (sdf-formula (mk-wave 3)))
+              (println (:op f) (:fn_name f))")]
+      (is (= "binary sub\n" (:print-output r))))))
+
+(deftest sdf-gyroid-creates-shell
+  (testing "sdf-gyroid produces a shell node"
+    (let [r (eval/eval-script "
+              (def g (sdf-gyroid 5 0.5))
+              (println (:op g))
+              (println (:thickness g))")]
+      (is (= "shell\n0.5\n" (:print-output r))))))
+
+(deftest sdf-schwarz-p-creates-shell
+  (testing "sdf-schwarz-p produces a shell node"
+    (let [r (eval/eval-script "
+              (def s (sdf-schwarz-p 8 1))
+              (println (:op s))")]
+      (is (= "shell\n" (:print-output r))))))
+
+(deftest sdf-diamond-creates-shell
+  (testing "sdf-diamond produces a shell node"
+    (let [r (eval/eval-script "
+              (def d (sdf-diamond 6 0.8))
+              (println (:op d))")]
+      (is (= "shell\n" (:print-output r))))))
+
+(deftest sdf-displace-adds-formula
+  (testing "sdf-displace creates binary add of SDF + compiled expression"
+    (let [r (eval/eval-script "
+              (def d (sdf-displace (sdf-sphere 10) '(* 0.5 (sin (* x 3)))))
+              (println (:op d) (:fn_name d))
+              (println (:op (:a d)))")]
+      (is (= "binary add\nsphere\n" (:print-output r))))))
+
+(deftest sdf-formula-spherical-coords
+  (testing "r expands to sqrt(x²+y²+z²)"
+    (let [r (eval/eval-script "
+              (def f (sdf-formula 'r))
+              (println (:op f) (:fn_name f))")]
+      (is (= "unary sqrt\n" (:print-output r)))))
+  (testing "theta expands to atan2(y,x)"
+    (let [r (eval/eval-script "
+              (def f (sdf-formula 'theta))
+              (println (:op f) (:fn_name f))")]
+      (is (= "binary atan2\n" (:print-output r)))))
+  (testing "spherical displacement compiles"
+    (let [r (eval/eval-script "
+              (def d (sdf-displace (sdf-sphere 10) '(* 1.5 (sin (* theta 6)) (sin (* phi 6)))))
+              (println (:op d) (:fn_name d))")]
+      (is (= "binary add\n" (:print-output r))))))
+
+;; ── auto-bounds ─────────────────────────────────────────────────
+
+(deftest sdf-auto-bounds-primitives
+  (testing "sphere bounds are symmetric"
+    (let [r (eval/eval-script "
+              (println (ridley.sdf.core/auto-bounds (sdf-sphere 10)))")]
+      (is (str/includes? (:print-output r) "-12")
+          "sphere r=10 should have bounds around ±12")))
+  (testing "box bounds match half-extents"
+    (let [r (eval/eval-script "
+              (println (ridley.sdf.core/auto-bounds (sdf-box 20 10 6)))")]
+      (is (str/includes? (:print-output r) "-6")))))
+
+(deftest sdf-auto-bounds-transforms
+  (testing "move shifts bounds"
+    (let [r (eval/eval-script "
+              (def b (ridley.sdf.core/auto-bounds (sdf-move (sdf-sphere 5) 100 0 0)))
+              (println (first (first b)))")]
+      ;; xmin should be around 100-6 = 94
+      (is (str/includes? (:print-output r) "94"))))
+  (testing "scale multiplies bounds"
+    (let [r (eval/eval-script "
+              (def b (ridley.sdf.core/auto-bounds (sdf-scale (sdf-sphere 10) 3)))
+              (println (second (first b)))")]
+      ;; xmax should be 12 * 3 = 36
+      (is (str/includes? (:print-output r) "36"))))
+  (testing "rotate uses bounding sphere (conservative)"
+    (let [r (eval/eval-script "
+              (def b1 (ridley.sdf.core/auto-bounds (sdf-box 20 4 4)))
+              (def b2 (ridley.sdf.core/auto-bounds (sdf-rotate (sdf-box 20 4 4) :z 45)))
+              ;; Rotated bounds should be larger (bounding sphere)
+              (println (> (second (first b2)) (second (first b1))))")]
+      (is (= "true\n" (:print-output r))))))
+
+;; ── min-feature-size / resolution cap ───────────────────────────
+
+(deftest sdf-resolution-cap
+  (testing "thin shell on large shape doesn't explode resolution"
+    ;; This used to OOM — the resolution cap should keep it sane
+    (let [r (eval/eval-script "
+              (require '[ridley.sdf.core :as sdf])
+              (def node (sdf-shell (sdf-sphere 50) 0.1))
+              (def bounds (sdf/auto-bounds node))
+              (def res (#'sdf/resolution-for-bounds bounds 20 node))
+              ;; With sphere r=50, span=120, cap at 200 voxels → max ~1.67 vpu
+              ;; Feature boost wants 3/0.1 = 30 vpu but cap should limit it
+              (println (< res 5))")]
+      (is (= "true\n" (:print-output r))
+          "resolution should be capped despite thin feature"))))
+
+;; ── compile-expr edge cases ─────────────────────────────────────
+
+(deftest sdf-formula-variadic
+  (testing "variadic + folds left over 4 args"
+    (let [r (eval/eval-script "
+              (def f (sdf-formula '(+ x y z 1)))
+              ;; Should be (add (add (add x y) z) 1)
+              (println (:op f) (:fn_name f))
+              (println (:op (:a f)) (:fn_name (:a f)))")]
+      (is (= "binary add\nbinary add\n" (:print-output r)))))
+  (testing "variadic * folds left"
+    (let [r (eval/eval-script "
+              (def f (sdf-formula '(* x y z)))
+              (println (:op f) (:fn_name f))
+              (println (:op (:b f)) (:name (:b f)))")]
+      (is (= "binary mul\nvar z\n" (:print-output r))))))
+
+(deftest sdf-formula-unary-negate
+  (testing "(- expr) with single arg compiles as neg"
+    (let [r (eval/eval-script "
+              (def f (sdf-formula '(- x)))
+              (println (:op f) (:fn_name f))")]
+      (is (= "unary neg\n" (:print-output r))))))
+
+(deftest sdf-formula-errors
+  (testing "unknown op throws"
+    (let [r (eval/eval-script "
+              (try (sdf-formula '(unknown-fn x))
+                   (println \"no-error\")
+                   (catch Throwable e (println \"error\")))")]
+      (is (= "error\n" (:print-output r)))))
+  (testing "unary with wrong arity throws"
+    (let [r (eval/eval-script "
+              (try (sdf-formula '(sin x y))
+                   (println \"no-error\")
+                   (catch Throwable e (println \"error\")))")]
+      (is (= "error\n" (:print-output r))))))
+
+(deftest sdf-formula-json-serializable
+  (testing "compiled formula can be serialized to JSON (needed for Rust)"
+    (let [r (eval/eval-script "
+              (require '[clojure.data.json :as json])
+              (def f (sdf-formula '(+ (* (sin x) (cos y)) z)))
+              (println (some? (json/write-str f)))")]
+      (is (= "true\n" (:print-output r))))))
+
+(deftest sdf-formula-rho
+  (testing "rho expands to sqrt(x²+y²)"
+    (let [r (eval/eval-script "
+              (def f (sdf-formula 'rho))
+              (println (:op f) (:fn_name f))
+              (println (:op (:a f)) (:fn_name (:a f)))")]
+      (is (= "unary sqrt\nbinary add\n" (:print-output r))))))
+
 ;; ============================================================
 ;; Shape macro (2D turtle recorder)
 ;; ============================================================
@@ -243,19 +443,19 @@
 (deftest shape-in-revolve
   (testing "shape macro works inside revolve"
     (is (has-mesh?
-          "(register T (revolve (shape (f 8) (th 90) (f 10) (th 90) (f 8))))"
-          'T))))
+         "(register T (revolve (shape (f 8) (th 90) (f 10) (th 90) (f 8))))"
+         'T))))
 
 (deftest shape-in-extrude
   (testing "shape macro works inside extrude"
     (is (has-mesh?
-          "(register T (extrude (shape (f 5) (th 90) (f 10) (th 90) (f 5)) (f 20)))"
-          'T))))
+         "(register T (extrude (shape (f 5) (th 90) (f 10) (th 90) (f 5)) (f 20)))"
+         'T))))
 
 (deftest shape-rejects-tv
   (testing "shape macro rejects tv (2D only)"
     (is (thrown? Exception
-          (eval/eval-script "(shape (f 5) (tv 45) (f 5))")))))
+                 (eval/eval-script "(shape (f 5) (tv 45) (f 5))")))))
 
 ;; ============================================================
 ;; Attach-face / Clone-face
@@ -281,7 +481,7 @@
 (deftest attach-face-with-inset
   (testing "attach-face with inset modifies mesh"
     (is (some?
-          (mesh "(register T (attach-face (box 20 20 20) :top (inset 3) (f 5)))" 'T)))))
+         (mesh "(register T (attach-face (box 20 20 20) :top (inset 3) (f 5)))" 'T)))))
 
 ;; ============================================================
 ;; Turtle scoping macro
@@ -471,15 +671,15 @@
     (let [m (mesh "(register T (revolve (rect 3 8)))" 'T)
           ;; For a watertight mesh: every edge shared by exactly 2 faces
           edges (into {}
-                  (map (fn [[e c]] [e c])
-                    (frequencies
-                      (mapcat (fn [face]
-                                (let [n (count face)]
-                                  (for [i (range n)]
-                                    (let [a (nth face i)
-                                          b (nth face (mod (inc i) n))]
-                                      (if (< a b) [a b] [b a])))))
-                              (:faces m)))))]
+                      (map (fn [[e c]] [e c])
+                           (frequencies
+                            (mapcat (fn [face]
+                                      (let [n (count face)]
+                                        (for [i (range n)]
+                                          (let [a (nth face i)
+                                                b (nth face (mod (inc i) n))]
+                                            (if (< a b) [a b] [b a])))))
+                                    (:faces m)))))]
       ;; All edges should be shared by exactly 2 faces
       (is (every? #(= 2 (val %)) edges)
           "every edge should be shared by exactly 2 faces"))))
@@ -530,8 +730,8 @@
 (deftest stamp-produces-mesh
   (testing "stamp generates a flat mesh visible in results"
     (let [r (eval/eval-script "(stamp (circle 10 8))")]
-      (is (pos? (count (:meshes r)))
-          "stamp should produce at least one mesh in results"))))
+      (is (pos? (count (:stamps r)))
+          "stamp should produce at least one stamp in results"))))
 
 (deftest extrude-zero-distance
   (testing "extrude with (f 0) doesn't crash"
@@ -546,7 +746,7 @@
 (deftest script-with-error
   (testing "script with error throws"
     (is (thrown? Exception
-          (eval/eval-script "(undefined-fn 42)")))))
+                 (eval/eval-script "(undefined-fn 42)")))))
 
 ;; ============================================================
 ;; Misc bindings (solidify, concat, extrude-z/y, helpers)
@@ -831,11 +1031,11 @@
       (is (= "1\n" (:print-output r))))))
 
 (deftest color-sets-metadata
-  (testing "color sets :color on registered mesh"
+  (testing "color sets :color in :material on registered mesh"
     (let [r (eval/eval-script "
               (register Foo (box 10 10 10))
               (color :Foo 0xff0000)
-              (println (:color (get-mesh :Foo)))")]
+              (println (:color (:material (get-mesh :Foo))))")]
       (is (= "16711680\n" (:print-output r))))))
 
 (deftest get-mesh-in-attach

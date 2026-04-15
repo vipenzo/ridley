@@ -8,6 +8,7 @@
             [ridley.turtle.shape :as shape]
             [ridley.turtle.path :as path]
             [ridley.turtle.transform :as xform]
+            [ridley.turtle.attachment :as attachment]
             [ridley.turtle.text :as text]
             [ridley.geometry.primitives :as prims]
             [ridley.geometry.operations :as ops]
@@ -215,6 +216,7 @@
    'finalize-loft-impl  impl/implicit-finalize-loft
    ;; Shape transformation functions (scale also works on attached mesh)
    'scale        impl/unified-scale
+   'mesh-scale   attachment/scale-mesh
    'rotate-shape xform/rotate
    'translate    xform/translate
    'morph        xform/morph

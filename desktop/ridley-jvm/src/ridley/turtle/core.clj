@@ -48,7 +48,6 @@
    :preserve-up false                ; when true, th/tv keep up aligned with reference-up
    :reference-up nil})               ; captured up vector when :preserve-up scope is entered
 
-
 ;; --- Vector math utilities (shared via ridley.math) ---
 
 (def v+ math/v+)
@@ -226,7 +225,7 @@
            :tr (assoc acc :up (rotate-around-axis up heading rad))
            acc)))
      {:heading (:heading state) :up (:up state)}
-   rotations)))
+     rotations)))
 
 ;; --- Resolution settings (like OpenSCAD $fn/$fa/$fs) ---
 
@@ -833,7 +832,7 @@
               approx-length (magnitude (v- p3 p0))
               actual-steps (or steps (calc-bezier-steps state approx-length))
               [c1 c2] (auto-control-points-with-target-heading
-                        p0 (:heading state) p3 (:heading anchor) (or tension 0.33))]
+                       p0 (:heading state) p3 (:heading anchor) (or tension 0.33))]
           (if (< approx-length 0.001)
             state
             (bezier-walk state actual-steps
@@ -861,9 +860,9 @@
    doesn't match the desired attachment point."
   [state mesh]
   (assoc mesh :creation-pose
-    {:position (:position state)
-     :heading (:heading state)
-     :up (:up state)}))
+         {:position (:position state)
+          :heading (:heading state)
+          :up (:up state)}))
 
 ;; --- Material settings ---
 
@@ -1473,9 +1472,9 @@
                     cubic-dirs (when cubic
                                  [(nth directions i) (nth directions (inc i))])
                     [c1 c2] (compute-bezier-control-points
-                              p0 h0 p3 h1 tension cubic-dirs)
+                             p0 h0 p3 h1 tension cubic-dirs)
                     walk-steps (sample-bezier-segment
-                                 p0 c1 c2 p3 steps h0 (:up current-pose))
+                                p0 c1 c2 p3 steps h0 (:up current-pose))
                     ;; Final pose from last walk step, or target if no steps
                     final-pose (if (seq walk-steps)
                                  (let [last-step (peek walk-steps)]
@@ -1529,10 +1528,10 @@
             calc-steps-fn (when-not steps
                             #(calc-bezier-steps state %))
             walk-data (compute-bezier-walk
-                        segments init-pose
-                        {:tension (or tension 0.33)
-                         :cubic cubic
-                         :calc-steps-fn (or calc-steps-fn (constantly (or steps 16)))})]
+                       segments init-pose
+                       {:tension (or tension 0.33)
+                        :cubic cubic
+                        :calc-steps-fn (or calc-steps-fn (constantly (or steps 16)))})]
         ;; Apply walk steps to state
         (reduce
          (fn [current-state segment-data]
@@ -1543,6 +1542,73 @@
              (reduce apply-walk-step current-state (:walk-steps segment-data))))
          state
          walk-data)))))
+
+;; ── Recording bezier-as (for path macro) ────────────────────────
+
+(defn- compute-rotation-angles
+  "Convert an absolute direction vector to relative [th-deg tv-deg] rotations
+   from the current heading/up frame."
+  [from-heading from-up to-direction]
+  (let [up-comp (dot to-direction from-up)
+        horiz-dir (v- to-direction (v* from-up up-comp))
+        horiz-len (magnitude horiz-dir)
+        tv-deg (* (Math/atan2 up-comp horiz-len) (/ 180 Math/PI))
+        th-deg (if (> horiz-len 0.001)
+                 (let [horiz-norm (normalize horiz-dir)
+                       fwd-comp (dot horiz-norm from-heading)
+                       right (cross from-heading from-up)
+                       right-comp (dot horiz-norm right)]
+                   (* (- (Math/atan2 right-comp fwd-comp)) (/ 180 Math/PI)))
+                 0.0)]
+    [th-deg tv-deg]))
+
+(defn rec-bezier-as
+  "Recording version of bezier-as. Decomposes a bezier approximation of a path
+   into f/th/tv commands and records them. Preserves :mark commands from the
+   original path segments. Works with the immutable recorder state."
+  [state p & args]
+  (let [{:keys [tension steps max-segment-length cubic]} (apply hash-map args)
+        segments (path-segments p)
+        segments (if max-segment-length
+                   (vec (mapcat #(subdivide-segment % max-segment-length) segments))
+                   segments)]
+    (if (empty? segments)
+      state
+      (let [init-pose (select-keys state [:position :heading :up])
+            calc-steps-fn (fn [_] (or steps 16))
+            walk-data (compute-bezier-walk
+                       segments init-pose
+                       {:tension (or tension 0.33)
+                        :cubic cubic
+                        :calc-steps-fn calc-steps-fn})]
+        (reduce
+         (fn [s [seg segment-data]]
+            ;; Insert any marks from this segment's rotations
+           (let [marks (filter #(= :mark (:cmd %)) (:rotations seg))
+                 s (reduce (fn [st m] (update st :recording conj m)) s marks)]
+             (if (:degenerate segment-data)
+               s
+               (reduce
+                (fn [s2 step]
+                  (let [{:keys [dist chord-heading final-heading]} step
+                        cur-heading (:heading s2)
+                        cur-up (:up s2)
+                        [th-a tv-a] (compute-rotation-angles cur-heading cur-up chord-heading)
+                        s3 (cond-> s2
+                             (> (Math/abs th-a) 0.001) (rec-th th-a)
+                             (> (Math/abs tv-a) 0.001) (rec-tv tv-a))
+                        s4 (rec-f s3 dist)
+                        cur-heading2 (:heading s4)
+                        cur-up2 (:up s4)
+                        [th-b tv-b] (compute-rotation-angles cur-heading2 cur-up2 final-heading)
+                        s5 (cond-> s4
+                             (> (Math/abs th-b) 0.001) (rec-th th-b)
+                             (> (Math/abs tv-b) 0.001) (rec-tv tv-b))]
+                    s5))
+                s
+                (:walk-steps segment-data)))))
+         state
+         (map vector segments walk-data))))))
 
 ;; ============================================================
 ;; Path sampling for text-on-path
@@ -1774,8 +1840,8 @@
                                   (mapcat #(transform-contour % cos-t sin-t) ring-holes)))))))
            ;; Flatten vertices (transient for speed)
            vertices (persistent!
-                      (reduce (fn [a ring] (reduce conj! a ring))
-                              (transient []) rings))
+                     (reduce (fn [a ring] (reduce conj! a ring))
+                             (transient []) rings))
            ;; Helper: generate side faces for a contour strip using a tight loop.
            ;; contour-len = number of vertices in the contour,
            ;; offset = starting index of that contour within each ring.
@@ -1849,7 +1915,7 @@
                        [first-outer first-holes] (split-ring first-combined-ring)
                        [last-outer last-holes] (split-ring last-combined-ring)
                        start-cap (triangulate-cap-with-holes first-outer first-holes
-                                                              0 start-proj-normal start-cap-flip)
+                                                             0 start-proj-normal start-cap-flip)
                        end-cap (triangulate-cap-with-holes last-outer last-holes
                                                            last-ring-base end-proj-normal end-cap-flip)]
                    (vec (concat start-cap end-cap)))
@@ -1861,12 +1927,12 @@
                        (vec (concat side-faces cap-faces))
                        side-faces)
            mesh (schema/assert-mesh!
-                    (cond-> {:type :mesh
-                             :primitive :revolve
-                             :vertices vertices
-                             :faces all-faces
-                             :creation-pose creation-pose}
-                      (:material state) (assoc :material (:material state))))]
+                 (cond-> {:type :mesh
+                          :primitive :revolve
+                          :vertices vertices
+                          :faces all-faces
+                          :creation-pose creation-pose}
+                   (:material state) (assoc :material (:material state))))]
        (update state :meshes conj mesh)))))
 
 ;; ============================================================

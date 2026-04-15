@@ -36,6 +36,11 @@ struct TVec3 { x: LibfiveTree, y: LibfiveTree, z: LibfiveTree }
 
 extern "C" {
     fn libfive_tree_const(f: f32) -> LibfiveTree;
+    fn libfive_tree_x() -> LibfiveTree;
+    fn libfive_tree_y() -> LibfiveTree;
+    fn libfive_tree_z() -> LibfiveTree;
+    fn libfive_tree_unary(op: i32, a: LibfiveTree) -> LibfiveTree;
+    fn libfive_tree_binary(op: i32, a: LibfiveTree, b: LibfiveTree) -> LibfiveTree;
     fn libfive_tree_delete(t: LibfiveTree);
     fn libfive_tree_render_mesh(t: LibfiveTree, region: LibfiveRegion3, resolution: f32) -> *mut LibfiveMesh;
     fn libfive_mesh_delete(m: *mut LibfiveMesh);
@@ -59,12 +64,71 @@ extern "C" {
     // Transforms
     #[link_name = "move"]
     fn move_(t: LibfiveTree, offset: TVec3) -> LibfiveTree;
+    fn rotate_x(t: LibfiveTree, angle: LibfiveTree, center: TVec3) -> LibfiveTree;
+    fn rotate_y(t: LibfiveTree, angle: LibfiveTree, center: TVec3) -> LibfiveTree;
     fn rotate_z(t: LibfiveTree, angle: LibfiveTree, center: TVec3) -> LibfiveTree;
+    fn scale_xyz(t: LibfiveTree, s: TVec3, center: TVec3) -> LibfiveTree;
 }
 
 fn tc(v: f32) -> LibfiveTree { unsafe { libfive_tree_const(v) } }
 fn tv(x: f32, y: f32, z: f32) -> TVec3 { TVec3 { x: tc(x), y: tc(y), z: tc(z) } }
 fn tv0() -> TVec3 { tv(0.0, 0.0, 0.0) }
+
+// libfive opcodes (from libfive/include/libfive/tree/opcode.hpp)
+const OP_SQUARE: i32 = 7;
+const OP_SQRT: i32 = 8;
+const OP_NEG: i32 = 9;
+const OP_SIN: i32 = 10;
+const OP_COS: i32 = 11;
+const OP_TAN: i32 = 12;
+const OP_ASIN: i32 = 13;
+const OP_ACOS: i32 = 14;
+const OP_ATAN: i32 = 15;
+const OP_EXP: i32 = 16;
+const OP_ABS: i32 = 28;
+const OP_LOG: i32 = 30;
+const OP_ADD: i32 = 17;
+const OP_MUL: i32 = 18;
+const OP_MIN: i32 = 19;
+const OP_MAX: i32 = 20;
+const OP_SUB: i32 = 21;
+const OP_DIV: i32 = 22;
+const OP_ATAN2: i32 = 23;
+const OP_POW: i32 = 24;
+const OP_MOD: i32 = 26;
+
+fn unary_opcode(name: &str) -> Option<i32> {
+    match name {
+        "square" => Some(OP_SQUARE),
+        "sqrt" => Some(OP_SQRT),
+        "neg" => Some(OP_NEG),
+        "sin" => Some(OP_SIN),
+        "cos" => Some(OP_COS),
+        "tan" => Some(OP_TAN),
+        "asin" => Some(OP_ASIN),
+        "acos" => Some(OP_ACOS),
+        "atan" => Some(OP_ATAN),
+        "exp" => Some(OP_EXP),
+        "abs" => Some(OP_ABS),
+        "log" => Some(OP_LOG),
+        _ => None,
+    }
+}
+
+fn binary_opcode(name: &str) -> Option<i32> {
+    match name {
+        "add" => Some(OP_ADD),
+        "mul" => Some(OP_MUL),
+        "min" => Some(OP_MIN),
+        "max" => Some(OP_MAX),
+        "sub" => Some(OP_SUB),
+        "div" => Some(OP_DIV),
+        "atan2" => Some(OP_ATAN2),
+        "pow" => Some(OP_POW),
+        "mod" => Some(OP_MOD),
+        _ => None,
+    }
+}
 
 /// SDF tree node — JSON representation from the JVM
 #[derive(Debug, Deserialize)]
@@ -92,6 +156,19 @@ pub enum SdfNode {
     Morph { a: std::boxed::Box<SdfNode>, b: std::boxed::Box<SdfNode>, t: f64 },
     #[serde(rename = "move")]
     Move { a: std::boxed::Box<SdfNode>, dx: f64, dy: f64, dz: f64 },
+    #[serde(rename = "rotate")]
+    Rotate { a: std::boxed::Box<SdfNode>, axis: String, angle: f64 },
+    #[serde(rename = "scale")]
+    Scale { a: std::boxed::Box<SdfNode>, sx: f64, sy: f64, sz: f64 },
+    // Expression nodes (for sdf-formula)
+    #[serde(rename = "var")]
+    Var { name: String },
+    #[serde(rename = "const")]
+    Const { value: f64 },
+    #[serde(rename = "unary")]
+    Unary { fn_name: String, a: std::boxed::Box<SdfNode> },
+    #[serde(rename = "binary")]
+    Binary { fn_name: String, a: std::boxed::Box<SdfNode>, b: std::boxed::Box<SdfNode> },
 }
 
 #[derive(Debug, Deserialize)]
@@ -136,6 +213,38 @@ fn build_tree(node: &SdfNode) -> LibfiveTree {
             }
             SdfNode::Move { a, dx, dy, dz } => {
                 move_(build_tree(a), tv(*dx as f32, *dy as f32, *dz as f32))
+            }
+            SdfNode::Rotate { a, axis, angle } => {
+                let rad = (*angle as f32).to_radians();
+                let tree = build_tree(a);
+                match axis.as_str() {
+                    "x" => rotate_x(tree, tc(rad), tv0()),
+                    "y" => rotate_y(tree, tc(rad), tv0()),
+                    _   => rotate_z(tree, tc(rad), tv0()),
+                }
+            }
+            SdfNode::Scale { a, sx, sy, sz } => {
+                scale_xyz(build_tree(a), tv(*sx as f32, *sy as f32, *sz as f32), tv0())
+            }
+            // Expression nodes
+            SdfNode::Var { name } => {
+                match name.as_str() {
+                    "x" => libfive_tree_x(),
+                    "y" => libfive_tree_y(),
+                    "z" => libfive_tree_z(),
+                    _ => tc(0.0),
+                }
+            }
+            SdfNode::Const { value } => tc(*value as f32),
+            SdfNode::Unary { fn_name, a } => {
+                let op = unary_opcode(fn_name)
+                    .unwrap_or_else(|| panic!("Unknown unary op: {}", fn_name));
+                libfive_tree_unary(op, build_tree(a))
+            }
+            SdfNode::Binary { fn_name, a, b } => {
+                let op = binary_opcode(fn_name)
+                    .unwrap_or_else(|| panic!("Unknown binary op: {}", fn_name));
+                libfive_tree_binary(op, build_tree(a), build_tree(b))
             }
         }
     }

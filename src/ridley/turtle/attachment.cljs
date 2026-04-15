@@ -66,18 +66,43 @@
                         (update :up #(rotate-around-axis % axis angle)))))))))
 
 (defn scale-mesh
-  "Scale all vertices of a mesh uniformly from its centroid."
+  "Scale all vertices of a mesh from its centroid.
+   factor can be a number (uniform) or [fx fy fz] (non-uniform along local axes).
+   Local axes come from the mesh's creation-pose (heading=X, up=Z, cross=Y)."
   [mesh factor]
   (let [centroid (mesh-centroid mesh)]
-    (-> mesh
-        (dissoc :ridley.manifold.core/manifold-cache :ridley.manifold.core/raw-arrays)
-        (update :vertices
-                (fn [verts]
-                  (mapv (fn [v]
-                          (let [rel (v- v centroid)
-                                scaled (v* rel factor)]
-                            (v+ centroid scaled)))
-                        verts))))))
+    (if (number? factor)
+      ;; Uniform scale
+      (-> mesh
+          (dissoc :ridley.manifold.core/manifold-cache :ridley.manifold.core/raw-arrays)
+          (update :vertices
+                  (fn [verts]
+                    (mapv (fn [v]
+                            (let [rel (v- v centroid)]
+                              (v+ centroid (v* rel factor))))
+                          verts))))
+      ;; Non-uniform scale [fx fy fz] along local axes
+      (let [[fx fy fz] factor
+            pose (:creation-pose mesh)
+            local-x (or (some-> pose :heading normalize) [1 0 0])
+            local-z (or (some-> pose :up normalize) [0 0 1])
+            local-y (normalize (cross local-z local-x))]
+        (-> mesh
+            (dissoc :ridley.manifold.core/manifold-cache :ridley.manifold.core/raw-arrays)
+            (update :vertices
+                    (fn [verts]
+                      (mapv (fn [v]
+                              (let [rel (v- v centroid)
+                                    ;; Project onto local axes
+                                    px (dot rel local-x)
+                                    py (dot rel local-y)
+                                    pz (dot rel local-z)
+                                    ;; Scale each component
+                                    scaled (v+ (v* local-x (* px fx))
+                                               (v+ (v* local-y (* py fy))
+                                                   (v* local-z (* pz fz))))]
+                                (v+ centroid scaled)))
+                            verts))))))))
 
 (defn replace-mesh-in-state
   "Replace a mesh in the state's meshes vector.
@@ -245,10 +270,10 @@
 
         ;; Update face-groups
         side-face-id (keyword (str (if (keyword? face-id) (name face-id) (str face-id))
-                                    "-sides-" (count vertices)))
+                                   "-sides-" (count vertices)))
         new-face-groups (-> face-groups
-                           (assoc face-id new-top-triangles)
-                           (assoc side-face-id side-faces))]
+                            (assoc face-id new-top-triangles)
+                            (assoc side-face-id side-faces))]
 
     (assoc mesh
            :vertices (vec (concat vertices new-verts))
@@ -393,12 +418,12 @@
         ;; Calculate inset direction for each vertex (toward center)
         ;; We move each vertex toward the centroid by dist units
         inset-verts (mapv (fn [idx]
-                           (let [v (nth vertices idx)
-                                 to-center (normalize (v- center v))
+                            (let [v (nth vertices idx)
+                                  to-center (normalize (v- center v))
                                  ;; Move toward center by dist
-                                 new-v (v+ v (v* to-center dist))]
-                             new-v))
-                         perimeter)
+                                  new-v (v+ v (v* to-center dist))]
+                              new-v))
+                          perimeter)
 
         ;; Map old perimeter vertex indices to new vertex indices
         index-mapping (zipmap perimeter
@@ -439,10 +464,10 @@
         ;; The inner face keeps the original face-id
         ;; Side faces get a new id
         side-face-id (keyword (str (if (keyword? face-id) (name face-id) (str face-id))
-                                    "-inset-sides-" (count vertices)))
+                                   "-inset-sides-" (count vertices)))
         new-face-groups (-> face-groups
-                           (assoc face-id new-inner-triangles)
-                           (assoc side-face-id side-faces))]
+                            (assoc face-id new-inner-triangles)
+                            (assoc side-face-id side-faces))]
 
     (assoc mesh
            :vertices (vec (concat vertices inset-verts))
@@ -563,14 +588,14 @@
         (assoc-in [:attached :face-info] (assoc new-face-info :id face-id)))))
 
 (defn scale
-  "Scale the attached geometry uniformly from its centroid.
-   factor > 1 = larger, factor < 1 = smaller.
+  "Scale the attached geometry from its centroid.
+   factor: number (uniform) or [fx fy fz] (non-uniform along local axes).
    Works with both mesh attachment (:pose) and face attachment (:face)."
   [state factor]
   (if-let [attachment (:attached state)]
     (case (:type attachment)
       :pose (scale-attached-mesh state factor)
-      :face (scale-attached-face state factor)
+      :face (scale-attached-face state (if (number? factor) factor (first factor)))
       state)
     state))
 

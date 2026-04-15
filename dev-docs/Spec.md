@@ -1671,6 +1671,204 @@ All presets use smooth falloff (hermite: `3t² - 2t³`). `smooth-falloff` is ava
 
 ---
 
+## SDF Modeling (Signed Distance Functions)
+
+> **Desktop only** — SDF operations require the JVM sidecar + Rust/libfive backend. Not available in the browser version.
+
+SDF nodes are **pure data** — lightweight descriptions of implicit surfaces. No geometry is computed until meshing is needed (at `register`, boolean, or export boundaries). This enables smooth blending, morphing, and shelling that are impossible with mesh-based CSG.
+
+### Architecture
+
+```
+Clojure DSL  →  SDF tree (maps)  →  JSON  →  Rust/libfive  →  triangle mesh
+```
+
+SDF trees are immutable Clojure maps:
+```clojure
+{:op "sphere" :r 5.0}
+{:op "union" :a {:op "sphere" :r 5.0} :b {:op "box" :sx 8.0 :sy 8.0 :sz 8.0}}
+```
+
+Meshing is **lazy**: it happens automatically when an SDF meets a mesh boundary (e.g. `register`, boolean with a mesh, export).
+
+### Primitives
+
+| Function | Description |
+|----------|-------------|
+| `(sdf-sphere r)` | Sphere centered at origin |
+| `(sdf-box sx sy sz)` | Axis-aligned box with dimensions sx × sy × sz |
+| `(sdf-cyl r h)` | Cylinder along Z axis with radius r and height h |
+
+### Boolean Operations
+
+| Function | Description |
+|----------|-------------|
+| `(sdf-union a b)` | Combine two SDF shapes |
+| `(sdf-difference a b)` | Subtract b from a |
+| `(sdf-intersection a b)` | Keep only the overlap of a and b |
+
+### SDF-Specific Operations
+
+These operations leverage the implicit representation and have no direct mesh equivalent:
+
+| Function | Description |
+|----------|-------------|
+| `(sdf-blend a b k)` | Smooth blend between a and b. k controls the blend radius — higher values produce a wider, smoother transition |
+| `(sdf-shell a thickness)` | Hollow shell with uniform wall thickness |
+| `(sdf-offset a amount)` | Expand (positive) or contract (negative) the surface by amount |
+| `(sdf-morph a b t)` | Interpolate between shapes a and b. t ranges from 0 (= a) to 1 (= b) |
+| `(sdf-displace node formula)` | Displace surface by a spatial formula (quoted expression using x, y, z) |
+
+`sdf-displace` adds the formula's value to the distance field at each point. Positive values push the surface inward, negative values push outward:
+
+```clojure
+;; Wavy sphere
+(register wavy (sdf-displace (sdf-sphere 10) '(* 1.5 (sin (* x 2)) (sin (* y 2)))))
+
+;; Displace any SDF — works with blends, booleans, etc.
+(register organic
+  (sdf-displace
+    (sdf-blend (sdf-sphere 10) (sdf-box 14 14 14) 2)
+    '(* 0.5 (sin (* x 3)) (cos (* z 3)))))
+```
+
+### Transforms
+
+| Function | Description |
+|----------|-------------|
+| `(sdf-move node dx dy dz)` | Translate an SDF node by offset |
+| `(sdf-rotate node axis angle)` | Rotate around axis (`:x` `:y` `:z`) by angle in degrees |
+| `(sdf-scale node s)` | Uniform scale |
+| `(sdf-scale node sx sy sz)` | Per-axis scale |
+
+### Materialization
+
+| Function | Description |
+|----------|-------------|
+| `(sdf->mesh node)` | Explicitly convert SDF tree to triangle mesh |
+| `(sdf->mesh node bounds resolution)` | With custom bounds `[[xmin xmax] [ymin ymax] [zmin zmax]]` and resolution (voxels/unit) |
+
+Materialization is normally automatic — call `sdf->mesh` only when you need explicit control over bounds or resolution.
+
+**Resolution**: controlled by the turtle's resolution setting. Higher resolution = finer mesh but slower meshing. When the tree contains thin features (`sdf-shell`, small `sdf-offset`), resolution is automatically boosted to guarantee at least 3 voxels across the thinnest part.
+
+### Custom Formulas
+
+`sdf-formula` compiles a quoted Clojure math expression into an SDF tree. The variables `x`, `y`, `z` represent spatial coordinates. Since `sdf-formula` is a function (not a macro), expressions are composable — you can build them with functions, store them in variables, and pass them around.
+
+```clojure
+(sdf-formula 'expr)           ; quoted literal
+(sdf-formula (build-expr))    ; from a function
+```
+
+**Available operations:**
+- Arithmetic: `+`, `-`, `*`, `/`
+- Trig: `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`
+- Math: `sqrt`, `abs`, `exp`, `log`, `pow`, `mod`, `square`, `neg`
+- Comparison: `min`, `max`
+
+**Coordinate variables:**
+
+| Variable | Description |
+|----------|-------------|
+| `x`, `y`, `z` | Cartesian coordinates |
+| `r` | Distance from origin — `sqrt(x² + y² + z²)` |
+| `rho` | Cylindrical radius — `sqrt(x² + y²)` |
+| `theta` | Azimuthal angle around Z — `atan2(y, x)` |
+| `phi` | Polar angle from Z — `atan2(sqrt(x²+y²), z)` |
+
+Spherical/cylindrical variables are synthetic — they expand to sub-trees of x, y, z. Useful for patterns that follow curved surfaces:
+
+```clojure
+;; Radial displacement that follows the sphere's curvature
+(register bumpy
+  (sdf-displace (sdf-sphere 10)
+    '(* 1.5 (sin (* theta 6)) (sin (* phi 6)))))
+
+;; Cylindrical fluting
+(register fluted
+  (sdf-displace (sdf-cyl 8 20) '(* 0.5 (cos (* theta 12)))))
+```
+
+Formulas produce infinite implicit surfaces — intersect with a bounding shape to get a finite solid:
+
+```clojure
+;; Wave surface (quoted literal)
+(register wave
+  (sdf-intersection
+    (sdf-formula '(- z (* 2 (sin (* x 0.5)) (cos (* y 0.5)))))
+    (sdf-box 30 30 10)))
+
+;; Composable: build formulas with functions
+(defn mk-wave [freq amp]
+  (list '- 'z (list '* amp (list 'sin (list '* 'x freq))
+                              (list 'cos (list '* 'y freq)))))
+
+(register wave2
+  (sdf-intersection
+    (sdf-formula (mk-wave 0.3 4))
+    (sdf-box 40 40 10)))
+```
+
+### TPMS (Triply Periodic Minimal Surfaces)
+
+Pre-built lattice structures for organic/structural infills:
+
+| Function | Description |
+|----------|-------------|
+| `(sdf-gyroid period thickness)` | Gyroid lattice — the most common TPMS for 3D printing |
+| `(sdf-schwarz-p period thickness)` | Schwarz-P — cubic channels |
+| `(sdf-diamond period thickness)` | Diamond (Schwarz-D) — interconnected tetrahedral cells |
+
+- `period` = cell size (larger = coarser lattice)
+- `thickness` = wall thickness
+
+TPMS are infinite — intersect with a shape to bound them:
+
+```clojure
+;; Gyroid-filled sphere
+(register infill (sdf-intersection (sdf-sphere 20) (sdf-gyroid 8 0.5)))
+
+;; Schwarz-P cube
+(register lattice (sdf-intersection (sdf-box 30 30 30) (sdf-schwarz-p 10 0.8)))
+```
+
+### Examples
+
+```clojure
+;; Simple sphere
+(register s (sdf-sphere 10))
+
+;; Box with rounded edges via offset
+(register rounded (sdf-offset (sdf-box 18 18 18) 2))
+
+;; Smooth blend of sphere and box
+(register blob (sdf-blend (sdf-sphere 10) (sdf-box 14 14 14) 3))
+
+;; Hollow shell
+(register shell (sdf-shell (sdf-sphere 15) 1))
+
+;; Morph between shapes
+
+
+;; Composed: blended union with cutout
+(register part
+  (sdf-difference
+    (sdf-blend (sdf-sphere 12) (sdf-cyl 8 20) 2)
+    (sdf-move (sdf-box 6 6 30) 0 0 0)))
+
+;; Rotated box
+(register tilted (sdf-rotate (sdf-box 20 10 5) :z 45))
+
+;; Scaled cylinder (elliptical cross-section)
+(register ellip (sdf-scale (sdf-cyl 10 20) 2 1 1))
+
+;; Explicit high-res meshing
+(register hires (sdf->mesh (sdf-sphere 10) [[-12 12] [-12 12] [-12 12]] 30))
+```
+
+---
+
 ## Viewport Control
 
 ### Camera
