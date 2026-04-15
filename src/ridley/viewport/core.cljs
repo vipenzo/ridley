@@ -546,7 +546,7 @@
   "Create mesh material from optional material map or use defaults."
   ([] (create-mesh-material nil))
   ([material]
-   (let [{:keys [color metalness roughness opacity flat-shading]
+   (let [{:keys [color metalness roughness opacity flat-shading double-sided]
           :or {color 0x00aaff metalness 0.3 roughness 0.7 opacity 1.0 flat-shading true}} material
          needs-transparency (< opacity 1.0)]
      (THREE/MeshStandardMaterial.
@@ -555,7 +555,7 @@
            :roughness roughness
            :opacity opacity
            :transparent needs-transparency
-           :side THREE/FrontSide
+           :side (if double-sided THREE/DoubleSide THREE/FrontSide)
            :flatShading flat-shading}))))
 
 (defn- create-highlight-material
@@ -1076,10 +1076,18 @@
     (let [^js renderer renderer
           ^js camera camera
           ^js canvas canvas
-          width (.-clientWidth canvas)
-          height (.-clientHeight canvas)]
+          ;; Read dimensions from parent container, not canvas itself.
+          ;; The canvas doesn't have intrinsic CSS dimensions — it gets
+          ;; its size from renderer.setSize. Reading from parent avoids
+          ;; a circular dependency where the canvas never grows.
+          parent (.-parentElement canvas)
+          width (.-clientWidth parent)
+          height (.-clientHeight parent)]
       (when (and (pos? width) (pos? height))
-        (.setSize renderer width height false)  ; false = don't set CSS style
+        ;; Set canvas CSS size to fill parent, then update renderer buffer
+        (set! (.. canvas -style -width) (str width "px"))
+        (set! (.. canvas -style -height) (str height "px"))
+        (.setSize renderer width height false)
         (set! (.-aspect camera) (/ width height))
         (.updateProjectionMatrix camera)))))
 
@@ -1735,14 +1743,16 @@
                   (deselect!)
                   (clear-measure-pending!)
                   (clear-rulers!))))
-      ;; Setup ResizeObserver on viewport-panel (parent) for responsive canvas sizing
-      ;; Observing the parent catches resize from panel divider drag
+      ;; Setup ResizeObserver on viewport-panel AND canvas for responsive sizing
+      ;; Panel observer catches divider drag; canvas observer catches Tauri resize
+      ;; Window resize listener as fallback for platforms where ResizeObserver misses
       (let [viewport-panel (.-parentElement canvas)
-            resize-observer (js/ResizeObserver.
-                              (fn [_entries]
-                                ;; Use requestAnimationFrame to ensure layout is updated
-                                (js/requestAnimationFrame handle-resize)))]
+            on-resize (fn [& _]
+                        (js/requestAnimationFrame handle-resize))
+            resize-observer (js/ResizeObserver. on-resize)]
         (.observe resize-observer viewport-panel)
+        (.observe resize-observer canvas)
+        (.addEventListener js/window "resize" on-resize)
         (reset! state {:scene scene
                        :camera camera
                        :camera-rig camera-rig

@@ -739,6 +739,39 @@ The transition `fraction` is auto-calculated as `radius / path-length` (geometri
 - Cap transition uses centroid scaling — shape proportions (including fillet radii) are preserved
 - Works on any shape including shapes with holes
 
+**Convex hull (`shape-hull`):**
+
+Compute the 2D convex hull of N input shapes — useful for fairing complex outlines from a few seed circles or for capsules and lozenge profiles.
+
+```clojure
+(shape-hull a b)             ; Hull of two shapes
+(shape-hull a b c)           ; Variadic — any number of shapes
+```
+
+`shape-hull` is variadic and takes shapes as positional arguments only — **there is no `:segments` option**. The output is the true convex hull of the union of all input points: it picks only the points that lie on the convex boundary and connects them with straight edges. Output point count = number of hull vertices.
+
+To control the resolution of the result:
+
+- **More hull vertices** → use input shapes with more segments (e.g., `(circle r 256)` instead of `(circle r 32)`). Only the points already on the boundary survive, so denser inputs give a smoother hull along their convex arcs. The straight tangent segments between two distinct shapes are always 2-vertex lines, regardless of input density.
+- **Exact point count** → wrap the result in `(resample hull n)` to redistribute the hull edge uniformly to `n` points. This is the recommended way to get a predictable point count for downstream loft/extrude operations.
+
+```clojure
+;; Capsule from two circles
+(register pill (extrude (shape-hull (circle 10) (translate (circle 10) 30 0)) (f 5)))
+
+;; Pistachio outline from three circles, normalized to 256 hull points
+(def s1 (translate (circle 50 128) 130 20))
+(def s2 (circle 25 128))
+(def s3 (translate (circle 16 128) 130 -20))
+(def base (resample (shape-hull s3 s1 s2) 256))
+(register bowl (loft base (f 50)))
+```
+
+**Notes:**
+- Holes on input shapes are ignored — only the outer contour participates in the hull.
+- Returned shape is centered (`:centered? true`) regardless of input position.
+- For 3D mesh hulls, see [Convex Hull](#convex-hull) below — `mesh-hull` is the 3D analogue.
+
 **Pattern tiling:**
 
 Tile a pattern shape across a target shape and subtract — producing a shape with holes.
@@ -1005,6 +1038,19 @@ The profile shape is interpreted as:
 
 Use `translate-shape` to offset the profile from the axis for hollow shapes (e.g., torus).
 
+Shapes with vertices at x < 0 are auto-clipped at the revolution axis to prevent self-intersecting geometry.
+
+**Pivot option:** For corner/bend modeling, `:pivot` shifts the shape so one edge sits on the revolution axis, then compensates the mesh position:
+
+```clojure
+(revolve shape 30 :pivot :left)   ; Left edge becomes pivot
+(revolve shape 30 :pivot :right)  ; Right edge becomes pivot
+(revolve shape 30 :pivot :up)     ; Top edge becomes pivot
+(revolve shape 30 :pivot :down)   ; Bottom edge becomes pivot
+```
+
+The pivot direction is relative to the shape's 2D coordinate frame (X = right, Y = up in the turtle frame). Use `:pivot` for bend/corner geometry — it keeps the shape's holes intact (no clipping).
+
 **Shape-fn support:** When a shape-fn is passed instead of a static shape, the profile is
 evaluated at each revolution step with `t` going from 0 (first ring) to 1 (last ring):
 
@@ -1014,6 +1060,65 @@ evaluated at each revolution step with `t` going from 0 (first ring) to 1 (last 
 (revolve (noisy (circle 15 64) :amplitude 2))      ; Organic surface
 (revolve (morphed (square 20) (circle 15 4)) 180)  ; Morph during half-revolution
 ```
+
+---
+
+## Chainable Operations (extrude+, revolve+, transform->)
+
+Variants of `extrude` and `revolve` that return `{:mesh :end-face}` for chaining multi-segment geometry. The `:end-face` contains the shape and pose of the final face, which can be used as input for the next operation.
+
+**JVM only** (not yet available in SCI/CLJS).
+
+### extrude+ / revolve+
+
+```clojure
+;; extrude+ returns {:mesh <mesh> :end-face {:shape <shape> :pose {...}}}
+(def seg1 (extrude+ shape (f 20)))
+(:mesh seg1)                       ; The mesh
+(:end-face seg1)                   ; {:shape <shape> :pose {:pos :heading :up}}
+
+;; revolve+ with :pivot for corner bends
+(def corner (turtle (:pose (:end-face seg1))
+              (revolve+ (:shape (:end-face seg1)) 30 :pivot :left)))
+
+;; Chain: next segment from previous end-face
+(def seg2 (turtle (:pose (:end-face corner))
+            (extrude+ (:shape (:end-face corner)) (f 30))))
+
+;; Combine
+(register tutto (mesh-union (:mesh seg1) (:mesh corner) (:mesh seg2)))
+```
+
+### transform->
+
+Macro that automates the chaining pattern. Takes an initial shape (or an end-face map from a previous `extrude+`/`revolve+`) and a sequence of steps. Each step receives the shape and pose from the previous step's end-face. All meshes are combined via `mesh-union`.
+
+```clojure
+(register frame
+  (transform-> (shape-difference (rect 40 40) (rect 30 30))
+    (extrude+ (f 20))              ; Straight segment
+    (revolve+ 30 :pivot :left)     ; Corner bend (30 degrees)
+    (extrude+ (f 30))              ; Another straight segment
+    (revolve+ -30 :pivot :right)   ; Bend back
+    (extrude+ (f 20))))            ; Final segment
+```
+
+Notes:
+The first argument can also be an end-face from a previous operation:
+
+```clojure
+;; Chain from a previous extrude+
+(def base (extrude+ frame-shape (f 10)))
+(register result
+  (mesh-union (:mesh base)
+    (transform-> (:end-face base)
+      (revolve+ 30 :pivot :left)
+      (extrude+ (f 20)))))
+```
+
+- Inside `transform->`, operations do NOT take a shape argument — it's passed automatically
+- `:pivot` on `revolve+` determines which edge of the shape sits on the revolution axis
+- The standard `extrude`/`revolve` remain unchanged (return just the mesh)
 
 ---
 
@@ -1106,6 +1211,55 @@ Compute the convex hull of one or more meshes:
 ;; Can also pass a vector
 (mesh-hull [s1 s2 s3])
 ```
+
+---
+
+## Mesh Smoothing & Refinement
+
+Round off non-sharp edges of a 3D mesh using Manifold's tangent-based subdivision. Useful when you want to fillet every crease softer than a chosen dihedral angle while keeping intentionally sharp design edges — typically applied after a CSG pipeline (boolean operations produce mostly right-angle corners that look synthetic).
+
+```clojure
+(mesh-smooth m)                                  ; defaults: sharp-angle 100, refine 3
+(mesh-smooth m :sharp-angle 120 :refine 4)       ; smooth more, denser
+(mesh-smooth m :sharp-angle 60)                  ; preserve all corners > 60deg
+(mesh-smooth m :sharp-angle 180)                 ; round absolutely everything
+
+;; Lower-level: refine without smoothing (just denser triangulation)
+(mesh-refine m 2)                                ; each triangle -> 4 sub-triangles
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `:sharp-angle` | 100 | Edges with dihedral angle GREATER than this stay sharp; the rest get smoothed. Manifold's stock default is 60, but for procedural meshes 90-120 typically gives better results because right-angle wall corners become smooth instead of preserved. Set to 180 to smooth everything. |
+| `:smoothness` | 0 | 0..1 fillet at the edges that survive as sharp. 0 leaves them perfectly sharp; 1 turns them fully smooth. |
+| `:refine` | 3 | Subdivision count after smoothing. Each triangle becomes n² sub-triangles. Higher = visually smoother but quadratically more triangles. |
+
+**How it works:** `smoothOut` stores Bezier-tangent vectors on each halfedge based on the dihedral angle of its adjacent faces (without changing geometry); `refine` then subdivides each triangle into n² sub-triangles, placing the new vertices on the tangent curves rather than along straight lines. The result is a denser mesh whose surface is C¹-continuous wherever the dihedral was ≤ `:sharp-angle`.
+
+```clojure
+;; CSG box with rounded edges — the canonical use case
+(register rounded-widget
+  (-> (mesh-difference (box 40 40 20) (cyl 12 30))
+      (mesh-smooth :sharp-angle 100 :refine 3)))
+
+;; Loft solid with smoothed creases
+(register smooth-bead
+  (-> (turtle (loft (rect 20 10) (f 40) (th 90) (f 30)))
+      (mesh-smooth :sharp-angle 80 :refine 3)))
+```
+
+**Important — the input must be a manifold (watertight, closed) mesh.**
+
+Manifold's `smoothOut` requires a valid manifold as input. This means:
+
+- ✅ **Works on**: primitives (box, sphere, cyl, cone), solid extrudes/lofts/revolves, results of `mesh-union`/`mesh-difference`/`mesh-intersection`/`mesh-hull`, SDF-materialized meshes.
+- ❌ **Does NOT work on**: perforated meshes with open edges. In particular, `shell :style :voronoi` / `:lattice` / `:checkerboard` and any other shell with open wall apertures produce non-manifold geometry — Manifold rejects them with `status 2 (NotManifold)`. For those cases you can either (a) rebuild the shape as a CSG of solids, or (b) raise the generation resolution so the staircase artifact becomes less visible.
+
+**Notes:**
+- `mesh-smooth` is a heavy operation: vertex/face count grows by `refine²`. Start with the defaults and only crank `:refine` if you still see facets.
+- The smoothing happens in 3D world coordinates, so it works equally on extrudes, lofts, revolves, and CSG results.
+- For sharper control over which edges to round (by direction or position), use `fillet` instead — it operates only on edges you select rather than every non-sharp edge in the mesh, and works on non-manifold input too.
+- Calling `mesh-refine` without a preceding `mesh-smooth` produces planar subdivision (the shape is unchanged, just denser) — useful only if you intend to feed the result into another operation that needs the extra density.
 
 ---
 
@@ -1284,6 +1438,50 @@ Query face information for meshes with face-groups (primitives):
 (get-face mesh :top)             ; Basic face info
 (face-info mesh :top)            ; Detailed: includes area, edges, vertex positions
 ```
+
+### Face Selection (query-based)
+
+For meshes without pre-defined face-groups (e.g. CSG results), faces can be selected by geometric queries. Face groups are auto-detected by coplanar adjacency.
+
+```clojure
+;; Find faces by direction (relative to mesh creation-pose)
+(find-faces mesh :top)           ; Faces aligned with heading direction
+(find-faces mesh :bottom)        ; Opposite heading
+(find-faces mesh :up)            ; Aligned with up
+(find-faces mesh :all)           ; All face groups
+(find-faces mesh :top :threshold 0.9)  ; Stricter alignment (default 0.7)
+(find-faces mesh :top :where #(> (:area %) 100))  ; With predicate
+
+;; Find face by position
+(face-at mesh [0 0 0])           ; Face whose plane passes closest to point
+(face-nearest mesh [10 0 0])     ; Face whose centroid is nearest to point
+
+;; Find largest face
+(largest-face mesh)              ; Largest face overall
+(largest-face mesh :top)         ; Largest face in a direction
+
+;; Auto face grouping
+(auto-face-groups mesh)          ; Group triangles by coplanar adjacency
+(ensure-face-groups mesh)        ; Add :face-groups if missing
+```
+
+All selection functions return face info maps with `:id` that can be passed to `attach-face`, `clone-face`, etc.
+
+### face-shape
+
+Extract a face boundary as a 2D shape for re-extrusion. Pure function — does not modify turtle state.
+
+```clojure
+(def top (face-shape mesh (:id (largest-face mesh :top))))
+;; => {:shape <ridley-shape>
+;;     :pose {:pos [x y z] :heading [hx hy hz] :up [ux uy uz]}}
+
+;; Use with turtle scope for positioning
+(turtle (:pose top)
+  (extrude (:shape top) (f 20)))
+```
+
+The pose uses `:pos` (not `:position`) for compatibility with the `turtle` macro. The up vector is derived from the mesh's creation-pose, projected perpendicular to the face normal.
 
 ### Face Highlighting
 
@@ -1469,6 +1667,204 @@ All presets use smooth falloff (hermite: `3t² - 2t³`). `smooth-falloff` is ava
 
 ;; Roughened surface
 (register r (warp (sphere 20 32 16) (sphere 22) (roughen 2 3)))
+```
+
+---
+
+## SDF Modeling (Signed Distance Functions)
+
+> **Desktop only** — SDF operations require the JVM sidecar + Rust/libfive backend. Not available in the browser version.
+
+SDF nodes are **pure data** — lightweight descriptions of implicit surfaces. No geometry is computed until meshing is needed (at `register`, boolean, or export boundaries). This enables smooth blending, morphing, and shelling that are impossible with mesh-based CSG.
+
+### Architecture
+
+```
+Clojure DSL  →  SDF tree (maps)  →  JSON  →  Rust/libfive  →  triangle mesh
+```
+
+SDF trees are immutable Clojure maps:
+```clojure
+{:op "sphere" :r 5.0}
+{:op "union" :a {:op "sphere" :r 5.0} :b {:op "box" :sx 8.0 :sy 8.0 :sz 8.0}}
+```
+
+Meshing is **lazy**: it happens automatically when an SDF meets a mesh boundary (e.g. `register`, boolean with a mesh, export).
+
+### Primitives
+
+| Function | Description |
+|----------|-------------|
+| `(sdf-sphere r)` | Sphere centered at origin |
+| `(sdf-box sx sy sz)` | Axis-aligned box with dimensions sx × sy × sz |
+| `(sdf-cyl r h)` | Cylinder along Z axis with radius r and height h |
+
+### Boolean Operations
+
+| Function | Description |
+|----------|-------------|
+| `(sdf-union a b)` | Combine two SDF shapes |
+| `(sdf-difference a b)` | Subtract b from a |
+| `(sdf-intersection a b)` | Keep only the overlap of a and b |
+
+### SDF-Specific Operations
+
+These operations leverage the implicit representation and have no direct mesh equivalent:
+
+| Function | Description |
+|----------|-------------|
+| `(sdf-blend a b k)` | Smooth blend between a and b. k controls the blend radius — higher values produce a wider, smoother transition |
+| `(sdf-shell a thickness)` | Hollow shell with uniform wall thickness |
+| `(sdf-offset a amount)` | Expand (positive) or contract (negative) the surface by amount |
+| `(sdf-morph a b t)` | Interpolate between shapes a and b. t ranges from 0 (= a) to 1 (= b) |
+| `(sdf-displace node formula)` | Displace surface by a spatial formula (quoted expression using x, y, z) |
+
+`sdf-displace` adds the formula's value to the distance field at each point. Positive values push the surface inward, negative values push outward:
+
+```clojure
+;; Wavy sphere
+(register wavy (sdf-displace (sdf-sphere 10) '(* 1.5 (sin (* x 2)) (sin (* y 2)))))
+
+;; Displace any SDF — works with blends, booleans, etc.
+(register organic
+  (sdf-displace
+    (sdf-blend (sdf-sphere 10) (sdf-box 14 14 14) 2)
+    '(* 0.5 (sin (* x 3)) (cos (* z 3)))))
+```
+
+### Transforms
+
+| Function | Description |
+|----------|-------------|
+| `(sdf-move node dx dy dz)` | Translate an SDF node by offset |
+| `(sdf-rotate node axis angle)` | Rotate around axis (`:x` `:y` `:z`) by angle in degrees |
+| `(sdf-scale node s)` | Uniform scale |
+| `(sdf-scale node sx sy sz)` | Per-axis scale |
+
+### Materialization
+
+| Function | Description |
+|----------|-------------|
+| `(sdf->mesh node)` | Explicitly convert SDF tree to triangle mesh |
+| `(sdf->mesh node bounds resolution)` | With custom bounds `[[xmin xmax] [ymin ymax] [zmin zmax]]` and resolution (voxels/unit) |
+
+Materialization is normally automatic — call `sdf->mesh` only when you need explicit control over bounds or resolution.
+
+**Resolution**: controlled by the turtle's resolution setting. Higher resolution = finer mesh but slower meshing. When the tree contains thin features (`sdf-shell`, small `sdf-offset`), resolution is automatically boosted to guarantee at least 3 voxels across the thinnest part.
+
+### Custom Formulas
+
+`sdf-formula` compiles a quoted Clojure math expression into an SDF tree. The variables `x`, `y`, `z` represent spatial coordinates. Since `sdf-formula` is a function (not a macro), expressions are composable — you can build them with functions, store them in variables, and pass them around.
+
+```clojure
+(sdf-formula 'expr)           ; quoted literal
+(sdf-formula (build-expr))    ; from a function
+```
+
+**Available operations:**
+- Arithmetic: `+`, `-`, `*`, `/`
+- Trig: `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`
+- Math: `sqrt`, `abs`, `exp`, `log`, `pow`, `mod`, `square`, `neg`
+- Comparison: `min`, `max`
+
+**Coordinate variables:**
+
+| Variable | Description |
+|----------|-------------|
+| `x`, `y`, `z` | Cartesian coordinates |
+| `r` | Distance from origin — `sqrt(x² + y² + z²)` |
+| `rho` | Cylindrical radius — `sqrt(x² + y²)` |
+| `theta` | Azimuthal angle around Z — `atan2(y, x)` |
+| `phi` | Polar angle from Z — `atan2(sqrt(x²+y²), z)` |
+
+Spherical/cylindrical variables are synthetic — they expand to sub-trees of x, y, z. Useful for patterns that follow curved surfaces:
+
+```clojure
+;; Radial displacement that follows the sphere's curvature
+(register bumpy
+  (sdf-displace (sdf-sphere 10)
+    '(* 1.5 (sin (* theta 6)) (sin (* phi 6)))))
+
+;; Cylindrical fluting
+(register fluted
+  (sdf-displace (sdf-cyl 8 20) '(* 0.5 (cos (* theta 12)))))
+```
+
+Formulas produce infinite implicit surfaces — intersect with a bounding shape to get a finite solid:
+
+```clojure
+;; Wave surface (quoted literal)
+(register wave
+  (sdf-intersection
+    (sdf-formula '(- z (* 2 (sin (* x 0.5)) (cos (* y 0.5)))))
+    (sdf-box 30 30 10)))
+
+;; Composable: build formulas with functions
+(defn mk-wave [freq amp]
+  (list '- 'z (list '* amp (list 'sin (list '* 'x freq))
+                              (list 'cos (list '* 'y freq)))))
+
+(register wave2
+  (sdf-intersection
+    (sdf-formula (mk-wave 0.3 4))
+    (sdf-box 40 40 10)))
+```
+
+### TPMS (Triply Periodic Minimal Surfaces)
+
+Pre-built lattice structures for organic/structural infills:
+
+| Function | Description |
+|----------|-------------|
+| `(sdf-gyroid period thickness)` | Gyroid lattice — the most common TPMS for 3D printing |
+| `(sdf-schwarz-p period thickness)` | Schwarz-P — cubic channels |
+| `(sdf-diamond period thickness)` | Diamond (Schwarz-D) — interconnected tetrahedral cells |
+
+- `period` = cell size (larger = coarser lattice)
+- `thickness` = wall thickness
+
+TPMS are infinite — intersect with a shape to bound them:
+
+```clojure
+;; Gyroid-filled sphere
+(register infill (sdf-intersection (sdf-sphere 20) (sdf-gyroid 8 0.5)))
+
+;; Schwarz-P cube
+(register lattice (sdf-intersection (sdf-box 30 30 30) (sdf-schwarz-p 10 0.8)))
+```
+
+### Examples
+
+```clojure
+;; Simple sphere
+(register s (sdf-sphere 10))
+
+;; Box with rounded edges via offset
+(register rounded (sdf-offset (sdf-box 18 18 18) 2))
+
+;; Smooth blend of sphere and box
+(register blob (sdf-blend (sdf-sphere 10) (sdf-box 14 14 14) 3))
+
+;; Hollow shell
+(register shell (sdf-shell (sdf-sphere 15) 1))
+
+;; Morph between shapes
+
+
+;; Composed: blended union with cutout
+(register part
+  (sdf-difference
+    (sdf-blend (sdf-sphere 12) (sdf-cyl 8 20) 2)
+    (sdf-move (sdf-box 6 6 30) 0 0 0)))
+
+;; Rotated box
+(register tilted (sdf-rotate (sdf-box 20 10 5) :z 45))
+
+;; Scaled cylinder (elliptical cross-section)
+(register ellip (sdf-scale (sdf-cyl 10 20) 2 1 1))
+
+;; Explicit high-res meshing
+(register hires (sdf->mesh (sdf-sphere 10) [[-12 12] [-12 12] [-12 12]] 30))
 ```
 
 ---

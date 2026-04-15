@@ -18,7 +18,8 @@
             [ridley.editor.bindings :refer [base-bindings]]
             [ridley.editor.macros :refer [macro-defs]]
             [ridley.library.core :as library]
-            [ridley.library.svg :as svg]))
+            [ridley.library.svg :as svg]
+            [ridley.jvm.client :as jvm]))
 
 ;; ============================================================
 ;; SCI Context Management
@@ -172,3 +173,34 @@
       {:lines (vec lines)
        :stamps (vec stamps)
        :meshes []})))
+
+;; ============================================================
+;; JVM Sidecar Evaluation
+;; ============================================================
+
+(defn- jvm-read-active-libs
+  "Read active JVM library names from localStorage (separate from SCI libs)."
+  []
+  (when-let [raw (.getItem js/localStorage "ridley:jvm-libs:active")]
+    (try (vec (js->clj (.parse js/JSON raw)))
+         (catch :default _ []))))
+
+(defn evaluate-definitions-jvm
+  "Evaluate definitions by sending the script to the JVM sidecar (async).
+   Includes active library names so the sidecar aliases their namespaces.
+   Calls on-result with {:meshes {name mesh} :print-output str :elapsed-ms num}
+   or {:error str}."
+  [code on-result]
+  (let [active-libs (or (jvm-read-active-libs) [])]
+    (if (seq active-libs)
+      (jvm/eval-script-with-libraries code active-libs on-result)
+      (jvm/eval-script code on-result))))
+
+(defn evaluate-repl-jvm
+  "Evaluate a REPL command via the JVM sidecar (async).
+   Uses persistent namespace — turtle state survives between calls.
+   Calls on-result with {:meshes ... :lines ... :print-output ... :result ... :elapsed-ms ...}
+   or {:error str}."
+  [command on-result]
+  (let [active-libs (or (jvm-read-active-libs) [])]
+    (jvm/eval-repl command active-libs on-result)))

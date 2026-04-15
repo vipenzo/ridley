@@ -333,5 +333,5 @@
 ;; Singola cella (per test veloci)
 ;; (register Cell (multiboard-cell true))
 
-(register Tile (multiboard-tile 4 4))
+(register Tile (bench "Wasm" (multiboard-tile 4 4)))
 (color :Tile 0xffffff)

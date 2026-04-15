@@ -31,17 +31,25 @@
             [ridley.anim.playback :as anim-playback]
             [ridley.editor.test-mode :as test-mode]
             [ridley.version :as version]
-            [ridley.audio :as audio]))
+            [ridley.audio :as audio]
+            [ridley.jvm.client :as jvm]))
 
 (defonce ^:private editor-view (atom nil))
 (defonce ^:private repl-input-el (atom nil))
 (defonce ^:private repl-history-el (atom nil))
 (defonce ^:private error-el (atom nil))
 
+;; JVM sidecar mode — when true, scripts are sent to JVM instead of SCI
+(defonce jvm-mode (atom false))
+
+;; Sync jvm-mode to editor-state for test_mode.cljs access
+(add-watch jvm-mode :sync-state
+           (fn [_ _ _ new-val]
+             (reset! editor-state/jvm-mode? new-val)))
+
 ;; Command history
 (defonce ^:private command-history (atom []))
 (defonce ^:private history-index (atom -1))
-
 
 ;; Sync state
 (defonce ^:private sync-mode (atom nil))  ; nil, :host, or :client
@@ -51,7 +59,6 @@
 
 ;; Manual panel state
 (defonce ^:private manual-panel (atom nil))
-
 
 (declare sync-voice-state)
 (declare save-to-storage)
@@ -139,8 +146,292 @@
   []
   (viewport/update-turtle-pose (editor-state/get-turtle-pose)))
 
+(defn- evaluate-definitions-sci
+  "Evaluate definitions via SCI (browser-side). The standard path."
+  [reset-camera?]
+  (let [explicit-code (cm/get-value @editor-view)
+        result (repl/evaluate-definitions explicit-code)]
+    (viewport/hide-loading!)
+    (if-let [error (:error result)]
+      (do
+        (show-error error)
+        (audio/play-feedback! false))
+      (do
+        ;; Show library load warnings if any
+        (let [lib-warnings @lib-core/load-warnings]
+          (if (seq lib-warnings)
+            (show-error (str/join "\n" lib-warnings))
+            (hide-error)))
+        ;; Show print output in REPL history if any
+        (when-let [print-output (:print-output result)]
+          (add-script-output print-output))
+        (let [render-data (repl/extract-render-data result)]
+          (when render-data
+            ;; Store lines, stamps, and definition meshes
+            (registry/set-lines! (:lines render-data))
+            (registry/set-stamps! (or (:stamps render-data) []))
+            (registry/set-definition-meshes! (:meshes render-data)))
+          ;; Refresh viewport, optionally resetting camera
+          (registry/refresh-viewport! reset-camera?)
+          ;; Announce success for screen readers (via aria-live on repl-history)
+          (let [mesh-count (count (or (:meshes render-data) []))
+                line-count (count (or (:lines render-data) []))
+                summary (cond
+                          (and (pos? mesh-count) (pos? line-count))
+                          (str "Evaluation successful: " mesh-count " mesh"
+                               (when (> mesh-count 1) "es")
+                               ", " line-count " line"
+                               (when (> line-count 1) "s"))
+                          (pos? mesh-count)
+                          (str "Evaluation successful: " mesh-count " mesh"
+                               (when (> mesh-count 1) "es"))
+                          (pos? line-count)
+                          (str "Evaluation successful: " line-count " line"
+                               (when (> line-count 1) "s"))
+                          :else
+                          "Evaluation successful")]
+            (add-repl-entry "[Run]" summary false)))
+        ;; Update turtle indicator
+        (update-turtle-indicator)
+        ;; Sync AI state
+        (sync-voice-state)
+        ;; Audio feedback
+        (audio/play-feedback! true)))))
+
+(defn- register-jvm-meshes!
+  "Register meshes from JVM eval result in the scene registry."
+  [meshes reset-camera?]
+  (doseq [[name mesh] meshes]
+    (let [mesh (if-let [c (:color mesh)]
+                 (update mesh :material merge {:color c})
+                 mesh)]
+      (registry/register-mesh! name mesh)
+      (when (false? (:visible mesh))
+        (registry/hide-mesh! name))))
+  (registry/refresh-viewport! reset-camera?))
+
+;; ── JVM Tweak slider UI ──────────────────────────────────────
+
+(defonce ^:private jvm-tweak-state (atom nil))
+
+(defn- jvm-tweak-cancel! []
+  "Cancel tweak: discard changes, restore original meshes."
+  (when-let [{:keys [panel-el esc-handler]} @jvm-tweak-state]
+    (when panel-el (.remove panel-el))
+    (when esc-handler (.removeEventListener js/document "keydown" esc-handler)))
+  (viewport/clear-preview!)
+  (registry/show-all!)
+  (registry/refresh-viewport! false)
+  (add-repl-entry "[Tweak]" "Cancelled" false)
+  (reset! jvm-tweak-state nil))
+
+(defn- jvm-tweak-confirm!
+  "Confirm tweak: log the final expression with tweaked values, re-eval to register."
+  []
+  (when-let [{:keys [form current-values panel-el esc-handler script command active-libs mode]} @jvm-tweak-state]
+    (when panel-el (.remove panel-el))
+    (when esc-handler (.removeEventListener js/document "keydown" esc-handler))
+    (viewport/clear-preview!)
+    ;; Build the final expression string with substituted values
+    ;; by sending one last tweak-update and using the result
+    (let [result (if (= mode :repl)
+                   (jvm/tweak-repl-update command form current-values active-libs)
+                   (jvm/tweak-update script form current-values active-libs))]
+      (when result
+        (let [meshes (:meshes result)]
+          (doseq [[name mesh] meshes]
+            (registry/register-mesh! name mesh)))))
+    (registry/show-all!)
+    (registry/refresh-viewport! false)
+    ;; Log the final form: replace numbers in order with tweaked values
+    (let [sorted-vals (map second (sort-by first current-values))
+          idx (atom 0)
+          final-form (str/replace form #"-?\d+\.?\d*"
+                                  (fn [match]
+                                    (let [i @idx]
+                                      (swap! idx inc)
+                                      (if-let [v (nth sorted-vals i nil)]
+                                        (str v)
+                                        match))))]
+      (add-repl-entry "[Tweak]" final-form false))
+    (reset! jvm-tweak-state nil)))
+
+(defn- slider-range [value]
+  (let [abs-val (Math/abs (double value))
+        [raw-min raw-max step]
+        (cond
+          (zero? value) [-100 100 1]
+          (< abs-val 1) [(* value -5) (* value 5) (/ abs-val 100)]
+          (< abs-val 10) [(- value (* abs-val 3)) (+ value (* abs-val 3)) 0.1]
+          (< abs-val 100) [(- value (* abs-val 2)) (+ value (* abs-val 2)) 0.5]
+          :else [(- value (* abs-val 1.5)) (+ value (* abs-val 1.5)) 1])
+        ;; Clamp min to 0 for positive values (dimensions shouldn't go negative)
+        smin (if (pos? value) (max 0 raw-min) raw-min)]
+    [smin raw-max step]))
+
+(defn- do-tweak-update! []
+  (when-let [{:keys [form script command active-libs current-values mode]} @jvm-tweak-state]
+    (let [result (if (= mode :repl)
+                   (jvm/tweak-repl-update command form current-values active-libs)
+                   (jvm/tweak-update script form current-values active-libs))]
+      (when result
+        (let [meshes (:meshes result)
+              items (vec (keep (fn [[_name mesh]]
+                                 (when (and (:vertices mesh) (:faces mesh))
+                                   {:type :mesh :data mesh}))
+                               meshes))]
+          (when (seq items)
+            (viewport/show-preview! items)))))))
+
+(defn- create-jvm-tweak-panel!
+  "Create slider panel for a JVM tweak session.
+   mode: :definitions (default) or :repl. command: original REPL command (for :repl mode)."
+  [tweak-session script active-libs & {:keys [mode command] :or {mode :definitions}}]
+  (jvm-tweak-cancel!)
+  (let [{:keys [form literals]} tweak-session
+        panel (.createElement js/document "div")
+        current-values (into {} (map (fn [lit] [(:index lit) (:value lit)]) literals))]
+    (set! (.-id panel) "test-slider-panel")
+    ;; Hide registered meshes so only the tweak preview is visible
+    (registry/hide-all!)
+    (registry/refresh-viewport! false)
+    ;; Header
+    (let [header (.createElement js/document "div")]
+      (.add (.-classList header) "slider-header")
+      (set! (.-innerHTML header) "<b>Tweak</b> <span style='opacity:0.6'>(Esc to close)</span>")
+      (.appendChild panel header))
+    ;; Sliders
+    (doseq [{:keys [index value label]} literals]
+      (let [[smin smax step] (slider-range value)
+            row (.createElement js/document "div")
+            label-el (.createElement js/document "span")
+            slider (.createElement js/document "input")
+            value-el (.createElement js/document "span")]
+        (.add (.-classList row) "slider-row")
+        (.add (.-classList label-el) "slider-label")
+        (set! (.-textContent label-el) (or label (str value)))
+        (.add (.-classList value-el) "slider-value")
+        (set! (.-textContent value-el) (str value))
+        (set! (.-type slider) "range")
+        (set! (.-min slider) (str smin))
+        (set! (.-max slider) (str smax))
+        (set! (.-step slider) (str step))
+        (set! (.-value slider) (str value))
+        (.add (.-classList slider) "test-slider")
+        ;; Debounced input handler
+        (let [timeout (atom nil)]
+          (.addEventListener slider "input"
+                             (fn [_]
+                               (let [new-val (js/parseFloat (.-value slider))]
+                                 (set! (.-textContent value-el) (str new-val))
+                                 (swap! jvm-tweak-state assoc-in [:current-values index] new-val)
+                                 (when-let [t @timeout] (js/clearTimeout t))
+                                 (reset! timeout
+                                         (js/setTimeout
+                                          (fn [] (do-tweak-update!))
+                                          150))))))
+        ;; Zoom buttons: + widens range, − narrows (more precise)
+        (let [zoom-fn (fn [factor]
+                        (let [cur (js/parseFloat (.-value slider))
+                              old-min (js/parseFloat (.-min slider))
+                              old-max (js/parseFloat (.-max slider))
+                              half-span (/ (* (- old-max old-min) factor) 2)
+                              old-step (js/parseFloat (.-step slider))
+                              new-step (if (> factor 1)
+                                         (* old-step 2)
+                                         (max 0.01 (/ old-step 2)))]
+                          (set! (.-min slider) (str (if (pos? cur) (max 0 (- cur half-span)) (- cur half-span))))
+                          (set! (.-max slider) (str (+ cur half-span)))
+                          (set! (.-step slider) (str new-step))
+                          (set! (.-value slider) (str cur))))
+              zoom-out (.createElement js/document "button")
+              zoom-in (.createElement js/document "button")]
+          (.add (.-classList zoom-out) "test-zoom-btn")
+          (.add (.-classList zoom-in) "test-zoom-btn")
+          (set! (.-textContent zoom-out) "+")
+          (set! (.-textContent zoom-in) "\u2212")
+          (set! (.-title zoom-out) "Wider range")
+          (set! (.-title zoom-in) "Narrower range (more precise)")
+          (.addEventListener zoom-out "click" (fn [_] (zoom-fn 2)))
+          (.addEventListener zoom-in "click" (fn [_] (zoom-fn 0.5)))
+          (.appendChild row label-el)
+          (.appendChild row zoom-in)
+          (.appendChild row slider)
+          (.appendChild row zoom-out)
+          (.appendChild row value-el))
+        (.appendChild panel row)))
+    ;; OK / Cancel buttons
+    (let [btn-row (.createElement js/document "div")
+          ok-btn (.createElement js/document "button")
+          cancel-btn (.createElement js/document "button")]
+      (.add (.-classList btn-row) "test-buttons")
+      (set! (.-textContent ok-btn) "OK")
+      (set! (.-textContent cancel-btn) "Cancel")
+      (.add (.-classList ok-btn) "test-btn" "test-btn-ok")
+      (.add (.-classList cancel-btn) "test-btn" "test-btn-cancel")
+      (.addEventListener ok-btn "click" (fn [_] (jvm-tweak-confirm!)))
+      (.addEventListener cancel-btn "click" (fn [_] (jvm-tweak-cancel!)))
+      (.appendChild btn-row ok-btn)
+      (.appendChild btn-row cancel-btn)
+      (.appendChild panel btn-row))
+    ;; Insert panel into the REPL area
+    (when-let [terminal (.getElementById js/document "repl-terminal")]
+      (.insertBefore terminal panel (.-firstChild terminal)))
+    ;; Esc handler
+    (let [esc-handler (fn [e]
+                        (when (= "Escape" (.-key e))
+                          (jvm-tweak-cancel!)))]
+      (.addEventListener js/document "keydown" esc-handler)
+      (reset! jvm-tweak-state {:form form
+                               :script script
+                               :command command
+                               :mode mode
+                               :active-libs active-libs
+                               :current-values current-values
+                               :panel-el panel
+                               :esc-handler esc-handler})
+      ;; Initial kick: show the mesh with original values immediately
+      (do-tweak-update!))))
+
+(defn- evaluate-definitions-jvm
+  "Evaluate definitions via JVM sidecar (async). Sends full script, receives meshes."
+  [reset-camera?]
+  (let [code (cm/get-value @editor-view)]
+    (repl/evaluate-definitions-jvm code
+                                   (fn [result]
+                                     (viewport/hide-loading!)
+                                     (if-let [error (:error result)]
+                                       (do
+                                         (show-error error)
+                                         (audio/play-feedback! false))
+                                       (let [{:keys [meshes stamps print-output elapsed-ms tweak-session]} result]
+                                         (hide-error)
+                                         (when (seq print-output)
+                                           (add-script-output print-output))
+                                         (when (seq stamps)
+                                           (registry/set-stamps! stamps))
+                                         (register-jvm-meshes! meshes reset-camera?)
+                                         ;; Check for tweak session
+                                         (if tweak-session
+                                           (let [active-libs (or (when-let [raw (.getItem js/localStorage "ridley:jvm-libs:active")]
+                                                                   (try (vec (js->clj (.parse js/JSON raw)))
+                                                                        (catch :default _ [])))
+                                                                 [])]
+                                             ;; Pass the full editor script — the server replaces
+                                             ;; (tweak <form>) with the modified form on each update
+                                             (create-jvm-tweak-panel! tweak-session code active-libs)
+                                             (add-repl-entry "[Run/JVM]" "Tweak mode active — move sliders" false))
+                                           ;; Normal summary
+                                           (let [mesh-count (count meshes)
+                                                 summary (str "JVM eval: " mesh-count " mesh"
+                                                              (when (> mesh-count 1) "es")
+                                                              " in " (.toFixed (or elapsed-ms 0) 0) "ms")]
+                                             (add-repl-entry "[Run/JVM]" summary false)))
+                                         (audio/play-feedback! true)))))))
+
 (defn- evaluate-definitions
   "Evaluate only the definitions panel (for Cmd+Enter).
+   Routes to JVM sidecar when jvm-mode is active, otherwise SCI.
    Optional reset-camera? parameter controls whether to reset camera view (default false)."
   ([] (evaluate-definitions false))
   ([reset-camera?]
@@ -155,54 +446,9 @@
     (fn []
       (js/setTimeout
        (fn []
-         (let [explicit-code (cm/get-value @editor-view)
-               result (repl/evaluate-definitions explicit-code)]
-           (viewport/hide-loading!)
-           (if-let [error (:error result)]
-             (do
-               (show-error error)
-               (audio/play-feedback! false))
-             (do
-               ;; Show library load warnings if any
-               (let [lib-warnings @lib-core/load-warnings]
-                 (if (seq lib-warnings)
-                   (show-error (str/join "\n" lib-warnings))
-                   (hide-error)))
-               ;; Show print output in REPL history if any
-               (when-let [print-output (:print-output result)]
-                 (add-script-output print-output))
-               (let [render-data (repl/extract-render-data result)]
-                 (when render-data
-                   ;; Store lines, stamps, and definition meshes
-                   (registry/set-lines! (:lines render-data))
-                   (registry/set-stamps! (or (:stamps render-data) []))
-                   (registry/set-definition-meshes! (:meshes render-data)))
-                 ;; Refresh viewport, optionally resetting camera
-                 (registry/refresh-viewport! reset-camera?)
-                 ;; Announce success for screen readers (via aria-live on repl-history)
-                 (let [mesh-count (count (or (:meshes render-data) []))
-                       line-count (count (or (:lines render-data) []))
-                       summary (cond
-                                 (and (pos? mesh-count) (pos? line-count))
-                                 (str "Evaluation successful: " mesh-count " mesh"
-                                      (when (> mesh-count 1) "es")
-                                      ", " line-count " line"
-                                      (when (> line-count 1) "s"))
-                                 (pos? mesh-count)
-                                 (str "Evaluation successful: " mesh-count " mesh"
-                                      (when (> mesh-count 1) "es"))
-                                 (pos? line-count)
-                                 (str "Evaluation successful: " line-count " line"
-                                      (when (> line-count 1) "s"))
-                                 :else
-                                 "Evaluation successful")]
-                   (add-repl-entry "[Run]" summary false)))
-               ;; Update turtle indicator
-               (update-turtle-indicator)
-               ;; Sync AI state
-               (sync-voice-state)
-               ;; Audio feedback
-               (audio/play-feedback! true)))))
+         (if @jvm-mode
+           (evaluate-definitions-jvm reset-camera?)
+           (evaluate-definitions-sci reset-camera?)))
        0)))))
 
 (defn ^:export run-definitions!
@@ -230,7 +476,7 @@
                                (if has-directives?
                                  (str "Generating... (" (count images) " captures)")
                                  "Generating..."))
-                      false)
+                     false)
      (let [script-content (when @editor-view (cm/get-value @editor-view))]
        (-> (ai/generate clean-text (cond-> {:script-content script-content
                                             :images (when (seq images) images)}
@@ -276,156 +522,184 @@
         (set! (.-value input-el) "")
         ;; Check for special commands
         (let [trimmed (str/trim input)]
-        (cond
+          (cond
           ;; /ai-describe [target] — start a describe session
-          (or (= trimmed "/ai-describe")
-              (str/starts-with? trimmed "/ai-describe "))
-          (let [rest (str/trim (subs trimmed (count "/ai-describe")))
-                target (when (seq rest) (keyword rest))]
-            (add-repl-entry input "Starting describe session..." false)
-            (try
-              (describe-session/describe target)
-              (catch :default e
-                (add-repl-entry input (.-message e) true))))
+            (or (= trimmed "/ai-describe")
+                (str/starts-with? trimmed "/ai-describe "))
+            (let [rest (str/trim (subs trimmed (count "/ai-describe")))
+                  target (when (seq rest) (keyword rest))]
+              (add-repl-entry input "Starting describe session..." false)
+              (try
+                (describe-session/describe target)
+                (catch :default e
+                  (add-repl-entry input (.-message e) true))))
 
           ;; /ai-ask question — follow-up in active describe session
-          (str/starts-with? trimmed "/ai-ask ")
-          (let [question (str/trim (subs trimmed 8))]
-            (if (seq question)
-              (do
-                (add-repl-entry input (str "Asking: " question) false)
-                (try
-                  (describe-session/ai-ask question)
-                  (catch :default e
-                    (add-repl-entry input (.-message e) true))))
-              (add-repl-entry input "Usage: /ai-ask your question here" true)))
+            (str/starts-with? trimmed "/ai-ask ")
+            (let [question (str/trim (subs trimmed 8))]
+              (if (seq question)
+                (do
+                  (add-repl-entry input (str "Asking: " question) false)
+                  (try
+                    (describe-session/ai-ask question)
+                    (catch :default e
+                      (add-repl-entry input (.-message e) true))))
+                (add-repl-entry input "Usage: /ai-ask your question here" true)))
 
           ;; /ai-end — close describe session
-          (= trimmed "/ai-end")
-          (add-repl-entry input (describe-session/end-describe) false)
+            (= trimmed "/ai-end")
+            (add-repl-entry input (describe-session/end-describe) false)
 
           ;; /ai-clear — reset AI conversation history
-          (= trimmed "/ai-clear")
-          (do (ai/clear-history!)
-              (when-let [view @editor-view]
-                (cm/clear-ai-history! view)
-                (save-to-storage)
-                (send-script-debounced))
-              (add-repl-entry input "AI history cleared." false))
+            (= trimmed "/ai-clear")
+            (do (ai/clear-history!)
+                (when-let [view @editor-view]
+                  (cm/clear-ai-history! view)
+                  (save-to-storage)
+                  (send-script-debounced))
+                (add-repl-entry input "AI history cleared." false))
 
           ;; /ai-batch — load EDN test suite from file picker
-          (= trimmed "/ai-batch")
-          (batch/start-batch-from-file!
-            (fn [msg] (add-repl-entry "/ai-batch" msg false)))
+            (= trimmed "/ai-batch")
+            (batch/start-batch-from-file!
+             (fn [msg] (add-repl-entry "/ai-batch" msg false)))
 
           ;; /ai-batch-inline prompt1 | prompt2 | prompt3
-          (str/starts-with? trimmed "/ai-batch-inline ")
-          (batch/start-batch-inline!
-            (str/trim (subs trimmed 18))
-            (fn [msg] (add-repl-entry "/ai-batch-inline" msg false)))
+            (str/starts-with? trimmed "/ai-batch-inline ")
+            (batch/start-batch-inline!
+             (str/trim (subs trimmed 18))
+             (fn [msg] (add-repl-entry "/ai-batch-inline" msg false)))
 
           ;; /ai-auto-continue [N] [feedback] — continue visual refinement with optional feedback
-          (or (str/starts-with? trimmed "/ai-auto-continue")
-              (= trimmed "/ai-auto-continue"))
-          (let [rest (str/trim (subs trimmed (count "/ai-auto-continue")))
-                [max-rounds feedback]
-                (if-let [[_ n fb] (re-matches #"(\d+)\s+(.*)" rest)]
-                  [(js/parseInt n 10) fb]
-                  (if-let [[_ n] (re-matches #"(\d+)" rest)]
-                    [(js/parseInt n 10) nil]
-                    [3 (when (seq rest) rest)]))]
-            (add-repl-entry input (str "Continuing [auto]..."
-                                       (when feedback (str " " feedback))) false)
-            (auto-session/continue! max-rounds feedback))
+            (or (str/starts-with? trimmed "/ai-auto-continue")
+                (= trimmed "/ai-auto-continue"))
+            (let [rest (str/trim (subs trimmed (count "/ai-auto-continue")))
+                  [max-rounds feedback]
+                  (if-let [[_ n fb] (re-matches #"(\d+)\s+(.*)" rest)]
+                    [(js/parseInt n 10) fb]
+                    (if-let [[_ n] (re-matches #"(\d+)" rest)]
+                      [(js/parseInt n 10) nil]
+                      [3 (when (seq rest) rest)]))]
+              (add-repl-entry input (str "Continuing [auto]..."
+                                         (when feedback (str " " feedback))) false)
+              (auto-session/continue! max-rounds feedback))
 
           ;; /ai-auto [N] prompt — iterative AI with visual feedback
-          (str/starts-with? trimmed "/ai-auto ")
-          (let [rest (str/trim (subs trimmed 9))
-                [max-rounds prompt] (if-let [[_ n p] (re-matches #"(\d+)\s+(.*)" rest)]
-                                      [(js/parseInt n 10) p]
-                                      [5 rest])
-                script-content (when @editor-view (cm/get-value @editor-view))]
-            (when (seq prompt)
-              (add-repl-entry input (str "Generating [auto, max " max-rounds "]...") false)
-              (auto-session/start! prompt script-content max-rounds)))
+            (str/starts-with? trimmed "/ai-auto ")
+            (let [rest (str/trim (subs trimmed 9))
+                  [max-rounds prompt] (if-let [[_ n p] (re-matches #"(\d+)\s+(.*)" rest)]
+                                        [(js/parseInt n 10) p]
+                                        [5 rest])
+                  script-content (when @editor-view (cm/get-value @editor-view))]
+              (when (seq prompt)
+                (add-repl-entry input (str "Generating [auto, max " max-rounds "]...") false)
+                (auto-session/start! prompt script-content max-rounds)))
 
           ;; /ai1, /ai1!, /ai2, /ai2!, /ai3, /ai3! — tier-specific AI generation
-          (or (str/starts-with? trimmed "/ai1! ") (str/starts-with? trimmed "/ai1 ")
-              (str/starts-with? trimmed "/ai2! ") (str/starts-with? trimmed "/ai2 ")
-              (str/starts-with? trimmed "/ai3! ") (str/starts-with? trimmed "/ai3 "))
-          (let [tier-num (subs trimmed 3 4)
-                tier-kw (case tier-num "1" :tier-1 "2" :tier-2 "3" :tier-3)
-                has-bang? (= "!" (subs trimmed 4 5))
-                prefix-len (if has-bang? 6 5)
-                prompt (str/trim (subs trimmed prefix-len))]
-            (when (seq prompt)
-              (handle-ai-command input prompt has-bang?
-                                 (str "Generating [" (name tier-kw) "]...") tier-kw)))
+            (or (str/starts-with? trimmed "/ai1! ") (str/starts-with? trimmed "/ai1 ")
+                (str/starts-with? trimmed "/ai2! ") (str/starts-with? trimmed "/ai2 ")
+                (str/starts-with? trimmed "/ai3! ") (str/starts-with? trimmed "/ai3 "))
+            (let [tier-num (subs trimmed 3 4)
+                  tier-kw (case tier-num "1" :tier-1 "2" :tier-2 "3" :tier-3)
+                  has-bang? (= "!" (subs trimmed 4 5))
+                  prefix-len (if has-bang? 6 5)
+                  prompt (str/trim (subs trimmed prefix-len))]
+              (when (seq prompt)
+                (handle-ai-command input prompt has-bang?
+                                   (str "Generating [" (name tier-kw) "]...") tier-kw)))
 
           ;; /ai or /ai! — AI code generation
-          (or (str/starts-with? trimmed "/ai! ")
-              (str/starts-with? trimmed "/ai "))
-          (let [auto-run? (str/starts-with? trimmed "/ai! ")
-                prefix-len (if auto-run? 5 4)
-                prompt (str/trim (subs trimmed prefix-len))]
-            (when (seq prompt)
-              (handle-ai-command input prompt auto-run?)))
+            (or (str/starts-with? trimmed "/ai! ")
+                (str/starts-with? trimmed "/ai "))
+            (let [auto-run? (str/starts-with? trimmed "/ai! ")
+                  prefix-len (if auto-run? 5 4)
+                  prompt (str/trim (subs trimmed prefix-len))]
+              (when (seq prompt)
+                (handle-ai-command input prompt auto-run?)))
 
           ;; Explicit negative feedback — rollback last AI code and retry
-          (and (when-let [view @editor-view] (cm/find-ai-block view))
-               (let [lower (str/lower-case trimmed)]
-                 (or (= lower "no")
-                     (str/starts-with? lower "no,")
-                     (str/starts-with? lower "no ")
-                     (some #(str/includes? lower %)
-                           ["sbagliato" "non così" "non va" "wrong" "rifai" "riprova"]))))
-          (do
+            (and (when-let [view @editor-view] (cm/find-ai-block view))
+                 (let [lower (str/lower-case trimmed)]
+                   (or (= lower "no")
+                       (str/starts-with? lower "no,")
+                       (str/starts-with? lower "no ")
+                       (some #(str/includes? lower %)
+                             ["sbagliato" "non così" "non va" "wrong" "rifai" "riprova"]))))
+            (do
             ;; Record feedback on last history entry
-            (ai/add-feedback! trimmed)
+              (ai/add-feedback! trimmed)
             ;; Rollback: delete the AI block from the editor
-            (when-let [view @editor-view]
-              (cm/delete-ai-block view)
-              (save-to-storage)
-              (send-script-debounced))
+              (when-let [view @editor-view]
+                (cm/delete-ai-block view)
+                (save-to-storage)
+                (send-script-debounced))
             ;; Auto-retry with the feedback text as the new prompt
-            (handle-ai-command input trimmed true "Feedback recorded, regenerating..."))
+              (handle-ai-command input trimmed true "Feedback recorded, regenerating..."))
 
           ;; Normal REPL evaluation
-          :else
-          (do
+            :else
+            (do
             ;; Cancel any active test/tweak session
-            (when (test-mode/active?)
-              (test-mode/cancel!))
+              (when (test-mode/active?)
+                (test-mode/cancel!))
             ;; Send to connected clients if we're the host
-            (when (= :host @sync-mode)
-              (sync/send-repl-command input))
-            ;; Evaluate REPL input only (definitions already in context)
-            (let [result (repl/evaluate-repl input)]
-              (if-let [error (:error result)]
-                (do
-                  (add-repl-entry input error true)
-                  (show-error error)
-                  (audio/play-feedback! false))
-                (do
-                  (hide-error)
-                  ;; Show result in terminal history (with any print output)
-                  (add-repl-entry input (:implicit-result result) false (:print-output result))
-                  ;; Extract lines, stamps, and meshes from REPL evaluation
-                  ;; Skip viewport update when tweak mode is active — its
-                  ;; preview would be clobbered by the refresh.
-                  (when-not (test-mode/active?)
-                    (when-let [render-data (repl/extract-render-data result)]
-                      (registry/add-lines! (:lines render-data))
-                      (registry/add-stamps! (or (:stamps render-data) []))
-                      (registry/set-definition-meshes! (:meshes render-data)))
-                    ;; Update viewport (don't reset camera)
-                    (registry/refresh-viewport! false))
-                  ;; Update turtle indicator
-                  (update-turtle-indicator)
-                  ;; Sync AI state
-                  (sync-voice-state)
-                  ;; Audio feedback
-                  (audio/play-feedback! true)))))))))))
+              (when (= :host @sync-mode)
+                (sync/send-repl-command input))
+            ;; Route to JVM or SCI
+              (if @jvm-mode
+                ;; JVM REPL (async)
+                (repl/evaluate-repl-jvm input
+                                        (fn [result]
+                                          (if-let [error (:error result)]
+                                            (do
+                                              (add-repl-entry input error true)
+                                              (show-error error)
+                                              (audio/play-feedback! false))
+                                            (do
+                                              (hide-error)
+                                              (add-repl-entry input (:result result) false (:print-output result))
+                                              (when-not (test-mode/active?)
+                          ;; Register meshes from JVM result
+                                                (when (seq (:meshes result))
+                                                  (register-jvm-meshes! (:meshes result) false))
+                          ;; Add pen lines
+                                                (when (seq (:lines result))
+                                                  (registry/add-lines! (:lines result)))
+                          ;; Add stamps
+                                                (when (seq (:stamps result))
+                                                  (registry/add-stamps! (:stamps result)))
+                                                (registry/refresh-viewport! false))
+                                              (when-let [pose (:turtle-pose result)]
+                                                (viewport/update-turtle-pose pose))
+                                              ;; Check for tweak session
+                                              (when-let [tweak-session (:tweak-session result)]
+                                                (let [active-libs (or (when-let [raw (.getItem js/localStorage "ridley:jvm-libs:active")]
+                                                                        (try (vec (js->clj (.parse js/JSON raw)))
+                                                                             (catch :default _ [])))
+                                                                      [])]
+                                                  (create-jvm-tweak-panel! tweak-session nil active-libs
+                                                                           :mode :repl :command input)))
+                                              (sync-voice-state)
+                                              (audio/play-feedback! true)))))
+                ;; SCI REPL (sync)
+                (let [result (repl/evaluate-repl input)]
+                  (if-let [error (:error result)]
+                    (do
+                      (add-repl-entry input error true)
+                      (show-error error)
+                      (audio/play-feedback! false))
+                    (do
+                      (hide-error)
+                      (add-repl-entry input (:implicit-result result) false (:print-output result))
+                      (when-not (test-mode/active?)
+                        (when-let [render-data (repl/extract-render-data result)]
+                          (registry/add-lines! (:lines render-data))
+                          (registry/add-stamps! (or (:stamps render-data) []))
+                          (registry/set-definition-meshes! (:meshes render-data)))
+                        (registry/refresh-viewport! false))
+                      (update-turtle-indicator)
+                      (sync-voice-state)
+                      (audio/play-feedback! true))))))))))))
 
 (defn- navigate-history
   "Navigate command history. direction: -1 for older, +1 for newer."
@@ -485,9 +759,9 @@
   (if (exists? js/window.showSaveFilePicker)
     (let [accept (js-obj mime-type extensions)]
       (-> (js/window.showSaveFilePicker
-            #js {:suggestedName filename
-                 :types #js [#js {:description description
-                                  :accept accept}]})
+           #js {:suggestedName filename
+                :types #js [#js {:description description
+                                 :accept accept}]})
           (.then (fn [handle] (.createWritable handle)))
           (.then (fn [writable]
                    (-> (.write writable blob)
@@ -508,10 +782,10 @@
 (defn- load-definitions [file]
   (let [reader (js/FileReader.)]
     (set! (.-onload reader)
-      (fn [e]
-        (cm/set-value @editor-view (.. e -target -result))
+          (fn [e]
+            (cm/set-value @editor-view (.. e -target -result))
         ;; Auto-save to localStorage after loading
-        (save-to-storage)))
+            (save-to-storage)))
     (.readAsText reader file)))
 
 ;; ============================================================
@@ -530,29 +804,29 @@
         start-explicit-height (atom 0)]
     (when (and divider explicit-section repl-section)
       (.addEventListener divider "mousedown"
-        (fn [e]
-          (.preventDefault e)
-          (reset! dragging true)
-          (reset! start-y (.-clientY e))
-          (reset! start-explicit-height (.-offsetHeight explicit-section))
-          (.add (.-classList js/document.body) "resizing-v")))
+                         (fn [e]
+                           (.preventDefault e)
+                           (reset! dragging true)
+                           (reset! start-y (.-clientY e))
+                           (reset! start-explicit-height (.-offsetHeight explicit-section))
+                           (.add (.-classList js/document.body) "resizing-v")))
       (.addEventListener js/document "mousemove"
-        (fn [e]
-          (when @dragging
-            (let [delta (- (.-clientY e) @start-y)
-                  panel-height (.-offsetHeight editor-panel)
-                  new-height (+ @start-explicit-height delta)
-                  min-height 80
-                  max-height (- panel-height 120)] ; Leave room for REPL
-              (when (and (>= new-height min-height) (<= new-height max-height))
-                (set! (.-flexGrow (.-style explicit-section)) "0")
-                (set! (.-flexBasis (.-style explicit-section)) (str new-height "px"))
-                (set! (.-flexGrow (.-style repl-section)) "1"))))))
+                         (fn [e]
+                           (when @dragging
+                             (let [delta (- (.-clientY e) @start-y)
+                                   panel-height (.-offsetHeight editor-panel)
+                                   new-height (+ @start-explicit-height delta)
+                                   min-height 80
+                                   max-height (- panel-height 120)] ; Leave room for REPL
+                               (when (and (>= new-height min-height) (<= new-height max-height))
+                                 (set! (.-flexGrow (.-style explicit-section)) "0")
+                                 (set! (.-flexBasis (.-style explicit-section)) (str new-height "px"))
+                                 (set! (.-flexGrow (.-style repl-section)) "1"))))))
       (.addEventListener js/document "mouseup"
-        (fn [_]
-          (when @dragging
-            (reset! dragging false)
-            (.remove (.-classList js/document.body) "resizing-v")))))))
+                         (fn [_]
+                           (when @dragging
+                             (reset! dragging false)
+                             (.remove (.-classList js/document.body) "resizing-v")))))))
 
 (defn- setup-horizontal-resizer
   "Setup horizontal resizer between editor panel and viewport."
@@ -569,29 +843,29 @@
         (set! (.-id resizer) "panel-resizer")
         (.insertBefore app resizer viewport-panel)
         (.addEventListener resizer "mousedown"
-          (fn [e]
-            (.preventDefault e)
-            (reset! dragging true)
-            (reset! start-x (.-clientX e))
-            (reset! start-width (.-offsetWidth editor-panel))
-            (.add (.-classList js/document.body) "resizing-h")))
+                           (fn [e]
+                             (.preventDefault e)
+                             (reset! dragging true)
+                             (reset! start-x (.-clientX e))
+                             (reset! start-width (.-offsetWidth editor-panel))
+                             (.add (.-classList js/document.body) "resizing-h")))
         (.addEventListener js/document "mousemove"
-          (fn [e]
-            (when @dragging
-              (let [delta (- (.-clientX e) @start-x)
-                    app-width (.-offsetWidth app)
-                    new-width (+ @start-width delta)
-                    min-width 250
-                    max-width (- app-width 300)] ; Leave room for viewport
-                (when (and (>= new-width min-width) (<= new-width max-width))
-                  (set! (.-width (.-style editor-panel)) (str new-width "px"))
-                  (set! (.-minWidth (.-style editor-panel)) (str new-width "px")))))))
+                           (fn [e]
+                             (when @dragging
+                               (let [delta (- (.-clientX e) @start-x)
+                                     app-width (.-offsetWidth app)
+                                     new-width (+ @start-width delta)
+                                     min-width 250
+                                     max-width (- app-width 300)] ; Leave room for viewport
+                                 (when (and (>= new-width min-width) (<= new-width max-width))
+                                   (set! (.-width (.-style editor-panel)) (str new-width "px"))
+                                   (set! (.-minWidth (.-style editor-panel)) (str new-width "px")))))))
                   ;; ResizeObserver handles viewport resize automatically
         (.addEventListener js/document "mouseup"
-          (fn [_]
-            (when @dragging
-              (reset! dragging false)
-              (.remove (.-classList js/document.body) "resizing-h"))))))))
+                           (fn [_]
+                             (when @dragging
+                               (reset! dragging false)
+                               (.remove (.-classList js/document.body) "resizing-h"))))))))
 
 ;; ============================================================
 ;; Setup
@@ -602,50 +876,55 @@
   ;; REPL input: Enter to run, arrows for history
   (when-let [el @repl-input-el]
     (.addEventListener el "keydown"
-      (fn [e]
-        (case (.-key e)
-          "Enter"
-          (do
-            (.preventDefault e)
-            (evaluate-repl-input))
-          "ArrowUp"
-          (do
-            (.preventDefault e)
-            (navigate-history -1))
-          "ArrowDown"
-          (do
-            (.preventDefault e)
-            (navigate-history 1))
-          "Escape"
-          (when (auto-session/active?)
-            (.preventDefault e)
-            (auto-session/cancel!))
-          nil))))
+                       (fn [e]
+                         (case (.-key e)
+                           "Enter"
+                           (do
+                             (.preventDefault e)
+                             (evaluate-repl-input))
+                           "ArrowUp"
+                           (do
+                             (.preventDefault e)
+                             (navigate-history -1))
+                           "ArrowDown"
+                           (do
+                             (.preventDefault e)
+                             (navigate-history 1))
+                           "Escape"
+                           (when (auto-session/active?)
+                             (.preventDefault e)
+                             (auto-session/cancel!))
+                           nil))))
   ;; Global Cmd+Enter — run script from anywhere (REPL, viewport, etc.)
   (.addEventListener js/window "keydown"
-    (fn [e]
-      (when (and (= "Enter" (.-key e))
-                 (or (.-metaKey e) (.-ctrlKey e)))
+                     (fn [e]
+                       (when (and (= "Enter" (.-key e))
+                                  (or (.-metaKey e) (.-ctrlKey e)))
         ;; Only handle if focus is NOT in the CodeMirror editor
         ;; (CodeMirror has its own Cmd+Enter handler)
-        (let [active (.-activeElement js/document)
-              in-editor? (when active
-                           (.closest active ".cm-editor"))]
-          (when-not in-editor?
-            (.preventDefault e)
-            (evaluate-definitions)))))))
+                         (let [active (.-activeElement js/document)
+                               in-editor? (when active
+                                            (.closest active ".cm-editor"))]
+                           (when-not in-editor?
+                             (.preventDefault e)
+                             (evaluate-definitions)))))))
 
-(defn- export-stl []
+(defn- export-mesh [fmt]
   (let [meshes (viewport/get-current-meshes)]
     (if (seq meshes)
-      (stl/download-stl meshes "ridley-model.stl")
+      (let [fname (or (first (registry/registered-names)) "model")
+            ext (name fmt)]
+        (stl/download-mesh meshes (str (name fname) "." ext) fmt))
       (js/alert "No meshes to export. Run some code first!"))))
 
 (defn- setup-save-load []
   (let [run-btn (.getElementById js/document "btn-run")
         save-btn (.getElementById js/document "btn-save")
         load-btn (.getElementById js/document "btn-load")
+        export-btn (.getElementById js/document "btn-export")
+        export-menu (.getElementById js/document "export-menu")
         export-stl-btn (.getElementById js/document "btn-export-stl")
+        export-3mf-btn (.getElementById js/document "btn-export-3mf")
         toggle-grid-btn (.getElementById js/document "btn-toggle-grid")
         toggle-axes-btn (.getElementById js/document "btn-toggle-axes")
         toggle-turtle-btn (.getElementById js/document "btn-toggle-turtle")
@@ -656,87 +935,102 @@
         file-input (.getElementById js/document "file-input")]
     ;; Run button - evaluate definitions
     (.addEventListener run-btn "click"
-      (fn [_] (evaluate-definitions)))
+                       (fn [_] (evaluate-definitions)))
     ;; Save button
     (.addEventListener save-btn "click"
-      (fn [_] (save-definitions)))
+                       (fn [_] (save-definitions)))
     ;; Load button - open file picker for local files
     (.addEventListener load-btn "click"
-      (fn [_] (.click file-input)))
-    ;; Export STL button
+                       (fn [_] (.click file-input)))
+    ;; Export dropdown menu
+    (when export-btn
+      (.addEventListener export-btn "click"
+                         (fn [e]
+                           (.stopPropagation e)
+                           (.toggle (.-classList export-menu) "hidden")))
+      (.addEventListener js/document "click"
+                         (fn [_]
+                           (.add (.-classList export-menu) "hidden"))))
     (when export-stl-btn
       (.addEventListener export-stl-btn "click"
-        (fn [_] (export-stl))))
+                         (fn [_]
+                           (.add (.-classList export-menu) "hidden")
+                           (export-mesh :stl))))
+    (when export-3mf-btn
+      (.addEventListener export-3mf-btn "click"
+                         (fn [_]
+                           (.add (.-classList export-menu) "hidden")
+                           (export-mesh :3mf))))
     ;; Toggle grid button
     (when toggle-grid-btn
       ;; Set initial active state (grid is visible by default)
       (.add (.-classList toggle-grid-btn) "active")
       (.addEventListener toggle-grid-btn "click"
-        (fn [_]
-          (let [visible (viewport/toggle-grid)]
-            (if visible
-              (.add (.-classList toggle-grid-btn) "active")
-              (.remove (.-classList toggle-grid-btn) "active"))))))
+                         (fn [_]
+                           (let [visible (viewport/toggle-grid)]
+                             (if visible
+                               (.add (.-classList toggle-grid-btn) "active")
+                               (.remove (.-classList toggle-grid-btn) "active"))))))
     ;; Toggle axes button
     (when toggle-axes-btn
       ;; Set initial active state (axes visible by default)
       (.add (.-classList toggle-axes-btn) "active")
       (.addEventListener toggle-axes-btn "click"
-        (fn [_]
-          (let [visible (viewport/toggle-axes)]
-            (if visible
-              (.add (.-classList toggle-axes-btn) "active")
-              (.remove (.-classList toggle-axes-btn) "active"))))))
+                         (fn [_]
+                           (let [visible (viewport/toggle-axes)]
+                             (if visible
+                               (.add (.-classList toggle-axes-btn) "active")
+                               (.remove (.-classList toggle-axes-btn) "active"))))))
     ;; Toggle turtle indicator button
     (when toggle-turtle-btn
       ;; Set initial active state (turtle visible by default)
       (.add (.-classList toggle-turtle-btn) "active")
       (.addEventListener toggle-turtle-btn "click"
-        (fn [_]
-          (let [visible (viewport/toggle-turtle)]
-            (if visible
-              (.add (.-classList toggle-turtle-btn) "active")
-              (.remove (.-classList toggle-turtle-btn) "active"))))))
+                         (fn [_]
+                           (let [visible (viewport/toggle-turtle)]
+                             (if visible
+                               (.add (.-classList toggle-turtle-btn) "active")
+                               (.remove (.-classList toggle-turtle-btn) "active"))))))
     ;; Toggle construction lines button
     (when toggle-lines-btn
       ;; Set initial active state (lines visible by default)
       (.add (.-classList toggle-lines-btn) "active")
       (.addEventListener toggle-lines-btn "click"
-        (fn [_]
-          (let [visible (viewport/toggle-lines)]
-            (if visible
-              (.add (.-classList toggle-lines-btn) "active")
-              (.remove (.-classList toggle-lines-btn) "active"))))))
+                         (fn [_]
+                           (let [visible (viewport/toggle-lines)]
+                             (if visible
+                               (.add (.-classList toggle-lines-btn) "active")
+                               (.remove (.-classList toggle-lines-btn) "active"))))))
     ;; Toggle face normals button
     (when toggle-normals-btn
       ;; Normals off by default (no active class initially)
       (.addEventListener toggle-normals-btn "click"
-        (fn [_]
-          (let [visible (viewport/toggle-normals)]
-            (if visible
-              (.add (.-classList toggle-normals-btn) "active")
-              (.remove (.-classList toggle-normals-btn) "active"))))))
+                         (fn [_]
+                           (let [visible (viewport/toggle-normals)]
+                             (if visible
+                               (.add (.-classList toggle-normals-btn) "active")
+                               (.remove (.-classList toggle-normals-btn) "active"))))))
     ;; Toggle stamp outlines button
     (when toggle-stamps-btn
       ;; Stamps visible by default
       (.add (.-classList toggle-stamps-btn) "active")
       (.addEventListener toggle-stamps-btn "click"
-        (fn [_]
-          (let [visible (viewport/toggle-stamps)]
-            (if visible
-              (.add (.-classList toggle-stamps-btn) "active")
-              (.remove (.-classList toggle-stamps-btn) "active"))))))
+                         (fn [_]
+                           (let [visible (viewport/toggle-stamps)]
+                             (if visible
+                               (.add (.-classList toggle-stamps-btn) "active")
+                               (.remove (.-classList toggle-stamps-btn) "active"))))))
     ;; Reset view button
     (when reset-view-btn
       (.addEventListener reset-view-btn "click"
-        (fn [_] (viewport/reset-camera))))
+                         (fn [_] (viewport/reset-camera))))
     ;; File input change (for local file loading)
     (.addEventListener file-input "change"
-      (fn [e]
-        (when-let [file (aget (.-files (.-target e)) 0)]
-          (load-definitions file))
+                       (fn [e]
+                         (when-let [file (aget (.-files (.-target e)) 0)]
+                           (load-definitions file))
         ;; Reset input so same file can be loaded again
-        (set! (.-value file-input) "")))))
+                         (set! (.-value file-input) "")))))
 
 ;; ============================================================
 ;; Animation transport UI
@@ -835,70 +1129,70 @@
     (when (and transport-el play-btn pause-btn stop-btn slider select-el)
       ;; Play button
       (.addEventListener play-btn "click"
-        (fn [_]
-          (let [selected (.-value select-el)]
-            (if (and (seq selected) (not= selected ""))
-              (anim/play! (keyword selected))
-              (anim/play!)))
-          (start-transport-tick!)))
+                         (fn [_]
+                           (let [selected (.-value select-el)]
+                             (if (and (seq selected) (not= selected ""))
+                               (anim/play! (keyword selected))
+                               (anim/play!)))
+                           (start-transport-tick!)))
       ;; Pause button
       (.addEventListener pause-btn "click"
-        (fn [_]
-          (let [selected (.-value select-el)]
-            (if (and (seq selected) (not= selected ""))
-              (anim/pause! (keyword selected))
-              (anim/pause!)))
-          (stop-transport-tick!)
-          (update-transport-ui!)))
+                         (fn [_]
+                           (let [selected (.-value select-el)]
+                             (if (and (seq selected) (not= selected ""))
+                               (anim/pause! (keyword selected))
+                               (anim/pause!)))
+                           (stop-transport-tick!)
+                           (update-transport-ui!)))
       ;; Stop button
       (.addEventListener stop-btn "click"
-        (fn [_]
-          (let [selected (.-value select-el)]
-            (if (and (seq selected) (not= selected ""))
-              (anim/stop! (keyword selected))
-              (anim/stop!)))
-          (stop-transport-tick!)
-          (update-transport-ui!)))
+                         (fn [_]
+                           (let [selected (.-value select-el)]
+                             (if (and (seq selected) (not= selected ""))
+                               (anim/stop! (keyword selected))
+                               (anim/stop!)))
+                           (stop-transport-tick!)
+                           (update-transport-ui!)))
       ;; Slider scrub (seek + visually apply frame)
       (.addEventListener slider "input"
-        (fn [_]
-          (let [frac (/ (js/parseInt (.-value slider)) 1000.0)
-                selected (.-value select-el)
-                reg @anim/anim-registry]
-            (if (and (seq selected) (not= selected ""))
-              (anim-playback/seek-and-apply! (keyword selected) frac)
+                         (fn [_]
+                           (let [frac (/ (js/parseInt (.-value slider)) 1000.0)
+                                 selected (.-value select-el)
+                                 reg @anim/anim-registry]
+                             (if (and (seq selected) (not= selected ""))
+                               (anim-playback/seek-and-apply! (keyword selected) frac)
               ;; Seek all
-              (doseq [[anim-name _] reg]
-                (anim-playback/seek-and-apply! anim-name frac))))))
+                               (doseq [[anim-name _] reg]
+                                 (anim-playback/seek-and-apply! anim-name frac))))))
       ;; Watch registry for show/hide transport and refresh select
       (add-watch anim/anim-registry ::transport-visibility
-        (fn [_ _ old-val new-val]
-          (let [has-anims (pos? (count new-val))]
+                 (fn [_ _ old-val new-val]
+                   (let [has-anims (pos? (count new-val))]
             ;; Show/hide transport bar (debounce hide to avoid flicker on re-eval)
-            (if has-anims
-              (do
+                     (if has-anims
+                       (do
                 ;; Cancel pending hide
-                (when-let [t @transport-hide-timer]
-                  (js/clearTimeout t)
-                  (reset! transport-hide-timer nil))
-                (.remove (.-classList transport-el) "hidden"))
+                         (when-let [t @transport-hide-timer]
+                           (js/clearTimeout t)
+                           (reset! transport-hide-timer nil))
+                         (.remove (.-classList transport-el) "hidden"))
               ;; Delay hide — evaluate-definitions clears then re-registers
-              (reset! transport-hide-timer
-                      (js/setTimeout
-                       (fn []
-                         (reset! transport-hide-timer nil)
-                         (when (zero? (count @anim/anim-registry))
-                           (.add (.-classList transport-el) "hidden")))
-                       100)))
+                       (reset! transport-hide-timer
+                               (js/setTimeout
+                                (fn []
+                                  (reset! transport-hide-timer nil)
+                                  (when (zero? (count @anim/anim-registry))
+                                    (.add (.-classList transport-el) "hidden")))
+                                100)))
             ;; Refresh dropdown when animations change
-            (when (not= (set (keys old-val)) (set (keys new-val)))
-              (refresh-anim-select!))
+                     (when (not= (set (keys old-val)) (set (keys new-val)))
+                       (refresh-anim-select!))
             ;; Start/stop tick based on playing state
-            (let [any-playing (some #(= :playing (:state (val %))) new-val)]
-              (if any-playing
-                (start-transport-tick!)
-                (do (stop-transport-tick!)
-                    (update-transport-ui!))))))))))
+                     (let [any-playing (some #(= :playing (:state (val %))) new-val)]
+                       (if any-playing
+                         (start-transport-tick!)
+                         (do (stop-transport-tick!)
+                             (update-transport-ui!))))))))))
 
 ;; ============================================================
 ;; Sync (Desktop <-> Headset)
@@ -933,19 +1227,38 @@
   "Called when we receive a REPL command from host. Execute it and show in history."
   [command]
   (when (seq (str/trim command))
-    (let [result (repl/evaluate-repl command)]
-      (if-let [error (:error result)]
-        (do
-          (add-repl-entry command error true)
-          (show-error error))
-        (do
-          (hide-error)
-          (add-repl-entry command (:implicit-result result) false (:print-output result))
-          (when-let [render-data (repl/extract-render-data result)]
-            (registry/add-lines! (:lines render-data))
-            (registry/add-stamps! (or (:stamps render-data) []))
-            (registry/set-definition-meshes! (:meshes render-data)))
-          (registry/refresh-viewport! false))))))
+    (if @jvm-mode
+      (repl/evaluate-repl-jvm command
+                              (fn [result]
+                                (if-let [error (:error result)]
+                                  (do
+                                    (add-repl-entry command error true)
+                                    (show-error error))
+                                  (do
+                                    (hide-error)
+                                    (add-repl-entry command (:result result) false (:print-output result))
+                                    (when (seq (:meshes result))
+                                      (register-jvm-meshes! (:meshes result) false))
+                                    (when (seq (:lines result))
+                                      (registry/add-lines! (:lines result)))
+                                    (when (seq (:stamps result))
+                                      (registry/add-stamps! (:stamps result)))
+                                    (registry/refresh-viewport! false)
+                                    (when-let [pose (:turtle-pose result)]
+                                      (viewport/update-turtle-pose pose))))))
+      (let [result (repl/evaluate-repl command)]
+        (if-let [error (:error result)]
+          (do
+            (add-repl-entry command error true)
+            (show-error error))
+          (do
+            (hide-error)
+            (add-repl-entry command (:implicit-result result) false (:print-output result))
+            (when-let [render-data (repl/extract-render-data result)]
+              (registry/add-lines! (:lines render-data))
+              (registry/add-stamps! (or (:stamps render-data) []))
+              (registry/set-definition-meshes! (:meshes render-data)))
+            (registry/refresh-viewport! false)))))))
 
 (defn- update-sync-status-text
   "Update the sync status text in toolbar."
@@ -1608,19 +1921,19 @@
     :on-copy copy-manual-code})
   ;; Watch manual state for changes
   (manual/add-state-watcher! :ui-update
-    (fn [_ _] (update-manual-visibility)))
+                             (fn [_ _] (update-manual-visibility)))
   ;; Setup Manual button
   (when-let [manual-btn (.getElementById js/document "btn-manual")]
     (.addEventListener manual-btn "click"
-      (fn [_] (manual/toggle-manual!))))
+                       (fn [_] (manual/toggle-manual!))))
   ;; Setup line numbers toggle button
   (when-let [ln-btn (.getElementById js/document "btn-line-numbers")]
     (.addEventListener ln-btn "click"
-      (fn [_]
-        (let [on? (cm/toggle-line-numbers!)]
-          (if on?
-            (.add (.-classList ln-btn) "active")
-            (.remove (.-classList ln-btn) "active")))))))
+                       (fn [_]
+                         (let [on? (cm/toggle-line-numbers!)]
+                           (if on?
+                             (.add (.-classList ln-btn) "active")
+                             (.remove (.-classList ln-btn) "active")))))))
 
 ;; ============================================================
 ;; Library Panel
@@ -1639,7 +1952,8 @@
     :on-change (fn []
                  ;; Reset SCI context and re-evaluate definitions
                  (repl/reset-ctx!)
-                 (evaluate-definitions))}))
+                 (evaluate-definitions))
+    :jvm-mode? (fn [] @jvm-mode)}))
 
 ;; ============================================================
 ;; Voice Input Integration
@@ -1719,138 +2033,138 @@
       (when (and from to value)
         (cm/replace-range view from to value))
 
-    (do (let [;; Check if target references "it/lo/last" - meaning previous form
-              ref (:ref target)
-              use-previous? (and (= (:type target) "form")
-                                 (contains? #{"it" "lo" "last" "questo" "this"} ref))
+      (do (let [;; Check if target references "it/lo/last" - meaning previous form
+                ref (:ref target)
+                use-previous? (and (= (:type target) "form")
+                                   (contains? #{"it" "lo" "last" "questo" "this"} ref))
               ;; Get the appropriate form based on target type
-              the-form (if use-previous?
-                     (cm/get-previous-form view)
-                     (case (:type target)
-                       "form" (cm/get-element-at-cursor view)
-                       "word" (cm/get-word-at-cursor view)
-                       "selection" (cm/get-selection view)
-                       nil))]
+                the-form (if use-previous?
+                           (cm/get-previous-form view)
+                           (case (:type target)
+                             "form" (cm/get-element-at-cursor view)
+                             "word" (cm/get-word-at-cursor view)
+                             "selection" (cm/get-selection view)
+                             nil))]
 
-      (when the-form
-        (case operation
-          :replace
-          (cm/replace-range view (:from the-form) (:to the-form) value)
+            (when the-form
+              (case operation
+                :replace
+                (cm/replace-range view (:from the-form) (:to the-form) value)
 
-          :delete
-          (let [;; Find parent form BEFORE deleting so we can position cursor there
-                parent-pos (let [from (:from the-form)]
-                             (when (pos? from)
+                :delete
+                (let [;; Find parent form BEFORE deleting so we can position cursor there
+                      parent-pos (let [from (:from the-form)]
+                                   (when (pos? from)
                                ;; Temporarily move cursor before the form to find parent
-                               (cm/set-cursor-position view {:pos (max 0 (dec from))})
-                               (when-let [parent (cm/get-form-at-cursor view)]
-                                 (inc (:from parent)))))]
-            (cm/delete-range view (:from the-form) (:to the-form))
+                                     (cm/set-cursor-position view {:pos (max 0 (dec from))})
+                                     (when-let [parent (cm/get-form-at-cursor view)]
+                                       (inc (:from parent)))))]
+                  (cm/delete-range view (:from the-form) (:to the-form))
             ;; Position cursor in parent form
-            (when parent-pos
-              (cm/set-cursor-position view {:pos (min parent-pos
-                                                      (.. view -state -doc -length))})))
+                  (when parent-pos
+                    (cm/set-cursor-position view {:pos (min parent-pos
+                                                            (.. view -state -doc -length))})))
 
-          :wrap
-          (when value
-            (let [wrapped (str/replace value "$" (:text the-form))]
-              (cm/replace-range view (:from the-form) (:to the-form) wrapped)))
+                :wrap
+                (when value
+                  (let [wrapped (str/replace value "$" (:text the-form))]
+                    (cm/replace-range view (:from the-form) (:to the-form) wrapped)))
 
-          :unwrap
-          (let [text (:text the-form)
-                first-ch (when (seq text) (.charAt text 0))
-                last-ch (when (seq text) (.charAt text (dec (count text))))]
-            (when (and first-ch last-ch
-                       (#{\( \[ \{} first-ch)
-                       (#{\) \] \}} last-ch))
-              (let [inner (subs text 1 (dec (count text)))
+                :unwrap
+                (let [text (:text the-form)
+                      first-ch (when (seq text) (.charAt text 0))
+                      last-ch (when (seq text) (.charAt text (dec (count text))))]
+                  (when (and first-ch last-ch
+                             (#{\( \[ \{} first-ch)
+                             (#{\) \] \}} last-ch))
+                    (let [inner (subs text 1 (dec (count text)))
                     ;; For () forms, strip the head (fn name); for [] and {}, keep all content
-                    content (if (= first-ch \()
-                              (str/trim (str/replace-first inner #"^\S+\s*" ""))
-                              (str/trim inner))]
-                (cm/replace-range view (:from the-form) (:to the-form) content))))
+                          content (if (= first-ch \()
+                                    (str/trim (str/replace-first inner #"^\S+\s*" ""))
+                                    (str/trim inner))]
+                      (cm/replace-range view (:from the-form) (:to the-form) content))))
 
-          :replace-structured
-          (when (and element value)
-            (when-let [new-form (cm/replace-form-element (:text the-form) element value)]
-              (cm/replace-range view (:from the-form) (:to the-form) new-form)))
+                :replace-structured
+                (when (and element value)
+                  (when-let [new-form (cm/replace-form-element (:text the-form) element value)]
+                    (cm/replace-range view (:from the-form) (:to the-form) new-form)))
 
-          :insert-structured
-          (when (and element value)
-            (when-let [new-form (cm/insert-form-element (:text the-form) element value)]
-              (cm/replace-range view (:from the-form) (:to the-form) new-form)))
+                :insert-structured
+                (when (and element value)
+                  (when-let [new-form (cm/insert-form-element (:text the-form) element value)]
+                    (cm/replace-range view (:from the-form) (:to the-form) new-form)))
 
-          :delete-structured
-          (when element
-            (when-let [new-form (cm/delete-form-element (:text the-form) element)]
-              (cm/replace-range view (:from the-form) (:to the-form) new-form)))
+                :delete-structured
+                (when element
+                  (when-let [new-form (cm/delete-form-element (:text the-form) element)]
+                    (cm/replace-range view (:from the-form) (:to the-form) new-form)))
 
-          :barf
-          (cm/barf-form view)
+                :barf
+                (cm/barf-form view)
 
-          :slurp
-          (cm/slurp-form view)
+                :slurp
+                (cm/slurp-form view)
 
-          :raise
-          (let [form-text (:text the-form)
-                form-from (:from the-form)]
+                :raise
+                (let [form-text (:text the-form)
+                      form-from (:from the-form)]
             ;; Find the parent form
-            (cm/set-cursor-position view {:pos (max 0 (dec form-from))})
-            (when-let [parent (cm/get-form-at-cursor view)]
-              (cm/replace-range view (:from parent) (:to parent) form-text)
+                  (cm/set-cursor-position view {:pos (max 0 (dec form-from))})
+                  (when-let [parent (cm/get-form-at-cursor view)]
+                    (cm/replace-range view (:from parent) (:to parent) form-text)
               ;; Position cursor at the raised form
-              (cm/set-cursor-position view {:pos (:from parent)})))
+                    (cm/set-cursor-position view {:pos (:from parent)})))
 
-          :join
+                :join
           ;; Merge current atom with next sibling (e.g. "do" + "times" → "dotimes")
-          (when-let [next-form (cm/get-next-form view)]
-            (let [joined (str (:text the-form) (:text next-form))]
-              (cm/replace-range view (:from the-form) (:to next-form) joined)
-              (cm/set-cursor-position view {:pos (:from the-form)})))
+                (when-let [next-form (cm/get-next-form view)]
+                  (let [joined (str (:text the-form) (:text next-form))]
+                    (cm/replace-range view (:from the-form) (:to next-form) joined)
+                    (cm/set-cursor-position view {:pos (:from the-form)})))
 
-          :transform
-          (let [text (:text the-form)
-                lang (voice-state/get-language)
-                new-text
-                (case transform-type
-                  :keyword   (str ":" text)
-                  :symbol    (when (str/starts-with? text ":")
-                               (subs text 1))
-                  :hash      (str "#" text)
-                  :deref     (str "@" text)
-                  :capitalize (when (seq text)
-                                (str (str/upper-case (subs text 0 1)) (subs text 1)))
-                  :uppercase (str/upper-case text)
-                  :number    nil  ; handled specially below
-                  nil)]
-            (if (= transform-type :number)
+                :transform
+                (let [text (:text the-form)
+                      lang (voice-state/get-language)
+                      new-text
+                      (case transform-type
+                        :keyword   (str ":" text)
+                        :symbol    (when (str/starts-with? text ":")
+                                     (subs text 1))
+                        :hash      (str "#" text)
+                        :deref     (str "@" text)
+                        :capitalize (when (seq text)
+                                      (str (str/upper-case (subs text 0 1)) (subs text 1)))
+                        :uppercase (str/upper-case text)
+                        :number    nil  ; handled specially below
+                        nil)]
+                  (if (= transform-type :number)
               ;; Number transform: word→digit, or "minus"+"N"→"-N"
-              (let [neg-words (get voice-i18n/negative-words lang #{})
-                    nums (get voice-i18n/numbers lang {})
-                    lower (str/lower-case text)]
-                (if (contains? neg-words lower)
+                    (let [neg-words (get voice-i18n/negative-words lang #{})
+                          nums (get voice-i18n/numbers lang {})
+                          lower (str/lower-case text)]
+                      (if (contains? neg-words lower)
                   ;; Current atom is "minus"/"meno" — negate next sibling
-                  (when-let [next-form (cm/get-next-form view)]
-                    (let [next-text (:text next-form)
-                          n (or (get nums (str/lower-case next-text))
-                                (when (re-matches #"\d+" next-text)
-                                  (js/parseInt next-text 10)))]
-                      (when n
-                        (cm/replace-range view (:from the-form) (:to next-form) (str "-" n))
-                        (cm/set-cursor-position view {:pos (:from the-form)}))))
+                        (when-let [next-form (cm/get-next-form view)]
+                          (let [next-text (:text next-form)
+                                n (or (get nums (str/lower-case next-text))
+                                      (when (re-matches #"\d+" next-text)
+                                        (js/parseInt next-text 10)))]
+                            (when n
+                              (cm/replace-range view (:from the-form) (:to next-form) (str "-" n))
+                              (cm/set-cursor-position view {:pos (:from the-form)}))))
                   ;; Try word→digit conversion
-                  (when-let [n (get nums lower)]
-                    (cm/replace-range view (:from the-form) (:to the-form) (str n))
-                    (cm/set-cursor-position view {:pos (:from the-form)}))))
+                        (when-let [n (get nums lower)]
+                          (cm/replace-range view (:from the-form) (:to the-form) (str n))
+                          (cm/set-cursor-position view {:pos (:from the-form)}))))
               ;; All other transforms: simple text replacement
-              (when new-text
-                (cm/replace-range view (:from the-form) (:to the-form) new-text)
-                (cm/set-cursor-position view {:pos (:from the-form)}))))
+                    (when new-text
+                      (cm/replace-range view (:from the-form) (:to the-form) new-text)
+                      (cm/set-cursor-position view {:pos (:from the-form)}))))
 
-          (js/console.warn "AI edit: unknown operation" operation)))
+                (js/console.warn "AI edit: unknown operation" operation)))
 
-      (when-not the-form
-        (js/console.warn "AI edit: no form found" (if use-previous? "(looking for previous)" ""))))))
+            (when-not the-form
+              (js/console.warn "AI edit: no form found" (if use-previous? "(looking for previous)" ""))))))
 
     ;; Update AI focus after edit (only when voice active)
     (maybe-update-ai-focus! view)
@@ -1960,76 +2274,76 @@
             hold-threshold 200]
 
         (.addEventListener mic-btn "mousedown"
-          (fn [e]
-            (.preventDefault e)
-            (.stopPropagation e)
+                           (fn [e]
+                             (.preventDefault e)
+                             (.stopPropagation e)
             ;; Ignore left-click mousedown when in continuous mode
             ;; (continuous mode is toggled by right-click only)
-            (when-not (voice/continuous-active?)
-              (reset! press-start (js/Date.now))
-              (voice/start-listening!)
-              (.add (.-classList mic-btn) "active")
-              (js/setTimeout #(when @editor-view (cm/focus @editor-view)) 50))))
+                             (when-not (voice/continuous-active?)
+                               (reset! press-start (js/Date.now))
+                               (voice/start-listening!)
+                               (.add (.-classList mic-btn) "active")
+                               (js/setTimeout #(when @editor-view (cm/focus @editor-view)) 50))))
 
         (.addEventListener mic-btn "mouseup"
-          (fn [_]
-            (when-let [start @press-start]
-              (reset! press-start nil)
-              (let [held (- (js/Date.now) start)]
-                (when (> held hold-threshold)
-                  (voice/stop-listening!)
-                  (.remove (.-classList mic-btn) "active")))
-              (when @editor-view (cm/focus @editor-view)))))
+                           (fn [_]
+                             (when-let [start @press-start]
+                               (reset! press-start nil)
+                               (let [held (- (js/Date.now) start)]
+                                 (when (> held hold-threshold)
+                                   (voice/stop-listening!)
+                                   (.remove (.-classList mic-btn) "active")))
+                               (when @editor-view (cm/focus @editor-view)))))
 
         (.addEventListener mic-btn "mouseleave"
-          (fn [_]
-            (when @press-start
-              (reset! press-start nil)
-              (when (voice/voice-active?)
-                (voice/stop-listening!))
-              (.remove (.-classList mic-btn) "active")))))
+                           (fn [_]
+                             (when @press-start
+                               (reset! press-start nil)
+                               (when (voice/voice-active?)
+                                 (voice/stop-listening!))
+                               (.remove (.-classList mic-btn) "active")))))
 
       ;; Right-click = toggle continuous listening mode
       (.addEventListener mic-btn "contextmenu"
-        (fn [e]
-          (.preventDefault e)
-          (.stopPropagation e)
-          (if (voice/continuous-active?)
-            (voice/stop-continuous-listening!)
-            (voice/start-continuous-listening!))
-          (when @editor-view (cm/focus @editor-view))))
+                         (fn [e]
+                           (.preventDefault e)
+                           (.stopPropagation e)
+                           (if (voice/continuous-active?)
+                             (voice/stop-continuous-listening!)
+                             (voice/start-continuous-listening!))
+                           (when @editor-view (cm/focus @editor-view))))
 
       ;; Watch state to update button appearance
       (add-watch voice-state/voice-state :voice-button-update
-        (fn [_ _ old-state new-state]
-          (let [was-listening (get-in old-state [:voice :listening?])
-                is-listening (get-in new-state [:voice :listening?])
-                was-continuous (get-in old-state [:voice :continuous?])
-                is-continuous (get-in new-state [:voice :continuous?])
-                pending (get-in new-state [:voice :pending-speech])
-                mode (:mode new-state)
-                was-active (or was-listening was-continuous)
-                is-active (or is-listening is-continuous)]
-            (when (not= was-listening is-listening)
-              (if is-listening
-                (.add (.-classList mic-btn) "active")
-                (do
-                  (.remove (.-classList mic-btn) "active")
-                  (.remove (.-classList mic-btn) "continuous"))))
-            (if is-continuous
-              (.add (.-classList mic-btn) "continuous")
-              (.remove (.-classList mic-btn) "continuous"))
+                 (fn [_ _ old-state new-state]
+                   (let [was-listening (get-in old-state [:voice :listening?])
+                         is-listening (get-in new-state [:voice :listening?])
+                         was-continuous (get-in old-state [:voice :continuous?])
+                         is-continuous (get-in new-state [:voice :continuous?])
+                         pending (get-in new-state [:voice :pending-speech])
+                         mode (:mode new-state)
+                         was-active (or was-listening was-continuous)
+                         is-active (or is-listening is-continuous)]
+                     (when (not= was-listening is-listening)
+                       (if is-listening
+                         (.add (.-classList mic-btn) "active")
+                         (do
+                           (.remove (.-classList mic-btn) "active")
+                           (.remove (.-classList mic-btn) "continuous"))))
+                     (if is-continuous
+                       (.add (.-classList mic-btn) "continuous")
+                       (.remove (.-classList mic-btn) "continuous"))
             ;; Show/hide AI focus when voice activation changes
-            (when (and (not was-active) is-active)
-              (when-let [view @editor-view]
-                (cm/update-ai-focus! view)))
-            (when (and was-active (not is-active))
-              (cm/clear-ai-focus!))
+                     (when (and (not was-active) is-active)
+                       (when-let [view @editor-view]
+                         (cm/update-ai-focus! view)))
+                     (when (and was-active (not is-active))
+                       (cm/clear-ai-focus!))
             ;; Show mode + status as tooltip
-            (when pending
-              (set! (.-title mic-btn) pending))
-            (when (and (not pending) (not is-listening))
-              (set! (.-title mic-btn) (str "Mode: " (name mode) " — push to talk, right-click for continuous"))))))
+                     (when pending
+                       (set! (.-title mic-btn) pending))
+                     (when (and (not pending) (not is-listening))
+                       (set! (.-title mic-btn) (str "Mode: " (name mode) " — push to talk, right-click for continuous"))))))
 
       (.appendChild toolbar mic-btn)))
 
@@ -2045,120 +2359,120 @@
 
     ;; Update panel content when state changes
     (add-watch voice-state/voice-state :voice-panel-update
-      (fn [_ _ _ _new-state]
-        (if (voice-state/enabled?)
-          (do
-            (set! (.-style.display panel-el) "block")
-            (set! (.-innerHTML panel-el) (voice/render-panel-html)))
-          (set! (.-style.display panel-el) "none"))))
+               (fn [_ _ _ _new-state]
+                 (if (voice-state/enabled?)
+                   (do
+                     (set! (.-style.display panel-el) "block")
+                     (set! (.-innerHTML panel-el) (voice/render-panel-html)))
+                   (set! (.-style.display panel-el) "none"))))
 
     ;; Help interactivity: click delegation on panel
     (.addEventListener panel-el "click"
-      (fn [e]
-        (when (= (voice-state/get-mode) :help)
-          (loop [el (.-target e)]
-            (when (and el (not= el panel-el))
-              (if (.hasAttribute el "data-action")
-                (let [action (.getAttribute el "data-action")]
-                  (case action
-                    "select-item"
-                    (when-let [idx-str (.getAttribute el "data-index")]
-                      (voice/dispatch-action! :help-select
-                        {:index (js/parseInt idx-str 10)}))
-                    "browse-tier"
-                    (when-let [ti-str (.getAttribute el "data-tier-index")]
-                      (let [sorted-tiers (sort-by (comp :order val) help-db/tiers)
-                            tier-key (key (nth sorted-tiers (js/parseInt ti-str 10) nil))]
-                        (when tier-key
-                          (voice/dispatch-action! :help-browse {:tier tier-key}))))
-                    "help-prev"
-                    (voice/dispatch-action! :help-prev {})
-                    "help-next"
-                    (voice/dispatch-action! :help-next {})
-                    "help-back"
-                    (voice/dispatch-action! :help-back {})
-                    nil))
-                (recur (.-parentElement el))))))))
+                       (fn [e]
+                         (when (= (voice-state/get-mode) :help)
+                           (loop [el (.-target e)]
+                             (when (and el (not= el panel-el))
+                               (if (.hasAttribute el "data-action")
+                                 (let [action (.getAttribute el "data-action")]
+                                   (case action
+                                     "select-item"
+                                     (when-let [idx-str (.getAttribute el "data-index")]
+                                       (voice/dispatch-action! :help-select
+                                                               {:index (js/parseInt idx-str 10)}))
+                                     "browse-tier"
+                                     (when-let [ti-str (.getAttribute el "data-tier-index")]
+                                       (let [sorted-tiers (sort-by (comp :order val) help-db/tiers)
+                                             tier-key (key (nth sorted-tiers (js/parseInt ti-str 10) nil))]
+                                         (when tier-key
+                                           (voice/dispatch-action! :help-browse {:tier tier-key}))))
+                                     "help-prev"
+                                     (voice/dispatch-action! :help-prev {})
+                                     "help-next"
+                                     (voice/dispatch-action! :help-next {})
+                                     "help-back"
+                                     (voice/dispatch-action! :help-back {})
+                                     nil))
+                                 (recur (.-parentElement el))))))))
 
     ;; Help interactivity: mouse wheel pagination on panel
     (.addEventListener panel-el "wheel"
-      (fn [e]
-        (when (= (voice-state/get-mode) :help)
-          (.preventDefault e)
-          (if (pos? (.-deltaY e))
-            (voice/dispatch-action! :help-next {})
-            (voice/dispatch-action! :help-prev {}))))
-      #js {:passive false})
+                       (fn [e]
+                         (when (= (voice-state/get-mode) :help)
+                           (.preventDefault e)
+                           (if (pos? (.-deltaY e))
+                             (voice/dispatch-action! :help-next {})
+                             (voice/dispatch-action! :help-prev {}))))
+                       #js {:passive false})
 
     ;; Help interactivity: keyboard shortcuts (window-level)
     (.addEventListener js/window "keydown"
-      (fn [e]
-        (let [k (.-key e)]
+                       (fn [e]
+                         (let [k (.-key e)]
           ;; F1 — open help with word at cursor (works in any mode)
-          (when (= k "F1")
-            (.preventDefault e)
-            (let [word-info (when @editor-view
-                              (cm/get-word-at-cursor @editor-view))
-                  query (when (and word-info (seq (:text word-info))) (:text word-info))]
-              (voice-state/enable!)
-              (if query
-                (do
-                  (voice/dispatch-action! :mode-switch {:mode :help :rest-tokens [query]})
+                           (when (= k "F1")
+                             (.preventDefault e)
+                             (let [word-info (when @editor-view
+                                               (cm/get-word-at-cursor @editor-view))
+                                   query (when (and word-info (seq (:text word-info))) (:text word-info))]
+                               (voice-state/enable!)
+                               (if query
+                                 (do
+                                   (voice/dispatch-action! :mode-switch {:mode :help :rest-tokens [query]})
                   ;; Store word boundaries for autocomplete replacement
-                  (voice-state/update-help! {:replace-word {:from (:from word-info)
-                                                            :to (:to word-info)}}))
-                (voice/dispatch-action! :mode-switch {:mode :help}))))
+                                   (voice-state/update-help! {:replace-word {:from (:from word-info)
+                                                                             :to (:to word-info)}}))
+                                 (voice/dispatch-action! :mode-switch {:mode :help}))))
 
           ;; Help mode navigation keys
-          (when (= (voice-state/get-mode) :help)
-            (let [{:keys [highlight]} (voice-state/get-help)
-                  highlight (or highlight -1)
-                  page-count (let [{:keys [results page]} (voice-state/get-help)
-                                   start (* page 7)]
-                               (min 7 (- (count results) start)))]
-              (cond
+                           (when (= (voice-state/get-mode) :help)
+                             (let [{:keys [highlight]} (voice-state/get-help)
+                                   highlight (or highlight -1)
+                                   page-count (let [{:keys [results page]} (voice-state/get-help)
+                                                    start (* page 7)]
+                                                (min 7 (- (count results) start)))]
+                               (cond
                 ;; Number keys 1-7 → select item
-                (and (>= (.charCodeAt k 0) 49) (<= (.charCodeAt k 0) 55) (= 1 (count k)))
-                (do (.preventDefault e)
-                    (voice/dispatch-action! :help-select {:index (dec (js/parseInt k 10))}))
+                                 (and (>= (.charCodeAt k 0) 49) (<= (.charCodeAt k 0) 55) (= 1 (count k)))
+                                 (do (.preventDefault e)
+                                     (voice/dispatch-action! :help-select {:index (dec (js/parseInt k 10))}))
 
                 ;; Arrow up → move highlight up
-                (= k "ArrowUp")
-                (do (.preventDefault e)
-                    (let [new-hl (if (neg? highlight) (dec page-count) (max 0 (dec highlight)))]
-                      (voice-state/update-help! {:highlight new-hl})))
+                                 (= k "ArrowUp")
+                                 (do (.preventDefault e)
+                                     (let [new-hl (if (neg? highlight) (dec page-count) (max 0 (dec highlight)))]
+                                       (voice-state/update-help! {:highlight new-hl})))
 
                 ;; Arrow down → move highlight down
-                (= k "ArrowDown")
-                (do (.preventDefault e)
-                    (let [new-hl (if (neg? highlight) 0 (min (dec page-count) (inc highlight)))]
-                      (voice-state/update-help! {:highlight new-hl})))
+                                 (= k "ArrowDown")
+                                 (do (.preventDefault e)
+                                     (let [new-hl (if (neg? highlight) 0 (min (dec page-count) (inc highlight)))]
+                                       (voice-state/update-help! {:highlight new-hl})))
 
                 ;; Enter → select highlighted item
-                (= k "Enter")
-                (do (.preventDefault e)
-                    (when (>= highlight 0)
-                      (voice/dispatch-action! :help-select {:index highlight})))
+                                 (= k "Enter")
+                                 (do (.preventDefault e)
+                                     (when (>= highlight 0)
+                                       (voice/dispatch-action! :help-select {:index highlight})))
 
                 ;; Arrow left / PageUp → previous page
-                (or (= k "ArrowLeft") (= k "PageUp"))
-                (do (.preventDefault e)
-                    (voice/dispatch-action! :help-prev {}))
+                                 (or (= k "ArrowLeft") (= k "PageUp"))
+                                 (do (.preventDefault e)
+                                     (voice/dispatch-action! :help-prev {}))
 
                 ;; Arrow right / PageDown → next page
-                (or (= k "ArrowRight") (= k "PageDown"))
-                (do (.preventDefault e)
-                    (voice/dispatch-action! :help-next {}))
+                                 (or (= k "ArrowRight") (= k "PageDown"))
+                                 (do (.preventDefault e)
+                                     (voice/dispatch-action! :help-next {}))
 
                 ;; Backspace → go back to categories
-                (= k "Backspace")
-                (do (.preventDefault e)
-                    (voice/dispatch-action! :help-back {}))
+                                 (= k "Backspace")
+                                 (do (.preventDefault e)
+                                     (voice/dispatch-action! :help-back {}))
 
                 ;; Escape → back to categories, or exit help if already there
-                (= k "Escape")
-                (do (.preventDefault e)
-                    (voice/dispatch-action! :help-exit {}))))))))))
+                                 (= k "Escape")
+                                 (do (.preventDefault e)
+                                     (voice/dispatch-action! :help-exit {}))))))))))
 
 ;; ============================================================
 ;; Picking status bar
@@ -2177,28 +2491,28 @@
                     (concat (take 2 display) [{:op :ellipsis}] (take-last 2 display))
                     display)]
     (str/join
-      "<span class=\"history-arrow\"> &larr; </span>"
-      (map (fn [entry]
-             (if (= :ellipsis (:op entry))
-               "<span class=\"history-arrow\">...</span>"
-               (let [op-name (name (:op entry))
-                     source (:source entry)
-                     line (:line entry)]
-                 (cond
+     "<span class=\"history-arrow\"> &larr; </span>"
+     (map (fn [entry]
+            (if (= :ellipsis (:op entry))
+              "<span class=\"history-arrow\">...</span>"
+              (let [op-name (name (:op entry))
+                    source (:source entry)
+                    line (:line entry)]
+                (cond
                    ;; Definitions with line → clickable link
-                   (and (= :definitions source) line)
-                   (str "<a class=\"source-link\" data-line=\"" line "\">"
-                        op-name " L:" line "</a>")
+                  (and (= :definitions source) line)
+                  (str "<a class=\"source-link\" data-line=\"" line "\">"
+                       op-name " L:" line "</a>")
                    ;; REPL → show tooltip with code
-                   (= :repl source)
-                   (str "<span class=\"source-repl\" title=\"REPL\">"
-                        op-name "</span>")
+                  (= :repl source)
+                  (str "<span class=\"source-repl\" title=\"REPL\">"
+                       op-name "</span>")
                    ;; Unknown source
-                   :else
-                   (str "<span class=\"source-repl\">" op-name
-                        (when line (str " L:" line))
-                        "</span>")))))
-           truncated))))
+                  :else
+                  (str "<span class=\"source-repl\">" op-name
+                       (when line (str " L:" line))
+                       "</span>")))))
+          truncated))))
 
 (defn- update-status-bar!
   "Update the picking status bar with the selected mesh/face info.
@@ -2249,12 +2563,12 @@
   ;; Click delegation: source-link clicks -> scroll to line
   (when-let [bar (.getElementById js/document "picking-status-bar")]
     (.addEventListener bar "click"
-      (fn [e]
-        (when-let [^js link (.closest (.-target e) ".source-link")]
-          (let [line (js/parseInt (.getAttribute link "data-line"))]
-            (when-not (js/isNaN line)
-              (cm/scroll-to-line! line)
-              (cm/flash-line! line 1500))))))))
+                       (fn [e]
+                         (when-let [^js link (.closest (.-target e) ".source-link")]
+                           (let [line (js/parseInt (.getAttribute link "data-line"))]
+                             (when-not (js/isNaN line)
+                               (cm/scroll-to-line! line)
+                               (cm/flash-line! line 1500))))))))
 
 ;; ============================================================
 ;; Initialization
@@ -2276,17 +2590,20 @@
         initial-content (or (load-from-storage) default-code)]
     ;; Create CodeMirror editor
     (reset! editor-view
-      (cm/create-editor
-        {:parent editor-container
-         :initial-value initial-content
-         :on-change (fn []
-                      (save-to-storage)
-                      (send-script-debounced)
-                      (sync-voice-state))
-         :on-run evaluate-definitions
-         :on-selection-change (fn []
-                                (maybe-update-ai-focus!)
-                                (sync-voice-state))}))
+            (cm/create-editor
+             {:parent editor-container
+              :initial-value initial-content
+              :on-change (fn []
+                           (save-to-storage)
+                           (send-script-debounced)
+                           (sync-voice-state))
+              :on-run evaluate-definitions
+              :on-selection-change (fn []
+                                     (maybe-update-ai-focus!)
+                                     (sync-voice-state))}))
+    ;; Wire editor content getter for test_mode JVM eval
+    (reset! editor-state/get-editor-content
+            (fn [] (when @editor-view (cm/get-value @editor-view))))
     (reset! repl-input-el repl-input)
     (reset! repl-history-el repl-history)
     (reset! error-el error-panel)
@@ -2299,12 +2616,12 @@
     (anim-playback/set-async-output-callback! add-script-output)
     ;; Register XR panel callbacks (avoid circular dependency)
     (xr/register-action-callback! :toggle-all-obj
-      (fn [show-all?]
-        (if show-all?
-          (do (registry/show-all!)
-              (registry/refresh-viewport! false))
-          (do (registry/show-only-registered!)
-              (registry/refresh-viewport! false)))))
+                                  (fn [show-all?]
+                                    (if show-all?
+                                      (do (registry/show-all!)
+                                          (registry/refresh-viewport! false))
+                                      (do (registry/show-only-registered!)
+                                          (registry/refresh-viewport! false)))))
     ;; Expose run-definitions to SCI (breaks circular dep via atom)
     (reset! editor-state/run-definitions-fn evaluate-definitions)
     (setup-keybindings)
@@ -2326,6 +2643,42 @@
     (-> (manifold/init!)
         (.then #(js/console.log "Manifold WASM initialized"))
         (.catch #(js/console.warn "Manifold WASM failed to initialize:" %)))
+    ;; Detect JVM sidecar availability (desktop mode)
+    ;; Retry a few times — JVM takes ~5s to start when Tauri spawns it
+    (letfn [(enable-jvm! []
+              (reset! jvm-mode true)
+              (js/console.log "JVM eval mode enabled")
+              ;; Populate library panel from sidecar
+              (lib-panel/refresh-jvm-libraries!)
+              (when-let [toolbar (.getElementById js/document "viewport-toolbar")]
+                (let [btn (.createElement js/document "button")
+                      version-tag (.getElementById js/document "version-tag")]
+                  (set! (.-className btn) "action-btn jvm-toggle active")
+                  (set! (.-id btn) "btn-jvm-toggle")
+                  (set! (.-textContent btn) "JVM")
+                  (set! (.-title btn) "Toggle JVM evaluation (currently: ON)")
+                  (.addEventListener btn "click"
+                                     (fn []
+                                       (swap! jvm-mode not)
+                                       (let [on? @jvm-mode]
+                                         (if on?
+                                           (do (.add (.-classList btn) "active")
+                                               (set! (.-title btn) "Toggle JVM evaluation (currently: ON)")
+                                               ;; Refresh library panel from sidecar
+                                               (lib-panel/refresh-jvm-libraries!))
+                                           (do (.remove (.-classList btn) "active")
+                                               (set! (.-title btn) "Toggle JVM evaluation (currently: OFF)")
+                                               ;; Re-render panel from localStorage
+                                               (lib-panel/render!))))))
+                  (if version-tag
+                    (.insertBefore toolbar btn version-tag)
+                    (.appendChild toolbar btn)))))
+            (try-ping! [attempt]
+              (if (jvm/ping!)
+                (enable-jvm!)
+                (when (< attempt 5)
+                  (js/setTimeout #(try-ping! (inc attempt)) 2000))))]
+      (try-ping! 0))
     ;; Initialize default font for text shapes (async)
     (-> (text/init-default-font!)
         (.then #(js/console.log "Default font loaded"))

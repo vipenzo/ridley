@@ -11,8 +11,7 @@
    Use with loft:
      (loft (tapered (circle 20) :to 0) (f 30))"
   (:require [ridley.turtle.transform :as xform]
-            [ridley.turtle.shape :as shape]
-))
+            [ridley.turtle.shape :as shape]))
 
 ;; ============================================================
 ;; Path-length context (set by loft at runtime)
@@ -103,8 +102,8 @@
    (tapered (circle 20) :from 0.5 :to 1)  ;; expand"
   [shape-or-fn & {:keys [to from] :or {to 0 from 1}}]
   (shape-fn shape-or-fn
-    (fn [s t]
-      (xform/scale s (+ from (* t (- to from)))))))
+            (fn [s t]
+              (xform/scale s (+ from (* t (- to from)))))))
 
 (defn ^:export twisted
   "Rotate a shape progressively along the path.
@@ -112,26 +111,26 @@
    (twisted (rect 20 10) :angle 90)"
   [shape-or-fn & {:keys [angle] :or {angle 360}}]
   (shape-fn shape-or-fn
-    (fn [s t]
-      (xform/rotate s (* t angle)))))
+            (fn [s t]
+              (xform/rotate s (* t angle)))))
 
 (defn ^:export rugged
   "Displace vertices radially with a sin pattern (constant along path).
    (rugged (circle 15) :amplitude 2 :frequency 8)"
   [shape-or-fn & {:keys [amplitude frequency] :or {amplitude 1 frequency 6}}]
   (shape-fn shape-or-fn
-    (fn [s _t]
-      (displace-radial s (fn [p]
-        (* amplitude (Math/sin (* (angle p) frequency))))))))
+            (fn [s _t]
+              (displace-radial s (fn [p]
+                                   (* amplitude (Math/sin (* (angle p) frequency))))))))
 
 (defn ^:export fluted
   "Longitudinal grooves using cos pattern (aligned with shape axes).
    (fluted (circle 20) :flutes 12 :depth 2)"
   [shape-or-fn & {:keys [flutes depth] :or {flutes 6 depth 1}}]
   (shape-fn shape-or-fn
-    (fn [s _t]
-      (displace-radial s (fn [p]
-        (* depth (Math/cos (* (angle p) flutes))))))))
+            (fn [s _t]
+              (displace-radial s (fn [p]
+                                   (* depth (Math/cos (* (angle p) flutes))))))))
 
 (defn ^:export displaced
   "Custom per-vertex radial displacement.
@@ -139,8 +138,8 @@
    (displaced (circle 15 64) (fn [p t] (* 2 (sin (+ (* (angle p) 6) (* t 20))))))"
   [shape-or-fn displace-fn]
   (shape-fn shape-or-fn
-    (fn [s t]
-      (displace-radial s (fn [p] (displace-fn p t))))))
+            (fn [s t]
+              (displace-radial s (fn [p] (displace-fn p t))))))
 
 (defn ^:export morphed
   "Interpolate between two shapes along the path.
@@ -149,8 +148,8 @@
    (morphed (resample (star 5 20 8) 32) (circle 15 32))"
   [shape-a shape-b]
   (shape-fn shape-a
-    (fn [s t]
-      (xform/morph s shape-b t))))
+            (fn [s t]
+              (xform/morph s shape-b t))))
 
 ;; ============================================================
 ;; Procedural noise
@@ -213,13 +212,13 @@
   (let [sx (or scale-x scale)
         sy (or scale-y scale)]
     (displaced shape-or-fn
-      (fn [p t]
-        (let [a (angle p)
-              nx (+ (* a sx) seed)
-              ny (+ (* t sy) seed)]
-          (* amplitude (if (= octaves 1)
-                         (noise nx ny)
-                         (fbm nx ny octaves))))))))
+               (fn [p t]
+                 (let [a (angle p)
+                       nx (+ (* a sx) seed)
+                       ny (+ (* t sy) seed)]
+                   (* amplitude (if (= octaves 1)
+                                  (noise nx ny)
+                                  (fbm nx ny octaves))))))))
 
 (defn ^:export woven
   "Woven fabric displacement — interlocking over/under thread pattern.
@@ -228,33 +227,33 @@
   [shape-or-fn & {:keys [warp weft amplitude thread]
                   :or {warp 6 weft 4 amplitude 1.0 thread 0.42}}]
   (displaced shape-or-fn
-    (fn [p t]
-      (let [a (angle p)
+             (fn [p t]
+               (let [a (angle p)
             ;; Map to repeating cell coordinates
-            u (* (/ (+ a Math/PI) (* 2 Math/PI)) warp)
-            v (* t weft)
+                     u (* (/ (+ a Math/PI) (* 2 Math/PI)) warp)
+                     v (* t weft)
             ;; Fractional position within cell [0,1)
-            fu (- u (Math/floor u))
-            fv (- v (Math/floor v))
+                     fu (- u (Math/floor u))
+                     fv (- v (Math/floor v))
             ;; Distance from thread center (threads run through cell center)
-            warp-d (Math/abs (- fv 0.5))
-            weft-d (Math/abs (- fu 0.5))
+                     warp-d (Math/abs (- fv 0.5))
+                     weft-d (Math/abs (- fu 0.5))
             ;; Raised-cosine thread profile: smooth round cross-section
-            prof (fn [d]
-                   (if (< d thread)
-                     (* 0.5 (+ 1 (Math/cos (* (/ d thread) Math/PI))))
-                     0))
-            warp-h (prof warp-d)
-            weft-h (prof weft-d)
+                     prof (fn [d]
+                            (if (< d thread)
+                              (* 0.5 (+ 1 (Math/cos (* (/ d thread) Math/PI))))
+                              0))
+                     warp-h (prof warp-d)
+                     weft-h (prof weft-d)
             ;; Checkerboard: determines which thread is on top
-            iu (int (Math/floor u))
-            iv (int (Math/floor v))
-            warp-top? (zero? (mod (+ iu iv) 2))
+                     iu (int (Math/floor u))
+                     iv (int (Math/floor v))
+                     warp-top? (zero? (mod (+ iu iv) 2))
             ;; "Over" thread at full height, "under" at reduced height
-            under 0.15]
-        (* amplitude
-           (max (if warp-top? warp-h (* under warp-h))
-                (if warp-top? (* under weft-h) weft-h)))))))
+                     under 0.15]
+                 (* amplitude
+                    (max (if warp-top? warp-h (* under warp-h))
+                         (if warp-top? (* under weft-h) weft-h)))))))
 
 ;; ============================================================
 ;; Analytical heightmap generators
@@ -324,10 +323,10 @@
     ;; Normalize to [0,1]
     (let [z-min (loop [i 0 m js/Number.POSITIVE_INFINITY]
                   (if (>= i n) m
-                    (recur (inc i) (Math/min m (aget data i)))))
+                      (recur (inc i) (Math/min m (aget data i)))))
           z-max (loop [i 0 m js/Number.NEGATIVE_INFINITY]
                   (if (>= i n) m
-                    (recur (inc i) (Math/max m (aget data i)))))
+                      (recur (inc i) (Math/max m (aget data i)))))
           z-range (- z-max z-min)]
       (when (> z-range 0)
         (dotimes [i n]
@@ -442,12 +441,12 @@
     ;; Normalize to [0, 1], skipping -Infinity cells
     (let [z-min (loop [i 0 m js/Number.POSITIVE_INFINITY]
                   (if (>= i n) m
-                    (let [v (aget data i)]
-                      (recur (inc i) (if (js/isFinite v) (min m v) m)))))
+                      (let [v (aget data i)]
+                        (recur (inc i) (if (js/isFinite v) (min m v) m)))))
           z-max (loop [i 0 m js/Number.NEGATIVE_INFINITY]
                   (if (>= i n) m
-                    (let [v (aget data i)]
-                      (recur (inc i) (if (js/isFinite v) (max m v) m)))))
+                      (let [v (aget data i)]
+                        (recur (inc i) (if (js/isFinite v) (max m v) m)))))
           z-range (- z-max z-min)]
       (if (> z-range 0)
         (dotimes [i n]
@@ -547,14 +546,14 @@
    (heightmap (circle 20 128) hm :amplitude 2 :tile-x 4 :tile-y 3)
    (heightmap (circle 20 128) hm :amplitude 2 :center true)  ; centered [-0.5, 0.5]"
   [shape-or-fn hm & {:keys [amplitude tile-x tile-y offset-x offset-y center]
-                      :or {amplitude 1.0 tile-x 1 tile-y 1
-                           offset-x 0 offset-y 0 center false}}]
+                     :or {amplitude 1.0 tile-x 1 tile-y 1
+                          offset-x 0 offset-y 0 center false}}]
   (displaced shape-or-fn
-    (fn [p t]
-      (let [u (+ offset-x (* tile-x (/ (+ (angle p) Math/PI) (* 2 Math/PI))))
-            v (+ offset-y (* tile-y t))
-            s (sample-heightmap hm u v)]
-        (* amplitude (if center (- s 0.5) s))))))
+             (fn [p t]
+               (let [u (+ offset-x (* tile-x (/ (+ (angle p) Math/PI) (* 2 Math/PI))))
+                     v (+ offset-y (* tile-y t))
+                     s (sample-heightmap hm u v)]
+                 (* amplitude (if center (- s 0.5) s))))))
 
 ;; ============================================================
 ;; Profile shape-fn (path silhouette → cross-section scaling)
@@ -639,9 +638,9 @@
                               (mapv (fn [t [x _]] [t (/ x base-x)]) ts pts)
                               [[0 1] [1 1]])]
             (shape-fn shape-or-fn
-              (fn [s t]
-                (let [sc (interpolate-table scale-table t)]
-                  (xform/scale s sc))))))))))
+                      (fn [s t]
+                        (let [sc (interpolate-table scale-table t)]
+                          (xform/scale s sc))))))))))
 
 ;; ============================================================
 ;; Shell shape-fn (variable-thickness hollow extrusion)
@@ -702,36 +701,43 @@
             :else 0.0))))
 
     :voronoi
-    (let [{:keys [cells rows seed wall-width]
-           :or {cells 6 rows 6 seed 42 wall-width 0.3}} opts
-          half-wall (* 0.5 wall-width)]
+    ;; Wall stripe along Voronoi cell edges. Returns 1 inside the wall and 0
+    ;; outside. :margin (default 0.05) specifies the fraction of t at start
+    ;; and end where the wall is forced solid (1.0), producing clean closed
+    ;; edges instead of jagged voronoi cuts.
+    (let [{:keys [cells rows seed wall-width margin]
+           :or {cells 6 rows 6 seed 42 wall-width 0.3 margin 0.05}} opts
+          half-wall (* 0.5 wall-width)
+          margin (or margin 0.05)]
       (fn [a t]
-        (let [u (* (/ (+ a Math/PI) (* 2 Math/PI)) cells)
-              v (* t rows)
-              iu (int (Math/floor u))
-              iv (int (Math/floor v))
-              [d1 d2]
-              (reduce
-               (fn [[best1 best2] [di dj]]
-                 (let [ci (+ iu di)
-                       cj (+ iv dj)
-                       ci-wrapped (mod ci cells)
-                       [jx jy] (voronoi-hash ci-wrapped cj seed)
-                       cx (+ ci jx)
-                       cy (+ cj jy)
-                       du (- u cx)
-                       dv (- v cy)
-                       dist (Math/sqrt (+ (* du du) (* dv dv)))]
-                   (cond
-                     (< dist best1) [dist best1]
-                     (< dist best2) [best1 dist]
-                     :else [best1 best2])))
-               [js/Infinity js/Infinity]
-               [[-1 -1] [-1 0] [-1 1]
-                [0 -1]  [0 0]  [0 1]
-                [1 -1]  [1 0]  [1 1]])
-              edge-dist (- d2 d1)]
-          (if (< edge-dist half-wall) 1.0 0.0))))
+        (if (or (<= t margin) (>= t (- 1.0 margin)))
+          1.0
+          (let [u (* (/ (+ a Math/PI) (* 2 Math/PI)) cells)
+                v (* t rows)
+                iu (int (Math/floor u))
+                iv (int (Math/floor v))
+                [d1 d2]
+                (reduce
+                 (fn [[best1 best2] [di dj]]
+                   (let [ci (+ iu di)
+                         cj (+ iv dj)
+                         ci-wrapped (mod ci cells)
+                         [jx jy] (voronoi-hash ci-wrapped cj seed)
+                         cx (+ ci jx)
+                         cy (+ cj jy)
+                         du (- u cx)
+                         dv (- v cy)
+                         dist (Math/sqrt (+ (* du du) (* dv dv)))]
+                     (cond
+                       (< dist best1) [dist best1]
+                       (< dist best2) [best1 dist]
+                       :else [best1 best2])))
+                 [js/Infinity js/Infinity]
+                 [[-1 -1] [-1 0] [-1 1]
+                  [0 -1]  [0 0]  [0 1]
+                  [1 -1]  [1 0]  [1 1]])
+                edge-dist (- d2 d1)]
+            (if (< edge-dist half-wall) 1.0 0.0)))))
 
     ;; Unknown style
     (throw (js/Error. (str "shell: unknown :style " style
@@ -748,6 +754,14 @@
    (shell shape :thickness 2 :style :weave :strands 6 :frequency 8); Woven pattern
    (shell shape :thickness 2 :fn (fn [a t] ...))                   ; Custom function
 
+   :voronoi extra options:
+     :wall-width  width of the wall stripe in (u, v) cell units (default 0.3)
+   The :voronoi cliff is binary: openings have hard pixelated edges along the
+   ring/segment grid. To smooth them, post-process the resulting mesh with
+   (mesh-smooth m :sharp-angle 90 :refine 2) — Manifold's tangent-based
+   smoother + subdivision rounds off the staircase while preserving any
+   intentionally sharp design corners.
+
    Caps at the ends:
    :cap-top N                                          ; Solid cap of thickness N
    :cap-top {:thickness N :style :voronoi :cells 10 :wall 1}  ; Patterned cap
@@ -761,21 +775,21 @@
   (let [thickness-fn (or (:fn opts)
                          (style->thickness-fn (or style :solid) opts))]
     (shape-fn shape-or-fn
-      (fn [s t]
-        (let [center (shape-centroid s)
-              pts (:points s)
-              values (mapv (fn [p]
-                            (let [a (Math/atan2 (- (second p) (second center))
-                                               (- (first p) (first center)))
-                                  v (thickness-fn a t)]
-                              (if (< v threshold) 0.0 (max 0.0 (min 1.0 v)))))
-                          pts)]
-          (cond-> (assoc s
-                         :shell-mode true
-                         :shell-thickness thickness
-                         :shell-values values)
-            cap-top    (assoc :shell-cap-top cap-top)
-            cap-bottom (assoc :shell-cap-bottom cap-bottom)))))))
+              (fn [s t]
+                (let [center (shape-centroid s)
+                      pts (:points s)
+                      values (mapv (fn [p]
+                                     (let [a (Math/atan2 (- (second p) (second center))
+                                                         (- (first p) (first center)))
+                                           v (thickness-fn a t)]
+                                       (if (< v threshold) 0.0 (max 0.0 (min 1.0 v)))))
+                                   pts)]
+                  (cond-> (assoc s
+                                 :shell-mode true
+                                 :shell-thickness thickness
+                                 :shell-values values)
+                    cap-top    (assoc :shell-cap-top cap-top)
+                    cap-bottom (assoc :shell-cap-bottom cap-bottom)))))))
 
 ;; ============================================================
 ;; Woven shell (thickness + radial offset for true over/under)
@@ -813,9 +827,9 @@
           col (int (Math/floor d1))
           row (int (Math/floor d2))
           off-d1 (* lift (Math/cos (* col Math/PI))
-                        (Math/sin (* d2 Math/PI)))
+                    (Math/sin (* d2 Math/PI)))
           off-d2 (* (- lift) (Math/cos (* row Math/PI))
-                             (Math/sin (* d1 Math/PI)))]
+                    (Math/sin (* d1 Math/PI)))]
       (cond
         (and on-d1? on-d2?)
         (woven-combine-crossing off-d1 (prof fd1 width)
@@ -842,10 +856,10 @@
           row (int (Math/floor wv))
           ;; Warp threads undulate as they cross weft lines
           off-warp (* lift (Math/cos (* col Math/PI))
-                          (Math/sin (* wv Math/PI)))
+                      (Math/sin (* wv Math/PI)))
           ;; Weft threads undulate as they cross warp lines (opposite sign)
           off-weft (* (- lift) (Math/cos (* row Math/PI))
-                               (Math/sin (* wu Math/PI)))]
+                      (Math/sin (* wu Math/PI)))]
       (cond
         (and on-warp? on-weft?)
         (woven-combine-crossing off-warp (prof fwu warp-width)
@@ -890,26 +904,26 @@
                                     (or warp-width 0.2) (or weft-width 0.1)
                                     lift half-t)))]
     (shape-fn shape-or-fn
-      (fn [s t]
-        (let [center (shape-centroid s)
-              pts (:points s)
-              results (mapv (fn [p]
-                              (let [a (Math/atan2 (- (second p) (second center))
-                                                 (- (first p) (first center)))]
-                                (weave-fn a t)))
-                            pts)
-              values (mapv (fn [{:keys [thickness]}]
-                             (let [v thickness]
-                               (if (< v threshold) 0.0 (max 0.0 v))))
-                           results)
-              offsets (mapv :offset results)]
-          (cond-> (assoc s
-                         :shell-mode true
-                         :shell-thickness thickness
-                         :shell-values values
-                         :shell-offsets offsets)
-            cap-top    (assoc :shell-cap-top cap-top)
-            cap-bottom (assoc :shell-cap-bottom cap-bottom)))))))
+              (fn [s t]
+                (let [center (shape-centroid s)
+                      pts (:points s)
+                      results (mapv (fn [p]
+                                      (let [a (Math/atan2 (- (second p) (second center))
+                                                          (- (first p) (first center)))]
+                                        (weave-fn a t)))
+                                    pts)
+                      values (mapv (fn [{:keys [thickness]}]
+                                     (let [v thickness]
+                                       (if (< v threshold) 0.0 (max 0.0 v))))
+                                   results)
+                      offsets (mapv :offset results)]
+                  (cond-> (assoc s
+                                 :shell-mode true
+                                 :shell-thickness thickness
+                                 :shell-values values
+                                 :shell-offsets offsets)
+                    cap-top    (assoc :shell-cap-top cap-top)
+                    cap-bottom (assoc :shell-cap-bottom cap-bottom)))))))
 
 ;; ============================================================
 ;; Cap fillet (smooth edge transition at extrusion ends)
@@ -943,8 +957,8 @@
    With shapes that have holes, :preserve-holes true (default) keeps holes unchanged
    so only the outer boundary is affected."
   [shape-or-fn radius & {:keys [mode start end fraction end-radius preserve-holes]
-                          :or {mode :fillet start true end true
-                               preserve-holes true}}]
+                         :or {mode :fillet start true end true
+                              preserve-holes true}}]
   (let [ease-fn (case mode
                   :fillet  (fn [u r]
                              (if (neg? r)
@@ -955,43 +969,43 @@
         end-radius (or end-radius radius)
         explicit-fraction fraction]
     (shape-fn shape-or-fn
-      (fn [s t]
+              (fn [s t]
         ;; Auto-calculate fraction from path length when not explicitly set
-        (let [fraction (or explicit-fraction
-                           (when *path-length*
-                             (let [max-r (max (Math/abs start-radius) (Math/abs (or end-radius start-radius)))
-                                   ideal (/ max-r *path-length*)]
+                (let [fraction (or explicit-fraction
+                                   (when *path-length*
+                                     (let [max-r (max (Math/abs start-radius) (Math/abs (or end-radius start-radius)))
+                                           ideal (/ max-r *path-length*)]
                                ;; Cap at 0.45 to leave room for the middle section
-                               (min 0.45 ideal)))
-                           0.08)
-              [in-transition? u active-radius]
-              (cond
-                (and start (< t fraction))
-                [true (ease-fn (/ t fraction) start-radius) start-radius]
+                                       (min 0.45 ideal)))
+                                   0.08)
+                      [in-transition? u active-radius]
+                      (cond
+                        (and start (< t fraction))
+                        [true (ease-fn (/ t fraction) start-radius) start-radius]
 
-                (and end (> t (- 1 fraction)))
-                [true (ease-fn (/ (- 1 t) fraction) end-radius) end-radius]
+                        (and end (> t (- 1 fraction)))
+                        [true (ease-fn (/ (- 1 t) fraction) end-radius) end-radius]
 
-                :else [false 1.0 0])]
-          (if (or (not in-transition?) (>= u 0.999))
-            s
+                        :else [false 1.0 0])]
+                  (if (or (not in-transition?) (>= u 0.999))
+                    s
             ;; Scale shape toward centroid — preserves proportions (fillet radii etc.)
             ;; The radius parameter controls how much the nearest edge moves inward.
-            (let [inset-amount (* active-radius (- 1 u))
-                  inradius (xform/shape-inradius s)
-                  scale (if (> inradius 0.001)
-                          (max 0.001 (/ (- inradius inset-amount) inradius))
-                          1.0)
-                  pts (:points s)
-                  n (count pts)
-                  cx (/ (reduce + (map first pts)) n)
-                  cy (/ (reduce + (map second pts)) n)
-                  scale-pt (fn [[x y]]
-                             [(+ cx (* scale (- x cx)))
-                              (+ cy (* scale (- y cy)))])
-                  scaled-points (mapv scale-pt pts)
-                  orig-holes (:holes s)]
-              (cond-> (assoc s :points scaled-points)
-                (and orig-holes (not preserve-holes))
-                (assoc :holes (mapv (fn [hole] (mapv scale-pt hole))
-                                    orig-holes))))))))))
+                    (let [inset-amount (* active-radius (- 1 u))
+                          inradius (xform/shape-inradius s)
+                          scale (if (> inradius 0.001)
+                                  (max 0.001 (/ (- inradius inset-amount) inradius))
+                                  1.0)
+                          pts (:points s)
+                          n (count pts)
+                          cx (/ (reduce + (map first pts)) n)
+                          cy (/ (reduce + (map second pts)) n)
+                          scale-pt (fn [[x y]]
+                                     [(+ cx (* scale (- x cx)))
+                                      (+ cy (* scale (- y cy)))])
+                          scaled-points (mapv scale-pt pts)
+                          orig-holes (:holes s)]
+                      (cond-> (assoc s :points scaled-points)
+                        (and orig-holes (not preserve-holes))
+                        (assoc :holes (mapv (fn [hole] (mapv scale-pt hole))
+                                            orig-holes))))))))))

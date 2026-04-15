@@ -255,7 +255,20 @@
     (swap! (turtle-ref) update :anchors merge marks)))
 
 (defn ^:export implicit-goto [name]
-  (swap! (turtle-ref) turtle/goto name)
+  ;; Built-in anchors
+  (if (#{:origin :ground} name)
+    (let [[h u] (case name
+                  :origin [[1 0 0] [0 0 1]]
+                  :ground [[0 0 -1] [0 1 0]])]
+      (swap! (turtle-ref) #(-> % (assoc :position [0 0 0]) (assoc :heading h) (assoc :up u))))
+    (do
+      ;; Check mark-anchors, copy to turtle state if found
+      (when-let [mark-pose (get @state/mark-anchors name)]
+        (swap! (turtle-ref) assoc-in [:anchors name]
+               {:position (or (:pos mark-pose) (:position mark-pose))
+                :heading (:heading mark-pose)
+                :up (:up mark-pose)}))
+      (swap! (turtle-ref) turtle/goto name)))
   (record-pen-lines!))
 
 (defn ^:export get-anchor
@@ -275,6 +288,11 @@
         (registry/register-mesh! mesh-name (assoc mesh :anchors anchors))))))
 
 (defn ^:export implicit-look-at [name]
+  (when-let [mark-pose (get @state/mark-anchors name)]
+    (swap! (turtle-ref) assoc-in [:anchors name]
+           {:position (or (:pos mark-pose) (:position mark-pose))
+            :heading (:heading mark-pose)
+            :up (:up mark-pose)}))
   (swap! (turtle-ref) turtle/look-at name))
 
 (defn ^:export implicit-path-to [name]
@@ -308,18 +326,29 @@
 (defn ^:export unified-scale
   "Unified scale function:
    - If first arg is a shape, scales the shape (2D)
-   - If no args and attached to mesh, scales the attached mesh"
+   - If no args and attached to mesh, scales the attached mesh
+   - (scale factor) — uniform scale of attached mesh
+   - (scale fx fy fz) — non-uniform scale of attached mesh along local axes"
   ([factor]
    ;; No shape provided - try to scale attached mesh
    (if (= :pose (get-in @(turtle-ref) [:attached :type]))
      (implicit-scale-mesh factor)
      (throw (js/Error. "scale requires a shape argument, or attach to a mesh first"))))
-  ([shape factor]
-   ;; Shape provided - scale the 2D shape
-   (xform/scale shape factor))
-  ([shape fx fy]
-   ;; Non-uniform scale of 2D shape
-   (xform/scale shape fx fy)))
+  ([shape-or-fx factor-or-fy]
+   ;; Shape + uniform factor, or two numbers for attached mesh
+   (if (number? shape-or-fx)
+     ;; Two numbers but no shape — error, need 3 for non-uniform
+     (throw (js/Error. "scale: non-uniform mesh scale needs 3 factors (scale fx fy fz)"))
+     ;; Shape provided - scale the 2D shape
+     (xform/scale shape-or-fx factor-or-fy)))
+  ([shape-or-fx fy-or-factor fz-or-fy]
+   (if (number? shape-or-fx)
+     ;; Three numbers: non-uniform scale of attached mesh
+     (if (= :pose (get-in @(turtle-ref) [:attached :type]))
+       (implicit-scale-mesh [shape-or-fx fy-or-factor fz-or-fy])
+       (throw (js/Error. "scale: attach to a mesh first for non-uniform scale")))
+     ;; Shape + fx + fy: non-uniform scale of 2D shape
+     (xform/scale shape-or-fx fy-or-factor fz-or-fy))))
 
 ;; Transform a mesh to turtle position/orientation
 (defn- transform-mesh-to-turtle

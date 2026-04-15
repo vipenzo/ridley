@@ -8,6 +8,7 @@
             [ridley.turtle.shape :as shape]
             [ridley.turtle.path :as path]
             [ridley.turtle.transform :as xform]
+            [ridley.turtle.attachment :as attachment]
             [ridley.turtle.text :as text]
             [ridley.geometry.primitives :as prims]
             [ridley.geometry.operations :as ops]
@@ -28,6 +29,7 @@
             [ridley.library.svg :as svg]
             [ridley.library.stl :as stl-import]
             [ridley.voronoi.core :as voronoi]
+            [ridley.manifold.native :as native-manifold]
             [ridley.measure.core :as measure]
             [ridley.settings :as settings]
             [ridley.viewport.capture :as capture]
@@ -78,7 +80,16 @@
    'material     impl/implicit-material
    'reset-material impl/implicit-reset-material
    ;; Creation pose override
-   'set-creation-pose (fn [mesh] (turtle/set-creation-pose @@state/turtle-state-var mesh))
+   'set-creation-pose (fn [mesh & [mark-name]]
+                        (if mark-name
+                          (if-let [pose (or (get @state/mark-anchors mark-name)
+                                            (get-in @@state/turtle-state-var [:anchors mark-name]))]
+                            (assoc mesh :creation-pose
+                                   {:position (or (:pos pose) (:position pose))
+                                    :heading (:heading pose)
+                                    :up (:up pose)})
+                            (throw (js/Error. (str "set-creation-pose: no mark named " mark-name))))
+                          (turtle/set-creation-pose @@state/turtle-state-var mesh)))
    ;; Lateral movement (pure translation, no heading change)
    'u            impl/implicit-u
    'd            impl/implicit-d
@@ -205,6 +216,7 @@
    'finalize-loft-impl  impl/implicit-finalize-loft
    ;; Shape transformation functions (scale also works on attached mesh)
    'scale        impl/unified-scale
+   'mesh-scale   attachment/scale-mesh
    'rotate-shape xform/rotate
    'translate    xform/translate
    'morph        xform/morph
@@ -250,6 +262,14 @@
    'get-face     faces/get-face
    'face-info    faces/face-info
    'face-ids     faces/face-ids
+   ;; Face selection (query-based)
+   'find-faces        faces/find-faces
+   'face-at           faces/face-at
+   'face-nearest      faces/face-nearest
+   'largest-face      faces/largest-face
+   'face-shape        faces/face-shape
+   'auto-face-groups  faces/auto-face-groups
+   'ensure-face-groups faces/ensure-face-groups
    ;; Face highlighting
    'flash-face      viewport/flash-face
    'highlight-face  viewport/highlight-face
@@ -318,7 +338,15 @@
    'mesh-difference-impl     manifold/difference
    'mesh-intersection-impl   manifold/intersection
    'mesh-hull-impl           manifold/hull
+   'mesh-smooth         manifold/mesh-smooth
+   'mesh-refine         manifold/mesh-refine
    'concat-meshes       manifold/concat-meshes
+   ;; Native Manifold (Rust backend via Tauri IPC) — async, return Promises
+   'bench               native-manifold/bench
+   'native-union        native-manifold/native-union
+   'native-difference   native-manifold/native-difference
+   'native-intersection native-manifold/native-intersection
+   'native-hull         native-manifold/native-hull
    'transform           turtle/transform-mesh
    'solidify-impl       manifold/solidify
    'slice-mesh          impl/implicit-slice-mesh
@@ -359,8 +387,32 @@
    'register-shape!     registry/register-shape!
    'get-shape           registry/get-shape
    'shape-names         registry/shape-names
-   ;; STL export
+   ;; STL/3MF export
    'save-stl            stl/download-stl
+   'save-3mf            stl/download-3mf
+   'save-mesh           stl/download-mesh
+   'export              (fn export-smart
+                          ([] (let [meshes (viewport/get-current-meshes)
+                                    fname  (or (first (registry/registered-names)) "model")]
+                                (if (seq meshes)
+                                  (stl/download-mesh meshes (str (name fname) ".stl") :stl)
+                                  (throw (js/Error. "No meshes to export. Run some code first!")))))
+                          ([target] (let [[mesh fname]
+                                          (cond
+                                            (keyword? target)
+                                            [(registry/get-mesh target) (name target)]
+
+                                            (and (map? target) (:vertices target))
+                                            [target "model"]
+
+                                            (sequential? target)
+                                            [target "model"]
+
+                                            :else
+                                            (throw (js/Error. (str "export: expected keyword, mesh, or vector of meshes, got " (type target)))))]
+                                      (if (nil? mesh)
+                                        (throw (js/Error. (str "export: no mesh registered as " target)))
+                                        (stl/download-mesh mesh (str fname ".stl") :stl)))))
    ;; View capture (for describe/AI and debugging)
    'render-view         capture/render-view
    'render-all-views    capture/render-all-views
@@ -446,12 +498,16 @@
    'list-collisions     anim/list-collisions
    ;; Macro impl functions (runtime dispatch for slimmed macros)
    'extrude-impl        macro-impl/extrude-impl
+   'extrude+-impl       macro-impl/extrude+-impl
    'extrude-closed-impl macro-impl/extrude-closed-impl
    'loft-impl           macro-impl/loft-impl
    'loft-n-impl         macro-impl/loft-n-impl
    'bloft-impl          macro-impl/bloft-impl
    'bloft-n-impl        macro-impl/bloft-n-impl
    'revolve-impl        macro-impl/revolve-impl
+   'revolve+-impl       macro-impl/revolve+-impl
+   'transform->impl     macro-impl/transform->impl
+   'lay-flat            macro-impl/lay-flat-impl
    'attach-impl         macro-impl/attach-impl
    'attach-face-impl    macro-impl/attach-face-impl
    'clone-face-impl     macro-impl/clone-face-impl

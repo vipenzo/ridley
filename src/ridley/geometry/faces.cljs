@@ -3,7 +3,8 @@
 
    Face groups are collections of triangles that form a logical face.
    For primitives, faces have semantic names (:top, :bottom, :front, etc).
-   For complex meshes, faces have numeric IDs.")
+   For complex meshes, faces have numeric IDs."
+  (:require [ridley.turtle.shape :as shape]))
 
 ;; ============================================================
 ;; Vector math utilities
@@ -272,6 +273,264 @@
                  (zipmap (range (count (:faces mesh)))
                          (map vector (:faces mesh))))]
     (assoc mesh :face-groups groups)))
+
+;; ============================================================
+;; Auto face grouping (coplanar adjacency)
+;; ============================================================
+
+(defn- triangle-normal [vertices [i j k]]
+  (let [v0 (nth vertices i) v1 (nth vertices j) v2 (nth vertices k)]
+    (normalize (cross (v- v1 v0) (v- v2 v0)))))
+
+(defn- normals-similar? [n1 n2 threshold]
+  (> (js/Math.abs (+ (* (n1 0) (n2 0)) (* (n1 1) (n2 1)) (* (n1 2) (n2 2))))
+     threshold))
+
+(defn- build-tri-adjacency
+  "Build adjacency: for each triangle index, which other triangles share an edge."
+  [faces]
+  (let [edge-tris (reduce-kv
+                    (fn [m ti [i j k]]
+                      (let [add (fn [m a b] (update m (if (< a b) [a b] [b a]) (fnil conj []) ti))]
+                        (-> m (add i j) (add j k) (add k i))))
+                    {} (vec faces))]
+    (reduce-kv
+      (fn [adj _ tris]
+        (reduce (fn [a t1]
+                  (reduce (fn [a2 t2]
+                            (if (= t1 t2) a2
+                              (update a2 t1 (fnil conj #{}) t2)))
+                          a tris))
+                adj tris))
+      {} edge-tris)))
+
+(defn auto-face-groups
+  "Group mesh triangles into coplanar faces by flood-fill.
+   Two adjacent triangles belong to the same face if their normals
+   are within threshold (default cos(5°) ≈ 0.996)."
+  ([mesh] (auto-face-groups mesh 0.996))
+  ([mesh threshold]
+   (let [faces (vec (:faces mesh))
+         vertices (:vertices mesh)
+         n (count faces)
+         normals (mapv #(triangle-normal vertices %) faces)
+         adj (build-tri-adjacency faces)
+         visited (volatile! #{})]
+     (loop [ti 0, group-id 0, groups {}]
+       (if (>= ti n)
+         groups
+         (if (@visited ti)
+           (recur (inc ti) group-id groups)
+           (let [group-tris
+                 (loop [queue [ti], result []]
+                   (if (empty? queue)
+                     result
+                     (let [t (first queue)
+                           rest-q (subvec queue 1)]
+                       (if (@visited t)
+                         (recur rest-q result)
+                         (do (vswap! visited conj t)
+                             (let [neighbors (get adj t #{})
+                                   tn (nth normals t)
+                                   compatible (filterv (fn [nb]
+                                                         (and (not (@visited nb))
+                                                              (normals-similar? tn (nth normals nb) threshold)))
+                                                       neighbors)]
+                               (recur (into rest-q compatible)
+                                      (conj result (nth faces t)))))))))]
+             (recur (inc ti)
+                    (inc group-id)
+                    (assoc groups group-id (vec group-tris))))))))))
+
+(defn ensure-face-groups
+  "Ensure mesh has :face-groups. If missing, compute via auto-face-groups."
+  [mesh]
+  (if (:face-groups mesh)
+    mesh
+    (assoc mesh :face-groups (auto-face-groups mesh))))
+
+;; ============================================================
+;; Face selection by query
+;; ============================================================
+
+(defn- face-group-info
+  "Compute info for each face group."
+  [mesh]
+  (let [mesh (ensure-face-groups mesh)
+        vertices (:vertices mesh)]
+    (mapv (fn [[face-id triangles]]
+            (let [info (compute-face-info vertices triangles)
+                  area (reduce + 0 (map (fn [[i j k]]
+                                          (let [v0 (nth vertices i) v1 (nth vertices j) v2 (nth vertices k)]
+                                            (/ (magnitude (cross (v- v1 v0) (v- v2 v0))) 2)))
+                                        triangles))]
+              (assoc info :id face-id :area area)))
+          (:face-groups mesh))))
+
+(defn find-faces
+  "Find faces by direction relative to the mesh's creation-pose.
+   direction: :top :bottom :up :down :left :right :all
+   Options:
+     :threshold  — alignment cos threshold (default 0.7 ≈ 45°)
+     :where      — extra predicate on face info map"
+  [mesh direction & {:keys [threshold where] :or {threshold 0.7}}]
+  (let [all (face-group-info mesh)
+        pose (or (:creation-pose mesh)
+                 {:heading [1 0 0] :up [0 0 1]})
+        h (:heading pose)
+        u (:up pose)
+        r (cross h u)
+        dir-vec (case direction
+                  :top h :bottom (v* h -1)
+                  :up u :down (v* u -1)
+                  :right r :left (v* r -1)
+                  :all nil)
+        filtered (if dir-vec
+                   (filterv (fn [f]
+                              (let [n (:normal f)
+                                    d (+ (* (n 0) (dir-vec 0)) (* (n 1) (dir-vec 1)) (* (n 2) (dir-vec 2)))]
+                                (> d threshold)))
+                            all)
+                   all)]
+    (if where
+      (filterv where filtered)
+      filtered)))
+
+(defn face-at
+  "Find the face whose plane is closest to a 3D point."
+  [mesh point]
+  (let [all (face-group-info mesh)
+        [px py pz] point]
+    (when (seq all)
+      (apply min-key
+             (fn [f]
+               (let [[nx ny nz] (:normal f)
+                     [cx cy cz] (:center f)]
+                 (js/Math.abs (+ (* nx (- px cx)) (* ny (- py cy)) (* nz (- pz cz))))))
+             all))))
+
+(defn face-nearest
+  "Find the face whose centroid is nearest to a 3D point."
+  [mesh point]
+  (let [all (face-group-info mesh)
+        [px py pz] point]
+    (when (seq all)
+      (apply min-key
+             (fn [f]
+               (let [[cx cy cz] (:center f)]
+                 (+ (* (- px cx) (- px cx))
+                    (* (- py cy) (- py cy))
+                    (* (- pz cz) (- pz cz)))))
+             all))))
+
+(defn largest-face
+  "Find the face with the largest area, optionally filtered by direction."
+  ([mesh] (largest-face mesh :all))
+  ([mesh direction]
+   (let [faces (find-faces mesh direction)]
+     (when (seq faces)
+       (apply max-key :area faces)))))
+
+;; ============================================================
+;; Face → 2D shape extraction
+;; ============================================================
+
+(defn- extract-boundary-loops
+  "Extract boundary edge loops from a set of triangles."
+  [triangles]
+  (let [edge-counts
+        (reduce (fn [m [i j k]]
+                  (let [add (fn [m a b]
+                              (let [e (if (< a b) [a b] [b a])]
+                                (update m e (fnil inc 0))))]
+                    (-> m (add i j) (add j k) (add k i))))
+                {} triangles)
+        boundary-edges (keep (fn [[e c]] (when (= 1 c) e)) edge-counts)
+        adj (reduce (fn [m [a b]]
+                      (-> m
+                          (update a (fnil conj #{}) b)
+                          (update b (fnil conj #{}) a)))
+                    {} boundary-edges)
+        all-verts (set (keys adj))]
+    (loop [remaining all-verts, loops []]
+      (if (empty? remaining)
+        loops
+        (let [start (first remaining)
+              loop-verts
+              (loop [current start, prev nil, result [start], visited #{start}]
+                (let [neighbors (get adj current)
+                      next-v (first (remove #(or (= % prev) (visited %)) neighbors))]
+                  (if (or (nil? next-v) (= next-v start))
+                    result
+                    (recur next-v current (conj result next-v) (conj visited next-v)))))]
+          (recur (reduce disj remaining (set loop-verts))
+                 (conj loops loop-verts)))))))
+
+(defn- project-3d-to-2d-face
+  "Project 3D points onto a face plane, returning 2D coordinates."
+  [points-3d center normal]
+  (let [ref (if (> (js/Math.abs (nth normal 1)) 0.9) [1 0 0] [0 1 0])
+        right (normalize (cross ref normal))
+        up (cross normal right)]
+    (mapv (fn [p]
+            (let [d (v- p center)]
+              [(+ (* (d 0) (right 0)) (* (d 1) (right 1)) (* (d 2) (right 2)))
+               (+ (* (d 0) (up 0)) (* (d 1) (up 1)) (* (d 2) (up 2)))]))
+          points-3d)))
+
+(defn- signed-area-2d-face [points]
+  (let [n (count points)]
+    (/ (reduce + (for [i (range n)]
+                   (let [[x1 y1] (nth points i)
+                         [x2 y2] (nth points (mod (inc i) n))]
+                     (- (* x1 y2) (* x2 y1)))))
+       2.0)))
+
+(defn face-shape
+  "Extract a face as a 2D shape with pose information.
+   Returns {:shape <ridley-shape> :pose {:position :heading :up}}
+   Pure function — does not modify turtle state."
+  [mesh face-id]
+  (let [mesh (ensure-face-groups mesh)
+        triangles (get (:face-groups mesh) face-id)
+        vertices (:vertices mesh)]
+    (when (seq triangles)
+      (let [info (compute-face-info vertices triangles)
+            center (:center info)
+            normal (:normal info)
+            ;; Derive up from creation-pose or world Z
+            ref-up (or (get-in mesh [:creation-pose :up]) [0 0 1])
+            dot-nu (+ (* (ref-up 0) (normal 0)) (* (ref-up 1) (normal 1)) (* (ref-up 2) (normal 2)))
+            up-raw (v- ref-up (v* normal dot-nu))
+            up-mag (magnitude up-raw)
+            up (if (> up-mag 0.001)
+                 (v* up-raw (/ 1.0 up-mag))
+                 (normalize (cross normal (:heading info))))
+            loops (extract-boundary-loops triangles)
+            loop-positions (mapv (fn [loop-indices]
+                                   (mapv #(nth vertices %) loop-indices))
+                                 loops)
+            loop-2d (mapv #(project-3d-to-2d-face % center normal) loop-positions)
+            areas (mapv (fn [pts] {:points pts :area (signed-area-2d-face pts)}) loop-2d)
+            sorted (sort-by #(- (js/Math.abs (:area %))) areas)
+            outer-pts (let [pts (:points (first sorted))]
+                        (if (neg? (signed-area-2d-face pts))
+                          (vec (reverse pts))
+                          pts))
+            holes (when (> (count sorted) 1)
+                    (mapv (fn [h]
+                            (let [pts (:points h)]
+                              (if (pos? (signed-area-2d-face pts))
+                                (vec (reverse pts))
+                                pts)))
+                          (rest sorted)))]
+        {:shape (shape/make-shape
+                  outer-pts
+                  (cond-> {:centered? true}
+                    (seq holes) (assoc :holes holes)))
+         :pose {:pos center
+                :heading normal
+                :up up}}))))
 
 ;; ============================================================
 ;; Sharp edge detection

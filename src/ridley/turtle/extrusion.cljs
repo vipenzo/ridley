@@ -728,11 +728,17 @@
    Generates side faces for outer + each hole, and optionally caps at both ends."
   ([ring-data-vec creation-pose] (build-sweep-mesh-with-holes ring-data-vec creation-pose true))
   ([ring-data-vec creation-pose caps?]
-   (let [n-rings (count ring-data-vec)
+   (let [;; Detect backward extrusion: compare sweep direction with creation-pose heading
+         first-centroid (ring-centroid (:outer (first ring-data-vec)))
+         last-centroid (ring-centroid (:outer (last ring-data-vec)))
+         sweep-dir (v- last-centroid first-centroid)
+         backward? (neg? (dot sweep-dir (:heading creation-pose)))
+         ;; Reverse ring order for backward extrusion so winding is correct
+         ring-data-vec (if backward? (vec (reverse ring-data-vec)) ring-data-vec)
+         n-rings (count ring-data-vec)
          first-data (first ring-data-vec)
          n-outer (count (:outer first-data))
          holes-structure (mapv count (or (:holes first-data) []))
-         ;; Combined ring length: outer + all holes
          ring-len (+ n-outer (reduce + 0 holes-structure))]
      (when (and (>= n-rings 2) (>= n-outer 3))
        (let [;; Flatten all ring-data into a single vertex array
@@ -1025,7 +1031,10 @@
         end-pos (v+ (:position state) (v* (:heading state) dist))
         end-state (assoc state :position end-pos)
         end-data (stamp-shape-with-holes end-state shape)
-        mesh (sweep-two-shapes-with-holes start-data end-data)]
+        ;; For backward extrusion (negative dist), swap start/end
+        ;; so that the sweep winding is correct
+        [d1 d2] (if (neg? dist) [end-data start-data] [start-data end-data])
+        mesh (sweep-two-shapes-with-holes d1 d2)]
     (if mesh
       (let [mesh-with-pose (cond-> (assoc mesh :creation-pose creation-pose)
                             (:material state) (assoc :material (:material state)))]

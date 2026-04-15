@@ -15,7 +15,7 @@
 (def s3 (translate (circle b4 512) bb (* aa -0.2)))
 (def spessore-gabbia 8)
 
-(def base-shape (shape-hull s3 s1 s2))
+(def base-shape (resample (shape-hull s3 s1 s2) 2048))
 (def n-pts (count (:points base-shape)))
 (def gabbia-shape (shape-offset base-shape spessore-gabbia))
 
@@ -48,15 +48,20 @@
          (f H))))
 (register bowl _bowl)
 
-
 ;; Tray = shell of base-shape offset inward, tray height
+;; mesh-smooth rounds off the staircase aliasing along the voronoi shell
+;; silhouette using Manifold's tangent-based subdivision (sharp-angle 100
+;; smooths every dihedral <= 100deg, refine 2 quadruples triangle count).
+;; mesh-laplacian: Taubin smoothing (iterative vertex averaging, no overshoot)
+;; Eliminates the staircase aliasing at voronoi shell hole edges.
 (def _tray
-  (loft-n 512
-          (shell (shape-fn base-shape (make-forma-tray 0 tray-H))
-                 :style :voronoi
-                 :thickness spessore :cells 10 :rows 4 :seed 42
-                 :cap-top {:style :voronoi :thickness spessore})
-          (f tray-H)))
+  (-> (loft-n 256
+              (shell (shape-fn base-shape (make-forma-tray 0 tray-H))
+                     :style :voronoi
+                     :thickness spessore :cells 10 :rows 4 :seed 42
+                     :cap-top {:style :voronoi :thickness spessore})
+              (f tray-H))
+      (mesh-simplify 0.5)))
 (register tray _tray)
 
 (color :bowl 0xffff00)

@@ -13,6 +13,49 @@
             [clojure.string :as str]))
 
 ;; ============================================================
+;; JVM eval helper (sync HTTP for interactive tweak)
+;; ============================================================
+
+(defn- jvm-eval-sync
+  "Evaluate a script on the JVM sidecar synchronously.
+   Returns the first registered mesh, or nil on error.
+   Uses synchronous XMLHttpRequest — blocks UI but gives instant feedback."
+  [script-text]
+  (try
+    (let [xhr (js/XMLHttpRequest.)
+          active-libs (or (when-let [raw (.getItem js/localStorage "ridley:jvm-libs:active")]
+                            (try (vec (js->clj (.parse js/JSON raw)))
+                                 (catch :default _ [])))
+                          [])]
+      (.open xhr "POST" "http://127.0.0.1:12322/eval" false) ;; synchronous
+      (.setRequestHeader xhr "Content-Type" "application/json")
+      (.send xhr (js/JSON.stringify
+                  #js {:script script-text
+                       :active_libraries (clj->js active-libs)}))
+      (when (= 200 (.-status xhr))
+        (let [^js result (js/JSON.parse (.-responseText xhr))
+              meshes-js (aget result "meshes")
+              print-output (aget result "print_output")]
+          (when (seq print-output)
+            (state/capture-println print-output))
+          ;; Return first mesh from the result
+          (when meshes-js
+            (let [keys (js/Object.keys meshes-js)]
+              (when (pos? (.-length keys))
+                (let [first-key (aget keys (dec (.-length keys)))
+                      ^js m (aget meshes-js first-key)
+                      verts-js (aget m "vertices")
+                      faces-js (aget m "faces")]
+                  (when (and verts-js faces-js)
+                    {:type :mesh
+                     :vertices (vec (map (fn [v] [(aget v 0) (aget v 1) (aget v 2)]) verts-js))
+                     :faces (vec (map (fn [f] [(int (aget f 0)) (int (aget f 1)) (int (aget f 2))]) faces-js))
+                     :creation-pose {:position [0 0 0] :heading [1 0 0] :up [0 0 1]}}))))))))
+    (catch :default e
+      (js/console.warn "JVM tweak eval error:" e)
+      nil)))
+
+;; ============================================================
 ;; State
 ;; ============================================================
 
@@ -50,15 +93,15 @@
                 (let [fn-sym (when (symbol? (first form)) (first form))
                       args (if fn-sym (rest form) form)]
                   (doall (map-indexed
-                           (fn [i child]
-                             (walk child (or fn-sym parent-fn) form i))
-                           args)))
+                          (fn [i child]
+                            (walk child (or fn-sym parent-fn) form i))
+                          args)))
 
                 (sequential? form)
                 (doall (map-indexed
-                         (fn [i child]
-                           (walk child parent-fn parent-form i))
-                         form))
+                        (fn [i child]
+                          (walk child parent-fn parent-form i))
+                        form))
 
                 (map? form)
                 (doseq [[k v] form]
@@ -190,56 +233,69 @@
 
 (defn- evaluate-and-preview!
   "Re-evaluate the current form with substituted values and update the preview.
+   In JVM mode, sends the full editor script + tweaked expression to the sidecar.
    Returns true on success, false on error."
   []
   (if-let [{:keys [current-values saved-turtle]} @test-state]
     (let [form (:form @test-state)
           modified-form (substitute-values form current-values)
           form-str (pr-str modified-form)]
-      ;; Restore turtle state before evaluation
-      (reset! @state/turtle-state-var saved-turtle)
-      (try
-        (let [ctx @state/sci-ctx-ref
-              _ (when-not ctx (throw (js/Error. "No SCI context — run definitions first")))
-              result (sci/eval-string form-str ctx)
-              items (cond
-                      ;; Mesh
-                      (mesh? result)
-                      [{:type :mesh :data result}]
+      (if @state/jvm-mode?
+        ;; JVM mode: send full script + tweaked expression to sidecar
+        (try
+          (let [editor-content (when-let [f @state/get-editor-content] (f))
+                full-script (str editor-content "\n" form-str)
+                result (jvm-eval-sync full-script)]
+            (if (mesh? result)
+              (do (viewport/show-preview! [{:type :mesh :data result}])
+                  true)
+              (do (viewport/clear-preview!)
+                  false)))
+          (catch :default e
+            (let [msg (str "tweak JVM eval error: " (.-message e))]
+              (state/capture-println msg)
+              (js/console.warn msg)
+              false)))
+        ;; SCI mode: evaluate locally
+        (do
+          (reset! @state/turtle-state-var saved-turtle)
+          (try
+            (let [ctx @state/sci-ctx-ref
+                  _ (when-not ctx (throw (js/Error. "No SCI context — run definitions first")))
+                  result (sci/eval-string form-str ctx)
+                  items (cond
+                          (mesh? result)
+                          [{:type :mesh :data result}]
 
-                      ;; Shape → stamp at saved turtle pose
-                      (shape/shape? result)
-                      (let [stamped (turtle/stamp-debug saved-turtle result)
-                            stamps (:stamps stamped)]
-                        (mapv (fn [s] {:type :stamp :data s}) stamps))
+                          (shape/shape? result)
+                          (let [stamped (turtle/stamp-debug saved-turtle result)
+                                stamps (:stamps stamped)]
+                            (mapv (fn [s] {:type :stamp :data s}) stamps))
 
-                      ;; Path → follow from saved turtle pose
-                      (turtle/path? result)
-                      (let [ran (turtle/run-path saved-turtle result)
-                            lines (:geometry ran)]
-                        (when (seq lines)
-                          [{:type :lines :data lines}]))
+                          (turtle/path? result)
+                          (let [ran (turtle/run-path saved-turtle result)
+                                lines (:geometry ran)]
+                            (when (seq lines)
+                              [{:type :lines :data lines}]))
 
-                      ;; Vector of meshes
-                      (and (sequential? result) (seq result) (every? mesh? result))
-                      (mapv (fn [m] {:type :mesh :data m}) result)
+                          (and (sequential? result) (seq result) (every? mesh? result))
+                          (mapv (fn [m] {:type :mesh :data m}) result)
 
-                      :else nil)]
-          (if items
-            (viewport/show-preview! items)
-            (viewport/clear-preview!))
-          ;; Live-refresh rulers when tweaking a registered mesh
-          (when-let [reg-name (:registry-name @test-state)]
-            (when (mesh? result)
-              (measure/set-ruler-overrides! {reg-name result})
-              (measure/refresh-rulers!)))
-          true)
-        (catch :default e
-          (let [msg (str "tweak eval error: " (.-message e))]
-            (state/capture-println msg)
-            (js/console.warn msg)
-            (js/console.warn "tweak form-str:" form-str)
-            false))))
+                          :else nil)]
+              (if items
+                (viewport/show-preview! items)
+                (viewport/clear-preview!))
+              (when-let [reg-name (:registry-name @test-state)]
+                (when (mesh? result)
+                  (measure/set-ruler-overrides! {reg-name result})
+                  (measure/refresh-rulers!)))
+              true)
+            (catch :default e
+              (let [msg (str "tweak eval error: " (.-message e))]
+                (state/capture-println msg)
+                (js/console.warn msg)
+                (js/console.warn "tweak form-str:" form-str)
+                false))))))
     false))
 
 ;; ============================================================
@@ -356,16 +412,16 @@
         ;; Debounced input handler
         (let [timeout (atom nil)]
           (.addEventListener slider "input"
-            (fn [_e]
-              (let [new-val (js/parseFloat (.-value slider))]
-                (set! (.-textContent value-el) (str new-val))
-                (when-let [t @timeout] (js/clearTimeout t))
-                (reset! timeout
-                  (js/setTimeout
-                    (fn []
-                      (swap! test-state assoc-in [:current-values index] new-val)
-                      (evaluate-and-preview!))
-                    100))))))
+                             (fn [_e]
+                               (let [new-val (js/parseFloat (.-value slider))]
+                                 (set! (.-textContent value-el) (str new-val))
+                                 (when-let [t @timeout] (js/clearTimeout t))
+                                 (reset! timeout
+                                         (js/setTimeout
+                                          (fn []
+                                            (swap! test-state assoc-in [:current-values index] new-val)
+                                            (evaluate-and-preview!))
+                                          100))))))
         ;; Zoom buttons: re-center range on current value
         (let [zoom-fn (fn [factor]
                         (let [cur (js/parseFloat (.-value slider))
@@ -515,7 +571,7 @@
          total (count literals)]
      (when (> total 32)
        (state/capture-println
-         (str "tweak: " total " numeric literals found, max 32 — narrow with (tweak [0 1 2] expr)")))
+        (str "tweak: " total " numeric literals found, max 32 — narrow with (tweak [0 1 2] expr)")))
      (if (or (zero? total) (> total 32))
        ;; No numeric literals or too many — just evaluate and show result
        (do (when (zero? total)
@@ -554,10 +610,10 @@
              ;; calls refresh-viewport! after we return, which wipes the preview.
              ;; By deferring, our preview renders AFTER that refresh.
              (js/setTimeout
-               (fn []
-                 (evaluate-and-preview!)
-                 (create-slider-ui! labeled selected))
-               0)
+              (fn []
+                (evaluate-and-preview!)
+                (create-slider-ui! labeled selected))
+              0)
              nil)
            ;; Evaluation failed — clean up, don't show sliders
            (do
@@ -578,6 +634,6 @@
    (let [form (or quoted-form (registry/get-source-form name))]
      (if (nil? form)
        (do (state/capture-println
-             (str "tweak: no source form for " name " — use (tweak " name " expr)"))
+            (str "tweak: no source form for " name " — use (tweak " name " expr)"))
            nil)
        (start! form filt name locals)))))

@@ -1,0 +1,1154 @@
+(ns ridley.turtle.shape
+  "Shape definitions: 2D profiles that can be stamped and extruded.
+
+   A shape is a closed 2D profile defined as a vector of [x y] points.
+   Shapes can be:
+   - Built-in: (circle r), (rect w h) - centered at origin
+   - Custom: (shape ...) - recorded from turtle movements
+
+   The new pen API:
+   (pen shape & movements)
+   - Stamps the shape on the plane perpendicular to turtle's heading
+   - Movements after stamping extrude the shape
+   - Turtle moves (extrusion is a side-effect)")
+
+;; ============================================================
+;; Shape data structure
+;; ============================================================
+
+(defn make-shape
+  "Create a shape from a vector of 2D points.
+   Points should form a closed polygon (CCW winding for outer, CW for holes).
+
+   Options:
+   - :centered? true  - shape is centered at turtle position (default for circle/rect)
+   - :centered? false - shape starts at turtle position (default for custom shapes)
+   - :holes [...]     - vector of hole contours (each is a vector of [x y] points, CW winding)
+   - :preserve-position? true - use raw 2D coords without offset (for text with built-in spacing)
+   - :align-to-heading? true - 2D x maps to heading direction (for text along path)
+   - :flip-plane-x? true - negate plane-x axis (equivalent to tr 180 before stamp)"
+  ([points] (make-shape points {:centered? false}))
+  ([points opts]
+   (cond-> {:type :shape
+            :points (vec points)
+            :centered? (:centered? opts false)}
+     (:holes opts) (assoc :holes (vec (map vec (:holes opts))))
+     (:preserve-position? opts) (assoc :preserve-position? true)
+     (:align-to-heading? opts) (assoc :align-to-heading? true)
+     (:flip-plane-x? opts) (assoc :flip-plane-x? true))))
+
+(defn shape?
+  "Check if x is a shape."
+  [x]
+  (and (map? x) (= :shape (:type x))))
+
+;; ============================================================
+;; Built-in shapes (centered at origin)
+;; ============================================================
+
+(defn circle-shape
+  "Create a circular shape centered at origin."
+  ([radius] (circle-shape radius 32))
+  ([radius segments]
+   (let [step (/ (* 2 Math/PI) segments)
+         points (vec (for [i (range segments)]
+                       (let [angle (* i step)]
+                         [(* radius (Math/cos angle))
+                          (* radius (Math/sin angle))])))]
+     (make-shape points {:centered? true}))))
+
+(defn rect-shape
+  "Create a rectangular shape centered at origin."
+  [width height]
+  (let [hw (/ width 2)
+        hh (/ height 2)
+        points [[(- hw) (- hh)]
+                [hw (- hh)]
+                [hw hh]
+                [(- hw) hh]]]
+    (make-shape points {:centered? true})))
+
+(defn polygon-shape
+  "Create a polygonal shape from points.
+   Points are relative to origin (not centered)."
+  [points]
+  (make-shape points {:centered? false}))
+
+(defn poly-shape
+  "Create a shape from flat x y coordinate pairs.
+   Origin [0,0] is anchored to turtle position.
+   Accepts: (poly 0 0 5 0 5 5), (poly [0 0 5 0 5 5]), or (poly v)"
+  ([x] (poly-shape x nil))
+  ([x y & more]
+   (let [nums (if (and (nil? y) (sequential? x))
+                x
+                (cons x (cons y more)))
+         n (count nums)]
+     (when (odd? n)
+       (throw (Exception. (str "poly: odd number of coordinates (" n "). Coordinates must be x y pairs."))))
+     (when (< n 6)
+       (throw (Exception. (str "poly: need at least 3 points (6 coordinates), got " n "."))))
+     (let [points (mapv vec (partition 2 nums))]
+       (make-shape points {:centered? true})))))
+
+(defn ngon-shape
+  "Create a regular n-sided polygon centered at origin.
+   n: number of sides (e.g., 6 for hexagon)
+   radius: distance from center to vertices"
+  [n radius]
+  (when-not (and (number? n) (number? radius))
+    (throw (Exception. (str "polygon: expected (polygon sides radius), got ("
+                           (pr-str n) " " (pr-str radius) ")."
+                           (when (sequential? n)
+                             " For custom points use (poly x1 y1 x2 y2 ...) or (make-shape [[x y] ...]).")))))
+  (when (< n 3)
+    (throw (Exception. (str "polygon: need at least 3 sides, got " n "."))))
+  (let [step (/ (* 2 Math/PI) n)
+        points (vec (for [i (range n)]
+                      (let [angle (- (* i step) (/ Math/PI 2))]  ; Start at top
+                        [(* radius (Math/cos angle))
+                         (* radius (Math/sin angle))])))]
+    (make-shape points {:centered? true})))
+
+(defn star-shape
+  "Create a star shape centered at origin.
+   n-points: number of points (tips)
+   outer-r: radius to outer points (tips)
+   inner-r: radius to inner points (valleys)"
+  ([n-points outer-r inner-r]
+   (let [total-verts (* 2 n-points)
+         step (/ (* 2 Math/PI) total-verts)
+         points (vec (for [i (range total-verts)]
+                       (let [angle (* i step)
+                             r (if (even? i) outer-r inner-r)]
+                         [(* r (Math/cos angle))
+                          (* r (Math/sin angle))])))]
+     (make-shape points {:centered? true}))))
+
+;; ============================================================
+;; Shape transformations
+;; ============================================================
+
+(defn translate-shape
+  "Translate a shape by [dx dy]. Returns a new shape with translated points.
+   Useful for positioning shapes before revolve (which uses X as radial distance)."
+  [shape dx dy]
+  (when (shape? shape)
+    (let [translate-point (fn [[x y]] [(+ x dx) (+ y dy)])
+          new-points (mapv translate-point (:points shape))
+          new-holes (when (:holes shape)
+                      (mapv (fn [hole] (mapv translate-point hole)) (:holes shape)))]
+      (cond-> (assoc shape :points new-points)
+        new-holes (assoc :holes new-holes)))))
+
+(defn scale-shape
+  "Scale a shape by [sx sy] or uniformly by s, around its centroid.
+   Returns a new shape with scaled points."
+  ([shape s] (scale-shape shape s s))
+  ([shape sx sy]
+   (when (shape? shape)
+     (let [pts (:points shape)
+           n (count pts)
+           cx (/ (reduce + (map first pts)) n)
+           cy (/ (reduce + (map second pts)) n)
+           scale-point (fn [[x y]]
+                         [(+ cx (* (- x cx) sx))
+                          (+ cy (* (- y cy) sy))])
+           new-points (mapv scale-point pts)
+           new-holes (when (:holes shape)
+                       (mapv (fn [hole] (mapv scale-point hole)) (:holes shape)))]
+       (cond-> (assoc shape :points new-points)
+         new-holes (assoc :holes new-holes))))))
+
+(defn reverse-shape
+  "Reverse the winding order of a shape's points.
+   This flips the normal direction when the shape is extruded/revolved.
+   Use when normals are pointing the wrong way."
+  [shape]
+  (when (shape? shape)
+    (let [new-points (vec (reverse (:points shape)))
+          ;; Holes also need to be reversed to maintain relative winding
+          new-holes (when (:holes shape)
+                      (mapv (fn [hole] (vec (reverse hole))) (:holes shape)))]
+      (cond-> (assoc shape :points new-points)
+        new-holes (assoc :holes new-holes)))))
+
+;; ============================================================
+;; Fillet and Chamfer
+;; ============================================================
+
+(defn- v2-dist
+  "Euclidean distance between two 2D points."
+  [[x1 y1] [x2 y2]]
+  (let [dx (- x2 x1) dy (- y2 y1)]
+    (Math/sqrt (+ (* dx dx) (* dy dy)))))
+
+(defn- v2-lerp
+  "Linear interpolation between two 2D points."
+  [[x1 y1] [x2 y2] t]
+  [(+ x1 (* t (- x2 x1)))
+   (+ y1 (* t (- y2 y1)))])
+
+(defn- corner-angle
+  "Angle (in radians) between edges prev->curr and curr->next.
+   Returns 0..PI. Small = sharp corner, PI = straight (no corner)."
+  [[px py] [cx cy] [nx ny]]
+  (let [ax (- px cx) ay (- py cy)
+        bx (- nx cx) by (- ny cy)
+        dot (+ (* ax bx) (* ay by))
+        ma (Math/sqrt (+ (* ax ax) (* ay ay)))
+        mb (Math/sqrt (+ (* bx bx) (* by by)))
+        denom (* ma mb)]
+    (if (< denom 1e-10)
+      Math/PI
+      (Math/acos (max -1 (min 1 (/ dot denom)))))))
+
+(defn- chamfer-corner
+  "Replace a corner vertex with two points, cutting the corner at distance d
+   along each adjacent edge. Returns [point-a point-b] or nil if edge too short."
+  [prev curr nxt d]
+  (let [d-prev (v2-dist prev curr)
+        d-next (v2-dist curr nxt)]
+    (when (and (> d-prev (* d 1.001)) (> d-next (* d 1.001)))
+      (let [t-prev (/ d d-prev)
+            t-next (/ d d-next)
+            pa (v2-lerp curr prev t-prev)
+            pb (v2-lerp curr nxt t-next)]
+        [pa pb]))))
+
+(defn- fillet-corner-arc
+  "Replace a corner with a true circular arc.
+   Computes the inscribed circle center and sweeps an arc from pa to pb."
+  [prev curr nxt d n]
+  (let [d-prev (v2-dist prev curr)
+        d-next (v2-dist curr nxt)]
+    (when (and (> d-prev (* d 1.001)) (> d-next (* d 1.001)))
+      (let [t-prev (/ d d-prev)
+            t-next (/ d d-next)
+            pa (v2-lerp curr prev t-prev)
+            pb (v2-lerp curr nxt t-next)
+            half-angle (/ (corner-angle prev curr nxt) 2)
+            sin-ha (Math/sin half-angle)]
+        (if (< sin-ha 1e-6)
+          [curr]
+          (let [radius (/ d (Math/tan half-angle))
+                [ax ay] [(- (first prev) (first curr)) (- (second prev) (second curr))]
+                [bx by] [(- (first nxt) (first curr)) (- (second nxt) (second curr))]
+                ma (Math/sqrt (+ (* ax ax) (* ay ay)))
+                mb (Math/sqrt (+ (* bx bx) (* by by)))
+                nax (/ ax ma) nay (/ ay ma)
+                nbx (/ bx mb) nby (/ by mb)
+                bsx (+ nax nbx) bsy (+ nay nby)
+                bm (Math/sqrt (+ (* bsx bsx) (* bsy bsy)))
+                center-dist (/ radius sin-ha)
+                cx (+ (first curr) (* (/ bsx bm) center-dist))
+                cy (+ (second curr) (* (/ bsy bm) center-dist))
+                a-start (Math/atan2 (- (second pa) cy) (- (first pa) cx))
+                a-end (Math/atan2 (- (second pb) cy) (- (first pb) cx))
+                diff (- a-end a-start)
+                diff (cond
+                       (> diff Math/PI) (- diff (* 2 Math/PI))
+                       (< diff (- Math/PI)) (+ diff (* 2 Math/PI))
+                       :else diff)]
+            (vec (for [i (range (inc n))]
+                   (let [t (/ i n)
+                         a (+ a-start (* t diff))]
+                     [(+ cx (* radius (Math/cos a)))
+                      (+ cy (* radius (Math/sin a)))])))))))))
+
+(defn- apply-corner-op
+  "Apply a corner operation (chamfer or fillet) to a polygon's points.
+   op-fn: (fn [prev curr next] -> [replacement-points] or nil)
+   indices: set of vertex indices to process, or nil for all.
+   Returns new points vector."
+  [points op-fn indices]
+  (let [n (count points)]
+    (into []
+      (mapcat
+        (fn [i]
+          (if (and indices (not (contains? indices i)))
+            [(nth points i)]
+            (let [prev (nth points (mod (dec (+ i n)) n))
+                  curr (nth points i)
+                  nxt  (nth points (mod (inc i) n))
+                  replacement (op-fn prev curr nxt)]
+              (or replacement [curr]))))
+        (range n)))))
+
+(defn chamfer-shape
+  "Cut corners of a 2D shape by replacing each vertex with a flat cut
+   at distance d along each adjacent edge.
+
+   Options:
+   - :indices [0 2 5] -- only chamfer specific vertex indices (default: all)
+
+   Usage:
+     (chamfer-shape (rect 40 20) 3)         ; all corners
+     (chamfer-shape (rect 40 20) 3 :indices [0 1])  ; only first two corners"
+  [shape d & {:keys [indices]}]
+  (when (and (map? shape) (= :shape (:type shape)) (pos? d))
+    (let [idx-set (when indices (set indices))
+          op-fn (fn [prev curr nxt]
+                  (chamfer-corner prev curr nxt d))
+          new-points (apply-corner-op (:points shape) op-fn idx-set)
+          new-holes (when (:holes shape)
+                      (mapv (fn [hole]
+                              (apply-corner-op hole
+                                (fn [prev curr nxt] (chamfer-corner prev curr nxt d))
+                                nil))
+                            (:holes shape)))]
+      (cond-> (assoc shape :points new-points)
+        new-holes (assoc :holes new-holes)))))
+
+(defn fillet-shape
+  "Round corners of a 2D shape with circular arcs at distance d from each vertex.
+
+   Options:
+   - :segments n -- arc segments per corner (default: 8)
+   - :indices [0 2 5] -- only fillet specific vertex indices (default: all)
+
+   Usage:
+     (fillet-shape (rect 40 20) 3)                     ; all corners, 8 segments
+     (fillet-shape (rect 40 20) 3 :segments 16)        ; smoother arcs
+     (fillet-shape (rect 40 20) 3 :indices [0 1])      ; only first two corners"
+  [shape d & {:keys [segments indices] :or {segments 8}}]
+  (when (and (map? shape) (= :shape (:type shape)) (pos? d))
+    (let [idx-set (when indices (set indices))
+          op-fn (fn [prev curr nxt]
+                  (fillet-corner-arc prev curr nxt d segments))
+          new-points (apply-corner-op (:points shape) op-fn idx-set)
+          new-holes (when (:holes shape)
+                      (mapv (fn [hole]
+                              (apply-corner-op hole
+                                (fn [prev curr nxt]
+                                  (fillet-corner-arc prev curr nxt d segments))
+                                nil))
+                            (:holes shape)))]
+      (cond-> (assoc shape :points new-points)
+        new-holes (assoc :holes new-holes)))))
+
+;; ============================================================
+;; Winding order utilities
+;; ============================================================
+
+(defn- signed-area-2d
+  "Calculate the signed area of a 2D polygon.
+   Positive = CCW (counter-clockwise), Negative = CW (clockwise).
+   Uses the shoelace formula."
+  [points]
+  (let [n (count points)]
+    (if (< n 3)
+      0
+      (/ (reduce
+          (fn [sum i]
+            (let [[x1 y1] (nth points i)
+                  [x2 y2] (nth points (mod (inc i) n))]
+              (+ sum (- (* x1 y2) (* x2 y1)))))
+          0
+          (range n))
+         2))))
+
+(defn- ensure-ccw
+  "Ensure points are in counter-clockwise order (positive signed area).
+   Reverses points if they are clockwise."
+  [points]
+  (if (neg? (signed-area-2d points))
+    (vec (reverse points))
+    points))
+
+(defn path-to-shape
+  "Convert a path to a 2D shape by tracing the commands.
+   Extracts X and Y coordinates from the 3D path.
+   Automatically ensures CCW winding for correct normals.
+   Useful for creating revolve profiles from recorded paths."
+  [path]
+  (when (and (map? path) (= :path (:type path)))
+    (let [commands (:commands path)
+          ;; Trace the path to collect 2D points
+          result (reduce
+                  (fn [{:keys [pos heading points]} cmd]
+                    (case (:cmd cmd)
+                      :f (let [dist (first (:args cmd))
+                               ;; Use only XY components of heading
+                               hx (first heading)
+                               hy (second heading)
+                               new-pos [(+ (first pos) (* hx dist))
+                                        (+ (second pos) (* hy dist))]]
+                           {:pos new-pos
+                            :heading heading
+                            :points (conj points new-pos)})
+                      :th (let [angle (first (:args cmd))
+                                rad (* angle (/ Math/PI 180))
+                                hx (first heading)
+                                hy (second heading)
+                                cos-a (Math/cos rad)
+                                sin-a (Math/sin rad)
+                                new-heading [(- (* hx cos-a) (* hy sin-a))
+                                             (+ (* hx sin-a) (* hy cos-a))
+                                             0]]
+                            {:pos pos :heading new-heading :points points})
+                      :set-heading (let [[h _up] (:args cmd)
+                                         ;; Extract XY from 3D heading
+                                         new-heading [(first h) (second h) 0]]
+                                     {:pos pos :heading new-heading :points points})
+                      ;; Skip unknown commands
+                      {:pos pos :heading heading :points points}))
+                  {:pos [0 0] :heading [1 0 0] :points [[0 0]]}
+                  commands)
+          raw-points (:points result)]
+      (when (>= (count raw-points) 3)
+        ;; Ensure CCW winding for correct outward-facing normals
+        (make-shape (ensure-ccw raw-points) {:centered? false})))))
+
+;; ============================================================
+;; Stroke shape: offset a path into a 2D outline
+;; ============================================================
+
+(defn- v2-mag [[x y]]
+  (Math/sqrt (+ (* x x) (* y y))))
+
+(defn- v2-normalize [[x y]]
+  (let [m (v2-mag [x y])]
+    (if (< m 0.0001) [0 0] [(/ x m) (/ y m)])))
+
+(defn- v2-perp
+  "Left-side perpendicular (rotate 90 deg CCW)."
+  [[x y]]
+  [(- y) x])
+
+(defn- line-intersect-2d
+  "Intersect two lines defined by point+direction.
+   Returns parameter t along line1 (p1 + t*d1), or nil if parallel."
+  [[p1x p1y] [d1x d1y] [p2x p2y] [d2x d2y]]
+  (let [denom (- (* d1x d2y) (* d1y d2x))]
+    (when (> (Math/abs denom) 0.0001)
+      (let [dx (- p2x p1x)
+            dy (- p2y p1y)]
+        (/ (- (* dx d2y) (* dy d2x)) denom)))))
+
+(defn- arc-pts
+  "Generate arc points around center from angle start-a to end-a (radians).
+   Includes start and end points. n = number of segments."
+  [[cx cy] radius start-a end-a n]
+  (mapv (fn [i]
+          (let [t (/ i n)
+                a (+ start-a (* t (- end-a start-a)))]
+            [(+ cx (* radius (Math/cos a)))
+             (+ cy (* radius (Math/sin a)))]))
+        (range (inc n))))
+
+(defn path-to-2d-waypoints
+  "Extract 2D waypoints (position + heading direction) from a path.
+   Projects XY from 3D turtle state. Returns vector of {:pos [x y] :dir [dx dy]}."
+  [path]
+  (when (and (map? path) (= :path (:type path)))
+    (let [commands (:commands path)]
+      (:waypoints
+       (reduce
+        (fn [{:keys [pos heading waypoints]} cmd]
+          (case (:cmd cmd)
+            :f (let [dist (first (:args cmd))
+                     hx (first heading) hy (second heading)
+                     new-pos [(+ (first pos) (* hx dist))
+                              (+ (second pos) (* hy dist))]]
+                 {:pos new-pos :heading heading
+                  :waypoints (conj waypoints {:pos new-pos :dir heading})})
+            :th (let [angle (first (:args cmd))
+                      rad (* angle (/ Math/PI 180))
+                      hx (first heading) hy (second heading)
+                      cos-a (Math/cos rad) sin-a (Math/sin rad)]
+                  {:pos pos
+                   :heading [(- (* hx cos-a) (* hy sin-a))
+                             (+ (* hx sin-a) (* hy cos-a))]
+                   :waypoints waypoints})
+            :set-heading (let [[h _] (:args cmd)]
+                           {:pos pos
+                            :heading [(first h) (second h)]
+                            :waypoints waypoints})
+            {:pos pos :heading heading :waypoints waypoints}))
+        {:pos [0 0] :heading [1 0] :waypoints [{:pos [0 0] :dir [1 0]}]}
+        commands)))))
+
+(defn mark-pos
+  "Get the 2D position [x y] of a named mark within a path.
+   Traces the path commands in 2D and returns the position where the mark was placed.
+   Returns nil if the mark is not found."
+  [path mark-name]
+  (when (and (map? path) (= :path (:type path)))
+    (let [commands (:commands path)]
+      (:result
+       (reduce
+        (fn [{:keys [pos heading result] :as acc} cmd]
+          (if result
+            (reduced acc)
+            (case (:cmd cmd)
+              :f (let [dist (first (:args cmd))
+                       hx (first heading) hy (second heading)]
+                   (assoc acc :pos [(+ (first pos) (* hx dist))
+                                    (+ (second pos) (* hy dist))]))
+              :th (let [angle (first (:args cmd))
+                        rad (* angle (/ Math/PI 180))
+                        hx (first heading) hy (second heading)
+                        cos-a (Math/cos rad) sin-a (Math/sin rad)]
+                    (assoc acc :heading [(- (* hx cos-a) (* hy sin-a))
+                                         (+ (* hx sin-a) (* hy cos-a))]))
+              :set-heading (assoc acc :heading (let [[h _] (:args cmd)]
+                                                 [(first h) (second h)]))
+              :mark (if (= (first (:args cmd)) mark-name)
+                      (assoc acc :result pos)
+                      acc)
+              acc)))
+        {:pos [0 0] :heading [1 0] :result nil}
+        commands)))))
+
+(defn mark-x
+  "Get the X coordinate of a named mark within a path."
+  [path mark-name]
+  (first (mark-pos path mark-name)))
+
+(defn mark-y
+  "Get the Y coordinate of a named mark within a path."
+  [path mark-name]
+  (second (mark-pos path mark-name)))
+
+(defn bounds-2d
+  "Get the 2D bounding box of a path or shape.
+   Returns {:min [x y] :max [x y] :center [cx cy] :size [w h]} or nil.
+   For paths, includes the origin point."
+  [obj]
+  (let [pts (cond
+              (and (map? obj) (= :path (:type obj)))
+              (let [wps (path-to-2d-waypoints obj)]
+                (mapv :pos wps))
+              (and (map? obj) (= :shape (:type obj)))
+              (:points obj))]
+    (when (seq pts)
+      (let [xs (mapv first pts)
+            ys (mapv second pts)
+            x-min (apply min xs) x-max (apply max xs)
+            y-min (apply min ys) y-max (apply max ys)]
+        {:min [x-min y-min]
+         :max [x-max y-max]
+         :center [(/ (+ x-min x-max) 2) (/ (+ y-min y-max) 2)]
+         :centroid [(/ (reduce + xs) (count xs)) (/ (reduce + ys) (count ys))]
+         :size [(- x-max x-min) (- y-max y-min)]}))))
+
+(defn- offset-point-2d
+  "Offset a 2D point along a normal by a signed distance."
+  [[px py] [nx ny] dist]
+  [(+ px (* nx dist)) (+ py (* ny dist))])
+
+(defn- miter-point-2d
+  "Compute miter intersection point for an offset side.
+   sign: +1 for left, -1 for right. Returns the miter point or nil."
+  [p n1 n2 d1 d2 half-w sign]
+  (let [off1 (offset-point-2d p n1 (* sign half-w))
+        off2 (offset-point-2d p n2 (* sign half-w))
+        t (line-intersect-2d off1 d1 off2 d2)]
+    (when t
+      [(+ (first off1) (* t (first d1)))
+       (+ (second off1) (* t (second d1)))])))
+
+(defn- compute-offset-pts
+  "Compute offset points for one side of the stroke.
+   sign: +1 for left side, -1 for right side.
+   At a left turn (cross-z > 0), the outside of the curve is the right side.
+   At a right turn (cross-z < 0), the outside is the left side."
+  [wps seg-dirs seg-normals half-w join-mode miter-limit sign]
+  (let [n (count wps)
+        n-segs (count seg-dirs)
+        is-outer? (if (pos? sign)
+                    (fn [cross-z] (neg? cross-z))   ;; left: outer on right turns
+                    (fn [cross-z] (pos? cross-z)))]  ;; right: outer on left turns
+    (loop [i 0, pts []]
+      (if (>= i n)
+        pts
+        (let [p (:pos (nth wps i))]
+          (cond
+            ;; First or last point: simple offset
+            (or (zero? i) (= i (dec n)))
+            (let [seg-idx (if (zero? i) 0 (dec n-segs))
+                  [nx ny] (nth seg-normals seg-idx)]
+              (recur (if (zero? i) 1 (inc i))
+                     (conj pts (offset-point-2d p [nx ny] (* sign half-w)))))
+
+            ;; Interior vertex: handle join
+            :else
+            (let [n1 (nth seg-normals (dec i))
+                  n2 (nth seg-normals i)
+                  d1 (nth seg-dirs (dec i))
+                  d2 (nth seg-dirs i)
+                  cross-z (- (* (first d1) (second d2))
+                             (* (second d1) (first d2)))
+                  outer? (is-outer? cross-z)]
+              (cond
+                ;; Inner side: always miter (converging)
+                (not outer?)
+                (let [mp (miter-point-2d p n1 n2 d1 d2 half-w sign)]
+                  (recur (inc i)
+                         (conj pts (or mp (offset-point-2d p n1 (* sign half-w))))))
+
+                ;; Outer side with :bevel
+                (= join-mode :bevel)
+                (let [p1 (offset-point-2d p n1 (* sign half-w))
+                      p2 (offset-point-2d p n2 (* sign half-w))]
+                  (recur (inc i) (-> pts (conj p1) (conj p2))))
+
+                ;; Outer side with :round
+                (= join-mode :round)
+                (let [sn1 (if (pos? sign) n1 [(- (first n1)) (- (second n1))])
+                      sn2 (if (pos? sign) n2 [(- (first n2)) (- (second n2))])
+                      a1 (Math/atan2 (second sn1) (first sn1))
+                      a2 (Math/atan2 (second sn2) (first sn2))
+                      ;; Ensure correct arc direction
+                      a2 (if (pos? sign)
+                           (if (< a2 a1) (+ a2 (* 2 Math/PI)) a2)
+                           (if (> a2 a1) (- a2 (* 2 Math/PI)) a2))
+                      arc (arc-pts p half-w a1 a2 8)]
+                  (recur (inc i) (into pts arc)))
+
+                ;; Outer side with :miter (default)
+                :else
+                (let [mp (miter-point-2d p n1 n2 d1 d2 half-w sign)]
+                  (if (and mp (<= (v2-mag [(- (first mp) (first p))
+                                           (- (second mp) (second p))])
+                               (* miter-limit half-w)))
+                    (recur (inc i) (conj pts mp))
+                    ;; Miter limit exceeded: bevel fallback
+                    (let [p1 (offset-point-2d p n1 (* sign half-w))
+                          p2 (offset-point-2d p n2 (* sign half-w))]
+                      (recur (inc i) (-> pts (conj p1) (conj p2))))))))))))))
+
+(defn stroke-shape
+  "Create a 2D outline shape by stroking a path with a given width.
+
+   (stroke-shape path width)
+   (stroke-shape path width :start-cap :round :end-cap :flat :join :miter)
+
+   Options:
+   - :start-cap  :flat (default), :round, :square
+   - :end-cap    :flat (default), :round, :square
+   - :join       :miter (default), :bevel, :round
+   - :miter-limit  maximum miter ratio before falling back to bevel (default 4)
+
+   Returns a shape suitable for extrude, revolve, etc."
+  [path width & {:keys [start-cap end-cap join miter-limit]
+                 :or {start-cap :flat end-cap :flat join :miter miter-limit 4}}]
+  (assert (number? width) "stroke-shape requires a width argument: (stroke-shape path width)")
+  (let [wps (path-to-2d-waypoints path)
+        n (count wps)
+        half-w (/ width 2.0)]
+    (when (and wps (>= n 2))
+      (let [seg-dirs (mapv (fn [i]
+                             (let [p0 (:pos (nth wps i))
+                                   p1 (:pos (nth wps (inc i)))]
+                               (v2-normalize [(- (first p1) (first p0))
+                                              (- (second p1) (second p0))])))
+                           (range (dec n)))
+            seg-normals (mapv v2-perp seg-dirs)
+            n-segs (count seg-dirs)
+
+            left-pts (compute-offset-pts wps seg-dirs seg-normals half-w join miter-limit +1)
+            right-pts (compute-offset-pts wps seg-dirs seg-normals half-w join miter-limit -1)
+
+            ;; End cap
+            end-pos (:pos (nth wps (dec n)))
+            end-dir (nth seg-dirs (dec n-segs))
+            end-cap-pts
+            (case end-cap
+              :round (let [n-left (v2-perp end-dir)
+                           a-start (Math/atan2 (second n-left) (first n-left))
+                           a-end (- a-start Math/PI)]
+                       (rest (arc-pts end-pos half-w a-start a-end 8)))
+              :square (let [[nx ny] (v2-perp end-dir)
+                            ext [(+ (first end-pos) (* (first end-dir) half-w))
+                                 (+ (second end-pos) (* (second end-dir) half-w))]]
+                        [[(+ (first ext) (* nx half-w))
+                          (+ (second ext) (* ny half-w))]
+                         [(- (first ext) (* nx half-w))
+                          (- (second ext) (* ny half-w))]])
+              [])
+
+            ;; Start cap
+            start-pos (:pos (nth wps 0))
+            start-dir (nth seg-dirs 0)
+            start-cap-pts
+            (case start-cap
+              :round (let [n-right [(second start-dir) (- (first start-dir))]
+                           a-start (Math/atan2 (second n-right) (first n-right))
+                           a-end (+ a-start Math/PI)]
+                       (rest (arc-pts start-pos half-w a-start a-end 8)))
+              :square (let [[nx ny] (v2-perp start-dir)
+                            ext [(- (first start-pos) (* (first start-dir) half-w))
+                                 (- (second start-pos) (* (second start-dir) half-w))]]
+                        [[(- (first ext) (* nx half-w))
+                          (- (second ext) (* ny half-w))]
+                         [(+ (first ext) (* nx half-w))
+                          (+ (second ext) (* ny half-w))]])
+              [])
+
+            ;; Combine: left (forward) + end-cap + right (reversed) + start-cap
+            all-pts (-> (vec left-pts)
+                        (into end-cap-pts)
+                        (into (rseq (vec right-pts)))
+                        (into start-cap-pts))]
+        (make-shape (ensure-ccw all-pts) {:centered? true})))))
+
+;; ============================================================
+;; Shape from turtle recording
+;; ============================================================
+
+(defn recording-turtle
+  "Create a turtle for recording movements.
+   Starts at origin, facing +X, records path."
+  []
+  {:position [0 0]
+   :heading [1 0]
+   :path []})
+
+(defn- rotate-2d
+  "Rotate a 2D vector by angle (radians)."
+  [[x y] angle]
+  (let [cos-a (Math/cos angle)
+        sin-a (Math/sin angle)]
+    [(- (* x cos-a) (* y sin-a))
+     (+ (* x sin-a) (* y cos-a))]))
+
+(defn- v2+ [[x1 y1] [x2 y2]]
+  [(+ x1 x2) (+ y1 y2)])
+
+(defn- v2* [[x y] s]
+  [(* x s) (* y s)])
+
+(defn- deg->rad [deg]
+  (* deg (/ Math/PI 180)))
+
+;; Recording turtle commands (pure, for shape macro)
+(defn rec-f
+  "Record forward movement."
+  [state dist]
+  (let [pos (:position state)
+        heading (:heading state)
+        new-pos (v2+ pos (v2* heading dist))
+        path' (if (empty? (:path state))
+                [pos new-pos]
+                (conj (:path state) new-pos))]
+    (-> state
+        (assoc :position new-pos)
+        (assoc :path path'))))
+
+(defn rec-b
+  "Record backward movement."
+  [state dist]
+  (rec-f state (- dist)))
+
+(defn rec-th
+  "Record turn (2D only has horizontal turn)."
+  [state angle]
+  (let [rad (deg->rad angle)
+        new-heading (rotate-2d (:heading state) rad)]
+    (assoc state :heading new-heading)))
+
+(defn replay-path-to-recording
+  "Replay a path's commands into a recording state.
+   Used by the shape macro to incorporate path variables.
+   Returns the updated recording state."
+  [rec-state path]
+  (if-not (and (map? path) (= :path (:type path)))
+    rec-state
+    (reduce
+     (fn [state cmd-map]
+       (let [cmd (:cmd cmd-map)
+             args (:args cmd-map)]
+         (case cmd
+           :f (rec-f state (first args))
+           :th (rec-th state (first args))
+           :set-heading
+           (let [h (first args)
+                 hx (first h)
+                 hy (second h)
+                 angle (Math/atan2 hy hx)]
+             (assoc state :heading [(Math/cos angle) (Math/sin angle)]))
+           ;; Skip unknown commands
+           state)))
+     rec-state
+     (:commands path))))
+
+(defn- points-close?
+  "Check if two 2D points are very close (within epsilon)."
+  [[x1 y1] [x2 y2]]
+  (let [eps 0.001
+        dx (- x2 x1)
+        dy (- y2 y1)]
+    (< (+ (* dx dx) (* dy dy)) (* eps eps))))
+
+(defn shape-from-recording
+  "Extract shape from recorded turtle state.
+   The path forms the shape outline.
+   Removes duplicate closing point if present.
+   Ensures CCW winding for correct outward-facing normals."
+  [rec-state]
+  (let [path (:path rec-state)
+        ;; Remove last point if it's essentially the same as the first (closed polygon)
+        clean-path (if (and (>= (count path) 4)
+                           (points-close? (first path) (last path)))
+                     (vec (butlast path))
+                     path)]
+    (when (>= (count clean-path) 3)
+      ;; Ensure CCW winding for correct outward-facing normals
+      (make-shape (ensure-ccw clean-path) {:centered? false}))))
+
+;; ============================================================
+;; Shape interpolation
+;; ============================================================
+
+(defn lerp-shape
+  "Linearly interpolate between two shapes.
+   t=0 returns shape1, t=1 returns shape2.
+   Both shapes must have the same number of points."
+  [shape1 shape2 t]
+  (let [pts1 (:points shape1)
+        pts2 (:points shape2)
+        n1 (count pts1)
+        n2 (count pts2)]
+    (when (= n1 n2)
+      (let [lerp-pt (fn [[x1 y1] [x2 y2]]
+                      [(+ x1 (* t (- x2 x1)))
+                       (+ y1 (* t (- y2 y1)))])
+            new-pts (mapv lerp-pt pts1 pts2)
+            ;; Interpolate holes if both shapes have matching holes
+            holes1 (:holes shape1)
+            holes2 (:holes shape2)
+            new-holes (when (and holes1 holes2 (= (count holes1) (count holes2)))
+                        (mapv (fn [h1 h2]
+                                (if (= (count h1) (count h2))
+                                  (mapv lerp-pt h1 h2)
+                                  h1))
+                              holes1 holes2))]
+        (make-shape new-pts (cond-> {:centered? (:centered? shape1)}
+                              new-holes (assoc :holes new-holes)))))))
+
+(defn make-lerp-fn
+  "Create a transform function that interpolates from shape1 to shape2.
+   Returns (fn [_ t]) that ignores the first arg and returns lerp-shape."
+  [shape1 shape2]
+  (fn [_ t]
+    (lerp-shape shape1 shape2 t)))
+
+;; ============================================================
+;; Shape transformation for stamping
+;; ============================================================
+
+(defn- compute-plane-params
+  "Compute plane transformation parameters from turtle state and shape options.
+   Returns {:plane-x :plane-y :offset} for transforming 2D points to 3D."
+  [shape turtle-pos turtle-heading turtle-up]
+  (let [points (:points shape)
+        centered? (:centered? shape)
+        preserve-position? (:preserve-position? shape)
+        align-to-heading? (:align-to-heading? shape)
+        flip-plane-x? (:flip-plane-x? shape)
+        [hx hy hz] turtle-heading
+        [ux uy uz] turtle-up
+        ;; Right vector = heading x up
+        rx (- (* hy uz) (* hz uy))
+        ry (- (* hz ux) (* hx uz))
+        rz (- (* hx uy) (* hy ux))
+        ;; Normalize right vector
+        r-mag (Math/sqrt (+ (* rx rx) (* ry ry) (* rz rz)))
+        [rx ry rz] (if (pos? r-mag)
+                     [(/ rx r-mag) (/ ry r-mag) (/ rz r-mag)]
+                     [1 0 0])
+        ;; Flip plane-x if requested
+        [rx ry rz] (if flip-plane-x?
+                     [(- rx) (- ry) (- rz)]
+                     [rx ry rz])
+        ;; Choose plane axes
+        [plane-x plane-y] (if align-to-heading?
+                           [turtle-heading turtle-up]
+                           [[rx ry rz] turtle-up])
+        ;; Calculate offset
+        offset (cond
+                 preserve-position? [0 0]
+                 centered? [0 0]
+                 :else (let [[fx fy] (first points)]
+                         [(- fx) (- fy)]))]
+    {:plane-x plane-x
+     :plane-y plane-y
+     :offset offset
+     :origin turtle-pos}))
+
+(defn- transform-points-to-plane
+  "Transform 2D points to 3D using precomputed plane parameters."
+  [points {:keys [plane-x plane-y offset origin]}]
+  (let [[ox oy oz] origin
+        [xx xy xz] plane-x
+        [yx yy yz] plane-y
+        [off-x off-y] offset]
+    (mapv (fn [[px py]]
+            (let [px' (+ px off-x)
+                  py' (+ py off-y)]
+              [(+ ox (* px' xx) (* py' yx))
+               (+ oy (* px' xy) (* py' yy))
+               (+ oz (* px' xz) (* py' yz))]))
+          points)))
+
+(defn transform-shape-to-plane
+  "Transform a 2D shape to 3D points on a plane.
+
+   The plane is defined by:
+   - origin: turtle position
+   - x-axis: perpendicular to turtle heading, in the 'right' direction
+   - y-axis: perpendicular to both (derived)
+   - The shape is placed on the plane perpendicular to turtle heading
+
+   For centered shapes, the center is at turtle position.
+   For non-centered shapes, the first point is at turtle position.
+   For preserve-position? shapes, raw 2D coords are used (for text with built-in spacing).
+   For align-to-heading? shapes, 2D x maps to heading (for text progression along path)."
+  [shape turtle-pos turtle-heading turtle-up]
+  (let [params (compute-plane-params shape turtle-pos turtle-heading turtle-up)]
+    (transform-points-to-plane (:points shape) params)))
+
+(defn transform-shape-with-holes-to-plane
+  "Transform a 2D shape with holes to 3D points on a plane.
+   Returns {:outer <3D-points> :holes [<3D-points> ...]}"
+  [shape turtle-pos turtle-heading turtle-up]
+  (let [params (compute-plane-params shape turtle-pos turtle-heading turtle-up)
+        outer-3d (transform-points-to-plane (:points shape) params)
+        holes-3d (when-let [holes (:holes shape)]
+                   (mapv #(transform-points-to-plane % params) holes))]
+    {:outer outer-3d
+     :holes holes-3d}))
+
+;; ============================================================
+;; Path clipping and transformation
+;; ============================================================
+
+(defn- points-to-path
+  "Convert a sequence of 2D points to a path.
+   Generates set-heading + forward commands to trace from [0,0] through each point.
+   Optional marks is a map of {waypoint-index -> [mark-names...]} to re-inject."
+  ([pts] (points-to-path pts nil))
+  ([pts marks]
+   (when (>= (count pts) 2)
+     (let [commands
+           (loop [i 0 cmds [] pos [0 0]]
+             (if (>= i (count pts))
+               cmds
+               (let [[tx ty] (nth pts i)
+                     dx (- tx (first pos))
+                     dy (- ty (second pos))
+                     dist (Math/sqrt (+ (* dx dx) (* dy dy)))
+                     ;; waypoint index is i+1 (0 is origin)
+                     wp-idx (inc i)
+                     mark-cmds (when marks
+                                 (mapv (fn [name] {:cmd :mark :args [name]})
+                                       (get marks wp-idx)))]
+                 (if (< dist 0.0001)
+                   (recur (inc i) (into cmds mark-cmds) [tx ty])
+                   (recur (inc i)
+                          (into (conj cmds
+                                      {:cmd :set-heading :args [[(/ dx dist) (/ dy dist) 0] [0 0 1]]}
+                                      {:cmd :f :args [dist]})
+                                mark-cmds)
+                          [tx ty])))))]
+       {:type :path :commands commands}))))
+
+(defn poly-path
+  "Create an open path from flat x y coordinate pairs.
+   Like poly but produces a path instead of a shape.
+   (poly-path 0 0 30 0 45 90)  ->  path from (0,0) -> (30,0) -> (45,90)
+   Accepts: (poly-path 0 0 30 0 ...), (poly-path [0 0 30 0 ...]), or (poly-path v)"
+  ([x] (poly-path x nil))
+  ([x y & more]
+   (let [nums (if (and (nil? y) (sequential? x))
+                x
+                (cons x (cons y more)))
+         n (count nums)]
+     (when (odd? n)
+       (throw (Exception. (str "poly-path: odd number of coordinates (" n "). Coordinates must be x y pairs."))))
+     (when (< n 4)
+       (throw (Exception. (str "poly-path: need at least 2 points (4 coordinates), got " n "."))))
+     (let [pts (mapv vec (partition 2 nums))]
+       (points-to-path pts)))))
+
+(defn poly-path-closed
+  "Create a closed path from flat x y coordinate pairs.
+   Like poly-path but adds a final segment back to the first point.
+   (poly-path-closed 0 0 30 0 45 90 0 90)  ->  closed quadrilateral path
+   Useful with bezier-as + path-to-shape for smoothed polygons."
+  ([x] (poly-path-closed x nil))
+  ([x y & more]
+   (let [nums (if (and (nil? y) (sequential? x))
+                x
+                (cons x (cons y more)))
+         n (count nums)]
+     (when (odd? n)
+       (throw (Exception. (str "poly-path-closed: odd number of coordinates (" n "). Coordinates must be x y pairs."))))
+     (when (< n 6)
+       (throw (Exception. (str "poly-path-closed: need at least 3 points (6 coordinates), got " n "."))))
+     (let [pts (mapv vec (partition 2 nums))
+           closed-pts (conj pts (first pts))]
+       (points-to-path closed-pts)))))
+
+(defn subpath-y
+  "Extract the portion of a path within a height range [from-h, to-h].
+   Heights are measured as distance from the path's starting Y position,
+   regardless of whether Y increases or decreases along the path.
+   Clips segments at boundaries and outputs a path with Y starting at 0.
+
+   (subpath-y path 2 13)  ; keep height 2..13, output Y=0..11"
+  [path from-h to-h]
+  (let [wps (path-to-2d-waypoints path)
+        pts (mapv :pos wps)
+        n (count pts)
+        eps 0.0001
+        y-start (second (first pts))
+        y-end (second (peek pts))
+        ;; Detect direction: -1 if path goes downward, +1 if upward
+        y-dir (if (< y-end y-start) -1 1)
+        ;; Convert each point to [x, height] where height >= 0
+        xh-pts (mapv (fn [[x y]] [x (* y-dir (- y y-start))]) pts)
+        in? (fn [[_ h]] (and (>= h (- from-h eps)) (<= h (+ to-h eps))))
+        lerp-h (fn [[x1 h1] [x2 h2] target-h]
+                 (let [dh (- h2 h1)]
+                   (if (< (Math/abs dh) eps)
+                     [x1 target-h]
+                     (let [t (/ (- target-h h1) dh)]
+                       [(+ x1 (* t (- x2 x1))) target-h]))))
+        result
+        (loop [i 0 acc []]
+          (if (>= i n)
+            acc
+            (let [p (nth xh-pts i)]
+              (if (zero? i)
+                (recur 1 (if (in? p) (conj acc p) acc))
+                (let [prev (nth xh-pts (dec i))
+                      pi (in? prev)
+                      ci (in? p)
+                      [_ ph] prev
+                      [_ ch] p]
+                  (cond
+                    ;; Both in range
+                    (and pi ci)
+                    (recur (inc i) (conj acc p))
+
+                    ;; Entering range
+                    (and (not pi) ci)
+                    (let [bh (if (< ph from-h) from-h to-h)]
+                      (recur (inc i) (-> acc (conj (lerp-h prev p bh)) (conj p))))
+
+                    ;; Leaving range
+                    (and pi (not ci))
+                    (let [bh (if (> ch to-h) to-h from-h)]
+                      (recur (inc i) (conj acc (lerp-h prev p bh))))
+
+                    ;; Both outside -- check if segment crosses entire range
+                    :else
+                    (if (or (and (< ph from-h) (> ch to-h))
+                            (and (> ph to-h) (< ch from-h)))
+                      (let [bp1 (lerp-h prev p from-h)
+                            bp2 (lerp-h prev p to-h)]
+                        (if (< ph ch)
+                          (recur (inc i) (-> acc (conj bp1) (conj bp2)))
+                          (recur (inc i) (-> acc (conj bp2) (conj bp1)))))
+                      (recur (inc i) acc))))))))]
+    (when (>= (count result) 2)
+      (let [shifted (mapv (fn [[x h]] [x (- h from-h)]) result)]
+        (points-to-path shifted)))))
+
+(defn offset-x
+  "Shift all X coordinates of a path by dx.
+   Useful for moving a profile inward/outward relative to the revolve axis.
+
+   (offset-x path -2.5)  ; shift profile 2.5 units toward the axis"
+  [path dx]
+  (let [wps (path-to-2d-waypoints path)
+        ;; Skip the implicit [0,0] origin, work with real waypoints
+        real-pts (mapv :pos (rest wps))
+        shifted (mapv (fn [[x y]] [(+ x dx) y]) real-pts)]
+    (when (>= (count shifted) 2)
+      (points-to-path shifted))))
+
+(defn- fit-scale-factors
+  "Compute scale factors for fitting a set of 2D points to target dimensions.
+   Returns [sx sy] where each is 1.0 if no target was given for that axis.
+   Sign-aware: if target is positive but points go mostly negative (or vice versa),
+   the scale factor is negated to flip the points into the target quadrant.
+   This means (fit path :y 180) always produces positive Y values, regardless
+   of whether the path was drawn upward or downward."
+  [pts target-x target-y]
+  (let [xs (mapv first pts)
+        ys (mapv second pts)
+        x-min (apply min xs) x-max (apply max xs)
+        y-min (apply min ys) y-max (apply max ys)
+        x-extent (- x-max x-min)
+        y-extent (- y-max y-min)
+        ;; Dominant direction: the coordinate farthest from 0
+        x-far (if (>= (Math/abs x-max) (Math/abs x-min)) x-max x-min)
+        y-far (if (>= (Math/abs y-max) (Math/abs y-min)) y-max y-min)
+        ;; Scale magnitude (always positive)
+        sx-mag (if (and target-x (> x-extent 0.0001)) (/ (Math/abs target-x) x-extent) 1.0)
+        sy-mag (if (and target-y (> y-extent 0.0001)) (/ (Math/abs target-y) y-extent) 1.0)
+        ;; Flip sign when target and dominant direction disagree
+        flip-x? (and target-x (> x-extent 0.0001)
+                     (> (Math/abs x-far) 0.0001)
+                     (neg? (* target-x x-far)))
+        flip-y? (and target-y (> y-extent 0.0001)
+                     (> (Math/abs y-far) 0.0001)
+                     (neg? (* target-y y-far)))]
+    [(* (if flip-x? -1 1) sx-mag)
+     (* (if flip-y? -1 1) sy-mag)]))
+
+(defn fit
+  "Scale a path or shape to fit target dimensions.
+   Works on both paths and shapes. Specify :x and/or :y to set the
+   desired extent for each axis. Scaling is proportional from the origin.
+
+   (fit path :y 180)          ; scale Y to 180, keep X as-is
+   (fit shape :x 200 :y 130)  ; scale both axes independently"
+  [obj & {:keys [x y]}]
+  (when (and (map? obj) (or x y))
+    (cond
+      ;; Path
+      (= :path (:type obj))
+      (let [wps (path-to-2d-waypoints obj)
+            real-pts (mapv :pos (rest wps))
+            ;; Extract marks: scan commands, map each mark name to its waypoint index
+            marks (let [cmds (:commands obj)]
+                    (reduce (fn [{:keys [wp-idx result]} cmd]
+                              (case (:cmd cmd)
+                                :f    {:wp-idx (inc wp-idx) :result result}
+                                :mark {:wp-idx wp-idx
+                                       :result (update result wp-idx (fnil conj []) (first (:args cmd)))}
+                                {:wp-idx wp-idx :result result}))
+                            {:wp-idx 0 :result {}}
+                            cmds))]
+        (when (>= (count real-pts) 2)
+          ;; Include origin [0,0] in extent calculation so scaling from
+          ;; origin doesn't overshoot the target dimensions.
+          (let [all-pts (cons [0 0] real-pts)
+                [sx sy] (fit-scale-factors all-pts x y)
+                scaled (mapv (fn [[px py]]
+                               [(if x (* px sx) px)
+                                (if y (* py sy) py)])
+                             real-pts)]
+            (points-to-path scaled (:result marks)))))
+
+      ;; Shape
+      (= :shape (:type obj))
+      (let [pts (:points obj)]
+        (when (>= (count pts) 2)
+          (let [[sx sy] (fit-scale-factors pts x y)
+                scale-pt (fn [[px py]]
+                           [(if x (* px sx) px)
+                            (if y (* py sy) py)])
+                scaled-pts (mapv scale-pt pts)
+                scaled-holes (when (:holes obj)
+                               (mapv (fn [hole] (mapv scale-pt hole))
+                                     (:holes obj)))]
+            (cond-> (assoc obj :points scaled-pts)
+              scaled-holes (assoc :holes scaled-holes)))))
+
+      :else nil)))

@@ -21,4 +21,33 @@
           :test {:target :node-test
                  :output-to "out/test.js"
                  :ns-regexp ".*-test$"
-                 :autorun true}}}
+                 :autorun true}
+          ;; Core library — pure geometry/turtle modules as Node library
+          ;; Validates browser-independence for future Ridley Desktop
+          :core {:target    :node-library
+                 :output-to "out/ridley-core.js"
+                 :exports   {:api           ridley.api/exports
+                             :makeTurtle    ridley.api/make-turtle
+                             :boxMesh       ridley.api/box-mesh
+                             :sphereMesh    ridley.api/sphere-mesh
+                             :cylMesh       ridley.api/cyl-mesh
+                             :coneMesh      ridley.api/cone-mesh
+                             :circleShape   ridley.api/circle-shape
+                             :rectShape     ridley.api/rect-shape
+                             :polygonShape  ridley.api/polygon-shape
+                             :extrude       ridley.api/extrude
+                             :revolve       ridley.api/revolve
+                             :manifoldInit  ridley.api/manifold-init!
+                             :manifoldUnion ridley.api/manifold-union
+                             :manifoldDiff  ridley.api/manifold-difference
+                             :manifoldInter ridley.api/manifold-intersection
+                             :shapeUnion    ridley.api/shape-union
+                             :shapeDiff     ridley.api/shape-difference
+                             :shapeInter    ridley.api/shape-intersection
+                             :shapeOffset   ridley.api/shape-offset
+                             :vPlus         ridley.api/v+
+                             :vMinus        ridley.api/v-
+                             :vMul          ridley.api/v*
+                             :dot           ridley.api/dot
+                             :cross         ridley.api/cross
+                             :normalize     ridley.api/normalize}}}}

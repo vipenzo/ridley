@@ -4,6 +4,12 @@
   (:require [ridley.turtle.core :as turtle]
             [sci.core :as sci]))
 
+;; JVM mode flag — set by core.cljs, read by test_mode.cljs to route eval
+(defonce jvm-mode? (atom false))
+
+;; Editor content getter — set by core.cljs, used by test_mode.cljs for JVM eval
+(defonce get-editor-content (atom nil))
+
 ;; SCI dynamic var holding the current turtle atom.
 ;; Root value is an atom; (turtle ...) macro rebinds to a new atom.
 ;; @turtle-state-var → the atom, @@turtle-state-var → turtle state map.
@@ -73,9 +79,9 @@
                ;; Clone parent: position, heading, up, pen-mode, resolution,
                ;; joint-mode, material, anchors, preserve-up, reference-up
                (select-keys parent
-                 [:position :heading :up :pen-mode :resolution
-                  :joint-mode :material :anchors
-                  :preserve-up :reference-up]))
+                            [:position :heading :up :pen-mode :resolution
+                             :joint-mode :material :anchors
+                             :preserve-up :reference-up]))
         ;; Apply overrides
         base (cond-> base
                (not (:reset opts))
@@ -108,9 +114,11 @@
 ;; Visual output (pen traces, stamps) shared across all turtle scopes.
 ;; Cleared at the start of each evaluation cycle.
 (defonce scene-accumulator (atom {:lines [] :stamps []}))
+(defonce mark-anchors (atom {}))
 
 (defn reset-scene-accumulator! []
-  (reset! scene-accumulator {:lines [] :stamps []}))
+  (reset! scene-accumulator {:lines [] :stamps []})
+  (reset! mark-anchors {}))
 
 ;; ============================================================
 ;; Source Tracking Dynamic Vars

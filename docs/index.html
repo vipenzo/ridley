@@ -46,7 +46,13 @@
     <div id="viewport-panel">
       <div id="viewport-toolbar">
         <button id="btn-toggle-view" class="action-btn toggle-btn" title="Toggle: show all / objects only">All</button>
-        <button id="btn-export-stl" class="action-btn export-btn" title="Export as STL">Export STL</button>
+        <div class="export-menu-wrapper">
+          <button id="btn-export" class="action-btn export-btn" title="Export model">Export ▾</button>
+          <div id="export-menu" class="export-dropdown hidden">
+            <button id="btn-export-stl" class="export-dropdown-item">Export STL</button>
+            <button id="btn-export-3mf" class="export-dropdown-item">Export 3MF</button>
+          </div>
+        </div>
       </div>
       <canvas id="viewport"></canvas>
     </div>
