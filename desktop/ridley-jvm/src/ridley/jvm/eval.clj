@@ -1579,8 +1579,8 @@
    'stop!             (fn [& _] (println "[warn] stop! is not supported in JVM mode") nil)
    'span              (fn [& _] nil)
    ;; File I/O (JVM native — direct filesystem access)
-   'save-stl  (fn [value path] (stl/save-stl (sdf/ensure-mesh value) path))
-   'save-3mf  (fn [value path] (threemf/save-3mf (sdf/ensure-mesh value) path))
+   'save-stl  (fn [value path] (stl/save-stl (manifold/solidify (sdf/ensure-mesh value)) path))
+   'save-3mf  (fn [value path] (threemf/save-3mf (manifold/solidify (sdf/ensure-mesh value)) path))
    'export    (fn [name-kw & [fmt]]
                 (let [fmt (or fmt :stl)
                       mesh (get-mesh name-kw)]
@@ -1617,10 +1617,11 @@
                                            (.endsWith (.toLowerCase path) ".3mf"))
                                      path
                                      (str path "." (name actual-fmt)))]
-                          (case actual-fmt
-                            :stl (stl/save-stl mesh path)
-                            :3mf (threemf/save-3mf mesh path)
-                            (throw (Exception. (str "Unknown format: " (name actual-fmt)))))
+                          (let [clean (manifold/solidify mesh)]
+                            (case actual-fmt
+                              :stl (stl/save-stl clean path)
+                              :3mf (threemf/save-3mf clean path)
+                              (throw (Exception. (str "Unknown format: " (name actual-fmt))))))
                           (str "Exported " path))
                         "Export cancelled"))
                     (str "No mesh named " name-kw))))
