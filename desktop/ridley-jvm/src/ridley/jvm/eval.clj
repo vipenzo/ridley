@@ -1579,7 +1579,7 @@
    'stop!             (fn [& _] (println "[warn] stop! is not supported in JVM mode") nil)
    'span              (fn [& _] nil)
    ;; File I/O (JVM native — direct filesystem access)
-   'save-stl  (fn [value path] (stl/save-stl (manifold/solidify (sdf/ensure-mesh value)) path))
+   'save-stl  (fn [value path] (stl/save-stl (manifold/solidify (stl/clean-for-export (sdf/ensure-mesh value))) path))
    'save-3mf  (fn [value path] (threemf/save-3mf (manifold/solidify (sdf/ensure-mesh value)) path))
    'export    (fn [name-kw & [fmt]]
                 (let [fmt (or fmt :stl)
@@ -1617,7 +1617,7 @@
                                            (.endsWith (.toLowerCase path) ".3mf"))
                                      path
                                      (str path "." (name actual-fmt)))]
-                          (let [clean (manifold/solidify mesh)]
+                          (let [clean (manifold/solidify (stl/clean-for-export mesh))]
                             (case actual-fmt
                               :stl (stl/save-stl clean path)
                               :3mf (threemf/save-3mf clean path)

@@ -14,6 +14,37 @@
             ByteArrayOutputStream]
            [java.nio ByteBuffer ByteOrder]))
 
+;; ── Mesh cleanup for export ──────────────────────────────────────
+
+(defn clean-for-export
+  "Prepare a mesh for STL export: snap vertices to float32, merge duplicates,
+   and remove degenerate faces. This prevents non-manifold edges that slicers
+   flag when near-coincident float64 vertices collapse in float32."
+  [mesh]
+  (let [verts (:vertices mesh)
+        ;; Snap to float32 (STL precision) and build dedup map
+        dedup (java.util.HashMap.)
+        new-verts (java.util.ArrayList.)
+        index-map (int-array (count verts))
+        _ (dotimes [i (count verts)]
+            (let [[x y z] (verts i)
+                  key [(float x) (float y) (float z)]]
+              (if-let [idx (.get dedup key)]
+                (aset index-map i (int idx))
+                (let [idx (.size new-verts)]
+                  (.put dedup key idx)
+                  (.add new-verts [(double (float x)) (double (float y)) (double (float z))])
+                  (aset index-map i idx)))))
+        ;; Remap faces, removing degenerate triangles (collapsed by merge)
+        new-faces (into []
+                        (comp (map (fn [[i j k]]
+                                     [(aget index-map i) (aget index-map j) (aget index-map k)]))
+                              (remove (fn [[i j k]] (or (= i j) (= j k) (= i k)))))
+                        (:faces mesh))]
+    (assoc mesh
+           :vertices (vec (.toArray new-verts))
+           :faces new-faces)))
+
 ;; ── Export ───────────────────────────────────────────────────────
 
 (defn- compute-normal
