@@ -1684,7 +1684,10 @@
    'sdf-displace     sdf/sdf-displace
    'sdf-gyroid       sdf/sdf-gyroid
    'sdf-schwarz-p    sdf/sdf-schwarz-p
-   'sdf-diamond      sdf/sdf-diamond     ;; explicit meshing (for resolution control)
+   'sdf-diamond      sdf/sdf-diamond
+   'sdf-slats        sdf/sdf-slats
+   'sdf-bars         sdf/sdf-bars
+   'sdf-grid         sdf/sdf-grid     ;; explicit meshing (for resolution control)
    ;; Utility
    'bench     bench
    'T         (fn [label x] (println (str label ": " x)) x)

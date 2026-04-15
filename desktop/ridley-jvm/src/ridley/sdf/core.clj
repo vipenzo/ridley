@@ -170,6 +170,56 @@
                         (list 'cos (list '* 'y s 2.0))))))
      thickness)))
 
+;; ── Periodic patterns ───────────────────────────────────────────
+
+(defn- slats-expr
+  "Helper: build SDF expression for infinite parallel slats perpendicular to axis.
+   abs(mod(axis + period/2, period) - period/2) - thickness/2"
+  [axis period thickness]
+  (let [hp (/ (double period) 2)
+        ht (/ (double thickness) 2)]
+    (compile-expr
+     (list '- (list 'abs (list '- (list 'mod (list '+ axis hp) (double period)) hp)) ht))))
+
+(defn sdf-slats
+  "Infinite parallel flat walls (slats).
+   axis: :x, :y, or :z — slats are perpendicular to this axis
+   period: center-to-center distance
+   thickness: wall thickness"
+  [axis period thickness]
+  (case (keyword (name axis))
+    :x (slats-expr 'x period thickness)
+    :y (slats-expr 'y period thickness)
+    :z (slats-expr 'z period thickness)))
+
+(defn sdf-bars
+  "Infinite parallel cylindrical bars.
+   axis: :x, :y, or :z — bars run along this axis
+   period: center-to-center distance
+   radius: bar radius"
+  [axis period radius]
+  (let [hp (/ (double period) 2)
+        r (double radius)
+        rep (fn [v] (list '- (list 'mod (list '+ v hp) (double period)) hp))]
+    (case (keyword (name axis))
+      :z (compile-expr (list '- (list 'sqrt (list '+ (list 'pow (rep 'x) 2) (list 'pow (rep 'y) 2))) r))
+      :x (compile-expr (list '- (list 'sqrt (list '+ (list 'pow (rep 'y) 2) (list 'pow (rep 'z) 2))) r))
+      :y (compile-expr (list '- (list 'sqrt (list '+ (list 'pow (rep 'x) 2) (list 'pow (rep 'z) 2))) r)))))
+
+(defn sdf-grid
+  "3D grid lattice: blend of three orthogonal slat sets.
+   period: cell size
+   thickness: wall thickness
+   blend-k: blend radius (0 = sharp edges, higher = smoother joints)"
+  [period thickness blend-k]
+  (sdf-blend
+   (sdf-slats :x period thickness)
+   (sdf-blend
+    (sdf-slats :y period thickness)
+    (sdf-slats :z period thickness)
+    blend-k)
+   blend-k))
+
 ;; ── Bounds estimation ───────────────────────────────────────────
 
 (defn auto-bounds

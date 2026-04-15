@@ -1833,6 +1833,39 @@ TPMS are infinite — intersect with a shape to bound them:
 (register lattice (sdf-intersection (sdf-box 30 30 30) (sdf-schwarz-p 10 0.8)))
 ```
 
+### Periodic Patterns (Slats, Bars, Grid)
+
+Infinite repeating patterns for perforations, lattices, and structural infills:
+
+| Function | Description |
+|----------|-------------|
+| `(sdf-slats axis period thickness)` | Infinite parallel flat walls perpendicular to axis (`:x` `:y` `:z`) |
+| `(sdf-bars axis period radius)` | Infinite parallel cylindrical bars along axis |
+| `(sdf-grid period thickness blend-k)` | 3D grid lattice (three orthogonal slat sets, blended at joints) |
+
+- `period` = center-to-center distance
+- `thickness` / `radius` = wall thickness or bar radius
+- `blend-k` = blend radius for smooth joints (0 = sharp, higher = rounder)
+
+These are infinite — use `sdf-difference` to punch holes, or `sdf-intersection` to bound:
+
+```clojure
+;; Punch slat holes through a shell
+(register vase
+  (sdf-difference container (sdf-slats :x 8 2)))
+
+;; Smooth grid lattice bounded by a sphere
+(register ball (sdf-intersection (sdf-sphere 20) (sdf-grid 8 1.5 0.5)))
+
+;; Three blended orthogonal slat sets (custom grid)
+(register custom
+  (sdf-intersection (sdf-box 40 40 40)
+    (sdf-blend
+      (sdf-slats :x 10 2)
+      (sdf-blend (sdf-slats :y 10 2) (sdf-slats :z 10 2) 0.5)
+      0.5)))
+```
+
 ### Examples
 
 ```clojure
