@@ -35,11 +35,21 @@
                   (.put dedup key idx)
                   (.add new-verts [(double (float x)) (double (float y)) (double (float z))])
                   (aset index-map i idx)))))
-        ;; Remap faces, removing degenerate triangles (collapsed by merge)
+        ;; Remap faces, removing degenerate and duplicate triangles
+        seen-faces (java.util.HashSet.)
         new-faces (into []
                         (comp (map (fn [[i j k]]
                                      [(aget index-map i) (aget index-map j) (aget index-map k)]))
-                              (remove (fn [[i j k]] (or (= i j) (= j k) (= i k)))))
+                              (remove (fn [[i j k]] (or (= i j) (= j k) (= i k))))
+                              (remove (fn [[i j k]]
+                                        ;; Canonical key: sorted vertex indices
+                                        (let [key (if (<= i j k) [i j k]
+                                                      (if (<= i k j) [i k j]
+                                                          (if (<= j i k) [j i k]
+                                                              (if (<= j k i) [j k i]
+                                                                  (if (<= k i j) [k i j]
+                                                                      [k j i])))))]
+                                          (not (.add seen-faces key))))))
                         (:faces mesh))]
     (assoc mesh
            :vertices (vec (.toArray new-verts))

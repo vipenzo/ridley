@@ -1797,14 +1797,16 @@
            ;; Transform a contour's 2D points to 3D at a given angle.
            ;; cos-t/sin-t and radial vector are pre-computed per ring,
            ;; so each point only does 6 mul + 3 add (no trig).
+           ;; Snap a double to float32 precision (prevents vertex divergence in STL)
+           f32 (fn [^double v] (double (float v)))
            transform-contour (fn [pts cos-t sin-t]
                                (let [rx (+ (* cos-t right-x) (* sin-t head-x))
                                      ry (+ (* cos-t right-y) (* sin-t head-y))
                                      rz (+ (* cos-t right-z) (* sin-t head-z))]
                                  (mapv (fn [[px py]]
-                                         [(+ pos-x (* py up-x) (* px rx))
-                                          (+ pos-y (* py up-y) (* px ry))
-                                          (+ pos-z (* py up-z) (* px rz))])
+                                         [(f32 (+ pos-x (* py up-x) (* px rx)))
+                                          (f32 (+ pos-y (* py up-y) (* px ry)))
+                                          (f32 (+ pos-z (* py up-z) (* px rz)))])
                                        pts)))
            ;; Hole support
            has-holes? (boolean (:holes shape))
@@ -1838,13 +1840,29 @@
                                 (transform-contour ring-outer cos-t sin-t)
                                 (when ring-holes
                                   (mapcat #(transform-contour % cos-t sin-t) ring-holes)))))))
-           ;; Flatten vertices (transient for speed)
-           vertices (persistent!
-                     (reduce (fn [a ring] (reduce conj! a ring))
-                             (transient []) rings))
+           ;; Flatten vertices and dedup (prevents non-manifold edges in STL)
+           raw-vertices (persistent!
+                         (reduce (fn [a ring] (reduce conj! a ring))
+                                 (transient []) rings))
+           ;; Build vertex dedup map: position → canonical index
+           vert-dedup (java.util.HashMap.)
+           deduped-verts (java.util.ArrayList.)
+           vi-map (int-array (count raw-vertices))
+           _ (dotimes [i (count raw-vertices)]
+               (let [v (raw-vertices i)]
+                 (if-let [idx (.get vert-dedup v)]
+                   (aset vi-map i (int idx))
+                   (let [idx (.size deduped-verts)]
+                     (.put vert-dedup v idx)
+                     (.add deduped-verts v)
+                     (aset vi-map i idx)))))
+           vertices (vec (.toArray deduped-verts))
+           ;; Helper: remap vertex index through dedup map
+           vm (fn [^long i] (aget vi-map i))
            ;; Helper: generate side faces for a contour strip using a tight loop.
            ;; contour-len = number of vertices in the contour,
            ;; offset = starting index of that contour within each ring.
+           ;; Skips degenerate triangles where vertex merge collapsed a quad edge.
            gen-strip-faces
            (fn [contour-len offset]
              (let [n-face-rings (if is-closed n-rings (dec n-rings))]
@@ -1860,12 +1878,16 @@
                                (if (>= vi contour-len)
                                  acc
                                  (let [next-vi (let [v (inc vi)] (if (= v contour-len) 0 v))
-                                       b0 (+ base vi) b1 (+ base next-vi)
-                                       t0 (+ next-base vi) t1 (+ next-base next-vi)]
-                                   (recur (inc vi)
-                                          (if flip-winding?
-                                            (-> acc (conj! [b0 t0 t1]) (conj! [b0 t1 b1]))
-                                            (-> acc (conj! [b0 t1 t0]) (conj! [b0 b1 t1]))))))))))))))
+                                       b0 (vm (+ base vi)) b1 (vm (+ base next-vi))
+                                       t0 (vm (+ next-base vi)) t1 (vm (+ next-base next-vi))
+                                       ;; Emit non-degenerate triangles only
+                                       acc (if (and (not= b0 t0) (not= t0 t1) (not= b0 t1))
+                                             (conj! acc (if flip-winding? [b0 t0 t1] [b0 t1 t0]))
+                                             acc)
+                                       acc (if (and (not= b0 t1) (not= t1 b1) (not= b0 b1))
+                                             (conj! acc (if flip-winding? [b0 t1 b1] [b0 b1 t1]))
+                                             acc)]
+                                   (recur (inc vi) acc)))))))))))
            ;; Side faces for outer contour
            outer-side-faces (gen-strip-faces n-profile 0)
            ;; Side faces for each hole
