@@ -1,0 +1,106 @@
+name: Desktop Build (macOS)
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+
+      - name: Install Clojure CLI
+        run: brew install clojure/tools/clojure
+
+      - name: Install CMake
+        run: brew install cmake
+
+      - name: Clone libfive
+        run: |
+          git clone --depth 1 https://github.com/libfive/libfive.git \
+            desktop/src-tauri/vendor/libfive
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build frontend (production JS)
+        run: |
+          TAG=${GITHUB_REF_NAME:-dev}
+          npx shadow-cljs release app \
+            --config-merge "{:closure-defines {ridley.version/VERSION \"$TAG\"}}"
+
+      - name: Build JVM sidecar uberjar
+        working-directory: desktop/ridley-jvm
+        run: clojure -X:uberjar
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2"
+
+      - name: Build Tauri app
+        working-directory: desktop/src-tauri
+        run: cargo tauri build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ""
+
+      - name: Bundle dylibs
+        working-directory: desktop
+        run: bash bundle-dylibs.sh
+
+      - name: Copy JVM sidecar jar into bundle
+        run: |
+          APP_BUNDLE="desktop/src-tauri/target/release/bundle/macos/Ridley.app"
+          RESOURCES_DIR="$APP_BUNDLE/Contents/Resources"
+          mkdir -p "$RESOURCES_DIR"
+          cp desktop/ridley-jvm/target/ridley-jvm.jar "$RESOURCES_DIR/"
+
+      - name: Create DMG
+        run: |
+          APP_BUNDLE="desktop/src-tauri/target/release/bundle/macos/Ridley.app"
+          TAG=${GITHUB_REF_NAME:-dev}
+          hdiutil create -volname "Ridley" \
+            -srcfolder "$APP_BUNDLE" \
+            -ov -format UDZO \
+            "Ridley-${TAG}-macOS.dmg"
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ridley-macOS-dmg
+          path: "Ridley-*.dmg"
+
+      - name: Attach DMG to release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            Ridley-*.dmg --clobber

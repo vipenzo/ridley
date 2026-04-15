@@ -6,8 +6,13 @@
         clj-http/clj-http {:mvn/version "3.13.0"}
         org.locationtech.jts/jts-core {:mvn/version "1.20.0"}}
  :aliases {:run {:main-opts ["-m" "ridley.jvm.server"]}
-          :test {:extra-paths ["test"]
-                 :extra-deps {io.github.cognitect-labs/test-runner
-                              {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
-                 :main-opts ["-m" "cognitect.test-runner"]
-                 :exec-fn cognitect.test-runner.api/test}}}
+           :test {:extra-paths ["test"]
+                  :extra-deps {io.github.cognitect-labs/test-runner
+                               {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
+                  :main-opts ["-m" "cognitect.test-runner"]
+                  :exec-fn cognitect.test-runner.api/test}
+           :uberjar {:extra-deps {com.github.seancorfield/depstar {:mvn/version "2.1.303"}}
+                     :exec-fn hf.depstar/uberjar
+                     :exec-args {:jar "target/ridley-jvm.jar"
+                                 :aot true
+                                 :main-class "ridley.jvm.server"}}}}
