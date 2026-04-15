@@ -26,7 +26,9 @@
             [ridley.sdf.core :as sdf]
             [ridley.voronoi.core :as voronoi]
             [ridley.jvm.library :as library]
-            [ridley.jvm.tweak :as tweak]))
+            [ridley.jvm.tweak :as tweak]
+            [clj-http.client :as http]
+            [clojure.data.json :as json]))
 
 ;; ── Forward declarations ────────────────────────────────────────
 (declare pure-loft-path pure-loft-two-shapes pure-loft-shape-fn
@@ -1586,35 +1588,22 @@
                       mesh (get-mesh name-kw)]
                   (if mesh
                     (let [default-name (str (name name-kw) "." (name fmt))
-                          ;; Open native save dialog on AWT thread, return chosen path
-                          chosen-path (atom nil)
-                          _ (javax.swing.SwingUtilities/invokeAndWait
-                             (fn []
-                               (let [frame (doto (javax.swing.JFrame.)
-                                             (.setUndecorated true)
-                                             (.setVisible true)
-                                             (.setAlwaysOnTop true)
-                                             (.toFront))
-                                     chooser (doto (javax.swing.JFileChooser.
-                                                    (java.io.File. (str (System/getProperty "user.home") "/Downloads")))
-                                               (.setSelectedFile (java.io.File. default-name))
-                                               (.setDialogTitle (str "Export " (name name-kw)))
-                                               (.setFileFilter
-                                                (javax.swing.filechooser.FileNameExtensionFilter.
-                                                 (str (.toUpperCase (name fmt)) " files")
-                                                 (into-array String [(name fmt)]))))
-                                     r (.showSaveDialog chooser frame)]
-                                 (.dispose frame)
-                                 (when (= r javax.swing.JFileChooser/APPROVE_OPTION)
-                                   (reset! chosen-path (.getAbsolutePath (.getSelectedFile chooser)))))))
-                          path @chosen-path]
+                          ;; Use Rust native save dialog via geo_server
+                          resp (try (http/post "http://127.0.0.1:12321/pick-save-path"
+                                               {:body (json/write-str {:suggested_name default-name})
+                                                :content-type :json
+                                                :as :string})
+                                    (catch Exception _ nil))
+                          result (when (and resp (= 200 (:status resp)))
+                                   (json/read-str (:body resp) :key-fn keyword))
+                          path (:path result)]
                       (if path
                         (let [actual-fmt (cond
-                                           (.endsWith (.toLowerCase path) ".3mf") :3mf
-                                           (.endsWith (.toLowerCase path) ".stl") :stl
+                                           (.endsWith (.toLowerCase ^String path) ".3mf") :3mf
+                                           (.endsWith (.toLowerCase ^String path) ".stl") :stl
                                            :else fmt)
-                              path (if (or (.endsWith (.toLowerCase path) ".stl")
-                                           (.endsWith (.toLowerCase path) ".3mf"))
+                              path (if (or (.endsWith (.toLowerCase ^String path) ".stl")
+                                           (.endsWith (.toLowerCase ^String path) ".3mf"))
                                      path
                                      (str path "." (name actual-fmt)))]
                           (let [clean (manifold/solidify (stl/clean-for-export mesh))]
