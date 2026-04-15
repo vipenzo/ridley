@@ -1757,10 +1757,11 @@
            ;; Get profile points
            ;; When using shape-fn, clamp x >= 0 to prevent crossing revolution axis
            ;; (polygon clipping would change point count, breaking face generation)
-           clamp-x (fn [pts] (mapv (fn [[x y]] [(max 0 x) y]) pts))
-           profile-points (if eval-shape-at-t
-                            (clamp-x (:points shape))
-                            (:points shape))
+           ;; Clamp x to a small minimum (not zero) to prevent pole vertex
+           ;; collisions in STL float32 — a tiny circle is manifold, a point is not
+           pole-eps 0.001
+           clamp-x (fn [pts] (mapv (fn [[x y]] [(max pole-eps x) y]) pts))
+           profile-points (clamp-x (:points shape))
            n-profile (count profile-points)
            ;; Calculate shape winding using signed area
            ;; Positive = CCW, Negative = CW
