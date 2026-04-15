@@ -22,9 +22,10 @@
 ; =====================
 ; Essential parameters — tweak these
 ; =====================
-(def RTOP 70) ; bowl rim radius (overall size)
-(def H       50)   ; bowl height
-(def wall    3)     ; bowl wall thickness
+(def prop 0.7)
+(def RTOP (* prop 70)) ; bowl rim radius (overall size)
+(def H (* prop 50)) ; bowl height
+(def wall    (* prop 3))     ; bowl wall thickness
 (def tray-gap 0.4)  ; gap between bowl and tray (print tolerance)
 
 ; =====================
@@ -213,8 +214,8 @@
 ; Animation: tray lifts out and rests beside the bowl
 ; =====================
 (anim! :tray-out 2.5 :tray
-  (span 0.35 :out-cubic  (u (* H 1.2)))
-  (span 0.35 :in-out     (rt (* RTOP 2.5)))
-  (span 0.30 :in-cubic   (d (* H 1.2))))
+       (span 0.35 :out-cubic  (u (* H 1.2)))
+       (span 0.35 :in-out     (rt (* RTOP 2.5)))
+       (span 0.30 :in-cubic   (d (* H 1.2))))
 
 (play! :tray-out)
