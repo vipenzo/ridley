@@ -22,34 +22,34 @@
 ; =====================
 ; Essential parameters — tweak these
 ; =====================
-(def prop 0.7)
+(def prop 1.3)
 (def RTOP (* prop 70)) ; bowl rim radius (overall size)
 (def H (* prop 50)) ; bowl height
-(def wall    (* prop 3))     ; bowl wall thickness
-(def tray-gap 0.4)  ; gap between bowl and tray (print tolerance)
+(def wall (* prop 3)) ; bowl wall thickness
+(def tray-gap 0.4) ; gap between bowl and tray (print tolerance)
 
 ; =====================
 ; Proportions — safe to adjust (0–1 range)
 ; =====================
-(def bottom-ratio  0.67)  ; base radius / rim radius
-(def tray-ratio    0.83)  ; tray height / bowl height
+(def bottom-ratio 0.67) ; base radius / rim radius
+(def tray-ratio 0.83) ; tray height / bowl height
 (def funnel-ratio 0.55) ; funnel top radius / base radius
 (def taper-ratio 0.35) ; funnel bottom / funnel top
 
 ; =====================
 ; Derived dimensions — computed from the above
 ; =====================
-(def RBOTTOM    (* RTOP bottom-ratio))
-(def tray-h     (* H tray-ratio))
-(def tray-wall  (* wall 0.6))
+(def RBOTTOM (* RTOP bottom-ratio))
+(def tray-h (* H tray-ratio))
+(def tray-wall (* wall 0.6))
 (def funnel-r-top (* RBOTTOM funnel-ratio))
 (def funnel-r-bot (* funnel-r-top taper-ratio))
-(def funnel-wall  tray-wall)
+(def funnel-wall tray-wall)
 (def funnel-handle (* funnel-r-top 0.27))
-(def funnel-h   (+ tray-h (* H 0.62)))
-(def hole-r     (- funnel-r-bot funnel-wall))
-(def leap-w     (/ (+ wall tray-wall tray-gap) 2))
-(def leap-h     2)
+(def funnel-h (+ tray-h (* H 0.62)))
+(def hole-r (- funnel-r-bot funnel-wall))
+(def leap-w (/ (+ wall tray-wall tray-gap) 2))
+(def leap-h 2)
 ; =====================
 ; Shared silhouette
 ; =====================
@@ -121,11 +121,18 @@
 ; Uniform wall thickness everywhere, base included.
 
 (register bowl
-          (mesh-difference
-    ;(revolve bowl-silhouette)
-           (revolve (displaced bowl-silhouette
-                               (fn [p t] (* 3.5 (pow (sin (* t 12 PI)) 2)))))
-           bowl-leap))
+          (mesh-union
+           (attach (cyl RBOTTOM (* H 0.1) 128) (u (- (* H 0.1))) (tr 90))
+           (mesh-difference
+          ;(revolve bowl-silhouette)
+            (revolve (displaced bowl-silhouette
+                                (fn [p t] (* 1.75 (+ 1 (sin (* t 12 PI))))))) ; sin "shifted", non quadrato
+
+            bowl-leap))
+
+  ; decimate
+          )
+
 
 
 (def tray-leap
@@ -214,8 +221,9 @@
 ; Animation: tray lifts out and rests beside the bowl
 ; =====================
 (anim! :tray-out 2.5 :tray
-       (span 0.35 :out-cubic  (u (* H 1.2)))
-       (span 0.35 :in-out     (rt (* RTOP 2.5)))
-       (span 0.30 :in-cubic   (d (* H 1.2))))
+       (span 0.35 :out-cubic (u (* H 1.2)))
+       (span 0.35 :in-out (rt (* RTOP 2.5)))
+       (span 0.30 :in-cubic (d (* H 1.2))))
 
 (play! :tray-out)
+(hide :tray)
