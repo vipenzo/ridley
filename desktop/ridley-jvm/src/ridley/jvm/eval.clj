@@ -1700,6 +1700,7 @@
    'sdf-diamond      sdf/sdf-diamond
    'sdf-slats        sdf/sdf-slats
    'sdf-bars         sdf/sdf-bars
+   'sdf-bar-cage     sdf/sdf-bar-cage
    'sdf-grid         sdf/sdf-grid     ;; explicit meshing (for resolution control)
    ;; Utility
    'bench     bench

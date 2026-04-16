@@ -1848,8 +1848,9 @@ Infinite repeating patterns for perforations, lattices, and structural infills:
 |----------|-------------|
 | `(sdf-slats axis period thickness)` | Infinite parallel flat walls perpendicular to axis (`:x` `:y` `:z`) |
 | `(sdf-slats axis period thickness phase)` | With phase offset along axis (e.g. period/2 = stagger) |
-| `(sdf-bars axis period radius)` | Infinite parallel cylindrical bars along axis |
+| `(sdf-bars axis period radius)` | Infinite parallel cylindrical bars along axis (period can be a number or `[pa pb]` for different periods on the two perpendicular axes) |
 | `(sdf-bars axis period radius phase-a phase-b)` | With phase offsets on the two perpendicular axes |
+| `(sdf-bar-cage sx sy sz n radius)` | Cage of `n×n` bars per direction aligned to a centered box, with bars on all edges/corners. Optional `:axes [:x :y :z]` to choose which directions get bars |
 | `(sdf-grid period thickness)` | 3D grid lattice with sharp edges (union of three slat sets) |
 | `(sdf-grid period thickness blend-k)` | Grid with smooth blended joints (see warning below) |
 
@@ -1876,6 +1877,16 @@ These are infinite — use `sdf-difference` to punch holes, or `sdf-intersection
 ;; Perforated box (grid carved out of a solid box)
 (register perforated
   (sdf-intersection (sdf-box 40 40 40) (sdf-grid 10 2)))
+
+;; Bar cage basket: rounded container with a 5x5 cage of bars on all 3 axes,
+;; hollowed out with an open top
+(register basket
+  (sdf-difference
+    (sdf-intersection
+      (sdf-rounded-box 60 60 90 6)
+      (sdf-bar-cage 60 60 90 5 1.5))
+    ;; Hollow interior (open at top)
+    (sdf-move (sdf-rounded-box 56 56 100 6) 0 0 4)))
 ```
 
 ### Examples

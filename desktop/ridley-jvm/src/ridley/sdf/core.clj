@@ -204,25 +204,54 @@
 (defn sdf-bars
   "Infinite parallel cylindrical bars.
    axis: :x, :y, or :z — bars run along this axis
-   period: center-to-center distance
+   period: center-to-center distance (number, or [pa pb] for different periods
+           on the two perpendicular axes — useful for non-square sections)
    radius: bar radius
    phase-a, phase-b (optional): offsets along the two perpendicular axes
    (e.g. for :z bars, phase-a = X offset, phase-b = Y offset)"
   ([axis period radius] (sdf-bars axis period radius 0 0))
   ([axis period radius phase-a phase-b]
-   (let [hp (/ (double period) 2)
+   (let [[pa-period pb-period] (if (vector? period) period [period period])
+         hpa (/ (double pa-period) 2)
+         hpb (/ (double pb-period) 2)
          r (double radius)
          pa (double phase-a)
          pb (double phase-b)
-         rep (fn [v phase]
-               (list '- (list 'mod (list '+ v (- hp phase)) (double period)) hp))
+         rep-a (fn [v] (list '- (list 'mod (list '+ v (- hpa pa)) (double pa-period)) hpa))
+         rep-b (fn [v] (list '- (list 'mod (list '+ v (- hpb pb)) (double pb-period)) hpb))
          ;; Use (* v v) instead of (pow v 2) — libfive's pow uses
          ;; exp(b·log(a)) which returns NaN for negative bases.
          sq (fn [e] (list '* e e))]
      (case (keyword (name axis))
-       :z (compile-expr (list '- (list 'sqrt (list '+ (sq (rep 'x pa)) (sq (rep 'y pb)))) r))
-       :x (compile-expr (list '- (list 'sqrt (list '+ (sq (rep 'y pa)) (sq (rep 'z pb)))) r))
-       :y (compile-expr (list '- (list 'sqrt (list '+ (sq (rep 'x pa)) (sq (rep 'z pb)))) r))))))
+       :z (compile-expr (list '- (list 'sqrt (list '+ (sq (rep-a 'x)) (sq (rep-b 'y)))) r))
+       :x (compile-expr (list '- (list 'sqrt (list '+ (sq (rep-a 'y)) (sq (rep-b 'z)))) r))
+       :y (compile-expr (list '- (list 'sqrt (list '+ (sq (rep-a 'x)) (sq (rep-b 'z)))) r))))))
+
+(defn sdf-bar-cage
+  "Cage of cylindrical bars aligned to a centered box.
+   The outermost bars touch the box edges (so corners get bars on all 3 axes).
+   sx, sy, sz: outer box dimensions (centered at origin)
+   n: bars per side along each axis (>= 2). Total bars per direction = n × n.
+   radius: bar radius
+   :axes (default [:x :y :z]) — which directions get bars"
+  [sx sy sz n radius & {:keys [axes] :or {axes [:x :y :z]}}]
+  (let [hx (/ (double sx) 2)
+        hy (/ (double sy) 2)
+        hz (/ (double sz) 2)
+        ;; period along each axis: side / (n - 1) so that bars span the full side
+        ;; with the outermost bars at ±side/2
+        nn (max 2 n)
+        px (/ (double sx) (dec nn))
+        py (/ (double sy) (dec nn))
+        pz (/ (double sz) (dec nn))
+        ;; Phase = -side/2 places the first bar exactly at the box edge
+        bar-for (fn [a]
+                  (case a
+                    :x (sdf-bars :x [py pz] radius (- hy) (- hz))
+                    :y (sdf-bars :y [px pz] radius (- hx) (- hz))
+                    :z (sdf-bars :z [px py] radius (- hx) (- hy))))
+        bars (mapv bar-for axes)]
+    (reduce sdf-union bars)))
 
 (defn sdf-grid
   "3D grid lattice: union of three orthogonal slat sets.
