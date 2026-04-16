@@ -1841,11 +1841,17 @@ Infinite repeating patterns for perforations, lattices, and structural infills:
 |----------|-------------|
 | `(sdf-slats axis period thickness)` | Infinite parallel flat walls perpendicular to axis (`:x` `:y` `:z`) |
 | `(sdf-bars axis period radius)` | Infinite parallel cylindrical bars along axis |
-| `(sdf-grid period thickness blend-k)` | 3D grid lattice (three orthogonal slat sets, blended at joints) |
+| `(sdf-grid period thickness)` | 3D grid lattice with sharp edges (union of three slat sets) |
+| `(sdf-grid period thickness blend-k)` | Grid with smooth blended joints (see warning below) |
 
 - `period` = center-to-center distance
 - `thickness` / `radius` = wall thickness or bar radius
-- `blend-k` = blend radius for smooth joints (0 = sharp, higher = rounder)
+- `blend-k` = blend radius for smooth joints (omit for sharp edges)
+
+**Warning**: The blend version uses libfive's exponential blend, which doesn't
+produce a valid SDF — the gradient can invert at joint regions, causing flipped
+face normals when combined with `sdf-intersection` / `sdf-difference`. For
+printable parts always prefer the sharp-edge 2-arg version.
 
 These are infinite — use `sdf-difference` to punch holes, or `sdf-intersection` to bound:
 
@@ -1854,16 +1860,12 @@ These are infinite — use `sdf-difference` to punch holes, or `sdf-intersection
 (register vase
   (sdf-difference container (sdf-slats :x 8 2)))
 
-;; Smooth grid lattice bounded by a sphere
-(register ball (sdf-intersection (sdf-sphere 20) (sdf-grid 8 1.5 0.5)))
+;; Grid lattice bounded by a sphere (sharp edges)
+(register ball (sdf-intersection (sdf-sphere 20) (sdf-grid 8 1.5)))
 
-;; Three blended orthogonal slat sets (custom grid)
-(register custom
-  (sdf-intersection (sdf-box 40 40 40)
-    (sdf-blend
-      (sdf-slats :x 10 2)
-      (sdf-blend (sdf-slats :y 10 2) (sdf-slats :z 10 2) 0.5)
-      0.5)))
+;; Perforated box (grid carved out of a solid box)
+(register perforated
+  (sdf-intersection (sdf-box 40 40 40) (sdf-grid 10 2)))
 ```
 
 ### Examples

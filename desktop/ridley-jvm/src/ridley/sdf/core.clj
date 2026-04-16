@@ -207,18 +207,28 @@
       :y (compile-expr (list '- (list 'sqrt (list '+ (list 'pow (rep 'x) 2) (list 'pow (rep 'z) 2))) r)))))
 
 (defn sdf-grid
-  "3D grid lattice: blend of three orthogonal slat sets.
+  "3D grid lattice: union of three orthogonal slat sets.
    period: cell size
    thickness: wall thickness
-   blend-k: blend radius (0 = sharp edges, higher = smoother joints)"
-  [period thickness blend-k]
-  (sdf-blend
-   (sdf-slats :x period thickness)
-   (sdf-blend
-    (sdf-slats :y period thickness)
-    (sdf-slats :z period thickness)
-    blend-k)
-   blend-k))
+   Optional blend-k argument: if positive, uses smooth blend at joints
+   (produces rounded corners but can cause normal inversion in booleans;
+   prefer the 2-arg sharp-edge version for printable parts)."
+  ([period thickness]
+   (sdf-union
+    (sdf-slats :x period thickness)
+    (sdf-union
+     (sdf-slats :y period thickness)
+     (sdf-slats :z period thickness))))
+  ([period thickness blend-k]
+   (if (and blend-k (pos? blend-k))
+     (sdf-blend
+      (sdf-slats :x period thickness)
+      (sdf-blend
+       (sdf-slats :y period thickness)
+       (sdf-slats :z period thickness)
+       blend-k)
+      blend-k)
+     (sdf-grid period thickness))))
 
 ;; ── Bounds estimation ───────────────────────────────────────────
 
