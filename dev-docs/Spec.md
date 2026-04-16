@@ -1850,7 +1850,7 @@ Infinite repeating patterns for perforations, lattices, and structural infills:
 | `(sdf-slats axis period thickness phase)` | With phase offset along axis (e.g. period/2 = stagger) |
 | `(sdf-bars axis period radius)` | Infinite parallel cylindrical bars along axis (period can be a number or `[pa pb]` for different periods on the two perpendicular axes) |
 | `(sdf-bars axis period radius phase-a phase-b)` | With phase offsets on the two perpendicular axes |
-| `(sdf-bar-cage sx sy sz n radius)` | Cage of `n×n` bars per direction aligned to a centered box, with bars on all edges/corners. Optional `:axes [:x :y :z]` to choose which directions get bars |
+| `(sdf-bar-cage sx sy sz n radius)` | Cage of `n×n` bars per direction aligned to a centered box, with bars on all edges/corners. Options: `:axes [:x :y :z]` to choose directions, `:blend k` for smooth joints (caveat: not a true SDF) |
 | `(sdf-grid period thickness)` | 3D grid lattice with sharp edges (union of three slat sets) |
 | `(sdf-grid period thickness blend-k)` | Grid with smooth blended joints (see warning below) |
 

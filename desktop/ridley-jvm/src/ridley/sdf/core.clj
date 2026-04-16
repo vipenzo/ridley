@@ -233,8 +233,12 @@
    sx, sy, sz: outer box dimensions (centered at origin)
    n: bars per side along each axis (>= 2). Total bars per direction = n × n.
    radius: bar radius
-   :axes (default [:x :y :z]) — which directions get bars"
-  [sx sy sz n radius & {:keys [axes] :or {axes [:x :y :z]}}]
+   :axes (default [:x :y :z]) — which directions get bars
+   :blend (default nil) — if positive, smooth-blend the bar joints.
+          Note: blend uses libfive's exponential blend (not a true SDF),
+          which can cause inverted normals when combined with other booleans.
+          Omit for printable parts."
+  [sx sy sz n radius & {:keys [axes blend] :or {axes [:x :y :z]}}]
   (let [hx (/ (double sx) 2)
         hy (/ (double sy) 2)
         hz (/ (double sz) 2)
@@ -250,8 +254,11 @@
                     :x (sdf-bars :x [py pz] radius (- hy) (- hz))
                     :y (sdf-bars :y [px pz] radius (- hx) (- hz))
                     :z (sdf-bars :z [px py] radius (- hx) (- hy))))
-        bars (mapv bar-for axes)]
-    (reduce sdf-union bars)))
+        bars (mapv bar-for axes)
+        combine (if (and blend (pos? blend))
+                  #(sdf-blend %1 %2 blend)
+                  sdf-union)]
+    (reduce combine bars)))
 
 (defn sdf-grid
   "3D grid lattice: union of three orthogonal slat sets.
