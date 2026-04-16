@@ -1767,6 +1767,12 @@ Materialization is normally automatic — call `sdf->mesh` only when you need ex
 - Math: `sqrt`, `abs`, `exp`, `log`, `pow`, `mod`, `square`, `neg`
 - Comparison: `min`, `max`
 
+**Gotcha — `pow` with negative bases**: libfive computes `pow(a, b)` as
+`exp(b · log(a))`, which returns NaN when `a < 0`. For squaring an
+expression that may be negative (e.g. `(- (mod x p) p/2)`), use
+`(* expr expr)` instead of `(pow expr 2)`. NaN propagates silently and
+produces hollow / broken meshes.
+
 **Coordinate variables:**
 
 | Variable | Description |
