@@ -1681,6 +1681,7 @@
    'sdf-sphere       sdf/sdf-sphere
    'sdf-box          sdf/sdf-box
    'sdf-cyl          sdf/sdf-cyl
+   'sdf-rounded-box  sdf/sdf-rounded-box
    'sdf-union        sdf/sdf-union
    'sdf-difference   sdf/sdf-difference
    'sdf-intersection sdf/sdf-intersection

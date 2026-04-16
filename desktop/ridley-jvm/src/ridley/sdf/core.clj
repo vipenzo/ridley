@@ -20,6 +20,12 @@
 (defn sdf-box [sx sy sz] {:op "box" :sx (double sx) :sy (double sy) :sz (double sz)})
 (defn sdf-cyl [r h] {:op "cyl" :r (double r) :h (double h)})
 
+(defn sdf-rounded-box
+  "Box with rounded corners as a true SDF (better field than sdf-offset of sdf-box).
+   sx, sy, sz: dimensions; r: corner radius."
+  [sx sy sz r]
+  {:op "rounded-box" :sx (double sx) :sy (double sy) :sz (double sz) :r (double r)})
+
 ;; ── SDF boolean operations ──────────────────────────────────────
 
 (defn sdf-union [a b] {:op "union" :a a :b b})
@@ -252,6 +258,8 @@
                [[(- m) m] [(- m) m] [(- m) m]])
     "box" (let [hx (* (:sx node) 0.6) hy (* (:sy node) 0.6) hz (* (:sz node) 0.6)]
             [[(- hx) hx] [(- hy) hy] [(- hz) hz]])
+    "rounded-box" (let [hx (* (:sx node) 0.6) hy (* (:sy node) 0.6) hz (* (:sz node) 0.6)]
+                    [[(- hx) hx] [(- hy) hy] [(- hz) hz]])
     "cyl" (let [r (* (:r node) 1.2) hh (* (:h node) 0.6)]
             [[(- r) r] [(- r) r] [(- hh) hh]])
     "move" (let [b (auto-bounds (:a node))

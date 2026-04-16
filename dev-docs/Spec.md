@@ -1698,6 +1698,7 @@ Meshing is **lazy**: it happens automatically when an SDF meets a mesh boundary 
 | `(sdf-sphere r)` | Sphere centered at origin |
 | `(sdf-box sx sy sz)` | Axis-aligned box with dimensions sx × sy × sz |
 | `(sdf-cyl r h)` | Cylinder along Z axis with radius r and height h |
+| `(sdf-rounded-box sx sy sz r)` | Box with rounded corners (true SDF — prefer over `sdf-offset` of `sdf-box` when combining with other SDFs) |
 
 ### Boolean Operations
 
@@ -1715,7 +1716,7 @@ These operations leverage the implicit representation and have no direct mesh eq
 |----------|-------------|
 | `(sdf-blend a b k)` | Smooth blend between a and b. k controls the blend radius — higher values produce a wider, smoother transition |
 | `(sdf-shell a thickness)` | Hollow shell with uniform wall thickness |
-| `(sdf-offset a amount)` | Expand (positive) or contract (negative) the surface by amount |
+| `(sdf-offset a amount)` | Expand (positive) or contract (negative) the surface by amount. **Note**: `sdf-offset` shifts the field by `amount`, which produces a non-SDF away from the surface. For rounded boxes prefer `sdf-rounded-box`; for shell-like operations the result may not combine cleanly with `sdf-intersection` of other SDFs. |
 | `(sdf-morph a b t)` | Interpolate between shapes a and b. t ranges from 0 (= a) to 1 (= b) |
 | `(sdf-displace node formula)` | Displace surface by a spatial formula (quoted expression using x, y, z) |
 

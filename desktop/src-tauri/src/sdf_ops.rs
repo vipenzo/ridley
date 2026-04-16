@@ -49,6 +49,7 @@ extern "C" {
     fn sphere(radius: LibfiveTree, center: TVec3) -> LibfiveTree;
     fn cylinder_z(r: LibfiveTree, h: LibfiveTree, base: TVec3) -> LibfiveTree;
     fn box_exact(a: TVec3, b: TVec3) -> LibfiveTree;
+    fn rounded_box(a: TVec3, b: TVec3, r: LibfiveTree) -> LibfiveTree;
 
     // CSG
     fn _union(a: LibfiveTree, b: LibfiveTree) -> LibfiveTree;
@@ -138,6 +139,8 @@ pub enum SdfNode {
     Sphere { r: f64 },
     #[serde(rename = "box")]
     Box { sx: f64, sy: f64, sz: f64 },
+    #[serde(rename = "rounded-box")]
+    RoundedBox { sx: f64, sy: f64, sz: f64, r: f64 },
     #[serde(rename = "cyl")]
     Cyl { r: f64, h: f64 },
     #[serde(rename = "union")]
@@ -190,6 +193,15 @@ fn build_tree(node: &SdfNode) -> LibfiveTree {
                 let hy = (*sy as f32) / 2.0;
                 let hz = (*sz as f32) / 2.0;
                 box_exact(tv(-hx, -hy, -hz), tv(hx, hy, hz))
+            }
+            SdfNode::RoundedBox { sx, sy, sz, r } => {
+                // libfive's rounded_box takes radius as 0-1 fraction of half-shortest-side
+                let hx = (*sx as f32) / 2.0;
+                let hy = (*sy as f32) / 2.0;
+                let hz = (*sz as f32) / 2.0;
+                let min_half = hx.min(hy).min(hz);
+                let frac = (*r as f32 / min_half).clamp(0.0, 1.0);
+                rounded_box(tv(-hx, -hy, -hz), tv(hx, hy, hz), tc(frac))
             }
             SdfNode::Cyl { r, h } => {
                 // cylinder_z is centered at base, so offset by -h/2 for centering
