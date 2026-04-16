@@ -1641,7 +1641,19 @@
    'area            mesh-area
    'lay-flat        lay-flat-impl
    ;; Material
-   'material        (fn [opts] (swap! turtle-state assoc :material opts))
+   'material        (fn material-fn
+                      ;; Global turtle material: (material {:opacity 0.5})
+                      ([opts-or-name]
+                       (if (map? opts-or-name)
+                         (swap! turtle-state assoc :material opts-or-name)
+                         (throw (ex-info "material: expected map or name + kwargs"
+                                         {:arg opts-or-name}))))
+                      ;; Per-mesh material: (material :name :opacity 0.5 :color 0xff0000)
+                      ([name-or-mesh & kvs]
+                       (let [opts (apply hash-map kvs)]
+                         (if (mesh? name-or-mesh)
+                           (update name-or-mesh :material merge opts)
+                           (update-mesh-material! name-or-mesh opts)))))
    'reset-material  (fn [] (swap! turtle-state dissoc :material))
    ;; Missing aliases
    'attached?       (fn [] (some? (:attached @turtle-state)))
