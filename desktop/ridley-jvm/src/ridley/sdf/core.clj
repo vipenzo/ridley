@@ -209,11 +209,14 @@
          pa (double phase-a)
          pb (double phase-b)
          rep (fn [v phase]
-               (list '- (list 'mod (list '+ v (- hp phase)) (double period)) hp))]
+               (list '- (list 'mod (list '+ v (- hp phase)) (double period)) hp))
+         ;; Use (* v v) instead of (pow v 2) — libfive's pow uses
+         ;; exp(b·log(a)) which returns NaN for negative bases.
+         sq (fn [e] (list '* e e))]
      (case (keyword (name axis))
-       :z (compile-expr (list '- (list 'sqrt (list '+ (list 'pow (rep 'x pa) 2) (list 'pow (rep 'y pb) 2))) r))
-       :x (compile-expr (list '- (list 'sqrt (list '+ (list 'pow (rep 'y pa) 2) (list 'pow (rep 'z pb) 2))) r))
-       :y (compile-expr (list '- (list 'sqrt (list '+ (list 'pow (rep 'x pa) 2) (list 'pow (rep 'z pb) 2))) r))))))
+       :z (compile-expr (list '- (list 'sqrt (list '+ (sq (rep 'x pa)) (sq (rep 'y pb)))) r))
+       :x (compile-expr (list '- (list 'sqrt (list '+ (sq (rep 'y pa)) (sq (rep 'z pb)))) r))
+       :y (compile-expr (list '- (list 'sqrt (list '+ (sq (rep 'x pa)) (sq (rep 'z pb)))) r))))))
 
 (defn sdf-grid
   "3D grid lattice: union of three orthogonal slat sets.
