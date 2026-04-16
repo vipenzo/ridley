@@ -1840,12 +1840,15 @@ Infinite repeating patterns for perforations, lattices, and structural infills:
 | Function | Description |
 |----------|-------------|
 | `(sdf-slats axis period thickness)` | Infinite parallel flat walls perpendicular to axis (`:x` `:y` `:z`) |
+| `(sdf-slats axis period thickness phase)` | With phase offset along axis (e.g. period/2 = stagger) |
 | `(sdf-bars axis period radius)` | Infinite parallel cylindrical bars along axis |
+| `(sdf-bars axis period radius phase-a phase-b)` | With phase offsets on the two perpendicular axes |
 | `(sdf-grid period thickness)` | 3D grid lattice with sharp edges (union of three slat sets) |
 | `(sdf-grid period thickness blend-k)` | Grid with smooth blended joints (see warning below) |
 
 - `period` = center-to-center distance
 - `thickness` / `radius` = wall thickness or bar radius
+- `phase` = positional offset (omit or 0 = pattern centered at origin)
 - `blend-k` = blend radius for smooth joints (omit for sharp edges)
 
 **Warning**: The blend version uses libfive's exponential blend, which doesn't

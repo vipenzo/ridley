@@ -174,37 +174,46 @@
 
 (defn- slats-expr
   "Helper: build SDF expression for infinite parallel slats perpendicular to axis.
-   abs(mod(axis + period/2, period) - period/2) - thickness/2"
-  [axis period thickness]
+   abs(mod(axis + period/2 - phase, period) - period/2) - thickness/2"
+  [axis period thickness phase]
   (let [hp (/ (double period) 2)
-        ht (/ (double thickness) 2)]
+        ht (/ (double thickness) 2)
+        offset (- hp (double phase))]
     (compile-expr
-     (list '- (list 'abs (list '- (list 'mod (list '+ axis hp) (double period)) hp)) ht))))
+     (list '- (list 'abs (list '- (list 'mod (list '+ axis offset) (double period)) hp)) ht))))
 
 (defn sdf-slats
   "Infinite parallel flat walls (slats).
    axis: :x, :y, or :z — slats are perpendicular to this axis
    period: center-to-center distance
-   thickness: wall thickness"
-  [axis period thickness]
-  (case (keyword (name axis))
-    :x (slats-expr 'x period thickness)
-    :y (slats-expr 'y period thickness)
-    :z (slats-expr 'z period thickness)))
+   thickness: wall thickness
+   phase (optional): offset along axis (default 0 = slat centered at origin)"
+  ([axis period thickness] (sdf-slats axis period thickness 0))
+  ([axis period thickness phase]
+   (case (keyword (name axis))
+     :x (slats-expr 'x period thickness phase)
+     :y (slats-expr 'y period thickness phase)
+     :z (slats-expr 'z period thickness phase))))
 
 (defn sdf-bars
   "Infinite parallel cylindrical bars.
    axis: :x, :y, or :z — bars run along this axis
    period: center-to-center distance
-   radius: bar radius"
-  [axis period radius]
-  (let [hp (/ (double period) 2)
-        r (double radius)
-        rep (fn [v] (list '- (list 'mod (list '+ v hp) (double period)) hp))]
-    (case (keyword (name axis))
-      :z (compile-expr (list '- (list 'sqrt (list '+ (list 'pow (rep 'x) 2) (list 'pow (rep 'y) 2))) r))
-      :x (compile-expr (list '- (list 'sqrt (list '+ (list 'pow (rep 'y) 2) (list 'pow (rep 'z) 2))) r))
-      :y (compile-expr (list '- (list 'sqrt (list '+ (list 'pow (rep 'x) 2) (list 'pow (rep 'z) 2))) r)))))
+   radius: bar radius
+   phase-a, phase-b (optional): offsets along the two perpendicular axes
+   (e.g. for :z bars, phase-a = X offset, phase-b = Y offset)"
+  ([axis period radius] (sdf-bars axis period radius 0 0))
+  ([axis period radius phase-a phase-b]
+   (let [hp (/ (double period) 2)
+         r (double radius)
+         pa (double phase-a)
+         pb (double phase-b)
+         rep (fn [v phase]
+               (list '- (list 'mod (list '+ v (- hp phase)) (double period)) hp))]
+     (case (keyword (name axis))
+       :z (compile-expr (list '- (list 'sqrt (list '+ (list 'pow (rep 'x pa) 2) (list 'pow (rep 'y pb) 2))) r))
+       :x (compile-expr (list '- (list 'sqrt (list '+ (list 'pow (rep 'y pa) 2) (list 'pow (rep 'z pb) 2))) r))
+       :y (compile-expr (list '- (list 'sqrt (list '+ (list 'pow (rep 'x pa) 2) (list 'pow (rep 'z pb) 2))) r))))))
 
 (defn sdf-grid
   "3D grid lattice: union of three orthogonal slat sets.
