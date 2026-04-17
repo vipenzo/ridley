@@ -268,13 +268,14 @@ fn build_tree(node: &SdfNode) -> LibfiveTree {
                 //   X → sqrt(X² + Y²)   (rho = cylindrical radius)
                 //   Y → Z               (height)
                 //   Z → 0               (unused in 2D)
-                // This produces a 3D solid of revolution around the Z axis.
+                // Uses OP_SQUARE instead of OP_MUL(x,x) so libfive's interval
+                // arithmetic knows x² ≥ 0 (prevents axis artifacts in marching cubes).
                 let child = build_tree(a);
                 let x = libfive_tree_x();
                 let y = libfive_tree_y();
                 let z = libfive_tree_z();
-                let x2 = libfive_tree_binary(OP_MUL, x, x);
-                let y2 = libfive_tree_binary(OP_MUL, y, y);
+                let x2 = libfive_tree_unary(OP_SQUARE, x);
+                let y2 = libfive_tree_unary(OP_SQUARE, y);
                 let sum = libfive_tree_binary(OP_ADD, x2, y2);
                 let rho = libfive_tree_unary(OP_SQRT, sum);
                 libfive_tree_remap(child, rho, z, tc(0.0))
