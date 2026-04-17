@@ -59,18 +59,57 @@
   [node axis angle]
   {:op "rotate" :a node :axis (name axis) :angle (double angle)})
 
+(defn- substitute-vars
+  "Walk an SDF tree and replace variable nodes according to a substitution map.
+   subs-map: {\"x\" <sdf-node>, \"y\" <sdf-node>, ...}"
+  [node subs-map]
+  (cond
+    ;; Leaf: variable → substitute if in map
+    (and (= (:op node) "var") (contains? subs-map (:name node)))
+    (get subs-map (:name node))
+
+    ;; Leaf: const or unmatched var → pass through
+    (or (= (:op node) "const") (= (:op node) "var"))
+    node
+
+    ;; Unary: recurse into :a
+    (= (:op node) "unary")
+    (update node :a #(substitute-vars % subs-map))
+
+    ;; Binary: recurse into :a and :b
+    (= (:op node) "binary")
+    (-> node
+        (update :a #(substitute-vars % subs-map))
+        (update :b #(substitute-vars % subs-map)))
+
+    ;; Other ops with :a and/or :b children
+    :else
+    (cond-> node
+      (:a node) (update :a #(substitute-vars % subs-map))
+      (:b node) (update :b #(substitute-vars % subs-map)))))
+
 (defn sdf-revolve
   "Revolve a 2D SDF (in the X/Y plane) around the Z axis to produce a 3D solid.
    The 2D SDF should treat X as radius and Y as height.
-   Internally remaps the SDF: X → sqrt(X²+Y²), Y → Z, Z → 0.
+
+   Works by substituting variables in the SDF tree:
+     x → sqrt(x² + y²)   (cylindrical radius)
+     y → z                (height)
+   This produces a single expression tree with correct interval arithmetic
+   (no libfive remap, which can cause axis-aligned artifacts).
 
    Optional :x-range [xmin xmax] and :y-range [ymin ymax] specify the
    bounding region of the 2D profile (needed for formulas which have
    no intrinsic bounds). If omitted, auto-bounds of the child are used."
   [node-2d & {:keys [x-range y-range]}]
-  (cond-> {:op "revolve" :a node-2d}
-    x-range (assoc :x-range (mapv double x-range))
-    y-range (assoc :y-range (mapv double y-range))))
+  (let [;; rho = sqrt(x² + y²) using square for correct interval arithmetic
+        rho (compile-expr '(sqrt (+ (square x) (square y))))
+        z-var {:op "var" :name "z"}
+        ;; Substitute x → rho, y → z in the 2D tree
+        revolved (substitute-vars node-2d {"x" rho "y" z-var})]
+    (cond-> revolved
+      x-range (assoc :x-range (mapv double x-range))
+      y-range (assoc :y-range (mapv double y-range)))))
 
 (defn sdf-scale
   "Scale an SDF node. Can be called with uniform scale or per-axis."
@@ -302,53 +341,61 @@
 (defn auto-bounds
   "Estimate spatial bounds from an SDF tree. Returns [[xmin xmax] [ymin ymax] [zmin zmax]]."
   [node]
-  (case (:op node)
-    "sphere" (let [r (:r node) m (* r 1.2)]
-               [[(- m) m] [(- m) m] [(- m) m]])
-    "box" (let [hx (* (:sx node) 0.6) hy (* (:sy node) 0.6) hz (* (:sz node) 0.6)]
-            [[(- hx) hx] [(- hy) hy] [(- hz) hz]])
-    "rounded-box" (let [hx (* (:sx node) 0.6) hy (* (:sy node) 0.6) hz (* (:sz node) 0.6)]
-                    [[(- hx) hx] [(- hy) hy] [(- hz) hz]])
-    "cyl" (let [r (* (:r node) 1.2) hh (* (:h node) 0.6)]
-            [[(- r) r] [(- r) r] [(- hh) hh]])
-    "revolve" (let [b (auto-bounds (:a node))
-                    ;; Use explicit range hints if provided, otherwise child bounds
-                    x-range (or (:x-range node) (b 0))
-                    y-range (or (:y-range node) (b 1))
-                    ;; 2D profile bounds: x = radial, y = height
-                    ;; Revolved 3D bounds: x,y in [-rmax, rmax], z = original y
-                    rmax (* 1.1 (max (Math/abs (double (x-range 0)))
-                                     (Math/abs (double (x-range 1)))))]
-                [[(- rmax) rmax] [(- rmax) rmax] [(y-range 0) (y-range 1)]])
-    "move" (let [b (auto-bounds (:a node))
-                 dx (:dx node) dy (:dy node) dz (:dz node)]
-             [[(+ (get-in b [0 0]) dx) (+ (get-in b [0 1]) dx)]
-              [(+ (get-in b [1 0]) dy) (+ (get-in b [1 1]) dy)]
-              [(+ (get-in b [2 0]) dz) (+ (get-in b [2 1]) dz)]])
-    "scale" (let [b (auto-bounds (:a node))
-                  sx (Math/abs (:sx node)) sy (Math/abs (:sy node)) sz (Math/abs (:sz node))]
-              [[(* (get-in b [0 0]) sx) (* (get-in b [0 1]) sx)]
-               [(* (get-in b [1 0]) sy) (* (get-in b [1 1]) sy)]
-               [(* (get-in b [2 0]) sz) (* (get-in b [2 1]) sz)]])
-    "rotate" (let [b (auto-bounds (:a node))
-                   ;; Conservative: use bounding sphere of the AABB
-                   r (Math/sqrt (+ (Math/pow (apply max (map #(Math/abs %) (b 0))) 2)
-                                   (Math/pow (apply max (map #(Math/abs %) (b 1))) 2)
-                                   (Math/pow (apply max (map #(Math/abs %) (b 2))) 2)))]
-               [[(- r) r] [(- r) r] [(- r) r]])
-    ;; Boolean/transform ops: union of child bounds
-    (let [kids (keep #(get node %) [:a :b])
-          child-bounds (map auto-bounds kids)]
-      (if (seq child-bounds)
-        (reduce (fn [acc cb]
-                  [[(min (get-in acc [0 0]) (get-in cb [0 0]))
-                    (max (get-in acc [0 1]) (get-in cb [0 1]))]
-                   [(min (get-in acc [1 0]) (get-in cb [1 0]))
-                    (max (get-in acc [1 1]) (get-in cb [1 1]))]
-                   [(min (get-in acc [2 0]) (get-in cb [2 0]))
-                    (max (get-in acc [2 1]) (get-in cb [2 1]))]])
-                child-bounds)
-        [[-10 10] [-10 10] [-10 10]]))))
+  (if (and (:x-range node) (:y-range node))
+    ;; Revolve bounds hints (sdf-revolve attaches :x-range/:y-range)
+    (let [xr (:x-range node) yr (:y-range node)
+          rmax (* 1.1 (max (Math/abs (double (xr 0))) (Math/abs (double (xr 1)))))]
+      [[(- rmax) rmax] [(- rmax) rmax] [(yr 0) (yr 1)]])
+    ;; Normal dispatch by op
+    (let [op (:op node)]
+      (cond
+        (= op "sphere")
+        (let [r (:r node) m (* r 1.2)]
+          [[(- m) m] [(- m) m] [(- m) m]])
+
+        (or (= op "box") (= op "rounded-box"))
+        (let [hx (* (:sx node) 0.6) hy (* (:sy node) 0.6) hz (* (:sz node) 0.6)]
+          [[(- hx) hx] [(- hy) hy] [(- hz) hz]])
+
+        (= op "cyl")
+        (let [r (* (:r node) 1.2) hh (* (:h node) 0.6)]
+          [[(- r) r] [(- r) r] [(- hh) hh]])
+
+        (= op "move")
+        (let [b (auto-bounds (:a node))
+              dx (:dx node) dy (:dy node) dz (:dz node)]
+          [[(+ (get-in b [0 0]) dx) (+ (get-in b [0 1]) dx)]
+           [(+ (get-in b [1 0]) dy) (+ (get-in b [1 1]) dy)]
+           [(+ (get-in b [2 0]) dz) (+ (get-in b [2 1]) dz)]])
+
+        (= op "scale")
+        (let [b (auto-bounds (:a node))
+              sx (Math/abs (:sx node)) sy (Math/abs (:sy node)) sz (Math/abs (:sz node))]
+          [[(* (get-in b [0 0]) sx) (* (get-in b [0 1]) sx)]
+           [(* (get-in b [1 0]) sy) (* (get-in b [1 1]) sy)]
+           [(* (get-in b [2 0]) sz) (* (get-in b [2 1]) sz)]])
+
+        (= op "rotate")
+        (let [b (auto-bounds (:a node))
+              r (Math/sqrt (+ (Math/pow (apply max (map #(Math/abs %) (b 0))) 2)
+                              (Math/pow (apply max (map #(Math/abs %) (b 1))) 2)
+                              (Math/pow (apply max (map #(Math/abs %) (b 2))) 2)))]
+          [[(- r) r] [(- r) r] [(- r) r]])
+
+        ;; Default: union of child bounds
+        :else
+        (let [kids (keep #(get node %) [:a :b])
+              child-bounds (map auto-bounds kids)]
+          (if (seq child-bounds)
+            (reduce (fn [acc cb]
+                      [[(min (get-in acc [0 0]) (get-in cb [0 0]))
+                        (max (get-in acc [0 1]) (get-in cb [0 1]))]
+                       [(min (get-in acc [1 0]) (get-in cb [1 0]))
+                        (max (get-in acc [1 1]) (get-in cb [1 1]))]
+                       [(min (get-in acc [2 0]) (get-in cb [2 0]))
+                        (max (get-in acc [2 1]) (get-in cb [2 1]))]])
+                    child-bounds)
+            [[-10 10] [-10 10] [-10 10]]))))))
 
 (defn mesh-bounds
   "Get bounds from a mesh's vertices."
