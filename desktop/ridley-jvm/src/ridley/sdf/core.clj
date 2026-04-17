@@ -344,7 +344,7 @@
   (if (and (:x-range node) (:y-range node))
     ;; Revolve bounds hints (sdf-revolve attaches :x-range/:y-range)
     (let [xr (:x-range node) yr (:y-range node)
-          rmax (* 1.1 (max (Math/abs (double (xr 0))) (Math/abs (double (xr 1)))))]
+          rmax (* 1.3 (max (Math/abs (double (xr 0))) (Math/abs (double (xr 1)))))]
       [[(- rmax) rmax] [(- rmax) rmax] [(yr 0) (yr 1)]])
     ;; Normal dispatch by op
     (let [op (:op node)]
