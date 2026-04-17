@@ -24,6 +24,15 @@
       (reset! jvm-available? false)
       false)))
 
+(defn cancel!
+  "Cancel the current eval on the JVM sidecar."
+  []
+  (try
+    (let [xhr (js/XMLHttpRequest.)]
+      (.open xhr "POST" (str server-url "/cancel") true) ;; async
+      (.send xhr))
+    (catch :default _)))
+
 (defn- parse-meshes-from-buffer
   "Parse mesh data from an ArrayBuffer using metadata (vertex/face counts).
    meshes-meta is a seq of [name {:vertex_count n :face_count m :creation-pose cp}].

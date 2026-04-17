@@ -25,7 +25,9 @@
                         {:body body-str
                          :content-type :json
                          :as :string
-                         :throw-exceptions false})]
+                         :throw-exceptions false
+                         :socket-timeout 60000
+                         :connection-timeout 5000})]
     (if (= 200 (:status resp))
       (json->mesh (:body resp))
       (throw (Exception. (str "Rust server " endpoint " returned " (:status resp) ": " (:body resp)))))))

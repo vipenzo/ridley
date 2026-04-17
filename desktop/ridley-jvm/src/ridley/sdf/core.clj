@@ -430,7 +430,9 @@
                          {:body (json/write-str payload)
                           :content-type :json
                           :as :string
-                          :throw-exceptions false})]
+                          :throw-exceptions false
+                          :socket-timeout 60000      ;; 60s read timeout
+                          :connection-timeout 5000})] ;; 5s connect timeout
      (if (= 200 (:status resp))
        (let [data (json/read-str (:body resp) :key-fn keyword)]
          {:type :mesh

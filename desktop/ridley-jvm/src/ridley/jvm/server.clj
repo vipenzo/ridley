@@ -18,6 +18,9 @@
 
 (def ^:private mesh-file-counter (atom 0))
 
+;; Current eval thread — used by /cancel to interrupt long-running evals
+(def ^:private current-eval-thread (atom nil))
+
 (defn- write-mesh-binary
   "Write all meshes to a single binary file. Returns the file path.
    Format: for each mesh, vertices (flat float64 LE) then faces (flat int32 LE),
@@ -193,6 +196,7 @@
     (and (= :post (:request-method request))
          (= "/eval-bin" (:uri request)))
     (try
+      (reset! current-eval-thread (Thread/currentThread))
       (handle-eval-bin (slurp (:body request)))
       (catch Exception e
         (let [root (loop [ex e]
@@ -210,6 +214,7 @@
     (and (= :post (:request-method request))
          (= "/eval-repl" (:uri request)))
     (try
+      (reset! current-eval-thread (Thread/currentThread))
       (handle-eval-repl (slurp (:body request)))
       (catch Exception e
         (let [root (loop [ex e]
@@ -324,6 +329,16 @@
       (catch Exception e
         (cors-headers {:status 500
                        :body (json/write-str {:error (.getMessage e)})})))
+
+    ;; Cancel current eval
+    (and (= :post (:request-method request))
+         (= "/cancel" (:uri request)))
+    (let [t @current-eval-thread]
+      (if (and t (.isAlive t))
+        (do (.interrupt t)
+            (println "cancel: interrupted eval thread")
+            (cors-headers {:status 200 :body (json/write-str {:cancelled true})}))
+        (cors-headers {:status 200 :body (json/write-str {:cancelled false :reason "no active eval"})})))
 
     ;; Ping
     (= "/ping" (:uri request))
