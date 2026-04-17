@@ -41,6 +41,7 @@ extern "C" {
     fn libfive_tree_z() -> LibfiveTree;
     fn libfive_tree_unary(op: i32, a: LibfiveTree) -> LibfiveTree;
     fn libfive_tree_binary(op: i32, a: LibfiveTree, b: LibfiveTree) -> LibfiveTree;
+    fn libfive_tree_remap(p: LibfiveTree, x: LibfiveTree, y: LibfiveTree, z: LibfiveTree) -> LibfiveTree;
     fn libfive_tree_delete(t: LibfiveTree);
     fn libfive_tree_render_mesh(t: LibfiveTree, region: LibfiveRegion3, resolution: f32) -> *mut LibfiveMesh;
     fn libfive_mesh_delete(m: *mut LibfiveMesh);
@@ -172,6 +173,10 @@ pub enum SdfNode {
     Unary { fn_name: String, a: std::boxed::Box<SdfNode> },
     #[serde(rename = "binary")]
     Binary { fn_name: String, a: std::boxed::Box<SdfNode>, b: std::boxed::Box<SdfNode> },
+    /// Revolve a 2D SDF (in the X/Y plane) around the Z axis.
+    /// Maps X → sqrt(X²+Y²), Y → Z, Z → 0 in the child tree.
+    #[serde(rename = "revolve")]
+    Revolve { a: std::boxed::Box<SdfNode> },
 }
 
 #[derive(Debug, Deserialize)]
@@ -257,6 +262,22 @@ fn build_tree(node: &SdfNode) -> LibfiveTree {
                 let op = binary_opcode(fn_name)
                     .unwrap_or_else(|| panic!("Unknown binary op: {}", fn_name));
                 libfive_tree_binary(op, build_tree(a), build_tree(b))
+            }
+            SdfNode::Revolve { a } => {
+                // Build the 2D SDF child, then remap variables:
+                //   X → sqrt(X² + Y²)   (rho = cylindrical radius)
+                //   Y → Z               (height)
+                //   Z → 0               (unused in 2D)
+                // This produces a 3D solid of revolution around the Z axis.
+                let child = build_tree(a);
+                let x = libfive_tree_x();
+                let y = libfive_tree_y();
+                let z = libfive_tree_z();
+                let x2 = libfive_tree_binary(OP_MUL, x, x);
+                let y2 = libfive_tree_binary(OP_MUL, y, y);
+                let sum = libfive_tree_binary(OP_ADD, x2, y2);
+                let rho = libfive_tree_unary(OP_SQRT, sum);
+                libfive_tree_remap(child, rho, z, tc(0.0))
             }
         }
     }

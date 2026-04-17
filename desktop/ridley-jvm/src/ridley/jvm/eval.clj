@@ -1691,6 +1691,7 @@
    'sdf-morph        sdf/sdf-morph
    'sdf-move         sdf/sdf-move
    'sdf-rotate       sdf/sdf-rotate
+   'sdf-revolve      sdf/sdf-revolve
    'sdf-scale        sdf/sdf-scale
    'sdf->mesh        sdf/materialize
    'sdf-formula      sdf/compile-expr

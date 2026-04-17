@@ -1741,6 +1741,7 @@ These operations leverage the implicit representation and have no direct mesh eq
 | `(sdf-rotate node axis angle)` | Rotate around axis (`:x` `:y` `:z`) by angle in degrees |
 | `(sdf-scale node s)` | Uniform scale |
 | `(sdf-scale node sx sy sz)` | Per-axis scale |
+| `(sdf-revolve node-2d)` | Revolve a 2D SDF (X=radius, Y=height) around the Z axis into a 3D solid |
 
 ### Materialization
 
@@ -1918,6 +1919,19 @@ These are infinite — use `sdf-difference` to punch holes, or `sdf-intersection
 
 ;; Scaled cylinder (elliptical cross-section)
 (register ellip (sdf-scale (sdf-cyl 10 20) 2 1 1))
+
+;; Torus via sdf-revolve: circle profile at distance 10 from Z axis
+(register torus
+  (sdf-revolve
+    (sdf-formula '(- (sqrt (+ (* (- x 10) (- x 10)) (* y y))) 3))))
+
+;; Bowl/vase via sdf-revolve: curved profile as 2D SDF
+;; X = radial distance, Y = height
+(register vase
+  (sdf-shell
+    (sdf-revolve
+      (sdf-formula '(- x (+ 30 (* 10 (cos (* y 0.05)))))))
+    2))
 
 ;; Explicit high-res meshing
 (register hires (sdf->mesh (sdf-sphere 10) [[-12 12] [-12 12] [-12 12]] 30))
