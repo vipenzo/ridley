@@ -499,7 +499,13 @@
    Resolution comes from *sdf-resolution* (set by the eval engine from turtle state)."
   ([x] (if (sdf-node? x)
          (let [bounds (auto-bounds x)
-               res (resolution-for-bounds bounds *sdf-resolution* x)]
+               res (resolution-for-bounds bounds *sdf-resolution* x)
+               spans (map (fn [[lo hi]] (- hi lo)) bounds)
+               voxels (reduce * (map #(* res %) spans))]
+           (when (> voxels 5e8)
+             (println (format "[warn] SDF meshing: %.0fM voxels (resolution may be too high for this object size). Try (resolution :n %d)."
+                              (/ voxels 1e6)
+                              (max 16 (int (* 0.5 *sdf-resolution*))))))
            (materialize x bounds res))
          x))
   ([x reference-mesh]
