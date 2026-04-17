@@ -170,159 +170,202 @@
 (def channel-r 1.08)      ; raggio ~1.08mm
 
 (defn tile-outline
-  "Contorno ottagonale del tile NxM celle, centrato all'origine."
-  [x-cells y-cells]
-  (let [w (* x-cells cell-size)
-        h (* y-cells cell-size)
-        ox (/ w 2)
-        oy (/ h 2)]
-    (poly (- (- w size-offset) ox) (- h oy)
-          (- size-offset ox)       (- h oy)
-          (- 0 ox)                 (- (- h size-offset) oy)
-          (- 0 ox)                 (- size-offset oy)
-          (- size-offset ox)       (- 0 oy)
-          (- (- w size-offset) ox) (- 0 oy)
-          (- w ox)                 (- size-offset oy)
-          (- w ox)                 (- (- h size-offset) oy))))
+  "Contorno del tile NxM celle, centrato all'origine.
+   edges: set of border edges #{:top :bottom :left :right}.
+   Corners are clipped (octagonal) only where both adjacent edges have borders.
+   Sides without borders extend to the full rectangle."
+  ([x-cells y-cells] (tile-outline x-cells y-cells #{:top :bottom :left :right}))
+  ([x-cells y-cells edges]
+   (let [w (* x-cells cell-size)
+         h (* y-cells cell-size)
+         ox (/ w 2)
+         oy (/ h 2)
+         ;; Corner clips: only if BOTH adjacent edges have borders
+         tr? (and (:top edges) (:right edges))     ; top-right
+         tl? (and (:top edges) (:left edges))      ; top-left
+         bl? (and (:bottom edges) (:left edges))    ; bottom-left
+         br? (and (:bottom edges) (:right edges))   ; bottom-right
+         ;; Build polygon points clockwise from top-right going to top-left
+         pts (vec (concat
+                    ;; Top edge (right to left)
+                   (if tr? [[(- (- w size-offset) ox) (- h oy)]]
+                       [[(- w ox) (- h oy)]])
+                   (if tl? [[(- size-offset ox) (- h oy)]]
+                       [[(- 0 ox) (- h oy)]])
+                    ;; Left edge (top to bottom)
+                   (if tl? [[(- 0 ox) (- (- h size-offset) oy)]]
+                       [])
+                   (if bl? [[(- 0 ox) (- size-offset oy)]]
+                       [[(- 0 ox) (- 0 oy)]])
+                    ;; Bottom edge (left to right)
+                   (if bl? [[(- size-offset ox) (- 0 oy)]]
+                       [])
+                   (if br? [[(- (- w size-offset) ox) (- 0 oy)]]
+                       [[(- w ox) (- 0 oy)]])
+                    ;; Right edge (bottom to top)
+                   (if br? [[(- w ox) (- size-offset oy)]]
+                       [])
+                   (if tr? [[(- w ox) (- (- h size-offset) oy)]]
+                       [])))]
+     (apply poly (mapcat identity pts)))))
 
 (defn multiboard-single-tile
   "Genera un tile Multiboard NxM centrato all'origine.
-   Blocco solido con multihole, peg hole, border slot e canali."
-  [x-cells y-cells]
-  (let [w (* x-cells cell-size)
-        h (* y-cells cell-size)
-        ox (/ w 2)
-        oy (/ h 2)
-        ;; 1. Blocco solido
-        base (extrude (tile-outline x-cells y-cells) (f height))
-        ;; 2. Multihole + thread per ogni cella
-        multiholes
-        (for [i (range x-cells)
-              j (range y-cells)]
-          (let [cx (- (+ (* i cell-size) (/ cell-size 2)) ox)
-                cy (- (+ (* j cell-size) (/ cell-size 2)) oy)]
-            [(attach multihole-base   (rt cx) (u cy))
-             (attach multihole-thread (rt cx) (u cy))]))
-        ;; 3. Peg holes solo ai vertici interni
-        peg-holes
-        (for [i (range 1 x-cells)
-              j (range 1 y-cells)]
-          (let [px (- (* i cell-size) ox)
-                py (- (* j cell-size) oy)]
-            [(attach peg-hole-base   (rt px) (u py))
-             (attach peg-hole-thread (rt px) (u py))]))
-        ;; 4. Border slots a T: collo stretto + camera larga
-        ;;    box(sx sy sz) → sx=right(Y), sy=up(Z), sz=heading(X)
-        x-bounds (for [i (range 1 x-cells)] (- (* i cell-size) ox))
-        y-bounds (for [j (range 1 y-cells)] (- (* j cell-size) oy))
-        ;; Per ogni slot: 2 box (collo + camera) uniti
-        ;; Right edge slots
-        right-slots
-        (mapcat identity
-                (for [yb y-bounds]
-                  [(attach (box slot-neck-depth slot-neck-width slot-height)
-                           (f slot-h-center)
-                           (rt (- ox (/ slot-neck-depth 2)))
-                           (u yb))
-                   (attach (box slot-head-depth slot-head-width slot-height)
-                           (f slot-h-center)
-                           (rt (- ox slot-neck-depth (/ slot-head-depth 2)))
-                           (u yb))]))
-        ;; Left edge slots
-        left-slots
-        (mapcat identity
-                (for [yb y-bounds]
-                  [(attach (box slot-neck-depth slot-neck-width slot-height)
-                           (f slot-h-center)
-                           (rt (- (/ slot-neck-depth 2) ox))
-                           (u yb))
-                   (attach (box slot-head-depth slot-head-width slot-height)
-                           (f slot-h-center)
-                           (rt (+ (- ox) slot-neck-depth (/ slot-head-depth 2)))
-                           (u yb))]))
-        ;; Top edge slots
-        top-slots
-        (mapcat identity
-                (for [xb x-bounds]
-                  [(attach (box slot-neck-width slot-neck-depth slot-height)
-                           (f slot-h-center)
-                           (rt xb)
-                           (u (- oy (/ slot-neck-depth 2))))
-                   (attach (box slot-head-width slot-head-depth slot-height)
-                           (f slot-h-center)
-                           (rt xb)
-                           (u (- oy slot-neck-depth (/ slot-head-depth 2))))]))
-        ;; Bottom edge slots
-        bottom-slots
-        (mapcat identity
-                (for [xb x-bounds]
-                  [(attach (box slot-neck-width slot-neck-depth slot-height)
-                           (f slot-h-center)
-                           (rt xb)
-                           (u (- (/ slot-neck-depth 2) oy)))
-                   (attach (box slot-head-width slot-head-depth slot-height)
-                           (f slot-h-center)
-                           (rt xb)
-                           (u (+ (- oy) slot-neck-depth (/ slot-head-depth 2))))]))
-        ;; 5. Canali cilindrici (1 per lato, tra primo e ultimo slot)
-        ;;    Posizionato a ~3.2mm dal bordo esterno
-        ch-offset 3.2           ; distanza dal bordo
-        ch-margin (* size-offset 1.5)  ; margine dagli angoli
-        ch-y-len (- h (* 2 ch-margin))  ; più corto: si ferma prima della diagonale
-        ch-x-len (- w (* 2 ch-margin))
-        ch-right  (attach (cyl channel-r ch-y-len) (f slot-h-center)
-                          (rt (- ox ch-offset)) (tv 90))
-        ch-left   (attach (cyl channel-r ch-y-len) (f slot-h-center)
-                          (rt (- ch-offset ox)) (tv 90))
-        ch-top    (attach (cyl channel-r ch-x-len) (f slot-h-center)
-                          (u (- oy ch-offset)) (tv -90) (th 90))
-        ch-bottom (attach (cyl channel-r ch-x-len) (f slot-h-center)
-                          (u (- ch-offset oy)) (tv -90) (th 90))
-        ;; 6. Corner slots (meno profondi, sulla faccia diagonale dell'ottagono)
-        ;;    Ruotati di 45° per allinearsi alla diagonale
-        corner-w 7.0           ; lunghezza lungo la diagonale
-        corner-d 0.8 ; profondità (appena una tacca, ~diametro canale in larghezza)
-        so2 (* size-offset 0.5) ; metà offset per centrare sulla diagonale
-        hhh (* slot-height 0.7)
-        corners
-        [;; Top-right diagonal
-         (attach (box corner-w corner-d hhh)
-                 (f slot-h-center)
-                 (rt (- ox so2)) (u (- oy so2)) (tr 45))
-         ;; Top-left diagonal
-         (attach (box corner-w corner-d hhh)
-                 (f slot-h-center)
-                 (rt (- so2 ox)) (u (- oy so2)) (tr -45))
-         ;; Bottom-left diagonal
-         (attach (box corner-w corner-d hhh)
-                 (f slot-h-center)
-                 (rt (- so2 ox)) (u (- so2 oy)) (tr 45))
-         ;; Bottom-right diagonal
-         (attach (box corner-w corner-d hhh)
-                 (f slot-h-center)
-                 (rt (- ox so2)) (u (- so2 oy)) (tr -45))]
-        ;; Unisci tutti i cutter
-        all-cutters (vec (concat
-                          (mapcat identity multiholes)
-                          (mapcat identity peg-holes)
-                          right-slots left-slots top-slots bottom-slots
-                          [ch-right ch-left ch-top ch-bottom]
-                          corners))
-        cutter (mesh-union all-cutters)]
-    (attach (mesh-difference base cutter) (tv 90))))
+   Blocco solido con multihole, peg hole, border slot e canali.
+   edges: set of border edges #{:top :bottom :left :right} (default: all 4).
+   Edges without borders get no slots, channels, or corner clips —
+   the tile extends to the full rectangle for seamless joining.
+
+   Tile types:
+   - #{:top :bottom :left :right} — standalone tile (default)
+   - #{:top :left}                — top-left corner
+   - #{:top}                      — top edge (middle)
+   - #{}                          — center tile (no borders)"
+  ([x-cells y-cells] (multiboard-single-tile x-cells y-cells #{:top :bottom :left :right}))
+  ([x-cells y-cells edges]
+   (let [edges (set edges)
+         w (* x-cells cell-size)
+         h (* y-cells cell-size)
+         ox (/ w 2)
+         oy (/ h 2)
+         ;; 1. Blocco solido (outline depends on which edges have borders)
+         base (extrude (tile-outline x-cells y-cells edges) (f height))
+         ;; 2. Multihole + thread per ogni cella
+         multiholes
+         (for [i (range x-cells)
+               j (range y-cells)]
+           (let [cx (- (+ (* i cell-size) (/ cell-size 2)) ox)
+                 cy (- (+ (* j cell-size) (/ cell-size 2)) oy)]
+             [(attach multihole-base   (rt cx) (u cy))
+              (attach multihole-thread (rt cx) (u cy))]))
+         ;; 3. Peg holes solo ai vertici interni
+         peg-holes
+         (for [i (range 1 x-cells)
+               j (range 1 y-cells)]
+           (let [px (- (* i cell-size) ox)
+                 py (- (* j cell-size) oy)]
+             [(attach peg-hole-base   (rt px) (u py))
+              (attach peg-hole-thread (rt px) (u py))]))
+         ;; 4. Border slots a T (only on edges with borders)
+         x-bounds (for [i (range 1 x-cells)] (- (* i cell-size) ox))
+         y-bounds (for [j (range 1 y-cells)] (- (* j cell-size) oy))
+         right-slots
+         (when (:right edges)
+           (mapcat identity
+                   (for [yb y-bounds]
+                     [(attach (box slot-neck-depth slot-neck-width slot-height)
+                              (f slot-h-center)
+                              (rt (- ox (/ slot-neck-depth 2)))
+                              (u yb))
+                      (attach (box slot-head-depth slot-head-width slot-height)
+                              (f slot-h-center)
+                              (rt (- ox slot-neck-depth (/ slot-head-depth 2)))
+                              (u yb))])))
+         left-slots
+         (when (:left edges)
+           (mapcat identity
+                   (for [yb y-bounds]
+                     [(attach (box slot-neck-depth slot-neck-width slot-height)
+                              (f slot-h-center)
+                              (rt (- (/ slot-neck-depth 2) ox))
+                              (u yb))
+                      (attach (box slot-head-depth slot-head-width slot-height)
+                              (f slot-h-center)
+                              (rt (+ (- ox) slot-neck-depth (/ slot-head-depth 2)))
+                              (u yb))])))
+         top-slots
+         (when (:top edges)
+           (mapcat identity
+                   (for [xb x-bounds]
+                     [(attach (box slot-neck-width slot-neck-depth slot-height)
+                              (f slot-h-center)
+                              (rt xb)
+                              (u (- oy (/ slot-neck-depth 2))))
+                      (attach (box slot-head-width slot-head-depth slot-height)
+                              (f slot-h-center)
+                              (rt xb)
+                              (u (- oy slot-neck-depth (/ slot-head-depth 2))))])))
+         bottom-slots
+         (when (:bottom edges)
+           (mapcat identity
+                   (for [xb x-bounds]
+                     [(attach (box slot-neck-width slot-neck-depth slot-height)
+                              (f slot-h-center)
+                              (rt xb)
+                              (u (- (/ slot-neck-depth 2) oy)))
+                      (attach (box slot-head-width slot-head-depth slot-height)
+                              (f slot-h-center)
+                              (rt xb)
+                              (u (+ (- oy) slot-neck-depth (/ slot-head-depth 2))))])))
+         ;; 5. Channels (only on edges with borders)
+         ch-offset 3.2
+         ch-margin (* size-offset 1.5)
+         ch-y-len (- h (* 2 ch-margin))
+         ch-x-len (- w (* 2 ch-margin))
+         channels
+         (vec (concat
+               (when (:right edges)
+                 [(attach (cyl channel-r ch-y-len) (f slot-h-center)
+                          (rt (- ox ch-offset)) (tv 90))])
+               (when (:left edges)
+                 [(attach (cyl channel-r ch-y-len) (f slot-h-center)
+                          (rt (- ch-offset ox)) (tv 90))])
+               (when (:top edges)
+                 [(attach (cyl channel-r ch-x-len) (f slot-h-center)
+                          (u (- oy ch-offset)) (tv -90) (th 90))])
+               (when (:bottom edges)
+                 [(attach (cyl channel-r ch-x-len) (f slot-h-center)
+                          (u (- ch-offset oy)) (tv -90) (th 90))])))
+         ;; 6. Corner slots (only where BOTH adjacent edges have borders)
+         corner-w 7.0
+         corner-d 0.8
+         so2 (* size-offset 0.5)
+         hhh (* slot-height 0.7)
+         corners
+         (vec (concat
+               (when (and (:top edges) (:right edges))
+                 [(attach (box corner-w corner-d hhh)
+                          (f slot-h-center)
+                          (rt (- ox so2)) (u (- oy so2)) (tr 45))])
+               (when (and (:top edges) (:left edges))
+                 [(attach (box corner-w corner-d hhh)
+                          (f slot-h-center)
+                          (rt (- so2 ox)) (u (- oy so2)) (tr -45))])
+               (when (and (:bottom edges) (:left edges))
+                 [(attach (box corner-w corner-d hhh)
+                          (f slot-h-center)
+                          (rt (- so2 ox)) (u (- so2 oy)) (tr 45))])
+               (when (and (:bottom edges) (:right edges))
+                 [(attach (box corner-w corner-d hhh)
+                          (f slot-h-center)
+                          (rt (- ox so2)) (u (- so2 oy)) (tr -45))])))
+         ;; Unisci tutti i cutter
+         all-cutters (vec (concat
+                           (mapcat identity multiholes)
+                           (mapcat identity peg-holes)
+                           right-slots left-slots top-slots bottom-slots
+                           channels corners))
+         cutter (mesh-union all-cutters)]
+     (attach (mesh-difference base cutter) (tv 90)))))
 
 (defn multiboard-tile
   "Genera uno stack di tile Multiboard per la stampa.
-   (multiboard-tile 4 2)           → singolo tile
-   (multiboard-tile 4 2 3)         → 3 tile impilati (gap 0.2mm)
-   (multiboard-tile 4 2 3 0.3)     → 3 tile impilati (gap 0.3mm)"
+   edges: set of border sides (default all 4).
+   (multiboard-tile 4 2)                              → standalone tile
+   (multiboard-tile 4 2 #{:top :left})                → corner tile
+   (multiboard-tile 4 2 #{:top})                      → edge tile
+   (multiboard-tile 4 2 #{})                           → center tile (no borders)
+   (multiboard-tile 4 2 #{:top :left} 3)              → 3 stacked corner tiles
+   (multiboard-tile 4 2 #{:top :left} 3 0.3)          → stacked with 0.3mm gap"
   ([x-cells y-cells]
    (multiboard-single-tile x-cells y-cells))
-  ([x-cells y-cells n-layers]
-   (multiboard-tile x-cells y-cells n-layers 0.2))
-  ([x-cells y-cells n-layers separation]
-   (let [tile (multiboard-single-tile x-cells y-cells)
-         step (+ height separation)  ; altezza tile + gap
+  ([x-cells y-cells edges]
+   (multiboard-single-tile x-cells y-cells edges))
+  ([x-cells y-cells edges n-layers]
+   (multiboard-tile x-cells y-cells edges n-layers 0.2))
+  ([x-cells y-cells edges n-layers separation]
+   (let [tile (multiboard-single-tile x-cells y-cells edges)
+         step (+ height separation)
          tiles (for [i (range n-layers)]
                  (if (zero? i)
                    tile
@@ -330,8 +373,11 @@
      (concat-meshes (vec tiles)))))
 
 ;; ── Preview ─────────────────────────────────────────────────────
-;; Singola cella (per test veloci)
-;; (register Cell (multiboard-cell true))
-
-(register Tile (bench "Wasm" (multiboard-tile 4 4)))
+;; Standalone tile (all borders)
+(register Tile (bench "tile" (multiboard-tile 4 4)))
 (color :Tile 0xffffff)
+
+;; Examples of edge/corner/center tiles:
+;; (register Corner  (multiboard-tile 4 4 #{:top :left}))        ; corner
+;; (register Edge    (multiboard-tile 4 4 #{:top}))              ; edge
+;; (register Center  (multiboard-tile 4 4 #{}))                  ; center (no borders)
