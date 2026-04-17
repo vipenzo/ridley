@@ -62,9 +62,15 @@
 (defn sdf-revolve
   "Revolve a 2D SDF (in the X/Y plane) around the Z axis to produce a 3D solid.
    The 2D SDF should treat X as radius and Y as height.
-   Internally remaps the SDF: X → sqrt(X²+Y²), Y → Z, Z → 0."
-  [node-2d]
-  {:op "revolve" :a node-2d})
+   Internally remaps the SDF: X → sqrt(X²+Y²), Y → Z, Z → 0.
+
+   Optional :x-range [xmin xmax] and :y-range [ymin ymax] specify the
+   bounding region of the 2D profile (needed for formulas which have
+   no intrinsic bounds). If omitted, auto-bounds of the child are used."
+  [node-2d & {:keys [x-range y-range]}]
+  (cond-> {:op "revolve" :a node-2d}
+    x-range (assoc :x-range (mapv double x-range))
+    y-range (assoc :y-range (mapv double y-range))))
 
 (defn sdf-scale
   "Scale an SDF node. Can be called with uniform scale or per-axis."
@@ -306,11 +312,14 @@
     "cyl" (let [r (* (:r node) 1.2) hh (* (:h node) 0.6)]
             [[(- r) r] [(- r) r] [(- hh) hh]])
     "revolve" (let [b (auto-bounds (:a node))
+                    ;; Use explicit range hints if provided, otherwise child bounds
+                    x-range (or (:x-range node) (b 0))
+                    y-range (or (:y-range node) (b 1))
                     ;; 2D profile bounds: x = radial, y = height
                     ;; Revolved 3D bounds: x,y in [-rmax, rmax], z = original y
-                    rmax (max (Math/abs (double (get-in b [0 0])))
-                              (Math/abs (double (get-in b [0 1]))))]
-                [[(- rmax) rmax] [(- rmax) rmax] [(get-in b [1 0]) (get-in b [1 1])]])
+                    rmax (* 1.1 (max (Math/abs (double (x-range 0)))
+                                     (Math/abs (double (x-range 1)))))]
+                [[(- rmax) rmax] [(- rmax) rmax] [(y-range 0) (y-range 1)]])
     "move" (let [b (auto-bounds (:a node))
                  dx (:dx node) dy (:dy node) dz (:dz node)]
              [[(+ (get-in b [0 0]) dx) (+ (get-in b [0 1]) dx)]
