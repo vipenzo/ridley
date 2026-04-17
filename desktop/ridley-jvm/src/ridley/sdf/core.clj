@@ -486,9 +486,12 @@
         min-vpu (if (and min-feat (pos? min-feat))
                   (/ 3.0 min-feat)
                   0.0)
-        ;; Cap: never exceed 200 voxels on the longest axis
-        max-vpu (if (pos? max-span) (/ 200.0 max-span) 10.0)]
-    (min (max base-vpu min-vpu) max-vpu)))
+        ;; Cap the auto-boost only (don't override user-requested resolution).
+        ;; The boost (min-vpu) is capped at 200 voxels to prevent OOM.
+        ;; The user's base resolution (base-vpu) is never capped.
+        max-boost-vpu (if (pos? max-span) (/ 200.0 max-span) 10.0)
+        capped-boost (min min-vpu max-boost-vpu)]
+    (max base-vpu capped-boost)))
 
 (defn ensure-mesh
   "If x is an SDF node, materialize it. If it's already a mesh, return as-is.
