@@ -273,13 +273,17 @@
                (when (not (:right edges))
                  (for [j (range 1 y-cells)]
                    [(- w ox) (- (* j cell-size) oy)]))))
-         ;; Full-depth peg hole cutters on edge diamonds
-         ;; (drill through the half-height diamond completely)
+         ;; Edge peg cutters:
+         ;; - Full peg hole + thread through the bottom half (the half we keep)
+         ;; - Full diamond volume in top half (empty space for the adjacent
+         ;;   flipped tile's diamond to slot into)
          peg-holes-half
          (for [[px py] edge-peg-positions]
            [(attach peg-hole-base   (rt px) (u py))
-            (attach peg-hole-thread (rt px) (u py))])
-         ;; Diamond protrusions at half height
+            (attach peg-hole-thread (rt px) (u py))
+            ;; Cut the diamond volume in the top half (clear space for neighbor)
+            (attach (extrude peg-diamond (f (+ half-h 0.1))) (f half-h) (rt px) (u py))])
+         ;; Diamond protrusions at half height (the bottom half we add)
          peg-protrusions
          (for [[px py] edge-peg-positions]
            (attach (extrude peg-diamond (f half-h)) (rt px) (u py)))
