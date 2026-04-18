@@ -290,33 +290,34 @@
          ;; 4. Border slots a T (only on edges with borders)
          x-bounds (for [i (range 1 x-cells)] (- (* i cell-size) ox))
          y-bounds (for [j (range 1 y-cells)] (- (* j cell-size) oy))
-         ;; Right/left slots: after (tv 90), rt=Y(horiz), u→-X(depth), f→Z(vert).
-         ;; box(sx=rt, sy=u, sz=f). Slot width must go in sz (vertical),
-         ;; slot height (thickness) in sy (depth into tile).
+         ;; Right/left slots: after (tv 90), f→Z(vert), u→-X(depth).
+         ;; Position along the edge uses (f yb) not (u yb), and
+         ;; tile-thickness position uses (u slot-h-center) not (f ...).
+         ;; box(sx=rt, sy=u, sz=f): depth in sx, thickness in sy, span in sz.
          right-slots
          (when (:right edges)
            (mapcat identity
                    (for [yb y-bounds]
                      [(attach (box slot-neck-depth slot-height slot-neck-width)
-                              (f slot-h-center)
+                              (u slot-h-center)
                               (rt (- ox (/ slot-neck-depth 2)))
-                              (u yb))
+                              (f yb))
                       (attach (box slot-head-depth slot-height slot-head-width)
-                              (f slot-h-center)
+                              (u slot-h-center)
                               (rt (- ox slot-neck-depth (/ slot-head-depth 2)))
-                              (u yb))])))
+                              (f yb))])))
          left-slots
          (when (:left edges)
            (mapcat identity
                    (for [yb y-bounds]
                      [(attach (box slot-neck-depth slot-height slot-neck-width)
-                              (f slot-h-center)
+                              (u slot-h-center)
                               (rt (- (/ slot-neck-depth 2) ox))
-                              (u yb))
+                              (f yb))
                       (attach (box slot-head-depth slot-height slot-head-width)
-                              (f slot-h-center)
+                              (u slot-h-center)
                               (rt (+ (- ox) slot-neck-depth (/ slot-head-depth 2)))
-                              (u yb))])))
+                              (f yb))])))
          top-slots
          (when (:top edges)
            (mapcat identity
