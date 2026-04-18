@@ -243,13 +243,9 @@
               (attach multihole-thread (rt cx) (u cy))]))
          ;; 3. Peg holes
          ;; Internal vertices: full-depth peg holes
-         ;; Edge vertices on open borders: half-height with diamond protrusion
+         ;; Edge vertices on open borders: half-height diamond protrusion
+         ;; with full-depth peg hole drilled through
          half-h (/ height 2)
-         peg-hole-base-half  (extrude (circle peg-hole-r 32) (f (+ half-h 0.1)))
-         peg-hole-thread-half
-         (trapz-thread sm-d1 sm-d2 sm-h1 sm-h2
-                       (+ half-h sm-h2) sm-pitch sm-fn
-                       (/ sm-h2 -2))
          peg-diamond (poly (- size-offset) 0
                            0 (- size-offset)
                            size-offset 0
@@ -263,30 +259,26 @@
              [(attach peg-hole-base   (rt px) (u py))
               (attach peg-hole-thread (rt px) (u py))]))
          ;; Edge peg holes: vertices on open borders
-         ;; Include vertices on the tile boundary where that boundary has no border
          edge-peg-positions
          (vec (concat
-                ;; Bottom edge vertices (j=0, not on closed border)
                (when (not (:bottom edges))
                  (for [i (range 1 x-cells)]
                    [(- (* i cell-size) ox) (- oy)]))
-                ;; Top edge vertices (j=y-cells, not on closed border)
                (when (not (:top edges))
                  (for [i (range 1 x-cells)]
                    [(- (* i cell-size) ox) (- h oy)]))
-                ;; Left edge vertices (i=0, not on closed border)
                (when (not (:left edges))
                  (for [j (range 1 y-cells)]
                    [(- ox) (- (* j cell-size) oy)]))
-                ;; Right edge vertices (i=x-cells, not on closed border)
                (when (not (:right edges))
                  (for [j (range 1 y-cells)]
                    [(- w ox) (- (* j cell-size) oy)]))))
-         ;; Half-height peg hole cutters
+         ;; Full-depth peg hole cutters on edge diamonds
+         ;; (drill through the half-height diamond completely)
          peg-holes-half
          (for [[px py] edge-peg-positions]
-           [(attach peg-hole-base-half   (rt px) (u py))
-            (attach peg-hole-thread-half (rt px) (u py))])
+           [(attach peg-hole-base   (rt px) (u py))
+            (attach peg-hole-thread (rt px) (u py))])
          ;; Diamond protrusions at half height
          peg-protrusions
          (for [[px py] edge-peg-positions]
@@ -361,29 +353,6 @@
                (when (:bottom edges)
                  [(attach (cyl channel-r ch-x-len) (f slot-h-center)
                           (u (- ch-offset oy)) (tv -90) (th 90))])))
-         ;; 6. Corner slots (only where BOTH adjacent edges have borders)
-         corner-w 7.0
-         corner-d 0.8
-         so2 (* size-offset 0.5)
-         hhh (* slot-height 0.7)
-         corners
-         (vec (concat
-               (when (and (:top edges) (:right edges))
-                 [(attach (box corner-w corner-d hhh)
-                          (f slot-h-center)
-                          (rt (- ox so2)) (u (- oy so2)) (tr 45))])
-               (when (and (:top edges) (:left edges))
-                 [(attach (box corner-w corner-d hhh)
-                          (f slot-h-center)
-                          (rt (- so2 ox)) (u (- oy so2)) (tr -45))])
-               (when (and (:bottom edges) (:left edges))
-                 [(attach (box corner-w corner-d hhh)
-                          (f slot-h-center)
-                          (rt (- so2 ox)) (u (- so2 oy)) (tr 45))])
-               (when (and (:bottom edges) (:right edges))
-                 [(attach (box corner-w corner-d hhh)
-                          (f slot-h-center)
-                          (rt (- ox so2)) (u (- so2 oy)) (tr -45))])))
          ;; Add diamond protrusions to base for half peg holes
          protrusion-list (vec (filter some? peg-protrusions))
          base-with-protrusions
@@ -397,7 +366,7 @@
                            (mapcat identity peg-holes)
                            half-peg-cutters
                            right-slots left-slots top-slots bottom-slots
-                           channels corners))
+                           channels))
          cutter (mesh-union all-cutters)]
      (attach (mesh-difference base-with-protrusions cutter) (tv 90)))))
 
