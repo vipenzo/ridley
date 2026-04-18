@@ -180,32 +180,35 @@
          h (* y-cells cell-size)
          ox (/ w 2)
          oy (/ h 2)
+         so size-offset
          ;; Corner clips: only if BOTH adjacent edges have borders
-         tr? (and (:top edges) (:right edges))     ; top-right
-         tl? (and (:top edges) (:left edges))      ; top-left
-         bl? (and (:bottom edges) (:left edges))    ; bottom-left
-         br? (and (:bottom edges) (:right edges))   ; bottom-right
-         ;; Build polygon points clockwise from top-right going to top-left
+         tr? (and (:top edges) (:right edges))
+         tl? (and (:top edges) (:left edges))
+         bl? (and (:bottom edges) (:left edges))
+         br? (and (:bottom edges) (:right edges))
+         ;; Build polygon CW from top-right (same winding as original octagon).
+         ;; Top → Left → Bottom → Right, with corner clips where both
+         ;; adjacent edges have borders.
          pts (vec (concat
                     ;; Top edge (right to left)
-                   (if tr? [[(- (- w size-offset) ox) (- h oy)]]
+                   (if tr? [[(- (- w so) ox) (- h oy)]]
                        [[(- w ox) (- h oy)]])
-                   (if tl? [[(- size-offset ox) (- h oy)]]
+                   (if tl? [[(- so ox) (- h oy)]]
                        [[(- 0 ox) (- h oy)]])
                     ;; Left edge (top to bottom)
-                   (if tl? [[(- 0 ox) (- (- h size-offset) oy)]]
+                   (if tl? [[(- 0 ox) (- (- h so) oy)]]
                        [])
-                   (if bl? [[(- 0 ox) (- size-offset oy)]]
+                   (if bl? [[(- 0 ox) (- so oy)]]
                        [[(- 0 ox) (- 0 oy)]])
                     ;; Bottom edge (left to right)
-                   (if bl? [[(- size-offset ox) (- 0 oy)]]
+                   (if bl? [[(- so ox) (- 0 oy)]]
                        [])
-                   (if br? [[(- (- w size-offset) ox) (- 0 oy)]]
+                   (if br? [[(- (- w so) ox) (- 0 oy)]]
                        [[(- w ox) (- 0 oy)]])
                     ;; Right edge (bottom to top)
-                   (if br? [[(- w ox) (- size-offset oy)]]
+                   (if br? [[(- w ox) (- so oy)]]
                        [])
-                   (if tr? [[(- w ox) (- (- h size-offset) oy)]]
+                   (if tr? [[(- w ox) (- (- h so) oy)]]
                        [])))]
      (apply poly (mapcat identity pts)))))
 
@@ -238,7 +241,20 @@
                  cy (- (+ (* j cell-size) (/ cell-size 2)) oy)]
              [(attach multihole-base   (rt cx) (u cy))
               (attach multihole-thread (rt cx) (u cy))]))
-         ;; 3. Peg holes solo ai vertici interni
+         ;; 3. Peg holes
+         ;; Internal vertices: full-depth peg holes
+         ;; Edge vertices on open borders: half-height with diamond protrusion
+         half-h (/ height 2)
+         peg-hole-base-half  (extrude (circle peg-hole-r 32) (f (+ half-h 0.1)))
+         peg-hole-thread-half
+         (trapz-thread sm-d1 sm-d2 sm-h1 sm-h2
+                       (+ half-h sm-h2) sm-pitch sm-fn
+                       (/ sm-h2 -2))
+         peg-diamond (poly (- size-offset) 0
+                           0 (- size-offset)
+                           size-offset 0
+                           0 size-offset)
+         ;; Internal peg holes (same as before)
          peg-holes
          (for [i (range 1 x-cells)
                j (range 1 y-cells)]
@@ -246,6 +262,35 @@
                  py (- (* j cell-size) oy)]
              [(attach peg-hole-base   (rt px) (u py))
               (attach peg-hole-thread (rt px) (u py))]))
+         ;; Edge peg holes: vertices on open borders
+         ;; Include vertices on the tile boundary where that boundary has no border
+         edge-peg-positions
+         (vec (concat
+                ;; Bottom edge vertices (j=0, not on closed border)
+               (when (not (:bottom edges))
+                 (for [i (range 1 x-cells)]
+                   [(- (* i cell-size) ox) (- oy)]))
+                ;; Top edge vertices (j=y-cells, not on closed border)
+               (when (not (:top edges))
+                 (for [i (range 1 x-cells)]
+                   [(- (* i cell-size) ox) (- h oy)]))
+                ;; Left edge vertices (i=0, not on closed border)
+               (when (not (:left edges))
+                 (for [j (range 1 y-cells)]
+                   [(- ox) (- (* j cell-size) oy)]))
+                ;; Right edge vertices (i=x-cells, not on closed border)
+               (when (not (:right edges))
+                 (for [j (range 1 y-cells)]
+                   [(- w ox) (- (* j cell-size) oy)]))))
+         ;; Half-height peg hole cutters
+         peg-holes-half
+         (for [[px py] edge-peg-positions]
+           [(attach peg-hole-base-half   (rt px) (u py))
+            (attach peg-hole-thread-half (rt px) (u py))])
+         ;; Diamond protrusions at half height
+         peg-protrusions
+         (for [[px py] edge-peg-positions]
+           (attach (extrude peg-diamond (f half-h)) (rt px) (u py)))
          ;; 4. Border slots a T (only on edges with borders)
          x-bounds (for [i (range 1 x-cells)] (- (* i cell-size) ox))
          y-bounds (for [j (range 1 y-cells)] (- (* j cell-size) oy))
@@ -339,14 +384,22 @@
                  [(attach (box corner-w corner-d hhh)
                           (f slot-h-center)
                           (rt (- ox so2)) (u (- so2 oy)) (tr -45))])))
+         ;; Add diamond protrusions to base for half peg holes
+         protrusion-list (vec (filter some? peg-protrusions))
+         base-with-protrusions
+         (if (seq protrusion-list)
+           (apply mesh-union base protrusion-list)
+           base)
          ;; Unisci tutti i cutter
+         half-peg-cutters (vec (mapcat identity (filter some? peg-holes-half)))
          all-cutters (vec (concat
                            (mapcat identity multiholes)
                            (mapcat identity peg-holes)
+                           half-peg-cutters
                            right-slots left-slots top-slots bottom-slots
                            channels corners))
          cutter (mesh-union all-cutters)]
-     (attach (mesh-difference base cutter) (tv 90)))))
+     (attach (mesh-difference base-with-protrusions cutter) (tv 90)))))
 
 (defn multiboard-tile
   "Genera uno stack di tile Multiboard per la stampa.
