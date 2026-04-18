@@ -290,6 +290,9 @@
          ;; 4. Border slots a T (only on edges with borders)
          x-bounds (for [i (range 1 x-cells)] (- (* i cell-size) ox))
          y-bounds (for [j (range 1 y-cells)] (- (* j cell-size) oy))
+         ;; Right/left slots: after (tv 90), rt=Y(horiz), u→-X(depth), f→Z(vert).
+         ;; box(sx=rt, sy=u, sz=f). Slot width must go in sz (vertical),
+         ;; slot height (thickness) in sy (depth into tile).
          right-slots
          (when (:right edges)
            (mapcat identity
@@ -407,3 +410,10 @@
 ;; (register Corner  (multiboard-tile 4 4 #{:top :left}))        ; corner
 ;; (register Edge    (multiboard-tile 4 4 #{:top}))              ; edge
 ;; (register Center  (multiboard-tile 4 4 #{}))                  ; center (no borders)
+
+(comment
+  (register Tile (bench "tile" (multiboard-tile 4 4 #{:top :left})))
+  (register Tile2 (attach (bench "tile" (multiboard-tile 4 4 #{:top :left}))
+                          (rt (* 4 25))
+                          (th 180)
+                          (f -6.2))))
