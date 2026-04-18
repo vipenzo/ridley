@@ -298,11 +298,11 @@
          (when (:right edges)
            (mapcat identity
                    (for [yb y-bounds]
-                     [(attach (box slot-neck-depth slot-height slot-neck-width)
+                     [(attach (box slot-neck-depth slot-neck-width slot-height)
                               (u slot-h-center)
                               (rt (- ox (/ slot-neck-depth 2)))
                               (f yb))
-                      (attach (box slot-head-depth slot-height slot-head-width)
+                      (attach (box slot-head-depth slot-head-width slot-height)
                               (u slot-h-center)
                               (rt (- ox slot-neck-depth (/ slot-head-depth 2)))
                               (f yb))])))
@@ -310,11 +310,11 @@
          (when (:left edges)
            (mapcat identity
                    (for [yb y-bounds]
-                     [(attach (box slot-neck-depth slot-height slot-neck-width)
+                     [(attach (box slot-neck-depth slot-neck-width slot-height)
                               (u slot-h-center)
                               (rt (- (/ slot-neck-depth 2) ox))
                               (f yb))
-                      (attach (box slot-head-depth slot-height slot-head-width)
+                      (attach (box slot-head-depth slot-head-width slot-height)
                               (u slot-h-center)
                               (rt (+ (- ox) slot-neck-depth (/ slot-head-depth 2)))
                               (f yb))])))
