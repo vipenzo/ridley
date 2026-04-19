@@ -164,7 +164,8 @@
                       :result eval-result
                       :lines (serialize-lines lines)
                       :stamps (:stamps result)
-                      :turtle_pose (:turtle-pose result)}
+                      :turtle_pose (:turtle-pose result)
+                      :visibility (:visibility result)}
                (:tweak-session result)
                (assoc :tweak_session (:tweak-session result))))})))
 

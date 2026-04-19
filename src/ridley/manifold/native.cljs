@@ -43,8 +43,8 @@
   "Subtract meshes using native Rust Manifold backend. Synchronous — returns a mesh."
   [base & cutters]
   (js->mesh (invoke-sync "/difference"
-              #js {:base (mesh->js base)
-                   :cutters (into-array (map mesh->js cutters))})))
+                         #js {:base (mesh->js base)
+                              :cutters (into-array (map mesh->js cutters))})))
 
 (defn native-intersection
   "Intersect meshes using native Rust Manifold backend. Synchronous — returns a mesh."
@@ -60,7 +60,7 @@
    (bench \"wasm union\" #(mesh-union a b))"
   [label f]
   (let [t0 (.now js/performance)
-        result (f)
+        result (if (fn? f) (f) f)
         t1 (.now js/performance)]
     (println (str label ": " (.toFixed (- t1 t0) 1) "ms"))
     result))

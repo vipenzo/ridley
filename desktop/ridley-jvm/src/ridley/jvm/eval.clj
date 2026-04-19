@@ -1930,6 +1930,15 @@
               (reset! ridley.jvm.eval/turtle-state saved#)
               result#)))))")
 
+(def ^:private attach!-macro-source
+  "(defmacro attach! [kw & body]
+     `(let [mesh# (ridley.jvm.eval/get-mesh ~kw)]
+        (when-not mesh#
+          (throw (Exception. (str \"attach! - no registered mesh named \" ~kw))))
+        (let [result# (attach mesh# ~@body)]
+          (ridley.jvm.eval/register-impl ~kw result#)
+          result#)))")
+
 (def ^:private loft-n-macro-source
   "(defmacro loft-n [steps first-arg & rest-args]
      (let [mvmt? (fn [x#] (and (list? x#) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v} (first x#))))]
@@ -2125,12 +2134,32 @@
    smooth-path-macro-source
    warp-macro-source
    attach-macro-source
+   attach!-macro-source
    attach-face-macro-source
    clone-face-macro-source
    turtle-macro-source
    register-macro-source
    tweak-macro-source
    anim-macro-source])
+
+;; ── Script definitions snapshot (for REPL access) ──────────────
+
+(def ^:private script-defs
+  "User-defined vars from the last script evaluation.
+   Map of symbol → value, excluding DSL bindings and clojure.core refers."
+  (atom {}))
+
+(defn- snapshot-user-defs!
+  "After eval-script, extract user-defined vars from the ephemeral namespace
+   and store them for injection into the REPL namespace.
+   pre-script-syms: set of intern symbols that existed before the user script ran."
+  [ns-sym pre-script-syms]
+  (let [ns-obj (the-ns ns-sym)
+        user-defs (->> (ns-interns ns-obj)
+                       (remove (fn [[sym _]] (pre-script-syms sym)))
+                       (map (fn [[sym var]] [sym (deref var)]))
+                       (into {}))]
+    (reset! script-defs user-defs)))
 
 (defn eval-script
   "Evaluate a DSL script string. Returns {:meshes map :print-output str}.
@@ -2142,7 +2171,8 @@
    (reset! tweak/tweak-session nil) ;; clear any previous tweak session
    (let [ns-sym (gensym "ridley-eval-")
          ns-obj (create-ns ns-sym)
-         output (java.io.StringWriter.)]
+         output (java.io.StringWriter.)
+         pre-syms (atom nil)]
      (try
        (binding [*ns* ns-obj]
          (refer 'clojure.core :exclude '[abs]))
@@ -2166,6 +2196,7 @@
          (load-string smooth-path-macro-source)
          (load-string warp-macro-source)
          (load-string attach-macro-source)
+         (load-string attach!-macro-source)
          (load-string attach-face-macro-source)
          (load-string clone-face-macro-source)
          (load-string turtle-macro-source)
@@ -2181,7 +2212,9 @@
                (when (find-ns lib-sym)
                  (.addAlias ^clojure.lang.Namespace eval-ns lib-sym (the-ns lib-sym))))))
          (library/inject-library-namespaces! ns-sym))
-      ;; Eval script, capturing print output
+       ;; Snapshot pre-script symbols (DSL + macros) so we can diff later
+       (reset! pre-syms (set (keys (ns-interns ns-obj))))
+       ;; Eval script, capturing print output
        (binding [*ns* ns-obj
                  *out* output]
          (load-string script-text))
@@ -2194,6 +2227,8 @@
                   :stamps stamps}
            @tweak/tweak-session (assoc :tweak-session @tweak/tweak-session)))
        (finally
+         (when @pre-syms
+           (snapshot-user-defs! ns-sym @pre-syms))
          (remove-ns ns-sym))))))
 
 ;; ── Persistent REPL namespace (survives between commands) ──────
@@ -2231,12 +2266,18 @@
           (load-string smooth-path-macro-source)
           (load-string warp-macro-source)
           (load-string attach-macro-source)
+          (load-string attach!-macro-source)
           (load-string attach-face-macro-source)
           (load-string clone-face-macro-source)
           (load-string turtle-macro-source)
           (load-string register-macro-source)
           (load-string tweak-macro-source)
           (load-string anim-macro-source)))))
+  ;; Inject user-defined symbols from last script evaluation
+  (when (seq @script-defs)
+    (let [ns-obj (the-ns @repl-ns-sym)]
+      (doseq [[sym val] @script-defs]
+        (intern ns-obj sym val))))
   ;; Always update library aliases (they may change between commands)
   (let [ns-sym @repl-ns-sym]
     (if (seq active-libraries)
@@ -2289,13 +2330,17 @@
                           (and (map? result) (:vertices result))
                           (str "#mesh [" (count (:vertices result)) " verts, "
                                (count (:faces result)) " faces]")
-                          :else (pr-str result))]
+                          :else (pr-str result))
+         ;; Current visibility state for all registered meshes
+         visibility (into {} (map (fn [[k v]] [k (get v :visible true)])
+                                  @registered-meshes))]
      (cond-> {:meshes meshes
               :lines lines
               :stamps stamps
               :print-output (str output)
               :result display-result
               :raw-result result
+              :visibility visibility
               :turtle-pose {:position (:position t)
                             :heading  (:heading t)
                             :up       (:up t)}}

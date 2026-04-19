@@ -141,10 +141,69 @@
       ;; Scroll to bottom
       (set! (.-scrollTop history-el) (.-scrollHeight history-el)))))
 
-(defn- update-turtle-indicator
-  "Update the turtle indicator with current pose from REPL."
+(defn- resolve-turtle-pose
+  "Resolve the current turtle pose based on turtle-source setting."
   []
-  (viewport/update-turtle-pose (editor-state/get-turtle-pose)))
+  (let [source (viewport/get-turtle-source)]
+    (cond
+      (= source :global)
+      (editor-state/get-turtle-pose)
+
+      (and (map? source) (:mesh source))
+      (or (when-let [mesh (registry/get-mesh (:mesh source))]
+            (:creation-pose mesh))
+          (editor-state/get-turtle-pose))
+
+      (and (map? source) (:custom source))
+      (:custom source)
+
+      :else
+      (editor-state/get-turtle-pose))))
+
+(defn- update-turtle-indicator
+  "Update the turtle indicator with current pose from resolved source."
+  []
+  (viewport/update-turtle-pose (resolve-turtle-pose)))
+
+(defn- rebuild-turtle-dropdown!
+  "Rebuild turtle source select options from current registry."
+  []
+  (when-let [sel (.getElementById js/document "turtle-source-select")]
+    (let [current-source (viewport/get-turtle-source)
+          current-val (cond
+                        (= current-source :global) "global"
+                        (and (map? current-source) (:mesh current-source))
+                        (name (:mesh current-source))
+                        (and (map? current-source) (:custom current-source))
+                        "custom"
+                        :else "off")
+          names (registry/registered-names)
+          make-opt (fn [value text]
+                     (let [opt (.createElement js/document "option")]
+                       (set! (.-value opt) value)
+                       (set! (.-textContent opt) text)
+                       opt))]
+      ;; Clear all options
+      (set! (.-innerHTML sel) "")
+      ;; Fixed options
+      (.appendChild sel (make-opt "off" "Turtle: Off"))
+      (.appendChild sel (make-opt "global" "Turtle: Global"))
+      ;; One option per registered mesh
+      (doseq [n names]
+        (.appendChild sel (make-opt (name n) (str "Turtle: " (name n)))))
+      ;; Custom pose option (only when active)
+      (when (and (map? current-source) (:custom current-source))
+        (.appendChild sel (make-opt "custom" "Turtle: Custom")))
+      ;; Restore selection
+      (set! (.-value sel) current-val)
+      ;; If selected mesh was removed, fall back to global
+      (when (= "" (.-value sel))
+        (set! (.-value sel) "global")
+        (viewport/set-turtle-source! :global))
+      ;; Update styling based on off/on
+      (if (= (.-value sel) "off")
+        (.setAttribute sel "data-off" "")
+        (.removeAttribute sel "data-off")))))
 
 (defn- evaluate-definitions-sci
   "Evaluate definitions via SCI (browser-side). The standard path."
@@ -191,8 +250,9 @@
                           :else
                           "Evaluation successful")]
             (add-repl-entry "[Run]" summary false)))
-        ;; Update turtle indicator
+        ;; Update turtle indicator and dropdown
         (update-turtle-indicator)
+        (rebuild-turtle-dropdown!)
         ;; Sync AI state
         (sync-voice-state)
         ;; Audio feedback
@@ -411,6 +471,12 @@
                                          (when (seq stamps)
                                            (registry/set-stamps! stamps))
                                          (register-jvm-meshes! meshes reset-camera?)
+                                         ;; Update turtle indicator and dropdown
+                                         (when-let [pose (:turtle-pose result)]
+                                           (viewport/update-turtle-pose pose))
+                                         (when (not= :global (viewport/get-turtle-source))
+                                           (update-turtle-indicator))
+                                         (rebuild-turtle-dropdown!)
                                          ;; Check for tweak session
                                          (if tweak-session
                                            (let [active-libs (or (when-let [raw (.getItem js/localStorage "ridley:jvm-libs:active")]
@@ -646,7 +712,10 @@
               (when (= :host @sync-mode)
                 (sync/send-repl-command input))
             ;; Route to JVM or SCI
-              (if @jvm-mode
+            ;; Viewport-only commands fall through to SCI even in JVM mode
+              (if (and @jvm-mode
+                       (not (re-find #"^\s*\(\s*(show-turtle|hide-turtle|show-stamps|hide-stamps|show-lines|hide-lines|stamps-visible\?)\b"
+                                     input)))
                 ;; JVM REPL (async)
                 (repl/evaluate-repl-jvm input
                                         (fn [result]
@@ -668,9 +737,19 @@
                           ;; Add stamps
                                                 (when (seq (:stamps result))
                                                   (registry/add-stamps! (:stamps result)))
+                          ;; Apply visibility changes from JVM show/hide
+                                                (when-let [vis (:visibility result)]
+                                                  (doseq [[sym visible?] vis]
+                                                    (if visible?
+                                                      (registry/show-mesh! sym)
+                                                      (registry/hide-mesh! sym))))
                                                 (registry/refresh-viewport! false))
+                                              ;; Store JVM turtle pose as global, then resolve source
                                               (when-let [pose (:turtle-pose result)]
                                                 (viewport/update-turtle-pose pose))
+                                              (when (not= :global (viewport/get-turtle-source))
+                                                (update-turtle-indicator))
+                                              (rebuild-turtle-dropdown!)
                                               ;; Check for tweak session
                                               (when-let [tweak-session (:tweak-session result)]
                                                 (let [active-libs (or (when-let [raw (.getItem js/localStorage "ridley:jvm-libs:active")]
@@ -698,6 +777,7 @@
                           (registry/set-definition-meshes! (:meshes render-data)))
                         (registry/refresh-viewport! false))
                       (update-turtle-indicator)
+                      (rebuild-turtle-dropdown!)
                       (sync-voice-state)
                       (audio/play-feedback! true))))))))))))
 
@@ -927,7 +1007,7 @@
         export-3mf-btn (.getElementById js/document "btn-export-3mf")
         toggle-grid-btn (.getElementById js/document "btn-toggle-grid")
         toggle-axes-btn (.getElementById js/document "btn-toggle-axes")
-        toggle-turtle-btn (.getElementById js/document "btn-toggle-turtle")
+        turtle-select (.getElementById js/document "turtle-source-select")
         toggle-lines-btn (.getElementById js/document "btn-toggle-lines")
         toggle-normals-btn (.getElementById js/document "btn-toggle-normals")
         toggle-stamps-btn (.getElementById js/document "btn-toggle-stamps")
@@ -981,16 +1061,30 @@
                              (if visible
                                (.add (.-classList toggle-axes-btn) "active")
                                (.remove (.-classList toggle-axes-btn) "active"))))))
-    ;; Toggle turtle indicator button
-    (when toggle-turtle-btn
-      ;; Set initial active state (turtle visible by default)
-      (.add (.-classList toggle-turtle-btn) "active")
-      (.addEventListener toggle-turtle-btn "click"
+    ;; Turtle source selector
+    (when turtle-select
+      (.addEventListener turtle-select "change"
                          (fn [_]
-                           (let [visible (viewport/toggle-turtle)]
-                             (if visible
-                               (.add (.-classList toggle-turtle-btn) "active")
-                               (.remove (.-classList toggle-turtle-btn) "active"))))))
+                           (let [val (.-value turtle-select)]
+                             (cond
+                               (= val "off")
+                               (do (viewport/set-turtle-visible false)
+                                   (.setAttribute turtle-select "data-off" ""))
+
+                               (= val "global")
+                               (do (viewport/set-turtle-source! :global)
+                                   (viewport/set-turtle-visible true)
+                                   (.removeAttribute turtle-select "data-off")
+                                   (update-turtle-indicator))
+
+                               (= val "custom")
+                               nil ;; already set, just keep it
+
+                               :else ;; mesh name
+                               (do (viewport/set-turtle-source! {:mesh (keyword val)})
+                                   (viewport/set-turtle-visible true)
+                                   (.removeAttribute turtle-select "data-off")
+                                   (update-turtle-indicator)))))))
     ;; Toggle construction lines button
     (when toggle-lines-btn
       ;; Set initial active state (lines visible by default)
@@ -1245,7 +1339,10 @@
                                       (registry/add-stamps! (:stamps result)))
                                     (registry/refresh-viewport! false)
                                     (when-let [pose (:turtle-pose result)]
-                                      (viewport/update-turtle-pose pose))))))
+                                      (viewport/update-turtle-pose pose))
+                                    (when (not= :global (viewport/get-turtle-source))
+                                      (update-turtle-indicator))
+                                    (rebuild-turtle-dropdown!)))))
       (let [result (repl/evaluate-repl command)]
         (if-let [error (:error result)]
           (do
@@ -1890,7 +1987,8 @@
           (registry/set-stamps! (or (:stamps render-data) []))
           (registry/set-definition-meshes! (:meshes render-data)))
         (registry/refresh-viewport! true)  ; Reset camera to show result
-        (update-turtle-indicator)))))
+        (update-turtle-indicator)
+        (rebuild-turtle-dropdown!)))))
 
 (defn- copy-manual-code
   "Copy code from manual to editor and close manual."

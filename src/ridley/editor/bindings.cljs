@@ -342,7 +342,8 @@
    'mesh-refine         manifold/mesh-refine
    'concat-meshes       manifold/concat-meshes
    ;; Native Manifold (Rust backend via Tauri IPC) — async, return Promises
-   'bench               native-manifold/bench
+   'perf-now            (fn [] (.now js/performance))
+   'print-bench         (fn [label ms] (state/capture-println (str label ": " (.toFixed ms 1) "ms")))
    'native-union        native-manifold/native-union
    'native-difference   native-manifold/native-difference
    'native-intersection native-manifold/native-intersection
@@ -379,6 +380,26 @@
    'show-stamps         (fn [] (viewport/set-stamps-visible true))
    'hide-stamps         (fn [] (viewport/set-stamps-visible false))
    'stamps-visible?     viewport/stamps-visible?
+   ;; Turtle source selector
+   'show-turtle         (fn [mesh-or-kw]
+                          (cond
+                            (keyword? mesh-or-kw)
+                            (do (viewport/set-turtle-source! {:mesh mesh-or-kw})
+                                (viewport/set-turtle-visible true)
+                                (viewport/update-turtle-pose
+                                 (when-let [m (registry/get-mesh mesh-or-kw)]
+                                   (:creation-pose m)))
+                                nil)
+
+                            (and (map? mesh-or-kw) (:creation-pose mesh-or-kw))
+                            (do (viewport/set-turtle-source! {:custom (:creation-pose mesh-or-kw)})
+                                (viewport/set-turtle-visible true)
+                                (viewport/update-turtle-pose (:creation-pose mesh-or-kw))
+                                nil)
+
+                            :else
+                            (throw (js/Error. "show-turtle: expected a keyword or mesh with :creation-pose"))))
+   'hide-turtle         (fn [] (viewport/set-turtle-visible false) nil)
    ;; Path registry (abstract, no visibility)
    'register-path!      registry/register-path!
    'get-path            registry/get-path

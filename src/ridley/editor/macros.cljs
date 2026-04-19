@@ -1405,6 +1405,14 @@
                                :source *eval-source*
                                :operands (mapv source-ref inputs#)}))))
 
+   ;; Bench: time an expression, print elapsed, return result
+   (defmacro bench [label & body]
+     `(let [t0# (perf-now)
+            result# (do ~@body)
+            ms# (- (perf-now) t0#)]
+        (print-bench ~label ms#)
+        result#))
+
    ;; Warp (single input ref)
    (defmacro warp [mesh volume & args]
      (let [{:keys [line column]} (meta &form)]

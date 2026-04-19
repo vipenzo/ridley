@@ -290,43 +290,43 @@
          ;; 4. Border slots a T (only on edges with borders)
          x-bounds (for [i (range 1 x-cells)] (- (* i cell-size) ox))
          y-bounds (for [j (range 1 y-cells)] (- (* j cell-size) oy))
-         ;; Right/left slots: after (tv 90), f→Z(vert), u→-X(depth).
-         ;; Position along the edge uses (f yb) not (u yb), and
-         ;; tile-thickness position uses (u slot-h-center) not (f ...).
-         ;; box(sx=rt, sy=u, sz=f): depth in sx, thickness in sy, span in sz.
+         ;; box(f, rt, u): first arg along heading, second along right, third along up.
+         ;; After final (tv 90): f→Z(vert), rt→Y, u→X.
+         ;; Right/left edges run along X (u axis). Width along u, depth along rt.
          right-slots
          (when (:right edges)
            (mapcat identity
                    (for [yb y-bounds]
-                     [(attach (box slot-neck-depth slot-neck-width slot-height)
-                              (u slot-h-center)
+                     [(attach (box slot-height slot-neck-depth slot-neck-width)
+                              (f slot-h-center)
                               (rt (- ox (/ slot-neck-depth 2)))
-                              (f yb))
-                      (attach (box slot-head-depth slot-head-width slot-height)
-                              (u slot-h-center)
+                              (u yb))
+                      (attach (box slot-height slot-head-depth slot-head-width)
+                              (f slot-h-center)
                               (rt (- ox slot-neck-depth (/ slot-head-depth 2)))
-                              (f yb))])))
+                              (u yb))])))
          left-slots
          (when (:left edges)
            (mapcat identity
                    (for [yb y-bounds]
-                     [(attach (box slot-neck-depth slot-neck-width slot-height)
-                              (u slot-h-center)
+                     [(attach (box slot-height slot-neck-depth slot-neck-width)
+                              (f slot-h-center)
                               (rt (- (/ slot-neck-depth 2) ox))
-                              (f yb))
-                      (attach (box slot-head-depth slot-head-width slot-height)
-                              (u slot-h-center)
+                              (u yb))
+                      (attach (box slot-height slot-head-depth slot-head-width)
+                              (f slot-h-center)
                               (rt (+ (- ox) slot-neck-depth (/ slot-head-depth 2)))
-                              (f yb))])))
+                              (u yb))])))
+         ;; Top/bottom edges run along Y (rt axis). Width along rt, depth along u.
          top-slots
          (when (:top edges)
            (mapcat identity
                    (for [xb x-bounds]
-                     [(attach (box slot-neck-width slot-neck-depth slot-height)
+                     [(attach (box slot-height slot-neck-width slot-neck-depth)
                               (f slot-h-center)
                               (rt xb)
                               (u (- oy (/ slot-neck-depth 2))))
-                      (attach (box slot-head-width slot-head-depth slot-height)
+                      (attach (box slot-height slot-head-width slot-head-depth)
                               (f slot-h-center)
                               (rt xb)
                               (u (- oy slot-neck-depth (/ slot-head-depth 2))))])))
@@ -334,11 +334,11 @@
          (when (:bottom edges)
            (mapcat identity
                    (for [xb x-bounds]
-                     [(attach (box slot-neck-width slot-neck-depth slot-height)
+                     [(attach (box slot-height slot-neck-width slot-neck-depth)
                               (f slot-h-center)
                               (rt xb)
                               (u (- (/ slot-neck-depth 2) oy)))
-                      (attach (box slot-head-width slot-head-depth slot-height)
+                      (attach (box slot-height slot-head-width slot-head-depth)
                               (f slot-h-center)
                               (rt xb)
                               (u (+ (- oy) slot-neck-depth (/ slot-head-depth 2))))])))
@@ -365,7 +365,7 @@
          protrusion-list (vec (filter some? peg-protrusions))
          base-with-protrusions
          (if (seq protrusion-list)
-           (apply mesh-union base protrusion-list)
+           (mesh-union (into [base] protrusion-list))
            base)
          ;; Unisci tutti i cutter
          half-peg-cutters (vec (mapcat identity (filter some? peg-holes-half)))

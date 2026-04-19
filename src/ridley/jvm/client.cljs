@@ -202,6 +202,10 @@
                                     {:position (vec (aget turtle-pose-js "position"))
                                      :heading  (vec (aget turtle-pose-js "heading"))
                                      :up       (vec (aget turtle-pose-js "up"))})
+                      visibility-js (aget resp "visibility")
+                      visibility (when visibility-js
+                                   (into {} (map (fn [k] [(keyword k) (aget visibility-js k)])
+                                                 (js/Object.keys visibility-js))))
                       tweak-session-js (aget resp "tweak_session")
                       tweak-session (when tweak-session-js
                                       (js->clj tweak-session-js :keywordize-keys true))]
@@ -222,7 +226,8 @@
                                                          :print-output print-output
                                                          :result eval-result
                                                          :elapsed-ms elapsed-ms
-                                                         :turtle-pose turtle-pose}
+                                                         :turtle-pose turtle-pose
+                                                         :visibility visibility}
                                                   tweak-session (assoc :tweak-session tweak-session))))))
                           (.catch (fn [e]
                                     (on-result {:error (str "Mesh file error: " (.-message e))})))))
@@ -232,7 +237,8 @@
                                         :print-output print-output
                                         :result eval-result
                                         :elapsed-ms elapsed-ms
-                                        :turtle-pose turtle-pose}
+                                        :turtle-pose turtle-pose
+                                        :visibility visibility}
                                  tweak-session (assoc :tweak-session tweak-session)))))
                 (catch :default e
                   (on-result {:error (str "Parse error: " (.-message e))})))
