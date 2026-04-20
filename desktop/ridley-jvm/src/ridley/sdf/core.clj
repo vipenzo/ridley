@@ -17,14 +17,19 @@
 ;; ── SDF node constructors (pure data) ───────────────────────────
 
 (defn sdf-sphere [r] {:op "sphere" :r (double r)})
-(defn sdf-box [sx sy sz] {:op "box" :sx (double sx) :sy (double sy) :sz (double sz)})
+(defn sdf-box
+  "Create an SDF box. Parameters match mesh box convention:
+   (sdf-box a b c) gives same proportions as (box a b c).
+   Internally remaps to match apply-transform: a→Y(right), b→Z(up), c→X(heading)."
+  [a b c] {:op "box" :sx (double c) :sy (double a) :sz (double b)})
 (defn sdf-cyl [r h] {:op "cyl" :r (double r) :h (double h)})
 
 (defn sdf-rounded-box
   "Box with rounded corners as a true SDF (better field than sdf-offset of sdf-box).
-   sx, sy, sz: dimensions; r: corner radius."
-  [sx sy sz r]
-  {:op "rounded-box" :sx (double sx) :sy (double sy) :sz (double sz) :r (double r)})
+   Parameters match mesh box convention: (sdf-rounded-box a b c r).
+   a→Y(right), b→Z(up), c→X(heading), r=corner radius."
+  [a b c r]
+  {:op "rounded-box" :sx (double c) :sy (double a) :sz (double b) :r (double r)})
 
 ;; ── SDF boolean operations ──────────────────────────────────────
 

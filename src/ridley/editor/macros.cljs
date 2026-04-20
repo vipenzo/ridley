@@ -47,6 +47,14 @@
    (defn- rec-play-path* [sub-path]
      (swap! path-recorder rec-play-path sub-path))
 
+   ;; Recording versions of @-commands (creation-pose shift)
+   (defn- rec-cp-f* [dist]
+     (swap! path-recorder rec-cp-f dist))
+   (defn- rec-cp-rt* [dist]
+     (swap! path-recorder rec-cp-rt dist))
+   (defn- rec-cp-u* [dist]
+     (swap! path-recorder rec-cp-u dist))
+
    ;; Recording version of arc-h that decomposes into rec-f* and rec-th*
    (defn- rec-arc-h* [radius angle & {:keys [steps]}]
      (when-not (or (zero? radius) (zero? angle))
@@ -425,7 +433,10 @@
               ~'inset rec-inset*
               ~'scale rec-scale*
               ~'move-to rec-move-to*
-              ~'play-path rec-play-path*]
+              ~'play-path rec-play-path*
+              ~'cp-f rec-cp-f*
+              ~'cp-rt rec-cp-rt*
+              ~'cp-u rec-cp-u*]
           (let [body-result# (do ~@body)]
             (let [rec-state# @path-recorder
                   recorded# (:recording rec-state#)]
@@ -1733,4 +1744,19 @@
       (let [locals (tweak-locals-form (collect-arg-symbols expr))]
         (if locals
           `(tweak-start-registered! ~name '~expr ~filt ~locals)
-          `(tweak-start-registered! ~name '~expr ~filt)))))")
+          `(tweak-start-registered! ~name '~expr ~filt)))))
+
+   ;; ============================================================
+   ;; Pilot — interactive mesh positioning
+   ;; ============================================================
+
+   (defmacro pilot [arg]
+     `(pilot-request! '~arg ~arg))
+
+   ;; set-creation-pose!: move the origin/grip of a registered mesh
+   ;; without moving its geometry. The turtle commands define the new pose.
+   ;; (set-creation-pose! :name (f 10) (th 45))
+   (defmacro set-creation-pose! [kw & body]
+     (let [{:keys [line column]} (meta &form)]
+       `(-> (set-creation-pose!-impl ~kw (path ~@body))
+            (add-source {:op :set-creation-pose! :line ~line :col ~column :source *eval-source*}))))")

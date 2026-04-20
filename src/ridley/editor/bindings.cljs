@@ -24,6 +24,7 @@
             [ridley.anim.preprocess :as anim-preprocess]
             [ridley.turtle.shape-fn :as sfn]
             [ridley.editor.test-mode :as test-mode]
+            [ridley.editor.pilot-mode :as pilot-mode]
             [ridley.editor.impl :as macro-impl]
             [ridley.geometry.warp :as warp]
             [ridley.library.svg :as svg]
@@ -308,6 +309,9 @@
    'rec-scale           turtle/rec-scale
    'rec-move-to         turtle/rec-move-to
    'rec-play-path       turtle/rec-play-path
+   'rec-cp-f            turtle/rec-cp-f
+   'rec-cp-rt           turtle/rec-cp-rt
+   'rec-cp-u            turtle/rec-cp-u
    'path-from-recorder  turtle/path-from-recorder
    ;; Shape recording functions (2D turtle)
    'shape-rec-f         shape/rec-f
@@ -533,9 +537,12 @@
    'attach-face-impl    macro-impl/attach-face-impl
    'clone-face-impl     macro-impl/clone-face-impl
    'attach!-impl        macro-impl/attach!-impl
+   'set-creation-pose!-impl macro-impl/set-creation-pose!-impl
    ;; Test/tweak mode
    'tweak-start!             test-mode/start!
    'tweak-start-registered!  test-mode/start-registered!
+   ;; Pilot mode (interactive mesh positioning)
+   'pilot-request!           pilot-mode/request!
    ;; Source form storage
    'set-source-form!    registry/set-source-form!
    'get-source-form     registry/get-source-form

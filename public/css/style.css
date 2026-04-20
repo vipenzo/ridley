@@ -212,6 +212,97 @@ html, body {
   background: #2d6634;
 }
 
+/* Pilot mode panel */
+#pilot-panel {
+  background: #252540;
+  border-top: 1px solid #4a4a6a;
+  padding: 8px 12px;
+  font-family: "SF Mono", "Monaco", "Menlo", "Consolas", monospace;
+  font-size: 12px;
+}
+
+#pilot-panel .pilot-header {
+  color: #dcdcaa;
+  font-weight: bold;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#pilot-panel .pilot-mode-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: #264f2e;
+  color: #7ddf8a;
+  font-weight: normal;
+}
+
+#pilot-panel .pilot-mode-badge.pilot-mode-scale {
+  background: #4f3d26;
+  color: #dfb87d;
+}
+
+#pilot-panel .pilot-controls {
+  display: flex;
+  gap: 16px;
+  color: #9cdcfe;
+  margin-bottom: 6px;
+}
+
+#pilot-panel .pilot-step-value,
+#pilot-panel .pilot-angle-value,
+#pilot-panel .pilot-scale-value {
+  color: #ce9178;
+  font-variant-numeric: tabular-nums;
+}
+
+#pilot-panel .pilot-active-param {
+  border-bottom: 2px solid #569cd6;
+  padding-bottom: 1px;
+}
+
+#pilot-panel .pilot-commands {
+  color: #d4d4d4;
+  padding: 4px 0;
+  min-height: 18px;
+  word-wrap: break-word;
+  max-height: 60px;
+  overflow-y: auto;
+}
+
+#pilot-panel .pilot-buttons {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+  justify-content: flex-end;
+}
+
+#pilot-panel .pilot-btn {
+  padding: 3px 14px;
+  border: 1px solid #4a4a6a;
+  border-radius: 3px;
+  background: #2d2d44;
+  color: #d4d4d4;
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+#pilot-panel .pilot-btn:hover {
+  background: #3d3d54;
+}
+
+#pilot-panel .pilot-btn-ok {
+  background: #264f2e;
+  border-color: #3a7d44;
+}
+
+#pilot-panel .pilot-btn-ok:hover {
+  background: #2d6634;
+}
+
 .section-header {
   display: flex;
   align-items: center;
@@ -393,6 +484,30 @@ html, body {
 .view-btn.active:hover {
   background: #3d3a2d;
   color: #ffcc00;
+}
+
+/* Turtle source dropdown */
+#turtle-source-select {
+  background: #252526;
+  color: #ffcc00;
+  border: 1px solid #ffcc00;
+  border-radius: 4px;
+  font-size: 12px;
+  padding: 2px 4px;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+#turtle-source-select:hover {
+  background: #3d3a2d;
+}
+#turtle-source-select[data-off] {
+  color: #a0a0a0;
+  border-color: #3c3c3c;
+}
+#turtle-source-select[data-off]:hover {
+  background: #3c3c3c;
+  color: #d4d4d4;
 }
 
 .toolbar-separator {

@@ -1259,6 +1259,24 @@
   [state target & [mode]]
   (update state :recording conj {:cmd :move-to :args (if mode [target mode] [target])}))
 
+;; cp-* commands: shift creation-pose without moving geometry
+;; Record-only — applied during replay in attach!-impl
+;; In user syntax: (@f 5) inside attach!, stored as :cp-f in path
+(defn rec-cp-f
+  "Record a creation-pose shift along heading. Record-only."
+  [state dist]
+  (update state :recording conj {:cmd :cp-f :args [dist]}))
+
+(defn rec-cp-rt
+  "Record a creation-pose shift along right. Record-only."
+  [state dist]
+  (update state :recording conj {:cmd :cp-rt :args [dist]}))
+
+(defn rec-cp-u
+  "Record a creation-pose shift along up. Record-only."
+  [state dist]
+  (update state :recording conj {:cmd :cp-u :args [dist]}))
+
 (defn rec-play-path
   "Splice a sub-path's commands into the current recording.
    Movement commands (f, th, tv, tr, u, rt, lt, set-heading) are both recorded

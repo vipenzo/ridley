@@ -114,7 +114,9 @@
                       :mesh_file mesh-file
                       :stamps (:stamps result)}
                (:tweak-session result)
-               (assoc :tweak_session (:tweak-session result))))})))
+               (assoc :tweak_session (:tweak-session result))
+               (:pilot-session result)
+               (assoc :pilot_session (:pilot-session result))))})))
 
 (defn- serialize-lines
   "Convert pen line data to JSON-safe format."

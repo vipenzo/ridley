@@ -1254,6 +1254,15 @@
   [state factor]
   (update state :recording conj {:cmd :scale :args [factor]}))
 
+(defn rec-cp-f [state dist]
+  (update state :recording conj {:cmd :cp-f :args [dist]}))
+
+(defn rec-cp-rt [state dist]
+  (update state :recording conj {:cmd :cp-rt :args [dist]}))
+
+(defn rec-cp-u [state dist]
+  (update state :recording conj {:cmd :cp-u :args [dist]}))
+
 (defn rec-move-to
   "Record a move-to command. Record-only — target resolution happens at replay."
   [state target & [mode]]

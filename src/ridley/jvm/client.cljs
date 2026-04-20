@@ -139,6 +139,9 @@
                       tweak-session-js (aget result "tweak_session")
                       tweak-session (when tweak-session-js
                                       (js->clj tweak-session-js :keywordize-keys true))
+                      pilot-session-js (aget result "pilot_session")
+                      pilot-session (when pilot-session-js
+                                      (js->clj pilot-session-js :keywordize-keys true))
                       stamps (parse-stamps (aget result "stamps"))]
                   (if mesh-file
                     (let [file-id (second (re-find #"ridley-meshes-(\d+)\.bin" mesh-file))]
@@ -155,14 +158,16 @@
                                                          :stamps stamps
                                                          :print-output print-output
                                                          :elapsed-ms elapsed-ms}
-                                                  tweak-session (assoc :tweak-session tweak-session))))))
+                                                  tweak-session (assoc :tweak-session tweak-session)
+                                                  pilot-session (assoc :pilot-session pilot-session))))))
                           (.catch (fn [e]
                                     (on-result {:error (str "Mesh file error: " (.-message e))})))))
                     (on-result (cond-> {:meshes {}
                                         :stamps stamps
                                         :print-output print-output
                                         :elapsed-ms elapsed-ms}
-                                 tweak-session (assoc :tweak-session tweak-session)))))
+                                 tweak-session (assoc :tweak-session tweak-session)
+                                 pilot-session (assoc :pilot-session pilot-session)))))
                 (catch :default e
                   (on-result {:error (str "Parse error: " (.-message e))})))
           ;; Error response
@@ -274,6 +279,9 @@
                       tweak-session-js (aget result "tweak_session")
                       tweak-session (when tweak-session-js
                                       (js->clj tweak-session-js :keywordize-keys true))
+                      pilot-session-js2 (aget result "pilot_session")
+                      pilot-session2 (when pilot-session-js2
+                                       (js->clj pilot-session-js2 :keywordize-keys true))
                       stamps (parse-stamps (aget result "stamps"))]
 
                   (if mesh-file
@@ -294,7 +302,8 @@
                                                          :stamps stamps
                                                          :print-output print-output
                                                          :elapsed-ms elapsed-ms}
-                                                  tweak-session (assoc :tweak-session tweak-session))))))
+                                                  tweak-session (assoc :tweak-session tweak-session)
+                                                  pilot-session2 (assoc :pilot-session pilot-session2))))))
                           (.catch (fn [e]
                                     (js/console.error "[eval-with-libs] fetch error:" e)
                                     (on-result {:error (str "Mesh file error: " (.-message e))})))))
@@ -302,7 +311,8 @@
                                         :stamps stamps
                                         :print-output print-output
                                         :elapsed-ms elapsed-ms}
-                                 tweak-session (assoc :tweak-session tweak-session)))))
+                                 tweak-session (assoc :tweak-session tweak-session)
+                                 pilot-session2 (assoc :pilot-session pilot-session2)))))
                 (catch :default e
                   (js/console.error "[eval-with-libs] parse error:" e)
                   (on-result {:error (str "Parse error: " (.-message e))})))

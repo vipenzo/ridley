@@ -139,32 +139,89 @@
 
 ;; ── Geometry helpers ────────────────────────────────────────────
 
-(defn- with-creation-pose [mesh]
-  (let [t @turtle-state]
-    (assoc mesh :creation-pose
-           {:position (:position t) :heading (:heading t) :up (:up t)})))
+(defn- transform-mesh-to-turtle
+  "Transform a mesh's vertices to current turtle position and orientation.
+   Also stores creation-pose and material, matching SCI behavior."
+  [mesh]
+  (let [t @turtle-state
+        position (:position t)
+        heading (:heading t)
+        up (:up t)
+        material (:material t)
+        transformed-verts (prims/apply-transform
+                           (:vertices mesh)
+                           position heading up)]
+    (cond-> mesh
+      true (assoc :vertices (vec transformed-verts))
+      true (assoc :creation-pose {:position position
+                                  :heading heading
+                                  :up up})
+      material (assoc :material material))))
+
+(defn- transform-mesh-to-turtle-upright
+  "Like transform-mesh-to-turtle but rotates so the mesh extends along the
+   turtle's UP axis instead of heading. Used for cyl/cone so height = UP."
+  [mesh]
+  (let [t @turtle-state
+        position (:position t)
+        heading (:heading t)
+        up (:up t)
+        material (:material t)
+        ;; Swap heading and up: mesh 'forward' becomes turtle's UP
+        rotated-heading up
+        rotated-up (mapv - heading)
+        transformed-verts (prims/apply-transform
+                           (:vertices mesh)
+                           position rotated-heading rotated-up)]
+    (cond-> mesh
+      true (assoc :vertices (vec transformed-verts))
+      true (assoc :creation-pose {:position position
+                                  :heading heading
+                                  :up up})
+      material (assoc :material material))))
 
 (defn box-impl
-  ([size] (with-creation-pose (prims/box-mesh size size size)))
-  ([sx sy sz] (with-creation-pose (prims/box-mesh sx sy sz))))
+  ([size] (transform-mesh-to-turtle (prims/box-mesh size size size)))
+  ([sx sy sz] (transform-mesh-to-turtle (prims/box-mesh sx sy sz))))
 
 (defn sphere-impl
   ([r] (sphere-impl r 16 12))
-  ([r segs rings] (with-creation-pose (prims/sphere-mesh r segs rings))))
+  ([r segs rings] (transform-mesh-to-turtle (prims/sphere-mesh r segs rings))))
 
 (defn cyl-impl
   ([r h] (cyl-impl r h 32))
-  ([r h n] (with-creation-pose (prims/cyl-mesh r h n))))
+  ([r h n] (transform-mesh-to-turtle-upright (prims/cyl-mesh r h n))))
 
 (defn cone-impl
   ([r h] (cone-impl r h 32))
-  ([r h n] (with-creation-pose (prims/cone-mesh r h n))))
+  ([r h n] (transform-mesh-to-turtle-upright (prims/cone-mesh r h n))))
 
 (defn circle-impl
   ([r] (circle-impl r 32))
   ([r n] (shape/circle-shape r n)))
 
 ;; ── Attach-face / Clone-face impl ──────────────────────────────
+
+(defn- shift-creation-pose
+  "Shift the creation-pose of the attached mesh along an axis without moving vertices."
+  [state axis dist]
+  (if-let [attachment (:attached state)]
+    (let [mesh (:mesh attachment)
+          pose (or (:creation-pose mesh) {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})
+          h (math/normalize (:heading pose))
+          u (math/normalize (:up pose))
+          r (math/normalize (math/cross h u))
+          dir (case axis :f h :rt r :u u h)
+          offset (math/v* dir dist)
+          new-pos (math/v+ (:position pose) offset)
+          new-pose (assoc pose :position new-pos)
+          new-mesh (assoc mesh :creation-pose new-pose)]
+      (-> state
+          (turtle/replace-mesh-in-state mesh new-mesh)
+          (assoc :position new-pos)
+          (assoc-in [:attached :mesh] new-mesh)
+          (assoc-in [:attached :original-pose] new-pose)))
+    state))
 
 (defn- replay-path-commands
   "Replay path commands on a turtle state."
@@ -180,6 +237,9 @@
               :lt (turtle/move-left s (first args))
               :inset (turtle/inset s (first args))
               :scale (turtle/scale s (first args))
+              :cp-f  (shift-creation-pose s :f (first args))
+              :cp-rt (shift-creation-pose s :rt (first args))
+              :cp-u  (shift-creation-pose s :u (first args))
               :mark s
               s))
           state
@@ -348,6 +408,15 @@
               edge-result)))))))
 
 ;; ── Attach-face / Clone-face impl ──────────────────────────────
+
+(defn mesh-attach-impl
+  "Attach to a single mesh and replay a path. Returns the transformed mesh.
+   Supports all path commands including scale, cp-f, cp-rt, cp-u."
+  [mesh path]
+  (let [state (-> (turtle/make-turtle)
+                  (turtle/attach-move mesh))
+        state (replay-path-commands state path)]
+    (or (get-in state [:attached :mesh]) mesh)))
 
 (defn attach-face-impl
   "Attach to a face and replay path. Returns modified mesh."
@@ -1824,7 +1893,10 @@
             ~'bezier-as (fn [p# & args#] (swap! rec# #(apply ridley.turtle.core/rec-bezier-as % p# args#)))
             ~'mark (fn [name#] (swap! rec# (fn [s#] (update s# :recording conj {:cmd :mark :args [name#]}))))
             ~'inset (fn [amount#] (swap! rec# ridley.turtle.core/rec-inset amount#))
-            ~'scale (fn [factor#] (swap! rec# ridley.turtle.core/rec-scale factor#))]
+            ~'scale (fn [factor#] (swap! rec# ridley.turtle.core/rec-scale factor#))
+            ~'cp-f  (fn [d#] (swap! rec# ridley.turtle.core/rec-cp-f d#))
+            ~'cp-rt (fn [d#] (swap! rec# ridley.turtle.core/rec-cp-rt d#))
+            ~'cp-u  (fn [d#] (swap! rec# ridley.turtle.core/rec-cp-u d#))]
         ~@body
         (let [result# @rec#
               body-result# ~(last body)]
@@ -1898,37 +1970,21 @@
          (let [[dispatch-arg# & movements#] rest-args]
            `(ridley.jvm.eval/loft-impl ~first-arg ~dispatch-arg# (path ~@movements#))))))")
 
+;; attach: transform a mesh or SDF node by turtle commands
 (def ^:private attach-macro-source
   "(defmacro attach [mesh & body]
-     `(let [saved# @ridley.jvm.eval/turtle-state
-            obj# ~mesh]
-        ;; SDF nodes: capture displacement as sdf-move
+     `(let [obj# ~mesh]
         (if (and (map? obj#) (:op obj#))
-          (do
+          ;; SDF nodes: capture displacement as sdf-move
+          (let [saved# @ridley.jvm.eval/turtle-state]
             (reset! ridley.jvm.eval/turtle-state (ridley.turtle.core/make-turtle))
             ~@body
             (let [t# @ridley.jvm.eval/turtle-state
                   p# (:position t#)]
               (reset! ridley.jvm.eval/turtle-state saved#)
               (ridley.sdf.core/sdf-move obj# (p# 0) (p# 1) (p# 2))))
-          ;; Mesh: use group-transform
-          (let [pose# (or (:creation-pose obj#)
-                           {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})
-                p0# (:position pose#)
-                h0# (ridley.math/normalize (:heading pose#))
-                u0# (ridley.math/normalize (:up pose#))]
-            (reset! ridley.jvm.eval/turtle-state
-                    (assoc (ridley.turtle.core/make-turtle)
-                           :position p0# :heading h0# :up u0#))
-            ~@body
-            (let [t# @ridley.jvm.eval/turtle-state
-                  p1# (:position t#)
-                  h1# (ridley.math/normalize (:heading t#))
-                  u1# (ridley.math/normalize (:up t#))
-                  result# (first (ridley.turtle.attachment/group-transform
-                                   [obj#] p0# h0# u0# p1# h1# u1#))]
-              (reset! ridley.jvm.eval/turtle-state saved#)
-              result#)))))")
+          ;; Mesh: use path + mesh-attach-impl (supports scale, cp-f, etc.)
+          (ridley.jvm.eval/mesh-attach-impl obj# (path ~@body)))))")
 
 (def ^:private attach!-macro-source
   "(defmacro attach! [kw & body]
@@ -2097,6 +2153,17 @@
   "(defmacro anim! [name duration target & body]
      `(println \"[warn] anim! is not supported in JVM mode (requires browser viewport)\"))")
 
+;; Pilot session atom — set by the pilot macro, read by eval-script
+(def pilot-session (atom nil))
+
+(def ^:private pilot-macro-source
+  "(defmacro pilot [arg]
+     `(let [v# ~arg]
+        (reset! ridley.jvm.eval/pilot-session
+                {:source-expr (pr-str '~arg)
+                 :creation-pose (:creation-pose v#)})
+        v#))")
+
 (def ^:private tweak-macro-source
   "(defmacro tweak
      ([expr]
@@ -2140,7 +2207,8 @@
    turtle-macro-source
    register-macro-source
    tweak-macro-source
-   anim-macro-source])
+   anim-macro-source
+   pilot-macro-source])
 
 ;; ── Script definitions snapshot (for REPL access) ──────────────
 
@@ -2168,7 +2236,8 @@
   ([script-text] (eval-script script-text nil))
   ([script-text active-libraries]
    (reset-state!)
-   (reset! tweak/tweak-session nil) ;; clear any previous tweak session
+   (reset! tweak/tweak-session nil)
+   (reset! pilot-session nil)
    (let [ns-sym (gensym "ridley-eval-")
          ns-obj (create-ns ns-sym)
          output (java.io.StringWriter.)
@@ -2202,7 +2271,8 @@
          (load-string turtle-macro-source)
          (load-string register-macro-source)
          (load-string tweak-macro-source)
-         (load-string anim-macro-source))
+         (load-string anim-macro-source)
+         (load-string pilot-macro-source))
        ;; Alias library namespaces: if active-libraries provided, alias only
        ;; those; otherwise alias all loaded libraries (backward compat).
        (if (seq active-libraries)
@@ -2225,7 +2295,8 @@
                   :print-output (str output)
                   :lines lines
                   :stamps stamps}
-           @tweak/tweak-session (assoc :tweak-session @tweak/tweak-session)))
+           @tweak/tweak-session (assoc :tweak-session @tweak/tweak-session)
+           @pilot-session (assoc :pilot-session @pilot-session)))
        (finally
          (when @pre-syms
            (snapshot-user-defs! ns-sym @pre-syms))

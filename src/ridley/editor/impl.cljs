@@ -26,7 +26,7 @@
   [op-name path]
   (when-let [bad (first (filter #(attach-only-cmds (:cmd %)) (:commands path)))]
     (throw (js/Error. (str op-name ": '" (name (:cmd bad))
-                          "' only works inside attach/attach-face, not " op-name)))))
+                           "' only works inside attach/attach-face, not " op-name)))))
 
 ;; ============================================================
 ;; Extrude family
@@ -181,25 +181,25 @@
                         (turtle/make-turtle))
         start-up (derive-end-up (:heading pose) (or (:up pose) [0 0 1]))
         results (reduce
-                  (fn [acc s]
-                    (let [state (turtle/extrude-from-path initial-state s path-data)
-                          mesh (last (:meshes state))]
-                      (if mesh
-                        (let [end-heading (:heading state)
-                              end-pos (:position state)
-                              end-up (derive-end-up end-heading (or (:up pose) [0 0 1]))]
-                          (conj acc {:mesh (assoc mesh :creation-pose pose)
-                                     :end-face {:shape s
-                                                :pose {:pos end-pos
-                                                       :heading end-heading
-                                                       :up end-up}}
-                                     :start-face {:shape s
-                                                  :pose {:pos (:position pose)
-                                                         :heading (:heading pose)
-                                                         :up start-up}}}))
-                        acc)))
-                  []
-                  shapes)
+                 (fn [acc s]
+                   (let [state (turtle/extrude-from-path initial-state s path-data)
+                         mesh (last (:meshes state))]
+                     (if mesh
+                       (let [end-heading (:heading state)
+                             end-pos (:position state)
+                             end-up (derive-end-up end-heading (or (:up pose) [0 0 1]))]
+                         (conj acc {:mesh (assoc mesh :creation-pose pose)
+                                    :end-face {:shape s
+                                               :pose {:pos end-pos
+                                                      :heading end-heading
+                                                      :up end-up}}
+                                    :start-face {:shape s
+                                                 :pose {:pos (:position pose)
+                                                        :heading (:heading pose)
+                                                        :up start-up}}}))
+                       acc)))
+                 []
+                 shapes)
         result (if (= 1 (count results)) (first results) results)]
     (when (and mark mark-cap result)
       (let [face-pose (case mark-cap
@@ -243,7 +243,7 @@
                                  max-y (apply max (map #(js/Math.abs (second %)) (:points shape-or-fn)))
                                  half (+ (max max-x max-y) 100)
                                  clip-rect (shape/make-shape [[0 (- half)] [half (- half)] [half half] [0 half]]
-                                             {:centered? true})]
+                                                             {:centered? true})]
                              (or (clipper/shape-intersection shape-or-fn clip-rect)
                                  shape-or-fn))
                            shape-or-fn))
@@ -275,7 +275,7 @@
              result (if (>= (js/Math.abs angle) 360)
                       {:mesh mesh :start-face {:shape shape-or-fn :pose start-pose}}
                       (let [face-data (faces/face-shape mesh
-                                        (:id (faces/largest-face mesh :top)))]
+                                                        (:id (faces/largest-face mesh :top)))]
                         {:mesh mesh
                          :start-face {:shape shape-or-fn :pose start-pose}
                          :end-face {:shape shape-or-fn
@@ -389,20 +389,20 @@
                     (get-in @@state/turtle-state-var [:anchors target]))]
        (if pose
          (lay-flat-with-normal mesh
-           (:heading pose)
-           (fn [rotated-verts]
-             (let [normal (:heading pose)
-                   tgt [0.0 0.0 -1.0]
-                   dot-nt (math/dot normal tgt)
-                   rot-fn (if (> (js/Math.abs dot-nt) 0.9999)
-                            (if (neg? dot-nt)
-                              identity
-                              (let [perp (if (> (js/Math.abs (nth normal 0)) 0.9) [0 1 0] [1 0 0])]
-                                #(math/rotate-point-around-axis % perp js/Math.PI)))
-                            (let [axis (math/normalize (math/cross normal tgt))
-                                  angle (js/Math.acos (max -1.0 (min 1.0 dot-nt)))]
-                              #(math/rotate-point-around-axis % axis angle)))]
-               (rot-fn (or (:pos pose) (:position pose))))))
+                               (:heading pose)
+                               (fn [rotated-verts]
+                                 (let [normal (:heading pose)
+                                       tgt [0.0 0.0 -1.0]
+                                       dot-nt (math/dot normal tgt)
+                                       rot-fn (if (> (js/Math.abs dot-nt) 0.9999)
+                                                (if (neg? dot-nt)
+                                                  identity
+                                                  (let [perp (if (> (js/Math.abs (nth normal 0)) 0.9) [0 1 0] [1 0 0])]
+                                                    #(math/rotate-point-around-axis % perp js/Math.PI)))
+                                                (let [axis (math/normalize (math/cross normal tgt))
+                                                      angle (js/Math.acos (max -1.0 (min 1.0 dot-nt)))]
+                                                  #(math/rotate-point-around-axis % axis angle)))]
+                                   (rot-fn (or (:pos pose) (:position pose))))))
          (throw (js/Error. (str "lay-flat: no anchor named " target)))))
 
      ;; Direction keyword
@@ -411,12 +411,12 @@
            face (faces/largest-face mesh target)]
        (when face
          (let [info (faces/compute-face-info (:vertices mesh)
-                      (get (:face-groups mesh) (:id face)))
+                                             (get (:face-groups mesh) (:id face)))
                face-indices (:vertices info)]
            (lay-flat-with-normal mesh (:normal info)
-             (fn [rotated-verts]
-               (let [fv (mapv #(nth rotated-verts %) face-indices)]
-                 (math/v* (reduce math/v+ fv) (/ 1.0 (count fv)))))))))
+                                 (fn [rotated-verts]
+                                   (let [fv (mapv #(nth rotated-verts %) face-indices)]
+                                     (math/v* (reduce math/v+ fv) (/ 1.0 (count fv)))))))))
 
      ;; Default: bottom
      :else
@@ -501,6 +501,32 @@
       (move-to-pose state target))))
 
 ;; ============================================================
+;; Creation-pose shift (@ commands)
+;; ============================================================
+
+(defn- shift-creation-pose
+  "Shift the creation-pose of the attached mesh along an axis without moving vertices.
+   axis: :f (heading), :rt (right), :u (up). dist: distance to shift."
+  [state axis dist]
+  (if-let [attachment (:attached state)]
+    (let [mesh (:mesh attachment)
+          pose (or (:creation-pose mesh) {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})
+          h (math/normalize (:heading pose))
+          u (math/normalize (:up pose))
+          r (math/normalize (math/cross h u))
+          dir (case axis :f h :rt r :u u h)
+          offset (math/v* dir dist)
+          new-pos (math/v+ (:position pose) offset)
+          new-pose (assoc pose :position new-pos)
+          new-mesh (assoc mesh :creation-pose new-pose)]
+      (-> state
+          (turtle/replace-mesh-in-state mesh new-mesh)
+          (assoc :position new-pos)
+          (assoc-in [:attached :mesh] new-mesh)
+          (assoc-in [:attached :original-pose] new-pose)))
+    state))
+
+;; ============================================================
 ;; Attach: path replay
 ;; ============================================================
 
@@ -524,6 +550,10 @@
               :scale (turtle/scale s (first args))
               :move-to (move-to-dispatch s args)
               :mark s ;; no-op during replay
+              ;; cp-* commands: shift creation-pose without moving vertices
+              :cp-f  (shift-creation-pose s :f (first args))
+              :cp-rt (shift-creation-pose s :rt (first args))
+              :cp-u  (shift-creation-pose s :u (first args))
               s))
           state
           (:commands path)))
@@ -564,9 +594,9 @@
   (let [state (turtle/make-turtle)
         state (replay-path-commands state path)]
     (assoc p
-      :position (:position state)
-      :heading (:heading state)
-      :up (:up state))))
+           :position (:position state)
+           :heading (:heading state)
+           :up (:up state))))
 
 (defn- resolve-selection
   "If mesh-or-sel is a selection map (from (selected)), resolve mesh and face-id.
@@ -617,6 +647,31 @@
     (when-not mesh
       (throw (js/Error. (str "attach! - no registered mesh named " kw))))
     (let [result (mesh-attach-impl mesh path)]
+      (registry/register-mesh! kw result)
+      (registry/refresh-viewport! false)
+      result)))
+
+(defn ^:export set-creation-pose!-impl
+  "Move the creation-pose of a registered mesh without moving its vertices.
+   Replays path commands starting from the current creation-pose to get a new pose,
+   then updates only the creation-pose (and heading/up) on the mesh."
+  [kw path]
+  (let [mesh (registry/get-mesh kw)]
+    (when-not mesh
+      (throw (js/Error. (str "set-creation-pose! - no registered mesh named " kw))))
+    (let [pose (or (:creation-pose mesh)
+                   {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})
+          ;; Create turtle at current creation-pose, replay commands
+          state (-> (turtle/make-turtle)
+                    (assoc :position (:position pose))
+                    (assoc :heading (:heading pose))
+                    (assoc :up (:up pose)))
+          state (replay-path-commands state path)
+          ;; Build new creation-pose from final turtle state
+          new-pose {:position (:position state)
+                    :heading  (:heading state)
+                    :up       (:up state)}
+          result (assoc mesh :creation-pose new-pose)]
       (registry/register-mesh! kw result)
       (registry/refresh-viewport! false)
       result)))
@@ -724,10 +779,10 @@
               (or (manifold/difference mesh strip) mesh)
               ;; Fallback to sequential prisms if strip fails
               (let [prisms (mapv (fn [{:keys [positions normals]}]
-                                  (let [[p0 p1] positions
-                                        [n1 n2] normals]
-                                    (faces/make-prism-along-edge p0 p1 n1 n2 distance)))
-                                dir-edges)]
+                                   (let [[p0 p1] positions
+                                         [n1 n2] normals]
+                                     (faces/make-prism-along-edge p0 p1 n1 n2 distance)))
+                                 dir-edges)]
                 (reduce (fn [current-mesh prism]
                           (or (manifold/difference current-mesh prism)
                               current-mesh))
@@ -747,7 +802,7 @@
    - :where           additional predicate on vertex positions
    - :blend-vertices  spherical blend at corners where 3+ faces meet (default false)"
   [mesh direction radius & {:keys [angle min-radius segments where blend-vertices]
-                             :or {angle 80 segments 8 blend-vertices false}}]
+                            :or {angle 80 segments 8 blend-vertices false}}]
   (let [dir-vec (direction-vec mesh direction)
         align-threshold 0.85
         pose (or (:creation-pose mesh)
@@ -787,40 +842,40 @@
                                (faces/find-fillet-vertices dir-edges))]
             (if (seq fillet-verts)
               (reduce
-                (fn [m {:keys [position normals]}]
-                  (let [center (faces/compute-fillet-vertex-center position normals radius)
+               (fn [m {:keys [position normals]}]
+                 (let [center (faces/compute-fillet-vertex-center position normals radius)
                         ;; Sphere at fillet center
-                        sphere (-> (primitives/sphere-mesh radius segments (max 6 (quot segments 2)))
-                                   (update :vertices
-                                           (fn [vs] (mapv (fn [[x y z]]
-                                                            [(+ x (nth center 0))
-                                                             (+ y (nth center 1))
-                                                             (+ z (nth center 2))]) vs))))
+                       sphere (-> (primitives/sphere-mesh radius segments (max 6 (quot segments 2)))
+                                  (update :vertices
+                                          (fn [vs] (mapv (fn [[x y z]]
+                                                           [(+ x (nth center 0))
+                                                            (+ y (nth center 1))
+                                                            (+ z (nth center 2))]) vs))))
                         ;; Box covering the corner: from center to vertex+margin
-                        margin (* radius 0.5)
-                        sum-n (reduce (fn [[ax ay az] [bx by bz]]
-                                        [(+ ax bx) (+ ay by) (+ az bz)])
-                                      normals)
-                        extent [(+ (nth position 0) (* (nth sum-n 0) margin))
-                                (+ (nth position 1) (* (nth sum-n 1) margin))
-                                (+ (nth position 2) (* (nth sum-n 2) margin))]
-                        [mnx mny mnz] [(min (nth center 0) (nth extent 0))
-                                        (min (nth center 1) (nth extent 1))
-                                        (min (nth center 2) (nth extent 2))]
-                        [mxx mxy mxz] [(max (nth center 0) (nth extent 0))
-                                        (max (nth center 1) (nth extent 1))
-                                        (max (nth center 2) (nth extent 2))]
-                        corner-box {:type :mesh
-                                    :vertices [[mnx mny mnz] [mxx mny mnz] [mxx mxy mnz] [mnx mxy mnz]
-                                               [mnx mny mxz] [mxx mny mxz] [mxx mxy mxz] [mnx mxy mxz]]
-                                    :faces [[0 2 1] [0 3 2] [4 5 6] [4 6 7]
-                                            [0 1 5] [0 5 4] [2 3 7] [2 7 6]
-                                            [1 2 6] [1 6 5] [0 4 7] [0 7 3]]}
+                       margin (* radius 0.5)
+                       sum-n (reduce (fn [[ax ay az] [bx by bz]]
+                                       [(+ ax bx) (+ ay by) (+ az bz)])
+                                     normals)
+                       extent [(+ (nth position 0) (* (nth sum-n 0) margin))
+                               (+ (nth position 1) (* (nth sum-n 1) margin))
+                               (+ (nth position 2) (* (nth sum-n 2) margin))]
+                       [mnx mny mnz] [(min (nth center 0) (nth extent 0))
+                                      (min (nth center 1) (nth extent 1))
+                                      (min (nth center 2) (nth extent 2))]
+                       [mxx mxy mxz] [(max (nth center 0) (nth extent 0))
+                                      (max (nth center 1) (nth extent 1))
+                                      (max (nth center 2) (nth extent 2))]
+                       corner-box {:type :mesh
+                                   :vertices [[mnx mny mnz] [mxx mny mnz] [mxx mxy mnz] [mnx mxy mnz]
+                                              [mnx mny mxz] [mxx mny mxz] [mxx mxy mxz] [mnx mxy mxz]]
+                                   :faces [[0 2 1] [0 3 2] [4 5 6] [4 6 7]
+                                           [0 1 5] [0 5 4] [2 3 7] [2 7 6]
+                                           [1 2 6] [1 6 5] [0 4 7] [0 7 3]]}
                         ;; Vertex cutter = box - sphere
-                        vertex-cutter (manifold/difference corner-box sphere)]
-                    (if vertex-cutter
-                      (or (manifold/difference m vertex-cutter) m)
-                      m)))
-                edge-result fillet-verts)
+                       vertex-cutter (manifold/difference corner-box sphere)]
+                   (if vertex-cutter
+                     (or (manifold/difference m vertex-cutter) m)
+                     m)))
+               edge-result fillet-verts)
               edge-result)))))))
 

@@ -25,8 +25,10 @@
 (defonce ^:private turtle-visible (atom true))
 (defonce ^:private turtle-indicator (atom nil))
 (defonce ^:private turtle-pose (atom {:position [0 0 0]
-                                       :heading [1 0 0]
-                                       :up [0 0 1]}))
+                                      :heading [1 0 0]
+                                      :up [0 0 1]}))
+;; Turtle source: :global | {:mesh :Name} | {:custom pose-map}
+(defonce ^:private turtle-source (atom :global))
 
 ;; Face normals visualization (like Blender's normal display)
 (defonce ^:private normals-visible (atom false))
@@ -75,8 +77,8 @@
 
 (defn- create-renderer [canvas]
   (let [renderer (THREE/WebGLRenderer. #js {:canvas canvas
-                                             :antialias true
-                                             :preserveDrawingBuffer true})]
+                                            :antialias true
+                                            :preserveDrawingBuffer true})]
     (.setPixelRatio renderer js/window.devicePixelRatio)
     renderer))
 
@@ -298,23 +300,23 @@
         ;; Body - cone pointing forward (along local +Z)
         body-geo (THREE/ConeGeometry. 0.3 1.2 8)
         body-mat (THREE/MeshBasicMaterial. #js {:color 0x00ffaa
-                                                 :transparent true
-                                                 :opacity 0.85
-                                                 :depthTest false})
+                                                :transparent true
+                                                :opacity 0.85
+                                                :depthTest false})
         body (THREE/Mesh. body-geo body-mat)
         ;; Wings - flat box extending sideways
         wing-geo (THREE/BoxGeometry. 1.0 0.05 0.3)
         wing-mat (THREE/MeshBasicMaterial. #js {:color 0x00ddff
-                                                 :transparent true
-                                                 :opacity 0.8
-                                                 :depthTest false})
+                                                :transparent true
+                                                :opacity 0.8
+                                                :depthTest false})
         wing (THREE/Mesh. wing-geo wing-mat)
         ;; Tail fin - vertical (shows up direction)
         tail-geo (THREE/BoxGeometry. 0.05 0.4 0.2)
         tail-mat (THREE/MeshBasicMaterial. #js {:color 0xffaa00
-                                                 :transparent true
-                                                 :opacity 0.8
-                                                 :depthTest false})
+                                                :transparent true
+                                                :opacity 0.8
+                                                :depthTest false})
         tail (THREE/Mesh. tail-geo tail-mat)]
     ;; Rotate body so cone points along +Z (local forward)
     (.rotateX body (/ js/Math.PI 2))
@@ -471,9 +473,9 @@
         ;; Create geometry and material
         geometry (THREE/PlaneGeometry. width height)
         material (THREE/MeshBasicMaterial. #js {:map texture
-                                                 :transparent true
-                                                 :side THREE/DoubleSide
-                                                 :depthWrite false})
+                                                :transparent true
+                                                :side THREE/DoubleSide
+                                                :depthWrite false})
         mesh (THREE/Mesh. geometry material)]
     ;; Position the mesh
     (.set (.-position mesh) px py pz)
@@ -562,14 +564,14 @@
   "Create material for highlighted faces."
   [color]
   (THREE/MeshStandardMaterial. #js {:color color
-                                     :metalness 0.1
-                                     :roughness 0.5
-                                     :side THREE/DoubleSide
-                                     :flatShading true
-                                     :transparent true
-                                     :opacity 0.85
-                                     :emissive color
-                                     :emissiveIntensity 0.3}))
+                                    :metalness 0.1
+                                    :roughness 0.5
+                                    :side THREE/DoubleSide
+                                    :flatShading true
+                                    :transparent true
+                                    :opacity 0.85
+                                    :emissive color
+                                    :emissiveIntensity 0.3}))
 
 ;; Track highlight objects for cleanup
 (defonce ^:private highlight-objects (atom []))
@@ -623,7 +625,7 @@
         (.setAttribute geom "position"
                        (THREE/BufferAttribute. (:vert-props raw) 3))
         (.setIndex geom
-         (THREE/BufferAttribute. (:tri-verts raw) 1))
+                   (THREE/BufferAttribute. (:tri-verts raw) 1))
         (.computeVertexNormals geom)
         (THREE/Mesh. geom three-material))
       ;; SLOW PATH: de-index from CLJS vectors (for non-CSG meshes)
@@ -649,11 +651,11 @@
   (clear-panels world-group)
   ;; Clear other geometry
   (let [to-remove (filterv #(and (or (= (.-type %) "LineSegments")
-                                      (= (.-type %) "Mesh"))
+                                     (= (.-type %) "Mesh"))
                                   ;; Keep grid (GridHelper is also a LineSegments)
-                                  (not (instance? THREE/GridHelper %))
+                                 (not (instance? THREE/GridHelper %))
                                   ;; Keep highlight group
-                                  (not (identical? % highlight-group)))
+                                 (not (identical? % highlight-group)))
                            (.-children world-group))]
     (doseq [^js obj to-remove]
       (.remove world-group obj)
@@ -1164,7 +1166,7 @@
           ;; Replay the same bounds-check filter as create-three-mesh
           valid-faces (into [] (filter (fn [[i0 i1 i2]]
                                          (and (< i0 n-verts) (< i1 n-verts) (< i2 n-verts))))
-                             faces)
+                            faces)
           hit-triangle (when (< three-face-index (count valid-faces))
                          (nth valid-faces three-face-index))]
       (when hit-triangle
@@ -1182,10 +1184,10 @@
         n-verts (count vertices)
         ;; Build valid-faces and track original indices
         indexed (keep-indexed
-                  (fn [orig-idx [i0 i1 i2 :as tri]]
-                    (when (and (< i0 n-verts) (< i1 n-verts) (< i2 n-verts))
-                      [orig-idx tri]))
-                  (:faces mesh-data))
+                 (fn [orig-idx [i0 i1 i2 :as tri]]
+                   (when (and (< i0 n-verts) (< i1 n-verts) (< i2 n-verts))
+                     [orig-idx tri]))
+                 (:faces mesh-data))
         valid-to-orig (mapv first indexed)
         valid-faces (mapv second indexed)]
     (when (< three-face-index (count valid-faces))
@@ -1430,7 +1432,7 @@
           final-tris (or selected-tris triangles)
           final-face-id (or selected-face-id face-id)
           {:keys [center normal]} (compute-face-center-and-normal
-                                    (:vertices mesh-data) final-tris)
+                                   (:vertices mesh-data) final-tris)
           face-info {:face-id final-face-id
                      :triangles final-tris
                      :normal normal
@@ -1462,7 +1464,7 @@
           (if (and shift? (= :face (:drill-level @picking-state)))
             ;; Alt+Shift+Click: toggle face in/out of selection
             (when-let [{:keys [face-id triangles]} (resolve-face-with-flood-fill
-                                                     mesh-data face-index @picking-tolerance)]
+                                                    mesh-data face-index @picking-tolerance)]
               (let [current-tris (get-in @picking-state [:selected-face :triangles] [])
                     current-set (set current-tris)
                     toggle-set (set triangles)
@@ -1739,10 +1741,10 @@
       ;; Shift+Click interactive measurement
       (.addEventListener canvas "click" on-viewport-shift-click)
       (.addEventListener js/document "keydown"
-        (fn [e] (when (= (.-key e) "Escape")
-                  (deselect!)
-                  (clear-measure-pending!)
-                  (clear-rulers!))))
+                         (fn [e] (when (= (.-key e) "Escape")
+                                   (deselect!)
+                                   (clear-measure-pending!)
+                                   (clear-rulers!))))
       ;; Setup ResizeObserver on viewport-panel AND canvas for responsive sizing
       ;; Panel observer catches divider drag; canvas observer catches Tauri resize
       ;; Window resize listener as fallback for platforms where ResizeObserver misses
@@ -1943,8 +1945,8 @@
   [position radius color]
   (let [geom (THREE/SphereGeometry. radius 8 6)
         mat (THREE/MeshBasicMaterial. #js {:color color
-                                            :depthTest true
-                                            :depthWrite false})
+                                           :depthTest true
+                                           :depthWrite false})
         mesh (THREE/Mesh. geom mat)
         [px py pz] position]
     (.set (.-position mesh) px py pz)
@@ -1960,8 +1962,8 @@
         points #js [(THREE/Vector3. x1 y1 z1)
                     (THREE/Vector3. x2 y2 z2)]
         mat (THREE/LineBasicMaterial. #js {:color color
-                                            :depthTest true
-                                            :depthWrite false})]
+                                           :depthTest true
+                                           :depthWrite false})]
     (.setFromPoints geom points)
     (let [line (THREE/Line. geom mat)]
       (set! (.-renderOrder line) 997)
@@ -2005,13 +2007,13 @@
   (when-let [{:keys [highlight-group]} @state]
     (doseq [{:keys [^js group]} @ruler-objects]
       (.traverse group
-        (fn [^js child]
-          (when-let [geom (.-geometry child)]
-            (.dispose geom))
-          (when-let [mat (.-material child)]
-            (when-let [tex (.-map mat)]
-              (.dispose tex))
-            (.dispose mat))))
+                 (fn [^js child]
+                   (when-let [geom (.-geometry child)]
+                     (.dispose geom))
+                   (when-let [mat (.-material child)]
+                     (when-let [tex (.-map mat)]
+                       (.dispose tex))
+                     (.dispose mat))))
       (.remove highlight-group group))
     (reset! ruler-objects [])))
 
@@ -2064,6 +2066,33 @@
         (.add world-group obj)
         (swap! preview-objects conj obj)))))
 
+(defn highlight-mesh-by-name!
+  "Highlight a mesh by its registry name (orange outline + emissive tint).
+   Pass nil to clear."
+  [reg-name]
+  (clear-selection-outline!)
+  (when reg-name
+    (when-let [three-mesh (find-three-mesh-by-reg-name reg-name)]
+      (show-selection-outline! three-mesh))))
+
+(defn show-wireframe-preview!
+  "Show an orange wireframe outline of a mesh as a preview overlay.
+   Clears any previous preview first."
+  [mesh-data]
+  (clear-preview!)
+  (when (and (seq (:vertices mesh-data)) (seq (:faces mesh-data)))
+    (when-let [{:keys [world-group]} @state]
+      (let [^js solid (create-three-mesh mesh-data)
+            edges (THREE/EdgesGeometry. (.-geometry solid) 30)
+            mat (THREE/LineBasicMaterial. #js {:color 0xff9933})
+            ^js outline (THREE/LineSegments. edges mat)]
+        (set! (.-renderOrder outline) 999)
+        (set! (.. outline -material -depthTest) false)
+        (.add world-group outline)
+        (swap! preview-objects conj outline)
+        ;; Dispose the temp solid (we only needed its geometry for edges)
+        (when-let [m (.-material solid)] (.dispose m))))))
+
 (defn fit-camera
   "Fit camera to current visible geometry."
   []
@@ -2095,13 +2124,13 @@
    Returns a Promise<Blob>."
   []
   (js/Promise.
-    (fn [resolve reject]
-      (if-let [{:keys [renderer scene camera]} @state]
-        (do (.render ^js renderer ^js scene ^js camera)
-            (.toBlob ^js (.-domElement ^js renderer)
-                     (fn [blob] (resolve blob))
-                     "image/png"))
-        (reject (js/Error. "No renderer"))))))
+   (fn [resolve reject]
+     (if-let [{:keys [renderer scene camera]} @state]
+       (do (.render ^js renderer ^js scene ^js camera)
+           (.toBlob ^js (.-domElement ^js renderer)
+                    (fn [blob] (resolve blob))
+                    "image/png"))
+       (reject (js/Error. "No renderer"))))))
 
 ;; ============================================================
 ;; Grid/Axes visibility toggles
@@ -2187,6 +2216,16 @@
   (reset! turtle-visible visible?)
   (when-let [indicator @turtle-indicator]
     (set! (.-visible indicator) visible?)))
+
+(defn set-turtle-source!
+  "Set turtle source. src is :global | {:mesh :Name} | {:custom pose-map}"
+  [src]
+  (reset! turtle-source src))
+
+(defn get-turtle-source
+  "Get current turtle source."
+  []
+  @turtle-source)
 
 ;; ============================================================
 ;; Face normals visibility

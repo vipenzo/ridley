@@ -30,6 +30,7 @@
             [ridley.anim.core :as anim]
             [ridley.anim.playback :as anim-playback]
             [ridley.editor.test-mode :as test-mode]
+            [ridley.editor.pilot-mode :as pilot-mode]
             [ridley.version :as version]
             [ridley.audio :as audio]
             [ridley.jvm.client :as jvm]))
@@ -256,7 +257,10 @@
         ;; Sync AI state
         (sync-voice-state)
         ;; Audio feedback
-        (audio/play-feedback! true)))))
+        (audio/play-feedback! true)
+        ;; Check if pilot mode was requested during evaluation
+        (when (pilot-mode/requested?)
+          (pilot-mode/enter!))))))
 
 (defn- register-jvm-meshes!
   "Register meshes from JVM eval result in the scene registry."
@@ -464,7 +468,7 @@
                                        (do
                                          (show-error error)
                                          (audio/play-feedback! false))
-                                       (let [{:keys [meshes stamps print-output elapsed-ms tweak-session]} result]
+                                       (let [{:keys [meshes stamps print-output elapsed-ms tweak-session pilot-session]} result]
                                          (hide-error)
                                          (when (seq print-output)
                                            (add-script-output print-output))
@@ -477,17 +481,21 @@
                                          (when (not= :global (viewport/get-turtle-source))
                                            (update-turtle-indicator))
                                          (rebuild-turtle-dropdown!)
-                                         ;; Check for tweak session
-                                         (if tweak-session
+                                         (cond
+                                           tweak-session
                                            (let [active-libs (or (when-let [raw (.getItem js/localStorage "ridley:jvm-libs:active")]
                                                                    (try (vec (js->clj (.parse js/JSON raw)))
                                                                         (catch :default _ [])))
                                                                  [])]
-                                             ;; Pass the full editor script — the server replaces
-                                             ;; (tweak <form>) with the modified form on each update
                                              (create-jvm-tweak-panel! tweak-session code active-libs)
                                              (add-repl-entry "[Run/JVM]" "Tweak mode active — move sliders" false))
-                                           ;; Normal summary
+
+                                           pilot-session
+                                           (do (pilot-mode/request-from-jvm! pilot-session meshes)
+                                               (pilot-mode/enter!)
+                                               (add-repl-entry "[Run/JVM]" "Pilot mode active" false))
+
+                                           :else
                                            (let [mesh-count (count meshes)
                                                  summary (str "JVM eval: " mesh-count " mesh"
                                                               (when (> mesh-count 1) "es")
