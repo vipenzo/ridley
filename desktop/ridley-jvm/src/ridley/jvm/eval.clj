@@ -1973,18 +1973,14 @@
 ;; attach: transform a mesh or SDF node by turtle commands
 (def ^:private attach-macro-source
   "(defmacro attach [mesh & body]
-     `(let [obj# ~mesh]
+     `(let [obj# ~mesh
+            p# (path ~@body)]
         (if (and (map? obj#) (:op obj#))
-          ;; SDF nodes: capture displacement as sdf-move
-          (let [saved# @ridley.jvm.eval/turtle-state]
-            (reset! ridley.jvm.eval/turtle-state (ridley.turtle.core/make-turtle))
-            ~@body
-            (let [t# @ridley.jvm.eval/turtle-state
-                  p# (:position t#)]
-              (reset! ridley.jvm.eval/turtle-state saved#)
-              (ridley.sdf.core/sdf-move obj# (p# 0) (p# 1) (p# 2))))
-          ;; Mesh: use path + mesh-attach-impl (supports scale, cp-f, etc.)
-          (ridley.jvm.eval/mesh-attach-impl obj# (path ~@body)))))")
+          ;; SDF nodes: materialize first, then attach as mesh
+          (ridley.jvm.eval/mesh-attach-impl
+            (ridley.sdf.core/ensure-mesh obj#) p#)
+          ;; Mesh: use mesh-attach-impl (supports scale, cp-f, etc.)
+          (ridley.jvm.eval/mesh-attach-impl obj# p#))))")
 
 (def ^:private attach!-macro-source
   "(defmacro attach! [kw & body]

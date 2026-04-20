@@ -517,9 +517,14 @@
          x))
   ([x reference-mesh]
    (if (sdf-node? x)
-     (let [bounds (if reference-mesh
-                    (expand-bounds (mesh-bounds reference-mesh) 1.3)
-                    (auto-bounds x))
+     (let [sdf-bounds (auto-bounds x)
+           bounds (if reference-mesh
+                    ;; Union of SDF bounds and reference mesh bounds
+                    (let [ref-b (expand-bounds (mesh-bounds reference-mesh) 1.3)]
+                      (mapv (fn [[slo shi] [rlo rhi]]
+                              [(min slo rlo) (max shi rhi)])
+                            sdf-bounds ref-b))
+                    sdf-bounds)
            res (resolution-for-bounds bounds *sdf-resolution* x)]
        (materialize x bounds res))
      x)))

@@ -128,7 +128,9 @@
       (.send xhr (js/JSON.stringify
                   #js {:script script-text
                        :active_libraries (clj->js active-libs)}))
-      (when (= 200 (.-status xhr))
+      (if-not (= 200 (.-status xhr))
+        (do (js/console.warn "pilot JVM eval error:" (.-status xhr) (.-responseText xhr))
+            nil)
         (let [^js result (js/JSON.parse (.-responseText xhr))
               meshes-js (aget result "meshes")
               print-output (aget result "print_output")]
@@ -173,12 +175,14 @@
               (doseq [[n m] (:meshes result)]
                 (when (not= n :__pilot__)
                   (registry/register-mesh! n m)))
-              (registry/refresh-viewport! false)
-              ;; Turtle + wireframe from __pilot__ mesh
-              (when-let [pilot-mesh (get (:meshes result) :__pilot__)]
-                (when (:creation-pose pilot-mesh)
-                  (viewport/update-turtle-pose (:creation-pose pilot-mesh))
-                  (viewport/show-wireframe-preview! pilot-mesh)))))
+              ;; Defer viewport update to next frame (sync XHR blocks rendering)
+              (let [pilot-mesh (get (:meshes result) :__pilot__)]
+                (js/requestAnimationFrame
+                 (fn []
+                   (registry/refresh-viewport! false)
+                   (when (and pilot-mesh (:creation-pose pilot-mesh))
+                     (viewport/update-turtle-pose (:creation-pose pilot-mesh))
+                     (viewport/show-wireframe-preview! pilot-mesh)))))))
           ;; === SCI mode: eval locally ===
           (do
             (registry/clear-all!)
@@ -540,13 +544,13 @@
     ;; cancel!/re-eval set the skip flag — just pass through the mesh
     (do (reset! skip-next-pilot false) value)
     ;; Normal path
-    (let [mesh value]
-      (when-not mesh
-        (throw (js/Error. (str "pilot: no mesh found for " quoted-arg))))
-      (when-not (and (map? mesh) (:vertices mesh))
-        (throw (js/Error. (str "pilot: argument must be a mesh"))))
-      (when-not (:creation-pose mesh)
-        (throw (js/Error. (str "pilot: mesh has no creation-pose"))))
+    (let [obj value
+          sdf? (and (map? obj) (string? (:op obj)))
+          mesh? (and (map? obj) (:vertices obj))]
+      (when-not obj
+        (throw (js/Error. (str "pilot: no object found for " quoted-arg))))
+      (when-not (or mesh? sdf?)
+        (throw (js/Error. (str "pilot: argument must be a mesh or SDF node"))))
       (when (active?)
         (throw (js/Error. "pilot: already in a pilot session")))
       ;; Find the (pilot ...) form in editor text
@@ -567,13 +571,14 @@
                    :scale-step    1.1
                    :digit-buffer  ""
                    :digit-target  :step
-                   :creation-pose (:creation-pose mesh)
-                   :original-mesh mesh
+                   :creation-pose (or (:creation-pose obj)
+                                      {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})
+                   :original-mesh obj
                    :pilot-from    pilot-from
                    :pilot-to      pilot-to
                    :entered?      false})
-          ;; Return mesh so (pilot x) acts as passthrough in first eval
-          mesh)))))
+          ;; Return object so (pilot x) acts as passthrough in first eval
+          obj)))))
 
 (defn request-from-jvm!
   "Set up pilot state from JVM sidecar pilot-session.
@@ -581,11 +586,12 @@
    pilot-session: {:source-expr \"cubo\" :creation-pose {...}} from JVM"
   [pilot-session _meshes]
   (let [source-expr (:source-expr pilot-session)
-        creation-pose (:creation-pose pilot-session)
+        creation-pose (or (:creation-pose pilot-session)
+                          {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})
         editor-text (cm/get-value)
         pilot-pattern (str "(pilot " source-expr ")")
         idx (.indexOf editor-text pilot-pattern)]
-    (when (and creation-pose (>= idx 0))
+    (when (>= idx 0)
       (let [pilot-from idx
             pilot-to (+ idx (count pilot-pattern))]
         (reset! pilot-state
