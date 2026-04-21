@@ -62,12 +62,7 @@
 ;(stamp (poly 0 0 RTOP 0 RTOP H 0 H) :color 0x00ff00)
 ;(stamp (poly 0 0 RBOTTOM 0 RBOTTOM H 0 H) :color 0xfffff)
 
-
-
 (resolution :n 128)
-
-
-
 
 ; =====================
 ; Inner tray (vassoio)
@@ -77,7 +72,6 @@
 ; Offset from silhouette centerline to tray centerline.
 ; Ensures constant gap = tray-gap between bowl inner surface and tray outer surface.
 (def tray-offset (+ (/ wall 2) tray-gap (/ tray-wall 2))) ; = 2.8
-
 
 ; --- Tray outer wall ---
 ; Same silhouette, clipped to tray height and inset by tray-offset.
@@ -93,7 +87,6 @@
 
 (def tray-outer
   (revolve tray-silhouette))
-
 
 ; Leap: ledge/groove for tray-bowl interlock at the rim.
 ; Bowl groove (bowl coords: Y up to H) — offset by 1mm for clearance.
@@ -113,7 +106,6 @@
    (u (- (get-in (bounds bowl-silhouette) [:max 1])
          (get-in (bounds leap-path) [:max 1])))))
 
-
 ; =====================
 ; Outer bowl (ciotola)
 ; =====================
@@ -124,21 +116,16 @@
           (mesh-union
            (attach (cyl RBOTTOM (* H 0.1) 128) (u (- (* H 0.1))) (tr 90))
            (mesh-difference
-          ;(revolve bowl-silhouette)
-            (revolve (displaced bowl-silhouette
-                                (fn [p t] (* 1.75 (+ 1 (sin (* t 12 PI))))))) ; sin "shifted", non quadrato
-
-            bowl-leap))
-
-  ; decimate
-          )
-
-
+            ;; Decima solo la parte ondulata; smussa i micro-bumps prima
+            (-> (revolve (displaced bowl-silhouette
+                                    ;; Ampiezza ridotta da 1.75 a 0.75 → bumps di 1.5mm picco-a-picco
+                                    (fn [p t] (* 0.75 (+ 1 (sin (* t 12 PI)))))))
+                (mesh-laplacian :iterations 1 :feature-angle 60)
+                (mesh-simplify 0.6))
+            bowl-leap)))
 
 (def tray-leap
   (revolve leap-path))
-
-
 
 ; --- Funnel ---
 ; Slight outward taper from base to rim, bezier-smoothed.
@@ -147,7 +134,6 @@
         funnel-r-bot 0
         funnel-r-top funnel-h
         0 funnel-h))
-
 
 (def tray-funnel
   (revolve
@@ -162,8 +148,6 @@
                           w (* funnel-h 0.4)
                           (+ funnel-r-top funnel-handle) (* funnel-h 0.8)
                           0 funnel-h)))))))
-
-
 
 ; --- Floor ---
 ; Flat ring connecting outer wall base to funnel base.

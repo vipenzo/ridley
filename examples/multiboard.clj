@@ -3,7 +3,7 @@
 
 ;; ── Parametri fondamentali ──────────────────────────────────────
 (def cell-size 25)
-(def height 6.2)   ; STL ufficiale = 6.2mm (OpenSCAD usa 6.4 per stacking)
+(def height 6.2) ; STL ufficiale = 6.2mm (OpenSCAD usa 6.4 per stacking)
 
 (def side-l (/ cell-size (+ 1 (* 2 (cos (/ PI 4))))))
 (def size-offset (* 0.5 (- cell-size side-l)))
@@ -11,40 +11,40 @@
 ;; ── Forma base della cella (quadrato con angoli tagliati) ───────
 (def cell-shape
   (poly (- cell-size size-offset) cell-size
-        size-offset               cell-size
-        0                         (- cell-size size-offset)
-        0                         size-offset
-        size-offset               0
+        size-offset cell-size
+        0 (- cell-size size-offset)
+        0 size-offset
+        size-offset 0
         (- cell-size size-offset) 0
-        cell-size                 size-offset
-        cell-size                 (- cell-size size-offset)))
+        cell-size size-offset
+        cell-size (- cell-size size-offset)))
 
 ;; Shape estesa: 2 vertici extra per la tacca peg-hole nell'angolo
 (def cell-shape-peg
   (poly (- cell-size size-offset) cell-size
-        size-offset               cell-size
-        0                         (- cell-size size-offset)
-        0                         size-offset
-        size-offset               0
+        size-offset cell-size
+        0 (- cell-size size-offset)
+        0 size-offset
+        size-offset 0
         (- cell-size size-offset) 0
-        cell-size                 size-offset
-        cell-size                 (- cell-size size-offset)
+        cell-size size-offset
+        cell-size (- cell-size size-offset)
         (+ cell-size size-offset) cell-size
-        cell-size                 (+ cell-size size-offset)))
+        cell-size (+ cell-size size-offset)))
 
 ;; ── Multihole ───────────────────────────────────────────────────
-(def hole-thick      3.6)
-(def hole-thin       1.6)
+(def hole-thick 3.6)
+(def hole-thin 1.6)
 (def hole-thick-height 2.4)
 
 (def hole-thick-size (- cell-size hole-thick))
-(def hole-thin-size  (- cell-size hole-thin))
+(def hole-thin-size (- cell-size hole-thin))
 
 (def hole-thick-side-l (/ hole-thick-size (+ 1 (* 2 (cos (/ PI 4))))))
-(def hole-thin-side-l  (/ hole-thin-size  (+ 1 (* 2 (cos (/ PI 4))))))
+(def hole-thin-side-l (/ hole-thin-size (+ 1 (* 2 (cos (/ PI 4))))))
 
 (def hole-thick-r (/ hole-thick-side-l (* 2 (sin (/ PI 8)))))
-(def hole-thin-r  (/ hole-thin-side-l  (* 2 (sin (/ PI 8)))))
+(def hole-thin-r (/ hole-thin-side-l (* 2 (sin (/ PI 8)))))
 
 (def h1 (/ (- height hole-thick-height) 2))
 (def h2 (/ (+ height hole-thick-height) 2))
@@ -55,7 +55,7 @@
   (cond
     (< z h1) (lerp hole-thin-r hole-thick-r (/ z h1))
     (< z h2) hole-thick-r
-    :else    (lerp hole-thick-r hole-thin-r (/ (- z h2) (- height h2)))))
+    :else (lerp hole-thick-r hole-thin-r (/ (- z h2) (- height h2)))))
 
 (def multihole-base
   (loft (circle 1 8)
@@ -71,10 +71,10 @@
 
 (defn trapz-thread [d1 d2 h1 h2 thread-len pitch n x-off]
   (let [profile [[(/ d1 2) (/ h1 -2)]
-                 [(/ d1 2) (/ h1  2)]
-                 [(/ d2 2) (/ h2  2)]
+                 [(/ d1 2) (/ h1 2)]
+                 [(/ d2 2) (/ h2 2)]
                  [(/ d2 2) (/ h2 -2)]]
-        ppc     4
+        ppc 4
         n-steps (round (* n (/ thread-len pitch)))
         ;; Vertici: (n-steps+1) sezioni × 4 punti
         verts
@@ -82,7 +82,7 @@
          (for [i (range (inc n-steps))
                [r hz] profile]
            (let [theta (* i (/ (* 2 PI) n))
-                 ax    (+ x-off (* i (/ pitch n)))]
+                 ax (+ x-off (* i (/ pitch n)))]
              [(+ ax hz)
               (* r (cos theta))
               (* r (sin theta))])))
@@ -91,7 +91,7 @@
         (vec
          (mapcat identity
                  (for [seg (range n-steps)
-                       pt  (range ppc)]
+                       pt (range ppc)]
                    (let [a (+ (* seg ppc) (mod (inc pt) ppc))
                          b (+ a ppc)
                          c (+ (* seg ppc) pt ppc)
@@ -99,9 +99,9 @@
                      [[a c b] [a d c]]))))
         ;; Cap iniziale e finale (invertite)
         start [[0 1 2] [0 2 3]]
-        lb    (* n-steps ppc)
-        end   [[(+ lb 2) (+ lb 1) (+ lb 0)]
-               [(+ lb 3) (+ lb 2) (+ lb 0)]]]
+        lb (* n-steps ppc)
+        end [[(+ lb 2) (+ lb 1) (+ lb 0)]
+             [(+ lb 3) (+ lb 2) (+ lb 0)]]]
     {:type :mesh
      :vertices verts
      :faces (vec (concat start sides end))
@@ -109,14 +109,14 @@
 
 ;; ── Parametri thread ────────────────────────────────────────────
 ;; Large thread (multihole) — valori da OpenSCAD / specifiche ufficiali
-(def lg-d1 22.5)    (def lg-d2 hole-thick-size)
-(def lg-h1 0.5)     (def lg-h2 1.583)
-(def lg-pitch 2.5)  (def lg-fn 32)
+(def lg-d1 22.5) (def lg-d2 hole-thick-size)
+(def lg-h1 0.5) (def lg-h2 1.583)
+(def lg-pitch 2.5) (def lg-fn 32)
 
 ;; Small thread (peg hole)
-(def sm-d1 7.025)   (def sm-d2 6.069)
-(def sm-h1 0.768)   (def sm-h2 2.5)
-(def sm-pitch 3.0)  (def sm-fn 32)
+(def sm-d1 7.025) (def sm-d2 6.069)
+(def sm-h1 0.768) (def sm-h2 2.5)
+(def sm-pitch 3.0) (def sm-fn 32)
 
 ;; ── Thread mesh ─────────────────────────────────────────────────
 (def multihole-thread
@@ -139,17 +139,17 @@
 ;; ── Cella singola ───────────────────────────────────────────────
 ;; Sottrae ogni pezzo separatamente — evita mesh-union su thread raw
 (defn multiboard-cell [with-peg-hole]
-  (let [base   (extrude (if with-peg-hole cell-shape-peg cell-shape) (f height))
+  (let [base (extrude (if with-peg-hole cell-shape-peg cell-shape) (f height))
         center-rt (/ cell-size 2)
-        center-u  (/ cell-size 2)]
+        center-u (/ cell-size 2)]
     (if with-peg-hole
       (mesh-difference base
-                       (attach multihole-base   (rt center-rt) (u center-u))
+                       (attach multihole-base (rt center-rt) (u center-u))
                        (attach multihole-thread (rt center-rt) (u center-u))
-                       (attach peg-hole-base    (rt cell-size) (u cell-size))
-                       (attach peg-hole-thread  (rt cell-size) (u cell-size)))
+                       (attach peg-hole-base (rt cell-size) (u cell-size))
+                       (attach peg-hole-thread (rt cell-size) (u cell-size)))
       (mesh-difference base
-                       (attach multihole-base   (rt center-rt) (u center-u))
+                       (attach multihole-base (rt center-rt) (u center-u))
                        (attach multihole-thread (rt center-rt) (u center-u))))))
 
 ;; ── Tile v2: contorno solido + sottrai fori ─────────────────────
@@ -158,16 +158,16 @@
 
 ;; Parametri border slot (da analisi STL ufficiale)
 ;; Profilo a T: collo stretto + camera interna più larga
-(def slot-neck-width 6.0)   ; larghezza collo (stretto)
-(def slot-head-width 7.0)   ; larghezza camera interna (larga)
-(def slot-neck-depth 2.0)   ; profondità collo (dal bordo esterno)
-(def slot-head-depth 3.0)   ; profondità camera interna
-(def slot-height 3.4)       ; altezza (z 1.4→4.8 nell'STL)
-(def slot-h-center 3.1)     ; centro altezza slot
+(def slot-neck-width 6.0) ; larghezza collo (stretto)
+(def slot-head-width 7.0) ; larghezza camera interna (larga)
+(def slot-neck-depth 2.0) ; profondità collo (dal bordo esterno)
+(def slot-head-depth 3.0) ; profondità camera interna
+(def slot-height 3.4) ; altezza (z 1.4→4.8 nell'STL)
+(def slot-h-center 3.1) ; centro altezza slot
 (def slot-total-depth (+ slot-neck-depth slot-head-depth))
 
 ;; Parametri canale cilindrico
-(def channel-r 1.08)      ; raggio ~1.08mm
+(def channel-r 1.08) ; raggio ~1.08mm
 
 (defn tile-outline
   "Contorno del tile NxM celle, centrato all'origine.
@@ -190,22 +190,22 @@
          ;; Top → Left → Bottom → Right, with corner clips where both
          ;; adjacent edges have borders.
          pts (vec (concat
-                    ;; Top edge (right to left)
+                   ;; Top edge (right to left)
                    (if tr? [[(- (- w so) ox) (- h oy)]]
                        [[(- w ox) (- h oy)]])
                    (if tl? [[(- so ox) (- h oy)]]
                        [[(- 0 ox) (- h oy)]])
-                    ;; Left edge (top to bottom)
+                   ;; Left edge (top to bottom)
                    (if tl? [[(- 0 ox) (- (- h so) oy)]]
                        [])
                    (if bl? [[(- 0 ox) (- so oy)]]
                        [[(- 0 ox) (- 0 oy)]])
-                    ;; Bottom edge (left to right)
+                   ;; Bottom edge (left to right)
                    (if bl? [[(- so ox) (- 0 oy)]]
                        [])
                    (if br? [[(- (- w so) ox) (- 0 oy)]]
                        [[(- w ox) (- 0 oy)]])
-                    ;; Right edge (bottom to top)
+                   ;; Right edge (bottom to top)
                    (if br? [[(- w ox) (- so oy)]]
                        [])
                    (if tr? [[(- w ox) (- (- h so) oy)]]
@@ -239,7 +239,7 @@
                j (range y-cells)]
            (let [cx (- (+ (* i cell-size) (/ cell-size 2)) ox)
                  cy (- (+ (* j cell-size) (/ cell-size 2)) oy)]
-             [(attach multihole-base   (rt cx) (u cy))
+             [(attach multihole-base (rt cx) (u cy))
               (attach multihole-thread (rt cx) (u cy))]))
          ;; 3. Peg holes
          ;; Internal vertices: full-depth peg holes
@@ -256,7 +256,7 @@
                j (range 1 y-cells)]
            (let [px (- (* i cell-size) ox)
                  py (- (* j cell-size) oy)]
-             [(attach peg-hole-base   (rt px) (u py))
+             [(attach peg-hole-base (rt px) (u py))
               (attach peg-hole-thread (rt px) (u py))]))
          ;; Edge peg holes: vertices on open borders
          edge-peg-positions
@@ -279,7 +279,7 @@
          ;;   flipped tile's diamond to slot into)
          peg-holes-half
          (for [[px py] edge-peg-positions]
-           [(attach peg-hole-base   (rt px) (u py))
+           [(attach peg-hole-base (rt px) (u py))
             (attach peg-hole-thread (rt px) (u py))
             ;; Cut the diamond volume in the top half (clear space for neighbor)
             (attach (extrude peg-diamond (f (+ half-h 0.1))) (f half-h) (rt px) (u py))])
@@ -300,11 +300,13 @@
                      [(attach (box slot-height slot-neck-depth slot-neck-width)
                               (f slot-h-center)
                               (rt (- ox (/ slot-neck-depth 2)))
-                              (u yb))
+                              (u yb)
+                              (tv 90))
                       (attach (box slot-height slot-head-depth slot-head-width)
                               (f slot-h-center)
                               (rt (- ox slot-neck-depth (/ slot-head-depth 2)))
-                              (u yb))])))
+                              (u yb)
+                              (tv 90))])))
          left-slots
          (when (:left edges)
            (mapcat identity
@@ -312,11 +314,13 @@
                      [(attach (box slot-height slot-neck-depth slot-neck-width)
                               (f slot-h-center)
                               (rt (- (/ slot-neck-depth 2) ox))
-                              (u yb))
+                              (u yb)
+                              (tv 90))
                       (attach (box slot-height slot-head-depth slot-head-width)
                               (f slot-h-center)
                               (rt (+ (- ox) slot-neck-depth (/ slot-head-depth 2)))
-                              (u yb))])))
+                              (u yb)
+                              (tv 90))])))
          ;; Top/bottom edges run along Y (rt axis). Width along rt, depth along u.
          top-slots
          (when (:top edges)
@@ -325,11 +329,13 @@
                      [(attach (box slot-height slot-neck-width slot-neck-depth)
                               (f slot-h-center)
                               (rt xb)
-                              (u (- oy (/ slot-neck-depth 2))))
+                              (u (- oy (/ slot-neck-depth 2)))
+                              (tr 90))
                       (attach (box slot-height slot-head-width slot-head-depth)
                               (f slot-h-center)
                               (rt xb)
-                              (u (- oy slot-neck-depth (/ slot-head-depth 2))))])))
+                              (u (- oy slot-neck-depth (/ slot-head-depth 2)))
+                              (tr 90))])))
          bottom-slots
          (when (:bottom edges)
            (mapcat identity
@@ -337,11 +343,13 @@
                      [(attach (box slot-height slot-neck-width slot-neck-depth)
                               (f slot-h-center)
                               (rt xb)
-                              (u (- (/ slot-neck-depth 2) oy)))
+                              (u (- (/ slot-neck-depth 2) oy))
+                              (tr 90))
                       (attach (box slot-height slot-head-width slot-head-depth)
                               (f slot-h-center)
                               (rt xb)
-                              (u (+ (- oy) slot-neck-depth (/ slot-head-depth 2))))])))
+                              (u (+ (- oy) slot-neck-depth (/ slot-head-depth 2)))
+                              (tr 90))])))
          ;; 5. Channels (only on edges with borders)
          ch-offset 3.2
          ch-margin (* size-offset 1.5)
@@ -404,7 +412,7 @@
 
 ;; ── Preview ─────────────────────────────────────────────────────
 ;; Standalone tile (all borders)
-(register Tile (bench "tile" (multiboard-tile 4 4)))
+(register Tile (bench "tile" (multiboard-tile 10 10 #{:top :left})))
 (color :Tile 0xffffff)
 
 ;; Examples of edge/corner/center tiles:
@@ -413,7 +421,7 @@
 ;; (register Center  (multiboard-tile 4 4 #{}))                  ; center (no borders)
 
 (comment
-  (register Tile (bench "tile" (multiboard-tile 4 4 #{:top :left})))
+  (register Tile (bench "tile" (multiboard-tile 10 10 #{:top :left})))
   (register Tile2 (attach (bench "tile" (multiboard-tile 4 4 #{:top :left}))
                           (rt (* 4 25))
                           (th 180)
