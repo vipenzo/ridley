@@ -474,6 +474,13 @@
    'pow                 js/Math.pow
    'atan2               js/Math.atan2
    'acos                js/Math.acos
+   'asin                js/Math.asin
+   'tan                 js/Math.tan
+   'atan                js/Math.atan
+   'math-log            js/Math.log
+   'exp                 js/Math.exp
+   'min                 js/Math.min
+   'max                 js/Math.max
    ;; Debug logging (outputs to browser console)
    'log                 (fn [& args] (apply js/console.log (map clj->js args)))
    ;; Print functions (captured and shown in REPL)
