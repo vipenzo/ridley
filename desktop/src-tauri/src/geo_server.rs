@@ -196,6 +196,47 @@ pub fn start() {
                         .map_err(|e| format!("JSON parse error: {}", e))
                         .and_then(|req| sdf_ops::sdf_to_mesh(&req))
                 }
+                "/sdf-mesh-bin" => {
+                    // Binary SDF endpoint: returns raw float32/uint32 arrays
+                    // Format: [nv:u32 LE][nf:u32 LE][verts: nv*3 f32 LE][faces: nf*3 u32 LE]
+                    match serde_json::from_str::<sdf_ops::SdfMeshRequest>(&body)
+                        .map_err(|e| format!("JSON parse error: {}", e))
+                        .and_then(|req| sdf_ops::sdf_to_mesh(&req))
+                    {
+                        Ok(mesh) => {
+                            let nv = mesh.vertices.len() as u32;
+                            let nf = mesh.faces.len() as u32;
+                            let mut buf = Vec::with_capacity(8 + (nv as usize) * 12 + (nf as usize) * 12);
+                            buf.extend_from_slice(&nv.to_le_bytes());
+                            buf.extend_from_slice(&nf.to_le_bytes());
+                            for v in &mesh.vertices {
+                                buf.extend_from_slice(&(v[0] as f32).to_le_bytes());
+                                buf.extend_from_slice(&(v[1] as f32).to_le_bytes());
+                                buf.extend_from_slice(&(v[2] as f32).to_le_bytes());
+                            }
+                            for f in &mesh.faces {
+                                buf.extend_from_slice(&f[0].to_le_bytes());
+                                buf.extend_from_slice(&f[1].to_le_bytes());
+                                buf.extend_from_slice(&f[2].to_le_bytes());
+                            }
+                            let bin_ct = Header::from_bytes("Content-Type", "application/octet-stream").unwrap();
+                            let resp = Response::from_data(buf)
+                                .with_status_code(200)
+                                .with_header(cors.clone())
+                                .with_header(bin_ct);
+                            let _ = request.respond(resp);
+                            continue;
+                        }
+                        Err(e) => {
+                            let resp = Response::from_string(format!("{{\"error\":\"{}\"}}", e))
+                                .with_status_code(500)
+                                .with_header(cors.clone())
+                                .with_header(content_type.clone());
+                            let _ = request.respond(resp);
+                            continue;
+                        }
+                    }
+                }
                 "/ping" => Ok(MeshData {
                     vertices: vec![],
                     faces: vec![],

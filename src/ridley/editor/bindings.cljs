@@ -31,6 +31,7 @@
             [ridley.library.stl :as stl-import]
             [ridley.voronoi.core :as voronoi]
             [ridley.manifold.native :as native-manifold]
+            [ridley.sdf.core :as sdf]
             [ridley.measure.core :as measure]
             [ridley.settings :as settings]
             [ridley.viewport.capture :as capture]
@@ -555,6 +556,36 @@
    'squash           warp/squash
    'roughen          warp/roughen
    'smooth-falloff   warp/smooth-falloff
+   ;; SDF operations (libfive via Rust backend)
+   'sdf-node?        sdf/sdf-node?
+   'sdf-sphere       sdf/sdf-sphere
+   'sdf-box          sdf/sdf-box
+   'sdf-cyl          sdf/sdf-cyl
+   'sdf-rounded-box  sdf/sdf-rounded-box
+   'sdf-union        sdf/sdf-union
+   'sdf-difference   sdf/sdf-difference
+   'sdf-intersection sdf/sdf-intersection
+   'sdf-blend        sdf/sdf-blend
+   'sdf-shell        sdf/sdf-shell
+   'sdf-offset       sdf/sdf-offset
+   'sdf-morph        sdf/sdf-morph
+   'sdf-displace     sdf/sdf-displace
+   'sdf-move         sdf/sdf-move
+   'sdf-rotate       sdf/sdf-rotate
+   'sdf-revolve      sdf/sdf-revolve
+   'sdf-scale        sdf/sdf-scale
+   'sdf-formula      sdf/compile-expr
+   'sdf->mesh        sdf/materialize
+   'sdf-ensure-mesh  sdf/ensure-mesh
+   ;; SDF TPMS (Triply Periodic Minimal Surfaces)
+   'sdf-gyroid       sdf/sdf-gyroid
+   'sdf-schwarz-p    sdf/sdf-schwarz-p
+   'sdf-diamond      sdf/sdf-diamond
+   ;; SDF periodic patterns
+   'sdf-slats        sdf/sdf-slats
+   'sdf-bars         sdf/sdf-bars
+   'sdf-bar-cage     sdf/sdf-bar-cage
+   'sdf-grid         sdf/sdf-grid
    ;; Source tracking
    '*eval-source*   state/eval-source-var
    '*eval-text*     state/eval-text-var

@@ -894,7 +894,11 @@
               name-kw# ~(keyword name)
               hidden?# ~(contains? (set opts) :hidden)
               ;; Convert lazy seqs to vectors, flatten nested sequences of meshes
-              value# (let [v# raw-value#]
+              value# (let [v# raw-value#
+                           ;; Auto-materialize SDF nodes to meshes
+                           v# (if (and (map? v#) (string? (:op v#)))
+                                (sdf-ensure-mesh v#)
+                                v#)]
                        (cond
                          ;; Already a mesh or map — leave as-is
                          (mesh? v#) v#
