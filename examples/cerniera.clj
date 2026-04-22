@@ -37,32 +37,32 @@
 (def base2 (attach base-mesh (tv 90)))
 (def base1 (attach base-mesh (tv 90)))
 ;; --- Assembly ---
-(def d0 8)
+(def d 8)
 (def d1 8)
-
 (def A2 (attach base2
-                (f (- (+ (/ base-side-z 2) d1 d0)))
-                (u (- (+ (/ base-side-z 2) d1 d0)))
+                (f (- (+ (/ base-side-z 2) d1 d)))
+                (u (- (+ (/ base-side-z 2) d1 d)))
                 (tr 180)))
 (def A1 (attach base1
-                (f (- (+ (/ base-side-z 2) d1 d0)))
-                (u (+ (+ (/ base-side-z 2) (- d1) d0)))))
+                (f (- (+ (/ base-side-z 2) d1 d)))
+                (u (+ (+ (/ base-side-z 2) (- d1) d)))))
+
 
 (def le (/ base-side-y 5))
-(def l0 (- (+ (/ base-side-y 2) (+ (/ d0 -2) 1))))
+(def l0 (- (+ (/ base-side-y 2) (+ (/ d -2) 1))))
 (def radius 8)
 
-(defn perno [cut]
-  (attach (cyl (/ (if cut (+ radius 0.8) radius) 2)
-               (if cut (* 2 base-side-y) base-side-y))
-          (tv 90)))
+(defn perno [cut] (attach (cyl (/ (if cut (+ radius 0.8) radius) 2) (if cut (* 2 base-side-y) base-side-y))))
+
 (defn el-c [o cut]
   (let [m (mesh-union
-           (attach (cyl radius (- (/ base-side-y 5) 0.5)) (tv 90))
+           (cyl radius (- (/ base-side-y 5) 0.5))
            (attach (box (* 1.5 radius) (dec le) base-h)
                    (f (if o radius (- radius)))
                    (u (- (* base-h 1.1)))))]
     (if cut (mesh-difference m (perno true)) m)))
+
+
 
 (def B1 (mesh-union
          (for [i [0 2 4]]
@@ -74,7 +74,7 @@
 (def CC1 (mesh-union
           (attach B1
                   (u (- (+ (/ base-side-z 2) d1)))
-                  (f d0))
+                  (f d))
           (attach (perno false)
                   (u (- (+ base-side-y radius)))
                   (f radius))
@@ -83,7 +83,7 @@
 (def CC2 (mesh-union
           (attach B2
                   (u (- (+ (/ base-side-z 2) d1)))
-                  (f d0))
+                  (f d))
           A1))
 
 (register cerniera
