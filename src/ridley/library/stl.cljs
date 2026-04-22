@@ -206,6 +206,31 @@
                    (str/lower-case))]
     (if (empty? result) "model" result)))
 
+(defn- mesh-bounds
+  "Compute axis-aligned bounding box from vertex list [[x y z] ...]."
+  [vertices]
+  (when (seq vertices)
+    (reduce (fn [[mn mx] v]
+              [(mapv min mn v) (mapv max mx v)])
+            [(first vertices) (first vertices)]
+            (rest vertices))))
+
+(defn- scale-warning
+  "Return a warning comment if the mesh looks like it uses meters instead of mm."
+  [vertices def-name]
+  (when-let [[mn mx] (mesh-bounds vertices)]
+    (let [size (mapv - mx mn)
+          max-dim (apply max size)]
+      (when (< max-dim 1.0)
+        (let [suggested (cond (< max-dim 0.01) 1000
+                              (< max-dim 0.1)  100
+                              (< max-dim 1.0)  10
+                              :else nil)]
+          (str ";; WARNING: mesh is very small (max dimension "
+               (.toFixed max-dim 3) " units).\n"
+               ";; If your STL uses meters, scale it:\n"
+               ";; (mesh-scale " def-name " " suggested ")\n"))))))
+
 (defn generate-library-source
   "Generate library source code from an STL ArrayBuffer.
    The generated code uses decode-mesh to reconstruct the mesh at eval time."
@@ -217,9 +242,10 @@
                       (parse-ascii-stl text)))
         {:keys [vertices-b64 faces-b64 num-vertices num-faces]}
         (encode-mesh-base64 mesh-data)
-        def-name (sanitize-name filename)]
-    (str ";; Imported from STL: " filename "\n"
-         ";; " num-vertices " vertices, " num-faces " faces\n\n"
+        def-name (sanitize-name filename)
+        warn (scale-warning (:vertices mesh-data) def-name)]
+    (str (when warn warn)
+         ";; " num-vertices " vertices, " num-faces " faces\n"
          "(def " def-name "\n"
          "  (decode-mesh\n"
          "    \"" vertices-b64 "\"\n"

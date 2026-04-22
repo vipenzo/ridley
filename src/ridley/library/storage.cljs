@@ -148,7 +148,9 @@
                    (vec (map str/trim
                              (str/split (str/trim (subs req-line (count ";; Requires:"))) #",")))
                    [])
-        source-lines (drop-while #(or (str/starts-with? % ";;") (str/blank? %)) lines)
+        source-lines (drop-while #(or (str/starts-with? % ";; Ridley Library:")
+                                      (str/starts-with? % ";; Requires:")
+                                      (str/blank? %)) lines)
         source-body (str/join "\n" source-lines)]
     {:name name :requires requires :source source-body}))
 
