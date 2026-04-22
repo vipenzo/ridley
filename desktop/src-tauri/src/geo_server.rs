@@ -163,6 +163,12 @@ fn handle_write_file(request: &mut tiny_http::Request) -> Result<String, String>
         .read_to_end(&mut bytes)
         .map_err(|e| format!("read error: {}", e))?;
 
+    // Create parent directories if they don't exist
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("mkdir error: {}", e))?;
+    }
+
     std::fs::write(&path, &bytes).map_err(|e| format!("write error: {}", e))?;
     Ok(format!("{{\"written\":{}}}", bytes.len()))
 }
