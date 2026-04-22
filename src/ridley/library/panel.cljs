@@ -3,18 +3,17 @@
 
    Renders a collapsible section in the editor sidebar with:
    - List of libraries with active/inactive checkboxes
-   - Dependency status indicators (✓/✗)
+   - Dependency status indicators
    - Context menu (edit, duplicate, export, delete)
    - Drag & drop reordering for active libraries
    - Edit mode: swaps CodeMirror content to library source
 
-   All state lives in localStorage via storage.cljs.
-   Panel re-renders from storage on every mutation."
+   Storage dispatches to filesystem (desktop) or localStorage (web)
+   via storage.cljs."
   (:require [clojure.string :as str]
             [ridley.library.storage :as storage]
             [ridley.library.svg :as svg]
-            [ridley.library.stl :as stl]
-            [ridley.jvm.client :as jvm]))
+            [ridley.library.stl :as stl]))
 
 ;; ============================================================
 ;; Panel State
@@ -29,34 +28,7 @@
 ;; Callbacks provided by core.cljs at setup time
 (defonce ^:private callbacks (atom nil))
 
-;; JVM mode library cache: populated from sidecar, used for rendering
-(defonce ^:private jvm-lib-cache (atom {:libraries [] :active #{}}))
-
-(defn- jvm-mode? []
-  (when-let [f (:jvm-mode? @callbacks)] (f)))
-
-(defn- jvm-active-key [] "ridley:jvm-libs:active")
-
-(defn- jvm-read-active []
-  (or (when-let [raw (.getItem js/localStorage (jvm-active-key))]
-        (try (set (js->clj (.parse js/JSON raw)))
-             (catch :default _ #{})))
-      #{}))
-
-(defn- jvm-write-active! [active-set]
-  (.setItem js/localStorage (jvm-active-key)
-            (.stringify js/JSON (clj->js (vec active-set)))))
-
 (declare render!)
-
-(defn refresh-jvm-libraries!
-  "Fetch library list from JVM sidecar and update cache. Then re-render."
-  []
-  (-> (jvm/list-libraries)
-      (.then (fn [libs]
-               (let [active (jvm-read-active)]
-                 (reset! jvm-lib-cache {:libraries (vec libs) :active active})
-                 (render!))))))
 
 ;; ============================================================
 ;; DOM Helpers
@@ -102,46 +74,33 @@
         sep (fn [] (el-with "div" "library-context-menu-sep" nil))]
     (set! (.-style.left menu) (str x "px"))
     (set! (.-style.top menu) (str y "px"))
-    ;; In JVM mode, only show Delete (STL files can't be edited/duplicated/exported as .clj)
-    (when-not (jvm-mode?)
-      (append! menu
-               (make-item "Edit" nil
-                          (fn [] (when-let [cb (:on-edit @callbacks)] (cb lib-name))))
-               (make-item "Duplicate" nil
-                          (fn []
-                            (when-let [lib (storage/get-library lib-name)]
-                              (let [new-name (str lib-name "-copy")]
-                                (storage/save-library! new-name (:source lib) (:requires lib))
-                                (render!)))))
-               (sep)
-               (make-item "Export .clj" nil
-                          (fn []
-                            (when-let [content (storage/export-library lib-name)]
-                              (let [blob (js/Blob. #js [content] #js {:type "text/plain"})
-                                    url (.createObjectURL js/URL blob)
-                                    a (el "a")]
-                                (set! (.-href a) url)
-                                (set! (.-download a) (str lib-name ".clj"))
-                                (.click a)
-                                (.revokeObjectURL js/URL url)))))
-               (sep)))
     (append! menu
+             (make-item "Edit" nil
+                        (fn [] (when-let [cb (:on-edit @callbacks)] (cb lib-name))))
+             (make-item "Duplicate" nil
+                        (fn []
+                          (when-let [lib (storage/get-library lib-name)]
+                            (let [new-name (str lib-name "-copy")]
+                              (storage/save-library! new-name (:source lib) (:requires lib))
+                              (render!)))))
+             (sep)
+             (make-item "Export .clj" nil
+                        (fn []
+                          (when-let [content (storage/export-library lib-name)]
+                            (let [blob (js/Blob. #js [content] #js {:type "text/plain"})
+                                  url (.createObjectURL js/URL blob)
+                                  a (el "a")]
+                              (set! (.-href a) url)
+                              (set! (.-download a) (str lib-name ".clj"))
+                              (.click a)
+                              (.revokeObjectURL js/URL url)))))
+             (sep)
              (make-item "Delete" "danger"
                         (fn []
                           (when (js/confirm (str "Delete library '" lib-name "'?"))
-                            (if (jvm-mode?)
-                              ;; JVM mode: delete from sidecar, then refresh panel
-                              (jvm/delete-library
-                               lib-name
-                               (fn [_]
-                                 (let [new-active (disj (jvm-read-active) lib-name)]
-                                   (jvm-write-active! new-active))
-                                 (refresh-jvm-libraries!)
-                                 (when-let [cb (:on-change @callbacks)] (cb))))
-                              ;; SCI mode: delete from localStorage
-                              (do (storage/delete-library! lib-name)
-                                  (when-let [cb (:on-change @callbacks)] (cb))
-                                  (render!)))))))
+                            (storage/delete-library! lib-name)
+                            (when-let [cb (:on-change @callbacks)] (cb))
+                            (render!)))))
     (.appendChild js/document.body menu)
     (swap! panel-state assoc :context-menu {:name lib-name :x x :y y})))
 
@@ -224,14 +183,10 @@
     (let [lib-source (when-let [cb (:get-editor-content @callbacks)] (cb))
           lib (storage/get-library lib-name)
           requires (or (:requires lib) [])]
-      ;; Save library with current editor content
       (storage/save-library! lib-name (or lib-source "") requires)
-      ;; Restore original editor content
       (when-let [cb (:set-editor-content @callbacks)]
         (cb (:saved-editor @panel-state)))
-      ;; Clear edit state
       (swap! panel-state assoc :editing nil :saved-editor "")
-      ;; Trigger re-evaluation with updated libraries
       (when-let [cb (:on-change @callbacks)] (cb))
       (render!))))
 
@@ -293,17 +248,16 @@
                            (when-not (.closest (.-target e) ".action-btn")
                              (swap! panel-state update :collapsed not)
                              (render!))))
-      ;; Add button — opens dropdown with "New library" / "Load SVG"
+      ;; Add button — opens dropdown with "New library" / "Load SVG" / "Load STL"
       (.addEventListener add-btn "click"
                          (fn [e]
                            (.stopPropagation e)
-          ;; Close any existing context menu first
                            (close-context-menu!)
                            (let [rect (.getBoundingClientRect add-btn)
                                  menu (el-with "div" "library-context-menu" nil)]
                              (set! (.-style.left menu) (str (.-left rect) "px"))
                              (set! (.-style.top menu) (str (.-bottom rect) "px"))
-            ;; "New library" item
+                             ;; "New library" item
                              (let [new-btn (el-with "button" "library-context-menu-item" "New library")]
                                (.addEventListener new-btn "click"
                                                   (fn [_]
@@ -316,7 +270,7 @@
                                                           (render!)
                                                           (when-let [cb (:on-edit @callbacks)] (cb name)))))))
                                (.appendChild menu new-btn))
-            ;; "Load SVG" item
+                             ;; "Load SVG" item
                              (let [svg-btn (el-with "button" "library-context-menu-item" "Load SVG")]
                                (.addEventListener svg-btn "click"
                                                   (fn [_]
@@ -346,7 +300,7 @@
                                                                   (.readAsText reader file)))))
                                                       (.click input))))
                                (.appendChild menu svg-btn))
-            ;; "Load STL" item
+                             ;; "Load STL" item
                              (let [stl-btn (el-with "button" "library-context-menu-item" "Load STL")]
                                (.addEventListener stl-btn "click"
                                                   (fn [_]
@@ -366,28 +320,12 @@
                                                                       reader (js/FileReader.)]
                                                                   (set! (.-onload reader)
                                                                         (fn [evt]
-                                                                          (let [array-buffer (.. evt -target -result)]
-                                                                            (if (and (:jvm-mode? @callbacks)
-                                                                                     ((:jvm-mode? @callbacks)))
-                                                                              ;; JVM mode: upload to sidecar, then refresh panel from sidecar
-                                                                              (jvm/import-stl-file
-                                                                               array-buffer filename
-                                                                               (fn [result]
-                                                                                 (if (:error result)
-                                                                                   (js/console.error "STL import error:" (:error result))
-                                                                                   (do
-                                                                                     ;; Auto-activate the new library
-                                                                                     (let [new-active (conj (jvm-read-active) lib-name)]
-                                                                                       (jvm-write-active! new-active))
-                                                                                     ;; Refresh panel from sidecar
-                                                                                     (refresh-jvm-libraries!)
-                                                                                     (when-let [cb (:on-change @callbacks)] (cb))))))
-                                                                              ;; SCI mode: generate source locally
-                                                                              (let [source (stl/generate-library-source array-buffer filename)]
-                                                                                (storage/save-library! lib-name source [])
-                                                                                (storage/activate-library! lib-name)
-                                                                                (render!)
-                                                                                (when-let [cb (:on-change @callbacks)] (cb)))))
+                                                                          (let [array-buffer (.. evt -target -result)
+                                                                                source (stl/generate-library-source array-buffer filename)]
+                                                                            (storage/save-library! lib-name source [])
+                                                                            (storage/activate-library! lib-name)
+                                                                            (render!)
+                                                                            (when-let [cb (:on-change @callbacks)] (cb)))
                                                                           (set! (.-value input) "")))
                                                                   (.readAsArrayBuffer reader file)))))
                                                       (.click input))))
@@ -401,7 +339,6 @@
         (.addEventListener import-btn "click"
                            (fn [e]
                              (.stopPropagation e)
-            ;; Use a file input
                              (let [input (or (.getElementById js/document "library-file-input")
                                              (let [fi (el "input")]
                                                (set! (.-type fi) "file")
@@ -422,7 +359,6 @@
                                                            (render!)
                                                            (when-let [cb (:on-change @callbacks)] (cb)))
                                                        (js/alert "Invalid library file. Expected ;; Ridley Library: NAME header.")))
-                          ;; Reset file input
                                                    (set! (.-value input) "")))
                                            (.readAsText reader file)))))
                                (.click input))))
@@ -462,11 +398,10 @@
                                  (let [all-libs (storage/list-libraries)
                                        available (vec (remove #{lib-name} (remove (set (or (:requires lib) [])) all-libs)))]
                                    (cond
-                                     (empty? available) nil ;; no other libraries
+                                     (empty? available) nil
                                      (= 1 (count available))
                                      (add-require! lib-name (first available))
                                      :else
-                    ;; Show picker menu
                                      (let [rect (.getBoundingClientRect (.-target e))
                                            menu (el-with "div" "library-context-menu" nil)]
                                        (set! (.-style.left menu) (str (.-left rect) "px"))
@@ -479,7 +414,6 @@
                                                                 (add-require! lib-name lib-opt)))
                                            (.appendChild menu btn)))
                                        (.appendChild js/document.body menu)
-                      ;; Close on outside click
                                        (let [close-fn (atom nil)]
                                          (reset! close-fn
                                                  (fn [evt]
@@ -490,60 +424,38 @@
                                           #(.addEventListener js/document "click" @close-fn) 0)))))))
             (.appendChild req-row add-req))
           (.appendChild panel-el req-row))))
-    ;; Library list — in JVM mode read from sidecar cache, else localStorage
+    ;; Library list
     (let [list-el (el-with "div" "library-list" nil)
-          jvm? (jvm-mode?)
-          all-libs (if jvm?
-                     (:libraries @jvm-lib-cache)
-                     (storage/list-libraries))
-          active-set (if jvm?
-                       (:active @jvm-lib-cache)
-                       (set (storage/get-active-libraries)))]
+          all-libs (storage/list-libraries)
+          active-set (set (storage/get-active-libraries))]
       (if (empty? all-libs)
         (let [empty-msg (el-with "div" "library-list-empty" "No libraries yet. Click + to create one.")]
           (.appendChild list-el empty-msg))
         (doseq [lib-name all-libs]
-          (let [lib (if jvm?
-                      {:name lib-name :requires []}
-                      (storage/get-library lib-name))
+          (let [lib (storage/get-library lib-name)
                 active? (contains? active-set lib-name)
-                ;; A library is "effectively loaded" only if active AND all deps satisfied
                 deps-satisfied? (every? active-set (or (:requires lib) []))
                 loaded? (and active? deps-satisfied?)
                 item (el-with "div" "library-item" nil)
-                ;; Drag handle (only for loaded)
                 handle (when loaded?
                          (el-with "span" "library-drag-handle" "\u2630"))
-                ;; Checkbox
                 checkbox (el "input")
-                ;; Name
                 name-el (el-with "span" "library-name" lib-name)
-                ;; Dependency indicator
                 deps-el (el-with "span" "library-deps" nil)
-                ;; Menu button
                 menu-btn (el-with "button" "library-menu-btn" "\u22EE")]
-            ;; Checkbox shows "loaded" state, not just "active"
             (set! (.-type checkbox) "checkbox")
             (set! (.-checked checkbox) loaded?)
             (.addEventListener checkbox "change"
                                (fn [_]
-                                 (if jvm?
-                                   ;; JVM mode: update local active set + cache
-                                   (let [new-active (if (.-checked checkbox)
-                                                      (conj (:active @jvm-lib-cache) lib-name)
-                                                      (disj (:active @jvm-lib-cache) lib-name))]
-                                     (jvm-write-active! new-active)
-                                     (swap! jvm-lib-cache assoc :active new-active))
-                                   ;; SCI mode: update localStorage
-                                   (if (.-checked checkbox)
-                                     (storage/activate-library! lib-name)
-                                     (do
-                                       (storage/deactivate-library! lib-name)
-                                       (let [all-active (storage/get-active-libraries)]
-                                         (doseq [other all-active]
-                                           (when-let [other-lib (storage/get-library other)]
-                                             (when (some #{lib-name} (:requires other-lib))
-                                               (storage/deactivate-library! other))))))))
+                                 (if (.-checked checkbox)
+                                   (storage/activate-library! lib-name)
+                                   (do
+                                     (storage/deactivate-library! lib-name)
+                                     (let [all-active (storage/get-active-libraries)]
+                                       (doseq [other all-active]
+                                         (when-let [other-lib (storage/get-library other)]
+                                           (when (some #{lib-name} (:requires other-lib))
+                                             (storage/deactivate-library! other)))))))
                                  (when-let [cb (:on-change @callbacks)] (cb))
                                  (render!)))
             ;; Dependency indicators
@@ -572,7 +484,6 @@
             ;; Assemble item
             (when handle (append! item handle))
             (append! item checkbox name-el deps-el menu-btn)
-            ;; Drag & drop for loaded items
             (when loaded? (setup-drag! item lib-name))
             (.appendChild list-el item))))
       (.appendChild panel-el list-el))))
@@ -580,6 +491,12 @@
 ;; ============================================================
 ;; Setup
 ;; ============================================================
+
+(defn refresh-jvm-libraries!
+  "No-op stub — JVM library mode has been removed.
+   Kept for backward compat with core.cljs JVM toggle."
+  []
+  (render!))
 
 (defn setup!
   "Initialize the library panel. Takes a callbacks map:

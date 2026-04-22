@@ -42,6 +42,14 @@ struct RefineRequest {
     n: i32,
 }
 
+/// Return the user's home directory.
+fn handle_home_dir() -> Result<String, String> {
+    std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map(|p| format!("{{\"path\":\"{}\"}}", p.replace('\\', "\\\\").replace('"', "\\\"")))
+        .map_err(|_| "cannot determine home directory".to_string())
+}
+
 /// Open a native save dialog, return the chosen path (no data written yet).
 fn handle_pick_save_path(request: &mut tiny_http::Request) -> Result<String, String> {
     let mut body = String::new();
@@ -70,6 +78,74 @@ fn handle_pick_save_path(request: &mut tiny_http::Request) -> Result<String, Str
         )),
         None => Ok("null".to_string()),
     }
+}
+
+/// Read a file from disk. Path comes from X-File-Path header.
+fn handle_read_file(request: &mut tiny_http::Request) -> Result<Vec<u8>, String> {
+    let path = request
+        .headers()
+        .iter()
+        .find(|h| h.field.as_str() == "X-File-Path")
+        .map(|h| h.value.as_str().to_string())
+        .ok_or_else(|| "missing X-File-Path header".to_string())?;
+
+    // Drain body (unused)
+    let mut _buf = Vec::new();
+    let _ = request.as_reader().read_to_end(&mut _buf);
+
+    std::fs::read(&path).map_err(|e| format!("read error: {}", e))
+}
+
+/// List files in a directory. Path comes from JSON body {"path": "..."}.
+fn handle_read_dir(request: &mut tiny_http::Request) -> Result<String, String> {
+    let mut body = String::new();
+    request
+        .as_reader()
+        .read_to_string(&mut body)
+        .map_err(|e| format!("read error: {}", e))?;
+
+    #[derive(serde::Deserialize)]
+    struct Req {
+        path: String,
+    }
+    let req: Req =
+        serde_json::from_str(&body).map_err(|e| format!("JSON parse error: {}", e))?;
+
+    // Create directory if it doesn't exist
+    std::fs::create_dir_all(&req.path)
+        .map_err(|e| format!("mkdir error: {}", e))?;
+
+    let entries: Vec<serde_json::Value> = std::fs::read_dir(&req.path)
+        .map_err(|e| format!("readdir error: {}", e))?
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let meta = entry.metadata().ok()?;
+            Some(serde_json::json!({
+                "name": entry.file_name().to_string_lossy().to_string(),
+                "is_dir": meta.is_dir(),
+                "size": meta.len(),
+            }))
+        })
+        .collect();
+
+    serde_json::to_string(&entries).map_err(|e| format!("serialize error: {}", e))
+}
+
+/// Delete a file. Path comes from X-File-Path header.
+fn handle_delete_file(request: &mut tiny_http::Request) -> Result<String, String> {
+    let path = request
+        .headers()
+        .iter()
+        .find(|h| h.field.as_str() == "X-File-Path")
+        .map(|h| h.value.as_str().to_string())
+        .ok_or_else(|| "missing X-File-Path header".to_string())?;
+
+    // Drain body
+    let mut _buf = Vec::new();
+    let _ = request.as_reader().read_to_end(&mut _buf);
+
+    std::fs::remove_file(&path).map_err(|e| format!("delete error: {}", e))?;
+    Ok("{\"deleted\":true}".to_string())
 }
 
 /// Write raw bytes to a given path (from X-File-Path header).
@@ -117,6 +193,73 @@ pub fn start() {
             // /pick-save-path — open native dialog, return chosen path (JSON body)
             if path == "/pick-save-path" {
                 let (status, json) = match handle_pick_save_path(&mut request) {
+                    Ok(json) => (200, json),
+                    Err(e) => (500, format!("{{\"error\":\"{}\"}}", e)),
+                };
+                let resp = Response::from_string(json)
+                    .with_status_code(status)
+                    .with_header(cors.clone())
+                    .with_header(content_type.clone());
+                let _ = request.respond(resp);
+                continue;
+            }
+
+            // /home-dir — return user's home directory
+            if path == "/home-dir" {
+                // Drain body
+                let mut _buf = Vec::new();
+                let _ = request.as_reader().read_to_end(&mut _buf);
+                let (status, json) = match handle_home_dir() {
+                    Ok(json) => (200, json),
+                    Err(e) => (500, format!("{{\"error\":\"{}\"}}", e)),
+                };
+                let resp = Response::from_string(json)
+                    .with_status_code(status)
+                    .with_header(cors.clone())
+                    .with_header(content_type.clone());
+                let _ = request.respond(resp);
+                continue;
+            }
+
+            // /read-file — read file from disk, return raw bytes
+            if path == "/read-file" {
+                match handle_read_file(&mut request) {
+                    Ok(bytes) => {
+                        let ct = Header::from_bytes("Content-Type", "application/octet-stream").unwrap();
+                        let resp = Response::from_data(bytes)
+                            .with_status_code(200)
+                            .with_header(cors.clone())
+                            .with_header(ct);
+                        let _ = request.respond(resp);
+                    }
+                    Err(e) => {
+                        let resp = Response::from_string(format!("{{\"error\":\"{}\"}}", e))
+                            .with_status_code(500)
+                            .with_header(cors.clone())
+                            .with_header(content_type.clone());
+                        let _ = request.respond(resp);
+                    }
+                }
+                continue;
+            }
+
+            // /read-dir — list files in a directory
+            if path == "/read-dir" {
+                let (status, json) = match handle_read_dir(&mut request) {
+                    Ok(json) => (200, json),
+                    Err(e) => (500, format!("{{\"error\":\"{}\"}}", e)),
+                };
+                let resp = Response::from_string(json)
+                    .with_status_code(status)
+                    .with_header(cors.clone())
+                    .with_header(content_type.clone());
+                let _ = request.respond(resp);
+                continue;
+            }
+
+            // /delete-file — delete a file from disk
+            if path == "/delete-file" {
+                let (status, json) = match handle_delete_file(&mut request) {
                     Ok(json) => (200, json),
                     Err(e) => (500, format!("{{\"error\":\"{}\"}}", e)),
                 };

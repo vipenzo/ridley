@@ -37,7 +37,8 @@
             [ridley.viewport.capture :as capture]
             [ridley.ai.describe :as ai-describe]
             [ridley.ai.describe-session :as describe-session]
-            [ridley.manual.export :as manual-export]))
+            [ridley.manual.export :as manual-export]
+            [ridley.geometry.mesh-utils :as mesh-utils]))
 
 ;; ============================================================
 ;; Source History Helpers
@@ -176,6 +177,7 @@
    'char-shape   text/char-shape
    'load-font!   text/load-font!
    'font-loaded? text/font-loaded?
+   'text-width   text/text-width
    'extrude-text text-ops/implicit-extrude-text
    'text-on-path-impl text-ops/implicit-text-on-path
    ;; Pure turtle functions (for explicit threading)
@@ -563,6 +565,11 @@
    'squash           warp/squash
    'roughen          warp/roughen
    'smooth-falloff   warp/smooth-falloff
+   ;; Mesh utilities (formerly JVM-only)
+   'merge-vertices   mesh-utils/merge-vertices
+   'mesh-diagnose    mesh-utils/mesh-diagnose
+   'mesh-simplify    mesh-utils/mesh-simplify
+   'mesh-laplacian   mesh-utils/mesh-laplacian
    ;; SDF operations (libfive via Rust backend)
    'sdf-node?        sdf/sdf-node?
    'sdf-sphere       sdf/sdf-sphere
