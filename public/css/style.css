@@ -1586,6 +1586,16 @@ body.resizing-h * {
   border-top: 2px solid #007acc;
 }
 
+.library-item.editing {
+  background: #094771;
+  border-left: 2px solid #007acc;
+}
+
+.library-item.editing .library-name {
+  color: #fff;
+  font-weight: 600;
+}
+
 .library-item input[type="checkbox"] {
   accent-color: #4ec9b0;
   cursor: pointer;
@@ -1683,6 +1693,70 @@ body.resizing-h * {
   height: 1px;
   background: #454545;
   margin: 4px 0;
+}
+
+/* Library modal dialogs (WKWebView compat) */
+.lib-modal-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+}
+.lib-modal-dialog {
+  background: #2d2d2d;
+  border: 1px solid #555;
+  border-radius: 6px;
+  padding: 16px;
+  min-width: 280px;
+  max-width: 400px;
+}
+.lib-modal-label {
+  color: #ccc;
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+.lib-modal-input {
+  width: 100%;
+  padding: 6px 8px;
+  background: #1e1e1e;
+  border: 1px solid #555;
+  border-radius: 3px;
+  color: #eee;
+  font-size: 13px;
+  margin-bottom: 12px;
+  box-sizing: border-box;
+}
+.lib-modal-input:focus {
+  outline: none;
+  border-color: #007acc;
+}
+.lib-modal-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.lib-modal-btn {
+  padding: 5px 14px;
+  border: 1px solid #555;
+  border-radius: 3px;
+  background: #333;
+  color: #ccc;
+  cursor: pointer;
+  font-size: 12px;
+}
+.lib-modal-btn:hover {
+  background: #444;
+}
+.lib-modal-ok {
+  background: #094771;
+  border-color: #094771;
+  color: #fff;
+}
+.lib-modal-ok:hover {
+  background: #0b5a8e;
 }
 
 /* Library edit mode bar */

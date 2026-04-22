@@ -51,6 +51,82 @@
   (set! (.-innerHTML parent) ""))
 
 ;; ============================================================
+;; Modal Dialogs (WKWebView blocks prompt/confirm/alert)
+;; ============================================================
+
+(defn- show-modal!
+  "Show a modal dialog overlay. Returns the overlay element for removal.
+   content-fn receives the overlay element and should append content to it."
+  [content-fn]
+  (let [overlay (el-with "div" "lib-modal-overlay" nil)
+        dialog (el-with "div" "lib-modal-dialog" nil)]
+    (.appendChild overlay dialog)
+    (content-fn dialog overlay)
+    (.appendChild js/document.body overlay)
+    ;; Focus first input if any
+    (when-let [input (.querySelector dialog "input")]
+      (.focus input))
+    overlay))
+
+(defn- modal-prompt!
+  "Show a prompt dialog. Calls on-result with the trimmed string, or nil if cancelled."
+  [message on-result]
+  (let [overlay (atom nil)]
+    (reset! overlay
+            (show-modal!
+             (fn [dialog _ov]
+               (let [label (el-with "div" "lib-modal-label" message)
+                     input (el "input")
+                     btn-row (el-with "div" "lib-modal-buttons" nil)
+                     ok-btn (el-with "button" "lib-modal-btn lib-modal-ok" "OK")
+                     cancel-btn (el-with "button" "lib-modal-btn lib-modal-cancel" "Cancel")
+                     submit! (fn []
+                               (let [val (str/trim (.-value input))]
+                                 (.remove @overlay)
+                                 (on-result (when (seq val) val))))
+                     cancel! (fn []
+                               (.remove @overlay)
+                               (on-result nil))]
+                 (set! (.-type input) "text")
+                 (set! (.-className input) "lib-modal-input")
+                 (.addEventListener ok-btn "click" (fn [_] (submit!)))
+                 (.addEventListener cancel-btn "click" (fn [_] (cancel!)))
+                 (.addEventListener input "keydown"
+                                    (fn [e]
+                                      (case (.-key e)
+                                        "Enter" (submit!)
+                                        "Escape" (cancel!)
+                                        nil)))
+                 (append! btn-row ok-btn cancel-btn)
+                 (append! dialog label input btn-row)))))))
+
+(defn- modal-confirm!
+  "Show a confirm dialog. Calls on-result with true or false."
+  [message on-result]
+  (show-modal!
+   (fn [dialog overlay]
+     (let [label (el-with "div" "lib-modal-label" message)
+           btn-row (el-with "div" "lib-modal-buttons" nil)
+           ok-btn (el-with "button" "lib-modal-btn lib-modal-ok" "OK")
+           cancel-btn (el-with "button" "lib-modal-btn lib-modal-cancel" "Cancel")]
+       (.addEventListener ok-btn "click" (fn [_] (.remove overlay) (on-result true)))
+       (.addEventListener cancel-btn "click" (fn [_] (.remove overlay) (on-result false)))
+       (append! btn-row ok-btn cancel-btn)
+       (append! dialog label btn-row)))))
+
+(defn- modal-alert!
+  "Show an alert dialog. Calls on-dismiss when closed."
+  [message on-dismiss]
+  (show-modal!
+   (fn [dialog overlay]
+     (let [label (el-with "div" "lib-modal-label" message)
+           btn-row (el-with "div" "lib-modal-buttons" nil)
+           ok-btn (el-with "button" "lib-modal-btn lib-modal-ok" "OK")]
+       (.addEventListener ok-btn "click" (fn [_] (.remove overlay) (when on-dismiss (on-dismiss))))
+       (append! btn-row ok-btn)
+       (append! dialog label btn-row)))))
+
+;; ============================================================
 ;; Context Menu
 ;; ============================================================
 
@@ -97,10 +173,13 @@
              (sep)
              (make-item "Delete" "danger"
                         (fn []
-                          (when (js/confirm (str "Delete library '" lib-name "'?"))
-                            (storage/delete-library! lib-name)
-                            (when-let [cb (:on-change @callbacks)] (cb))
-                            (render!)))))
+                          (modal-confirm!
+                           (str "Delete library '" lib-name "'?")
+                           (fn [yes?]
+                             (when yes?
+                               (storage/delete-library! lib-name)
+                               (when-let [cb (:on-change @callbacks)] (cb))
+                               (render!)))))))
     (.appendChild js/document.body menu)
     (swap! panel-state assoc :context-menu {:name lib-name :x x :y y})))
 
@@ -262,13 +341,14 @@
                                (.addEventListener new-btn "click"
                                                   (fn [_]
                                                     (close-context-menu!)
-                                                    (when-let [name (js/prompt "Library name:")]
-                                                      (let [name (str/trim name)]
-                                                        (when (seq name)
-                                                          (storage/save-library! name "" [])
-                                                          (storage/activate-library! name)
-                                                          (render!)
-                                                          (when-let [cb (:on-edit @callbacks)] (cb name)))))))
+                                                    (modal-prompt!
+                                                     "Library name:"
+                                                     (fn [name]
+                                                       (when name
+                                                         (storage/save-library! name "" [])
+                                                         (storage/activate-library! name)
+                                                         (render!)
+                                                         (when-let [cb (:on-edit @callbacks)] (cb name)))))))
                                (.appendChild menu new-btn))
                              ;; "Load SVG" item
                              (let [svg-btn (el-with "button" "library-context-menu-item" "Load SVG")]
@@ -358,7 +438,7 @@
                                                        (do (storage/activate-library! lib-name)
                                                            (render!)
                                                            (when-let [cb (:on-change @callbacks)] (cb)))
-                                                       (js/alert "Invalid library file. Expected ;; Ridley Library: NAME header.")))
+                                                       (modal-alert! "Invalid library file. Expected ;; Ridley Library: NAME header." nil)))
                                                    (set! (.-value input) "")))
                                            (.readAsText reader file)))))
                                (.click input))))
@@ -436,7 +516,8 @@
                 active? (contains? active-set lib-name)
                 deps-satisfied? (every? active-set (or (:requires lib) []))
                 loaded? (and active? deps-satisfied?)
-                item (el-with "div" "library-item" nil)
+                editing? (= lib-name (:editing @panel-state))
+                item (el-with "div" (str "library-item" (when editing? " editing")) nil)
                 handle (when loaded?
                          (el-with "span" "library-drag-handle" "\u2630"))
                 checkbox (el "input")

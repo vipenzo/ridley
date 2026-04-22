@@ -47,12 +47,10 @@
 (defn- fs-write-text!
   "Write a text string to a file via geo_server."
   [path content]
-  (let [xhr (js/XMLHttpRequest.)
-        encoder (js/TextEncoder.)
-        bytes (.encode encoder content)]
+  (let [xhr (js/XMLHttpRequest.)]
     (.open xhr "POST" (str geo-server-url "/write-file") false)
     (.setRequestHeader xhr "X-File-Path" path)
-    (.send xhr bytes)
+    (.send xhr content)
     (= 200 (.-status xhr))))
 
 (defn- fs-read-text
@@ -62,12 +60,9 @@
     (let [xhr (js/XMLHttpRequest.)]
       (.open xhr "POST" (str geo-server-url "/read-file") false)
       (.setRequestHeader xhr "X-File-Path" path)
-      ;; Set response type to arraybuffer so we can decode UTF-8
-      (set! (.-responseType xhr) "arraybuffer")
       (.send xhr "")
       (when (= 200 (.-status xhr))
-        (let [decoder (js/TextDecoder. "utf-8")]
-          (.decode decoder (.-response xhr)))))
+        (.-responseText xhr)))
     (catch :default _ nil)))
 
 (defn- fs-read-json
