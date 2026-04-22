@@ -13,49 +13,6 @@
             [clojure.string :as str]))
 
 ;; ============================================================
-;; JVM eval helper (sync HTTP for interactive tweak)
-;; ============================================================
-
-(defn- jvm-eval-sync
-  "Evaluate a script on the JVM sidecar synchronously.
-   Returns the first registered mesh, or nil on error.
-   Uses synchronous XMLHttpRequest — blocks UI but gives instant feedback."
-  [script-text]
-  (try
-    (let [xhr (js/XMLHttpRequest.)
-          active-libs (or (when-let [raw (.getItem js/localStorage "ridley:jvm-libs:active")]
-                            (try (vec (js->clj (.parse js/JSON raw)))
-                                 (catch :default _ [])))
-                          [])]
-      (.open xhr "POST" "http://127.0.0.1:12322/eval" false) ;; synchronous
-      (.setRequestHeader xhr "Content-Type" "application/json")
-      (.send xhr (js/JSON.stringify
-                  #js {:script script-text
-                       :active_libraries (clj->js active-libs)}))
-      (when (= 200 (.-status xhr))
-        (let [^js result (js/JSON.parse (.-responseText xhr))
-              meshes-js (aget result "meshes")
-              print-output (aget result "print_output")]
-          (when (seq print-output)
-            (state/capture-println print-output))
-          ;; Return first mesh from the result
-          (when meshes-js
-            (let [keys (js/Object.keys meshes-js)]
-              (when (pos? (.-length keys))
-                (let [first-key (aget keys (dec (.-length keys)))
-                      ^js m (aget meshes-js first-key)
-                      verts-js (aget m "vertices")
-                      faces-js (aget m "faces")]
-                  (when (and verts-js faces-js)
-                    {:type :mesh
-                     :vertices (vec (map (fn [v] [(aget v 0) (aget v 1) (aget v 2)]) verts-js))
-                     :faces (vec (map (fn [f] [(int (aget f 0)) (int (aget f 1)) (int (aget f 2))]) faces-js))
-                     :creation-pose {:position [0 0 0] :heading [1 0 0] :up [0 0 1]}}))))))))
-    (catch :default e
-      (js/console.warn "JVM tweak eval error:" e)
-      nil)))
-
-;; ============================================================
 ;; State
 ;; ============================================================
 
@@ -240,62 +197,45 @@
     (let [form (:form @test-state)
           modified-form (substitute-values form current-values)
           form-str (pr-str modified-form)]
-      (if @state/jvm-mode?
-        ;; JVM mode: send full script + tweaked expression to sidecar
+      (do
+        (reset! @state/turtle-state-var saved-turtle)
         (try
-          (let [editor-content (when-let [f @state/get-editor-content] (f))
-                full-script (str editor-content "\n" form-str)
-                result (jvm-eval-sync full-script)]
-            (if (mesh? result)
-              (do (viewport/show-preview! [{:type :mesh :data result}])
-                  true)
-              (do (viewport/clear-preview!)
-                  false)))
+          (let [ctx @state/sci-ctx-ref
+                _ (when-not ctx (throw (js/Error. "No SCI context — run definitions first")))
+                result (sci/eval-string form-str ctx)
+                items (cond
+                        (mesh? result)
+                        [{:type :mesh :data result}]
+
+                        (shape/shape? result)
+                        (let [stamped (turtle/stamp-debug saved-turtle result)
+                              stamps (:stamps stamped)]
+                          (mapv (fn [s] {:type :stamp :data s}) stamps))
+
+                        (turtle/path? result)
+                        (let [ran (turtle/run-path saved-turtle result)
+                              lines (:geometry ran)]
+                          (when (seq lines)
+                            [{:type :lines :data lines}]))
+
+                        (and (sequential? result) (seq result) (every? mesh? result))
+                        (mapv (fn [m] {:type :mesh :data m}) result)
+
+                        :else nil)]
+            (if items
+              (viewport/show-preview! items)
+              (viewport/clear-preview!))
+            (when-let [reg-name (:registry-name @test-state)]
+              (when (mesh? result)
+                (measure/set-ruler-overrides! {reg-name result})
+                (measure/refresh-rulers!)))
+            true)
           (catch :default e
-            (let [msg (str "tweak JVM eval error: " (.-message e))]
+            (let [msg (str "tweak eval error: " (.-message e))]
               (state/capture-println msg)
               (js/console.warn msg)
-              false)))
-        ;; SCI mode: evaluate locally
-        (do
-          (reset! @state/turtle-state-var saved-turtle)
-          (try
-            (let [ctx @state/sci-ctx-ref
-                  _ (when-not ctx (throw (js/Error. "No SCI context — run definitions first")))
-                  result (sci/eval-string form-str ctx)
-                  items (cond
-                          (mesh? result)
-                          [{:type :mesh :data result}]
-
-                          (shape/shape? result)
-                          (let [stamped (turtle/stamp-debug saved-turtle result)
-                                stamps (:stamps stamped)]
-                            (mapv (fn [s] {:type :stamp :data s}) stamps))
-
-                          (turtle/path? result)
-                          (let [ran (turtle/run-path saved-turtle result)
-                                lines (:geometry ran)]
-                            (when (seq lines)
-                              [{:type :lines :data lines}]))
-
-                          (and (sequential? result) (seq result) (every? mesh? result))
-                          (mapv (fn [m] {:type :mesh :data m}) result)
-
-                          :else nil)]
-              (if items
-                (viewport/show-preview! items)
-                (viewport/clear-preview!))
-              (when-let [reg-name (:registry-name @test-state)]
-                (when (mesh? result)
-                  (measure/set-ruler-overrides! {reg-name result})
-                  (measure/refresh-rulers!)))
-              true)
-            (catch :default e
-              (let [msg (str "tweak eval error: " (.-message e))]
-                (state/capture-println msg)
-                (js/console.warn msg)
-                (js/console.warn "tweak form-str:" form-str)
-                false))))))
+              (js/console.warn "tweak form-str:" form-str)
+              false)))))
     false))
 
 ;; ============================================================

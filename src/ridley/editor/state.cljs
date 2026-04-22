@@ -4,10 +4,7 @@
   (:require [ridley.turtle.core :as turtle]
             [sci.core :as sci]))
 
-;; JVM mode flag — set by core.cljs, read by test_mode.cljs to route eval
-(defonce jvm-mode? (atom false))
-
-;; Editor content getter — set by core.cljs, used by test_mode.cljs for JVM eval
+;; Editor content getter — set by core.cljs, used by test_mode.cljs
 (defonce get-editor-content (atom nil))
 
 ;; SCI dynamic var holding the current turtle atom.

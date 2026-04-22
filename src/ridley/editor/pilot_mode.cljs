@@ -113,96 +113,30 @@
          replacement
          (.substring editor-text pilot-to))))
 
-(defn- jvm-eval-sync!
-  "Evaluate a script on the JVM sidecar synchronously.
-   Returns {:meshes {name mesh} :print-output str} or nil on error."
-  [script-text]
-  (try
-    (let [xhr (js/XMLHttpRequest.)
-          active-libs (or (when-let [raw (.getItem js/localStorage "ridley:jvm-libs:active")]
-                            (try (vec (js->clj (.parse js/JSON raw)))
-                                 (catch :default _ [])))
-                          [])]
-      (.open xhr "POST" "http://127.0.0.1:12322/eval" false)
-      (.setRequestHeader xhr "Content-Type" "application/json")
-      (.send xhr (js/JSON.stringify
-                  #js {:script script-text
-                       :active_libraries (clj->js active-libs)}))
-      (if-not (= 200 (.-status xhr))
-        (do (js/console.warn "pilot JVM eval error:" (.-status xhr) (.-responseText xhr))
-            nil)
-        (let [^js result (js/JSON.parse (.-responseText xhr))
-              meshes-js (aget result "meshes")
-              print-output (aget result "print_output")]
-          {:meshes (when meshes-js
-                     (into {}
-                           (map (fn [k]
-                                  (let [^js m (aget meshes-js k)
-                                        verts-js (aget m "vertices")
-                                        faces-js (aget m "faces")]
-                                    [(keyword k)
-                                     {:type :mesh
-                                      :vertices (vec (map (fn [v] [(aget v 0) (aget v 1) (aget v 2)]) verts-js))
-                                      :faces (vec (map (fn [f] [(int (aget f 0)) (int (aget f 1)) (int (aget f 2))]) faces-js))
-                                      :creation-pose (let [cp-js (or (aget m "creation-pose")
-                                                                     (aget m "creation_pose"))]
-                                                       (if cp-js
-                                                         {:position (vec (aget cp-js "position"))
-                                                          :heading (vec (aget cp-js "heading"))
-                                                          :up (vec (aget cp-js "up"))}
-                                                         {:position [0 0 0] :heading [1 0 0] :up [0 0 1]}))}]))
-                                (js/Object.keys meshes-js))))
-           :print-output print-output})))
-    (catch :default e
-      (js/console.warn "pilot JVM eval error:" e)
-      nil)))
-
 (defn- eval-with-commands!
-  "Re-evaluate the full editor script with (pilot ...) replaced by attach code.
-   Works in both SCI and JVM modes."
+  "Re-evaluate the full editor script with (pilot ...) replaced by attach code."
   []
   (when-let [{:keys [commands]} @pilot-state]
     (try
       (let [modified-script (build-modified-script commands)]
-        (if @state/jvm-mode?
-          ;; === JVM mode: send modified script + __pilot__ mesh to sidecar ===
-          (let [replacement (build-replacement-code commands)
-                full-script (str modified-script
-                                 "\n(register __pilot__ " replacement ")")
-                result (jvm-eval-sync! full-script)]
-            (when result
-              (registry/clear-all!)
-              (doseq [[n m] (:meshes result)]
-                (when (not= n :__pilot__)
-                  (registry/register-mesh! n m)))
-              ;; Defer viewport update to next frame (sync XHR blocks rendering)
-              (let [pilot-mesh (get (:meshes result) :__pilot__)]
-                (js/requestAnimationFrame
-                 (fn []
-                   (registry/refresh-viewport! false)
-                   (when (and pilot-mesh (:creation-pose pilot-mesh))
-                     (viewport/update-turtle-pose (:creation-pose pilot-mesh))
-                     (viewport/show-wireframe-preview! pilot-mesh)))))))
-          ;; === SCI mode: eval locally ===
-          (do
-            (registry/clear-all!)
-            (state/reset-turtle!)
-            (state/reset-scene-accumulator!)
-            (state/reset-print-buffer!)
-            (let [ctx @state/sci-ctx-ref]
-              (reset! skip-next-pilot true)
-              (sci/eval-string modified-script ctx))
-            (let [{:keys [lines stamps]} @state/scene-accumulator]
-              (registry/set-lines! (vec (or lines [])))
-              (registry/set-stamps! (vec (or stamps []))))
-            (registry/refresh-viewport! false)
-            ;; Turtle + wireframe from SCI eval
-            (let [replacement (build-replacement-code commands)
-                  mesh-result (try (sci/eval-string replacement @state/sci-ctx-ref)
-                                   (catch :default _ nil))]
-              (when (and (map? mesh-result) (:creation-pose mesh-result))
-                (viewport/update-turtle-pose (:creation-pose mesh-result))
-                (viewport/show-wireframe-preview! mesh-result))))))
+        (registry/clear-all!)
+        (state/reset-turtle!)
+        (state/reset-scene-accumulator!)
+        (state/reset-print-buffer!)
+        (let [ctx @state/sci-ctx-ref]
+          (reset! skip-next-pilot true)
+          (sci/eval-string modified-script ctx))
+        (let [{:keys [lines stamps]} @state/scene-accumulator]
+          (registry/set-lines! (vec (or lines [])))
+          (registry/set-stamps! (vec (or stamps []))))
+        (registry/refresh-viewport! false)
+        ;; Turtle + wireframe from SCI eval
+        (let [replacement (build-replacement-code commands)
+              mesh-result (try (sci/eval-string replacement @state/sci-ctx-ref)
+                               (catch :default _ nil))]
+          (when (and (map? mesh-result) (:creation-pose mesh-result))
+            (viewport/update-turtle-pose (:creation-pose mesh-result))
+            (viewport/show-wireframe-preview! mesh-result))))
       (catch :default e
         (js/console.warn "pilot eval error:" (.-message e))))))
 

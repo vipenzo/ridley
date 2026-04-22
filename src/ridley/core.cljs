@@ -32,21 +32,12 @@
             [ridley.editor.test-mode :as test-mode]
             [ridley.editor.pilot-mode :as pilot-mode]
             [ridley.version :as version]
-            [ridley.audio :as audio]
-            [ridley.jvm.client :as jvm]))
+            [ridley.audio :as audio]))
 
 (defonce ^:private editor-view (atom nil))
 (defonce ^:private repl-input-el (atom nil))
 (defonce ^:private repl-history-el (atom nil))
 (defonce ^:private error-el (atom nil))
-
-;; JVM sidecar mode — when true, scripts are sent to JVM instead of SCI
-(defonce jvm-mode (atom false))
-
-;; Sync jvm-mode to editor-state for test_mode.cljs access
-(add-watch jvm-mode :sync-state
-           (fn [_ _ _ new-val]
-             (reset! editor-state/jvm-mode? new-val)))
 
 ;; Command history
 (defonce ^:private command-history (atom []))
@@ -262,250 +253,8 @@
         (when (pilot-mode/requested?)
           (pilot-mode/enter!))))))
 
-(defn- register-jvm-meshes!
-  "Register meshes from JVM eval result in the scene registry."
-  [meshes reset-camera?]
-  (doseq [[name mesh] meshes]
-    (let [mesh (if-let [c (:color mesh)]
-                 (update mesh :material merge {:color c})
-                 mesh)]
-      (registry/register-mesh! name mesh)
-      (when (false? (:visible mesh))
-        (registry/hide-mesh! name))))
-  (registry/refresh-viewport! reset-camera?))
-
-;; ── JVM Tweak slider UI ──────────────────────────────────────
-
-(defonce ^:private jvm-tweak-state (atom nil))
-
-(defn- jvm-tweak-cancel! []
-  "Cancel tweak: discard changes, restore original meshes."
-  (when-let [{:keys [panel-el esc-handler]} @jvm-tweak-state]
-    (when panel-el (.remove panel-el))
-    (when esc-handler (.removeEventListener js/document "keydown" esc-handler)))
-  (viewport/clear-preview!)
-  (registry/show-all!)
-  (registry/refresh-viewport! false)
-  (add-repl-entry "[Tweak]" "Cancelled" false)
-  (reset! jvm-tweak-state nil))
-
-(defn- jvm-tweak-confirm!
-  "Confirm tweak: log the final expression with tweaked values, re-eval to register."
-  []
-  (when-let [{:keys [form current-values panel-el esc-handler script command active-libs mode]} @jvm-tweak-state]
-    (when panel-el (.remove panel-el))
-    (when esc-handler (.removeEventListener js/document "keydown" esc-handler))
-    (viewport/clear-preview!)
-    ;; Build the final expression string with substituted values
-    ;; by sending one last tweak-update and using the result
-    (let [result (if (= mode :repl)
-                   (jvm/tweak-repl-update command form current-values active-libs)
-                   (jvm/tweak-update script form current-values active-libs))]
-      (when result
-        (let [meshes (:meshes result)]
-          (doseq [[name mesh] meshes]
-            (registry/register-mesh! name mesh)))))
-    (registry/show-all!)
-    (registry/refresh-viewport! false)
-    ;; Log the final form: replace numbers in order with tweaked values
-    (let [sorted-vals (map second (sort-by first current-values))
-          idx (atom 0)
-          final-form (str/replace form #"-?\d+\.?\d*"
-                                  (fn [match]
-                                    (let [i @idx]
-                                      (swap! idx inc)
-                                      (if-let [v (nth sorted-vals i nil)]
-                                        (str v)
-                                        match))))]
-      (add-repl-entry "[Tweak]" final-form false))
-    (reset! jvm-tweak-state nil)))
-
-(defn- slider-range [value]
-  (let [abs-val (Math/abs (double value))
-        [raw-min raw-max step]
-        (cond
-          (zero? value) [-100 100 1]
-          (< abs-val 1) [(* value -5) (* value 5) (/ abs-val 100)]
-          (< abs-val 10) [(- value (* abs-val 3)) (+ value (* abs-val 3)) 0.1]
-          (< abs-val 100) [(- value (* abs-val 2)) (+ value (* abs-val 2)) 0.5]
-          :else [(- value (* abs-val 1.5)) (+ value (* abs-val 1.5)) 1])
-        ;; Clamp min to 0 for positive values (dimensions shouldn't go negative)
-        smin (if (pos? value) (max 0 raw-min) raw-min)]
-    [smin raw-max step]))
-
-(defn- do-tweak-update! []
-  (when-let [{:keys [form script command active-libs current-values mode]} @jvm-tweak-state]
-    (let [result (if (= mode :repl)
-                   (jvm/tweak-repl-update command form current-values active-libs)
-                   (jvm/tweak-update script form current-values active-libs))]
-      (when result
-        (let [meshes (:meshes result)
-              items (vec (keep (fn [[_name mesh]]
-                                 (when (and (:vertices mesh) (:faces mesh))
-                                   {:type :mesh :data mesh}))
-                               meshes))]
-          (when (seq items)
-            (viewport/show-preview! items)))))))
-
-(defn- create-jvm-tweak-panel!
-  "Create slider panel for a JVM tweak session.
-   mode: :definitions (default) or :repl. command: original REPL command (for :repl mode)."
-  [tweak-session script active-libs & {:keys [mode command] :or {mode :definitions}}]
-  (jvm-tweak-cancel!)
-  (let [{:keys [form literals]} tweak-session
-        panel (.createElement js/document "div")
-        current-values (into {} (map (fn [lit] [(:index lit) (:value lit)]) literals))]
-    (set! (.-id panel) "test-slider-panel")
-    ;; Hide registered meshes so only the tweak preview is visible
-    (registry/hide-all!)
-    (registry/refresh-viewport! false)
-    ;; Header
-    (let [header (.createElement js/document "div")]
-      (.add (.-classList header) "slider-header")
-      (set! (.-innerHTML header) "<b>Tweak</b> <span style='opacity:0.6'>(Esc to close)</span>")
-      (.appendChild panel header))
-    ;; Sliders
-    (doseq [{:keys [index value label]} literals]
-      (let [[smin smax step] (slider-range value)
-            row (.createElement js/document "div")
-            label-el (.createElement js/document "span")
-            slider (.createElement js/document "input")
-            value-el (.createElement js/document "span")]
-        (.add (.-classList row) "slider-row")
-        (.add (.-classList label-el) "slider-label")
-        (set! (.-textContent label-el) (or label (str value)))
-        (.add (.-classList value-el) "slider-value")
-        (set! (.-textContent value-el) (str value))
-        (set! (.-type slider) "range")
-        (set! (.-min slider) (str smin))
-        (set! (.-max slider) (str smax))
-        (set! (.-step slider) (str step))
-        (set! (.-value slider) (str value))
-        (.add (.-classList slider) "test-slider")
-        ;; Debounced input handler
-        (let [timeout (atom nil)]
-          (.addEventListener slider "input"
-                             (fn [_]
-                               (let [new-val (js/parseFloat (.-value slider))]
-                                 (set! (.-textContent value-el) (str new-val))
-                                 (swap! jvm-tweak-state assoc-in [:current-values index] new-val)
-                                 (when-let [t @timeout] (js/clearTimeout t))
-                                 (reset! timeout
-                                         (js/setTimeout
-                                          (fn [] (do-tweak-update!))
-                                          150))))))
-        ;; Zoom buttons: + widens range, − narrows (more precise)
-        (let [zoom-fn (fn [factor]
-                        (let [cur (js/parseFloat (.-value slider))
-                              old-min (js/parseFloat (.-min slider))
-                              old-max (js/parseFloat (.-max slider))
-                              half-span (/ (* (- old-max old-min) factor) 2)
-                              old-step (js/parseFloat (.-step slider))
-                              new-step (if (> factor 1)
-                                         (* old-step 2)
-                                         (max 0.01 (/ old-step 2)))]
-                          (set! (.-min slider) (str (if (pos? cur) (max 0 (- cur half-span)) (- cur half-span))))
-                          (set! (.-max slider) (str (+ cur half-span)))
-                          (set! (.-step slider) (str new-step))
-                          (set! (.-value slider) (str cur))))
-              zoom-out (.createElement js/document "button")
-              zoom-in (.createElement js/document "button")]
-          (.add (.-classList zoom-out) "test-zoom-btn")
-          (.add (.-classList zoom-in) "test-zoom-btn")
-          (set! (.-textContent zoom-out) "+")
-          (set! (.-textContent zoom-in) "\u2212")
-          (set! (.-title zoom-out) "Wider range")
-          (set! (.-title zoom-in) "Narrower range (more precise)")
-          (.addEventListener zoom-out "click" (fn [_] (zoom-fn 2)))
-          (.addEventListener zoom-in "click" (fn [_] (zoom-fn 0.5)))
-          (.appendChild row label-el)
-          (.appendChild row zoom-in)
-          (.appendChild row slider)
-          (.appendChild row zoom-out)
-          (.appendChild row value-el))
-        (.appendChild panel row)))
-    ;; OK / Cancel buttons
-    (let [btn-row (.createElement js/document "div")
-          ok-btn (.createElement js/document "button")
-          cancel-btn (.createElement js/document "button")]
-      (.add (.-classList btn-row) "test-buttons")
-      (set! (.-textContent ok-btn) "OK")
-      (set! (.-textContent cancel-btn) "Cancel")
-      (.add (.-classList ok-btn) "test-btn" "test-btn-ok")
-      (.add (.-classList cancel-btn) "test-btn" "test-btn-cancel")
-      (.addEventListener ok-btn "click" (fn [_] (jvm-tweak-confirm!)))
-      (.addEventListener cancel-btn "click" (fn [_] (jvm-tweak-cancel!)))
-      (.appendChild btn-row ok-btn)
-      (.appendChild btn-row cancel-btn)
-      (.appendChild panel btn-row))
-    ;; Insert panel into the REPL area
-    (when-let [terminal (.getElementById js/document "repl-terminal")]
-      (.insertBefore terminal panel (.-firstChild terminal)))
-    ;; Esc handler
-    (let [esc-handler (fn [e]
-                        (when (= "Escape" (.-key e))
-                          (jvm-tweak-cancel!)))]
-      (.addEventListener js/document "keydown" esc-handler)
-      (reset! jvm-tweak-state {:form form
-                               :script script
-                               :command command
-                               :mode mode
-                               :active-libs active-libs
-                               :current-values current-values
-                               :panel-el panel
-                               :esc-handler esc-handler})
-      ;; Initial kick: show the mesh with original values immediately
-      (do-tweak-update!))))
-
-(defn- evaluate-definitions-jvm
-  "Evaluate definitions via JVM sidecar (async). Sends full script, receives meshes."
-  [reset-camera?]
-  (let [code (cm/get-value @editor-view)]
-    (repl/evaluate-definitions-jvm code
-                                   (fn [result]
-                                     (viewport/hide-loading!)
-                                     (if-let [error (:error result)]
-                                       (do
-                                         (show-error error)
-                                         (audio/play-feedback! false))
-                                       (let [{:keys [meshes stamps print-output elapsed-ms tweak-session pilot-session]} result]
-                                         (hide-error)
-                                         (when (seq print-output)
-                                           (add-script-output print-output))
-                                         (when (seq stamps)
-                                           (registry/set-stamps! stamps))
-                                         (register-jvm-meshes! meshes reset-camera?)
-                                         ;; Update turtle indicator and dropdown
-                                         (when-let [pose (:turtle-pose result)]
-                                           (viewport/update-turtle-pose pose))
-                                         (when (not= :global (viewport/get-turtle-source))
-                                           (update-turtle-indicator))
-                                         (rebuild-turtle-dropdown!)
-                                         (cond
-                                           tweak-session
-                                           (let [active-libs (or (when-let [raw (.getItem js/localStorage "ridley:jvm-libs:active")]
-                                                                   (try (vec (js->clj (.parse js/JSON raw)))
-                                                                        (catch :default _ [])))
-                                                                 [])]
-                                             (create-jvm-tweak-panel! tweak-session code active-libs)
-                                             (add-repl-entry "[Run/JVM]" "Tweak mode active — move sliders" false))
-
-                                           pilot-session
-                                           (do (pilot-mode/request-from-jvm! pilot-session meshes)
-                                               (pilot-mode/enter!)
-                                               (add-repl-entry "[Run/JVM]" "Pilot mode active" false))
-
-                                           :else
-                                           (let [mesh-count (count meshes)
-                                                 summary (str "JVM eval: " mesh-count " mesh"
-                                                              (when (> mesh-count 1) "es")
-                                                              " in " (.toFixed (or elapsed-ms 0) 0) "ms")]
-                                             (add-repl-entry "[Run/JVM]" summary false)))
-                                         (audio/play-feedback! true)))))))
-
 (defn- evaluate-definitions
   "Evaluate only the definitions panel (for Cmd+Enter).
-   Routes to JVM sidecar when jvm-mode is active, otherwise SCI.
    Optional reset-camera? parameter controls whether to reset camera view (default false)."
   ([] (evaluate-definitions false))
   ([reset-camera?]
@@ -520,9 +269,7 @@
     (fn []
       (js/setTimeout
        (fn []
-         (if @jvm-mode
-           (evaluate-definitions-jvm reset-camera?)
-           (evaluate-definitions-sci reset-camera?)))
+         (evaluate-definitions-sci reset-camera?))
        0)))))
 
 (defn ^:export run-definitions!
@@ -719,75 +466,25 @@
             ;; Send to connected clients if we're the host
               (when (= :host @sync-mode)
                 (sync/send-repl-command input))
-            ;; Route to JVM or SCI
-            ;; Viewport-only commands fall through to SCI even in JVM mode
-              (if (and @jvm-mode
-                       (not (re-find #"^\s*\(\s*(show-turtle|hide-turtle|show-stamps|hide-stamps|show-lines|hide-lines|stamps-visible\?)\b"
-                                     input)))
-                ;; JVM REPL (async)
-                (repl/evaluate-repl-jvm input
-                                        (fn [result]
-                                          (if-let [error (:error result)]
-                                            (do
-                                              (add-repl-entry input error true)
-                                              (show-error error)
-                                              (audio/play-feedback! false))
-                                            (do
-                                              (hide-error)
-                                              (add-repl-entry input (:result result) false (:print-output result))
-                                              (when-not (test-mode/active?)
-                          ;; Register meshes from JVM result
-                                                (when (seq (:meshes result))
-                                                  (register-jvm-meshes! (:meshes result) false))
-                          ;; Add pen lines
-                                                (when (seq (:lines result))
-                                                  (registry/add-lines! (:lines result)))
-                          ;; Add stamps
-                                                (when (seq (:stamps result))
-                                                  (registry/add-stamps! (:stamps result)))
-                          ;; Apply visibility changes from JVM show/hide
-                                                (when-let [vis (:visibility result)]
-                                                  (doseq [[sym visible?] vis]
-                                                    (if visible?
-                                                      (registry/show-mesh! sym)
-                                                      (registry/hide-mesh! sym))))
-                                                (registry/refresh-viewport! false))
-                                              ;; Store JVM turtle pose as global, then resolve source
-                                              (when-let [pose (:turtle-pose result)]
-                                                (viewport/update-turtle-pose pose))
-                                              (when (not= :global (viewport/get-turtle-source))
-                                                (update-turtle-indicator))
-                                              (rebuild-turtle-dropdown!)
-                                              ;; Check for tweak session
-                                              (when-let [tweak-session (:tweak-session result)]
-                                                (let [active-libs (or (when-let [raw (.getItem js/localStorage "ridley:jvm-libs:active")]
-                                                                        (try (vec (js->clj (.parse js/JSON raw)))
-                                                                             (catch :default _ [])))
-                                                                      [])]
-                                                  (create-jvm-tweak-panel! tweak-session nil active-libs
-                                                                           :mode :repl :command input)))
-                                              (sync-voice-state)
-                                              (audio/play-feedback! true)))))
-                ;; SCI REPL (sync)
-                (let [result (repl/evaluate-repl input)]
-                  (if-let [error (:error result)]
-                    (do
-                      (add-repl-entry input error true)
-                      (show-error error)
-                      (audio/play-feedback! false))
-                    (do
-                      (hide-error)
-                      (add-repl-entry input (:implicit-result result) false (:print-output result))
-                      (when-not (test-mode/active?)
-                        (when-let [render-data (repl/extract-render-data result)]
-                          (registry/add-lines! (:lines render-data))
-                          (registry/add-stamps! (or (:stamps render-data) []))
-                          (registry/set-definition-meshes! (:meshes render-data)))
-                        (registry/refresh-viewport! false))
-                      (update-turtle-indicator)
-                      (rebuild-turtle-dropdown!)
-                      (sync-voice-state)
-                      (audio/play-feedback! true))))))))))))
+              (let [result (repl/evaluate-repl input)]
+                (if-let [error (:error result)]
+                  (do
+                    (add-repl-entry input error true)
+                    (show-error error)
+                    (audio/play-feedback! false))
+                  (do
+                    (hide-error)
+                    (add-repl-entry input (:implicit-result result) false (:print-output result))
+                    (when-not (test-mode/active?)
+                      (when-let [render-data (repl/extract-render-data result)]
+                        (registry/add-lines! (:lines render-data))
+                        (registry/add-stamps! (or (:stamps render-data) []))
+                        (registry/set-definition-meshes! (:meshes render-data)))
+                      (registry/refresh-viewport! false))
+                    (update-turtle-indicator)
+                    (rebuild-turtle-dropdown!)
+                    (sync-voice-state)
+                    (audio/play-feedback! true)))))))))))
 
 (defn- navigate-history
   "Navigate command history. direction: -1 for older, +1 for newer."
@@ -1329,41 +1026,19 @@
   "Called when we receive a REPL command from host. Execute it and show in history."
   [command]
   (when (seq (str/trim command))
-    (if @jvm-mode
-      (repl/evaluate-repl-jvm command
-                              (fn [result]
-                                (if-let [error (:error result)]
-                                  (do
-                                    (add-repl-entry command error true)
-                                    (show-error error))
-                                  (do
-                                    (hide-error)
-                                    (add-repl-entry command (:result result) false (:print-output result))
-                                    (when (seq (:meshes result))
-                                      (register-jvm-meshes! (:meshes result) false))
-                                    (when (seq (:lines result))
-                                      (registry/add-lines! (:lines result)))
-                                    (when (seq (:stamps result))
-                                      (registry/add-stamps! (:stamps result)))
-                                    (registry/refresh-viewport! false)
-                                    (when-let [pose (:turtle-pose result)]
-                                      (viewport/update-turtle-pose pose))
-                                    (when (not= :global (viewport/get-turtle-source))
-                                      (update-turtle-indicator))
-                                    (rebuild-turtle-dropdown!)))))
-      (let [result (repl/evaluate-repl command)]
-        (if-let [error (:error result)]
-          (do
-            (add-repl-entry command error true)
-            (show-error error))
-          (do
-            (hide-error)
-            (add-repl-entry command (:implicit-result result) false (:print-output result))
-            (when-let [render-data (repl/extract-render-data result)]
-              (registry/add-lines! (:lines render-data))
-              (registry/add-stamps! (or (:stamps render-data) []))
-              (registry/set-definition-meshes! (:meshes render-data)))
-            (registry/refresh-viewport! false)))))))
+    (let [result (repl/evaluate-repl command)]
+      (if-let [error (:error result)]
+        (do
+          (add-repl-entry command error true)
+          (show-error error))
+        (do
+          (hide-error)
+          (add-repl-entry command (:implicit-result result) false (:print-output result))
+          (when-let [render-data (repl/extract-render-data result)]
+            (registry/add-lines! (:lines render-data))
+            (registry/add-stamps! (or (:stamps render-data) []))
+            (registry/set-definition-meshes! (:meshes render-data)))
+          (registry/refresh-viewport! false))))))
 
 (defn- update-sync-status-text
   "Update the sync status text in toolbar."
@@ -2058,8 +1733,7 @@
     :on-change (fn []
                  ;; Reset SCI context and re-evaluate definitions
                  (repl/reset-ctx!)
-                 (evaluate-definitions))
-    :jvm-mode? (fn [] @jvm-mode)}))
+                 (evaluate-definitions))}))
 
 ;; ============================================================
 ;; Voice Input Integration
@@ -2749,42 +2423,6 @@
     (-> (manifold/init!)
         (.then #(js/console.log "Manifold WASM initialized"))
         (.catch #(js/console.warn "Manifold WASM failed to initialize:" %)))
-    ;; Detect JVM sidecar availability (desktop mode)
-    ;; Retry a few times — JVM takes ~5s to start when Tauri spawns it
-    (letfn [(enable-jvm! []
-              (reset! jvm-mode true)
-              (js/console.log "JVM eval mode enabled")
-              ;; Populate library panel from sidecar
-              (lib-panel/refresh-jvm-libraries!)
-              (when-let [toolbar (.getElementById js/document "viewport-toolbar")]
-                (let [btn (.createElement js/document "button")
-                      version-tag (.getElementById js/document "version-tag")]
-                  (set! (.-className btn) "action-btn jvm-toggle active")
-                  (set! (.-id btn) "btn-jvm-toggle")
-                  (set! (.-textContent btn) "JVM")
-                  (set! (.-title btn) "Toggle JVM evaluation (currently: ON)")
-                  (.addEventListener btn "click"
-                                     (fn []
-                                       (swap! jvm-mode not)
-                                       (let [on? @jvm-mode]
-                                         (if on?
-                                           (do (.add (.-classList btn) "active")
-                                               (set! (.-title btn) "Toggle JVM evaluation (currently: ON)")
-                                               ;; Refresh library panel from sidecar
-                                               (lib-panel/refresh-jvm-libraries!))
-                                           (do (.remove (.-classList btn) "active")
-                                               (set! (.-title btn) "Toggle JVM evaluation (currently: OFF)")
-                                               ;; Re-render panel from localStorage
-                                               (lib-panel/render!))))))
-                  (if version-tag
-                    (.insertBefore toolbar btn version-tag)
-                    (.appendChild toolbar btn)))))
-            (try-ping! [attempt]
-              (if (jvm/ping!)
-                (enable-jvm!)
-                (when (< attempt 5)
-                  (js/setTimeout #(try-ping! (inc attempt)) 2000))))]
-      (try-ping! 0))
     ;; Initialize default font for text shapes (async)
     (-> (text/init-default-font!)
         (.then #(js/console.log "Default font loaded"))
