@@ -419,7 +419,7 @@
               ~'tv rec-tv*
               ~'tr rec-tr*
               ~'u rec-u*
-              ~'d (fn [dist#] (rec-u* (- dist#)))
+              ~'down (fn [dist#] (rec-u* (- dist#)))
               ~'rt rec-rt*
               ~'lt rec-lt*
               ~'arc-h rec-arc-h*

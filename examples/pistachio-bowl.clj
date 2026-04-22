@@ -178,8 +178,8 @@
 ; Assemble tray
 (def tray
   (-> (mesh-union tray-outer tray-floor tray-leap)
-      (mesh-union (attach tray-funnel (d 1.5)))
-      (mesh-difference (attach floor-hole (d 5)))))
+      (mesh-union (attach tray-funnel (down 1.5)))
+      (mesh-difference (attach floor-hole (down 5)))))
 
 ; =====================
 ; Register tray

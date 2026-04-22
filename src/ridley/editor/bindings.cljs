@@ -96,6 +96,7 @@
    ;; Lateral movement (pure translation, no heading change)
    'u            impl/implicit-u
    'd            impl/implicit-d
+   'down         impl/implicit-d
    'rt           impl/implicit-rt
    'lt           impl/implicit-lt
    ;; Pure lateral functions (for explicit threading / attach macros)

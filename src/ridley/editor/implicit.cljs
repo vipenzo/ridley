@@ -373,16 +373,19 @@
       material (assoc :material material))))
 
 (defn- transform-mesh-to-turtle-upright
-  "Like transform-mesh-to-turtle but rotates so the mesh extends along the
-   turtle's UP axis instead of heading. Used for cyl/cone so height = UP."
+  "Transform mesh so height (local Y) extends along turtle's heading axis.
+   The cylinder/cone local Y axis maps to heading, not up.
+   Swaps heading↔up so apply-transform (which maps local Y→up param)
+   ends up placing the cylinder axis along heading."
   [mesh]
   (let [turtle @(turtle-ref)
         position (:position turtle)
         heading (:heading turtle)
         up (:up turtle)
         material (:material turtle)
-        ;; Swap heading and up: mesh 'forward' becomes turtle's UP
-        ;; heading becomes -up (pitch -90°), new up becomes heading
+        ;; Swap: pass up as heading, -heading as up
+        ;; apply-transform maps local Y → up param → now that's -heading
+        ;; Net effect: cylinder local Y goes along heading direction
         rotated-heading up
         rotated-up (turtle/v* heading -1)
         transformed-verts (prims/apply-transform

@@ -192,8 +192,8 @@
         ; Hole: carved through the floor for shells to fall into the bowl
         floor-hole (revolve (make-floor-hole-profile m))
         ; Assemble tray
-        tray (-> (mesh-union tray-outer tray-floor tray-leap (attach tray-funnel (d 0.5)))
-                 (mesh-difference (attach floor-hole (d 5))))]
+        tray (-> (mesh-union tray-outer tray-floor tray-leap (attach tray-funnel (down 0.5)))
+                 (mesh-difference (attach floor-hole (down 5))))]
     {:tray tray :tray-leap tray-leap}))
 
 ; =====================
@@ -245,8 +245,6 @@
     (color :tray 0xeeefee)
     ;(material :bowl :opacity 0.5)
     (color :bowl 0xeeff80)))
-
-
 
 ; =====================
 ; Animation
