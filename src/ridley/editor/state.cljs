@@ -126,3 +126,29 @@
 ;; repl → bindings → state is fine; repl → bindings → repl is not.
 (def eval-source-var (sci/new-dynamic-var '*eval-source* :unknown))
 (def eval-text-var   (sci/new-dynamic-var '*eval-text*   nil))
+
+;; ============================================================
+;; Interactive Mode Guard
+;; ============================================================
+
+;; Tracks which interactive mode is active (nil, :pilot, or :tweak).
+;; Lives in state.cljs so both pilot-mode and test-mode can check
+;; without importing each other (which would create circular deps).
+(defonce interactive-mode (atom nil))
+
+(defn claim-interactive-mode!
+  "Claim the interactive mode slot. Throws if another mode is already active."
+  [mode]
+  (when-let [current @interactive-mode]
+    (when (not= current mode)
+      (throw (js/Error.
+              (str (name mode) ": cannot start — "
+                   (name current) " is already active"))))
+    (throw (js/Error.
+            (str (name mode) ": already in a " (name mode) " session"))))
+  (reset! interactive-mode mode))
+
+(defn release-interactive-mode!
+  "Release the interactive mode slot."
+  []
+  (reset! interactive-mode nil))

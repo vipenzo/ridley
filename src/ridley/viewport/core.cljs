@@ -65,7 +65,7 @@
 
 (defn- create-scene []
   (let [scene (THREE/Scene.)]
-    (set! (.-background scene) (THREE/Color. 0x252526))
+    (set! (.-background scene) (THREE/Color. 0x353540))
     scene))
 
 (defn- create-camera [width height]
@@ -203,8 +203,8 @@
   ;; Create new grids for this level
   (let [major-step (js/Math.pow 10 order)
         grid-size (* major-step 20)
-        major (make-grid-helper grid-size 20 0x555555 0x444444)
-        minor (make-grid-helper grid-size 200 0x444444 0x333333)]
+        major (make-grid-helper grid-size 20 0x666666 0x555555)
+        minor (make-grid-helper grid-size 200 0x555555 0x454550)]
     (set! (.-transparent (.-material minor)) true)
     (set! (.-opacity (.-material minor)) 1.0)
     (set! (.-name major) "grid-major")

@@ -162,6 +162,25 @@ html, body {
   font-variant-numeric: tabular-nums;
 }
 
+#test-slider-panel .slider-value-input {
+  width: 70px;
+  min-width: 50px;
+  background: #1e1e30;
+  color: #ce9178;
+  border: 1px solid #569cd6;
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: inherit;
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+  outline: none;
+}
+
+#test-slider-panel .slider-value-input:focus {
+  border-color: #7cbcf7;
+}
+
 #test-slider-panel .test-zoom-btn {
   width: 20px;
   height: 20px;

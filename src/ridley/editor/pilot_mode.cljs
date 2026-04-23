@@ -113,32 +113,52 @@
          replacement
          (.substring editor-text pilot-to))))
 
+(defn- eval-with-commands-repl!
+  "REPL mode: evaluate replacement code and show preview without touching editor."
+  [commands]
+  (try
+    (let [code (build-replacement-code commands)
+          ctx @state/sci-ctx-ref
+          result (sci/eval-string code ctx)]
+      (when (and (map? result) (:creation-pose result))
+        (viewport/update-turtle-pose (:creation-pose result))
+        (viewport/show-wireframe-preview! result)))
+    (catch :default e
+      (js/console.warn "pilot eval error (repl):" (.-message e)))))
+
+(defn- eval-with-commands-script!
+  "Script mode: re-evaluate full editor script with (pilot ...) replaced."
+  [commands]
+  (try
+    (let [modified-script (build-modified-script commands)]
+      (registry/clear-all!)
+      (state/reset-turtle!)
+      (state/reset-scene-accumulator!)
+      (state/reset-print-buffer!)
+      (let [ctx @state/sci-ctx-ref]
+        (reset! skip-next-pilot true)
+        (sci/eval-string modified-script ctx))
+      (let [{:keys [lines stamps]} @state/scene-accumulator]
+        (registry/set-lines! (vec (or lines [])))
+        (registry/set-stamps! (vec (or stamps []))))
+      (registry/refresh-viewport! false)
+      ;; Turtle + wireframe from SCI eval
+      (let [replacement (build-replacement-code commands)
+            mesh-result (try (sci/eval-string replacement @state/sci-ctx-ref)
+                             (catch :default _ nil))]
+        (when (and (map? mesh-result) (:creation-pose mesh-result))
+          (viewport/update-turtle-pose (:creation-pose mesh-result))
+          (viewport/show-wireframe-preview! mesh-result))))
+    (catch :default e
+      (js/console.warn "pilot eval error:" (.-message e)))))
+
 (defn- eval-with-commands!
-  "Re-evaluate the full editor script with (pilot ...) replaced by attach code."
+  "Re-evaluate with current pilot commands. Dispatches to REPL or script mode."
   []
-  (when-let [{:keys [commands]} @pilot-state]
-    (try
-      (let [modified-script (build-modified-script commands)]
-        (registry/clear-all!)
-        (state/reset-turtle!)
-        (state/reset-scene-accumulator!)
-        (state/reset-print-buffer!)
-        (let [ctx @state/sci-ctx-ref]
-          (reset! skip-next-pilot true)
-          (sci/eval-string modified-script ctx))
-        (let [{:keys [lines stamps]} @state/scene-accumulator]
-          (registry/set-lines! (vec (or lines [])))
-          (registry/set-stamps! (vec (or stamps []))))
-        (registry/refresh-viewport! false)
-        ;; Turtle + wireframe from SCI eval
-        (let [replacement (build-replacement-code commands)
-              mesh-result (try (sci/eval-string replacement @state/sci-ctx-ref)
-                               (catch :default _ nil))]
-          (when (and (map? mesh-result) (:creation-pose mesh-result))
-            (viewport/update-turtle-pose (:creation-pose mesh-result))
-            (viewport/show-wireframe-preview! mesh-result))))
-      (catch :default e
-        (js/console.warn "pilot eval error:" (.-message e))))))
+  (when-let [{:keys [commands from-repl]} @pilot-state]
+    (if from-repl
+      (eval-with-commands-repl! commands)
+      (eval-with-commands-script! commands))))
 
 ;; ============================================================
 ;; Command management
@@ -185,30 +205,37 @@
   (viewport/clear-preview!))
 
 (defn confirm!
-  "Confirm pilot mode: compute polished commands, replace in editor."
+  "Confirm pilot mode: compute polished commands, replace in editor or print to REPL."
   []
-  (when-let [{:keys [source-expr commands pilot-from pilot-to]} @pilot-state]
+  (when-let [{:keys [source-expr commands pilot-from pilot-to from-repl]} @pilot-state]
     (let [cmds (compact-commands commands)
           code (if (empty? cmds)
                  source-expr
                  (str "(attach " source-expr " (path " (commands->code-str cmds) "))"))]
-      ;; Replace (pilot ...) in editor
-      (cm/replace-range pilot-from pilot-to code)
-      (state/capture-println (str "pilot: " code))
+      (if from-repl
+        ;; REPL mode: just print the expression
+        (state/capture-println code)
+        ;; Script mode: replace in editor and re-evaluate
+        (do (cm/replace-range pilot-from pilot-to code)
+            (state/capture-println (str "pilot: " code))))
       (cleanup!)
+      (state/release-interactive-mode!)
       (reset! pilot-state nil)
-      ;; Re-evaluate to make the change take effect
-      (when-let [f @state/run-definitions-fn] (f)))))
+      (when-not from-repl
+        (when-let [f @state/run-definitions-fn] (f))))))
 
 (defn cancel!
   "Cancel pilot mode: restore original state."
   []
-  (cleanup!)
-  (reset! pilot-state nil)
-  ;; Set skip flag so the (pilot ...) macro doesn't re-trigger
-  (reset! skip-next-pilot true)
-  ;; Re-evaluate original script to restore
-  (when-let [f @state/run-definitions-fn] (f)))
+  (let [from-repl (:from-repl @pilot-state)]
+    (cleanup!)
+    (state/release-interactive-mode!)
+    (reset! pilot-state nil)
+    (when-not from-repl
+      ;; Set skip flag so the (pilot ...) macro doesn't re-trigger
+      (reset! skip-next-pilot true)
+      ;; Re-evaluate original script to restore
+      (when-let [f @state/run-definitions-fn] (f)))))
 
 ;; ============================================================
 ;; UI Panel
@@ -485,34 +512,38 @@
         (throw (js/Error. (str "pilot: no object found for " quoted-arg))))
       (when-not (or mesh? sdf?)
         (throw (js/Error. (str "pilot: argument must be a mesh or SDF node"))))
-      (when (active?)
-        (throw (js/Error. "pilot: already in a pilot session")))
-      ;; Find the (pilot ...) form in editor text
-      (let [editor-text (cm/get-value)
+      (state/claim-interactive-mode! :pilot)
+      ;; Detect context from eval-source dynamic var
+      (let [from-repl (not= :definitions @state/eval-source-var)
+            ;; In script mode, find the (pilot ...) form in editor text
             pilot-pattern (str "(pilot " quoted-arg ")")
-            idx (.indexOf editor-text pilot-pattern)]
-        (when (neg? idx)
+            [pilot-from pilot-to]
+            (when-not from-repl
+              (let [editor-text (cm/get-value)
+                    idx (.indexOf editor-text pilot-pattern)]
+                (when (>= idx 0)
+                  [idx (+ idx (count pilot-pattern))])))]
+        (when (and (not from-repl) (nil? pilot-from))
           (throw (js/Error. (str "pilot: cannot find '" pilot-pattern "' in editor"))))
-        (let [pilot-from idx
-              pilot-to   (+ idx (count pilot-pattern))]
-          ;; Store request — will be picked up by core.cljs after eval
-          (reset! pilot-state
-                  {:source-expr   (str quoted-arg) ;; source text of the argument
-                   :pilot-text    pilot-pattern
-                   :commands      []
-                   :step          5
-                   :angle-step    15
-                   :scale-step    1.1
-                   :digit-buffer  ""
-                   :digit-target  :step
-                   :creation-pose (or (:creation-pose obj)
-                                      {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})
-                   :original-mesh obj
-                   :pilot-from    pilot-from
-                   :pilot-to      pilot-to
-                   :entered?      false})
-          ;; Return object so (pilot x) acts as passthrough in first eval
-          obj)))))
+        ;; Store request — will be picked up by core.cljs after eval
+        (reset! pilot-state
+                {:source-expr   (str quoted-arg) ;; source text of the argument
+                 :pilot-text    pilot-pattern
+                 :commands      []
+                 :step          5
+                 :angle-step    15
+                 :scale-step    1.1
+                 :digit-buffer  ""
+                 :digit-target  :step
+                 :creation-pose (or (:creation-pose obj)
+                                    {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})
+                 :original-mesh obj
+                 :from-repl     from-repl
+                 :pilot-from    pilot-from
+                 :pilot-to      pilot-to
+                 :entered?      false})
+        ;; Return object so (pilot x) acts as passthrough in first eval
+        obj))))
 
 (defn request-from-jvm!
   "Set up pilot state from JVM sidecar pilot-session.

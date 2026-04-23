@@ -5,6 +5,7 @@
    the expression and updates the preview in real-time."
   (:require [sci.core :as sci]
             [ridley.editor.state :as state]
+            [ridley.editor.codemirror :as cm]
             [ridley.scene.registry :as registry]
             [ridley.turtle.core :as turtle]
             [ridley.turtle.shape :as shape]
@@ -17,6 +18,10 @@
 ;; ============================================================
 
 (defonce ^:private test-state (atom nil))
+
+;; When true, the next (tweak ...) macro invocation is silently ignored.
+;; Used by cancel! in script mode to prevent re-entering tweak on re-eval.
+(defonce ^:private skip-next-tweak (atom false))
 ;; When active:
 ;; {:form            <quoted s-expr>
 ;;  :literals        [{:index :value :label :parent-fn :parent-form :arg-idx} ...]
@@ -182,61 +187,158 @@
          (str/join "\n" lines))))
 
 ;; ============================================================
+;; Script-mode helpers — find (tweak ...) in editor text
+;; ============================================================
+
+(defn- skip-string
+  "Given text and index of the opening quote, return index after closing quote, or -1."
+  [text start]
+  (let [len (count text)]
+    (loop [j (inc start)]
+      (cond
+        (>= j len) -1
+        (= (.charAt text j) "\\") (recur (+ j 2))
+        (= (.charAt text j) "\"") (inc j)
+        :else (recur (inc j))))))
+
+(defn- find-matching-paren
+  "Given text and the index of an opening paren, return the index
+   one past the matching closing paren. Handles nested parens, strings,
+   and line comments. Returns -1 if unbalanced."
+  [text start]
+  (let [len (count text)]
+    (loop [i (inc start) depth 1]
+      (cond
+        (>= i len) -1
+        (zero? depth) i
+        :else
+        (let [ch (.charAt text i)]
+          (case ch
+            "(" (recur (inc i) (inc depth))
+            ")" (if (= depth 1) (inc i) (recur (inc i) (dec depth)))
+            "\"" (let [after (skip-string text i)]
+                   (if (neg? after) -1 (recur after depth)))
+            ";" (let [nl (.indexOf text "\n" i)]
+                  (if (neg? nl) -1 (recur (inc nl) depth)))
+            (recur (inc i) depth)))))))
+
+(defn- find-tweak-bounds
+  "Find the character bounds [from, to) of the (tweak ...) form in editor text.
+   Returns [from to] or nil if not found."
+  [editor-text]
+  (let [idx (.indexOf editor-text "(tweak ")]
+    (when (>= idx 0)
+      (let [end (find-matching-paren editor-text idx)]
+        (when (pos? end)
+          [idx end])))))
+
+;; ============================================================
 ;; Evaluate and preview
 ;; ============================================================
 
 (defn- mesh? [x]
   (and (map? x) (:vertices x) (:faces x)))
 
-(defn- evaluate-and-preview!
-  "Re-evaluate the current form with substituted values and update the preview.
-   In JVM mode, sends the full editor script + tweaked expression to the sidecar.
-   Returns true on success, false on error."
+(defn- build-modified-script
+  "Build the full editor script with (tweak ...) replaced by the current expression."
+  [form-str]
+  (let [{:keys [tweak-from tweak-to]} @test-state
+        editor-text (cm/get-value)]
+    (str (.substring editor-text 0 tweak-from)
+         form-str
+         (.substring editor-text tweak-to))))
+
+(defn- evaluate-and-preview-script!
+  "Script mode: re-evaluate the full editor script with (tweak ...) replaced.
+   Returns the evaluated result on success, nil on error."
+  []
+  (when-let [{:keys [current-values]} @test-state]
+    (let [form (:form @test-state)
+          modified-form (substitute-values form current-values)
+          form-str (pr-str modified-form)]
+      (try
+        (let [modified-script (build-modified-script form-str)]
+          (registry/clear-all!)
+          (state/reset-turtle!)
+          (state/reset-scene-accumulator!)
+          (state/reset-print-buffer!)
+          (let [ctx @state/sci-ctx-ref]
+            (reset! skip-next-tweak true)
+            (sci/eval-string modified-script ctx))
+          (let [{:keys [lines stamps]} @state/scene-accumulator]
+            (registry/set-lines! (vec (or lines [])))
+            (registry/set-stamps! (vec (or stamps []))))
+          (registry/refresh-viewport! false)
+          ;; Update turtle indicator to reflect new creation-pose
+          (let [source (viewport/get-turtle-source)]
+            (cond
+              (and (map? source) (:mesh source))
+              (when-let [mesh (registry/get-mesh (:mesh source))]
+                (when-let [pose (:creation-pose mesh)]
+                  (viewport/update-turtle-pose pose)))
+
+              (= source :global)
+              (viewport/update-turtle-pose (state/get-turtle-pose))))
+          :ok)
+        (catch :default e
+          (js/console.warn "tweak script eval error:" (.-message e))
+          nil)))))
+
+(defn- evaluate-and-preview-repl!
+  "REPL mode: evaluate the tweaked expression in isolation and show preview.
+   Returns the evaluated result on success, nil on error."
   []
   (if-let [{:keys [current-values saved-turtle]} @test-state]
     (let [form (:form @test-state)
           modified-form (substitute-values form current-values)
           form-str (pr-str modified-form)]
-      (do
-        (reset! @state/turtle-state-var saved-turtle)
-        (try
-          (let [ctx @state/sci-ctx-ref
-                _ (when-not ctx (throw (js/Error. "No SCI context — run definitions first")))
-                result (sci/eval-string form-str ctx)
-                items (cond
-                        (mesh? result)
-                        [{:type :mesh :data result}]
+      (reset! @state/turtle-state-var saved-turtle)
+      (try
+        (let [ctx @state/sci-ctx-ref
+              _ (when-not ctx (throw (js/Error. "No SCI context — run definitions first")))
+              result (sci/eval-string form-str ctx)
+              items (cond
+                      (mesh? result)
+                      [{:type :mesh :data result}]
 
-                        (shape/shape? result)
-                        (let [stamped (turtle/stamp-debug saved-turtle result)
-                              stamps (:stamps stamped)]
-                          (mapv (fn [s] {:type :stamp :data s}) stamps))
+                      (shape/shape? result)
+                      (let [stamped (turtle/stamp-debug saved-turtle result)
+                            stamps (:stamps stamped)]
+                        (mapv (fn [s] {:type :stamp :data s}) stamps))
 
-                        (turtle/path? result)
-                        (let [ran (turtle/run-path saved-turtle result)
-                              lines (:geometry ran)]
-                          (when (seq lines)
-                            [{:type :lines :data lines}]))
+                      (turtle/path? result)
+                      (let [ran (turtle/run-path saved-turtle result)
+                            lines (:geometry ran)]
+                        (when (seq lines)
+                          [{:type :lines :data lines}]))
 
-                        (and (sequential? result) (seq result) (every? mesh? result))
-                        (mapv (fn [m] {:type :mesh :data m}) result)
+                      (and (sequential? result) (seq result) (every? mesh? result))
+                      (mapv (fn [m] {:type :mesh :data m}) result)
 
-                        :else nil)]
-            (if items
-              (viewport/show-preview! items)
-              (viewport/clear-preview!))
-            (when-let [reg-name (:registry-name @test-state)]
-              (when (mesh? result)
-                (measure/set-ruler-overrides! {reg-name result})
-                (measure/refresh-rulers!)))
-            true)
-          (catch :default e
-            (let [msg (str "tweak eval error: " (.-message e))]
-              (state/capture-println msg)
-              (js/console.warn msg)
-              (js/console.warn "tweak form-str:" form-str)
-              false)))))
-    false))
+                      :else nil)]
+          (if items
+            (viewport/show-preview! items)
+            (viewport/clear-preview!))
+          (when-let [reg-name (:registry-name @test-state)]
+            (when (mesh? result)
+              (measure/set-ruler-overrides! {reg-name result})
+              (measure/refresh-rulers!)))
+          result)
+        (catch :default e
+          (let [msg (str "tweak eval error: " (.-message e))]
+            (state/capture-println msg)
+            (js/console.warn msg)
+            (js/console.warn "tweak form-str:" form-str)
+            nil))))
+    nil))
+
+(defn- evaluate-and-preview!
+  "Dispatch to script or REPL mode evaluation.
+   Returns the evaluated result on success, nil on error."
+  []
+  (if (:tweak-from @test-state)
+    (evaluate-and-preview-script!)
+    (evaluate-and-preview-repl!)))
 
 ;; ============================================================
 ;; DOM helpers
@@ -274,52 +376,87 @@
 
 (defn cancel!
   "Cancel test mode: discard changes, clear preview, restore turtle.
-   In registry mode, re-shows the original mesh."
+   In registry mode, re-shows the original mesh.
+   In script mode, re-evaluates the original script."
   []
-  (when-let [{:keys [saved-turtle registry-name]} @test-state]
+  (when-let [{:keys [saved-turtle registry-name tweak-from]} @test-state]
     (reset! @state/turtle-state-var saved-turtle)
     (viewport/clear-preview!)
     (measure/clear-ruler-overrides!)
     (measure/refresh-rulers!)
-    (when registry-name
-      (registry/show-mesh! registry-name)
-      (registry/refresh-viewport! true))
+    (if tweak-from
+      ;; Script mode: set skip flag and re-evaluate original script to restore viewport
+      (do (reset! skip-next-tweak true)
+          (when-let [f @state/run-definitions-fn] (f)))
+      ;; REPL mode: just re-show the original mesh
+      (when registry-name
+        (registry/show-mesh! registry-name)
+        (registry/refresh-viewport! true)))
     (cleanup-ui!)
+    (state/release-interactive-mode!)
     (reset! test-state nil)))
 
 (defn confirm!
   "Confirm test mode: print final expression, clear preview, restore turtle.
-   In registry mode, re-evaluates and registers the tweaked mesh."
+   In script mode, replaces the (tweak ...) form in the editor and re-evaluates.
+   In REPL mode, prints the final expression (and re-registers if registry mode)."
   []
-  (when-let [{:keys [form current-values saved-turtle registry-name]} @test-state]
+  (when-let [{:keys [form current-values saved-turtle registry-name
+                     tweak-from tweak-to]} @test-state]
     (let [final-form (substitute-values form current-values)
           final-str (pr-str final-form)]
       (reset! @state/turtle-state-var saved-turtle)
       (viewport/clear-preview!)
-      (if registry-name
-        ;; Registry mode: re-evaluate, register, show
-        (try
-          (let [ctx @state/sci-ctx-ref
-                result (sci/eval-string final-str ctx)]
-            (when (mesh? result)
-              (registry/register-mesh! registry-name result)
-              (registry/set-source-form! registry-name final-form)
-              (registry/show-mesh! registry-name)
-              (registry/refresh-viewport! true))
-            (add-repl-output! final-str))
-          (catch :default e
-            (let [msg (str "tweak confirm error: " (.-message e))]
-              (state/capture-println msg)
-              (js/console.warn msg)
-              ;; Re-show original on error
-              (registry/show-mesh! registry-name)
-              (registry/refresh-viewport! true))))
-        ;; Normal mode: just print
-        (add-repl-output! final-str))
+      (if (and tweak-from tweak-to)
+        ;; Script mode: replace (tweak ...) in editor and re-evaluate
+        (do (cm/replace-range tweak-from tweak-to final-str)
+            (state/capture-println (str "tweak: " final-str))
+            ;; Re-evaluate the modified script
+            (when-let [f @state/run-definitions-fn] (f)))
+        ;; REPL mode
+        (if registry-name
+          ;; Registry mode: re-evaluate, register, show
+          (try
+            (let [ctx @state/sci-ctx-ref
+                  result (sci/eval-string final-str ctx)]
+              (when (mesh? result)
+                (registry/register-mesh! registry-name result)
+                (registry/set-source-form! registry-name final-form)
+                (registry/show-mesh! registry-name)
+                (registry/refresh-viewport! true))
+              (add-repl-output! final-str))
+            (catch :default e
+              (let [msg (str "tweak confirm error: " (.-message e))]
+                (state/capture-println msg)
+                (js/console.warn msg)
+                ;; Re-show original on error
+                (registry/show-mesh! registry-name)
+                (registry/refresh-viewport! true))))
+          ;; Normal REPL mode: just print
+          (add-repl-output! final-str)))
       (measure/clear-ruler-overrides!)
       (measure/refresh-rulers!)
       (cleanup-ui!)
+      (state/release-interactive-mode!)
       (reset! test-state nil))))
+
+;; ============================================================
+;; Number formatting
+;; ============================================================
+
+(defn- format-value
+  "Format a numeric value for display, limiting decimal places.
+   Integers stay as-is. Floats get up to 2 decimal places,
+   removing trailing zeros."
+  [v]
+  (if (== v (Math/round v))
+    (str (long v))
+    (let [s (.toFixed v 2)]
+      ;; Remove trailing zeros: "1.50" → "1.5", "1.00" → "1"
+      (cond
+        (str/ends-with? s "00") (subs s 0 (- (count s) 3))
+        (str/ends-with? s "0")  (subs s 0 (dec (count s)))
+        :else s))))
 
 ;; ============================================================
 ;; Slider UI
@@ -342,26 +479,63 @@
         (.add (.-classList label-el) "slider-label")
         (set! (.-textContent label-el) label)
         (.add (.-classList value-el) "slider-value")
-        (set! (.-textContent value-el) (str value))
+        (set! (.-textContent value-el) (format-value value))
+        (set! (.-title value-el) "Click to type a value")
+        (set! (.-style.-cursor value-el) "pointer")
         (set! (.-type slider) "range")
         (set! (.-min slider) (str smin))
         (set! (.-max slider) (str smax))
         (set! (.-step slider) (str step))
         (set! (.-value slider) (str value))
         (.add (.-classList slider) "test-slider")
-        ;; Debounced input handler
-        (let [timeout (atom nil)]
+        ;; Helper: apply a new value from slider or keyboard input
+        (let [timeout (atom nil)
+              apply-value! (fn [new-val]
+                             (set! (.-textContent value-el) (format-value new-val))
+                             (set! (.-value slider) (str new-val))
+                             (when-let [t @timeout] (js/clearTimeout t))
+                             (reset! timeout
+                                     (js/setTimeout
+                                      (fn []
+                                        (swap! test-state assoc-in [:current-values index] new-val)
+                                        (evaluate-and-preview!))
+                                      100)))]
+          ;; Slider drag handler
           (.addEventListener slider "input"
                              (fn [_e]
-                               (let [new-val (js/parseFloat (.-value slider))]
-                                 (set! (.-textContent value-el) (str new-val))
-                                 (when-let [t @timeout] (js/clearTimeout t))
-                                 (reset! timeout
-                                         (js/setTimeout
-                                          (fn []
-                                            (swap! test-state assoc-in [:current-values index] new-val)
-                                            (evaluate-and-preview!))
-                                          100))))))
+                               (apply-value! (js/parseFloat (.-value slider)))))
+          ;; Click on value → inline number input
+          (.addEventListener value-el "click"
+                             (fn [_e]
+                               (let [input (.createElement js/document "input")]
+                                 (set! (.-type input) "number")
+                                 (set! (.-value input) (.-textContent value-el))
+                                 (.add (.-classList input) "slider-value-input")
+                                 ;; Replace the span with the input
+                                 (.replaceWith value-el input)
+                                 (.focus input)
+                                 (.select input)
+                                 ;; Commit on Enter or blur
+                                 (let [commit! (fn []
+                                                 (let [v (js/parseFloat (.-value input))]
+                                                   (when (and (js/isFinite v) (not (js/isNaN v)))
+                                                     ;; Re-center slider range around the new value
+                                                     (let [[new-min new-max new-step] (slider-range v)]
+                                                       (set! (.-min slider) (str new-min))
+                                                       (set! (.-max slider) (str new-max))
+                                                       (set! (.-step slider) (str new-step)))
+                                                     (apply-value! v))
+                                                   ;; Restore the span
+                                                   (.replaceWith input value-el)))]
+                                   (.addEventListener input "blur" (fn [_] (commit!)))
+                                   (.addEventListener input "keydown"
+                                                      (fn [e]
+                                                        (when (= (.-key e) "Enter")
+                                                          (.preventDefault e)
+                                                          (commit!))
+                                                        (when (= (.-key e) "Escape")
+                                                          (.preventDefault e)
+                                                          (.replaceWith input value-el)))))))))
         ;; Zoom buttons: re-center range on current value
         (let [zoom-fn (fn [factor]
                         (let [cur (js/parseFloat (.-value slider))
@@ -495,73 +669,90 @@
   ([quoted-form filt] (start! quoted-form filt nil nil))
   ([quoted-form filt registry-name] (start! quoted-form filt registry-name nil))
   ([quoted-form filt registry-name locals]
-   ;; Cancel any existing test session
-   (when (active?) (cancel!))
-   ;; In registry mode, hide the original mesh first
-   (when registry-name
-     (registry/hide-mesh! registry-name)
-     (registry/refresh-viewport! true))
-   (let [;; Inline data symbols (resolve def'd maps/vectors/numbers)
-         ctx @state/sci-ctx-ref
-         resolved-form (if ctx
-                         (inline-data-symbols quoted-form ctx locals)
-                         quoted-form)
-         ;; Find all numeric literals
-         literals (find-numeric-literals resolved-form)
-         total (count literals)]
-     (when (> total 32)
-       (state/capture-println
-        (str "tweak: " total " numeric literals found, max 32 — narrow with (tweak [0 1 2] expr)")))
-     (if (or (zero? total) (> total 32))
-       ;; No numeric literals or too many — just evaluate and show result
-       (do (when (zero? total)
-             (state/capture-println "tweak: no numeric literals found"))
-           ;; Re-show if registry mode
-           (when registry-name
-             (registry/show-mesh! registry-name)
-             (registry/refresh-viewport! true))
-           nil)
-       (let [;; Resolve filter to set of indices
-             selected (resolve-filter filt total)
-             ;; Generate labels
-             labeled (mapv (fn [lit]
-                             (assoc lit :label (generate-label lit literals)))
-                           literals)
-             ;; Build initial values map (all literals, not just selected)
-             initial-values (into {} (map (fn [{:keys [index value]}]
-                                            [index value]))
-                                  literals)
-             ;; Save turtle state
-             saved-turtle @@state/turtle-state-var]
-         ;; Set up state
-         (reset! test-state {:form resolved-form
-                             :literals labeled
-                             :selected selected
-                             :current-values initial-values
-                             :saved-turtle saved-turtle
-                             :registry-name registry-name})
-         ;; Verify expression evaluates successfully before committing
-         (if (evaluate-and-preview!)
-           (do
-             ;; Success — print index map
-             (state/capture-println (format-index-map labeled))
-             ;; Defer preview re-render + sliders to next tick.
-             ;; Reason: when tweak runs inside evaluate-definitions, the caller
-             ;; calls refresh-viewport! after we return, which wipes the preview.
-             ;; By deferring, our preview renders AFTER that refresh.
-             (js/setTimeout
-              (fn []
-                (evaluate-and-preview!)
-                (create-slider-ui! labeled selected))
-              0)
-             nil)
-           ;; Evaluation failed — clean up, don't show sliders
-           (do
-             (when registry-name
-               (registry/show-mesh! registry-name)
-               (registry/refresh-viewport! true))
-             (reset! test-state nil)
-             nil)))))))
+   (if @skip-next-tweak
+     ;; Skip — cancel! in script mode sets this to avoid re-entry on re-eval
+     (do (reset! skip-next-tweak false) nil)
+     ;; Normal entry
+     (do
+       ;; Claim interactive slot — throws if pilot or another tweak is active
+       (state/claim-interactive-mode! :tweak)
+       ;; In registry mode, hide the original mesh first
+       (when registry-name
+         (registry/hide-mesh! registry-name)
+         (registry/refresh-viewport! true))
+       (let [;; Inline data symbols (resolve def'd maps/vectors/numbers)
+             ctx @state/sci-ctx-ref
+             resolved-form (if ctx
+                             (inline-data-symbols quoted-form ctx locals)
+                             quoted-form)
+             ;; Find all numeric literals
+             literals (find-numeric-literals resolved-form)
+             total (count literals)]
+         (when (> total 32)
+           (state/capture-println
+            (str "tweak: " total " numeric literals found, max 32 — narrow with (tweak [0 1 2] expr)")))
+         (if (or (zero? total) (> total 32))
+           ;; No numeric literals or too many — just evaluate and show result
+           (do (when (zero? total)
+                 (state/capture-println "tweak: no numeric literals found"))
+               ;; Re-show if registry mode
+               (when registry-name
+                 (registry/show-mesh! registry-name)
+                 (registry/refresh-viewport! true))
+               nil)
+           (let [;; Resolve filter to set of indices
+                 selected (resolve-filter filt total)
+                 ;; Generate labels
+                 labeled (mapv (fn [lit]
+                                 (assoc lit :label (generate-label lit literals)))
+                               literals)
+                 ;; Build initial values map (all literals, not just selected)
+                 initial-values (into {} (map (fn [{:keys [index value]}]
+                                                [index value]))
+                                      literals)
+                 ;; Save turtle state
+                 saved-turtle @@state/turtle-state-var
+                 ;; Detect script context: if eval-source is :definitions, find form in editor
+                 from-script (= :definitions @state/eval-source-var)
+                 [tweak-from tweak-to] (when from-script
+                                         (find-tweak-bounds (cm/get-value)))]
+             ;; Set up state
+             (reset! test-state {:form resolved-form
+                                 :literals labeled
+                                 :selected selected
+                                 :current-values initial-values
+                                 :saved-turtle saved-turtle
+                                 :registry-name registry-name
+                                 :tweak-from tweak-from
+                                 :tweak-to tweak-to})
+             ;; Initial eval always uses REPL path (we're inside script eval,
+             ;; can't re-eval the full script recursively)
+             (let [initial-result (evaluate-and-preview-repl!)]
+               (if initial-result
+                 (do
+                   ;; Success — print index map
+                   (state/capture-println (format-index-map labeled))
+                   ;; Defer preview re-render + sliders to next tick.
+                   ;; Reason: when tweak runs inside evaluate-definitions, the caller
+                   ;; calls refresh-viewport! after we return, which wipes the preview.
+                   ;; By deferring, our preview renders AFTER that refresh.
+                   (js/setTimeout
+                    (fn []
+                      (evaluate-and-preview!)
+                      (create-slider-ui! labeled selected))
+                    0)
+                   ;; In script mode, return the initial result so (register ...) gets
+                   ;; the mesh and CCC appears in the dropdown / turtle menu.
+                   ;; In REPL mode, return nil to avoid printing the mesh.
+                   (when from-script initial-result))
+                 ;; Evaluation failed — clean up, don't show sliders
+                 (do
+                   (state/release-interactive-mode!)
+                   (when registry-name
+                     (registry/show-mesh! registry-name)
+                     (registry/refresh-viewport! true))
+                   (reset! test-state nil)
+                   nil))))))))))
 
 (defn ^:export start-registered!
   "Enter test mode for a registered mesh.
