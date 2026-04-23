@@ -24,12 +24,6 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '21'
-
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -37,9 +31,6 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop/src-tauri
-
-      - name: Install Clojure CLI
-        run: brew install clojure/tools/clojure
 
       - name: Install CMake
         run: brew install cmake
@@ -58,10 +49,6 @@ jobs:
           npx shadow-cljs release app \
             --config-merge "{:closure-defines {ridley.version/VERSION \"$TAG\"}}"
 
-      - name: Build JVM sidecar uberjar
-        working-directory: desktop/ridley-jvm
-        run: clojure -X:uberjar
-
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2"
 
@@ -74,13 +61,6 @@ jobs:
       - name: Bundle dylibs
         working-directory: desktop
         run: bash bundle-dylibs.sh
-
-      - name: Copy JVM sidecar jar into bundle
-        run: |
-          APP_BUNDLE="desktop/src-tauri/target/release/bundle/macos/Ridley.app"
-          RESOURCES_DIR="$APP_BUNDLE/Contents/Resources"
-          mkdir -p "$RESOURCES_DIR"
-          cp desktop/ridley-jvm/target/ridley-jvm.jar "$RESOURCES_DIR/"
 
       - name: Create DMG
         run: |

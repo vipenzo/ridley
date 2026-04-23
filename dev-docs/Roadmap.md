@@ -617,9 +617,11 @@ The core turtle system, generative operations, boolean operations, anchor/naviga
 **Current sprint:**
 1. [ ] Face cutting (draw shape on face)
 2. [ ] Non-uniform scale `(scale [sx sy sz])`
-3. [ ] STL import — load external STL as reusable mesh in Ridley
 
 **Recently completed:**
+- ✓ **Pilot/Tweak alignment** (2026-04-23) — Both pilot and tweak now work from REPL (print expression on Ok) and from script (replace form in editor on Ok, re-eval full script). Tweak in script mode re-evaluates entire script on each slider change. Interactive mode mutual exclusion guard. Tweak UI: decimal formatting, click-to-type value input, slider range recentering.
+- ✓ **JVM Sidecar Removal — complete** (2026-04-23) — Deleted `desktop/ridley-jvm/` (33 files), removed JVM spawn from `main.rs`, removed Java/Clojure steps from CI workflow, cleaned stubs and dead code. All JVM eval code was already ported to SCI+CLJS in the previous sprint.
+
 - ✓ **Shell Shape-fn** — `shell` wraps any shape into a variable-thickness hollow extrusion. A thickness function `(fn [angle t] → 0..1)` controls wall thickness at each point; where it returns 0, openings appear. Generates symmetric double rings (outer displaced outward, inner inward by half-thickness). Per-triangle face generation skips only fully-zero triangles. Built-in patterns: `shell-lattice` (brick/grid), `shell-checkerboard`, `shell-weave` (warp/weft with over/under), `shell-voronoi` (organic irregular openings). Composes with `tapered`, `twisted`, and other shape-fns via `->` threading.
 - ✓ **Voronoi Shell** — `voronoi-shell` generates perforated 2D shapes with Voronoi cell patterns. Uses d3-delaunay for Voronoi computation, Clipper2 for cell clipping/inset, Lloyd relaxation for uniform cells. Returns shape with holes, compatible with extrude, loft, revolve, and all shape-fns.
 - ✓ **Turtle Scope Refactor** — Major architecture change replacing the global mutable `turtle-atom` with SCI dynamic var `turtle-state-var` + `turtle` macro for lexical scoping. Added scene accumulator to separate visual output (lines, stamps) from turtle navigation state. Implemented `:preserve-up` mode to prevent roll accumulation from combined th+tv rotations. Removed deprecated `push-state`/`pop-state`/`clear-stack`, removed interactive `attach`/`detach` (replaced by functional macros), cleaned up dead code. 159 tests, 0 failures.

@@ -99,40 +99,6 @@ fn main() {
         Mutex::new(child)
     };
 
-    // Spawn JVM sidecar
-    // Release mode: use uberjar from Resources; dev mode: use clj CLI
-    let jvm_child: Mutex<Option<Child>> = Mutex::new({
-        #[cfg(not(debug_assertions))]
-        {
-            // In release: look for ridley-jvm.jar in the app bundle's Resources
-            let jar_path = {
-                let exe = std::env::current_exe().unwrap_or_default();
-                let resources = exe.parent().unwrap_or(exe.as_ref())
-                    .join("../Resources/ridley-jvm.jar");
-                if resources.exists() {
-                    resources
-                } else {
-                    // Fallback: next to the executable
-                    exe.parent().unwrap_or(exe.as_ref()).join("ridley-jvm.jar")
-                }
-            };
-            if jar_path.exists() {
-                spawn_child("jvm-sidecar", "java",
-                    &["-jar", jar_path.to_str().unwrap_or("ridley-jvm.jar")],
-                    &root)
-            } else {
-                eprintln!("jvm-sidecar: jar not found at {:?}, trying clj", jar_path);
-                let jvm_dir = root.join("desktop/ridley-jvm");
-                spawn_child("jvm-sidecar", "clj", &["-M", "-m", "ridley.jvm.server"], &jvm_dir)
-            }
-        }
-        #[cfg(debug_assertions)]
-        {
-            let jvm_dir = root.join("desktop/ridley-jvm");
-            spawn_child("jvm-sidecar", "clj", &["-M", "-m", "ridley.jvm.server"], &jvm_dir)
-        }
-    });
-
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             ping,
@@ -146,12 +112,6 @@ fn main() {
         .run(move |_app, event| {
             if let tauri::RunEvent::Exit = event {
                 // Kill child processes on app exit
-                if let Ok(mut guard) = jvm_child.lock() {
-                    if let Some(ref mut child) = *guard {
-                        eprintln!("jvm-sidecar: killing pid {}", child.id());
-                        let _ = child.kill();
-                    }
-                }
                 #[cfg(debug_assertions)]
                 if let Ok(mut guard) = frontend_child.lock() {
                     if let Some(ref mut child) = *guard {

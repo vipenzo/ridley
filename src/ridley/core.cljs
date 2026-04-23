@@ -2381,7 +2381,7 @@
               :on-selection-change (fn []
                                      (maybe-update-ai-focus!)
                                      (sync-voice-state))}))
-    ;; Wire editor content getter for test_mode JVM eval
+    ;; Wire editor content getter for test_mode
     (reset! editor-state/get-editor-content
             (fn [] (when @editor-view (cm/get-value @editor-view))))
     (reset! repl-input-el repl-input)

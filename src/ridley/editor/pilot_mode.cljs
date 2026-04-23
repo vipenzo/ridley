@@ -545,35 +545,6 @@
         ;; Return object so (pilot x) acts as passthrough in first eval
         obj))))
 
-(defn request-from-jvm!
-  "Set up pilot state from JVM sidecar pilot-session.
-   Called by core.cljs when the sidecar signals a pilot session.
-   pilot-session: {:source-expr \"cubo\" :creation-pose {...}} from JVM"
-  [pilot-session _meshes]
-  (let [source-expr (:source-expr pilot-session)
-        creation-pose (or (:creation-pose pilot-session)
-                          {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})
-        editor-text (cm/get-value)
-        pilot-pattern (str "(pilot " source-expr ")")
-        idx (.indexOf editor-text pilot-pattern)]
-    (when (>= idx 0)
-      (let [pilot-from idx
-            pilot-to (+ idx (count pilot-pattern))]
-        (reset! pilot-state
-                {:source-expr   source-expr
-                 :pilot-text    pilot-pattern
-                 :commands      []
-                 :step          5
-                 :angle-step    15
-                 :scale-step    1.1
-                 :digit-buffer  ""
-                 :digit-target  :step
-                 :creation-pose creation-pose
-                 :original-mesh nil  ;; not needed — JVM re-evals full script
-                 :pilot-from    pilot-from
-                 :pilot-to      pilot-to
-                 :entered?      false})))))
-
 (defn requested?
   "Check if pilot mode was requested during evaluation."
   []

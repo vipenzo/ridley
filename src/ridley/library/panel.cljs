@@ -573,12 +573,6 @@
 ;; Setup
 ;; ============================================================
 
-(defn refresh-jvm-libraries!
-  "No-op stub — JVM library mode has been removed.
-   Kept for backward compat with core.cljs JVM toggle."
-  []
-  (render!))
-
 (defn setup!
   "Initialize the library panel. Takes a callbacks map:
    :get-editor-content  fn [] -> string

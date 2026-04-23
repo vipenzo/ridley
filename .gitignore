@@ -21,7 +21,6 @@ out/
 # Tauri
 desktop/src-tauri/target/
 desktop/src-tauri/gen/
-desktop/ridley-jvm/target/
 
 # OS
 .DS_Store
