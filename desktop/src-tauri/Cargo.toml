@@ -17,6 +17,8 @@ rfd = "0.15"
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
 
-# Optimize dependencies in dev mode (Manifold is 7x slower unoptimized)
+# Keep dependencies optimized in dev builds.
+# libfive and the tauri crate are heavy; default opt-level
+# makes debug builds painfully slow for interactive work.
 [profile.dev.package."*"]
 opt-level = 3
