@@ -144,6 +144,9 @@
    'rec-scale           turtle/rec-scale
    'rec-move-to         turtle/rec-move-to
    'rec-play-path       turtle/rec-play-path
+   'rec-cp-f            turtle/rec-cp-f
+   'rec-cp-rt           turtle/rec-cp-rt
+   'rec-cp-u            turtle/rec-cp-u
    'path-from-recorder  turtle/path-from-recorder
    ;; Shape recording functions (used by shape macro)
    'shape-rec-f         shape/rec-f
@@ -201,12 +204,12 @@
    'mark   (fn [_name] nil)
    ;; Needed for macro-defs follow-path reference
    'run-path (fn [p] (doseq [{:keys [cmd args]} (:commands p)]
-                        (case cmd
-                          :f  (implicit-f (first args))
-                          :th (implicit-th (first args))
-                          :tv (implicit-tv (first args))
-                          :tr (implicit-tr (first args))
-                          nil)))
+                       (case cmd
+                         :f  (implicit-f (first args))
+                         :th (implicit-th (first args))
+                         :tv (implicit-tv (first args))
+                         :tr (implicit-tr (first args))
+                         nil)))
    ;; Source tracking (used by macro-defs wrappers)
    'add-source      (fn [mesh op-info]
                       (if (and (map? mesh) (:vertices mesh))
@@ -262,8 +265,9 @@
    'link!               (fn [& _] nil)
    ;; Tweak stub
    'tweak-start!        (fn [& _] nil)
-   ;; Export stub
-   'save-stl            (fn [& _] nil)})
+   ;; Export stubs
+   'save-stl            (fn [& _] nil)
+   'save-mesh           (fn [& _] nil)})
 
 ;; ── Public API ──────────────────────────────────────────────
 
