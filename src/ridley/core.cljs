@@ -538,10 +538,28 @@
     (js/URL.revokeObjectURL url)))
 
 (defn- save-blob-with-picker
-  "Save a blob using showSaveFilePicker (native Save As dialog) when available,
-   falling back to traditional download otherwise."
+  "Save a blob using the most appropriate Save As path for the runtime:
+   - Desktop (Tauri, WKWebView): native dialog via geo-server /pick-save-path + /write-file.
+   - Chrome/Edge: File System Access API (showSaveFilePicker).
+   - Other browsers: traditional <a download> fallback.
+
+   extensions is a JS array of dot-prefixed strings, e.g. #js [\".clj\"]."
   [blob filename description mime-type extensions]
-  (if (exists? js/window.showSaveFilePicker)
+  (cond
+    (stl/desktop-mode?)
+    (let [exts (vec (map #(if (.startsWith ^js % ".") (.substring % 1) %)
+                         (array-seq extensions)))]
+      (-> (stl/desktop-pick-save-path filename {:title "Save"
+                                                :filters [{:name description
+                                                           :extensions exts}]})
+          (.then (fn [chosen-path]
+                   (when chosen-path
+                     (stl/desktop-write-file blob chosen-path))))
+          (.catch (fn [err]
+                    (js/console.warn "native save error:" err)
+                    nil))))
+
+    (exists? js/window.showSaveFilePicker)
     (let [accept (js-obj mime-type extensions)]
       (-> (js/window.showSaveFilePicker
            #js {:suggestedName filename
@@ -554,6 +572,8 @@
           (.catch (fn [_err]
                     ;; User cancelled — do nothing
                     nil))))
+
+    :else
     (download-blob-fallback blob filename)))
 
 (defn- save-definitions []

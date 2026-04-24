@@ -209,7 +209,9 @@
 
 (defonce ^:private desktop-mode-cache (atom nil))
 
-(defn- desktop-mode? []
+(defn desktop-mode?
+  "True if the Rust geo-server is reachable on 127.0.0.1:12321 (desktop Tauri)."
+  []
   (if-some [v @desktop-mode-cache]
     v
     (let [result (try
@@ -221,30 +223,42 @@
       (reset! desktop-mode-cache result)
       result)))
 
-(defn- desktop-pick-save-path
-  "Open native save dialog via Rust geo_server. Returns Promise<string|nil> (path or nil if cancelled)."
-  [suggested-name]
-  (js/Promise.
-   (fn [resolve reject]
-     (let [xhr (js/XMLHttpRequest.)]
-       (.open xhr "POST" (str geo-server-url "/pick-save-path") true)
-       (.setRequestHeader xhr "Content-Type" "application/json")
-       (set! (.-onload xhr)
-             (fn [_]
-               (if (= 200 (.-status xhr))
-                 (let [resp (js/JSON.parse (.-responseText xhr))]
-                   (if (nil? resp)
-                     (resolve nil)
-                     (resolve (.-path resp))))
-                 (reject (js/Error. (.-responseText xhr))))))
-       (set! (.-onerror xhr)
-             (fn [_] (reject (js/Error. "pick-save-path request failed"))))
-       (.send xhr (js/JSON.stringify #js {:suggested_name suggested-name}))))))
+(defn desktop-pick-save-path
+  "Open native save dialog via Rust geo_server. Returns Promise<string|nil>
+   (path or nil if cancelled).
 
-(defn- desktop-write-file
-  "Write binary blob to a file path via Rust geo_server. Returns Promise<nil>."
+   Options:
+     :title    dialog title (default \"Save\")
+     :filters  vec of {:name str :extensions [str ...]}
+               (default: STL and 3MF)"
+  ([suggested-name] (desktop-pick-save-path suggested-name nil))
+  ([suggested-name {:keys [title filters]}]
+   (js/Promise.
+    (fn [resolve reject]
+      (let [xhr (js/XMLHttpRequest.)
+            body (cond-> {:suggested_name suggested-name}
+                   title   (assoc :title title)
+                   filters (assoc :filters (mapv (fn [{:keys [name extensions]}]
+                                                   {:name name :extensions (vec extensions)})
+                                                 filters)))]
+        (.open xhr "POST" (str geo-server-url "/pick-save-path") true)
+        (.setRequestHeader xhr "Content-Type" "application/json")
+        (set! (.-onload xhr)
+              (fn [_]
+                (if (= 200 (.-status xhr))
+                  (let [resp (js/JSON.parse (.-responseText xhr))]
+                    (if (nil? resp)
+                      (resolve nil)
+                      (resolve (.-path resp))))
+                  (reject (js/Error. (.-responseText xhr))))))
+        (set! (.-onerror xhr)
+              (fn [_] (reject (js/Error. "pick-save-path request failed"))))
+        (.send xhr (js/JSON.stringify (clj->js body))))))))
+
+(defn desktop-write-file
+  "Write a Blob (or string) to a file path via Rust geo_server. Returns Promise<nil>."
   [blob file-path]
-  (-> (.arrayBuffer blob)
+  (-> (.arrayBuffer (if (string? blob) (js/Blob. #js [blob]) blob))
       (.then (fn [ab]
                (js/Promise.
                 (fn [resolve reject]

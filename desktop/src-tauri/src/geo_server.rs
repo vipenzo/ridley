@@ -17,6 +17,13 @@ fn handle_home_dir() -> Result<String, String> {
 }
 
 /// Open a native save dialog, return the chosen path (no data written yet).
+///
+/// Request body:
+///   { "suggested_name": "foo.stl",
+///     "title": "Export",                              (optional, default "Save")
+///     "filters": [{"name": "STL files",               (optional, default STL+3MF)
+///                  "extensions": ["stl"]},
+///                 ...] }
 fn handle_pick_save_path(request: &mut tiny_http::Request) -> Result<String, String> {
     let mut body = String::new();
     request
@@ -25,17 +32,38 @@ fn handle_pick_save_path(request: &mut tiny_http::Request) -> Result<String, Str
         .map_err(|e| format!("read error: {}", e))?;
 
     #[derive(serde::Deserialize)]
+    struct Filter {
+        name: String,
+        extensions: Vec<String>,
+    }
+    #[derive(serde::Deserialize)]
     struct Req {
         suggested_name: String,
+        #[serde(default)]
+        title: Option<String>,
+        #[serde(default)]
+        filters: Option<Vec<Filter>>,
     }
     let req: Req =
         serde_json::from_str(&body).map_err(|e| format!("JSON parse error: {}", e))?;
 
-    let dialog = rfd::FileDialog::new()
-        .set_title("Export")
-        .set_file_name(&req.suggested_name)
-        .add_filter("STL files", &["stl"])
-        .add_filter("3MF files", &["3mf"]);
+    let mut dialog = rfd::FileDialog::new()
+        .set_title(req.title.as_deref().unwrap_or("Save"))
+        .set_file_name(&req.suggested_name);
+
+    match req.filters {
+        Some(fs) if !fs.is_empty() => {
+            for f in fs {
+                let ext_refs: Vec<&str> = f.extensions.iter().map(|s| s.as_str()).collect();
+                dialog = dialog.add_filter(&f.name, &ext_refs);
+            }
+        }
+        _ => {
+            dialog = dialog
+                .add_filter("STL files", &["stl"])
+                .add_filter("3MF files", &["3mf"]);
+        }
+    }
 
     match dialog.save_file() {
         Some(path) => Ok(format!(
