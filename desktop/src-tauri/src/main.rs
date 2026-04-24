@@ -2,36 +2,14 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod geo_server;
-mod manifold_ops;
 mod sdf_ops;
 
-use manifold_ops::MeshData;
 use std::process::{Child, Command};
 use std::sync::Mutex;
 
 #[tauri::command]
 fn ping() -> String {
     "pong from Rust backend".to_string()
-}
-
-#[tauri::command]
-fn manifold_union(meshes: Vec<MeshData>) -> Result<MeshData, String> {
-    manifold_ops::union(&meshes)
-}
-
-#[tauri::command]
-fn manifold_difference(base: MeshData, cutters: Vec<MeshData>) -> Result<MeshData, String> {
-    manifold_ops::difference(&base, &cutters)
-}
-
-#[tauri::command]
-fn manifold_intersection(meshes: Vec<MeshData>) -> Result<MeshData, String> {
-    manifold_ops::intersection(&meshes)
-}
-
-#[tauri::command]
-fn manifold_hull(meshes: Vec<MeshData>) -> Result<MeshData, String> {
-    manifold_ops::hull(&meshes)
 }
 
 /// Project root, computed at compile time from CARGO_MANIFEST_DIR.
@@ -100,13 +78,7 @@ fn main() {
     };
 
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![
-            ping,
-            manifold_union,
-            manifold_difference,
-            manifold_intersection,
-            manifold_hull,
-        ])
+        .invoke_handler(tauri::generate_handler![ping])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(move |_app, event| {

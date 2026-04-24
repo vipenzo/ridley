@@ -2,45 +2,11 @@
 //! Runs on a background thread, listens on localhost:12321.
 //! The frontend calls it via synchronous XMLHttpRequest.
 
-use crate::manifold_ops::{self, MeshData};
-use crate::sdf_ops;
+use crate::sdf_ops::{self, MeshData};
 use std::thread;
 use tiny_http::{Header, Method, Response, Server};
 
 const PORT: u16 = 12321;
-
-/// Request body for difference (base + cutters).
-#[derive(serde::Deserialize)]
-struct DifferenceRequest {
-    base: MeshData,
-    cutters: Vec<MeshData>,
-}
-
-/// Request body for smooth (mesh + sharp angle threshold + refine count).
-#[derive(serde::Deserialize)]
-struct SmoothRequest {
-    mesh: MeshData,
-    #[serde(default = "default_min_sharp_angle")]
-    min_sharp_angle: f64,
-    #[serde(default)]
-    min_smoothness: f64,
-    #[serde(default = "default_refine")]
-    refine: i32,
-}
-
-fn default_min_sharp_angle() -> f64 {
-    100.0
-}
-fn default_refine() -> i32 {
-    3
-}
-
-/// Request body for refine (mesh + n).
-#[derive(serde::Deserialize)]
-struct RefineRequest {
-    mesh: MeshData,
-    n: i32,
-}
 
 /// Return the user's home directory.
 fn handle_home_dir() -> Result<String, String> {
@@ -303,43 +269,6 @@ pub fn start() {
             }
 
             let result: Result<MeshData, String> = match path.as_str() {
-                "/union" => {
-                    serde_json::from_str::<Vec<MeshData>>(&body)
-                        .map_err(|e| format!("JSON parse error: {}", e))
-                        .and_then(|meshes| manifold_ops::union(&meshes))
-                }
-                "/difference" => {
-                    serde_json::from_str::<DifferenceRequest>(&body)
-                        .map_err(|e| format!("JSON parse error: {}", e))
-                        .and_then(|req| manifold_ops::difference(&req.base, &req.cutters))
-                }
-                "/intersection" => {
-                    serde_json::from_str::<Vec<MeshData>>(&body)
-                        .map_err(|e| format!("JSON parse error: {}", e))
-                        .and_then(|meshes| manifold_ops::intersection(&meshes))
-                }
-                "/hull" => {
-                    serde_json::from_str::<Vec<MeshData>>(&body)
-                        .map_err(|e| format!("JSON parse error: {}", e))
-                        .and_then(|meshes| manifold_ops::hull(&meshes))
-                }
-                "/smooth" => {
-                    serde_json::from_str::<SmoothRequest>(&body)
-                        .map_err(|e| format!("JSON parse error: {}", e))
-                        .and_then(|req| {
-                            manifold_ops::smooth(
-                                &req.mesh,
-                                req.min_sharp_angle,
-                                req.min_smoothness,
-                                req.refine,
-                            )
-                        })
-                }
-                "/refine" => {
-                    serde_json::from_str::<RefineRequest>(&body)
-                        .map_err(|e| format!("JSON parse error: {}", e))
-                        .and_then(|req| manifold_ops::refine(&req.mesh, req.n))
-                }
                 "/sdf-mesh" => {
                     serde_json::from_str::<sdf_ops::SdfMeshRequest>(&body)
                         .map_err(|e| format!("JSON parse error: {}", e))

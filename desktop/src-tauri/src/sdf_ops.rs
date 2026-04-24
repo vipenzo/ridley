@@ -3,9 +3,15 @@
 //! Receives an SDF tree as JSON, builds it with libfive's C API,
 //! meshes it, and returns triangle mesh data.
 
-use crate::manifold_ops::MeshData;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::os::raw::c_void;
+
+/// Triangle mesh payload exchanged with the frontend.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeshData {
+    pub vertices: Vec<[f64; 3]>,
+    pub faces: Vec<[u32; 3]>,
+}
 
 // libfive C API bindings (minimal, hand-written)
 type LibfiveTree = *mut c_void;

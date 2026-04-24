@@ -30,7 +30,6 @@
             [ridley.library.svg :as svg]
             [ridley.library.stl :as stl-import]
             [ridley.voronoi.core :as voronoi]
-            [ridley.manifold.native :as native-manifold]
             [ridley.sdf.core :as sdf]
             [ridley.measure.core :as measure]
             [ridley.settings :as settings]
@@ -349,13 +348,9 @@
    'mesh-smooth         manifold/mesh-smooth
    'mesh-refine         manifold/mesh-refine
    'concat-meshes       manifold/concat-meshes
-   ;; Native Manifold (Rust backend via Tauri IPC) — async, return Promises
+   ;; Benchmarking helpers (used by the bench macro)
    'perf-now            (fn [] (.now js/performance))
    'print-bench         (fn [label ms] (state/capture-println (str label ": " (.toFixed ms 1) "ms")))
-   'native-union        native-manifold/native-union
-   'native-difference   native-manifold/native-difference
-   'native-intersection native-manifold/native-intersection
-   'native-hull         native-manifold/native-hull
    'transform           turtle/transform-mesh
    'solidify-impl       manifold/solidify
    'slice-mesh          impl/implicit-slice-mesh
