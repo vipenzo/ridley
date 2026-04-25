@@ -83,9 +83,45 @@
 
 ;; ── SDF boolean operations ──────────────────────────────────────
 
-(defn sdf-union [a b] {:op "union" :a a :b b})
-(defn sdf-difference [a b] {:op "difference" :a a :b b})
-(defn sdf-intersection [a b] {:op "intersection" :a a :b b})
+(defn- variadic-args
+  "Normalize variadic SDF boolean args: accept (op a b c) or (op [a b c])."
+  [first-arg more]
+  (if (and (empty? more) (sequential? first-arg))
+    (vec first-arg)
+    (into [first-arg] more)))
+
+(defn sdf-union
+  "Union of one or more SDF nodes.
+   Usage: (sdf-union a), (sdf-union a b c), (sdf-union [a b c])."
+  [first-arg & more]
+  (let [nodes (variadic-args first-arg more)]
+    (case (count nodes)
+      0 nil
+      1 (first nodes)
+      (reduce (fn [acc n] {:op "union" :a acc :b n})
+              (first nodes) (rest nodes)))))
+
+(defn sdf-difference
+  "Difference of SDF nodes: (((a - b) - c) - d).
+   Usage: (sdf-difference a b), (sdf-difference a b c), (sdf-difference [a b c])."
+  [first-arg & more]
+  (let [nodes (variadic-args first-arg more)]
+    (case (count nodes)
+      0 nil
+      1 (first nodes)
+      (reduce (fn [acc n] {:op "difference" :a acc :b n})
+              (first nodes) (rest nodes)))))
+
+(defn sdf-intersection
+  "Intersection of one or more SDF nodes.
+   Usage: (sdf-intersection a), (sdf-intersection a b c), (sdf-intersection [a b c])."
+  [first-arg & more]
+  (let [nodes (variadic-args first-arg more)]
+    (case (count nodes)
+      0 nil
+      1 (first nodes)
+      (reduce (fn [acc n] {:op "intersection" :a acc :b n})
+              (first nodes) (rest nodes)))))
 
 (declare compile-expr)
 
