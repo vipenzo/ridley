@@ -32,6 +32,7 @@
             [ridley.voronoi.core :as voronoi]
             [ridley.sdf.core :as sdf]
             [ridley.measure.core :as measure]
+            [ridley.env :as runtime-env]
             [ridley.settings :as settings]
             [ridley.viewport.capture :as capture]
             [ridley.ai.describe :as ai-describe]
@@ -614,4 +615,7 @@
    'audio-feedback?      settings/audio-feedback?
    'set-audio-feedback!  settings/set-audio-feedback!
    ;; Run definitions from REPL (accessibility — same as Run button)
-   'run-definitions!     (fn [] (when-let [f @state/run-definitions-fn] (f) nil))})
+   'run-definitions!     (fn [] (when-let [f @state/run-definitions-fn] (f) nil))
+   ;; Runtime environment (desktop/webapp)
+   'env                  runtime-env/env
+   'desktop?             runtime-env/desktop?})

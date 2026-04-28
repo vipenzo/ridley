@@ -12,7 +12,8 @@
    Also exposes `download-mesh` — a format-aware downloader that lets the
    user pick the destination file name and STL/3MF format via the native
    file picker (or falls back to a download link)."
-  (:require [ridley.export.threemf :as threemf]
+  (:require [ridley.env :as env]
+            [ridley.export.threemf :as threemf]
             [ridley.manifold.core :as manifold]))
 
 (defn- compute-normal
@@ -207,22 +208,6 @@
 
 (def ^:private geo-server-url "http://127.0.0.1:12321")
 
-(defonce ^:private desktop-mode-cache (atom nil))
-
-(defn desktop-mode?
-  "True if the Rust geo-server is reachable on 127.0.0.1:12321 (desktop Tauri)."
-  []
-  (if-some [v @desktop-mode-cache]
-    v
-    (let [result (try
-                   (let [xhr (js/XMLHttpRequest.)]
-                     (.open xhr "POST" (str geo-server-url "/ping") false)
-                     (.send xhr "{}")
-                     (= 200 (.-status xhr)))
-                   (catch :default _ false))]
-      (reset! desktop-mode-cache result)
-      result)))
-
 (defn desktop-pick-save-path
   "Open native save dialog via Rust geo_server. Returns Promise<string|nil>
    (path or nil if cancelled).
@@ -293,7 +278,7 @@
                        (js/Promise.resolve (meshes->stl-blob meshes))))]
     (cond
       ;; Desktop mode: pick path first, then build correct format, then write
-      (desktop-mode?)
+      (env/desktop?)
       (-> (desktop-pick-save-path suggested)
           (.then (fn [chosen-path]
                    (when chosen-path

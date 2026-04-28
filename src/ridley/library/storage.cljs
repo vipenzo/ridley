@@ -4,27 +4,14 @@
 
    Desktop: libraries live as .clj files in ~/.ridley/libraries/
    Web:     libraries stored in localStorage (original behaviour)"
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [ridley.env :as env]))
 
 ;; ============================================================
 ;; Geo-server filesystem backend
 ;; ============================================================
 
 (def ^:private geo-server-url "http://127.0.0.1:12321")
-
-(defonce ^:private desktop-mode-cache (atom nil))
-
-(defn- desktop-mode? []
-  (if-some [v @desktop-mode-cache]
-    v
-    (let [result (try
-                   (let [xhr (js/XMLHttpRequest.)]
-                     (.open xhr "POST" (str geo-server-url "/ping") false)
-                     (.send xhr "{}")
-                     (= 200 (.-status xhr)))
-                   (catch :default _ false))]
-      (reset! desktop-mode-cache result)
-      result)))
 
 ;; We'll resolve the actual lib dir lazily on first use
 (defonce ^:private lib-dir-cache (atom nil))
@@ -170,14 +157,14 @@
 (defn list-libraries
   "Returns vector of library names, ordered."
   []
-  (if (desktop-mode?)
+  (if (env/desktop?)
     (or (fs-read-json (index-file)) [])
     (ls-read-index)))
 
 (defn get-library
   "Returns {:name :requires :source :created :modified} or nil."
   [name]
-  (if (desktop-mode?)
+  (if (env/desktop?)
     (when-let [text (fs-read-text (lib-file name))]
       (let [{:keys [requires source]} (parse-lib-header text)]
         ;; Metadata is stored in _index.json alongside the .clj file
@@ -194,7 +181,7 @@
   "Save/update library."
   [name source requires]
   (let [now (now-iso)]
-    (if (desktop-mode?)
+    (if (env/desktop?)
       (let [;; Write .clj file
             _ (fs-write-text! (lib-file name) (lib->file-content name source requires))
             ;; Update index
@@ -226,7 +213,7 @@
 (defn delete-library!
   "Remove library from storage, index, and active list."
   [name]
-  (if (desktop-mode?)
+  (if (env/desktop?)
     (do (fs-delete! (lib-file name))
         (fs-write-json! (index-file) (vec (remove #{name} (or (fs-read-json (index-file)) []))))
         (fs-write-json! (active-file) (vec (remove #{name} (or (fs-read-json (active-file)) []))))
@@ -242,7 +229,7 @@
   "Rename library. Updates index, active list, and other libraries' requires."
   [old-name new-name]
   (when-let [lib (get-library old-name)]
-    (if (desktop-mode?)
+    (if (env/desktop?)
       (do
         ;; Write new file, delete old
         (fs-write-text! (lib-file new-name)
@@ -286,14 +273,14 @@
 (defn get-active-libraries
   "Returns ordered vector of active library names."
   []
-  (if (desktop-mode?)
+  (if (env/desktop?)
     (or (fs-read-json (active-file)) [])
     (ls-read-active)))
 
 (defn set-active-libraries!
   "Set the ordered list of active libraries."
   [names]
-  (if (desktop-mode?)
+  (if (env/desktop?)
     (fs-write-json! (active-file) (vec names))
     (ls-write-active! (vec names))))
 

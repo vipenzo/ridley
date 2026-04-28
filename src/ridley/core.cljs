@@ -9,6 +9,7 @@
             [ridley.manifold.core :as manifold]
             [ridley.turtle.text :as text]
             [ridley.scene.registry :as registry]
+            [ridley.env :as env]
             [ridley.export.stl :as stl]
             [ridley.sync.peer :as sync]
             [ridley.manual.core :as manual]
@@ -546,7 +547,7 @@
    extensions is a JS array of dot-prefixed strings, e.g. #js [\".clj\"]."
   [blob filename description mime-type extensions]
   (cond
-    (stl/desktop-mode?)
+    (env/desktop?)
     (let [exts (vec (map #(if (.startsWith ^js % ".") (.substring % 1) %)
                          (array-seq extensions)))]
       (-> (stl/desktop-pick-save-path filename {:title "Save"

@@ -1,6 +1,7 @@
 //! Local HTTP server for synchronous geometry operations.
 //! Runs on a background thread, listens on localhost:12321.
-//! The frontend calls it via synchronous XMLHttpRequest.
+//! The frontend calls it via XMLHttpRequest (synchronous for mesh ops,
+//! async for file I/O).
 
 use crate::sdf_ops::{self, MeshData};
 use std::thread;
@@ -343,10 +344,6 @@ pub fn start() {
                         }
                     }
                 }
-                "/ping" => Ok(MeshData {
-                    vertices: vec![],
-                    faces: vec![],
-                }),
                 _ => Err(format!("Unknown endpoint: {}", path)),
             };
 

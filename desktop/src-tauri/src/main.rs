@@ -7,10 +7,9 @@ mod sdf_ops;
 use std::process::{Child, Command};
 use std::sync::Mutex;
 
-#[tauri::command]
-fn ping() -> String {
-    "pong from Rust backend".to_string()
-}
+use tauri::{WebviewUrl, WebviewWindowBuilder};
+
+const INIT_SCRIPT: &str = r#"window.RIDLEY_ENV = "desktop";"#;
 
 /// Project root, computed at compile time from CARGO_MANIFEST_DIR.
 fn project_root() -> std::path::PathBuf {
@@ -78,7 +77,16 @@ fn main() {
     };
 
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![ping])
+        .setup(|app| {
+            WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
+                .title("Ridley")
+                .inner_size(1280.0, 800.0)
+                .resizable(true)
+                .fullscreen(false)
+                .initialization_script(INIT_SCRIPT)
+                .build()?;
+            Ok(())
+        })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(move |_app, event| {
