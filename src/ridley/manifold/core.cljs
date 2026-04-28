@@ -11,7 +11,8 @@
    - Mesh repair/merge for nearly-manifold meshes
 
    Uses manifold-3d v3.0 loaded from CDN as an ES module."
-  (:require [ridley.schema :as schema]))
+  (:require [ridley.schema :as schema]
+            [ridley.sdf.core :as sdf]))
 
 ;; Manifold WASM module state
 (defonce ^:private manifold-state (atom nil))
@@ -264,6 +265,22 @@
 ;; Boolean operations
 ;; ============================================================
 
+(defn- coerce-to-meshes
+  "Convert any SDF nodes in `args` to meshes via sdf/ensure-mesh.
+   Warns if every arg is an SDF (suggests using sdf-* for higher precision).
+
+   Note: uses 1-arg ensure-mesh (auto-bounds from the SDF tree itself).
+   For 'infinite' SDFs (gyroid, half-spaces) used as cutters in mesh-difference,
+   you may need to call sdf-ensure-mesh manually with a reference mesh."
+  [op-name args]
+  (let [sdf-flags (mapv sdf/sdf-node? args)]
+    (when (every? identity sdf-flags)
+      (js/console.warn
+       (str "mesh-" op-name ": all arguments are SDF nodes — "
+            "consider sdf-" op-name " to stay in SDF space (no meshing cost, exact precision).")))
+    (mapv (fn [is-sdf? a] (if is-sdf? (sdf/ensure-mesh a) a))
+          sdf-flags args)))
+
 (defn- union-two
   "Compute the union of exactly two meshes.
    Reuses cached Manifold objects from prior CSG results when available."
@@ -313,7 +330,8 @@
   (let [;; Normalize: accept both (union a b c) and (union [a b c])
         meshes (if (and (empty? more) (sequential? first-arg))
                  (vec first-arg)
-                 (into [first-arg] more))]
+                 (into [first-arg] more))
+        meshes (coerce-to-meshes "union" meshes)]
     (case (count meshes)
       0 nil
       1 (first meshes)
@@ -357,7 +375,8 @@
   (let [;; Normalize: accept both (difference a b c) and (difference [a b c])
         meshes (if (and (empty? more) (sequential? first-arg))
                  (vec first-arg)
-                 (into [first-arg] more))]
+                 (into [first-arg] more))
+        meshes (coerce-to-meshes "difference" meshes)]
     (when (>= (count meshes) 2)
       (reduce difference-two meshes))))
 
@@ -394,7 +413,8 @@
   (let [;; Normalize: accept both (intersection a b c) and (intersection [a b c])
         meshes (if (and (empty? more) (sequential? first-arg))
                  (vec first-arg)
-                 (into [first-arg] more))]
+                 (into [first-arg] more))
+        meshes (coerce-to-meshes "intersection" meshes)]
     (when (>= (count meshes) 2)
       (reduce intersection-two meshes))))
 
