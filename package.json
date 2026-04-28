@@ -7,9 +7,7 @@
     "dev": "shadow-cljs watch app",
     "test": "shadow-cljs compile test",
     "release": "shadow-cljs release app",
-    "clean": "rm -rf public/js docs/js",
-    "build:gh-pages": "npm run copy-static && shadow-cljs release release",
-    "copy-static": "rm -rf docs && mkdir -p docs && cp -r public/css public/scripts public/index.html docs/ && touch docs/.nojekyll"
+    "clean": "rm -rf public/js docs/js"
   },
   "devDependencies": {
     "shadow-cljs": "^2.28.5"
