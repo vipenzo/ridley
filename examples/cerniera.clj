@@ -52,14 +52,18 @@
 (def l0 (- (+ (/ base-side-y 2) (+ (/ d -2) 1))))
 (def radius 8)
 
-(defn perno [cut] (attach (cyl (/ (if cut (+ radius 0.8) radius) 2) (if cut (* 2 base-side-y) base-side-y))))
+(defn perno [cut]
+  (attach
+   (cyl (/ (if cut (+ radius 0.8) radius) 2) (if cut (* 2 base-side-y) base-side-y))
+   (th 90)))
 
 (defn el-c [o cut]
   (let [m (mesh-union
-           (cyl radius (- (/ base-side-y 5) 0.5))
+           (attach (cyl radius (- (/ base-side-y 5) 0.5)) (th 90))
            (attach (box (* 1.5 radius) (dec le) base-h)
                    (f (if o radius (- radius)))
-                   (u (- (* base-h 1.1)))))]
+                   (u (- (* base-h 1.1)))
+                   (th 90)))]
     (if cut (mesh-difference m (perno true)) m)))
 
 
@@ -77,7 +81,7 @@
                   (f d))
           (attach (perno false)
                   (u (- (+ base-side-y radius)))
-                  (f radius))
+                  (rt radius))
           A2))
 
 (def CC2 (mesh-union
@@ -85,6 +89,7 @@
                   (u (- (+ (/ base-side-z 2) d1)))
                   (f d))
           A1))
+
 
 (register cerniera
           (attach (concat-meshes CC1 CC2)
