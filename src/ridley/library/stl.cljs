@@ -46,6 +46,10 @@
    vertices-b64: base64 of packed Float32Array (x,y,z triples)
    faces-b64: base64 of packed Uint32Array (i,j,k triples)
 
+   The creation-pose position is set to the bbox center of the loaded
+   vertices so that operations that move the mesh (e.g. mesh-translate)
+   keep the pose anchored to the geometry.
+
    Returns {:type :mesh :vertices [[x y z]...] :faces [[i j k]...]}"
   [vertices-b64 faces-b64]
   (let [vert-f32 (js/Float32Array. (base64->array-buffer vertices-b64))
@@ -65,11 +69,19 @@
                          (conj! acc [(aget face-u32 i)
                                      (aget face-u32 (+ i 1))
                                      (aget face-u32 (+ i 2))]))
-                  (persistent! acc)))]
+                  (persistent! acc)))
+        center (if (seq vertices)
+                 (let [v0 (first vertices)
+                       [mn mx] (reduce (fn [[mn mx] v]
+                                         [(mapv min mn v) (mapv max mx v)])
+                                       [v0 v0]
+                                       (rest vertices))]
+                   (mapv (fn [a b] (/ (+ a b) 2.0)) mn mx))
+                 [0 0 0])]
     {:type :mesh
      :vertices vertices
      :faces faces
-     :creation-pose {:position [0 0 0] :heading [1 0 0] :up [0 0 1]}}))
+     :creation-pose {:position center :heading [1 0 0] :up [0 0 1]}}))
 
 ;; ============================================================
 ;; STL format detection
@@ -215,6 +227,12 @@
             [(first vertices) (first vertices)]
             (rest vertices))))
 
+(defn- bbox-center
+  "Return the bbox center [cx cy cz] of a vertex list, or nil if empty."
+  [vertices]
+  (when-let [[mn mx] (mesh-bounds vertices)]
+    (mapv (fn [a b] (/ (+ a b) 2.0)) mn mx)))
+
 (defn- scale-warning
   "Return a warning comment if the mesh looks like it uses meters instead of mm."
   [vertices def-name]
@@ -231,9 +249,14 @@
                ";; If your STL uses meters, scale it:\n"
                ";; (mesh-scale " def-name " " suggested ")\n"))))))
 
+(defn- format-coord [n]
+  (.toFixed n 3))
+
 (defn generate-library-source
   "Generate library source code from an STL ArrayBuffer.
-   The generated code uses decode-mesh to reconstruct the mesh at eval time."
+   The generated code uses decode-mesh to reconstruct the mesh at eval time.
+   When the parsed mesh sits far from the origin, an explicit mesh-translate
+   call is emitted so the user can see, edit, or remove the recentering."
   [^js array-buffer filename]
   (let [mesh-data (if (binary-stl? array-buffer)
                     (parse-binary-stl array-buffer)
@@ -243,13 +266,30 @@
         {:keys [vertices-b64 faces-b64 num-vertices num-faces]}
         (encode-mesh-base64 mesh-data)
         def-name (sanitize-name filename)
-        warn (scale-warning (:vertices mesh-data) def-name)]
+        warn (scale-warning (:vertices mesh-data) def-name)
+        center (bbox-center (:vertices mesh-data))
+        offset (when (and center (some #(> (Math/abs %) 0.001) center))
+                 (mapv - center))]
     (str (when warn warn)
          ";; " num-vertices " vertices, " num-faces " faces\n"
+         (when offset
+           (str ";; Imported mesh sat at bbox center ["
+                (format-coord (nth center 0)) " "
+                (format-coord (nth center 1)) " "
+                (format-coord (nth center 2)) "].\n"
+                ";; Recentered on origin via mesh-translate — remove or edit if not desired.\n"))
          "(def " def-name "\n"
-         "  (decode-mesh\n"
-         "    \"" vertices-b64 "\"\n"
-         "    \"" faces-b64 "\"))\n")))
+         (if offset
+           (str "  (-> (decode-mesh\n"
+                "        \"" vertices-b64 "\"\n"
+                "        \"" faces-b64 "\")\n"
+                "      (mesh-translate ["
+                (format-coord (nth offset 0)) " "
+                (format-coord (nth offset 1)) " "
+                (format-coord (nth offset 2)) "])))\n")
+           (str "  (decode-mesh\n"
+                "    \"" vertices-b64 "\"\n"
+                "    \"" faces-b64 "\"))\n")))))
 
 (defn filename->lib-name
   "Derive a library name from an STL filename."

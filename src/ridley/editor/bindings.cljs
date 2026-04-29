@@ -220,9 +220,10 @@
    'stamp-loft-impl     impl/implicit-stamp-loft
    'finalize-loft-impl  impl/implicit-finalize-loft
    ;; Shape transformation functions (scale also works on attached mesh)
-   'scale        impl/unified-scale
-   'mesh-scale   attachment/scale-mesh
-   'rotate-shape xform/rotate
+   'scale          impl/unified-scale
+   'mesh-scale     attachment/scale-mesh
+   'mesh-translate attachment/translate-mesh
+   'rotate-shape   xform/rotate
    'translate    xform/translate
    'morph        xform/morph
    'resample     xform/resample
