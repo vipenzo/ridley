@@ -7,7 +7,6 @@
             [ridley.turtle.core :as turtle]
             [ridley.turtle.shape :as shape]
             [ridley.turtle.path :as path]
-            [ridley.turtle.transform :as xform]
             [ridley.geometry.primitives :as prims]
             [ridley.manifold.core :as manifold]
             [ridley.scene.registry :as registry]
@@ -135,6 +134,13 @@
 
 (defn ^:export implicit-pen [mode]
   (swap! (turtle-ref) turtle/pen mode))
+
+(defn ^:export implicit-reset-pose
+  "Reset turtle pose to defaults (origin, +X heading, +Z up, pen :on).
+   Keeps accumulated geometry and meshes."
+  ([] (swap! (turtle-ref) turtle/reset-pose))
+  ([position] (swap! (turtle-ref) turtle/reset-pose position))
+  ([position & opts] (apply swap! (turtle-ref) turtle/reset-pose position opts)))
 
 (defn ^:export implicit-joint-mode [mode]
   (swap! (turtle-ref) turtle/joint-mode mode))
@@ -312,43 +318,30 @@
           (registry/update-mesh-at-index! registry-idx new-mesh)
           (registry/refresh-viewport! false))))))
 
-(defn ^:export implicit-scale-mesh [factor]
+(defn- do-scale-mesh [factor]
   (let [old-attached (:attached @(turtle-ref))
         registry-idx (:registry-index old-attached)]
     (swap! (turtle-ref) turtle/scale factor)
-    ;; If attached to mesh with registry index, update the registry
     (when (and registry-idx (= :pose (:type old-attached)))
       (let [new-mesh (get-in @(turtle-ref) [:attached :mesh])]
         (when new-mesh
           (registry/update-mesh-at-index! registry-idx new-mesh)
           (registry/refresh-viewport! false))))))
 
-(defn ^:export unified-scale
-  "Unified scale function:
-   - If first arg is a shape, scales the shape (2D)
-   - If no args and attached to mesh, scales the attached mesh
-   - (scale factor) — uniform scale of attached mesh
-   - (scale fx fy fz) — non-uniform scale of attached mesh along local axes"
+(defn ^:export implicit-scale-mesh
+  "Scale the attached mesh in place.
+   - (scale factor)            uniform scale
+   - (scale [sx sy sz])        non-uniform scale (vector form)
+   - (scale fx fy fz)          non-uniform scale (positional form)
+   For 2D shape scaling use scale-shape."
   ([factor]
-   ;; No shape provided - try to scale attached mesh
    (if (= :pose (get-in @(turtle-ref) [:attached :type]))
-     (implicit-scale-mesh factor)
-     (throw (js/Error. "scale requires a shape argument, or attach to a mesh first"))))
-  ([shape-or-fx factor-or-fy]
-   ;; Shape + uniform factor, or two numbers for attached mesh
-   (if (number? shape-or-fx)
-     ;; Two numbers but no shape — error, need 3 for non-uniform
-     (throw (js/Error. "scale: non-uniform mesh scale needs 3 factors (scale fx fy fz)"))
-     ;; Shape provided - scale the 2D shape
-     (xform/scale shape-or-fx factor-or-fy)))
-  ([shape-or-fx fy-or-factor fz-or-fy]
-   (if (number? shape-or-fx)
-     ;; Three numbers: non-uniform scale of attached mesh
-     (if (= :pose (get-in @(turtle-ref) [:attached :type]))
-       (implicit-scale-mesh [shape-or-fx fy-or-factor fz-or-fy])
-       (throw (js/Error. "scale: attach to a mesh first for non-uniform scale")))
-     ;; Shape + fx + fy: non-uniform scale of 2D shape
-     (xform/scale shape-or-fx fy-or-factor fz-or-fy))))
+     (do-scale-mesh factor)
+     (throw (js/Error. "scale: attach to a mesh first (for 2D shape scaling use scale-shape)"))))
+  ([fx fy fz]
+   (if (= :pose (get-in @(turtle-ref) [:attached :type]))
+     (do-scale-mesh [fx fy fz])
+     (throw (js/Error. "scale: attach to a mesh first (for 2D shape scaling use scale-shape)")))))
 
 ;; Transform a mesh to turtle position/orientation
 (defn- transform-mesh-to-turtle

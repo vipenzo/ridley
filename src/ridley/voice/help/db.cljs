@@ -164,11 +164,11 @@
                      :doc {:it "Estrusione chiusa (torus)" :en "Closed extrusion (torus)"}
                      :aliases {:it [] :en []}}
    :loft            {:tier :ridley :category :operations
-                     :template "(loft (circle 20) #(scale %1 (- 1 %2)) (f 30))"
+                     :template "(loft (circle 20) #(scale-shape %1 (- 1 %2)) (f 30))"
                      :doc {:it "Estrusione con trasformazione" :en "Extrude with shape transform"}
                      :aliases {:it [] :en []}}
    :loft-n          {:tier :ridley :category :operations
-                     :template "(loft-n 32 (circle 20) #(scale %1 (- 1 %2)) (f 30))"
+                     :template "(loft-n 32 (circle 20) #(scale-shape %1 (- 1 %2)) (f 30))"
                      :doc {:it "Loft con N steps" :en "Loft with N steps"}
                      :aliases {:it [] :en []}}
    :revolve         {:tier :ridley :category :operations
@@ -285,8 +285,8 @@
                      :aliases {:it [] :en []}}
 
    ;; --- Trasformazioni Forma 2D ---
-   :scale           {:tier :ridley :category :shape-transform
-                     :template "(scale shape 0.5)"
+   :scale-shape     {:tier :ridley :category :shape-transform
+                     :template "(scale-shape shape 0.5)"
                      :doc {:it "Scala forma" :en "Scale shape"}
                      :aliases {:it ["scala"] :en []}}
    :rotate-shape    {:tier :ridley :category :shape-transform
@@ -301,12 +301,12 @@
                      :template "(translate-shape shape 10 5)"
                      :doc {:it "Alias translate" :en "Alias for translate"}
                      :aliases {:it [] :en []}}
-   :morph           {:tier :ridley :category :shape-transform
-                     :template "(morph shape-a shape-b 0.5)"
+   :morph-shape     {:tier :ridley :category :shape-transform
+                     :template "(morph-shape shape-a shape-b 0.5)"
                      :doc {:it "Interpola forme" :en "Interpolate shapes"}
                      :aliases {:it [] :en []}}
-   :resample        {:tier :ridley :category :shape-transform
-                     :template "(resample shape 32)"
+   :resample-shape  {:tier :ridley :category :shape-transform
+                     :template "(resample-shape shape 32)"
                      :doc {:it "Ricampiona a n punti" :en "Resample to n points"}
                      :aliases {:it [] :en []}}
 

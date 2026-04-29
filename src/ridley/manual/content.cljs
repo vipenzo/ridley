@@ -113,7 +113,7 @@
         {:id :morph-shapes
          :code "(register morph\n  (loft (rect 30 30) (circle 15) (f 40)))"}
         {:id :loft-transform
-         :code "(register cone\n  (loft (circle 20)\n    #(scale %1 (- 1 %2))\n    (f 40)))"}
+         :code "(register cone\n  (loft (circle 20)\n    #(scale-shape %1 (- 1 %2))\n    (f 40)))"}
         {:id :loft-twist
          :code "(register twisted\n  (loft (rect 20 10)\n    #(rotate-shape %1 (* %2 90))\n    (f 40)))"}]}
       {:id :joint-modes
@@ -247,7 +247,7 @@
        [{:id :bloft-basic
          :code "(def curved-path\n  (path (f 40) (th 120) (f 30) (th 120) (f 40)))\n\n(register tube\n  (bloft (circle 6) identity\n    (path (bezier-as curved-path))))"}
         {:id :bloft-taper
-         :code "(def tight-curve\n  (path (f 30) (th 150) (f 25)))\n\n(register tapered\n  (bloft (circle 8)\n    #(scale %1 (- 1 (* 0.6 %2)))\n    (path (bezier-as tight-curve))))"}
+         :code "(def tight-curve\n  (path (f 30) (th 150) (f 25)))\n\n(register tapered\n  (bloft (circle 8)\n    #(scale-shape %1 (- 1 (* 0.6 %2)))\n    (path (bezier-as tight-curve))))"}
         {:id :bloft-steps
          :code "(def snake-path\n  (path (f 50) (th 100) (f 20) (th 80)\n    (f 20) (th 50) (f 40)))\n\n(register smooth-loop\n  (bloft-n 128 (tapered (circle 5 64) 0.2)\n    (path (bezier-as snake-path\n            :tension 0.4 :steps 64))))"}]}
       {:id :colors-materials
@@ -362,7 +362,7 @@
        [{:id :anon-shorthand
          :code "(register columns\n  (map #(attach (box 5) (th (* % 36)) (f 10))\n    (range 10)))"}
         {:id :anon-fn-form
-         :code "(register cone\n  (loft (circle 20)\n    (fn [shape t] (scale shape t))\n    (f 40)))"}
+         :code "(register cone\n  (loft (circle 20)\n    (fn [shape t] (scale-shape shape t))\n    (f 40)))"}
         {:id :anon-loft-twist
          :code "(register twisted\n  (loft (rect 20 10)\n    #(rotate-shape %1 (* %2 90))\n    (f 40)))"}]}
       {:id :map-and-reduce
@@ -576,7 +576,6 @@ Each shape becomes the cross-section of your extruded solid."
        :poly-extrude {:caption "Poly"
                       :description "`poly` creates arbitrary polygons from flat x y coordinate pairs. The origin [0,0] is at the turtle's position. Also accepts a vector: `(poly [x1 y1 x2 y2 ...])`."}}}
 
-
      :custom-shapes
      {:title "Custom Shapes"
       :content "The `shape` macro lets you draw your own 2D shapes using turtle movements. The turtle traces a closed path, and that path becomes your shape.
@@ -731,7 +730,7 @@ This is equivalent to:
 You can pass the numbers as separate arguments or as a single vector — useful when the sequence is computed or stored in a variable."
       :examples
       {:qp-basic {:caption "Zigzag path"
-                   :description "Numbers alternate: forward 30, turn 90°, forward 30, turn -90°, forward 30. The result is a zigzag tube."}
+                  :description "Numbers alternate: forward 30, turn 90°, forward 30, turn -90°, forward 30. The result is a zigzag tube."}
        :qp-vector {:caption "Path from vector"
                    :description "When the numbers are in a vector, `quick-path` accepts it directly. Handy for computed or parameterized paths."}}}
 
@@ -914,14 +913,14 @@ Variables can depend on earlier ones in the same `let`. This keeps your code cle
 
 **Short form** — `#(...)` with `%`, `%1`, `%2` for arguments:
 ```
-#(* % 2)           ; one argument
-#(scale %1 %2)     ; two arguments
+#(* % 2)                ; one argument
+#(scale-shape %1 %2)    ; two arguments
 ```
 
 **Long form** — `(fn [args] body)` for more complex cases:
 ```
 (fn [shape t]
-  (scale shape (- 1 t)))
+  (scale-shape shape (- 1 t)))
 ```
 
 Use the short form for simple one-liners. Use `fn` when the body is more complex or when naming the arguments improves clarity.
@@ -1815,7 +1814,6 @@ Ogni forma diventa la sezione trasversale del tuo solido estruso."
        :poly-extrude {:caption "Poly"
                       :description "`poly` crea poligoni arbitrari da coppie di coordinate x y. L'origine [0,0] corrisponde alla posizione della tartaruga. Accetta anche un vettore: `(poly [x1 y1 x2 y2 ...])`."}}}
 
-
      :custom-shapes
      {:title "Forme Personalizzate"
       :content "La macro `shape` ti permette di disegnare le tue forme 2D usando movimenti turtle. La tartaruga traccia un percorso chiuso, e quel percorso diventa la tua forma.
@@ -1970,7 +1968,7 @@ Equivale a:
 Puoi passare i numeri come argomenti separati o come un singolo vettore — utile quando la sequenza è calcolata o memorizzata in una variabile."
       :examples
       {:qp-basic {:caption "Percorso a zigzag"
-                   :description "I numeri si alternano: avanti 30, gira 90°, avanti 30, gira -90°, avanti 30. Il risultato è un tubo a zigzag."}
+                  :description "I numeri si alternano: avanti 30, gira 90°, avanti 30, gira -90°, avanti 30. Il risultato è un tubo a zigzag."}
        :qp-vector {:caption "Percorso da vettore"
                    :description "Quando i numeri sono in un vettore, `quick-path` lo accetta direttamente. Comodo per percorsi calcolati o parametrizzati."}}}
 
@@ -2153,14 +2151,14 @@ Le variabili possono dipendere da quelle precedenti nello stesso `let`. Questo m
 
 **Forma breve** — `#(...)` con `%`, `%1`, `%2` per gli argomenti:
 ```
-#(* % 2)           ; un argomento
-#(scale %1 %2)     ; due argomenti
+#(* % 2)                ; un argomento
+#(scale-shape %1 %2)    ; due argomenti
 ```
 
 **Forma estesa** — `(fn [args] corpo)` per casi più complessi:
 ```
 (fn [shape t]
-  (scale shape (- 1 t)))
+  (scale-shape shape (- 1 t)))
 ```
 
 Usa la forma breve per semplici one-liner. Usa `fn` quando il corpo è più complesso o quando dare un nome agli argomenti migliora la chiarezza.

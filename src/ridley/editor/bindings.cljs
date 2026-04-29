@@ -81,6 +81,7 @@
    ;; Color and material
    'color        impl/implicit-color
    'material     impl/implicit-material
+   'reset          impl/implicit-reset-pose
    'reset-material impl/implicit-reset-material
    ;; Creation pose override
    'set-creation-pose (fn [mesh & [mark-name]]
@@ -219,14 +220,15 @@
    ;; Loft impl functions (used by loft macro)
    'stamp-loft-impl     impl/implicit-stamp-loft
    'finalize-loft-impl  impl/implicit-finalize-loft
-   ;; Shape transformation functions (scale also works on attached mesh)
-   'scale          impl/unified-scale
+   ;; Shape transformation functions
+   ;; scale operates on the attached mesh (use scale-shape for 2D shapes)
+   'scale          impl/implicit-scale-mesh
    'mesh-scale     attachment/scale-mesh
    'mesh-translate attachment/translate-mesh
    'rotate-shape   xform/rotate
    'translate    xform/translate
-   'morph        xform/morph
-   'resample     xform/resample
+   'morph-shape  xform/morph
+   'resample-shape xform/resample
    ;; Shape-fn system (shapes that vary along the extrusion path)
    'shape-fn         sfn/shape-fn
    'shape-fn?        sfn/shape-fn?

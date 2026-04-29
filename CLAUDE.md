@@ -23,11 +23,11 @@ The REPL session persists between evaluations. Always use `:reload` or `:reload-
 
 ## Documentation Maintenance
 
-Keep the following documents in `/dev-docs` up to date:
-- **Architecture.md** - System architecture and design decisions
-- **Roadmap.md** - Project roadmap and sprint planning
-- **Examples.md** - Usage examples and code samples
-- **Spec.md** - Language specification and reference
+Keep the following documents up to date:
+- **`docs/Architecture.md`** - System architecture and design decisions
+- **`docs/Roadmap.md`** - Project roadmap and sprint planning
+- **`docs/Spec.md`** - Language specification and reference
+- **`dev-docs/Examples.md`** - Usage examples and code samples
 
 ### Before Every Commit
 Review and update the relevant documentation files if there have been changes that impact them.

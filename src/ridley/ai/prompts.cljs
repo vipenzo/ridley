@@ -95,7 +95,7 @@ All shapes extend along turtle's heading. The 2D profile is perpendicular to hea
 Cylinder: (extrude (circle R) (f H))
 Box:      (extrude (rect W H) (f D))    ; W=width, H=height of face, D=depth along heading
 Prism:    (extrude (circle R N) (f D)) ; N-sided prism (circle with N segments)
-Cone:     (loft (circle R1) #(scale %1 (/ R2 R1)) (f H))
+Cone:     (loft (circle R1) #(scale-shape %1 (/ R2 R1)) (f H))
 Sphere:   (sphere R)                    ; exception: sphere is symmetric
 
 ORIENTATION EXAMPLES:
@@ -180,7 +180,7 @@ CRITICAL: extrude and revolve both take SHAPE as first arg, NOT path!
 - revolve spins shape around heading axis (like a lathe)
 
 LOFT (extrude with shape transformation):
-(loft shape #(scale %1 factor) movements...)  - Shape changes along path
+(loft shape #(scale-shape %1 factor) movements...)  - Shape changes along path
 (loft (tapered (circle 20) :to 0) (f 30))     - Cone using shape-fn
 (loft (twisted (rect 20 10) :angle 90) (f 40)) - Twisted extrusion
 
@@ -542,7 +542,7 @@ All shapes extend along turtle's heading. The 2D profile is perpendicular to hea
 Cylinder: (extrude (circle R) (f H))
 Box:      (extrude (rect W H) (f D))    ; W=width, H=height of face, D=depth along heading
 Prism:    (extrude (circle R N) (f D)) ; N-sided prism (circle with N segments)
-Cone:     (loft (circle R1) #(scale %1 (/ R2 R1)) (f H))
+Cone:     (loft (circle R1) #(scale-shape %1 (/ R2 R1)) (f H))
 Sphere:   (sphere R)                    ; exception: sphere is symmetric
 
 ORIENTATION EXAMPLES:

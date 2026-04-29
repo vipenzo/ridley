@@ -15,7 +15,7 @@
 (def s3 (translate (circle b4 512) bb (* aa -0.2)))
 (def spessore-gabbia 8)
 
-(def base-shape (resample (shape-hull s3 s1 s2) 2048))
+(def base-shape (resample-shape (shape-hull s3 s1 s2) 2048))
 (def n-pts (count (:points base-shape)))
 (def gabbia-shape (shape-offset base-shape spessore-gabbia))
 
@@ -26,7 +26,7 @@
 (defn make-forma [z0 z1]
   (fn [shape t]
     (let [z (+ z0 (* t (- z1 z0)))]
-      (scale shape (forma-factor (/ z H))))))
+      (scale-shape shape (forma-factor (/ z H))))))
 
 ;; Tray: same scaling, then offset inward by (spessore + tolleranza)
 ;; Guarantees: tray outer wall = bowl outer wall - (spessore + tolleranza)
@@ -34,10 +34,10 @@
 (defn make-forma-tray [z0 z1]
   (fn [shape t]
     (let [z (+ z0 (* t (- z1 z0)))
-          scaled (scale shape (forma-factor (/ z H)))
+          scaled (scale-shape shape (forma-factor (/ z H)))
           inset (shape-offset scaled (neg (+ spessore tolleranza)))
-          s (shape-difference inset (scale s2 (forma-factor (/ z H))))]
-      (resample s n-pts))))
+          s (shape-difference inset (scale-shape s2 (forma-factor (/ z H))))]
+      (resample-shape s n-pts))))
 
 (def _bowl
   (turtle

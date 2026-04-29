@@ -19,16 +19,17 @@
                                      (rt 9)
                                      (u 18)))))
 
-(def diametro 91)
-(def H 40)
-(def spessore 3)
 (resolution :n 64)
-(def reggibottiglia (mesh-union
-                     (mesh-difference
-                      (box 110 110 H)
-                      (attach (cyl (/ diametro 2) diametro) (tv 30)))
-                     (attach perno (path (tr 90) (rt 47) (u (* 1.5 25))))
-                     (attach perno (path (tr 90) (rt 47) (u (* 1.5 -25))))))
-(register C reggibottiglia)
-  ;(register A (attach P20 (f 30)))
-  ;(register B(attach P40 (f -30)))  
+
+(defn reggibottiglia [diam H spessore p-pos]
+  (mesh-difference
+   (mesh-union
+    (box (+ diam 15) (+ diam 15) H)
+    (concat-meshes (for [x p-pos]
+                     (attach perno (path (tr 90) (rt (/ diam 2)) (u (* x 25)))))))
+
+   (attach (cyl (/ diam 2) (* diam 3)) (tv 30))))
+(register C (attach (reggibottiglia 91 40 3 [-1.5 1.5]) (f 60)))
+;(register A (attach P20 (f 30)))
+;(register B(attach P40 (f -30)))  
+(register D (reggibottiglia 35 20 3 [0]))

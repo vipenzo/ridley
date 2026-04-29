@@ -59,8 +59,8 @@
 
 (def multihole-base
   (loft (circle 1 8)
-        #(scale (rotate-shape %1 22.5)
-                (hole-r-at (* %2 height)))
+        #(scale-shape (rotate-shape %1 22.5)
+                      (hole-r-at (* %2 height)))
         (f height)))
 
 ;; ── Thread (filettatura trapezoidale a spirale) ─────────────────

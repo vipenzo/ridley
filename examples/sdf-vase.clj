@@ -4,7 +4,7 @@
 (def base-side 60)
 (def round-radius 6)
 (def rounded-rect (shape-offset (rect base-side base-side) round-radius :join-type :round))
-(def base-shape (resample rounded-rect 1024))
+(def base-shape (resample-shape rounded-rect 1024))
 
 (def solid
   (sdf-offset (sdf-box (- base-side (* 2 round-radius))
@@ -35,4 +35,4 @@
 
 ;; Tre set di lamelle ortogonali blendati
 (register glass
-  (sdf-difference container (sdf-grid 10 2 0.5)))
+          (sdf-difference container (sdf-grid 10 2 0.5)))

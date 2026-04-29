@@ -519,7 +519,7 @@
    ;; (loft (-> (circle 20) (fluted :flutes 12) (tapered :to 0)) (f 50))
    ;;
    ;; Legacy transform-fn mode:
-   ;; (loft (circle 20) #(scale %1 (- 1 %2)) (f 30))        - cone
+   ;; (loft (circle 20) #(scale-shape %1 (- 1 %2)) (f 30))    - cone
    ;; (loft (rect 20 10) #(rotate-shape %1 (* %2 90)) (f 30)) - twist
    ;;
    ;; Two-shape mode:
@@ -553,8 +553,8 @@
                   (add-source ~src)))))))
 
    ;; loft-n: loft with custom step count
-   ;; (loft-n 32 (tapered (circle 20) :to 0) (f 30))         - shape-fn
-   ;; (loft-n 32 (circle 20) #(scale %1 (- 1 %2)) (f 30))   - legacy
+   ;; (loft-n 32 (tapered (circle 20) :to 0) (f 30))            - shape-fn
+   ;; (loft-n 32 (circle 20) #(scale-shape %1 (- 1 %2)) (f 30)) - legacy
    ;; Returns the created mesh (can be bound with def)
    (defmacro loft-n [steps first-arg & rest-args]
      (let [{:keys [line column]} (meta &form)
@@ -584,7 +584,7 @@
    ;; Best for tight curves like (bezier-as (branch-path 30))
    ;; (bloft (tapered (circle 10) :to 0.5) my-bezier-path)    - shape-fn
    ;; (bloft (circle 10) identity my-bezier-path)              - legacy
-   ;; (bloft (rect 3 3) #(scale %1 0.5) (bezier-as (branch-path 30)))
+   ;; (bloft (rect 3 3) #(scale-shape %1 0.5) (bezier-as (branch-path 30)))
    ;; (bloft-n 64 (circle 10) identity my-bezier-path) - more steps
    (defmacro bloft [first-arg & rest-args]
      (let [{:keys [line column]} (meta &form)

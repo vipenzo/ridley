@@ -20,8 +20,9 @@
 
 (defn scale
   "Scale a shape uniformly or non-uniformly.
-   (scale shape factor)      - uniform scale
-   (scale shape fx fy)       - non-uniform scale"
+   Internal name; exposed in the DSL as `scale-shape`.
+   (scale-shape shape factor)      - uniform scale
+   (scale-shape shape fx fy)       - non-uniform scale"
   ([shape factor]
    (assert-shape shape "scale")
    (shape/scale-shape shape factor))
