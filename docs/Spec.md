@@ -1765,20 +1765,22 @@ Meshing is **lazy**: it happens automatically when an SDF meets a mesh boundary 
 
 ### Primitives
 
-| Function | Description |
-|----------|-------------|
-| `(sdf-sphere r)` | Sphere centered at origin |
-| `(sdf-box sx sy sz)` | Axis-aligned box with dimensions sx x sy x sz |
-| `(sdf-cyl r h)` | Cylinder along Z axis with radius r and height h |
-| `(sdf-rounded-box sx sy sz r)` | Box with rounded corners (true SDF, prefer over `sdf-offset` of `sdf-box` when combining with other SDFs) |
+```clojure
+(sdf-sphere r)                  ; Sphere centered at origin
+(sdf-box sx sy sz)              ; Axis-aligned box with dimensions sx x sy x sz
+(sdf-cyl r h)                   ; Cylinder along Z axis with radius r and height h
+(sdf-rounded-box sx sy sz r)    ; Box with rounded corners (true SDF)
+```
+
+Prefer `sdf-rounded-box` over `(sdf-offset (sdf-box ...) r)` when combining with other SDFs (see [SDF-specific operations](#sdf-specific-operations) below for why offset is not a true SDF).
 
 ### Booleans
 
-| Function | Description |
-|----------|-------------|
-| `(sdf-union a b)` | Combine two SDF shapes |
-| `(sdf-difference a b)` | Subtract b from a |
-| `(sdf-intersection a b)` | Keep only the overlap of a and b |
+```clojure
+(sdf-union a b)                 ; Combine two SDF shapes
+(sdf-difference a b)            ; Subtract b from a
+(sdf-intersection a b)          ; Keep only the overlap of a and b
+```
 
 ### SDF-specific operations
 
@@ -1807,20 +1809,22 @@ These operations leverage the implicit representation and have no direct mesh eq
 
 ### Transforms
 
-| Function | Description |
-|----------|-------------|
-| `(sdf-move node dx dy dz)` | Translate an SDF node by offset |
-| `(sdf-rotate node axis angle)` | Rotate around axis (`:x` `:y` `:z`) by angle in degrees |
-| `(sdf-scale node s)` | Uniform scale |
-| `(sdf-scale node sx sy sz)` | Per-axis scale |
-| `(sdf-revolve node-2d)` | Revolve a 2D SDF (X=radius, Y=height) around the Z axis into a 3D solid |
+```clojure
+(sdf-move node dx dy dz)        ; Translate an SDF node
+(sdf-rotate node axis angle)    ; Rotate around axis (:x :y :z) by angle in degrees
+(sdf-scale node s)              ; Uniform scale
+(sdf-scale node sx sy sz)       ; Per-axis scale
+(sdf-revolve node-2d)           ; Revolve a 2D SDF (X=radius, Y=height) around Z
+```
 
 ### Materialization
 
-| Function | Description |
-|----------|-------------|
-| `(sdf->mesh node)` | Explicitly convert SDF tree to triangle mesh |
-| `(sdf->mesh node bounds resolution)` | With custom bounds `[[xmin xmax] [ymin ymax] [zmin zmax]]` and resolution (voxels/unit) |
+```clojure
+(sdf->mesh node)                            ; Convert SDF tree to triangle mesh
+(sdf->mesh node bounds resolution)          ; With custom bounds and resolution
+;; bounds: [[xmin xmax] [ymin ymax] [zmin zmax]]
+;; resolution: voxels per unit
+```
 
 Materialization is normally automatic. Call `sdf->mesh` only when you need explicit control over bounds or resolution.
 
@@ -1890,11 +1894,11 @@ Formulas produce infinite implicit surfaces. Intersect with a bounding shape to 
 
 Pre-built lattice structures for organic/structural infills:
 
-| Function | Description |
-|----------|-------------|
-| `(sdf-gyroid period thickness)` | Gyroid lattice (the most common TPMS for 3D printing) |
-| `(sdf-schwarz-p period thickness)` | Schwarz-P (cubic channels) |
-| `(sdf-diamond period thickness)` | Diamond (Schwarz-D), interconnected tetrahedral cells |
+```clojure
+(sdf-gyroid period thickness)       ; Gyroid (most common TPMS for 3D printing)
+(sdf-schwarz-p period thickness)    ; Schwarz-P (cubic channels)
+(sdf-diamond period thickness)      ; Diamond / Schwarz-D (tetrahedral cells)
+```
 
 - `period` = cell size (larger = coarser lattice).
 - `thickness` = wall thickness.
@@ -2265,19 +2269,19 @@ The `tweak` macro provides interactive parameter exploration with real-time prev
 
 ```clojure
 ;; Default: slider for first literal only
-(tweak (extrude (circle 15) (f 30)))
+(tweak (extrude (circle 15) (f 30)))                       ; edits 15
 
-;; Specific index (0-based)
-(tweak 2 (extrude (circle 15) (f 30) (th 90) (f 20)))
+;; Specific index (0-based; literals collected depth-first, left-to-right)
+(tweak 2 (extrude (circle 15) (f 30) (th 90) (f 20)))      ; indices: 0=15 1=30 2=90 3=20 ; edits 90
 
 ;; Negative index (from end, Python-style)
-(tweak -1 (extrude (circle 15) (f 30) (th 90) (f 20)))
+(tweak -1 (extrude (circle 15) (f 30) (th 90) (f 20)))     ; edits 20
 
 ;; Multiple indices
-(tweak [0 -1] (extrude (circle 15) (f 30) (th 90) (f 20)))
+(tweak [0 -1] (extrude (circle 15) (f 30) (th 90) (f 20))) ; edits 15 and 20
 
 ;; All numeric literals
-(tweak :all (extrude (circle 15) (f 30) (th 90) (f 20)))
+(tweak :all (extrude (circle 15) (f 30) (th 90) (f 20)))   ; edits 15, 30, 90, 20
 ```
 
 **Registry-aware mode.** When `tweak` receives a keyword, it operates on the named registered mesh: hides the original during tweaking, re-registers the result on OK, and restores the original on Cancel.
@@ -2729,70 +2733,8 @@ Conversely, when a trig result needs to feed a turtle rotation:
 
 ---
 
-## 18. Complete Examples
+## 18. Not Yet Implemented
 
-### Parametric torus with anchors
-
-```clojure
-;; Define parameters
-(def tube-radius 5)
-(def torus-radius 30)
-
-;; Create square path for torus
-(def square-path
-  (path
-    (dotimes [_ 4]
-      (f (* 2 torus-radius))
-      (th 90))))
-
-;; Move to torus center, set joint mode
-(reset [0 0 0])
-(f torus-radius)                 ; Offset to path start
-(joint-mode :round)              ; Smooth corners
-
-;; Create torus
-(register my-torus
-  (extrude-closed (circle tube-radius) square-path))
-
-;; Inspect faces
-(list-faces my-torus)
-(flash-face my-torus :side)
-```
-
-### Twisted extrusion
-
-```clojure
-;; Star that twists 180 deg over its length
-(register twisted-star
-  (loft-n 64
-    (star 5 20 8)
-    #(rotate-shape %1 (* %2 180))
-    (f 100)))
-```
-
-### Branching with turtle scopes
-
-```clojure
-;; Tree-like structure using turtle scopes for isolation
-(defn branch [depth length]
-  (when (pos? depth)
-    (f length)
-    (turtle
-      (th 30)
-      (branch (dec depth) (* length 0.7)))
-    (turtle
-      (th -30)
-      (branch (dec depth) (* length 0.7)))))
-
-(reset)
-(branch 5 20)
-```
-
----
-
-## 19. Not Yet Implemented
-
-- Dense syntax parser (string notation like "F20 TH90").
 - Fillet/chamfer vertex blending on 3D mesh edges (edge fillet/chamfer works, vertex blending is experimental, see [FilletChamfer3D.md](FilletChamfer3D.md)).
 - OBJ export (STL and 3MF export are available via `export`).
 - Backward movement command `(b dist)`. Use `(f -dist)` instead.
