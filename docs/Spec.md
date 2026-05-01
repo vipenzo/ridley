@@ -290,6 +290,45 @@ Marks record named poses within a path. They have no effect on geometry: they si
 ;; full contains: f 20, f 10, mark :joint, th 90, f 10
 ```
 
+### Side-trip (scoped sub-path)
+
+`side-trip` runs its body as a sub-path that does NOT advance the spine: on replay, the turtle's position/heading/up are saved, the body runs (marks, moves, etc.), then the pose is restored. Anchors created inside the body are kept; only the spine cursor is rewound.
+
+```clojure
+(def skel
+  (path
+    (mark :start)         ; (0 0 0)
+    (f 50)                ; spine at (50 0 0)
+    (side-trip
+      (th 90) (f 27)      ; off to the side
+      (tv -90) (f 37)     ; and down
+      (mark :branch))     ; mark dropped at (50 27 -37)
+    (mark :after)         ; back at (50 0 0) — spine never moved
+    (f 10) (mark :end)))  ; (60 0 0)
+```
+
+This is the natural primitive for "drop a mark off the side and keep walking the main axis". A common pattern is to wrap each side-trip in a small helper:
+
+```clojure
+(defn arm [side depth mname]
+  (path
+    (side-trip
+     (th (if (pos? side) 90 -90))
+     (f (if (pos? side) side (- side)))
+     (tv -90) (f depth) (tv 90)
+     (mark mname))))
+
+(def skel
+  (path
+    (mark :pin-axis)
+    (f 50) (follow (arm  27 37 :left-1)) (follow (arm -27 37 :right-1))
+    (f -80) (follow (arm  27 37 :left-2)) (follow (arm -27 37 :right-2))))
+```
+
+Without `side-trip` the helper would have to manually undo every `(th)`, `(f)`, `(tv)` it issued before marking — making each arm fragile and verbose. `side-trip` lets a sub-path "branch off" of the spine, drop its marks, and snap back automatically.
+
+Nesting and `follow` both work as expected: `(side-trip (follow X) (mark :Y))` is fine; the inner `(follow X)` just splices into the side-trip's sub-path, and only that sub-path is scoped.
+
 ### Quick path
 
 `quick-path` (alias `qp`) creates paths from compact notation:
@@ -1620,8 +1659,9 @@ The `cp-*` commands change where future `attach!` operations originate from, use
 Move to another object's position and adopt its orientation (inside `attach`/`attach!`):
 
 ```clojure
-(move-to :name)            ; move to pose position + adopt heading/up (default)
-(move-to :name :center)    ; move to centroid only, keep current heading
+(move-to :name)              ; move to creation-pose + adopt its heading/up (default)
+(move-to :name :center)      ; move to centroid only, keep current heading
+(move-to :name :at :anchor)  ; move to a named anchor (from attach-path) + adopt its heading/up
 ```
 
 After `(move-to :A)`, the turtle is at A's position with A's orientation. "Forward" means A's forward, "up" means A's up. This makes relative positioning work correctly even if A has been rotated.
@@ -1635,7 +1675,33 @@ After `(move-to :A)`, the turtle is at A's position with A's orientation. "Forwa
 (attach! :sfera (move-to :base) (tv 90) (f 30) (tv -90))
 ```
 
-Use `move-to` whenever positioning relative to another object. Use `:center` mode when you only need centroid alignment without orientation change.
+Use `move-to` whenever positioning relative to another object. Use `:center` mode when you only need centroid alignment without orientation change. Use `:at :anchor` to snap to a named anchor previously associated to the mesh via `attach-path` (see [Scene → Mesh anchors](#13-scene)) — throws if the anchor doesn't exist.
+
+```clojure
+(register upper (extrude (circle 1.5) (f 15)))
+(attach-path :upper (path (mark :top) (f 15) (mark :tip)))
+
+(register lower (extrude (circle 1.2) (f 10)))
+;; Snap lower's origin to upper's :tip anchor; turtle adopts :tip's frame
+(attach! :lower (move-to :upper :at :tip))
+```
+
+Like the default form, `:at` moves the mesh and re-orients the turtle frame for chained ops; the mesh itself is translated, not rotated. To rotate the child to match the anchor's orientation, add the `:align` flag (see below) or prefer the path-driven assembly form.
+
+#### `:align` — translate AND rotate the mesh
+
+By default `move-to … :at :anchor` only translates the mesh; the turtle's heading/up adopt the anchor's pose for subsequent ops, but the mesh's vertices keep their construction orientation. Add `:align` after the anchor name to also rotate the mesh so its current frame snaps onto the anchor's frame:
+
+```clojure
+(attach! :child (move-to :parent :at :slot))         ; translate only
+(attach! :child (move-to :parent :at :slot :align))  ; translate + rotate
+```
+
+The rotation is computed in two steps:
+1. rotate the mesh so its current heading aligns with the anchor's heading,
+2. then rotate around the new heading so the mesh's up aligns with the anchor's up.
+
+This is the natural primitive when the anchor's orientation is meaningful — e.g. a path mark whose heading was set by an `(th 180)` to flag a flipped slot, or a skeleton-driven assembly where each mark records "which way this part should face". The cerniera2_C example uses `:align` to snap symmetric brackets onto skeleton marks whose heading encodes the outward-facing side.
 
 ### play-path
 
@@ -1651,6 +1717,39 @@ Replay a recorded path's movements inside `attach`/`attach!`. Solves the problem
 ;; Combine with additional movements:
 (attach! :Y (play-path my-path) (f 10) (th 45))
 ```
+
+### Static assembly via anchors
+
+`link!` (see [Scene → Mesh anchors](#13-scene)) only takes effect during animation playback — it adds the parent's runtime delta but does not snap meshes at construction time. For static (non-animated) assembly using anchors, two patterns work today.
+
+**Path-driven turtle.** Build both meshes inside the same `with-path` scope, using `goto` to position the turtle at a mark before extruding:
+
+```clojure
+(def arm-sk (path (mark :shoulder) (f 15) (mark :elbow) (f 12) (mark :wrist)))
+
+(register upper
+  (with-path arm-sk
+    (extrude (circle 1.5) (path-to :elbow))))
+
+(register lower
+  (with-path arm-sk
+    (goto :elbow)                      ; adopt elbow's position + heading + up
+    (extrude (circle 1.2) (path-to :wrist))))
+```
+
+Both meshes are built directly in world coordinates against the same skeleton, with the lower segment's vertices generated along the elbow→wrist direction. No post-hoc snapping required. For a more compact, hierarchical form see [Hierarchical assemblies](#hierarchical-assemblies).
+
+**Snap-to-anchor with `move-to :at`.** When the child mesh already exists, snap it to a named anchor of the parent:
+
+```clojure
+(register upper (extrude (circle 1.5) (f 15)))
+(attach-path :upper (path (mark :top) (f 15) (mark :tip)))
+
+(register lower (extrude (circle 1.2) (f 10)))
+(attach! :lower (move-to :upper :at :tip))      ; lower's origin -> :tip
+```
+
+This is convenient when the children come from independent sources, but the child mesh is only translated — its own heading/up don't rotate to match the anchor (consistent with the default `move-to`). If you need the child's geometry to follow the anchor's orientation, prefer the path-driven approach above, where the extrusion direction follows from `goto`.
 
 ### scale (attach context)
 
@@ -2422,6 +2521,30 @@ Performance: `gen-fn` runs every frame (60fps). Keep it fast: avoid `mesh-union`
 ```
 
 Anchors store position, heading, and up vectors relative to the mesh's creation-pose. They are resolved on-demand at playback time.
+
+`(anchors target)` returns named anchors as a `name → pose` map — useful when generating placements programmatically without having to remember (or re-derive) the mark names baked into the skeleton path. `target` can be a registered mesh name OR a path object directly:
+
+```clojure
+(anchors :upper)            ; => {:top {...} :elbow {...} :wrist {...}}
+(keys (anchors :upper))     ; => (:top :elbow :wrist)
+
+;; Or feed a path directly — its marks are resolved at the world origin:
+(def skel (path (mark :pin) (f 50) (mark :tip)))
+(anchors skel)              ; => {:pin {...} :tip {...}}
+```
+
+Both `move-to` and `anchors` accept a path object as `target`, so a skeleton path can be the assembly's source of truth without registering a carrier mesh:
+
+```clojure
+(def skel (path (mark :pin-axis) (f 50) (mark :slot)))
+
+;; Snap a piece to a path mark:
+(attach my-piece (move-to skel :at :slot :align))
+
+;; Iterate over path marks by name:
+(for [m (filter #(re-find #"bracket" (name %)) (keys (anchors skel)))]
+  (attach bracket (move-to skel :at m :align)))
+```
 
 **Target linking.** Link a child target to a parent so the child inherits the parent's position delta at playback:
 

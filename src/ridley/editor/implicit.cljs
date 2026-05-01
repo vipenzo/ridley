@@ -293,6 +293,39 @@
       (when (seq anchors)
         (registry/register-mesh! mesh-name (assoc mesh :anchors anchors))))))
 
+(defn ^:export implicit-anchors
+  "Return the named anchors of a registered mesh OR a path.
+
+   - When `target` is a registered mesh name (or mesh value), returns its
+     `:anchors` map (set by `attach-path`), or nil.
+   - When `target` is a path, resolves the path's marks at the world origin
+     and returns the resulting `name → pose` map. Useful when iterating a
+     skeleton path's marks without going through a carrier mesh.
+
+   Each entry is `name → {:position [x y z] :heading [x y z] :up [x y z]}`.
+
+   Example:
+     (def my-skel (path (mark :pin) (f 50) (mark :tip)))
+     (anchors my-skel)              ; => {:pin {...} :tip {...}}
+     (keys (anchors my-skel))       ; => (:pin :tip)
+
+     ;; Or via a registered carrier:
+     (register Sk (sphere 0.001) :hidden)
+     (attach-path :Sk my-skel)
+     (anchors :Sk)                  ; => same"
+  [target]
+  (cond
+    (and (map? target) (= :path (:type target)))
+    (turtle/resolve-marks
+     {:position [0 0 0] :heading [1 0 0] :up [0 0 1]}
+     target)
+
+    (and (map? target) (:vertices target))
+    (:anchors target)
+
+    :else
+    (:anchors (registry/get-mesh target))))
+
 (defn ^:export implicit-look-at [name]
   (when-let [mark-pose (get @state/mark-anchors name)]
     (swap! (turtle-ref) assoc-in [:anchors name]

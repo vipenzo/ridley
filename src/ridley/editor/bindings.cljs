@@ -518,6 +518,7 @@
    'unlink!             anim/unlink!
    ;; Mesh anchors
    'attach-path         impl/implicit-attach-path
+   'anchors             impl/implicit-anchors
    ;; Animation internals (used by anim! / span / anim-proc! macros)
    'anim-register!      anim/register-animation!
    'anim-proc-register! anim/register-procedural-animation!

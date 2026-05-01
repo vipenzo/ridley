@@ -1255,9 +1255,10 @@
   (update state :recording conj {:cmd :scale :args [factor]}))
 
 (defn rec-move-to
-  "Record a move-to command. Record-only — target resolution happens at replay."
-  [state target & [mode]]
-  (update state :recording conj {:cmd :move-to :args (if mode [target mode] [target])}))
+  "Record a move-to command. Record-only — target resolution happens at replay.
+   Extra args are kept verbatim so modes like :center or :at <anchor> reach the dispatcher."
+  [state target & args]
+  (update state :recording conj {:cmd :move-to :args (into [target] args)}))
 
 ;; cp-* commands: shift creation-pose without moving geometry
 ;; Record-only — applied during replay in attach!-impl
@@ -1305,9 +1306,25 @@
   [recorder]
   (make-path (:recording recorder)))
 
+(declare run-path)
+
+(defn- run-side-trip
+  "Replay a sub-path on `state`, then restore the original pose.
+   Anchors added by the sub-path are kept. The spine is unaffected."
+  [state sub-path]
+  (let [saved-pos (:position state)
+        saved-h   (:heading state)
+        saved-u   (:up state)
+        state'    (run-path state sub-path)]
+    (-> state'
+        (assoc :position saved-pos)
+        (assoc :heading saved-h)
+        (assoc :up saved-u))))
+
 (defn run-path
   "Execute a path's commands on a turtle state.
    Handles :mark commands by saving the pose as an anchor.
+   Handles :side-trip commands by running a sub-path and restoring the pose.
    Returns the updated state."
   [state path]
   (if (path? path)
@@ -1327,6 +1344,7 @@
                                 {:position (:position s)
                                  :heading (:heading s)
                                  :up (:up s)})
+                :side-trip (run-side-trip s (first args))
                 s))
             state
             (:commands path))

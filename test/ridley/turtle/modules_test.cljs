@@ -54,6 +54,55 @@
     (is (fn? att/inset) "inset exists")
     (is (fn? att/scale) "scale exists")))
 
+(defn- mesh-with-anchor
+  "Build a minimal mesh with a creation-pose and a single anchor at offset [dx dy dz]."
+  [creation-pos anchor-offset]
+  {:type :mesh
+   :vertices [creation-pos (mapv + creation-pos [1 0 0])]
+   :creation-pose {:position creation-pos
+                   :heading [1 0 0]
+                   :up [0 0 1]}
+   :anchors {:tip {:position (mapv + creation-pos anchor-offset)
+                   :heading [1 0 0]
+                   :up [0 0 1]}}})
+
+(deftest translate-mesh-updates-anchors
+  (testing "translate-mesh shifts both creation-pose and anchors by the same offset"
+    (let [m (mesh-with-anchor [10 0 0] [5 0 0])
+          t (att/translate-mesh m [0 100 0])]
+      (is (= [10 100 0] (get-in t [:creation-pose :position]))
+          "creation-pose moves by offset")
+      (is (= [15 100 0] (get-in t [:anchors :tip :position]))
+          "anchor position moves by offset (was [15 0 0], +[0 100 0])")
+      (is (= [1 0 0] (get-in t [:anchors :tip :heading]))
+          "anchor heading is unchanged by translation"))))
+
+(deftest rotate-mesh-updates-anchors
+  (testing "rotate-mesh keeps anchors aligned with the rotated mesh"
+    (let [;; Mesh centered at [10 0 0] with anchor offset [5 0 0] (so anchor at [15 0 0])
+          m (mesh-with-anchor [10 0 0] [5 0 0])
+          ;; 90° around Z, around centroid
+          ;; Vertices [[10 0 0] [11 0 0]] → centroid [10.5 0 0]
+          ;; After 90° rot around Z: anchor relative to centroid was [4.5 0 0],
+          ;; rotated → [0 4.5 0], so anchor lands at [10.5 4.5 0]
+          t (att/rotate-mesh m [0 0 1] (/ js/Math.PI 2))]
+      (is (some? (get-in t [:anchors :tip])) "anchor still present after rotation")
+      (let [pos (get-in t [:anchors :tip :position])]
+        (is (< (Math/abs (- (first pos) 10.5)) 0.001) "x ≈ 10.5")
+        (is (< (Math/abs (- (second pos) 4.5)) 0.001) "y ≈ 4.5"))
+      (let [h (get-in t [:anchors :tip :heading])]
+        (is (< (Math/abs (- (first h) 0)) 0.001) "heading.x ≈ 0 after 90° rot")
+        (is (< (Math/abs (- (second h) 1)) 0.001) "heading.y ≈ 1 after 90° rot")))))
+
+(deftest translate-mesh-no-anchors-still-works
+  (testing "translate-mesh on a mesh without :anchors does not blow up"
+    (let [m {:type :mesh
+             :vertices [[0 0 0] [1 0 0]]
+             :creation-pose {:position [0 0 0] :heading [1 0 0] :up [0 0 1]}}
+          t (att/translate-mesh m [10 0 0])]
+      (is (= [10 0 0] (get-in t [:creation-pose :position])))
+      (is (nil? (:anchors t)) "anchors stays nil"))))
+
 ;; ── Bezier module ───────────────────────────────────────────
 
 (deftest bezier-module-accessible

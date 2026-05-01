@@ -34,20 +34,30 @@
       (v* (reduce v+ [0 0 0] verts) (/ 1 n))
       [0 0 0])))
 
+(defn- transform-poses
+  "Apply pose-fn to creation-pose and to every anchor.
+   Keeps anchors in sync with the mesh transformation, so that
+   `move-to :at :anchor` always sees the current world position."
+  [mesh pose-fn]
+  (let [apply-fn (fn [pose] (when pose (pose-fn pose)))]
+    (-> mesh
+        (update :creation-pose apply-fn)
+        (update :anchors (fn [anchors]
+                           (when (seq anchors)
+                             (into {} (map (fn [[k a]] [k (apply-fn a)])) anchors)))))))
+
 (defn translate-mesh
-  "Translate all vertices of a mesh by an offset vector."
+  "Translate all vertices of a mesh by an offset vector.
+   Updates creation-pose position and all anchors (positions only — directions unchanged)."
   [mesh offset]
   (-> mesh
       (dissoc :ridley.manifold.core/manifold-cache :ridley.manifold.core/raw-arrays)
       (update :vertices (fn [verts] (mapv #(v+ % offset) verts)))
-      (update :creation-pose
-              (fn [pose]
-                (when pose
-                  (update pose :position #(v+ % offset)))))))
+      (transform-poses (fn [pose] (update pose :position #(v+ % offset))))))
 
 (defn rotate-mesh
   "Rotate all vertices of a mesh around its centroid by angle (radians) around axis.
-   Also rotates the creation-pose heading and up vectors."
+   Updates creation-pose and all anchors (position + heading + up)."
   [mesh axis angle]
   (let [centroid (mesh-centroid mesh)
         rotate-vertex (fn [pt]
@@ -57,13 +67,11 @@
     (-> mesh
         (dissoc :ridley.manifold.core/manifold-cache :ridley.manifold.core/raw-arrays)
         (update :vertices (fn [verts] (mapv rotate-vertex verts)))
-        (update :creation-pose
-                (fn [pose]
-                  (when pose
-                    (-> pose
-                        (update :position rotate-vertex)
-                        (update :heading #(rotate-around-axis % axis angle))
-                        (update :up #(rotate-around-axis % axis angle)))))))))
+        (transform-poses (fn [pose]
+                           (-> pose
+                               (update :position rotate-vertex)
+                               (update :heading #(rotate-around-axis % axis angle))
+                               (update :up #(rotate-around-axis % axis angle))))))))
 
 (defn scale-mesh
   "Scale all vertices of a mesh from its centroid.
@@ -118,8 +126,7 @@
 
 (defn rotate-mesh-around-point
   "Rotate all vertices of a mesh around a given pivot point by angle (radians) around axis.
-   Also rotates the creation-pose heading and up vectors, and rotates creation-pose position
-   around the pivot."
+   Updates creation-pose and all anchors (position around pivot + heading/up)."
   [mesh axis angle pivot]
   (let [rotate-vertex (fn [pt]
                         (let [rel (v- pt pivot)
@@ -128,13 +135,11 @@
     (-> mesh
         (dissoc :ridley.manifold.core/manifold-cache :ridley.manifold.core/raw-arrays)
         (update :vertices (fn [verts] (mapv rotate-vertex verts)))
-        (update :creation-pose
-                (fn [pose]
-                  (when pose
-                    (-> pose
-                        (update :position rotate-vertex)
-                        (update :heading #(rotate-around-axis % axis angle))
-                        (update :up #(rotate-around-axis % axis angle)))))))))
+        (transform-poses (fn [pose]
+                           (-> pose
+                               (update :position rotate-vertex)
+                               (update :heading #(rotate-around-axis % axis angle))
+                               (update :up #(rotate-around-axis % axis angle))))))))
 
 (defn rotate-attached-mesh
   "Rotate the attached mesh around the turtle position (attachment point) using the given axis.

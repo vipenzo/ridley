@@ -479,6 +479,49 @@
       (is (= [:move-to] (mapv :cmd (:commands result))))
       (is (= [:target :center] (:args (first (:commands result))))))))
 
+(deftest path-move-to-at-anchor-recording
+  (testing "move-to with :at anchor records target, :at, and anchor name"
+    (let [{:keys [result error]} (h/eval-dsl "(path (move-to :target :at :tip))")]
+      (is (nil? error) (str "Should not error: " error))
+      (is (= [:move-to] (mapv :cmd (:commands result))))
+      (is (= [:target :at :tip] (:args (first (:commands result))))))))
+
+(deftest path-move-to-at-anchor-align-recording
+  (testing "move-to with :at anchor :align records the extra flag"
+    (let [{:keys [result error]} (h/eval-dsl "(path (move-to :target :at :tip :align))")]
+      (is (nil? error) (str "Should not error: " error))
+      (is (= [:move-to] (mapv :cmd (:commands result))))
+      (is (= [:target :at :tip :align] (:args (first (:commands result))))))))
+
+(deftest path-side-trip-recording
+  (testing "side-trip wraps its body as a single :side-trip command holding a sub-path"
+    (let [{:keys [result error]} (h/eval-dsl
+                                  "(path (f 50) (side-trip (th 90) (f 10) (mark :B)) (f 30))")]
+      (is (nil? error) (str "Should not error: " error))
+      (is (= [:f :side-trip :f] (mapv :cmd (:commands result))))
+      (let [side-trip-cmd (second (:commands result))
+            sub-path (first (:args side-trip-cmd))]
+        (is (= :path (:type sub-path)))
+        (is (= [:th :f :mark] (mapv :cmd (:commands sub-path))))))))
+
+(deftest path-side-trip-anchors-resolve-without-moving-spine
+  (testing "side-trip preserves marks but restores pose on replay"
+    (let [{:keys [turtle error]}
+          (h/eval-dsl
+           "(follow-path
+              (path
+                (mark :A) (f 50)
+                (side-trip (th 90) (f 27) (tv -90) (f 37) (tv 90) (mark :branch))
+                (mark :after) (f 10) (mark :end)))")
+          anchors (:anchors turtle)]
+      (is (nil? error) (str "Should not error: " error))
+      (is (= [0 0 0] (mapv int (get-in anchors [:A :position]))))
+      (is (= [50 27 -37] (mapv int (get-in anchors [:branch :position]))))
+      (is (= [50 0 0] (mapv int (get-in anchors [:after :position])))
+          ":after is back on the spine, not at the side-trip end")
+      (is (= [60 0 0] (mapv int (get-in anchors [:end :position])))
+          ":end continues 10 forward from :after"))))
+
 ;; ── 17. Path pass-through ──────────────────────────────────
 
 (deftest path-pass-through

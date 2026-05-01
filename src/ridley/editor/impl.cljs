@@ -5,6 +5,7 @@
   (:require [ridley.editor.operations :as ops]
             [ridley.editor.state :as state]
             [ridley.turtle.core :as turtle]
+            [ridley.turtle.attachment :as attachment]
             [ridley.turtle.shape :as shape]
             [ridley.turtle.shape-fn :as sfn]
             [ridley.scene.registry :as registry]
@@ -427,10 +428,23 @@
 ;; ============================================================
 
 (defn- resolve-mesh
-  "Resolve a keyword/string/mesh to an actual mesh."
+  "Resolve a keyword/string/mesh/path to an actual mesh.
+   For path objects, returns a virtual mesh whose `:anchors` are the path's
+   marks resolved at the world origin — useful when a skeleton path is used
+   directly as a target for `move-to`, without registering a carrier mesh."
   [target]
-  (if (and (map? target) (:vertices target))
+  (cond
+    (and (map? target) (:vertices target))
     target
+
+    (and (map? target) (= :path (:type target)))
+    {:type :path-as-mesh
+     :creation-pose {:position [0 0 0] :heading [1 0 0] :up [0 0 1]}
+     :anchors (turtle/resolve-marks
+               {:position [0 0 0] :heading [1 0 0] :up [0 0 1]}
+               target)}
+
+    :else
     (registry/get-mesh (if (keyword? target) target (keyword target)))))
 
 (defn- compute-target-bounds
@@ -491,14 +505,74 @@
           (assoc :up (:up pose)))
       (move-to-center state target))))
 
+(defn- align-attached-mesh
+  "Rotate the attached mesh in place so its current heading/up align with target heading/up.
+   Pivots around `pivot` (typically the anchor position after translation).
+   Uses a 2-step rotation: first align headings, then align ups around the new heading.
+   Returns the updated state with mesh rotated and anchors transformed accordingly."
+  [state cur-h cur-u tgt-h tgt-u pivot]
+  (let [mesh (get-in state [:attached :mesh])
+        ;; Step 1: align headings
+        dot-h (math/dot cur-h tgt-h)
+        cross-h (math/cross cur-h tgt-h)
+        [s1-axis s1-angle] (cond
+                             (>= dot-h 0.9999)  [nil 0]                                ; already aligned
+                             (<= dot-h -0.9999) [(math/normalize cur-u) Math/PI]       ; antiparallel: 180° around current up
+                             :else              [(math/normalize cross-h) (Math/acos dot-h)])
+        mesh1 (if s1-axis (attachment/rotate-mesh-around-point mesh s1-axis s1-angle pivot) mesh)
+        cur-u' (if s1-axis (math/rotate-around-axis cur-u s1-axis s1-angle) cur-u)
+        ;; Step 2: align ups by rotating around the now-aligned heading (= tgt-h)
+        dot-u (math/dot cur-u' tgt-u)
+        cross-u (math/cross cur-u' tgt-u)
+        sign (if (>= (math/dot cross-u tgt-h) 0) 1 -1)
+        [s2-axis s2-angle] (cond
+                             (>= dot-u 0.9999)  [nil 0]
+                             (<= dot-u -0.9999) [tgt-h Math/PI]
+                             :else              [tgt-h (* sign (Math/acos dot-u))])
+        mesh2 (if s2-axis (attachment/rotate-mesh-around-point mesh1 s2-axis s2-angle pivot) mesh1)]
+    (-> state
+        (turtle/replace-mesh-in-state mesh mesh2)
+        (assoc-in [:attached :mesh] mesh2))))
+
+(defn- move-to-anchor
+  "Move state to target mesh's named anchor, adopting its heading/up.
+   Anchors come from attach-path. With :align? true, also rotates the
+   attached mesh so its frame matches the anchor's frame."
+  [state target anchor-name & {:keys [align?]}]
+  (let [mesh (resolve-mesh target)
+        anchor (when mesh (get-in mesh [:anchors anchor-name]))]
+    (if anchor
+      (let [tgt-pos (:position anchor)
+            tgt-h   (:heading anchor)
+            tgt-u   (:up anchor)
+            translated (move-state-to-position state tgt-pos)
+            aligned (if (and align? (:attached translated))
+                      (align-attached-mesh translated
+                                           (:heading translated) (:up translated)
+                                           tgt-h tgt-u tgt-pos)
+                      translated)]
+        (-> aligned
+            (assoc :heading tgt-h)
+            (assoc :up tgt-u)))
+      (throw (js/Error. (str "move-to: no anchor " anchor-name " on mesh " target))))))
+
 (defn- move-to-dispatch
-  "Handle :move-to command during replay."
+  "Handle :move-to command during replay.
+   Supports:
+     (move-to :name)                       — snap to creation-pose, adopt orientation
+     (move-to :name :center)               — snap to centroid
+     (move-to :name :at :anchor)           — snap to anchor (translate only)
+     (move-to :name :at :anchor :align)    — snap to anchor and rotate mesh to match"
   [state args]
   (let [target (first args)
         mode (second args)]
-    (case mode
-      :center (move-to-center state target)
-      (move-to-pose state target))))
+    (cond
+      (and (= mode :at) (= (nth args 3 nil) :align))
+      (move-to-anchor state target (nth args 2) :align? true)
+
+      (= mode :at)     (move-to-anchor state target (nth args 2))
+      (= mode :center) (move-to-center state target)
+      :else            (move-to-pose state target))))
 
 ;; ============================================================
 ;; Creation-pose shift (@ commands)

@@ -33,6 +33,13 @@
        (doseq [cmd (:commands path)]
          (swap! path-recorder update :recording conj cmd))))
 
+   ;; Recording version of side-trip - records a sub-path that, on replay,
+   ;; runs in a saved-then-restored pose scope (marks are kept, spine is not moved)
+   (defn- rec-side-trip* [sub-path]
+     (when (and (map? sub-path) (= :path (:type sub-path)))
+       (swap! path-recorder update :recording conj
+              {:cmd :side-trip :args [sub-path]})))
+
    ;; Recording version of resolution - sets resolution in path-recorder
    (defn- rec-resolution* [mode value]
      (swap! path-recorder assoc :resolution {:mode mode :value value}))
@@ -42,8 +49,8 @@
      (swap! path-recorder rec-inset amount))
    (defn- rec-scale* [factor]
      (swap! path-recorder rec-scale factor))
-   (defn- rec-move-to* [target & [mode]]
-     (swap! path-recorder rec-move-to target mode))
+   (defn- rec-move-to* [target & args]
+     (apply swap! path-recorder rec-move-to target args))
    (defn- rec-play-path* [sub-path]
      (swap! path-recorder rec-play-path sub-path))
 
@@ -430,6 +437,7 @@
               ~'resolution rec-resolution*
               ~'mark rec-mark*
               ~'follow rec-follow*
+              ~'side-trip-fn rec-side-trip*
               ~'inset rec-inset*
               ~'scale rec-scale*
               ~'move-to rec-move-to*
@@ -447,6 +455,17 @@
                 (let [result# (path-from-recorder rec-state#)
                       result# (if (:bezier rec-state#) (assoc result# :bezier true) result#)]
                   result#)))))))
+
+   ;; side-trip: scoped sub-path that doesn't move the spine
+   ;; (path
+   ;;   (mark :A)
+   ;;   (f 10)
+   ;;   (side-trip (th 90) (f 5) (mark :branch))   ; mark dropped at side
+   ;;   (f 10))                                     ; spine continues from where it was
+   ;; Marks created inside the body are kept on replay; position/heading/up
+   ;; of the parent path are restored when the side-trip returns.
+   (defmacro side-trip [& body]
+     `(~'side-trip-fn (~'path ~@body)))
 
    ;; smooth-path: convert a path to its bezier-smoothed version
    ;; (def sp (smooth-path P))                   - smooth with defaults
