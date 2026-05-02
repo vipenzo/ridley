@@ -2713,6 +2713,37 @@ Returns a data URL (PNG) of the 2D contour outlines.
 (save-image (render-slice :cup :z 15) "cup-z15.png")
 ```
 
+### Animation export (GIF, desktop only)
+
+Render the current procedural (`anim-proc!`) animation to an animated GIF.
+Available only in the Ridley Desktop build.
+
+```clojure
+(anim-export-gif "filename.gif"
+                 :fps 15
+                 :duration 6
+                 :width 720)
+```
+
+| Option       | Default                  | Description                                                      |
+|--------------|--------------------------|------------------------------------------------------------------|
+| `:fps`       | 15                       | Frames per second                                                |
+| `:duration`  | animation's own duration | Capture length in seconds                                        |
+| `:width`     | 720                      | Output width in pixels; height matches the viewport aspect ratio |
+| `:anim`      | auto-pick                | Animation name when more than one procedural animation exists    |
+| `:overwrite` | false                    | Replace an existing file at the target path                      |
+
+Capture is off-realtime: the live render loop is suspended and frames are
+generated as fast as the system can compute the procedural mesh. The file is
+written to `~/Documents/Ridley/exports/<filename>` (parent dirs created
+automatically). A progress overlay covers the viewport during capture and
+encoding.
+
+Errors:
+- non-procedural animation (keyframe `anim!`) is not supported
+- multiple procedural animations require `:anim <name>`
+- file collision raises an error unless `:overwrite true` is passed
+
 ### Manual export
 
 Generate downloadable Markdown manuals from the online manual content:

@@ -19,6 +19,7 @@
             [ridley.scene.panel :as panel]
             [ridley.viewport.core :as viewport]
             [ridley.export.stl :as stl]
+            [ridley.export.gif :as gif-export]
             [ridley.anim.core :as anim]
             [ridley.anim.easing :as easing]
             [ridley.anim.preprocess :as anim-preprocess]
@@ -512,6 +513,7 @@
    'stop-all!           anim/stop-all!
    'seek!               anim/seek!
    'anim-list           anim/list-animations
+   'anim-export-gif     gif-export/anim-export-gif
    'ease                easing/ease
    ;; Animation linking (parent-child position tracking)
    'link!               anim/link!

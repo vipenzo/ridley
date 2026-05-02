@@ -1007,6 +1007,20 @@
   (when-let [{:keys [renderer]} @state]
     (.setAnimationLoop ^js renderer render-frame)))
 
+(defn pause-render-loop!
+  "Suspend the Three.js setAnimationLoop. Used during off-realtime capture
+   so animations don't advance while we step through frames manually."
+  []
+  (when-let [{:keys [renderer]} @state]
+    (.setAnimationLoop ^js renderer nil)))
+
+(defn resume-render-loop!
+  "Re-attach the standard render-frame callback to setAnimationLoop."
+  []
+  (start-animation-loop)
+  ;; Reset dt baseline so the first post-resume tick doesn't get a giant dt
+  (reset! last-frame-time nil))
+
 ;; ============================================================
 ;; Animation support: camera pose (defined before init to avoid forward ref)
 ;; ============================================================
@@ -1786,8 +1800,9 @@
 (defn get-capture-context
   "Return state needed by the capture module for offscreen rendering."
   []
-  (when-let [{:keys [renderer scene world-group]} @state]
-    {:renderer renderer :scene scene :world-group world-group
+  (when-let [{:keys [renderer scene camera controls canvas world-group]} @state]
+    {:renderer renderer :scene scene :camera camera :controls controls
+     :canvas canvas :world-group world-group
      :current-meshes @current-meshes}))
 
 ;; ============================================================
