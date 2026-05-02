@@ -64,7 +64,7 @@
             comp-h (math/dot v bh)
             comp-u (math/dot v bu)]
         (math/v+ (math/v+ (math/v* fr comp-r)
-                           (math/v* fh comp-h))
+                          (math/v* fh comp-h))
                  (math/v* fu comp-u))))))
 
 (defn- apply-mesh-pose!
@@ -102,16 +102,25 @@
   [mesh-name new-mesh _anim-data]
   (when new-mesh
     (let [new-verts (:vertices new-mesh)
-          new-faces (:faces new-mesh)]
+          new-faces (:faces new-mesh)
+          ;; If the new mesh is a CSG result it carries its own raw typed arrays;
+          ;; propagate them and drop any stale ones from old-mesh, otherwise the
+          ;; viewport refresh at the end of the tick will rebuild Three.js from
+          ;; the old typed arrays via create-three-mesh's fast path and ignore
+          ;; the just-written :vertices/:faces.
+          new-raw (:ridley.manifold.core/raw-arrays new-mesh)]
       (when (and new-verts new-faces)
         ;; Update mesh in registry
         (when-let [get-fn @get-mesh-fn]
           (when-let [old-mesh (get-fn mesh-name)]
             (when-let [reg-fn @register-mesh-fn]
               (reg-fn mesh-name
-                      (assoc old-mesh
-                             :vertices new-verts
-                             :faces new-faces)))))
+                      (cond-> (-> old-mesh
+                                  (assoc :vertices new-verts
+                                         :faces new-faces)
+                                  (dissoc :ridley.manifold.core/raw-arrays
+                                          :ridley.manifold.core/manifold-cache))
+                        new-raw (assoc :ridley.manifold.core/raw-arrays new-raw))))))
         ;; Update Three.js geometry (handles face count changes)
         (when-let [f @update-geometry-fn]
           (f mesh-name new-verts new-faces))))))
@@ -235,9 +244,9 @@
                :rotation-fn (when inherit-rot?
                               (when rest-anchor
                                 (compute-rotation-matrix
-                                  {:heading (:heading rest-anchor) :up (:up rest-anchor)
-                                   :position (:position rest-anchor)}
-                                  anchor-pose)))}))
+                                 {:heading (:heading rest-anchor) :up (:up rest-anchor)
+                                  :position (:position rest-anchor)}
+                                 anchor-pose)))}))
           ;; Centroid-based link: track parent's position delta (existing behavior)
           (let [delta (get-parent-position-delta parent-target)]
             (when delta
@@ -521,23 +530,23 @@
         (let [{:keys [target-a target-b threshold callback state once fired-once]} entry
               centroid-a (animated-centroid target-a)
               centroid-b (animated-centroid target-b)]
-                (when (and centroid-a centroid-b)
-                  (let [dist (vec3-distance centroid-a centroid-b)
-                        within? (< dist threshold)]
-                    (cond
+          (when (and centroid-a centroid-b)
+            (let [dist (vec3-distance centroid-a centroid-b)
+                  within? (< dist threshold)]
+              (cond
                       ;; Outside → entering collision zone
-                      (and within? (= state :outside))
-                      (do
-                        (swap! anim/collision-registry assoc-in [k :state] :inside)
-                        (when-not fired-once
-                          (swap! anim/collision-registry assoc-in [k :fired-once] true)
-                          (invoke-span-callback! callback)))
+                (and within? (= state :outside))
+                (do
+                  (swap! anim/collision-registry assoc-in [k :state] :inside)
+                  (when-not fired-once
+                    (swap! anim/collision-registry assoc-in [k :fired-once] true)
+                    (invoke-span-callback! callback)))
 
                       ;; Inside → leaving collision zone (re-arm unless :once)
-                      (and (not within?) (= state :inside))
-                      (when-not once
-                        (swap! anim/collision-registry update k
-                               assoc :state :outside :fired-once false))))))))))
+                (and (not within?) (= state :inside))
+                (when-not once
+                  (swap! anim/collision-registry update k
+                         assoc :state :outside :fired-once false))))))))))
 
 (defn tick-animations!
   "Called from render-frame. Advances all playing animations by dt seconds.
@@ -572,11 +581,11 @@
             (and loop-mode (>= new-time cycle-duration))
             (let [wrapped-raw (mod new-time cycle-duration)
                   effective-time (case loop-mode
-                                  :forward wrapped-raw
-                                  :reverse (- duration wrapped-raw)
-                                  :bounce  (if (< wrapped-raw duration)
-                                             wrapped-raw
-                                             (- (* 2.0 duration) wrapped-raw)))]
+                                   :forward wrapped-raw
+                                   :reverse (- duration wrapped-raw)
+                                   :bounce  (if (< wrapped-raw duration)
+                                              wrapped-raw
+                                              (- (* 2.0 duration) wrapped-raw)))]
               (swap! anim/anim-registry assoc-in [anim-name :current-time] wrapped-raw)
               (if procedural?
                 (swap! proc-data assoc anim-name
@@ -606,12 +615,12 @@
             ;; Normal advance (within first cycle)
             :else
             (let [effective-time (case loop-mode
-                                  :reverse (- duration new-time)
-                                  :bounce  (if (< new-time duration)
-                                             new-time
-                                             (- (* 2.0 duration) new-time))
+                                   :reverse (- duration new-time)
+                                   :bounce  (if (< new-time duration)
+                                              new-time
+                                              (- (* 2.0 duration) new-time))
                                   ;; :forward or nil
-                                  new-time)]
+                                   new-time)]
               (swap! anim/anim-registry assoc-in [anim-name :current-time] new-time)
               (if procedural?
                 (swap! proc-data assoc anim-name
