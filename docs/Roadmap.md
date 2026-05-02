@@ -112,11 +112,17 @@ Il cap. 15.4.6 di `Architecture.md` raccoglie cinque direzioni concrete in ordin
 
 ### 2.3 Animation export
 
-L'infrastruttura render-to-PNG dell'animation system esiste già (`viewport/capture.cljs`), ma non è agganciata al sistema delle animazioni. Le due voci aperte:
+L'export GIF è la prima voce in casa, e ha portato con sé l'infrastruttura su cui si appoggiano le altre. Il loop di cattura off-realtime sta in `ridley.export.animation/capture-frames!`: sospende il render loop di Three.js, itera `t ∈ [0,1]` chiamando `seek-and-apply!`, forza un render sincrono, e passa il canvas a un `on-frame` callback. È encoder-agnostico per costruzione. L'encoder GIF (gif.js, lazy-loaded da `public/vendor/`) consuma quel callback e scrive il file via geo_server in `~/Documents/Ridley/exports/`. Solo desktop, gating su `env/desktop?`, bundle web invariato.
 
-**PNG frame-by-frame export**: loop su `seek-and-apply!` lungo la timeline dell'animazione, con `render-view` per ogni frame e raccolta in ZIP. Lavoro circoscritto, uno-due giorni, perché l'infrastruttura c'è.
+Le voci ancora aperte poggiano tutte su `capture-frames!`.
 
-**MP4 export via ffmpeg**: l'output del PNG export passa per ffmpeg per produrre un video. La scelta di design da prendere è ffmpeg system-installed contro ffmpeg sidecar bundled nel binario Tauri. Bundled è più affidabile per l'utente finale ma aumenta la dimensione del bundle; system-installed è più leggero ma richiede installazione utente. Tre-cinque giorni di lavoro più la decisione.
+**PNG frame-by-frame export**: con il loop pronto è un giorno di lavoro. On-frame raccoglie `canvas.toBlob('image/png')`, JSZip (già nel bundle) impacchetta, write-file scarica.
+
+**MP4 export via ffmpeg**: l'output PNG sequence passa per ffmpeg per produrre un video. La scelta di design è ffmpeg system-installed contro ffmpeg sidecar bundled nel binario Tauri. Bundled è più affidabile per l'utente finale ma aumenta la dimensione del bundle; system-installed è più leggero ma richiede installazione utente. Tre-cinque giorni più la decisione.
+
+**Encoder GIF Rust nativo (gifski)**: oggi gif.js (NeuQuant in JS, output 1-3 MB sui pilot) è sufficiente per la documentazione tecnica. Migrazione a `gifski` via crate Rust darebbe palette percettiva (output 30-50% più piccolo a parità di qualità) ed encoding parallelo veloce, al costo di ~5-15 MB sul binario Tauri. Da rivalutare quando avremo abbastanza GIF nella documentazione per giudicare se la qualità di gif.js basta.
+
+La generalizzazione di `capture-frames!` da uso visivo a uso analitico vive in §2.7.
 
 ### 2.4 Geometria avanzata
 
@@ -151,6 +157,16 @@ Standard parts come libreria parts vere e proprie, non come funzionalità del co
 **Threads**: viti, dadi, accoppiamenti filettati. Helix sweep su profilo trapezoidale per filetti realistici. Set base secondo standard ISO (M3, M4, M5, M6, M8, M10) più dadi e rondelle corrispondenti. È lavoro di una-due settimane per il set base; il blocco non banale è il filetto realistico, dove la mesh prodotta deve essere stampabile e stabile in boolean.
 
 Ulteriori librerie a corredo (cuscinetti, profilati, raccordi) possono seguire come incrementi quando emergono casi d'uso.
+
+### 2.7 Animazioni come strumento di analisi
+
+`capture-frames!` (§2.3) è oggi il loop di cattura visiva: per ogni frame, render del canvas e cattura. La sua generalizzazione naturale è sostituire "cattura il canvas" con "esegui una funzione utente arbitraria" — misura geometrica, predicato, calcolo. L'output non è più un GIF: è una traccia temporale di una proprietà del modello.
+
+Per la cerniera di `01-hinge-c-profile`, a ogni `t` calcoli `(mesh-volume (mesh-intersection inner-hinge outer-hinge))`: se è zero per ogni `t` la cerniera è meccanicamente valida, se è non-zero per qualche `t` hai un'interferenza e sai *quando* (per quale angolo) e *quanto* (volume). È un salto di categoria: oggi le animazioni di Ridley servono a *vedere* il movimento, con questa estensione servirebbero a *verificarlo* — sostituendo molte iterazioni di "stampo, monto, riprogetto" con due righe di check nel sorgente. Diventa pertinente appena scriveremo esempi meccanici più complessi (manovellismi, giunti cardanici, meccanismi a quattro barre).
+
+L'API è stratificata, una sola implementazione. La primitiva **`anim-fold`** ha semantica reduce con supporto a `reduced` per stop precoce: accumula su tutti i frame, ferma appena l'utente decide. Sopra di essa, due helper. **`anim-sample`** è `anim-fold` con `:init [] :step conj`: ritorna un vettore di N misure, adatto al caso comune di produrre un trace per plotting o ispezione. **`anim-check`** è `anim-fold` con un predicato ed early-stop alla prima falsità, adatto alle verifiche pre-confezionate.
+
+Lo spec va scritto prima di implementare. Aperti: la firma esatta degli helper; una libreria di check pre-confezionati (`point-in-mesh` leggero contro `mesh-intersection` costoso, perché 90 booleane Manifold per check non si possono permettere sempre); eventuale visualizzazione del trace sovrapposta all'animazione, voce secondaria.
 
 ---
 
