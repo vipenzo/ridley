@@ -92,17 +92,17 @@ A different use case: putting a peg on top of a plate.
 ;; A flat plate, anchor at the centre by default.
 (def plate (box 100 100 5))
 
-;; A vertical peg (height along the up axis: `box w d l` puts d along up).
-;; Anchor shifted to its base — so attaching it somewhere lands its base
-;; on the target, not its midpoint.
-(def peg
-  (attach (box 16 30 16) (cp-u -15)))
+;; A peg, anchor shifted to its bottom — so attaching it
+;; somewhere lands its bottom on the target, not its midpoint.
+(def peg (attach (cyl 8 30) (cp-f -15)))
+;(def peg (cyl 8 30)) ; WRONG!
 
-;; Snap the peg's base onto the top face of the plate.
+;; Now snap the peg onto the top face of the plate, at a corner.
 (register Assembly
   (mesh-union
    plate
-   (attach peg (u (/ 5 2)))))
+    (attach peg (rt (- 50 8)) (u (- 50 8)))))
+
 ```
 
 Two creation-pose decisions are happening:
