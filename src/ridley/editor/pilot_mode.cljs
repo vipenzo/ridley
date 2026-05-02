@@ -438,7 +438,7 @@
             :angle (add-command! :tr (- a))
             :scale (add-command! :scale [1 1 (/ 1.0 sc)])))
 
-        ;; === Alt+arrows: move creation-pose (shift origin without moving geometry) ===
+        ;; === Alt+arrows: cp-* — slide geometry under a stationary creation-pose ===
         (and (= key "ArrowUp") (.-altKey e) (not shift?))
         (do (.preventDefault e) (.stopPropagation e) (flush-digit-buffer!)
             (add-command! :cp-f (:step @pilot-state)))

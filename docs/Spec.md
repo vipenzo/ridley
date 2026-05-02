@@ -1646,13 +1646,13 @@ The body of `attach` and `attach!` is a turtle path (the macros wrap it in `(pat
 | `(play-path p)` | Replay a recorded path's movements (see below) |
 | `(scale factor)` | Uniformly scale the attached mesh in place |
 
-**Creation-pose shift (move where the mesh "thinks" it was created, without moving its geometry):**
+**Creation-pose shift (slide the geometry under a stationary anchor so a chosen feature point coincides with it):**
 
 | Command | Description |
 |---------|-------------|
-| `(cp-f dist)` / `(cp-rt dist)` / `(cp-u dist)` | Shift the mesh's creation-pose along heading / right / up |
+| `(cp-f dist)` / `(cp-rt dist)` / `(cp-u dist)` | Re-anchor at the point `+dist` along heading / right / up: geometry slides by `-dist` along that axis, anchor unchanged |
 
-The `cp-*` commands change where future `attach!` operations originate from, useful when you want a mesh to be transformed around a different reference point than its original creation pose. The visible vertices stay where they are.
+The `cp-*` commands re-pick which point of the mesh coincides with its anchor. The anchor's world position stays put; the geometry translates so the chosen local point now sits on it. Useful when later `attach`/`move-to` should land things on a face/edge/feature instead of the centroid, or when you want a rotation pivot at a specific feature point.
 
 ### move-to
 

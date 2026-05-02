@@ -55,6 +55,18 @@
       (update :vertices (fn [verts] (mapv #(v+ % offset) verts)))
       (transform-poses (fn [pose] (update pose :position #(v+ % offset))))))
 
+(defn translate-vertices-keeping-anchor
+  "Translate vertices and named anchors by `offset`, leaving the creation-pose
+   fixed. Used by cp-* to relocate the geometry under a stationary anchor:
+   the anchor stays where it is in world, the geometry slides relative to it."
+  [mesh offset]
+  (-> mesh
+      (dissoc :ridley.manifold.core/manifold-cache :ridley.manifold.core/raw-arrays)
+      (update :vertices (fn [verts] (mapv #(v+ % offset) verts)))
+      (update :anchors (fn [anchors]
+                         (when (seq anchors)
+                           (into {} (map (fn [[k a]] [k (update a :position #(v+ % offset))])) anchors))))))
+
 (defn rotate-mesh
   "Rotate all vertices of a mesh around its centroid by angle (radians) around axis.
    Updates creation-pose and all anchors (position + heading + up)."

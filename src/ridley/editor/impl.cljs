@@ -579,25 +579,24 @@
 ;; ============================================================
 
 (defn- shift-creation-pose
-  "Shift the creation-pose of the attached mesh along an axis without moving vertices.
+  "Relocate the geometry of the attached mesh along an axis while keeping the
+   creation-pose fixed in world. After `(cp-f n)`, the point that was at +n
+   along heading from the original anchor coincides with the (unchanged) anchor.
+   Vertices and named anchors translate by `-offset`; creation-pose is untouched.
    axis: :f (heading), :rt (right), :u (up). dist: distance to shift."
   [state axis dist]
-  (if-let [attachment (:attached state)]
-    (let [mesh (:mesh attachment)
+  (if-let [attached (:attached state)]
+    (let [mesh (:mesh attached)
           pose (or (:creation-pose mesh) {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})
           h (math/normalize (:heading pose))
           u (math/normalize (:up pose))
           r (math/normalize (math/cross h u))
           dir (case axis :f h :rt r :u u h)
           offset (math/v* dir dist)
-          new-pos (math/v+ (:position pose) offset)
-          new-pose (assoc pose :position new-pos)
-          new-mesh (assoc mesh :creation-pose new-pose)]
+          new-mesh (attachment/translate-vertices-keeping-anchor mesh (math/v* offset -1))]
       (-> state
           (turtle/replace-mesh-in-state mesh new-mesh)
-          (assoc :position new-pos)
-          (assoc-in [:attached :mesh] new-mesh)
-          (assoc-in [:attached :original-pose] new-pose)))
+          (assoc-in [:attached :mesh] new-mesh)))
     state))
 
 ;; ============================================================

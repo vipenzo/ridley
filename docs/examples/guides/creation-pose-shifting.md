@@ -24,13 +24,13 @@ The alternative — leaving the creation pose at the default and compensating wi
 
 A mesh's creation pose is a transform tag attached to the mesh, separate from the geometry. It says: *"if anyone attaches to me, here is the pose they should snap onto."*
 
-The `cp-*` family adjusts this tag without touching the geometry:
+The `cp-*` family slides the geometry under the (stationary) anchor so that a chosen feature point comes to coincide with it:
 
-- `cp-f n` — slide the anchor forward by `n` along the heading at creation time.
-- `cp-u n` — slide the anchor up by `n`.
-- `cp-rt n` — slide the anchor right by `n`.
+- `cp-f n` — re-anchor at the point `+n` along heading from the original anchor (geometry slides backward by `n` along heading).
+- `cp-u n` — re-anchor at the point `+n` along up (geometry slides down by `n`).
+- `cp-rt n` — re-anchor at the point `+n` along right (geometry slides left by `n`).
 
-The geometry stays put. Only the tag moves.
+The anchor stays put in world. The geometry moves under it. Net effect: the original local point at `+n` along the chosen axis now coincides with the anchor — so future attachers land there.
 
 The effect shows up later, when something else uses the mesh:
 
@@ -92,12 +92,13 @@ A different use case: putting a peg on top of a plate.
 ;; A flat plate, anchor at the centre by default.
 (def plate (box 100 100 5))
 
-;; A peg, anchor shifted to its bottom — so attaching it
-;; somewhere lands its bottom on the target, not its midpoint.
+;; A vertical peg (height along the up axis: `box w d l` puts d along up).
+;; Anchor shifted to its base — so attaching it somewhere lands its base
+;; on the target, not its midpoint.
 (def peg
-  (attach (cyl 8 30) (cp-u -15)))
+  (attach (box 16 30 16) (cp-u -15)))
 
-;; Now snap the peg onto the top face of the plate.
+;; Snap the peg's base onto the top face of the plate.
 (register Assembly
   (mesh-union
    plate
@@ -113,11 +114,11 @@ Without the shift on the peg, its centre would coincide with the plate's top fac
 
 ## Common pitfalls
 
-- **Confusing `cp-*` with positioning moves.** `cp-f 10` shifts the *anchor* forward by 10. `(attach mesh (f 10))` moves the *mesh* forward by 10 at compose time. Both look similar in the code but they live in different phases: `cp-*` runs at creation, positioning runs at compose. Mix them up and you'll compensate twice.
+- **Confusing `cp-*` with positioning moves.** `cp-f n` re-picks the anchor: it slides the geometry under a stationary anchor so the local point at `+n` along heading lands on it. `(attach mesh (f n))` translates the *mesh* forward by `n` at compose time, keeping the anchor at the centroid (or wherever it was). Both look similar in code but they live in different phases — `cp-*` runs at creation and is "baked in" for all later uses; `f` is a one-shot translation at compose. Mix them up and you'll compensate twice.
 
 - **Forgetting that rotation pivots around the creation pose.** If a rotation looks wrong — pivots somewhere unexpected, swings the mesh off into space — check the creation pose first. Most of the time the rotation is correct and the pose is in the wrong place.
 
-- **Shifting the geometry instead of the pose.** If you find yourself writing `(attach (box …) (f offset))` to "move the box so its anchor ends up where I want", you're moving the geometry. Use `cp-f` instead — the geometry stays put, only the anchor moves.
+- **Compensating with a positioning move when `cp-*` would do.** Writing `(attach (box …) (f offset))` to "shift the box so it sits the way I want when later attached" works, but it bakes the offset into compose-time code. `cp-f` records the same shift on the mesh itself, so the compose-time call stays clean.
 
 ## See also
 
