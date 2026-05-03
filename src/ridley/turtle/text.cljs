@@ -21,8 +21,9 @@
 ;; Cache for loaded fonts: {url-or-key -> font-object}
 (defonce ^:private font-cache (atom {}))
 
-;; Default font (loaded at startup)
-(defonce ^:private default-font (atom nil))
+;; Default font (loaded at startup). Public so tests can inject a synchronously-
+;; loaded font without going through the async browser fetch path.
+(defonce default-font (atom nil))
 
 ;; Built-in font paths (relative for GitHub Pages compatibility)
 (def ^:private builtin-fonts
@@ -239,6 +240,47 @@
     {:outer (vec (map :contour (filter #(pos? (:area %)) classified)))
      :holes (vec (map :contour (filter #(neg? (:area %)) classified)))}))
 
+(defn- point-in-contour?
+  "Ray-casting point-in-polygon test. Returns true if [x y] is inside contour."
+  [[x y] contour]
+  (let [n (count contour)]
+    (loop [i 0
+           j (dec n)
+           inside false]
+      (if (>= i n)
+        inside
+        (let [[xi yi] (nth contour i)
+              [xj yj] (nth contour j)
+              crosses? (and (not= (> yi y) (> yj y))
+                            (< x (+ xi (/ (* (- xj xi) (- y yi))
+                                          (- yj yi)))))]
+          (recur (inc i) i (if crosses? (not inside) inside)))))))
+
+(defn- assign-holes-to-outers
+  "For each outer contour, find which holes belong inside it.
+   A hole belongs to the SMALLEST outer (by absolute area) that contains it,
+   so nested glyphs (rare but possible) attribute correctly.
+   Returns vector of {:outer contour :holes [...]}."
+  [outers holes]
+  (let [outer-areas (mapv (fn [o] {:contour o :area (Math/abs (contour-area o))}) outers)
+        holes-with-target
+        (mapv (fn [hole]
+                (let [test-pt (first hole)
+                      candidates (filter (fn [{:keys [contour]}]
+                                           (point-in-contour? test-pt contour))
+                                         outer-areas)]
+                  ;; Pick smallest containing outer (innermost in case of nesting)
+                  (when (seq candidates)
+                    {:hole hole
+                     :target (:contour (apply min-key :area candidates))})))
+              holes)]
+    (mapv (fn [outer]
+            {:outer outer
+             :holes (vec (keep (fn [{:keys [hole target]}]
+                                 (when (identical? target outer) hole))
+                               (remove nil? holes-with-target)))})
+          outers)))
+
 ;; ============================================================
 ;; Public API
 ;; ============================================================
@@ -280,11 +322,12 @@
    - :font - font object (default: built-in Roboto)
    - :curve-segments - segments for Bezier curves (default 8)
 
-   Returns a VECTOR of shapes, one per character contour.
-   Use with extrude which handles multiple shapes:
-   (extrude (text-shape \"Hi\" :size 30) (f 5))
+   Returns a VECTOR of shapes. Composite glyphs (lowercase i/j, accented
+   letters, umlauts, etc.) produce multiple shapes — one per outer contour,
+   with holes attributed to the containing outer.
 
-   Shapes include holes for letters like O, A, B, etc."
+   Use with extrude which combines multiple shapes into a single mesh:
+   (extrude (text-shape \"Hi\" :size 30) (f 5))"
   [text & {:keys [size font curve-segments]
            :or {size 10 curve-segments 8}}]
   (let [font (or font @default-font)]
@@ -303,9 +346,9 @@
                   commands (.-commands path)
                   contours (path-commands->contours commands curve-segments)
                   advance-width (* (.-advanceWidth glyph) scale)
-                  ;; Flip Y and reverse points to preserve winding
-                  ;; opentype.js getPath uses SVG coords (Y-down), we need Y-up
-                  ;; Y flip inverts winding, reverse restores it
+                  ;; Flip Y and reverse points to preserve winding.
+                  ;; opentype.js getPath uses SVG coords (Y-down), we need Y-up.
+                  ;; Y flip inverts winding, reverse restores it.
                   normalized-contours
                   (->> contours
                        (map (fn [contour]
@@ -313,27 +356,22 @@
                        (map remove-consecutive-duplicates)
                        (filter #(> (count %) 2))
                        vec)
-                  ;; Classify contours - winding is preserved after flip+reverse
                   {:keys [outer holes]} (classify-contours normalized-contours)
-                  ;; Get largest outer contour as the main shape boundary
-                  largest-outer (when (seq outer)
-                                  (apply max-key count outer))
-                  ;; Use the outer contour as-is (winding is correct after flip+reverse)
-                  final-outer largest-outer
-                  ;; Create shape with holes
-                  ;; preserve-position? keeps the offset for proper text spacing
-                  ;; align-to-heading? makes text extend along heading (readable from front)
-                  glyph-shape (when (and final-outer (> (count final-outer) 2))
-                                (shape/make-shape final-outer
-                                                  (cond-> {:centered? false
-                                                           :preserve-position? true
-                                                           :align-to-heading? true}
-                                                    (seq holes) (assoc :holes holes))))]
+                  ;; Composite glyphs (i, j, à, ä, ñ, ...) have multiple outers.
+                  ;; Emit one shape per outer, attributing each hole to its container.
+                  outer+holes (assign-holes-to-outers outer holes)
+                  glyph-shapes (keep (fn [{:keys [outer holes]}]
+                                       (when (> (count outer) 2)
+                                         (shape/make-shape
+                                          outer
+                                          (cond-> {:centered? false
+                                                   :preserve-position? true
+                                                   :align-to-heading? true}
+                                            (seq holes) (assoc :holes holes)))))
+                                     outer+holes)]
               (recur (inc idx)
                      (+ x-offset advance-width)
-                     (if glyph-shape
-                       (conj shapes glyph-shape)
-                       shapes)))))))))
+                     (into shapes glyph-shapes)))))))))
 
 (defn text-shapes
   "Create multiple shapes, one per character.

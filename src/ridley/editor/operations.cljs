@@ -13,6 +13,7 @@
 
 (declare pure-bloft)
 (declare pure-loft-path)
+(declare combine-meshes wrap-results)
 
 (defn- bezier-path-has-self-intersection?
   "Quick check: would extruding this shape along this bezier path cause
@@ -68,10 +69,7 @@
                        acc)))
                  []
                  shapes)]
-    ;; Return single mesh or vector of meshes
-    (if (= 1 (count results))
-      (first results)
-      results)))
+    (wrap-results results)))
 
 (defn ^:export pure-extrude-path
   "Pure extrude function - creates mesh without side effects.
@@ -105,9 +103,7 @@
                        (if mesh (conj acc mesh) acc)))
                    []
                    shapes)]
-      (if (= 1 (count results))
-        (first results)
-        results))))
+      (wrap-results results))))
 
 (defn- combine-meshes
   "Combine multiple meshes into one by concatenating vertices and reindexing faces.
@@ -146,11 +142,14 @@
     [shape-or-shapes]))
 
 (defn- wrap-results
-  "Return single result or vector based on count."
+  "Return a single mesh from one or more extrusion/loft/revolve results.
+   Multiple meshes (from a vector input of shapes) are combined geometry-wise
+   so downstream boolean ops receive a single valid mesh, not a vector."
   [results]
-  (if (= 1 (count results))
-    (first results)
-    results))
+  (case (count results)
+    0 nil
+    1 (first results)
+    (combine-meshes results)))
 
 (defn ^:export pure-loft-path
   "Pure loft function - creates mesh without side effects.
@@ -280,9 +279,9 @@
   ([shape-fn-val path] (pure-loft-shape-fn shape-fn-val path 16))
   ([shape-fn-val path steps]
    (let [path-length (reduce + 0 (keep (fn [cmd]
-                                          (when (= :f (:cmd cmd))
-                                            (first (:args cmd))))
-                                        (:commands path)))]
+                                         (when (= :f (:cmd cmd))
+                                           (first (:args cmd))))
+                                       (:commands path)))]
      (binding [sfn/*path-length* path-length]
        (let [base-shape (shape-fn-val 0)
              transform-fn (fn [_shape t] (shape-fn-val t))]
@@ -294,9 +293,9 @@
   ([shape-fn-val path steps] (pure-bloft-shape-fn shape-fn-val path steps 0.1))
   ([shape-fn-val path steps threshold]
    (let [path-length (reduce + 0 (keep (fn [cmd]
-                                          (when (= :f (:cmd cmd))
-                                            (first (:args cmd))))
-                                        (:commands path)))]
+                                         (when (= :f (:cmd cmd))
+                                           (first (:args cmd))))
+                                       (:commands path)))]
      (binding [sfn/*path-length* path-length]
        (let [base-shape (shape-fn-val 0)
              transform-fn (fn [_shape t] (shape-fn-val t))]

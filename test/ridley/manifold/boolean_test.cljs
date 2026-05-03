@@ -117,3 +117,45 @@
       (let [result (manifold/hull box-a box-b)]
         (is (= sample-pose (:creation-pose result)))
         (is (= {:color 0xff0000} (:material result)))))))
+
+;; ── Fail-fast on bad inputs ─────────────────────────────────
+;; Without these checks, passing a vector-of-meshes (e.g. legacy extrude
+;; result) would silently return nil, costing hours of debugging.
+
+(deftest difference-rejects-vector-arg
+  (testing "mesh-difference throws on vector-as-mesh argument"
+    (is (thrown? js/Error (manifold/difference box-a [box-b box-b]))
+        "Vector as second arg must throw, not return nil silently")
+    (is (thrown? js/Error (manifold/difference box-a box-b [box-b box-b]))
+        "Vector as third arg must throw too")))
+
+(deftest union-rejects-vector-arg
+  (testing "mesh-union throws on vector-as-mesh argument"
+    (is (thrown? js/Error (manifold/union box-a [box-b box-b])))))
+
+(deftest intersection-rejects-vector-arg
+  (testing "mesh-intersection throws on vector-as-mesh argument"
+    (is (thrown? js/Error (manifold/intersection box-a [box-b box-b])))))
+
+(deftest difference-rejects-nil-arg
+  (testing "mesh-difference throws on nil argument"
+    (is (thrown? js/Error (manifold/difference box-a nil)))))
+
+(deftest difference-error-message-mentions-vector
+  (testing "the error message guides the user toward the fix"
+    (try
+      (manifold/difference box-a [box-b box-b])
+      (is false "Should have thrown")
+      (catch :default e
+        (let [msg (.-message e)]
+          (is (re-find #"vector|extrude|concat-meshes" msg)
+              (str "Error message should hint at the cause; got: " msg)))))))
+
+(deftest difference-accepts-vector-of-meshes-as-sole-arg
+  (testing "(difference [a b c]) is the documented variadic form — must NOT throw"
+    ;; This is the [a b c] → A - B - C form. coerce-to-meshes runs after the
+    ;; vector is normalized into [a b c], so each element is checked individually.
+    (if-not (manifold-available?)
+      (is true "Skipped: Manifold WASM not available in node")
+      (let [result (manifold/difference [box-a box-b])]
+        (is (some? result))))))

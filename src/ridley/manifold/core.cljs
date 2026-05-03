@@ -265,15 +265,42 @@
 ;; Boolean operations
 ;; ============================================================
 
+(defn- describe-bad-arg
+  "Return a short human description of why `a` is not a valid mesh argument."
+  [a]
+  (cond
+    (nil? a)         "nil"
+    (sequential? a)  (str "a vector/seq of " (count a) " element(s) — did an extrude/loft return multiple meshes? "
+                          "If so, that's now a single mesh in this codebase; "
+                          "if you assembled it manually, wrap with concat-meshes or mesh-union first")
+    (and (map? a)
+         (not= :mesh (:type a))
+         (some? (:type a))) (str "a " (name (:type a)) " (expected a mesh)")
+    (map? a)         "a map without :vertices/:faces (not a valid mesh)"
+    :else            (str (pr-str (type a)))))
+
 (defn- coerce-to-meshes
-  "Convert any SDF nodes in `args` to meshes via sdf/ensure-mesh.
+  "Convert any SDF nodes in `args` to meshes via sdf/ensure-mesh, and reject
+   any non-mesh, non-SDF input with an explicit error (rather than silently
+   returning nil downstream).
+
    Warns if every arg is an SDF (suggests using sdf-* for higher precision).
 
    Note: uses 1-arg ensure-mesh (auto-bounds from the SDF tree itself).
    For 'infinite' SDFs (gyroid, half-spaces) used as cutters in mesh-difference,
    you may need to call sdf-ensure-mesh manually with a reference mesh."
   [op-name args]
-  (let [sdf-flags (mapv sdf/sdf-node? args)]
+  (let [sdf-flags (mapv sdf/sdf-node? args)
+        bad (keep-indexed
+             (fn [i a]
+               (when-not (or (nth sdf-flags i)
+                             (and (map? a) (:vertices a) (:faces a)))
+                 {:idx i :why (describe-bad-arg a)}))
+             args)]
+    (when (seq bad)
+      (let [{:keys [idx why]} (first bad)]
+        (throw (js/Error.
+                (str "mesh-" op-name ": argument " (inc idx) " is " why ".")))))
     (when (every? identity sdf-flags)
       (js/console.warn
        (str "mesh-" op-name ": all arguments are SDF nodes — "
