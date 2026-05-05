@@ -979,6 +979,13 @@ Extrude sweeps a 2D shape along a path. Returns a mesh without side effects:
 
 **Pure operation:** `extrude` does not modify turtle state. The mesh starts at current turtle position.
 
+**Return value.** Always a single mesh.
+
+- Single shape input → single mesh.
+- Vector-of-shapes input (e.g. `text-shape` output, where composite glyphs and multi-letter strings produce multiple shapes) → single combined mesh. The shapes are extruded independently along the same path, then merged into one mesh so downstream boolean ops (`mesh-difference`, `mesh-union`, …) just work without manual `concat-meshes`.
+
+The same convention applies to `extrude-closed`, `loft`, `bloft`, and `revolve`.
+
 **Joint modes.** Control corner geometry during extrusion:
 
 ```clojure
@@ -1269,6 +1276,29 @@ The heading vector acts as the plane normal. The resulting shapes use the turtle
 ```
 
 Shapes returned have `:preserve-position? true` so they render at absolute plane-local coordinates when fed to `stamp`. See [Anchoring flags](#anchoring-flags) for how the flag changes shape projection.
+
+Both `slice-mesh` and `project-mesh` accept a mesh map, a registered mesh keyword, or an SDF node (auto-materialized via the current `*sdf-resolution*`).
+
+### Silhouette (project)
+
+Project a mesh onto the plane orthogonal to the turtle's heading, returning the silhouette outline as a vector of 2D shapes. Whereas `slice-mesh` gives the cross-section *at* a plane, `project-mesh` gives the shadow *of* the mesh as seen looking along the heading.
+
+```clojure
+(project-mesh mesh)                  ; Silhouette of mesh
+(project-mesh :neck)                 ; Silhouette of registered mesh
+(project-mesh (sdf-blend a b 5))     ; Silhouette of an SDF (auto-materialized)
+```
+
+Same conventions as `slice-mesh`: heading is the projection direction, output shapes use turtle right/up as local X/Y, holes are preserved, and `:preserve-position? true` is set so `stamp` renders at absolute plane-local coordinates. Useful for pulling a 2D footprint from a 3D shape — e.g. to extrude a slightly larger silhouette as a negative for a clearance pocket.
+
+```clojure
+;; Top-down silhouette of a tilted neck, used as a cutter
+(def cut
+  (turtle (tv 90) (f 20)
+    (let [s (project-mesh (chitarra-sdf))
+          bigger (scale-shape s 1.05)]
+      (extrude bigger (f 10)))))
+```
 
 ### Convex hull
 
@@ -1869,6 +1899,7 @@ Meshing is **lazy**: it happens automatically when an SDF meets a mesh boundary 
 (sdf-box sx sy sz)              ; Axis-aligned box with dimensions sx x sy x sz
 (sdf-cyl r h)                   ; Cylinder along Z axis with radius r and height h
 (sdf-rounded-box sx sy sz r)    ; Box with rounded corners (true SDF)
+(sdf-torus R r)                 ; Torus in the XY plane around Z. R = major, r = minor
 ```
 
 Prefer `sdf-rounded-box` over `(sdf-offset (sdf-box ...) r)` when combining with other SDFs (see [SDF-specific operations](#sdf-specific-operations) below for why offset is not a true SDF).
@@ -1887,7 +1918,8 @@ These operations leverage the implicit representation and have no direct mesh eq
 
 | Function | Description |
 |----------|-------------|
-| `(sdf-blend a b k)` | Smooth blend between a and b. k controls the blend radius (higher values produce a wider, smoother transition) |
+| `(sdf-blend a b k)` | Smooth union between a and b. k controls the blend radius (higher values produce a wider, smoother transition) |
+| `(sdf-blend-difference a b k)` | Smooth subtraction: removes b from a with a soft concavity of radius k. Dual to `sdf-blend` for the union case |
 | `(sdf-shell a thickness)` | Hollow shell with uniform wall thickness |
 | `(sdf-offset a amount)` | Expand (positive) or contract (negative) the surface by amount. Note: `sdf-offset` shifts the field by `amount`, which produces a non-SDF away from the surface. For rounded boxes prefer `sdf-rounded-box`; for shell-like operations the result may not combine cleanly with `sdf-intersection` of other SDFs. |
 | `(sdf-morph a b t)` | Interpolate between shapes a and b. t ranges from 0 (= a) to 1 (= b) |
@@ -1927,7 +1959,9 @@ These operations leverage the implicit representation and have no direct mesh eq
 
 Materialization is normally automatic. Call `sdf->mesh` only when you need explicit control over bounds or resolution.
 
-**Resolution**: controlled by the turtle's resolution setting. Higher resolution = finer mesh but slower meshing. When the tree contains thin features (`sdf-shell`, small `sdf-offset`), resolution is automatically boosted to guarantee at least 3 voxels across the thinnest part.
+**Resolution**: a global meshing resolution governs auto-meshing of SDF nodes (default 15, "turtle-style" — same scale as `(resolution :n N)` for curves). Bump it with `(sdf-resolution! 60)` before `register` to get a finer mesh. Higher = finer but slower; total voxel count is also capped to keep meshes printable. When the tree contains thin features (`sdf-shell`, small `sdf-offset`), resolution is automatically boosted to guarantee at least 3 voxels across the thinnest part.
+
+For full control, call `sdf->mesh` directly with explicit `bounds` and `resolution` (voxels per unit) — bypasses the auto-resolution and auto-bounds entirely.
 
 ### Custom formulas
 
@@ -2117,10 +2151,10 @@ Convert text to 2D shapes using opentype.js font parsing:
 ;; With size
 (text-shape "Hello" :size 30)           ; Larger text
 
-;; Extrude for 3D text (extrude handles vector of shapes)
+;; Extrude for 3D text — single mesh out, ready for booleans.
 (register title (extrude (text-shape "RIDLEY" :size 40) (f 5)))
 
-;; Individual character shapes (one shape per character)
+;; Individual character shapes (one shape per character, no composite handling)
 (text-shapes "ABC" :size 20)            ; Returns vector of shapes
 
 ;; Single character shape
@@ -2133,6 +2167,19 @@ Convert text to 2D shapes using opentype.js font parsing:
 ;; Check if font is ready
 (font-loaded?)                          ; true when default font loaded
 ```
+
+**Return value of `text-shape`.** A vector of shapes, with one entry per **outer contour** found in the string — not strictly one per character. Composite glyphs produce multiple shapes:
+
+| Glyph                     | Outer contours | Shapes emitted |
+|---------------------------|----------------|----------------|
+| `I`, `O`, `c`, `n` …      | 1              | 1              |
+| `i`, `j`                  | 2 (stem + tittle) | 2          |
+| `à`, `è`, `é`, `ì`, `ò`, `ù` | 2 (letter + accent) | 2     |
+| `ä`, `ö`, `ü`, `ñ`        | 3 (letter + 2 marks / tilde) | 3 |
+
+Holes (counters inside `o`, `a`, `B`, etc.) are attributed to the smallest containing outer, so `ä` correctly yields a body-with-counter plus two solid dots.
+
+Pass the whole vector to `extrude` — it combines the per-shape extrusions into a single mesh.
 
 **Built-in fonts:**
 - `:roboto`: Roboto Regular (default).
@@ -2660,6 +2707,28 @@ Pass `:3mf` as a trailing argument to export in 3MF format instead of STL:
 (export :torus :3mf)             ; torus.3mf
 ```
 
+**Multi-material 3MF.** When two or more registered meshes have a color set
+via `(color :name 0xRRGGBB)`, the 3MF file carries that information through
+to the slicer:
+
+- Each mesh becomes a separate `<object>` (no merging, unlike STL).
+- A `<basematerials>` block holds one entry per distinct color, with the
+  registered mesh name as label and the color as `displaycolor`.
+- Each colored object points at the right entry via `pid`/`pindex`.
+
+```clojure
+(register :supporto (box 40 20 2))
+(register :scritta  (extrude (text-shape "OK") :h 1))
+(color :supporto 0xff0000)
+(color :scritta  0xffffff)
+(export :supporto :scritta :3mf)
+```
+
+In Bambu Studio / OrcaSlicer the two parts appear as distinct objects with
+their colors preassigned, ready to be mapped to AMS slots. Identical colors
+on multiple meshes share one material entry (same filament, distinct parts).
+Meshes without a color produce the same plain-geometry output as before.
+
 ### View capture (render-view, render-slice, save-views)
 
 Functions for rendering views of the scene to images. Useful for documentation, debugging, and the AI describe feature.
@@ -2816,6 +2885,8 @@ Standard math functions and the constant `PI` are exposed at the top level (no i
 | `acos` | `(acos x)` | Inverse cosine, returns radians in [0, PI] |
 | `atan` | `(atan x)` | Inverse tangent, returns radians in (-PI/2, PI/2) |
 | `atan2` | `(atan2 y x)` | Two-argument arctangent, returns radians in (-PI, PI] |
+| `to-radians` | `(to-radians deg)` | Convert degrees to radians |
+| `to-degrees` | `(to-degrees rad)` | Convert radians to degrees |
 
 **Exponentials and logarithms:**
 

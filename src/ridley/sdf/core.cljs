@@ -81,6 +81,27 @@
   [a b c r]
   {:op "rounded-box" :sx c :sy a :sz b :r r})
 
+(declare compile-expr)
+
+(defn sdf-torus
+  "Torus in the XY plane around the Z axis.
+   R = major radius (center of tube to torus axis), r = minor radius (tube)."
+  [R r]
+  (-> (compile-expr
+       (list '- (list 'sqrt
+                      (list '+
+                            (list 'square
+                                  (list '-
+                                        (list 'sqrt (list '+ (list 'square 'x) (list 'square 'y)))
+                                        R))
+                            (list 'square 'z)))
+             r))
+      ;; Annotate bounds so auto-bounds gives the right meshing region.
+      ;; auto-bounds reads :x-range as radial extent and :y-range as height extent
+      ;; (revolve convention: X=radius, Y=height).
+      (assoc :x-range [(- (+ R r)) (+ R r)]
+             :y-range [(- r) r])))
+
 ;; ── SDF boolean operations ──────────────────────────────────────
 
 (defn- variadic-args
@@ -128,6 +149,13 @@
 ;; ── SDF-only operations ─────────────────────────────────────────
 
 (defn sdf-blend [a b k] {:op "blend" :a a :b b :k k})
+
+(defn sdf-blend-difference
+  "Smooth subtraction: removes b from a with a soft transition of radius k.
+   Analogous to sdf-blend but for difference. k has length units (mm in
+   typical Ridley scenes); higher k → wider, smoother concavity."
+  [a b k]
+  {:op "blend-difference" :a a :b b :k k})
 (defn sdf-shell [a thickness] {:op "shell" :a a :thickness thickness})
 (defn sdf-offset [a amount] {:op "offset" :a a :amount amount})
 (defn sdf-morph [a b t] {:op "morph" :a a :b b :t t})
@@ -214,7 +242,9 @@
     (number? form) {:op "const" :value form}
 
     (seq? form)
-    (let [[op & args] form]
+    (let [[op-raw & args] form
+          ;; Strip namespace (syntax-quote inside SCI qualifies +, -, min, max, etc. to clojure.core/*).
+          op (if (symbol? op-raw) (symbol (name op-raw)) op-raw)]
       (cond
         (unary-ops op)
         (do (assert (= 1 (count args)) (str op " expects 1 argument"))
@@ -231,7 +261,7 @@
                     (compile-expr (first args))
                     (rest args)))
 
-        :else (throw (js/Error. (str "sdf-formula: unknown op '" op "'")))))
+        :else (throw (js/Error. (str "sdf-formula: unknown op '" op-raw "'")))))
 
     :else (throw (js/Error. (str "sdf-formula: cannot compile '" form "'")))))
 
@@ -464,16 +494,16 @@
            child-mins (keep #(min-feature-size % scale) kids)]
        (when (seq child-mins) (apply min child-mins))))))
 
-(def ^:private max-voxels
-  "Maximum total voxel budget for SDF meshing (base resolution only).
-   The thin-feature boost is exempt from this cap to avoid artifacts."
+(def ^:private base-max-voxels
+  "Maximum total voxel budget for SDF meshing at default turtle-res=15.
+   Scales linearly with turtle-res so bumping resolution actually allows finer meshes."
   4e6)
 
 (defn- resolution-for-bounds
   "Convert turtle-style resolution to voxels-per-unit for SDF meshing.
-   The base resolution is capped by max-voxels budget, but the thin-feature
-   minimum (3 voxels per thinnest feature) is never capped — it's a hard
-   requirement for visual correctness."
+   The base resolution is capped by a voxel budget that scales with turtle-res,
+   so bumping *sdf-resolution* has real effect. The thin-feature boost is also
+   capped by the same scaled cap to avoid OOM from tiny shells/offsets."
   [bounds turtle-res node]
   (let [spans (mapv (fn [[lo hi]] (- hi lo)) bounds)
         max-span (apply max spans)
@@ -483,19 +513,20 @@
         base-vpu (if (pos? max-span)
                    (/ grid-size max-span)
                    2.0)
-        ;; Cap base resolution by voxel budget
+        ;; Voxel budget scales with turtle-res so the user can effectively bump it.
+        budget (* base-max-voxels (max 1.0 (/ turtle-res 15.0)))
         max-vpu (if (pos? volume)
-                  (js/Math.pow (/ max-voxels volume) (/ 1 3))
+                  (js/Math.pow (/ budget volume) (/ 1 3))
                   base-vpu)
         capped-base (min base-vpu max-vpu)
         ;; Thin-feature boost: at least 2.5 voxels across thinnest part
-        ;; Not capped by budget (hard requirement), but clamped to avoid OOM
+        ;; Capped by the scaled budget rather than a hard 200/max-span.
         min-feat (min-feature-size node)
         feat-vpu (if (and min-feat (pos? min-feat))
                    (/ 2.5 min-feat)
                    0.0)
-        ;; Hard cap on longest axis to prevent excessive mesh size
-        abs-max-vpu (if (pos? max-span) (/ 200.0 max-span) 10.0)]
+        ;; Hard cap on longest axis: scales with grid-size so user can override.
+        abs-max-vpu (if (pos? max-span) (/ (* 3 grid-size) max-span) 10.0)]
     (min (max capped-base feat-vpu) abs-max-vpu)))
 
 (def ^:dynamic *sdf-resolution*

@@ -74,6 +74,8 @@ Save/open file dialog simmetrici: il save dialog nativo è già implementato lat
 
 Recent files: lista dei file aperti di recente con persistenza e voce di menu (una giornata).
 
+`path-to-shape` come vera proiezione XY: oggi `path-to-shape` ([shape.cljs:359](../src/ridley/turtle/shape.cljs#L359)) ritraccia il path considerando solo `:f`, `:th` e `:set-heading` (con Z scartata), ignorando silenziosamente `:b`, `:tv` e `:tr`. La docstring e Spec.md la descrivono come "XY projection", ma una proiezione reale eseguirebbe il path completo in 3D e poi scarterebbe la Z dei waypoint. Da fare: eseguire il trace con turtle 3D e proiettare a posteriori (mezza giornata).
+
 ### 1.6 Recupero della copertura test
 
 Il cap. 15.2.7 di `Architecture.md` elenca le aree del sistema con copertura test scoperta. Sono aree distribuibili nel tempo e su sessioni separate, perché ognuna è autocontenuta: voce, AI, animazione, viewport, librerie, modi interattivi. Il lavoro è di scrivere fixture e harness specifici per ogni area, non di portare il numero di test in alto in modo grossolano.

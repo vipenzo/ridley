@@ -131,9 +131,12 @@
 
 (defn translate-shape
   "Translate a shape by [dx dy]. Returns a new shape with translated points.
-   Useful for positioning shapes before revolve (which uses X as radial distance)."
+   Useful for positioning shapes before revolve (which uses X as radial distance).
+   Also accepts a vector of shapes (e.g. from text-shape, project-mesh)."
   [shape dx dy]
-  (when (shape? shape)
+  (cond
+    (sequential? shape) (mapv #(translate-shape % dx dy) shape)
+    (shape? shape)
     (let [translate-point (fn [[x y]] [(+ x dx) (+ y dy)])
           new-points (mapv translate-point (:points shape))
           new-holes (when (:holes shape)
@@ -143,10 +146,14 @@
 
 (defn scale-shape
   "Scale a shape by [sx sy] or uniformly by s, around its centroid.
-   Returns a new shape with scaled points."
+   Returns a new shape with scaled points.
+   Also accepts a vector of shapes (e.g. from text-shape, project-mesh) —
+   each shape is scaled around its own centroid."
   ([shape s] (scale-shape shape s s))
   ([shape sx sy]
-   (when (shape? shape)
+   (cond
+     (sequential? shape) (mapv #(scale-shape % sx sy) shape)
+     (shape? shape)
      (let [pts (:points shape)
            n (count pts)
            cx (/ (reduce + (map first pts)) n)
@@ -163,9 +170,12 @@
 (defn reverse-shape
   "Reverse the winding order of a shape's points.
    This flips the normal direction when the shape is extruded/revolved.
-   Use when normals are pointing the wrong way."
+   Use when normals are pointing the wrong way.
+   Also accepts a vector of shapes."
   [shape]
-  (when (shape? shape)
+  (cond
+    (sequential? shape) (mapv reverse-shape shape)
+    (shape? shape)
     (let [new-points (vec (reverse (:points shape)))
           ;; Holes also need to be reversed to maintain relative winding
           new-holes (when (:holes shape)
@@ -264,16 +274,16 @@
   [points op-fn indices]
   (let [n (count points)]
     (into []
-      (mapcat
-        (fn [i]
-          (if (and indices (not (contains? indices i)))
-            [(nth points i)]
-            (let [prev (nth points (mod (dec (+ i n)) n))
-                  curr (nth points i)
-                  nxt  (nth points (mod (inc i) n))
-                  replacement (op-fn prev curr nxt)]
-              (or replacement [curr]))))
-        (range n)))))
+          (mapcat
+           (fn [i]
+             (if (and indices (not (contains? indices i)))
+               [(nth points i)]
+               (let [prev (nth points (mod (dec (+ i n)) n))
+                     curr (nth points i)
+                     nxt  (nth points (mod (inc i) n))
+                     replacement (op-fn prev curr nxt)]
+                 (or replacement [curr]))))
+           (range n)))))
 
 (defn ^:export chamfer-shape
   "Cut corners of a 2D shape by replacing each vertex with a flat cut
@@ -294,8 +304,8 @@
           new-holes (when (:holes shape)
                       (mapv (fn [hole]
                               (apply-corner-op hole
-                                (fn [prev curr nxt] (chamfer-corner prev curr nxt d))
-                                nil))
+                                               (fn [prev curr nxt] (chamfer-corner prev curr nxt d))
+                                               nil))
                             (:holes shape)))]
       (cond-> (assoc shape :points new-points)
         new-holes (assoc :holes new-holes)))))
@@ -320,9 +330,9 @@
           new-holes (when (:holes shape)
                       (mapv (fn [hole]
                               (apply-corner-op hole
-                                (fn [prev curr nxt]
-                                  (fillet-corner-arc prev curr nxt d segments))
-                                nil))
+                                               (fn [prev curr nxt]
+                                                 (fillet-corner-arc prev curr nxt d segments))
+                                               nil))
                             (:holes shape)))]
       (cond-> (assoc shape :points new-points)
         new-holes (assoc :holes new-holes)))))
@@ -612,7 +622,7 @@
                 (let [mp (miter-point-2d p n1 n2 d1 d2 half-w sign)]
                   (if (and mp (<= (v2-mag [(- (first mp) (first p))
                                            (- (second mp) (second p))])
-                               (* miter-limit half-w)))
+                                  (* miter-limit half-w)))
                     (recur (inc i) (conj pts mp))
                     ;; Miter limit exceeded: bevel fallback
                     (let [p1 (offset-point-2d p n1 (* sign half-w))
@@ -791,7 +801,7 @@
   (let [path (:path rec-state)
         ;; Remove last point if it's essentially the same as the first (closed polygon)
         clean-path (if (and (>= (count path) 4)
-                           (points-close? (first path) (last path)))
+                            (points-close? (first path) (last path)))
                      (vec (butlast path))
                      path)]
     (when (>= (count clean-path) 3)
@@ -865,8 +875,8 @@
                      [rx ry rz])
         ;; Choose plane axes
         [plane-x plane-y] (if align-to-heading?
-                           [turtle-heading turtle-up]
-                           [[rx ry rz] turtle-up])
+                            [turtle-heading turtle-up]
+                            [[rx ry rz] turtle-up])
         ;; Calculate offset
         offset (cond
                  preserve-position? [0 0]

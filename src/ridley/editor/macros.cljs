@@ -1227,6 +1227,21 @@
        name-or-mesh
        (get-mesh (if (keyword? name-or-mesh) name-or-mesh (keyword name-or-mesh)))))
 
+   ;; Tag a mesh with the registered name it was looked up by, so the export
+   ;; pipeline can emit it as an object name attribute in 3MF. No-op for nil.
+   (defn- with-export-name [mesh nm]
+     (when mesh
+       (assoc mesh :export-name (if (keyword? nm) nm (keyword (str nm))))))
+
+   ;; Like resolve-mesh, but also tags the mesh with :export-name when the
+   ;; caller passed a name (keyword/string/symbol).
+   (defn- resolve-mesh-for-export [name-or-mesh]
+     (cond
+       (mesh? name-or-mesh) name-or-mesh
+       (or (keyword? name-or-mesh) (string? name-or-mesh) (symbol? name-or-mesh))
+       (let [kw (if (keyword? name-or-mesh) name-or-mesh (keyword (str name-or-mesh)))]
+         (with-export-name (get-mesh kw) kw))))
+
    ;; Bounding box functions
    ;; (bounds :cube)       - by registered mesh name
    ;; (bounds cube)        - by mesh reference
@@ -1296,7 +1311,7 @@
        (let [arg (first args)
              kw (if (keyword? arg) arg (keyword (str arg)))]
          (when-let [m (get-mesh kw)]
-           (save-mesh [m] (str (name kw) \".\" (name fmt)) fmt)))
+           (save-mesh [(with-export-name m kw)] (str (name kw) \".\" (name fmt)) fmt)))
 
        ;; Single sequential of names
        (and (= 1 (count args))
@@ -1306,7 +1321,7 @@
                 (string? (ffirst args))
                 (symbol? (ffirst args))))
        (let [names (first args)
-             meshes (keep #(resolve-mesh %) names)]
+             meshes (keep #(resolve-mesh-for-export %) names)]
          (when (seq meshes)
            (save-mesh (vec meshes)
                       (str (clojure.string/join \"-\" (map #(name (if (keyword? %) % (keyword (str %)))) names))
@@ -1319,9 +1334,9 @@
                   (str (export-default-name (first args)) \".\" (name fmt))
                   fmt)
 
-       ;; Single map of meshes
+       ;; Single map of meshes — keys are treated as object names
        (and (= 1 (count args)) (mesh-map? (first args)))
-       (save-mesh (vec (vals (first args)))
+       (save-mesh (vec (for [[k m] (first args)] (with-export-name m k)))
                   (str (export-default-name (first args)) \".\" (name fmt))
                   fmt)
 
@@ -1343,11 +1358,11 @@
        (when-let [m (get (first args) (second args))]
          (let [k (second args)
                kn (if (keyword? k) (name k) (str k))]
-           (save-mesh [m] (str kn \".\" (name fmt)) fmt)))
+           (save-mesh [(with-export-name m k)] (str kn \".\" (name fmt)) fmt)))
 
        ;; Otherwise: treat all args as a heterogeneous list of meshes/names
        :else
-       (let [meshes (keep resolve-mesh args)
+       (let [meshes (keep resolve-mesh-for-export args)
              default-name (or (some #(when (or (keyword? %) (string? %) (symbol? %))
                                        (name (if (keyword? %) % (keyword (str %)))))
                                     args)

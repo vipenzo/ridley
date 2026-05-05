@@ -67,6 +67,7 @@ extern "C" {
     fn shell(a: LibfiveTree, offset: LibfiveTree) -> LibfiveTree;
     fn offset(a: LibfiveTree, o: LibfiveTree) -> LibfiveTree;
     fn blend_expt_unit(a: LibfiveTree, b: LibfiveTree, m: LibfiveTree) -> LibfiveTree;
+    fn blend_difference(a: LibfiveTree, b: LibfiveTree, m: LibfiveTree, o: LibfiveTree) -> LibfiveTree;
     fn morph(a: LibfiveTree, b: LibfiveTree, m: LibfiveTree) -> LibfiveTree;
 
     // Transforms
@@ -158,6 +159,8 @@ pub enum SdfNode {
     Intersection { a: std::boxed::Box<SdfNode>, b: std::boxed::Box<SdfNode> },
     #[serde(rename = "blend")]
     Blend { a: std::boxed::Box<SdfNode>, b: std::boxed::Box<SdfNode>, k: f64 },
+    #[serde(rename = "blend-difference")]
+    BlendDifference { a: std::boxed::Box<SdfNode>, b: std::boxed::Box<SdfNode>, k: f64 },
     #[serde(rename = "shell")]
     Shell { a: std::boxed::Box<SdfNode>, thickness: f64 },
     #[serde(rename = "offset")]
@@ -224,6 +227,9 @@ fn build_tree(node: &SdfNode) -> LibfiveTree {
             SdfNode::Intersection { a, b } => intersection(build_tree(a), build_tree(b)),
             SdfNode::Blend { a, b, k } => {
                 blend_expt_unit(build_tree(a), build_tree(b), tc(*k as f32))
+            }
+            SdfNode::BlendDifference { a, b, k } => {
+                blend_difference(build_tree(a), build_tree(b), tc(*k as f32), tc(0.0))
             }
             SdfNode::Shell { a, thickness } => {
                 shell(build_tree(a), tc(*thickness as f32))

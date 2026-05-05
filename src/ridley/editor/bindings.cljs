@@ -359,6 +359,7 @@
    'transform           turtle/transform-mesh
    'solidify-impl       manifold/solidify
    'slice-mesh          impl/implicit-slice-mesh
+   'project-mesh        impl/implicit-project-mesh
    'slice-at-plane      manifold/slice-at-plane
    ;; Scene registry
    'add-mesh!           registry/add-mesh!
@@ -484,6 +485,8 @@
    'exp                 js/Math.exp
    'min                 js/Math.min
    'max                 js/Math.max
+   'to-radians          (fn [deg] (/ (* deg js/Math.PI) 180))
+   'to-degrees          (fn [rad] (/ (* rad 180) js/Math.PI))
    ;; Debug logging (outputs to browser console)
    'log                 (fn [& args] (apply js/console.log (map clj->js args)))
    ;; Print functions (captured and shown in REPL)
@@ -579,10 +582,13 @@
    'sdf-box          sdf/sdf-box
    'sdf-cyl          sdf/sdf-cyl
    'sdf-rounded-box  sdf/sdf-rounded-box
+   'sdf-torus        sdf/sdf-torus
+   'sdf-resolution!  (fn [n] (set! sdf/*sdf-resolution* n))
    'sdf-union        sdf/sdf-union
    'sdf-difference   sdf/sdf-difference
    'sdf-intersection sdf/sdf-intersection
    'sdf-blend        sdf/sdf-blend
+   'sdf-blend-difference sdf/sdf-blend-difference
    'sdf-shell        sdf/sdf-shell
    'sdf-offset       sdf/sdf-offset
    'sdf-morph        sdf/sdf-morph

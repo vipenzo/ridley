@@ -9,6 +9,7 @@
             [ridley.turtle.path :as path]
             [ridley.geometry.primitives :as prims]
             [ridley.manifold.core :as manifold]
+            [ridley.sdf.core :as sdf]
             [ridley.scene.registry :as registry]
             [ridley.scene.panel :as panel]
             [ridley.viewport.core :as viewport]))
@@ -541,23 +542,14 @@
   (swap! (turtle-ref) update :meshes conj mesh)
   mesh)
 
-(defn ^:export implicit-slice-mesh
-  "Slice a mesh at the plane defined by the turtle's current position and heading.
-   The heading vector is the plane normal. Returns a vector of shapes
-   in the plane's local coordinates (X = turtle right, Y = turtle up).
-   Shapes have :preserve-position? true for absolute coordinate rendering.
-   Accepts a mesh map or a keyword (registered mesh name)."
-  [mesh-or-name]
-  (let [mesh (if (keyword? mesh-or-name)
-               (registry/get-mesh mesh-or-name)
-               mesh-or-name)
-        state @(turtle-ref)
+(defn- turtle-plane-basis
+  "Returns [pos heading up right] for the turtle's current plane,
+   with right = up × heading (det=+1, needed for Manifold)."
+  []
+  (let [state @(turtle-ref)
         pos (:position state)
         heading (:heading state)
         up (:up state)
-        ;; Compute right as up × heading (not heading × up)
-        ;; to ensure [right, up, heading] forms a right-handed basis (det=+1)
-        ;; which preserves face winding when transforming for Manifold
         [hx hy hz] heading
         [ux uy uz] up
         rx (- (* uy hz) (* uz hy))
@@ -566,13 +558,47 @@
         rmag (Math/sqrt (+ (* rx rx) (* ry ry) (* rz rz)))
         right (if (pos? rmag)
                 [(/ rx rmag) (/ ry rmag) (/ rz rmag)]
-                [0 1 0])
-        shapes (manifold/slice-at-plane mesh heading pos right up)
-        ;; The slice basis uses right = up × heading (det=+1, needed for Manifold),
-        ;; but stamp uses right = heading × up (opposite sign on X axis).
-        ;; Mirror X and reverse point order to match the stamp coordinate frame.
-        mirror (fn [pts] (mapv (fn [[x y]] [(- x) y]) (vec (rseq pts))))]
+                [0 1 0])]
+    [pos heading up right]))
+
+(defn- mirror-shapes-x
+  "Mirror X and reverse winding to match the stamp coordinate frame.
+   Manifold uses right = up × heading; stamp uses right = heading × up."
+  [shapes]
+  (let [mirror (fn [pts] (mapv (fn [[x y]] [(- x) y]) (vec (rseq pts))))]
     (mapv (fn [shape]
             (cond-> (update shape :points mirror)
               (:holes shape) (update :holes (fn [hs] (mapv mirror hs)))))
           shapes)))
+
+(defn- resolve-to-mesh
+  "Accept a mesh map, a keyword (registered mesh name), or an SDF node
+   (auto-materialized into a mesh)."
+  [x]
+  (cond
+    (keyword? x)     (registry/get-mesh x)
+    (sdf/sdf-node? x) (sdf/ensure-mesh x)
+    :else x))
+
+(defn ^:export implicit-slice-mesh
+  "Slice a mesh at the plane defined by the turtle's current position and heading.
+   The heading vector is the plane normal. Returns a vector of shapes
+   in the plane's local coordinates (X = turtle right, Y = turtle up).
+   Shapes have :preserve-position? true for absolute coordinate rendering.
+   Accepts a mesh map, a keyword (registered mesh name), or an SDF node
+   (auto-materialized)."
+  [mesh-or-name-or-sdf]
+  (let [mesh (resolve-to-mesh mesh-or-name-or-sdf)
+        [pos heading up right] (turtle-plane-basis)]
+    (mirror-shapes-x (manifold/slice-at-plane mesh heading pos right up))))
+
+(defn ^:export implicit-project-mesh
+  "Project a mesh onto the plane orthogonal to the turtle's heading,
+   returning the silhouette outline as a vector of 2D shapes (X = turtle right,
+   Y = turtle up). Holes are preserved. Shapes have :preserve-position? true.
+   Accepts a mesh map, a keyword (registered mesh name), or an SDF node
+   (auto-materialized)."
+  [mesh-or-name-or-sdf]
+  (let [mesh (resolve-to-mesh mesh-or-name-or-sdf)
+        [pos heading up right] (turtle-plane-basis)]
+    (mirror-shapes-x (manifold/project-at-plane mesh heading pos right up))))
