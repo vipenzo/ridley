@@ -13,8 +13,7 @@
   (let [;; --- manico: mezzo cilindro lungo X (heading), parte piatta verso +Z ---
         cilindro (sdf-rotate (sdf-cyl r_manico l_manico) :y 90)
         ;; semispazio z<=0 per tenere solo la metà bassa (= dorso del manico)
-        sotto (sdf-move (sdf-box 1000 (* 2 r_manico) 1000)
-                        0 0 (- r_manico))
+        sotto (turtle (tv 90) (sdf-half-space))
         manico (sdf-intersection cilindro sotto)
 
         ;; --- paletta: slab arrotondato, ruotato di -ang attorno a Y, in coda al manico ---
@@ -61,13 +60,12 @@
     :y 90)
    0 0 95))
 
+
 (def base
   (sdf-move
    (sdf-rotate
     (sdf-scale
-     (sdf-intersection
-      (sdf-cyl 35 70)
-      (sdf-move (sdf-box 200 200 200) 100 0 100))
+     (turtle (tv -90) (sdf-clip (sdf-cyl 35 70)))
      1.5 2 3)
     :y 90)
    50 0 -85))

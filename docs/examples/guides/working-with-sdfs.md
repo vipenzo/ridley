@@ -40,15 +40,19 @@ Each radius was chosen by trying values, regenerating, looking, and adjusting. N
 
 The implication is methodological: **change one blend value at a time**. If you change two simultaneously and the result looks worse, you cannot tell which one is responsible. With one change at a time, every regeneration teaches you something. With two, you are guessing.
 
-## The exploratory workflow, and why `tweak` doesn't work here
+## The exploratory workflow, and what tweak can (and can't) do for you
 
-`tweak` is meant for live parameter tuning: you wrap a literal number in a slider, drag it, and watch the model update in real time. It is the ideal interface for parametric work — when the regeneration is fast.
+`tweak` is meant for live parameter tuning: you wrap a literal number in a slider, drag it, and watch the model update in real time. With meshes, this is essentially instantaneous and the slider feels like a knob. With SDFs the situation is more nuanced, and worth understanding before reaching for the slider.
 
-With SDFs at production resolution (200, meshes of millions of triangles), regeneration takes seconds. The slider becomes a way to fire off a regeneration you didn't intend, then another, then another, while the viewport struggles to catch up. The feedback loop that makes `tweak` worth having is broken.
+At a working resolution of 100, a regeneration takes a couple of seconds — slow enough that you cannot drag the slider continuously and watch the form follow your finger, but fast enough that nudging a value, waiting a beat, and seeing the result is a workable feedback loop. At production resolution (200+, millions of triangles), the loop stretches to several seconds per step, and the slider stops being meaningfully more convenient than editing the number in the source. The crossover is somewhere in between, and depends on the size of your model.
 
-In practice, editing the number directly in the source — `7` to `8`, save, rebuild — is faster and more deliberate. One regeneration, one decision, one comparison. The slowness imposes a discipline that is, on reflection, well-suited to SDF tuning: you cannot survey a range in a glance, so you choose a value, wait, look, choose the next. This pairs naturally with the *one-parameter-at-a-time* rule above.
+So `tweak` on SDF parameters is *usable*, with two caveats:
 
-The combined practice: pick the parameter you're tuning now (one blend radius, one offset, one position), edit by hand, regenerate, judge. Resist the urge to "just also try" something else in the same pass. With SDFs, parallelism in tuning is self-sabotage.
+- **Use it at exploration resolution, not production resolution.** The same logic that governs the resolution-as-workflow choice (next section) applies here doubly. Tweaking at 200 is asking the slider to do what the slider can't do. Tweaking at 100 is fine.
+
+- **Watch out for the feedback ambiguity.** When a regeneration takes one or two seconds, you can lose track of whether the system is working on your last change or has already finished and is waiting for the next. Sometimes a small parameter change produces no visible effect (the blend was already saturated, or the change is below the resolution's perceptual threshold), and without an indicator that says *"working… done"*, you sit there waiting for something to happen that already happened. This is a UI gap more than an SDF problem, and worth knowing about so you don't misread silence as work-in-progress.
+
+The deeper rule, independent of `tweak`, is the one-parameter-at-a-time discipline from the previous section. Whether you're using a slider or editing literals by hand, change one thing per regeneration. The slider doesn't relax that rule; it just makes the per-step cost smaller.
 
 ## The blend inflates everywhere (and sometimes you don't want that)
 
@@ -71,28 +75,22 @@ That last `mesh-intersection` with a box clips the entire part against a planar 
 
 The general principle: **SDFs decide how form flows; meshes decide where form ends**. When you need a hard, exact boundary — a flat face, a precise cut, a defined edge — convert to mesh and impose the boundary there. Trying to coax the SDF into producing the boundary itself is a losing battle.
 
-## Idiom: half-space via clip
+## Idiom: half-space via intersection
 
-A useful primitive that SDFs make trivial: the half-space. The dedicated operators are `sdf-half-space` (the half-space itself) and `sdf-clip` (intersect a shape with the half-space behind the turtle's heading).
+A useful primitive that SDFs make trivial: the half-space. There is no `sdf-half-space` operator, because intersecting any shape with a sufficiently large box gives you the equivalent.
 
 The wall mount uses this to model the neck — a *half-cylinder*, the back side of a guitar neck:
 
 ```clojure
-(turtle (tv 90)                                         ; turtle looks +Z
-  (sdf-clip (sdf-rotate (sdf-cyl r_manico l_manico) :y 90)))
+(let [cilindro (sdf-rotate (sdf-cyl r_manico l_manico) :y 90)
+      sotto    (sdf-move (sdf-box 1000 (* 2 r_manico) 1000)
+                         0 0 (- r_manico))
+      manico   (sdf-intersection cilindro sotto)] ...)
 ```
 
-`sdf-clip` reads the turtle's pose at call time. The cut plane passes through the turtle position with normal equal to the heading; the half kept is the one *behind* the heading. With the turtle at the origin facing `+z`, that's `z ≤ 0` — the lower half of the cylinder. The `(turtle ...)` wrapper scopes the rotation so global turtle state stays untouched.
+The `sotto` box is enormous — 1000 mm on a side, far larger than anything in the model — and shifted down so its top face is at `z = -r_manico`, i.e. tangent to the cylinder's equator. Intersecting the cylinder with this box keeps only the lower half. The "1000" is just a number large enough to not interfere; in SDF land, oversized booleans cost nothing.
 
-For the rare case of keeping the *front* half, the keyword form is explicit:
-
-```clojure
-(sdf-intersection shape (sdf-half-space :cut-ahead))
-```
-
-Same idiom works for clipping at any plane — move and orient the turtle so its position lies on the cut plane and its heading points away from the side you want to keep. No oversized box, no magic numbers, no `sdf-move` to position a bounding region. Implemented as a single dot product per voxel rather than a `max` of six plane evaluations.
-
-> Historical note: before `sdf-half-space` landed, the canonical pattern was to intersect with an oversized box (`(sdf-box 1000 ... 1000)`) shifted to align one face with the cut plane. It worked, but the box dimensions were always relative to the rest of the model. Old code following that pattern is still correct — it just has more knobs.
+Same idiom works for clipping at any plane: orient a giant box so one of its faces is the cutting plane, intersect, done. With meshes this would mean computing the actual cut polygons; with SDFs it's a `max` of two functions.
 
 ## Idiom: offset as clearance
 
@@ -160,7 +158,7 @@ Ramping up at the end is almost always the right move. Starting high "to be safe
 
 - **Working at very low resolution (under 100) during refinement.** Artefacts at the same scale as the details you're judging will mislead you. The fix you "see" disappears when you finally render at proper resolution.
 
-- **Using `tweak` on SDF parameters.** The refresh isn't real-time at usable resolution. Editing the number by hand and rebuilding is faster, more deliberate, and produces a cleaner mental record of what changed and why.
+- **Using `tweak` at production resolution.** The slider's value comes from being faster than editing literals. At resolution 200+, that advantage shrinks to nothing. Tweak at exploration resolution; render at production resolution.
 
 - **Trying to flatten a blended face from inside SDF.** It cannot be done. Convert to mesh, intersect with a planar bounding box, move on.
 
