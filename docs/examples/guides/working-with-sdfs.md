@@ -71,22 +71,28 @@ That last `mesh-intersection` with a box clips the entire part against a planar 
 
 The general principle: **SDFs decide how form flows; meshes decide where form ends**. When you need a hard, exact boundary — a flat face, a precise cut, a defined edge — convert to mesh and impose the boundary there. Trying to coax the SDF into producing the boundary itself is a losing battle.
 
-## Idiom: half-space via intersection
+## Idiom: half-space via clip
 
-A useful primitive that SDFs make trivial: the half-space. There is no `sdf-half-space` operator, because intersecting any shape with a sufficiently large box gives you the equivalent.
+A useful primitive that SDFs make trivial: the half-space. The dedicated operators are `sdf-half-space` (the half-space itself) and `sdf-clip` (intersect a shape with the half-space behind the turtle's heading).
 
 The wall mount uses this to model the neck — a *half-cylinder*, the back side of a guitar neck:
 
 ```clojure
-(let [cilindro (sdf-rotate (sdf-cyl r_manico l_manico) :y 90)
-      sotto    (sdf-move (sdf-box 1000 (* 2 r_manico) 1000)
-                         0 0 (- r_manico))
-      manico   (sdf-intersection cilindro sotto)] ...)
+(turtle (tv 90)                                         ; turtle looks +Z
+  (sdf-clip (sdf-rotate (sdf-cyl r_manico l_manico) :y 90)))
 ```
 
-The `sotto` box is enormous — 1000 mm on a side, far larger than anything in the model — and shifted down so its top face is at `z = -r_manico`, i.e. tangent to the cylinder's equator. Intersecting the cylinder with this box keeps only the lower half. The "1000" is just a number large enough to not interfere; in SDF land, oversized booleans cost nothing.
+`sdf-clip` reads the turtle's pose at call time. The cut plane passes through the turtle position with normal equal to the heading; the half kept is the one *behind* the heading. With the turtle at the origin facing `+z`, that's `z ≤ 0` — the lower half of the cylinder. The `(turtle ...)` wrapper scopes the rotation so global turtle state stays untouched.
 
-Same idiom works for clipping at any plane: orient a giant box so one of its faces is the cutting plane, intersect, done. With meshes this would mean computing the actual cut polygons; with SDFs it's a `max` of two functions.
+For the rare case of keeping the *front* half, the keyword form is explicit:
+
+```clojure
+(sdf-intersection shape (sdf-half-space :cut-ahead))
+```
+
+Same idiom works for clipping at any plane — move and orient the turtle so its position lies on the cut plane and its heading points away from the side you want to keep. No oversized box, no magic numbers, no `sdf-move` to position a bounding region. Implemented as a single dot product per voxel rather than a `max` of six plane evaluations.
+
+> Historical note: before `sdf-half-space` landed, the canonical pattern was to intersect with an oversized box (`(sdf-box 1000 ... 1000)`) shifted to align one face with the cut plane. It worked, but the box dimensions were always relative to the rest of the model. Old code following that pattern is still correct — it just has more knobs.
 
 ## Idiom: offset as clearance
 

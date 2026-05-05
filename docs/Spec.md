@@ -1920,10 +1920,32 @@ These operations leverage the implicit representation and have no direct mesh eq
 |----------|-------------|
 | `(sdf-blend a b k)` | Smooth union between a and b. k controls the blend radius (higher values produce a wider, smoother transition) |
 | `(sdf-blend-difference a b k)` | Smooth subtraction: removes b from a with a soft concavity of radius k. Dual to `sdf-blend` for the union case |
+| `(sdf-half-space)` / `(sdf-half-space :cut-ahead)` | Half-space defined by the turtle's pose. The cut plane passes through the turtle position with normal equal to the heading. Default keeps the half *behind* the heading; `:cut-ahead` keeps the half *ahead*. See below |
+| `(sdf-clip shape)` | Convenience: `(sdf-intersection shape (sdf-half-space))`. Clips `shape` against the turtle's plane, keeping the half behind the heading |
 | `(sdf-shell a thickness)` | Hollow shell with uniform wall thickness |
 | `(sdf-offset a amount)` | Expand (positive) or contract (negative) the surface by amount. Note: `sdf-offset` shifts the field by `amount`, which produces a non-SDF away from the surface. For rounded boxes prefer `sdf-rounded-box`; for shell-like operations the result may not combine cleanly with `sdf-intersection` of other SDFs. |
 | `(sdf-morph a b t)` | Interpolate between shapes a and b. t ranges from 0 (= a) to 1 (= b) |
 | `(sdf-displace node formula)` | Displace surface by a spatial formula (quoted expression using x, y, z) |
+
+**Half-space and clip.** `sdf-half-space` returns the half-space defined by the current turtle pose: the cut plane passes through the turtle position with normal equal to the heading. By default it keeps the side *behind* the heading — the side the turtle came from. The convention matches `extrude`: after extruding a solid the turtle ends on the far face, with the material behind it; `(sdf-half-space)` at that pose returns the half-space containing the material.
+
+For the rare case where you want the front half:
+
+```clojure
+(sdf-intersection shape (sdf-half-space :cut-ahead))
+```
+
+`sdf-clip` is a one-arg shortcut for the common case:
+
+```clojure
+;; Keep the lower half of a cylinder. Turtle at origin facing +Z.
+(tv 90)
+(sdf-clip (sdf-rotate (sdf-cyl r l) :y 90))
+
+;; Same idea inside a (turtle ...) scope to leave global turtle state untouched.
+(turtle (tv 90)
+  (sdf-clip (sdf-rotate (sdf-cyl r l) :y 90)))
+```
 
 `sdf-displace` adds the formula's value to the distance field at each point. Positive values push the surface inward, negative values push outward:
 

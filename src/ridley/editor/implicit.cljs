@@ -602,3 +602,40 @@
   (let [mesh (resolve-to-mesh mesh-or-name-or-sdf)
         [pos heading up right] (turtle-plane-basis)]
     (mirror-shapes-x (manifold/project-at-plane mesh heading pos right up))))
+
+(defn ^:export implicit-sdf-half-space
+  "Returns an SDF representing a half-space defined by the turtle's current
+   pose. The cut plane passes through the turtle's position with normal equal
+   to the turtle's heading.
+
+   By default, keeps the half-space BEHIND the heading (the side the turtle
+   came from). With :cut-ahead, keeps the half-space AHEAD of the heading.
+
+   The default matches the natural orientation after extrude: the turtle ends
+   on the far face of the new solid, with the material behind it; calling
+   (sdf-half-space) at that pose returns the half-space containing the material."
+  ([] (implicit-sdf-half-space nil))
+  ([opt]
+   (let [state @(turtle-ref)
+         [px py pz] (:position state)
+         [hx hy hz] (:heading state)
+         keep-ahead? (= opt :cut-ahead)
+         ;; Signed distance from p=(x,y,z) to plane through (px,py,pz) with
+         ;; unit normal (hx,hy,hz):  d(p) = sum hi*(xi - oi).
+         ;; d > 0 ahead of plane, d < 0 behind. SDF convention: f<0 inside.
+         ;; Default (keep behind): f = d (negative behind is already correct).
+         ;; :cut-ahead (keep ahead): f = -d.
+         dot-expr (list '+
+                        (list '* hx (list '- 'x px))
+                        (list '* hy (list '- 'y py))
+                        (list '* hz (list '- 'z pz)))]
+     (sdf/compile-expr (if keep-ahead? (list '- dot-expr) dot-expr)))))
+
+(defn ^:export implicit-sdf-clip
+  "Clip an SDF shape against the turtle's plane, keeping the half behind
+   the heading. Equivalent to (sdf-intersection shape (sdf-half-space)).
+
+   For the rare case of keeping the front half, use the explicit form:
+     (sdf-intersection shape (sdf-half-space :cut-ahead))."
+  [shape]
+  (sdf/sdf-intersection shape (implicit-sdf-half-space)))

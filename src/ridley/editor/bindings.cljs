@@ -589,6 +589,8 @@
    'sdf-intersection sdf/sdf-intersection
    'sdf-blend        sdf/sdf-blend
    'sdf-blend-difference sdf/sdf-blend-difference
+   'sdf-half-space   impl/implicit-sdf-half-space
+   'sdf-clip         impl/implicit-sdf-clip
    'sdf-shell        sdf/sdf-shell
    'sdf-offset       sdf/sdf-offset
    'sdf-morph        sdf/sdf-morph
