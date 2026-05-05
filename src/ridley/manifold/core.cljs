@@ -152,9 +152,9 @@
 ;; ============================================================
 
 (defn ^:export mesh->manifold
-  "Create a Manifold object from a Ridley mesh.
-   Always creates a new Manifold object — does not reuse cache,
-   because cached objects may have been deleted by prior CSG ops."
+  "Create a fresh Manifold WASM object from a Ridley mesh.
+   Caller is responsible for calling .delete on the returned object
+   to free WASM heap memory."
   [ridley-mesh]
   (when-let [^js Manifold (get-manifold-class)]
     (when (and (:vertices ridley-mesh) (:faces ridley-mesh))
@@ -253,9 +253,8 @@
           (.delete m1)
           (.delete m2)
           (.delete raw-result)
-          ;; Cache result for potential next CSG op in chain
-          (-> (schema/assert-mesh! output)
-              (assoc ::_discarded-cache clean)))
+          (.delete clean)
+          (schema/assert-mesh! output))
         (catch :default e
           (js/console.warn "solidify failed:" e)
           ridley-mesh))
@@ -325,8 +324,8 @@
           (.delete ma)
           (.delete mb)
           (.delete raw-result)
-          (-> (schema/assert-mesh! output)
-              (assoc ::_discarded-cache result)))))))
+          (.delete result)
+          (schema/assert-mesh! output))))))
 
 (defn- tree-union
   "Union meshes using balanced binary tree strategy.
@@ -387,8 +386,8 @@
           (.delete ma)
           (.delete mb)
           (.delete raw-result)
-          (-> (schema/assert-mesh! output)
-              (assoc ::_discarded-cache result)))))))
+          (.delete result)
+          (schema/assert-mesh! output))))))
 
 (defn difference
   "Compute the difference of meshes (A - B - C - ...).
@@ -424,9 +423,8 @@
           (.delete ma)
           (.delete mb)
           (.delete raw-result)
-          ;; Cache result Manifold for potential next CSG op in chain
-          (-> (schema/assert-mesh! output)
-              (assoc ::_discarded-cache result)))))))
+          (.delete result)
+          (schema/assert-mesh! output))))))
 
 (defn intersection
   "Compute the intersection of two or more meshes (A ∩ B ∩ C ∩ ...).
@@ -479,9 +477,8 @@
             (doseq [m manifolds]
               (.delete m))
             (.delete raw-result)
-            ;; Cache result for potential next CSG op in chain
-            (-> (schema/assert-mesh! output)
-                (assoc ::_discarded-cache result)))
+            (.delete result)
+            (schema/assert-mesh! output))
           (catch :default e
             (js/console.error "Hull operation failed:" e)
             ;; Clean up on error
@@ -840,4 +837,111 @@
                shapes)))
          (catch :default e
            (js/console.error "slice-at-plane failed:" e)
+           nil))))))
+
+(defn ^:export project-at-plane
+  "Project a mesh onto an arbitrary plane, returning the silhouette outline.
+
+   Same arguments as slice-at-plane (point + normal + optional right/up basis).
+   Returns a vector of 2D shapes representing the projected silhouette in the
+   plane's local coordinates (X = right, Y = up). Holes are preserved.
+
+   Whereas slice-at-plane gives the cross-section AT a plane, this gives the
+   shadow OF the mesh as seen looking along the normal direction.
+
+   (project-at-plane mesh [0 0 1] [0 0 0])  ; top-down silhouette
+   (project-at-plane mesh [1 0 0] [0 0 0])  ; side-view silhouette"
+  ([ridley-mesh normal point]
+   (let [[right up _] (compute-basis normal)]
+     (project-at-plane ridley-mesh normal point right up)))
+  ([ridley-mesh normal point right up]
+   (when (get-manifold-class)
+     (when (and (:vertices ridley-mesh) (:faces ridley-mesh))
+       (try
+         (let [[px py pz] point
+               [rx ry rz] right
+               [ux uy uz] up
+               [nx ny nz] normal
+               xform-vert (fn [[vx vy vz]]
+                            (let [dx (- vx px) dy (- vy py) dz (- vz pz)]
+                              [(+ (* rx dx) (* ry dy) (* rz dz))
+                               (+ (* ux dx) (* uy dy) (* uz dz))
+                               (+ (* nx dx) (* ny dy) (* nz dz))]))
+               xformed-verts (mapv xform-vert (:vertices ridley-mesh))
+               xformed-mesh (-> ridley-mesh
+                                (assoc :vertices xformed-verts)
+                                (dissoc ::manifold-cache ::raw-arrays))
+               ^js m (mesh->manifold xformed-mesh)]
+           (when m
+             ;; Manifold 3.3.2's high-level .project() wrapper has a bug — it
+             ;; returns an empty CrossSection. We use the low-level ._Project()
+             ;; directly. Additionally, on low-poly meshes from libfive the raw
+             ;; projection comes out fragmented into many overlapping polygons,
+             ;; so we feed those through Module.CrossSection(polys, "Positive")
+             ;; which performs the boolean union and gives a single merged
+             ;; silhouette.
+             (let [^js pv (._Project m)
+                   n-polys (.size pv)
+                   raw-polys-js (clj->js
+                                 (vec (for [i (range n-polys)
+                                            :let [^js p (.get pv i)
+                                                  sz (.size p)]
+                                            :when (>= sz 3)]
+                                        (vec (for [j (range sz)
+                                                   :let [^js pt (.get p j)]]
+                                               [(.-x pt) (.-y pt)])))))
+                   ;; Dispose the C++ vec we no longer need.
+                   _ (do (dotimes [i n-polys] (.delete (.get pv i)))
+                         (.delete pv))
+                   ;; High-level CrossSection wrapper performs the union.
+                   ^js cs-cls (:CrossSection @manifold-state)
+                   ^js cs (cs-cls raw-polys-js "Positive")
+                   ^js polys (.toPolygons cs)
+                   contours (vec
+                             (for [i (range (.-length polys))
+                                   :let [^js poly (aget polys i)
+                                         pts (vec (for [j (range (.-length poly))
+                                                        :let [^js pt (aget poly j)]]
+                                                    [(aget pt 0) (aget pt 1)]))]
+                                   :when (>= (count pts) 3)]
+                               pts))
+                   signed-area (fn [pts]
+                                 (let [n (count pts)]
+                                   (* 0.5
+                                      (reduce
+                                       (fn [sum i]
+                                         (let [[x1 y1] (nth pts i)
+                                               [x2 y2] (nth pts (mod (inc i) n))]
+                                           (+ sum (- (* x1 y2) (* x2 y1)))))
+                                       0 (range n)))))
+                   outers (filterv #(pos? (signed-area %)) contours)
+                   holes  (filterv #(neg? (signed-area %)) contours)
+                   point-in-poly? (fn [[px py] poly]
+                                    (let [n (count poly)]
+                                      (loop [i 0, inside? false]
+                                        (if (>= i n)
+                                          inside?
+                                          (let [[xi yi] (nth poly i)
+                                                [xj yj] (nth poly (mod (inc i) n))
+                                                crosses? (and (not= (> yi py) (> yj py))
+                                                              (< px (+ xi (* (/ (- py yi) (- yj yi))
+                                                                             (- xj xi)))))]
+                                            (recur (inc i) (if crosses? (not inside?) inside?)))))))
+                   shapes (mapv
+                           (fn [outer]
+                             (let [my-holes (filterv
+                                             (fn [hole]
+                                               (point-in-poly? (first hole) outer))
+                                             holes)]
+                               (cond-> {:type :shape
+                                        :points outer
+                                        :centered? false
+                                        :preserve-position? true}
+                                 (seq my-holes) (assoc :holes my-holes))))
+                           outers)]
+               (.delete cs)
+               (.delete m)
+               shapes)))
+         (catch :default e
+           (js/console.error "project-at-plane failed:" e)
            nil))))))
