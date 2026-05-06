@@ -171,10 +171,22 @@
 (defn sdf-move [node dx dy dz]
   {:op "move" :a node :dx dx :dy dy :dz dz})
 
+(declare sdf-rotate-axis)
+
 (defn sdf-rotate
-  "Rotate an SDF node around an axis (:x :y :z) by angle in degrees."
+  "Rotate an SDF node around an axis by angle in degrees.
+   axis: keyword (:x :y :z) for cardinal axes (uses libfive's optimized rotate),
+         or vector [ax ay az] for arbitrary axes (uses Rodrigues remap)."
   [node axis angle]
-  {:op "rotate" :a node :axis (name axis) :angle angle})
+  (cond
+    (keyword? axis)
+    {:op "rotate" :a node :axis (name axis) :angle angle}
+
+    (sequential? axis)
+    (sdf-rotate-axis node axis angle)
+
+    :else
+    (throw (js/Error. (str "sdf-rotate: axis must be a keyword (:x :y :z) or a [ax ay az] vector")))))
 
 (defn- substitute-vars
   "Walk an SDF tree and replace variable nodes according to a substitution map."
@@ -214,6 +226,36 @@
   ([node s] (sdf-scale node s s s))
   ([node sx sy sz]
    {:op "scale" :a node :sx sx :sy sy :sz sz}))
+
+(defn sdf-rotate-axis
+  "Rotate an SDF around an arbitrary axis [ax ay az] by angle (degrees).
+   The axis is normalized internally. Implemented as a coordinate remap via
+   the transposed Rodrigues matrix (the SDF transforms the QUERY point, so
+   the inverse rotation R^T is what we substitute into x/y/z)."
+  [node axis angle-deg]
+  (let [[ax-r ay-r az-r] axis
+        mag (Math/sqrt (+ (* ax-r ax-r) (* ay-r ay-r) (* az-r az-r)))]
+    (when-not (pos? mag)
+      (throw (js/Error. "sdf-rotate-axis: axis must be a non-zero vector")))
+    (let [ax (/ ax-r mag) ay (/ ay-r mag) az (/ az-r mag)
+          rad (* angle-deg (/ Math/PI 180))
+          c (Math/cos rad)
+          s (Math/sin rad)
+          t (- 1 c)
+          ;; R^T coefficients (row-major for new_x, new_y, new_z)
+          m00 (+ c (* ax ax t))
+          m01 (+ (* ax ay t) (* az s))
+          m02 (- (* ax az t) (* ay s))
+          m10 (- (* ax ay t) (* az s))
+          m11 (+ c (* ay ay t))
+          m12 (+ (* ay az t) (* ax s))
+          m20 (+ (* ax az t) (* ay s))
+          m21 (- (* ay az t) (* ax s))
+          m22 (+ c (* az az t))
+          new-x (compile-expr (list '+ (list '* m00 'x) (list '* m01 'y) (list '* m02 'z)))
+          new-y (compile-expr (list '+ (list '* m10 'x) (list '* m11 'y) (list '* m12 'z)))
+          new-z (compile-expr (list '+ (list '* m20 'x) (list '* m21 'y) (list '* m22 'z)))]
+      (substitute-vars node {"x" new-x "y" new-y "z" new-z}))))
 
 ;; ── SDF formula (expression compiler) ───────────────────────────
 

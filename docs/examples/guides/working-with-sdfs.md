@@ -75,22 +75,27 @@ That last `mesh-intersection` with a box clips the entire part against a planar 
 
 The general principle: **SDFs decide how form flows; meshes decide where form ends**. When you need a hard, exact boundary — a flat face, a precise cut, a defined edge — convert to mesh and impose the boundary there. Trying to coax the SDF into producing the boundary itself is a losing battle.
 
-## Idiom: half-space via intersection
+## Idiom: half-space and clipping
 
-A useful primitive that SDFs make trivial: the half-space. There is no `sdf-half-space` operator, because intersecting any shape with a sufficiently large box gives you the equivalent.
+Half-space cuts come up constantly when sculpting with SDFs — keeping one side of a cylinder, slicing a blob against a plane, flattening a region against a known boundary. Two operators, both turtle-relative, cover the common cases: `sdf-half-space` returns the half-space defined by the turtle's current pose (cut plane through the turtle, normal along the heading), and `sdf-clip` clips a given shape against that plane.
 
-The wall mount uses this to model the neck — a *half-cylinder*, the back side of a guitar neck:
+The wall mount uses this to build the neck — a *half-cylinder*, the back side of a guitar neck. Position the turtle at the cylinder's equator with the heading pointing up (out of the material), and clip:
 
 ```clojure
-(let [cilindro (sdf-rotate (sdf-cyl r_manico l_manico) :y 90)
-      sotto    (sdf-move (sdf-box 1000 (* 2 r_manico) 1000)
-                         0 0 (- r_manico))
-      manico   (sdf-intersection cilindro sotto)] ...)
+(let [cilindro (rotate (sdf-cyl r_manico l_manico) :y 90)]
+  (tv 90) (f r_manico)              ; turtle at equator, heading +z
+  (sdf-clip cilindro))              ; keeps the half behind the heading
 ```
 
-The `sotto` box is enormous — 1000 mm on a side, far larger than anything in the model — and shifted down so its top face is at `z = -r_manico`, i.e. tangent to the cylinder's equator. Intersecting the cylinder with this box keeps only the lower half. The "1000" is just a number large enough to not interfere; in SDF land, oversized booleans cost nothing.
+The convention is the same as `extrude`'s: the turtle "looks out of the material". After an `extrude`, the turtle sits with the new solid behind it; calling `(sdf-half-space)` at that pose returns exactly the half-space containing the material. The same intuition carries over: at any point, the turtle pose specifies a cutting plane, and the half-space *behind* the turtle is the one that's kept.
 
-Same idiom works for clipping at any plane: orient a giant box so one of its faces is the cutting plane, intersect, done. With meshes this would mean computing the actual cut polygons; with SDFs it's a `max` of two functions.
+For the rare case where you want the front half instead, `(sdf-half-space :cut-ahead)` flips the convention. `sdf-clip` doesn't take that option — if you need to keep the front, use the explicit form:
+
+```clojure
+(sdf-intersection shape (sdf-half-space :cut-ahead))
+```
+
+> **Historical note.** Before these operators existed, the same effect was achieved by intersecting with an oversized box positioned so that one of its faces coincided with the cut plane. It worked, but it was verbose, required a magic "large enough" number, and didn't follow the turtle-relative convention used elsewhere in the DSL. If you encounter that pattern in older code or examples, it's the half-space idiom in its earlier form.
 
 ## Idiom: offset as clearance
 
@@ -164,6 +169,6 @@ Ramping up at the end is almost always the right move. Starting high "to be safe
 
 ## See also
 
-- Spec, *SDF* — full reference for `sdf-cyl`, `sdf-box`, `sdf-blend`, `sdf-offset`, `sdf-intersection`, `sdf-rotate`, `sdf-move`, `sdf-blend-difference`, and the meshing bridge.
+- Spec, *SDF* — full reference for `sdf-cyl`, `sdf-box`, `sdf-blend`, `sdf-offset`, `sdf-intersection`, `sdf-blend-difference`, `sdf-half-space`, `sdf-clip`, the polymorphic transforms `translate` / `rotate` / `scale`, and the meshing bridge.
 - `defining-2d-profiles.md` — the other side of modelling, where shapes are *contours* rather than *fields*.
 - `03_guitar_wall_mount.clj` — full pilot example using all the patterns above.

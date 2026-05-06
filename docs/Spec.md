@@ -1940,11 +1940,11 @@ For the rare case where you want the front half:
 ```clojure
 ;; Keep the lower half of a cylinder. Turtle at origin facing +Z.
 (tv 90)
-(sdf-clip (sdf-rotate (sdf-cyl r l) :y 90))
+(sdf-clip (rotate (sdf-cyl r l) :y 90))
 
 ;; Same idea inside a (turtle ...) scope to leave global turtle state untouched.
 (turtle (tv 90)
-  (sdf-clip (sdf-rotate (sdf-cyl r l) :y 90)))
+  (sdf-clip (rotate (sdf-cyl r l) :y 90)))
 ```
 
 `sdf-displace` adds the formula's value to the distance field at each point. Positive values push the surface inward, negative values push outward:
@@ -1962,13 +1962,17 @@ For the rare case where you want the front half:
 
 ### Transforms
 
+SDFs use the **polymorphic** transforms `translate`, `scale`, `rotate`, the same names as for meshes and 2D shapes. The `sdf-move`, `sdf-scale`, `sdf-rotate` names of earlier versions are gone.
+
 ```clojure
-(sdf-move node dx dy dz)        ; Translate an SDF node
-(sdf-rotate node axis angle)    ; Rotate around axis (:x :y :z) by angle in degrees
-(sdf-scale node s)              ; Uniform scale
-(sdf-scale node sx sy sz)       ; Per-axis scale
+(translate node dx dy dz)       ; Translate an SDF node
+(rotate node axis angle-deg)    ; Rotate. axis = :x | :y | :z, or [ax ay az] (arbitrary)
+(scale node s)                  ; Uniform scale
+(scale node sx sy sz)           ; Per-axis scale
 (sdf-revolve node-2d)           ; Revolve a 2D SDF (X=radius, Y=height) around Z
 ```
+
+Arbitrary-axis rotation is implemented as a coordinate remap via the transposed Rodrigues matrix; the cardinal-axis form uses libfive's optimized `rotate_x/y/z`.
 
 ### Materialization
 
@@ -2111,7 +2115,7 @@ These are infinite. Use `sdf-difference` to punch holes, or `sdf-intersection` t
       (sdf-rounded-box 60 60 90 6)
       (sdf-bar-cage 60 60 90 5 1.5))
     ;; Hollow interior (open at top)
-    (sdf-move (sdf-rounded-box 56 56 100 6) 0 0 4)))
+    (translate (sdf-rounded-box 56 56 100 6) 0 0 4)))
 ```
 
 ### Examples
@@ -2133,13 +2137,13 @@ These are infinite. Use `sdf-difference` to punch holes, or `sdf-intersection` t
 (register part
   (sdf-difference
     (sdf-blend (sdf-sphere 12) (sdf-cyl 8 20) 2)
-    (sdf-move (sdf-box 6 6 30) 0 0 0)))
+    (translate (sdf-box 6 6 30) 0 0 0)))
 
 ;; Rotated box
-(register tilted (sdf-rotate (sdf-box 20 10 5) :z 45))
+(register tilted (rotate (sdf-box 20 10 5) :z 45))
 
 ;; Scaled cylinder (elliptical cross-section)
-(register ellip (sdf-scale (sdf-cyl 10 20) 2 1 1))
+(register ellip (scale (sdf-cyl 10 20) 2 1 1))
 
 ;; Torus via sdf-revolve: circle profile at distance 10 from Z axis
 (register torus

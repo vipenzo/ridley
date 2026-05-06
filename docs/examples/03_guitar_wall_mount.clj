@@ -1,17 +1,17 @@
-(def r_manico 20)
+(def r_manico 25)
 (def l_manico 350)
-(def m_paletta {:h 55
-                :w 140
+(def m_paletta {:h 21
+                :w 100
                 :l 180
                 :ang 14})
 
-(sdf-resolution! 200)
+(sdf-resolution! 100)
 
 (defn chitarra-sdf []
   ;; sdf-box / sdf-rounded-box prendono argomenti in ordine (right, up, heading) → (Y, Z, X)
   ;; quindi i tre args mappano direttamente alle dimensioni "trasversa, verticale, longitudinale".
   (let [;; --- manico: mezzo cilindro lungo X (heading), parte piatta verso +Z ---
-        cilindro (sdf-rotate (sdf-cyl r_manico l_manico) :y 90)
+        cilindro (rotate (sdf-cyl r_manico l_manico) :y 90)
         ;; semispazio z<=0 per tenere solo la metà bassa (= dorso del manico)
         sotto (turtle (tv 90) (sdf-half-space))
         manico (sdf-intersection cilindro sotto)
@@ -29,42 +29,52 @@
         cx (+ (/ l_manico 2) (* (/ Lp 2) (cos a)) 20)
         cz (- (- (* (/ Lp 2) (sin a))) (/ Hp 2))
         paletta (-> slab
-                    (sdf-rotate :y (- (:ang m_paletta)))
-                    (sdf-move cx 0 cz))
+                    (rotate :y (- (:ang m_paletta)))
+                    (translate cx 0 cz))
         body (sdf-blend manico paletta 7)]
-    (sdf-move body -170 0 0))) ; k=8 ≈ raggio del raccordo
+    (translate body -170 0 0))) ; k=8 ≈ raggio del raccordo
 
+(defn torus-arc
+  "Arco di toro: arc-deg in [0°, 360°], centrato su +X, asse Z."
+  [R r arc-deg]
+  (let [half (/ arc-deg 2)
+        h1 (turtle (th (+ 90 half)) (sdf-half-space))
+        h2 (turtle (th (- (+ 90 half))) (sdf-half-space))]
+    (sdf-intersection
+     (sdf-torus R r)
+     (if (<= arc-deg 180)
+       (sdf-intersection h1 h2)    ; cuneo "stretto"
+       (sdf-union h1 h2)))))       ; complemento del cuneo "stretto"
 
-
-(defn anelli
-  "Tubo X: n anelli paralleli, passo p, R maggiore, r minore."
-  [n p R r]
+(defn anelli [n p R r sz arc-deg]
   (let [x0 (- (* (/ (dec n) 2) p))
         anello (fn [i]
-                 (let [base (sdf-rotate (sdf-scale (sdf-torus R r) 1 1.5 0.4) :y 90) ; piano YZ
-] ; piano XZ
-                   (sdf-move base (+ x0 (* i p)) 0 0)))]
+                 (let [base (rotate (scale (torus-arc R r arc-deg) sz 1 1) :y 90)]
+                   (translate base (+ x0 (* i p)) 0 0)))]
     (reduce sdf-union (map anello (range n)))))
+
+(def anello-mobile
+  (translate (anelli 1 11 45 5 1 0) -13 0 -20))
 
 (def struttura
   (sdf-blend
-   (anelli 6 10 20 12)
-   (sdf-move (anelli 1 30 30 15) 40 0 -20)
-   10))
+   (translate (anelli 1 11 45 5 1 0) -3 0 -20)
+   (translate (anelli 1 30 50 15 0.8 0) 15 0 -20)
+   1))
 
+(register AAA anello-mobile)
 
 (def ellip
-  (sdf-move
-   (sdf-rotate
-    (sdf-scale (sdf-cyl 40 150) 1.6 1.8 3)
+  (translate
+   (rotate
+    (scale (sdf-cyl 40 100) 1.1 1 1)
     :y 90)
-   0 0 95))
-
+   0 0 30))
 
 (def base
-  (sdf-move
-   (sdf-rotate
-    (sdf-scale
+  (translate
+   (rotate
+    (scale
      (turtle (tv -90) (sdf-clip (sdf-cyl 35 70)))
      1.5 2 3)
     :y 90)
@@ -73,14 +83,12 @@
 (def wallmount
   (sdf-difference
    (sdf-blend-difference
-    (sdf-blend struttura base 5)
+    (sdf-blend struttura base 1)
     (sdf-blend
-     (sdf-move
-      (sdf-offset (chitarra-sdf) 1.5)
-      6 0 0)
+     (sdf-offset (chitarra-sdf) 1.5)
      ellip
-     7)
-    2))) ; +1 mm di clearance per infilare la chitarra
+     1.1)
+    1))) ; +1 mm di clearance per infilare la chitarra
 
 (def hole
   (mesh-union
@@ -98,6 +106,6 @@
              (attach hole (f 30) (tv 90) (f -83))))
            (attach (box 180 110 180) (u -30))))
 
-;(register chitarra (chitarra-sdf))
-;(color :chitarra 0xffff55)
+(register chitarra (chitarra-sdf))
+(color :chitarra 0xffff55)
 ;(export :WallMount :3mf)  

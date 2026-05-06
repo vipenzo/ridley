@@ -1279,7 +1279,7 @@ flowchart TB
 
 Tutto ciò che sta dentro i due sottografi è dominio puro: costruzione di dato in CLJS, FFI in Rust, decodifica zero-copy verso Three.js. Solo `invoke-sync` lato CLJS e il dispatcher di `geo_server.rs:300` lato Rust toccano il confine. Vediamo concretamente cosa attraversa.
 
-Prendiamo `(sdf-union (sdf-sphere 10) (sdf-move (sdf-box 5 5 5) 5 0 0))`. Il valore prodotto in CLJS è dato puro:
+Prendiamo `(sdf-union (sdf-sphere 10) (translate (sdf-box 5 5 5) 5 0 0))`. Il valore prodotto in CLJS è dato puro:
 
 ```clojure
 {:op "union"

@@ -14,6 +14,7 @@
             [ridley.clipper.core :as clipper]
             [ridley.geometry.faces :as faces]
             [ridley.geometry.primitives :as primitives]
+            [ridley.sdf.core :as sdf]
             [ridley.math :as math]))
 
 ;; ============================================================
@@ -643,6 +644,88 @@
         state (replay-path-commands state path)]
     (or (get-in state [:attached :mesh]) mesh)))
 
+;; ============================================================
+;; SDF attach
+;; ============================================================
+
+(def ^:private sdf-attach-rejected
+  "Path commands that are not meaningful when attaching an SDF (no anchor system,
+   no per-face inset semantics)."
+  {:cp-f  "cp-* requires an anchor system not available for SDFs; use f / rt / u for translation"
+   :cp-rt "cp-* requires an anchor system not available for SDFs; use f / rt / u for translation"
+   :cp-u  "cp-* requires an anchor system not available for SDFs; use f / rt / u for translation"
+   :inset "inset is mesh/face-specific, not applicable to SDFs"
+   :scale "(scale n) inside attach is for meshes; for SDFs use (scale sdf factor) outside attach"})
+
+(defn- validate-sdf-attach-path! [path]
+  (when-let [bad (first (filter #(contains? sdf-attach-rejected (:cmd %)) (:commands path)))]
+    (throw (js/Error. (str "attach on SDF: '" (name (:cmd bad)) "' — "
+                           (sdf-attach-rejected (:cmd bad)))))))
+
+(defn- rotation-matrix->axis-angle
+  "Convert a 3x3 rotation matrix (vector of 3 row-vectors) to [axis angle-deg].
+   Returns nil for the identity rotation. Uses quaternion intermediate for
+   numerical robustness across all angles, including 180°."
+  [R]
+  (let [r00 (get-in R [0 0]) r01 (get-in R [0 1]) r02 (get-in R [0 2])
+        r10 (get-in R [1 0]) r11 (get-in R [1 1]) r12 (get-in R [1 2])
+        r20 (get-in R [2 0]) r21 (get-in R [2 1]) r22 (get-in R [2 2])
+        trace (+ r00 r11 r22)
+        eps 1e-9
+        ;; Quaternion (w, x, y, z) from the rotation matrix.
+        ;; Branch on the largest diagonal term to avoid loss of precision.
+        [w qx qy qz]
+        (cond
+          (> trace 0)
+          (let [s (* 2 (Math/sqrt (+ trace 1)))]
+            [(* 0.25 s) (/ (- r21 r12) s) (/ (- r02 r20) s) (/ (- r10 r01) s)])
+
+          (and (> r00 r11) (> r00 r22))
+          (let [s (* 2 (Math/sqrt (+ 1 r00 (- r11) (- r22))))]
+            [(/ (- r21 r12) s) (* 0.25 s) (/ (+ r01 r10) s) (/ (+ r02 r20) s)])
+
+          (> r11 r22)
+          (let [s (* 2 (Math/sqrt (+ 1 r11 (- r00) (- r22))))]
+            [(/ (- r02 r20) s) (/ (+ r01 r10) s) (* 0.25 s) (/ (+ r12 r21) s)])
+
+          :else
+          (let [s (* 2 (Math/sqrt (+ 1 r22 (- r00) (- r11))))]
+            [(/ (- r10 r01) s) (/ (+ r02 r20) s) (/ (+ r12 r21) s) (* 0.25 s)]))
+        w (max -1.0 (min 1.0 w))]
+    (when (< w (- 1 eps))
+      (let [angle-rad (* 2 (Math/acos w))
+            sin-half (Math/sqrt (max 0 (- 1 (* w w))))
+            ax (/ qx sin-half)
+            ay (/ qy sin-half)
+            az (/ qz sin-half)
+            angle-deg (* angle-rad (/ 180 Math/PI))]
+        [[ax ay az] angle-deg]))))
+
+(defn- sdf-attach-impl
+  "Attach to an SDF: replay path on a fresh turtle, then apply the
+   resulting rigid transformation (rotation + translation) to the SDF."
+  [sdf-node path]
+  (validate-sdf-attach-path! path)
+  (let [state (replay-path-commands (turtle/make-turtle) path)
+        [px py pz] (:position state)
+        [hx hy hz] (math/normalize (:heading state))
+        [ux uy uz] (math/normalize (:up state))
+        ;; side = up × heading (right-handed frame consistent with mesh attach)
+        sx (- (* uy hz) (* uz hy))
+        sy (- (* uz hx) (* ux hz))
+        sz (- (* ux hy) (* uy hx))
+        ;; Rotation matrix mapping (e1, e2, e3) → (heading, side, up).
+        ;; Columns are the new basis vectors expressed in the standard frame.
+        R [[hx sx ux]
+           [hy sy uy]
+           [hz sz uz]]
+        axis-angle (rotation-matrix->axis-angle R)
+        rotated (if axis-angle
+                  (let [[axis angle-deg] axis-angle]
+                    (sdf/sdf-rotate-axis sdf-node axis angle-deg))
+                  sdf-node)]
+    (sdf/sdf-move rotated px py pz)))
+
 (defn- group-attach-impl
   "Attach to a vector of meshes (group transform). Returns transformed vector."
   [meshes path]
@@ -680,13 +763,15 @@
     [mesh-or-sel face-id]))
 
 (defn ^:export attach-impl
-  "Dispatch attach by target type: sequential, panel, single mesh, or selection map."
+  "Dispatch attach by target type: sequential, panel, single mesh, SDF, or selection map."
   [target path]
-  (let [target (if (and (map? target) (:name target) (not (:vertices target)))
+  (let [target (if (and (map? target) (:name target) (not (:vertices target))
+                        (not (sdf/sdf-node? target)))
                  ;; Selection map → resolve to mesh
                  (registry/get-mesh (:name target))
                  target)]
     (cond
+      (sdf/sdf-node? target) (sdf-attach-impl target path)
       (sequential? target) (group-attach-impl target path)
       (panel/panel? target) (panel-attach-impl target path)
       :else (mesh-attach-impl target path))))

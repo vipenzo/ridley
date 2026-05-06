@@ -32,6 +32,7 @@
             [ridley.library.stl :as stl-import]
             [ridley.voronoi.core :as voronoi]
             [ridley.sdf.core :as sdf]
+            [ridley.editor.transforms :as transforms]
             [ridley.measure.core :as measure]
             [ridley.env :as runtime-env]
             [ridley.settings :as settings]
@@ -221,14 +222,17 @@
    ;; Loft impl functions (used by loft macro)
    'stamp-loft-impl     impl/implicit-stamp-loft
    'finalize-loft-impl  impl/implicit-finalize-loft
-   ;; Shape transformation functions
-   ;; scale operates on the attached mesh (use scale-shape for 2D shapes)
-   'scale          impl/implicit-scale-mesh
+   ;; Polymorphic transforms: dispatch on mesh / SDF / 2D shape.
+   ;; Legacy turtle-attach scale form (scale 1.5) is preserved as a special
+   ;; case dispatched on number-as-first-arg.
+   'translate      transforms/translate
+   'scale          transforms/scale
+   'rotate         transforms/rotate
+   ;; Type-specific aliases (kept for backward compat)
+   'rotate-shape   xform/rotate
    'mesh-scale     attachment/scale-mesh
    'mesh-translate attachment/translate-mesh
-   'rotate-shape   xform/rotate
-   'translate    xform/translate
-   'morph-shape  xform/morph
+   'morph-shape    xform/morph
    'resample-shape xform/resample
    ;; Shape-fn system (shapes that vary along the extrusion path)
    'shape-fn         sfn/shape-fn
@@ -595,10 +599,9 @@
    'sdf-offset       sdf/sdf-offset
    'sdf-morph        sdf/sdf-morph
    'sdf-displace     sdf/sdf-displace
-   'sdf-move         sdf/sdf-move
-   'sdf-rotate       sdf/sdf-rotate
+   ;; sdf-move / sdf-rotate / sdf-scale removed: use polymorphic
+   ;; translate / rotate / scale (which dispatch to the SDF backend).
    'sdf-revolve      sdf/sdf-revolve
-   'sdf-scale        sdf/sdf-scale
    'sdf-formula      sdf/compile-expr
    'sdf->mesh        sdf/materialize
    'sdf-ensure-mesh  sdf/ensure-mesh
