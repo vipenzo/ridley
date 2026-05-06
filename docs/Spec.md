@@ -470,16 +470,17 @@ A fourth flag, `:align-to-heading?`, swaps the plane axes so 2D x maps to the tu
 
 ### Shape transformations
 
-For loft operations that morph shapes:
-
 ```clojure
-(scale-shape shape factor)         ; Uniform scale
-(scale-shape shape sx sy)          ; Non-uniform scale
+(scale shape factor)               ; Uniform scale (polymorphic, see §9)
+(scale shape sx sy)                ; Non-uniform scale
+(scale-shape shape …)              ; Type-specific alias (kept for back-compat)
 
-(rotate-shape shape angle-deg)     ; Rotate around origin
+(rotate shape angle-deg)           ; Rotate around origin (Z axis implicit)
+(rotate shape :z angle-deg)        ; Same, axis explicit
+(rotate-shape shape angle-deg)     ; Type-specific alias
 
-(translate shape dx dy)            ; Translate shape by [dx dy]
-(translate-shape shape dx dy)      ; Alias with explicit name
+(translate shape dx dy)            ; Translate (polymorphic)
+(translate-shape shape dx dy)      ; Type-specific alias
 
 (reverse-shape shape)              ; Reverse winding order (flip normals)
 
@@ -489,7 +490,9 @@ For loft operations that morph shapes:
 (resample-shape shape n)           ; Resample to n points (for morph compatibility)
 ```
 
-All shape transforms end in `-shape` for consistency. The bare `scale` is reserved for the attached-mesh form documented under [Positioning & Assembly](#9-positioning--assembly).
+`translate`, `scale`, `rotate` are **polymorphic** (mesh / SDF / 2D shape — see [Top-level transforms](#top-level-transforms)). The `*-shape` aliases continue to work; pick whichever form reads better in context.
+
+**`rotate` on a 2D shape only accepts `:z` (or no axis at all).** Calling `(rotate shape :x α)` or `(rotate shape :y α)` throws — a 2D shape has no out-of-plane geometry to rotate. To position a shape obliquely in 3D space, set the turtle's heading before consuming the shape (e.g. `(tv 30) (extrude shape (f 20))`). For a Y-foreshortening effect, write `(scale shape 1 (cos angle))` explicitly — that's what the math reduces to, and it makes the lossy projection visible at the call site.
 
 ### Shape functions (shape-fn)
 
@@ -1607,9 +1610,38 @@ Operations available inside `attach-face`/`clone-face`:
 
 ## 9. Positioning & Assembly
 
+### Top-level transforms
+
+`translate`, `scale`, `rotate` are **polymorphic**: they dispatch on the type of the first argument and work uniformly across mesh, SDF, and 2D shape.
+
+```clojure
+(translate thing dx dy [dz])       ; mesh / SDF take 3 args; shape takes 2
+(scale thing s)                    ; uniform
+(scale thing sx sy [sz])           ; per-axis (3 for mesh/SDF, 2 for shape)
+(rotate thing :x|:y|:z angle-deg)  ; cardinal axis (mesh / SDF)
+(rotate thing [ax ay az] angle-deg); arbitrary axis (mesh / SDF)
+(rotate shape angle-deg)           ; 2D shape: implicit Z axis
+```
+
+**Pivot conventions** differ by type and match each type's natural reference:
+
+| Type | translate | scale around | rotate around |
+|------|-----------|--------------|----------------|
+| Mesh | world axes | mesh centroid | mesh centroid |
+| SDF | world axes | world origin | world origin |
+| 2D shape | shape's local frame | shape centroid | shape origin (0, 0) |
+
+For an SDF that's already off-origin and you want to scale or rotate "in place", compose with translation: `(translate (rotate (translate sdf -dx -dy -dz) :y 30) dx dy dz)`.
+
+**Arbitrary-axis rotation on SDF** is implemented internally as a ZYX Tait-Bryan decomposition into three cardinal-axis rotations. This is invisible to the caller (you just get the rotation you asked for), but worth knowing if you hit numerical edge cases near gimbal lock (pitch ≈ ±90° with non-zero yaw or roll).
+
+**Type-specific aliases** are still bound (`mesh-translate`, `mesh-scale`, `translate-shape`, `scale-shape`, `rotate-shape`) for backward compatibility and for code that wants to declare type intent at the call site. They route to the same implementations as the polymorphic forms.
+
+**Legacy `scale` inside attach.** Inside an `attach` body, `(scale 1.5)` (with a single number, no thing) keeps its historical meaning of scaling the currently-attached mesh — see [scale (attach context)](#scale-attach-context). The polymorphic `scale` recognises the number-first form and dispatches to that legacy path.
+
 ### attach
 
-Transform a mesh or panel, returning a new mesh (functional, original unchanged):
+Transform a mesh, panel, or SDF, returning a new value (functional, original unchanged):
 
 ```clojure
 (register b (box 20))
@@ -1622,7 +1654,24 @@ Transform a mesh or panel, returning a new mesh (functional, original unchanged)
 
 ;; Works with panels too
 (register label (attach label (f 20) (th 90)))
+
+;; And with SDF nodes — the path commands replay on a fresh turtle, and
+;; the resulting rigid transform (rotation + translation) is applied to
+;; the SDF. Useful for placing an SDF at a turtle pose without manually
+;; composing translate / rotate.
+(register cap (attach (sdf-sphere 5) (tv 60) (tr 30) (f 30)))
 ```
+
+**Restrictions on SDF attach.** The body still uses the turtle path DSL, but a few commands have no meaning when the target is an SDF and throw with a clear error:
+
+| Command | Reason |
+|---------|--------|
+| `cp-f`, `cp-rt`, `cp-u` | Require an anchor system; SDFs have no named anchors |
+| `mark` | Same reason — no anchor model |
+| `inset` | Mesh-face-specific, no SDF analogue |
+| `(scale n)` | Inside-attach legacy form is for meshes; for SDF use top-level `(scale sdf n)` outside the attach |
+
+Plain movement (`f`, `b`, `rt`, `u`) and rotation (`th`, `tv`, `tr`, `set-heading`) all work, plus `move-to` (which only updates the turtle pose, no anchor lookup on the SDF target).
 
 ### attach!
 
@@ -1783,7 +1832,7 @@ This is convenient when the children come from independent sources, but the chil
 
 ### scale (attach context)
 
-Scale the attached mesh in place. `(scale factor)` does a uniform scale; `(scale [sx sy sz])` or `(scale sx sy sz)` does a non-uniform scale along the local axes. Meaningful only inside `attach`/`attach!`; for 2D shapes use `scale-shape` (see [Shape transformations](#shape-transformations)).
+Inside an `attach` / `attach!` body, `(scale factor)` (a number-first call, no value argument) scales the currently-attached mesh in place. `(scale [sx sy sz])` or `(scale sx sy sz)` does a non-uniform scale along the local axes.
 
 ```clojure
 (register b (box 20))
@@ -1794,6 +1843,8 @@ Scale the attached mesh in place. `(scale factor)` does a uniform scale; `(scale
 ;; Combine with other ops: move, then double size, then rotate
 (attach! :b (f 10) (scale 2) (th 45))
 ```
+
+This is a special case of the polymorphic `scale` — the dispatcher recognises the leading-number form and routes here. `(scale value …)` with a non-number first argument does the regular value transform on a mesh, SDF, or 2D shape (see [Top-level transforms](#top-level-transforms)). For 2D shapes specifically, the `scale-shape` alias still works.
 
 ### Lateral movement
 
@@ -1962,7 +2013,7 @@ For the rare case where you want the front half:
 
 ### Transforms
 
-SDFs use the **polymorphic** transforms `translate`, `scale`, `rotate`, the same names as for meshes and 2D shapes. The `sdf-move`, `sdf-scale`, `sdf-rotate` names of earlier versions are gone.
+SDFs use the **polymorphic** transforms `translate`, `scale`, `rotate`, the same names as for meshes and 2D shapes (full description in [Top-level transforms](#top-level-transforms)). The `sdf-move`, `sdf-scale`, `sdf-rotate` names of earlier versions are gone.
 
 ```clojure
 (translate node dx dy dz)       ; Translate an SDF node
@@ -1972,7 +2023,7 @@ SDFs use the **polymorphic** transforms `translate`, `scale`, `rotate`, the same
 (sdf-revolve node-2d)           ; Revolve a 2D SDF (X=radius, Y=height) around Z
 ```
 
-Arbitrary-axis rotation is implemented as a coordinate remap via the transposed Rodrigues matrix; the cardinal-axis form uses libfive's optimized `rotate_x/y/z`.
+Cardinal-axis rotations dispatch directly to libfive's `rotate_x/y/z`. Arbitrary-axis rotations decompose into a ZYX Tait-Bryan triple; the decomposition can lose one degree of freedom near gimbal lock (pitch ≈ ±90°), but the visible rotation remains consistent. SDFs rotate around the **world origin**, not their bounding-box centroid — to rotate an off-origin SDF in place, sandwich the rotation between matched translations.
 
 ### Materialization
 
