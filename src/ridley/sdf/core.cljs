@@ -229,9 +229,13 @@
 
 (defn sdf-rotate-axis
   "Rotate an SDF around an arbitrary axis [ax ay az] by angle (degrees).
-   The axis is normalized internally. Implemented as a coordinate remap via
-   the transposed Rodrigues matrix (the SDF transforms the QUERY point, so
-   the inverse rotation R^T is what we substitute into x/y/z)."
+   The axis is normalized internally.
+
+   Implemented as ZYX (extrinsic) Tait-Bryan decomposition into three
+   cardinal-axis rotations, dispatched to libfive's rotate_x/y/z. We can't
+   do this via JSON-level variable substitution because primitives like
+   sdf-box / sdf-sphere don't expose `var` nodes in their JSON tree —
+   their dependence on x/y/z is implicit inside the libfive backend."
   [node axis angle-deg]
   (let [[ax-r ay-r az-r] axis
         mag (Math/sqrt (+ (* ax-r ax-r) (* ay-r ay-r) (* az-r az-r)))]
@@ -242,20 +246,23 @@
           c (Math/cos rad)
           s (Math/sin rad)
           t (- 1 c)
-          ;; R^T coefficients (row-major for new_x, new_y, new_z)
-          m00 (+ c (* ax ax t))
-          m01 (+ (* ax ay t) (* az s))
-          m02 (- (* ax az t) (* ay s))
-          m10 (- (* ax ay t) (* az s))
-          m11 (+ c (* ay ay t))
-          m12 (+ (* ay az t) (* ax s))
-          m20 (+ (* ax az t) (* ay s))
-          m21 (- (* ay az t) (* ax s))
-          m22 (+ c (* az az t))
-          new-x (compile-expr (list '+ (list '* m00 'x) (list '* m01 'y) (list '* m02 'z)))
-          new-y (compile-expr (list '+ (list '* m10 'x) (list '* m11 'y) (list '* m12 'z)))
-          new-z (compile-expr (list '+ (list '* m20 'x) (list '* m21 'y) (list '* m22 'z)))]
-      (substitute-vars node {"x" new-x "y" new-y "z" new-z}))))
+          ;; Rodrigues rotation matrix (rotates points by angle around axis)
+          r00 (+ c (* ax ax t))
+          r10 (+ (* ax ay t) (* az s))
+          r20 (- (* ax az t) (* ay s))
+          r21 (+ (* ay az t) (* ax s))
+          r22 (+ c (* az az t))
+          ;; Decompose into ZYX extrinsic Tait-Bryan: R = Rz(yaw) * Ry(pitch) * Rx(roll)
+          ;; Applied as (rotate :x roll) → (rotate :y pitch) → (rotate :z yaw)
+          ;; gives the correct composition since each call rotates around the WORLD axis.
+          pitch-rad (- (Math/asin (max -1.0 (min 1.0 r20))))
+          yaw-rad   (Math/atan2 r10 r00)
+          roll-rad  (Math/atan2 r21 r22)
+          to-deg    (fn [r] (* r (/ 180 Math/PI)))]
+      (-> node
+          (sdf-rotate :x (to-deg roll-rad))
+          (sdf-rotate :y (to-deg pitch-rad))
+          (sdf-rotate :z (to-deg yaw-rad))))))
 
 ;; ── SDF formula (expression compiler) ───────────────────────────
 
