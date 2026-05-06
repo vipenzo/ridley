@@ -250,6 +250,17 @@
   (-> {:op "move" :a node :dx dx :dy dy :dz dz}
       (with-meta-from node (pose-translate dx dy dz))))
 
+(defn sdf-move-keeping-creation-pose
+  "Like sdf-move but leaves :creation-pose unchanged on the result while
+   translating :anchors. Used by cp-* in attach: anchors and geometry
+   slide in opposite directions from the creation-pose, which stays put."
+  [node dx dy dz]
+  (let [base {:op "move" :a node :dx dx :dy dy :dz dz}
+        pose-fn (pose-translate dx dy dz)]
+    (cond-> base
+      (:anchors node)       (assoc :anchors (map-anchors (:anchors node) pose-fn))
+      (:creation-pose node) (assoc :creation-pose (:creation-pose node)))))
+
 (declare sdf-rotate-axis)
 
 (defn sdf-rotate

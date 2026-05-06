@@ -700,6 +700,16 @@
     target
     :else nil))
 
+(defn- translate-sdf-to-position
+  "Translate the SDF by the world-space delta needed to take the turtle
+   from its current position to dest. Mirrors what move-state-to-position
+   achieves on meshes (which goes through turtle commands that drag the
+   attached mesh along)."
+  [sdf state dest]
+  (let [[cx cy cz] (:position state)
+        [dx dy dz] dest]
+    (sdf/sdf-move sdf (- dx cx) (- dy cy) (- dz cz))))
+
 (defn- sdf-move-to
   "Handle :move-to inside an SDF attach. Returns [new-state new-sdf]."
   [state sdf args]
@@ -716,9 +726,10 @@
         (let [tgt-pos (:position anchor)
               tgt-h   (:heading anchor)
               tgt-u   (:up anchor)
-              sdf'    (if align?
-                        (sdf-align sdf (:heading state) (:up state) tgt-h tgt-u tgt-pos)
-                        sdf)]
+              sdf-translated (translate-sdf-to-position sdf state tgt-pos)
+              sdf' (if align?
+                     (sdf-align sdf-translated (:heading state) (:up state) tgt-h tgt-u tgt-pos)
+                     sdf-translated)]
           [(-> state
                (assoc :position tgt-pos)
                (assoc :heading tgt-h)
@@ -732,7 +743,10 @@
                          [(/ (+ (apply min xs) (apply max xs)) 2)
                           (/ (+ (apply min ys) (apply max ys)) 2)
                           (/ (+ (apply min zs) (apply max zs)) 2)]))]
-        [(if centroid (assoc state :position centroid) state) sdf])
+        (if centroid
+          [(assoc state :position centroid)
+           (translate-sdf-to-position sdf state centroid)]
+          [state sdf]))
 
       :else
       (let [pose (when target-obj (:creation-pose target-obj))]
@@ -741,7 +755,7 @@
                (assoc :position (:position pose))
                (assoc :heading (:heading pose))
                (assoc :up (:up pose)))
-           sdf]
+           (translate-sdf-to-position sdf state (:position pose))]
           [state sdf])))))
 
 (defn- sdf-attach-impl
@@ -765,7 +779,14 @@
   [sdf-node path]
   (validate-sdf-attach-path! path)
   (loop [state (turtle/make-turtle)
-         sdf sdf-node
+         ;; Give the SDF a default :creation-pose at the turtle origin if it
+         ;; doesn't have one yet. cp-* leans on creation-pose to mean "anchor
+         ;; that stays put while the geometry slides under it" — without an
+         ;; initial pose, that semantic has nothing to anchor against.
+         sdf (if (:creation-pose sdf-node)
+               sdf-node
+               (assoc sdf-node :creation-pose
+                      {:position [0 0 0] :heading [1 0 0] :up [0 0 1]}))
          remaining (:commands path)]
     (if (empty? remaining)
       sdf
@@ -821,7 +842,8 @@
 
           :cp-f (let [n (first args)
                       [hx hy hz] (math/normalize (:heading state))
-                      sdf' (sdf/sdf-move sdf (- (* n hx)) (- (* n hy)) (- (* n hz)))]
+                      sdf' (sdf/sdf-move-keeping-creation-pose
+                            sdf (- (* n hx)) (- (* n hy)) (- (* n hz)))]
                   (recur state sdf' rest-cmds))
 
           :cp-rt (let [n (first args)
@@ -830,12 +852,14 @@
                        rx (- (* uy hz) (* uz hy))
                        ry (- (* uz hx) (* ux hz))
                        rz (- (* ux hy) (* uy hx))
-                       sdf' (sdf/sdf-move sdf (- (* n rx)) (- (* n ry)) (- (* n rz)))]
+                       sdf' (sdf/sdf-move-keeping-creation-pose
+                             sdf (- (* n rx)) (- (* n ry)) (- (* n rz)))]
                    (recur state sdf' rest-cmds))
 
           :cp-u (let [n (first args)
                       [ux uy uz] (math/normalize (:up state))
-                      sdf' (sdf/sdf-move sdf (- (* n ux)) (- (* n uy)) (- (* n uz)))]
+                      sdf' (sdf/sdf-move-keeping-creation-pose
+                            sdf (- (* n ux)) (- (* n uy)) (- (* n uz)))]
                   (recur state sdf' rest-cmds))
 
           :mark (let [nm (first args)
