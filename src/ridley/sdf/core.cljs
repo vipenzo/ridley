@@ -253,15 +253,21 @@
           r21 (+ (* ay az t) (* ax s))
           r22 (+ c (* az az t))
           ;; Decompose into ZYX extrinsic Tait-Bryan: R = Rz(yaw) * Ry(pitch) * Rx(roll)
-          ;; Applied as (rotate :x roll) → (rotate :y pitch) → (rotate :z yaw)
-          ;; gives the correct composition since each call rotates around the WORLD axis.
+          ;; Applied as (rotate :x roll) → (rotate :y pitch) → (rotate :z yaw):
+          ;; each libfive rotate_* call rotates around its WORLD axis, so the
+          ;; composition order (innermost first) matches the matrix product.
+          ;;
+          ;; libfive sign quirk: rotate_x and rotate_z use right-hand convention,
+          ;; but rotate_y uses LEFT-hand around +Y (i.e. its visible effect is
+          ;; Ry(-α) standard). We flip the pitch sign when calling rotate_y so
+          ;; the composition matches the standard right-hand decomposition.
           pitch-rad (- (Math/asin (max -1.0 (min 1.0 r20))))
           yaw-rad   (Math/atan2 r10 r00)
           roll-rad  (Math/atan2 r21 r22)
           to-deg    (fn [r] (* r (/ 180 Math/PI)))]
       (-> node
           (sdf-rotate :x (to-deg roll-rad))
-          (sdf-rotate :y (to-deg pitch-rad))
+          (sdf-rotate :y (to-deg (- pitch-rad)))
           (sdf-rotate :z (to-deg yaw-rad))))))
 
 ;; ── SDF formula (expression compiler) ───────────────────────────

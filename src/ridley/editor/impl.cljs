@@ -683,9 +683,10 @@
         sz (- (* ux hy) (* uy hx))
         ;; Rotation matrix R = [heading | side | up] as columns,
         ;; mapping (e1, e2, e3) → (heading, side, up).
-        ;; ZYX Tait-Bryan extraction from R (no R[i][j] indexing —
-        ;; we have the entries by name already).
-        ;; R[2][0] = hz, R[1][0] = hy, R[0][0] = hx, R[2][1] = sz, R[2][2] = uz.
+        ;; ZYX Tait-Bryan extraction from R (entries available by name).
+        ;; libfive sign quirk: rotate_y uses left-hand convention while
+        ;; rotate_x/z use right-hand — we negate the pitch when calling
+        ;; rotate_y so the composition matches the standard decomposition.
         clamp (fn [v] (max -1.0 (min 1.0 v)))
         pitch-rad (- (Math/asin (clamp hz)))
         yaw-rad   (Math/atan2 hy hx)
@@ -693,7 +694,7 @@
         to-deg    (fn [r] (* r (/ 180 Math/PI)))]
     (-> sdf-node
         (sdf/sdf-rotate :x (to-deg roll-rad))
-        (sdf/sdf-rotate :y (to-deg pitch-rad))
+        (sdf/sdf-rotate :y (to-deg (- pitch-rad)))
         (sdf/sdf-rotate :z (to-deg yaw-rad))
         (sdf/sdf-move px py pz))))
 
