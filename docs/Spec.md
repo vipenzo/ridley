@@ -1662,16 +1662,25 @@ Transform a mesh, panel, or SDF, returning a new value (functional, original unc
 (register cap (attach (sdf-sphere 5) (tv 60) (tr 30) (f 30)))
 ```
 
-**Restrictions on SDF attach.** The body still uses the turtle path DSL, but a few commands have no meaning when the target is an SDF and throw with a clear error:
+SDF attach is **incremental**: the path is walked one command at a time, and each command transforms the SDF tree directly. Movement (`f`, `rt`, `u`, `lt`), rotation (`th`, `tv`, `tr`, `set-heading`), creation-pose shifts (`cp-f`, `cp-rt`, `cp-u`), `mark`, and `move-to` (with or without `:align`) all work on SDFs the same way they do on meshes.
+
+| Command | Effect on SDF |
+|---------|---------------|
+| `f`, `rt`, `u`, `lt` | Translate the SDF; advance the turtle |
+| `th`, `tv`, `tr` | Rotate the SDF around the current turtle position by the corresponding axis (up / right / heading) |
+| `set-heading` | Replace turtle heading/up; SDF unchanged |
+| `cp-f`, `cp-rt`, `cp-u` | Translate the SDF in the *opposite* direction (anchor stays, geometry slides) |
+| `mark :name` | Record the current turtle pose as a named anchor on the SDF |
+| `move-to … [:align]` | Snap turtle to target anchor / centroid / pose; with `:align`, also rotate the SDF to match the anchor's frame |
+
+The anchors recorded by `mark` survive through subsequent transforms and through SDF booleans (the second argument's anchors are merged in, first-wins on name collision). They also cross the SDF→mesh boundary: when an SDF is materialized, its anchors carry over to the resulting mesh.
+
+Two commands remain rejected with an explanatory error:
 
 | Command | Reason |
 |---------|--------|
-| `cp-f`, `cp-rt`, `cp-u` | Require an anchor system; SDFs have no named anchors |
-| `mark` | Same reason — no anchor model |
 | `inset` | Mesh-face-specific, no SDF analogue |
-| `(scale n)` | Inside-attach legacy form is for meshes; for SDF use top-level `(scale sdf n)` outside the attach |
-
-Plain movement (`f`, `b`, `rt`, `u`) and rotation (`th`, `tv`, `tr`, `set-heading`) all work, plus `move-to` (which only updates the turtle pose, no anchor lookup on the SDF target).
+| `(scale n)` | The legacy turtle-mesh form; for SDF use top-level `(scale sdf n)` outside the attach |
 
 ### attach!
 

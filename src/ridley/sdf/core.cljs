@@ -2,7 +2,8 @@
   "SDF operations via libfive (Rust backend).
    SDF nodes are pure data — descriptions of implicit surfaces.
    Meshing is lazy: happens automatically at register/boolean/export boundaries.
-   This is the CLJS version — calls the Rust server via synchronous XMLHttpRequest.")
+   This is the CLJS version — calls the Rust server via synchronous XMLHttpRequest."
+  (:require [ridley.math :as math]))
 
 (def ^:private server-url "http://127.0.0.1:12321")
 
@@ -64,6 +65,71 @@
   [x]
   (and (map? x) (string? (:op x))))
 
+;; ── Anchor / creation-pose propagation helpers ─────────────────
+;; SDFs carry optional :anchors (map of name → pose) and :creation-pose
+;; on their root node, mirroring the convention used by meshes. Each
+;; SDF op needs to propagate (and possibly transform) these fields so
+;; that anchors stay attached to the geometry through any chain of
+;; transforms or boolean ops.
+
+(defn- pose-translate
+  "Return a pose-transform fn that translates the position by (dx, dy, dz),
+   leaving heading and up untouched."
+  [dx dy dz]
+  (fn [{:keys [position] :as pose}]
+    (let [[px py pz] position]
+      (assoc pose :position [(+ px dx) (+ py dy) (+ pz dz)]))))
+
+(defn- pose-rotate
+  "Return a pose-transform fn that rotates position, heading, up around
+   the given world axis by angle-rad (right-hand convention)."
+  [axis angle-rad]
+  (fn [{:keys [position heading up] :as pose}]
+    (assoc pose
+           :position (math/rotate-point-around-axis position axis angle-rad)
+           :heading  (math/rotate-around-axis heading axis angle-rad)
+           :up       (math/rotate-around-axis up      axis angle-rad))))
+
+(defn- pose-scale
+  "Return a pose-transform fn that scales the position component-wise.
+   Heading and up stay invariant (they're directions, not points)."
+  [sx sy sz]
+  (fn [{:keys [position] :as pose}]
+    (let [[px py pz] position]
+      (assoc pose :position [(* px sx) (* py sy) (* pz sz)]))))
+
+(defn- map-anchors
+  "Apply pose-fn to every anchor in the map."
+  [anchors pose-fn]
+  (when anchors
+    (into {} (map (fn [[k v]] [k (pose-fn v)])) anchors)))
+
+(defn- with-meta-from
+  "Copy :anchors and :creation-pose from `source` to `result`, transformed
+   through pose-fn."
+  [result source pose-fn]
+  (cond-> result
+    (:anchors source)       (assoc :anchors (map-anchors (:anchors source) pose-fn))
+    (:creation-pose source) (assoc :creation-pose (pose-fn (:creation-pose source)))))
+
+(defn- inherit-meta
+  "Copy :anchors and :creation-pose unchanged from `source` to `result`.
+   Used by ops that don't transform geometry positionally (shell, offset, etc.)."
+  [result source]
+  (cond-> result
+    (:anchors source)       (assoc :anchors (:anchors source))
+    (:creation-pose source) (assoc :creation-pose (:creation-pose source))))
+
+(defn- merge-meta
+  "Merge :anchors and :creation-pose from two sources into `result`.
+   On anchor name collision, `a` wins; same for creation-pose."
+  [result a b]
+  (let [combined-anchors (merge (:anchors b) (:anchors a))
+        combined-pose (or (:creation-pose a) (:creation-pose b))]
+    (cond-> result
+      (seq combined-anchors) (assoc :anchors combined-anchors)
+      combined-pose          (assoc :creation-pose combined-pose))))
+
 ;; ── SDF node constructors (pure data) ───────────────────────────
 
 (defn sdf-sphere [r] {:op "sphere" :r r})
@@ -113,63 +179,76 @@
 
 (defn sdf-union
   "Union of one or more SDF nodes.
-   Usage: (sdf-union a), (sdf-union a b c), (sdf-union [a b c])."
+   Usage: (sdf-union a), (sdf-union a b c), (sdf-union [a b c]).
+   Anchors merged: first-wins on name collision."
   [first-arg & more]
   (let [nodes (variadic-args first-arg more)]
     (case (count nodes)
       0 nil
       1 (first nodes)
-      (reduce (fn [acc n] {:op "union" :a acc :b n})
+      (reduce (fn [acc n] (-> {:op "union" :a acc :b n} (merge-meta acc n)))
               (first nodes) (rest nodes)))))
 
 (defn sdf-difference
   "Difference of SDF nodes: (((a - b) - c) - d).
-   Usage: (sdf-difference a b), (sdf-difference a b c), (sdf-difference [a b c])."
+   Usage: (sdf-difference a b), (sdf-difference a b c), (sdf-difference [a b c]).
+   Anchors come from the minuend (first arg)."
   [first-arg & more]
   (let [nodes (variadic-args first-arg more)]
     (case (count nodes)
       0 nil
       1 (first nodes)
-      (reduce (fn [acc n] {:op "difference" :a acc :b n})
+      (reduce (fn [acc n] (-> {:op "difference" :a acc :b n} (inherit-meta acc)))
               (first nodes) (rest nodes)))))
 
 (defn sdf-intersection
   "Intersection of one or more SDF nodes.
-   Usage: (sdf-intersection a), (sdf-intersection a b c), (sdf-intersection [a b c])."
+   Usage: (sdf-intersection a), (sdf-intersection a b c), (sdf-intersection [a b c]).
+   Anchors merged: first-wins on name collision."
   [first-arg & more]
   (let [nodes (variadic-args first-arg more)]
     (case (count nodes)
       0 nil
       1 (first nodes)
-      (reduce (fn [acc n] {:op "intersection" :a acc :b n})
+      (reduce (fn [acc n] (-> {:op "intersection" :a acc :b n} (merge-meta acc n)))
               (first nodes) (rest nodes)))))
 
 (declare compile-expr)
 
 ;; ── SDF-only operations ─────────────────────────────────────────
 
-(defn sdf-blend [a b k] {:op "blend" :a a :b b :k k})
+(defn sdf-blend [a b k]
+  (-> {:op "blend" :a a :b b :k k} (merge-meta a b)))
 
 (defn sdf-blend-difference
   "Smooth subtraction: removes b from a with a soft transition of radius k.
    Analogous to sdf-blend but for difference. k has length units (mm in
-   typical Ridley scenes); higher k → wider, smoother concavity."
+   typical Ridley scenes); higher k → wider, smoother concavity.
+   Anchors come from the minuend (a)."
   [a b k]
-  {:op "blend-difference" :a a :b b :k k})
-(defn sdf-shell [a thickness] {:op "shell" :a a :thickness thickness})
-(defn sdf-offset [a amount] {:op "offset" :a a :amount amount})
-(defn sdf-morph [a b t] {:op "morph" :a a :b b :t t})
+  (-> {:op "blend-difference" :a a :b b :k k} (inherit-meta a)))
+
+(defn sdf-shell [a thickness]
+  (-> {:op "shell" :a a :thickness thickness} (inherit-meta a)))
+
+(defn sdf-offset [a amount]
+  (-> {:op "offset" :a a :amount amount} (inherit-meta a)))
+
+(defn sdf-morph [a b t]
+  (-> {:op "morph" :a a :b b :t t} (merge-meta a b)))
 
 (defn sdf-displace
   "Displace an SDF surface by a spatial formula.
    The formula is a quoted expression using x, y, z."
   [node formula-expr]
-  {:op "binary" :fn_name "add" :a node :b (compile-expr formula-expr)})
+  (-> {:op "binary" :fn_name "add" :a node :b (compile-expr formula-expr)}
+      (inherit-meta node)))
 
 ;; ── SDF transforms ──────────────────────────────────────────────
 
 (defn sdf-move [node dx dy dz]
-  {:op "move" :a node :dx dx :dy dy :dz dz})
+  (-> {:op "move" :a node :dx dx :dy dy :dz dz}
+      (with-meta-from node (pose-translate dx dy dz))))
 
 (declare sdf-rotate-axis)
 
@@ -180,7 +259,14 @@
   [node axis angle]
   (cond
     (keyword? axis)
-    {:op "rotate" :a node :axis (name axis) :angle angle}
+    (let [rad (* angle (/ Math/PI 180))
+          axis-vec (case axis :x [1 0 0] :y [0 1 0] :z [0 0 1])
+          ;; libfive rotate_y is left-hand around +Y while rotate_x/z are
+          ;; right-hand. To rotate anchors with the same visible effect, we
+          ;; flip the angle sign for :y.
+          effective-rad (if (= axis :y) (- rad) rad)]
+      (-> {:op "rotate" :a node :axis (name axis) :angle angle}
+          (with-meta-from node (pose-rotate axis-vec effective-rad))))
 
     (sequential? axis)
     (sdf-rotate-axis node axis angle)
@@ -225,7 +311,8 @@
   "Scale an SDF node. Uniform or per-axis."
   ([node s] (sdf-scale node s s s))
   ([node sx sy sz]
-   {:op "scale" :a node :sx sx :sy sy :sz sz}))
+   (-> {:op "scale" :a node :sx sx :sy sy :sz sz}
+       (with-meta-from node (pose-scale sx sy sz)))))
 
 (defn sdf-rotate-axis
   "Rotate an SDF around an arbitrary axis [ax ay az] by angle (degrees).
@@ -591,14 +678,18 @@
 (defn materialize
   "Materialize an SDF tree into a triangle mesh via libfive.
    bounds: [[xmin xmax] ...] — if nil, auto-computed from tree
-   resolution: voxels per unit (default 15)"
+   resolution: voxels per unit (default 15)
+   Anchors and creation-pose on the SDF root carry over to the resulting mesh."
   ([node] (materialize node nil 15))
   ([node bounds] (materialize node bounds 15))
   ([node bounds resolution]
    (let [bounds (or bounds (auto-bounds node))
          payload (clj->js {:tree node :bounds bounds :resolution resolution})
-         result (invoke-sync "/sdf-mesh" payload)]
-     (js->mesh result))))
+         result (invoke-sync "/sdf-mesh" payload)
+         mesh (js->mesh result)]
+     (cond-> mesh
+       (:anchors node)       (assoc :anchors (:anchors node))
+       (:creation-pose node) (assoc :creation-pose (:creation-pose node))))))
 
 (defn ensure-mesh
   "If x is an SDF node, materialize it. If already a mesh, return as-is."

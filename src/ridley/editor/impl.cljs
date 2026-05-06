@@ -649,54 +649,207 @@
 ;; ============================================================
 
 (def ^:private sdf-attach-rejected
-  "Path commands that are not meaningful when attaching an SDF (no anchor system,
-   no per-face inset semantics)."
-  {:cp-f  "cp-* requires an anchor system not available for SDFs; use f / rt / u for translation"
-   :cp-rt "cp-* requires an anchor system not available for SDFs; use f / rt / u for translation"
-   :cp-u  "cp-* requires an anchor system not available for SDFs; use f / rt / u for translation"
-   :inset "inset is mesh/face-specific, not applicable to SDFs"
-   :scale "(scale n) inside attach is for meshes; for SDFs use (scale sdf factor) outside attach"})
+  "Path commands not meaningful when attaching an SDF: only mesh-face
+   ops (inset) and the legacy turtle-mesh scale command."
+  {:inset "inset is mesh-face-specific, not applicable to SDFs"
+   :scale "(scale n) inside attach is mesh-only; for SDF use (scale sdf factor) outside attach"})
 
 (defn- validate-sdf-attach-path! [path]
   (when-let [bad (first (filter #(contains? sdf-attach-rejected (:cmd %)) (:commands path)))]
     (throw (js/Error. (str "attach on SDF: '" (name (:cmd bad)) "' — "
                            (sdf-attach-rejected (:cmd bad)))))))
 
-(defn- sdf-attach-impl
-  "Attach to an SDF: replay path on a fresh turtle, then apply the
-   resulting rigid transformation (rotation + translation) to the SDF.
+(defn- sdf-rotate-around-point
+  "Rotate an SDF around an arbitrary axis through `pivot` by angle (radians)."
+  [sdf-node axis angle-rad pivot]
+  (let [[px py pz] pivot
+        angle-deg (* angle-rad (/ 180 Math/PI))]
+    (-> sdf-node
+        (sdf/sdf-move (- px) (- py) (- pz))
+        (sdf/sdf-rotate axis angle-deg)
+        (sdf/sdf-move px py pz))))
 
-   Decomposes the final rotation into ZYX extrinsic Tait-Bryan angles
-   so each step delegates to libfive's optimized rotate_x/y/z. Doing
-   this via a single arbitrary-axis remap is not viable at the JSON
-   level: primitives like sdf-box / sdf-sphere don't expose `var` nodes,
-   so variable substitution has no purchase on them."
+(defn- sdf-align
+  "Two-step rotation taking the (cur-h, cur-u) frame to (tgt-h, tgt-u),
+   pivoted at `pivot`. Mirrors align-attached-mesh."
+  [sdf-node cur-h cur-u tgt-h tgt-u pivot]
+  (let [dot-h (math/dot cur-h tgt-h)
+        cross-h (math/cross cur-h tgt-h)
+        [s1-axis s1-angle] (cond
+                             (>= dot-h 0.9999)  [nil 0]
+                             (<= dot-h -0.9999) [(math/normalize cur-u) Math/PI]
+                             :else              [(math/normalize cross-h) (Math/acos dot-h)])
+        sdf1 (if s1-axis (sdf-rotate-around-point sdf-node s1-axis s1-angle pivot) sdf-node)
+        cur-u' (if s1-axis (math/rotate-around-axis cur-u s1-axis s1-angle) cur-u)
+        dot-u (math/dot cur-u' tgt-u)
+        cross-u (math/cross cur-u' tgt-u)
+        sign (if (>= (math/dot cross-u tgt-h) 0) 1 -1)
+        [s2-axis s2-angle] (cond
+                             (>= dot-u 0.9999)  [nil 0]
+                             (<= dot-u -0.9999) [tgt-h Math/PI]
+                             :else              [tgt-h (* sign (Math/acos dot-u))])]
+    (if s2-axis (sdf-rotate-around-point sdf1 s2-axis s2-angle pivot) sdf1)))
+
+(defn- resolve-anchor-source
+  "Resolve a target reference (keyword, mesh, or SDF) to something that
+   can carry :anchors / :creation-pose."
+  [target]
+  (cond
+    (keyword? target) (registry/get-mesh target)
+    (and (map? target) (or (:vertices target) (:anchors target) (sdf/sdf-node? target)))
+    target
+    :else nil))
+
+(defn- sdf-move-to
+  "Handle :move-to inside an SDF attach. Returns [new-state new-sdf]."
+  [state sdf args]
+  (let [target (first args)
+        mode (second args)
+        target-obj (resolve-anchor-source target)]
+    (cond
+      (= mode :at)
+      (let [anchor-name (nth args 2)
+            align? (= (nth args 3 nil) :align)
+            anchor (when target-obj (get-in target-obj [:anchors anchor-name]))]
+        (when-not anchor
+          (throw (js/Error. (str "move-to: no anchor " anchor-name " on " target))))
+        (let [tgt-pos (:position anchor)
+              tgt-h   (:heading anchor)
+              tgt-u   (:up anchor)
+              sdf'    (if align?
+                        (sdf-align sdf (:heading state) (:up state) tgt-h tgt-u tgt-pos)
+                        sdf)]
+          [(-> state
+               (assoc :position tgt-pos)
+               (assoc :heading tgt-h)
+               (assoc :up tgt-u))
+           sdf']))
+
+      (= mode :center)
+      (let [centroid (when (and target-obj (:vertices target-obj))
+                       (let [vs (:vertices target-obj)
+                             xs (map first vs) ys (map second vs) zs (map #(nth % 2) vs)]
+                         [(/ (+ (apply min xs) (apply max xs)) 2)
+                          (/ (+ (apply min ys) (apply max ys)) 2)
+                          (/ (+ (apply min zs) (apply max zs)) 2)]))]
+        [(if centroid (assoc state :position centroid) state) sdf])
+
+      :else
+      (let [pose (when target-obj (:creation-pose target-obj))]
+        (if pose
+          [(-> state
+               (assoc :position (:position pose))
+               (assoc :heading (:heading pose))
+               (assoc :up (:up pose)))
+           sdf]
+          [state sdf])))))
+
+(defn- sdf-attach-impl
+  "Attach to an SDF: walk the path commands, transforming the SDF
+   incrementally. Each command updates the turtle state and (where
+   relevant) the SDF tree:
+
+   - f / b / rt / u / lt / d: translate the SDF by the corresponding
+     world-space delta and advance the turtle.
+   - th / tv / tr: rotate the SDF around the current turtle position
+     using the appropriate axis (up, right, heading), and rotate the
+     turtle frame.
+   - cp-f / cp-rt / cp-u: translate the SDF by the OPPOSITE of the
+     direction (anchor stays put in world; geometry slides under).
+   - mark: record the current turtle pose as a named anchor on the SDF.
+   - move-to: snap the turtle to the target anchor / centroid / pose.
+     With :align, also rotate the SDF so its frame matches the anchor.
+   - set-heading: replace turtle heading/up directly (frame change only,
+     SDF unchanged).
+   - inset / scale (legacy turtle form): rejected with explanatory error."
   [sdf-node path]
   (validate-sdf-attach-path! path)
-  (let [state (replay-path-commands (turtle/make-turtle) path)
-        [px py pz] (:position state)
-        [hx hy hz] (math/normalize (:heading state))
-        [ux uy uz] (math/normalize (:up state))
-        ;; side = up × heading (right-handed frame consistent with mesh attach)
-        sx (- (* uy hz) (* uz hy))
-        sy (- (* uz hx) (* ux hz))
-        sz (- (* ux hy) (* uy hx))
-        ;; Rotation matrix R = [heading | side | up] as columns,
-        ;; mapping (e1, e2, e3) → (heading, side, up).
-        ;; ZYX Tait-Bryan extraction from R (entries available by name).
-        ;; libfive sign quirk: rotate_y uses left-hand convention while
-        ;; rotate_x/z use right-hand — we negate the pitch when calling
-        ;; rotate_y so the composition matches the standard decomposition.
-        clamp (fn [v] (max -1.0 (min 1.0 v)))
-        pitch-rad (- (Math/asin (clamp hz)))
-        yaw-rad   (Math/atan2 hy hx)
-        roll-rad  (Math/atan2 sz uz)
-        to-deg    (fn [r] (* r (/ 180 Math/PI)))]
-    (-> sdf-node
-        (sdf/sdf-rotate :x (to-deg roll-rad))
-        (sdf/sdf-rotate :y (to-deg (- pitch-rad)))
-        (sdf/sdf-rotate :z (to-deg yaw-rad))
-        (sdf/sdf-move px py pz))))
+  (loop [state (turtle/make-turtle)
+         sdf sdf-node
+         remaining (:commands path)]
+    (if (empty? remaining)
+      sdf
+      (let [{:keys [cmd args]} (first remaining)
+            rest-cmds (rest remaining)
+            apply-translation
+            (fn [state' sdf']
+              (let [delta (mapv - (:position state') (:position state))
+                    [dx dy dz] delta]
+                [state' (sdf/sdf-move sdf' dx dy dz)]))]
+        (case cmd
+          :f  (let [[s' sdf'] (apply-translation (turtle/f state (first args)) sdf)]
+                (recur s' sdf' rest-cmds))
+          :u  (let [[s' sdf'] (apply-translation (turtle/move-up state (first args)) sdf)]
+                (recur s' sdf' rest-cmds))
+          :rt (let [[s' sdf'] (apply-translation (turtle/move-right state (first args)) sdf)]
+                (recur s' sdf' rest-cmds))
+          :lt (let [[s' sdf'] (apply-translation (turtle/move-left state (first args)) sdf)]
+                (recur s' sdf' rest-cmds))
+
+          :th (let [α (first args)
+                    pivot (:position state)
+                    axis (:up state)
+                    rad (* α (/ Math/PI 180))
+                    sdf' (sdf-rotate-around-point sdf axis rad pivot)
+                    state' (turtle/th state α)]
+                (recur state' sdf' rest-cmds))
+
+          :tv (let [α (first args)
+                    pivot (:position state)
+                    [hx hy hz] (:heading state)
+                    [ux uy uz] (:up state)
+                    axis [(- (* uy hz) (* uz hy))
+                          (- (* uz hx) (* ux hz))
+                          (- (* ux hy) (* uy hx))]
+                    rad (* α (/ Math/PI 180))
+                    sdf' (sdf-rotate-around-point sdf axis rad pivot)
+                    state' (turtle/tv state α)]
+                (recur state' sdf' rest-cmds))
+
+          :tr (let [α (first args)
+                    pivot (:position state)
+                    axis (:heading state)
+                    rad (* α (/ Math/PI 180))
+                    sdf' (sdf-rotate-around-point sdf axis rad pivot)
+                    state' (turtle/tr state α)]
+                (recur state' sdf' rest-cmds))
+
+          :set-heading (recur (-> state
+                                  (assoc :heading (math/normalize (first args)))
+                                  (assoc :up (math/normalize (second args))))
+                              sdf rest-cmds)
+
+          :cp-f (let [n (first args)
+                      [hx hy hz] (math/normalize (:heading state))
+                      sdf' (sdf/sdf-move sdf (- (* n hx)) (- (* n hy)) (- (* n hz)))]
+                  (recur state sdf' rest-cmds))
+
+          :cp-rt (let [n (first args)
+                       [hx hy hz] (:heading state)
+                       [ux uy uz] (:up state)
+                       rx (- (* uy hz) (* uz hy))
+                       ry (- (* uz hx) (* ux hz))
+                       rz (- (* ux hy) (* uy hx))
+                       sdf' (sdf/sdf-move sdf (- (* n rx)) (- (* n ry)) (- (* n rz)))]
+                   (recur state sdf' rest-cmds))
+
+          :cp-u (let [n (first args)
+                      [ux uy uz] (math/normalize (:up state))
+                      sdf' (sdf/sdf-move sdf (- (* n ux)) (- (* n uy)) (- (* n uz)))]
+                  (recur state sdf' rest-cmds))
+
+          :mark (let [nm (first args)
+                      pose {:position (:position state)
+                            :heading (:heading state)
+                            :up (:up state)}
+                      sdf' (assoc-in sdf [:anchors nm] pose)]
+                  (recur state sdf' rest-cmds))
+
+          :move-to (let [[s' sdf'] (sdf-move-to state sdf args)]
+                     (recur s' sdf' rest-cmds))
+
+          ;; Default: ignore unknown commands silently (matches the mesh path).
+          (recur state sdf rest-cmds))))))
 
 (defn- group-attach-impl
   "Attach to a vector of meshes (group transform). Returns transformed vector."
