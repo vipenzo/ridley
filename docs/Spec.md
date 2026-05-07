@@ -1675,6 +1675,8 @@ SDF attach is **incremental**: the path is walked one command at a time, and eac
 
 The anchors recorded by `mark` survive through subsequent transforms and through SDF booleans (the second argument's anchors are merged in, first-wins on name collision). They also cross the SDF→mesh boundary: when an SDF is materialized, its anchors carry over to the resulting mesh.
 
+For `cp-*` to have a creation-pose to anchor against, an SDF entering `attach` is given a default `creation-pose` at the turtle's starting frame (origin, heading `+X`, up `+Z`) if it doesn't already carry one. The pose then translates with `f`/`rt`/`u` and rotates with `th`/`tv`/`tr` along with the geometry; only `cp-*` shifts the geometry independently.
+
 Two commands remain rejected with an explanatory error:
 
 | Command | Reason |
