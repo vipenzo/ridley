@@ -819,9 +819,10 @@
                     pivot (:position state)
                     [hx hy hz] (:heading state)
                     [ux uy uz] (:up state)
-                    axis [(- (* uy hz) (* uz hy))
-                          (- (* uz hx) (* ux hz))
-                          (- (* ux hy) (* uy hx))]
+                    ;; right = heading × up (turtle convention, see turtle/core.cljs).
+                    axis [(- (* hy uz) (* hz uy))
+                          (- (* hz ux) (* hx uz))
+                          (- (* hx uy) (* hy ux))]
                     rad (* α (/ Math/PI 180))
                     sdf' (sdf-rotate-around-point sdf axis rad pivot)
                     state' (turtle/tv state α)]
@@ -849,9 +850,10 @@
           :cp-rt (let [n (first args)
                        [hx hy hz] (:heading state)
                        [ux uy uz] (:up state)
-                       rx (- (* uy hz) (* uz hy))
-                       ry (- (* uz hx) (* ux hz))
-                       rz (- (* ux hy) (* uy hx))
+                       ;; right = heading × up (turtle convention).
+                       rx (- (* hy uz) (* hz uy))
+                       ry (- (* hz ux) (* hx uz))
+                       rz (- (* hx uy) (* hy ux))
                        sdf' (sdf/sdf-move-keeping-creation-pose
                              sdf (- (* n rx)) (- (* n ry)) (- (* n rz)))]
                    (recur state sdf' rest-cmds))

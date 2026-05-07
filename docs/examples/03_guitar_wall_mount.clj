@@ -11,7 +11,7 @@
   ;; sdf-box / sdf-rounded-box prendono argomenti in ordine (right, up, heading) → (Y, Z, X)
   ;; quindi i tre args mappano direttamente alle dimensioni "trasversa, verticale, longitudinale".
   (let [;; --- manico: mezzo cilindro lungo X (heading), parte piatta verso +Z ---
-        cilindro (sdf-rotate (sdf-cyl r_manico l_manico) :y 90)
+        cilindro (rotate (sdf-cyl r_manico l_manico) :y 90)
         ;; semispazio z<=0 per tenere solo la metà bassa (= dorso del manico)
         sotto (turtle (tv 90) (sdf-half-space))
         manico (sdf-intersection cilindro sotto)
@@ -29,10 +29,10 @@
         cx (+ (/ l_manico 2) (* (/ Lp 2) (cos a)) 20)
         cz (- (- (* (/ Lp 2) (sin a))) (/ Hp 2))
         paletta (-> slab
-                    (sdf-rotate :y (- (:ang m_paletta)))
-                    (sdf-move cx 0 cz))
+                    (rotate :y (- (:ang m_paletta)))
+                    (translate cx 0 cz))
         body (sdf-blend manico paletta 7)]
-    (sdf-move body -170 0 0))) ; k=8 ≈ raggio del raccordo
+    (translate body -170 0 0))) ; k=8 ≈ raggio del raccordo
 
 
 
@@ -42,7 +42,7 @@
   (let [half (/ arc-deg 2)
         h1 (turtle (th (+ 90 half)) (sdf-half-space))
         h2 (turtle (th (- (+ 90 half))) (sdf-half-space))]
-    (sdf-rotate
+    (rotate
      (sdf-intersection
       (sdf-torus R r)
       (if (<= arc-deg 180)
@@ -53,46 +53,47 @@
 (defn anelli [n p R r sz arc-deg arc-rot]
   (let [x0 (- (* (/ (dec n) 2) p))
         anello (fn [i]
-                 (let [base (sdf-rotate (sdf-scale (torus-arc R r arc-deg arc-rot) sz 1 1) :y 90)]
-                   (sdf-move base (+ x0 (* i p)) 0 0)))
+                 (let [base (rotate (scale (torus-arc R r arc-deg arc-rot) sz 1 1) :y 90)]
+                   (translate base (+ x0 (* i p)) 0 0)))
         s1 (sdf-sphere r)]
     (reduce sdf-union (map anello (range n)))))
 
 (defn anelliA [n p R r sz arc-deg arc-rot]
   (let [x0 (- (* (/ (dec n) 2) p))
         anello (fn [i]
-                 (let [base (sdf-rotate (sdf-scale (torus-arc R r arc-deg arc-rot) sz 1 1) :y 90)]
-                   (sdf-move base (+ x0 (* i p)) 0 0)))
+                 (let [base (rotate (scale (torus-arc R r arc-deg arc-rot) sz 1 1) :y 90)]
+                   (translate base (+ x0 (* i p)) 0 0)))
         s1 (sdf-sphere r)]
     (sdf-blend
      (reduce sdf-union (map anello (range n)))
-     (attach s1 (tv 90) (tr (/ arc-deg 2)) (f R))
+     (attach s1 (tv 90) (th (/ arc-deg -2)) (f -30))
+
      1)))
 
 
 (def anello-mobile
-  (sdf-move (anelliA 1 11 45 5 1 216 180) -13 0 -20))
+  (translate (anelliA 1 11 45 5 1 216 180) -13 0 -20))
 
 (def struttura
   (sdf-blend
-   (sdf-move (anelli 1 11 45 5 1 270 180) -3 0 -20)
-   (sdf-move (anelli 1 30 50 15 0.8 270 180) 15 0 -20)
+   (translate (anelli 1 11 45 5 1 270 180) -3 0 -20)
+   (translate (anelli 1 30 50 15 0.8 270 180) 15 0 -20)
    1))
 
 (register AAA anello-mobile)
 
 (def ellip
-  (sdf-move
-   (sdf-rotate
-    (sdf-scale (sdf-cyl 40 100) 1.1 1 1)
+  (translate
+   (rotate
+    (scale (sdf-cyl 40 100) 1.1 1 1)
     :y 90)
    0 0 30))
 
 
 (def base
-  (sdf-move
-   (sdf-rotate
-    (sdf-scale
+  (translate
+   (rotate
+    (scale
      (turtle (tv -90) (sdf-clip (sdf-cyl 35 70)))
      1.5 2 3)
     :y 90)
@@ -126,4 +127,4 @@
 
 (register chitarra (chitarra-sdf))
 (color :chitarra 0xffff55)
-  ;(export :WallMount :3mf)      
+;(export :WallMount :3mf)      
