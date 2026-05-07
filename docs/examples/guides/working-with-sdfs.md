@@ -20,7 +20,7 @@ Stay with meshes when:
 - The geometry is **dimensionally constrained** — "this hole is 5 mm, this wall is 2 mm thick, this distance is exactly 30 mm" — and any deviation is wrong.
 - You expect to **animate** or `tweak` parameters live: meshes regenerate fast enough; SDFs at usable resolution don't.
 
-The wall mount in `03_guitar_wall_mount.clj` is the canonical mixed case. The cradle that wraps the guitar neck is unmistakably an SDF problem — there is no clean way to model that flowing wrap with mesh booleans. The screw holes with countersinks, and the flat back face that sits against the wall, are unmistakably mesh problems. The pilot uses both, in that order.
+The wall mount in `03_guitar_wall_mount.clj` is a good mixed case. The cradle that wraps the guitar neck is unmistakably an SDF problem — there is no clean way to model that flowing wrap with mesh booleans. The screw holes with countersinks, and the flat back face that sits against the wall, are unmistakably mesh problems. The pilot uses both, and the boundary between the two worlds is porous: the same turtle vocabulary works on both sides (see *Unifying mesh and SDF* below).
 
 ## Blend: the sculptor's knob
 
@@ -28,15 +28,7 @@ The wall mount in `03_guitar_wall_mount.clj` is the canonical mixed case. The cr
 
 There is no formula for the right `k`. It depends on the relative size of the two shapes, on how perpendicularly they meet, on what the surrounding surfaces look like, on what the part needs to feel like. It is a knob you turn by ear.
 
-The wall mount uses three blends with three different radii:
-
-```clojure
-(def body (sdf-blend manico paletta 7))           ; neck-to-headstock
-(def struttura (sdf-blend (anelli ...) (anelli ...) 10))   ; backing rings
-(sdf-blend struttura base 5)                      ; backing-to-base
-```
-
-Each radius was chosen by trying values, regenerating, looking, and adjusting. Not by computation.
+The wall mount uses several blends with different radii — 1 between the inner ring and the spheres at its tips, 1 between the rings and the base structure, 7 between the neck and the headstock, 2 in the soft cavity carved by `sdf-blend-difference`. Each radius was chosen by trying values, regenerating, looking, and adjusting. Not by computation.
 
 The implication is methodological: **change one blend value at a time**. If you change two simultaneously and the result looks worse, you cannot tell which one is responsible. With one change at a time, every regeneration teaches you something. With two, you are guessing.
 
@@ -48,7 +40,7 @@ At a working resolution of 100, a regeneration takes a couple of seconds — slo
 
 So `tweak` on SDF parameters is *usable*, with two caveats:
 
-- **Use it at exploration resolution, not production resolution.** The same logic that governs the resolution-as-workflow choice (next section) applies here doubly. Tweaking at 200 is asking the slider to do what the slider can't do. Tweaking at 100 is fine.
+- **Use it at exploration resolution, not production resolution.** The same logic that governs the resolution-as-workflow choice (below) applies here doubly. Tweaking at 200 is asking the slider to do what the slider can't do. Tweaking at 100 is fine.
 
 - **Watch out for the feedback ambiguity.** When a regeneration takes one or two seconds, you can lose track of whether the system is working on your last change or has already finished and is waiting for the next. Sometimes a small parameter change produces no visible effect (the blend was already saturated, or the change is below the resolution's perceptual threshold), and without an indicator that says *"working… done"*, you sit there waiting for something to happen that already happened. This is a UI gap more than an SDF problem, and worth knowing about so you don't misread silence as work-in-progress.
 
@@ -64,28 +56,58 @@ The escape is to leave the SDF world. The last lines of the wall mount do exactl
 
 ```clojure
 (register WallMount
-  (mesh-intersection
-    (mesh-difference
-      wallmount                       ; the SDF result, now meshed
-      (concat-meshes ... screw-holes))
-    (attach (box 180 110 180) (u -30))))   ; <-- the planar cut
+  (mesh-union
+    anello-mobile                          ; placed separately
+    (mesh-intersection
+      (mesh-difference
+        wallmount                          ; the SDF result, now meshed
+        ...)                               ; screw holes & ring slot
+      (attach (box 180 110 180) (u -30))))) ; <-- the planar cut
 ```
 
 That last `mesh-intersection` with a box clips the entire part against a planar bounding region. The bulged back face is sliced off cleanly; what remains is a flat face that the printer (and the wall) can rely on.
 
 The general principle: **SDFs decide how form flows; meshes decide where form ends**. When you need a hard, exact boundary — a flat face, a precise cut, a defined edge — convert to mesh and impose the boundary there. Trying to coax the SDF into producing the boundary itself is a losing battle.
 
+## Unifying mesh and SDF: the polymorphic core
+
+The mesh and SDF worlds share a single vocabulary for transformation and assembly. The same operators work on both:
+
+- `translate`, `rotate`, `scale` are **polymorphic**: they dispatch on whether their argument is a mesh, an SDF, or a 2D shape.
+- **`attach` works on SDFs.** The full turtle vocabulary inside an `attach` body is available: movement (`f`, `rt`, `u`), rotation (`th`, `tv`, `tr`), creation-pose shifts (`cp-f`, `cp-rt`, `cp-u`), `mark`, and `move-to` (with or without `:align`). Two commands are rejected on SDFs: `inset` (no SDF analogue) and the legacy single-argument `(scale n)` inside `attach` (use the top-level `scale` outside the attach).
+- **Anchors carry across the SDF–mesh boundary.** `mark` records anchors on an SDF; those anchors survive through SDF booleans and through the eventual conversion to mesh.
+
+In practice this means you can place an SDF primitive at a turtle pose without manually composing translates and rotates. The wall mount uses this to put a sphere at each tip of an arc-shaped torus:
+
+```clojure
+(defn anelli [n p R r sz arc-deg arc-rot]
+  (let [...
+        s1 (sdf-sphere (* r 1.3))]
+    (sdf-blend
+      (reduce sdf-union (map anello (range n)))
+      (sdf-union
+        (attach s1 (tv 90) (th (+ 180 (/ arc-deg 2))) (f R))
+        (attach s1 (tv 90) (th (+ 180 (/ arc-deg -2))) (f R)))
+      1)))
+```
+
+Read the two `attach` calls turtle-first: pitch up by 90°, yaw to the angular endpoint of the arc, walk forward by R (the major radius of the torus). Drop a sphere there. This is exactly the same vocabulary you'd use to place a feature on a mesh.
+
+The practical consequence is that **most of the assembly can happen inside the SDF world**, with smooth fusions and clean booleans, and the hand-off to mesh is driven by the *kind* of operation you need next — mesh booleans against pre-built mesh parts, planar cuts, mechanical detail — rather than by ergonomic friction. The next sections walk through the patterns where SDF stays superior, and the patterns where mesh stays superior.
+
 ## Idiom: half-space and clipping
 
 Half-space cuts come up constantly when sculpting with SDFs — keeping one side of a cylinder, slicing a blob against a plane, flattening a region against a known boundary. Two operators, both turtle-relative, cover the common cases: `sdf-half-space` returns the half-space defined by the turtle's current pose (cut plane through the turtle, normal along the heading), and `sdf-clip` clips a given shape against that plane.
 
-The wall mount uses this to build the neck — a *half-cylinder*, the back side of a guitar neck. Position the turtle at the cylinder's equator with the heading pointing up (out of the material), and clip:
+The wall mount uses this to build the neck — a *half-cylinder*, the back side of a guitar neck:
 
 ```clojure
-(let [cilindro (rotate (sdf-cyl r_manico l_manico) :y 90)]
-  (tv 90) (f r_manico)              ; turtle at equator, heading +z
-  (sdf-clip cilindro))              ; keeps the half behind the heading
+(let [cilindro (rotate (sdf-cyl r_manico l_manico) :y 90)
+      sotto    (turtle (tv 90) (sdf-half-space))   ; isolated turtle scope
+      manico   (sdf-intersection cilindro sotto)] ...)
 ```
+
+The `(turtle (tv 90) (sdf-half-space))` form is worth dwelling on. The `turtle` macro creates an isolated turtle scope: the rotation `(tv 90)` only applies inside it, and the outer turtle state is left untouched. Without the scope, the `tv 90` would leak into whatever turtle code runs next. With the scope, the half-space construction is *local* — a small parenthesized intent — and the surrounding code stays clean. This is the recommended idiom.
 
 The convention is the same as `extrude`'s: the turtle "looks out of the material". After an `extrude`, the turtle sits with the new solid behind it; calling `(sdf-half-space)` at that pose returns exactly the half-space containing the material. The same intuition carries over: at any point, the turtle pose specifies a cutting plane, and the half-space *behind* the turtle is the one that's kept.
 
@@ -95,53 +117,97 @@ For the rare case where you want the front half instead, `(sdf-half-space :cut-a
 (sdf-intersection shape (sdf-half-space :cut-ahead))
 ```
 
-> **Historical note.** Before these operators existed, the same effect was achieved by intersecting with an oversized box positioned so that one of its faces coincided with the cut plane. It worked, but it was verbose, required a magic "large enough" number, and didn't follow the turtle-relative convention used elsewhere in the DSL. If you encounter that pattern in older code or examples, it's the half-space idiom in its earlier form.
+**Composition: arcs from a torus.** Two half-spaces combined are a *wedge*. The wall mount uses this to cut arc-shaped pieces out of a torus:
+
+```clojure
+(defn torus-arc [R r arc-deg arc-rot]
+  (let [half (/ arc-deg 2)
+        h1 (turtle (th (+ 90 half))     (sdf-half-space))
+        h2 (turtle (th (- (+ 90 half)))  (sdf-half-space))]
+    (rotate
+      (sdf-intersection
+        (sdf-torus R r)
+        (if (<= arc-deg 180)
+          (sdf-intersection h1 h2)   ; narrow wedge: the slice we want
+          (sdf-union h1 h2)))        ; wide arc: complement of the missing slice
+      :z arc-rot)))
+```
+
+The two half-spaces, oriented symmetrically around the heading, define a wedge of opening angle `arc-deg`. When the arc is less than 180°, the wedge is narrow — what we want to keep — so we *intersect*. When the arc is more than 180°, the "wedge" of the missing slice would be the narrow one; we want everything else, so we *union* the two complementary half-spaces. The same two anchor pieces, glued together by `intersection` or `union`, cover the whole 0°–360° range.
+
+This is a small but transferable pattern. Anywhere you'd reach for "keep / discard a wedge of a body", `(intersection h1 h2)` or `(union h1 h2)` of two turtle-aimed half-spaces will do the job.
 
 ## Idiom: offset as clearance
 
 Another operation that SDFs make almost trivial: uniform offset. Adding a constant to a distance field grows or shrinks the implicit surface by exactly that amount, in every direction, on every shape, however irregular.
 
-The wall mount uses this for assembly clearance:
+The wall mount uses `sdf-offset` twice for two different kinds of clearance.
+
+**Clearance for the guitar.** The cradle has to be slightly larger than the guitar that slides into it — a couple of millimeters of slop, all around the surface, so the user can drop the instrument in without forcing it. Computing this on the mesh of an irregular shape (the neck-plus-headstock blob) would be ugly: surface offsets are notoriously prone to self-intersection. On the SDF, it's adding 1.5 to the field:
 
 ```clojure
-(sdf-offset (chitarra-sdf) 1.5)
+(sdf-blend-difference
+  (sdf-blend struttura base 1)
+  (sdf-offset (chitarra-sdf) 1.5)        ; <-- inflated guitar
+  2)
 ```
 
-The cradle has to be slightly larger than the guitar that slides into it — 1.5 mm of slop, all around the surface. Computing this on the mesh of an irregular shape (the neck-plus-headstock blob) would be an ugly job: surface offsets are notoriously prone to self-intersection. On the SDF, it's adding 1.5 to the field. One token.
+**Clearance for a mating part.** The wall mount has a *moving ring* (`anello-mobile`) — a separate piece that slides through a slot in the body to hold the guitar in place. The slot has to be slightly bigger than the ring itself, so the ring can move. The trick: subtract an *offset* version of the ring from the body, before re-uniting the actual ring at assembly time:
 
-Whenever you need a uniform inflation or deflation of an arbitrary form — clearances, shells, dilation/erosion — this is qualitatively easier in SDF than in mesh, not just incrementally.
+```clojure
+(register WallMount
+  (mesh-union
+    anello-mobile                                ; the ring itself
+    (mesh-intersection
+      (mesh-difference
+        wallmount
+        (mesh-union
+          ...                                    ; screw holes
+          (sdf-offset anello-mobile 0.5)))       ; the ring's slot, with clearance
+      ...)))
+```
+
+The ring is built once. From it we derive two things: the ring as a solid (added to the assembly), and the ring expanded by 0.5 mm (subtracted from the body to carve the slot). The two are guaranteed to fit together with exactly 0.5 mm of slop, by construction.
+
+Whenever you need a uniform inflation or deflation of an arbitrary form — clearances, shells, dilation/erosion — this is qualitatively easier in SDF than in mesh, not just incrementally. The two clearances above (1.5 mm for the guitar, 0.5 mm for the moving ring) come from physical experiments — printer tolerance, surface roughness, ease of insertion. The DSL doesn't help you choose the number; it helps you apply it without fighting the geometry.
 
 ## Idiom: SDF-then-mesh hybrid for mechanical detail
 
-The wall mount illustrates a pattern worth naming: **organic shape lives in SDF, mechanical detail lives in mesh, and the hand-off is one-way**.
+Even with `attach` working on SDFs, there are still good reasons to leave SDF land at some point. Three, in fact:
 
-The structure:
+1. **Mesh booleans against pre-built mesh parts.** If a feature is naturally modelled with the turtle (a screw hole with a countersink, a dovetail, a snap fit), it lives as a mesh. To difference it from the body, the body has to be a mesh too — at the moment of the boolean, at least.
 
-1. Build all the soft, blended, offset, sculptural form as SDFs. Keep them composed via `sdf-union`, `sdf-blend`, `sdf-intersection`, `sdf-offset`.
-2. At a chosen point, the SDF result is meshed (implicitly, when it's first used in a mesh-world operator).
-3. From there onward, work in mesh: `mesh-difference` for screw holes drawn with the turtle, `mesh-intersection` for planar cuts, `attach` for placing precision components.
+2. **Planar cuts.** As discussed above, the blend always inflates the surface a bit. Any face that has to be rigorously flat — a wall-contact face, a print bed face, a mating surface — has to be enforced after meshing, with a `mesh-intersection` against a bounding box.
+
+3. **Operations with no SDF analogue.** `inset`, face selection, mesh smoothing, hull. These are mesh-side concepts.
+
+The wall mount illustrates all three:
 
 ```clojure
 (def hole
   (mesh-union
     (cyl 2 5 64)
     (attach (cone 8 2 5 64) (f 2.5))
-    (attach (cyl 10 100 64) (f 52.5))))
+    (attach (cyl 10 100 64) (f 52.5))))         ; mesh-side detail
 
 (register WallMount
-  (mesh-intersection
-    (mesh-difference
-      wallmount
-      (concat-meshes
-        (attach hole (f -40) (rt 50)  (tv 90) (f -83))
-        (attach hole (f -40) (rt -50) (tv 90) (f -83))
-        (attach hole (f 30)           (tv 90) (f -83))))
-    (attach (box 180 110 180) (u -30))))
+  (mesh-union
+    anello-mobile
+    (mesh-intersection
+      (mesh-difference
+        wallmount                                ; SDF result, materialized
+        (mesh-union
+          (concat-meshes
+            (attach hole (f -40) (rt 50)  (tv 90) (f -83))
+            (attach hole (f -40) (rt -50) (tv 90) (f -83))
+            (attach hole (f 30)            (tv 90) (f -83)))
+          (sdf-offset anello-mobile 0.5)))
+      (attach (box 180 110 180) (u -30)))))     ; planar cut
 ```
 
-The `hole` is a counter-sunk screw hole built with ordinary turtle moves, three primitives unioned together. It would be perverse to model that as an SDF — the geometry is exact and rigid, the depths and diameters are dimensions, not feelings. So it is a mesh, and the wall mount is `mesh-difference`d against three placed copies.
+The `hole` is a counter-sunk screw hole built with ordinary turtle moves, three primitives unioned together. It would be perverse to model that as an SDF — the geometry is exact and rigid, the depths and diameters are dimensions, not feelings. So it is a mesh, and three placed copies are `mesh-difference`d from the body.
 
-Practical rule: **close the SDF phase as soon as the form is decided**. Keep further work in mesh. The temptation to add "just one more SDF operation" after the mesh transition is mostly nostalgia; if you find yourself wanting to do it, it usually means you're about to undo a planar cut or a precise hole that would be much harder to redo from scratch.
+Practical rule: **use SDF for the form, mesh for the boundary**. The form is "where does the surface go, how does it flow" — SDF excels. The boundary is "where exactly does the part end, what mates with what, what holds the screws" — mesh excels. The hand-off is one-way and should be made deliberately, not by default, but it's still essential.
 
 ## Resolution as a workflow choice
 
@@ -167,8 +233,12 @@ Ramping up at the end is almost always the right move. Starting high "to be safe
 
 - **Trying to flatten a blended face from inside SDF.** It cannot be done. Convert to mesh, intersect with a planar bounding box, move on.
 
+- **Letting `(tv 90)` (or any turtle command before `sdf-half-space`) leak into surrounding code.** Wrap half-space constructions in `(turtle ...)` to keep the turtle state clean. This is small, but the bugs caused by accidental turtle-state leakage are annoying to track down.
+
 ## See also
 
-- Spec, *SDF* — full reference for `sdf-cyl`, `sdf-box`, `sdf-blend`, `sdf-offset`, `sdf-intersection`, `sdf-blend-difference`, `sdf-half-space`, `sdf-clip`, the polymorphic transforms `translate` / `rotate` / `scale`, and the meshing bridge.
+- Spec, *SDF Modeling* — full reference for the SDF primitives and operators (`sdf-cyl`, `sdf-box`, `sdf-rounded-box`, `sdf-sphere`, `sdf-torus`, `sdf-blend`, `sdf-blend-difference`, `sdf-offset`, `sdf-half-space`, `sdf-clip`, `sdf-intersection`, `sdf-difference`, `sdf-union`, `sdf-displace`, `sdf-formula`).
+- Spec, *Top-level transforms* — `translate`, `rotate`, `scale` as polymorphic operations across mesh, SDF, and 2D shape.
+- Spec, *attach* — the unified attach operator and its handling of SDFs.
 - `defining-2d-profiles.md` — the other side of modelling, where shapes are *contours* rather than *fields*.
-- `03_guitar_wall_mount.clj` — full pilot example using all the patterns above.
+- `03_guitar_wall_mount.clj` — full pilot example using the patterns above.

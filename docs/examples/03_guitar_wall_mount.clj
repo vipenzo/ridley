@@ -5,7 +5,7 @@
                 :l 180
                 :ang 14})
 
-(sdf-resolution! 100)
+(sdf-resolution! 200)
 
 (defn chitarra-sdf []
   ;; sdf-box / sdf-rounded-box prendono argomenti in ordine (right, up, heading) → (Y, Z, X)
@@ -29,7 +29,7 @@
         cx (+ (/ l_manico 2) (* (/ Lp 2) (cos a)) 20)
         cz (- (- (* (/ Lp 2) (sin a))) (/ Hp 2))
         paletta (-> slab
-                    (rotate :y (- (:ang m_paletta)))
+                    (rotate :y (:ang m_paletta))
                     (translate cx 0 cz))
         body (sdf-blend manico paletta 7)]
     (translate body -170 0 0))) ; k=8 ≈ raggio del raccordo
@@ -55,8 +55,13 @@
         anello (fn [i]
                  (let [base (rotate (scale (torus-arc R r arc-deg arc-rot) sz 1 1) :y 90)]
                    (translate base (+ x0 (* i p)) 0 0)))
-        s1 (sdf-sphere r)]
-    (reduce sdf-union (map anello (range n)))))
+        s1 (sdf-sphere (* r 1.3))]
+    (sdf-blend
+     (reduce sdf-union (map anello (range n)))
+     (sdf-union
+      (attach s1 (tv 90) (th (+ 180 (/ arc-deg 2))) (f R))
+      (attach s1 (tv 90) (th (+ 180 (/ arc-deg -2))) (f R)))
+     1)))
 
 (defn anelliA [n p R r sz arc-deg arc-rot]
   (let [x0 (- (* (/ (dec n) 2) p))
@@ -72,42 +77,51 @@
 
 
 (def anello-mobile
-  (translate (anelliA 1 11 45 5 1 216 180) -13 0 -20))
+  (translate (anelli 1 11 45 5 1 265 0) -21 0 -20))
 
 (def struttura
   (sdf-blend
-   (translate (anelli 1 11 45 5 1 270 180) -3 0 -20)
-   (translate (anelli 1 30 50 15 0.8 270 180) 15 0 -20)
-   1))
+   (translate (anelli 1 11 45 5 1 265 0) -7 0 -20)
+   (translate (anelli 1 30 50 15 0.8 220 0) 15 0 -20)
+   4))
 
-(register AAA anello-mobile)
+;(register AAA anello-mobile)
 
-(def ellip
-  (translate
-   (rotate
-    (scale (sdf-cyl 40 100) 1.1 1 1)
-    :y 90)
-   0 0 30))
 
 
 (def base
-  (translate
-   (rotate
-    (scale
-     (turtle (tv -90) (sdf-clip (sdf-cyl 35 70)))
-     1.5 2 3)
-    :y 90)
-   50 0 -85))
+  (sdf-blend-difference
+   (translate
+    (rotate
+     (scale
+      (turtle (tv -90) (sdf-clip (sdf-cyl 35 60)))
+      1.5 2 3)
+     :y -90)
+    40 0 -85)
+   (translate
+    (rotate
+     (scale
+      (turtle (tv -90) (sdf-clip (sdf-cyl 20 50)))
+      1.5 2 3)
+     :y -90)
+    20 0 -85)
+   3))
+
 
 (def wallmount
   (sdf-difference
    (sdf-blend-difference
     (sdf-blend struttura base 1)
-    (sdf-blend
+    (sdf-union
      (sdf-offset (chitarra-sdf) 1.5)
-     ellip
-     1.1)
-    1))) ; +1 mm di clearance per infilare la chitarra
+     (translate
+      (rotate
+       (scale
+        (turtle (tv -90) (sdf-clip (sdf-cyl 20 50)))
+        1.5 2 3)
+       :y -90)
+      20 0 -85))
+    2))) ; +1 mm di clearance per infilare la chitarra
 
 (def hole
   (mesh-union
@@ -116,14 +130,18 @@
    (attach (cyl 10 100 64) (f 52.5))))
 
 (register WallMount
-          (mesh-intersection
-           (mesh-difference
-            wallmount
-            (concat-meshes
-             (attach hole (f -40) (rt 50) (tv 90) (f -83))
-             (attach hole (f -40) (rt -50) (tv 90) (f -83))
-             (attach hole (f 30) (tv 90) (f -83))))
-           (attach (box 180 110 180) (u -30))))
+          (mesh-union
+           anello-mobile
+           (mesh-intersection
+            (mesh-difference
+             wallmount
+             (mesh-union
+              (concat-meshes
+               (attach hole (f -40) (rt 50) (tv 90) (f -83))
+               (attach hole (f -40) (rt -50) (tv 90) (f -83))
+               (attach hole (f 30) (tv 90) (f -83)))
+              (sdf-offset anello-mobile 0.5)))
+            (attach (box 180 110 180) (u -30)))))
 
 (register chitarra (chitarra-sdf))
 (color :chitarra 0xffff55)
