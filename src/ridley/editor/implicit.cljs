@@ -629,7 +629,8 @@
                         (list '* hx (list '- 'x px))
                         (list '* hy (list '- 'y py))
                         (list '* hz (list '- 'z pz)))]
-     (sdf/compile-expr (if keep-ahead? (list '- dot-expr) dot-expr)))))
+     (assoc (sdf/compile-expr (if keep-ahead? (list '- dot-expr) dot-expr))
+            :creation-pose sdf/default-creation-pose))))
 
 (defn ^:export implicit-sdf-clip
   "Clip an SDF shape against the turtle's plane, keeping the half behind

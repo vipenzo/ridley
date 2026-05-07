@@ -130,22 +130,35 @@
       (seq combined-anchors) (assoc :anchors combined-anchors)
       combined-pose          (assoc :creation-pose combined-pose))))
 
-;; ── SDF node constructors (pure data) ───────────────────────────
+(def default-creation-pose
+  {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})
 
-(defn sdf-sphere [r] {:op "sphere" :r r})
+(defn- with-default-pose [node]
+  (assoc node :creation-pose default-creation-pose))
+
+;; ── SDF node constructors (pure data) ───────────────────────────
+;; Every public-facing constructor stamps a default :creation-pose at
+;; world origin. Top-level rotate/scale pivot on that pose, mirroring
+;; how meshes pivot on their centroid. Internal expression nodes built
+;; via compile-expr remain untagged — only the root is positional.
+
+(defn sdf-sphere [r]
+  (with-default-pose {:op "sphere" :r r}))
 
 (defn sdf-box
   "Create an SDF box. Parameters match mesh box convention:
    (sdf-box a b c) — a→Y(right), b→Z(up), c→X(heading)."
-  [a b c] {:op "box" :sx c :sy a :sz b})
+  [a b c]
+  (with-default-pose {:op "box" :sx c :sy a :sz b}))
 
-(defn sdf-cyl [r h] {:op "cyl" :r r :h h})
+(defn sdf-cyl [r h]
+  (with-default-pose {:op "cyl" :r r :h h}))
 
 (defn sdf-rounded-box
   "Box with rounded corners as a true SDF.
    Parameters match mesh box convention: (sdf-rounded-box a b c r)."
   [a b c r]
-  {:op "rounded-box" :sx c :sy a :sz b :r r})
+  (with-default-pose {:op "rounded-box" :sx c :sy a :sz b :r r}))
 
 (declare compile-expr)
 
@@ -166,7 +179,8 @@
       ;; auto-bounds reads :x-range as radial extent and :y-range as height extent
       ;; (revolve convention: X=radius, Y=height).
       (assoc :x-range [(- (+ R r)) (+ R r)]
-             :y-range [(- r) r])))
+             :y-range [(- r) r])
+      with-default-pose))
 
 ;; ── SDF boolean operations ──────────────────────────────────────
 
@@ -418,52 +432,62 @@
 
     :else (throw (js/Error. (str "sdf-formula: cannot compile '" form "'")))))
 
+(defn sdf-formula
+  "User-facing wrapper around compile-expr: builds an SDF tree from a quoted
+   Clojure math expression, stamped with the default creation-pose so that
+   top-level rotate/scale pivot consistently with other SDF primitives."
+  [form]
+  (with-default-pose (compile-expr form)))
+
 ;; ── TPMS (Triply Periodic Minimal Surfaces) ─────────────────────
 
 (defn sdf-gyroid
   "Gyroid TPMS. period = cell size, thickness = wall thickness."
   [period thickness]
   (let [s (/ (* 2 js/Math.PI) period)]
-    (sdf-shell
-     (compile-expr
-      (list '+ (list '* (list 'sin (list '* 'x s)) (list 'cos (list '* 'y s)))
-            (list '+ (list '* (list 'sin (list '* 'y s)) (list 'cos (list '* 'z s)))
-                  (list '* (list 'sin (list '* 'z s)) (list 'cos (list '* 'x s))))))
-     thickness)))
+    (with-default-pose
+      (sdf-shell
+       (compile-expr
+        (list '+ (list '* (list 'sin (list '* 'x s)) (list 'cos (list '* 'y s)))
+              (list '+ (list '* (list 'sin (list '* 'y s)) (list 'cos (list '* 'z s)))
+                    (list '* (list 'sin (list '* 'z s)) (list 'cos (list '* 'x s))))))
+       thickness))))
 
 (defn sdf-schwarz-p
   "Schwarz-P TPMS. period = cell size, thickness = wall thickness."
   [period thickness]
   (let [s (/ (* 2 js/Math.PI) period)]
-    (sdf-shell
-     (compile-expr
-      (list '+ (list 'cos (list '* 'x s))
-            (list '+ (list 'cos (list '* 'y s))
-                  (list 'cos (list '* 'z s)))))
-     thickness)))
+    (with-default-pose
+      (sdf-shell
+       (compile-expr
+        (list '+ (list 'cos (list '* 'x s))
+              (list '+ (list 'cos (list '* 'y s))
+                    (list 'cos (list '* 'z s)))))
+       thickness))))
 
 (defn sdf-diamond
   "Diamond (Schwarz-D) TPMS. period = cell size, thickness = wall thickness."
   [period thickness]
   (let [s (/ (* 2 js/Math.PI) period)]
-    (sdf-shell
-     (compile-expr
-      (list '-
-            (list '+
-                  (list '* (list 'sin (list '* 'x s))
-                        (list '* (list 'sin (list '* 'y s))
-                              (list 'sin (list '* 'z s))))
-                  (list '* (list 'cos (list '* 'x s))
-                        (list '* (list 'cos (list '* 'y s))
-                              (list 'cos (list '* 'z s)))))
-            (list '+
-                  (list '* (list 'sin (list '* 'x s 2.0))
-                        (list 'cos (list '* 'z s 2.0)))
-                  (list '* (list 'sin (list '* 'y s 2.0))
-                        (list 'cos (list '* 'x s 2.0)))
-                  (list '* (list 'sin (list '* 'z s 2.0))
-                        (list 'cos (list '* 'y s 2.0))))))
-     thickness)))
+    (with-default-pose
+      (sdf-shell
+       (compile-expr
+        (list '-
+              (list '+
+                    (list '* (list 'sin (list '* 'x s))
+                          (list '* (list 'sin (list '* 'y s))
+                                (list 'sin (list '* 'z s))))
+                    (list '* (list 'cos (list '* 'x s))
+                          (list '* (list 'cos (list '* 'y s))
+                                (list 'cos (list '* 'z s)))))
+              (list '+
+                    (list '* (list 'sin (list '* 'x s 2.0))
+                          (list 'cos (list '* 'z s 2.0)))
+                    (list '* (list 'sin (list '* 'y s 2.0))
+                          (list 'cos (list '* 'x s 2.0)))
+                    (list '* (list 'sin (list '* 'z s 2.0))
+                          (list 'cos (list '* 'y s 2.0))))))
+       thickness))))
 
 ;; ── Periodic patterns ───────────────────────────────────────────
 
@@ -484,10 +508,11 @@
    phase (optional): offset along axis (default 0)"
   ([axis period thickness] (sdf-slats axis period thickness 0))
   ([axis period thickness phase]
-   (case (keyword (name axis))
-     :x (slats-expr 'x period thickness phase)
-     :y (slats-expr 'y period thickness phase)
-     :z (slats-expr 'z period thickness phase))))
+   (with-default-pose
+     (case (keyword (name axis))
+       :x (slats-expr 'x period thickness phase)
+       :y (slats-expr 'y period thickness phase)
+       :z (slats-expr 'z period thickness phase)))))
 
 (defn sdf-bars
   "Infinite parallel cylindrical bars.
@@ -505,10 +530,11 @@
          rep-a (fn [v] (list '- (list 'mod (list '+ v (- hpa pa)) pa-period) hpa))
          rep-b (fn [v] (list '- (list 'mod (list '+ v (- hpb pb)) pb-period) hpb))
          sq (fn [e] (list '* e e))]
-     (case (keyword (name axis))
-       :z (compile-expr (list '- (list 'sqrt (list '+ (sq (rep-a 'x)) (sq (rep-b 'y)))) r))
-       :x (compile-expr (list '- (list 'sqrt (list '+ (sq (rep-a 'y)) (sq (rep-b 'z)))) r))
-       :y (compile-expr (list '- (list 'sqrt (list '+ (sq (rep-a 'x)) (sq (rep-b 'z)))) r))))))
+     (with-default-pose
+       (case (keyword (name axis))
+         :z (compile-expr (list '- (list 'sqrt (list '+ (sq (rep-a 'x)) (sq (rep-b 'y)))) r))
+         :x (compile-expr (list '- (list 'sqrt (list '+ (sq (rep-a 'y)) (sq (rep-b 'z)))) r))
+         :y (compile-expr (list '- (list 'sqrt (list '+ (sq (rep-a 'x)) (sq (rep-b 'z)))) r)))))))
 
 (defn sdf-bar-cage
   "Cage of cylindrical bars aligned to a centered box."

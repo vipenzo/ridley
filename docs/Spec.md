@@ -1623,15 +1623,15 @@ Operations available inside `attach-face`/`clone-face`:
 (rotate shape angle-deg)           ; 2D shape: implicit Z axis
 ```
 
-**Pivot conventions** differ by type and match each type's natural reference:
+**Pivot conventions** match each type's natural reference. Rotation axes are interpreted in **world space** for all three types — only the pivot location changes.
 
 | Type | translate | scale around | rotate around |
 |------|-----------|--------------|----------------|
 | Mesh | world axes | mesh centroid | mesh centroid |
-| SDF | world axes | world origin | world origin |
+| SDF | world axes | creation-pose | creation-pose |
 | 2D shape | shape's local frame | shape centroid | shape origin (0, 0) |
 
-For an SDF that's already off-origin and you want to scale or rotate "in place", compose with translation: `(translate (rotate (translate sdf -dx -dy -dz) :y 30) dx dy dz)`.
+Every SDF carries a `:creation-pose` — defaulted to the world origin at construction, advanced by `translate` and `attach`, and shifted by `cp-*`. So `(rotate sdf :y 30)` on an SDF at the origin behaves exactly as before; on an off-origin SDF it rotates *in place*, the same way meshes pivot on their centroid.
 
 **Arbitrary-axis rotation on SDF** is implemented internally as a ZYX Tait-Bryan decomposition into three cardinal-axis rotations. This is invisible to the caller (you just get the rotation you asked for), but worth knowing if you hit numerical edge cases near gimbal lock (pitch ≈ ±90° with non-zero yaw or roll).
 
@@ -1675,7 +1675,7 @@ SDF attach is **incremental**: the path is walked one command at a time, and eac
 
 The anchors recorded by `mark` survive through subsequent transforms and through SDF booleans (the second argument's anchors are merged in, first-wins on name collision). They also cross the SDF→mesh boundary: when an SDF is materialized, its anchors carry over to the resulting mesh.
 
-For `cp-*` to have a creation-pose to anchor against, an SDF entering `attach` is given a default `creation-pose` at the turtle's starting frame (origin, heading `+X`, up `+Z`) if it doesn't already carry one. The pose then translates with `f`/`rt`/`u` and rotates with `th`/`tv`/`tr` along with the geometry; only `cp-*` shifts the geometry independently.
+Every SDF constructor stamps a default `:creation-pose` at the world origin (heading `+X`, up `+Z`). The pose translates with `f`/`rt`/`u` and rotates with `th`/`tv`/`tr` along with the geometry; only `cp-*` shifts the geometry independently. Booleans (`sdf-union`, `sdf-intersection`, `sdf-difference`) keep the **first argument's** creation-pose on the result — pick the operand whose pose you want a subsequent in-place rotate/scale to pivot on.
 
 Two commands remain rejected with an explanatory error:
 
@@ -2034,7 +2034,7 @@ SDFs use the **polymorphic** transforms `translate`, `scale`, `rotate`, the same
 (sdf-revolve node-2d)           ; Revolve a 2D SDF (X=radius, Y=height) around Z
 ```
 
-Cardinal-axis rotations dispatch directly to libfive's `rotate_x/y/z`. Arbitrary-axis rotations decompose into a ZYX Tait-Bryan triple; the decomposition can lose one degree of freedom near gimbal lock (pitch ≈ ±90°), but the visible rotation remains consistent. SDFs rotate around the **world origin**, not their bounding-box centroid — to rotate an off-origin SDF in place, sandwich the rotation between matched translations.
+Cardinal-axis rotations dispatch directly to libfive's `rotate_x/y/z`. Arbitrary-axis rotations decompose into a ZYX Tait-Bryan triple; the decomposition can lose one degree of freedom near gimbal lock (pitch ≈ ±90°), but the visible rotation remains consistent. SDFs rotate and scale around their `:creation-pose` (the local frame established at construction and advanced by `translate`, `attach`, and `cp-*` commands), the same way meshes pivot on their centroid — so an off-origin SDF rotates in place, no manual sandwiching needed.
 
 ### Materialization
 

@@ -17,6 +17,12 @@
 (defn- type-error [op-name x]
   (throw (js/Error. (str op-name ": unsupported argument type. Expected mesh, SDF, or 2D shape."))))
 
+(defn- sdf-pivot
+  "Position component of an SDF's creation-pose. Every SDF carries one
+   (defaulted to world origin at construction), so this is always defined."
+  [sdf-node]
+  (or (get-in sdf-node [:creation-pose :position]) [0 0 0]))
+
 ;; ============================================================
 ;; translate
 ;; ============================================================
@@ -45,6 +51,16 @@
 ;; scale
 ;; ============================================================
 
+(defn- sdf-scale-around-pivot
+  "Scale an SDF in place around its creation-pose position.
+   Sandwich: translate pivot to origin, scale, translate back."
+  [sdf-node sx sy sz]
+  (let [[px py pz] (sdf-pivot sdf-node)]
+    (-> sdf-node
+        (sdf/sdf-move (- px) (- py) (- pz))
+        (sdf/sdf-scale sx sy sz)
+        (sdf/sdf-move px py pz))))
+
 (defn ^:export scale
   "Scale a mesh / SDF / 2D shape, OR (legacy) scale the currently-attached
    mesh during an attach.
@@ -63,8 +79,8 @@
 
     (sdf/sdf-node? first-arg)
     (case (count rest-args)
-      1 (sdf/sdf-scale first-arg (first rest-args))
-      3 (apply sdf/sdf-scale first-arg rest-args)
+      1 (let [s (first rest-args)] (sdf-scale-around-pivot first-arg s s s))
+      3 (let [[sx sy sz] rest-args] (sdf-scale-around-pivot first-arg sx sy sz))
       (throw (js/Error. "scale: SDF form takes 1 (uniform) or 3 (per-axis) factors")))
 
     (mesh? first-arg)
@@ -93,11 +109,23 @@
       (and (zero? (or ax 0)) (zero? (or ay 0)) (not (zero? (or az 0)))))
     :else false))
 
+(defn- sdf-rotate-around-pivot
+  "Rotate an SDF in place around its creation-pose position. The axis is
+   interpreted in world space; only the pivot location moves to the
+   creation-pose. Sandwich: translate pivot to origin, rotate, translate back."
+  [sdf-node axis angle-deg]
+  (let [[px py pz] (sdf-pivot sdf-node)]
+    (-> sdf-node
+        (sdf/sdf-move (- px) (- py) (- pz))
+        (sdf/sdf-rotate axis angle-deg)
+        (sdf/sdf-move px py pz))))
+
 (defn ^:export rotate
   "Rotate a mesh / SDF / 2D shape.
    - Mesh / SDF: (rotate thing axis angle-deg)
                   axis = :x | :y | :z (cardinal) or [ax ay az] (arbitrary)
-                  Mesh rotates around its centroid; SDF around the world origin.
+                  Mesh rotates around its centroid; SDF around its
+                  creation-pose position.
    - 2D shape:   (rotate shape angle-deg)            implicit Z axis
                  (rotate shape :z angle-deg)         explicit Z (same)
                  (rotate shape :x|:y angle-deg)      ERROR: not meaningful for
@@ -124,7 +152,7 @@
                     "extrude/loft. For Y-foreshortening use (scale shape 1 (cos angle))."))))
 
      (sdf/sdf-node? thing)
-     (sdf/sdf-rotate thing axis angle-deg)
+     (sdf-rotate-around-pivot thing axis angle-deg)
 
      (mesh? thing)
      (let [angle-rad (* angle-deg (/ js/Math.PI 180))

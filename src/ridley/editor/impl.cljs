@@ -787,14 +787,7 @@
   [sdf-node path]
   (validate-sdf-attach-path! path)
   (loop [state (turtle/make-turtle)
-         ;; Give the SDF a default :creation-pose at the turtle origin if it
-         ;; doesn't have one yet. cp-* leans on creation-pose to mean "anchor
-         ;; that stays put while the geometry slides under it" — without an
-         ;; initial pose, that semantic has nothing to anchor against.
-         sdf (if (:creation-pose sdf-node)
-               sdf-node
-               (assoc sdf-node :creation-pose
-                      {:position [0 0 0] :heading [1 0 0] :up [0 0 1]}))
+         sdf sdf-node
          remaining (:commands path)]
     (if (empty? remaining)
       sdf

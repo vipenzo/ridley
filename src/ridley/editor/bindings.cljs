@@ -602,7 +602,7 @@
    ;; sdf-move / sdf-rotate / sdf-scale removed: use polymorphic
    ;; translate / rotate / scale (which dispatch to the SDF backend).
    'sdf-revolve      sdf/sdf-revolve
-   'sdf-formula      sdf/compile-expr
+   'sdf-formula      sdf/sdf-formula
    'sdf->mesh        sdf/materialize
    'sdf-ensure-mesh  sdf/ensure-mesh
    ;; SDF TPMS (Triply Periodic Minimal Surfaces)

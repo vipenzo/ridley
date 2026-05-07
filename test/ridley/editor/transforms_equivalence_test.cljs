@@ -3,9 +3,10 @@
    and for attach: verify that mesh and SDF land at consistent anchor
    positions and creation-poses for the same conceptual operation.
 
-   Pivot conventions differ by type (mesh = centroid, SDF = world origin),
-   so these tests deliberately use centered-at-origin geometry where
-   centroid = origin and the comparisons line up."
+   Pivot conventions: mesh pivots on its centroid, SDF on its creation-pose.
+   The base fixtures use centered-at-origin geometry so centroid = origin =
+   creation-pose, and mesh/SDF results line up directly. The off-origin
+   tests exercise the case where pivot-on-creation-pose matters."
   (:require [cljs.test :refer [deftest testing is]]
             [ridley.sdf.core :as sdf]
             [ridley.editor.transforms :as t]
@@ -240,3 +241,93 @@
           d (sdf/sdf-difference a b)]
       (is (some? (get-in d [:anchors :keep])))
       (is (nil? (get-in d [:anchors :drop]))))))
+
+;; ── Default creation-pose ──────────────────────────────────────
+
+(deftest sdf-primitives-have-default-creation-pose
+  (testing "every public SDF constructor stamps a default creation-pose at world origin"
+    (doseq [s [(sdf/sdf-sphere 5)
+               (sdf/sdf-box 4 4 4)
+               (sdf/sdf-cyl 3 8)
+               (sdf/sdf-rounded-box 4 4 4 0.5)
+               (sdf/sdf-torus 10 1)
+               (sdf/sdf-formula '(- (sqrt (+ (* x x) (* y y) (* z z))) 5))]]
+      (is (= sdf/default-creation-pose (:creation-pose s))
+          (str "missing default creation-pose on " (:op s))))))
+
+;; ── Off-origin SDF rotate/scale (pivot on creation-pose) ───────
+
+(deftest sdf-rotate-off-origin-pivots-on-creation-pose
+  (testing "rotating an off-origin SDF pivots on its creation-pose, not world origin"
+    ;; An anchor at (15,0,5) on an SDF whose creation-pose is at (10,0,0).
+    ;; Anchor offset from pivot = (5,0,5). Rotating :z 90 should send (5,0,5)
+    ;; → (0,5,5) relative to pivot → (10,5,5) in world coords.
+    (let [s (-> (sdf/sdf-sphere 1)
+                (assoc :creation-pose {:position [10 0 0] :heading [1 0 0] :up [0 0 1]}
+                       :anchors {:foo {:position [15 0 5] :heading [1 0 0] :up [0 0 1]}}))
+          r (t/rotate s :z 90)]
+      (is (v-approx= [10 5 5] (anchor-pos r))
+          (str "expected (10,5,5), got " (anchor-pos r)))
+      ;; Creation-pose position stays put; its heading rotates.
+      (is (v-approx= [10 0 0] (cp-pos r)))
+      (is (v-approx= [0 1 0] (get-in r [:creation-pose :heading]))))))
+
+(deftest sdf-scale-off-origin-pivots-on-creation-pose
+  (testing "scaling an off-origin SDF expands about its creation-pose, not world origin"
+    ;; Anchor at (15,4,0), creation-pose at (10,0,0), scale 2 →
+    ;; offset (5,4,0) doubles to (10,8,0) → world (20,8,0).
+    (let [s (-> (sdf/sdf-sphere 1)
+                (assoc :creation-pose {:position [10 0 0] :heading [1 0 0] :up [0 0 1]}
+                       :anchors {:foo {:position [15 4 0] :heading [1 0 0] :up [0 0 1]}}))
+          r (t/scale s 2)]
+      (is (v-approx= [20 8 0] (anchor-pos r))
+          (str "expected (20,8,0), got " (anchor-pos r)))
+      ;; Creation-pose position stays put under in-place scale.
+      (is (v-approx= [10 0 0] (cp-pos r))))))
+
+(deftest sdf-rotate-off-origin-equals-manual-sandwich
+  (testing "the new (rotate sdf …) matches the historical translate-rotate-translate workaround"
+    (let [base  (sdf/sdf-box 6 6 6)
+          dx 7  dy -3  dz 4
+          ;; SDF placed at (dx,dy,dz) by translate (which advances its pose).
+          placed (t/translate base dx dy dz)
+          new-way (t/rotate placed :y 30)
+          old-way (-> placed
+                      (t/translate (- dx) (- dy) (- dz))  ; back to origin
+                      ((fn [s] (sdf/sdf-rotate s :y 30))) ; rotate around origin (raw primitive)
+                      (t/translate dx dy dz))             ; translate back
+          ;; Probe: pick an anchor on the placed sdf and compare positions
+          ;; under both pipelines via anchor propagation.
+          anchored (assoc placed :anchors {:probe {:position [dx (+ dy 4) dz]
+                                                   :heading [1 0 0] :up [0 0 1]}})
+          new-probe (anchor-pos (t/rotate anchored :y 30))
+          old-probe (anchor-pos (-> anchored
+                                    (t/translate (- dx) (- dy) (- dz))
+                                    ((fn [s] (sdf/sdf-rotate s :y 30)))
+                                    (t/translate dx dy dz)))]
+      ;; Creation-poses should land in the same place too.
+      (is (v-approx= (cp-pos new-way) (cp-pos old-way)))
+      (is (v-approx= new-probe old-probe)
+          (str "new=" new-probe " old=" old-probe)))))
+
+(deftest sdf-and-mesh-rotate-around-same-point-when-collocated
+  (testing "after the same translate, mesh and SDF rotate around the same point"
+    ;; Both fresh primitives have origin-centroid / origin-creation-pose.
+    ;; After (translate _ 8 0 0), both pivots move to (8,0,0).
+    ;; Rotating (rotate _ :z 90) should send anchors initially at (8+a,b,c)
+    ;; to the same place on both.
+    (let [m (-> (prims/box-mesh 4)
+                (assoc :anchors {:foo {:position [12 4 0] :heading [1 0 0] :up [0 0 1]}}))
+          s (-> (sdf/sdf-box 4 4 4)
+                (assoc :anchors {:foo {:position [12 4 0] :heading [1 0 0] :up [0 0 1]}}))
+          ;; Translate both by (8,0,0) — but the anchor stays where it is in world space.
+          ;; Translation moves geometry+pose+anchors together.
+          mt (t/translate m 8 0 0)
+          st (t/translate s 8 0 0)
+          ;; After translate, anchors are at (20,4,0). Pivots at (8,0,0).
+          ;; Anchor offset from pivot: (12,4,0). After :z 90 → (-4,12,0) +
+          ;; pivot (8,0,0) = (4,12,0).
+          mr (t/rotate mt :z 90)
+          sr (t/rotate st :z 90)]
+      (is (v-approx= (anchor-pos mr) (anchor-pos sr) 1e-5)
+          (str "mesh=" (anchor-pos mr) " sdf=" (anchor-pos sr))))))
