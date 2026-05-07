@@ -88,41 +88,31 @@
 (defn scale-mesh
   "Scale all vertices of a mesh from its centroid.
    factor can be a number (uniform) or [fx fy fz] (non-uniform along local axes).
-   Local axes come from the mesh's creation-pose (heading=X, up=Z, cross=Y)."
+   Local axes come from the mesh's creation-pose (heading=X, up=Z, cross=Y).
+   Also updates anchor positions and creation-pose position so they follow
+   the geometry — heading/up directions on poses stay invariant."
   [mesh factor]
-  (let [centroid (mesh-centroid mesh)]
-    (if (number? factor)
-      ;; Uniform scale
-      (-> mesh
-          (dissoc :ridley.manifold.core/manifold-cache :ridley.manifold.core/raw-arrays)
-          (update :vertices
-                  (fn [verts]
-                    (mapv (fn [v]
-                            (let [rel (v- v centroid)]
-                              (v+ centroid (v* rel factor))))
-                          verts))))
-      ;; Non-uniform scale [fx fy fz] along local axes
-      (let [[fx fy fz] factor
-            pose (:creation-pose mesh)
-            local-x (or (some-> pose :heading normalize) [1 0 0])
-            local-z (or (some-> pose :up normalize) [0 0 1])
-            local-y (normalize (cross local-z local-x))]
-        (-> mesh
-            (dissoc :ridley.manifold.core/manifold-cache :ridley.manifold.core/raw-arrays)
-            (update :vertices
-                    (fn [verts]
-                      (mapv (fn [v]
-                              (let [rel (v- v centroid)
-                                    ;; Project onto local axes
-                                    px (dot rel local-x)
-                                    py (dot rel local-y)
-                                    pz (dot rel local-z)
-                                    ;; Scale each component
-                                    scaled (v+ (v* local-x (* px fx))
-                                               (v+ (v* local-y (* py fy))
-                                                   (v* local-z (* pz fz))))]
-                                (v+ centroid scaled)))
-                            verts))))))))
+  (let [centroid (mesh-centroid mesh)
+        scale-pos (if (number? factor)
+                    (fn [p] (v+ centroid (v* (v- p centroid) factor)))
+                    (let [[fx fy fz] factor
+                          pose (:creation-pose mesh)
+                          local-x (or (some-> pose :heading normalize) [1 0 0])
+                          local-z (or (some-> pose :up normalize) [0 0 1])
+                          local-y (normalize (cross local-z local-x))]
+                      (fn [p]
+                        (let [rel (v- p centroid)
+                              px (dot rel local-x)
+                              py (dot rel local-y)
+                              pz (dot rel local-z)]
+                          (v+ centroid
+                              (v+ (v* local-x (* px fx))
+                                  (v+ (v* local-y (* py fy))
+                                      (v* local-z (* pz fz)))))))))]
+    (-> mesh
+        (dissoc :ridley.manifold.core/manifold-cache :ridley.manifold.core/raw-arrays)
+        (update :vertices (fn [verts] (mapv scale-pos verts)))
+        (transform-poses (fn [pose] (update pose :position scale-pos))))))
 
 (defn replace-mesh-in-state
   "Replace a mesh in the state's meshes vector.

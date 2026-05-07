@@ -623,7 +623,15 @@
               :inset (turtle/inset s (first args))
               :scale (turtle/scale s (first args))
               :move-to (move-to-dispatch s args)
-              :mark s ;; no-op during replay
+              :mark (let [nm (first args)
+                          pose {:position (:position s)
+                                :heading (:heading s)
+                                :up (:up s)}]
+                      (if (get-in s [:attached :mesh])
+                        ;; Record anchor on the attached mesh (mirrors SDF attach
+                        ;; behavior). When not attached to a mesh, mark is a no-op.
+                        (assoc-in s [:attached :mesh :anchors nm] pose)
+                        s))
               ;; cp-* commands: shift creation-pose without moving vertices
               :cp-f  (shift-creation-pose s :f (first args))
               :cp-rt (shift-creation-pose s :rt (first args))

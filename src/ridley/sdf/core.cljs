@@ -266,18 +266,22 @@
 (defn sdf-rotate
   "Rotate an SDF node around an axis by angle in degrees.
    axis: keyword (:x :y :z) for cardinal axes (uses libfive's optimized rotate),
-         or vector [ax ay az] for arbitrary axes (uses Rodrigues remap)."
+         or vector [ax ay az] for arbitrary axes (uses Rodrigues remap).
+
+   The user-facing convention is right-hand around all three cardinal axes
+   (consistent with mesh rotate). libfive's rotate_y is internally left-hand,
+   so we silently flip the angle before sending it to libfive — the angle
+   stored in the JSON tree for :y is the negated form."
   [node axis angle]
   (cond
     (keyword? axis)
     (let [rad (* angle (/ Math/PI 180))
           axis-vec (case axis :x [1 0 0] :y [0 1 0] :z [0 0 1])
-          ;; libfive rotate_y is left-hand around +Y while rotate_x/z are
-          ;; right-hand. To rotate anchors with the same visible effect, we
-          ;; flip the angle sign for :y.
-          effective-rad (if (= axis :y) (- rad) rad)]
-      (-> {:op "rotate" :a node :axis (name axis) :angle angle}
-          (with-meta-from node (pose-rotate axis-vec effective-rad))))
+          ;; libfive's rotate_y has visible effect Ry(-α) standard. To present
+          ;; a uniform right-hand API we negate angle for :y before serializing.
+          libfive-angle (if (= axis :y) (- angle) angle)]
+      (-> {:op "rotate" :a node :axis (name axis) :angle libfive-angle}
+          (with-meta-from node (pose-rotate axis-vec rad))))
 
     (sequential? axis)
     (sdf-rotate-axis node axis angle)
@@ -352,20 +356,16 @@
           r22 (+ c (* az az t))
           ;; Decompose into ZYX extrinsic Tait-Bryan: R = Rz(yaw) * Ry(pitch) * Rx(roll)
           ;; Applied as (rotate :x roll) → (rotate :y pitch) → (rotate :z yaw):
-          ;; each libfive rotate_* call rotates around its WORLD axis, so the
-          ;; composition order (innermost first) matches the matrix product.
-          ;;
-          ;; libfive sign quirk: rotate_x and rotate_z use right-hand convention,
-          ;; but rotate_y uses LEFT-hand around +Y (i.e. its visible effect is
-          ;; Ry(-α) standard). We flip the pitch sign when calling rotate_y so
-          ;; the composition matches the standard right-hand decomposition.
+          ;; each cardinal sdf-rotate now exposes a right-hand convention
+          ;; (the libfive-y quirk is hidden inside sdf-rotate keyword branch),
+          ;; so the composition matches the standard right-hand decomposition.
           pitch-rad (- (Math/asin (max -1.0 (min 1.0 r20))))
           yaw-rad   (Math/atan2 r10 r00)
           roll-rad  (Math/atan2 r21 r22)
           to-deg    (fn [r] (* r (/ 180 Math/PI)))]
       (-> node
           (sdf-rotate :x (to-deg roll-rad))
-          (sdf-rotate :y (to-deg (- pitch-rad)))
+          (sdf-rotate :y (to-deg pitch-rad))
           (sdf-rotate :z (to-deg yaw-rad))))))
 
 ;; ── SDF formula (expression compiler) ───────────────────────────
