@@ -171,6 +171,18 @@ The ring is built once. From it we derive two things: the ring as a solid (added
 
 Whenever you need a uniform inflation or deflation of an arbitrary form — clearances, shells, dilation/erosion — this is qualitatively easier in SDF than in mesh, not just incrementally. The two clearances above (1.5 mm for the guitar, 0.5 mm for the moving ring) come from physical experiments — printer tolerance, surface roughness, ease of insertion. The DSL doesn't help you choose the number; it helps you apply it without fighting the geometry.
 
+## Modelling things that are also tools
+
+There's a category-shift that's easy to miss until you hit it physically. An SDF used to *show* something — a guitar on a shelf, a vase on a table — only needs to look right. An SDF used as a *negative*, to carve out the space a real object will occupy, has to *match* that real object.
+
+The wall mount uses `(chitarra-sdf)` as a subtractive tool: it's offset by 1.5 mm and used to hollow out the cradle that will hold the actual guitar. A model that looked like a guitar — half-cylinder neck, angled slab headstock — wasn't enough. To hollow a cradle that the real instrument can actually slide into, the model has to reproduce the real geometry: correct headstock thickness and width, correct neck-to-headstock angle, and the lateral space the guitar body needs to pass through during insertion. The latter is sculpted by subtracting two cylinders (`c1` and `c2`) from the neck region via `sdf-blend-difference` — a soft subtraction, because the corridors need to ease into the surrounding form, not cut into it sharply.
+
+None of this changes how the guitar *looks* in renders. All of it changes whether the part *works*.
+
+The principle generalises. Whenever you use an SDF as a subtractive tool — to make a holder, a socket, a mating cavity — its fidelity becomes a functional requirement, not a cosmetic one. A 1.5 mm clearance offset will save you from manufacturing tolerance, but not from a model that's geometrically wrong by 5 mm in the wrong place. The clearance papers over noise; it does not paper over inaccuracy.
+
+A practical consequence: before committing a part to print, it's worth asking, for every SDF that's being used subtractively, *is this faithful enough to the real object, or only recognisable as it?* The two are very different standards, and the first one is the one that matters when atoms get involved.
+
 ## Idiom: SDF-then-mesh hybrid for mechanical detail
 
 Even with `attach` working on SDFs, there are still good reasons to leave SDF land at some point. Three, in fact:
