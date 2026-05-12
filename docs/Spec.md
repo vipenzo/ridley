@@ -2887,7 +2887,7 @@ Available only in the Ridley Desktop build.
 | `:fps`       | 15                       | Frames per second                                                |
 | `:duration`  | animation's own duration | Capture length in seconds                                        |
 | `:width`     | 720                      | Output width in pixels; height matches the viewport aspect ratio |
-| `:anim`      | auto-pick                | Animation name when more than one procedural animation exists    |
+| `:anim`      | auto-pick                | Primary animation name; required only when more than one procedural animation is registered. Determines capture length. |
 | `:overwrite` | false                    | Replace an existing file at the target path                      |
 
 Capture is off-realtime: the live render loop is suspended and frames are
@@ -2895,6 +2895,16 @@ generated as fast as the system can compute the procedural mesh. The file is
 written to `~/Documents/Ridley/exports/<filename>` (parent dirs created
 automatically). A progress overlay covers the viewport during capture and
 encoding.
+
+**Multi-anim capture.** Every procedural animation in `:playing` state is
+driven in lockstep at the same fractional t each frame, not just the named
+one. This lets a single GIF show multiple independently-coloured meshes
+animating together — e.g. a static support, a rotating ring, and a sliding
+part each as its own registered target with its own colour and its own
+`anim-proc!`. The named (or auto-picked) anim's duration governs total
+length; others run on the same fractional timeline, so animations with
+matching durations progress in lockstep and ones with different durations
+finish proportionally.
 
 Errors:
 - non-procedural animation (keyframe `anim!`) is not supported
