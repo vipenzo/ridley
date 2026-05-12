@@ -496,6 +496,32 @@
   []
   (some? @pilot-state))
 
+(defn- describe-arg
+  "Render a short description of what the pilot argument actually is,
+   so the user can tell apart 'a function' vs 'a number' vs 'nil'."
+  [v]
+  (cond
+    (nil? v)     "nil"
+    (fn? v)      "a function (did you forget to call it?)"
+    (number? v)  "a number"
+    (string? v)  "a string"
+    (keyword? v) "a keyword"
+    (vector? v)  "a vector"
+    (map? v)     "a map (not a mesh or SDF node)"
+    :else        (str (type v))))
+
+(defn- clear-orphan-state!
+  "Reset stuck pilot state from a previous failed eval.
+   If interactive-mode is :pilot but no live UI exists, release everything."
+  []
+  (let [ps @pilot-state
+        live? (and ps (:entered? ps)
+                   (some-> (:panel-el ps) .-parentNode))]
+    (when (and (= :pilot @state/interactive-mode) (not live?))
+      (when ps (cleanup!))
+      (reset! pilot-state nil)
+      (state/release-interactive-mode!))))
+
 (defn ^:export request!
   "Called by the pilot macro during script evaluation.
    quoted-arg: the source form as written (unevaluated, e.g. 'cubo or '(get-mesh :cubo))
@@ -505,14 +531,15 @@
     ;; cancel!/re-eval set the skip flag — just pass through the mesh
     (do (reset! skip-next-pilot false) value)
     ;; Normal path
-    (let [obj value
+    (let [_ (clear-orphan-state!)
+          obj value
           sdf? (and (map? obj) (string? (:op obj)))
           mesh? (and (map? obj) (:vertices obj))]
       (when-not obj
         (throw (js/Error. (str "pilot: no object found for " quoted-arg))))
       (when-not (or mesh? sdf?)
-        (throw (js/Error. (str "pilot: argument must be a mesh or SDF node"))))
-      (state/claim-interactive-mode! :pilot)
+        (throw (js/Error. (str "pilot: argument must be a mesh or SDF node — got "
+                               (describe-arg obj)))))
       ;; Detect context from eval-source dynamic var
       (let [from-repl (not= :definitions @state/eval-source-var)
             ;; In script mode, find the (pilot ...) form in editor text
@@ -525,7 +552,9 @@
                   [idx (+ idx (count pilot-pattern))])))]
         (when (and (not from-repl) (nil? pilot-from))
           (throw (js/Error. (str "pilot: cannot find '" pilot-pattern "' in editor"))))
-        ;; Store request — will be picked up by core.cljs after eval
+        ;; All validation passed — claim slot and store request.
+        ;; Claim is the LAST possible failure point so no error can leave it dangling.
+        (state/claim-interactive-mode! :pilot)
         (reset! pilot-state
                 {:source-expr   (str quoted-arg) ;; source text of the argument
                  :pilot-text    pilot-pattern
