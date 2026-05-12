@@ -1,5 +1,5 @@
-;(def target :print)
-(def target :gif)
+(def target :print)
+;(def target :gif)
 
 (def r_manico 25)
 (def l_manico 350)
@@ -10,11 +10,8 @@
                 :ang 12})
 (def wall-angle 15)
 
-
-
+(resolution :n 128)
 (sdf-resolution! 200)
-
-
 
 (defn chitarra-sdf []
   ;; sdf-box / sdf-rounded-box prendono argomenti in ordine (right, up, heading) → (Y, Z, X)
@@ -51,14 +48,11 @@
             (u -30)
             (f -20)
             (rt -65))]
-    (sdf-blend-difference
-     (translate body -160 0 -10)
-     (sdf-union c1 c2) 2)))
-
-
-
-
-
+    (translate
+     (sdf-blend-difference
+      (translate body -160 0 -10)
+      (sdf-union c1 c2) 2)
+     20 0 0)))
 
 (defn torus-arc
   "Arco di toro: arc-deg in [0°, 360°], centrato su +X, asse Z."
@@ -85,11 +79,11 @@
      (sdf-union
       (attach s1 (tv 90) (th (+ 180 (/ arc-deg 2))) (f R))
       (attach s1 (tv 90) (th (+ 180 (/ arc-deg -2))) (f R)))
-     1)))
+     2)))
 
 (def anello-mobile
   (rotate
-   (translate (anelli 1 11 35 5 1 230 0) -21 0 -30)
+   (translate (anelli 1 11 38 5 1 230 0) -21 0 -30)
    :y wall-angle))
 
 (def struttura
@@ -136,7 +130,7 @@
      (sdf-blend struttura base 1)
      :y wall-angle)
     (sdf-offset (chitarra-sdf) 1.5)
-    2))) ; +1 mm di clearance per infilare la chitarra
+    3))) ; +1 mm di clearance per infilare la chitarra
 
 (def hole
   (mesh-union
@@ -157,15 +151,16 @@
      (sdf-offset anello-mobile 0.5)))
    (attach (box 180 110 210) (u -50))))
 
-
 (defn do-export []
   ;; Export-only target: support + ring fused into a single print-in-place
-  ;; mesh. `:hidden` keeps it out of the viewport (animations stay on the
-  ;; two visible targets above). Uncomment the export form to write it.
-  (register WallMountPrint (mesh-union support anello-mobile))
-  (export :WallMountPrint :3mf))
-
-
+  ;; mesh. Force higher SDF→mesh resolution on the ring with the 2-arg
+  ;; numeric form of sdf-ensure-mesh so its smoothness matches struttura,
+  ;; which is meshed at high vpu inside the wallmount pass.
+  (register WallMountPrint
+            (mesh-union support
+                        (sdf-ensure-mesh anello-mobile 600)))
+    ;(export :WallMountPrint :3mf)
+  )
 (defn do-gif []
 
   (register chitarra (chitarra-sdf))
@@ -174,8 +169,7 @@
   (register WallMount support)
   (register AnelloMobile anello-mobile)
 
-
-  ;; ============================================================
+;; ============================================================
   ;; ANIMATION
   ;; ============================================================
   ;; Fase 1 (t in [0, insertion-frac]): la chitarra trasla da
@@ -222,8 +216,6 @@
       (sdf-ensure-mesh
        (translate (chitarra-sdf) dx 0 dz))))
 
-
-
   (defn anello-frame [t]
     (let [u (segment01 t insertion-frac 1.0)
           ang (* u ring-rotation)]
@@ -235,7 +227,6 @@
           :x ang)
          :y wall-angle)
         -21 0 -30))))
-
 
   (anim-proc! :insert anim-duration :chitarra :linear chitarra-frame)
   (anim-proc! :lock anim-duration :AnelloMobile :linear anello-frame)
@@ -250,8 +241,6 @@
                    :fps 15
                    :width 720
                    :overwrite true))
-
-
 
 (case target
   :print (do-export)
