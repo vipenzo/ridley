@@ -1,7 +1,7 @@
 (ns ridley.viewport.core
   "Three.js viewport for rendering turtle geometry."
   (:require ["three" :as THREE]
-            ["three/examples/jsm/controls/OrbitControls.js" :refer [OrbitControls]]
+            ["three/examples/jsm/controls/TrackballControls.js" :refer [TrackballControls]]
             [ridley.viewport.xr :as xr]
             [ridley.anim.playback :as anim-playback]
             [ridley.manifold.core :as manifold]
@@ -83,9 +83,12 @@
     renderer))
 
 (defn- create-controls [^js camera ^js renderer]
-  (let [controls (OrbitControls. camera (.-domElement renderer))]
-    (set! (.-enableDamping controls) true)
-    (set! (.-dampingFactor controls) 0.05)
+  (let [controls (TrackballControls. camera (.-domElement renderer))]
+    (set! (.-staticMoving controls) false)
+    (set! (.-dynamicDampingFactor controls) 0.2)
+    (set! (.-rotateSpeed controls) 3.0)
+    (set! (.-zoomSpeed controls) 1.2)
+    (set! (.-panSpeed controls) 0.8)
     controls))
 
 ;; ============================================================
@@ -1088,10 +1091,11 @@
 (defn handle-resize
   "Handle viewport resize - call when panel dimensions change."
   []
-  (when-let [{:keys [renderer camera canvas]} @state]
+  (when-let [{:keys [renderer camera canvas controls]} @state]
     (let [^js renderer renderer
           ^js camera camera
           ^js canvas canvas
+          ^js controls controls
           ;; Read dimensions from parent container, not canvas itself.
           ;; The canvas doesn't have intrinsic CSS dimensions — it gets
           ;; its size from renderer.setSize. Reading from parent avoids
@@ -1105,7 +1109,10 @@
         (set! (.. canvas -style -height) (str height "px"))
         (.setSize renderer width height false)
         (set! (.-aspect camera) (/ width height))
-        (.updateProjectionMatrix camera)))))
+        (.updateProjectionMatrix camera)
+        ;; TrackballControls caches screen geometry — must be refreshed on resize.
+        (when (and controls (.-handleResize controls))
+          (.handleResize controls))))))
 
 ;; Forward declarations for ruler system (defined after highlights section)
 (declare add-ruler!)
@@ -1692,7 +1699,7 @@
   "Alt+Scroll handler: adjust coplanarity tolerance when at face drill-down level.
    Alt+Scroll up → increase tolerance (more permissive, merge more faces).
    Alt+Scroll down → decrease tolerance (stricter, fewer faces).
-   Without Alt, normal zoom (event passes through to OrbitControls)."
+   Without Alt, normal zoom (event passes through to TrackballControls)."
   [^js event]
   (when (and (.-altKey event)
              (= :face (:drill-level @picking-state)))
