@@ -729,17 +729,27 @@
        (:creation-pose node) (assoc :creation-pose (:creation-pose node))))))
 
 (defn ensure-mesh
-  "If x is an SDF node, materialize it. If already a mesh, return as-is."
-  ([x] (if (sdf-node? x)
-         (let [bounds (auto-bounds x)
-               res (resolution-for-bounds bounds *sdf-resolution* x)
-               spans (map (fn [[lo hi]] (- hi lo)) bounds)
-               voxels (reduce * (map #(* res %) spans))]
-           (when (> voxels 5e8)
-             (println (str "[warn] SDF meshing: " (.toFixed (/ voxels 1e6) 0) "M voxels — try lower resolution.")))
-           (materialize x bounds res))
-         x))
-  ([x reference-mesh]
+  "If x is an SDF node, materialize it. If already a mesh, return as-is.
+
+   Arities:
+     (ensure-mesh sdf)              — auto bounds + auto resolution
+     (ensure-mesh sdf ref-mesh)     — bounds extended to cover ref-mesh,
+                                      auto resolution
+     (ensure-mesh sdf turtle-res)   — auto bounds, resolution overridden
+                                      (same units as `sdf-resolution!`)
+     (ensure-mesh sdf ref-mesh n)   — both: extend bounds AND override
+
+   The 2-arg form dispatches on the second argument: a number means
+   resolution override (no reference mesh), anything else (mesh or nil)
+   means reference mesh (auto resolution). Pass nil + number for the
+   3-arg form when you want only a resolution override but find the
+   dispatching ambiguous."
+  ([x] (ensure-mesh x nil nil))
+  ([x ref-or-res]
+   (if (number? ref-or-res)
+     (ensure-mesh x nil ref-or-res)
+     (ensure-mesh x ref-or-res nil)))
+  ([x reference-mesh resolution-override]
    (if (sdf-node? x)
      (let [sdf-bounds (auto-bounds x)
            bounds (if reference-mesh
@@ -748,6 +758,11 @@
                               [(min slo rlo) (max shi rhi)])
                             sdf-bounds ref-b))
                     sdf-bounds)
-           res (resolution-for-bounds bounds *sdf-resolution* x)]
+           turtle-res (or resolution-override *sdf-resolution*)
+           res (resolution-for-bounds bounds turtle-res x)
+           spans (map (fn [[lo hi]] (- hi lo)) bounds)
+           voxels (reduce * (map #(* res %) spans))]
+       (when (> voxels 5e8)
+         (println (str "[warn] SDF meshing: " (.toFixed (/ voxels 1e6) 0) "M voxels — try lower resolution.")))
        (materialize x bounds res))
      x)))

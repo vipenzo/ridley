@@ -285,9 +285,15 @@
 
    Warns if every arg is an SDF (suggests using sdf-* for higher precision).
 
-   Note: uses 1-arg ensure-mesh (auto-bounds from the SDF tree itself).
-   For 'infinite' SDFs (gyroid, half-spaces) used as cutters in mesh-difference,
-   you may need to call sdf-ensure-mesh manually with a reference mesh."
+   Note: uses 1-arg ensure-mesh (auto-bounds + auto resolution from the
+   SDF tree itself). When you need to override either, materialize the
+   SDF yourself before calling the mesh op:
+     - (sdf-ensure-mesh sdf ref-mesh) → extend bounds to cover ref-mesh
+       (needed for 'infinite' SDFs like gyroid/half-space used as cutters)
+     - (sdf-ensure-mesh sdf turtle-res) → override resolution
+       (e.g. force finer meshing on a small SDF that ends up coarse when
+       fused with a much larger one via mesh-union)
+     - (sdf-ensure-mesh sdf ref-mesh turtle-res) → both"
   [op-name args]
   (let [sdf-flags (mapv sdf/sdf-node? args)
         bad (keep-indexed
