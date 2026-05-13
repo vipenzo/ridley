@@ -1,3 +1,5 @@
+;; Ridley Library: puppet
+
 ;; =========================
 ;; Puppet Library for Ridley
 ;; Articulated humanoid figures with preset actions

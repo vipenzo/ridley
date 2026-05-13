@@ -28,6 +28,7 @@
             [ridley.ui.prompt-panel :as prompt-panel]
             [ridley.library.panel :as lib-panel]
             [ridley.library.core :as lib-core]
+            [ridley.library.builtin :as lib-builtin]
             [ridley.anim.core :as anim]
             [ridley.anim.playback :as anim-playback]
             [ridley.editor.test-mode :as test-mode]
@@ -2455,6 +2456,8 @@
     (setup-sync)
     ;; Setup manual panel
     (setup-manual)
+    ;; Install bundled builtin libraries (overwrites by name)
+    (lib-builtin/install-builtins!)
     ;; Setup library panel
     (setup-library-panel)
     ;; Setup picking status bar (Alt+Click mesh selection)

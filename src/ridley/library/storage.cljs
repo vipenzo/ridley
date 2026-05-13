@@ -315,3 +315,21 @@
     (when (and name (seq (str/trim source)))
       (save-library! name source requires)
       name)))
+
+(defn mark-builtin!
+  "Tag a library as builtin (read-only in the UI)."
+  [name]
+  (if (env/desktop?)
+    (let [meta-file (str (lib-dir) "/_meta.json")
+          all-meta (or (fs-read-json meta-file) {})
+          existing (get all-meta (keyword name))]
+      (fs-write-json! meta-file
+                      (assoc all-meta (keyword name)
+                             (assoc existing :builtin true))))
+    (when-let [lib (ls-read-json (ls-lib-key name))]
+      (ls-write-json! (ls-lib-key name) (assoc lib :builtin true)))))
+
+(defn builtin?
+  "True if the named library is marked as builtin."
+  [name]
+  (boolean (:builtin (get-library name))))

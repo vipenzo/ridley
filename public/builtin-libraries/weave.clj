@@ -1,3 +1,5 @@
+;; Ridley Library: weave
+
 
 
 (defn canvas [thickness compactness]

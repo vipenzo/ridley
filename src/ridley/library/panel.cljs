@@ -137,7 +137,8 @@
 
 (defn- show-context-menu! [lib-name x y]
   (close-context-menu!)
-  (let [menu (el-with "div" "library-context-menu" nil)
+  (let [builtin? (storage/builtin? lib-name)
+        menu (el-with "div" "library-context-menu" nil)
         make-item (fn [label class-name on-click]
                     (let [btn (el-with "button" (str "library-context-menu-item"
                                                      (when class-name (str " " class-name)))
@@ -150,36 +151,41 @@
         sep (fn [] (el-with "div" "library-context-menu-sep" nil))]
     (set! (.-style.left menu) (str x "px"))
     (set! (.-style.top menu) (str y "px"))
-    (append! menu
-             (make-item "Edit" nil
-                        (fn [] (when-let [cb (:on-edit @callbacks)] (cb lib-name))))
-             (make-item "Duplicate" nil
-                        (fn []
-                          (when-let [lib (storage/get-library lib-name)]
-                            (let [new-name (str lib-name "-copy")]
-                              (storage/save-library! new-name (:source lib) (:requires lib))
-                              (render!)))))
-             (sep)
-             (make-item "Export .clj" nil
-                        (fn []
-                          (when-let [content (storage/export-library lib-name)]
-                            (let [blob (js/Blob. #js [content] #js {:type "text/plain"})
-                                  url (.createObjectURL js/URL blob)
-                                  a (el "a")]
-                              (set! (.-href a) url)
-                              (set! (.-download a) (str lib-name ".clj"))
-                              (.click a)
-                              (.revokeObjectURL js/URL url)))))
-             (sep)
-             (make-item "Delete" "danger"
-                        (fn []
-                          (modal-confirm!
-                           (str "Delete library '" lib-name "'?")
-                           (fn [yes?]
-                             (when yes?
-                               (storage/delete-library! lib-name)
-                               (when-let [cb (:on-change @callbacks)] (cb))
-                               (render!)))))))
+    (when-not builtin?
+      (.appendChild menu
+                    (make-item "Edit" nil
+                               (fn [] (when-let [cb (:on-edit @callbacks)] (cb lib-name))))))
+    (.appendChild menu
+                  (make-item "Duplicate" nil
+                             (fn []
+                               (when-let [lib (storage/get-library lib-name)]
+                                 (let [new-name (str lib-name "-copy")]
+                                   (storage/save-library! new-name (:source lib) (:requires lib))
+                                   (render!))))))
+    (.appendChild menu (sep))
+    (.appendChild menu
+                  (make-item "Export .clj" nil
+                             (fn []
+                               (when-let [content (storage/export-library lib-name)]
+                                 (let [blob (js/Blob. #js [content] #js {:type "text/plain"})
+                                       url (.createObjectURL js/URL blob)
+                                       a (el "a")]
+                                   (set! (.-href a) url)
+                                   (set! (.-download a) (str lib-name ".clj"))
+                                   (.click a)
+                                   (.revokeObjectURL js/URL url))))))
+    (when-not builtin?
+      (.appendChild menu (sep))
+      (.appendChild menu
+                    (make-item "Delete" "danger"
+                               (fn []
+                                 (modal-confirm!
+                                  (str "Delete library '" lib-name "'?")
+                                  (fn [yes?]
+                                    (when yes?
+                                      (storage/delete-library! lib-name)
+                                      (when-let [cb (:on-change @callbacks)] (cb))
+                                      (render!))))))))
     (.appendChild js/document.body menu)
     (swap! panel-state assoc :context-menu {:name lib-name :x x :y y})))
 
@@ -558,10 +564,16 @@
                                  (.stopPropagation e)
                                  (let [rect (.getBoundingClientRect menu-btn)]
                                    (show-context-menu! lib-name (.-right rect) (.-bottom rect)))))
-            ;; Double-click to edit
+            ;; Double-click to edit (disabled for builtin libraries)
             (.addEventListener item "dblclick"
                                (fn [_]
-                                 (when-let [cb (:on-edit @callbacks)] (cb lib-name))))
+                                 (when-not (:builtin lib)
+                                   (when-let [cb (:on-edit @callbacks)] (cb lib-name)))))
+            ;; Builtin badge
+            (when (:builtin lib)
+              (let [badge (el-with "span" "library-builtin-badge" "builtin")]
+                (set! (.-title badge) "Built-in library — read-only")
+                (.appendChild name-el badge)))
             ;; Assemble item
             (when handle (append! item handle))
             (append! item checkbox name-el deps-el menu-btn)

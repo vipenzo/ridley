@@ -1637,6 +1637,20 @@ body.resizing-h * {
   white-space: nowrap;
 }
 
+.library-builtin-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #cfd6dd;
+  background: #3a4a5a;
+  border-radius: 3px;
+  vertical-align: middle;
+}
+
 .library-deps .dep-ok {
   color: #4ec9b0;
 }
