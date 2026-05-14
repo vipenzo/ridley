@@ -4,6 +4,11 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Release tag to build for and upload DMG to (e.g. v1.11.0). Leave blank to use the workflow ref."
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -43,11 +48,19 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
+      - name: Resolve build tag
+        id: tag
+        run: |
+          TAG="${{ inputs.version }}"
+          if [ -z "$TAG" ]; then
+            TAG="${GITHUB_REF_NAME:-dev}"
+          fi
+          echo "value=$TAG" >> "$GITHUB_OUTPUT"
+
       - name: Build frontend (production JS)
         run: |
-          TAG=${GITHUB_REF_NAME:-dev}
           npx shadow-cljs release app \
-            --config-merge "{:closure-defines {ridley.version/VERSION \"$TAG\"}}"
+            --config-merge "{:closure-defines {ridley.version/VERSION \"${{ steps.tag.outputs.value }}\"}}"
 
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2"
@@ -65,11 +78,10 @@ jobs:
       - name: Create DMG
         run: |
           APP_BUNDLE="desktop/src-tauri/target/release/bundle/macos/Ridley.app"
-          TAG=${GITHUB_REF_NAME:-dev}
           hdiutil create -volname "Ridley" \
             -srcfolder "$APP_BUNDLE" \
             -ov -format UDZO \
-            "Ridley-${TAG}-macOS.dmg"
+            "Ridley-${{ steps.tag.outputs.value }}-macOS.dmg"
 
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4
@@ -78,9 +90,8 @@ jobs:
           path: "Ridley-*.dmg"
 
       - name: Attach DMG to release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(steps.tag.outputs.value, 'v')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG=${GITHUB_REF_NAME}
-          gh release upload "$TAG" Ridley-*.dmg --clobber
+          gh release upload "${{ steps.tag.outputs.value }}" Ridley-*.dmg --clobber
