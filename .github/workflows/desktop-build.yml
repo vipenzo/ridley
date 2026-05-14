@@ -32,8 +32,8 @@ jobs:
         with:
           workspaces: desktop/src-tauri
 
-      - name: Install CMake
-        run: brew install cmake
+      - name: Install build dependencies
+        run: brew install cmake boost eigen libpng
 
       - name: Clone libfive
         run: |
@@ -78,9 +78,9 @@ jobs:
           path: "Ridley-*.dmg"
 
       - name: Attach DMG to release
-        if: github.event_name == 'release'
+        if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload "${{ github.event.release.tag_name }}" \
-            Ridley-*.dmg --clobber
+          TAG=${GITHUB_REF_NAME}
+          gh release upload "$TAG" Ridley-*.dmg --clobber
