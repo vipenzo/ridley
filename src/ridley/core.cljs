@@ -2377,11 +2377,11 @@
 ;; ============================================================
 
 (def ^:private default-code "; Run with Cmd+Enter, then use REPL below
-(register smooth-spline
-  (extrude (circle 5)
-    (bezier-as
-      (path (f 30) (th 90) (f 20) (tr -80) (th -45) (f 25))
-      :cubic true)))")
+(register Blob
+  (sdf-blend
+    (sdf-sphere 10)
+    (translate (sdf-box 8 8 8) 12 0 0)
+    3))")
 
 (defn init []
   (let [canvas (.getElementById js/document "viewport")
