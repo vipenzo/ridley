@@ -600,6 +600,31 @@
           (assoc-in [:attached :mesh] new-mesh)))
     state))
 
+(defn- rotate-creation-pose
+  "Rotate the geometry of the attached mesh around the anchor (creation-pose
+   position) while keeping the creation-pose orientation fixed in world.
+   After `(cp-th α)`, the direction that was at +α around up from the original
+   anchor-heading coincides with the (unchanged) anchor-heading. Vertices and
+   named anchors rotate by `-α` around the corresponding pose axis;
+   creation-pose is untouched.
+   axis: :th (around up), :tv (around right = heading × up), :tr (around heading)."
+  [state axis angle-deg]
+  (if-let [attached (:attached state)]
+    (let [mesh (:mesh attached)
+          pose (or (:creation-pose mesh) {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})
+          h (math/normalize (:heading pose))
+          u (math/normalize (:up pose))
+          r (math/normalize (math/cross h u))
+          rot-axis (case axis :th u :tv r :tr h)
+          pivot (:position pose)
+          rad (* (- angle-deg) (/ Math/PI 180))
+          new-mesh (attachment/rotate-vertices-keeping-creation-pose
+                    mesh rot-axis rad pivot)]
+      (-> state
+          (turtle/replace-mesh-in-state mesh new-mesh)
+          (assoc-in [:attached :mesh] new-mesh)))
+    state))
+
 ;; ============================================================
 ;; Attach: path replay
 ;; ============================================================
@@ -621,7 +646,31 @@
                                (assoc :heading (math/normalize (first args)))
                                (assoc :up (math/normalize (second args))))
               :inset (turtle/inset s (first args))
-              :scale (turtle/scale s (first args))
+              :stretch-f  (let [factor (first args)
+                                attached (:attached s)
+                                mesh (:mesh attached)
+                                new-mesh (attachment/stretch-mesh-along-axis
+                                          mesh (:heading s) factor (:position s))]
+                            (-> s
+                                (turtle/replace-mesh-in-state mesh new-mesh)
+                                (assoc-in [:attached :mesh] new-mesh)))
+              :stretch-rt (let [factor (first args)
+                                attached (:attached s)
+                                mesh (:mesh attached)
+                                right (math/cross (:heading s) (:up s))
+                                new-mesh (attachment/stretch-mesh-along-axis
+                                          mesh right factor (:position s))]
+                            (-> s
+                                (turtle/replace-mesh-in-state mesh new-mesh)
+                                (assoc-in [:attached :mesh] new-mesh)))
+              :stretch-u  (let [factor (first args)
+                                attached (:attached s)
+                                mesh (:mesh attached)
+                                new-mesh (attachment/stretch-mesh-along-axis
+                                          mesh (:up s) factor (:position s))]
+                            (-> s
+                                (turtle/replace-mesh-in-state mesh new-mesh)
+                                (assoc-in [:attached :mesh] new-mesh)))
               :move-to (move-to-dispatch s args)
               :mark (let [nm (first args)
                           pose {:position (:position s)
@@ -632,10 +681,14 @@
                         ;; behavior). When not attached to a mesh, mark is a no-op.
                         (assoc-in s [:attached :mesh :anchors nm] pose)
                         s))
-              ;; cp-* commands: shift creation-pose without moving vertices
+              ;; cp-* commands: relocate geometry while keeping creation-pose
+              ;; fixed (anchor stays, geometry slides/rotates under it)
               :cp-f  (shift-creation-pose s :f (first args))
               :cp-rt (shift-creation-pose s :rt (first args))
               :cp-u  (shift-creation-pose s :u (first args))
+              :cp-th (rotate-creation-pose s :th (first args))
+              :cp-tv (rotate-creation-pose s :tv (first args))
+              :cp-tr (rotate-creation-pose s :tr (first args))
               s))
           state
           (:commands path)))
@@ -657,10 +710,8 @@
 ;; ============================================================
 
 (def ^:private sdf-attach-rejected
-  "Path commands not meaningful when attaching an SDF: only mesh-face
-   ops (inset) and the legacy turtle-mesh scale command."
-  {:inset "inset is mesh-face-specific, not applicable to SDFs"
-   :scale "(scale n) inside attach is mesh-only; for SDF use (scale sdf factor) outside attach"})
+  "Path commands not meaningful when attaching an SDF: only mesh-face ops."
+  {:inset "inset is mesh-face-specific, not applicable to SDFs"})
 
 (defn- validate-sdf-attach-path! [path]
   (when-let [bad (first (filter #(contains? sdf-attach-rejected (:cmd %)) (:commands path)))]
@@ -676,6 +727,31 @@
         (sdf/sdf-move (- px) (- py) (- pz))
         (sdf/sdf-rotate axis angle-deg)
         (sdf/sdf-move px py pz))))
+
+(defn- sdf-stretch-along-axis
+  "Scale an SDF by `factor` along world-space unit vector `axis`, pivoted at
+   `pivot`. Sandwich: translate pivot to origin, rotate axis onto world X,
+   scale (factor 1 1) along X, rotate back, translate back."
+  [sdf-node axis factor pivot]
+  (let [u (math/normalize axis)
+        [ux uy uz] u
+        [px py pz] pivot
+        ;; Build rotation R that takes u to [1 0 0]: rot-axis = cross(u, [1 0 0]),
+        ;; angle = acos(ux). The inverse rotation takes [1 0 0] back to u.
+        dot-x ux
+        translated (sdf/sdf-move sdf-node (- px) (- py) (- pz))
+        align? (< dot-x 0.9999)
+        [rot-axis angle-deg] (cond
+                               (>= dot-x  0.9999) [nil 0]
+                               (<= dot-x -0.9999) [[0 0 1] 180.0]
+                               :else (let [;; cross(u, [1,0,0]) = [0, uz, -uy]
+                                           a [0.0 uz (- uy)]
+                                           ang (* (Math/acos dot-x) (/ 180 Math/PI))]
+                                       [(math/normalize a) ang]))
+        rotated (if align? (sdf/sdf-rotate translated rot-axis angle-deg) translated)
+        scaled (sdf/sdf-scale rotated factor 1 1)
+        unrotated (if align? (sdf/sdf-rotate scaled rot-axis (- angle-deg)) scaled)]
+    (sdf/sdf-move unrotated px py pz)))
 
 (defn- sdf-align
   "Two-step rotation taking the (cur-h, cur-u) frame to (tgt-h, tgt-u),
@@ -778,6 +854,9 @@
      turtle frame.
    - cp-f / cp-rt / cp-u: translate the SDF by the OPPOSITE of the
      direction (anchor stays put in world; geometry slides under).
+   - cp-th / cp-tv / cp-tr: rotate the SDF around the anchor by the
+     NEGATIVE of the angle (creation-pose orientation stays put; geometry
+     rotates under it).
    - mark: record the current turtle pose as a named anchor on the SDF.
    - move-to: snap the turtle to the target anchor / centroid / pose.
      With :align, also rotate the SDF so its frame matches the anchor.
@@ -837,6 +916,19 @@
                     state' (turtle/tr state α)]
                 (recur state' sdf' rest-cmds))
 
+          :stretch-f (let [factor (first args)
+                           sdf' (sdf-stretch-along-axis sdf (:heading state) factor (:position state))]
+                       (recur state sdf' rest-cmds))
+
+          :stretch-rt (let [factor (first args)
+                            right (math/cross (:heading state) (:up state))
+                            sdf' (sdf-stretch-along-axis sdf right factor (:position state))]
+                        (recur state sdf' rest-cmds))
+
+          :stretch-u (let [factor (first args)
+                           sdf' (sdf-stretch-along-axis sdf (:up state) factor (:position state))]
+                       (recur state sdf' rest-cmds))
+
           :set-heading (recur (-> state
                                   (assoc :heading (math/normalize (first args)))
                                   (assoc :up (math/normalize (second args))))
@@ -864,6 +956,27 @@
                       sdf' (sdf/sdf-move-keeping-creation-pose
                             sdf (- (* n ux)) (- (* n uy)) (- (* n uz)))]
                   (recur state sdf' rest-cmds))
+
+          :cp-th (let [α (first args)
+                       axis (math/normalize (:up state))
+                       sdf' (sdf/sdf-rotate-keeping-creation-pose sdf axis (- α))]
+                   (recur state sdf' rest-cmds))
+
+          :cp-tv (let [α (first args)
+                       [hx hy hz] (:heading state)
+                       [ux uy uz] (:up state)
+                       ;; right = heading × up
+                       axis (math/normalize
+                             [(- (* hy uz) (* hz uy))
+                              (- (* hz ux) (* hx uz))
+                              (- (* hx uy) (* hy ux))])
+                       sdf' (sdf/sdf-rotate-keeping-creation-pose sdf axis (- α))]
+                   (recur state sdf' rest-cmds))
+
+          :cp-tr (let [α (first args)
+                       axis (math/normalize (:heading state))
+                       sdf' (sdf/sdf-rotate-keeping-creation-pose sdf axis (- α))]
+                   (recur state sdf' rest-cmds))
 
           :mark (let [nm (first args)
                       pose {:position (:position state)

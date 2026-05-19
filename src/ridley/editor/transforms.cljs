@@ -5,8 +5,7 @@
   (:require [ridley.sdf.core :as sdf]
             [ridley.turtle.attachment :as attachment]
             [ridley.turtle.shape :as shape]
-            [ridley.turtle.transform :as xform]
-            [ridley.editor.implicit :as ed-impl]))
+            [ridley.turtle.transform :as xform]))
 
 (defn- mesh? [x]
   (and (map? x) (:vertices x) (:faces x) (not (sdf/sdf-node? x))))
@@ -62,20 +61,17 @@
         (sdf/sdf-move px py pz))))
 
 (defn ^:export scale
-  "Scale a mesh / SDF / 2D shape, OR (legacy) scale the currently-attached
-   mesh during an attach.
-   - Value form:   (scale thing s)            uniform
-                   (scale thing sx sy [sz])   non-uniform
-   - Legacy form:  (scale s)                  scales attached mesh
-                   (scale sx sy sz)           non-uniform on attached mesh"
+  "Scale a mesh / SDF / 2D shape around its creation-pose (mesh, SDF) or
+   centroid (2D shape).
+   - (scale thing s)            uniform
+   - (scale thing sx sy [sz])   non-uniform along world axes
+   For local-axis scaling inside an attach body, use stretch-f / stretch-rt /
+   stretch-u."
   [first-arg & rest-args]
   (cond
-    ;; Legacy turtle attach form: first arg is a number
     (number? first-arg)
-    (case (count rest-args)
-      0 (ed-impl/implicit-scale-mesh first-arg)
-      2 (ed-impl/implicit-scale-mesh first-arg (first rest-args) (second rest-args))
-      (throw (js/Error. "scale: legacy turtle form takes 1 or 3 number args")))
+    (throw (js/Error. (str "scale: first argument must be a mesh, SDF, or 2D shape — got a number. "
+                           "For local-axis scaling inside attach use stretch-f, stretch-rt, stretch-u.")))
 
     (sdf/sdf-node? first-arg)
     (case (count rest-args)
@@ -165,3 +161,41 @@
        (attachment/rotate-mesh thing axis-vec angle-rad))
 
      :else (type-error "rotate" thing))))
+
+;; ============================================================
+;; reset-creation-pose
+;; ============================================================
+
+(defn- sdf-bbox-center [sdf-node]
+  (let [[[xmin xmax] [ymin ymax] [zmin zmax]] (sdf/auto-bounds sdf-node)]
+    [(* 0.5 (+ xmin xmax))
+     (* 0.5 (+ ymin ymax))
+     (* 0.5 (+ zmin zmax))]))
+
+(defn ^:export reset-creation-pose
+  "Re-anchor a mesh's or SDF's creation-pose at its centroid (or an explicit
+   world-space point). Heading and up of the pose stay unchanged. Anchors
+   already store absolute world positions, so they remain valid.
+
+   Useful after a boolean operation when you want subsequent in-place rotate
+   or scale to pivot at the geometry's visual center rather than at the
+   creation-pose inherited from the first operand.
+
+   - (reset-creation-pose thing)             → centroid (mesh) or
+                                                bounding-box center (SDF)
+   - (reset-creation-pose thing [x y z])     → explicit world point"
+  ([thing] (reset-creation-pose thing nil))
+  ([thing point]
+   (let [default-pose {:position [0 0 0] :heading [1 0 0] :up [0 0 1]}]
+     (cond
+       (mesh? thing)
+       (let [p (or point (attachment/mesh-centroid thing))
+             old-pose (or (:creation-pose thing) default-pose)]
+         (assoc thing :creation-pose (assoc old-pose :position p)))
+
+       (sdf/sdf-node? thing)
+       (let [p (or point (sdf-bbox-center thing))
+             old-pose (or (:creation-pose thing) default-pose)]
+         (assoc thing :creation-pose (assoc old-pose :position p)))
+
+       :else (type-error "reset-creation-pose" thing)))))

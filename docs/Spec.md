@@ -95,6 +95,8 @@ Works both in direct turtle mode and inside `path` recordings.
 |----------|-------------|
 | `(pen :off)` | Stop drawing (pen up) |
 | `(pen :on)` | Draw lines (default) |
+| `(pen-up)` | Alias of `(pen :off)` — stop drawing |
+| `(pen-down)` | Alias of `(pen :on)` — resume drawing |
 
 ### Reset
 
@@ -372,6 +374,9 @@ Create paths from coordinate pairs (like `poly` for shapes):
 ;; Scale path or shape to fit target dimensions
 (fit path :y 180)                    ; Scale Y extent to 180, keep X
 (fit shape :x 200 :y 130)           ; Scale both axes independently
+
+;; Type predicate
+(path? x)                            ; true if x is a path map
 ```
 
 ---
@@ -386,7 +391,7 @@ Shapes are 2D profiles used for extrusion:
 (circle radius)                  ; Circle, uses resolution setting
 (circle radius segments)         ; Custom resolution
 
-(rect width height)              ; Rectangle centered at origin
+(rect r u)                       ; Rectangle centered at origin (r=right, u=up, in the section plane orthogonal to forward)
 
 (polygon n radius)                ; Regular n-sided polygon (e.g., 6 for hexagon)
 
@@ -467,6 +472,32 @@ In normal use you do not set these flags directly: the built-in constructors pic
 - **Shapes returned by `slice-mesh`** are in plane-local coordinates (origin = turtle, X = right, Y = up) and the points already encode their absolute position in that frame. Without the flag, the slice would visually drift relative to the source mesh when fed to `stamp`.
 
 A fourth flag, `:align-to-heading?`, swaps the plane axes so 2D x maps to the turtle's heading direction (used internally by `text-on-path` to make letters progress along the curve). It is not normally set by user code.
+
+### Predicates
+
+```clojure
+(shape? x)                          ; true if x is a 2D shape map
+```
+
+### Import
+
+Load 2D outlines from external sources. Parsed contours become standard Ridley shapes, ready for `extrude`, `loft`, `revolve`, and shape booleans.
+
+```clojure
+;; Extract every geometric element from parsed SVG data as a vector of shapes
+(svg-shapes svg-data)                                   ; Defaults
+(svg-shapes svg-data :segments 64 :scale 1.0
+                     :center true :flip-y true)         ; All options
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `:segments` | 64 | Curve discretization (per arc / bezier element) |
+| `:scale` | 1.0 | Uniform scale applied to imported coordinates |
+| `:center` | `true` | Center each shape at its centroid |
+| `:flip-y` | `true` | Invert Y to map SVG screen coordinates to Ridley's math frame |
+
+`svg-data` is the parsed SVG map produced by `(svg "<svg>...</svg>")`. `svg-shapes` returns one Ridley shape per geometry element (path, rect, circle, polygon). For a single element by index, use `(svg-shape svg-data :index i ...)`.
 
 ### Shape transformations
 
@@ -802,6 +833,20 @@ The transition `fraction` is auto-calculated as `radius / path-length` (geometri
 - Cap transition uses centroid scaling: shape proportions (including fillet radii) are preserved.
 - Works on any shape including shapes with holes.
 
+**Bridge between shapes (`shape-bridge`).** Connect N shapes with smooth bridges via offset → union → unoffset. Each shape is expanded outward by `:radius`, the expansions are unioned, and the result is contracted by the same radius — producing a single outline where nearby shapes are joined by rounded fillets.
+
+```clojure
+(shape-bridge a b :radius 5)                       ; Two shapes, default round joins
+(shape-bridge a b c :radius 3 :join-type :round)   ; Variadic, explicit join type
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `:radius` | 1 | Outward offset distance (controls bridge width and corner radius) |
+| `:join-type` | `:round` | `:round`, `:square`, or `:miter` (matches `shape-offset` semantics) |
+
+Useful for fairing disconnected blobs into one organic outline, or for blending feature shapes into a base contour before extrusion.
+
 **Convex hull (`shape-hull`).** Compute the 2D convex hull of N input shapes. Useful for fairing complex outlines from a few seed circles or for capsules and lozenge profiles.
 
 ```clojure
@@ -930,19 +975,19 @@ Primitives return mesh data at current turtle position:
 
 ```clojure
 (box size)                       ; Cube
-(box w d l)                      ; Rectangular box: w=right, d=up, l=heading
+(box r u f)                      ; Rectangular box: r=right, u=up, f=forward (heading)
 
 (sphere radius)                  ; Sphere, uses resolution setting
 (sphere radius segments rings)   ; Custom resolution
 
-(cyl radius height)              ; Cylinder, height along UP axis
+(cyl radius height)              ; Cylinder, height along forward (heading)
 (cyl radius height segments)     ; Custom segments
 
-(cone r1 r2 height)              ; Frustum, height along UP axis (r1=bottom, r2=top)
+(cone r1 r2 height)              ; Frustum, height along forward (heading) (r1=base near turtle, r2=top far from turtle)
 (cone r1 r2 height segments)     ; Use r2=0 for proper cone
 ```
 
-**Orientation:** `box` extends along heading (like extrude). `cyl` and `cone` extend along the turtle's UP axis (upright by default). At default pose (heading +X, up +Z): box extends along X, cyl/cone extend along Z.
+**Orientation:** all primitives with an extension axis (`box`, `cyl`, `cone`) extend along the turtle's forward axis (heading). For `box`, the section is the rectangle in the right–up plane; for `cyl` and `cone`, the section is a circle in the same plane. This matches `extrude` (which extends a 2D section along a forward path), with `box` anchored at center and `extrude` anchored at the base of the path.
 
 **Important:** Primitives create meshes at the current turtle position but do NOT modify turtle state. Use `register` to make them visible:
 
@@ -996,6 +1041,15 @@ The same convention applies to `extrude-closed`, `loft`, `bloft`, and `revolve`.
 (joint-mode :round)     ; Smooth rounded corners
 (joint-mode :tapered)   ; Beveled/tapered corners
 ```
+
+**Axis-aligned convenience.** When extruding a 2D path (a list of `[x y]` pairs) along a world axis — bypassing the turtle's heading entirely — two helpers cover the common cases:
+
+```clojure
+(extrude-z path distance)            ; Extrude a 2D path along world Z
+(extrude-y path distance)            ; Extrude a 2D path along world Y
+```
+
+Both are thin wrappers over the lower-level `(extrude path axis distance)` form with a fixed axis vector (`[0 0 1]` / `[0 1 0]`). For sweeping a 2D shape along a turtle path, keep using the main `extrude` form above.
 
 ### Extrude-closed
 
@@ -1259,6 +1313,28 @@ Post-processing operations that detect sharp edges by dihedral angle and modify 
 
 Direction selectors: `:top` `:bottom` `:up` `:down` `:left` `:right` `:all`.
 
+**Lower-level chamfer primitives.** `chamfer-edges` is the value-level entry point used internally by `(chamfer ...)`: it returns a new mesh with sharp edges chamfered by CSG subtraction.
+
+```clojure
+(chamfer-edges mesh distance)                       ; Defaults: :angle 80
+(chamfer-edges mesh distance :angle 60)             ; Lower dihedral threshold
+(chamfer-edges mesh distance :where #(pos? (first %))) ; Only edges whose endpoints satisfy predicate
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `:angle` | 80 | Minimum dihedral angle (degrees) for an edge to count as sharp |
+| `:where` | `nil` | Predicate `(fn [[x y z]] -> bool)` applied to BOTH edge endpoints |
+
+`chamfer-prisms` returns the intermediate vector of triangular prism meshes (one per sharp edge) without applying the boolean cut, so you can preview, filter, or transform them before subtracting:
+
+```clojure
+(chamfer-prisms mesh distance)                      ; => [prism1 prism2 ...] or nil
+(chamfer-prisms mesh distance :angle 30 :where pred)
+```
+
+Useful for debugging which edges a chamfer would cut, or for asymmetric chamfers built by hand from a subset of the prisms.
+
 ### Cross-section (slice)
 
 Slice a mesh at the plane defined by the turtle's current position and heading. Returns a vector of 2D shapes (cross-section contours) in the plane's local coordinates.
@@ -1281,6 +1357,21 @@ The heading vector acts as the plane normal. The resulting shapes use the turtle
 Shapes returned have `:preserve-position? true` so they render at absolute plane-local coordinates when fed to `stamp`. See [Anchoring flags](#anchoring-flags) for how the flag changes shape projection.
 
 Both `slice-mesh` and `project-mesh` accept a mesh map, a registered mesh keyword, or an SDF node (auto-materialized via the current `*sdf-resolution*`).
+
+**Explicit plane.** `slice-at-plane` is the lower-level form that takes a plane defined by an arbitrary point and normal — bypassing the turtle entirely. Useful when the slicing plane comes from a computation rather than the current turtle pose.
+
+```clojure
+(slice-at-plane mesh normal point)              ; Auto-computed right/up basis
+(slice-at-plane mesh normal point right up)     ; Explicit local basis
+
+;; Horizontal slice at Z=90
+(slice-at-plane :cup [0 0 1] [0 0 90])
+
+;; Vertical slice at X=0 with explicit basis (X = right, Y = up)
+(slice-at-plane :cup [1 0 0] [0 0 0] [0 1 0] [0 0 1])
+```
+
+Returns the same vector of `:preserve-position? true` shapes as `slice-mesh`. Accepts both mesh values and registered names (keywords).
 
 ### Silhouette (project)
 
@@ -1421,6 +1512,48 @@ Pure ClojureScript: no Manifold WASM or Rust server, runs anywhere. Cheap enough
 | `(mesh-laplacian mesh :iterations n :lambda l :mu m :feature-angle deg)` | Custom schedule. Defaults: `:iterations 10`, `:lambda 0.5`, `:mu -0.53`, `:feature-angle 150` |
 
 `merge-vertices` is the most common quick fix: a CSG result that fails `mesh-smooth` with `:non-manifold-edges > 0` often becomes manifold after a merge pass. `mesh-laplacian` is useful when you have an aesthetically rough mesh you cannot make manifold (typically a shell with apertures): smoothing reduces the visual aliasing without changing topology, and the result is still printable.
+
+### Edge analysis
+
+Inspect a mesh's sharp edges — useful for previewing where `chamfer` / `fillet` would act, or for building custom edge-driven operations.
+
+```clojure
+(find-sharp-edges mesh)                             ; Defaults: :angle 30
+(find-sharp-edges mesh :angle 80)
+(find-sharp-edges mesh :angle 80 :where #(> (first %) 0))
+```
+
+Returns a vector of edge maps: `{:edge [v0 v1] :positions [p0 p1] :angle <degrees> :midpoint [x y z] :normals [n1 n2]}`. Each entry describes one interior edge whose adjacent triangles meet at a dihedral angle steeper than `:angle`.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `:angle` | 30 | Minimum dihedral angle (degrees) to count as sharp |
+| `:where` | `nil` | Predicate `(fn [[x y z]] -> bool)` applied to BOTH edge endpoints |
+
+The output feeds directly into `chamfer-prisms` / `chamfer-edges` (see [3D Chamfer & Fillet](#3d-chamfer--fillet)).
+
+### Orientation utilities
+
+```clojure
+(lay-flat mesh)                                     ; Lay mesh on the XY plane via its largest bottom face
+(lay-flat mesh :top)                                ; Lay on a direction-aligned face (:top :bottom :left :right :up :down)
+(lay-flat mesh :base-mark)                          ; Lay on a named anchor's plane
+```
+
+Rotates a mesh so a chosen face — its largest direction-aligned face, or the plane recorded at a named anchor — ends up flush with the world XY plane (Z down), then re-centers it at the origin. Useful before export to give a slicer a printable orientation.
+
+When `target` is a direction keyword (`:top`, `:bottom`, `:up`, `:down`, `:left`, `:right`), `lay-flat` selects the largest face in that direction and lays it down. When it is any other keyword, it is resolved as a named anchor (mark) on the mesh and that anchor's plane is laid flat instead. Without an argument, `:bottom` is used.
+
+### Import
+
+```clojure
+;; Reconstruct a mesh from base64-encoded vertex / face arrays
+(decode-mesh vertices-b64 faces-b64)
+```
+
+`decode-mesh` decodes a packed Float32 vertex array and Uint32 face index array (both base64-encoded) into a Ridley mesh. This is the binding behind library-imported `.stl` parts: the generated code stores the geometry as two base64 strings and rebuilds the mesh at eval time. The creation-pose position is anchored to the bounding-box center so subsequent `mesh-translate` calls behave sensibly.
+
+You normally do not call `decode-mesh` directly — it appears in the autogenerated code produced by the library importer — but it is bound in SCI so user code can construct mesh literals from packed binary payloads.
 
 ---
 
@@ -1623,21 +1756,44 @@ Operations available inside `attach-face`/`clone-face`:
 (rotate shape angle-deg)           ; 2D shape: implicit Z axis
 ```
 
-**Pivot conventions** match each type's natural reference. Rotation axes are interpreted in **world space** for all three types — only the pivot location changes.
+**Pivot conventions.** For mesh and SDF, both `scale` and `rotate` use **world axes** with the **creation-pose position** as pivot. The two types are intentionally symmetric, so swapping a mesh for an SDF (or vice versa) in a pipeline never changes how downstream transforms behave.
 
 | Type | translate | scale around | rotate around |
 |------|-----------|--------------|----------------|
-| Mesh | world axes | mesh centroid | mesh centroid |
-| SDF | world axes | creation-pose | creation-pose |
-| 2D shape | shape's local frame | shape centroid | shape origin (0, 0) |
+| Mesh | world axes | creation-pose, world axes | creation-pose, world axes |
+| SDF | world axes | creation-pose, world axes | creation-pose, world axes |
+| 2D shape | shape's local frame | shape centroid, local axes | shape origin (0, 0), Z |
 
-Every SDF carries a `:creation-pose` — defaulted to the world origin at construction, advanced by `translate` and `attach`, and shifted by `cp-*`. So `(rotate sdf :y 30)` on an SDF at the origin behaves exactly as before; on an off-origin SDF it rotates *in place*, the same way meshes pivot on their centroid.
+Every mesh and SDF carries a `:creation-pose` — defaulted to the world origin at construction, advanced by `translate` and `attach`, and shifted by `cp-*`. So `(rotate thing :y 30)` on a mesh or SDF at the origin rotates it in place; on an off-origin one, it pivots around the creation-pose, keeping the visual relationship with that anchor intact.
+
+**Local-axis scaling.** Because `scale` follows world axes, scaling a rotated mesh along its *local* heading needs a dedicated tool. Inside an `attach` body, use `stretch-f` / `stretch-rt` / `stretch-u` to scale along the turtle's current heading / right / up direction — see [attach](#attach). At top level there is no turtle frame, so `scale` is world-only by design.
+
+**`reset-creation-pose`.** After a boolean (`mesh-union`, `sdf-intersection`, etc.) the result inherits the first operand's creation-pose, which may sit far from the resulting geometry's visual center. To make a subsequent in-place `rotate` or `scale` pivot at the visual center instead, re-anchor the pose:
+
+```clojure
+(reset-creation-pose thing)             ; pose.position → centroid (mesh) /
+                                        ; bbox center (SDF). heading/up untouched.
+(reset-creation-pose thing [x y z])     ; pose.position → explicit world point
+```
+
+Anchors store absolute world positions and are unaffected by this operation. `reset-creation-pose` is the only escape hatch for "I want to rotate this thing around its visual middle, not where it was constructed."
 
 **Arbitrary-axis rotation on SDF** is implemented internally as a ZYX Tait-Bryan decomposition into three cardinal-axis rotations. This is invisible to the caller (you just get the rotation you asked for), but worth knowing if you hit numerical edge cases near gimbal lock (pitch ≈ ±90° with non-zero yaw or roll).
 
 **Type-specific aliases** are still bound (`mesh-translate`, `mesh-scale`, `translate-shape`, `scale-shape`, `rotate-shape`) for backward compatibility and for code that wants to declare type intent at the call site. They route to the same implementations as the polymorphic forms.
 
-**Legacy `scale` inside attach.** Inside an `attach` body, `(scale 1.5)` (with a single number, no thing) keeps its historical meaning of scaling the currently-attached mesh — see [scale (attach context)](#scale-attach-context). The polymorphic `scale` recognises the number-first form and dispatches to that legacy path.
+**Negative scale factors (mesh reflection).** `scale` accepts negative factors, which produce a reflection of the mesh along the corresponding axes. When the product of factors is negative (an odd number of negative factors — e.g. `(scale m -1 1 1)`, `(scale m 1 -1 1)`, `(scale m -1 -1 -1)`, or uniform `(scale m -1)`), face winding is automatically reversed so the mesh stays manifold and usable in subsequent boolean operations (`mesh-union`, `mesh-difference`, `mesh-intersection`). Scales whose product is positive (e.g. `(scale m -1 -1 1)` — a 180° rotation about Z) need no winding fix and continue to work as before. The same applies to `stretch-f` / `stretch-rt` / `stretch-u` inside attach when given a negative factor.
+
+**`scale` inside attach is not available.** Writing `(scale …)` in the body of `attach` or `attach!` throws an error directing you to `stretch-f` / `stretch-rt` / `stretch-u`. The earlier "scale the currently-attached mesh" form has been removed; the body of attach is for turtle movements (which advance the geometry) and for `stretch-*` (which scales along the current turtle frame).
+
+**Path-driven transform (`transform`).** Apply a recorded path's turtle commands to a mesh (or vector of meshes) as a rigid-body transformation, without going through `attach`:
+
+```clojure
+(transform mesh path)                ; Single mesh: walk path on a virtual turtle attached to it
+(transform [m1 m2 m3] path)          ; Vector of meshes: group rigid transform (translate + rotate)
+```
+
+The path is replayed on a virtual turtle starting at the mesh's `:creation-pose`; the resulting position/heading/up are baked into the mesh's vertices. With a sequence of meshes, the same rigid transform is applied to all of them so their relative arrangement is preserved (useful for transporting a sub-assembly around a scene).
 
 ### attach
 
@@ -1662,27 +1818,30 @@ Transform a mesh, panel, or SDF, returning a new value (functional, original unc
 (register cap (attach (sdf-sphere 5) (tv 60) (tr 30) (f 30)))
 ```
 
-SDF attach is **incremental**: the path is walked one command at a time, and each command transforms the SDF tree directly. Movement (`f`, `rt`, `u`, `lt`), rotation (`th`, `tv`, `tr`, `set-heading`), creation-pose shifts (`cp-f`, `cp-rt`, `cp-u`), `mark`, and `move-to` (with or without `:align`) all work on SDFs the same way they do on meshes.
+SDF attach is **incremental**: the path is walked one command at a time, and each command transforms the SDF tree directly. Movement (`f`, `rt`, `u`, `lt`), rotation (`th`, `tv`, `tr`, `set-heading`), creation-pose shifts (`cp-f`, `cp-rt`, `cp-u`, `cp-th`, `cp-tv`, `cp-tr`), `mark`, and `move-to` (with or without `:align`) all work on SDFs the same way they do on meshes.
 
 | Command | Effect on SDF |
 |---------|---------------|
 | `f`, `rt`, `u`, `lt` | Translate the SDF; advance the turtle |
 | `th`, `tv`, `tr` | Rotate the SDF around the current turtle position by the corresponding axis (up / right / heading) |
+| `stretch-f`, `stretch-rt`, `stretch-u` | Scale the SDF along the current turtle's heading / right / up axis, pivoted at the turtle position |
 | `set-heading` | Replace turtle heading/up; SDF unchanged |
 | `cp-f`, `cp-rt`, `cp-u` | Translate the SDF in the *opposite* direction (anchor stays, geometry slides) |
+| `cp-th`, `cp-tv`, `cp-tr` | Rotate the SDF around the anchor by the *opposite* angle (anchor orientation stays, geometry rotates under it) |
 | `mark :name` | Record the current turtle pose as a named anchor on the SDF |
 | `move-to … [:align]` | Snap turtle to target anchor / centroid / pose; with `:align`, also rotate the SDF to match the anchor's frame |
 
 The anchors recorded by `mark` survive through subsequent transforms and through SDF booleans (the second argument's anchors are merged in, first-wins on name collision). They also cross the SDF→mesh boundary: when an SDF is materialized, its anchors carry over to the resulting mesh.
 
-Every SDF constructor stamps a default `:creation-pose` at the world origin (heading `+X`, up `+Z`). The pose translates with `f`/`rt`/`u` and rotates with `th`/`tv`/`tr` along with the geometry; only `cp-*` shifts the geometry independently. Booleans (`sdf-union`, `sdf-intersection`, `sdf-difference`) keep the **first argument's** creation-pose on the result — pick the operand whose pose you want a subsequent in-place rotate/scale to pivot on.
+Every SDF constructor stamps a default `:creation-pose` at the world origin (heading `+X`, up `+Z`). The pose translates with `f`/`rt`/`u` and rotates with `th`/`tv`/`tr` along with the geometry; only the `cp-*` family shifts the geometry independently (`cp-f`/`cp-rt`/`cp-u` slide it, `cp-th`/`cp-tv`/`cp-tr` rotate it around the anchor). Booleans (`sdf-union`, `sdf-intersection`, `sdf-difference`) keep the **first argument's** creation-pose on the result — pick the operand whose pose you want a subsequent in-place rotate/scale to pivot on.
 
-Two commands remain rejected with an explanatory error:
+One command is rejected with an explanatory error:
 
 | Command | Reason |
 |---------|--------|
 | `inset` | Mesh-face-specific, no SDF analogue |
-| `(scale n)` | The legacy turtle-mesh form; for SDF use top-level `(scale sdf n)` outside the attach |
+
+`(scale …)` is rejected inside *any* attach (mesh or SDF) — use `stretch-f` / `stretch-rt` / `stretch-u` instead, or apply `scale` to the result outside the attach.
 
 ### attach!
 
@@ -1734,15 +1893,20 @@ The body of `attach` and `attach!` is a turtle path (the macros wrap it in `(pat
 |---------|-------------|
 | `(move-to target)` | Snap to another object's pose (see below) |
 | `(play-path p)` | Replay a recorded path's movements (see below) |
-| `(scale factor)` | Uniformly scale the attached mesh in place |
+| `(stretch-f factor)` / `(stretch-rt factor)` / `(stretch-u factor)` | Scale the attached mesh / SDF along the current turtle's heading / right / up direction, pivoted at the turtle position |
 
-**Creation-pose shift (slide the geometry under a stationary anchor so a chosen feature point coincides with it):**
+**Creation-pose shift (move the geometry under a stationary anchor so a chosen feature coincides with it):**
 
 | Command | Description |
 |---------|-------------|
-| `(cp-f dist)` / `(cp-rt dist)` / `(cp-u dist)` | Re-anchor at the point `+dist` along heading / right / up: geometry slides by `-dist` along that axis, anchor unchanged |
+| `(cp-f dist)` / `(cp-rt dist)` / `(cp-u dist)` | Re-anchor at the point `+dist` along heading / right / up: geometry slides by `-dist` along that axis, anchor position unchanged |
+| `(cp-th α)` / `(cp-tv α)` / `(cp-tr α)` | Re-anchor with frame rotated `+α` around up / right / heading: geometry rotates by `-α` around the anchor, anchor orientation unchanged |
 
-The `cp-*` commands re-pick which point of the mesh coincides with its anchor. The anchor's world position stays put; the geometry translates so the chosen local point now sits on it. Useful when later `attach`/`move-to` should land things on a face/edge/feature instead of the centroid, or when you want a rotation pivot at a specific feature point.
+The `cp-*` commands re-pick which part of the mesh — or which orientation of it — coincides with its creation-pose. The position-shift variants (`cp-f`/`cp-rt`/`cp-u`) translate the geometry under a stationary anchor point so a chosen feature lines up with the anchor; the rotation variants (`cp-th`/`cp-tv`/`cp-tr`) rotate the geometry around the anchor while keeping the anchor's heading/up fixed in world.
+
+The rotation variants matter when the anchor's orientation will be read by downstream operations — most notably `move-to` (which adopts the anchor's heading/up). Rotating the geometry with `cp-th` leaves the anchor pointing the way it did before, so a later `move-to` of *this* mesh into another assembly behaves as if no rotation had happened.
+
+All `cp-*` commands chain in the original creation-pose frame: a `cp-tv` after a `cp-th` rotates around the *original* right axis, not the post-`cp-th` one. (This is the same convention as `cp-f`/`cp-rt`/`cp-u`, which always slide along the original heading/right/up.)
 
 ### move-to
 
@@ -1841,21 +2005,37 @@ Both meshes are built directly in world coordinates against the same skeleton, w
 
 This is convenient when the children come from independent sources, but the child mesh is only translated — its own heading/up don't rotate to match the anchor (consistent with the default `move-to`). If you need the child's geometry to follow the anchor's orientation, prefer the path-driven approach above, where the extrusion direction follows from `goto`.
 
-### scale (attach context)
+### stretch-f / stretch-rt / stretch-u (attach context)
 
-Inside an `attach` / `attach!` body, `(scale factor)` (a number-first call, no value argument) scales the currently-attached mesh in place. `(scale [sx sy sz])` or `(scale sx sy sz)` does a non-uniform scale along the local axes.
+Inside an `attach` / `attach!` body — and only there — these commands scale the attached mesh or SDF along the current turtle's local frame:
+
+| Command | Axis | Pivot |
+|---------|------|-------|
+| `(stretch-f factor)` | turtle heading (forward) | turtle position |
+| `(stretch-rt factor)` | turtle right (`heading × up`) | turtle position |
+| `(stretch-u factor)` | turtle up | turtle position |
+
+The pivot is the turtle's position at the moment of the call, which defaults to the creation-pose but advances through `f` / `rt` / `u` and rotates through `th` / `tv` / `tr` like any other turtle command. Negative factors are allowed and reverse winding (mesh) or reflect (SDF) along that axis.
 
 ```clojure
 (register b (box 20))
 
-;; Half size in place
-(attach! :b (scale 0.5))
+;; Double the size along the box's local heading (forward axis), pivoted at the
+;; creation-pose.
+(attach! :b (stretch-f 2))
 
-;; Combine with other ops: move, then double size, then rotate
-(attach! :b (f 10) (scale 2) (th 45))
+;; Rotate the turtle frame first, then stretch along the rotated heading.
+;; Result: box stretched along the original Y direction.
+(attach! :b (th 90) (stretch-f 2))
+
+;; Move the turtle, then stretch: the pivot is the new position, so only
+;; vertices on one side of it scale outward.
+(attach! :b (f 10) (stretch-rt 2))
 ```
 
-This is a special case of the polymorphic `scale` — the dispatcher recognises the leading-number form and routes here. `(scale value …)` with a non-number first argument does the regular value transform on a mesh, SDF, or 2D shape (see [Top-level transforms](#top-level-transforms)). For 2D shapes specifically, the `scale-shape` alias still works.
+`stretch-*` is the local-axis counterpart to top-level `scale`. Outside `attach` / `attach!` they are not bound. At top level use `scale` (world axes, creation-pose pivot); for local-axis scaling, enter an attach body. Writing `(scale …)` inside attach throws an error pointing at `stretch-*`.
+
+The `scale-shape` alias still works for 2D shape scaling outside attach.
 
 ### Lateral movement
 
@@ -1865,6 +2045,7 @@ Pure translation along the turtle's local axes. No heading/up change, no ring ge
 |---------|-------------|
 | `(u dist)` | Move along up axis |
 | `(d dist)` | Move opposite to up axis |
+| `(down dist)` | Alias of `(d dist)` |
 | `(rt dist)` | Move along right axis (heading x up) |
 | `(lt dist)` | Move opposite to right axis |
 
@@ -2034,7 +2215,7 @@ SDFs use the **polymorphic** transforms `translate`, `scale`, `rotate`, the same
 (sdf-revolve node-2d)           ; Revolve a 2D SDF (X=radius, Y=height) around Z
 ```
 
-Cardinal-axis rotations dispatch directly to libfive's `rotate_x/y/z`. Arbitrary-axis rotations decompose into a ZYX Tait-Bryan triple; the decomposition can lose one degree of freedom near gimbal lock (pitch ≈ ±90°), but the visible rotation remains consistent. SDFs rotate and scale around their `:creation-pose` (the local frame established at construction and advanced by `translate`, `attach`, and `cp-*` commands), the same way meshes pivot on their centroid — so an off-origin SDF rotates in place, no manual sandwiching needed.
+Cardinal-axis rotations dispatch directly to libfive's `rotate_x/y/z`. Arbitrary-axis rotations decompose into a ZYX Tait-Bryan triple; the decomposition can lose one degree of freedom near gimbal lock (pitch ≈ ±90°), but the visible rotation remains consistent. SDFs and meshes rotate and scale around their `:creation-pose` (the local frame established at construction and advanced by `translate`, `attach`, and `cp-*` commands), so an off-origin SDF or mesh rotates in place — no manual sandwiching needed. Use `reset-creation-pose` to re-anchor at the visual center when the inherited pose drifts (typically after a boolean).
 
 ### Materialization
 
@@ -2050,6 +2231,25 @@ Materialization is normally automatic. Call `sdf->mesh` only when you need expli
 **Resolution**: a global meshing resolution governs auto-meshing of SDF nodes (default 15, "turtle-style" — same scale as `(resolution :n N)` for curves). Bump it with `(sdf-resolution! 60)` before `register` to get a finer mesh. Higher = finer but slower; total voxel count is also capped to keep meshes printable. When the tree contains thin features (`sdf-shell`, small `sdf-offset`), resolution is automatically boosted to guarantee at least 3 voxels across the thinnest part.
 
 For full control, call `sdf->mesh` directly with explicit `bounds` and `resolution` (voxels per unit) — bypasses the auto-resolution and auto-bounds entirely.
+
+**Conditional materialization (`sdf-ensure-mesh`).** Coerce a value to a mesh: if it is already a mesh, return it unchanged; if it is an SDF node, materialize it. Useful inside polymorphic code that may receive either, and as the controlled-resolution form of auto-meshing:
+
+```clojure
+(sdf-ensure-mesh x)                       ; Auto bounds + auto resolution
+(sdf-ensure-mesh sdf ref-mesh)            ; Bounds extended to cover ref-mesh, auto resolution
+(sdf-ensure-mesh sdf 30)                  ; Auto bounds, resolution override (turtle-style units)
+(sdf-ensure-mesh sdf ref-mesh 30)         ; Both: extend bounds AND override resolution
+```
+
+The 2-arg form dispatches on the second argument's type (number → resolution override; anything else → reference mesh). To pass an explicit resolution without a reference mesh, use the 3-arg form with `nil` (`(sdf-ensure-mesh sdf nil 30)`).
+
+### Predicates
+
+```clojure
+(sdf-node? x)                             ; true if x is an SDF tree node (vs. a mesh)
+```
+
+Distinguishes lazy SDF descriptions from materialized meshes. Useful in polymorphic helpers that branch on representation.
 
 ### Custom formulas
 
@@ -2273,6 +2473,30 @@ Pass the whole vector to `extrude` — it combines the per-shape extrusions into
 - `:roboto`: Roboto Regular (default).
 - `:roboto-mono`: Roboto Mono (monospace).
 
+**Shortcut: extrude in one call.** `extrude-text` combines `text-shape` and `extrude` into a single call that emits the text mesh at the current turtle pose, flowing along the heading and extruding along up:
+
+```clojure
+(extrude-text "RIDLEY")                          ; Defaults: :size 10 :depth 5
+(extrude-text "RIDLEY" :size 40 :depth 3)        ; Bigger glyphs, thinner extrusion
+(extrude-text "RIDLEY" :size 40 :font my-font)   ; Custom font object
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `:size` | 10 | Font size in units |
+| `:depth` | 5 | Extrusion depth along the turtle's up axis |
+| `:font` | default Roboto | opentype font object (e.g. from `load-font!`) |
+
+Returns one mesh per character. Use `concat-meshes` or pass directly to a downstream boolean operation if you need a single combined mesh.
+
+**Measuring text.** `text-width` returns the horizontal extent (in the same units as `:size`) a given string would occupy when rendered:
+
+```clojure
+(text-width "Hello" font 20)                     ; => width in units at size 20
+```
+
+Useful for layout — centering text along a path, sizing a backing plate, computing tracking. `font` is an opentype font object (the default Ridley font is available via `(font-loaded?)`-gated globals; custom fonts come from `load-font!`).
+
 ### Text on path
 
 Place 3D text along a curved path:
@@ -2426,6 +2650,12 @@ Panels are 3D text billboards positioned in the scene. They display text content
 ```
 
 Panels support `show`/`hide`, `register`, `attach`/`attach!` like meshes.
+
+**Type predicate:**
+
+```clojure
+(panel? x)                       ; true if x is a panel map
+```
 
 ### Color and material
 
@@ -2817,6 +3047,22 @@ their colors preassigned, ready to be mapped to AMS slots. Identical colors
 on multiple meshes share one material entry (same filament, distinct parts).
 Meshes without a color produce the same plain-geometry output as before.
 
+**Direct download helpers (`save-mesh`, `save-stl`, `save-3mf`).** Lower-level entry points that take an already-resolved mesh value (not a registry name) and trigger the native save-file picker. `save-mesh` is the primary form; `save-stl` and `save-3mf` are convenience wrappers that pin the format.
+
+```clojure
+(save-mesh mesh)                          ; Picker, default "model.stl" suggestion
+(save-mesh mesh "part.stl")               ; Custom suggested filename
+(save-mesh mesh "part.3mf" :3mf)          ; Explicit format
+
+(save-stl mesh)                           ; STL, default suggested name "model.stl"
+(save-stl mesh "part.stl")                ; STL, custom suggested name
+
+(save-3mf mesh)                           ; 3MF, default suggested name "model.3mf"
+(save-3mf mesh "part.3mf")                ; 3MF, custom suggested name
+```
+
+`mesh` can be a single mesh or a vector of meshes (merged into one file for STL, kept as distinct objects for 3MF — see multi-material 3MF above). The format the picker actually writes follows the extension typed by the user: passing `.3mf` to `save-stl` still produces a 3MF file. Use `export` (the keyword-driven entry point above) when working from registered names; reach for `save-mesh` / `save-stl` / `save-3mf` when the mesh value is already in hand.
+
 ### View capture (render-view, render-slice, save-views)
 
 Functions for rendering views of the scene to images. Useful for documentation, debugging, and the AI describe feature.
@@ -3034,6 +3280,30 @@ Because Ridley scripts run inside SCI with `clojure.core` enabled, the usual Clo
 (defn clamp [x lo hi] (max lo (min hi x)))
 ```
 
+### Vector math (3D)
+
+Vector operators on `[x y z]` triples. All inputs are 3-element vectors; outputs are `[x y z]` for vector-returning operations, scalars for `vec3-dot`. Useful when computing positions, headings, or alignments outside the turtle (e.g. inside a `displaced` shape-fn or a custom warp).
+
+| Function | Description |
+|----------|-------------|
+| `(vec3+ a b)` | Component-wise addition |
+| `(vec3- a b)` | Component-wise subtraction |
+| `(vec3* v s)` | Multiply vector by scalar |
+| `(vec3-dot a b)` | Dot product (scalar) |
+| `(vec3-cross a b)` | Cross product (vector perpendicular to `a` and `b`) |
+| `(vec3-normalize v)` | Unit vector along `v`; zero vector returned unchanged |
+
+```clojure
+;; Midpoint of two points
+(vec3* (vec3+ p1 p2) 0.5)
+
+;; Direction from a to b
+(vec3-normalize (vec3- b a))
+
+;; Right-hand perpendicular in the XY plane (heading rotated 90deg)
+(vec3-cross heading [0 0 1])
+```
+
 #### Radians vs degrees
 
 Trigonometric functions (`sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`) operate in **radians**. Turtle commands (`th`, `tv`, `tr`, `arc-h`, `arc-v`, `rotate-shape`, etc.) take **degrees**. The two coexist in the same script, so when feeding a degree quantity into a trig function, convert explicitly:
@@ -3056,7 +3326,147 @@ Conversely, when a trig result needs to feed a turtle rotation:
 
 ---
 
-## 18. Not Yet Implemented
+## 18. Internals
+
+> **For users extending Ridley with their own code.** This section documents
+> the low-level API surface that SCI exposes for those writing reusable part
+> libraries, procedural code that drives the scene, or custom integrations.
+> It is not part of ordinary Ridley scripting: if you are writing a Ridley
+> program and ended up here by accident, the user-facing equivalent is
+> almost certainly in one of the earlier sections.
+
+### 18.1 Registry pattern
+
+The registry is the scene's named-object store. Six entry points add or replace entries; they all dispatch on the kind of object being registered, and they all take a name keyword (`:my-thing`) as first argument. User code normally goes through the `register` macro instead; the bare functions are exposed for macro authors and for tooling that builds the scene programmatically.
+
+| Function | Description |
+|----------|-------------|
+| `(register-mesh! name mesh)` | Add or replace a named mesh in the registry |
+| `(register-path! name path)` | Register a named path (abstract object, no visibility) |
+| `(register-shape! name shape)` | Register a named 2D shape (abstract) |
+| `(register-value! name value)` | Register a plain value (panel-like, used by `register` for non-renderable maps) |
+| `(register-panel! name panel)` | Register a 3D panel |
+| `(add-mesh! mesh)` | Add an anonymous mesh to the scene (no name, no later lookup) — counterpart of `register-mesh!` for one-off geometry |
+
+### 18.2 Registry introspection
+
+Read-only counterpart of the registry mutators. Use these to query what is currently registered, by name or by visibility, without building a mesh.
+
+| Function | Description |
+|----------|-------------|
+| `(get-mesh name)` | Look up a registered mesh by keyword |
+| `(get-path name)` | Look up a registered path |
+| `(get-shape name)` | Look up a registered 2D shape |
+| `(get-panel name)` | Look up a registered panel |
+| `(registered-names)` | Vector of all registered mesh names |
+| `(path-names)` | Vector of registered path names |
+| `(shape-names)` | Vector of registered shape names |
+| `(visible-names)` | Vector of names of currently-visible meshes |
+| `(visible-meshes)` | Vector of mesh maps that are currently visible |
+| `(all-meshes-info)` | Diagnostic dump: per-mesh `{:name :visible :vertices :faces ...}` for everything in the registry |
+
+### 18.3 Scene visibility
+
+Programmatic control of which registered objects appear in the viewport, plus the turtle indicator and an explicit refresh hook. User-facing code uses `(show ...)`/`(hide ...)` from §13; the bang-suffixed forms here are the lower-level entry points that those wrap.
+
+| Function | Description |
+|----------|-------------|
+| `(show-mesh! name)` | Make a registered mesh visible by name |
+| `(hide-mesh! name)` | Hide a registered mesh by name |
+| `(show-mesh-ref! mesh)` | Make a mesh visible by reference (must already be registered) |
+| `(hide-mesh-ref! mesh)` | Hide a mesh by reference |
+| `(show-all!)` | Show every registered mesh |
+| `(hide-all!)` | Hide every registered mesh |
+| `(show-only-registered!)` | Hide anonymous meshes; only named ones remain visible |
+| `(show-panel! name)` | Show a registered panel |
+| `(hide-panel! name)` | Hide a registered panel |
+| `(show-turtle)` / `(show-turtle mesh-or-kw)` | Show the turtle indicator (optionally anchored to a mesh) |
+| `(hide-turtle)` | Hide the turtle indicator |
+| `(refresh-viewport!)` | Force a viewport rebuild — needed when script code mutates the registry outside the normal eval flow |
+
+### 18.4 Picking & selection
+
+The picking API exposes what is currently selected in the viewport (clicked, hovered, or set via `selected!`). Reads only — picking itself is driven by the GUI.
+
+| Function | Description |
+|----------|-------------|
+| `(selected)` | Current selection record `{:mesh :face :name :origin :last-op ...}`, or nil |
+| `(selected-face)` | Just the face descriptor of the current selection |
+| `(selected-mesh)` | The mesh value of the current selection |
+| `(selected-name)` | Registry name of the selection, or nil if anonymous |
+| `(origin-of selection)` | World-space origin of the picked feature |
+| `(last-op selection)` | Last operation recorded on the picked mesh (peek of its source history) |
+
+For the full source history of the picked mesh, see `source-of` in [18.8 Source tracking & metaprogramming](#188-source-tracking--metaprogramming).
+
+### 18.5 Interactive testing
+
+Hooks behind the `tweak` macro and a couple of turtle-state introspection accessors used by tooling.
+
+| Function | Description |
+|----------|-------------|
+| `(tweak-start! expr opts)` | Open the tweak panel for an arbitrary expression (lower-level than the `tweak` macro) |
+| `(tweak-start-registered! name expr opts)` | Tweak entry point for a registered mesh (hides original, restores on cancel) |
+| `(get-turtle-resolution)` | Current global resolution setting, as a map (matches `(resolution :n N)` semantics) |
+| `(get-turtle-joint-mode)` | Current joint mode keyword (`:flat`, `:round`, `:tapered`) |
+
+### 18.6 Animation API
+
+Lower-level construction primitives behind the `anim!` / `anim-proc!` macros, plus runtime accessors for the camera state used by animation targets. Most user code stays at the macro level; these bindings exist for code that builds animations programmatically (e.g. parameterized sweep generators).
+
+| Function | Description |
+|----------|-------------|
+| `(anim-make-cmd kind args)` | Build a single animation command map (the value the macros emit per turtle call) |
+| `(anim-make-span weight easing cmds & opts)` | Build a span value (weight, easing, command list, callbacks) |
+| `(anim-register! name spec)` | Register a timeline animation (entry point of `anim!`) |
+| `(anim-proc-register! name spec)` | Register a procedural animation (entry point of `anim-proc!`) |
+| `(anim-preprocess spec)` | Run the per-frame preprocessing pipeline on an animation spec (turtle commands → per-frame poses) |
+| `(anim-clear-all!)` | Remove all registered animations |
+| `(get-camera-pose)` | Snapshot of the viewport camera `{:position :target :up}` |
+| `(get-orbit-target)` | Current OrbitControls pivot point (`[x y z]`) |
+
+### 18.7 Collisions & pilot
+
+Collision callbacks fire during animation playback when two registered meshes intersect; pilot mode is the interactive positioning loop documented under §13.
+
+| Function | Description |
+|----------|-------------|
+| `(on-collide a b callback)` | Register a callback `(fn [evt])` for collisions between two named targets |
+| `(off-collide a b)` | Remove the collision handler for a specific pair |
+| `(reset-collide a b)` | Reset the collision state of a pair (clears "currently overlapping" flag) |
+| `(list-collisions)` | Vector of `{:a :b :callback ...}` for currently registered handlers |
+| `(clear-collisions)` | Remove every collision handler |
+| `(pilot-request! mesh opts)` | Enter interactive pilot mode for a mesh (keyboard-driven positioning) |
+
+### 18.8 Source tracking & metaprogramming
+
+Every mesh that goes through `register` carries two metadata fields used by tooling: `:source-history` (a chronological log of the operations that produced it) and `:source-form` (the quoted form passed to `register`). These bindings read and write that metadata.
+
+| Function | Description |
+|----------|-------------|
+| `(add-source mesh entry)` | Append an entry to a mesh's `:source-history` |
+| `(source-of selection)` | Full source-history of the currently picked mesh (used by inspector tooling) |
+| `(source-ref selection)` | Compact reference into the source-history (form + index) |
+| `(get-source-form name)` | Quoted form that produced the registered mesh — what `tweak :name` re-evaluates |
+| `(set-source-form! name form)` | Replace the stored quoted form (used by `register` to bind both mesh and form atomically) |
+
+`source-of` is bound under picking (it takes a selection record); it overlaps in spirit with the picking accessors above and is the natural counterpart of `selected` for code that needs to know not just *what* is picked but *how it was built*.
+
+### 18.9 Runtime settings
+
+Accessibility settings, runtime environment introspection, and a hook for the "Run definitions" toolbar button. These are the bindings that scripts use to branch on platform (desktop vs. web) or to drive the audio-feedback flag from REPL code.
+
+| Function | Description |
+|----------|-------------|
+| `(desktop?)` | `true` when running in the Tauri desktop build, `false` in the browser |
+| `(env)` | Runtime environment keyword: `:desktop` or `:webapp` |
+| `(audio-feedback?)` | Current state of the audio-feedback accessibility flag |
+| `(set-audio-feedback! bool)` | Enable / disable audio feedback |
+| `(run-definitions!)` | Trigger the toolbar's "Run definitions" action programmatically |
+
+---
+
+## 19. Not Yet Implemented
 
 - Fillet/chamfer vertex blending on 3D mesh edges (edge fillet/chamfer works, vertex blending is experimental, see [FilletChamfer3D.md](FilletChamfer3D.md)).
 - OBJ export (STL and 3MF export are available via `export`).

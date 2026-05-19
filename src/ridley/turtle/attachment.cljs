@@ -67,15 +67,37 @@
                          (when (seq anchors)
                            (into {} (map (fn [[k a]] [k (update a :position #(v+ % offset))])) anchors))))))
 
+(defn rotate-vertices-keeping-creation-pose
+  "Rotate vertices and named anchors around `pivot` by `angle` (radians)
+   around `axis`, leaving :creation-pose untouched.
+   Used by cp-th/cp-tv/cp-tr: the anchor frame stays fixed in world while
+   the geometry rotates under it."
+  [mesh axis angle pivot]
+  (let [rotate-pt (fn [pt]
+                    (let [rel (v- pt pivot)]
+                      (v+ pivot (rotate-point-around-axis rel axis angle))))]
+    (-> mesh
+        (dissoc :ridley.manifold.core/manifold-cache :ridley.manifold.core/raw-arrays)
+        (update :vertices (fn [verts] (mapv rotate-pt verts)))
+        (update :anchors (fn [anchors]
+                           (when (seq anchors)
+                             (into {} (map (fn [[k a]]
+                                             [k (-> a
+                                                    (update :position rotate-pt)
+                                                    (update :heading #(rotate-around-axis % axis angle))
+                                                    (update :up #(rotate-around-axis % axis angle)))]))
+                                   anchors)))))))
+
 (defn rotate-mesh
-  "Rotate all vertices of a mesh around its centroid by angle (radians) around axis.
+  "Rotate all vertices of a mesh around its creation-pose position by angle
+   (radians) around axis. Axis is interpreted in world space.
    Updates creation-pose and all anchors (position + heading + up)."
   [mesh axis angle]
-  (let [centroid (mesh-centroid mesh)
+  (let [pivot (or (get-in mesh [:creation-pose :position]) [0 0 0])
         rotate-vertex (fn [pt]
-                        (let [rel (v- pt centroid)
+                        (let [rel (v- pt pivot)
                               rotated (rotate-point-around-axis rel axis angle)]
-                          (v+ centroid rotated)))]
+                          (v+ pivot rotated)))]
     (-> mesh
         (dissoc :ridley.manifold.core/manifold-cache :ridley.manifold.core/raw-arrays)
         (update :vertices (fn [verts] (mapv rotate-vertex verts)))
@@ -86,33 +108,55 @@
                                (update :up #(rotate-around-axis % axis angle))))))))
 
 (defn scale-mesh
-  "Scale all vertices of a mesh from its centroid.
-   factor can be a number (uniform) or [fx fy fz] (non-uniform along local axes).
-   Local axes come from the mesh's creation-pose (heading=X, up=Z, cross=Y).
-   Also updates anchor positions and creation-pose position so they follow
-   the geometry — heading/up directions on poses stay invariant."
+  "Scale all vertices of a mesh around its creation-pose position.
+   factor can be a number (uniform) or [fx fy fz] (non-uniform along world axes).
+   Pivot is the creation-pose position — same convention as SDF scale.
+   Anchor positions and creation-pose position follow the geometry;
+   heading/up directions on poses stay invariant.
+
+   When the scale determinant is negative (a reflection — an odd number of
+   negative factors), face winding is reversed so the mesh stays manifold
+   and usable in subsequent boolean operations."
   [mesh factor]
-  (let [centroid (mesh-centroid mesh)
+  (let [pivot (or (get-in mesh [:creation-pose :position]) [0 0 0])
         scale-pos (if (number? factor)
-                    (fn [p] (v+ centroid (v* (v- p centroid) factor)))
-                    (let [[fx fy fz] factor
-                          pose (:creation-pose mesh)
-                          local-x (or (some-> pose :heading normalize) [1 0 0])
-                          local-z (or (some-> pose :up normalize) [0 0 1])
-                          local-y (normalize (cross local-z local-x))]
+                    (fn [p] (v+ pivot (v* (v- p pivot) factor)))
+                    (let [[fx fy fz] factor]
                       (fn [p]
-                        (let [rel (v- p centroid)
-                              px (dot rel local-x)
-                              py (dot rel local-y)
-                              pz (dot rel local-z)]
-                          (v+ centroid
-                              (v+ (v* local-x (* px fx))
-                                  (v+ (v* local-y (* py fy))
-                                      (v* local-z (* pz fz)))))))))]
-    (-> mesh
-        (dissoc :ridley.manifold.core/manifold-cache :ridley.manifold.core/raw-arrays)
-        (update :vertices (fn [verts] (mapv scale-pos verts)))
-        (transform-poses (fn [pose] (update pose :position scale-pos))))))
+                        (let [[px py pz] (v- p pivot)]
+                          (v+ pivot [(* px fx) (* py fy) (* pz fz)])))))
+        det (if (number? factor)
+              (* factor factor factor)
+              (let [[fx fy fz] factor] (* fx fy fz)))
+        flip-winding? (neg? det)]
+    (cond-> mesh
+      true (dissoc :ridley.manifold.core/manifold-cache :ridley.manifold.core/raw-arrays)
+      true (update :vertices (fn [verts] (mapv scale-pos verts)))
+      true (transform-poses (fn [pose] (update pose :position scale-pos)))
+      flip-winding? (update :faces (fn [faces]
+                                     (mapv (fn [[i j k]] [i k j]) faces))))))
+
+(defn stretch-mesh-along-axis
+  "Scale a mesh by `factor` along world-space unit vector `axis`, pivoted at
+   `pivot`. Used by stretch-f/stretch-rt/stretch-u inside attach to scale along
+   the turtle's local frame.
+   When factor < 0 (reflection), face winding is reversed."
+  [mesh axis factor pivot]
+  (let [u (normalize axis)
+        scale-pos (fn [p]
+                    (let [rel (v- p pivot)
+                          d (dot rel u)
+                          parallel (v* u d)
+                          perp (v- rel parallel)
+                          scaled-parallel (v* u (* d factor))]
+                      (v+ pivot (v+ scaled-parallel perp))))
+        flip-winding? (neg? factor)]
+    (cond-> mesh
+      true (dissoc :ridley.manifold.core/manifold-cache :ridley.manifold.core/raw-arrays)
+      true (update :vertices (fn [verts] (mapv scale-pos verts)))
+      true (transform-poses (fn [pose] (update pose :position scale-pos)))
+      flip-winding? (update :faces (fn [faces]
+                                     (mapv (fn [[i j k]] [i k j]) faces))))))
 
 (defn replace-mesh-in-state
   "Replace a mesh in the state's meshes vector.

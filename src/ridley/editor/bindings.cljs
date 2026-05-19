@@ -223,11 +223,12 @@
    'stamp-loft-impl     impl/implicit-stamp-loft
    'finalize-loft-impl  impl/implicit-finalize-loft
    ;; Polymorphic transforms: dispatch on mesh / SDF / 2D shape.
-   ;; Legacy turtle-attach scale form (scale 1.5) is preserved as a special
-   ;; case dispatched on number-as-first-arg.
-   'translate      transforms/translate
-   'scale          transforms/scale
-   'rotate         transforms/rotate
+   ;; All three use world axes; pivot is the creation-pose (mesh and SDF)
+   ;; or the shape's local convention (2D).
+   'translate           transforms/translate
+   'scale               transforms/scale
+   'rotate              transforms/rotate
+   'reset-creation-pose transforms/reset-creation-pose
    ;; Type-specific aliases (kept for backward compat)
    'rotate-shape   xform/rotate
    'mesh-scale     attachment/scale-mesh
@@ -324,6 +325,9 @@
    'rec-cp-f            turtle/rec-cp-f
    'rec-cp-rt           turtle/rec-cp-rt
    'rec-cp-u            turtle/rec-cp-u
+   'rec-cp-th           turtle/rec-cp-th
+   'rec-cp-tv           turtle/rec-cp-tv
+   'rec-cp-tr           turtle/rec-cp-tr
    'path-from-recorder  turtle/path-from-recorder
    ;; Shape recording functions (2D turtle)
    'shape-rec-f         shape/rec-f

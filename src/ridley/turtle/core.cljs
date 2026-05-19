@@ -1278,6 +1278,23 @@
   [state dist]
   (update state :recording conj {:cmd :cp-u :args [dist]}))
 
+(defn rec-cp-th
+  "Record a creation-pose-preserving rotation around up. Record-only."
+  [state angle-deg]
+  (update state :recording conj {:cmd :cp-th :args [angle-deg]}))
+
+(defn rec-cp-tv
+  "Record a creation-pose-preserving rotation around right (= heading × up).
+   Record-only."
+  [state angle-deg]
+  (update state :recording conj {:cmd :cp-tv :args [angle-deg]}))
+
+(defn rec-cp-tr
+  "Record a creation-pose-preserving rotation around heading (roll).
+   Record-only."
+  [state angle-deg]
+  (update state :recording conj {:cmd :cp-tr :args [angle-deg]}))
+
 (defn rec-play-path
   "Splice a sub-path's commands into the current recording.
    Movement commands (f, th, tv, tr, u, rt, lt, set-heading) are both recorded

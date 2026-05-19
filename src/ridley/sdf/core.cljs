@@ -277,6 +277,40 @@
 
 (declare sdf-rotate-axis)
 
+(defn- pose-rotate-around-pivot
+  "Return a pose-transform fn that rotates position, heading, up around
+   an arbitrary world-space pivot by angle-rad."
+  [axis angle-rad [px py pz]]
+  (fn [{:keys [position heading up] :as pose}]
+    (let [[x y z] position
+          centered [(- x px) (- y py) (- z pz)]
+          [rx ry rz] (math/rotate-point-around-axis centered axis angle-rad)]
+      (assoc pose
+             :position [(+ rx px) (+ ry py) (+ rz pz)]
+             :heading  (math/rotate-around-axis heading axis angle-rad)
+             :up       (math/rotate-around-axis up      axis angle-rad)))))
+
+(defn sdf-rotate-keeping-creation-pose
+  "Rotate the geometry around the creation-pose position by `angle` (degrees)
+   around `axis` (arbitrary [ax ay az] vector), leaving :creation-pose
+   unchanged on the result while rotating :anchors. Mirrors
+   sdf-move-keeping-creation-pose for cp-th/cp-tv/cp-tr: anchors and
+   geometry rotate, the creation-pose stays put."
+  [node axis angle-deg]
+  (let [pose (or (:creation-pose node) default-creation-pose)
+        [px py pz] (:position pose)
+        ;; Geometry: pivot the rotation at the creation-pose position.
+        rotated (-> node
+                    (sdf-move (- px) (- py) (- pz))
+                    (sdf-rotate-axis axis angle-deg)
+                    (sdf-move px py pz))
+        rad (* angle-deg (/ Math/PI 180))
+        anchor-fn (pose-rotate-around-pivot axis rad [px py pz])]
+    (cond-> (assoc rotated :creation-pose (:creation-pose node))
+      (:anchors node) (assoc :anchors (map-anchors (:anchors node) anchor-fn)))))
+
+(declare sdf-rotate-axis)
+
 (defn sdf-rotate
   "Rotate an SDF node around an axis by angle in degrees.
    axis: keyword (:x :y :z) for cardinal axes (uses libfive's optimized rotate),

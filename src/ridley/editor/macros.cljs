@@ -44,11 +44,17 @@
    (defn- rec-resolution* [mode value]
      (swap! path-recorder assoc :resolution {:mode mode :value value}))
 
-   ;; Record-only commands: inset, scale, move-to (meaningful only in attach context)
+   ;; Record-only commands: inset, move-to (meaningful only in attach context)
    (defn- rec-inset* [amount]
      (swap! path-recorder rec-inset amount))
-   (defn- rec-scale* [factor]
-     (swap! path-recorder rec-scale factor))
+   (defn- rec-scale* [& _]
+     (throw (js/Error. \"scale is not available inside attach. Use stretch-f, stretch-rt, stretch-u for local-axis scaling.\")))
+   (defn- rec-stretch-f* [factor]
+     (swap! path-recorder update :recording conj {:cmd :stretch-f :args [factor]}))
+   (defn- rec-stretch-rt* [factor]
+     (swap! path-recorder update :recording conj {:cmd :stretch-rt :args [factor]}))
+   (defn- rec-stretch-u* [factor]
+     (swap! path-recorder update :recording conj {:cmd :stretch-u :args [factor]}))
    (defn- rec-move-to* [target & args]
      (apply swap! path-recorder rec-move-to target args))
    (defn- rec-play-path* [sub-path]
@@ -61,6 +67,12 @@
      (swap! path-recorder rec-cp-rt dist))
    (defn- rec-cp-u* [dist]
      (swap! path-recorder rec-cp-u dist))
+   (defn- rec-cp-th* [angle-deg]
+     (swap! path-recorder rec-cp-th angle-deg))
+   (defn- rec-cp-tv* [angle-deg]
+     (swap! path-recorder rec-cp-tv angle-deg))
+   (defn- rec-cp-tr* [angle-deg]
+     (swap! path-recorder rec-cp-tr angle-deg))
 
    ;; Recording version of arc-h that decomposes into rec-f* and rec-th*
    (defn- rec-arc-h* [radius angle & {:keys [steps]}]
@@ -440,11 +452,17 @@
               ~'side-trip-fn rec-side-trip*
               ~'inset rec-inset*
               ~'scale rec-scale*
+              ~'stretch-f rec-stretch-f*
+              ~'stretch-rt rec-stretch-rt*
+              ~'stretch-u rec-stretch-u*
               ~'move-to rec-move-to*
               ~'play-path rec-play-path*
               ~'cp-f rec-cp-f*
               ~'cp-rt rec-cp-rt*
-              ~'cp-u rec-cp-u*]
+              ~'cp-u rec-cp-u*
+              ~'cp-th rec-cp-th*
+              ~'cp-tv rec-cp-tv*
+              ~'cp-tr rec-cp-tr*]
           (let [body-result# (do ~@body)]
             (let [rec-state# @path-recorder
                   recorded# (:recording rec-state#)]
