@@ -641,9 +641,22 @@
 
 (defn concat-meshes
   "Concatenate multiple meshes into one by combining vertices and faces.
-   Unlike mesh-union, this does NOT perform boolean operations — it simply
-   merges the geometry. The result is not manifold-valid but works for
-   heightmap sampling, visualization, etc.
+   Unlike mesh-union, this does NOT perform a boolean operation — it
+   simply merges the geometry in linear time.
+
+   When the input meshes are **disjoint** (no overlap), the result is a
+   valid manifold and can be passed directly to mesh-difference/-union/
+   -intersection as a single tool, faster than the equivalent N-1
+   sequential boolean operations. Typical use: arrays of holes (grids,
+   rings, polka dots) where each cutter sits in its own region.
+
+   When inputs overlap, the result has interior faces and is not
+   manifold-valid — boolean operations on it produce artefacts (mis-
+   oriented faces in the cut region). Use mesh-union instead in that
+   case.
+
+   The result is always fine for heightmap sampling and visualization,
+   regardless of overlap.
 
    Usage:
    (concat-meshes [mesh1 mesh2 mesh3])

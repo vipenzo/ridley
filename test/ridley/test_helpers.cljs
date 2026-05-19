@@ -83,9 +83,27 @@
   (let [centroid (mesh-centroid mesh)
         n-faces (count (:faces mesh))]
     (every?
-      (fn [idx]
-        (let [fc (face-centroid mesh idx)
-              normal (face-normal mesh idx)
-              to-outside (t/v- fc centroid)]
-          (pos? (t/dot normal to-outside))))
-      (range n-faces))))
+     (fn [idx]
+       (let [fc (face-centroid mesh idx)
+             normal (face-normal mesh idx)
+             to-outside (t/v- fc centroid)]
+         (pos? (t/dot normal to-outside))))
+     (range n-faces))))
+
+(defn signed-volume
+  "Signed volume of a closed triangle mesh, via the divergence theorem:
+   V = (1/6) * Σ v0 · (v1 × v2) over each face [v0 v1 v2].
+   For a closed manifold with consistently outward-facing normals: V > 0.
+   Inverted (inward) normals → V < 0.
+   Partially flipped → magnitude smaller than the true volume.
+   More reliable than `all-normals-outward?` for non-convex meshes."
+  [mesh]
+  (let [verts (:vertices mesh)]
+    (* (/ 1.0 6.0)
+       (reduce (fn [sum [a b c]]
+                 (let [v0 (nth verts a)
+                       v1 (nth verts b)
+                       v2 (nth verts c)]
+                   (+ sum (t/dot v0 (t/cross v1 v2)))))
+               0.0
+               (:faces mesh)))))

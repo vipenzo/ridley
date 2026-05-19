@@ -63,8 +63,8 @@
                              {:cmd :f :args [30]}])
           make-mesh (fn [mode]
                       (last (:meshes (-> (t/make-turtle)
-                                          (t/joint-mode mode)
-                                          (t/extrude-from-path circ path)))))
+                                         (t/joint-mode mode)
+                                         (t/extrude-from-path circ path)))))
           flat-bbox (h/mesh-bounding-box (make-mesh :flat))
           round-bbox (h/mesh-bounding-box (make-mesh :round))
           tapered-bbox (h/mesh-bounding-box (make-mesh :tapered))
@@ -374,6 +374,30 @@
           mesh (last (:meshes turtle))]
       (is (h/all-normals-outward? mesh)
           "All normals should point outward"))))
+
+(deftest extrude-u-turn-faces-outward
+  (testing "U-turn path (two -90° turns) produces watertight mesh with outward-oriented faces"
+    (let [rect (shape/rect-shape 5 5)
+          mk-mesh (fn [joint]
+                    (last (:meshes
+                           (-> (t/make-turtle)
+                               (assoc :joint-mode joint)
+                               (t/extrude-from-path
+                                rect
+                                (t/make-path [{:cmd :f :args [30]} {:cmd :th :args [-90]}
+                                              {:cmd :f :args [15]} {:cmd :th :args [-90]}
+                                              {:cmd :f :args [20]}]))))))
+          expected-vol (* 5 5 (+ 30 15 20))]  ; 1625
+      (doseq [joint [:flat :round :tapered]]
+        (let [m (mk-mesh joint)
+              vol (h/signed-volume m)]
+          (is (h/watertight? m)
+              (str "U-shape extrusion with " joint " joint mode should be watertight"))
+          ;; Signed volume catches inverted side faces: an inverted last segment
+          ;; would drop vol from ~1500 down to ~250 or below (vol_seg1 - vol_seg3)
+          (is (> vol (* expected-vol 0.7))
+              (str "U-shape extrusion with " joint " joint mode: "
+                   "signed volume " vol " should be close to expected " expected-vol)))))))
 
 ;; ═══════════════════════════════════════════════════════════
 ;; Path with Multiple Segment Types
