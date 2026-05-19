@@ -13,6 +13,12 @@
 ;;   (register blank  (make-bin 1 2 2 false))  ; solido 1×2 per cavità custom
 
 (defn make-bin [r c h cavity]
+  (when-not (and (integer? r) (pos? r))
+    (throw (ex-info (str "make-bin: r (righe) deve essere intero positivo, ricevuto " (pr-str r)) {:r r})))
+  (when-not (and (integer? c) (pos? c))
+    (throw (ex-info (str "make-bin: c (colonne) deve essere intero positivo, ricevuto " (pr-str c)) {:c c})))
+  (when-not (and (integer? h) (pos? h))
+    (throw (ex-info (str "make-bin: h (unità altezza) deve essere intero positivo, ricevuto " (pr-str h)) {:h h})))
   (let [grid     42.0
         outer-w  (- (* c grid) 0.5)
         outer-d  (- (* r grid) 0.5)
