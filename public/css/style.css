@@ -2219,3 +2219,78 @@ body.resizing-h * {
 .prompt-panel-btn.primary:hover { background: #1177bb; }
 .prompt-panel-btn-danger { color: #f48771; }
 .prompt-panel-btn-danger:hover { background: #5a1d1d; color: #f48771; }
+
+/* ============================================================
+   Draft manual chapters (rendered from raw markdown via marked)
+   ============================================================ */
+
+.manual-draft-content h1,
+.manual-draft-content h2,
+.manual-draft-content h3,
+.manual-draft-content h4 {
+  color: #fff;
+  margin-top: 28px;
+  margin-bottom: 12px;
+  font-weight: 600;
+}
+
+.manual-draft-content h1 { font-size: 22px; margin-top: 0; }
+.manual-draft-content h2 { font-size: 18px; border-bottom: 1px solid #333; padding-bottom: 4px; }
+.manual-draft-content h3 { font-size: 16px; color: #d4d4d4; }
+.manual-draft-content h4 { font-size: 14px; color: #d4d4d4; }
+
+.manual-draft-content p {
+  color: #d4d4d4;
+  line-height: 1.7;
+  margin: 0 0 16px 0;
+}
+
+.manual-draft-content strong { color: #fff; font-weight: 600; }
+.manual-draft-content em { color: #d4d4d4; font-style: italic; }
+
+.manual-draft-content code {
+  background: #2d2d2d;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: "SF Mono", "Monaco", "Menlo", "Consolas", monospace;
+  font-size: 0.9em;
+  color: #9cdcfe;
+}
+
+.manual-draft-content ul,
+.manual-draft-content ol {
+  color: #d4d4d4;
+  margin: 0 0 16px 0;
+  padding-left: 24px;
+  line-height: 1.6;
+}
+
+.manual-draft-content li { margin-bottom: 6px; }
+
+.manual-draft-content blockquote {
+  border-left: 3px solid #444;
+  margin: 16px 0;
+  padding: 4px 12px;
+  color: #b0b0b0;
+  font-style: italic;
+}
+
+.manual-draft-content a {
+  color: #4fc1ff;
+  text-decoration: none;
+}
+.manual-draft-content a:hover { text-decoration: underline; }
+
+.manual-draft-content hr {
+  border: none;
+  border-top: 1px solid #333;
+  margin: 24px 0;
+}
+
+/* Code blocks inside drafts use the shared .manual-example styling, so we
+   only need to ensure they sit nicely inline with the prose. */
+.manual-draft-content .manual-example {
+  margin: 16px 0;
+}
+
+.manual-draft-error { color: #f48771; }

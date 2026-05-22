@@ -1,6 +1,7 @@
 (ns ridley.manual.content
   "Manual content structure and internationalization.
-   For Phase 10a, content is hardcoded. Later will load from EDN files.")
+   For Phase 10a, content is hardcoded. Later will load from EDN files."
+  (:require [ridley.manual.draft-renderer :as draft]))
 
 ;; Page structure - defines hierarchy and code examples
 ;; Examples are language-agnostic (code is the same in all languages)
@@ -2887,14 +2888,24 @@ Due set di fili vengono loftati lungo percorsi sinusoidali con `bezier-as`, poi 
       :examples
       {:canvas-weave-code {:caption "Tazza con Trama a Intreccio"}}}}}})
 
-;; Helper to find a page in the structure
+;; Synthetic section for draft chapters rendered from raw markdown.
+;; Keeps draft pages discoverable via TOC and reachable by prev/next nav.
+(def ^:private drafts-section
+  {:id :drafts
+   :pages (mapv (fn [{:keys [id title]}] {:id id :draft-title title})
+                draft/draft-chapters)})
+
+(defn- all-sections []
+  (concat (:sections structure) [drafts-section]))
+
+;; Helper to find a page in the structure (includes drafts)
 (defn- find-page-structure [page-id]
   (some (fn [section]
           (some (fn [page]
                   (when (= (:id page) page-id)
                     (assoc page :section-id (:id section))))
                 (:pages section)))
-        (:sections structure)))
+        (all-sections)))
 
 ;; Get parent section for a page
 (defn get-parent-section
@@ -2922,46 +2933,55 @@ Due set di fili vengono loftati lungo percorsi sinusoidali con `bezier-as`, poi 
   [page-id]
   (= page-id :toc))
 
-;; Get full structure for TOC rendering
+;; Get full structure for TOC rendering (includes draft chapters)
 (defn get-toc-structure
   "Get the full manual structure for table of contents."
   []
-  (:sections structure))
+  (all-sections))
 
-;; Get merged page data (structure + i18n)
+;; Get merged page data (structure + i18n). Draft pages come from the raw .md
+;; renderer, so they short-circuit i18n and expose :draft? true plus a title.
 (defn get-page
   "Get page data merged with i18n content for the given language.
    Returns nil if page not found."
   [page-id lang]
   (when-let [page-struct (find-page-structure page-id)]
-    (let [lang-data (get-in i18n [lang :pages page-id])
-          ;; Fall back to English if translation missing
-          fallback-data (when (and (not= lang :en) (nil? lang-data))
-                          (get-in i18n [:en :pages page-id]))
-          text-data (or lang-data fallback-data)
-          ;; Merge examples with their i18n captions
-          examples (mapv (fn [ex]
-                           (merge ex (get-in text-data [:examples (:id ex)])))
-                         (:examples page-struct))]
-      (merge page-struct
-             (dissoc text-data :examples)
-             {:examples examples}))))
+    (if (= (:section-id page-struct) :drafts)
+      {:id page-id
+       :title (:draft-title page-struct)
+       :draft? true
+       :section-id :drafts}
+      (let [lang-data (get-in i18n [lang :pages page-id])
+            ;; Fall back to English if translation missing
+            fallback-data (when (and (not= lang :en) (nil? lang-data))
+                            (get-in i18n [:en :pages page-id]))
+            text-data (or lang-data fallback-data)
+            ;; Merge examples with their i18n captions
+            examples (mapv (fn [ex]
+                             (merge ex (get-in text-data [:examples (:id ex)])))
+                           (:examples page-struct))]
+        (merge page-struct
+               (dissoc text-data :examples)
+               {:examples examples})))))
 
 ;; Get section title
 (defn get-section-title
   "Get the title of a section in the given language."
   [section-id lang]
-  (or (get-in i18n [lang :sections section-id :title])
-      (get-in i18n [:en :sections section-id :title])
-      (name section-id)))
+  (cond
+    (= section-id :drafts) (if (= lang :it) "Capitoli in bozza" "Draft Chapters")
+    :else
+    (or (get-in i18n [lang :sections section-id :title])
+        (get-in i18n [:en :sections section-id :title])
+        (name section-id))))
 
-;; Get all pages for navigation
+;; Get all pages for navigation (includes drafts so prev/next works there too)
 (defn get-all-pages
   "Get a flat list of all page IDs in order."
   []
   (mapcat (fn [section]
             (map :id (:pages section)))
-          (:sections structure)))
+          (all-sections)))
 
 ;; Get next/previous page
 (defn get-adjacent-page

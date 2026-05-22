@@ -2,6 +2,7 @@
   "Manual UI components - renders the manual panel."
   (:require [ridley.manual.core :as manual]
             [ridley.manual.content :as content]
+            [ridley.manual.draft-renderer :as draft]
             ["@codemirror/view" :as view :refer [EditorView]]
             ["@codemirror/state" :refer [EditorState]]
             ["@codemirror/language" :refer [syntaxHighlighting HighlightStyle]]
@@ -17,38 +18,40 @@
    on-run: (fn [code]) - called when Run is clicked
    on-copy: (fn [code]) - called when Copy is clicked"
   [{:keys [on-run on-copy]}]
-  (reset! callbacks {:on-run on-run :on-copy on-copy}))
+  (reset! callbacks {:on-run on-run :on-copy on-copy})
+  ;; Mirror to draft renderer so Run/Edit on draft chapter examples use the same eval path.
+  (draft/set-callbacks! {:on-run on-run :on-copy on-copy}))
 
 ;; Create highlight style for code blocks (same as main editor)
 (defn- create-highlight-style []
   (.define HighlightStyle
-    #js [#js {:tag (.-lineComment tags) :color "#6a9955" :fontStyle "italic"}
-         #js {:tag (.-atom tags) :color "#4fc1ff"}
-         #js {:tag (.-string tags) :color "#ce9178"}
-         #js {:tag (.-number tags) :color "#b5cea8"}
-         #js {:tag (.-keyword tags) :color "#c586c0"}
-         #js {:tag (.definition tags (.-variableName tags)) :color "#dcdcaa"}
-         #js {:tag (.-variableName tags) :color "#9cdcfe"}
-         #js {:tag (.-bool tags) :color "#569cd6"}
-         #js {:tag (.-null tags) :color "#569cd6"}
-         #js {:tag (.-punctuation tags) :color "#d4d4d4"}
-         #js {:tag (.-bracket tags) :color "#d4d4d4"}]))
+           #js [#js {:tag (.-lineComment tags) :color "#6a9955" :fontStyle "italic"}
+                #js {:tag (.-atom tags) :color "#4fc1ff"}
+                #js {:tag (.-string tags) :color "#ce9178"}
+                #js {:tag (.-number tags) :color "#b5cea8"}
+                #js {:tag (.-keyword tags) :color "#c586c0"}
+                #js {:tag (.definition tags (.-variableName tags)) :color "#dcdcaa"}
+                #js {:tag (.-variableName tags) :color "#9cdcfe"}
+                #js {:tag (.-bool tags) :color "#569cd6"}
+                #js {:tag (.-null tags) :color "#569cd6"}
+                #js {:tag (.-punctuation tags) :color "#d4d4d4"}
+                #js {:tag (.-bracket tags) :color "#d4d4d4"}]))
 
 ;; Create read-only theme
 (defn- create-readonly-theme []
   (.theme EditorView
-    #js {"&" #js {:backgroundColor "#1a1a2e"
-                  :fontSize "13px"}
-         ".cm-scroller" #js {:fontFamily "'SF Mono', 'Monaco', 'Menlo', 'Consolas', monospace"
-                             :lineHeight "1.5"
-                             :overflow "auto"}
-         ".cm-content" #js {:padding "12px"
-                            :caretColor "transparent"}
-         ".cm-line" #js {:padding "0 4px"}
-         "&.cm-focused" #js {:outline "none"}
-         ".cm-gutters" #js {:display "none"}
-         ".cm-cursor" #js {:display "none"}}
-    #js {:dark true}))
+          #js {"&" #js {:backgroundColor "#1a1a2e"
+                        :fontSize "13px"}
+               ".cm-scroller" #js {:fontFamily "'SF Mono', 'Monaco', 'Menlo', 'Consolas', monospace"
+                                   :lineHeight "1.5"
+                                   :overflow "auto"}
+               ".cm-content" #js {:padding "12px"
+                                  :caretColor "transparent"}
+               ".cm-line" #js {:padding "0 4px"}
+               "&.cm-focused" #js {:outline "none"}
+               ".cm-gutters" #js {:display "none"}
+               ".cm-cursor" #js {:display "none"}}
+          #js {:dark true}))
 
 ;; Create a read-only CodeMirror view for code display
 (defn- create-code-view [parent code]
@@ -57,8 +60,8 @@
                         (create-readonly-theme)
                         (.of (.-editable EditorView) false)]
         state (.create EditorState
-                #js {:doc code
-                     :extensions extensions})]
+                       #js {:doc code
+                            :extensions extensions})]
     (EditorView. #js {:state state :parent parent})))
 
 ;; Render a single example block
@@ -91,13 +94,13 @@
     (set! (.-textContent copy-btn) "Edit")
     ;; Button handlers
     (.addEventListener run-btn "click"
-      (fn [_]
-        (when-let [on-run (:on-run @callbacks)]
-          (on-run code))))
+                       (fn [_]
+                         (when-let [on-run (:on-run @callbacks)]
+                           (on-run code))))
     (.addEventListener copy-btn "click"
-      (fn [_]
-        (when-let [on-copy (:on-copy @callbacks)]
-          (on-copy code))))
+                       (fn [_]
+                         (when-let [on-copy (:on-copy @callbacks)]
+                           (on-copy code))))
     (when-not (:no-run example)
       (.appendChild buttons run-btn))
     (.appendChild buttons copy-btn)
@@ -176,9 +179,9 @@
             (set! (.-textContent link) (:title link-data))
             (set! (.-href link) "#")
             (.addEventListener link "click"
-              (fn [e]
-                (.preventDefault e)
-                (manual/navigate-to! link-id)))
+                               (fn [e]
+                                 (.preventDefault e)
+                                 (manual/navigate-to! link-id)))
             (.appendChild links link))))
       (.appendChild section links)
       (.appendChild container section))))
@@ -243,9 +246,9 @@
               (set! (.-textContent page-link) (:title page-data))
               (set! (.-href page-link) "#")
               (.addEventListener page-link "click"
-                (fn [e]
-                  (.preventDefault e)
-                  (manual/navigate-to! (:id page))))
+                                 (fn [e]
+                                   (.preventDefault e)
+                                   (manual/navigate-to! (:id page))))
               (.appendChild page-item page-link)
               (.appendChild pages-list page-item)))
           (.appendChild section-div pages-list)
@@ -310,20 +313,27 @@
           (.appendChild nav close-btn)
           (.appendChild header nav)
           (.appendChild container header))
-        ;; Content
-        (let [content-div (.createElement js/document "div")]
-          (set! (.-className content-div) "manual-content")
-          (render-content content-div (:content page-data))
-          (.appendChild container content-div))
-        ;; Examples
-        (when (seq (:examples page-data))
-          (let [examples-div (.createElement js/document "div")]
-            (set! (.-className examples-div) "manual-examples")
-            (doseq [example (:examples page-data)]
-              (render-example examples-div example))
-            (.appendChild container examples-div)))
-        ;; See Also links
-        (render-see-also container current-page lang)
+        (if (:draft? page-data)
+          ;; Draft chapter: defer to markdown-driven renderer.
+          (let [draft-div (.createElement js/document "div")]
+            (set! (.-className draft-div) "manual-content")
+            (.appendChild container draft-div)
+            (draft/render-chapter! draft-div current-page))
+          (do
+            ;; Content
+            (let [content-div (.createElement js/document "div")]
+              (set! (.-className content-div) "manual-content")
+              (render-content content-div (:content page-data))
+              (.appendChild container content-div))
+            ;; Examples
+            (when (seq (:examples page-data))
+              (let [examples-div (.createElement js/document "div")]
+                (set! (.-className examples-div) "manual-examples")
+                (doseq [example (:examples page-data)]
+                  (render-example examples-div example))
+                (.appendChild container examples-div)))
+            ;; See Also links
+            (render-see-also container current-page lang)))
         ;; Page navigation (prev/next)
         (let [page-nav (.createElement js/document "div")
               prev-page (content/get-adjacent-page (:id page-data) :prev)
@@ -335,7 +345,7 @@
               (set! (.-className prev-btn) "manual-btn manual-btn-nav")
               (set! (.-textContent prev-btn) (str "← " (:title prev-data)))
               (.addEventListener prev-btn "click"
-                (fn [_] (manual/navigate-to! prev-page)))
+                                 (fn [_] (manual/navigate-to! prev-page)))
               (.appendChild page-nav prev-btn)))
           (when next-page
             (let [next-btn (.createElement js/document "button")
@@ -343,7 +353,7 @@
               (set! (.-className next-btn) "manual-btn manual-btn-nav manual-btn-next")
               (set! (.-textContent next-btn) (str (:title next-data) " →"))
               (.addEventListener next-btn "click"
-                (fn [_] (manual/navigate-to! next-page)))
+                                 (fn [_] (manual/navigate-to! next-page)))
               (.appendChild page-nav next-btn)))
           (.appendChild container page-nav))))))
 

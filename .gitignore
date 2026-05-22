@@ -4,6 +4,7 @@ node_modules/
 # Build output
 public/js/
 public/vendor/
+public/manual-drafts/
 out/
 .shadow-cljs/
 
