@@ -458,12 +458,13 @@
       (is (= [:f :inset :f] (mapv :cmd (:commands result))))
       (is (= [3] (:args (second (:commands result))))))))
 
-(deftest path-scale-recording
-  (testing "scale inside path records :scale command"
-    (let [{:keys [result error]} (h/eval-dsl "(path (f 10) (scale 2) (f 5))")]
-      (is (nil? error) (str "Should not error: " error))
-      (is (= [:f :scale :f] (mapv :cmd (:commands result))))
-      (is (= [2] (:args (second (:commands result))))))))
+(deftest path-scale-throws
+  (testing "scale inside path/attach is deliberately forbidden; users should use
+            stretch-f / stretch-rt / stretch-u for local-axis scaling instead"
+    (let [{:keys [error]} (h/eval-dsl "(path (f 10) (scale 2) (f 5))")]
+      (is (some? error) "scale inside path should throw")
+      (is (re-find #"scale is not available inside attach" (or error ""))
+          "error message guides the user toward stretch-* alternatives"))))
 
 (deftest path-move-to-recording
   (testing "move-to inside path records :move-to command"
