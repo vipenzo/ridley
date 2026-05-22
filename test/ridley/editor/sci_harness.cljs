@@ -147,6 +147,9 @@
    'rec-cp-f            turtle/rec-cp-f
    'rec-cp-rt           turtle/rec-cp-rt
    'rec-cp-u            turtle/rec-cp-u
+   'rec-cp-th           turtle/rec-cp-th
+   'rec-cp-tv           turtle/rec-cp-tv
+   'rec-cp-tr           turtle/rec-cp-tr
    'path-from-recorder  turtle/path-from-recorder
    ;; Shape recording functions (used by shape macro)
    'shape-rec-f         shape/rec-f
