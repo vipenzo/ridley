@@ -19,7 +19,8 @@
         :groq-model "llama-3.3-70b-versatile"
         :google-model "gemini-2.5-flash"
         :tier :auto}          ; :auto | :tier-1 | :tier-2 | :tier-3
-   :audio-feedback true})     ; Play sounds on eval success/error
+   :audio-feedback true       ; Play sounds on eval success/error
+   :curve-resolution nil})    ; {:mode :n|:a|:s :value <pos-num>} or nil = built-in default
 
 ;; =============================================================================
 ;; Settings State
@@ -100,12 +101,12 @@
         provider (:provider ai)]
     (and (:enabled ai)
          (match-provider provider
-           {:anthropic (seq (:anthropic-key ai))
-            :openai    (seq (:openai-key ai))
-            :groq      (seq (:groq-key ai))
-            :ollama    (seq (:ollama-url ai))
-            :google    (seq (:google-key ai))
-            :default   false}))))
+                         {:anthropic (seq (:anthropic-key ai))
+                          :openai    (seq (:openai-key ai))
+                          :groq      (seq (:groq-key ai))
+                          :ollama    (seq (:ollama-url ai))
+                          :google    (seq (:google-key ai))
+                          :default   false}))))
 
 (defn get-ai-api-key
   "Get the API key for the current provider."
@@ -113,12 +114,12 @@
   (let [ai (:ai @settings)
         provider (:provider ai)]
     (match-provider provider
-      {:anthropic (:anthropic-key ai)
-       :openai    (:openai-key ai)
-       :groq      (:groq-key ai)
-       :google    (:google-key ai)
-       :ollama    nil
-       :default   nil})))
+                    {:anthropic (:anthropic-key ai)
+                     :openai    (:openai-key ai)
+                     :groq      (:groq-key ai)
+                     :google    (:google-key ai)
+                     :ollama    nil
+                     :default   nil})))
 
 (defn get-ai-model
   "Get the model for the current provider."
@@ -126,12 +127,12 @@
   (let [ai (:ai @settings)
         provider (:provider ai)]
     (match-provider provider
-      {:anthropic (:model ai)
-       :openai    (:model ai)
-       :groq      (:groq-model ai)
-       :ollama    (:ollama-model ai)
-       :google    (:google-model ai)
-       :default   nil})))
+                    {:anthropic (:model ai)
+                     :openai    (:model ai)
+                     :groq      (:groq-model ai)
+                     :ollama    (:ollama-model ai)
+                     :google    (:google-model ai)
+                     :default   nil})))
 
 ;; =============================================================================
 ;; Model → Tier Detection
@@ -327,4 +328,28 @@
   "Enable or disable audio feedback on eval and persist."
   [enabled?]
   (swap! settings assoc :audio-feedback (boolean enabled?))
+  (save-settings!))
+
+;; =============================================================================
+;; Curve Resolution
+;; =============================================================================
+
+(defn get-curve-resolution
+  "Return the user's preferred curve resolution as `{:mode :n|:a|:s :value <num>}`,
+   or nil to fall back to the built-in default. Returns nil if the stored value
+   is missing or malformed."
+  []
+  (let [r (get @settings :curve-resolution)]
+    (when (and (map? r)
+               (#{:n :a :s} (:mode r))
+               (number? (:value r))
+               (pos? (:value r)))
+      r)))
+
+(defn set-curve-resolution!
+  "Set the user's preferred curve resolution and persist. Pass nil to revert
+   to the built-in default. `value` must be `{:mode :n|:a|:s :value <pos-num>}`
+   or nil."
+  [value]
+  (swap! settings assoc :curve-resolution value)
   (save-settings!))

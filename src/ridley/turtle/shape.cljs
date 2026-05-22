@@ -10,7 +10,8 @@
    (pen shape & movements)
    - Stamps the shape on the plane perpendicular to turtle's heading
    - Movements after stamping extrude the shape
-   - Turtle moves (extrusion is a side-effect)")
+   - Turtle moves (extrusion is a side-effect)"
+  (:require [ridley.turtle.extrusion :as extrusion]))
 
 ;; ============================================================
 ;; Shape data structure
@@ -314,16 +315,19 @@
   "Round corners of a 2D shape with circular arcs at distance d from each vertex.
 
    Options:
-   - :segments n — arc segments per corner (default: 8)
+   - :segments n — arc segments per corner (default: (default-segments 0.5),
+     i.e. half the global curve resolution — corners are local details that
+     usually need less detail than full curves)
    - :indices [0 2 5] — only fillet specific vertex indices (default: all)
 
    Usage:
-     (fillet-shape (rect 40 20) 3)                     ; all corners, 8 segments
-     (fillet-shape (rect 40 20) 3 :segments 16)        ; smoother arcs
+     (fillet-shape (rect 40 20) 3)                     ; all corners, default segs
+     (fillet-shape (rect 40 20) 3 :segments 16)        ; explicit override
      (fillet-shape (rect 40 20) 3 :indices [0 1])      ; only first two corners"
-  [shape d & {:keys [segments indices] :or {segments 8}}]
+  [shape d & {:keys [segments indices]}]
   (when (and (map? shape) (= :shape (:type shape)) (pos? d))
-    (let [idx-set (when indices (set indices))
+    (let [segments (or segments (extrusion/default-segments 0.5))
+          idx-set (when indices (set indices))
           op-fn (fn [prev curr nxt]
                   (fillet-corner-arc prev curr nxt d segments))
           new-points (apply-corner-op (:points shape) op-fn idx-set)

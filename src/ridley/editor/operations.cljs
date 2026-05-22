@@ -155,11 +155,12 @@
   "Pure loft function - creates mesh without side effects.
    Starts from current turtle position/orientation.
    transform-fn: (fn [shape t]) where t goes from 0 to 1
-   steps: number of intermediate steps (default 16)
+   steps: number of intermediate steps (defaults to (default-segments state 1))
 
    At corners, generates separate segment meshes and combines them.
    The resulting mesh may have overlapping/intersecting parts."
-  ([shape-or-shapes transform-fn path] (pure-loft-path shape-or-shapes transform-fn path 16))
+  ([shape-or-shapes transform-fn path]
+   (pure-loft-path shape-or-shapes transform-fn path nil))
   ([shape-or-shapes transform-fn path steps]
    (let [shapes (unwrap-shapes shape-or-shapes)
          current-turtle @@state/turtle-state-var
@@ -171,7 +172,8 @@
                              (assoc :joint-mode (:joint-mode current-turtle))
                              (assoc :resolution (:resolution current-turtle))
                              (assoc :material (:material current-turtle)))
-                         (turtle/make-turtle))]
+                         (turtle/make-turtle))
+         steps (or steps (extrusion/default-segments initial-state 1))]
      (if (and (:bezier path)
               (bezier-path-has-self-intersection? initial-state (first shapes) path))
        ;; Bezier with tight curves: use bloft
@@ -193,7 +195,7 @@
    Point arrays are aligned angularly for smooth morphing between different topologies.
    Starts from current turtle position/orientation.
    If shape1 is a vector of shapes, each is independently lofted to shape2."
-  ([shape1-or-shapes shape2 path] (pure-loft-two-shapes shape1-or-shapes shape2 path 16))
+  ([shape1-or-shapes shape2 path] (pure-loft-two-shapes shape1-or-shapes shape2 path nil))
   ([shape1-or-shapes shape2 path steps]
    (let [shapes1 (unwrap-shapes shape1-or-shapes)
          results (reduce
@@ -276,7 +278,7 @@
 (defn ^:export pure-loft-shape-fn
   "Pure loft with a shape-fn. Evaluates shape-fn at each step along the path.
    Bridges shape-fn API to existing loft pipeline."
-  ([shape-fn-val path] (pure-loft-shape-fn shape-fn-val path 16))
+  ([shape-fn-val path] (pure-loft-shape-fn shape-fn-val path nil))
   ([shape-fn-val path steps]
    (let [path-length (reduce + 0 (keep (fn [cmd]
                                          (when (= :f (:cmd cmd))

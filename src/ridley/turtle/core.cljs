@@ -39,7 +39,8 @@
    :stamps []             ; accumulated stamp outlines for debug visualization
    :anchors {}              ; named poses for mark/goto
    :attached nil            ; attachment state for face/mesh operations
-   :resolution {:mode :n :value 16}  ; curve resolution (like OpenSCAD $fn)
+   :resolution (extrusion/default-resolution)  ; curve resolution (like OpenSCAD $fn)
+   :joint-mode :tapered            ; corner style for direction changes (:flat | :tapered | :round)
    :material {:color 0x00aaff        ; hex color
               :metalness 0.3         ; 0-1, PBR metalness
               :roughness 0.7         ; 0-1, PBR roughness
@@ -241,10 +242,7 @@
   [state mode value]
   (assoc state :resolution {:mode mode :value value}))
 
-(defn- get-resolution
-  "Get current resolution settings, defaulting to {:mode :n :value 16}."
-  [state]
-  (or (:resolution state) {:mode :n :value 16}))
+(def ^:private get-resolution extrusion/get-resolution)
 
 (defn calc-arc-steps
   "Calculate steps for an arc based on resolution settings.
@@ -1706,7 +1704,7 @@
 ;; ============================================================
 
 (defn ^:export revolve-shape
-  "Revolve a 2D profile shape around the turtle's heading axis.
+  "Revolve a 2D profile shape around the turtle's up axis.
    Creates a solid of revolution (like a lathe operation).
 
    The profile is interpreted as:

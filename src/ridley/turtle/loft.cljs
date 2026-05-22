@@ -49,8 +49,9 @@
 (defn stamp-loft
   "Internal: stamp a shape for loft with transform function.
    Similar to stamp but also stores the base shape and transform function.
-   steps: number of intermediate steps (default 16)"
-  ([state shape transform-fn] (stamp-loft state shape transform-fn 16))
+   steps: number of intermediate steps (defaults to (default-segments state 1))"
+  ([state shape transform-fn]
+   (stamp-loft state shape transform-fn (extrusion/default-segments state 1)))
   ([state shape transform-fn steps]
    (if (shape? shape)
      (let [;; Apply transform at t=0 to get initial shape
@@ -339,28 +340,28 @@
           (let [has-holes? (boolean (:holes base-shape))
                 mesh (if has-holes?
                        (let [ring-data-vec (vec
-                                           (for [i (range (inc steps))]
-                                             (let [t (/ i steps)
-                                                   target-dist (* t total-dist)
-                                                   orientation (find-orientation-at-dist orientations target-dist total-dist)
-                                                   transformed-2d (transform-fn base-shape t)
-                                                   temp-state (-> state
-                                                                  (assoc :position (:position orientation))
-                                                                  (assoc :heading (:heading orientation))
-                                                                  (assoc :up (:up orientation)))]
-                                               (stamp-shape-with-holes temp-state transformed-2d))))]
+                                            (for [i (range (inc steps))]
+                                              (let [t (/ i steps)
+                                                    target-dist (* t total-dist)
+                                                    orientation (find-orientation-at-dist orientations target-dist total-dist)
+                                                    transformed-2d (transform-fn base-shape t)
+                                                    temp-state (-> state
+                                                                   (assoc :position (:position orientation))
+                                                                   (assoc :heading (:heading orientation))
+                                                                   (assoc :up (:up orientation)))]
+                                                (stamp-shape-with-holes temp-state transformed-2d))))]
                          (build-sweep-mesh-with-holes ring-data-vec creation-pose))
                        (let [new-rings (vec
-                                       (for [i (range (inc steps))]
-                                         (let [t (/ i steps)
-                                               target-dist (* t total-dist)
-                                               orientation (find-orientation-at-dist orientations target-dist total-dist)
-                                               transformed-2d (transform-fn base-shape t)
-                                               temp-state (-> state
-                                                              (assoc :position (:position orientation))
-                                                              (assoc :heading (:heading orientation))
-                                                              (assoc :up (:up orientation)))]
-                                           (stamp-shape temp-state transformed-2d))))]
+                                        (for [i (range (inc steps))]
+                                          (let [t (/ i steps)
+                                                target-dist (* t total-dist)
+                                                orientation (find-orientation-at-dist orientations target-dist total-dist)
+                                                transformed-2d (transform-fn base-shape t)
+                                                temp-state (-> state
+                                                               (assoc :position (:position orientation))
+                                                               (assoc :heading (:heading orientation))
+                                                               (assoc :up (:up orientation)))]
+                                            (stamp-shape temp-state transformed-2d))))]
                          (build-sweep-mesh new-rings false creation-pose)))
                 mesh-with-material (when mesh
                                      (cond-> mesh
@@ -466,7 +467,7 @@
   "Remove shell metadata from a shape, returning a plain shape for solid loft."
   [s]
   (dissoc s :shell-mode :shell-thickness :shell-values :shell-offsets
-            :shell-cap-top :shell-cap-bottom))
+          :shell-cap-top :shell-cap-bottom))
 
 (defn- resolve-cap-shape
   "Resolve a cap-spec into a decorated shape at a given base shape.
@@ -489,17 +490,18 @@
         (when expanded
           (case style
             :voronoi (voronoi/voronoi-shell expanded
-                       :cells (or (:cells cap-spec) 20)
-                       :wall (or (:wall cap-spec) 1.5)
-                       :seed (or (:seed cap-spec) 0)
-                       :relax (or (:relax cap-spec) 2)
-                       :resolution (or (:resolution cap-spec) 16))
+                                            :cells (or (:cells cap-spec) 20)
+                                            :wall (or (:wall cap-spec) 1.5)
+                                            :seed (or (:seed cap-spec) 0)
+                                            :relax (or (:relax cap-spec) 2)
+                                            :resolution (or (:resolution cap-spec)
+                                                            (extrusion/default-segments 0.5)))
             :grid    (clipper/pattern-tile expanded
-                       (shape/circle-shape
-                         (or (:hole cap-spec) 1.5)
-                         (or (:hole-segments cap-spec) 16))
-                       :spacing (or (:spacing cap-spec) [5 5])
-                       :inset (or (:inset cap-spec) 0))
+                                           (shape/circle-shape
+                                            (or (:hole cap-spec) 1.5)
+                                            (or (:hole-segments cap-spec) 16))
+                                           :spacing (or (:spacing cap-spec) [5 5])
+                                           :inset (or (:inset cap-spec) 0))
             :solid   nil
             (throw (js/Error. (str "Unknown cap :style " style)))))))))
 
@@ -557,11 +559,12 @@
   "Loft a shape along a path with a transform function.
 
    transform-fn: (fn [shape t]) where t goes from 0 to 1
-   steps: number of rings to generate (default 16)
+   steps: number of rings to generate (defaults to (default-segments state 1))
 
    At corners, generates SEPARATE meshes for each segment (no joint mesh).
    Use mesh-union to combine them if needed."
-  ([state shape transform-fn path] (loft-from-path state shape transform-fn path 16))
+  ([state shape transform-fn path]
+   (loft-from-path state shape transform-fn path (extrusion/default-segments state 1)))
   ([state shape transform-fn path steps]
    (if-not (and (shape? shape) (is-path? path))
      state
@@ -623,15 +626,15 @@
                            shell-mode?
                            (fn [r1 r2]
                              {:outer (mapv (fn [p1 p2] (v+ p1 (v* (v- p2 p1) 0.5)))
-                                          (:outer r1) (:outer r2))
+                                           (:outer r1) (:outer r2))
                               :inner (mapv (fn [p1 p2] (v+ p1 (v* (v- p2 p1) 0.5)))
-                                          (:inner r1) (:inner r2))
+                                           (:inner r1) (:inner r2))
                               :values (mapv (fn [v1 v2] (* 0.5 (+ v1 v2)))
                                             (:values r1) (:values r2))})
                            has-holes?
                            (fn [r1 r2]
                              {:outer (mapv (fn [p1 p2] (v+ p1 (v* (v- p2 p1) 0.5)))
-                                          (:outer r1) (:outer r2))
+                                           (:outer r1) (:outer r2))
                               :holes (when (:holes r1)
                                        (mapv (fn [h1 h2]
                                                (mapv (fn [p1 p2] (v+ p1 (v* (v- p2 p1) 0.5))) h1 h2))
@@ -842,8 +845,8 @@
                              ;; Track first/second ring for caps
                              new-first-ring (or loft-first-ring (first new-acc-rings))
                              new-second-ring (or loft-second-ring
-                                                (when (>= (count new-acc-rings) 2)
-                                                  (second new-acc-rings)))
+                                                 (when (>= (count new-acc-rings) 2)
+                                                   (second new-acc-rings)))
 
                              ;; Apply rotations to get new heading (rotate at corner position)
                              s-at-corner (assoc s :position corner-base)
@@ -972,7 +975,7 @@
                  ;; Add all segment meshes with material to state
                  (let [meshes-with-material (if (:material state)
                                               (mapv #(schema/assert-mesh!
-                                                       (assoc % :material (:material state)))
+                                                      (assoc % :material (:material state)))
                                                     segment-meshes)
                                               (mapv schema/assert-mesh! segment-meshes))]
                    (update final-state :meshes into meshes-with-material)))))))))))
@@ -1006,7 +1009,6 @@
                              (< forward threshold)))
                          (map vector ring1 ring2))]
         result))))
-
 
 (defn walk-path-poses
   "Walk a path and sample turtle poses at regular distance intervals.

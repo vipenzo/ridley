@@ -2,7 +2,8 @@
   "Generative operations: extrude, revolve, sweep, loft.
    These operations take 2D profiles and generate 3D meshes."
   (:require [ridley.math :as math :refer [v+ v- v* magnitude normalize rotate-point-around-axis]]
-            [ridley.schema :as schema]))
+            [ridley.schema :as schema]
+            [ridley.turtle.extrusion :as extrusion]))
 
 ;; ============================================================
 ;; Utility functions
@@ -105,15 +106,15 @@
    - profile: A path or turtle state with geometry (in XY plane, will revolve around Y)
    - axis: [x y z] axis vector to revolve around (default [0 1 0] = Y axis)
    - angle: Total angle in degrees (default 360 for full revolution)
-   - segments: Number of segments around the revolution (default 24)
+   - segments: Number of segments around the revolution (defaults to (default-segments 1))
 
    Returns a mesh {:vertices [...] :faces [...]}."
   ([profile]
-   (revolve profile [0 1 0] 360 24))
+   (revolve profile [0 1 0] 360 (extrusion/default-segments)))
   ([profile axis]
-   (revolve profile axis 360 24))
+   (revolve profile axis 360 (extrusion/default-segments)))
   ([profile axis angle]
-   (revolve profile axis angle 24))
+   (revolve profile axis angle (extrusion/default-segments)))
   ([profile axis angle segments]
    (let [raw-points (path-to-points profile)
          ;; Auto-close the profile for solid mesh

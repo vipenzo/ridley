@@ -6,7 +6,8 @@
   (:require ["earcut" :default earcut]
             ["libtess" :as libtess]
             [ridley.schema :as schema]
-            [ridley.math :as math]))
+            [ridley.math :as math]
+            [ridley.settings :as settings]))
 
 ;; --- Re-export math utilities used throughout ---
 (def v+ math/v+)
@@ -55,10 +56,66 @@
 
 ;; --- Resolution settings ---
 
+(def ^:private built-in-default-resolution
+  "Hard-coded fallback used when the user has no preference stored in settings."
+  {:mode :n :value 64})
+
+(def ^:private reference-radius
+  "Hypothetical curve size used to derive an equivalent :n segment count from
+   :a / :s resolution modes when an actual curve is unavailable (e.g. loft
+   step count, fillet corner segments, voronoi cap pattern). Picked to
+   represent a 'typical' Ridley object — revisit if it becomes user pain."
+  80)
+
+(defn default-resolution
+  "Canonical default for curve resolution. Returns the user's preference from
+   settings if set, otherwise the built-in default. Called by `make-turtle`
+   to seed the initial turtle state and by `get-resolution` as the fallback."
+  []
+  (or (settings/get-curve-resolution) built-in-default-resolution))
+
 (defn get-resolution
-  "Get current resolution settings, defaulting to {:mode :n :value 16}."
+  "Get current resolution settings, defaulting to `(default-resolution)`."
   [state]
-  (or (:resolution state) {:mode :n :value 16}))
+  (or (:resolution state) (default-resolution)))
+
+(defn- equivalent-n
+  "Given resolution settings, return the segment count that would be applied
+   to a full circle of `reference-radius`. Mirrors `calc-circle-segments`
+   but uses the fixed reference instead of an actual circumference, so it
+   can be called where no curve is in scope (loft, fillet, revolve, …).
+   For :a / :s modes a floor of 8 prevents degenerate cases."
+  [{:keys [mode value]}]
+  (case mode
+    :n value
+    :a (max 8 (int (Math/ceil (/ 360 value))))
+    :s (max 8 (int (Math/ceil (/ (* 2 Math/PI reference-radius) value))))
+    value))
+
+(defn default-segments
+  "Default segment count derived from the current curve resolution, scaled
+   by `ratio`. Use this in any context that needs a 'reasonable N' but has
+   no actual curve to measure (loft step count, fillet corner segments,
+   revolve angular slices, voronoi cap detail, heightmap grid).
+
+   When `state` is supplied, honors a per-state :resolution override (e.g.
+   from `(resolution :n N)` inside a script). Without state, reads the
+   global default from settings.
+
+   Examples:
+     (default-segments)              ;; 1:1, settings-based
+     (default-segments 0.5)          ;; half — e.g. fillet, voronoi cap
+     (default-segments 2)            ;; double — e.g. heightmap grid
+     (default-segments state 1)      ;; 1:1, state-aware — e.g. loft, revolve
+     (default-segments state 0.5)    ;; half, state-aware"
+  ([] (default-segments nil 1))
+  ([ratio-or-state]
+   (if (number? ratio-or-state)
+     (default-segments nil ratio-or-state)
+     (default-segments ratio-or-state 1)))
+  ([state ratio]
+   (let [r (if state (get-resolution state) (default-resolution))]
+     (max 2 (int (* (equivalent-n r) ratio))))))
 
 (defn calc-round-steps
   "Calculate steps for a round joint based on resolution and angle.
@@ -167,17 +224,17 @@
         tess (libtess/GluTesselator.)
         tri-coords #js []
         _ (.gluTessCallback tess (.-GLU_TESS_VERTEX_DATA libtess/gluEnum)
-            (fn [data poly-arr]
-              (.push poly-arr (aget data 0) (aget data 1))))
+                            (fn [data poly-arr]
+                              (.push poly-arr (aget data 0) (aget data 1))))
         _ (.gluTessCallback tess (.-GLU_TESS_BEGIN libtess/gluEnum)
-            (fn [_type]))
+                            (fn [_type]))
         _ (.gluTessCallback tess (.-GLU_TESS_ERROR libtess/gluEnum)
-            (fn [_errno]))
+                            (fn [_errno]))
         _ (.gluTessCallback tess (.-GLU_TESS_COMBINE libtess/gluEnum)
-            (fn [coords _data _weight]
-              #js [(aget coords 0) (aget coords 1) 0]))
+                            (fn [coords _data _weight]
+                              #js [(aget coords 0) (aget coords 1) 0]))
         _ (.gluTessCallback tess (.-GLU_TESS_EDGE_FLAG libtess/gluEnum)
-            (fn [_flag]))
+                            (fn [_flag]))
         _ (.gluTessNormal tess 0 0 1)]
     ;; Feed contours
     (.gluTessBeginPolygon tess tri-coords)
@@ -353,8 +410,8 @@
           cx (/ (reduce + (map first points)) n)
           cy (/ (reduce + (map second points)) n)]
       (reduce max 0 (map (fn [[x y]]
-                            (let [dx (- x cx) dy (- y cy)]
-                              (Math/sqrt (+ (* dx dx) (* dy dy)))))
+                           (let [dx (- x cx) dy (- y cy)]
+                             (Math/sqrt (+ (* dx dx) (* dy dy)))))
                          points)))
     0))
 
@@ -511,32 +568,32 @@
          ;; Flatten rings into a single vertices vector (transient for speed)
          flatten-rings (fn [rs]
                          (persistent!
-                           (reduce (fn [a ring] (reduce conj! a ring))
-                                   (transient []) rs)))
+                          (reduce (fn [a ring] (reduce conj! a ring))
+                                  (transient []) rs)))
          ;; Generate side faces with diagonal-flip in a tight loop
          gen-diag-faces (fn [vertices num-rings n-v wrap?]
                           (persistent!
-                            (loop [ri 0, acc (transient [])]
-                              (if (>= ri num-rings)
-                                acc
-                                (let [next-ri (if wrap?
-                                                (let [n (inc ri)] (if (= n num-rings) 0 n))
-                                                (inc ri))
-                                      base (* ri n-v)
-                                      next-base (* next-ri n-v)]
-                                  (recur (inc ri)
-                                         (loop [vi 0, acc acc]
-                                           (if (>= vi n-v)
-                                             acc
-                                             (let [next-vi (let [v (inc vi)] (if (= v n-v) 0 v))
-                                                   b0 (+ base vi) b1 (+ base next-vi)
-                                                   t0 (+ next-base vi) t1 (+ next-base next-vi)
-                                                   db0t1 (v- (nth vertices b0) (nth vertices t1))
-                                                   db1t0 (v- (nth vertices b1) (nth vertices t0))]
-                                               (recur (inc vi)
-                                                      (if (<= (dot db0t1 db0t1) (dot db1t0 db1t0))
-                                                        (-> acc (conj! [b0 t0 t1]) (conj! [b0 t1 b1]))
-                                                        (-> acc (conj! [b0 t0 b1]) (conj! [t0 t1 b1])))))))))))))]
+                           (loop [ri 0, acc (transient [])]
+                             (if (>= ri num-rings)
+                               acc
+                               (let [next-ri (if wrap?
+                                               (let [n (inc ri)] (if (= n num-rings) 0 n))
+                                               (inc ri))
+                                     base (* ri n-v)
+                                     next-base (* next-ri n-v)]
+                                 (recur (inc ri)
+                                        (loop [vi 0, acc acc]
+                                          (if (>= vi n-v)
+                                            acc
+                                            (let [next-vi (let [v (inc vi)] (if (= v n-v) 0 v))
+                                                  b0 (+ base vi) b1 (+ base next-vi)
+                                                  t0 (+ next-base vi) t1 (+ next-base next-vi)
+                                                  db0t1 (v- (nth vertices b0) (nth vertices t1))
+                                                  db1t0 (v- (nth vertices b1) (nth vertices t0))]
+                                              (recur (inc vi)
+                                                     (if (<= (dot db0t1 db0t1) (dot db1t0 db1t0))
+                                                       (-> acc (conj! [b0 t0 t1]) (conj! [b0 t1 b1]))
+                                                       (-> acc (conj! [b0 t0 b1]) (conj! [t0 t1 b1])))))))))))))]
      (when (and (>= n-rings 2) (>= n-verts 3))
        (if closed?
          ;; Closed loop: skip last ring (overlaps with first), connect last to first
@@ -587,25 +644,25 @@
          n-verts (count (first rings))]
      (when (and (>= n-rings 2) (>= n-verts 3))
        (let [vertices (persistent!
-                        (reduce (fn [a ring] (reduce conj! a ring))
-                                (transient []) rings))
+                       (reduce (fn [a ring] (reduce conj! a ring))
+                               (transient []) rings))
              side-faces (persistent!
-                          (loop [ri 0, acc (transient [])]
-                            (if (>= ri (dec n-rings))
-                              acc
-                              (let [base (* ri n-verts)
-                                    next-base (* (inc ri) n-verts)]
-                                (recur (inc ri)
-                                       (loop [vi 0, acc acc]
-                                         (if (>= vi n-verts)
-                                           acc
-                                           (let [next-vi (let [v (inc vi)] (if (= v n-verts) 0 v))
-                                                 b0 (+ base vi) b1 (+ base next-vi)
-                                                 t0 (+ next-base vi) t1 (+ next-base next-vi)]
-                                             (recur (inc vi)
-                                                    (if flip-winding?
-                                                      (-> acc (conj! [b0 b1 t1]) (conj! [b0 t1 t0]))
-                                                      (-> acc (conj! [b0 t1 b1]) (conj! [b0 t0 t1]))))))))))))]
+                         (loop [ri 0, acc (transient [])]
+                           (if (>= ri (dec n-rings))
+                             acc
+                             (let [base (* ri n-verts)
+                                   next-base (* (inc ri) n-verts)]
+                               (recur (inc ri)
+                                      (loop [vi 0, acc acc]
+                                        (if (>= vi n-verts)
+                                          acc
+                                          (let [next-vi (let [v (inc vi)] (if (= v n-verts) 0 v))
+                                                b0 (+ base vi) b1 (+ base next-vi)
+                                                t0 (+ next-base vi) t1 (+ next-base next-vi)]
+                                            (recur (inc vi)
+                                                   (if flip-winding?
+                                                     (-> acc (conj! [b0 b1 t1]) (conj! [b0 t1 t0]))
+                                                     (-> acc (conj! [b0 t1 b1]) (conj! [b0 t0 t1]))))))))))))]
          {:type :mesh
           :primitive :segment
           :vertices vertices
@@ -806,7 +863,7 @@
                      bottom-normal (v* bottom-dir -1)
                      top-normal top-dir
                      bottom-cap (triangulate-cap-with-holes first-outer first-holes
-                                                             0 bottom-normal false)
+                                                            0 bottom-normal false)
                      top-cap (triangulate-cap-with-holes last-outer last-holes
                                                          last-ring-base top-normal false)]
                  (vec (concat bottom-cap top-cap))))
@@ -1037,7 +1094,7 @@
         mesh (sweep-two-shapes-with-holes d1 d2)]
     (if mesh
       (let [mesh-with-pose (cond-> (assoc mesh :creation-pose creation-pose)
-                            (:material state) (assoc :material (:material state)))]
+                             (:material state) (assoc :material (:material state)))]
         (-> state
             (assoc :position end-pos)
             (update :meshes conj mesh-with-pose)))
@@ -1215,9 +1272,9 @@
                           ;; Small rotations from bezier-as walk steps are smooth transitions,
                           ;; not corners requiring shortening/fillets/duplicate rings.
                           has-corner-rotation (and any-corner-cmds
-                                                  heading-angle
-                                                  (> heading-angle (* corner-threshold-deg-closed
-                                                                      (/ Math/PI 180))))
+                                                   heading-angle
+                                                   (> heading-angle (* corner-threshold-deg-closed
+                                                                       (/ Math/PI 180))))
 
                           corner-rings (if (and has-corner-rotation (not is-last))
                                          (let [corner-angle-deg (when (= joint-mode :round)

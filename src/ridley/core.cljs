@@ -1283,8 +1283,9 @@
         enabled (:enabled ai)
         provider (:provider ai)]
     (str
-     "<h3>⚙ LLM Settings</h3>"
+     "<h3>⚙ Settings</h3>"
 
+     "<h3 class='settings-section-header'>AI Assistant</h3>"
      ;; Enable checkbox
      "<div class='settings-field'>"
      "<label class='settings-checkbox-row'>"
@@ -1489,6 +1490,36 @@
            "<button class='settings-test-btn' id='settings-edit-prompts'>Edit Prompts</button>"
            "</div>"))))
 
+     ;; Display section — curve resolution (affects all curve operations globally)
+     (let [stored (settings/get-curve-resolution)
+           mode (when stored (:mode stored))
+           current-n (cond
+                       (and stored (= :n mode)) (:value stored)
+                       :else 64)
+           custom-mode? (and stored (not= :n mode))]
+       (str
+        "<h3 class='settings-section-header'>Display</h3>"
+        "<div class='settings-field'>"
+        "<label class='settings-label'>Curve resolution</label>"
+        "<div class='settings-api-key-row'>"
+        "<input type='number' id='settings-curve-resolution' class='settings-input' "
+        "min='4' max='256' step='1' "
+        "value='" current-n "'>"
+        "<button class='settings-toggle-btn' id='settings-curve-resolution-reset'"
+        (when (nil? stored) " disabled") ">"
+        "Default"
+        "</button>"
+        "</div>"
+        "<div class='settings-hint'>"
+        "Number of segments per full circle. Affects spheres, cylinders, "
+        "lofts, fillets, and most curve operations. Higher = smoother but "
+        "more triangles. Built-in default: 64."
+        (when custom-mode?
+          (str " <strong>Custom <code>:" (name mode) "</code> mode active</strong> "
+               "(set via script). Saving here will switch to <code>:n</code> mode."))
+        "</div>"
+        "</div>"))
+
      ;; Accessibility section (always visible, not dependent on AI)
      "<h3 class='settings-section-header'>Accessibility</h3>"
      "<div class='settings-field'>"
@@ -1598,6 +1629,21 @@
                          (when-let [m (.querySelector js/document ".settings-modal")]
                            (.remove m))
                          (prompt-panel/open!))))
+  ;; Curve resolution input
+  (when-let [el (.querySelector modal "#settings-curve-resolution")]
+    (.addEventListener el "change"
+                       (fn [e]
+                         (let [raw (.. e -target -value)
+                               n (js/parseInt raw 10)]
+                           (when (and (not (js/isNaN n)) (>= n 4) (<= n 256))
+                             (settings/set-curve-resolution! {:mode :n :value n})
+                             (re-render))))))
+  ;; Curve resolution reset (revert to built-in default)
+  (when-let [el (.querySelector modal "#settings-curve-resolution-reset")]
+    (.addEventListener el "click"
+                       (fn [_]
+                         (settings/set-curve-resolution! nil)
+                         (re-render))))
   ;; Audio feedback checkbox (accessibility)
   (when-let [el (.querySelector modal "#settings-audio-feedback")]
     (.addEventListener el "change"
@@ -1605,7 +1651,7 @@
                          (settings/set-audio-feedback! (.. e -target -checked))))))
 
 (defn- show-settings-modal
-  "Show the LLM settings modal."
+  "Show the Settings modal."
   []
   (let [modal (.createElement js/document "div")
         overlay (.createElement js/document "div")

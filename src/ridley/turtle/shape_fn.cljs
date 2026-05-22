@@ -11,7 +11,8 @@
    Use with loft:
      (loft (tapered (circle 20) :to 0) (f 30))"
   (:require [ridley.turtle.transform :as xform]
-            [ridley.turtle.shape :as shape]))
+            [ridley.turtle.shape :as shape]
+            [ridley.turtle.extrusion :as extrusion]))
 
 ;; ============================================================
 ;; Path-length context (set by loft at runtime)
@@ -268,12 +269,13 @@
    :spacing    - center-to-center thread distance (default 5)
    :radius     - thread radius (default 2)
    :lift       - over/under amplitude (default: same as radius)
-   :resolution - heightmap grid size (default 128)
+   :resolution - heightmap grid size (default (default-segments 2))
    :profile    - :round or :flat (default :round)
    :thickness  - for :flat profile, ribbon thickness (default: radius * 0.5)"
   [& {:keys [threads spacing radius lift resolution profile thickness]
-      :or {threads 4, spacing 5, radius 2, resolution 128, profile :round}}]
-  (let [lift (or lift radius)
+      :or {threads 4, spacing 5, radius 2, profile :round}}]
+  (let [resolution (or resolution (extrusion/default-segments 2))
+        lift (or lift radius)
         thickness (or thickness (* radius 0.5))
         size (* threads spacing)
         w resolution
@@ -404,12 +406,15 @@
 
 (defn ^:export mesh-to-heightmap
   "Convert a mesh to a heightmap by rasterizing max-z onto a 2D grid.
-   (mesh-to-heightmap mesh :resolution 128)
+   :resolution defaults to (default-segments 2) — twice the global curve
+   resolution, because heightmaps are 2D grids and benefit from finer sampling.
+   (mesh-to-heightmap mesh)
+   (mesh-to-heightmap mesh :resolution 256)
    (mesh-to-heightmap mesh :resolution 128 :bounds [x0 y0 x1 y1])
    (mesh-to-heightmap mesh :resolution 128 :offset-x 0 :offset-y 0 :length-x 10 :length-y 10)"
-  [mesh & {:keys [resolution bounds offset-x offset-y length-x length-y]
-           :or {resolution 128}}]
-  (let [verts (:vertices mesh)
+  [mesh & {:keys [resolution bounds offset-x offset-y length-x length-y]}]
+  (let [resolution (or resolution (extrusion/default-segments 2))
+        verts (:vertices mesh)
         faces (:faces mesh)
         auto-bounds (mesh-xy-bounds verts)
         [x-min y-min x-max y-max]
