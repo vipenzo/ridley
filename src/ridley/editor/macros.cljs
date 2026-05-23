@@ -1680,20 +1680,30 @@
    ;; ============================================================
    ;; turtle: scoped turtle state
    ;; ============================================================
-   ;; (turtle body...)                    — clone parent pose, isolated geometry
-   ;; (turtle :reset body...)             — fresh turtle at origin
-   ;; (turtle :preserve-up body...)       — enable preserve-up mode
-   ;; (turtle [x y z] body...)            — set position
-   ;; (turtle {:pos p :heading h} body...)— full options literal map
-   ;; (turtle :pose pose-expr body...)    — set pose from a runtime map
-   ;;                                       (e.g. (:pose (:end-face seg))).
-   ;;                                       Picks :pos/:heading/:up from the
-   ;;                                       evaluated map.
+   ;; (turtle body...)                       — clone parent pose, isolated geometry
+   ;; (turtle :reset body...)                — fresh turtle at origin
+   ;; (turtle :preserve-up body...)          — enable preserve-up mode
+   ;; (turtle [x y z] body...)               — set position
+   ;; (turtle {:pos p :heading h} body...)   — full options literal map
+   ;; (turtle :pose pose-expr body...)       — set pose from a runtime map
+   ;;                                          (e.g. (:pose (:end-face seg))).
+   ;;                                          Picks :pos/:position/:heading/:up
+   ;;                                          from the evaluated map.
+   ;; (turtle path :at name body...)         — set pose to the anchor `name` of
+   ;;                                          `path`. Sugar for :pose with
+   ;;                                          (get (anchors path) name).
+   ;; (turtle (:mark-name path) body...)     — pure-accessor first form: a
+   ;;                                          keyword-as-fn call or
+   ;;                                          (get …)/(get-in …) is treated
+   ;;                                          as the pose expression. Side-
+   ;;                                          effectful first forms stay
+   ;;                                          body, as before.
 
    (defn- parse-turtle-opts
      \"Parse turtle macro arguments into {:opts map :pose-expr form :body forms}.
       Consumes leading keywords (:reset, :preserve-up), vector (position),
-      map with known keys, or :pose <runtime-expr> pair. Everything else is body.\"
+      map with known keys, :pose <expr>, or <path> :at <name>. Everything
+      else is body.\"
      [args]
      (loop [opts {} pose-expr nil remaining (vec args)]
        (if (empty? remaining)
@@ -1714,6 +1724,26 @@
              (and (map? x)
                   (some #{:pos :heading :up :reset :preserve-up} (keys x)))
              (recur (merge opts x) pose-expr (subvec remaining 1))
+             ;; (turtle <path-expr> :at <name-expr> body…)
+             (and (>= (count remaining) 3)
+                  (= :at (nth remaining 1)))
+             (let [path-expr (first remaining)
+                   name-expr (nth remaining 2)]
+               (when pose-expr
+                 (throw (js/Error. \"turtle: cannot combine :pose with :at\")))
+               {:opts opts
+                :pose-expr (list 'get (list (quote anchors) path-expr) name-expr)
+                :body (vec (subvec remaining 3))})
+             ;; (turtle (:mark path) body…) or (turtle (get path k) body…) —
+             ;; pure-accessor first form is treated as pose expression. Safe
+             ;; because these forms have no side effects.
+             (and (nil? pose-expr)
+                  (list? x)
+                  (or (keyword? (first x))
+                      (#{(quote get) (quote get-in)} (first x))))
+             {:opts opts
+              :pose-expr x
+              :body (vec (subvec remaining 1))}
              :else
              {:opts opts :pose-expr pose-expr :body (vec remaining)})))))
 
@@ -1723,8 +1753,11 @@
        (if pose-expr
          `(let [parent-state# @*turtle-state*
                 pose# ~pose-expr
+                ;; Accept either :pos (extrude+/revolve+ end-face style)
+                ;; or :position (anchors / turtle-state style).
+                pose-pos# (or (:pos pose#) (:position pose#))
                 merged-opts# (cond-> ~opts-form
-                               (:pos pose#)     (assoc :pos (:pos pose#))
+                               pose-pos#        (assoc :pos pose-pos#)
                                (:heading pose#) (assoc :heading (:heading pose#))
                                (:up pose#)      (assoc :up (:up pose#)))]
             (binding [*turtle-state* (atom (init-turtle merged-opts# parent-state#))]

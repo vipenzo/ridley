@@ -1169,12 +1169,22 @@
   [x]
   (and (map? x) (= :path (:type x))))
 
+(declare resolve-marks)
+
 (defn make-path
-  "Create a path from a vector of recorded commands.
-   Each command is {:cmd :f/:b/:th/:tv/:tr :args [...]}"
+  "Create a path from a vector of recorded commands. Each command is
+   {:cmd :f/:b/:th/:tv/:tr/:mark/… :args [...]}.
+
+   Resolved anchors (mark name → pose) are baked into the returned map
+   as top-level keys, so callers can write `(:mark-name path)` to get
+   the pose directly. Structural keys (:type, :commands, :bezier) win
+   in case of a name collision."
   [commands]
-  {:type :path
-   :commands (vec commands)})
+  (let [base {:type :path :commands (vec commands)}
+        anchors (resolve-marks
+                 {:position [0 0 0] :heading [1 0 0] :up [0 0 1]}
+                 base)]
+    (merge anchors base)))
 
 (defn quick-path
   "Create a path from compact numeric notation.

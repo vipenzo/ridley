@@ -151,10 +151,13 @@
   (let [first-arg (first args)
         pose? (and first-arg
                    (map? first-arg)
-                   (some #{:pos :heading :up} (keys first-arg)))
+                   (some #{:pos :position :heading :up} (keys first-arg)))
         norm-args
         (if pose?
-          (let [{:keys [pos heading up]} first-arg
+          ;; Accept either :pos (extrude+/revolve+ end-face style) or
+          ;; :position (anchors / turtle-state style).
+          (let [pos (or (:pos first-arg) (:position first-arg))
+                {:keys [heading up]} first-arg
                 overrides (apply hash-map (rest args))
                 final-heading (or (:heading overrides) heading)
                 final-up (or (:up overrides) up)]
@@ -347,6 +350,35 @@
 
     :else
     (:anchors (registry/get-mesh target))))
+
+(defn ^:export implicit-mark-pos
+  "Return the 3D position [x y z] of a named mark within a path.
+   Walks the path from the world origin (heading +X, up +Z) and returns
+   the turtle's position at the moment the mark was recorded. Handles
+   every path command — including :side-trip — via turtle/resolve-marks.
+   Returns nil if the mark is not found."
+  [path mark-name]
+  (when (and (map? path) (= :path (:type path)))
+    (-> (turtle/resolve-marks
+         {:position [0 0 0] :heading [1 0 0] :up [0 0 1]}
+         path)
+        (get mark-name)
+        :position)))
+
+(defn ^:export implicit-mark-x
+  "X coordinate of a named mark within a path."
+  [path mark-name]
+  (first (implicit-mark-pos path mark-name)))
+
+(defn ^:export implicit-mark-y
+  "Y coordinate of a named mark within a path."
+  [path mark-name]
+  (second (implicit-mark-pos path mark-name)))
+
+(defn ^:export implicit-mark-z
+  "Z coordinate of a named mark within a path."
+  [path mark-name]
+  (nth (implicit-mark-pos path mark-name) 2 nil))
 
 (defn ^:export implicit-look-at [name]
   (when-let [mark-pose (get @state/mark-anchors name)]

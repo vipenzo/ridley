@@ -157,10 +157,10 @@
    'subpath-y       shape/subpath-y
    'offset-x        shape/offset-x
    'fit             shape/fit
-   'mark-pos        shape/mark-pos
-   'mark-x          shape/mark-x
-   'mark-y          shape/mark-y
-   'mark-z          shape/mark-z
+   'mark-pos        impl/implicit-mark-pos
+   'mark-x          impl/implicit-mark-x
+   'mark-y          impl/implicit-mark-y
+   'mark-z          impl/implicit-mark-z
    'bounds-2d       shape/bounds-2d
    ;; Fillet and chamfer (2D shape corners)
    'fillet-shape    shape/fillet-shape

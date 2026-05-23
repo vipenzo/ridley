@@ -483,60 +483,13 @@
         {:pos [0 0] :heading [1 0] :waypoints [{:pos [0 0] :dir [1 0]}]}
         commands)))))
 
-(defn ^:export mark-pos
-  "Get the 3D position [x y z] of a named mark within a path.
-   Walks the path from the world origin (position [0 0 0], heading
-   [1 0 0], up [0 0 1]) and returns the turtle's position at the moment
-   the mark was recorded. Handles all path commands (rotations :th/:tv/
-   :tr/:set-heading, displacements :u/:rt/:lt). Returns nil if the mark
-   is not found."
-  [path mark-name]
-  (when (and (map? path) (= :path (:type path)))
-    (let [init-state {:position [0 0 0] :heading [1 0 0] :up [0 0 1]}]
-      (:result
-       (reduce
-        (fn [{:keys [position heading up result] :as acc} cmd]
-          (if result
-            (reduced acc)
-            (case (:cmd cmd)
-              :f (let [d (first (:args cmd))]
-                   (assoc acc :position (extrusion/v+ position
-                                                      (extrusion/v* heading d))))
-              :u (let [d (first (:args cmd))]
-                   (assoc acc :position (extrusion/v+ position
-                                                      (extrusion/v* up d))))
-              :rt (let [d (first (:args cmd))
-                        right (extrusion/cross heading up)]
-                    (assoc acc :position (extrusion/v+ position
-                                                       (extrusion/v* right d))))
-              :lt (let [d (first (:args cmd))
-                        right (extrusion/cross heading up)]
-                    (assoc acc :position (extrusion/v+ position
-                                                       (extrusion/v* right (- d)))))
-              (:th :tv :tr :set-heading)
-              (let [s' (extrusion/apply-rotation-to-state acc cmd)]
-                (assoc acc :heading (:heading s') :up (:up s')))
-              :mark (if (= (first (:args cmd)) mark-name)
-                      (assoc acc :result position)
-                      acc)
-              acc)))
-        (assoc init-state :result nil)
-        (:commands path))))))
-
-(defn ^:export mark-x
-  "Get the X coordinate of a named mark within a path."
-  [path mark-name]
-  (first (mark-pos path mark-name)))
-
-(defn ^:export mark-y
-  "Get the Y coordinate of a named mark within a path."
-  [path mark-name]
-  (second (mark-pos path mark-name)))
-
-(defn ^:export mark-z
-  "Get the Z coordinate of a named mark within a path."
-  [path mark-name]
-  (nth (mark-pos path mark-name) 2 nil))
+;; mark-pos / mark-x / mark-y / mark-z were here, but a correct trace
+;; needs to handle :side-trip (and any future scoped commands) the same
+;; way turtle/resolve-marks does. Reusing resolve-marks from here would
+;; close the cycle ridley.turtle.core → loft → clipper → shape → core,
+;; so they live in ridley.editor.implicit (which already requires
+;; turtle.core) as implicit-mark-pos & friends, bound to `mark-pos` etc
+;; in the SCI context.
 
 (defn ^:export bounds-2d
   "Get the 2D bounding box of a path or shape.
