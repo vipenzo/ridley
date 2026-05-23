@@ -1,0 +1,193 @@
+#!/usr/bin/env bb
+;; build_reference_index.bb
+;;
+;; Legge le schede Reference da dev-docs/reference-manual/ e produce
+;; src/ridley/manual/reference_index.cljs con una mappa simbolo → metadati.
+;;
+;; Uso:
+;;   bb scripts/build_reference_index.bb
+;;
+;; Output: namespace `ridley.manual.reference-index` con `def reference-index`.
+;; Lo script genera anche un riepilogo su stdout (schede processate,
+;; warning, entry nell'indice). Exit code 0 anche in presenza di warning.
+
+(require '[clojure.string :as str]
+         '[babashka.fs :as fs]
+         '[clj-yaml.core :as yaml])
+
+(def reference-dir "dev-docs/reference-manual")
+(def output-file   "src/ridley/manual/reference_index.cljs")
+
+;; File non-card alla radice di reference-manual/: skip senza warning.
+(def meta-files #{"Readme.md" "PROGRESS.md"})
+
+;; Niente troncamento: il primo paragrafo intero finisce nell'indice
+;; (usato da search/tooltip in CodeMirror). Se serve un riassunto
+;; in futuro, troncare a livello di consumer, non di sorgente.
+
+;; ----------------------------------------------------------------------------
+;; Parsing
+
+(defn split-frontmatter
+  "Ritorna [frontmatter-yaml body] o [nil testo-intero] se il frontmatter manca."
+  [text]
+  (let [lines (str/split-lines text)]
+    (if (= "---" (first lines))
+      (let [[fm-lines after] (split-with #(not= "---" %) (rest lines))]
+        (if (seq after)
+          [(str/join "\n" fm-lines)
+           (str/join "\n" (rest after))]
+          [nil text]))
+      [nil text])))
+
+(defn parse-frontmatter [yaml-str]
+  (when yaml-str
+    (try
+      (yaml/parse-string yaml-str)
+      (catch Exception _ nil))))
+
+(defn parse-body-sections
+  "Split del body per heading `## Nome`. Ritorna {nome → contenuto-trimmed}."
+  [body]
+  (let [lines (str/split-lines body)]
+    (loop [lines lines
+           current-name nil
+           current-lines []
+           sections (transient {})]
+      (if (empty? lines)
+        (persistent!
+         (if current-name
+           (assoc! sections current-name (str/trim (str/join "\n" current-lines)))
+           sections))
+        (let [line (first lines)
+              h2 (re-matches #"^##\s+(.+?)\s*$" line)]
+          (if h2
+            (recur (rest lines)
+                   (second h2)
+                   []
+                   (if current-name
+                     (assoc! sections current-name (str/trim (str/join "\n" current-lines)))
+                     sections))
+            (recur (rest lines)
+                   current-name
+                   (conj current-lines line)
+                   sections)))))))
+
+(defn extract-signature
+  "Tutte le signature inline-code della sezione Signature, una per riga.
+   Le funzioni con arità multiple (es. `(box size)` / `(box r u f)`) hanno
+   più righe di signature nel sorgente, e va preservato l'elenco completo
+   perché finisce nel tooltip dell'editor. \"\" se manca."
+  [section]
+  (if (str/blank? section)
+    ""
+    (let [sigs (->> (str/split-lines section)
+                    (keep (fn [line]
+                            (let [[_ s] (re-find #"`([^`]+)`" line)]
+                              s)))
+                    (vec))]
+      (str/join "\n" sigs))))
+
+(defn extract-description
+  "Primo paragrafo della sezione Description, whitespace collassato."
+  [section]
+  (if (str/blank? section)
+    ""
+    (-> section
+        (str/split #"\n\s*\n" 2)
+        first
+        (or "")
+        (str/replace #"\s+" " ")
+        str/trim)))
+
+(defn relative-path
+  "Path POSIX relativo alla root di progetto."
+  [path]
+  (let [root (.getCanonicalPath (java.io.File. "."))
+        p    (.getCanonicalPath (fs/file path))]
+    (if (str/starts-with? p (str root "/"))
+      (subs p (inc (count root)))
+      (str p))))
+
+(defn process-card [path]
+  (let [text (slurp (str path))
+        [fm body] (split-frontmatter text)
+        meta-data (parse-frontmatter fm)
+        sections (parse-body-sections (or body ""))
+        sig-section (get sections "Signature")
+        desc-section (get sections "Description")]
+    {:name         (some-> meta-data :name str)
+     :category     (some-> meta-data :category str)
+     :status       (some-> meta-data :status str)
+     :since        (or (some-> meta-data :since str) "")
+     :signature    (extract-signature sig-section)
+     :description  (extract-description desc-section)
+     :path         (relative-path path)
+     :_has-fm      (boolean meta-data)
+     :_has-sig     (boolean sig-section)}))
+
+;; ----------------------------------------------------------------------------
+;; Emit
+
+(defn emit-entry [{:keys [name category status since signature description path]}]
+  (str (pr-str name) "\n"
+       "   {:name " (pr-str name) "\n"
+       "    :category " (pr-str category) "\n"
+       "    :status " (pr-str status) "\n"
+       "    :since " (pr-str since) "\n"
+       "    :signature " (pr-str signature) "\n"
+       "    :description " (pr-str description) "\n"
+       "    :path " (pr-str path) "}"))
+
+(defn emit-cljs [entries]
+  (str ";; Generated by scripts/build_reference_index.bb — do not edit manually.\n"
+       ";; Source: dev-docs/reference-manual/*.md\n"
+       "(ns ridley.manual.reference-index)\n"
+       "\n"
+       "(def reference-index\n"
+       "  {" (str/join "\n\n   " (map emit-entry entries)) "})\n"))
+
+;; ----------------------------------------------------------------------------
+;; Main
+
+(let [files (->> (file-seq (fs/file reference-dir))
+                 (filter #(.isFile %))
+                 (filter #(str/ends-with? (.getName %) ".md"))
+                 (remove #(contains? meta-files (.getName %)))
+                 (sort-by #(.getPath %)))
+      _ (println (str "Processing " (count files) " file(s) from " reference-dir))
+      cards (mapv process-card files)
+      warnings (volatile! [])
+      seen-names (volatile! #{})
+      add-warn! (fn [msg] (vswap! warnings conj msg))]
+
+  (doseq [{:keys [name path signature _has-fm _has-sig]} cards]
+    (when-not _has-fm
+      (add-warn! (str "frontmatter mancante o malformato: " path)))
+    (when (and _has-fm (str/blank? name))
+      (add-warn! (str "campo 'name' assente nel frontmatter: " path)))
+    (when-not _has-sig
+      (add-warn! (str "sezione ## Signature mancante: " path)))
+    (when (and _has-sig (str/blank? signature))
+      (add-warn! (str "sezione ## Signature presente ma nessuna signature inline-code estratta: " path)))
+    (when (and (not (str/blank? name)) (contains? @seen-names name))
+      (add-warn! (str "nome duplicato '" name "' in: " path)))
+    (when (not (str/blank? name))
+      (vswap! seen-names conj name)))
+
+  (let [entries (->> cards
+                     (filter (comp not str/blank? :name))
+                     (map #(dissoc % :_has-fm :_has-sig))
+                     (sort-by :name))
+        output (emit-cljs entries)]
+
+    (fs/create-dirs (fs/parent output-file))
+    (spit output-file output)
+
+    (println)
+    (doseq [w @warnings] (println (str "  WARN " w)))
+    (when (seq @warnings) (println))
+    (println (str "Processate: " (count cards) " schede"))
+    (println (str "Warning:    " (count @warnings)))
+    (println (str "Entry:      " (count entries)))
+    (println (str "Scritto:    " output-file))))

@@ -1,26 +1,29 @@
 (ns ridley.editor.codemirror
   "CodeMirror 6 integration for Clojure editing with paredit support."
   (:require [ridley.ai.history :as history]
+            [ridley.manual.reference-index :refer [reference-index]]
+            [ridley.manual.clojure-core-index :refer [clojure-core-index]]
             [clojure.string :as str]
             ["@codemirror/view" :as view :refer [EditorView ViewPlugin Decoration
-                                                  keymap lineNumbers
-                                                  drawSelection
-                                                  rectangularSelection
-                                                  crosshairCursor
-                                                  highlightSpecialChars]]
+                                                 keymap lineNumbers
+                                                 drawSelection
+                                                 rectangularSelection
+                                                 crosshairCursor
+                                                 hoverTooltip
+                                                 highlightSpecialChars]]
             ["@codemirror/state" :refer [EditorState StateField StateEffect
-                                          Compartment]]
+                                         Compartment Prec]]
             ["@codemirror/commands" :as commands :refer [history historyKeymap
                                                          defaultKeymap
                                                          indentWithTab
                                                          undo redo]]
             ["@codemirror/language" :refer [indentOnInput bracketMatching
                                             foldGutter foldKeymap
-                                            syntaxHighlighting
+                                            syntaxHighlighting syntaxTree
                                             HighlightStyle]]
             ["@codemirror/search" :refer [searchKeymap highlightSelectionMatches]]
             ["@codemirror/autocomplete" :refer [closeBrackets closeBracketsKeymap
-                                                autocompletion]]
+                                                autocompletion acceptCompletion]]
             ["@lezer/highlight" :refer [tags]]
             ["@nextjournal/clojure-mode" :as clojure-mode]))
 
@@ -43,23 +46,23 @@
 ;; State field to track AI focus range {from, to} or nil
 (def ai-focus-field
   (.define StateField
-    #js {:create (fn [] nil)
-         :update (fn [value tr]
-                   (let [effects (.-effects tr)]
+           #js {:create (fn [] nil)
+                :update (fn [value tr]
+                          (let [effects (.-effects tr)]
                      ;; Check for our effect first
-                     (loop [i 0]
-                       (if (< i (.-length effects))
-                         (let [effect (aget effects i)]
-                           (if (.is effect set-ai-focus-effect)
-                             (.-value effect)
-                             (recur (inc i))))
+                            (loop [i 0]
+                              (if (< i (.-length effects))
+                                (let [effect (aget effects i)]
+                                  (if (.is effect set-ai-focus-effect)
+                                    (.-value effect)
+                                    (recur (inc i))))
                          ;; No effect found — map positions through doc changes
-                         (when value
-                           (let [from (.-from value)
-                                 to (.-to value)]
-                             (when (and from to)
-                               #js {:from (.mapPos (.-changes tr) from)
-                                    :to (.mapPos (.-changes tr) to)})))))))}))
+                                (when value
+                                  (let [from (.-from value)
+                                        to (.-to value)]
+                                    (when (and from to)
+                                      #js {:from (.mapPos (.-changes tr) from)
+                                           :to (.mapPos (.-changes tr) to)})))))))}))
 
 ;; Mark decoration for AI focus
 (def ^:private ai-focus-mark
@@ -68,104 +71,281 @@
 ;; Plugin that provides decorations from the state field
 (def ai-focus-plugin
   (.fromClass ViewPlugin
-    (fn [^js view]
-      #js {:decorations (let [range (.field (.-state view) ai-focus-field)]
-                          (if (and range (.-from range) (.-to range)
-                                   (< (.-from range) (.-to range)))
-                            (.set Decoration
-                              #js [(.range ai-focus-mark (.-from range) (.-to range))])
-                            (.-none Decoration)))
-           :update (fn [^js update]
-                     (this-as this
-                       (set! (.-decorations this)
-                             (let [range (.field (.-state (.-view update)) ai-focus-field)]
-                               (if (and range (.-from range) (.-to range)
-                                        (< (.-from range) (.-to range)))
-                                 (.set Decoration
-                                   #js [(.range ai-focus-mark (.-from range) (.-to range))])
-                                 (.-none Decoration))))))})
-    #js {:decorations (fn [v] (.-decorations v))}))
+              (fn [^js view]
+                #js {:decorations (let [range (.field (.-state view) ai-focus-field)]
+                                    (if (and range (.-from range) (.-to range)
+                                             (< (.-from range) (.-to range)))
+                                      (.set Decoration
+                                            #js [(.range ai-focus-mark (.-from range) (.-to range))])
+                                      (.-none Decoration)))
+                     :update (fn [^js update]
+                               (this-as this
+                                        (set! (.-decorations this)
+                                              (let [range (.field (.-state (.-view update)) ai-focus-field)]
+                                                (if (and range (.-from range) (.-to range)
+                                                         (< (.-from range) (.-to range)))
+                                                  (.set Decoration
+                                                        #js [(.range ai-focus-mark (.-from range) (.-to range))])
+                                                  (.-none Decoration))))))})
+              #js {:decorations (fn [v] (.-decorations v))}))
+
+;; ============================================================
+;; Reference search — completion & hover tooltip for Ridley symbols
+;; ============================================================
+
+(def ^:private symbol-char-re #"[A-Za-z0-9\-?!*+/<>=._]")
+
+(defn- in-string-or-comment?
+  "Returns true if pos is inside a String or Comment node per the syntax tree."
+  [^js state pos]
+  (try
+    (let [tree (syntaxTree state)
+          node (.resolveInner tree pos -1)]
+      (loop [^js n node]
+        (if (nil? n)
+          false
+          (let [name (.-name n)]
+            (cond
+              (or (= name "String") (= name "StringContent")
+                  (= name "Comment") (= name "LineComment")
+                  (= name "BlockComment"))
+              true
+              :else (recur (.-parent n)))))))
+    (catch :default _ false)))
+
+(defn- ridley-entries-cached []
+  reference-index)
+
+(defn- clojure-entries-cached []
+  clojure-core-index)
+
+(defn- build-completion-option
+  "Build a CodeMirror completion option for an index entry.
+   type: \"function\" for Ridley, \"keyword\" for Clojure core."
+  [type entry]
+  #js {:label       (:name entry)
+       :detail      (:signature entry)
+       :info        (:description entry)
+       :type        type})
+
+(def ^:private ridley-completions
+  (delay
+    (->> (vals (ridley-entries-cached))
+         (mapv #(build-completion-option "function" %))
+         to-array)))
+
+(def ^:private clojure-completions
+  (delay
+    (->> (vals (clojure-entries-cached))
+         (mapv #(build-completion-option "keyword" %))
+         to-array)))
+
+(defn- all-completions []
+  (let [out (array)]
+    (doseq [c @ridley-completions] (.push out c))
+    (doseq [c @clojure-completions] (.push out c))
+    out))
+
+(defn- ridley-completion-source
+  "CodeMirror CompletionSource. Returns Ridley + Clojure-core symbols
+   matching the prefix before the cursor. Bails inside strings/comments
+   and for implicit prefixes shorter than 2 characters."
+  [^js context]
+  (let [state (.-state context)
+        pos   (.-pos context)
+        doc   (.. state -doc (toString))
+        ;; Scan back to find token start
+        start (loop [i (dec pos)]
+                (if (< i 0)
+                  0
+                  (let [ch (.charAt doc i)]
+                    (if (re-matches symbol-char-re ch)
+                      (recur (dec i))
+                      (inc i)))))
+        text  (subs doc start pos)
+        explicit? (.-explicit context)]
+    (cond
+      (in-string-or-comment? state pos) nil
+      (and (not explicit?) (< (count text) 2)) nil
+      (zero? (count text)) (when explicit?
+                             #js {:from start :to pos :options (all-completions)})
+      :else #js {:from start :to pos :options (all-completions)})))
+
+(defn- symbol-at-pos
+  "Return {:from :to :text} for the symbol token at `pos`, or nil if pos
+   is not on a symbol character."
+  [^js state pos]
+  (let [doc (.. state -doc (toString))
+        n   (count doc)]
+    (when (and (>= pos 0) (< pos n))
+      (let [ch (.charAt doc pos)]
+        (when (re-matches symbol-char-re ch)
+          (let [start (loop [i (dec pos)]
+                        (if (< i 0)
+                          0
+                          (let [c (.charAt doc i)]
+                            (if (re-matches symbol-char-re c)
+                              (recur (dec i))
+                              (inc i)))))
+                end   (loop [i (inc pos)]
+                        (if (>= i n)
+                          n
+                          (let [c (.charAt doc i)]
+                            (if (re-matches symbol-char-re c)
+                              (recur (inc i))
+                              i))))]
+            {:from start :to end :text (subs doc start end)}))))))
+
+(defn- make-tooltip-dom
+  "Build the DOM node for a reference tooltip from an entry map."
+  [{:keys [name signature description]}]
+  (let [root (js/document.createElement "div")
+        title (js/document.createElement "div")
+        sig   (js/document.createElement "div")
+        desc  (js/document.createElement "div")]
+    (set! (.-className root) "cm-ridley-tooltip")
+    (set! (.-className title) "cm-ridley-tooltip-name")
+    (set! (.-textContent title) name)
+    (set! (.-className sig) "cm-ridley-tooltip-sig")
+    (set! (.-textContent sig) (or signature ""))
+    (set! (.-className desc) "cm-ridley-tooltip-desc")
+    (set! (.-textContent desc) (or description ""))
+    (.appendChild root title)
+    (when-not (str/blank? (or signature "")) (.appendChild root sig))
+    (when-not (str/blank? (or description "")) (.appendChild root desc))
+    root))
+
+(defn- lookup-entry [sym]
+  (or (get (ridley-entries-cached) sym)
+      (get (clojure-entries-cached) sym)))
+
+(defn- ridley-hover-source
+  "Returns a Tooltip description for the symbol under the pointer, or nil
+   when there's no annotated entry or the position is in a string/comment."
+  [^js view pos _side]
+  (let [state (.-state view)]
+    (when-not (in-string-or-comment? state pos)
+      (when-let [{:keys [from to text]} (symbol-at-pos state pos)]
+        (when-let [entry (lookup-entry text)]
+          #js {:pos    from
+               :end    to
+               :above  true
+               :create (fn [_]
+                         #js {:dom (make-tooltip-dom entry)})})))))
+
+(def ridley-reference-tooltip
+  (hoverTooltip ridley-hover-source
+                #js {:hoverTime 300}))
+
+(def ridley-completion-extension
+  (autocompletion #js {:override #js [ridley-completion-source]}))
+
+;; Tab → acceptCompletion (only when popup is active; acceptCompletion
+;; returns false otherwise, letting indentWithTab take over).
+;; High precedence so it wins over indentWithTab when completion is open.
+(def ridley-tab-accept-keymap
+  (.highest Prec
+            (.of keymap #js [#js {:key "Tab" :run acceptCompletion}])))
 
 (defn- create-highlight-style
   "Create a bright syntax highlighting style for Clojure."
   []
   (.define HighlightStyle
-    #js [;; Comments - green italic
-         #js {:tag (.-lineComment tags) :color "#6a9955" :fontStyle "italic"}
-         #js {:tag (.-blockComment tags) :color "#6a9955" :fontStyle "italic"}
+           #js [;; Comments - green italic
+                #js {:tag (.-lineComment tags) :color "#6a9955" :fontStyle "italic"}
+                #js {:tag (.-blockComment tags) :color "#6a9955" :fontStyle "italic"}
          ;; Keywords (:foo) - bright cyan
-         #js {:tag (.-atom tags) :color "#4fc1ff"}
+                #js {:tag (.-atom tags) :color "#4fc1ff"}
          ;; Strings - orange
-         #js {:tag (.-string tags) :color "#ce9178"}
+                #js {:tag (.-string tags) :color "#ce9178"}
          ;; Numbers - light green
-         #js {:tag (.-number tags) :color "#b5cea8"}
+                #js {:tag (.-number tags) :color "#b5cea8"}
          ;; def, defn, let, fn, etc. - purple
-         #js {:tag (.-keyword tags) :color "#c586c0"}
+                #js {:tag (.-keyword tags) :color "#c586c0"}
          ;; Function/var definitions - yellow
-         #js {:tag (.definition tags (.-variableName tags)) :color "#dcdcaa"}
+                #js {:tag (.definition tags (.-variableName tags)) :color "#dcdcaa"}
          ;; Variable names - light blue
-         #js {:tag (.-variableName tags) :color "#9cdcfe"}
+                #js {:tag (.-variableName tags) :color "#9cdcfe"}
          ;; Boolean, nil - blue
-         #js {:tag (.-bool tags) :color "#569cd6"}
-         #js {:tag (.-null tags) :color "#569cd6"}
+                #js {:tag (.-bool tags) :color "#569cd6"}
+                #js {:tag (.-null tags) :color "#569cd6"}
          ;; Operators - light gray
-         #js {:tag (.-operator tags) :color "#d4d4d4"}
+                #js {:tag (.-operator tags) :color "#d4d4d4"}
          ;; Punctuation/brackets - white
-         #js {:tag (.-punctuation tags) :color "#d4d4d4"}
-         #js {:tag (.-bracket tags) :color "#d4d4d4"}
+                #js {:tag (.-punctuation tags) :color "#d4d4d4"}
+                #js {:tag (.-bracket tags) :color "#d4d4d4"}
          ;; Special/meta
-         #js {:tag (.-meta tags) :color "#d4d4d4"}
+                #js {:tag (.-meta tags) :color "#d4d4d4"}
          ;; Emphasis (docstrings)
-         #js {:tag (.-emphasis tags) :color "#ce9178" :fontStyle "italic"}
+                #js {:tag (.-emphasis tags) :color "#ce9178" :fontStyle "italic"}
          ;; Regexp
-         #js {:tag (.-regexp tags) :color "#d16969"}]))
+                #js {:tag (.-regexp tags) :color "#d16969"}]))
 
 (defn- create-theme
   "Create a custom dark theme with bright, readable colors."
   []
   (.theme EditorView
-    #js {"&" #js {:height "100%"
-                  :fontSize "13px"
-                  :backgroundColor "#1e1e1e"}
-         ".cm-scroller" #js {:fontFamily "'SF Mono', 'Monaco', 'Menlo', 'Consolas', monospace"
-                             :lineHeight "1.5"
-                             :overflow "auto"}
-         ".cm-content" #js {:padding "12px 0"
-                            :caretColor "#fff"}
-         ".cm-line" #js {:padding "0 16px"}
-         "&.cm-focused" #js {:outline "none"}
-         ".cm-gutters" #js {:backgroundColor "#1e1e1e"
-                            :color "#858585"
-                            :border "none"
-                            :paddingLeft "8px"}
-         ".cm-activeLineGutter" #js {:backgroundColor "#252526"
-                                     :color "#c6c6c6"}
-         ".cm-activeLine" #js {:backgroundColor "#252526"}
+          #js {"&" #js {:height "100%"
+                        :fontSize "13px"
+                        :backgroundColor "#1e1e1e"}
+               ".cm-scroller" #js {:fontFamily "'SF Mono', 'Monaco', 'Menlo', 'Consolas', monospace"
+                                   :lineHeight "1.5"
+                                   :overflow "auto"}
+               ".cm-content" #js {:padding "12px 0"
+                                  :caretColor "#fff"}
+               ".cm-line" #js {:padding "0 16px"}
+               "&.cm-focused" #js {:outline "none"}
+               ".cm-gutters" #js {:backgroundColor "#1e1e1e"
+                                  :color "#858585"
+                                  :border "none"
+                                  :paddingLeft "8px"}
+               ".cm-activeLineGutter" #js {:backgroundColor "#252526"
+                                           :color "#c6c6c6"}
+               ".cm-activeLine" #js {:backgroundColor "#252526"}
          ;; Syntax highlighting - brighter colors
-         ".cm-keyword" #js {:color "#c586c0"}           ; purple - def, defn, let, etc.
-         ".cm-atom" #js {:color "#4fc1ff"}              ; bright cyan - keywords like :foo
-         ".cm-number" #js {:color "#b5cea8"}            ; light green - numbers
-         ".cm-string" #js {:color "#ce9178"}            ; orange - strings
-         ".cm-comment" #js {:color "#6a9955"            ; green - comments
-                            :fontStyle "italic"}
-         ".cm-variableName" #js {:color "#9cdcfe"}      ; light blue - variables
-         ".cm-definition" #js {:color "#dcdcaa"}        ; yellow - function names
-         ".cm-punctuation" #js {:color "#d4d4d4"}       ; light gray - parens
-         ".cm-bracket" #js {:color "#ffd700"}           ; gold - brackets
-         ".cm-matchingBracket" #js {:backgroundColor "#3a3d41"
-                                    :color "#ffd700"
-                                    :fontWeight "bold"}
-         ".cm-selectionMatch" #js {:backgroundColor "#3a3d41"}
-         ".cm-cursor" #js {:borderLeftColor "#fff"
-                           :borderLeftWidth "2px"}
+               ".cm-keyword" #js {:color "#c586c0"}           ; purple - def, defn, let, etc.
+               ".cm-atom" #js {:color "#4fc1ff"}              ; bright cyan - keywords like :foo
+               ".cm-number" #js {:color "#b5cea8"}            ; light green - numbers
+               ".cm-string" #js {:color "#ce9178"}            ; orange - strings
+               ".cm-comment" #js {:color "#6a9955"            ; green - comments
+                                  :fontStyle "italic"}
+               ".cm-variableName" #js {:color "#9cdcfe"}      ; light blue - variables
+               ".cm-definition" #js {:color "#dcdcaa"}        ; yellow - function names
+               ".cm-punctuation" #js {:color "#d4d4d4"}       ; light gray - parens
+               ".cm-bracket" #js {:color "#ffd700"}           ; gold - brackets
+               ".cm-matchingBracket" #js {:backgroundColor "#3a3d41"
+                                          :color "#ffd700"
+                                          :fontWeight "bold"}
+               ".cm-selectionMatch" #js {:backgroundColor "#3a3d41"}
+               ".cm-cursor" #js {:borderLeftColor "#fff"
+                                 :borderLeftWidth "2px"}
          ;; Selection background colors
-         "&.cm-focused .cm-selectionBackground" #js {:backgroundColor "#264f78"}
-         ".cm-selectionBackground" #js {:backgroundColor "#3a3d41"}
+               "&.cm-focused .cm-selectionBackground" #js {:backgroundColor "#264f78"}
+               ".cm-selectionBackground" #js {:backgroundColor "#3a3d41"}
          ;; AI focus indicator — orange highlight around current form
-         ".cm-ai-focus" #js {:backgroundColor "rgba(255, 152, 0, 0.12)"
-                             :borderBottom "2px solid #ff9800"
-                             :borderRadius "2px"}}
-    #js {:dark true}))
+               ".cm-ai-focus" #js {:backgroundColor "rgba(255, 152, 0, 0.12)"
+                                   :borderBottom "2px solid #ff9800"
+                                   :borderRadius "2px"}
+         ;; Reference tooltip — hover-over-symbol info
+               ".cm-ridley-tooltip" #js {:padding "8px 10px"
+                                         :maxWidth "440px"
+                                         :backgroundColor "#252526"
+                                         :border "1px solid #3a3d41"
+                                         :borderRadius "4px"
+                                         :color "#d4d4d4"
+                                         :fontSize "12px"
+                                         :lineHeight "1.45"
+                                         :boxShadow "0 4px 12px rgba(0,0,0,0.4)"}
+               ".cm-ridley-tooltip-name" #js {:fontWeight "bold"
+                                              :color "#dcdcaa"
+                                              :marginBottom "4px"}
+               ".cm-ridley-tooltip-sig" #js {:fontFamily "'SF Mono','Monaco','Menlo','Consolas',monospace"
+                                             :color "#9cdcfe"
+                                             :marginBottom "6px"
+                                             :whiteSpace "pre-wrap"}
+               ".cm-ridley-tooltip-desc" #js {:color "#d4d4d4"
+                                              :whiteSpace "normal"}}
+          #js {:dark true}))
 
 (defn- create-selection-layer-fix
   "ViewPlugin that applies inline styles to .cm-selectionLayer,
@@ -175,40 +355,40 @@
    pointer-events none ensures clicks pass through to the text layer."
   []
   (.define ViewPlugin
-    (fn [^js view]
-      (let [apply-fix (fn []
-                        (when-let [layer (.querySelector (.-dom view) ".cm-selectionLayer")]
-                          (let [s (.-style layer)]
-                            (set! (.-zIndex s) "2")
-                            (set! (.-pointerEvents s) "none")
-                            (set! (.-opacity s) "0.4"))))]
-        (apply-fix)
-        #js {:update (fn [_update] (apply-fix))}))))
+           (fn [^js view]
+             (let [apply-fix (fn []
+                               (when-let [layer (.querySelector (.-dom view) ".cm-selectionLayer")]
+                                 (let [s (.-style layer)]
+                                   (set! (.-zIndex s) "2")
+                                   (set! (.-pointerEvents s) "none")
+                                   (set! (.-opacity s) "0.4"))))]
+               (apply-fix)
+               #js {:update (fn [_update] (apply-fix))}))))
 
 (defn- create-run-keymap
   "Create keymap for Cmd+Enter to run code."
   [on-run]
   (.of keymap
-    #js [#js {:key "Mod-Enter"
-              :run (fn [_view]
-                     (when on-run (on-run))
-                     true)}]))
+       #js [#js {:key "Mod-Enter"
+                 :run (fn [_view]
+                        (when on-run (on-run))
+                        true)}]))
 
 (defn- create-change-listener
   "Create update listener that calls on-change when document changes."
   [on-change]
   (.of (.-updateListener EditorView)
-    (fn [^js update]
-      (when (and on-change (.-docChanged update))
-        (on-change)))))
+       (fn [^js update]
+         (when (and on-change (.-docChanged update))
+           (on-change)))))
 
 (defn- create-selection-listener
   "Create update listener that calls on-selection-change when selection changes."
   [on-selection-change]
   (.of (.-updateListener EditorView)
-    (fn [^js update]
-      (when (and on-selection-change (.-selectionSet update))
-        (on-selection-change)))))
+       (fn [^js update]
+         (when (and on-selection-change (.-selectionSet update))
+           (on-selection-change)))))
 
 (defn create-editor
   "Create a CodeMirror editor instance.
@@ -229,7 +409,9 @@
                             (syntaxHighlighting (create-highlight-style))
                             (bracketMatching)
                             (closeBrackets)
-                            (autocompletion)
+                            ridley-completion-extension
+                            ridley-tab-accept-keymap
+                            ridley-reference-tooltip
                             (rectangularSelection)
                             (crosshairCursor)
                             (highlightSelectionMatches)
@@ -277,8 +459,8 @@
                             (->> (remove nil?))
                             to-array)
         state (.create EditorState
-                #js {:doc (or initial-value "")
-                     :extensions flat-extensions})
+                       #js {:doc (or initial-value "")
+                            :extensions flat-extensions})
         view (EditorView. #js {:state state
                                :parent parent})]
     (reset! editor-instance view)
@@ -299,9 +481,9 @@
   ([view value]
    (when view
      (.dispatch view
-       #js {:changes #js {:from 0
-                          :to (.. view -state -doc -length)
-                          :insert (or value "")}}))))
+                #js {:changes #js {:from 0
+                                   :to (.. view -state -doc -length)
+                                   :insert (or value "")}}))))
 
 (defn toggle-line-numbers!
   "Toggle line numbers on/off. Returns new state (true = visible)."
@@ -310,7 +492,7 @@
     (let [on? (swap! line-numbers-on? not)
           ext (if on? (lineNumbers) #js [])]
       (.dispatch view
-        #js {:effects (.reconfigure line-numbers-compartment ext)})
+                 #js {:effects (.reconfigure line-numbers-compartment ext)})
       on?)))
 
 (defn line-numbers-visible?
@@ -364,7 +546,7 @@
                               line-obj (.line (.-doc state) line)]
                           (+ (.-from line-obj) col)))]
        (.dispatch view
-         #js {:selection #js {:anchor actual-pos :head actual-pos}})))))
+                  #js {:selection #js {:anchor actual-pos :head actual-pos}})))))
 
 (defn insert-at-cursor
   "Insert text at current cursor position."
@@ -373,8 +555,8 @@
    (when view
      (let [pos (.. view -state -selection -main -head)]
        (.dispatch view
-         #js {:changes #js {:from pos :to pos :insert text}
-              :selection #js {:anchor (+ pos (count text))}})))))
+                  #js {:changes #js {:from pos :to pos :insert text}
+                       :selection #js {:anchor (+ pos (count text))}})))))
 
 (defn insert-at-end
   "Insert text at end of document."
@@ -383,8 +565,8 @@
    (when view
      (let [end (.. view -state -doc -length)]
        (.dispatch view
-         #js {:changes #js {:from end :to end :insert text}
-              :selection #js {:anchor (+ end (count text))}})))))
+                  #js {:changes #js {:from end :to end :insert text}
+                       :selection #js {:anchor (+ end (count text))}})))))
 
 (defn get-selection
   "Get current selection as {:from :to :text}."
@@ -403,8 +585,8 @@
   ([view from to text]
    (when view
      (.dispatch view
-       #js {:changes #js {:from from :to to :insert text}
-            :selection #js {:anchor (+ from (count text))}}))))
+                #js {:changes #js {:from from :to to :insert text}
+                     :selection #js {:anchor (+ from (count text))}}))))
 
 (defn delete-range
   "Delete text in range [from, to)."
@@ -665,38 +847,38 @@
          ;; Scan backwards looking for an unmatched open bracket
          (loop [i (dec pos)
               ;; Stack of close-brackets we need to skip
-              stack []]
-         (when (>= i 0)
-           (let [ch (.charAt doc-text i)]
-             (cond
+                stack []]
+           (when (>= i 0)
+             (let [ch (.charAt doc-text i)]
+               (cond
                ;; Skip string backwards
-               (and (= ch \") (or (zero? i) (not= (.charAt doc-text (dec i)) \\)))
-               (let [str-start (loop [k (dec i)]
-                                 (cond
-                                   (< k 0) nil
-                                   (and (= (.charAt doc-text k) \")
-                                        (or (zero? k) (not= (.charAt doc-text (dec k)) \\)))
-                                   k
-                                   :else (recur (dec k))))]
-                 (if str-start
-                   (recur (dec str-start) stack)
-                   nil))
+                 (and (= ch \") (or (zero? i) (not= (.charAt doc-text (dec i)) \\)))
+                 (let [str-start (loop [k (dec i)]
+                                   (cond
+                                     (< k 0) nil
+                                     (and (= (.charAt doc-text k) \")
+                                          (or (zero? k) (not= (.charAt doc-text (dec k)) \\)))
+                                     k
+                                     :else (recur (dec k))))]
+                   (if str-start
+                     (recur (dec str-start) stack)
+                     nil))
 
                ;; Close bracket — push to stack
-               (close-brackets ch)
-               (recur (dec i) (conj stack ch))
+                 (close-brackets ch)
+                 (recur (dec i) (conj stack ch))
 
                ;; Open bracket — check if it matches top of stack or is our parent
-               (open-brackets ch)
-               (let [expected-close (bracket-pairs ch)]
-                 (if (and (seq stack) (= (peek stack) expected-close))
+                 (open-brackets ch)
+                 (let [expected-close (bracket-pairs ch)]
+                   (if (and (seq stack) (= (peek stack) expected-close))
                    ;; Matches a close we saw — pop and continue
-                   (recur (dec i) (pop stack))
+                     (recur (dec i) (pop stack))
                    ;; Unmatched open bracket — this is our containing form
-                   (when-let [end (find-matching-close doc-text i doc-len)]
-                     {:from i :to end :text (subs doc-text i end)})))
+                     (when-let [end (find-matching-close doc-text i doc-len)]
+                       {:from i :to end :text (subs doc-text i end)})))
 
-               :else (recur (dec i) stack))))))))))
+                 :else (recur (dec i) stack))))))))))
 
 (defn- read-form-backward
   "Read the form ending at position p (inclusive). Returns {:from :to :text} or nil."
@@ -718,15 +900,15 @@
                                   (recur (dec i) (dec depth)))
                   ;; Skip strings inside brackets
                   (= c \") (let [str-start (loop [k (dec i)]
-                                              (cond
-                                                (< k 0) nil
-                                                (and (= (.charAt doc-text k) \")
-                                                     (or (zero? k) (not= (.charAt doc-text (dec k)) \\)))
-                                                k
-                                                :else (recur (dec k))))]
-                              (if str-start
-                                (recur (dec str-start) depth)
-                                nil))
+                                             (cond
+                                               (< k 0) nil
+                                               (and (= (.charAt doc-text k) \")
+                                                    (or (zero? k) (not= (.charAt doc-text (dec k)) \\)))
+                                               k
+                                               :else (recur (dec k))))]
+                             (if str-start
+                               (recur (dec str-start) depth)
+                               nil))
                   :else (recur (dec i) depth))))))
 
         ;; End of string — find opening quote
@@ -870,7 +1052,7 @@
   ([view from to]
    (when view
      (.dispatch view
-       #js {:selection #js {:anchor from :head to}})
+                #js {:selection #js {:anchor from :head to}})
      ;; Return the selection info
      {:from from :to to :text (.sliceDoc (.-state view) from to)})))
 
@@ -1104,9 +1286,9 @@
          (let [line-obj (.line doc line-number)
                pos (.-from line-obj)]
            (.dispatch view
-             #js {:selection #js {:anchor pos :head pos}
-                  :effects (.scrollIntoView EditorView pos
-                             #js {:y "center"})})))))))
+                      #js {:selection #js {:anchor pos :head pos}
+                           :effects (.scrollIntoView EditorView pos
+                                                     #js {:y "center"})})))))))
 
 (defn flash-line!
   "Briefly highlight a line with an orange flash, then fade.
@@ -1121,17 +1303,17 @@
        (when (<= line-number n-lines)
          ;; Wait for scroll to complete, then flash via DOM
          (js/requestAnimationFrame
-           (fn []
-             (let [line-obj (.line doc line-number)
-                   pos (.-from line-obj)]
+          (fn []
+            (let [line-obj (.line doc line-number)
+                  pos (.-from line-obj)]
                ;; Use coordsAtPos to find the DOM line element
-               (when-let [coords (.coordsAtPos view pos)]
-                 (let [^js els (.elementsFromPoint js/document (.-left coords) (.-top coords))
-                       ^js line-dom (some (fn [^js el]
-                                            (when (.contains (.-classList el) "cm-line") el))
-                                          els)]
-                   (when line-dom
-                     (.add (.-classList line-dom) "cm-line-flash")
-                     (js/setTimeout
-                       #(.remove (.-classList line-dom) "cm-line-flash")
-                       duration-ms))))))))))))
+              (when-let [coords (.coordsAtPos view pos)]
+                (let [^js els (.elementsFromPoint js/document (.-left coords) (.-top coords))
+                      ^js line-dom (some (fn [^js el]
+                                           (when (.contains (.-classList el) "cm-line") el))
+                                         els)]
+                  (when line-dom
+                    (.add (.-classList line-dom) "cm-line-flash")
+                    (js/setTimeout
+                     #(.remove (.-classList line-dom) "cm-line-flash")
+                     duration-ms))))))))))))

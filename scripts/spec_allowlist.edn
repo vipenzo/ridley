@@ -1,0 +1,211 @@
+;; Allowlist: simboli bound in SCI ma intenzionalmente non documentati in Spec.md.
+;;
+;; Ogni voce DEVE essere preceduta da un commento `;;` che spieghi PERCHÉ il
+;; simbolo è esposto a SCI ma non è parte della documentazione utente.
+;;
+;; Usato da `scripts/spec_lint.bb` per filtrare i simboli "orfani" attesi
+;; (plumbing interno, helper di macro DSL, hook dinamici, ecc.).
+;;
+;; Convenzioni:
+;; - I simboli vanno scritti come simboli Clojure nudi, NON come stringhe.
+;; - Mantieni la lista raggruppata per famiglia (vedi intestazioni `===`).
+;; - Quando aggiungi una voce: una riga di commento sopra che spiega il motivo.
+;;
+;; Esempio:
+;;   ;; Internal helper used by the `box` DSL macro (not user-facing).
+;;   box-impl
+
+[ ;; ============================================================
+ ;; 1. Macro implementation helpers (suffisso `-impl`)
+ ;; ============================================================
+ ;; Funzioni runtime che implementano la semantica delle macro DSL
+ ;; definite in `src/ridley/editor/macros.cljs`. La macro espande in
+ ;; codice che chiama il corrispondente `*-impl`. L'utente usa la macro
+ ;; (es. `box`), non il suo helper (`box-impl`). Sono bound in SCI perché
+ ;; il codice macro-espanso vive nel sandbox SCI.
+
+ add-mesh-impl
+ attach!-impl
+ attach-face-impl
+ attach-impl
+ bloft-impl
+ bloft-n-impl
+ box-impl
+ clone-face-impl
+ compute-bezier-walk-impl
+ cone-impl
+ cyl-impl
+ extrude+-impl
+ extrude-closed-impl
+ extrude-closed-path-impl
+ extrude-impl
+ extrude-path-impl
+ finalize-loft-impl
+ finalize-sweep-closed-impl
+ finalize-sweep-impl
+ loft-impl
+ loft-n-impl
+ mesh-difference-impl
+ mesh-hull-impl
+ mesh-intersection-impl
+ mesh-union-impl
+ path-segments-impl
+ pen-impl
+ revolve+-impl
+ revolve-impl
+ run-path-impl
+ set-creation-pose!-impl
+ solidify-impl
+ sphere-impl
+ stamp-closed-impl
+ stamp-impl
+ stamp-loft-impl
+ subdivide-segment-impl
+ text-on-path-impl
+ warp-impl
+
+ ;; ============================================================
+ ;; 2. Shadow pure functions (prefisso `pure-`)
+ ;; ============================================================
+ ;; Versioni "pure" (senza side effect su `*turtle-state*`) usate dal
+ ;; recorder/replayer e dal pipeline `transform->`. Non documentate
+ ;; perché l'API utente è la variante turtle-aware (`loft`, `bloft`,
+ ;; `revolve`, `extrude-path`, ...).
+
+ pure-bloft
+ pure-bloft-shape-fn
+ pure-bloft-two-shapes
+ pure-extrude-path
+ pure-loft-path
+ pure-loft-shape-fn
+ pure-loft-two-shapes
+ pure-revolve
+ pure-revolve-shape-fn
+
+ ;; ============================================================
+ ;; 3. Recording helpers (prefisso `rec-`)
+ ;; ============================================================
+ ;; Primitive del recorder usate internamente da `path` per costruire
+ ;; il percorso senza toccare la turtle globale. L'utente scrive
+ ;; codice DSL (`f`, `rt`, `u`, ...) dentro `path` o `attach`; il
+ ;; macro-espansore le traduce in chiamate `rec-*`.
+
+ rec-cp-f
+ rec-cp-rt
+ rec-cp-u
+ rec-f
+ rec-inset
+ rec-lt
+ rec-move-to
+ rec-play-path
+ rec-rt
+ rec-scale
+ rec-set-heading
+ rec-th
+ rec-tr
+ rec-tv
+ rec-u
+
+ ;; ============================================================
+ ;; 4. Low-level turtle namespace (prefisso `turtle-`)
+ ;; ============================================================
+ ;; API esplicite della turtle che agiscono sullo state globale.
+ ;; Sono esposte per debug e per il bootstrap del DSL (le forme
+ ;; corte `f`, `rt`, `u`, `box`, `cyl`, ... le chiamano sotto il
+ ;; cofano). Non documentate perché l'utente usa le forme corte.
+
+ turtle-attach
+ turtle-attach-face
+ turtle-attach-face-extrude
+ turtle-attach-move
+ turtle-box
+ turtle-cone
+ turtle-cyl
+ turtle-d
+ turtle-f
+ turtle-group-transform
+ turtle-inset
+ turtle-lt
+ turtle-pen
+ turtle-pen-down
+ turtle-pen-up
+ turtle-rt
+ turtle-scale
+ turtle-sphere
+ turtle-th
+ turtle-tr
+ turtle-transform-mesh
+ turtle-tv
+ turtle-u
+
+ ;; ============================================================
+ ;; 5. Anchor support functions (suffisso `*`)
+ ;; ============================================================
+ ;; Helper interni del sistema marks/anchors. Wrappano save/restore
+ ;; del frame di riferimento usato da `attach`/`mark`. L'utente non
+ ;; li chiama direttamente; sono punti di estensione per le macro.
+
+ resolve-and-merge-marks*
+ restore-anchors*
+ save-anchors*
+
+ ;; ============================================================
+ ;; 6. Dynamic vars (`*name*`)
+ ;; ============================================================
+ ;; Earmuff vars che il recorder/la turtle leggono per propagare
+ ;; contesto (source map per error reporting, testo originale,
+ ;; turtle corrente). Non sono API utente: bound solo da `binding`
+ ;; dentro l'engine.
+
+ *eval-source*
+ *eval-text*
+ *turtle-state*
+
+ ;; ============================================================
+ ;; 7. Constructors-helper
+ ;; ============================================================
+ ;; Costruttori a basso livello per i record/atom usati dal motore
+ ;; (recorder, shape, turtle). L'utente usa primitive piu` alte
+ ;; (`path`, `loft`, ...) che li chiamano internamente.
+
+ make-recorder
+ make-shape
+ make-turtle
+ recording-turtle
+ replay-path-to-recording
+ shape-from-recording
+ shape-rec-f
+ shape-rec-th
+
+ ;; ============================================================
+ ;; 8. Debug / introspection internals
+ ;; ============================================================
+ ;; Helper di debug e introspezione (gli "14 C" dell'audit). Stampe
+ ;; di timing, naming automatico delle mesh anonime, claim/release
+ ;; di reference. Esposti perché utili dalla REPL, ma non parte
+ ;; della superficie pubblica del linguaggio.
+
+ anonymous-count
+ anonymous-meshes
+ claim-mesh!
+ perf-now
+ pr
+ print-bench
+
+ ;; ============================================================
+ ;; 9. Legacy aliases / namespace plumbing
+ ;; ============================================================
+ ;; Alias storici e simboli di compatibilità mantenuti per non
+ ;; rompere codice utente esistente in library. Non documentati
+ ;; perché esiste una forma canonica documentata altrove in Spec.md.
+ ;; - `ops-extrude`, `ops-loft`: alias prefissati di vecchia API.
+ ;; - `path-`, `path-from-recorder`: costruttori legacy del path.
+ ;; - `init-turtle`, `set-creation-pose`: setup iniziale, esposti
+ ;;   per script di bootstrap.
+
+ init-turtle
+ ops-extrude
+ ops-loft
+ path-
+ path-from-recorder
+ set-creation-pose]

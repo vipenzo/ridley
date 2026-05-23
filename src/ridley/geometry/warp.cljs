@@ -63,24 +63,24 @@
         (when (= prim :cone)
           (let [tol (max (* 0.02 height) 0.001)
                 bottom-r (apply max 0.0
-                           (keep #(when (< (Math/abs (- (second %) min-y)) tol)
-                                    (radial-fn %))
-                                 local-verts))
+                                (keep #(when (< (Math/abs (- (second %) min-y)) tol)
+                                         (radial-fn %))
+                                      local-verts))
                 top-r (apply max 0.0
-                        (keep #(when (< (Math/abs (- (second %) max-y)) tol)
-                                 (radial-fn %))
-                              local-verts))]
+                             (keep #(when (< (Math/abs (- (second %) max-y)) tol)
+                                      (radial-fn %))
+                                   local-verts))]
             {:bottom-radius bottom-r :top-radius top-r}))]
     (merge
-      {:center center
-       :heading heading
-       :up up
-       :right right
-       :half-ext half-ext
-       :primitive prim
-       :height height
-       :radius radius}
-      cone-radii)))
+     {:center center
+      :heading heading
+      :up up
+      :right right
+      :half-ext half-ext
+      :primitive prim
+      :height height
+      :radius radius}
+     cone-radii)))
 
 ;; ============================================================
 ;; Volume intersection (local space)
@@ -174,7 +174,7 @@
         ;; Volume center inside a large triangle? Check closest surface point.
         (let [cp (closest-point-on-triangle center v0 v1 v2)]
           (point-in-volume-local?
-            (world-to-local cp center right up heading) vol)))))
+           (world-to-local cp center right up heading) vol)))))
 
 (defn- get-or-add-midpoint
   "Return midpoint vertex index for edge [vi0 vi1], creating it if needed.
@@ -242,30 +242,30 @@
   [[lx ly lz] {:keys [primitive radius height half-ext bottom-radius top-radius]}]
   (let [half-h (/ height 2.0)]
     (min 1.0
-      (case primitive
-        :sphere
-        (let [d (Math/sqrt (+ (* lx lx) (* ly ly) (* lz lz)))]
-          (if (pos? radius) (/ d radius) 0.0))
+         (case primitive
+           :sphere
+           (let [d (Math/sqrt (+ (* lx lx) (* ly ly) (* lz lz)))]
+             (if (pos? radius) (/ d radius) 0.0))
 
-        :cylinder
-        (let [radial (Math/sqrt (+ (* lx lx) (* lz lz)))
-              rdist (if (pos? radius) (/ radial radius) 0.0)
-              hdist (if (pos? half-h) (/ (Math/abs ly) half-h) 0.0)]
-          (max rdist hdist))
+           :cylinder
+           (let [radial (Math/sqrt (+ (* lx lx) (* lz lz)))
+                 rdist (if (pos? radius) (/ radial radius) 0.0)
+                 hdist (if (pos? half-h) (/ (Math/abs ly) half-h) 0.0)]
+             (max rdist hdist))
 
-        :cone
-        (let [t (if (pos? height) (/ (+ ly half-h) height) 0.5)
-              r-at-t (+ bottom-radius (* t (- top-radius bottom-radius)))
-              radial (Math/sqrt (+ (* lx lx) (* lz lz)))
-              rdist (if (pos? r-at-t) (/ radial r-at-t) 0.0)
-              hdist (if (pos? half-h) (/ (Math/abs ly) half-h) 0.0)]
-          (max rdist hdist))
+           :cone
+           (let [t (if (pos? height) (/ (+ ly half-h) height) 0.5)
+                 r-at-t (+ bottom-radius (* t (- top-radius bottom-radius)))
+                 radial (Math/sqrt (+ (* lx lx) (* lz lz)))
+                 rdist (if (pos? r-at-t) (/ radial r-at-t) 0.0)
+                 hdist (if (pos? half-h) (/ (Math/abs ly) half-h) 0.0)]
+             (max rdist hdist))
 
         ;; Default: max-norm (Chebyshev distance)
-        (let [[hx hy hz] half-ext]
-          (max (if (pos? hx) (/ (Math/abs lx) hx) 0.0)
-               (if (pos? hy) (/ (Math/abs ly) hy) 0.0)
-               (if (pos? hz) (/ (Math/abs lz) hz) 0.0)))))))
+           (let [[hx hy hz] half-ext]
+             (max (if (pos? hx) (/ (Math/abs lx) hx) 0.0)
+                  (if (pos? hy) (/ (Math/abs ly) hy) 0.0)
+                  (if (pos? hz) (/ (Math/abs lz) hz) 0.0)))))))
 
 ;; ============================================================
 ;; Normalized local position [-1, 1] per axis
@@ -307,41 +307,41 @@
                         faces)
         ;; Build per-vertex adjacency: vertex-index → [face-indices]
         vert-adj (reduce-kv
-                   (fn [acc fi [i0 i1 i2]]
-                     (-> acc
-                         (update i0 (fnil conj []) fi)
-                         (update i1 (fnil conj []) fi)
-                         (update i2 (fnil conj []) fi)))
-                   (vec (repeat n nil))
-                   (vec faces))
+                  (fn [acc fi [i0 i1 i2]]
+                    (-> acc
+                        (update i0 (fnil conj []) fi)
+                        (update i1 (fnil conj []) fi)
+                        (update i2 (fnil conj []) fi)))
+                  (vec (repeat n nil))
+                  (vec faces))
         ;; cos(70°) ≈ 0.34 — faces above this angle are separate smooth groups
         threshold 0.34
         normals
         (mapv
-          (fn [vi]
-            (if-let [adj (nth vert-adj vi)]
-              (if (<= (count adj) 1)
+         (fn [vi]
+           (if-let [adj (nth vert-adj vi)]
+             (if (<= (count adj) 1)
                 ;; Single face — just use its normal
-                (:normal (nth face-data (first adj)))
+               (:normal (nth face-data (first adj)))
                 ;; Seed: face with largest area
-                (let [seed-fi (reduce (fn [best fi]
-                                        (if (> (:area (nth face-data fi))
-                                               (:area (nth face-data best)))
-                                          fi best))
-                                      (first adj) (rest adj))
-                      seed-n (:normal (nth face-data seed-fi))
+               (let [seed-fi (reduce (fn [best fi]
+                                       (if (> (:area (nth face-data fi))
+                                              (:area (nth face-data best)))
+                                         fi best))
+                                     (first adj) (rest adj))
+                     seed-n (:normal (nth face-data seed-fi))
                       ;; Sum cross products of compatible faces only
-                      sum (reduce
-                            (fn [acc fi]
-                              (let [{:keys [normal cross]} (nth face-data fi)]
-                                (if (> (m/dot normal seed-n) threshold)
-                                  (m/v+ acc cross)
-                                  acc)))
-                            [0 0 0]
-                            adj)]
-                  (m/normalize sum)))
-              [0 0 0]))
-          (range n))]
+                     sum (reduce
+                          (fn [acc fi]
+                            (let [{:keys [normal cross]} (nth face-data fi)]
+                              (if (> (m/dot normal seed-n) threshold)
+                                (m/v+ acc cross)
+                                acc)))
+                          [0 0 0]
+                          adj)]
+                 (m/normalize sum)))
+             [0 0 0]))
+         (range n))]
     normals))
 
 ;; ============================================================
@@ -373,8 +373,10 @@
    Multiple deform-fns are applied sequentially to each vertex.
 
    Options (keyword args mixed with deform-fns):
-     :subdivide n — centroid-subdivide triangles inside volume n times
-                    before deforming (each pass: 1 triangle → 3).
+     :subdivide n — midpoint-subdivide triangles inside volume n times
+                    before deforming (each pass: 1 triangle → 4, edges
+                    split at midpoints, midpoints shared between
+                    neighbours). Drops :face-groups metadata.
 
    Returns new mesh with modified vertices."
   [mesh volume & args]
@@ -402,18 +404,18 @@
             normals (estimate-vertex-normals vertices faces)
             new-vertices
             (vec (map-indexed
-                   (fn [i pos]
-                     (let [local (world-to-local pos center right up heading)]
-                       (if (point-in-volume-local? local vol)
-                         (let [local-pos (compute-local-pos local vol)
-                               dist (compute-dist-local local vol)
-                               normal (nth normals i)]
-                           (reduce
-                             (fn [p dfn] (dfn p local-pos dist normal vol))
-                             pos
-                             deform-fns))
-                         pos)))
-                   vertices))]
+                  (fn [i pos]
+                    (let [local (world-to-local pos center right up heading)]
+                      (if (point-in-volume-local? local vol)
+                        (let [local-pos (compute-local-pos local vol)
+                              dist (compute-dist-local local vol)
+                              normal (nth normals i)]
+                          (reduce
+                           (fn [p dfn] (dfn p local-pos dist normal vol))
+                           pos
+                           deform-fns))
+                        pos)))
+                  vertices))]
         (-> mesh
             (dissoc :ridley.manifold.core/manifold-cache :ridley.manifold.core/raw-arrays)
             (assoc :vertices new-vertices))))))

@@ -325,7 +325,7 @@
               ^js result (.asOriginal raw-result)
               output (manifold->mesh result)
               output (cond-> output
-                       true (assoc :creation-pose default-creation-pose)
+                       (:creation-pose mesh-a) (assoc :creation-pose (:creation-pose mesh-a))
                        (:material mesh-a) (assoc :material (:material mesh-a)))]
           (.delete ma)
           (.delete mb)
@@ -387,7 +387,7 @@
               ^js result (.asOriginal raw-result)
               output (manifold->mesh result)
               output (cond-> output
-                       true (assoc :creation-pose default-creation-pose)
+                       (:creation-pose mesh-a) (assoc :creation-pose (:creation-pose mesh-a))
                        (:material mesh-a) (assoc :material (:material mesh-a)))]
           (.delete ma)
           (.delete mb)

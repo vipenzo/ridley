@@ -56,6 +56,8 @@ Tweak offset stale e graceful degradation del mutex interattivo (15.3.1, una gio
 
 Spy/recorder per gli stub muti del sci-harness (15.3.5, alcune ore): il test harness oggi traccia silenziosamente le call a stub di Three.js, di registry, eccetera; un piccolo recorder che li espone migliorerebbe la diagnosticabilità dei test che falliscono per side-effect non previsti.
 
+Cancellazione cooperativa dell'eval (due-tre giorni): oggi una valutazione SCI lunga — tipicamente molte chiamate CSG su geometria grande o degenerata — blocca il main thread senza modo di interromperla, e l'utente deve chiudere il tab. Il primo passo è cooperativo, a basso costo architetturale: un flag globale di cancel impostato da un bottone "Stop" nell'editor, e controlli ai punti naturali di yield (`mesh-union-impl`, `mesh-difference-impl`, `mesh-intersection-impl`, e i reduce dei macro di union variadici) che lanciano un'eccezione di abort se il flag è attivo. La granularità è per-CSG-call, quindi non interrompe una singola `manifold/union` lunga ma sblocca lo scenario tipico di "ho scritto qualcosa di troppo grande/sbagliato e si è incastrato". L'interruzione *durante* una singola WASM call resta dipendente dallo spostamento del CSG in worker (4.2).
+
 ### 1.5 Completamenti DSL minori
 
 Lavori di pochi giorni ciascuno, ben circoscritti.
@@ -70,11 +72,15 @@ Inline documentation hover: tooltip su nome di funzione che mostra docstring der
 
 Error highlighting persistente: oggi gli errori SCI producono un flash arancio sulla riga; l'integrazione con `@codemirror/lint` darebbe marker persistenti su gutter e squiggle sotto il token problematico (una giornata).
 
+Wireframe della mesh sotto il cursore: evidenziare in wireframe nel viewport la mesh prodotta dall'espressione su cui si trova il cursore. Aiuta a disambiguare quale espressione di uno script lungo ha prodotto quale oggetto. Estende il source tracking esistente con una mappa line→mesh-name; un layer di rendering wireframe attivato da selezione in CodeMirror (due giorni).
+
 Save/open file dialog simmetrici: il save dialog nativo è già implementato lato Tauri, manca l'open speculare. Poche ore di lavoro.
 
 Recent files: lista dei file aperti di recente con persistenza e voce di menu (una giornata).
 
 `path-to-shape` come vera proiezione XY: oggi `path-to-shape` ([shape.cljs:359](../src/ridley/turtle/shape.cljs#L359)) ritraccia il path considerando solo `:f`, `:th` e `:set-heading` (con Z scartata), ignorando silenziosamente `:b`, `:tv` e `:tr`. La docstring e Spec.md la descrivono come "XY projection", ma una proiezione reale eseguirebbe il path completo in 3D e poi scarterebbe la Z dei waypoint. Da fare: eseguire il trace con turtle 3D e proiettare a posteriori (mezza giornata).
+
+`loft+` (chaining variant di loft): `extrude+` e `revolve+` esistono e restituiscono `{:mesh :end-face}` per il chaining via `transform->`. Manca `loft+`, la variante analoga per `loft`. Il caso d'uso è il chaining di segmenti in cui il profilo cambia lungo il percorso (es. un tratto rastremato seguito da un gomito): senza `loft+`, l'utente deve calcolare manualmente la shape alla fine del loft valutando la shape-fn a `t=1` e riposizionando la tartaruga. Con `loft+` il pattern `transform->` funzionerebbe anche con segmenti loft. Implementazione: stessa struttura di `extrude+`, con in più la valutazione della shape-fn a `t=1` per popolare `:end-face`. Mezza giornata.
 
 ### 1.6 Recupero della copertura test
 
@@ -249,3 +255,54 @@ Le voci della Parte III sono visioni: vivono come direzioni nominate, e prendono
 Le voci della Parte IV vivono come opzioni: si attivano se rivalutazione dei vincoli cambia il rapporto costo/beneficio, e fino a quel momento restano nominate.
 
 La roadmap è uno strumento di consapevolezza, non di pianificazione vincolante. Il principio guida è quello del cap. 16 di `Architecture.md`: turtle-centricity come bussola, codice come fonte di verità, astrazioni a soglia. Ogni voce di questo documento, quando arriva il momento di essere pagata, si misura contro questo principio.
+
+## RAW
+### mesh→SDF (sampling-based)
+
+Convertire una mesh arbitraria in SDF tramite signed distance sampling.
+Apre offset arbitrari su mesh importate o risultanti da booleane, blend
+mesh↔SDF, smoothing/morphing via operatori SDF. Punto di aggancio
+naturale: API libfive che accetta distance functions arbitrarie →
+`mesh-distance-fn` che restituisce un SDF chiamabile.
+
+Tre blocchi: (1) BVH lookup per query veloce (Manifold ha primitive utili,
+o impl. propria); (2) signed test (raycast parity, oppure normali +
+inside/outside); (3) wrapping libfive come SDF node che il resto del
+sistema usa come gli altri.
+
+Versione iniziale: approssimazione BVH (veloce, non distance-field puro).
+Versione esatta come passo successivo. Costo scala con complessità mesh
+— per mesh leggere fattibile, per mesh dense pesante. Stima impegno:
+1-2 settimane per prototipo funzionante.
+
+### Lattice infill
+
+Fill a solid volume with procedural internal structure (TPMS, strut lattice, etc.). Pipeline: mesh → bounding box → voxel grid → implicit function evaluation → marching cubes → lattice mesh. Enables lightweight structural parts like those produced by DMLS/SLA 3D printing.
+
+**Key components:**
+- Implicit density functions: Gyroid (`sin(x)*cos(y) + sin(y)*cos(z) + sin(z)*cos(x)`), Schwarz-P, Diamond, strut-based
+- Point-in-mesh test (ray casting or signed distance field)
+- Marching cubes (or dual contouring) for isosurface extraction
+- DSL: `(lattice mesh :type :gyroid :scale 5 :thickness 0.3)` or `(lattice mesh :fn (fn [x y z] ...))`
+
+### Attach on mesh collections (structure-preserving)
+
+Extend `attach` to work on nested vectors of meshes, transforming all meshes while preserving the nesting structure. This enables treating function-composed groups as rigid bodies:
+
+```clojure
+(defn branch [l] ...)              ;; returns a mesh
+(defn ring [l n] ...)              ;; returns [mesh mesh ...]
+(defn tree [l h rings branches]    ;; returns [[mesh ...] [mesh ...] ...]
+  (for [i (range rings)]
+    (do (f (/ h rings)) (ring l branches))))
+
+(def t (tree 50 100 5 5))
+(register T (attach t (f 20) (th 45)))
+;; t2 has same nested structure, all vertices transformed
+```
+
+Key principles:
+- **Preserve structure**: `attach` walks recursively, transforms meshes in-place, returns same nesting shape. No flattening.
+- **Pivot = current turtle position**: the turtle's position at call time is the transformation pivot.
+- **Composability**: since structure is preserved, the result can be passed to another `attach` or used in further function composition.
+- **Revisit `register` flatten**: the current flatten in `register` is a workaround. Ideally the registry and viewport should walk nested structures for rendering without flattening, so that `(hide :T 2)` can address sub-groups by index path.

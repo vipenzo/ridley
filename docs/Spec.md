@@ -114,7 +114,7 @@ Resets turtle pose without clearing accumulated geometry/meshes.
 Control the resolution of curves and circular primitives globally:
 
 ```clojure
-(resolution :n 32)               ; Fixed number of segments (default 16)
+(resolution :n 32)               ; Fixed number of segments (default 64)
 (resolution :a 5)                ; Maximum angle per segment (degrees)
 (resolution :s 0.5)              ; Maximum segment length (units)
 ```
@@ -1037,9 +1037,9 @@ The same convention applies to `extrude-closed`, `loft`, `bloft`, and `revolve`.
 **Joint modes.** Control corner geometry during extrusion:
 
 ```clojure
-(joint-mode :flat)      ; Default (sharp corners)
+(joint-mode :tapered)   ; Default (beveled corners)
+(joint-mode :flat)      ; Sharp corners
 (joint-mode :round)     ; Smooth rounded corners
-(joint-mode :tapered)   ; Beveled/tapered corners
 ```
 
 **Axis-aligned convenience.** When extruding a 2D path (a list of `[x y]` pairs) along a world axis — bypassing the turtle's heading entirely — two helpers cover the common cases:
@@ -1114,7 +1114,7 @@ Taper between two different shapes:
     (f 40)))
 ```
 
-Default: 16 steps. Returns mesh without side effects.
+Default: step count follows `resolution` (64 at default). Returns mesh without side effects.
 
 ### Bloft (bezier-safe loft)
 
@@ -1151,13 +1151,17 @@ For paths with tight curves (like `bezier-as`), regular `loft` can produce self-
 ### Revolve
 
 ```clojure
-(revolve shape)                  ; Full 360 deg revolution around turtle heading
+(revolve shape)                  ; Full 360 deg revolution around turtle up axis
 (revolve shape angle)            ; Partial revolution (degrees)
 ```
 
+The axis of revolution is the turtle's **up** vector (the revolution axis passes through the turtle's current position). Use `(tv …)` to tilt the turtle's pose before revolving when a different axis is needed.
+
 The profile shape is interpreted as:
-- 2D X = radial distance from axis (perpendicular to heading).
-- 2D Y = position along axis (in heading direction).
+- 2D X = radial distance from axis (perpendicular to up).
+- 2D Y = position along axis (in the up direction).
+
+At the starting angle (`θ = 0`), the profile is stamped so that shape-X maps to the turtle's right direction (`heading × up`) and shape-Y maps to up — identical to the `stamp` / `extrude` convention.
 
 Use `translate-shape` to offset the profile from the axis for hollow shapes (e.g., torus).
 
@@ -1180,7 +1184,7 @@ The pivot direction is relative to the shape's 2D coordinate frame (X = right, Y
 (revolve (tapered (circle 20) :to 0.5))           ; Profile shrinks during revolution
 (revolve (twisted (rect 20 10) :angle 90))         ; Profile rotates as it revolves
 (revolve (noisy (circle 15 64) :amplitude 2))      ; Organic surface
-(revolve (morphed (square 20) (circle 15 4)) 180)  ; Morph during half-revolution
+(revolve (morphed (rect 20 20) (circle 15 4)) 180) ; Morph during half-revolution
 ```
 
 ### Chaining (extrude+, revolve+, transform->)
