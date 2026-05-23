@@ -4,6 +4,7 @@
   "description": "Default capabilities for Ridley Desktop",
   "windows": ["*"],
   "permissions": [
-    "core:default"
+    "core:default",
+    "window-state:default"
   ]
 }

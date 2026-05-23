@@ -8,6 +8,7 @@ use std::process::{Child, Command};
 use std::sync::Mutex;
 
 use tauri::{WebviewUrl, WebviewWindowBuilder};
+use tauri_plugin_window_state::{StateFlags, WindowExt};
 
 const INIT_SCRIPT: &str = r#"window.RIDLEY_ENV = "desktop";"#;
 
@@ -77,14 +78,19 @@ fn main() {
     };
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
+            let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
                 .title("Ridley")
                 .inner_size(1280.0, 800.0)
                 .resizable(true)
                 .fullscreen(false)
                 .initialization_script(INIT_SCRIPT)
                 .build()?;
+            // Restore previous window position/size/maximized/fullscreen.
+            // First run uses the defaults above; subsequent runs honor
+            // whatever the user left when they closed the app.
+            let _ = window.restore_state(StateFlags::all());
             Ok(())
         })
         .build(tauri::generate_context!())
