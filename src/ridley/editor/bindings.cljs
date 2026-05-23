@@ -160,6 +160,7 @@
    'mark-pos        shape/mark-pos
    'mark-x          shape/mark-x
    'mark-y          shape/mark-y
+   'mark-z          shape/mark-z
    'bounds-2d       shape/bounds-2d
    ;; Fillet and chamfer (2D shape corners)
    'fillet-shape    shape/fillet-shape

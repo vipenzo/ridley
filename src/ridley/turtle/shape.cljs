@@ -484,36 +484,44 @@
         commands)))))
 
 (defn ^:export mark-pos
-  "Get the 2D position [x y] of a named mark within a path.
-   Traces the path commands in 2D and returns the position where the mark was placed.
-   Returns nil if the mark is not found."
+  "Get the 3D position [x y z] of a named mark within a path.
+   Walks the path from the world origin (position [0 0 0], heading
+   [1 0 0], up [0 0 1]) and returns the turtle's position at the moment
+   the mark was recorded. Handles all path commands (rotations :th/:tv/
+   :tr/:set-heading, displacements :u/:rt/:lt). Returns nil if the mark
+   is not found."
   [path mark-name]
   (when (and (map? path) (= :path (:type path)))
-    (let [commands (:commands path)]
+    (let [init-state {:position [0 0 0] :heading [1 0 0] :up [0 0 1]}]
       (:result
        (reduce
-        (fn [{:keys [pos heading result] :as acc} cmd]
+        (fn [{:keys [position heading up result] :as acc} cmd]
           (if result
             (reduced acc)
             (case (:cmd cmd)
-              :f (let [dist (first (:args cmd))
-                       hx (first heading) hy (second heading)]
-                   (assoc acc :pos [(+ (first pos) (* hx dist))
-                                    (+ (second pos) (* hy dist))]))
-              :th (let [angle (first (:args cmd))
-                        rad (* angle (/ Math/PI 180))
-                        hx (first heading) hy (second heading)
-                        cos-a (Math/cos rad) sin-a (Math/sin rad)]
-                    (assoc acc :heading [(- (* hx cos-a) (* hy sin-a))
-                                         (+ (* hx sin-a) (* hy cos-a))]))
-              :set-heading (assoc acc :heading (let [[h _] (:args cmd)]
-                                                 [(first h) (second h)]))
+              :f (let [d (first (:args cmd))]
+                   (assoc acc :position (extrusion/v+ position
+                                                      (extrusion/v* heading d))))
+              :u (let [d (first (:args cmd))]
+                   (assoc acc :position (extrusion/v+ position
+                                                      (extrusion/v* up d))))
+              :rt (let [d (first (:args cmd))
+                        right (extrusion/cross heading up)]
+                    (assoc acc :position (extrusion/v+ position
+                                                       (extrusion/v* right d))))
+              :lt (let [d (first (:args cmd))
+                        right (extrusion/cross heading up)]
+                    (assoc acc :position (extrusion/v+ position
+                                                       (extrusion/v* right (- d)))))
+              (:th :tv :tr :set-heading)
+              (let [s' (extrusion/apply-rotation-to-state acc cmd)]
+                (assoc acc :heading (:heading s') :up (:up s')))
               :mark (if (= (first (:args cmd)) mark-name)
-                      (assoc acc :result pos)
+                      (assoc acc :result position)
                       acc)
               acc)))
-        {:pos [0 0] :heading [1 0] :result nil}
-        commands)))))
+        (assoc init-state :result nil)
+        (:commands path))))))
 
 (defn ^:export mark-x
   "Get the X coordinate of a named mark within a path."
@@ -524,6 +532,11 @@
   "Get the Y coordinate of a named mark within a path."
   [path mark-name]
   (second (mark-pos path mark-name)))
+
+(defn ^:export mark-z
+  "Get the Z coordinate of a named mark within a path."
+  [path mark-name]
+  (nth (mark-pos path mark-name) 2 nil))
 
 (defn ^:export bounds-2d
   "Get the 2D bounding box of a path or shape.
