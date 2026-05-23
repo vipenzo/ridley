@@ -138,10 +138,31 @@
 
 (defn ^:export implicit-reset-pose
   "Reset turtle pose to defaults (origin, +X heading, +Z up, pen :on).
-   Keeps accumulated geometry and meshes."
-  ([] (swap! (turtle-ref) turtle/reset-pose))
-  ([position] (swap! (turtle-ref) turtle/reset-pose position))
-  ([position & opts] (apply swap! (turtle-ref) turtle/reset-pose position opts)))
+   Keeps accumulated geometry and meshes.
+
+   - (reset)                          — reset to origin
+   - (reset [x y z])                  — reset to position
+   - (reset [x y z] :heading h :up u) — reset to position with orientation
+   - (reset pose-map)                 — reset from a pose map carrying
+                                        :pos/:heading/:up keys, e.g.
+                                        (reset (:pose (:end-face seg)))
+   - (reset pose-map :heading h)      — pose-map with explicit overrides"
+  [& args]
+  (let [first-arg (first args)
+        pose? (and first-arg
+                   (map? first-arg)
+                   (some #{:pos :heading :up} (keys first-arg)))
+        norm-args
+        (if pose?
+          (let [{:keys [pos heading up]} first-arg
+                overrides (apply hash-map (rest args))
+                final-heading (or (:heading overrides) heading)
+                final-up (or (:up overrides) up)]
+            (concat [(or pos [0 0 0])]
+                    (when final-heading [:heading final-heading])
+                    (when final-up [:up final-up])))
+          args)]
+    (apply swap! (turtle-ref) turtle/reset-pose norm-args)))
 
 (defn ^:export implicit-joint-mode [mode]
   (swap! (turtle-ref) turtle/joint-mode mode))

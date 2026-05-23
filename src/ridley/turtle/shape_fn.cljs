@@ -759,6 +759,9 @@
    (shell shape :thickness 2 :style :weave :strands 6 :frequency 8); Woven pattern
    (shell shape :thickness 2 :fn (fn [a t] ...))                   ; Custom function
 
+   Add :invert? true to swap solid/empty (e.g. turn :lattice bricks into a
+   shell with brick-shaped openings, or :voronoi wireframe into solid cells).
+
    :voronoi extra options:
      :wall-width  width of the wall stripe in (u, v) cell units (default 0.3)
    The :voronoi cliff is binary: openings have hard pixelated edges along the
@@ -774,11 +777,14 @@
 
    Composes with other shape-fns:
    (-> (circle 20 64) (shell :thickness 3 :style :voronoi :cells 8 :rows 6) (tapered :to 0.5))"
-  [shape-or-fn & {:keys [thickness threshold style cap-top cap-bottom]
+  [shape-or-fn & {:keys [thickness threshold style cap-top cap-bottom invert?]
                   :or {thickness 2 threshold 0.05}
                   :as opts}]
-  (let [thickness-fn (or (:fn opts)
-                         (style->thickness-fn (or style :solid) opts))]
+  (let [base-fn (or (:fn opts)
+                    (style->thickness-fn (or style :solid) opts))
+        thickness-fn (if invert?
+                       (fn [a t] (- 1.0 (base-fn a t)))
+                       base-fn)]
     (shape-fn shape-or-fn
               (fn [s t]
                 (let [center (shape-centroid s)

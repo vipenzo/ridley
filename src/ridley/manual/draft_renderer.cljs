@@ -187,6 +187,129 @@
         (.appendChild block buttons)))
     (.replaceWith pre-el block)))
 
+;; ── TOC (local table of contents) ─────────────────────────────
+
+(defn- slugify
+  "Turn heading text into a URL-safe id fragment."
+  [text]
+  (-> text
+      (.toLowerCase)
+      (.replace (js/RegExp. "[^\\p{Letter}\\p{Number}\\s-]" "gu") "")
+      (.replace (js/RegExp. "\\s+" "g") "-")
+      (.replace (js/RegExp. "-+" "g") "-")
+      (.replace (js/RegExp. "^-|-$" "g") "")))
+
+(defn- ensure-unique-id!
+  "Assign a slug-based id to `el` if it doesn't already have one, avoiding
+   collisions against `used` (an atom holding a set of ids already assigned)."
+  [el used]
+  (let [existing (.getAttribute el "id")]
+    (if (and existing (not (empty? existing)))
+      (do (swap! used conj existing) existing)
+      (let [base (slugify (.-textContent el))
+            base (if (empty? base) "section" base)]
+        (loop [candidate base
+               n 2]
+          (if (contains? @used candidate)
+            (recur (str base "-" n) (inc n))
+            (do (.setAttribute el "id" candidate)
+                (swap! used conj candidate)
+                candidate)))))))
+
+(defn- collect-headings!
+  "Walk h2/h3 inside `root` in document order. Assigns ids when missing and
+   returns a vector of {:level :text :id} maps."
+  [root]
+  (let [used (atom #{})
+        nodes (array-seq (.querySelectorAll root "h2, h3"))]
+    (vec
+     (for [el nodes]
+       (let [tag (.-tagName el)
+             level (if (= tag "H2") 2 3)
+             text (.-textContent el)
+             id (ensure-unique-id! el used)]
+         {:level level :text text :id id})))))
+
+(defonce ^:private toc-state (atom {:popup nil :doc-handler nil}))
+
+(defn- close-toc-popup! []
+  (let [{:keys [popup doc-handler]} @toc-state]
+    (when popup
+      (.remove popup))
+    (when doc-handler
+      (.removeEventListener js/document "click" doc-handler true)
+      (.removeEventListener js/document "keydown" doc-handler))
+    (reset! toc-state {:popup nil :doc-handler nil})))
+
+(defn- scroll-to-heading! [content-root id]
+  (when-let [target (or (.getElementById js/document id)
+                        (.querySelector content-root (str "[id='" id "']")))]
+    (.scrollIntoView target #js {:behavior "smooth" :block "start"})))
+
+(defn- build-toc-popup [headings content-root]
+  (let [popup (.createElement js/document "div")
+        ul (.createElement js/document "ul")]
+    (set! (.-className popup) "manual-toc-popup")
+    (set! (.-className ul) "manual-toc-list")
+    (doseq [{:keys [level text id]} headings]
+      (let [li (.createElement js/document "li")
+            a (.createElement js/document "a")]
+        (set! (.-className li) (str "manual-toc-item manual-toc-h" level))
+        (set! (.-href a) (str "#" id))
+        (set! (.-textContent a) text)
+        (.addEventListener a "click"
+                           (fn [ev]
+                             (.preventDefault ev)
+                             (close-toc-popup!)
+                             (scroll-to-heading! content-root id)))
+        (.appendChild li a)
+        (.appendChild ul li)))
+    (.appendChild popup ul)
+    popup))
+
+(defn- open-toc-popup! [button-el wrapper-el headings content-root]
+  (close-toc-popup!)
+  (let [popup (build-toc-popup headings content-root)
+        handler (fn [ev]
+                  (cond
+                    (= (.-type ev) "keydown")
+                    (when (= (.-key ev) "Escape") (close-toc-popup!))
+                    :else
+                    (when-not (.contains popup (.-target ev))
+                      (when-not (.contains button-el (.-target ev))
+                        (close-toc-popup!)))))]
+    (.appendChild wrapper-el popup)
+    (reset! toc-state {:popup popup :doc-handler handler})
+    ;; Defer listener attach so the opening click doesn't immediately close it.
+    (js/setTimeout
+     (fn []
+       (.addEventListener js/document "click" handler true)
+       (.addEventListener js/document "keydown" handler))
+     0)))
+
+(defn- inject-toc-button!
+  "If `nav-el` is non-nil and `headings` is non-empty, prepend a TOC button
+   into the nav. The button toggles a popup listing the headings."
+  [nav-el headings content-root]
+  (when (and nav-el (seq headings))
+    (let [wrapper (.createElement js/document "div")
+          btn (.createElement js/document "button")]
+      (set! (.-className wrapper) "manual-toc-wrapper")
+      (set! (.-className btn) "manual-btn manual-btn-toc")
+      (set! (.-textContent btn) "§")
+      (set! (.-title btn) "Sezioni del capitolo")
+      (.addEventListener btn "click"
+                         (fn [ev]
+                           (.stopPropagation ev)
+                           (if (:popup @toc-state)
+                             (close-toc-popup!)
+                             (open-toc-popup! btn wrapper headings content-root))))
+      (.appendChild wrapper btn)
+      ;; Insert as the first child so it sits to the left of back/up/lang/close.
+      (if-let [first-child (.-firstChild nav-el)]
+        (.insertBefore nav-el wrapper first-child)
+        (.appendChild nav-el wrapper)))))
+
 (defn- enhance-code-blocks!
   "Walk the rendered manual content. For each <pre><code class='language-clojure'>:
    - if its previousElementSibling is the marker <div class='draft-example-source'>,
@@ -230,21 +353,27 @@
 
 (defn render-chapter!
   "Render the draft chapter identified by `page-id` into `container-el`.
+   When `nav-el` is provided, a TOC button is injected into it after parsing.
    Returns the chapter map (or nil if page-id is not a draft chapter)."
-  [container-el page-id]
-  (when-let [chap (draft-chapter page-id)]
-    (show-loading! container-el)
-    (-> (fetch-markdown (:file chap))
-        (.then (fn [raw-md]
-                 (let [with-sentinels (replace-example-markers raw-md)
-                       cleaned (strip-remaining-comments with-sentinels)
-                       html (.parse marked cleaned)]
-                   (set! (.-innerHTML container-el) html)
-                   (set! (.-className container-el)
-                         (str (or (.-className container-el) "")
-                              " manual-draft-content"))
-                   (enhance-code-blocks! container-el))))
-        (.catch (fn [err]
-                  (show-error! container-el
-                               (str "Errore caricamento capitolo: " (.-message err))))))
-    chap))
+  ([container-el page-id]
+   (render-chapter! container-el page-id nil))
+  ([container-el page-id nav-el]
+   (close-toc-popup!)
+   (when-let [chap (draft-chapter page-id)]
+     (show-loading! container-el)
+     (-> (fetch-markdown (:file chap))
+         (.then (fn [raw-md]
+                  (let [with-sentinels (replace-example-markers raw-md)
+                        cleaned (strip-remaining-comments with-sentinels)
+                        html (.parse marked cleaned)]
+                    (set! (.-innerHTML container-el) html)
+                    (set! (.-className container-el)
+                          (str (or (.-className container-el) "")
+                               " manual-draft-content"))
+                    (enhance-code-blocks! container-el)
+                    (let [headings (collect-headings! container-el)]
+                      (inject-toc-button! nav-el headings container-el)))))
+         (.catch (fn [err]
+                   (show-error! container-el
+                                (str "Errore caricamento capitolo: " (.-message err))))))
+     chap)))

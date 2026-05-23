@@ -304,18 +304,25 @@
          (pure-bloft base-shape transform-fn path steps threshold))))))
 
 (defn- clip-shape-for-revolve
-  "Clip a shape to x >= 0 for revolve. Vertices with x < 0 would cross
-   the revolution axis and produce self-intersecting geometry.
-   Returns the clipped shape, or nil if entirely in x < 0."
+  "Sanitise a shape for revolution. Shapes that cross the revolution axis
+   (have both x > 0 and x < 0 vertices) self-intersect when revolved, so
+   they are clipped to x >= 0. Shapes entirely on one side of the axis
+   pass through unchanged — including x <= 0 shapes used by `revolve+`
+   with `:pivot :right`.
+   Returns the (possibly clipped) shape, or nil if clipping is empty."
   [s]
   (let [pts (:points s)
-        min-x (apply min (map first pts))]
-    (if (>= min-x 0)
-      s  ;; all points already at x >= 0
-      (let [max-x (apply max (map first pts))
-            max-y (apply max (map #(Math/abs (second %)) pts))
+        min-x (apply min (map first pts))
+        max-x (apply max (map first pts))]
+    (cond
+      ;; Entirely in x >= 0 or x <= 0: no clip needed.
+      (or (>= min-x 0) (<= max-x 0))
+      s
+
+      ;; Crosses the axis: clip to x >= 0 (legacy safety behaviour).
+      :else
+      (let [max-y (apply max (map #(Math/abs (second %)) pts))
             half-extent (+ (max max-x max-y) 100)
-            ;; Large rectangle covering x >= 0
             clip-rect (shape/make-shape
                        [[0 (- half-extent)]
                         [half-extent (- half-extent)]

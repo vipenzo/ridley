@@ -1739,12 +1739,21 @@
                           :heading (:heading state)
                           :up (:up state)}
            ;; Get profile points
-           ;; When using shape-fn, clamp x >= 0 to prevent crossing revolution axis
-           ;; (polygon clipping would change point count, breaking face generation)
-           ;; Clamp x to a small minimum (not zero) to prevent pole vertex
-           ;; collisions in STL float32 — a tiny circle is manifold, a point is not
+           ;; When using shape-fn, clamp x away from 0 to prevent crossing
+           ;; revolution axis (polygon clipping would change point count,
+           ;; breaking face generation). Clamp magnitude to a tiny minimum
+           ;; (not zero) to prevent pole vertex collisions in STL float32 —
+           ;; a tiny circle is manifold, a point is not. The clamp preserves
+           ;; sign so shapes entirely on the negative-x side (used by
+           ;; `revolve+` with `:pivot :right`) keep their position.
            pole-eps 0.001
-           clamp-x (fn [pts] (mapv (fn [[x y]] [(max pole-eps x) y]) pts))
+           clamp-x (fn [pts]
+                     (mapv (fn [[x y]]
+                             [(if (neg? x)
+                                (min (- pole-eps) x)
+                                (max pole-eps x))
+                              y])
+                           pts))
            profile-points (clamp-x (:points shape))
            n-profile (count profile-points)
            ;; Calculate shape winding using signed area
@@ -1759,7 +1768,15 @@
            ;; Determine if we need to flip face winding
            ;; Flip when: (CCW shape AND positive angle) OR (CW shape AND negative angle)
            shape-is-ccw? (pos? shape-signed-area)
-           flip-winding? (if shape-is-ccw? (pos? angle) (neg? angle))
+           base-flip? (if shape-is-ccw? (pos? angle) (neg? angle))
+           ;; If the shape sits entirely on the non-positive-x side of the
+           ;; axis (e.g. after `revolve+ :pivot :right`, where the right
+           ;; edge sits exactly at x=0), the radial direction reverses, so
+           ;; the winding→outward mapping inverts. Flip again to keep
+           ;; normals outward. Detection uses the raw (unclamped) shape
+           ;; because clamp-x pushes x=0 points to +pole-eps.
+           shape-on-negative-x? (not (pos? (apply max (map first (:points shape)))))
+           flip-winding? (if shape-on-negative-x? (not base-flip?) base-flip?)
            ;; Calculate number of segments based on resolution
            ;; Use same logic as arc: resolution based on angle
            steps (calc-arc-steps state (* 2 Math/PI) (Math/abs angle))

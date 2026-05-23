@@ -680,11 +680,14 @@
    ;; (revolve (shape (f 8) (th 90) (f 10) (th 90) (f 8)))  ; solid cylinder
    ;; (revolve (circle 5))         ; torus (circle revolved around axis)
    ;; (revolve profile 180)        ; half revolution
+   ;; (revolve (circle 8) 90 :pivot :left)  ; partial revolution with pivot offset
    ;; (revolve (tapered (circle 20) :to 0.5))  ; shape-fn: profile varies during revolution
    ;; The profile is interpreted as:
    ;; - 2D X = radial distance from axis (perpendicular to heading)
    ;; - 2D Y = position along axis (in heading direction)
    ;; When a shape-fn is passed, t=0 at the first ring, t→1 at the last ring.
+   ;; When opts are passed (:pivot, :mark, :mark-cap), delegates to revolve+-impl
+   ;; and unwraps the mesh.
    ;; Returns the created mesh (can be bound with def)
    (defmacro revolve
      ([shape]
@@ -694,6 +697,10 @@
      ([shape angle]
       (let [{:keys [line column]} (meta &form)]
         `(-> (revolve-impl ~shape ~angle)
+             (add-source {:op :revolve :line ~line :col ~column :source *eval-source*}))))
+     ([shape angle & opts]
+      (let [{:keys [line column]} (meta &form)]
+        `(-> (:mesh (revolve+-impl ~shape ~angle ~@opts))
              (add-source {:op :revolve :line ~line :col ~column :source *eval-source*})))))
 
    ;; ── Chainable operations ──────────────────────────────────
@@ -1677,36 +1684,54 @@
    ;; (turtle :reset body...)             — fresh turtle at origin
    ;; (turtle :preserve-up body...)       — enable preserve-up mode
    ;; (turtle [x y z] body...)            — set position
-   ;; (turtle {:pos p :heading h} body...)— full options map
+   ;; (turtle {:pos p :heading h} body...)— full options literal map
+   ;; (turtle :pose pose-expr body...)    — set pose from a runtime map
+   ;;                                       (e.g. (:pose (:end-face seg))).
+   ;;                                       Picks :pos/:heading/:up from the
+   ;;                                       evaluated map.
 
    (defn- parse-turtle-opts
-     \"Parse turtle macro arguments into {:opts map :body forms}.
+     \"Parse turtle macro arguments into {:opts map :pose-expr form :body forms}.
       Consumes leading keywords (:reset, :preserve-up), vector (position),
-      or map with known keys. Everything else is body.\"
+      map with known keys, or :pose <runtime-expr> pair. Everything else is body.\"
      [args]
-     (loop [opts {} remaining (vec args)]
+     (loop [opts {} pose-expr nil remaining (vec args)]
        (if (empty? remaining)
-         {:opts opts :body []}
+         {:opts opts :pose-expr pose-expr :body []}
          (let [x (first remaining)]
            (cond
              (= :reset x)
-             (recur (assoc opts :reset true) (subvec remaining 1))
+             (recur (assoc opts :reset true) pose-expr (subvec remaining 1))
              (= :preserve-up x)
-             (recur (assoc opts :preserve-up true) (subvec remaining 1))
+             (recur (assoc opts :preserve-up true) pose-expr (subvec remaining 1))
+             (= :pose x)
+             (do
+               (when (< (count remaining) 2)
+                 (throw (js/Error. \"turtle: :pose requires a following expression evaluating to a pose map\")))
+               (recur opts (second remaining) (subvec remaining 2)))
              (vector? x)
-             (recur (assoc opts :pos x) (subvec remaining 1))
+             (recur (assoc opts :pos x) pose-expr (subvec remaining 1))
              (and (map? x)
                   (some #{:pos :heading :up :reset :preserve-up} (keys x)))
-             (recur (merge opts x) (subvec remaining 1))
+             (recur (merge opts x) pose-expr (subvec remaining 1))
              :else
-             {:opts opts :body (vec remaining)})))))
+             {:opts opts :pose-expr pose-expr :body (vec remaining)})))))
 
    (defmacro turtle [& args]
-     (let [{:keys [opts body]} (parse-turtle-opts args)
+     (let [{:keys [opts pose-expr body]} (parse-turtle-opts args)
            opts-form (if (empty? opts) {} opts)]
-       `(let [parent-state# @*turtle-state*]
-          (binding [*turtle-state* (atom (init-turtle ~opts-form parent-state#))]
-            ~@body))))
+       (if pose-expr
+         `(let [parent-state# @*turtle-state*
+                pose# ~pose-expr
+                merged-opts# (cond-> ~opts-form
+                               (:pos pose#)     (assoc :pos (:pos pose#))
+                               (:heading pose#) (assoc :heading (:heading pose#))
+                               (:up pose#)      (assoc :up (:up pose#)))]
+            (binding [*turtle-state* (atom (init-turtle merged-opts# parent-state#))]
+              ~@body))
+         `(let [parent-state# @*turtle-state*]
+            (binding [*turtle-state* (atom (init-turtle ~opts-form parent-state#))]
+              ~@body)))))
 
    ;; anim-proc-fn: like anim-proc! but returns a function.
    ;; Each call auto-generates a unique name.

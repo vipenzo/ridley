@@ -930,6 +930,15 @@
   [cmd]
   (#{:th :tv :tr} cmd))
 
+(defn is-annotation?
+  "Record-only commands that carry no geometric effect during extrusion
+   (purely labels or attach-context metadata). Path-analysis loops that
+   walk for rotations between forwards must skip these rather than stop
+   at them, otherwise a stray `(mark …)` between a `(th …)` and a
+   `(f …)` silently swallows the rotation."
+  [cmd]
+  (#{:mark :inset} cmd))
+
 (defn- total-rotation-angle-closed
   "Calculate the total absolute rotation angle from a sequence of rotation commands."
   [rotations]
@@ -984,9 +993,10 @@
                                    rots
                                    (let [ci (mod (+ i n) n)
                                          c (nth cmds ci)]
-                                     (if (is-rotation? (:cmd c))
-                                       (recur (dec i) (conj rots c) (inc steps))
-                                       rots))))
+                                     (cond
+                                       (is-rotation? (:cmd c))   (recur (dec i) (conj rots c) (inc steps))
+                                       (is-annotation? (:cmd c)) (recur (dec i) rots (inc steps))
+                                       :else                     rots))))
               explicit-angle-before (total-rotation-angle-closed rotations-before)
               angle-before (if is-first
                              (+ explicit-angle-before closing-angle)
@@ -998,13 +1008,15 @@
                                     (if (= wrapped-i idx)
                                       rots
                                       (let [c (nth cmds wrapped-i)]
-                                        (if (is-rotation? (:cmd c))
-                                          (recur (inc i) (conj rots c))
-                                          rots))))
+                                        (cond
+                                          (is-rotation? (:cmd c))   (recur (inc i) (conj rots c))
+                                          (is-annotation? (:cmd c)) (recur (inc i) rots)
+                                          :else                     rots))))
                                   (let [c (nth cmds i)]
-                                    (if (is-rotation? (:cmd c))
-                                      (recur (inc i) (conj rots c))
-                                      rots))))
+                                    (cond
+                                      (is-rotation? (:cmd c))   (recur (inc i) (conj rots c))
+                                      (is-annotation? (:cmd c)) (recur (inc i) rots)
+                                      :else                     rots))))
               explicit-angle-after (total-rotation-angle-closed rotations-after)
               angle-after (if is-last
                             (+ explicit-angle-after closing-angle)
@@ -1038,9 +1050,10 @@
                                  (if (< i 0)
                                    rots
                                    (let [c (nth cmds i)]
-                                     (if (is-rotation? (:cmd c))
-                                       (recur (dec i) (conj rots c))
-                                       rots))))
+                                     (cond
+                                       (is-rotation? (:cmd c))   (recur (dec i) (conj rots c))
+                                       (is-annotation? (:cmd c)) (recur (dec i) rots)
+                                       :else                     rots))))
               angle-before (reduce + 0 (map (fn [r]
                                               (if (is-corner-rotation? (:cmd r))
                                                 (Math/abs (first (:args r)))
@@ -1051,9 +1064,10 @@
                                 (if (>= i n)
                                   rots
                                   (let [c (nth cmds i)]
-                                    (if (is-rotation? (:cmd c))
-                                      (recur (inc i) (conj rots c))
-                                      rots))))
+                                    (cond
+                                      (is-rotation? (:cmd c))   (recur (inc i) (conj rots c))
+                                      (is-annotation? (:cmd c)) (recur (inc i) rots)
+                                      :else                     rots))))
               angle-after (reduce + 0 (map (fn [r]
                                              (if (is-corner-rotation? (:cmd r))
                                                (Math/abs (first (:args r)))

@@ -274,14 +274,49 @@
              creation-pose {:position (:position current-turtle)
                             :heading heading :up up}
              mesh (assoc mesh :creation-pose creation-pose)
+             ;; Analytic end-pose computation. Face-detection via
+             ;; `largest-face :top` biases toward +heading, so negative
+             ;; revolution angles (which place the end-face on the
+             ;; -heading side) silently picked the start-face. Compute
+             ;; the end-pose directly from the rotation instead.
+             angle-rad (* angle (/ Math/PI 180))
+             cos-a (Math/cos angle-rad)
+             sin-a (Math/sin angle-rad)
+             centroid (if (sfn/shape-fn? shifted-shape)
+                        (let [end-shape (shifted-shape 1)
+                              pts (:points end-shape)
+                              n (count pts)]
+                          (if (zero? n)
+                            [0 0]
+                            [(/ (reduce + (map first pts)) n)
+                             (/ (reduce + (map second pts)) n)]))
+                        (let [pts (:points shifted-shape)
+                              n (count pts)]
+                          (if (zero? n)
+                            [0 0]
+                            [(/ (reduce + (map first pts)) n)
+                             (/ (reduce + (map second pts)) n)])))
+             [sx sy] centroid
+             ;; r(θ) — direction of shape's x-axis after rotation by θ
+             rx (+ (* cos-a (right 0)) (* sin-a (heading 0)))
+             ry (+ (* cos-a (right 1)) (* sin-a (heading 1)))
+             rz (+ (* cos-a (right 2)) (* sin-a (heading 2)))
+             [tpx tpy tpz] (:position current-turtle)
+             end-pos [(+ tpx (* sy (up 0)) (* sx rx) (pivot-offset 0))
+                      (+ tpy (* sy (up 1)) (* sx ry) (pivot-offset 1))
+                      (+ tpz (* sy (up 2)) (* sx rz) (pivot-offset 2))]
+             ;; Rotate heading by angle around up (k · v = 0 since
+             ;; heading ⊥ up, so Rodrigues collapses to:
+             ;;   v' = cos·heading − sin·right)
+             end-heading [(- (* cos-a (heading 0)) (* sin-a (right 0)))
+                          (- (* cos-a (heading 1)) (* sin-a (right 1)))
+                          (- (* cos-a (heading 2)) (* sin-a (right 2)))]
+             end-pose {:pos end-pos :heading end-heading :up up}
              result (if (>= (js/Math.abs angle) 360)
                       {:mesh mesh :start-face {:shape shape-or-fn :pose start-pose}}
-                      (let [face-data (faces/face-shape mesh
-                                                        (:id (faces/largest-face mesh :top)))]
-                        {:mesh mesh
-                         :start-face {:shape shape-or-fn :pose start-pose}
-                         :end-face {:shape shape-or-fn
-                                    :pose (:pose face-data)}}))]
+                      {:mesh mesh
+                       :start-face {:shape shape-or-fn :pose start-pose}
+                       :end-face {:shape shape-or-fn :pose end-pose}})]
          (when (and mark mark-cap)
            (let [face-pose (case mark-cap
                              :start-cap (:pose (:start-face result))

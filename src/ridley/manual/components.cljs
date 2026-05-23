@@ -315,10 +315,11 @@
           (.appendChild container header))
         (if (:draft? page-data)
           ;; Draft chapter: defer to markdown-driven renderer.
-          (let [draft-div (.createElement js/document "div")]
+          (let [draft-div (.createElement js/document "div")
+                nav-el (.querySelector container ".manual-nav")]
             (set! (.-className draft-div) "manual-content")
             (.appendChild container draft-div)
-            (draft/render-chapter! draft-div current-page))
+            (draft/render-chapter! draft-div current-page nav-el))
           (do
             ;; Content
             (let [content-div (.createElement js/document "div")]
