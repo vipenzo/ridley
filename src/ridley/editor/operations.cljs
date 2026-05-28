@@ -9,6 +9,7 @@
             [ridley.turtle.loft :as loft]
             [ridley.turtle.extrusion :as extrusion]
             [ridley.turtle.shape-fn :as sfn]
+            [ridley.geometry.mesh-utils :as mesh-utils]
             [ridley.clipper.core :as clipper]))
 
 (declare pure-bloft)
@@ -183,7 +184,14 @@
        (let [results (reduce
                       (fn [acc shape]
                         (let [result-state (turtle/loft-from-path initial-state shape transform-fn path steps)
-                              mesh (combine-meshes (:meshes result-state))]
+                              ;; loft-from-path emits side-wall, corner and cap segments
+                              ;; as separate sub-meshes with independent vertex indices.
+                              ;; Adjacent sub-meshes share boundary rings *geometrically*
+                              ;; but not *topologically* — combine-meshes just concatenates.
+                              ;; merge-vertices welds coincident positions, closing the seam
+                              ;; and producing a watertight mesh on path corners.
+                              mesh (some-> (combine-meshes (:meshes result-state))
+                                           (mesh-utils/merge-vertices 1e-4))]
                           (if mesh (conj acc mesh) acc)))
                       []
                       shapes)]
