@@ -150,6 +150,23 @@ Il rimedio è a monte, sul path: ridurre la curvatura locale rispetto al raggio 
 
 4. **Spezzare il loft in tratti dritti uniti con `mesh-union`**, accettando un raccordo squadrato al posto della transizione continua.
 
-Le shape con holes (es. `(shape-difference (circle 8) (circle 4))`) sono più sensibili: il ring interno spazza un raggio più piccolo del path e si auto-interseca prima del ring esterno. Se ti serve un profilo anulare lungo una curva, tieni la curvatura gentile rispetto al raggio del foro (in pratica: smussa di più, o usa un foro più piccolo).
+### Limite noto: shape con holes su curve
 
-La regola pratica resta: se `manifold? nil`, agisci sul path. Loft non ha meccanismi automatici di recupero, e fingere che ce ne fossero produrrebbe solo silent failure.
+Le sezioni con holes (es. `(shape-difference (circle 8) (circle 4))`) sono un caso che il loft attuale **non gestisce bene su nessuna curva non banale**, e non c'è una manopola che lo risolva. Il motivo strutturale: il ring esterno e il ring interno spazzano raggi diversi intorno al path. Quando il path curva, sul lato concavo il ring interno (raggio minore) si auto-interseca *prima* del ring esterno; il loft costruisce una mesh topologicamente chiusa ma geometricamente compenetrata, che Manifold rifiuta.
+
+Un esempio minimo che fallisce:
+
+```clojure
+(def turn (bezier-as (path (f 25) (th 60) (f 25)) :tension 0.4))
+(register pipe
+  (loft (shape-difference (circle 8) (circle 4)) identity turn))
+
+(println :manifold? (manifold? (get-mesh :pipe)))   ;; => nil
+```
+
+Alzare la tensione o rimpicciolire il foro **non basta**: nei nostri test entrambi continuano a produrre mesh auto-intersecanti su curvature di interesse pratico. Quando hai bisogno di un profilo anulare lungo una curva, le opzioni che funzionano davvero sono:
+
+- **Costruire il tubo con due loft separati e un boolean**: estrudi il profilo pieno (`circle 8`) lungo il path, estrudi il "cavatappi" (`circle 4`) lungo lo *stesso* path, sottrai il secondo dal primo (`mesh-difference`). Più lento, ma robusto.
+- **Mantenere il path dritto e curvare con `attach`** quando possibile, applicando le rotazioni al pezzo finito piuttosto che durante l'estrusione.
+
+La regola pratica generale resta: se `manifold? nil`, agisci sul path o sulla strategia di costruzione. Loft non ha meccanismi automatici di recupero.

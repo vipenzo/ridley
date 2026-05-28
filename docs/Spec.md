@@ -1119,7 +1119,9 @@ Taper between two different shapes:
 
 Default: step count follows `resolution` (64 at default). Returns mesh without side effects.
 
-**Tight curves and self-intersection.** When the path's radius of curvature is comparable to the shape's radius (e.g. a `(th 120)` spike or a high-tension `bezier-as`), `loft` rings on the inner side of the bend overlap. The result may be a topologically valid mesh that still self-intersects in 3D, which `manifold?` will reject. The remedy is on the path side: smooth spikes with `bezier-as` or `arc-h`, choose a smaller shape, or split the loft into straight segments joined with `mesh-union`. Shapes with holes (`shape-difference`) are especially sensitive — the inner ring sweeps through a smaller radius and self-intersects sooner; if you need an annular profile along a curve, keep the curvature gentle relative to the hole's inner radius.
+**Tight curves and self-intersection.** When the path's radius of curvature is comparable to the shape's radius (e.g. a `(th 120)` spike or a high-tension `bezier-as`), `loft` rings on the inner side of the bend overlap. The result may be a topologically valid mesh that still self-intersects in 3D, which `manifold?` will reject. The remedy is on the path side: smooth spikes with `bezier-as` or `arc-h`, choose a smaller shape, or split the loft into straight segments joined with `mesh-union`.
+
+**Known limit: holed profiles along curves.** Shapes with holes (`shape-difference`) sweep two rings at different radii; on any non-trivial curve the inner ring self-intersects before the outer one and the loft produces a 3D self-intersecting mesh that `manifold?` rejects. Tweaking tension or shrinking the hole does not reliably fix this. For an annular tube along a curve, build the tube as `mesh-difference` of two solid lofts (outer shape minus inner shape) along the same path.
 
 ### Revolve
 
