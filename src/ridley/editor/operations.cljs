@@ -6,40 +6,13 @@
             [ridley.turtle.core :as turtle]
             [ridley.turtle.shape :as shape]
             [ridley.turtle.transform :as xform]
-            [ridley.turtle.loft :as loft]
             [ridley.turtle.extrusion :as extrusion]
             [ridley.turtle.shape-fn :as sfn]
             [ridley.geometry.mesh-utils :as mesh-utils]
             [ridley.clipper.core :as clipper]))
 
-(declare pure-bloft)
 (declare pure-loft-path)
 (declare combine-meshes wrap-results)
-
-(defn- bezier-path-has-self-intersection?
-  "Quick check: would extruding this shape along this bezier path cause
-   ring self-intersections? Compares the path's minimum radius of curvature
-   against the shape radius. Used by `pure-loft-path` to auto-delegate to
-   `pure-bloft` on tight bezier curves."
-  [initial-state shape path]
-  (let [radius (extrusion/shape-radius shape)
-        poses (loft/walk-path-poses initial-state path 32)
-        n (count poses)]
-    (when (>= n 2)
-      (loop [i 0]
-        (if (>= i (dec n))
-          false
-          (let [pa (nth poses i)
-                pb (nth poses (inc i))
-                dp (mapv - (:position pb) (:position pa))
-                d (Math/sqrt (reduce + (mapv * dp dp)))]
-            (if (< d 0.0001)
-              (recur (inc i))
-              (let [dot-hh (reduce + (mapv * (:heading pa) (:heading pb)))
-                    angle (Math/acos (min 1.0 (max -1.0 dot-hh)))]
-                (if (> (* radius angle) d)
-                  true
-                  (recur (inc i)))))))))))
 
 (defn ^:export implicit-extrude-closed-path
   "Extrude-closed function - creates closed mesh without side effects.
@@ -174,28 +147,20 @@
                              (assoc :resolution (:resolution current-turtle))
                              (assoc :material (:material current-turtle)))
                          (turtle/make-turtle))
-         steps (or steps (extrusion/default-segments initial-state 1))]
-     (if (and (:bezier path)
-              (bezier-path-has-self-intersection? initial-state (first shapes) path))
-       ;; Bezier with tight curves: auto-delegate to bloft (self-intersection
-       ;; safe via hull-bridge + manifold/union). Public surface stays as `loft`;
-       ;; bloft is an internal implementation detail.
-       (pure-bloft shape-or-shapes transform-fn path nil 0.1)
-       (let [results (reduce
-                      (fn [acc shape]
-                        (let [result-state (turtle/loft-from-path initial-state shape transform-fn path steps)
-                              ;; loft-from-path emits side-wall, corner and cap segments
-                              ;; as separate sub-meshes with independent vertex indices.
-                              ;; Adjacent sub-meshes share boundary rings *geometrically*
-                              ;; but not *topologically* — combine-meshes just concatenates.
-                              ;; merge-vertices welds coincident positions, closing the seam
-                              ;; and producing a watertight mesh on path corners.
-                              mesh (some-> (combine-meshes (:meshes result-state))
-                                           (mesh-utils/merge-vertices 1e-4))]
-                          (if mesh (conj acc mesh) acc)))
-                      []
-                      shapes)]
-         (wrap-results results))))))
+         steps (or steps (extrusion/default-segments initial-state 1))
+         results (reduce
+                  (fn [acc shape]
+                    (let [result-state (turtle/loft-from-path initial-state shape transform-fn path steps)
+                          ;; loft-from-path emits side-wall, corner and cap segments
+                          ;; as separate sub-meshes with independent vertex indices.
+                          ;; merge-vertices welds coincident positions so the seams
+                          ;; close into a watertight mesh.
+                          mesh (some-> (combine-meshes (:meshes result-state))
+                                       (mesh-utils/merge-vertices 1e-4))]
+                      (if mesh (conj acc mesh) acc)))
+                  []
+                  shapes)]
+     (wrap-results results))))
 
 (defn ^:export pure-loft-two-shapes
   "Pure loft between two shapes - creates mesh that transitions from shape1 to shape2.
@@ -221,37 +186,6 @@
                       (if mesh (conj acc mesh) acc)))
                   []
                   shapes1)]
-     (wrap-results results))))
-
-(defn- pure-bloft
-  "Bezier-safe loft, internal fallback used by `pure-loft-path` when the
-   path is bezier-marked and consecutive rings would self-intersect.
-
-   Builds the sweep with adaptive curvature sampling, replaces intersecting
-   ring pairs with convex-hull bridges, then unions the pieces via Manifold.
-   Not part of the public API: callers go through `loft`, which decides
-   automatically whether to invoke this path."
-  ([shape-or-shapes transform-fn path] (pure-bloft shape-or-shapes transform-fn path nil 0.1))
-  ([shape-or-shapes transform-fn path steps] (pure-bloft shape-or-shapes transform-fn path steps 0.1))
-  ([shape-or-shapes transform-fn path steps threshold]
-   (let [shapes (unwrap-shapes shape-or-shapes)
-         current-turtle @@state/turtle-state-var
-         initial-state (if current-turtle
-                         (-> (turtle/make-turtle)
-                             (assoc :position (:position current-turtle))
-                             (assoc :heading (:heading current-turtle))
-                             (assoc :up (:up current-turtle))
-                             (assoc :joint-mode (:joint-mode current-turtle))
-                             (assoc :resolution (:resolution current-turtle))
-                             (assoc :material (:material current-turtle)))
-                         (turtle/make-turtle))
-         results (reduce
-                  (fn [acc shape]
-                    (let [result-state (loft/bloft initial-state shape transform-fn path steps threshold)
-                          mesh (combine-meshes (:meshes result-state))]
-                      (if mesh (conj acc mesh) acc)))
-                  []
-                  shapes)]
      (wrap-results results))))
 
 ;; ============================================================

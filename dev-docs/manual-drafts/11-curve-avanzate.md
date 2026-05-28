@@ -150,4 +150,6 @@ Il rimedio è a monte, sul path: ridurre la curvatura locale rispetto al raggio 
 
 4. **Spezzare il loft in tratti dritti uniti con `mesh-union`**, accettando un raccordo squadrato al posto della transizione continua.
 
-Su path già passati per `bezier-as`, loft applica internamente una strategia di recupero quando rileva intersezioni fra ring adiacenti — sostituendole con un hull convesso locale. Non è infallibile (su curve estremamente strette può comunque produrre triangoli sottili nel raccordo) e non si attiva su path non-bezier. La regola pratica resta: se vedi `manifold? nil`, agisci sul path, non aspettarti che il loft inventi una soluzione.
+Le shape con holes (es. `(shape-difference (circle 8) (circle 4))`) sono più sensibili: il ring interno spazza un raggio più piccolo del path e si auto-interseca prima del ring esterno. Se ti serve un profilo anulare lungo una curva, tieni la curvatura gentile rispetto al raggio del foro (in pratica: smussa di più, o usa un foro più piccolo).
+
+La regola pratica resta: se `manifold? nil`, agisci sul path. Loft non ha meccanismi automatici di recupero, e fingere che ce ne fossero produrrebbe solo silent failure.
