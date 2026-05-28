@@ -150,4 +150,4 @@ Il rimedio è a monte, sul path: ridurre la curvatura locale rispetto al raggio 
 
 4. **Spezzare il loft in tratti dritti uniti con `mesh-union`**, accettando un raccordo squadrato al posto della transizione continua.
 
-`loft` non ha un proprio meccanismo di recupero per ring auto-intersecanti: se il tuo path produce un risultato non-manifold, applica una delle strategie sopra prima di andare avanti.
+Su path già passati per `bezier-as`, loft applica internamente una strategia di recupero quando rileva intersezioni fra ring adiacenti — sostituendole con un hull convesso locale. Non è infallibile (su curve estremamente strette può comunque produrre triangoli sottili nel raccordo) e non si attiva su path non-bezier. La regola pratica resta: se vedi `manifold? nil`, agisci sul path, non aspettarti che il loft inventi una soluzione.

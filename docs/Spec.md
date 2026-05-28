@@ -1119,7 +1119,7 @@ Taper between two different shapes:
 
 Default: step count follows `resolution` (64 at default). Returns mesh without side effects.
 
-**Tight curves and self-intersection.** When the path's radius of curvature is comparable to the shape's radius (e.g. a `(th 120)` spike or a high-tension `bezier-as`), `loft` rings on the inner side of the bend overlap. The result is non-manifold geometry (`manifold?` returns `nil`). The remedy is on the path side: smooth spikes with `bezier-as` or `arc-h`, choose a smaller shape, or split the loft into straight segments joined with `mesh-union`. `loft` has no built-in escape hatch for genuinely self-intersecting rings.
+**Tight curves and self-intersection.** When the path's radius of curvature is comparable to the shape's radius (e.g. a `(th 120)` spike or a high-tension `bezier-as`), `loft` rings on the inner side of the bend overlap. The result is non-manifold geometry (`manifold?` returns `nil`). The remedy is on the path side: smooth spikes with `bezier-as` or `arc-h`, choose a smaller shape, or split the loft into straight segments joined with `mesh-union`. On paths already marked as bezier (via `bezier-as` / `bezier-to`), `loft` applies an internal hull-bridge recovery when it detects ring-ring intersection — this is not a guarantee but rescues most reasonable cases. On non-bezier paths there is no recovery.
 
 ### Revolve
 
