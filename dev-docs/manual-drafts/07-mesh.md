@@ -1,4 +1,5 @@
-PLACEHOLDER<!-- Convenzioni accertate per il capitolo 7:
+<!--
+Convenzioni accertate per il capitolo 7:
 - Una mesh Ridley è una mappa Clojure con :vertices, :faces, :creation-pose, e campi opzionali (:primitive, :face-groups, :material, ::raw-arrays).
 - :vertices è un vettore di vettori [x y z], :faces è un vettore di vettori [i j k] (indici nei vertici).
 - ::raw-arrays è una cache di sola uscita per Three.js e export; non viene usata nel path inverso (mesh → Manifold).
@@ -6,12 +7,12 @@ PLACEHOLDER<!-- Convenzioni accertate per il capitolo 7:
 - mesh-diagnose è puro ClojureScript, niente Manifold WASM.
 - manifold? e mesh-status richiedono Manifold WASM.
 - merge-vertices è il fix più comune per mesh non-manifold dopo CSG.
-- mesh-smooth richiede input manifold (watertight).
 - inset-face e scale-face NON esistono come binding SCI.
 - Codice esempi in inglese, prosa in italiano. No em-dash.
 -->
 
 # 7. Mesh
+
 
 ## 7.1 Cos'è una mesh
 
@@ -19,7 +20,7 @@ Fino a qui hai costruito oggetti in diversi modi: chiamando una primitiva, estru
 
 Una mesh è la rappresentazione 3D che Ridley usa per tutto ciò che appare nel viewport, viene esportato in STL o 3MF, e partecipa alle operazioni booleane. È il formato in cui converge ogni tecnica di costruzione.
 
-In Ridley una mesh è una mappa Clojure. Puoi ispezionarla, stamparla nella REPL, confrontarla con `=`, passarla a una funzione, metterla in un atom. Non è un oggetto opaco, non è un puntatore a memoria nativa: è un dato, come tutto il resto.
+In Ridley una mesh è una mappa Clojure. Puoi ispezionarla, stamparla nella REPL, confrontarla con `=`, passarla a una funzione, salvarla in una variabile con `def`. Non è un oggetto opaco, non è un puntatore a memoria nativa: è un dato, come tutto il resto.
 
 La struttura minima è questa:
 
@@ -74,16 +75,18 @@ Le primitive (`box`, `sphere`, `cyl`, `cone`), le estrusioni chiuse, i loft, i r
 
 <!-- TODO: chiarire quali costruzioni Ridley producono effettivamente mesh non-manifold e in quali circostanze. Verificare il comportamento di shell con voronoi/lattice/checkerboard e di thickness-fn a zero rispetto a Manifold. Oggi la Spec dice che Manifold le rifiuta con status 2, ma il motivo topologico preciso non è accertato. -->
 
-Non tutte le mesh lo sono. Alcune costruzioni possono produrre geometrie che Manifold non accetta: giunzioni a T, muri sovrapposti, bordi condivisi da più di due facce. Quando succede, `mesh-diagnose` ti dice esattamente qual è il problema.
+Non tutte le mesh lo sono. Le aperture create dalle thickness-fn (cap. 6.9) lasciano sui bordi dei fori vertici quasi-coincidenti che la topologia legge come spigoli condivisi da più di due facce: `merge-vertices` (più sotto) li fonde e ripristina la mesh come manifold. Anche concatenazioni di operazioni booleane su numeri in virgola mobile possono lasciare vertici quasi-coincidenti con lo stesso effetto. Quando una mesh non risulta manifold, `mesh-diagnose` aiuta a capire da quale parte guardare.
 
-La distinzione conta perché alcune operazioni richiedono input manifold. `mesh-union`, `mesh-difference`, `mesh-intersection` e `mesh-smooth` funzionano solo su mesh watertight: Manifold (la libreria WASM che esegue queste operazioni) rifiuta le altre. Se provi a fare una booleana su una mesh non-manifold, ottieni un errore.
+Restano due fonti di incertezza che vale la pena menzionare. La prima è la natura stessa delle shape-fn componibili (cap. 6): la loro espressività è il loro punto di forza, ma significa anche che è impossibile garantire a priori che ogni combinazione di shell, thickness-fn custom e parametri estremi produca una mesh manifold. In pratica si prova, si verifica con `mesh-diagnose`, e se serve si interviene con `merge-vertices` o `solidify`. La seconda è che Ridley è un sistema complesso e bug residui sono sempre possibili: se una costruzione che secondo questo manuale dovrebbe produrre una mesh manifold non lo fa, vale la pena segnalare il caso.
+
+La distinzione conta perché alcune operazioni richiedono input manifold. `mesh-union`, `mesh-difference` e `mesh-intersection` funzionano solo su mesh watertight: Manifold (la libreria WASM che esegue queste operazioni) rifiuta le altre. Se provi a fare una booleana su una mesh non-manifold, ottieni un errore.
 
 Il punto importante è che "non-manifold" non significa "rotto". Una mesh che Manifold rifiuta può comunque renderizzarsi correttamente nel viewport, esportarsi in STL, e la maggior parte degli slicer (Bambu Studio, OrcaSlicer, PrusaSlicer, Cura) la accetta senza problemi: riparano automaticamente i piccoli gap e affettano il risultato. Semplicemente, quella mesh non può partecipare a certe operazioni.
 
 Per verificare rapidamente lo stato di una mesh hai due strumenti:
 
 ```clojure
-(manifold? m)     ;; => true / false
+(manifold? m)     ;; => true / nil
 (mesh-status m)   ;; => informazioni dettagliate sullo stato
 ```
 
@@ -97,27 +100,22 @@ Per verificare rapidamente lo stato di una mesh hai due strumenti:
 
 ### Riparare una mesh
 
-Il caso più comune di mesh non-manifold è il risultato di una sequenza di operazioni booleane che produce vertici quasi-duplicati. Due vertici a distanza infinitesimale l'uno dall'altro confondono la topologia: lo spigolo tra loro viene contato come condiviso da un numero sbagliato di facce.
+Il caso più comune di mesh non-manifold sono shell e loft con aperture: `shell` con uno stile come `:lattice`, `:voronoi`, `:checkerboard` o con una thickness-fn custom che restituisce 0 in alcune zone produce buchi nella parete, e ai bordi di quei buchi restano vertici distinti ma spazialmente coincidenti. Due vertici a distanza infinitesimale l'uno dall'altro confondono la topologia: lo spigolo tra loro viene contato come condiviso da un numero sbagliato di facce, e Manifold rifiuta la mesh.
+
+Le booleane 3D (`mesh-union`, `mesh-difference`, `mesh-intersection`) invece producono di norma output già manifold: Manifold gestisce internamente i quasi-duplicati. Quando una booleana fallisce, di solito il problema è nell'**input**, non nell'output.
 
 `merge-vertices` risolve il problema collassando i vertici che distano meno di un epsilon (per default `1e-6`):
 
-```clojure
-;; CSG result that fails mesh-smooth
-(def result (mesh-difference a b))
-(manifold? result)          ;; => false
+<!-- example-source: mesh-merge-vertices :no-run
+;; Shell con aperture: non-manifold per via dei bordi dei fori
+(def m (loft (shell (circle 20 64) :thickness 2
+                    :style :lattice :openings 6 :rows 4)
+             (f 40)))
+(println "before:" (boolean (manifold? m)))  ;; => false
 
-;; After merging near-duplicate vertices
-(def fixed (merge-vertices result))
-(manifold? fixed)           ;; => true
-```
-
-<!-- example-source: mesh-merge-vertices
-(def a (box 30))
-(def b (attach (box 20) (f 10)))
-(def result (mesh-difference a b))
-(println "before:" (manifold? result))
-(register fixed (merge-vertices result))
-(println "after:" (manifold? fixed))
+;; Dopo aver fuso i vertici coincidenti
+(def fixed (merge-vertices m))
+(println "after:" (boolean (manifold? fixed)))  ;; => true
 -->
 
 Non è una garanzia universale, ma è il primo tentativo che vale sempre la pena fare. Se la mesh ha problemi strutturali più seri (buchi veri, geometria sovrapposta), servono strategie diverse che vedremo nelle sezioni successive.
@@ -153,15 +151,20 @@ Tutte e tre accettano due o più argomenti, oppure un vettore:
 (mesh-difference [base t1 t2])
 ```
 
-<!-- example-source: bool-variadic
-(def base (box 40 40 20))
-(def holes
-  (for [i (range 4)]
-    (attach (cyl 5 30) (th (* i 90)) (f 12))))
-(register drilled (mesh-difference base (mesh-union holes)))
--->
 
 La forma con vettore è comoda quando le mesh vengono da un `for` o da un `map`: puoi passare direttamente il risultato senza doverlo scompattare.
+
+Quando hai un caso misto — una mesh singola da una parte e un vettore di mesh dall'altra, come tipicamente succede con `mesh-difference` quando i tool vengono da un `for` — la forma a vettore non basta da sola: devi prima mettere la mesh singola davanti al vettore. La via più diretta è `into`:
+
+<!-- example-source: bool-into-vector -->
+```clojure
+(def base (box 40 40 20))
+(def cuts
+  (for [i (range 4)]
+    (attach (cyl 5 30) (th (* i 90)) (f 12))))
+
+(register drilled (mesh-difference (into [base] cuts)))
+```
 
 Per `mesh-difference`, l'ordine conta: il primo elemento è sempre la base, gli altri sono gli utensili. Per `mesh-union` e `mesh-intersection` l'ordine è irrilevante.
 
@@ -170,7 +173,7 @@ Per `mesh-difference`, l'ordine conta: il primo elemento è sempre la base, gli 
 Le booleane richiedono input manifold. Se una mesh non lo è, l'operazione fallisce. Due strumenti per verificare prima:
 
 ```clojure
-(manifold? m)     ;; => true / false
+(manifold? m)     ;; => true / nil
 (mesh-status m)   ;; => informazioni dettagliate
 ```
 
@@ -184,7 +187,7 @@ Se una booleana fallisce e non capisci perché, `mesh-diagnose` (sezione 7.1) è
 
 ### Solidify: ripulire auto-intersezioni
 
-A volte un'estrusione o un loft producono geometria che si auto-interseca: il profilo attraversa sé stesso in una curva stretta, oppure due segmenti di un percorso si sovrappongono. La mesh risultante non è pulita e le booleane successive la rifiutano.
+A volte un'estrusione o un loft producono geometria che si auto-interseca: il profilo attraversa se stesso in una curva stretta, oppure due segmenti di un percorso si sovrappongono. La mesh risultante non è pulita e le booleane successive la rifiutano.
 
 `solidify` risolve il problema facendo passare la mesh attraverso Manifold, che ricalcola la superficie eliminando le intersezioni interne:
 
@@ -232,7 +235,7 @@ Non sempre serve una booleana per mettere insieme più mesh. `concat-meshes` uni
 (concat-meshes [m1 m2 m3])      ; from a vector
 ```
 
-Il risultato non è manifold (le mesh si compenetrano senza che le intersezioni vengano risolte), ma questo non è un problema quando il passo successivo è una booleana. Manifold accetta geometria concatenata come operando, e la risolve durante l'operazione.
+Il risultato è una mesh che contiene più pezzi nello stesso oggetto, senza che le intersezioni tra loro vengano risolte. Funziona come ingresso a una booleana solo se i pezzi non si compenetrano: se due cilindri si sovrappongono nello spazio, `concat-meshes` produce una mesh con auto-intersezioni che Manifold rifiuta. Per pezzi separati (come i 12 cilindri disposti in cerchio dell'esempio sotto), `concat-meshes` è perfetto.
 
 Il vantaggio è la velocità. Considera un caso comune: forare un disco con 12 cilindri disposti in cerchio.
 
@@ -243,24 +246,18 @@ Il vantaggio è la velocità. Considera un caso comune: forare un disco con 12 c
     (cyl 30 5)
     (mesh-union
       (for [i (range 12)]
-        (attach (cyl 2 8) (th (* i 30)) (f 20))))))
+        (attach (cyl 2 20) (tr (* i 30)) (rt 20) )))))
 
+```
+
+<!-- example-source: bool-concat-perf
 ;; Fast: one concat, then one difference
 (register plate-fast
   (mesh-difference
     (cyl 30 5)
     (concat-meshes
       (for [i (range 12)]
-        (attach (cyl 2 8) (th (* i 30)) (f 20))))))
-```
-
-<!-- example-source: bool-concat-perf
-(register plate
-  (mesh-difference
-    (cyl 30 5)
-    (concat-meshes
-      (for [i (range 12)]
-        (attach (cyl 2 8) (th (* i 30)) (f 20))))))
+        (attach (cyl 2 20) (tr (* i 30)) (rt 20))))))
 -->
 
 Nella versione lenta, `mesh-union` esegue 11 operazioni booleane in sequenza per fondere i 12 cilindri, e poi una dodicesima per sottrarli dal disco. Nella versione veloce, `concat-meshes` incolla i cilindri in tempo lineare, e `mesh-difference` fa una sola operazione booleana. Per pattern a griglia o ad anello con decine di pezzi, la differenza è un ordine di grandezza.
@@ -277,27 +274,43 @@ Per le union variandiche, Manifold usa internamente un algoritmo tree-union che 
 
 ## 7.3 Raccordi e smussi 3D
 
-Dopo una serie di booleane, un modello ha tipicamente spigoli vivi a 90° dove i volumi si incontrano. In un CAD tradizionale applicheresti un fillet o un chamfer selezionando gli spigoli uno per uno. In Ridley ci sono due strade: lavorare per direzione con `fillet` e `chamfer`, oppure smussare globalmente con `mesh-smooth`.
+Dopo una serie di booleane, un modello ha tipicamente spigoli vivi a 90° dove i volumi si incontrano. In un CAD tradizionale applicheresti un fillet o un chamfer selezionando gli spigoli uno per uno. In Ridley si lavora per direzione con `fillet` e `chamfer`.
+
+Una premessa onesta: smussare gli spigoli di una mesh arbitraria è un problema notoriamente difficile, che anche i CAD commerciali risolvono solo parzialmente (Fusion 360, Onshape e altri falliscono regolarmente con messaggi tipo "fillet/chamfer encountered a non-manifold edge"). `chamfer` e `fillet` in Ridley funzionano bene sui casi comuni — primitive e booleane semplici — ma possono produrre risultati sbagliati su geometrie complesse, in particolare quando gli spigoli sono vicini ad altre parti del modello. Per questi casi il manuale indica come riconoscere il problema, come limitarlo con il parametro `:angle`, e quando conviene cambiare strategia usando gli SDF (cap. 12), che producono smussi morbidi per costruzione.
 
 ### Chamfer: smusso piatto
 
-`chamfer` taglia gli spigoli vivi con un piano inclinato. Il risultato è uno smusso piatto, come una limatura a 45°.
+`chamfer` taglia gli spigoli vivi con un piano inclinato. Il risultato è uno smusso piatto, come una limatura.
 
+<!-- example-source: chamfer-basic :warning slow -->
 ```clojure
-(-> (box 30 30 20) (chamfer :top 2))
-(-> (box 30 30 20) (chamfer :all 1.5))
-(-> (box 30 30 20) (chamfer :all 1.5 :angle 60))
+(register A (-> (box 30 30 20) (chamfer :top 5)))
+(f 60)
+(register B (-> (mesh-union
+                  (box 30 30 20)
+                  (attach (cone 2 10 50) (f -10) (tv 50)))
+                (chamfer :all 4.5)))
+(f 60)
+(register C (-> (mesh-union
+                  (box 30 30 20)
+                  (attach (cone 2 10 50) (f -10) (tv 50)))
+                (chamfer :all 4.5 :angle 90)))
 ```
 
-<!-- example-source: chamfer-box
-(register chamfered (-> (box 30 30 20) (chamfer :top 2)))
--->
 
-Il primo argomento dopo la mesh è un *direction selector* che sceglie quali spigoli lavorare: `:top`, `:bottom`, `:left`, `:right`, `:up`, `:down`, oppure `:all` per tutti. Il secondo è la distanza di taglio. `:angle` controlla la soglia dell'angolo diedrale: solo gli spigoli più acuti di quel valore vengono toccati (default 80°).
+Il primo argomento dopo la mesh è un *direction selector* che sceglie quali spigoli lavorare: `:top`, `:bottom`, `:left`, `:right`, `:up`, `:down`, oppure `:all` per tutti. Il secondo è la distanza di taglio.
+
+A mostra il caso più semplice: gli spigoli superiori di un box vengono smussati in modo pulito.
+
+B e C mostrano cosa succede quando la geometria è più complessa. Un cono viene unito al box col vertice attaccato in alto e la base sospesa in aria. Senza il parametro `:angle`, `chamfer` lavora su molti spigoli, inclusi quelli attorno al vertice del cono (dove il cono incontra il piano superiore del box), e il risultato è visivamente sbagliato. Con `:angle 90`, `chamfer` esclude proprio quegli spigoli e si limita ai 90° del box e alla base larga del cono, producendo un risultato corretto.
+
+`:angle` specifica la *piega minima* (in gradi) perché uno spigolo venga considerato. La piega è l'angolo tra le normali esterne delle due facce adiacenti: 0° su una superficie piana (nessuno spigolo), 90° sugli spigoli retti di un box, tendente a 180° sugli spigoli a lama. Vengono toccati gli spigoli con piega *maggiore o uguale* a `:angle`. Il default `:angle 80` cattura tutti gli spigoli da 80° in su, inclusi i 90° del box e gli ~81° generati dall'unione cono-box. Alzare la soglia esclude gli spigoli con piega più dolce e protegge le zone dove `chamfer` farebbe pasticci: è il primo strumento da provare quando un chamfer produce un risultato strano.
 
 ### Fillet: raccordo arrotondato
 
-`fillet` fa la stessa cosa ma produce un raccordo curvo al posto del taglio piatto. Ha un parametro in più, `:segments`, che controlla quanti passi usa per approssimare la curva:
+`fillet` fa la stessa cosa di `chamfer` ma produce un raccordo curvo al posto del taglio piatto. Tutte le considerazioni su `chamfer` (i direction selector, il parametro `:angle`, i limiti su geometrie complesse) si applicano identicamente a `fillet`. Internamente entrambe le operazioni costruiscono dei "cutter" e li sottraggono dalla mesh con `mesh-difference`: la differenza è solo nella forma del cutter (piatto per `chamfer`, arrotondato per `fillet`).
+
+`fillet` ha un parametro in più, `:segments`, che controlla quanti passi usa per approssimare la curva:
 
 ```clojure
 (-> (box 30 30 20) (fillet :top 3 :segments 8))
@@ -310,11 +323,15 @@ Il primo argomento dopo la mesh è un *direction selector* che sceglie quali spi
 
 Più segmenti producono un raccordo più liscio ma con più triangoli. Per la stampa 3D, 6-8 segmenti sono di solito sufficienti.
 
-`:blend-vertices true` aggiunge un raccordo sferico ai vertici dove convergono tre spigoli:
+### Quando chamfer e fillet non bastano
 
-```clojure
-(-> (box 30 30 20) (fillet :top 3 :blend-vertices true))
-```
+Le situazioni in cui `chamfer` e `fillet` producono risultati sbagliati o falliscono sono tipicamente tre:
+
+- **Spigoli concavi.** Entrambe le operazioni sottraggono materiale lungo lo spigolo. Su uno spigolo concavo (interno) questo scava un solco invece di smussare il raccordo. `chamfer` e `fillet` rifiutano di operare sugli spigoli concavi.
+- **Spigoli troppo vicini ad altra geometria.** Se il cutter generato per uno spigolo si avvicina o attraversa altre parti del modello, il risultato può essere geometria malformata. Il parametro `:angle` aiuta a escludere gli spigoli problematici.
+- **Geometrie auto-intersecanti o con tolleranze molto strette.** Le booleane sottostanti possono fallire o produrre piccoli artefatti.
+
+Se ti trovi in uno di questi casi e nessuna combinazione di `:angle` o di selezione direzionale ti soddisfa, la strategia alternativa è costruire l'oggetto direttamente come SDF (cap. 12). `sdf-blend`, `sdf-blend-difference` e simili producono raccordi morbidi *per costruzione*: lo smussamento è incorporato nelle operazioni di combinazione, non aggiunto come post-processing. Non hanno i limiti di `chamfer`/`fillet` perché non operano sulla topologia di una mesh esistente, ma sulla rappresentazione implicita.
 
 ### Chamfer-edges e chamfer-prisms: il livello basso
 
@@ -342,31 +359,6 @@ Più segmenti producono un raccordo più liscio ma con più triangoli. Per la st
 
 Puoi filtrare i prismi, trasformarli, o usarli per costruire smussi asimmetrici.
 
-### Mesh-smooth: arrotondamento globale
-
-`mesh-smooth` è un approccio diverso: invece di lavorare su spigoli selezionati, arrotonda globalmente tutti gli spigoli della mesh che hanno un angolo diedrale inferiore a una soglia. È il modo più veloce per dare un aspetto organico a un pezzo uscito da una pipeline CSG.
-
-```clojure
-(mesh-smooth m)                              ; default: sharp-angle 100, refine 3
-(mesh-smooth m :sharp-angle 120 :refine 4)   ; più liscio, più denso
-(mesh-smooth m :sharp-angle 60)              ; conserva gli angoli > 60°
-(mesh-smooth m :sharp-angle 180)             ; arrotonda tutto
-```
-
-<!-- example-source: mesh-smooth-csg
-(register rounded-widget
-  (-> (mesh-difference (box 40 40 20) (cyl 12 30))
-      (mesh-smooth :sharp-angle 100 :refine 3)))
--->
-
-Il parametro chiave è `:sharp-angle`: gli spigoli con angolo diedrale *maggiore* di questo valore restano vivi, gli altri vengono arrotondati. Il default di Ridley è 100° (quello di Manifold è 60°): per modelli procedurali 90-120° funziona meglio, perché gli spigoli a 90° delle booleane vengono arrotondati invece che conservati.
-
-`:refine` controlla la suddivisione: ogni triangolo diventa `n²` sotto-triangoli. Il default 3 produce 9 triangoli per ogni triangolo originale. Aumentare migliora la qualità visiva ma il costo cresce quadraticamente. Parti dai default e alza solo se vedi ancora sfaccettature.
-
-`:smoothness` (0-1) controlla il raccordo sugli spigoli che sopravvivono come "sharp": 0 li lascia perfettamente vivi, 1 li arrotonda completamente.
-
-`mesh-smooth` richiede input manifold. Se la mesh non lo è, l'operazione fallisce. Per mesh non-manifold che hanno bisogno di un trattamento estetico simile, vedi `mesh-laplacian` più avanti.
-
 ### Mesh-refine: suddivisione senza smoothing
 
 `mesh-refine` suddivide i triangoli senza spostare i vertici: la forma resta identica, ma la mesh diventa più densa.
@@ -384,7 +376,7 @@ Da solo non cambia nulla visivamente. È utile come passo preparatorio quando un
 
 ### Mesh-laplacian: smoothing che preserva la topologia
 
-`mesh-laplacian` è uno smoothing di Taubin: sposta i vertici sugli spigoli più acuti per smussarli, senza cambiare la topologia della mesh. A differenza di `mesh-smooth`, non aggiunge vertici e non richiede input manifold.
+`mesh-laplacian` è uno smoothing di Taubin: sposta i vertici sugli spigoli più acuti per smussarli, senza cambiare la topologia della mesh. Non aggiunge vertici e non richiede input manifold.
 
 ```clojure
 (mesh-laplacian m)
@@ -392,12 +384,19 @@ Da solo non cambia nulla visivamente. È utile come passo preparatorio quando un
 ```
 
 <!-- example-source: mesh-laplacian
-(register smoothed (mesh-laplacian (box 20) :iterations 15))
+(register smoothed
+  (mesh-laplacian
+    (loft (shell (circle 20 64) :thickness 2
+                 :style :lattice :openings 6 :rows 4)
+          (f 40))
+    :iterations 10))
 -->
 
 Il comportamento è selettivo: muove solo i vertici sugli spigoli il cui angolo diedrale è sotto `:feature-angle` (default 150°), lasciando le superfici piatte intatte. Questo lo rende particolarmente utile per ammorbidire l'aliasing a gradini sulle shell perforate e su altre mesh esteticamente ruvide che non puoi rendere manifold.
 
 I parametri del ciclo di Taubin (`:lambda` 0.5, `:mu` -0.53) sono calibrati per smussare senza restringere il volume. Più iterazioni producono un effetto più marcato.
+
+`mesh-laplacian` funziona bene su mesh dense (centinaia di vertici o più). Su mesh sparse come un box di sole 8 vertici, ogni vertice ha troppi pochi vicini perché la media abbia senso, e il filtro distorce invece di smussare: per arrotondare un box usa `fillet` o `chamfer`, non `mesh-laplacian`.
 
 ### Mesh-simplify: ridurre i triangoli
 
@@ -408,11 +407,16 @@ I parametri del ciclo di Taubin (`:lambda` 0.5, `:mu` -0.53) sono calibrati per 
 (mesh-simplify m 0.25)   ; target: 25%
 ```
 
-<!-- example-source: mesh-simplify
-(register simple-sphere (mesh-simplify (sphere 20 64 32) 0.3))
+<!-- example-source: mesh-simplify :warning slow
+(def heavy
+  (-> (mesh-difference (box 40 40 20) (cyl 12 30))
+      (fillet :all 2)))
+(register light (mesh-simplify heavy 0.3 :max-passes 50))
 -->
 
-Il rapporto è una frazione del conteggio originale. Il risultato è approssimativo: la mesh semplificata perde dettagli fini ma conserva la forma generale. Utile per ridurre il peso di mesh molto dense (tipicamente quelle uscite da `mesh-smooth` con `:refine` alto) prima dell'export.
+Il rapporto è una frazione del conteggio originale. Il risultato è approssimativo: la mesh semplificata perde dettagli fini ma conserva la forma generale. Utile per ridurre il peso di mesh molto dense prima dell'export.
+
+`mesh-simplify` funziona bene su mesh isotropiche (triangoli di dimensioni simili) come quelle uscite da `fillet`, `chamfer` o booleane su geometrie curve. Su mesh con triangoli molto non uniformi — tipicamente le sfere UV (`sphere`), che hanno ventagli densissimi ai poli, o i ventagli dei cap di `cyl` — il collasso preferenziale degli edge corti distorce la forma (sfera schiacciata ai poli, cilindro collassato): in questi casi è meglio ricostruire la primitiva a risoluzione più bassa che semplificarla a posteriori. Se il target non viene raggiunto, alza `:max-passes` (default 20).
 
 ### Scegliere lo strumento giusto
 
@@ -420,11 +424,11 @@ La scelta tra questi strumenti dipende da cosa vuoi ottenere:
 
 Se vuoi arrotondare spigoli specifici (quelli in alto, quelli a destra, quelli in una regione), usa `fillet` con un direction selector o `chamfer-edges` con `:where`. Hai il controllo preciso su dove agisce l'operazione.
 
-Se vuoi dare un aspetto organico globale a un pezzo CSG, usa `mesh-smooth`. È veloce da scrivere e il risultato è visivamente convincente. L'unico vincolo è che la mesh deve essere manifold.
-
-Se la mesh non è manifold ma vuoi ammorbidire le sfaccettature visibili, usa `mesh-laplacian`. Non aggiunge geometria, non cambia topologia, e funziona su qualsiasi mesh.
+Se vuoi ammorbidire le sfaccettature visibili senza cambiare la topologia, usa `mesh-laplacian`. Non aggiunge geometria e funziona su qualsiasi mesh, anche non-manifold.
 
 Se hai bisogno di un semplice smusso piatto per rompere gli spigoli vivi (comune nella stampa 3D per evitare l'effetto "elephant foot"), usa `chamfer`. È l'operazione più leggera.
+
+Per arrotondamenti morbidi e globali tipici delle forme organiche, vedi gli SDF nel cap. 12: producono raccordi continui per costruzione (`sdf-blend`) invece che come post-processing.
 
 ## 7.4 Modificare le facce di una mesh
 
@@ -615,15 +619,11 @@ Il pattern `inset` + `f` è il più comune: restringi la faccia e poi la estrudi
 (register b (box 30 30 10))
 (def top-info (face-shape b (:id (largest-face b :top))))
 (turtle (:pose top-info)
+  (color 0xffffff)
   (register tower (extrude (:shape top-info) (f 40))))
 -->
 
-La posa usa `:pos` (non `:position`) per compatibilità con la macro `turtle`. Per usarla, apri un `turtle` scope con la posa della faccia ed estrudi la shape da lì:
-
-```clojure
-(turtle (:pose top-info)
-  (register tower (extrude (:shape top-info) (f 40))))
-```
+(:pose top-info) restituisce posizione e direzione della faccia, apri un `turtle` scope con la pose della faccia ed estrudi la shape da lì:
 
 Questo pattern è utile per costruire sopra il risultato di una booleana: trovi la faccia, ne estrai la forma, e la usi come profilo per una nuova estrusione posizionata esattamente dove serve.
 
@@ -635,24 +635,20 @@ A volte hai bisogno di tornare dal 3D al 2D: estrarre la sezione di una mesh a u
 
 `slice-mesh` taglia una mesh con il piano definito dalla posizione e dalla direzione della tartaruga. Il vettore heading è la normale del piano. Il risultato è un vettore di shape 2D (una mesh può avere più contorni disgiunti sullo stesso piano).
 
-```clojure
-(register cup (revolve (shape (f 20) (th -90) (f 30) (th -90) (f 15))))
-
-;; posiziona la tartaruga sul piano di taglio
-(tv 90) (f 15)
-(def sections (slice-mesh :cup))
-```
 
 <!-- example-source: slice-mesh-cup
-(register cup (revolve (shape (f 20) (th -90) (f 30) (th -90) (f 15))))
+(register cup (revolve (shape (f 20) (th 90) (f 30) (th 90) (f 15))))
 (tv 90) (f 15)
-(stamp (slice-mesh :cup))
+(def shp (slice-mesh :cup))
+(f 30)
+(stamp shp)
 -->
 
 Le coordinate delle shape risultanti sono nel sistema locale del piano di taglio: l'asse X è il right della tartaruga, l'asse Y è il suo up. Le shape hanno `:preserve-position? true`, il che significa che `stamp` le renderizza nella posizione corretta nel viewport:
 
 ```clojure
-(stamp (slice-mesh :cup))    ; visualizza la sezione sul piano di taglio
+(f 30)
+(stamp shp)    ; visualizza la sezione su un piano a distanza 30 per renderla visibile
 ```
 
 `slice-mesh` accetta sia una mesh che un nome registrato (keyword), oppure un nodo SDF (che viene materializzato automaticamente).
@@ -672,8 +668,11 @@ Se il piano di taglio viene da un calcolo e non dalla posa della tartaruga, `sli
 ```
 
 <!-- example-source: slice-at-plane
-(register cup (revolve (shape (f 20) (th -90) (f 30) (th -90) (f 15))))
-(stamp (slice-at-plane :cup [0 0 1] [0 0 15]))
+(register cup (revolve (shape (f 20) (th 90) (f 30) (th 90) (f 15))))
+(tv 90) (f 15)
+(def shp (slice-at-plane :cup [0 0 1] [0 0 15]))
+(f 30)
+(stamp shp)
 -->
 
 Il primo argomento è la mesh (o keyword), il secondo è la normale del piano, il terzo è un punto sul piano. Opzionalmente puoi passare i vettori right e up per controllare la base locale delle shape risultanti. Senza di essi, Ridley sceglie una base ortogonale automaticamente.
@@ -692,7 +691,7 @@ Restituisce lo stesso tipo di risultato di `slice-mesh`: un vettore di shape 2D 
 
 <!-- example-source: project-mesh-silhouette
 (register b (box 30 20 10))
-(tv 90)
+(tv 40) (th 30) (f 50)
 (stamp (project-mesh :b))
 -->
 
@@ -729,7 +728,7 @@ Il volume è una mesh ordinaria usata solo per i suoi bounds: `(sphere 25)`, `(b
 
 <!-- example-source: warp-inflate-basic
 (register bumpy
-  (warp (box 40) (sphere 25) (inflate 5) :subdivide 2))
+  (warp (box 40) (attach (sphere 25) (f 20) (u 10)) (inflate 5) :subdivide 6))
 -->
 
 ### Preset di deformazione
@@ -803,21 +802,14 @@ I preset coprono i casi comuni, ma `warp` accetta qualsiasi funzione con la firm
 
 Non devi usare tutti i parametri. Una deformazione custom che sposta i vertici verso l'alto in funzione della loro distanza dal centro:
 
-```clojure
-(warp mesh volume
-  (fn [pos _local _dist _normal _vol]
-    (let [[x y z] pos
-          r (Math/sqrt (+ (* x x) (* y y)))]
-      [x y (+ z (* 3 (Math/exp (- (* r r 0.01)))))])))
-```
 
 <!-- example-source: warp-custom
 (register gaussian-bump
-  (warp (mesh-refine (box 40 40 5) 3) (sphere 25)
+  (warp (mesh-refine (box 40 40 5) 5) (sphere 25)
     (fn [pos _ _ _ _]
       (let [[x y z] pos
-            r (Math/sqrt (+ (* x x) (* y y)))]
-        [x y (+ z (* 3 (Math/exp (- (* r r 0.01)))))]))))
+            r (sqrt (+ (* x x) (* y y)))]
+        [x y (+ z (* 3 (exp (- (* r r 0.01)))))]))))
 -->
 
 Il falloff hermite (da `smooth-falloff`) è già applicato dal sistema prima di chiamare la tua funzione: i vertici al bordo del volume ricevono un effetto ridotto automaticamente. Non devi gestire il blend tu stesso.

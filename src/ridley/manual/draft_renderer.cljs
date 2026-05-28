@@ -81,30 +81,112 @@
 
 ;; ── Example-source marker extraction ──────────────────────────
 ;;
-;; Format (single-line marker preceding a ```clojure``` block):
+;; Two accepted formats:
 ;;
-;;     <!-- example-source: some-id -->
-;;     ```clojure
-;;     (code)
-;;     ```
+;; 1) Single-line marker preceding a ```clojure``` block. The fence's
+;;    visible code is also what Run executes — one combined panel.
 ;;
-;; The code is read from the visible block itself; the marker just flags
-;; the block as runnable and carries the id (for future cross-references).
+;;        <!-- example-source: some-id -->
+;;        ```clojure
+;;        (code)
+;;        ```
 ;;
-;; Any other HTML comment — including the old multi-line example-source
-;; format still present in unconverted chapters — is stripped silently.
-;; In that transitional state, those code blocks render as illustrative
-;; (no Run button), which is the desired behaviour.
+;; 2) Multi-line marker (anywhere). The marker stands on its own and
+;;    becomes a separate runnable panel; its code body is what Run executes
+;;    and what's shown in the CodeMirror view. Any preceding ```clojure```
+;;    fence stays illustrative-only.
+;;
+;;        ```clojure
+;;        (def m (box 20))           <- illustrative panel (no Run)
+;;        (mesh-diagnose m) ;; => {:n-verts 8 ...}
+;;        ```
+;;
+;;        <!-- example-source: some-id   <- runnable panel
+;;        (register m (box 20))
+;;        (println (mesh-diagnose m))
+;;        -->
+;;
+;; Both forms accept optional attributes on the marker's first line, after
+;; the id:
+;;
+;;   :no-run            Hide the Run button (only Edit is shown).
+;;   :warning <value>   Show a small badge next to the buttons. Known values:
+;;                      `slow`, `desktop-only`.
+;;
+;;        <!-- example-source: some-id :no-run :warning slow -->
+;;
+;; The single-line marker is replaced by an empty sentinel <div> that
+;; flags the following fence as runnable. The multi-line marker is
+;; replaced by a self-contained sentinel <div> carrying the code in
+;; data-runnable-code; enhance-code-blocks! turns it into an independent
+;; CodeMirror panel.
+
+(defn- escape-html-attr
+  "HTML-escape a string for safe inclusion in an attribute value, encoding
+   newlines so the attribute stays on one line in the serialized HTML."
+  [s]
+  (-> s
+      (.replace (js/RegExp. "&" "g") "&amp;")
+      (.replace (js/RegExp. "<" "g") "&lt;")
+      (.replace (js/RegExp. ">" "g") "&gt;")
+      (.replace (js/RegExp. "\"" "g") "&quot;")
+      (.replace (js/RegExp. "\n" "g") "&#10;")))
+
+(defn- parse-marker-attrs
+  "Parse the optional attribute string that follows the id on a marker's
+   first line. Returns {:no-run? bool :warning string-or-nil}."
+  [attr-str]
+  (let [trimmed (when attr-str (.trim attr-str))
+        tokens (if (and trimmed (pos? (.-length trimmed)))
+                 (vec (.split trimmed (js/RegExp. "\\s+")))
+                 [])]
+    (loop [t tokens acc {:no-run? false :warning nil}]
+      (cond
+        (empty? t) acc
+        (= (first t) ":no-run")
+        (recur (subvec t 1) (assoc acc :no-run? true))
+        (and (= (first t) ":warning") (>= (count t) 2))
+        (recur (subvec t 2) (assoc acc :warning (second t)))
+        :else
+        (recur (subvec t 1) acc)))))
+
+(defn- attr-fragment
+  "Emit ` data-foo=\"bar\"` only when val is truthy. Returns empty string otherwise."
+  [name val]
+  (if val (str " " name "=\"" (escape-html-attr (str val)) "\"") ""))
 
 (defn- replace-example-markers
-  "Replace each <!-- example-source: id --> marker with a block-level sentinel
-   div that survives Markdown parsing. Returns the rewritten markdown."
+  "Replace each <!-- example-source: ... --> marker with a block-level sentinel
+   div that survives Markdown parsing. Handles both the single-line marker
+   (id only, flags the following fence) and the multi-line marker (id + code
+   body, becomes a self-contained runnable panel). Marker attributes
+   (`:no-run`, `:warning <value>`) flow into data-* attributes on the sentinel.
+
+   Order matters: single-line markers are processed first so that their
+   closing `-->` is consumed before the (greedy) multi-line scan runs.
+   Otherwise a single-line marker followed somewhere later by a multi-line
+   marker would be absorbed into one giant block ending at the multi-line's
+   own `-->`."
   [markdown]
-  (let [pattern (js/RegExp. "<!--[ \\t]*example-source:[ \\t]*(\\S+)[ \\t]*-->" "g")]
-    (.replace markdown pattern
-              (fn [_match id]
-                (str "\n\n<div class=\"draft-example-source\" data-source-id=\""
-                     id "\"></div>\n\n")))))
+  (let [single-pat (js/RegExp. "<!--[ \\t]*example-source:[ \\t]*(\\S+)([^\\n]*?)-->" "g")
+        multi-pat  (js/RegExp. "<!--[ \\t]*example-source:[ \\t]*(\\S+)([^\\n]*)\\n([\\s\\S]*?)\\n[ \\t]*-->" "g")
+        with-single (.replace markdown single-pat
+                              (fn [_match id attrs]
+                                (let [{:keys [no-run? warning]} (parse-marker-attrs attrs)]
+                                  (str "\n\n<div class=\"draft-example-source\" data-source-id=\""
+                                       id "\""
+                                       (attr-fragment "data-no-run" (when no-run? "true"))
+                                       (attr-fragment "data-warning" warning)
+                                       "></div>\n\n"))))]
+    (.replace with-single multi-pat
+              (fn [_match id attrs code]
+                (let [{:keys [no-run? warning]} (parse-marker-attrs attrs)]
+                  (str "\n\n<div class=\"draft-runnable-panel\" data-source-id=\""
+                       id "\" data-runnable-code=\""
+                       (escape-html-attr code) "\""
+                       (attr-fragment "data-no-run" (when no-run? "true"))
+                       (attr-fragment "data-warning" warning)
+                       "></div>\n\n"))))))
 
 (defn- strip-remaining-comments
   "Strip any HTML comments left over after marker replacement. Catches author
@@ -160,11 +242,27 @@
     (.addEventListener btn "click" click-fn)
     btn))
 
+(def ^:private warning-labels
+  "Display text for known :warning values. Unknown values fall back to the
+   raw string with a generic icon."
+  {"slow"         {:icon "⏱" :text "Slow"          :title "L'esecuzione richiede diversi secondi"}
+   "desktop-only" {:icon "🖥" :text "Desktop only" :title "Richiede l'app desktop"}})
+
+(defn- make-warning-badge [warning]
+  (let [{:keys [icon text title]} (get warning-labels warning
+                                       {:icon "⚠" :text warning :title nil})
+        badge (.createElement js/document "span")]
+    (set! (.-className badge) (str "manual-example-warning manual-warning-" warning))
+    (set! (.-textContent badge) (str icon " " text))
+    (when title (set! (.-title badge) title))
+    badge))
+
 (defn- render-code-block!
   "Replace a <pre><code> element with a CodeMirror read-only view. If
-   `example-code` is non-nil, append Run + Edit buttons that funnel
-   `example-code` through the shared callbacks."
-  [pre-el visible-code example-code]
+   `example-code` is non-nil, append Edit (always) and Run (unless `:no-run?`)
+   buttons that funnel `example-code` through the shared callbacks. A
+   `:warning` string renders an informational badge after the buttons."
+  [pre-el visible-code example-code {:keys [no-run? warning]}]
   (let [block (.createElement js/document "div")
         code-container (.createElement js/document "div")]
     (set! (.-className block) "manual-example")
@@ -174,16 +272,19 @@
     (when example-code
       (let [buttons (.createElement js/document "div")]
         (set! (.-className buttons) "manual-example-buttons")
-        (.appendChild buttons
-                      (make-button "Run" "manual-btn manual-btn-run"
-                                   (fn [_]
-                                     (when-let [on-run (:on-run @callbacks)]
-                                       (on-run example-code)))))
+        (when-not no-run?
+          (.appendChild buttons
+                        (make-button "Run" "manual-btn manual-btn-run"
+                                     (fn [_]
+                                       (when-let [on-run (:on-run @callbacks)]
+                                         (on-run example-code))))))
         (.appendChild buttons
                       (make-button "Edit" "manual-btn manual-btn-copy"
                                    (fn [_]
                                      (when-let [on-copy (:on-copy @callbacks)]
                                        (on-copy example-code)))))
+        (when warning
+          (.appendChild buttons (make-warning-badge warning)))
         (.appendChild block buttons)))
     (.replaceWith pre-el block)))
 
@@ -310,13 +411,37 @@
         (.insertBefore nav-el wrapper first-child)
         (.appendChild nav-el wrapper)))))
 
+(defn- read-marker-opts
+  "Pull :no-run? and :warning off a sentinel div (data-no-run, data-warning)."
+  [el]
+  {:no-run? (= (.getAttribute el "data-no-run") "true")
+   :warning (.getAttribute el "data-warning")})
+
 (defn- enhance-code-blocks!
-  "Walk the rendered manual content. For each <pre><code class='language-clojure'>:
-   - if its previousElementSibling is the marker <div class='draft-example-source'>,
-     attach Run+Edit buttons (the code in the block is both visible and runnable);
-   - otherwise render as illustrative (no buttons)."
+  "Walk the rendered manual content and turn the two example-source sentinel
+   shapes into CodeMirror panels:
+
+   - <div class='draft-example-source'> placed before a <pre><code> fence
+     marks the fence as runnable (the fence's visible code is also what
+     Run executes).
+   - <div class='draft-runnable-panel' data-runnable-code='...'> becomes a
+     self-contained CodeMirror panel with Run+Edit buttons; the code in the
+     attribute is both visible and runnable.
+
+   Regular fences with no adjacent marker render as illustrative."
   [root]
-  ;; Snapshot the list before mutating to avoid live-NodeList surprises.
+  ;; Pass 1: rewrite each standalone runnable-panel sentinel as a CodeMirror panel.
+  (doseq [panel (vec (array-seq (.querySelectorAll root ".draft-runnable-panel")))]
+    (let [code (.getAttribute panel "data-runnable-code")
+          opts (read-marker-opts panel)
+          ;; render-code-block! expects a <pre> element to replace; build a
+          ;; placeholder so we can reuse the same code path.
+          placeholder (.createElement js/document "pre")]
+      (.replaceWith panel placeholder)
+      (render-code-block! placeholder code code opts)))
+  ;; Pass 2: turn each <pre><code class='language-clojure'> into a CodeMirror
+  ;; view, attaching Run+Edit if preceded by a single-line example-source
+  ;; sentinel.
   (let [pres (vec (array-seq (.querySelectorAll root "pre")))]
     (doseq [pre pres]
       (let [code-el (.querySelector pre "code")
@@ -327,12 +452,13 @@
             marker (when (and prev
                               (.. prev -classList (contains "draft-example-source")))
                      prev)
+            opts (if marker (read-marker-opts marker) {})
             runnable? (some? marker)]
         (when marker (.remove marker))
         (when clojure?
-          (render-code-block! pre visible (when runnable? visible))))))
+          (render-code-block! pre visible (when runnable? visible) opts)))))
   ;; Clean up any leftover orphan markers (paranoia).
-  (doseq [orphan (array-seq (.querySelectorAll root ".draft-example-source"))]
+  (doseq [orphan (array-seq (.querySelectorAll root ".draft-example-source, .draft-runnable-panel"))]
     (.remove orphan)))
 
 ;; ── Public render entry point ─────────────────────────────────

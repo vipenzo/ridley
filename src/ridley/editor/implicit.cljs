@@ -3,7 +3,8 @@
    These functions are bound in the SCI context via base-bindings.
    The turtle atom is resolved via state/turtle-state-var, supporting
    scoped turtle contexts."
-  (:require [ridley.editor.state :as state]
+  (:require [clojure.string :as cstr]
+            [ridley.editor.state :as state]
             [ridley.turtle.core :as turtle]
             [ridley.turtle.shape :as shape]
             [ridley.turtle.path :as path]
@@ -351,6 +352,84 @@
     :else
     (:anchors (registry/get-mesh target))))
 
+(defn- on-anchors-format-pattern [pat]
+  (cond
+    (string? pat)             (pr-str pat)
+    (keyword? pat)            (str pat)
+    (set? pat)                (pr-str pat)
+    (instance? js/RegExp pat) (str pat)
+    :else                     (pr-str pat)))
+
+(defn ^:export implicit-pin-path
+  "Resolve a path's marks at the current turtle pose and return the resulting
+   `{anchor-name → {:position [x y z] :heading [x y z] :up [x y z]}}` map.
+
+   `pin-path` is the value-returning counterpart of `with-path` — it captures
+   the same anchor resolution but as plain data, with no scope. Use it for
+   introspection (\"where would these marks be if I pinned them here?\") or
+   for manual per-anchor logic that does not fit the `on-anchors` dispatch
+   shape:
+
+       (doseq [[name pose] (pin-path skel)]
+         (when (= \"foot-\" (subs (clojure.core/name name) 0 5))
+           …))
+
+   Returns nil if `path` is not a path map. Compare to `(anchors path)`,
+   which always resolves marks at the world origin."
+  [path]
+  (when (and (map? path) (= :path (:type path)))
+    (turtle/resolve-marks @(turtle-ref) path)))
+
+(defn ^:export on-anchors-resolve-target
+  "Resolve the anchor map an on-anchors call iterates over.
+
+   - **Path target**: marks are resolved at the CURRENT turtle pose, so
+     on-anchors composes naturally inside nested assembly contexts (the
+     same convention as with-path, not as `(anchors path)` which uses
+     the world origin).
+   - **Mesh target** (value or registered name): the stored :anchors map
+     is returned unchanged — mesh anchors live in world coordinates and
+     are independent of the current turtle.
+
+   Returns nil if the target carries no resolvable anchors."
+  [target]
+  (cond
+    (and (map? target) (= :path (:type target)))
+    (turtle/resolve-marks @(turtle-ref) target)
+    (and (map? target) (:vertices target))
+    (:anchors target)
+    :else
+    (:anchors (registry/get-mesh target))))
+
+(defn ^:export on-anchors-match?
+  "Test whether an anchor name matches a pattern.
+   Pattern types:
+   - string  → prefix match on (name anchor-name)
+   - regex   → re-find on (name anchor-name)
+   - keyword → equality with anchor-name
+   - set     → contains? on anchor-name"
+  [pat anchor-name]
+  (cond
+    (keyword? pat)            (= pat anchor-name)
+    (set? pat)                (contains? pat anchor-name)
+    (string? pat)             (cstr/starts-with? (name anchor-name) pat)
+    (instance? js/RegExp pat) (some? (re-find pat (name anchor-name)))
+    :else
+    (throw (js/Error.
+            (str "on-anchors: unsupported pattern type "
+                 (pr-str (type pat)) ": " (pr-str pat)
+                 ". Use string, regex, keyword, or set.")))))
+
+(defn ^:export on-anchors-warn-no-match!
+  "Emit a console warning that an on-anchors pattern did not match any anchor
+   in the given anchor map. Lists the available anchor names."
+  [pattern anchor-map]
+  (js/console.warn
+   (str "on-anchors: pattern "
+        (on-anchors-format-pattern pattern)
+        " non ha matchato alcun anchor. Anchor disponibili: "
+        (pr-str (sort (keys (or anchor-map {})))))))
+
 (defn ^:export implicit-mark-pos
   "Return the 3D position [x y z] of a named mark within a path.
    Walks the path from the world origin (heading +X, up +Z) and returns
@@ -644,6 +723,19 @@
   (let [mesh (resolve-to-mesh mesh-or-name-or-sdf)
         [pos heading up right] (turtle-plane-basis)]
     (mirror-shapes-x (manifold/slice-at-plane mesh heading pos right up))))
+
+(defn ^:export implicit-slice-at-plane
+  "Slice a mesh at an arbitrary plane (point + normal), optionally with explicit
+   right/up vectors for the plane's local basis. Accepts a mesh map, a keyword
+   (registered mesh name), or an SDF node (auto-materialized). Returns shapes
+   with :preserve-position? true, oriented to match the stamp coordinate frame
+   (consistent with slice-mesh)."
+  ([mesh-or-name-or-sdf normal point]
+   (let [mesh (resolve-to-mesh mesh-or-name-or-sdf)]
+     (mirror-shapes-x (manifold/slice-at-plane mesh normal point))))
+  ([mesh-or-name-or-sdf normal point right up]
+   (let [mesh (resolve-to-mesh mesh-or-name-or-sdf)]
+     (mirror-shapes-x (manifold/slice-at-plane mesh normal point right up)))))
 
 (defn ^:export implicit-project-mesh
   "Project a mesh onto the plane orthogonal to the turtle's heading,

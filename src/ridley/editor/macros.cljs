@@ -1744,6 +1744,15 @@
              {:opts opts
               :pose-expr x
               :body (vec (subvec remaining 1))}
+             ;; (turtle :anchor-name body…) — pose from a named anchor on the
+             ;; current turtle (e.g. set by with-path or attach-path). The
+             ;; special control keywords above are excluded.
+             (and (nil? pose-expr)
+                  (keyword? x)
+                  (not (#{:reset :preserve-up :pose :at} x)))
+             {:opts opts
+              :pose-expr (list (quote get-anchor) x)
+              :body (vec (subvec remaining 1))}
              :else
              {:opts opts :pose-expr pose-expr :body (vec remaining)})))))
 
@@ -1765,6 +1774,111 @@
          `(let [parent-state# @*turtle-state*]
             (binding [*turtle-state* (atom (init-turtle ~opts-form parent-state#))]
               ~@body)))))
+
+   ;; on-anchors: dispatch a body per matching anchor name on a path or mesh.
+   ;; (on-anchors target [combine-mode]
+   ;;   pattern-1 [:align] body-1
+   ;;   pattern-2 [:align] body-2
+   ;;   ...)
+   ;;
+   ;; Patterns (first match wins):
+   ;;   string  → prefix match on (name anchor-name)
+   ;;   regex   → re-find on (name anchor-name)
+   ;;   keyword → equality with anchor-name
+   ;;   set     → contains? on anchor-name
+   ;;
+   ;; Each body is evaluated inside (turtle :pose <pose> body). By default
+   ;; only :position is taken from the anchor's pose, so the turtle is
+   ;; positioned at the marker but NOT rotated to its frame (same default
+   ;; as move-to). :align before the body activates full pose alignment
+   ;; (position + heading + up) for that clause.
+   ;;
+   ;; Combine mode (optional, immediately after target):
+   ;;   :concat (default) → (concat-meshes …) — fast geometric merge; safe
+   ;;                       when per-anchor bodies are disjoint.
+   ;;   :union           → (mesh-union …)    — boolean union; use when
+   ;;                       bodies overlap each other or the host mesh,
+   ;;                       otherwise concat-meshes leaves interior faces
+   ;;                       that produce artefacts in later booleans.
+   ;;   :vec             → returns a vector of the per-anchor meshes
+   ;;                       (flattened via flatten-meshes) for custom
+   ;;                       downstream composition.
+   ;;
+   ;; If a pattern matches no anchor, a console warning is emitted.
+   (defn- on-anchors-parse-clauses [forms]
+     (loop [acc [] remaining (vec forms)]
+       (cond
+         (empty? remaining) acc
+         (= 1 (count remaining))
+         (throw (js/Error.
+                 (str \"on-anchors: pattern \"
+                      (pr-str (first remaining))
+                      \" has no body\")))
+         :else
+         (let [pattern (first remaining)
+               rest1   (subvec remaining 1)
+               first1  (first rest1)
+               [align? rest2]
+               (cond
+                 (= :align first1)    [true  (subvec rest1 1)]
+                 (= :no-align first1) [false (subvec rest1 1)]
+                 :else                [false rest1])]
+           (when (empty? rest2)
+             (throw (js/Error.
+                     (str \"on-anchors: pattern \"
+                          (pr-str pattern)
+                          \" has no body\"))))
+           (recur (conj acc {:pattern pattern :align? align? :body (first rest2)})
+                  (subvec rest2 1))))))
+
+   (defmacro on-anchors [target & clauses]
+     (let [combine-modes #{:concat :union :vec}
+           [mode clauses] (if (and (seq clauses)
+                                   (contains? combine-modes (first clauses)))
+                            [(first clauses) (rest clauses)]
+                            [:concat clauses])
+           parsed     (on-anchors-parse-clauses clauses)
+           n          (count parsed)
+           target-s   (gensym \"target_\")
+           amap-s     (gensym \"amap_\")
+           counts-s   (gensym \"counts_\")
+           results-s  (gensym \"results_\")
+           pats-s     (gensym \"pats_\")
+           aname-s    (gensym \"aname_\")
+           pose-s     (gensym \"pose_\")
+           flat-s     (gensym \"flat_\")
+           combine-form (case mode
+                          :vec    flat-s
+                          :union  `(apply mesh-union-impl ~flat-s)
+                          :concat `(apply concat-meshes ~flat-s))
+           cond-pairs (mapcat
+                       (fn [[idx clause]]
+                         (let [align?    (:align? clause)
+                               body      (:body clause)
+                               pose-form (if align?
+                                           pose-s
+                                           (list 'select-keys pose-s [:position]))]
+                           [(list 'on-anchors-match?
+                                  (list 'nth pats-s idx)
+                                  aname-s)
+                            (list 'do
+                                  (list 'swap! counts-s 'update idx 'inc)
+                                  (list 'swap! results-s 'conj
+                                        (list 'turtle :pose pose-form body)))]))
+                       (map-indexed vector parsed))]
+       `(let [~target-s  ~target
+              ~amap-s    (on-anchors-resolve-target ~target-s)
+              ~counts-s  (atom (vec (repeat ~n 0)))
+              ~results-s (atom [])
+              ~pats-s    [~@(map :pattern parsed)]]
+          (when (seq ~amap-s)
+            (doseq [[~aname-s ~pose-s] ~amap-s]
+              (cond ~@cond-pairs)))
+          (doseq [i# (range ~n)]
+            (when (and (seq ~amap-s) (zero? (nth @~counts-s i#)))
+              (on-anchors-warn-no-match! (nth ~pats-s i#) ~amap-s)))
+          (let [~flat-s (vec (mapcat flatten-meshes @~results-s))]
+            ~combine-form))))
 
    ;; anim-proc-fn: like anim-proc! but returns a function.
    ;; Each call auto-generates a unique name.

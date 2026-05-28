@@ -10,6 +10,7 @@ status: stable
 ## Signature
 
 `(move-to target)`
+`(move-to target :align)`
 `(move-to target :center)`
 `(move-to target :at anchor)`
 `(move-to target :at anchor :align)`
@@ -26,14 +27,20 @@ relative to another: it translates the attached value and updates
 the turtle frame so subsequent commands operate in the target's
 coordinate system.
 
-Four forms:
+Five forms:
 
-| Form                        | Position                       | Frame                             |
-|-----------------------------|--------------------------------|-----------------------------------|
-| `(move-to :name)`           | target's creation-pose position | turtle adopts target's heading/up |
-| `(move-to :name :center)`   | target's centroid              | turtle heading unchanged          |
-| `(move-to :name :at :a)`    | target's named anchor `:a`     | turtle adopts anchor's heading/up |
-| `(move-to … :at :a :align)` | target's anchor                | mesh ALSO rotated to match anchor |
+| Form                        | Position                        | Frame                                 |
+|-----------------------------|---------------------------------|---------------------------------------|
+| `(move-to :name)`           | target's creation-pose position | turtle adopts target's heading/up     |
+| `(move-to :name :align)`    | target's creation-pose position | mesh ALSO rotated to match creation-pose |
+| `(move-to :name :center)`   | target's centroid               | turtle heading unchanged              |
+| `(move-to :name :at :a)`    | target's named anchor `:a`      | turtle adopts anchor's heading/up     |
+| `(move-to … :at :a :align)` | target's anchor                 | mesh ALSO rotated to match anchor     |
+
+`:align` is the opt-in flag that turns a translation-only `move-to`
+into a translate-and-rotate. It is valid with the default (creation-pose)
+form and with `:at :anchor`. It is **not** valid with `:center` —
+a centroid has no associated frame, so there is nothing to align to.
 
 The default form (`(move-to :A)`) is "go to A and face the same way
 A does". Subsequent `(f …)` means "forward in A's frame", which is
@@ -46,19 +53,29 @@ useful when only the position matters.
 `:at :anchor` snaps to a named anchor (set on the target via
 `attach-path`). Throws if the anchor doesn't exist.
 
-`:align`, added after the anchor name, also rotates the attached
-mesh's vertices so its current frame snaps onto the anchor's frame.
-The rotation runs in two steps: first align headings, then roll
-around the new heading to align up vectors.
+`:align`, added after the anchor name (or after `target` in the
+no-`:at` form), also rotates the attached mesh's vertices so its
+current frame snaps onto the target frame (the anchor's frame in
+`:at` form, the target's creation-pose frame otherwise). The
+rotation runs in two steps: first align headings, then roll around
+the new heading to align up vectors.
 
 ## Parameters
 
-- `target` — a keyword (registered mesh name) or a mesh value.
+- `target` — a keyword or a mesh/path value. As a keyword, resolved
+  in this order: (1) named anchor on the current turtle (set by
+  `with-path` or top-level `mark`); (2) registered mesh in the
+  registry. As a path value, the path's marks become anchors
+  (only valid with `:at`).
 - `:center` — flag selecting centroid mode.
 - `:at` — keyword introducing a named anchor on the target.
 - `anchor` — the anchor's keyword name. Must exist on the target.
-- `:align` — flag enabling vertex-level rotation onto the anchor's
+- `:align` — flag enabling vertex-level rotation onto the target's
   frame.
+
+When `target` resolves to an anchor (case 1 above), only the default
+form and `:align` are valid — `:center` and `:at` throw, because an
+anchor is a single pose with no centroid and no sub-anchors.
 
 ## Example
 
@@ -144,8 +161,10 @@ slot). The child's vertices rotate to face the anchor's heading/up.
   mesh; alternatively, build the mesh inside a `with-path` scope
   whose marks resolve as anchors.
 - Without `:align`, the child mesh keeps its construction
-  orientation — only the turtle's frame changes. Add `:align` when
-  the child's vertices must face the anchor's direction.
+  orientation — only the turtle's frame changes (for subsequent
+  commands inside the same `attach`). Add `:align` — valid with the
+  default and `:at` forms, rejected with `:center` — when the
+  child's vertices must face the target's direction.
 - `move-to` is body-only: outside an `attach` / `attach!` body, the
   symbol either is shadowed by the live-turtle helper or unbound.
 

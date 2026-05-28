@@ -1125,6 +1125,19 @@ body.resizing-h * {
   color: #6eb3f7;
 }
 
+.manual-example-warning {
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+  padding: 6px 10px;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  background: #252525;
+  color: #a0a0a0;
+  font-size: 12px;
+  cursor: help;
+}
+
 .manual-example-description {
   padding: 12px 16px;
   color: #a0a0a0;

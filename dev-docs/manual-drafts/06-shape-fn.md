@@ -34,7 +34,7 @@ Vincoli:
 
 Nel cap. 4 abbiamo visto che `extrude` trascina una shape identica lungo un percorso. Ogni anello è una copia esatta del profilo di partenza. Quando il profilo deve cambiare lungo il percorso (rastremarsi, torcersi, ondularsi), serve `loft`, e serve un modo per dire a `loft` *come* il profilo cambia.
 
-Quel modo sono le shape-fn: funzioni che, dato un valore `t` compreso tra 0 e 1, restituiscono una shape. `t = 0` è l'inizio del percorso, `t = 1` è la fine. Il loft valuta la shape-fn a ogni passo e usa il profilo risultante come shape per il passo corrente. Alla fine del processo vengono generate le facce laterali (unendo con nuovi segmenti i vertici corrispondenti di tutte le shape prodotte) e quelle iniziale e finale (cap). Tutto questo è possibile solo se ogni passo produce shape con lo stesso numero di vertici. È un vincolo importante: le shape-fn possono spostare, scalare, ruotare i punti del profilo, ma non possono aggiungerne o toglierne. Se due shape hanno un numero di punti diverso e devono coesistere in una catena (come in `morphed`), si usa `resample-shape` per portarle allo stesso conteggio prima di passarle alla shape-fn.
+Quel modo sono le shape-fn: funzioni che, dato un valore `t` compreso tra 0 e 1, restituiscono una shape. `t = 0` è l'inizio del percorso, `t = 1` è la fine. Il loft valuta la shape-fn a ogni passo e usa il profilo risultante come shape per il passo corrente. Alla fine del processo vengono generate le facce laterali (unendo con nuovi segmenti i vertici corrispondenti di tutte le shape prodotte) e quelle iniziale e finale (cap). Tutto questo è possibile solo se ogni passo produce shape con lo stesso numero di vertici. È un vincolo importante: le shape-fn possono spostare, scalare, ruotare i punti del profilo, ma non possono aggiungerne o toglierne. Se due shape hanno un numero di punti diverso e devono coesistere in una catena, si usa `resample-shape` per portarle allo stesso conteggio prima di passarle alla shape-fn (alcune, come `morphed`, lo fanno automaticamente).
 
 <!-- example-source: shapefn-intro-tapered -->
 ```clojure
@@ -46,15 +46,15 @@ Quel modo sono le shape-fn: funzioni che, dato un valore `t` compreso tra 0 e 1,
 
 La stessa logica vale per tutte le shape-fn built-in: `twisted`, `fluted`, `noisy`, `morphed`, `profile`, `heightmap`. Ognuna descrive un tipo diverso di variazione, ma il meccanismo è lo stesso: una funzione da `t` a shape, che `loft` (o `bloft`, o `revolve`) valuta passo per passo.
 
-La differenza con il legacy mode di `loft` (dove si passava una funzione di trasformazione come secondo argomento) è che la logica di variazione vive *dentro* la shape, non fuori. Questo significa che si possono comporre più variazioni con il threading `->`:
+`loft` accetta anche una forma più semplice in cui il primo parametro è una shape e il secondo è una funzione di trasformazione `(fn [shape t] -> shape)`. Le shape-fn rendono esplicito ciò che lì è implicito: la logica di variazione vive *dentro* la shape, non fuori. Questo permette di comporre più variazioni con il threading `->`:
 
 <!-- example-source: shapefn-intro-compose -->
 ```clojure
 (register column
   (loft
-    (-> (circle 15 48)
+    (-> (circle 15 128)
         (fluted :flutes 20 :depth 1.5)
-        (tapered :to 0.85))
+        (tapered :to 0.25))
     (f 80)))
 ```
 
@@ -73,9 +73,11 @@ Scala il profilo uniformemente. A `t = 0` il profilo ha scala 1 (o il valore di 
 ```clojure
 ;; Cono: da raggio 20 a raggio 0
 (register cone (loft (tapered (circle 20) :to 0) (f 40)))
+(rt 50)
 
 ;; Tronco di cono: da raggio 20 a raggio 10
 (register frustum (loft (tapered (circle 20) :to 0.5) (f 40)))
+(rt 50)
 
 ;; Espansione: da raggio 10 a raggio 20
 (register horn (loft (tapered (circle 10) :from 0.5 :to 1) (f 40)))
@@ -94,6 +96,7 @@ Ruota il profilo progressivamente lungo il percorso.
 ;; Rettangolo che ruota di 90° lungo il percorso
 (register ribbon
   (loft (twisted (rect 30 5) :angle 90) (f 60)))
+(rt 60)
 
 ;; Torsione completa (360° default)
 (register drill
@@ -112,22 +115,29 @@ Aggiunge scanalature longitudinali al profilo. La profondità delle scanalature 
 ```clojure
 ;; Colonna dorica: 20 scanalature
 (register pillar
-  (loft (fluted (circle 15 48) :flutes 20 :depth 1.5) (f 80)))
+  (loft (fluted (circle 15 128) :flutes 20 :depth 1.5) (f 80)))
 ```
 
-`:flutes` è il numero di scanalature; `:depth` è la profondità radiale. Il profilo deve avere abbastanza punti perché le scanalature siano visibili: come regola pratica, almeno 2-3 punti per scanalatura. Un `(circle 15 48)` ha 48 punti, sufficiente per 20 scanalature.
+`:flutes` è il numero di scanalature; `:depth` è la profondità radiale. Il profilo deve avere abbastanza punti perché le scanalature siano ben definite: come regola pratica, almeno 6 punti per scanalatura. Un `(circle 15 128)` ha 128 punti, sufficiente per 20 scanalature.
 
 ### rugged
 
-Aggiunge una perturbazione sinusoidale radiale, costante lungo `t`. Come `fluted`, ma con una frequenza e un'ampiezza arbitrarie, utile per superfici rocciose o irregolari.
+Aggiunge una perturbazione radiale composta da più sinusoidi sovrapposte (stile fBm), che varia sia attorno al profilo sia lungo il percorso. A differenza di `fluted` (un'unica sinusoide regolare con creste parallele all'asse), `rugged` produce asperità irregolari a più scale — utile per superfici rocciose, cortecce, scogliere.
 
 <!-- example-source: shapefn-rugged -->
 ```clojure
 (register rough-tube
-  (loft (rugged (circle 15 64) :amplitude 2 :frequency 8) (f 40)))
+  (loft (rugged (circle 15 256) :amplitude 2 :frequency 8 :octaves 2) (f 40)))
 ```
 
-`:amplitude` è lo spostamento radiale massimo; `:frequency` è il numero di oscillazioni attorno al profilo. La differenza con `fluted` è cosmetica: `fluted` produce incavi regolari da colonna classica, `rugged` produce una superficie grezza.
+Parametri:
+- `:amplitude` — spostamento radiale massimo.
+- `:frequency` — numero base di oscillazioni della prima ottava attorno al profilo.
+- `:octaves` (default 3) — quante sinusoidi sovrapposte; ogni ottava raddoppia la frequenza. Con `:octaves 1` torna a un'unica sinusoide.
+- `:gain` (default 0.5) — ampiezza relativa di ogni ottava (0.5 = fBm standard, più alto = più aspro).
+- `:seed` — sfasamento per variare il pattern senza cambiarne le caratteristiche.
+
+Il profilo deve avere abbastanza punti per catturare l'ottava più alta: con `:frequency F` e `:octaves N` la frequenza massima è `F · 2^(N-1)`. Per `:frequency 8 :octaves 2` la frequenza finale è 16, quindi servono almeno ~64 punti per anello. L'esempio sopra usa 256 punti per avere margine, e il default di 64 passi longitudinali è sufficiente.
 
 
 ## Displacement
@@ -136,7 +146,7 @@ Le shape-fn di displacement spostano i vertici del profilo in modo non uniforme,
 
 ### noisy
 
-Sposta i vertici radialmente usando una funzione di rumore continuo. A differenza di `rugged` (sinusoidale, uguale a ogni `t`), `noisy` varia sia attorno al profilo sia lungo il percorso.
+Sposta i vertici radialmente usando una funzione di rumore continuo. A differenza di `rugged` (sinusoidi sovrapposte, dall'aspetto angolare/cristallino), `noisy` produce variazioni più morbide e organiche grazie all'interpolazione del rumore Perlin-like.
 
 <!-- example-source: shapefn-noisy -->
 ```clojure
@@ -156,12 +166,12 @@ Le opzioni controllano il carattere del rumore:
 ```clojure
 ;; Superficie organica dettagliata
 (register bark
-  (loft-n 64
+  (loft
     (noisy (circle 12 96) :amplitude 1.5 :scale 5 :octaves 3)
     (f 60)))
 ```
 
-Il `loft-n 64` alza il numero di passi longitudinali. Senza, il loft userebbe 16 passi e il rumore apparirebbe grossolano nella direzione del percorso, anche con `:octaves` alti.
+Il `loft` di default usa 64 passi longitudinali. Per pattern molto fitti o con `:octaves` alti, può servire alzarli con `loft-n 128` o più.
 
 ### displaced
 
@@ -190,21 +200,21 @@ La funzione riceve due argomenti: `p` (il punto 2D `[x y]` sul profilo, prima de
 <!-- example-source: shapefn-morphed -->
 ```clojure
 (register transition
-  (loft (morphed (rect 20 20) (circle 15 4)) (f 40)))
+  (loft (morphed (rect 20 20) (circle 15 32)) (f 40)))
 ```
 
-Un quadrato che diventa un cerchio. L'interpolazione avviene punto per punto, quindi le due shape devono avere lo stesso numero di punti (il vincolo descritto nella 6.1). Se non lo hanno, `resample-shape` le porta allo stesso conteggio:
+Un quadrato che diventa un cerchio. `morphed` si occupa automaticamente di due cose che renderebbero la transizione problematica:
 
-<!-- example-source: shapefn-morphed-resample -->
+1. **Conteggio punti**: se le due shape hanno un numero diverso di punti, vengono entrambe ricampionate al conteggio massimo.
+2. **Allineamento angolare**: il vertice `i` di `shape-a` viene accoppiato con il vertice di `shape-b` angolarmente più vicino. Senza questo passaggio, accoppiando ad esempio il primo vertice di un rettangolo `(-10,-10)` con il primo di un cerchio `(15,0)`, l'interpolazione passerebbe vicino all'origine producendo un poligono autointersecante (un bowtie). Con l'allineamento, il punto intermedio è un quadrato arrotondato.
+
+<!-- example-source: shapefn-morphed-star -->
 ```clojure
-(def start (resample-shape (star 5 20 10) 64))
-(def end   (resample-shape (circle 12) 64))
-
-(register morph
-  (loft (morphed start end) (f 50)))
+(register star-to-circle
+  (loft (morphed (star 5 20 10) (circle 12 64)) (f 50)))
 ```
 
-Il risultato di `morphed` è una transizione geometrica, non topologica: se le due shape hanno contorni molto diversi (una concava, l'altra convessa), la transizione può produrre autointersecazioni nei punti intermedi. Profili che hanno una forma compatibile (entrambi convessi, o con la stessa struttura di concavità) producono transizioni più pulite.
+Il risultato di `morphed` è una transizione geometrica, non topologica: se le due shape hanno strutture di concavità molto diverse, anche con l'allineamento i punti intermedi possono autointersecarsi. Profili con la stessa struttura di concavità (entrambi convessi, o entrambi a 5 punte come stella e pentagono) producono transizioni più pulite.
 
 
 ## profile: il profilo come silhouette
@@ -275,8 +285,8 @@ Qualsiasi mesh può diventare una heightmap. `mesh-to-heightmap` guarda la mesh 
 (def dome-hm (mesh-to-heightmap (sphere 10 32 16) :resolution 128))
 
 (register embossed
-  (loft-n 64
-    (heightmap (circle 20 128) dome-hm :amplitude 2 :tile-x 4 :tile-y 4)
+  (loft-n 256
+    (heightmap (circle 20 256) dome-hm :amplitude 2 :tile-x 4 :tile-y 4)
     (f 60)))
 ```
 
@@ -293,6 +303,11 @@ Genera analiticamente una heightmap che rappresenta un pattern di intreccio. A d
 <!-- example-source: shapefn-weave-heightmap -->
 ```clojure
 (def basket (weave-heightmap :threads 4 :spacing 5 :radius 2 :resolution 128))
+
+(register basket-weave
+  (loft
+    (heightmap (circle 20 128) basket :amplitude 2 :tile-x 4 :tile-y 4)
+    (f 60)))
 ```
 
 Le opzioni:
@@ -307,11 +322,12 @@ Le opzioni:
 
 ### heightmap-to-mesh
 
-Converte una heightmap in una mesh piatta con Z dai valori della mappa. Utile per visualizzare una heightmap come superficie 3D, o per usarla come base per operazioni booleane.
+Converte una heightmap in una mesh piatta con Z dai valori della mappa. È uno strumento di debug: la mesh prodotta non è manifold (è una superficie aperta, non un solido chiuso), quindi non si può usare in operazioni booleane né esportare per la stampa. Il suo scopo è permettere di visualizzare una heightmap come superficie 3D per verificarne il contenuto prima di usarla con `heightmap`.
 
 <!-- example-source: shapefn-heightmap-to-mesh -->
 ```clojure
-(def terrain (heightmap-to-mesh dome-hm :z-scale 5 :size 40))
+(def dome-hm (mesh-to-heightmap (sphere 10 32 16) :resolution 128))
+(def terrain (heightmap-to-mesh dome-hm :z-scale 0.5 :size 40))
 (register ground terrain)
 ```
 
@@ -324,7 +340,6 @@ La heightmap prodotta da `weave-heightmap` è tileabile per costruzione: i bordi
 
 `sample-heightmap` campiona una heightmap a coordinate `u, v` arbitrarie con interpolazione bilineare, e applica automaticamente il tiling (le coordinate che escono dal range [0,1] vengono riportate dentro). È la funzione usata internamente dalla shape-fn `heightmap`, ma è esposta anche per usi diretti come il calcolo di offset in funzioni custom.
 
-<!-- example-source: shapefn-sample-heightmap -->
 ```clojure
 ;; Campionare il valore al centro della heightmap
 (sample-heightmap weave 0.5 0.5)
@@ -340,9 +355,9 @@ Le shape-fn si compongono con il threading `->`. Ogni shape-fn della catena avvo
 ;; Colonna scanalata che si rastrema e si torce
 (register column
   (loft
-    (-> (circle 15 48)
+    (-> (circle 15 128)
         (fluted :flutes 20 :depth 1.5)
-        (tapered :to 0.85)
+        (tapered :to 0.25)
         (twisted :angle 45))
     (f 80)))
 ```
@@ -353,9 +368,8 @@ La catena si legge dall'alto in basso: cerchio, poi scanalature, poi rastremazio
 
 `shell` e `woven-shell` devono essere **ultime** nella catena di composizione. Il motivo è tecnico: `shell` annota la shape con metadata (`:shell-mode`) che il loft legge per generare i doppi anelli (esterno + interno). Le altre shape-fn non conoscono questo metadata e lo perderebbero.
 
-<!-- example-source: shapefn-compose-shell -->
 ```clojure
-;; Corretto: shell per ultima
+;; tapered è l'eccezione: può stare dopo shell
 (-> (circle 20 64)
     (fluted :flutes 12 :depth 1)
     (shell :thickness 2 :style :voronoi :cells 8 :rows 6)
@@ -371,8 +385,8 @@ La composizione di shape-fn non cambia quanti passi fa il loft. Se il risultato 
 <!-- example-source: shapefn-compose-resolution -->
 ```clojure
 (register smooth-column
-  (loft-n 64
-    (-> (circle 15 48)
+  (loft-n 128
+    (-> (circle 15 128)
         (fluted :flutes 20 :depth 1.5)
         (tapered :to 0.85))
     (f 80)))
@@ -396,7 +410,7 @@ Il valore restituito è un coefficiente di spessore: 1 significa parete piena (s
 ```clojure
 ;; Pattern a strisce orizzontali
 (register striped
-  (loft-n 64
+  (loft
     (shell (circle 20 64) :thickness 2
       :fn (fn [a t] (if (> (mod (* t 12) 1) 0.5) 1 0)))
     (f 60)))
@@ -412,7 +426,7 @@ Ragionare in coordinate `(angle, t)` è ragionare su un rettangolo che viene poi
 ```clojure
 ;; Pattern diagonale (strisce a 45°)
 (register diagonal
-  (loft-n 64
+  (loft
     (shell (circle 20 64) :thickness 2
       :fn (fn [a t]
         (if (> (mod (+ (* a 3) (* t 20)) 1) 0.4) 1 0)))
@@ -425,14 +439,14 @@ Sommando `angle` e `t` con pesi diversi si ottengono strisce diagonali. Il rappo
 ```clojure
 ;; Variazione sinusoidale morbida
 (register wavy-shell
-  (loft-n 64
+  (loft
     (shell (circle 20 64) :thickness 3
       :fn (fn [a t]
-        (max 0 (sin (+ (* a 8) (* t PI 6))))))
+        (max 0.1 (sin (+ (* a 8) (* t PI 6))))))
     (f 60)))
 ```
 
-Usando `sin` invece di soglie nette, la transizione tra pieno e vuoto è graduale. Le aperture hanno bordi morbidi.
+Usando `sin` invece di soglie nette, lo spessore varia in modo continuo. Con `max 0.1` come pavimento la parete non scompare mai del tutto: alterna zone piene e zone più sottili senza creare buchi. Abbassare il pavimento a 0 produrrebbe aperture vere ma frammenterebbe la struttura in tante isole staccate, una per ogni cresta della sinusoide.
 
 ### woven-shell custom
 
@@ -441,7 +455,7 @@ Usando `sin` invece di soglie nette, la transizione tra pieno e vuoto è gradual
 <!-- example-source: shapefn-woven-shell-custom -->
 ```clojure
 (register custom-weave
-  (loft-n 64
+  (loft
     (woven-shell (circle 20 128) :thickness 3
       :fn (fn [a t]
         {:thickness (if (> (mod (* a 4) 1) 0.3) 0.8 0)
@@ -450,6 +464,33 @@ Usando `sin` invece di soglie nette, la transizione tra pieno e vuoto è gradual
 ```
 
 `:thickness` controlla dove c'è materiale; `:offset` controlla dove quel materiale si trova rispetto alla superficie mediana. Un offset positivo sposta la parete verso l'esterno, negativo verso l'interno.
+
+### Combinare pattern: un portapenne
+
+Due gusci con pattern diversi possono coesistere nello stesso oggetto. Sovrapponendo l'intreccio precedente alle fasce orizzontali di `striped`, e aggiungendo una base, si ottiene un portapenne stampabile:
+
+<!-- example-source: shapefn-uvase -->
+```clojure
+(def part-a
+  (merge-vertices
+    (loft
+      (woven-shell (circle 20 128) :thickness 3
+        :fn (fn [a t]
+              {:thickness (if (> (mod (* a 4) 1) 0.3) 0.8 0)
+               :offset (* 1.5 (sin (* a 8)) (cos (* t PI 4)))}))
+      (f 60))))
+
+(def part-b
+  (merge-vertices
+    (loft
+      (shell (circle 20 64) :thickness 2
+        :fn (fn [a t] (if (> (mod (* t 12) 1) 0.5) 1 0)))
+      (f 60))))
+
+(register uvase (mesh-union part-a part-b (cyl 20 3)))
+```
+
+`merge-vertices` è il dettaglio tecnico che rende possibile l'unione. Le thickness-fn che generano aperture (le `:fn` qui sopra restituiscono 0 in alcune zone) producono vertici duplicati ai bordi dei fori. `manifold` rifiuta le operazioni booleane su mesh con duplicati, e `mesh-union` fallirebbe silenziosamente. `merge-vertices` fonde i duplicati spazialmente coincidenti e rende la mesh utilizzabile.
 
 ### Rapporto con gli stili built-in
 

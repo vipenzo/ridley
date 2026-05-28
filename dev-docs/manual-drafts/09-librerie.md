@@ -6,7 +6,7 @@ Le librerie sono il modo in cui accumuli codice riusabile fra un progetto e l'al
 
 ## 9.1 A cosa servono le librerie
 
-Il codice nell'editor è il tuo progetto corrente. Ogni volta che premi Cmd+Enter, viene evaluato da zero in un contesto fresco: i `def` e i `defn` nascono, vivono per la durata dell'eval, e scompaiono alla successiva. Se definisci una funzione utile in un progetto e vuoi usarla in un altro, devi copiarla a mano.
+Il codice nell'editor è il tuo progetto corrente. Ogni volta che premi Cmd+Enter, viene analizzato da zero in un contesto fresco: i `def` e i `defn` nascono, vivono per la durata dell'eval, e scompaiono alla successiva. Se definisci una funzione utile in un progetto e vuoi usarla in un altro, devi copiarla a mano.
 
 Le librerie risolvono questo problema. Una libreria è persistente (sopravvive fra sessioni), indipendente dal progetto corrente, e attivabile o disattivabile dal pannello. Quando è attiva, le sue definizioni pubbliche sono disponibili nel contesto dell'eval come namespace separato.
 

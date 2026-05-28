@@ -593,7 +593,7 @@
     :category "mesh-operations"
     :status "stable"
     :since ""
-    :signature "(fillet mesh direction radius & {:keys [angle min-radius segments where blend-vertices]})"
+    :signature "(fillet mesh direction radius & {:keys [angle min-radius segments where]})"
     :description "Round every sharp edge of `mesh` that points in the given `direction` with a fillet of the given `radius`. The API mirrors `chamfer`: same edge selection, same direction keywords, but each qualifying edge is cut by a concave cylindrical cutter (a quarter-pipe minus its sharp inside) instead of a flat prism."
     :path "dev-docs/reference-manual/fillet.md"}
 
@@ -1070,7 +1070,7 @@
     :category "positioning-assembly"
     :status "stable"
     :since ""
-    :signature "(move-to target)\n(move-to target :center)\n(move-to target :at anchor)\n(move-to target :at anchor :align)\nattach"
+    :signature "(move-to target)\n(move-to target :align)\n(move-to target :center)\n(move-to target :at anchor)\n(move-to target :at anchor :align)\nattach"
     :description "Inside an attach body, move the turtle to another object's pose and optionally re-align with one of that object's named anchors. `move-to` is the cleanest primitive for positioning one mesh relative to another: it translates the attached value and updates the turtle frame so subsequent commands operate in the target's coordinate system."
     :path "dev-docs/reference-manual/move-to.md"}
 
@@ -1089,7 +1089,7 @@
     :status "stable"
     :since ""
     :signature "(noisy shape-or-fn & {:keys [amplitude scale scale-x scale-y octaves seed]})"
-    :description "Shape-fn that displaces vertices radially using procedural 2D noise. Unlike `rugged` and `fluted` (deterministic sinusoidal patterns), `noisy` varies organically along both the angular direction and the path (`t`). With `:octaves > 1` the noise is layered via fractal Brownian motion for richer detail. Used with `loft`, `bloft`, or `revolve`. Does not modify turtle state."
+    :description "Shape-fn that displaces vertices radially using procedural 2D noise. Compared with the sinusoid-based displacements, `noisy` produces smooth, organic, blobby surfaces (`fluted` gives single-frequency regular ridges; `rugged` gives angular crystalline asperities via layered sines). With `:octaves > 1` the noise is layered via fractal Brownian motion for richer detail. Used with `loft`, `bloft`, or `revolve`. Does not modify turtle state."
     :path "dev-docs/reference-manual/noisy.md"}
 
    "objects"
@@ -1109,6 +1109,15 @@
     :signature "(offset-x path dx)"
     :description "Shift every waypoint of a path by `dx` in X. The typical use is to move a `revolve` profile inward or outward relative to the revolve axis: the path's local X coordinate represents radial distance, so adding to it grows the swept body radially."
     :path "dev-docs/reference-manual/offset-x.md"}
+
+   "on-anchors"
+   {:name "on-anchors"
+    :category "positioning-assembly"
+    :status "stable"
+    :since ""
+    :signature "(on-anchors target [combine-mode] pattern [:align] body ...)"
+    :description "Iterate over the anchors of a path or mesh and evaluate a body per matching anchor, with the turtle positioned at that anchor. Each clause pairs a **pattern** with a **body**; for every anchor, clauses are tested in order and the first matching clause's body runs (no fallthrough). The body is evaluated inside an implicit `(turtle :pose <anchor-pose> body)` scope, so turtle primitives (`f`, `th`, `attach`, `cyl`, …) operate relative to the anchor. An optional `combine-mode` (`:concat` default, `:union` for boolean union, `:vec` for a vector of meshes) controls how the per-anchor bodies are aggregated — switch to `:union` when bodies overlap, otherwise `:concat` leaves interior faces that produce artefacts in later booleans."
+    :path "dev-docs/reference-manual/on-anchors.md"}
 
    "out"
    {:name "out"
@@ -1208,6 +1217,15 @@
     :signature "(pilot-request! quoted-arg value)"
     :description "Low-level entry point of **pilot mode**: an interactive session in which the keyboard drives turtle commands to position or orient a mesh or SDF node directly in the viewport. On confirmation, the editor source text is rewritten — the `(pilot ...)` form is replaced by an `(attach! ...)` form carrying the commands you typed during the session."
     :path "dev-docs/reference-manual/pilot-request-bang.md"}
+
+   "pin-path"
+   {:name "pin-path"
+    :category "path"
+    :status "stable"
+    :since ""
+    :signature "(pin-path path)"
+    :description "Resolve a path's marks at the **current turtle pose** and return the resulting `{anchor-name → {:position [x y z] :heading [x y z] :up [x y z]}}` map."
+    :path "dev-docs/reference-manual/pin-path.md"}
 
    "play!"
    {:name "play!"
@@ -1457,8 +1475,8 @@
     :category "generative-operations"
     :status "stable"
     :since ""
-    :signature "(rugged shape-or-fn & {:keys [amplitude frequency]})"
-    :description "Shape-fn that displaces vertices radially with a sine pattern, constant along the path. The displacement depends only on the vertex angle, not on `t`, so each ring carries the same ripple — useful for ridged or gear-like surfaces. Used with `loft`, `bloft`, or `revolve`. Does not modify turtle state."
+    :signature "(rugged shape-or-fn & {:keys [amplitude frequency octaves gain seed]})"
+    :description "Shape-fn that displaces vertices radially with **layered sinusoids** (fBm-style), varying both around the profile and along the extrusion path. Each octave doubles the frequency and scales amplitude by `:gain`, producing irregular crystalline asperities."
     :path "dev-docs/reference-manual/rugged.md"}
 
    "ruler"

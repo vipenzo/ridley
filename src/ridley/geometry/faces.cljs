@@ -290,19 +290,19 @@
   "Build adjacency: for each triangle index, which other triangles share an edge."
   [faces]
   (let [edge-tris (reduce-kv
-                    (fn [m ti [i j k]]
-                      (let [add (fn [m a b] (update m (if (< a b) [a b] [b a]) (fnil conj []) ti))]
-                        (-> m (add i j) (add j k) (add k i))))
-                    {} (vec faces))]
+                   (fn [m ti [i j k]]
+                     (let [add (fn [m a b] (update m (if (< a b) [a b] [b a]) (fnil conj []) ti))]
+                       (-> m (add i j) (add j k) (add k i))))
+                   {} (vec faces))]
     (reduce-kv
-      (fn [adj _ tris]
-        (reduce (fn [a t1]
-                  (reduce (fn [a2 t2]
-                            (if (= t1 t2) a2
-                              (update a2 t1 (fnil conj #{}) t2)))
-                          a tris))
-                adj tris))
-      {} edge-tris)))
+     (fn [adj _ tris]
+       (reduce (fn [a t1]
+                 (reduce (fn [a2 t2]
+                           (if (= t1 t2) a2
+                               (update a2 t1 (fnil conj #{}) t2)))
+                         a tris))
+               adj tris))
+     {} edge-tris)))
 
 (defn auto-face-groups
   "Group mesh triangles into coplanar faces by flood-fill.
@@ -525,9 +525,9 @@
                                 pts)))
                           (rest sorted)))]
         {:shape (shape/make-shape
-                  outer-pts
-                  (cond-> {:centered? true}
-                    (seq holes) (assoc :holes holes)))
+                 outer-pts
+                 (cond-> {:centered? true}
+                   (seq holes) (assoc :holes holes)))
          :pose {:pos center
                 :heading normal
                 :up up}}))))
@@ -544,23 +544,24 @@
    Each edge maps to the 1 or 2 triangles that share it."
   [faces]
   (reduce-kv
-    (fn [acc tri-idx [i j k]]
-      (let [add-edge (fn [m a b]
-                       (let [edge (if (< a b) [a b] [b a])]
-                         (update m edge (fnil conj []) tri-idx)))]
-        (-> acc
-            (add-edge i j)
-            (add-edge j k)
-            (add-edge k i))))
-    {}
-    (vec faces)))
+   (fn [acc tri-idx [i j k]]
+     (let [add-edge (fn [m a b]
+                      (let [edge (if (< a b) [a b] [b a])]
+                        (update m edge (fnil conj []) tri-idx)))]
+       (-> acc
+           (add-edge i j)
+           (add-edge j k)
+           (add-edge k i))))
+   {}
+   (vec faces)))
 
 (defn ^:export find-sharp-edges
-  "Find edges where adjacent triangle normals differ by more than angle-deg degrees.
+  "Find edges where the dihedral angle is at least angle-deg degrees.
    Returns a vector of {:edge [v0 v1] :positions [p0 p1] :angle degrees :midpoint [x y z]}.
 
    Options:
-   - :angle  minimum dihedral angle in degrees (default 30)
+   - :angle  minimum dihedral angle in degrees, INCLUSIVE (default 30).
+             For a cube's 90° edges, pass :angle 90 to include them.
    - :where  predicate fn called with [x y z] for BOTH edge endpoints;
              edge is included only if (where p0) AND (where p1) are truthy
 
@@ -573,9 +574,9 @@
         ;; Precompute triangle normals
         tri-normals (mapv (fn [[i j k]]
                             (compute-triangle-normal
-                              (nth vertices i)
-                              (nth vertices j)
-                              (nth vertices k)))
+                             (nth vertices i)
+                             (nth vertices j)
+                             (nth vertices k)))
                           faces)
         ;; Build edge → [tri-a, tri-b] adjacency
         edge-adj (build-edge-adjacency faces)]
@@ -583,8 +584,10 @@
          (keep (fn [[edge tri-indices]]
                  ;; Only boundary edges have 1 triangle, interior have 2
                  (when (= 2 (count tri-indices))
-                   (let [n1 (nth tri-normals (first tri-indices))
-                         n2 (nth tri-normals (second tri-indices))
+                   (let [tri-a-idx (first tri-indices)
+                         tri-b-idx (second tri-indices)
+                         n1 (nth tri-normals tri-a-idx)
+                         n2 (nth tri-normals tri-b-idx)
                          cos-a (dot n1 n2)
                          ;; Dihedral angle: supplement of angle between normals
                          ;; For a 90° edge, normals are perpendicular → dot=0 → angle=90°
@@ -592,14 +595,27 @@
                          edge-angle-deg (* edge-angle-rad (/ 180 Math/PI))
                          [v0 v1] edge
                          p0 (nth vertices v0)
-                         p1 (nth vertices v1)]
-                     (when (and (> edge-angle-deg angle)
+                         p1 (nth vertices v1)
+                         ;; Convex vs concave: find the vertex of triangle B
+                         ;; that is NOT on the edge, then check which side of
+                         ;; triangle A's plane it lies on. A's normal points
+                         ;; outward (away from solid), so:
+                         ;;   opp_B on -n1 side → opp_B is inside the solid
+                         ;;     relative to A → edge is convex
+                         ;;   opp_B on +n1 side → opp_B is outside A → concave
+                         tri-b (nth faces tri-b-idx)
+                         opp-b-idx (first (remove #{v0 v1} tri-b))
+                         opp-b (when opp-b-idx (nth vertices opp-b-idx))
+                         convex? (when opp-b
+                                   (neg? (dot n1 (v- opp-b p0))))]
+                     (when (and (>= edge-angle-deg angle)
                                 (or (nil? where)
                                     (and (where p0) (where p1))))
                        {:edge edge
                         :positions [p0 p1]
                         :normals [n1 n2]
                         :angle edge-angle-deg
+                        :convex? convex?
                         :midpoint (v* (v+ p0 p1) 0.5)})))))
          vec)))
 
@@ -617,12 +633,17 @@
    d: chamfer distance
 
    Returns a mesh {:vertices [...] :faces [...]}."
-  [p0 p1 n1 n2 d]
+  [p0 p1 n1 n2 d & {:keys [edge-margin-factor corner-factor face-margin-factor]
+                    :or {edge-margin-factor 0.3
+                         corner-factor 1.5
+                         face-margin-factor 0.5}}]
   (let [;; Edge direction
         edge-dir (normalize (v- p1 p0))
         ;; Extend beyond edge endpoints so adjacent prisms overlap,
-        ;; preventing gaps on curved edges (circles, fillets)
-        edge-margin (* d 0.3)
+        ;; preventing gaps on curved edges (circles, fillets). Callers
+        ;; chamfering polyhedral meshes can pass :edge-margin-factor 0 to
+        ;; avoid over-cutting past sharp corners.
+        edge-margin (* d edge-margin-factor)
         ep0 (v+ p0 (v* edge-dir (- edge-margin)))
         ep1 (v+ p1 (v* edge-dir edge-margin))
         ;; The prism straddles the corner:
@@ -631,12 +652,12 @@
         ;; - face2-pt: d INTO face-2 surface (along -n1, perpendicular to face-2)
         ;; The triangle covers the corner wedge from outside to d inside each face.
         bisector (normalize (v+ n1 n2))
-        off-corner (v* bisector (* d 1.5))
+        off-corner (v* bisector (* d corner-factor))
         ;; Face points: d along the other face's inward normal (along the surface),
         ;; plus a margin OUTWARD past the surface (along own normal).
         ;; All 3 prism vertices end up OUTSIDE the mesh.
         ;; Their triangle's intersection with the mesh volume IS the corner wedge.
-        margin (* d 0.5)
+        margin (* d face-margin-factor)
         off-f1 (v+ (v* n2 (- d)) (v* n1 margin))
         off-f2 (v+ (v* n1 (- d)) (v* n2 margin))
         ;; 6 vertices: 3 at each end of the prism
@@ -649,9 +670,9 @@
         ;; Determine correct winding via signed volume.
         ;; If signed volume is negative, faces are inverted.
         base-faces [[0 2 1] [3 4 5]
-                     [0 1 4] [0 4 3]
-                     [0 3 5] [0 5 2]
-                     [1 2 5] [1 5 4]]
+                    [0 1 4] [0 4 3]
+                    [0 3 5] [0 5 2]
+                    [1 2 5] [1 5 4]]
         verts [v0 v1 v2 v3 v4 v5]
         signed-vol (reduce (fn [acc [i j k]]
                              (let [a (nth verts i)
@@ -666,6 +687,51 @@
      :primitive :chamfer-prism
      :vertices verts
      :faces faces})) ;; n1-n2 side (the cutting face)
+
+(defn- point-in-convex-mesh?
+  "True if `p` lies inside the convex mesh defined by pverts/pfaces (CCW
+   triangles with outward normals)."
+  [p pverts pfaces tol]
+  (every? (fn [[a-i b-i c-i]]
+            (let [a (nth pverts a-i)
+                  b (nth pverts b-i)
+                  c (nth pverts c-i)
+                  e1 (v- b a)
+                  e2 (v- c a)
+                  normal (cross e1 e2)
+                  rel (v- p a)]
+              (<= (dot normal rel) tol)))
+          pfaces))
+
+(defn ^:export prism-cuts-other-features?
+  "Returns true if the prism contains the midpoint of any other sharp edge in
+   `other-edges` (skip the one with edge-key skip-edge). Used to detect chamfer
+   cutters that would carve into mesh features beyond the edge being chamfered
+   — e.g. near a CSG junction where two solids meet, a prism may extend past
+   its endpoint into the body of the other solid and cut across other sharp
+   edges of the intersection ring."
+  [prism skip-edge other-edges]
+  (let [pverts (:vertices prism)
+        pfaces (:faces prism)
+        tol 1e-6
+        ;; Cheap bbox prefilter
+        bbox-min (reduce (fn [[mx my mz] [x y z]]
+                           [(min mx x) (min my y) (min mz z)])
+                         [##Inf ##Inf ##Inf] pverts)
+        bbox-max (reduce (fn [[mx my mz] [x y z]]
+                           [(max mx x) (max my y) (max mz z)])
+                         [##-Inf ##-Inf ##-Inf] pverts)
+        [minx miny minz] bbox-min
+        [maxx maxy maxz] bbox-max]
+    (some (fn [other]
+            (when (not= (:edge other) skip-edge)
+              (let [m (:midpoint other)
+                    [mx my mz] m]
+                (and (>= mx (- minx tol)) (<= mx (+ maxx tol))
+                     (>= my (- miny tol)) (<= my (+ maxy tol))
+                     (>= mz (- minz tol)) (<= mz (+ maxz tol))
+                     (point-in-convex-mesh? m pverts pfaces tol)))))
+          other-edges)))
 
 ;; ============================================================
 ;; Edge loop ordering
@@ -830,8 +896,8 @@
                         closed? (< (magnitude (v- p-first p-last)) 0.01)
                         ;; Compute arc points for each station
                         stations (mapv (fn [{:keys [position normals]}]
-                                        (compute-fillet-arc position normals distance segments))
-                                      loop-path)
+                                         (compute-fillet-arc position normals distance segments))
+                                       loop-path)
                         base-idx (count @all-verts)
                         _ (doseq [station stations]
                             (swap! all-verts into station))
@@ -1041,7 +1107,7 @@
          (mapv (fn [{:keys [position normal-set]}]
                  {:position position
                   :normals (mapv (fn [rn] (mapv #(/ % 100.0) rn))
-                                (vec normal-set))})))))
+                                 (vec normal-set))})))))
 
 (defn ^:export compute-fillet-vertex-center
   "Compute the sphere center for a fillet vertex where N faces meet.
@@ -1076,8 +1142,8 @@
                       closed? (< (magnitude (v- p-first p-last)) 0.01)
                       ;; For each vertex, compute 3 offset points
                       stations (mapv (fn [{:keys [position normals]}]
-                                      (compute-strip-offsets position normals distance 1))
-                                    loop-path)
+                                       (compute-strip-offsets position normals distance 1))
+                                     loop-path)
                       base-idx (count @all-verts)
                       ;; Add all vertices: 3 per station (corner, f1, f2)
                       _ (doseq [[corner f1 f2] stations]
@@ -1150,8 +1216,8 @@
                         p-last (:position (last loop-path))
                         closed? (< (magnitude (v- p-first p-last)) 0.01)
                         stations (mapv (fn [{:keys [position normals]}]
-                                        (compute-strip-offsets position normals distance segments))
-                                      loop-path)
+                                         (compute-strip-offsets position normals distance segments))
+                                       loop-path)
                         base-idx (count @all-verts)
                         _ (doseq [station stations]
                             (swap! all-verts into station))

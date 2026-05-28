@@ -18,9 +18,11 @@ the result is `shape-a`; at `t = 1` it is `shape-b`; in between, the
 profile is the pointwise lerp. Used with `loft`, `bloft`, or `revolve`.
 Does not modify turtle state.
 
-Both shapes must have the same point count. Use `resample-shape` to match
-counts when they differ — without that, the morph silently falls back to
-returning `shape-a`.
+If point counts differ, both shapes are auto-resampled to the larger
+count. `shape-b`'s vertex array is then angularly aligned to `shape-a`
+so corresponding indices follow the shortest path: morphing `rect` to
+`circle` produces a rounded square in the middle, not a self-intersecting
+bowtie.
 
 ## Parameters
 
@@ -33,14 +35,14 @@ returning `shape-a`.
 
 <!-- example-source: morphed-basic -->
 ```clojure
-(def s (resample-shape (star 5 18 9) 32))
-(def c (circle 15 32))
-(register transition (loft (morphed s c) (f 40)))
+(register transition
+  (loft (morphed (star 5 18 9) (circle 15 32)) (f 40)))
 ```
 <!-- /example-source -->
 
 Smooth transition from a 5-point star to a circle along the loft. Both
-shapes are resampled to 32 points so the pointwise blend is well-defined.
+shapes have different point counts but `morphed` auto-resamples and
+aligns them, so the blend is well-defined.
 
 ## Notes
 

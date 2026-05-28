@@ -732,6 +732,27 @@
       (is (seq (:vertices result)))
       (is (seq (:faces result))))))
 
+(deftest turtle-scope-anchor-keyword
+  (testing "(turtle :anchor-name body) sets pose from an anchor on the current turtle"
+    (let [{:keys [result error]}
+          (h/eval-dsl "(do (with-path (path (f 30) (mark :tip))
+                              (turtle :tip (turtle-position))))")]
+      (is (nil? error) (str "turtle :anchor error: " error))
+      (is (v-approx= [30 0 0] result)
+          "Should jump to :tip anchor position"))))
+
+(deftest turtle-scope-anchor-keyword-with-offset-from-with-path
+  (testing "(turtle :anchor body) reflects offset when with-path resolves marks from current pose"
+    (let [{:keys [result error]}
+          (h/eval-dsl "(do (u 50)
+                            (with-path (path (f 30) (mark :tip))
+                              (turtle :tip (turtle-position))))")]
+      (is (nil? error) (str "turtle :anchor with offset error: " error))
+      ;; (u 50) moves turtle to (0,0,50); with-path resolves :tip there → (30,0,50);
+      ;; turtle :tip jumps to that anchor.
+      (is (v-approx= [30 0 50] result)
+          "Anchor should be resolved relative to turtle pose at with-path entry"))))
+
 (deftest turtle-scope-settings-inherit
   (testing "turtle scope inherits resolution from parent"
     (let [{:keys [result error]}

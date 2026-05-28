@@ -174,10 +174,14 @@ The `turtle` macro creates an isolated turtle scope. The child turtle inherits t
 |--------|-------------|
 | `:reset` | Start from origin with default settings (ignores parent state) |
 | `:preserve-up` | Enable preserve-up mode (see below) |
+| `:anchor-name` | Set pose from a named anchor on the current turtle (set by `with-path` or `mark`) |
 | `[x y z]` | Set position (positional vector argument) |
 | `{:pos [x y z]}` | Override position |
 | `{:heading [x y z]}` | Override heading |
 | `{:up [x y z]}` | Override up vector |
+| `:pose <expr>` | Set pose from an explicit pose map expression |
+
+Bare-keyword anchor shorthand: `(turtle :tip body…)` jumps to the anchor named `:tip` on the current turtle, then runs `body` in an isolated scope. Equivalent to `(turtle :pose (get-anchor :tip) body…)`. The control keywords `:reset`, `:preserve-up`, `:pose`, `:at` retain their special meaning and are not treated as anchor names.
 
 **Use cases:**
 - Branching constructions (L-systems, trees), replacing `push-state`/`pop-state`.
@@ -545,7 +549,7 @@ A shape-fn is a function `(fn [t] -> shape)` with metadata `{:type :shape-fn}`. 
 |----------|-------------|
 | `(tapered shape :to ratio)` | Scale from 1 (or `:from`) to `:to` along path |
 | `(twisted shape :angle deg)` | Rotate progressively (default 360) |
-| `(rugged shape :amplitude a :frequency f)` | Radial sin displacement (constant along t) |
+| `(rugged shape :amplitude a :frequency f :octaves n :gain g :seed s)` | Layered sinusoid displacement (fBm, angular ridges, varies along t) |
 | `(fluted shape :flutes n :depth d)` | Longitudinal cos grooves |
 | `(displaced shape (fn [p t] -> offset))` | Custom per-vertex radial displacement |
 | `(morphed shape-a shape-b)` | Interpolate between two shapes (same point count) |
@@ -1315,7 +1319,15 @@ Post-processing operations that detect sharp edges by dihedral angle and modify 
 (-> mesh (fillet :top 3 :blend-vertices true))      ; With spherical corner blend
 ```
 
-Direction selectors: `:top` `:bottom` `:up` `:down` `:left` `:right` `:all`.
+Direction selectors: `:top` `:bottom` `:up` `:down` `:left` `:right` `:all`. Note that `:top`/`:bottom` are oriented along the mesh's **heading** axis (not world up); use `:up`/`:down` for the up axis.
+
+The `:angle` threshold is **inclusive**: `:angle 90` matches a box's 90° edges. Concave edges (interior creases, e.g. where two unioned solids fold inward) and vertices touched by more than 3 sharp edges are skipped automatically — both would produce self-intersecting cutters.
+
+**Limitation on dense CSG junctions.** `chamfer` and `fillet` operate by subtracting per-edge prism cutters from the mesh. On meshes built by `mesh-union` (or other CSG composition) of primitives that meet at tight intersection contours, the cutters near the contour can clip surfaces of the other primitive, producing visible spurs or bites. The operations are reliable on:
+- standalone primitives (boxes, cylinders, spheres);
+- compositions where the chamfer `distance` is small relative to the local feature size at every junction.
+
+For dense junctions, prefer chamfering the inputs **before** composing them, or reduce `distance`. The contour ring edges produced by CSG are technically convex sharp edges and will be selected by `:all`; filter them out via `:where` or `:angle` if needed.
 
 **Lower-level chamfer primitives.** `chamfer-edges` is the value-level entry point used internally by `(chamfer ...)`: it returns a new mesh with sharp edges chamfered by CSG subtraction.
 
@@ -1833,7 +1845,7 @@ SDF attach is **incremental**: the path is walked one command at a time, and eac
 | `cp-f`, `cp-rt`, `cp-u` | Translate the SDF in the *opposite* direction (anchor stays, geometry slides) |
 | `cp-th`, `cp-tv`, `cp-tr` | Rotate the SDF around the anchor by the *opposite* angle (anchor orientation stays, geometry rotates under it) |
 | `mark :name` | Record the current turtle pose as a named anchor on the SDF |
-| `move-to … [:align]` | Snap turtle to target anchor / centroid / pose; with `:align`, also rotate the SDF to match the anchor's frame |
+| `move-to … [:align]` | Snap turtle to target creation-pose / centroid / anchor; with `:align` (opt-in, valid with creation-pose and `:at :anchor` forms), also rotate the SDF to match the target's frame |
 
 The anchors recorded by `mark` survive through subsequent transforms and through SDF booleans (the second argument's anchors are merged in, first-wins on name collision). They also cross the SDF→mesh boundary: when an SDF is materialized, its anchors carry over to the resulting mesh.
 
@@ -1917,12 +1929,16 @@ All `cp-*` commands chain in the original creation-pose frame: a `cp-tv` after a
 Move to another object's position and adopt its orientation (inside `attach`/`attach!`):
 
 ```clojure
-(move-to :name)              ; move to creation-pose + adopt its heading/up (default)
+(move-to :name)              ; move to creation-pose; turtle adopts heading/up (mesh not rotated)
+(move-to :name :align)       ; move to creation-pose AND rotate mesh to match its frame
 (move-to :name :center)      ; move to centroid only, keep current heading
-(move-to :name :at :anchor)  ; move to a named anchor (from attach-path) + adopt its heading/up
+(move-to :name :at :anchor)  ; move to a named anchor (from attach-path); turtle adopts heading/up
+(move-to :name :at :anchor :align)  ; move to anchor AND rotate mesh to match its frame
 ```
 
-After `(move-to :A)`, the turtle is at A's position with A's orientation. "Forward" means A's forward, "up" means A's up. This makes relative positioning work correctly even if A has been rotated.
+`:name` is resolved in this order: (1) named anchor on the current turtle (set by `with-path` or top-level `mark`); (2) registered mesh in the registry. Anchor targets only support the default form and `:align` — `(move-to :anchor :center)` and `(move-to :anchor :at :sub)` throw, because a single anchor has no centroid and no sub-anchors.
+
+After `(move-to :A)`, the turtle is at A's position with A's orientation — but only the turtle's frame is updated, not the mesh's. "Forward" means A's forward for subsequent commands, "up" means A's up. This makes relative positioning work correctly even if A has been rotated. To also rotate the attached mesh's vertices to match A's frame, opt in with `:align` (see below).
 
 ```clojure
 (register base (box 40))
@@ -1948,18 +1964,26 @@ Like the default form, `:at` moves the mesh and re-orients the turtle frame for 
 
 #### `:align` — translate AND rotate the mesh
 
-By default `move-to … :at :anchor` only translates the mesh; the turtle's heading/up adopt the anchor's pose for subsequent ops, but the mesh's vertices keep their construction orientation. Add `:align` after the anchor name to also rotate the mesh so its current frame snaps onto the anchor's frame:
+By default `move-to` only translates the mesh; the turtle's heading/up adopt the target's pose for subsequent ops, but the mesh's vertices keep their construction orientation. Add `:align` to also rotate the mesh so its current frame snaps onto the target frame. `:align` is opt-in and works with both the default (creation-pose) form and the `:at :anchor` form:
 
 ```clojure
-(attach! :child (move-to :parent :at :slot))         ; translate only
-(attach! :child (move-to :parent :at :slot :align))  ; translate + rotate
+(attach! :child (move-to :parent))                   ; translate to creation-pose only
+(attach! :child (move-to :parent :align))            ; translate + rotate to creation-pose frame
+(attach! :child (move-to :parent :at :slot))         ; translate to anchor only
+(attach! :child (move-to :parent :at :slot :align))  ; translate + rotate to anchor frame
 ```
 
-The rotation is computed in two steps:
-1. rotate the mesh so its current heading aligns with the anchor's heading,
-2. then rotate around the new heading so the mesh's up aligns with the anchor's up.
+`:align` is **not** supported with `:center` — a centroid has no associated frame, so there is nothing to align to. `(move-to target :center :align)` throws an explicit error.
 
-This is the natural primitive when the anchor's orientation is meaningful — e.g. a path mark whose heading was set by an `(th 180)` to flag a flipped slot, or a skeleton-driven assembly where each mark records "which way this part should face". The cerniera2_C example uses `:align` to snap symmetric brackets onto skeleton marks whose heading encodes the outward-facing side.
+The rotation is computed in two steps:
+1. rotate the mesh so its current heading aligns with the target's heading,
+2. then rotate around the new heading so the mesh's up aligns with the target's up.
+
+This is the natural primitive when the target's orientation is meaningful — e.g. a path mark whose heading was set by an `(th 180)` to flag a flipped slot, or a skeleton-driven assembly where each mark records "which way this part should face". The cerniera2_C example uses `:align` to snap symmetric brackets onto skeleton marks whose heading encodes the outward-facing side.
+
+#### Path targets
+
+`move-to` accepts a path object as `target`, but only with `:at :anchor`: a path has marks that resolve to anchors, but it has no creation-pose or centroid of its own. The non-`:at` forms — `(move-to path)`, `(move-to path :align)`, `(move-to path :center)` — throw an explicit error. Resolve the path's marks via `:at :mark-name`, or convert the path to a carrier mesh first.
 
 ### play-path
 
@@ -2008,6 +2032,55 @@ Both meshes are built directly in world coordinates against the same skeleton, w
 ```
 
 This is convenient when the children come from independent sources, but the child mesh is only translated — its own heading/up don't rotate to match the anchor (consistent with the default `move-to`). If you need the child's geometry to follow the anchor's orientation, prefer the path-driven approach above, where the extrusion direction follows from `goto`.
+
+**Pattern-dispatch over multiple anchors with `on-anchors`.** When a skeleton carries many marks with role-based names (`:end-post-0`, `:end-post-1`, `:mid-post-0`, …), the explicit `(for [m (filter … (keys (anchors skel)))] (attach … (move-to skel :at m :align)))` form becomes repetitive — one role per `for`/`filter` block, with the role's name written twice. `on-anchors` collapses the idiom into a single pass with role patterns:
+
+```clojure
+(on-anchors target
+  pattern-1 [:align] body-1
+  pattern-2 [:align] body-2
+  …)
+```
+
+Each clause pairs a **pattern** with a **body**. For every anchor on `target`, clauses are tested in order and the first match wins (no fallthrough). The body runs in an implicit `(turtle :pose <pose> body)` scope, so it sees the turtle positioned at the anchor; subsequent turtle primitives (`f`, `th`, `attach`, `cyl`, …) operate in that scope.
+
+Patterns:
+
+| Pattern | Match                                         |
+|---------|-----------------------------------------------|
+| string  | prefix match on `(name anchor-name)`          |
+| regex   | `re-find` on `(name anchor-name)`             |
+| keyword | equality with the anchor's name               |
+| set     | `contains?` of the anchor's name in the set   |
+
+`:align` *(optional, per clause)* opts the body into full pose alignment (position + heading + up). Without it, only the position is set and the body inherits the parent turtle's heading/up — same default as `move-to`. `target` is either a path (its `(mark …)` recordings are walked from the world origin) or a mesh value with an `:anchors` map (set by `attach-path` or by registering inside `with-path`).
+
+The result is `(concat-meshes …)` of all body values, with nested sequences flattened via `flatten-meshes`; non-mesh values are silently dropped. A console warning is emitted for any pattern that matched zero anchors, listing the available names. Anchors not matched by any pattern are silently skipped (filtering only a subset is normal).
+
+**Path marks resolve at the current turtle pose**, like `with-path` does — *not* at the world origin (unlike `(anchors path)`, which always inspects from origin, and `(move-to path :at name)`, which uses absolute marks). This makes `on-anchors` composable: a function that builds its geometry through `on-anchors path` lands its pieces wherever the caller has positioned the turtle, so the same component can be re-distributed by an outer `on-anchors` over another skeleton. Mesh targets are unaffected — a mesh's `:anchors` are stored in world coordinates and used as-is.
+
+For ad-hoc per-anchor logic that does not fit the `on-anchors` dispatch shape, `(pin-path path)` exposes the same resolver as a plain function — it returns the `{anchor-name → pose}` map at the current turtle pose, with no scope and no side effects. Use it in a custom `for` over anchors when the per-anchor work is more dynamic than a fixed set of clauses (e.g. parameters keyed by anchor name, or post-processing applied after the loop).
+
+```clojure
+;; Two roles dispatched by prefix on the same skeleton.
+(def row-skel
+  (path (mark :end-post-0) (f 20)
+        (mark :mid-post-0) (f 20)
+        (mark :end-post-1)))
+
+(register fence
+  (on-anchors row-skel
+    "end-post-" :align (attach end-post)
+    "mid-post-" :align (attach mid-post)))
+
+;; Set pattern + no-align: vertical legs on a horizontal skeleton.
+(register stand
+  (on-anchors plate-skel
+    #{:foot-1 :foot-3} (attach long-foot)
+    #{:foot-2 :foot-4} (attach short-foot)))
+```
+
+`on-anchors` is the structured form of the `for`/`filter` idiom; the explicit form remains valid when the loop logic itself is dynamic (e.g. the patterns are computed at runtime).
 
 ### stretch-f / stretch-rt / stretch-u (attach context)
 

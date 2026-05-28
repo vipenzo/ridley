@@ -9,7 +9,7 @@ status: stable
 
 ## Signature
 
-`(fillet mesh direction radius & {:keys [angle min-radius segments where blend-vertices]})`
+`(fillet mesh direction radius & {:keys [angle min-radius segments where]})`
 
 ## Description
 
@@ -27,7 +27,6 @@ Returns a new mesh.
 | `:min-radius`     | `nil`   | Exclude edges closer than `r` to the mesh's heading axis.                  |
 | `:segments`       | 8       | Arc resolution. 8 is sufficient for `radius` < ~5; bump up for larger.     |
 | `:where`          | `nil`   | Extra predicate `(fn [[x y z]] -> bool)` on edge endpoints.                |
-| `:blend-vertices` | `false` | When true, add a spherical blend at corners where 3+ filleted edges meet. |
 
 ## Parameters
 
@@ -53,21 +52,6 @@ fillet. `:segments 8` gives a smooth arc.
 
 ## Variations
 
-{{example: fillet-blend-vertices}}
-
-<!-- example-source: fillet-blend-vertices -->
-```clojure
-;; Fillet every edge of a cube, including spherical corner blends
-(register stone
-  (-> (box 20)
-      (fillet :all 2 :segments 8 :blend-vertices true)))
-```
-<!-- /example-source -->
-
-A box with every edge rounded becomes a bar of soap. `:blend-vertices`
-adds a spherical cap at each corner so three meeting fillets join
-smoothly rather than tangentially.
-
 {{example: fillet-min-radius}}
 
 <!-- example-source: fillet-min-radius -->
@@ -88,8 +72,6 @@ the mesh's axis), so only the outer rim is filleted.
 - `fillet` works on non-manifold input. Internally it subtracts a
   concave cutter per edge, so a single broken edge does not poison
   the whole result.
-- `:blend-vertices` is the path to "no flat spots at corners" — at
-  the cost of one extra sphere-cut per multi-edge vertex.
 - For wholesale rounding of every shallow crease at once (with the
   manifold constraint and quadratic densification), use
   `mesh-smooth`. For flat bevels, use `chamfer`.

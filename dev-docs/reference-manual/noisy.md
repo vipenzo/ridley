@@ -14,9 +14,10 @@ status: stable
 ## Description
 
 Shape-fn that displaces vertices radially using procedural 2D noise.
-Unlike `rugged` and `fluted` (deterministic sinusoidal patterns), `noisy`
-varies organically along both the angular direction and the path (`t`).
-With `:octaves > 1` the noise is layered via fractal Brownian motion for
+Compared with the sinusoid-based displacements, `noisy` produces smooth,
+organic, blobby surfaces (`fluted` gives single-frequency regular ridges;
+`rugged` gives angular crystalline asperities via layered sines). With
+`:octaves > 1` the noise is layered via fractal Brownian motion for
 richer detail. Used with `loft`, `bloft`, or `revolve`. Does not modify
 turtle state.
 

@@ -10,19 +10,22 @@ Ridley offre strumenti per rispondere a queste domande sia da codice (nella REPL
 
 `distance` calcola la distanza euclidea fra due riferimenti. I riferimenti possono essere mesh registrate (per nome), facce di una mesh, o punti arbitrari nello spazio:
 
-```clojure
+<!-- example-source: distance-forms :no-run
+(register box1 (box 30))
+(register box2 (attach (box 30) (f 80) (u 20)))
+
 ;; Fra i centroidi di due mesh
-(distance :box1 :box2)
+(println (distance :box1 :box2))
 
 ;; Fra i centri di due facce
-(distance :box1 :top :box2 :bottom)
+(println (distance :box1 :top :box2 :bottom))
 
 ;; Fra due punti
-(distance [0 0 0] [100 0 0])
+(println (distance [0 0 0] [100 0 0]))
 
 ;; Misto: centro di una faccia e un punto
-(distance :box1 :top [0 0 50])
-```
+(println (distance :box1 :top [0 0 50]))
+-->
 
 Il risultato è un numero: la distanza in unità Ridley (millimetri, se stai progettando per la stampa 3D).
 
@@ -30,10 +33,11 @@ Il risultato è un numero: la distanza in unità Ridley (millimetri, se stai pro
 
 `bounds` restituisce il bounding box di una mesh registrata:
 
-```clojure
-(bounds :my-piece)
+<!-- example-source: bounds-basic :no-run
+(register my-piece (attach (box 40 30 20) (f 50)))
+(println (bounds :my-piece))
 ;; => {:min [x y z] :max [x y z] :size [x y z] :center [x y z]}
-```
+-->
 
 `:size` è la dimensione del bounding box lungo ogni asse: utile per verificare che un pezzo stia dentro un volume di stampa, o per calcolare margini. `:center` è il centro geometrico del box.
 
@@ -41,9 +45,10 @@ Il risultato è un numero: la distanza in unità Ridley (millimetri, se stai pro
 
 `area` calcola l'area di una faccia:
 
-```clojure
-(area :box1 :top)    ;; area della faccia top di box1
-```
+<!-- example-source: area-basic :no-run
+(register box1 (box 30))
+(println (area :box1 :top))    ;; area della faccia top di box1
+-->
 
 ## 10.2 Misurazione interattiva
 
@@ -51,13 +56,13 @@ Il risultato è un numero: la distanza in unità Ridley (millimetri, se stai pro
 
 `ruler` ha le stesse forme di argomento di `distance`, ma aggiunge un overlay visivo nel viewport: una linea con marcatori ai due estremi e un'etichetta flottante con la distanza.
 
-```clojure
+<!-- example-source: ruler-basic
+(register box1 (box 30))
+(register box2 (attach (box 30) (f 80) (u 20)))
 (ruler :box1 :box2)                ;; fra centroidi
-(ruler :box1 :top [0 0 50])       ;; da faccia a punto
-(ruler [0 0 0] [100 0 0])         ;; fra punti
-
-(clear-rulers)                     ;; rimuovi tutti i ruler
-```
+(ruler :box1 :top [0 0 50])        ;; da faccia a punto
+(ruler [0 0 0] [100 0 0])          ;; fra punti
+-->
 
 I ruler persistono fra comandi REPL (puoi aggiungerne più d'uno e ispezionarli insieme), ma vengono cancellati automaticamente al prossimo Cmd+Enter. `(clear-rulers)` li rimuove manualmente.
 
@@ -75,13 +80,12 @@ Per misurare senza scrivere codice:
 
 I ruler si aggiornano in tempo reale quando usi `tweak` su una mesh registrata:
 
-```clojure
+<!-- example-source: ruler-tweak :no-run
 (register A (box 30))
 (register B (attach (box 30) (f 140) (u 50)))
-
 (ruler :A :B)
 (tweak :all :B)    ;; i ruler seguono B mentre trascini gli slider
-```
+-->
 
 Quando confermi il tweak, i ruler usano la mesh finale. Quando annulli, tornano alla posizione originale.
 
@@ -91,12 +95,11 @@ Quando confermi il tweak, i ruler usano la mesh finale. Quando annulli, tornano 
 
 Le direzioni sono relative alla creation-pose della mesh, non al mondo:
 
-```clojure
-(find-faces mesh :top)              ;; facce allineate con heading
-(find-faces mesh :bottom)           ;; opposto a heading
-(find-faces mesh :up)               ;; allineate con up
-(find-faces mesh :all)              ;; tutte, raggruppate per direzione
-```
+<!-- example-source: find-faces-basic
+(register my-piece (attach (box 40 30 20) (rt 20) (tv 15)))
+(doseq [face (find-faces (get-mesh :my-piece) :top)]
+  (flash-face (get-mesh :my-piece) (:id face)))
+-->
 
 `:threshold` controlla la tolleranza dell'allineamento (default 0.7, dove 1.0 è perfetto):
 
@@ -114,18 +117,9 @@ Le funzioni di selezione puntuale (`face-at`, `face-nearest`, `largest-face`) so
 
 ## 10.4 Diagnostica della mesh
 
-Gli strumenti di diagnostica della mesh (`mesh-diagnose`, `mesh-status`, `merge-vertices`) sono trattati nella sezione 7.1. Qui aggiungiamo una precisazione su `manifold?` e uno strumento che non è stato presentato lì.
+Gli strumenti di diagnostica della mesh (`mesh-diagnose`, `mesh-status`, `merge-vertices`) sono trattati nella sezione 7.1. Qui aggiungiamo una precisazione su `manifold?`.
 
 `manifold?` restituisce `true` se la mesh è watertight, `nil` altrimenti. Il motivo del `nil` (e non `false`) è che sotto il cofano Manifold WASM lancia un'eccezione quando l'oggetto non è manifold, e Ridley la cattura restituendo `nil`. In pratica non cambia nulla (entrambi sono falsy), ma vale la pena saperlo se usi il risultato in un `cond` o in un'espressione che distingue `false` da `nil`.
-
-### Find-sharp-edges
-
-`find-sharp-edges` trova gli spigoli il cui angolo diedrale è sotto una soglia. Utile per ispezionare dove un fillet o chamfer agirebbe, o per verificare che un'operazione di smoothing abbia lavorato dove ci si aspettava:
-
-```clojure
-(find-sharp-edges mesh)              ;; default: angolo < 150°
-(find-sharp-edges mesh :angle 90)    ;; solo spigoli molto acuti
-```
 
 ## 10.5 AI describe
 

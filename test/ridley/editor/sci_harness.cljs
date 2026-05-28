@@ -11,11 +11,18 @@
             [ridley.editor.macros :as macros]
             [ridley.editor.operations :as gen-ops]
             [ridley.editor.impl :as macro-impl]
+            [ridley.editor.implicit :as impl]
+            [ridley.manifold.core :as manifold]
             [ridley.turtle.core :as turtle]
             [ridley.turtle.shape :as shape]
             [ridley.turtle.transform :as xform]
             [ridley.turtle.shape-fn :as sfn]
             [ridley.math :as math]))
+
+;; Atom for on-anchors warning capture in tests.
+(defonce on-anchors-warnings (atom []))
+
+(defn reset-warnings! [] (reset! on-anchors-warnings []))
 
 ;; ── Turtle lifecycle ──────────────────────────────────────
 
@@ -30,6 +37,12 @@
 
 (defn- implicit-f [dist]
   (swap! @state/turtle-state-var turtle/f dist))
+
+(defn- implicit-u [dist]
+  (swap! @state/turtle-state-var turtle/move-up dist))
+
+(defn- implicit-rt [dist]
+  (swap! @state/turtle-state-var turtle/move-right dist))
 
 (defn- implicit-th [angle]
   (swap! @state/turtle-state-var turtle/th angle))
@@ -83,6 +96,8 @@
 (def ^:private base-bindings
   {;; Movement
    'f            implicit-f
+   'u            implicit-u
+   'rt           implicit-rt
    'th           implicit-th
    'tv           implicit-tv
    'tr           implicit-tr
@@ -227,10 +242,17 @@
    'hide-mesh!          (fn [& _] nil)
    'refresh-viewport!   (fn [& _] nil)
    'get-mesh            (fn [& _] nil)
-   'get-anchor          (fn [& _] nil)
-   'save-anchors*       (fn [] nil)
-   'restore-anchors*    (fn [_] nil)
-   'resolve-and-merge-marks* (fn [_] nil)
+   ;; Real anchor support: read/write the global turtle's :anchors map.
+   'get-anchor          (fn [name] (get-in @@state/turtle-state-var [:anchors name]))
+   'save-anchors*       (fn [] (:anchors @@state/turtle-state-var))
+   'restore-anchors*    (fn [saved] (swap! @state/turtle-state-var assoc :anchors (or saved {})))
+   'resolve-and-merge-marks* (fn [path]
+                               (when path
+                                 (let [marks (turtle/resolve-marks @@state/turtle-state-var path)]
+                                   (swap! @state/turtle-state-var update :anchors merge marks))))
+   ;; with-path tracks the active path here (no assembly-frame logic in tests).
+   'current-skeleton    (atom nil)
+   'assembly-active?    (fn [] false)
    ;; Registry / scene stubs
    'show-mesh-ref!      (fn [& _] nil)
    'hide-mesh-ref!      (fn [& _] nil)
@@ -270,7 +292,40 @@
    'tweak-start!        (fn [& _] nil)
    ;; Export stubs
    'save-stl            (fn [& _] nil)
-   'save-mesh           (fn [& _] nil)})
+   'save-mesh           (fn [& _] nil)
+   ;; on-anchors macro support
+   'anchors             (fn [target]
+                          (cond
+                            (and (map? target) (= :path (:type target)))
+                            (turtle/resolve-marks
+                             {:position [0 0 0] :heading [1 0 0] :up [0 0 1]}
+                             target)
+                            (and (map? target) (:vertices target))
+                            (:anchors target)
+                            :else nil))
+   ;; pin-path: resolve a path's marks at the CURRENT turtle pose.
+   'pin-path
+   (fn [path]
+     (when (and (map? path) (= :path (:type path)))
+       (turtle/resolve-marks @@state/turtle-state-var path)))
+   ;; on-anchors uses this for dispatch: path marks resolved at current
+   ;; turtle pose (not at world origin) so on-anchors composes nested.
+   'on-anchors-resolve-target
+   (fn [target]
+     (cond
+       (and (map? target) (= :path (:type target)))
+       (turtle/resolve-marks @@state/turtle-state-var target)
+       (and (map? target) (:vertices target))
+       (:anchors target)
+       :else nil))
+   'concat-meshes       manifold/concat-meshes
+   ;; mesh-union stub: behaves like concat-meshes for testing composite bodies.
+   ;; Real boolean union requires Manifold WASM which is unavailable in CLJ test env.
+   'mesh-union-impl     (fn [& meshes] (manifold/concat-meshes (vec meshes)))
+   'on-anchors-match?   impl/on-anchors-match?
+   'on-anchors-warn-no-match!
+   (fn [pattern anchor-map]
+     (swap! on-anchors-warnings conj {:pattern pattern :anchor-map anchor-map}))})
 
 ;; ── Public API ──────────────────────────────────────────────
 

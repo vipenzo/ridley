@@ -128,95 +128,77 @@ Spesso un path ha una spina principale (l'asse lungo cui si sviluppa la struttur
 (def skel
   (path
     (mark :start)
-    (f 50)
+    (f 40)
     (side-trip
-      (th 90) (f 27)
-      (tv -90) (f 37)
-      (mark :branch))
+      (th 60)
+      (mark :start-branch)
+      (f 27)
+      (mark :end-branch))
     (mark :after)
-    (f 10)
+    (f 20)
     (mark :end)))
+
+(register tree
+  (mesh-union
+    (extrude (circle 5) skel)
+    (attach (cyl 10 2) (move-to skel :at :start))
+    (attach (cyl 12 2) (move-to skel :at :after))
+    (attach (cyl 15 2) (move-to skel :at :end))
+    (turtle (:start-branch skel)
+      (extrude (circle 2) (f 27)))))
 ```
 
-La spina va da `:start` a `:end` passando per `:after`. Il `side-trip` si stacca dalla spina a 50 in avanti, gira a destra di 90°, avanza 27, scende di 37, e lascia il mark `:branch`. Poi la tartaruga torna automaticamente a dove era prima del `side-trip` (a 50 sulla spina), e il path continua con `:after` e `:end`.
+La spina va da `:start` a `:end` passando per `:after`. Il `side-trip` si stacca dalla spina a 40 in avanti, gira di 60°, e lascia due mark (`:start-branch` e `:end-branch`). Poi la tartaruga torna automaticamente a dove era prima del `side-trip` (a 40 sulla spina), e il path continua con `:after` e `:end`.
 
-Il mark `:branch` è a `[50, 27, -37]`, fuori dalla spina. Ma la spina non ne sa nulla: il `side-trip` non ha avanzato il cursore principale.
+Tre dischi piazzati con `move-to` segnano i punti sulla spina. Il ramo laterale viene costruito con una sintassi diversa: `(turtle (:start-branch skel) ...)`. Un path si comporta come una mappa dei suoi anchor, quindi `(:start-branch skel)` restituisce la posa del mark `:start-branch`, e `turtle` apre uno scope posizionato su quella posa. Dentro lo scope, `(extrude (circle 2) (f 27))` costruisce il ramo.
+
+Questa sintassi è il modo più diretto per costruire geometria a partire da un mark. La differenza con `move-to` (che funziona solo dentro `attach`): `turtle` con un anchor apre un intero scope in cui si possono fare più operazioni, non solo posizionare una mesh.
+
+`turtle` accetta anchor in tre forme equivalenti:
+
+```clojure
+(turtle (:anchor-name my-path) ...)    ; accessor implicito (la più comune)
+(turtle my-path :at :anchor-name ...)  ; sugar :at
+(turtle :pose some-pose ...)           ; pose esplicita da qualsiasi sorgente
+```
+
+La prima forma è la più compatta e la userete quasi sempre. La seconda rende esplicito che si sta navigando a un anchor di un path. La terza accetta qualsiasi posa (non solo da path), utile quando la posa viene da un calcolo o da `(:end-face result)`.
 
 ### Pattern: helper con side-trip
 
-Un pattern frequente è avvolgere il side-trip in una funzione helper che parametrizza la direzione e la profondità del ramo:
+Un altro pattern frequente: avvolgere il side-trip in una funzione helper che parametrizza la direzione e l'orientamento del ramo.
 
 <!-- example-source: side-trip-helper -->
 ```clojure
-(defn arm [side depth mname]
+(defn arm [side rot mname]
   (path
     (side-trip
       (th (if (pos? side) 90 -90))
+      (tr rot)
       (f (abs side))
-      (u (- depth))
       (mark mname))))
 
 (def skel
   (path
-    (mark :pin-axis)
     (f 50)
-    (follow (arm  27 37 :left-1))
-    (follow (arm -27 37 :right-1))
+    (follow (arm  27 15 :a-1))
+    (follow (arm -27 30 :a-2))
     (f 30)
-    (follow (arm  27 37 :left-2))
-    (follow (arm -27 37 :right-2))))
+    (follow (arm  27 45 :a-3))
+    (follow (arm -27 60 :a-4))))
+
+(register stuff
+  (mesh-union
+    (extrude (circle 3) skel)
+    (concat-meshes (for [k (keys (anchors skel))]
+      (attach (box 10 5 2) (move-to skel :at k :align))))))
 ```
 
-`arm` crea un sotto-path che si stacca dalla spina, va lateralmente di `side` (positivo = destra, negativo = sinistra), scende di `depth`, e lascia un mark. `follow` lo innesta nella spina (vedremo `follow` nella sezione successiva). Quattro chiamate con parametri diversi piazzano quattro mark simmetrici lungo la spina, senza che la spina stessa ne sia influenzata.
+`arm` crea un sotto-path che si stacca dalla spina, va lateralmente di `side` (positivo = destra, negativo = sinistra), ruota con `tr` per variare l'orientamento, e lascia un mark. `follow` lo innesta nella spina. Quattro chiamate con parametri diversi piazzano quattro mark lungo la spina, ciascuno con un'angolazione diversa.
+
+La parte finale itera su tutti i mark con `for` e piazza una box su ciascuno, allineata alla posa del mark. `concat-meshes` raccoglie le mesh prodotte dal `for` in una lista che `mesh-union` può fondere con il tubo estruso.
 
 Il `side-trip` annida senza problemi: un side-trip può contenere un `follow` che contiene un altro side-trip. Ogni livello salva e ripristina la sua posa.
-
-## Comporre path: follow e splicing
-
-I path si compongono innestandoli uno nell'altro con `follow`. `follow` prende un path esistente e ne inserisce i comandi nel path corrente, come se fossero stati scritti lì.
-
-<!-- example-source: follow-basic -->
-```clojure
-(def segment (path (f 10) (mark :joint)))
-
-(def full
-  (path
-    (f 20)
-    (follow segment)
-    (th 90)
-    (f 10)))
-```
-
-`full` contiene: avanti 20, poi i comandi di `segment` (avanti 10, mark `:joint`), poi gira 90°, avanti 10. `follow` non copia il path come blocco opaco: ne inserisce i comandi uno a uno nel recording del path corrente. Il risultato è un unico path con tutti i comandi in sequenza.
-
-La differenza con scrivere i comandi direttamente è il riuso: `segment` può essere usato in più path diversi, e modificarlo in un posto aggiorna tutti i path che lo usano via `follow`.
-
-### Comporre pezzi modulari
-
-`follow` e `side-trip` insieme permettono di costruire path complessi da pezzi piccoli e riutilizzabili. Lo abbiamo già visto nella sezione precedente con `arm`: una funzione che restituisce un sotto-path, innestata nella spina via `follow`.
-
-<!-- example-source: follow-modular -->
-```clojure
-(defn leg [length mname]
-  (path (side-trip (tv -90) (f length) (mark mname))))
-
-(defn top-bar [length]
-  (path (f length)))
-
-(def table-skel
-  (path
-    (follow (leg 40 :leg-1))
-    (follow (top-bar 60))
-    (follow (leg 40 :leg-2))
-    (th 90)
-    (follow (leg 40 :leg-3))
-    (follow (top-bar 40))
-    (follow (leg 40 :leg-4))))
-```
-
-Lo scheletro di un tavolo: quattro gambe e due traverse, ciascuna definita come funzione che restituisce un path. La spina cammina lungo il piano del tavolo, le gambe scendono in `side-trip`. Cambiare la lunghezza delle gambe o delle traverse è un cambio di parametro in un posto solo.
-
-Il pattern scala: scheletri con decine di mark, costruiti componendo helper con `follow`, sono la norma per assiemi complessi. Il cap. 8 (Assemblaggio) mostra il pattern completo con componenti attaccati ai mark.
 
 ## Path da coordinate
 
@@ -236,6 +218,7 @@ Cinque punti, un percorso aperto che li collega con segmenti rettilinei. Le coor
 
 `poly-path-closed` fa la stessa cosa ma chiude il percorso tornando al primo punto:
 
+<!-- example-source: poly-path-closed -->
 ```clojure
 (def frame-path (poly-path-closed 0 0  40 0  40 30  0 30))
 (register frame (extrude-closed (circle 2) frame-path))
@@ -247,6 +230,7 @@ Un rettangolo chiuso, utile come percorso per `extrude-closed`.
 
 `quick-path` (alias `qp`) è il costruttore compatto che abbiamo già visto nel cap. 4: numeri e angoli si alternano.
 
+<!-- example-source: quick-path-zigzag -->
 ```clojure
 (def zigzag (qp 20 60 20 -120 20 60 20))
 (register bar (extrude (rect 5 3) zigzag))
@@ -313,7 +297,9 @@ I path sono dati. Diventano utili quando qualcosa li consuma. Ecco la mappa comp
 
 Il consumatore principale. Trascinano una shape lungo il percorso del path. Li abbiamo visti in tutto il cap. 4.
 
+<!-- example-source: where-extrude-loft -->
 ```clojure
+(def my-path (path (f 20) (arc-h 15 90) (f 20)))
 (register tube (extrude (circle 5) my-path))
 (register vase (loft (tapered (circle 15) :to 0.5) my-path))
 ```
@@ -326,6 +312,7 @@ Esegue i comandi del path sulla tartaruga corrente, muovendola e tracciando le l
 
 Dispone testo 3D lungo la curva del path. Ogni lettera viene posizionata e orientata seguendo il percorso.
 
+<!-- example-source: where-text-on-path -->
 ```clojure
 (def curve (path (dotimes [_ 40] (f 2) (th 3))))
 (register title (text-on-path "Hello Ridley" curve :size 15 :depth 3))
@@ -345,12 +332,13 @@ Porta la tartaruga alla posa di un mark dentro il path. Disponibile solo nel cor
 
 `with-path` apre uno scope in cui i mark di un path diventano anchor navigabili. Dentro lo scope, `goto` salta la tartaruga a un anchor, e `path-to` costruisce un path dalla posizione corrente a un anchor target.
 
+<!-- example-source: where-with-path -->
 ```clojure
 (def skel (path (mark :base) (f 15) (mark :mid) (f 12) (mark :top)))
 
 (with-path skel
   (goto :base)
-  (register lower (extrude (circle 1.5) (path-to :mid))))
+  (register lower (extrude (circle 2.5) (path-to :mid))))
 
 (with-path skel
   (goto :mid)
@@ -358,6 +346,15 @@ Porta la tartaruga alla posa di un mark dentro il path. Disponibile solo nel cor
 ```
 
 `with-path` è il pattern principale per costruire più pezzi lungo lo stesso scheletro. Ogni pezzo viene estruso da un mark al successivo, e i pezzi sono automaticamente allineati perché condividono lo stesso scheletro. Il cap. 8 (Assemblaggio) usa questo pattern in modo estensivo.
+
+### turtle con anchor
+
+Apre uno scope posizionato sulla posa di un mark. A differenza di `move-to` (che funziona solo dentro `attach`), `turtle` permette di eseguire più operazioni dalla posa del mark: estrusioni, registrazioni, sotto-assemblaggi. Lo abbiamo visto nella 5.4.
+
+```clojure
+(turtle (:elbow my-path)
+  (register joint (sphere 5)))
+```
 
 ### anchors
 
@@ -399,6 +396,7 @@ Scala un path a una dimensione target su uno o entrambi gli assi:
 | `follow-path` | muove la tartaruga e traccia linee | 5.2 |
 | `text-on-path` | posiziona lettere lungo la curva | 12 |
 | `move-to` (dentro attach) | snap della tartaruga a un mark | 5.3 |
+| `turtle` con anchor | scope posizionato su un mark | 5.4 |
 | `with-path` + `goto` + `path-to` | assemblaggio path-driven | 8 |
 | `anchors` | mappa mark→posa | 5.3 |
 | `path-to-shape` | converte in shape 2D | 5.7 |

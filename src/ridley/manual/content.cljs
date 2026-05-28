@@ -686,8 +686,7 @@ Composes with everything:
 | `:angle` | 80 | Min dihedral angle for edge detection |
 | `:segments` | 8 | Arc resolution (fillet only) |
 | `:min-radius` | nil | Exclude edges near holes |
-| `:where` | nil | Custom vertex predicate |
-| `:blend-vertices` | false | Spherical corners (experimental) |"
+| `:where` | nil | Custom vertex predicate |"
       :examples
       {:chamfer-3d {:caption "3D Chamfer"
                     :description "`chamfer` detects sharp edges on the mesh and cuts them flat. `:top` selects edges adjacent to the face along the turtle's heading direction."}
@@ -1924,8 +1923,7 @@ I **selettori di direzione** sono relativi alla posa della tartaruga alla creazi
 | `:angle` | 80 | Angolo diedro minimo per rilevamento spigoli |
 | `:segments` | 8 | Risoluzione arco (solo fillet) |
 | `:min-radius` | nil | Escludi spigoli vicini a fori |
-| `:where` | nil | Predicato personalizzato sui vertici |
-| `:blend-vertices` | false | Angoli sferici (sperimentale) |"
+| `:where` | nil | Predicato personalizzato sui vertici |"
       :examples
       {:chamfer-3d {:caption "Smusso 3D"
                     :description "`chamfer` rileva gli spigoli vivi della mesh e li taglia piatti. `:top` seleziona gli spigoli adiacenti alla faccia nella direzione del heading della tartaruga."}

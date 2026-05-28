@@ -463,11 +463,21 @@
 ;; Attach: helpers for move-to replay
 ;; ============================================================
 
+(defn- anchor-pose-from-context
+  "If target is a keyword matching a named anchor on the current turtle
+   (set by `with-path` or `attach-path`) or in the top-level mark-anchors
+   atom (set by `mark` outside `attach`), return its pose map. Else nil."
+  [target]
+  (when (keyword? target)
+    (or (get @state/mark-anchors target)
+        (get-in @@state/turtle-state-var [:anchors target]))))
+
 (defn- resolve-mesh
-  "Resolve a keyword/string/mesh/path to an actual mesh.
-   For path objects, returns a virtual mesh whose `:anchors` are the path's
-   marks resolved at the world origin — useful when a skeleton path is used
-   directly as a target for `move-to`, without registering a carrier mesh."
+  "Resolve a keyword/string/mesh/path/anchor-name to a target for `move-to`.
+   Priority for keywords: (1) named anchor on the current turtle or in
+   top-level mark-anchors → virtual target with that pose; (2) registered
+   mesh in the registry. For path objects, returns a virtual mesh whose
+   `:anchors` are the path's marks resolved at the world origin."
   [target]
   (cond
     (and (map? target) (:vertices target))
@@ -481,7 +491,12 @@
                target)}
 
     :else
-    (registry/get-mesh (if (keyword? target) target (keyword target)))))
+    (or (when-let [pose (anchor-pose-from-context target)]
+          {:type :anchor-as-target
+           :creation-pose {:position (or (:position pose) (:pos pose))
+                           :heading (:heading pose)
+                           :up (:up pose)}})
+        (registry/get-mesh (if (keyword? target) target (keyword target))))))
 
 (defn- compute-target-bounds
   "Compute bounding box for a target (mesh or name)."
@@ -528,19 +543,6 @@
     (move-state-to-position state (:center bounds))
     state))
 
-(defn- move-to-pose
-  "Move state to target's creation-pose position, then adopt its heading/up.
-   Falls back to centroid if no creation-pose."
-  [state target]
-  (let [mesh (resolve-mesh target)
-        pose (when mesh (:creation-pose mesh))]
-    (if pose
-      (-> state
-          (move-state-to-position (:position pose))
-          (assoc :heading (:heading pose))
-          (assoc :up (:up pose)))
-      (move-to-center state target))))
-
 (defn- align-attached-mesh
   "Rotate the attached mesh in place so its current heading/up align with target heading/up.
    Pivots around `pivot` (typically the anchor position after translation).
@@ -570,6 +572,29 @@
         (turtle/replace-mesh-in-state mesh mesh2)
         (assoc-in [:attached :mesh] mesh2))))
 
+(defn- move-to-pose
+  "Move state to target's creation-pose position, then adopt its heading/up.
+   With :align? true, also rotates the attached mesh so its frame matches
+   the creation-pose's frame.
+   Falls back to centroid if no creation-pose (align? ignored in that case)."
+  [state target & {:keys [align?]}]
+  (let [mesh (resolve-mesh target)
+        pose (when mesh (:creation-pose mesh))]
+    (if pose
+      (let [tgt-pos (:position pose)
+            tgt-h   (:heading pose)
+            tgt-u   (:up pose)
+            translated (move-state-to-position state tgt-pos)
+            aligned (if (and align? (:attached translated))
+                      (align-attached-mesh translated
+                                           (:heading translated) (:up translated)
+                                           tgt-h tgt-u tgt-pos)
+                      translated)]
+        (-> aligned
+            (assoc :heading tgt-h)
+            (assoc :up tgt-u)))
+      (move-to-center state target))))
+
 (defn- move-to-anchor
   "Move state to target mesh's named anchor, adopting its heading/up.
    Anchors come from attach-path. With :align? true, also rotates the
@@ -592,22 +617,45 @@
             (assoc :up tgt-u)))
       (throw (js/Error. (str "move-to: no anchor " anchor-name " on mesh " target))))))
 
+(defn- path-target?
+  "True when target is an inline path value (as opposed to a mesh/SDF or a
+   registered-mesh keyword). Paths have :anchors via their marks but no
+   meaningful creation-pose or centroid."
+  [target]
+  (and (map? target) (= :path (:type target))))
+
 (defn- move-to-dispatch
   "Handle :move-to command during replay.
    Supports:
-     (move-to :name)                       — snap to creation-pose, adopt orientation
+     (move-to :name)                       — snap to creation-pose (translate only)
+     (move-to :name :align)                — snap to creation-pose and rotate mesh to match
      (move-to :name :center)               — snap to centroid
      (move-to :name :at :anchor)           — snap to anchor (translate only)
-     (move-to :name :at :anchor :align)    — snap to anchor and rotate mesh to match"
+     (move-to :name :at :anchor :align)    — snap to anchor and rotate mesh to match
+   Path targets are only valid with :at :anchor (paths have no creation-pose
+   or centroid of their own). Anchor targets (keywords that name an anchor
+   on the current turtle or in mark-anchors) are only valid with the default
+   form and :align (an anchor is a single pose: no centroid, no sub-anchors)."
   [state args]
   (let [target (first args)
-        mode (second args)]
+        mode (second args)
+        anchor-tgt? (some? (anchor-pose-from-context target))]
     (cond
+      (and (path-target? target) (not= mode :at))
+      (throw (js/Error. "move-to: path targets are only valid with :at :anchor — paths have no creation-pose or centroid. Use (move-to path :at :mark) or convert the path to a mesh first."))
+
+      (and anchor-tgt? (#{:center :at} mode))
+      (throw (js/Error. (str "move-to: anchor target " target " supports only (move-to " target ") and (move-to " target " :align). An anchor is a single pose — it has no centroid (:center) and no sub-anchors (:at).")))
+
+      (and (= mode :center) (= (nth args 2 nil) :align))
+      (throw (js/Error. "move-to: :align is not supported with :center (centroid has no frame). Use (move-to target :align) for creation-pose alignment."))
+
       (and (= mode :at) (= (nth args 3 nil) :align))
       (move-to-anchor state target (nth args 2) :align? true)
 
       (= mode :at)     (move-to-anchor state target (nth args 2))
       (= mode :center) (move-to-center state target)
+      (= mode :align)  (move-to-pose state target :align? true)
       :else            (move-to-pose state target))))
 
 ;; ============================================================
@@ -810,11 +858,20 @@
     (if s2-axis (sdf-rotate-around-point sdf1 s2-axis s2-angle pivot) sdf1)))
 
 (defn- resolve-anchor-source
-  "Resolve a target reference (keyword, mesh, or SDF) to something that
-   can carry :anchors / :creation-pose."
+  "Resolve a target reference (keyword, mesh, SDF, or context anchor) to
+   something that can carry :anchors / :creation-pose. Priority for
+   keywords: (1) named anchor on the current turtle or in top-level
+   mark-anchors → virtual target with that pose as creation-pose;
+   (2) registered mesh in the registry."
   [target]
   (cond
-    (keyword? target) (registry/get-mesh target)
+    (keyword? target)
+    (or (when-let [pose (anchor-pose-from-context target)]
+          {:type :anchor-as-target
+           :creation-pose {:position (or (:position pose) (:pos pose))
+                           :heading (:heading pose)
+                           :up (:up pose)}})
+        (registry/get-mesh target))
     (and (map? target) (or (:vertices target) (:anchors target) (sdf/sdf-node? target)))
     target
     :else nil))
@@ -834,8 +891,18 @@
   [state sdf args]
   (let [target (first args)
         mode (second args)
-        target-obj (resolve-anchor-source target)]
+        target-obj (resolve-anchor-source target)
+        anchor-tgt? (some? (anchor-pose-from-context target))]
     (cond
+      (and (path-target? target) (not= mode :at))
+      (throw (js/Error. "move-to: path targets are only valid with :at :anchor — paths have no creation-pose or centroid. Use (move-to path :at :mark) or convert the path to a mesh first."))
+
+      (and anchor-tgt? (#{:center :at} mode))
+      (throw (js/Error. (str "move-to: anchor target " target " supports only (move-to " target ") and (move-to " target " :align). An anchor is a single pose — it has no centroid (:center) and no sub-anchors (:at).")))
+
+      (and (= mode :center) (= (nth args 2 nil) :align))
+      (throw (js/Error. "move-to: :align is not supported with :center (centroid has no frame). Use (move-to target :align) for creation-pose alignment."))
+
       (= mode :at)
       (let [anchor-name (nth args 2)
             align? (= (nth args 3 nil) :align)
@@ -868,13 +935,21 @@
           [state sdf]))
 
       :else
-      (let [pose (when target-obj (:creation-pose target-obj))]
+      (let [pose (when target-obj (:creation-pose target-obj))
+            align? (= mode :align)]
         (if pose
-          [(-> state
-               (assoc :position (:position pose))
-               (assoc :heading (:heading pose))
-               (assoc :up (:up pose)))
-           (translate-sdf-to-position sdf state (:position pose))]
+          (let [tgt-pos (:position pose)
+                tgt-h   (:heading pose)
+                tgt-u   (:up pose)
+                sdf-translated (translate-sdf-to-position sdf state tgt-pos)
+                sdf' (if align?
+                       (sdf-align sdf-translated (:heading state) (:up state) tgt-h tgt-u tgt-pos)
+                       sdf-translated)]
+            [(-> state
+                 (assoc :position tgt-pos)
+                 (assoc :heading tgt-h)
+                 (assoc :up tgt-u))
+             sdf'])
           [state sdf])))))
 
 (defn- sdf-attach-impl
@@ -1191,9 +1266,20 @@
    direction: :top :bottom :up :down :left :right :all
    distance: chamfer size in mm
    Options:
-   - :angle      minimum dihedral angle (default 80)
+   - :angle      minimum dihedral angle (inclusive, default 80)
    - :min-radius exclude edges closer than r to the extrusion axis
-   - :where      additional predicate on vertex positions"
+   - :where      additional predicate on vertex positions
+
+   Concave edges and edges at vertices where more than 3 sharp edges meet are
+   skipped automatically — those produce self-intersecting cutters.
+
+   Limitation: on meshes built from CSG composition (e.g. mesh-union of
+   primitives that intersect tightly), the chamfer cutters near intersection
+   contours can clip features other than the intended edge, producing visible
+   spurs. The algorithm is reliable on standalone primitives and on
+   compositions where the chamfer distance is small relative to the local
+   feature size; on dense junctions, prefer chamfering before composing, or
+   reduce `distance`."
   [mesh direction distance & {:keys [angle min-radius where] :or {angle 80}}]
   (let [dir-vec (direction-vec mesh direction)
         ;; Threshold for normal alignment (cos ~30° ≈ 0.85)
@@ -1220,32 +1306,70 @@
         combined-where (fn [p]
                          (and (or (nil? radius-check) (radius-check p))
                               (or (nil? where) (where p))))]
-    ;; Find sharp edges, then filter by direction
+    ;; Find sharp edges, then filter by convexity and direction.
+    ;; Concave edges (where two surfaces meet at an interior corner, e.g. the
+    ;; intersection of two unioned boxes) must be excluded — chamfering them
+    ;; would cut spurs of material along the interior crease.
+    ;; Edges touching a vertex where >3 sharp edges meet are also excluded:
+    ;; at a regular polyhedral corner exactly 3 edges meet (cube vertex), and
+    ;; their chamfer wedges resolve to a clean corner triangle. At a CSG
+    ;; intersection corner (e.g. where a contour ring meets a primitive's edge)
+    ;; 4+ edges meet, the wedges overlap, and CSG produces self-intersecting
+    ;; results.
     (when-let [edges (faces/find-sharp-edges mesh :angle angle :where combined-where)]
-      (let [;; Filter edges by direction: one of the normals must align with dir-vec
+      (let [convex-edges (filterv :convex? edges)
+            vertex-degree (reduce (fn [m {:keys [edge]}]
+                                    (let [[v0 v1] edge]
+                                      (-> m
+                                          (update v0 (fnil inc 0))
+                                          (update v1 (fnil inc 0)))))
+                                  {} convex-edges)
+            simple-edges (filterv (fn [{:keys [edge]}]
+                                    (let [[v0 v1] edge]
+                                      (and (<= (vertex-degree v0 0) 3)
+                                           (<= (vertex-degree v1 0) 3))))
+                                  convex-edges)
+            ;; Filter edges by direction: one of the normals must align with dir-vec
             dir-edges (if dir-vec
                         (filterv (fn [{:keys [normals]}]
                                    (let [[n1 n2] normals]
                                      (or (> (dot3 n1 dir-vec) align-threshold)
                                          (> (dot3 n2 dir-vec) align-threshold))))
-                                 edges)
-                        edges)]
+                                 simple-edges)
+                        simple-edges)]
         (when (seq dir-edges)
-          ;; Build strip mesh from pre-filtered edges, then subtract
-          (let [strip (faces/build-chamfer-strip dir-edges distance)]
-            (if strip
-              (or (manifold/difference mesh strip) mesh)
-              ;; Fallback to sequential prisms if strip fails
-              (let [prisms (mapv (fn [{:keys [positions normals]}]
-                                   (let [[p0 p1] positions
-                                         [n1 n2] normals]
-                                     (faces/make-prism-along-edge p0 p1 n1 n2 distance)))
-                                 dir-edges)]
-                (reduce (fn [current-mesh prism]
-                          (or (manifold/difference current-mesh prism)
-                              current-mesh))
-                        mesh
-                        prisms)))))))))
+          ;; Build a prism cutter per edge, then discard prisms whose interior
+          ;; contains the midpoint of another sharp edge. This happens at
+          ;; "difficult" edges in CSG-composed meshes — e.g. near where two
+          ;; unioned solids meet — where a cutter would carve across the
+          ;; intersection ring instead of just smoothing the intended edge.
+          ;; Skipping is a conservative compromise: that edge stays unchamfered
+          ;; rather than producing a self-intersecting spur.
+          ;; Build cutter prisms that are just barely larger than the wedge to
+          ;; remove. The legacy defaults (corner=1.5d, face-margin=0.5d) inflate
+          ;; the prism well beyond the wedge — for d=4.5 the prism reaches ~7
+          ;; units past the corner — which on tight CSG junctions causes the
+          ;; cutter to clip adjacent features and produce spurs. We halve d
+          ;; before passing it because the resulting cut depth with the small
+          ;; face margin is ≈ d_passed (vs the legacy formula's ≈ d/2), and we
+          ;; want to keep the user-visible cut size unchanged.
+          (let [d-passed (* distance 0.5)
+                prisms (keep (fn [{:keys [positions normals edge]}]
+                               (let [[p0 p1] positions
+                                     [n1 n2] normals
+                                     prism (faces/make-prism-along-edge
+                                            p0 p1 n1 n2 d-passed
+                                            :edge-margin-factor 0
+                                            :corner-factor 0.2
+                                            :face-margin-factor 0.05)]
+                                 (when-not (faces/prism-cuts-other-features? prism edge convex-edges)
+                                   prism)))
+                             dir-edges)]
+            (reduce (fn [current-mesh prism]
+                      (or (manifold/difference current-mesh prism)
+                          current-mesh))
+                    mesh
+                    prisms)))))))
 
 (defn ^:export fillet-impl
   "Fillet (round) edges selected by turtle-oriented direction.

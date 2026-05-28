@@ -11,6 +11,7 @@
             [ridley.sdf.core :as sdf]
             [ridley.editor.transforms :as t]
             [ridley.editor.impl :as impl]
+            [ridley.editor.state :as state]
             [ridley.turtle.core :as turtle]
             [ridley.geometry.primitives :as prims]))
 
@@ -216,6 +217,141 @@
       (is (v-approx= [5 5 0] (cp-pos s)))
       (is (v-approx= [0 1 0] (get-in m [:creation-pose :heading])))
       (is (v-approx= [0 1 0] (get-in s [:creation-pose :heading]))))))
+
+(deftest attach-move-to-pose-align-rotates-mesh
+  (testing "(attach _ (move-to other :align)) translates AND rotates to match target's creation-pose"
+    (let [;; Target's creation-pose at (5,5,0) with heading +Y, up +Z.
+          target {:type :mesh
+                  :vertices [] :faces []
+                  :creation-pose {:position [5 5 0] :heading [0 1 0] :up [0 0 1]}}
+          pth (p [:move-to target :align])
+          mk-mesh #(-> (prims/box-mesh 4) (assoc :creation-pose identity-pose))
+          mk-sdf  #(-> (sdf/sdf-box 4 4 4) (assoc :creation-pose identity-pose))
+          m (impl/attach-impl (mk-mesh) pth)
+          s (impl/attach-impl (mk-sdf) pth)]
+      ;; Position lands on target's creation-pose position.
+      (is (v-approx= [5 5 0] (cp-pos m)))
+      (is (v-approx= [5 5 0] (cp-pos s)))
+      ;; Mesh frame rotated to match target's frame (the key difference vs no-:align).
+      (is (v-approx= [0 1 0] (get-in m [:creation-pose :heading])))
+      (is (v-approx= [0 1 0] (get-in s [:creation-pose :heading]))))))
+
+(deftest attach-move-to-pose-no-align-keeps-mesh-frame
+  (testing "(attach _ (move-to other)) translates only — mesh creation-pose heading stays at +X"
+    (let [target {:type :mesh
+                  :vertices [] :faces []
+                  :creation-pose {:position [5 5 0] :heading [0 1 0] :up [0 0 1]}}
+          pth (p [:move-to target])
+          mk-mesh #(-> (prims/box-mesh 4) (assoc :creation-pose identity-pose))
+          m (impl/attach-impl (mk-mesh) pth)]
+      ;; Position translates to target's creation-pose position.
+      (is (v-approx= [5 5 0] (cp-pos m)))
+      ;; But mesh's heading is NOT rotated — stays at +X (default).
+      (is (v-approx= [1 0 0] (get-in m [:creation-pose :heading]))))))
+
+(deftest move-to-rejects-center-with-align
+  (testing "(move-to target :center :align) throws — centroid has no frame to align to"
+    (let [target {:type :mesh :vertices [[0 0 0] [1 1 1]] :faces []
+                  :creation-pose identity-pose}
+          pth (p [:move-to target :center :align])
+          mk-mesh #(-> (prims/box-mesh 4) (assoc :creation-pose identity-pose))
+          mk-sdf  #(-> (sdf/sdf-box 4 4 4) (assoc :creation-pose identity-pose))]
+      (is (thrown-with-msg? js/Error #":align is not supported with :center"
+                            (impl/attach-impl (mk-mesh) pth)))
+      (is (thrown-with-msg? js/Error #":align is not supported with :center"
+                            (impl/attach-impl (mk-sdf) pth))))))
+
+(deftest move-to-rejects-path-target-without-at
+  (testing "(move-to path), (move-to path :center), (move-to path :align) all throw — paths require :at :anchor"
+    (let [path-target (turtle/make-path [{:cmd :f :args [10]} {:cmd :mark :args [:tip]}])
+          mk-mesh #(-> (prims/box-mesh 4) (assoc :creation-pose identity-pose))
+          mk-sdf  #(-> (sdf/sdf-box 4 4 4) (assoc :creation-pose identity-pose))]
+      (doseq [form [[:move-to path-target]
+                    [:move-to path-target :center]
+                    [:move-to path-target :align]]]
+        (let [pth (p form)]
+          (is (thrown-with-msg? js/Error #"path targets are only valid with :at"
+                                (impl/attach-impl (mk-mesh) pth))
+              (str "mesh attach should reject " form))
+          (is (thrown-with-msg? js/Error #"path targets are only valid with :at"
+                                (impl/attach-impl (mk-sdf) pth))
+              (str "sdf attach should reject " form)))))))
+
+(deftest move-to-allows-path-target-with-at
+  (testing "(move-to path :at :mark) still works — the path's mark becomes the anchor"
+    (let [path-target (turtle/make-path [{:cmd :f :args [10]} {:cmd :mark :args [:tip]}])
+          pth (p [:move-to path-target :at :tip])
+          mk-mesh #(-> (prims/box-mesh 4) (assoc :creation-pose identity-pose))
+          m (impl/attach-impl (mk-mesh) pth)]
+      ;; Path's :tip mark is at (10,0,0) from the (f 10) before it.
+      (is (v-approx= [10 0 0] (cp-pos m))))))
+
+(defn- with-global-anchor
+  "Set a single anchor on the global turtle for the duration of `f`, then
+   restore. Lets us simulate being inside a `with-path` scope from a plain
+   unit test."
+  [anchor-name pose f]
+  (let [tref @state/turtle-state-var
+        saved (:anchors @tref)]
+    (try
+      (swap! tref assoc-in [:anchors anchor-name] pose)
+      (f)
+      (finally
+        (swap! tref assoc :anchors saved)))))
+
+(deftest move-to-resolves-keyword-from-turtle-anchors
+  (testing "(move-to :anchor) looks up the anchor on the global turtle when no mesh is registered with that name"
+    (with-global-anchor :mid
+      {:position [7 0 0] :heading [0 1 0] :up [0 0 1]}
+      (fn []
+        (let [pth (p [:move-to :mid])
+              mk-mesh #(-> (prims/box-mesh 4) (assoc :creation-pose identity-pose))
+              mk-sdf  #(-> (sdf/sdf-box 4 4 4) (assoc :creation-pose identity-pose))
+              m (impl/attach-impl (mk-mesh) pth)
+              s (impl/attach-impl (mk-sdf) pth)]
+          ;; Position lands on the anchor.
+          (is (v-approx= [7 0 0] (cp-pos m)))
+          (is (v-approx= [7 0 0] (cp-pos s))))))))
+
+(deftest move-to-anchor-keyword-align-rotates-mesh
+  (testing "(move-to :anchor :align) translates AND rotates to the anchor's frame"
+    (with-global-anchor :slot
+      {:position [3 4 0] :heading [0 1 0] :up [0 0 1]}
+      (fn []
+        (let [pth (p [:move-to :slot :align])
+              mk-mesh #(-> (prims/box-mesh 4) (assoc :creation-pose identity-pose))
+              mk-sdf  #(-> (sdf/sdf-box 4 4 4) (assoc :creation-pose identity-pose))
+              m (impl/attach-impl (mk-mesh) pth)
+              s (impl/attach-impl (mk-sdf) pth)]
+          ;; Position + frame both adopt the anchor's pose.
+          (is (v-approx= [3 4 0] (cp-pos m)))
+          (is (v-approx= [3 4 0] (cp-pos s)))
+          (is (v-approx= [0 1 0] (get-in m [:creation-pose :heading])))
+          (is (v-approx= [0 1 0] (get-in s [:creation-pose :heading]))))))))
+
+(deftest move-to-anchor-rejects-center
+  (testing "(move-to :anchor :center) throws — an anchor has no centroid"
+    (with-global-anchor :mid {:position [5 0 0] :heading [1 0 0] :up [0 0 1]}
+      (fn []
+        (let [pth (p [:move-to :mid :center])
+              mk-mesh #(-> (prims/box-mesh 4) (assoc :creation-pose identity-pose))
+              mk-sdf  #(-> (sdf/sdf-box 4 4 4) (assoc :creation-pose identity-pose))]
+          (is (thrown-with-msg? js/Error #"anchor target"
+                                (impl/attach-impl (mk-mesh) pth)))
+          (is (thrown-with-msg? js/Error #"anchor target"
+                                (impl/attach-impl (mk-sdf) pth))))))))
+
+(deftest move-to-anchor-rejects-at
+  (testing "(move-to :anchor :at :sub) throws — an anchor has no sub-anchors"
+    (with-global-anchor :mid {:position [5 0 0] :heading [1 0 0] :up [0 0 1]}
+      (fn []
+        (let [pth (p [:move-to :mid :at :sub])
+              mk-mesh #(-> (prims/box-mesh 4) (assoc :creation-pose identity-pose))
+              mk-sdf  #(-> (sdf/sdf-box 4 4 4) (assoc :creation-pose identity-pose))]
+          (is (thrown-with-msg? js/Error #"anchor target"
+                                (impl/attach-impl (mk-mesh) pth)))
+          (is (thrown-with-msg? js/Error #"anchor target"
+                                (impl/attach-impl (mk-sdf) pth))))))))
 
 ;; ── SDF-only invariants ────────────────────────────────────────
 

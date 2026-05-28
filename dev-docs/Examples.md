@@ -209,8 +209,8 @@ Shape functions encode the transformation inside the shape, enabling clean compo
 ;; Fluted column
 (register column (loft (fluted (circle 20) :flutes 12 :depth 2) (f 80)))
 
-;; Bumpy tube
-(register bumpy (loft (rugged (circle 15) :amplitude 2 :frequency 8) (f 30)))
+;; Rocky tube (layered sinusoids, 3 octaves)
+(register bumpy (loft-n 64 (rugged (circle 15 256) :amplitude 2 :frequency 6 :octaves 3) (f 30)))
 
 ;; Star morphing into circle
 (register morph-tube

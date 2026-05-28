@@ -116,13 +116,37 @@
               (xform/rotate s (* t angle)))))
 
 (defn ^:export rugged
-  "Displace vertices radially with a sin pattern (constant along path).
-   (rugged (circle 15) :amplitude 2 :frequency 8)"
-  [shape-or-fn & {:keys [amplitude frequency] :or {amplitude 1 frequency 6}}]
+  "Rocky/irregular displacement via layered sinusoids varying both around the
+   profile and along the path. Each octave doubles the frequency and scales
+   amplitude by :gain, producing fBm-style asperities.
+   Distinct from `fluted` (single regular ridge pattern) and `noisy` (smooth
+   value noise): `rugged` keeps the angular character of sin waves layered at
+   multiple scales — useful for rocky, bark, or crystalline surfaces.
+   (rugged (circle 15) :amplitude 2 :frequency 6 :octaves 3)
+   (rugged (circle 15) :amplitude 2 :octaves 4 :gain 0.6 :seed 7)"
+  [shape-or-fn & {:keys [amplitude frequency octaves gain seed]
+                  :or {amplitude 1 frequency 6 octaves 3 gain 0.5 seed 0}}]
   (shape-fn shape-or-fn
-            (fn [s _t]
-              (displace-radial s (fn [p]
-                                   (* amplitude (Math/sin (* (angle p) frequency))))))))
+            (fn [s t]
+              (displace-radial s
+                               (fn [p]
+                                 (let [a (angle p)]
+                                   (loop [i 0
+                                          freq (double frequency)
+                                          amp 1.0
+                                          total 0.0
+                                          max-amp 0.0]
+                                     (if (>= i octaves)
+                                       (* amplitude (/ total (max max-amp 1e-9)))
+                                       (let [phase (+ seed (* i 2.3956))]
+                                         (recur (inc i)
+                                                (* freq 2.0)
+                                                (* amp gain)
+                                                (+ total
+                                                   (* amp 0.5
+                                                      (+ (Math/sin (+ (* a freq) phase))
+                                                         (Math/sin (+ (* t freq) phase 1.7)))))
+                                                (+ max-amp amp)))))))))))
 
 (defn ^:export fluted
   "Longitudinal grooves using cos pattern (aligned with shape axes).
@@ -145,12 +169,22 @@
 (defn ^:export morphed
   "Interpolate between two shapes along the path.
    At t=0 returns shape-a, at t=1 returns shape-b.
-   Both must have the same point count (use resample if needed).
-   (morphed (resample (star 5 20 8) 32) (circle 15 32))"
+   If point counts differ, both are resampled to the max count.
+   Shape-b is angularly aligned to shape-a so corresponding vertices follow
+   the shortest path (avoids twisted/bowtie morphs between e.g. rect and circle).
+   (morphed (rect 20 20) (circle 15 32))
+   (morphed (star 5 20 8) (circle 15 32))"
   [shape-a shape-b]
-  (shape-fn shape-a
-            (fn [s t]
-              (xform/morph s shape-b t))))
+  (let [n-a (count (:points shape-a))
+        n-b (count (:points shape-b))
+        [ra rb] (if (= n-a n-b)
+                  [shape-a shape-b]
+                  (let [n (max n-a n-b)]
+                    [(xform/resample shape-a n) (xform/resample shape-b n)]))
+        rb-aligned (xform/align-to-shape ra rb)]
+    (shape-fn ra
+              (fn [s t]
+                (xform/morph s rb-aligned t)))))
 
 ;; ============================================================
 ;; Procedural noise

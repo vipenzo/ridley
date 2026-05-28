@@ -336,7 +336,8 @@
   "Dispatch to script or REPL mode evaluation.
    Returns the evaluated result on success, nil on error."
   []
-  (if (:tweak-from @test-state)
+  (if (and (:tweak-from @test-state)
+           (not (:registry-name @test-state)))
     (evaluate-and-preview-script!)
     (evaluate-and-preview-repl!)))
 
@@ -377,29 +378,37 @@
 (defn cancel!
   "Cancel test mode: discard changes, clear preview, restore turtle.
    In registry mode, re-shows the original mesh.
-   In script mode, re-evaluates the original script."
+   In script-only mode, re-evaluates the original script."
   []
   (when-let [{:keys [saved-turtle registry-name tweak-from]} @test-state]
     (reset! @state/turtle-state-var saved-turtle)
     (viewport/clear-preview!)
     (measure/clear-ruler-overrides!)
     (measure/refresh-rulers!)
-    (if tweak-from
-      ;; Script mode: set skip flag and re-evaluate original script to restore viewport
+    (cond
+      ;; Registry mode (also from script): the named mesh was hidden on entry
+      ;; and never re-registered (slider preview is REPL-style). Just unhide it.
+      registry-name
+      (do (registry/show-mesh! registry-name)
+          (registry/refresh-viewport! true))
+
+      ;; Script-only mode: re-evaluate the original script to restore viewport
+      tweak-from
       (do (reset! skip-next-tweak true)
-          (when-let [f @state/run-definitions-fn] (f)))
-      ;; REPL mode: just re-show the original mesh
-      (when registry-name
-        (registry/show-mesh! registry-name)
-        (registry/refresh-viewport! true)))
+          (when-let [f @state/run-definitions-fn] (f))))
     (cleanup-ui!)
     (state/release-interactive-mode!)
     (reset! test-state nil)))
 
 (defn confirm!
   "Confirm test mode: print final expression, clear preview, restore turtle.
-   In script mode, replaces the (tweak ...) form in the editor and re-evaluates.
-   In REPL mode, prints the final expression (and re-registers if registry mode)."
+   - Registry mode (also from script): updates the named mesh in-memory and
+     its stored source-form. The editor script is not edited; rerunning the
+     script reverts B to its (register ...) line — edit that line manually
+     to persist the change.
+   - Script-only mode: replaces the (tweak ...) form in the editor and
+     re-evaluates the whole script.
+   - Plain REPL mode: prints the final expression."
   []
   (when-let [{:keys [form current-values saved-turtle registry-name
                      tweak-from tweak-to]} @test-state]
@@ -407,33 +416,36 @@
           final-str (pr-str final-form)]
       (reset! @state/turtle-state-var saved-turtle)
       (viewport/clear-preview!)
-      (if (and tweak-from tweak-to)
-        ;; Script mode: replace (tweak ...) in editor and re-evaluate
+      (cond
+        ;; Registry mode (works in both script & REPL contexts):
+        ;; update the named mesh in memory and its source-form.
+        registry-name
+        (try
+          (let [ctx @state/sci-ctx-ref
+                result (sci/eval-string final-str ctx)]
+            (when (mesh? result)
+              (registry/register-mesh! registry-name result)
+              (registry/set-source-form! registry-name final-form)
+              (registry/show-mesh! registry-name)
+              (registry/refresh-viewport! true))
+            (add-repl-output! final-str))
+          (catch :default e
+            (let [msg (str "tweak confirm error: " (.-message e))]
+              (state/capture-println msg)
+              (js/console.warn msg)
+              ;; Re-show original on error
+              (registry/show-mesh! registry-name)
+              (registry/refresh-viewport! true))))
+
+        ;; Script-only mode: replace (tweak ...) in editor and re-evaluate
+        (and tweak-from tweak-to)
         (do (cm/replace-range tweak-from tweak-to final-str)
             (state/capture-println (str "tweak: " final-str))
-            ;; Re-evaluate the modified script
             (when-let [f @state/run-definitions-fn] (f)))
-        ;; REPL mode
-        (if registry-name
-          ;; Registry mode: re-evaluate, register, show
-          (try
-            (let [ctx @state/sci-ctx-ref
-                  result (sci/eval-string final-str ctx)]
-              (when (mesh? result)
-                (registry/register-mesh! registry-name result)
-                (registry/set-source-form! registry-name final-form)
-                (registry/show-mesh! registry-name)
-                (registry/refresh-viewport! true))
-              (add-repl-output! final-str))
-            (catch :default e
-              (let [msg (str "tweak confirm error: " (.-message e))]
-                (state/capture-println msg)
-                (js/console.warn msg)
-                ;; Re-show original on error
-                (registry/show-mesh! registry-name)
-                (registry/refresh-viewport! true))))
-          ;; Normal REPL mode: just print
-          (add-repl-output! final-str)))
+
+        ;; Plain REPL mode: just print
+        :else
+        (add-repl-output! final-str))
       (measure/clear-ruler-overrides!)
       (measure/refresh-rulers!)
       (cleanup-ui!)

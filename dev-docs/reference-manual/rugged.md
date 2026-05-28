@@ -9,25 +9,40 @@ status: stable
 
 ## Signature
 
-`(rugged shape-or-fn & {:keys [amplitude frequency]})`
+`(rugged shape-or-fn & {:keys [amplitude frequency octaves gain seed]})`
 
 ## Description
 
-Shape-fn that displaces vertices radially with a sine pattern, constant
-along the path. The displacement depends only on the vertex angle, not
-on `t`, so each ring carries the same ripple — useful for ridged or
-gear-like surfaces. Used with `loft`, `bloft`, or `revolve`. Does not
-modify turtle state.
+Shape-fn that displaces vertices radially with **layered sinusoids**
+(fBm-style), varying both around the profile and along the extrusion
+path. Each octave doubles the frequency and scales amplitude by `:gain`,
+producing irregular crystalline asperities.
 
-Compared with `fluted` (cosine, axis-aligned), `rugged` uses sine, so the
-ripples are phase-shifted relative to the shape's axes.
+Used with `loft`, `bloft`, or `revolve`. Does not modify turtle state.
+
+Compared with siblings:
+
+- **`fluted`** — single regular sinusoid, axis-aligned, constant along
+  the path. Use for fluted columns and clean periodic ridges.
+- **`noisy`** — smooth value noise (Perlin-like). Organic, blobby look.
+- **`rugged`** — layered sinusoids, angular ridges at multiple scales.
+  Rocky, bark, weathered surfaces.
 
 ## Parameters
 
 - `shape-or-fn` — a 2D shape, or another shape-fn (composes).
-- `:amplitude` — radial displacement amplitude (default `1`).
-- `:frequency` — number of full sine cycles around the contour
-  (default `6`).
+- `:amplitude` — overall radial displacement amplitude (default `1`).
+- `:frequency` — base frequency: cycles around the profile (and along
+  the path) in the first octave (default `6`).
+- `:octaves` — number of sinusoid layers (default `3`). Each octave
+  doubles the previous frequency. `1` collapses to a single layer
+  (similar to `fluted` but on both axes).
+- `:gain` — amplitude multiplier per octave (default `0.5`). Standard
+  fBm is `0.5`; higher values (e.g. `0.7`) give a harsher, more chaotic
+  surface; lower values (e.g. `0.3`) give a smoother base shape with
+  fine detail on top.
+- `:seed` — phase offset (default `0`). Changes the pattern without
+  changing its statistics.
 
 ## Example
 
@@ -35,19 +50,25 @@ ripples are phase-shifted relative to the shape's axes.
 
 <!-- example-source: rugged-basic -->
 ```clojure
-(register gear (loft (rugged (circle 15 96) :amplitude 2 :frequency 16) (f 20)))
+(register rock
+  (loft (rugged (circle 15 256) :amplitude 2 :frequency 6 :octaves 3)
+        (f 40)))
 ```
 <!-- /example-source -->
 
-A gear-like silhouette: 16 ripples around the circle, each 2 units high.
+A rocky tube: 6 main ridges around and along, with two octaves of finer
+detail layered on top.
 
 ## Notes
 
-- Choose `:frequency` together with the base circle's segment count.
-  Points per ring should be at least `4 × frequency` for clean ripples.
-- For random / organic surfaces use `noisy`; for axis-aligned grooves use
-  `fluted`.
-- Shape-fns compose with `->` threading.
+- The profile and the loft must both be resolved enough to capture the
+  highest-frequency octave. With `:frequency F` and `:octaves N`, the
+  final octave has frequency `F · 2^(N-1)`. Aim for at least
+  `4 × final-frequency` points per ring and as many `loft-n` steps.
+- For axis-aligned ridges (no variation along the path) use `fluted`.
+- For organic, smooth random surfaces use `noisy`.
+- Composes with other shape-fns via `->` threading:
+  `(-> (circle 15 256) (rugged :frequency 8) (tapered :to 0.3))`.
 
 ## See also
 
