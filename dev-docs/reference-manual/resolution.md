@@ -37,7 +37,6 @@ Three modes, mutually exclusive:
 - `sphere`, `cyl`, `cone` — circumferential segments.
 - `revolve` — number of revolution segments (and rings for shape-fn
   revolves).
-- `bloft` — ring count along the path.
 - Round joints during extrusion (`(joint-mode :round)`).
 - SDF meshing — voxels-per-unit derived from the resolution.
 
@@ -106,4 +105,4 @@ should depend on world-space size.
 
 - **Guide:** placeholder → cap. 1 (Primi passi)
 - **Related:** `arc-h`, `arc-v`, `bezier-to`, `circle`, `sphere`,
-  `cyl`, `cone`, `revolve`, `loft-n`, `bloft`
+  `cyl`, `cone`, `revolve`, `loft-n`

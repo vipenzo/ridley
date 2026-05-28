@@ -51,7 +51,7 @@ ridley/
 │       │   ├── macros.cljs        # SCI macro definitions (string, eval'd into context)
 │       │   ├── bindings.cljs      # SCI context bindings map
 │       │   ├── impl.cljs          # Runtime *-impl functions for macro delegation
-│       │   ├── operations.cljs    # Pure generative operations (extrude, loft, bloft, revolve)
+│       │   ├── operations.cljs    # Pure generative operations (extrude, loft, revolve)
 │       │   └── state.cljs         # Shared atoms (turtle-state-var, scene-accumulator)
 │       ├── turtle/
 │       │   ├── core.cljs          # Turtle state, movement, extrusion
@@ -255,7 +255,6 @@ The `path` macro:
 These handle runtime dispatch that would be complex at macro-expand time:
 - **Extrude family**: `extrude-impl`, `extrude-closed-impl` — validate path, delegate to pure ops
 - **Loft family**: `loft-impl`, `loft-n-impl` — dispatch on shape-fn? / shape? / transform-fn
-- **Bloft family**: `bloft-impl`, `bloft-n-impl` — same dispatch with bezier-safe loft
 - **Revolve**: `revolve-impl` — dispatch on shape-fn?
 - **Attach family**: `attach-impl`, `attach-face-impl`, `clone-face-impl`, `attach!-impl` — replay path commands on turtle state with attached geometry
 
@@ -302,7 +301,7 @@ The `clipper` module (`ridley/clipper/core.cljs`) provides 2D boolean operations
 
 `shape-xor` returns a vector of shapes (since XOR can produce disconnected regions). This vector is accepted by:
 - `shape-offset` — offsets each shape independently
-- `extrude`, `loft`, `bloft`, `revolve` — generates a mesh per shape, returns single mesh or vector
+- `extrude`, `loft`, `revolve` — generates a mesh per shape, returns single mesh or vector
 - `stamp` — stamps all shapes at current pose
 
 ### Holes-Aware Extrusion

@@ -623,24 +623,6 @@
       (is (map? result))
       (is (seq (:vertices result))))))
 
-;; ── 21. bloft smoke test ───────────────────────────────────
-
-(deftest bloft-basic
-  (testing "bloft with two shapes along straight path"
-    (let [{:keys [result error]}
-          (h/eval-dsl "(bloft (circle 5) (circle 10) (f 30))")]
-      (is (nil? error) (str "bloft error: " error))
-      (is (map? result))
-      (is (seq (:vertices result))))))
-
-(deftest bloft-n-basic
-  (testing "bloft-n with custom step count"
-    (let [{:keys [result error]}
-          (h/eval-dsl "(bloft-n 6 (circle 5) (circle 10) (f 30))")]
-      (is (nil? error) (str "bloft-n error: " error))
-      (is (map? result))
-      (is (seq (:vertices result))))))
-
 ;; ── 22. Attach via SCI ────────────────────────────────────
 
 (deftest attach-translates-mesh

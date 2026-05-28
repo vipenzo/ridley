@@ -1,43 +1,17 @@
 (ns ridley.editor.operations
-  "Pure generative operations: extrude, loft, bloft, revolve.
+  "Pure generative operations: extrude, loft, revolve.
    These functions read turtle state for initial state but don't mutate it
    (except legacy implicit-extrude-path)."
   (:require [ridley.editor.state :as state]
             [ridley.turtle.core :as turtle]
             [ridley.turtle.shape :as shape]
             [ridley.turtle.transform :as xform]
-            [ridley.turtle.loft :as loft]
             [ridley.turtle.extrusion :as extrusion]
             [ridley.turtle.shape-fn :as sfn]
             [ridley.clipper.core :as clipper]))
 
-(declare pure-bloft)
 (declare pure-loft-path)
 (declare combine-meshes wrap-results)
-
-(defn- bezier-path-has-self-intersection?
-  "Quick check: would extruding this shape along this bezier path cause
-   ring self-intersections? Compares the path's minimum radius of curvature
-   against the shape radius. Uses 32 samples for accurate curvature estimation."
-  [initial-state shape path]
-  (let [radius (extrusion/shape-radius shape)
-        poses (loft/walk-path-poses initial-state path 32)
-        n (count poses)]
-    (when (>= n 2)
-      (loop [i 0]
-        (if (>= i (dec n))
-          false
-          (let [pa (nth poses i)
-                pb (nth poses (inc i))
-                dp (mapv - (:position pb) (:position pa))
-                d (Math/sqrt (reduce + (mapv * dp dp)))]
-            (if (< d 0.0001)
-              (recur (inc i))
-              (let [dot-hh (reduce + (mapv * (:heading pa) (:heading pb)))
-                    angle (Math/acos (min 1.0 (max -1.0 dot-hh)))]
-                (if (> (* radius angle) d)
-                  true
-                  (recur (inc i)))))))))))
 
 (defn ^:export implicit-extrude-closed-path
   "Extrude-closed function - creates closed mesh without side effects.
@@ -75,8 +49,7 @@
   "Pure extrude function - creates mesh without side effects.
    Starts from current turtle position/orientation.
    For bezier paths, delegates to loft with identity transform (avoids
-   shortening artifacts from micro-rotations in bezier walk steps).
-   For bezier paths with self-intersecting rings, automatically uses bloft."
+   shortening artifacts from micro-rotations in bezier walk steps)."
   [shape-or-shapes path]
   (if (:bezier path)
     ;; Bezier paths: use loft with identity transform.
@@ -173,21 +146,15 @@
                              (assoc :resolution (:resolution current-turtle))
                              (assoc :material (:material current-turtle)))
                          (turtle/make-turtle))
-         steps (or steps (extrusion/default-segments initial-state 1))]
-     (if (and (:bezier path)
-              (bezier-path-has-self-intersection? initial-state (first shapes) path))
-       ;; Bezier with tight curves: use bloft
-       (do (js/console.log "loft: bezier path has self-intersecting rings, using bloft")
-           (pure-bloft shape-or-shapes transform-fn path nil 0.1))
-       ;; Normal path OR gentle bezier: standard loft
-       (let [results (reduce
-                      (fn [acc shape]
-                        (let [result-state (turtle/loft-from-path initial-state shape transform-fn path steps)
-                              mesh (combine-meshes (:meshes result-state))]
-                          (if mesh (conj acc mesh) acc)))
-                      []
-                      shapes)]
-         (wrap-results results))))))
+         steps (or steps (extrusion/default-segments initial-state 1))
+         results (reduce
+                  (fn [acc shape]
+                    (let [result-state (turtle/loft-from-path initial-state shape transform-fn path steps)
+                          mesh (combine-meshes (:meshes result-state))]
+                      (if mesh (conj acc mesh) acc)))
+                  []
+                  shapes)]
+     (wrap-results results))))
 
 (defn ^:export pure-loft-two-shapes
   "Pure loft between two shapes - creates mesh that transitions from shape1 to shape2.
@@ -215,62 +182,6 @@
                   shapes1)]
      (wrap-results results))))
 
-(defn ^:export pure-bloft
-  "Pure bezier-safe loft - handles self-intersecting paths.
-   Uses convex hulls to bridge intersecting ring sections, then unions.
-   Better for tight curves like bezier-as paths.
-
-   transform-fn: (fn [shape t]) where t goes from 0 to 1
-   steps: number of intermediate steps (default 32)
-   threshold: intersection sensitivity 0.0-1.0 (default 0.1)
-              Higher = faster but may miss intersections
-              Lower = slower but catches more intersections"
-  ([shape-or-shapes transform-fn path] (pure-bloft shape-or-shapes transform-fn path nil 0.1))
-  ([shape-or-shapes transform-fn path steps] (pure-bloft shape-or-shapes transform-fn path steps 0.1))
-  ([shape-or-shapes transform-fn path steps threshold]
-   (let [shapes (unwrap-shapes shape-or-shapes)
-         current-turtle @@state/turtle-state-var
-         initial-state (if current-turtle
-                         (-> (turtle/make-turtle)
-                             (assoc :position (:position current-turtle))
-                             (assoc :heading (:heading current-turtle))
-                             (assoc :up (:up current-turtle))
-                             (assoc :joint-mode (:joint-mode current-turtle))
-                             (assoc :resolution (:resolution current-turtle))
-                             (assoc :material (:material current-turtle)))
-                         (turtle/make-turtle))
-         results (reduce
-                  (fn [acc shape]
-                    (let [result-state (turtle/bloft initial-state shape transform-fn path steps threshold)
-                          mesh (combine-meshes (:meshes result-state))]
-                      (if mesh (conj acc mesh) acc)))
-                  []
-                  shapes)]
-     (wrap-results results))))
-
-(defn ^:export pure-bloft-two-shapes
-  "Bezier-safe loft between two shapes. Creates lerp transform, then delegates to pure-bloft."
-  ([shape1-or-shapes shape2 path] (pure-bloft-two-shapes shape1-or-shapes shape2 path nil 0.1))
-  ([shape1-or-shapes shape2 path steps] (pure-bloft-two-shapes shape1-or-shapes shape2 path steps 0.1))
-  ([shape1-or-shapes shape2 path steps threshold]
-   (let [shapes1 (unwrap-shapes shape1-or-shapes)
-         results (reduce
-                  (fn [acc s1]
-                    (let [n1 (count (:points s1))
-                          n2 (count (:points shape2))
-                          [rs1 rs2] (if (= n1 n2)
-                                      [s1 shape2]
-                                      (let [target-n (max n1 n2)]
-                                        [(xform/resample s1 target-n)
-                                         (xform/resample shape2 target-n)]))
-                          s2-aligned (xform/align-to-shape rs1 rs2)
-                          transform-fn (shape/make-lerp-fn rs1 s2-aligned)
-                          mesh (pure-bloft rs1 transform-fn path steps threshold)]
-                      (if mesh (conj acc mesh) acc)))
-                  []
-                  shapes1)]
-     (wrap-results results))))
-
 ;; ============================================================
 ;; Shape-fn adapters
 ;; ============================================================
@@ -288,20 +199,6 @@
        (let [base-shape (shape-fn-val 0)
              transform-fn (fn [_shape t] (shape-fn-val t))]
          (pure-loft-path base-shape transform-fn path steps))))))
-
-(defn ^:export pure-bloft-shape-fn
-  "Bezier-safe loft with a shape-fn. Handles self-intersecting paths."
-  ([shape-fn-val path] (pure-bloft-shape-fn shape-fn-val path nil 0.1))
-  ([shape-fn-val path steps] (pure-bloft-shape-fn shape-fn-val path steps 0.1))
-  ([shape-fn-val path steps threshold]
-   (let [path-length (reduce + 0 (keep (fn [cmd]
-                                         (when (= :f (:cmd cmd))
-                                           (first (:args cmd))))
-                                       (:commands path)))]
-     (binding [sfn/*path-length* path-length]
-       (let [base-shape (shape-fn-val 0)
-             transform-fn (fn [_shape t] (shape-fn-val t))]
-         (pure-bloft base-shape transform-fn path steps threshold))))))
 
 (defn- clip-shape-for-revolve
   "Sanitise a shape for revolution. Shapes that cross the revolution axis

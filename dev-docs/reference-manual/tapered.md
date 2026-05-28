@@ -15,8 +15,8 @@ status: stable
 
 Shape-fn that scales the cross-section uniformly along the path. At `t = 0`
 the profile is scaled by `:from`; at `t = 1` it is scaled by `:to`; in
-between the factor is linearly interpolated. Used with `loft`, `bloft`,
-or `revolve`. Does not modify turtle state.
+between the factor is linearly interpolated. Used with `loft` or
+`revolve`. Does not modify turtle state.
 
 The most common case is a cone (`:to 0`): the profile shrinks to zero
 over the length of the path. `:from` defaults to `1`, so a single `:to`

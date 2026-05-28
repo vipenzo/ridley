@@ -15,8 +15,8 @@ status: stable
 
 Shape-fn that rotates the cross-section progressively along the path. At
 `t = 0` the rotation is `0°`; at `t = 1` it is `:angle` degrees, linearly
-interpolated in between. Used with `loft`, `bloft`, or `revolve`. Does
-not modify turtle state.
+interpolated in between. Used with `loft` or `revolve`. Does not
+modify turtle state.
 
 ## Parameters
 

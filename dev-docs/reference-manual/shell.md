@@ -19,8 +19,8 @@ per-vertex thickness value (`0` = no wall, `1` = full thickness); the
 loft uses these to build an inner and outer wall around each point. The
 wall pattern is chosen via `:style` (one of `:solid`, `:lattice`,
 `:checkerboard`, `:weave`, `:voronoi`) or supplied as a custom function
-via `:fn`. Used with `loft`, `bloft`, or `revolve`. Does not modify
-turtle state.
+via `:fn`. Used with `loft` or `revolve`. Does not modify turtle
+state.
 
 Caps (top and/or bottom) close the ends of the shell. They can be solid
 (a single thickness number) or patterned (a map with their own `:style`).

@@ -92,7 +92,6 @@ more than the global setting.
   auto-generated control point preserves tangency).
 - For curves that connect to a named anchor with smooth tangency, use
   `bezier-to-anchor`.
-- For loft-safe extrusions along tight bezier curves, see `bloft`.
 
 ## See also
 

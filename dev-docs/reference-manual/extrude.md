@@ -88,5 +88,5 @@ trajectory is reused across multiple operations.
 
 - **Guide:** placeholder → cap. 4 (Estrusione) e cap. 6 (Da funzioni
   matematiche a forme)
-- **Related:** `loft`, `bloft`, `extrude-closed`, `extrude-axis`,
-  `revolve`, `extrude+`, `joint-mode`
+- **Related:** `loft`, `extrude-closed`, `extrude-axis`, `revolve`,
+  `extrude+`, `joint-mode`

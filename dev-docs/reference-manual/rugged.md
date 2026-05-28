@@ -18,7 +18,7 @@ Shape-fn that displaces vertices radially with **layered sinusoids**
 path. Each octave doubles the frequency and scales amplitude by `:gain`,
 producing irregular crystalline asperities.
 
-Used with `loft`, `bloft`, or `revolve`. Does not modify turtle state.
+Used with `loft` or `revolve`. Does not modify turtle state.
 
 Compared with siblings:
 

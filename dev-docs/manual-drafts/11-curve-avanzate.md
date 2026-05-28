@@ -136,59 +136,18 @@ Le opzioni:
 
 `bezier-as` funziona sia in turtle mode diretto che dentro `path`.
 
-## 11.3 Bloft: loft sicuro per Bezier
+## 11.3 Curve strette e auto-intersezione
 
-Le curve Bezier possono avere curvature strette, specialmente con tensione alta o traiettorie a U. Quando usi `loft` su un path con curve strette, le sezioni (ring) successive possono intersecarsi: il loft non se ne accorge e produce geometria auto-intersecante.
+Le curve Bezier possono avere curvature strette, specialmente con tensione alta o traiettorie a U. Quando il raggio di curvatura locale è confrontabile col raggio della shape estrusa, le sezioni (ring) successive del loft sul lato interno della curva si scavalcano: il loft non se ne accorge e produce geometria auto-intersecante. `manifold?` restituisce `nil` (la mesh non è stampabile), e operazioni booleane successive sulla mesh saltano in aria.
 
-`bloft` affronta il problema in modo diverso: rileva le intersezioni tra ring adiacenti e le risolve passandoci attraverso un hull convesso locale, garantendo una mesh manifold. Ha la stessa signature di `loft`:
+Il rimedio è a monte, sul path: ridurre la curvatura locale rispetto al raggio della shape. In ordine di crescente costo:
 
-<!-- example-source: bloft-vs-loft
-;; Tubo spesso + angolo netto: gli anelli sul lato interno
-;; si scavalcano e loft produce triangoli sovrapposti che Manifold rifiuta.
-(def tight-path
-  (path (f 20) (th 120) (f 30)))
-(material :opacity 0.5)
-;; loft: a questo angolo + raggio la mesh è non-manifold
-(register tube-loft (loft (circle 4) identity tight-path))
-;; bloft: rileva l'intersezione e ci passa un hull convesso → manifold,
-;; ma il gomito è "rigonfio" (è l'hull, non un raccordo).
-(register tube-bloft
-  (attach (bloft (circle 4) identity tight-path) (f 60)))
-;; La differenza strutturale si misura:
-(println :loft-manifold? (manifold? (get-mesh :tube-loft)))    ;; => nil
-(println :bloft-manifold? (manifold? (get-mesh :tube-bloft)))  ;; => true
--->
+1. **Smussare il path con `bezier-as`** quando hai spigoli netti (`(th 120)` o simili). Anche una smussatura leggera (`:tension 0.3`) trasforma uno spigolo in un arco di raggio finito, dando alle ring lo spazio per ruotare senza scavalcarsi.
 
-I due tubi a prima vista si somigliano, ma il `loft` sull'angolo stretto produce una mesh che si auto-interseca, e quindi *non manifold* — `manifold?` restituisce `nil`. Una mesh non-manifold non è stampabile e dà problemi in molte operazioni booleane.
+2. **Sostituire l'angolo con un `arc-h`/`arc-v` di raggio esplicito**: `(arc-h r 90)` dichiara esattamente con che raggio gira il path. Se `r` è almeno comparabile col raggio della shape (e meglio 2-3× più grande), il loft passa pulito.
 
-Attenzione però: `bloft` non è un rimpiazzo trasparente di `loft`. La sua garanzia è "sempre manifold", non "stesso aspetto ma robusto". Sul gomito sostituisce il raccordo con un hull convesso, che risulta visibilmente più rigonfio di un raccordo morbido; e ignora `joint-mode`, applicando la propria strategia. Usa `bloft` quando hai bisogno di una mesh valida su una curva stretta e accetti il gomito a hull; usa `loft` (con il `joint-mode` adatto) quando la curva è abbastanza ampia da non auto-intersecarsi e vuoi controllo sulla forma della giunzione.
+3. **Abbassare il raggio della shape** se il path non si può cambiare (per esempio quando l'utente lo fornisce). Una `circle 2` su una curva che ha problemi con `circle 8` può funzionare senza modifiche al path.
 
-`bloft-n` è la variante con numero di passi esplicito:
+4. **Spezzare il loft in tratti dritti uniti con `mesh-union`**, accettando un raccordo squadrato al posto della transizione continua.
 
-```clojure
-(register smooth-tube
-  (bloft-n 64 (circle 4) identity my-bezier-path))
-```
-
-### Quando usare bloft vs loft
-
-Usa `loft` per percorsi dritti o con curve dolci: è più veloce. Usa `bloft` quando il path ha curve strette (tipicamente curve Bezier con tensione alta o angoli acuti). Se un `loft` produce geometria strana (facce che si compenetrano, Manifold che rifiuta il risultato), prova `bloft` prima di cercare altre soluzioni.
-
-La densità di campionamento delle Bezier dipende da `resolution`: valori bassi (es. `:n 10`) danno un'anteprima veloce con possibili artefatti, valori alti (es. `:n 60`) danno un risultato liscio ma più lento. `bloft` amplifica il costo di `resolution` perché deve fare hull e union su ogni coppia di ring intersecanti.
-
-### Shape-fn con bloft
-
-`bloft` accetta shape-fn come secondo argomento, esattamente come `loft`:
-
-<!-- example-source: bloft-shape-fn
-(def my-path
-  (path (bezier-as (path (f 30) (th 60) (f 30) (th -60) (f 30)))))
-
-;; Tubo rastremato lungo una Bezier
-(register tapered
-  (bloft (circle 8)
-    #(scale-shape %1 (- 1 (* 0.5 %2)))
-    my-path))
--->
-
-La shape-fn riceve `(shape, t)` dove `t` va da 0 a 1 lungo il percorso. Tutte le shape-fn che funzionano con `loft` funzionano con `bloft`.
+`loft` non ha un proprio meccanismo di recupero per ring auto-intersecanti: se il tuo path produce un risultato non-manifold, applica una delle strategie sopra prima di andare avanti.

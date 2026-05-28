@@ -293,7 +293,7 @@ I cap disponibili sono `:round` e `:flat`. Le giunzioni sono `:round` (default),
 
 I path sono dati. Diventano utili quando qualcosa li consuma. Ecco la mappa completa dei consumatori.
 
-### extrude, loft, bloft, extrude-closed
+### extrude, loft, extrude-closed
 
 Il consumatore principale. Trascinano una shape lungo il percorso del path. Li abbiamo visti in tutto il cap. 4.
 
@@ -392,7 +392,7 @@ Scala un path a una dimensione target su uno o entrambi gli assi:
 
 | Consumatore | Cosa fa col path | Capitolo |
 |---|---|---|
-| `extrude`, `loft`, `bloft`, `extrude-closed` | traiettoria di estrusione | 4 |
+| `extrude`, `loft`, `extrude-closed` | traiettoria di estrusione | 4 |
 | `follow-path` | muove la tartaruga e traccia linee | 5.2 |
 | `text-on-path` | posiziona lettere lungo la curva | 12 |
 | `move-to` (dentro attach) | snap della tartaruga a un mark | 5.3 |

@@ -126,7 +126,6 @@ Control the resolution of curves and circular primitives globally:
 - `circle`: circle segment count.
 - `sphere`, `cyl`, `cone`: circumferential segments.
 - `revolve`: number of revolution segments (and rings for shape-fn revolves).
-- `bloft`: ring count along the path (combines path length and total angle).
 - Round joints during extrusion (`extrude`, `loft`).
 - SDF meshing: voxels-per-unit derived from the turtle resolution (denser meshes for higher values, automatically boosted for thin features).
 
@@ -533,7 +532,7 @@ Load 2D outlines from external sources. Parsed contours become standard Ridley s
 
 Shape functions are shapes that vary along the extrusion path. Instead of passing a separate transform function to `loft`, shape-fns carry the transformation logic inside the shape itself, enabling composable, reusable profiles.
 
-A shape-fn is a function `(fn [t] -> shape)` with metadata `{:type :shape-fn}`. At each point along a loft path (or revolution step), `t` goes from 0 to 1. Shape-fns work with `loft`, `bloft`, and `revolve`.
+A shape-fn is a function `(fn [t] -> shape)` with metadata `{:type :shape-fn}`. At each point along a loft path (or revolution step), `t` goes from 0 to 1. Shape-fns work with `loft` and `revolve`.
 
 ```clojure
 ;; Static shape: use extrude (fast, no per-ring evaluation)
@@ -912,7 +911,7 @@ The pattern can be a single shape or a vector of shapes. Works with any shape: c
 **Notes:**
 - Results may contain holes (e.g., `shape-difference` of overlapping shapes).
 - `shape-xor` returns a **vector of shapes** (since XOR can produce disconnected regions).
-- Vectors of shapes are accepted by `shape-offset`, `extrude`, `loft`, `bloft`, `revolve`, and `stamp`.
+- Vectors of shapes are accepted by `shape-offset`, `extrude`, `loft`, `revolve`, and `stamp`.
 - Holes are automatically detected from winding direction.
 - All shape transforms (`scale`, `rotate-shape`, `translate`, `morph`) propagate holes.
 - Internally uses integer coordinates (x1000 scale) for precision.
@@ -1036,7 +1035,7 @@ Extrude sweeps a 2D shape along a path. Returns a mesh without side effects:
 - Single shape input → single mesh.
 - Vector-of-shapes input (e.g. `text-shape` output, where composite glyphs and multi-letter strings produce multiple shapes) → single combined mesh. The shapes are extruded independently along the same path, then merged into one mesh so downstream boolean ops (`mesh-difference`, `mesh-union`, …) just work without manual `concat-meshes`.
 
-The same convention applies to `extrude-closed`, `loft`, `bloft`, and `revolve`.
+The same convention applies to `extrude-closed`, `loft`, and `revolve`.
 
 **Joint modes.** Control corner geometry during extrusion:
 
@@ -1120,37 +1119,7 @@ Taper between two different shapes:
 
 Default: step count follows `resolution` (64 at default). Returns mesh without side effects.
 
-### Bloft (bezier-safe loft)
-
-For paths with tight curves (like `bezier-as`), regular `loft` can produce self-intersecting geometry. `bloft` handles this by detecting ring intersections and bridging them with convex hulls, then unioning all pieces into a manifold mesh.
-
-```clojure
-;; Basic usage (same signature as loft)
-(register tube
-  (bloft (circle 4)
-    identity
-    (path (bezier-as my-curved-path))))
-
-;; With taper
-(register tapered-tube
-  (bloft (circle 8)
-    #(scale-shape %1 (- 1 (* 0.5 %2)))  ; Taper to half size
-    (path (bezier-as (branch-path 30)))))
-
-;; More steps for smoother result
-(register smooth-tube
-  (bloft-n 64 (circle 4)
-    identity
-    my-bezier-path))
-```
-
-**When to use `bloft` vs `loft`:**
-- Use `loft` for straight paths or gentle curves (faster).
-- Use `bloft` for tight bezier curves that might self-intersect (slower but correct).
-
-**Performance note:** `bloft` can take several seconds for complex paths at high resolution. The density of bezier sampling is controlled by `(resolution :n ...)`:
-- Low values (e.g., `:n 10`): fast draft preview (may show visual artifacts).
-- High values (e.g., `:n 60`): smooth final render (slower).
+**Tight curves and self-intersection.** When the path's radius of curvature is comparable to the shape's radius (e.g. a `(th 120)` spike or a high-tension `bezier-as`), `loft` rings on the inner side of the bend overlap. The result is non-manifold geometry (`manifold?` returns `nil`). The remedy is on the path side: smooth spikes with `bezier-as` or `arc-h`, choose a smaller shape, or split the loft into straight segments joined with `mesh-union`. `loft` has no built-in escape hatch for genuinely self-intersecting rings.
 
 ### Revolve
 

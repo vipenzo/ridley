@@ -104,7 +104,6 @@
 (def ^:export finalize-loft loft/finalize-loft)
 (def ^:export analyze-loft-path loft/analyze-loft-path)
 (def ^:export loft-from-path loft/loft-from-path)
-(def ^:export bloft loft/bloft)
 
 ;; --- Re-exports from attachment module (facade pattern) ---
 

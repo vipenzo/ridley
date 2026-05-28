@@ -28,8 +28,6 @@
  attach!-impl
  attach-face-impl
  attach-impl
- bloft-impl
- bloft-n-impl
  box-impl
  clone-face-impl
  compute-bezier-walk-impl
@@ -69,12 +67,9 @@
  ;; ============================================================
  ;; Versioni "pure" (senza side effect su `*turtle-state*`) usate dal
  ;; recorder/replayer e dal pipeline `transform->`. Non documentate
- ;; perché l'API utente è la variante turtle-aware (`loft`, `bloft`,
- ;; `revolve`, `extrude-path`, ...).
+ ;; perché l'API utente è la variante turtle-aware (`loft`, `revolve`,
+ ;; `extrude-path`, ...).
 
- pure-bloft
- pure-bloft-shape-fn
- pure-bloft-two-shapes
  pure-extrude-path
  pure-loft-path
  pure-loft-shape-fn

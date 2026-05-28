@@ -13,8 +13,8 @@ status: stable
 
 ## Description
 
-Set the corner geometry mode for `extrude`, `extrude-closed`, `loft`, and
-`bloft`. **Modifies turtle state**: the chosen mode persists on the
+Set the corner geometry mode for `extrude`, `extrude-closed`, and
+`loft`. **Modifies turtle state**: the chosen mode persists on the
 turtle until changed again, so it affects every subsequent extrusion
 that turns through a corner.
 
@@ -72,4 +72,4 @@ mitred joins.
 ## See also
 
 - **Guide:** placeholder → cap. 4 (Estrusione)
-- **Related:** `extrude`, `extrude-closed`, `loft`, `bloft`
+- **Related:** `extrude`, `extrude-closed`, `loft`

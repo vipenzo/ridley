@@ -271,7 +271,7 @@ I numeri dei capitoli non rispecchiano l'ordine narrativo dello schema, perché 
 11. Curve avanzate
     11.1 Archi
     11.2 Curve di Bezier
-    11.3 bloft: loft sicuro per Bezier
+    11.3 Curve strette e auto-intersezione
 
 12. Lavorare con gli SDF                            ← guida esistente
     12.1 Primitive e operatori
@@ -410,12 +410,12 @@ Cambiando direzione a metà percorso si ottiene un tubo piegato.
 ## Notes
 
 - L'orientamento del profilo dipende dall'orientamento iniziale della tartaruga.
-- Per percorsi con curve strette o cambi bruschi, valuta `bloft` (Bezier-safe loft).
+- Per percorsi con curve strette o cambi bruschi, smussa il path con `bezier-as` o `arc-h` prima di estrudere.
 
 ## See also
 
 - **Guide:** [4.1 Il concetto di estrusione](../../guides/04-extrusion/01-concept.md)
-- **Related functions:** `extrude-closed`, `loft`, `loft-n`, `bloft`, `revolve`
+- **Related functions:** `extrude-closed`, `loft`, `loft-n`, `revolve`
 ```
 
 ### 4.2 Frontmatter
@@ -506,7 +506,7 @@ Material di base da preparare durante la stesura. Va anche aggiunto al capitolo 
 
 Molti operatori di Ridley accettano indifferentemente un input singolo o una collezione. La regolarità si manifesta in due aree principali:
 
-- **Shape vs vettori di shape**: alcune funzioni producono vettori di shape (`text-shape`, `slice-mesh`, `project-mesh`, `shape-xor`); gli operatori che consumano shape (`extrude`, `loft`, `bloft`, `revolve`, `stamp`, `shape-offset`) li accettano direttamente. Le mesh prodotte da una estrusione di vettore di shape vengono fuse in una singola mesh, così le booleane downstream funzionano senza `concat-meshes` manuale.
+- **Shape vs vettori di shape**: alcune funzioni producono vettori di shape (`text-shape`, `slice-mesh`, `project-mesh`, `shape-xor`); gli operatori che consumano shape (`extrude`, `loft`, `revolve`, `stamp`, `shape-offset`) li accettano direttamente. Le mesh prodotte da una estrusione di vettore di shape vengono fuse in una singola mesh, così le booleane downstream funzionano senza `concat-meshes` manuale.
 - **Mesh singole vs vettori di mesh**: pattern analogo per le mesh (da approfondire quando si arriva a documentarlo).
 
 Vale la pena documentare la regolarità come pattern di sistema, non solo caso per caso nelle singole funzioni. Scheda Internals da popolare quando si arriverà a scrivere la Reference; in parallelo, le sezioni 3.9 e cenni nelle Guide rimandano qui.
@@ -907,7 +907,7 @@ Annotazioni operative non previste nella pianificazione, prese durante la scritt
 
 - **2026-05-16 (T-002)** — *Una scheda Reference = un file monolingua.* La scheda canonica si produce in inglese (EN è source-of-truth per la Reference, §5.1). La versione IT è un task successivo, da pianificare quando il workflow di traduzione (punto 10.4) sarà chiuso.
 
-- **2026-05-16 (T-002)** — *Funzioni con varianti di arity: pattern "scheda madre + stub".* Per simboli che Spec.md raggruppa sotto un'unica voce con più varianti (es. `loft` / `loft-n` / `loft-between`), si produce una scheda madre che copre le firme correlate, più schede stub per le varianti che contengono solo signature minimale e rimando alla scheda madre. Decisione applicabile a tutti i casi analoghi (`extrude`/`extrude-closed`, `box` con due arity, `sphere` con due arity, `cyl`/`cone` con segments opzionali, ecc.). `bloft` resta scheda propria perché ha un dominio d'uso distinto (bezier-safe), non solo arity diversa.
+- **2026-05-16 (T-002)** — *Funzioni con varianti di arity: pattern "scheda madre + stub".* Per simboli che Spec.md raggruppa sotto un'unica voce con più varianti (es. `loft` / `loft-n` / `loft-between`), si produce una scheda madre che copre le firme correlate, più schede stub per le varianti che contengono solo signature minimale e rimando alla scheda madre. Decisione applicabile a tutti i casi analoghi (`extrude`/`extrude-closed`, `box` con due arity, `sphere` con due arity, `cyl`/`cone` con segments opzionali, ecc.).
 
 - **2026-05-16 (T-002)** — *Modi secondari di una funzione: documentati senza etichetta peggiorativa.* Le funzioni che ammettono uno stile di chiamata "diretto" affiancato a uno "più libero" (es. `loft` shape-fn mode vs transform-fn mode) presentano entrambi i modi nella scheda. Il modo che chiama una funzione di trasformazione esplicita è descritto come "transform-fn mode" (non "legacy mode"): è di fatto la via più flessibile, indicata quando si vogliono trasformazioni custom non incapsulate in una shape-fn riusabile. Lo si presenta in coda alla sezione `Description`, non in `Notes`.
 

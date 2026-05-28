@@ -18,7 +18,7 @@ values move backward. The pen state determines whether a construction
 line is drawn between the previous and the new position; pose
 (heading / up) is unchanged. **Modifies turtle state.**
 
-Inside `path` and the extrusion macros (`extrude`, `loft`, `bloft`,
+Inside `path` and the extrusion macros (`extrude`, `loft`,
 `revolve+`), `f` adds a segment to the recorded path; the same call
 that walks the turtle at top level also drives the geometry generation
 inside those contexts.

@@ -56,7 +56,6 @@
    "Extrude"                    ["extrude" "sweep" "estrusione" "profilo" "sezione"]
    "Extrude Closed"             ["extrude-closed" "torus" "ring" "anello" "closed"]
    "Loft"                       ["loft" "loft-n" "morph" "transform" "taper" "twist"]
-   "Bloft (Bezier-safe Loft)"   ["bloft" "bezier" "loft" "smooth" "curve"]
    "Revolve"                    ["revolve" "lathe" "revolution" "vase" "spicchio" "tornio" "vaso"]
    "Boolean Operations"         ["mesh-union" "mesh-difference" "mesh-intersection" "boolean" "hole" "foro" "subtract" "sottrai"]
    "Cross-Section (Slice)"      ["slice" "cross-section" "sezione" "taglio" "plane"]

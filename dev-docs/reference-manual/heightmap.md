@@ -18,8 +18,8 @@ Shape-fn that displaces the profile radially using values sampled from a
 fraction `t` maps to `v`, both into the heightmap's parameter space.
 The sampled value is scaled by `:amplitude` and used as the radial
 offset. Tiling and centring let the same heightmap repeat or be biased
-around zero. Used with `loft`, `bloft`, or `revolve`. Does not modify
-turtle state.
+around zero. Used with `loft` or `revolve`. Does not modify turtle
+state.
 
 Heightmaps come from `mesh-to-heightmap` (rasterise a mesh's Z),
 `weave-heightmap` (analytical generator), or any function building the

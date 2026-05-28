@@ -16,8 +16,7 @@ status: stable
 Shape-fn that scales the cross-section to match a path silhouette. The
 path's X coordinates represent the radius at each point along the
 extrusion; at each loft step the profile is uniformly scaled to that
-radius. Used with `loft` (typically) or `bloft`. Does not modify turtle
-state.
+radius. Used with `loft`. Does not modify turtle state.
 
 The path should trace the silhouette starting at the base radius and
 moving along the axis. Uses cumulative arc length for smooth

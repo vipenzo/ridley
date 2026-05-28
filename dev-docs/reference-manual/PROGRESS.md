@@ -80,8 +80,6 @@ Brief: `dev-docs/brief-reference-batch2-generative-operations.md`.
 - [x] [loft](loft.md) — pre-existing, audited, no diff required
 - [x] [loft-n](loft-n.md) (stub)
 - [x] [loft-between](loft-between.md) (stub)
-- [x] [bloft](bloft.md)
-- [x] [bloft-n](bloft-n.md) (stub)
 - [x] [revolve](revolve.md)
 
 ### Chaining
@@ -134,8 +132,8 @@ Brief: `dev-docs/brief-reference-batch2-generative-operations.md`.
 - **`loft.md` audit.** Re-read against Spec §6 (`### Loft`,
   `### Loft-between`). Currently aligned: the three modes (shape-fn,
   transform-fn / legacy, two-shape) are documented; default step count
-  of 16 matches Spec; `loft-n` and `bloft` are referenced. No diff
-  required for this batch.
+  of 16 matches Spec; `loft-n` is referenced. No diff required for this
+  batch.
 - **Spec correction applied.** `docs/Spec.md` line 1183 referenced a
   non-existent `(square 20)` constructor; replaced with `(rect 20 20)`.
   Captured in this batch as the canonical example for `morphed`.

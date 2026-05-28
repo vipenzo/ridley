@@ -16,8 +16,8 @@ status: stable
 Shape-fn that adds longitudinal grooves to the profile by displacing
 points radially with a cosine pattern aligned to the shape's axes. The
 displacement is constant along the path, so each ring is identical —
-useful for fluted columns and ridged surfaces. Used with `loft`, `bloft`,
-or `revolve`. Does not modify turtle state.
+useful for fluted columns and ridged surfaces. Used with `loft` or
+`revolve`. Does not modify turtle state.
 
 ## Parameters
 

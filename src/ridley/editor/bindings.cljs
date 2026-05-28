@@ -265,8 +265,6 @@
    ;; Cap fillet (smooth edge transition at extrusion ends)
    'capped            sfn/capped
    'pure-loft-shape-fn   gen-ops/pure-loft-shape-fn
-   'pure-bloft-shape-fn      gen-ops/pure-bloft-shape-fn
-   'pure-bloft-two-shapes    gen-ops/pure-bloft-two-shapes
    ;; Face operations
    'find-sharp-edges faces/find-sharp-edges
    'chamfer-prisms   faces/chamfer-prisms
@@ -348,7 +346,6 @@
    'pure-extrude-path        gen-ops/pure-extrude-path  ; Pure version (no side effects)
    'pure-loft-path           gen-ops/pure-loft-path     ; Pure loft version (no side effects)
    'pure-loft-two-shapes     gen-ops/pure-loft-two-shapes ; Loft between two shapes
-   'pure-bloft               gen-ops/pure-bloft         ; Bezier-safe loft (handles self-intersection)
    'pure-revolve             gen-ops/pure-revolve       ; Pure revolve/lathe version
    'pure-revolve-shape-fn    gen-ops/pure-revolve-shape-fn ; Revolve with shape-fn
    'add-mesh-impl       impl/implicit-add-mesh
@@ -557,8 +554,6 @@
    'extrude-closed-impl macro-impl/extrude-closed-impl
    'loft-impl           macro-impl/loft-impl
    'loft-n-impl         macro-impl/loft-n-impl
-   'bloft-impl          macro-impl/bloft-impl
-   'bloft-n-impl        macro-impl/bloft-n-impl
    'revolve-impl        macro-impl/revolve-impl
    'revolve+-impl       macro-impl/revolve+-impl
    'transform->impl     macro-impl/transform->impl

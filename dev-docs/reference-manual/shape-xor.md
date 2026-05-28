@@ -42,8 +42,8 @@ meshes.
 
 - The return type is **vector of shapes**, even when only one region
   results. Downstream operations accept vectors of shapes natively:
-  `extrude`, `loft`, `bloft`, `revolve`, `stamp`, `shape-offset`, and the
-  shape transformations propagate over each element.
+  `extrude`, `loft`, `revolve`, `stamp`, `shape-offset`, and the shape
+  transformations propagate over each element.
 - For the single-shape booleans, see `shape-union`, `shape-difference`,
   `shape-intersection`.
 

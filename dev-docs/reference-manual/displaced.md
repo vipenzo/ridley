@@ -16,8 +16,8 @@ status: stable
 Shape-fn that applies a custom radial displacement to each vertex. The
 displacement function receives the vertex and the current path
 fraction `t`; the returned scalar moves the vertex radially from the
-shape's centroid. Used with `loft`, `bloft`, or `revolve`. Does not
-modify turtle state.
+shape's centroid. Used with `loft` or `revolve`. Does not modify
+turtle state.
 
 `displaced` is the most flexible profile displacement: pass any function
 that fits, including ones that call `noise`, `fbm`, or `sample-heightmap`

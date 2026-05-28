@@ -184,9 +184,6 @@
    'pure-loft-path           gen-ops/pure-loft-path
    'pure-loft-two-shapes     gen-ops/pure-loft-two-shapes
    'pure-loft-shape-fn       gen-ops/pure-loft-shape-fn
-   'pure-bloft               gen-ops/pure-bloft
-   'pure-bloft-shape-fn      gen-ops/pure-bloft-shape-fn
-   'pure-bloft-two-shapes    gen-ops/pure-bloft-two-shapes
    'pure-revolve             gen-ops/pure-revolve
    'pure-revolve-shape-fn    gen-ops/pure-revolve-shape-fn
    ;; Shape-fn support
@@ -196,8 +193,6 @@
    'extrude-closed-impl macro-impl/extrude-closed-impl
    'loft-impl           macro-impl/loft-impl
    'loft-n-impl         macro-impl/loft-n-impl
-   'bloft-impl          macro-impl/bloft-impl
-   'bloft-n-impl        macro-impl/bloft-n-impl
    'revolve-impl        macro-impl/revolve-impl
    'attach-impl         macro-impl/attach-impl
    'attach-face-impl    macro-impl/attach-face-impl

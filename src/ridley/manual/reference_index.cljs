@@ -183,24 +183,6 @@
     :description "Move the turtle to a named anchor along a smooth bezier curve that respects both the current heading and the anchor's heading, producing a C1-continuous connection. **Modifies turtle state.**"
     :path "dev-docs/reference-manual/bezier-to-anchor.md"}
 
-   "bloft"
-   {:name "bloft"
-    :category "generative-operations"
-    :status "stable"
-    :since ""
-    :signature "(bloft shape-fn & path-commands)\n(bloft shape transform-fn & path-commands)\n(bloft start-shape end-shape & path-commands)\n(bloft-n n shape-fn & path-commands)"
-    :description "Bezier-safe loft. For paths with tight curves (typically those processed with `bezier-as`), regular `loft` can produce self-intersecting geometry because consecutive rings overlap. `bloft` detects ring intersections and bridges them with convex hulls, then unions all pieces into a manifold mesh."
-    :path "dev-docs/reference-manual/bloft.md"}
-
-   "bloft-n"
-   {:name "bloft-n"
-    :category "generative-operations"
-    :status "stable"
-    :since ""
-    :signature "(bloft-n n shape-fn & path-commands)\n(bloft-n n shape transform-fn & path-commands)\n(bloft-n n start-shape end-shape & path-commands)"
-    :description "`bloft` with an explicit step count. Same semantics as `bloft` — see the parent page for the convex-hull intersection handling and full behavioural details. The walk along the path uses `n` rings instead of the default 16. Does not modify turtle state."
-    :path "dev-docs/reference-manual/bloft-n.md"}
-
    "bounds"
    {:name "bounds"
     :category "registration-visibility"
@@ -423,7 +405,7 @@
     :status "stable"
     :since ""
     :signature "(displaced shape-or-fn displace-fn)"
-    :description "Shape-fn that applies a custom radial displacement to each vertex. The displacement function receives the vertex and the current path fraction `t`; the returned scalar moves the vertex radially from the shape's centroid. Used with `loft`, `bloft`, or `revolve`. Does not modify turtle state."
+    :description "Shape-fn that applies a custom radial displacement to each vertex. The displacement function receives the vertex and the current path fraction `t`; the returned scalar moves the vertex radially from the shape's centroid. Used with `loft` or `revolve`. Does not modify turtle state."
     :path "dev-docs/reference-manual/displaced.md"}
 
    "distance"
@@ -657,7 +639,7 @@
     :status "stable"
     :since ""
     :signature "(fluted shape-or-fn & {:keys [flutes depth]})"
-    :description "Shape-fn that adds longitudinal grooves to the profile by displacing points radially with a cosine pattern aligned to the shape's axes. The displacement is constant along the path, so each ring is identical — useful for fluted columns and ridged surfaces. Used with `loft`, `bloft`, or `revolve`. Does not modify turtle state."
+    :description "Shape-fn that adds longitudinal grooves to the profile by displacing points radially with a cosine pattern aligned to the shape's axes. The displacement is constant along the path, so each ring is identical — useful for fluted columns and ridged surfaces. Used with `loft` or `revolve`. Does not modify turtle state."
     :path "dev-docs/reference-manual/fluted.md"}
 
    "follow"
@@ -738,7 +720,7 @@
     :status "stable"
     :since ""
     :signature "(heightmap shape-or-fn hm & {:keys [amplitude tile-x tile-y offset-x offset-y center]})"
-    :description "Shape-fn that displaces the profile radially using values sampled from a 2D heightmap. The vertex's angular position maps to `u`, the loft fraction `t` maps to `v`, both into the heightmap's parameter space. The sampled value is scaled by `:amplitude` and used as the radial offset. Tiling and centring let the same heightmap repeat or be biased around zero. Used with `loft`, `bloft`, or `revolve`. Does not modify turtle state."
+    :description "Shape-fn that displaces the profile radially using values sampled from a 2D heightmap. The vertex's angular position maps to `u`, the loft fraction `t` maps to `v`, both into the heightmap's parameter space. The sampled value is scaled by `:amplitude` and used as the radial offset. Tiling and centring let the same heightmap repeat or be biased around zero. Used with `loft` or `revolve`. Does not modify turtle state."
     :path "dev-docs/reference-manual/heightmap.md"}
 
    "heightmap-to-mesh"
@@ -783,7 +765,7 @@
     :status "stable"
     :since ""
     :signature "(joint-mode mode)"
-    :description "Set the corner geometry mode for `extrude`, `extrude-closed`, `loft`, and `bloft`. **Modifies turtle state**: the chosen mode persists on the turtle until changed again, so it affects every subsequent extrusion that turns through a corner."
+    :description "Set the corner geometry mode for `extrude`, `extrude-closed`, and `loft`. **Modifies turtle state**: the chosen mode persists on the turtle until changed again, so it affects every subsequent extrusion that turns through a corner."
     :path "dev-docs/reference-manual/joint-mode.md"}
 
    "largest-face"
@@ -1062,7 +1044,7 @@
     :status "stable"
     :since ""
     :signature "(morphed shape-a shape-b)"
-    :description "Shape-fn that interpolates between two shapes along the path. At `t = 0` the result is `shape-a`; at `t = 1` it is `shape-b`; in between, the profile is the pointwise lerp. Used with `loft`, `bloft`, or `revolve`. Does not modify turtle state."
+    :description "Shape-fn that interpolates between two shapes along the path. At `t = 0` the result is `shape-a`; at `t = 1` it is `shape-b`; in between, the profile is the pointwise lerp. Used with `loft` or `revolve`. Does not modify turtle state."
     :path "dev-docs/reference-manual/morphed.md"}
 
    "move-to"
@@ -1089,7 +1071,7 @@
     :status "stable"
     :since ""
     :signature "(noisy shape-or-fn & {:keys [amplitude scale scale-x scale-y octaves seed]})"
-    :description "Shape-fn that displaces vertices radially using procedural 2D noise. Compared with the sinusoid-based displacements, `noisy` produces smooth, organic, blobby surfaces (`fluted` gives single-frequency regular ridges; `rugged` gives angular crystalline asperities via layered sines). With `:octaves > 1` the noise is layered via fractal Brownian motion for richer detail. Used with `loft`, `bloft`, or `revolve`. Does not modify turtle state."
+    :description "Shape-fn that displaces vertices radially using procedural 2D noise. Compared with the sinusoid-based displacements, `noisy` produces smooth, organic, blobby surfaces (`fluted` gives single-frequency regular ridges; `rugged` gives angular crystalline asperities via layered sines). With `:octaves > 1` the noise is layered via fractal Brownian motion for richer detail. Used with `loft` or `revolve`. Does not modify turtle state."
     :path "dev-docs/reference-manual/noisy.md"}
 
    "objects"
@@ -1296,7 +1278,7 @@
     :status "stable"
     :since ""
     :signature "(profile shape-or-fn path)"
-    :description "Shape-fn that scales the cross-section to match a path silhouette. The path's X coordinates represent the radius at each point along the extrusion; at each loft step the profile is uniformly scaled to that radius. Used with `loft` (typically) or `bloft`. Does not modify turtle state."
+    :description "Shape-fn that scales the cross-section to match a path silhouette. The path's X coordinates represent the radius at each point along the extrusion; at each loft step the profile is uniformly scaled to that radius. Used with `loft`. Does not modify turtle state."
     :path "dev-docs/reference-manual/profile.md"}
 
    "project-mesh"
@@ -1872,7 +1854,7 @@
     :status "stable"
     :since ""
     :signature "(shape-fn base transform)"
-    :description "Constructor for custom shape-fns. Returns a function `(fn [t] -> shape)` tagged with metadata `{:type :shape-fn}` so `loft`, `bloft`, and `revolve` recognise it as a varying profile. `base` may be a plain shape or another shape-fn (in which case the new transform is composed on top of the existing one). Does not modify turtle state."
+    :description "Constructor for custom shape-fns. Returns a function `(fn [t] -> shape)` tagged with metadata `{:type :shape-fn}` so `loft` and `revolve` recognise it as a varying profile. `base` may be a plain shape or another shape-fn (in which case the new transform is composed on top of the existing one). Does not modify turtle state."
     :path "dev-docs/reference-manual/shape-fn.md"}
 
    "shape-fn?"
@@ -1944,7 +1926,7 @@
     :status "stable"
     :since ""
     :signature "(shell shape-or-fn & {:keys [thickness style threshold cap-top cap-bottom fn] :as style-opts})"
-    :description "Shape-fn that produces a hollow extrusion with variable-thickness walls and optional openings. At each ring, the profile is annotated with a per-vertex thickness value (`0` = no wall, `1` = full thickness); the loft uses these to build an inner and outer wall around each point. The wall pattern is chosen via `:style` (one of `:solid`, `:lattice`, `:checkerboard`, `:weave`, `:voronoi`) or supplied as a custom function via `:fn`. Used with `loft`, `bloft`, or `revolve`. Does not modify turtle state."
+    :description "Shape-fn that produces a hollow extrusion with variable-thickness walls and optional openings. At each ring, the profile is annotated with a per-vertex thickness value (`0` = no wall, `1` = full thickness); the loft uses these to build an inner and outer wall around each point. The wall pattern is chosen via `:style` (one of `:solid`, `:lattice`, `:checkerboard`, `:weave`, `:voronoi`) or supplied as a custom function via `:fn`. Used with `loft` or `revolve`. Does not modify turtle state."
     :path "dev-docs/reference-manual/shell.md"}
 
    "show"
@@ -2133,7 +2115,7 @@
     :status "stable"
     :since ""
     :signature "(tapered shape-or-fn & {:keys [from to]})"
-    :description "Shape-fn that scales the cross-section uniformly along the path. At `t = 0` the profile is scaled by `:from`; at `t = 1` it is scaled by `:to`; in between the factor is linearly interpolated. Used with `loft`, `bloft`, or `revolve`. Does not modify turtle state."
+    :description "Shape-fn that scales the cross-section uniformly along the path. At `t = 0` the profile is scaled by `:from`; at `t = 1` it is scaled by `:to`; in between the factor is linearly interpolated. Used with `loft` or `revolve`. Does not modify turtle state."
     :path "dev-docs/reference-manual/tapered.md"}
 
    "text-on-path"
@@ -2268,7 +2250,7 @@
     :status "stable"
     :since ""
     :signature "(twisted shape-or-fn & {:keys [angle]})"
-    :description "Shape-fn that rotates the cross-section progressively along the path. At `t = 0` the rotation is `0°`; at `t = 1` it is `:angle` degrees, linearly interpolated in between. Used with `loft`, `bloft`, or `revolve`. Does not modify turtle state."
+    :description "Shape-fn that rotates the cross-section progressively along the path. At `t = 0` the rotation is `0°`; at `t = 1` it is `:angle` degrees, linearly interpolated in between. Used with `loft` or `revolve`. Does not modify turtle state."
     :path "dev-docs/reference-manual/twisted.md"}
 
    "u"
@@ -2340,7 +2322,7 @@
     :status "stable"
     :since ""
     :signature "(woven shape-or-fn & {:keys [warp weft amplitude thread]})"
-    :description "Shape-fn that displaces the profile radially with an interlocking over/under woven-fabric pattern. Threads run in two directions — warp (along the path) and weft (around the contour); at each cell of the resulting grid one thread sits \"over\" the other, alternating in checkerboard. Used with `loft`, `bloft`, or `revolve`. Does not modify turtle state."
+    :description "Shape-fn that displaces the profile radially with an interlocking over/under woven-fabric pattern. Threads run in two directions — warp (along the path) and weft (around the contour); at each cell of the resulting grid one thread sits \"over\" the other, alternating in checkerboard. Used with `loft` or `revolve`. Does not modify turtle state."
     :path "dev-docs/reference-manual/woven.md"}
 
    "woven-shell"
@@ -2349,5 +2331,5 @@
     :status "stable"
     :since ""
     :signature "(woven-shell shape-or-fn & {:keys [thickness mode strands width warp weft warp-width weft-width lift threshold fn cap-top cap-bottom]})"
-    :description "Shape-fn that produces a hollow extrusion with a true 3D over/under woven pattern. Unlike `shell` (which only modulates wall thickness), `woven-shell` also shifts the wall **radially** at each point so threads can pass in front of / behind each other. At crossings, both threads are combined into a single thicker wall that encompasses both. Used with `loft`, `bloft`, or `revolve`. Does not modify turtle state."
+    :description "Shape-fn that produces a hollow extrusion with a true 3D over/under woven pattern. Unlike `shell` (which only modulates wall thickness), `woven-shell` also shifts the wall **radially** at each point so threads can pass in front of / behind each other. At crossings, both threads are combined into a single thicker wall that encompasses both. Used with `loft` or `revolve`. Does not modify turtle state."
     :path "dev-docs/reference-manual/woven-shell.md"}})

@@ -87,50 +87,6 @@
      (ops/pure-loft-path first-arg second-arg path steps))))
 
 ;; ============================================================
-;; Bloft family
-;; ============================================================
-
-(defn ^:export bloft-impl
-  "Runtime dispatch for bloft (bezier-safe loft)."
-  ([first-arg path]
-   (validate-extrude-path! "bloft" path)
-   (if (sfn/shape-fn? first-arg)
-     (ops/pure-bloft-shape-fn first-arg path)
-     (throw (js/Error. "bloft: 2-arg form requires a shape-fn as first argument"))))
-  ([first-arg second-arg path]
-   (validate-extrude-path! "bloft" path)
-   (cond
-     (sfn/shape-fn? first-arg) (ops/pure-bloft-shape-fn first-arg path)
-     (shape/shape? second-arg) (ops/pure-bloft-two-shapes first-arg second-arg path)
-     :else (ops/pure-bloft first-arg second-arg path nil 0.1)))
-  ([first-arg second-arg path steps]
-   (validate-extrude-path! "bloft" path)
-   (cond
-     (sfn/shape-fn? first-arg) (ops/pure-bloft-shape-fn first-arg path steps)
-     (shape/shape? second-arg) (ops/pure-bloft-two-shapes first-arg second-arg path steps)
-     :else (ops/pure-bloft first-arg second-arg path steps 0.1)))
-  ([first-arg second-arg path steps threshold]
-   (validate-extrude-path! "bloft" path)
-   (cond
-     (sfn/shape-fn? first-arg) (ops/pure-bloft-shape-fn first-arg path steps threshold)
-     (shape/shape? second-arg) (ops/pure-bloft-two-shapes first-arg second-arg path steps threshold)
-     :else (ops/pure-bloft first-arg second-arg path steps threshold))))
-
-(defn ^:export bloft-n-impl
-  "Runtime dispatch for bloft-n (bloft with custom step count)."
-  ([steps first-arg path]
-   (validate-extrude-path! "bloft-n" path)
-   (if (sfn/shape-fn? first-arg)
-     (ops/pure-bloft-shape-fn first-arg path steps)
-     (throw (js/Error. "bloft-n: 2-arg form requires a shape-fn as first argument"))))
-  ([steps first-arg second-arg path]
-   (validate-extrude-path! "bloft-n" path)
-   (cond
-     (sfn/shape-fn? first-arg) (ops/pure-bloft-shape-fn first-arg path steps)
-     (shape/shape? second-arg) (ops/pure-bloft-two-shapes first-arg second-arg path steps)
-     :else (ops/pure-bloft first-arg second-arg path steps 0.1))))
-
-;; ============================================================
 ;; Revolve
 ;; ============================================================
 

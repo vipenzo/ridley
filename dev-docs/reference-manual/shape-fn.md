@@ -14,7 +14,7 @@ status: stable
 ## Description
 
 Constructor for custom shape-fns. Returns a function `(fn [t] -> shape)`
-tagged with metadata `{:type :shape-fn}` so `loft`, `bloft`, and `revolve`
+tagged with metadata `{:type :shape-fn}` so `loft` and `revolve`
 recognise it as a varying profile. `base` may be a plain shape or another
 shape-fn (in which case the new transform is composed on top of the
 existing one). Does not modify turtle state.
@@ -30,7 +30,7 @@ package as a reusable shape-fn.
 - `base` — a plain shape or another shape-fn. When a shape-fn, the new
   transform is applied on top of the base evaluation.
 - `transform` — function `(fn [shape t] -> shape)` where `t ∈ [0, 1]`.
-  Called once per ring during loft/bloft/revolve.
+  Called once per ring during loft/revolve.
 
 ## Example
 
@@ -81,4 +81,4 @@ composes them.
 ## See also
 
 - **Guide:** placeholder → cap. 6 (Da funzioni matematiche a forme)
-- **Related:** `shape-fn?`, `loft`, `bloft`, `revolve`, `displaced`
+- **Related:** `shape-fn?`, `loft`, `revolve`, `displaced`

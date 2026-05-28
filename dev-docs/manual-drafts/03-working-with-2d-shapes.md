@@ -361,7 +361,7 @@ Le shape sono anche input di altri operatori 2D: le booleane (`shape-union`, `sh
 | Consumatore | Cosa produce | Capitolo |
 |---|---|---|
 | `extrude` | mesh (sezione costante) | 4 |
-| `loft` / `bloft` | mesh (sezione variabile) | 6 |
+| `loft` | mesh (sezione variabile) | 6 |
 | `revolve` | mesh (solido di rivoluzione) | 4 |
 | `stamp` | preview 2D (nessun solido) | — |
 | operatori 2D | altra shape | 3 |
@@ -433,7 +433,7 @@ Queste tre operazioni chiudono un cerchio: le sezioni 3.1-3.6 costruiscono shape
 
 ## Più forme alla volta
 
-Alcune operazioni restituiscono non una shape singola ma un vettore di shape: `shape-xor` (che può produrre regioni disconnesse), `slice-mesh` (che può tagliare più contorni), `text-shape` (che produce una shape per lettera o per glifo composito). Non è un caso speciale da gestire: i consumatori principali (`extrude`, `loft`, `bloft`, `revolve`, `stamp`) accettano direttamente un vettore di shape e lo trattano come un profilo unico con più contorni.
+Alcune operazioni restituiscono non una shape singola ma un vettore di shape: `shape-xor` (che può produrre regioni disconnesse), `slice-mesh` (che può tagliare più contorni), `text-shape` (che produce una shape per lettera o per glifo composito). Non è un caso speciale da gestire: i consumatori principali (`extrude`, `loft`, `revolve`, `stamp`) accettano direttamente un vettore di shape e lo trattano come un profilo unico con più contorni.
 
 <!-- example-source: vector-of-shapes-text -->
 ```clojure

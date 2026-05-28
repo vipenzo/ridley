@@ -44,7 +44,7 @@ Quel modo sono le shape-fn: funzioni che, dato un valore `t` compreso tra 0 e 1,
 
 `tapered` prende un cerchio e restituisce una shape-fn. A `t = 0` il cerchio ha raggio 20; a `t = 1` il raggio è 0 (`:to 0`). In mezzo, il raggio decresce linearmente. Il loft produce un cono.
 
-La stessa logica vale per tutte le shape-fn built-in: `twisted`, `fluted`, `noisy`, `morphed`, `profile`, `heightmap`. Ognuna descrive un tipo diverso di variazione, ma il meccanismo è lo stesso: una funzione da `t` a shape, che `loft` (o `bloft`, o `revolve`) valuta passo per passo.
+La stessa logica vale per tutte le shape-fn built-in: `twisted`, `fluted`, `noisy`, `morphed`, `profile`, `heightmap`. Ognuna descrive un tipo diverso di variazione, ma il meccanismo è lo stesso: una funzione da `t` a shape, che `loft` (o `revolve`) valuta passo per passo.
 
 `loft` accetta anche una forma più semplice in cui il primo parametro è una shape e il secondo è una funzione di trasformazione `(fn [shape t] -> shape)`. Le shape-fn rendono esplicito ciò che lì è implicito: la logica di variazione vive *dentro* la shape, non fuori. Questo permette di comporre più variazioni con il threading `->`:
 

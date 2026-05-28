@@ -136,7 +136,7 @@ La generalizzazione di `capture-frames!` da uso visivo a uso analitico vive in �
 
 Tre completamenti sostanziosi del DSL geometrico, indipendenti fra loro.
 
-**Adaptive loft step density per shape-fn transitions**: il `bloft` ha già adaptive sampling sulla curvatura del path; manca l'analogo sul *rate of change della shape-fn*. Il `capped` shape-fn produce oggi faceting grezzo perché i loft step sono uniformi nonostante il profilo cambi rapidamente in alcune zone. Il blocco di design è la metrica: definire un "cambio shape" robusto per shape-fn arbitrarie — una shape-fn ritorna una shape, e misurare la distanza fra due shape è in generale più sottile che misurare la distanza fra due punti di un path. Tre-cinque giorni di lavoro più l'esplorazione della metrica.
+**Adaptive loft step density per shape-fn transitions**: oggi i loft step sono uniformi lungo il path. Il `capped` shape-fn produce faceting grezzo perché il profilo cambia rapidamente in zone strette ma il sample rate non lo sa. Il blocco di design è la metrica: definire un "cambio shape" robusto per shape-fn arbitrarie — una shape-fn ritorna una shape, e misurare la distanza fra due shape è in generale più sottile che misurare la distanza fra due punti di un path. Tre-cinque giorni di lavoro più l'esplorazione della metrica.
 
 **Face cutting**: disegnare una shape 2D su una faccia esistente di una mesh e usarla come operazione di taglio (passante o cieco). Oggi `attach-face` permette estrusione e inset di una faccia, ma non "qui voglio scavare un buco con questo profilo". Una settimana, con tre blocchi di design: orientamento UV della shape sulla faccia, gestione della profondità (passante/cieco), boolean Manifold finale.
 

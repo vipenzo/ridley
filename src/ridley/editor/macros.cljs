@@ -616,65 +616,6 @@
              `(-> (loft-n-impl ~steps ~first-arg (path ~dispatch-arg))
                   (add-source ~src)))))))
 
-   ;; bloft: bezier-safe loft that handles self-intersecting paths
-   ;; Uses convex hulls for intersecting sections, then unions all pieces.
-   ;; Best for tight curves like (bezier-as (branch-path 30))
-   ;; (bloft (tapered (circle 10) :to 0.5) my-bezier-path)    - shape-fn
-   ;; (bloft (circle 10) identity my-bezier-path)              - legacy
-   ;; (bloft (rect 3 3) #(scale-shape %1 0.5) (bezier-as (branch-path 30)))
-   ;; (bloft-n 64 (circle 10) identity my-bezier-path) - more steps
-   (defmacro bloft [first-arg & rest-args]
-     (let [{:keys [line column]} (meta &form)
-           mvmt? (fn [x] (and (list? x) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v
-                                                       'bezier-to 'bezier-as} (first x))))
-           src `{:op :bloft :line ~line :col ~column :source *eval-source*}
-           wrap (fn [expr] `(-> ~expr (add-source ~src)))]
-       (cond
-         (= 1 (count rest-args))
-         (wrap `(bloft-impl ~first-arg (path ~(first rest-args))))
-
-         (mvmt? (first rest-args))
-         (wrap `(bloft-impl ~first-arg (path ~@rest-args)))
-
-         :else
-         (let [[dispatch-arg & rest-movements] rest-args]
-           (if (seq rest-movements)
-             (let [args rest-movements]
-               (cond
-                 (and (seq args) (mvmt? (first args)))
-                 (wrap `(bloft-impl ~first-arg ~dispatch-arg (path ~@args)))
-                 (= 1 (count args))
-                 (wrap `(bloft-impl ~first-arg ~dispatch-arg (path ~(first args))))
-                 (= 2 (count args))
-                 (wrap `(bloft-impl ~first-arg ~dispatch-arg (path ~(first args)) ~(second args)))
-                 (= 3 (count args))
-                 (wrap `(bloft-impl ~first-arg ~dispatch-arg (path ~(first args)) ~(second args) ~(nth args 2)))
-                 :else
-                 (wrap `(bloft-impl ~first-arg ~dispatch-arg (path ~@args)))))
-             (wrap `(bloft-impl ~first-arg (path ~dispatch-arg))))))))
-
-   (defmacro bloft-n [steps first-arg & rest-args]
-     (let [{:keys [line column]} (meta &form)
-           mvmt? (fn [x] (and (list? x) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v
-                                                       'bezier-to 'bezier-as} (first x))))
-           src `{:op :bloft-n :line ~line :col ~column :source *eval-source*}]
-       (cond
-         (= 1 (count rest-args))
-         `(-> (bloft-n-impl ~steps ~first-arg (path ~(first rest-args)))
-              (add-source ~src))
-
-         (mvmt? (first rest-args))
-         `(-> (bloft-n-impl ~steps ~first-arg (path ~@rest-args))
-              (add-source ~src))
-
-         :else
-         (let [[dispatch-arg & movements] rest-args]
-           (if (seq movements)
-             `(-> (bloft-n-impl ~steps ~first-arg ~dispatch-arg (path ~@movements))
-                  (add-source ~src))
-             `(-> (bloft-n-impl ~steps ~first-arg (path ~dispatch-arg))
-                  (add-source ~src)))))))
-
    ;; revolve: create solid of revolution (lathe operation)
    ;; PURE: returns mesh without side effects (use register to make visible)
    ;; (revolve (shape (f 8) (th 90) (f 10) (th 90) (f 8)))  ; solid cylinder

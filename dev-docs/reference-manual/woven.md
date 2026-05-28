@@ -17,8 +17,8 @@ Shape-fn that displaces the profile radially with an interlocking
 over/under woven-fabric pattern. Threads run in two directions — warp
 (along the path) and weft (around the contour); at each cell of the
 resulting grid one thread sits "over" the other, alternating in
-checkerboard. Used with `loft`, `bloft`, or `revolve`. Does not modify
-turtle state.
+checkerboard. Used with `loft` or `revolve`. Does not modify turtle
+state.
 
 `woven` is the radial-displacement-only variant. For a true 3D over/under
 look where threads also shift in and out radially at crossings, see

@@ -20,8 +20,7 @@ state on its own.
 
 Works both in direct turtle mode (the smoothed path is replayed) and
 inside `path` recordings (the smoothed segments are merged into the
-recorded path). Pair with `bloft` for extrusions along the resulting
-tight curves.
+recorded path).
 
 ## Parameters
 
@@ -54,13 +53,12 @@ Smooth a piecewise-linear path and extrude along the resulting curve.
 <!-- example-source: bezier-as-tension -->
 ```clojure
 (def waypoints (path (f 20) (th 90) (f 20)))
-(register tube (bloft (circle 4) (bezier-as waypoints :tension 0.6 :steps 48)))
+(register tube (extrude (circle 4) (bezier-as waypoints :tension 0.6 :steps 48)))
 ```
 <!-- /example-source -->
 
 Higher `:tension` produces a more swoopy result; `:steps` controls the
-per-bezier resolution. Use `bloft` for tight bezier curves where
-regular `loft` would self-intersect.
+per-bezier resolution.
 
 ## Notes
 
@@ -72,5 +70,4 @@ regular `loft` would self-intersect.
 ## See also
 
 - **Guide:** placeholder → cap. 1 (Primi passi)
-- **Related:** `bezier-to`, `bezier-to-anchor`, `bloft`, `path`,
-  `resolution`
+- **Related:** `bezier-to`, `bezier-to-anchor`, `path`, `resolution`

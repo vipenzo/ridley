@@ -48,7 +48,6 @@ Tutti i numeri sotto sono calcolati a partire dalla risoluzione corrente con un 
 | `bezier-to-anchor …` | 1× | calcolato dalla lunghezza |
 | `joint-mode :round` corner | 1× | calcolato dall'angolo del corner |
 | `revolve` (DSL macro) | 1× | calcolato dall'angolo |
-| `bloft` | adaptive | calcolato da `calc-bloft-steps` |
 
 ### 2b. Operazioni che ora ereditano dal default globale (nuove dopo il refactor)
 

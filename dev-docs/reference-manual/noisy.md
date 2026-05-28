@@ -18,8 +18,8 @@ Compared with the sinusoid-based displacements, `noisy` produces smooth,
 organic, blobby surfaces (`fluted` gives single-frequency regular ridges;
 `rugged` gives angular crystalline asperities via layered sines). With
 `:octaves > 1` the noise is layered via fractal Brownian motion for
-richer detail. Used with `loft`, `bloft`, or `revolve`. Does not modify
-turtle state.
+richer detail. Used with `loft` or `revolve`. Does not modify turtle
+state.
 
 The deterministic noise is built on `noise` / `fbm`, so the same seed
 always produces the same surface.

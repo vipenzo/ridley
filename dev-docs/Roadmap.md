@@ -648,7 +648,7 @@ The core turtle system, generative operations, boolean operations, anchor/naviga
 | Turtle movement | 16 | f, th, tv, tr, u, d, rt, lt, arc-h/v, bezier, goto, look-at |
 | 2D shapes | 17 | circle, rect, poly, star, shape macro, fillet/chamfer-shape, booleans |
 | Shape-fn system | 18 | tapered, twisted, rugged, fluted, displaced, morphed, noise, shell, capped... |
-| Extrusion/loft | 28 | extrude, extrude-closed, loft, loft-n, bloft, bloft-n + pure-* variants |
+| Extrusion/loft | 20 | extrude, extrude-closed, loft, loft-n + pure-* variants |
 | Revolve | 4 | revolve macro + impl, pure-revolve, pure-revolve-shape-fn |
 | Attachment | 14 | attach, attach-face, clone-face macros + pure turtle functions |
 | Turtle scoping | 2 | turtle macro, init-turtle |
@@ -726,7 +726,7 @@ Full SVG path parser: all commands (M, L, H, V, C, S, Q, T, A, Z), both absolute
 ## Pending Improvements
 
 ### Adaptive loft step density for shape-fn transitions
-The `capped` shape-fn concentrates shape changes in narrow transition zones (fraction of the path). With uniform loft steps, only 2-3 rings may fall in the cap zone, producing coarse faceting. Implement non-uniform `t` sampling: `capped` declares transition zones via shape-fn metadata, and the loft generates denser rings in those zones. Similar to the existing `walk-path-poses-adaptive` (curvature-based density for bloft), but driven by shape-fn change rate rather than path curvature.
+The `capped` shape-fn concentrates shape changes in narrow transition zones (fraction of the path). With uniform loft steps, only 2-3 rings may fall in the cap zone, producing coarse faceting. Implement non-uniform `t` sampling: `capped` declares transition zones via shape-fn metadata, and the loft generates denser rings in those zones. Sampling driven by shape-fn change rate rather than path curvature.
 
 ---
 

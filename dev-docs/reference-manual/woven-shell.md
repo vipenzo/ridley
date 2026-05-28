@@ -18,7 +18,7 @@ woven pattern. Unlike `shell` (which only modulates wall thickness),
 `woven-shell` also shifts the wall **radially** at each point so threads
 can pass in front of / behind each other. At crossings, both threads are
 combined into a single thicker wall that encompasses both. Used with
-`loft`, `bloft`, or `revolve`. Does not modify turtle state.
+`loft` or `revolve`. Does not modify turtle state.
 
 Two built-in modes: `:diagonal` (default; threads cross at 45°) and
 `:orthogonal` (basket/wicker; warp and weft are perpendicular). A custom

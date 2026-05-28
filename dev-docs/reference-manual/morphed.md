@@ -15,8 +15,8 @@ status: stable
 
 Shape-fn that interpolates between two shapes along the path. At `t = 0`
 the result is `shape-a`; at `t = 1` it is `shape-b`; in between, the
-profile is the pointwise lerp. Used with `loft`, `bloft`, or `revolve`.
-Does not modify turtle state.
+profile is the pointwise lerp. Used with `loft` or `revolve`. Does
+not modify turtle state.
 
 If point counts differ, both shapes are auto-resampled to the larger
 count. `shape-b`'s vertex array is then angularly aligned to `shape-a`

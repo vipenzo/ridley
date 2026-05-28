@@ -44,7 +44,6 @@ For variants closely related to `loft`, see:
 
 - `loft-n` — same as `loft` with explicit step count (variant page).
 - `loft-between` — alias of the two-shape mode (variant page).
-- `bloft` — bezier-safe loft for paths with tight curves, see its own page.
 
 ## Parameters
 
@@ -106,13 +105,13 @@ in a single inlined expression.
   a single mesh, so downstream booleans need no manual `concat-meshes`.
 - Joint modes (`(joint-mode :flat | :round | :tapered)`) apply to `loft` as
   they do to `extrude` and control corner geometry where the path turns.
-- For paths with tight bezier curves where rings may self-intersect, use
-  `bloft` instead. It detects intersections and bridges them with convex
-  hulls at the cost of speed.
+- For paths with tight bezier curves where rings would self-intersect,
+  smooth the path first (`bezier-as`, `arc-h`, `joint-mode :round`); `loft`
+  has no built-in escape hatch for genuinely overlapping rings.
 
 ## See also
 
 - **Guide:** [6. From mathematical functions to shapes](../../guides/06-shape-fn/index.md)
 - **Internals:** [shape-fn contract](../../internals/contracts/shape-fn.md)
-- **Related:** `extrude`, `extrude-closed`, `bloft`, `revolve`, `loft-n`, `loft-between`
+- **Related:** `extrude`, `extrude-closed`, `revolve`, `loft-n`, `loft-between`
 - **Composable shape-fns:** `tapered`, `twisted`, `fluted`, `rugged`, `noisy`, `morphed`, `shell`, `woven-shell`, `profile`, `heightmap`, `displaced`
