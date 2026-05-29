@@ -147,12 +147,47 @@
 
 (defn sdf-box
   "Create an SDF box. Parameters match mesh box convention:
+   (sdf-box size) — cube with given side
    (sdf-box a b c) — a→Y(right), b→Z(up), c→X(heading)."
-  [a b c]
-  (with-default-pose {:op "box" :sx c :sy a :sz b}))
+  ([size] (sdf-box size size size))
+  ([a b c] (with-default-pose {:op "box" :sx c :sy a :sz b})))
 
 (defn sdf-cyl [r h]
-  (with-default-pose {:op "cyl" :r r :h h}))
+  ;; :feature-r drives mesh smoothness around the side (see min-feature-size).
+  (with-default-pose {:op "cyl" :r r :h h :feature-r r}))
+
+(declare sdf-formula)
+
+(defn sdf-cone
+  "Truncated cone (frustum) of bottom radius r1, top radius r2, height h,
+   axis along Z. r2=0 gives a proper cone.
+
+   Built on top of sdf-formula: SDF = max(rho - r(z), |z| - h/2)
+   where r(z) interpolates linearly from r1 (at z=-h/2) to r2 (at z=+h/2).
+   The field is the max of two half-spaces, so the iso-zero contour is
+   the exact frustum surface — accurate enough for booleans and visual
+   meshing, though not a true Euclidean SDF outside the surface."
+  [r1 r2 h]
+  (let [half-h (/ h 2)
+        slope  (/ (- r2 r1) h)
+        max-r  (max r1 r2)]
+    (-> (sdf-formula
+         (list 'max
+               (list '- 'rho
+                     (list '+ r1 (list '* slope (list '+ 'z half-h))))
+               (list '- (list 'abs 'z) half-h)))
+        ;; auto-bounds: x-range is radial extent, y-range is height.
+        ;; The +1 pad on y-range pushes the meshing region one unit past
+        ;; the cap planes (z = ±h/2). Without it, libfive's marching cubes
+        ;; never sees a sign flip across the caps and leaves them open —
+        ;; the iso-zero surface sits exactly on the bound. In the editor
+        ;; this was masked because implicit-sdf-cone rotates the node into
+        ;; turtle space, and rotate's spherical bound inflate over-covers
+        ;; the caps; bare sdf-cone (no rotate) exposed the bug.
+        (assoc :x-range [(- max-r) max-r]
+               :y-range [(- (+ half-h 1)) (+ half-h 1)]
+               ;; Drives smoothness around the widest circumference.
+               :feature-r max-r))))
 
 (defn sdf-rounded-box
   "Box with rounded corners as a true SDF.
@@ -179,7 +214,11 @@
       ;; auto-bounds reads :x-range as radial extent and :y-range as height extent
       ;; (revolve convention: X=radius, Y=height).
       (assoc :x-range [(- (+ R r)) (+ R r)]
-             :y-range [(- r) r])
+             :y-range [(- r) r]
+             ;; Smallest curvature radius drives mesh smoothness around the
+             ;; tube. min-feature-size reads this to lift the voxel density
+             ;; when the torus bounding box is dominated by R, not r.
+             :feature-r r)
       with-default-pose))
 
 ;; ── SDF boolean operations ──────────────────────────────────────
@@ -652,6 +691,35 @@
                                  (js/Math.pow (apply max (map js/Math.abs (b 2))) 2)))]
           [[(- r) r] [(- r) r] [(- r) r]])
 
+        ;; Smooth union inflates the surface outward in the bridge region:
+        ;; the iso-zero contour can extend roughly k beyond the union of the
+        ;; two inputs. Pad by 1.5·k on every side as a safety margin so the
+        ;; meshing region doesn't clip the bridge.
+        (= op "blend")
+        (let [ba (auto-bounds (:a node))
+              bb (auto-bounds (:b node))
+              pad (* 1.5 (or (:k node) 0))
+              merged [[(min (get-in ba [0 0]) (get-in bb [0 0]))
+                       (max (get-in ba [0 1]) (get-in bb [0 1]))]
+                      [(min (get-in ba [1 0]) (get-in bb [1 0]))
+                       (max (get-in ba [1 1]) (get-in bb [1 1]))]
+                      [(min (get-in ba [2 0]) (get-in bb [2 0]))
+                       (max (get-in ba [2 1]) (get-in bb [2 1]))]]]
+          (mapv (fn [[lo hi]] [(- lo pad) (+ hi pad)]) merged))
+
+        ;; Smooth subtraction only carves inward into a — never extends
+        ;; the surface outside a's footprint — so a's bounds are conservative.
+        (= op "blend-difference")
+        (auto-bounds (:a node))
+
+        ;; Positive offset expands the surface outward by `amount`; negative
+        ;; offset contracts and stays inside a's bounds. Pad only on positive.
+        (= op "offset")
+        (let [b (auto-bounds (:a node))
+              amt (:amount node)
+              pad (if (pos? amt) amt 0)]
+          (mapv (fn [[lo hi]] [(- lo pad) (+ hi pad)]) b))
+
         :else
         (let [kids (keep #(get node %) [:a :b])
               child-bounds (map auto-bounds kids)]
@@ -686,26 +754,44 @@
 
 ;; ── Meshing ─────────────────────────────────────────────────────
 
+(def ^:private default-feature-segments
+  "Target voxel count around the smallest curvature when a primitive does
+   not specify :feature-segments. ~64 gives noticeably smooth curves
+   without exploding the voxel count."
+  64)
+
 (defn- min-feature-size
-  "Walk the SDF tree and return the smallest feature size that needs resolving."
+  "Walk the SDF tree and return the smallest feature size that needs resolving.
+
+   `:feature-r` is a per-node annotation set by curved primitives (torus,
+   cyl, cone) carrying the smallest curvature radius. `:feature-segments`
+   is the target number of voxels around that circumference — set by the
+   editor-side wrappers from the turtle resolution, or falls back to
+   default-feature-segments. We feed `5π·r/N` into the existing
+   2.5×-per-feat formula, which yields `feat-vpu = N/(2π·r)` voxels per
+   unit — exactly N voxels around the circumference of radius r."
   ([node] (min-feature-size node 1.0))
   ([node scale]
-   (case (:op node)
-     "shell" (let [child-min (min-feature-size (:a node) scale)
-                   thickness (* (js/Math.abs (:thickness node)) scale)]
-               (if child-min (min child-min thickness) thickness))
-     "offset" (let [child-min (min-feature-size (:a node) scale)
-                    amt (* (js/Math.abs (:amount node)) scale)]
-                (when (< amt 2.0)
-                  (if child-min (min child-min amt) amt)))
-     "scale" (let [min-s (min (js/Math.abs (:sx node))
-                              (js/Math.abs (:sy node))
-                              (js/Math.abs (:sz node)))]
-               (min-feature-size (:a node) (* scale min-s)))
-     ;; Recurse into children
-     (let [kids (keep #(get node %) [:a :b])
-           child-mins (keep #(min-feature-size % scale) kids)]
-       (when (seq child-mins) (apply min child-mins))))))
+   (let [own (when-let [fr (:feature-r node)]
+               (let [n (or (:feature-segments node) default-feature-segments)]
+                 (* fr 5 (/ Math/PI n) scale)))]
+     (case (:op node)
+       "shell" (let [child-min (min-feature-size (:a node) scale)
+                     thickness (* (js/Math.abs (:thickness node)) scale)]
+                 (if child-min (min child-min thickness) thickness))
+       "offset" (let [child-min (min-feature-size (:a node) scale)
+                      amt (* (js/Math.abs (:amount node)) scale)]
+                  (when (< amt 2.0)
+                    (if child-min (min child-min amt) amt)))
+       "scale" (let [min-s (min (js/Math.abs (:sx node))
+                                (js/Math.abs (:sy node))
+                                (js/Math.abs (:sz node)))]
+                 (min-feature-size (:a node) (* scale min-s)))
+       ;; Recurse into children, combining with this node's own annotation.
+       (let [kids (keep #(get node %) [:a :b])
+             child-mins (keep #(min-feature-size % scale) kids)
+             all-mins (cond->> child-mins own (cons own))]
+         (when (seq all-mins) (apply min all-mins)))))))
 
 (def ^:private base-max-voxels
   "Maximum total voxel budget for SDF meshing at default turtle-res=15.

@@ -10,15 +10,52 @@ La differenza pratica è che alcune operazioni che con le mesh sono impossibili 
 
 ```clojure
 (sdf-sphere r)                    ;; sfera di raggio r
+(sdf-box size)                    ;; cubo di lato size
 (sdf-box sx sy sz)                ;; box con dimensioni sx × sy × sz
 (sdf-rounded-box sx sy sz r)      ;; box con spigoli arrotondati di raggio r
-(sdf-cyl r h)                     ;; cilindro di raggio r e altezza h
+(sdf-cyl r h)                     ;; cilindro di raggio r e altezza h, asse lungo heading
+(sdf-cone r1 r2 h)                ;; cono/tronco di cono, asse lungo heading
 (sdf-torus R r)                   ;; toro: R raggio maggiore, r raggio sezione
 ```
 
-Le primitive SDF sono dati puri: costruire `(sdf-sphere 10)` non calcola nulla, produce una mappa Clojure `{:op "sphere" :r 10}`. Il calcolo avviene solo quando la mesh viene materializzata.
+Le primitive SDF sono dati puri: costruire `(sdf-sphere 10)` non calcola nulla, produce un albero di operazioni. Il calcolo avviene solo quando la mesh viene materializzata.
 
-Una nota sugli argomenti di `sdf-box`: l'ordine è `(sdf-box x y z)`, che corrisponde a `(sdf-box right up forward)`. La primitiva mesh `box` usa lo stesso ordine: `(box right up forward)`. Le due forme producono la stessa geometria, ma per chiarezza puoi pensare agli argomenti come `(sdf-box r u f)` per mantenere la simmetria con `(box r u f)`.
+L'esempio dispone tutte le primitive SDF su una fila, e sopra ciascuna (dove esiste) la primitiva mesh corrispondente. Si vede la corrispondenza diretta SDF↔mesh — e le due primitive che vivono solo nel mondo SDF, `sdf-rounded-box` e `sdf-torus`, che restano senza compagna sopra:
+
+<!-- example-source: sdf-primitives-gallery
+;; Fila SDF (in basso)
+(register s-sphere    (attach (sdf-sphere 18)))
+(register s-cube      (attach (sdf-box 30) (rt 50)))
+(register s-box       (attach (sdf-box 20 30 36) (rt 100)))
+(register s-rbox      (attach (sdf-rounded-box 30 30 30 6) (rt 150)))
+(register s-cyl       (attach (sdf-cyl 15 36) (rt 200)))
+(register s-cone      (attach (sdf-cone 16 4 36) (rt 250)))
+(register s-torus     (attach (sdf-torus 16 6) (rt 300)))
+
+;; Fila mesh (in alto, +70 in up), allineata colonna per colonna
+(register m-sphere (attach (sphere 18) (u 70)))
+(register m-cube   (attach (box 30) (u 70) (rt 50)))
+(register m-box    (attach (box 20 30 36) (u 70) (rt 100)))
+;; (rt 150): nessun rounded-box mesh — colonna vuota
+(register m-cyl    (attach (cyl 15 36) (u 70) (rt 200)))
+(register m-cone   (attach (cone 16 4 36) (u 70) (rt 250)))
+;; (rt 300): nessun torus mesh — colonna vuota
+-->
+
+Le colonne di `sdf-rounded-box` e `sdf-torus` non hanno una mesh sopra: sono forme che Ridley produce direttamente come SDF e che nel mondo mesh richiederebbero costruzioni più elaborate.
+
+Come le primitive mesh, le primitive SDF nascono alla posa corrente della tartaruga. Quindi:
+
+<!-- example-source: sdf-pose-aware
+(f 30)
+(register original (sdf-sphere 10))   ;; sfera centrata in (30 0 0)
+(th 90)
+(register turned (sdf-box 4 8 16))    ;; box in (30 0 0) ruotato di 90° intorno a Z
+-->
+
+Vale per `sdf-sphere`, `sdf-box`, `sdf-rounded-box`, `sdf-cyl`, `sdf-cone`, `sdf-torus` e `sdf-formula`. Le strutture infinite (`sdf-gyroid`, `sdf-schwarz-p`, `sdf-diamond`, `sdf-slats`, `sdf-bars`, `sdf-bar-cage`, `sdf-grid`) restano allineate agli assi del mondo: tipicamente le ritagli con `sdf-intersection` contro un volume posizionato.
+
+Una nota sugli argomenti di `sdf-box`: l'ordine è `(sdf-box x y z)`, che corrisponde a `(sdf-box right up forward)`. La primitiva mesh `box` usa lo stesso ordine: `(box right up forward)`. Le due forme producono la stessa geometria nella stessa posa, e per chiarezza puoi pensare agli argomenti come `(sdf-box r u f)` per mantenere la simmetria con `(box r u f)`.
 
 ### Booleane SDF
 
@@ -50,22 +87,55 @@ Queste operazioni sfruttano la rappresentazione implicita e non hanno equivalent
 
 `(sdf-blend a b k)` fonde due SDF con un raccordo morbido. `k` controlla il raggio di blend: più grande, più ampia la zona di transizione. È l'operazione che rende gli SDF interessanti per forme organiche.
 
+<!-- example-source: sdf-blend-intro
+(register blob
+  (sdf-blend
+    (sdf-sphere 12)
+    (attach (sdf-box 10 10 10) (f 12))
+    4))
+-->
+
 `(sdf-blend-difference a b k)` sottrae b da a con una concavità morbida, il duale di `sdf-blend`.
+
+<!-- example-source: sdf-blend-difference-intro
+(register scooped
+  (sdf-blend-difference
+    (sdf-rounded-box 30 30 20 3)
+    (attach (sdf-sphere 15) (u 10))
+    3))
+-->
 
 `(sdf-shell a thickness)` svuota un solido lasciando un guscio uniforme di spessore `thickness`.
 
-`(sdf-offset a amount)` espande (positivo) o contrae (negativo) la superficie. Una nota: `sdf-offset` produce un campo che non è più un vero SDF lontano dalla superficie. Per box arrotondati preferisci `sdf-rounded-box`; per operazioni di shell il risultato potrebbe non combinarsi correttamente con `sdf-intersection` di altri SDF.
+<!-- example-source: sdf-shell-intro
+(register hollow
+  (sdf-clip
+    (attach (sdf-shell (sdf-sphere 15) 1) (f -11))))
+-->
+
+`(sdf-offset a amount)` espande (positivo) o contrae (negativo) la superficie. Affianchiamo una sfera offsettata e una originale per vedere la differenza:
+
+<!-- example-source: sdf-offset-intro
+(register grown (sdf-offset (sdf-sphere 10) 3))
+(register original (attach (sdf-sphere 10) (rt 40)))
+-->
+
+Una nota: `sdf-offset` produce un campo che non è più un vero SDF lontano dalla superficie. Per box arrotondati preferisci `sdf-rounded-box`; per operazioni di shell il risultato potrebbe non combinarsi correttamente con `sdf-intersection` di altri SDF.
 
 `(sdf-morph a b t)` interpola tra due forme. `t` va da 0 (= a) a 1 (= b).
 
+<!-- example-source: sdf-morph-intro
+(register half-way
+  (sdf-morph (sdf-box 16 32 8) (sdf-sphere 11) 0.5))
+-->
+
 `(sdf-displace node formula)` deforma la superficie con una formula spaziale:
 
-```clojure
-;; Sfera ondulata
+<!-- example-source: sdf-displace-intro
 (register wavy
   (sdf-displace (sdf-sphere 10)
     '(* 1.5 (sin (* x 2)) (sin (* y 2)))))
-```
+-->
 
 La formula è un'espressione Clojure quotata che usa `x`, `y`, `z` come variabili spaziali. Valori positivi spingono la superficie verso l'interno, negativi verso l'esterno.
 
@@ -73,18 +143,19 @@ La formula è un'espressione Clojure quotata che usa `x`, `y`, `z` come variabil
 
 `sdf-half-space` è un semispazio definito dalla posa della tartaruga. Il piano di taglio passa per la posizione della tartaruga con normale uguale all'heading. Per default tiene la metà *dietro* l'heading (la parte da cui la tartaruga è venuta):
 
-```clojure
+<!-- example-source: sdf-half-space-intro
 ;; Taglia un cilindro a metà
 (tv 90)
 (register half-cyl
   (sdf-intersection (sdf-cyl 10 20) (sdf-half-space)))
-```
+-->
 
 `sdf-clip` è la scorciatoia per il caso comune:
 
-```clojure
-(sdf-clip (sdf-cyl 10 20))    ;; equivale a (sdf-intersection ... (sdf-half-space))
-```
+<!-- example-source: sdf-clip-intro
+(tv 90)
+(register clipped (sdf-clip (sdf-cyl 10 20)))    ;; equivale a (sdf-intersection ... (sdf-half-space))
+-->
 
 Per tenere la metà davanti alla tartaruga:
 
@@ -96,21 +167,27 @@ Per tenere la metà davanti alla tartaruga:
 
 Gli SDF possono descrivere strutture infinite, da ritagliare poi con un'intersezione:
 
-```clojure
+<!-- example-source: sdf-grid-lattice
 ;; Griglia lattice delimitata da una sfera
 (register ball-lattice
   (sdf-intersection (sdf-sphere 20) (sdf-grid 8 1.5)))
+-->
 
-;; Fenditure parallele
-(register slotted
-  (sdf-difference container (sdf-slats :x 8 2)))
-
+<!-- example-source: sdf-bar-cage-intro
 ;; Gabbia di barre
 (register cage
   (sdf-intersection
     (sdf-rounded-box 60 60 90 6)
     (sdf-bar-cage 60 60 90 5 1.5)))
-```
+-->
+
+Un terzo costrutto sono le fenditure parallele, che si sottraggono da un contenitore:
+
+<!-- example-source: sdf-slats-intro
+;; Fenditure parallele scavate in un box (periodo 8, spessore 2, perpendicolari a X)
+(register slotted
+  (sdf-difference (sdf-rounded-box 50 30 30 4) (sdf-slats :x 8 2)))
+-->
 
 `sdf-slats`, `sdf-bars`, `sdf-bar-cage`, `sdf-grid` producono strutture infinite; `sdf-difference` e `sdf-intersection` le confinano nella regione che ti interessa.
 
@@ -120,7 +197,7 @@ Una avvertenza: le versioni con blend (`(sdf-grid period thickness blend-k)`) us
 
 `sdf-formula` compila un'espressione Clojure quotata in un albero SDF. Le variabili `x`, `y`, `z` rappresentano le coordinate spaziali. Sono disponibili anche `r` (distanza dall'origine), `rho` (raggio cilindrico), `theta` (angolo azimutale), `phi` (angolo polare):
 
-```clojure
+<!-- example-source: sdf-formula-gyroid
 ;; Gyroid approssimato
 (register gyroid
   (sdf-intersection
@@ -129,9 +206,41 @@ Una avvertenza: le versioni con blend (`(sdf-grid period thickness blend-k)`) us
       '(+ (* (sin x) (cos y))
           (* (sin y) (cos z))
           (* (sin z) (cos x))))))
-```
+-->
 
 Le operazioni disponibili nella formula sono: aritmetiche (`+`, `-`, `*`, `/`), trigonometriche (`sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`), matematiche (`sqrt`, `abs`, `exp`, `log`, `pow`, `mod`, `square`, `neg`), e comparazione (`min`, `max`).
+
+Un esempio più solido di come `sdf-formula` permette di costruire primitive da zero: `sdf-cone` è definito internamente proprio così. Un tronco di cono con raggio `r1` alla base (z = -h/2), `r2` in cima (z = +h/2) e altezza `h` ha questo campo distanza:
+
+<!-- example-source: sdf-formula-cone
+;; Definizione di sdf-cone usando sdf-formula
+(defn my-cone [r1 r2 h]
+  (let [half-h (/ h 2)
+        slope  (/ (- r2 r1) h)
+        max-r  (max r1 r2)]
+    (-> (sdf-formula
+          (list 'max
+                ;; rho - r(z), dove r(z) interpola linearmente da r1 a r2
+                (list '- 'rho
+                      (list '+ r1 (list '* slope (list '+ 'z half-h))))
+                ;; |z| - h/2: ritaglia tra le due basi
+                (list '- (list 'abs 'z) half-h)))
+        ;; auto-bounds: :x-range è estensione radiale, :y-range è altezza.
+        ;; Il +1 sul y-range allarga la regione di meshing oltre i piani
+        ;; dei dischi: senza quel margine libfive non chiude le basi.
+        (assoc :x-range [(- max-r) max-r]
+               :y-range [(- (+ half-h 1)) (+ half-h 1)]))))
+
+(register cone-from-formula (my-cone 16 4 36))
+-->
+
+L'idea è che il cono è l'intersezione di due regioni: il "disco inclinato" `rho ≤ r(z)` e la lastra `|z| ≤ h/2`. Il massimo delle due funzioni distanza dà l'SDF dell'intersezione. Non è un SDF euclideo perfetto (la distanza vera fuori dalla superficie sarebbe più piccola), ma il contorno a iso-zero coincide con la superficie del cono — abbastanza per booleane e meshing.
+
+L'`assoc` finale serve al meshing automatico. `sdf-formula` non sa cosa rappresenta la tua espressione, quindi se non gli dici dove vive il solido `auto-bounds` ripiega su un cubo `[-10 10]` su ogni asse — col risultato che il nostro cono di raggio 16 e altezza 36 verrebbe clippato. `:x-range` è letto come estensione radiale (e applicato sia a X che a Y, con un po' di padding); `:y-range` come estensione lungo Z. Per il cono i numeri escono direttamente dai parametri: il raggio massimo dei due dischi (`max r1 r2`) e mezza altezza.
+
+Il `+1` aggiunto al `y-range` non è cosmetico: la superficie iso-zero delle due basi giace esattamente a `z = ±h/2`, e se la regione di meshing termina lì libfive non vede voxel "esterni" oltre il cap, quindi non lo chiude. Lasciando un po' di margine (un'unità basta) il marching cubes trova il salto di segno e produce un mesh chiuso. È una conseguenza dello schema "max di semispazi" — se costruisci una primitiva con superfici piatte tangenti al bounding box, ricordati di lasciare un po' d'aria sui lati interessati.
+
+Lo schema "max di semispazi" si generalizza: ogni solido convesso può essere descritto come max di tante funzioni `f_i(x,y,z) - 0` dove `f_i` è positivo fuori e negativo dentro l'i-esima faccia. Le primitive più sofisticate (`sdf-rounded-box`, le TPMS) usano formule più ricche, ma il principio è lo stesso.
 
 Un'insidia: `pow` con base negativa restituisce NaN (libfive calcola `pow(a,b)` come `exp(b * log(a))`). Per elevare al quadrato un'espressione che può essere negativa, usa `(* expr expr)` invece di `(pow expr 2)`.
 
@@ -179,6 +288,18 @@ Il numero è in "unità turtle" (come `resolution :n` per le curve). Internament
 ### Auto-boost per feature sottili
 
 Quando l'albero SDF contiene `sdf-shell` o `sdf-offset` piccoli, la risoluzione viene automaticamente aumentata per garantire almeno 3 voxel attraverso la feature più sottile. Non devi fare nulla: il sistema rileva lo spessore minimo e adatta.
+
+### Dolcezza delle curve
+
+Per le primitive curve (`sdf-cyl`, `sdf-cone`, `sdf-torus`) la dolcezza visiva non dipende dalla `sdf-resolution!` ma dalla **turtle resolution** corrente al momento della costruzione — esattamente come per le primitive mesh (`cyl`, `cone`, `sphere`). Il default `:n 64` dà ~64 voxel attorno al perimetro più curvo; basta alzarlo per liscere:
+
+```clojure
+;; Toro liscio solo all'interno dello scope, default altrove
+(turtle (resolution :n 256)
+  (register hi-ring (sdf-torus 16 6)))
+```
+
+Lo scope `(turtle …)` ti permette di mirare la risoluzione alta su una singola primitiva, lasciando il resto del modello al default. È la stessa semantica delle mesh, quindi un solo `resolution` controlla l'intera scena coerentemente.
 
 ### Controllo esplicito
 
