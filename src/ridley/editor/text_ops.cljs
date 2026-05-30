@@ -123,13 +123,14 @@
    - :depth - extrusion depth (default 5)
    - :font - font object (optional)
 
-   Returns vector of meshes, one per character."
+   Returns a single combined mesh (all glyphs concatenated), so it can be
+   placed with attach or used directly in mesh-difference / boolean ops."
   [txt & {:keys [size depth font] :or {size 10 depth 5}}]
   (let [glyph-data (text/text-glyph-data txt :size size :font font)
         start-pos (:position @@state/turtle-state-var)
         heading (:heading @@state/turtle-state-var)
         up (:up @@state/turtle-state-var)
-        meshes (atom [])]
+        glyph-meshes (atom [])]
     (doseq [{:keys [contours x-offset]} glyph-data]
       (when (seq contours)
         (let [{:keys [outer holes]} (classify-glyph-contours contours)]
@@ -159,9 +160,12 @@
                                             {:position glyph-pos
                                              :heading heading
                                              :up up})]
-                  (swap! meshes conj mesh-with-pose)
-                  (swap! @state/turtle-state-var update :meshes conj mesh-with-pose))))))))
-    @meshes))
+                  (swap! glyph-meshes conj mesh-with-pose))))))))
+    ;; Concatenate all glyphs into a single mesh so extrude-text returns one
+    ;; mesh (placeable via attach, usable directly in mesh-difference etc.).
+    (when-let [combined (manifold/concat-meshes @glyph-meshes)]
+      (swap! @state/turtle-state-var update :meshes conj combined)
+      combined)))
 
 (defn ^:export build-text-heightmap-mesh
   "Build a text mesh in canonical heightmap pose: glyphs in the XY plane
@@ -265,7 +269,8 @@
    - :align - :start (default), :center, or :end
    - :spacing - extra letter spacing (default 0)
 
-   Returns vector of meshes, one per glyph."
+   Returns a single combined mesh (all glyphs concatenated), so it can be
+   placed with attach or used directly in mesh-difference / boolean ops."
   [txt path & {:keys [size depth font overflow align spacing]
                :or {size 10 depth 5 overflow :truncate align :start spacing 0}}]
   (let [glyph-data (text/text-glyph-data txt :size size :font font)
@@ -290,7 +295,7 @@
         turtle-up (:up @@state/turtle-state-var)
         turtle-preserve-up (:preserve-up @@state/turtle-state-var)
         turtle-reference-up (:reference-up @@state/turtle-state-var)
-        meshes (atom [])]
+        glyph-meshes (atom [])]
     ;; x-offset in glyph-data is already cumulative, so we use it directly
     ;; We only need to add start-offset (for alignment) and apply scale-factor
     (doseq [[glyph-idx {:keys [contours x-offset advance-width]}] (map-indexed vector glyph-data)]
@@ -330,6 +335,9 @@
                   (let [transformed (transform-mesh-to-turtle-orientation raw-mesh glyph-position heading up)
                         with-pose (assoc transformed :creation-pose
                                          {:position glyph-position :heading heading :up up})]
-                    (swap! meshes conj with-pose)
-                    (swap! @state/turtle-state-var update :meshes conj with-pose)))))))))
-    @meshes))
+                    (swap! glyph-meshes conj with-pose)))))))))
+    ;; Concatenate all glyphs into a single mesh so text-on-path returns one
+    ;; mesh (placeable via attach, usable directly in mesh-difference etc.).
+    (when-let [combined (manifold/concat-meshes @glyph-meshes)]
+      (swap! @state/turtle-state-var update :meshes conj combined)
+      combined)))
