@@ -14,7 +14,8 @@ status: stable
 ## Description
 
 Construct an SDF node for a box with dimensions `sx × sy × sz` and
-corners rounded with radius `r`. The result is a **true SDF** — the
+corners rounded with radius `r`. Centered on the current turtle pose,
+same axis convention as `sdf-box`. The result is a **true SDF** — the
 field reports the actual signed distance everywhere — so the shape
 combines cleanly with other SDFs under `sdf-intersection`,
 `sdf-difference`, and `sdf-blend`.
@@ -74,7 +75,8 @@ periodic patterns: its true-SDF field keeps booleans well-behaved.
 
 ## See also
 
-- **SDF primitives:** `sdf-sphere`, `sdf-box`, `sdf-cyl`, `sdf-torus`
+- **SDF primitives:** `sdf-sphere`, `sdf-box`, `sdf-cyl`, `sdf-cone`,
+  `sdf-torus`
 - **Avoid for rounding:** `sdf-offset`
 - **Booleans / blends:** `sdf-union`, `sdf-blend`, `sdf-difference`
 - **Transforms:** `translate`, `rotate`, `scale`, `attach`

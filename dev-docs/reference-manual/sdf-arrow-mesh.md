@@ -71,4 +71,4 @@ default `15`.
 - **Auto-materialization:** `sdf-ensure-mesh`, `sdf-resolution!`
 - **Predicate:** `sdf-node?`
 - **All SDF primitives:** `sdf-sphere`, `sdf-box`, `sdf-cyl`,
-  `sdf-rounded-box`, `sdf-torus`
+  `sdf-cone`, `sdf-rounded-box`, `sdf-torus`

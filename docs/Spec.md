@@ -368,6 +368,12 @@ Create paths from coordinate pairs (like `poly` for shapes):
 ;; 2D bounding box
 (bounds-2d path)                     ; {:min [x y] :max [x y] :center [cx cy] :size [w h]}
 
+;; 2D contour measurement
+(
+  rimeter shape)              ; Length of outer closed contour (closing edge included)
+(shape-perimeters shape)             ; [outer hole1 hole2 ...] per-contour lengths
+(path-length path)                   ; Length of open path (3D, no closing edge)
+
 ;; Extract portion of path by height
 (subpath-y path from-h to-h)         ; Clip path vertically, output starts at Y=0
 
@@ -594,7 +600,7 @@ The path's X coordinates represent the radius at each point along the extrusion.
 
 **`woven` options:** `:warp` (6), `:weft` (4), `:amplitude` (1.0), `:thread` (0.42, thread width as fraction of cell, 0..0.5).
 
-**`heightmap` options:** `:amplitude` (1.0), `:tile-x` (1), `:tile-y` (1), `:offset-x` (0), `:offset-y` (0), `:center` (false; when true, shifts sample range to [-0.5, 0.5]).
+**`heightmap` options:** `:amplitude` (1.0), `:center` (false; when true, shifts sample range to [-0.5, 0.5]), `:direction` (`:circumference` default — width wraps around — or `:height` — width runs along the path), `:fit` (`:auto` default / `:physical` / `:stretch`), `:scale` (1.0; physical mode), `:surface-width` / `:surface-height` (physical overrides; default = base-shape perimeter / loft length), `:tile-x` (1), `:tile-y` (1) (integer count or `:fill` to pack seamless copies), `:offset-x` (0), `:offset-y` (0). `u` runs around the cross-section, `v` along the path. In `:physical` mode the heightmap lands at its real-world size (e.g. `text-heightmap`); `:stretch` fills the whole surface (classic, for seamless patterns).
 
 **Noise and heightmap functions** (available globally):
 
@@ -606,6 +612,7 @@ The path's X coordinates represent the radius at each point along the extrusion.
 | `(fbm x y octaves lacunarity gain)` | fbm with full control |
 | `(mesh-to-heightmap mesh :resolution n)` | Rasterize mesh z-values into a 2D grid |
 | `(weave-heightmap :threads 4 :spacing 5 :radius 2 :resolution 128)` | Analytical weave heightmap generator |
+| `(text-heightmap "Ridley" :size 5)` | Heightmap from text, sized in real units (`heightmap :fit :physical` keeps it ~`:size` tall, reads straight) |
 | `(sample-heightmap hm u v)` | Sample heightmap with bilinear interpolation (auto-tiles) |
 | `(heightmap-to-mesh hm)` | Convert heightmap to a flat XY mesh with Z from values |
 | `(mesh-bounds mesh)` | 3D bounding box `{:min [x y z] :max [x y z] :center [cx cy cz] :size [sx sy sz]}` |
@@ -613,6 +620,8 @@ The path's X coordinates represent the radius at each point along the extrusion.
 **`weave-heightmap` options:** `:threads` (4), `:spacing` (5), `:radius` (2), `:lift` (same as radius), `:resolution` (128), `:profile` (`:round` or `:flat`), `:thickness` (radius * 0.5, for `:flat` profile).
 
 **`mesh-to-heightmap` options:** `:resolution` (128), `:bounds` `[x0 y0 x1 y1]`, `:offset-x`, `:offset-y`, `:length-x`, `:length-y` (custom sampling window).
+
+**`text-heightmap` options:** `:size` (5; physical relief height), `:resolution` (256, grid), `:curve-segments` (defaults to `max 16, resolution/8`; glyph-outline smoothness — the dominant quality factor, not the grid), `:font` (`:roboto`), `:depth` (1, irrelevant after normalization). Width = text advance **including spaces**, height = glyph height; both real `:size` units, carried as `:phys-width`/`:phys-height` so the `heightmap` shape-fn can place it at true size (`:physical` fit).
 
 **`heightmap-to-mesh` options:** `:z-scale` (1.0; amplify Z), `:size` (fit into NxN square at origin).
 
@@ -2186,12 +2195,16 @@ Meshing is **lazy**: it happens automatically when an SDF meets a mesh boundary 
 ### Primitives
 
 ```clojure
-(sdf-sphere r)                  ; Sphere centered at origin
-(sdf-box sx sy sz)              ; Axis-aligned box with dimensions sx x sy x sz
-(sdf-cyl r h)                   ; Cylinder along Z axis with radius r and height h
+(sdf-sphere r)                  ; Sphere of radius r
+(sdf-box size)                  ; Cube of given side
+(sdf-box sx sy sz)              ; Box with sx along right, sy along up, sz along heading
+(sdf-cyl r h)                   ; Cylinder of radius r, height h along the turtle's heading
+(sdf-cone r1 r2 h)              ; Cone or frustum, r1 at +heading, r2 at -heading
 (sdf-rounded-box sx sy sz r)    ; Box with rounded corners (true SDF)
-(sdf-torus R r)                 ; Torus in the XY plane around Z. R = major, r = minor
+(sdf-torus R r)                 ; Torus axis along the turtle's up. R = major, r = minor
 ```
+
+Like mesh primitives, SDF primitives spawn at the current turtle pose: position, heading, and up are all baked into the resulting SDF. TPMS and periodic patterns (`sdf-gyroid`, `sdf-slats`, `sdf-bars`, `sdf-bar-cage`, `sdf-grid`, …) are the exception — they fill space and stay world-aligned.
 
 Prefer `sdf-rounded-box` over `(sdf-offset (sdf-box ...) r)` when combining with other SDFs (see [SDF-specific operations](#sdf-specific-operations) below for why offset is not a true SDF).
 
@@ -2494,15 +2507,17 @@ Convert text to 2D shapes using opentype.js font parsing:
 (text-shapes "ABC" :size 20)            ; Returns vector of shapes
 
 ;; Single character shape
-(char-shape "A" font size)              ; Returns shape for one character
+(char-shape "A" :roboto 20)             ; Returns shape for one character
 
-;; Load custom font
-(load-font! "/path/to/font.ttf")        ; Returns promise
-(load-font! :roboto-mono)               ; Built-in monospace font
-
-;; Check if font is ready
-(font-loaded?)                          ; true when default font loaded
+;; Use a custom font registered in Settings → Fonts
+(text-shape "Hello" :font :inter-bold)  ; Synchronous lookup by id
 ```
+
+Fonts are looked up by keyword id from a registry populated at startup
+(`:roboto`, `:roboto-mono`) and from the Settings → Fonts panel (custom
+fonts persist across sessions on desktop). Passing an unregistered id
+raises a deterministic error pointing at the panel — there is no async
+"loading, please retry" path.
 
 **Return value of `text-shape`.** A vector of shapes, with one entry per **outer contour** found in the string — not strictly one per character. Composite glyphs produce multiple shapes:
 
@@ -2526,24 +2541,24 @@ Pass the whole vector to `extrude` — it combines the per-shape extrusions into
 ```clojure
 (extrude-text "RIDLEY")                          ; Defaults: :size 10 :depth 5
 (extrude-text "RIDLEY" :size 40 :depth 3)        ; Bigger glyphs, thinner extrusion
-(extrude-text "RIDLEY" :size 40 :font my-font)   ; Custom font object
+(extrude-text "RIDLEY" :font :roboto-mono)       ; Different registered font
 ```
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `:size` | 10 | Font size in units |
 | `:depth` | 5 | Extrusion depth along the turtle's up axis |
-| `:font` | default Roboto | opentype font object (e.g. from `load-font!`) |
+| `:font` | `:roboto` | Keyword id of a registered font (built-ins or custom from Settings → Fonts) |
 
 Returns one mesh per character. Use `concat-meshes` or pass directly to a downstream boolean operation if you need a single combined mesh.
 
 **Measuring text.** `text-width` returns the horizontal extent (in the same units as `:size`) a given string would occupy when rendered:
 
 ```clojure
-(text-width "Hello" font 20)                     ; => width in units at size 20
+(text-width "Hello" :roboto 20)                  ; => width in units at size 20
 ```
 
-Useful for layout — centering text along a path, sizing a backing plate, computing tracking. `font` is an opentype font object (the default Ridley font is available via `(font-loaded?)`-gated globals; custom fonts come from `load-font!`).
+Useful for layout — centering text along a path, sizing a backing plate, computing tracking. `font` is a registered font id keyword (or `nil` for the default `:roboto`).
 
 ### Text on path
 

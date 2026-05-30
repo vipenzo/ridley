@@ -26,14 +26,12 @@ counters (holes inside `o`, `B`, …) are dropped.
 For full glyph fidelity with holes and composite parts, use
 `text-shape`. For a single character, use `char-shape`.
 
-Requires the default font to be loaded (see `font-loaded?`,
-`load-font!`).
-
 ## Parameters
 
 - `text` — the string to render.
 - `:size` (default `10`) — font size in units.
-- `:font` (default the loaded Roboto) — opentype.js font object.
+- `:font` (default `:roboto`) — keyword id of a registered font
+  (`:roboto`, `:roboto-mono`, or any custom id from Settings → Fonts).
 - `:curve-segments` (default `8`) — segments per Bezier curve.
 
 ## Example
@@ -83,5 +81,4 @@ extrusion call.
 
 ## See also
 
-- **Related:** `text-shape`, `char-shape`, `extrude-text`,
-  `text-width`, `load-font!`, `font-loaded?`
+- **Related:** `text-shape`, `char-shape`, `extrude-text`, `text-width`

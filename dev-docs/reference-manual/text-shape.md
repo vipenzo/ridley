@@ -18,10 +18,10 @@ boolean operations. Returns a vector of shapes — **one entry per outer
 contour**, not per character. Pure function; does not modify turtle
 state.
 
-The string is rendered with opentype.js using the default Roboto font (or
-a custom one passed via `:font`). Composite glyphs are decomposed into
-one shape per outer contour, with counters (e.g. the hole inside `o` or
-`a`) attributed to their containing outer:
+The string is rendered with opentype.js using the default font
+(`:roboto`) or any other registered id passed via `:font`. Composite
+glyphs are decomposed into one shape per outer contour, with counters
+(e.g. the hole inside `o` or `a`) attributed to their containing outer:
 
 | Glyph | Outer contours | Shapes emitted |
 |-------|----------------|----------------|
@@ -38,15 +38,13 @@ outer-only), use `text-shapes`. For a single character, use `char-shape`.
 For a one-call shortcut that goes straight to a 3D mesh, use
 `extrude-text`.
 
-Requires the default font to be loaded. Check with `font-loaded?` and
-pre-load with `load-font!` if not.
-
 ## Parameters
 
 - `text` — the string to render.
 - `:size` (default `10`) — font size in units.
-- `:font` (default the loaded Roboto) — opentype.js font object, as
-  returned by `load-font!`.
+- `:font` (default `:roboto`) — keyword id of a registered font.
+  Built-in ids are `:roboto` and `:roboto-mono`; custom ids are added
+  in Settings → Fonts (desktop). An unregistered id raises an error.
 - `:curve-segments` (default `8`) — number of straight segments per
   Bezier curve in the glyph outlines. Increase for smoother letters at
   large sizes.
@@ -72,16 +70,14 @@ automatically.
 
 <!-- example-source: text-shape-custom-font -->
 ```clojure
-;; Pass a custom font (load-font! returns a promise; resolve before use)
-(-> (load-font! :roboto-mono)
-    (.then (fn [mono]
-             (register code
-               (extrude (text-shape "fn ()" :size 20 :font mono) (f 2))))))
+;; Pass a registered font id — synchronous lookup, no async wait
+(register code
+  (extrude (text-shape "fn ()" :size 20 :font :roboto-mono) (f 2)))
 ```
 <!-- /example-source -->
 
-`:font` lets you swap the built-in Roboto for any opentype font loaded
-via `load-font!` — built-in keys (`:roboto`, `:roboto-mono`) or a URL.
+`:font` swaps the default Roboto for any registered id. Custom ids are
+registered in Settings → Fonts and persist across sessions.
 
 ## Notes
 
@@ -89,11 +85,11 @@ via `load-font!` — built-in keys (`:roboto`, `:roboto-mono`) or a URL.
   on `y = 0`, starting at `x = 0`. The shapes carry positional metadata
   so `extrude` preserves the relative layout.
 - For accurate width measurements before extrusion, use `text-width`.
-- If the default font has not loaded yet (e.g. before `init-default-font!`
-  completes), `text-shape` returns `nil`. Gate calls with
-  `(when (font-loaded?) …)` in startup code.
+- An unregistered `:font` id raises a deterministic error pointing at
+  Settings → Fonts. Built-ins (`:roboto`, `:roboto-mono`) are always
+  available; custom ids must be registered first.
 
 ## See also
 
 - **Related:** `text-shapes`, `char-shape`, `extrude-text`,
-  `text-on-path`, `text-width`, `load-font!`, `font-loaded?`, `extrude`
+  `text-on-path`, `text-width`, `extrude`

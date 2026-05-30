@@ -201,6 +201,33 @@
     :description "Compute the 2D axis-aligned bounding box of a path or a shape, in the XY plane. Returns a map:"
     :path "dev-docs/reference-manual/bounds-2d.md"}
 
+   "shape-perimeter"
+   {:name "shape-perimeter"
+    :category "path"
+    :status "stable"
+    :since ""
+    :signature "(shape-perimeter shape)"
+    :description "Total length of a shape's outer closed contour (sum of edge lengths of the sampled polygon, including the closing edge). Holes are ignored — use shape-perimeters for the per-contour breakdown. Low-resolution curves slightly underestimate (inscribed polygon)."
+    :path "dev-docs/reference-manual/shape-perimeter.md"}
+
+   "shape-perimeters"
+   {:name "shape-perimeters"
+    :category "path"
+    :status "stable"
+    :since ""
+    :signature "(shape-perimeters shape)"
+    :description "Per-contour lengths of a shape as a vector [outer hole1 hole2 ...]. Element 0 matches shape-perimeter; the rest are the hole contours in order."
+    :path "dev-docs/reference-manual/shape-perimeters.md"}
+
+   "path-length"
+   {:name "path-length"
+    :category "path"
+    :status "stable"
+    :since ""
+    :signature "(path-length path)"
+    :description "Total length of an open path: sum of euclidean distances between consecutive 3D turtle waypoints, with no closing edge. True 3D length (equals the 2D length for a planar path). Measures the per-f waypoint polyline."
+    :path "dev-docs/reference-manual/path-length.md"}
+
    "box"
    {:name "box"
     :category "3d-primitives"
@@ -504,7 +531,7 @@
     :status "stable"
     :since ""
     :signature "(extrude-text text & {:keys [size depth font]})"
-    :description "Convert a text string directly into 3D meshes, one per character, at the current turtle pose. Glyphs flow along the turtle's heading and extrude along its up axis. Returns **a vector of meshes** (not a single mesh). Modifies turtle state: each emitted mesh is added to the current turtle's mesh list as it would be with any other constructor."
+    :description "Convert a text string directly into a 3D mesh at the current turtle pose. Glyphs flow along the turtle's heading and extrude along its up axis. Returns a single mesh combining all glyphs (or nil if the text is empty). The mesh is also added to the current turtle's mesh list, like any other constructor."
     :path "dev-docs/reference-manual/extrude-text.md"}
 
    "f"
@@ -660,15 +687,6 @@
     :description "Execute a recorded path on the live turtle. Each command in the path is applied to the global turtle state: position, heading, and up are advanced segment by segment; marks created during recording are NOT re-emitted (the live turtle has no recorder). If the pen is down, lines are drawn just as if the commands had been issued directly."
     :path "dev-docs/reference-manual/follow-path.md"}
 
-   "font-loaded?"
-   {:name "font-loaded?"
-    :category "text"
-    :status "stable"
-    :since ""
-    :signature "(font-loaded?)"
-    :description "Predicate. Return `true` if the default Roboto font has finished loading and is ready for `text-shape` / `extrude-text` / `text-on-path` calls that do not pass an explicit `:font` option. Return `false` if loading has not yet completed."
-    :path "dev-docs/reference-manual/font-loaded?.md"}
-
    "get-anchor"
    {:name "get-anchor"
     :category "turtle-movement"
@@ -719,8 +737,8 @@
     :category "generative-operations"
     :status "stable"
     :since ""
-    :signature "(heightmap shape-or-fn hm & {:keys [amplitude tile-x tile-y offset-x offset-y center]})"
-    :description "Shape-fn that displaces the profile radially using values sampled from a 2D heightmap. The vertex's angular position maps to `u`, the loft fraction `t` maps to `v`, both into the heightmap's parameter space. The sampled value is scaled by `:amplitude` and used as the radial offset. Tiling and centring let the same heightmap repeat or be biased around zero. Used with `loft` or `revolve`. Does not modify turtle state."
+    :signature "(heightmap shape-or-fn hm & {:keys [amplitude center direction fit scale surface-width surface-height tile-x tile-y offset-x offset-y]})"
+    :description "Shape-fn that displaces the profile radially using values sampled from a 2D heightmap. `u` runs around the cross-section (circumference), `v` along the loft path (height). Two fit modes: `:stretch` fills the whole surface (classic, for seamless patterns) and `:physical` places the heightmap at its real-world size (e.g. `:size 5` text stays ~5 units tall — circumference comes from the base shape's perimeter, height from the loft length). `:fit :auto` (default) picks physical when the heightmap knows its size, else stretch. `:direction` chooses wrap-around vs climb-the-axis; `:scale`, `:tile-x`/`:tile-y` (integer or `:fill`), and `:offset-x`/`:offset-y` control size, coverage and placement. Used with `loft` or `revolve`. Does not modify turtle state."
     :path "dev-docs/reference-manual/heightmap.md"}
 
    "heightmap-to-mesh"
@@ -812,15 +830,6 @@
     :signature "(list-faces mesh)"
     :description "Return every face of `mesh` as a sequence of info maps. Each map has at least `:id` (the face identifier — a keyword on primitives, an integer on CSG-derived meshes), `:normal`, `:heading`, and `:center` — all `[x y z]` vectors. Pure function; does not modify turtle state."
     :path "dev-docs/reference-manual/list-faces.md"}
-
-   "load-font!"
-   {:name "load-font!"
-    :category "text"
-    :status "stable"
-    :since ""
-    :signature "(load-font! url-or-key)"
-    :description "Load an opentype-compatible font (TTF, OTF, WOFF) asynchronously. Returns a JavaScript promise that resolves to the font object. The font object is cached, so repeated calls with the same key/URL return the cached value without re-fetching."
-    :path "dev-docs/reference-manual/load-font!.md"}
 
    "loft"
    {:name "loft"
@@ -1592,8 +1601,8 @@
     :category "sdf-modeling"
     :status "stable"
     :since ""
-    :signature "(sdf-box sx sy sz)"
-    :description "Construct an SDF node for an axis-aligned box with dimensions `sx × sy × sz`, centered at the origin. Returns a lightweight SDF tree map; no geometry is computed until meshing."
+    :signature "(sdf-box size) or (sdf-box sx sy sz)"
+    :description "Construct an SDF node for a box, centered on the current turtle pose. The 1-arg form builds a cube of side `size`; the 3-arg form takes individual side lengths (same convention as mesh `box`). Returns a lightweight SDF tree; no geometry is computed until meshing."
     :path "dev-docs/reference-manual/sdf-box.md"}
 
    "sdf-clip"
@@ -1611,8 +1620,17 @@
     :status "stable"
     :since ""
     :signature "(sdf-cyl r h)"
-    :description "Construct an SDF node for a cylinder of radius `r` and height `h`, centered at the origin with its axis along Z. Returns a lightweight SDF tree; no geometry is computed until meshing."
+    :description "Construct an SDF node for a cylinder of radius `r` and height `h`, centered on the current turtle pose with its axis along the turtle's heading. Returns a lightweight SDF tree; no geometry is computed until meshing."
     :path "dev-docs/reference-manual/sdf-cyl.md"}
+
+   "sdf-cone"
+   {:name "sdf-cone"
+    :category "sdf-modeling"
+    :status "stable"
+    :since ""
+    :signature "(sdf-cone r1 r2 h)"
+    :description "Construct an SDF node for a cone or truncated cone (frustum), centered on the current turtle pose, axis along the turtle's heading. `r1` is the radius at +heading (forward), `r2` at -heading (backward); use `r2 = 0` for a sharp tip. Built on top of `sdf-formula` as `max(rho - r(z), |z| - h/2)`."
+    :path "dev-docs/reference-manual/sdf-cone.md"}
 
    "sdf-diamond"
    {:name "sdf-diamond"
@@ -2124,7 +2142,7 @@
     :status "stable"
     :since ""
     :signature "(text-on-path text path & {:keys [size depth font spacing align overflow]})"
-    :description "Place 3D text along a curved path: each glyph is positioned at its advance-width offset along the path and rotated to align with the local tangent. Returns a **vector of meshes**, one per glyph. Mutates the turtle state (each emitted mesh is added to the current turtle's mesh list), like other constructors."
+    :description "Place 3D text along a curved path: each glyph is positioned at its advance-width offset along the path and rotated to align with the local tangent. Returns a single mesh combining all glyphs (or nil if the text is empty). The mesh is also added to the current turtle's mesh list, like other constructors."
     :path "dev-docs/reference-manual/text-on-path.md"}
 
    "text-shape"
@@ -2306,6 +2324,15 @@
     :signature "(weave-heightmap & {:keys [threads spacing radius lift resolution profile thickness]})"
     :description "Generate a weave-pattern heightmap analytically — no mesh required. Returns a heightmap value (a map with `:type :heightmap`) ready for use with the `heightmap` shape-fn, `sample-heightmap`, or `heightmap-to-mesh`. Much faster than building tube meshes and rasterising them. Does not modify turtle state."
     :path "dev-docs/reference-manual/weave-heightmap.md"}
+
+   "text-heightmap"
+   {:name "text-heightmap"
+    :category "generative-operations"
+    :status "stable"
+    :since ""
+    :signature "(text-heightmap text & {:keys [size resolution font depth curve-segments]})"
+    :description "Generate a heightmap directly from a text string. Returns a heightmap value (a map with `:type :heightmap`) — the same structure as `weave-heightmap` / `mesh-to-heightmap` — ready for the `heightmap` shape-fn, `sample-heightmap`, or `heightmap-to-mesh`. Letters lie in a canonical orientation (width = text advance INCLUDING spaces, height = glyph height), both in real `:size` units. The output carries its physical footprint (`:phys-width`/`:phys-height`), so the `heightmap` shape-fn in `:physical` mode lands the text at its true size (`:size 5` ≈ 5 units tall) rather than stretching it. `:curve-segments` (default scales with `:resolution`) controls glyph-outline smoothness — the dominant factor in relief quality, not the grid. Direction, coverage and tiling are decided on the `heightmap` side. Does not modify turtle state."
+    :path "dev-docs/reference-manual/text-heightmap.md"}
 
    "with-path"
    {:name "with-path"

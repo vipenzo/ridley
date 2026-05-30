@@ -513,6 +513,47 @@
          :centroid [(/ (reduce + xs) (count xs)) (/ (reduce + ys) (count ys))]
          :size [(- x-max x-min) (- y-max y-min)]}))))
 
+(defn- contour-perimeter
+  "Sum of euclidean distances around a CLOSED ring of [x y] points,
+   including the closing edge (last -> first). Returns 0 for < 2 points.
+   Closure is implicit: the ring is NOT expected to repeat its first point."
+  [points]
+  (let [n (count points)]
+    (if (< n 2)
+      0
+      (loop [i 0 total 0]
+        (if (>= i n)
+          total
+          (let [[x1 y1] (nth points i)
+                [x2 y2] (nth points (mod (inc i) n))
+                dx (- x2 x1) dy (- y2 y1)]
+            (recur (inc i) (+ total (Math/sqrt (+ (* dx dx) (* dy dy)))))))))))
+
+(defn ^:export shape-perimeter
+  "Total length of a shape's OUTER contour: the sum of euclidean distances
+   between consecutive points of the closed ring, including the closing
+   edge (last -> first). Holes are ignored — use `shape-perimeters` for the
+   per-contour breakdown.
+
+   The result is the length of the SAMPLED polygon, so low-resolution
+   circles/arcs/beziers slightly UNDERESTIMATE (inscribed polygon): a circle
+   of radius r at n segments gives 2·n·r·sin(π/n) < 2πr. Increase the
+   shape's segment count for more precision. Returns nil for non-shapes."
+  [shape]
+  (when (shape? shape)
+    (contour-perimeter (:points shape))))
+
+(defn ^:export shape-perimeters
+  "Per-contour lengths of a shape as a vector [outer hole1 hole2 ...].
+   Element 0 is the outer contour (same value as `shape-perimeter`); the
+   remaining elements are the hole contours in order. Each entry is a
+   closed-ring perimeter (see `shape-perimeter` for the sampling caveat).
+   Returns nil for non-shapes."
+  [shape]
+  (when (shape? shape)
+    (into [(contour-perimeter (:points shape))]
+          (map contour-perimeter (:holes shape)))))
+
 (defn- offset-point-2d
   "Offset a 2D point along a normal by a signed distance."
   [[px py] [nx ny] dist]

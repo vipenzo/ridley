@@ -25,42 +25,39 @@ Per le shape dei singoli caratteri (senza composizione automatica dei contorni):
 (text-shapes "ABC" :size 20)        ;; vettore di shape, una per carattere
 ```
 
-`char-shape` produce la shape di un singolo carattere, ma richiede un oggetto font esplicito (vedi sotto):
+`char-shape` produce la shape di un singolo carattere, e accetta l'id di un font (vedi sotto):
 
 ```clojure
-(char-shape "A" my-font 20)         ;; singolo carattere con font esplicito
+(char-shape "A" :roboto-mono 20)    ;; singolo carattere con font specifico
 ```
 
 ### Font
 
 Il font di default è Roboto Regular. `text-shape`, `text-shapes`, `extrude-text` e `text-on-path` lo usano automaticamente senza che tu debba passare nulla.
 
-Per usare un font diverso, caricalo con `load-font!`:
+Per usare un font diverso, ti riferisci a esso tramite il suo **id** (una keyword). Due font sono sempre disponibili in ogni versione di Ridley, web inclusa: `:roboto` e `:roboto-mono`. Li passi alle funzioni di testo con l'opzione `:font`:
+
+<!-- example-source: text-font-builtin
+(register mono-title (extrude-text "RIDLEY" :size 40 :font :roboto-mono))
+-->
+
+Un font non è un oggetto da "caricare" prima dell'uso: è una risorsa registrata, citata per id — come una mesh nel registro o un marcatore in un path. Passi la keyword dove serve, e Ridley risolve l'id internamente.
+
+**Font custom: solo nella versione desktop.** I due built-in sono gli unici font disponibili nella versione web. Per usare font aggiuntivi serve l'app desktop, dove li registri una volta dal pannello Settings → Fonts: scegli un file (`.ttf`, `.otf`, `.woff`, `.woff2`) e gli assegni un id. Da quel momento il font è disponibile in tutti i progetti con quell'id, e la registrazione persiste fra sessioni (come le librerie). Nel codice lo usi come i built-in:
 
 ```clojure
-;; Font monospace built-in
-(def mono (load-font! :roboto-mono))
-
-;; Font custom da file (desktop)
-(def my-font (load-font! "/path/to/font.ttf"))
-
-;; Usa il font caricato
-(extrude-text "RIDLEY" :size 40 :font mono)
-(char-shape "A" mono 20)
+(extrude-text "RIDLEY" :size 40 :font :il-mio-font)
 ```
 
-`load-font!` restituisce l'oggetto font. È asincrono internamente, ma in pratica i font built-in si caricano prima del primo eval. Un font custom da file potrebbe richiedere un secondo eval per essere disponibile.
-
-`(font-loaded?)` restituisce `true` se il font di default (Roboto) è pronto. Non accetta parametri: è un check sul font di default, non su quelli custom.
+Se passi un id non registrato, l'errore è immediato e chiaro: `Font id :x is not registered. Add it in Settings → Fonts.` Nessuna attesa, nessun "riprova": o l'id c'è, o non c'è. Tieni presente che un modello che usa un font custom funziona solo dove quell'id è stato registrato — quindi sull'app desktop di chi ha aggiunto quel font. Condividendo il modello, condividi anche il file del font e l'istruzione di registrarlo con lo stesso id; chi apre il modello nella versione web, o senza quel font, otterrà l'errore di id non registrato.
 
 ### Misurare il testo
 
-`text-width` restituisce la larghezza orizzontale che una stringa occuperà una volta renderizzata. Richiede un oggetto font esplicito:
+`text-width` restituisce la larghezza orizzontale che una stringa occuperà una volta renderizzata. Accetta l'id del font:
 
-```clojure
-(def mono (load-font! :roboto-mono))
-(text-width "Hello" mono 20)    ;; => larghezza in unità alla size 20
-```
+<!-- example-source: text-width :no-run
+(println (text-width "Hello" :roboto-mono 20))    ;; => larghezza in unità alla size 20
+-->
 
 Utile per il layout: centrare il testo lungo un percorso, dimensionare una piastra di supporto, calcolare la spaziatura.
 
@@ -69,10 +66,6 @@ Utile per il layout: centrare il testo lungo un percorso, dimensionare una piast
 ### Extrude manuale
 
 Puoi passare il vettore di shape da `text-shape` direttamente a `extrude`:
-
-```clojure
-(register title (extrude (text-shape "RIDLEY" :size 40) (f 5)))
-```
 
 <!-- example-source: text-extrude
 (register title (extrude (text-shape "RIDLEY" :size 40) (f 5)))
@@ -87,25 +80,18 @@ Puoi passare il vettore di shape da `text-shape` direttamente a `extrude`:
 ```clojure
 (extrude-text "RIDLEY")                            ;; default: size 10, depth 5
 (extrude-text "RIDLEY" :size 40 :depth 3)          ;; personalizzato
-(extrude-text "RIDLEY" :size 40 :font my-font)     ;; font custom
+(extrude-text "RIDLEY" :size 40 :font :roboto-mono);; font specifico per id
 ```
 
 <!-- example-source: extrude-text
 (register title (extrude-text "RIDLEY" :size 40 :depth 3))
 -->
 
-Il testo scorre lungo l'heading della tartaruga e si estrude lungo l'up. Restituisce una mesh per carattere; usa `concat-meshes` se ti serve un'unica mesh.
+Il testo scorre lungo l'heading della tartaruga e si estrude lungo l'up. Restituisce un'unica mesh contenente tutti i glifi, pronta per essere combinata con booleane o passata a `attach`.
 
 ### Testo lungo un percorso
 
 `text-on-path` piazza testo 3D lungo un percorso curvo:
-
-```clojure
-(def curve (path (dotimes [_ 40] (f 2) (th 3)))))
-
-(register curved-text
-  (text-on-path "Hello World" curve :size 15 :depth 3))
-```
 
 <!-- example-source: text-on-path
 (def curve (path (dotimes [_ 40] (f 2) (th 3))))
@@ -116,62 +102,84 @@ Ogni lettera viene posizionata tangente al percorso nel punto corrispondente. Le
 
 `:spacing` aggiunge (o toglie, se negativo) spazio extra fra le lettere. `:align` controlla l'allineamento: `:start` (default), `:center`, `:end`. `:overflow` decide cosa fare se il testo è più lungo del percorso: `:truncate` (default, taglia), `:wrap` (ricomincia dall'inizio, utile per percorsi chiusi), `:scale` (scala il testo per farlo stare).
 
+### Testo su un percorso 3D: preserve-up
+
+Finché il percorso resta nel piano, le lettere stanno dritte da sole. Ma su un percorso che sale nello spazio — una spirale, un'elica — emerge un problema sottile. Ogni `th` e `tv` è una rotazione attorno agli assi *correnti* della tartaruga, e componendone tanti in sequenza il vettore up accumula una deriva: comincia a ruotare attorno all'heading senza che tu l'abbia chiesto (un *roll implicito*). Il testo, che usa l'up per sapere da che parte sta "in alto", si arrotola su sé stesso e diventa illeggibile.
+
+`:preserve-up`, come opzione di `turtle`, cancella questa deriva: cattura l'up all'ingresso dello scope e dopo ogni rotazione lo riproietta sul piano perpendicolare all'heading. L'heading non cambia — quindi il percorso e le posizioni restano identici — ma l'up resta ancorato, e le lettere stanno su.
+
+<!-- example-source: text-spiral
+(def spiral (path (tv 7) (dotimes [_ 500] (f 1) (th 3))))
+(register spiral-text
+  (turtle :preserve-up
+    (text-on-path
+      "Once upon a time in a galaxy far far away there was a spiral that went up and up and up and never stopped and she's buying a stairway to heaven"
+      spiral :size 6 :depth 1.2)))
+-->
+
+Lo `(tv 7)` iniziale inclina la tartaruga verso l'alto; i 500 passi di `(f 1) (th 3)` la fanno girare salendo, tracciando una spirale ascendente. Senza `:preserve-up` il testo si avviterebbe progressivamente; con, segue la spirale restando leggibile. È lo stesso flag che serve per eliche, molle, e corrimani che salgono.
+
 ### Pattern comune: testo inciso o in rilievo
 
 Il testo 3D diventa utile quando lo combini con un pezzo tramite booleane:
 
-```clojure
-;; Testo inciso su una piastra
-(def plate (box 80 20 3))
-(def label (attach (extrude-text "MODEL-A" :size 12 :depth 2) (u 2)))
-
-(register engraved (mesh-difference plate label))
-```
-
 <!-- example-source: text-engraved
-(def plate (box 80 20 3))
-(def label (attach (extrude-text "MODEL-A" :size 12 :depth 2) (u 2)))
+(def plate (attach (box 3 20 80) (cp-f -40)))
+(def label (attach (extrude-text "MODEL-A" :size 12 :depth 2) (f 15) (u -4)))
 (register engraved (mesh-difference plate label))
 -->
 
-Per testo in rilievo, usa `mesh-union` al posto di `mesh-difference`. La profondità dell'estrusione (`:depth`) controlla quanto il testo sporge o penetra.
+Un dettaglio sull'orientamento: il testo si sviluppa lungo l'heading della tartaruga, quindi la piastra che lo deve ospitare va dimensionata lungo lo stesso asse (qui `box 3 20 80`, con la lunghezza 80 sull'asse del testo). La `cp-f -40` sposta la creation-pose della piastra a un'estremità, così il testo — che parte dalla posa corrente — si allinea al bordo invece di centrarsi. Per testo in rilievo, usa `mesh-union` al posto di `mesh-difference`. La profondità dell'estrusione (`:depth`) controlla quanto il testo sporge o penetra. Per una targhetta a due colori (testo in contrasto sulla base), vedi il pattern bicolore nel cap. 14.
 
 ## 13.3 Heightmap e testo in rilievo
 
 Per testo in rilievo su una superficie curva (un cilindro, un vaso, un profilo organico), l'estrusione dritta non basta: il testo dovrebbe seguire la curvatura. La heightmap è la soluzione.
 
-Una heightmap è una griglia 2D dove ogni cella contiene un'altezza. Usata come shape-fn in un `loft`, modula il profilo aggiungendo o togliendo materiale punto per punto.
+Una heightmap è una griglia 2D dove ogni cella contiene un'altezza. Usata come shape-fn in un `loft`, modula il profilo aggiungendo o togliendo materiale punto per punto: dove la cella è alta, il profilo si gonfia verso l'esterno.
+
+### Text-heightmap
+
+`text-heightmap` produce direttamente una heightmap a partire da una stringa, già orientata correttamente per essere avvolta su un profilo. La passi alla shape-fn `heightmap` dentro un `loft`:
+
+<!-- example-source: text-heightmap
+(def hm (text-heightmap "Ridley" :size 5))
+(register embossed-cylinder
+  (loft (heightmap (circle 10 256) hm :amplitude 1.5 :center true) (f 60)))
+-->
+
+Il risultato è un cilindro con "Ridley" in rilievo, leggibile, alto ~5 unità (la `:size` che hai chiesto). Il punto chiave è che la heightmap *conosce la propria dimensione fisica*: `:size 5` non viene stirato fino a riempire la parete, ma piazzato alla taglia reale. È la shape-fn `heightmap` a leggere quella dimensione e a posizionare il testo di conseguenza — col comportamento di default (una copia singola, centrata, alla taglia fisica). `:amplitude` controlla quanto il rilievo sporge; `:center true` lo distribuisce simmetricamente, così le lettere emergono da una superficie neutra invece di gonfiare il cilindro verso l'esterno.
+
+I parametri di `text-heightmap`: `:size` (altezza fisica dei caratteri, default 5), `:font` (id del font, default `:roboto`), `:resolution` (dimensione della griglia, default 256), e `:curve-segments`. Quest'ultimo merita una nota: è il fattore che governa la *morbidezza* delle lettere, non `:resolution` né il numero di segmenti del cerchio. Se le lettere appaiono sfaccettate, è il flattening delle curve dei glifi a essere troppo grossolano — alza `:curve-segments` (di default scala con `:resolution`). Aumentare la risoluzione della griglia o del profilo non liscia lettere già sfaccettate all'origine.
+
+Un dettaglio utile: gli spazi nel testo diventano margine piatto reale. `"Ridley "` (con lo spazio finale) è più largo di `"Ridley"`, e quel margine torna comodo come stacco quando ripeti il testo attorno a un profilo.
+
+Direzione, copertura e ripetizione non sono compito di `text-heightmap` ma della shape-fn `heightmap`, che le controlla con `:direction`, `:tile-x`/`:tile-y`, `:fit`. Così la stessa heightmap si può far girare una volta attorno al cilindro, impacchettare a ripetizione lungo tutta la circonferenza, o far salire lungo l'asse:
+
+<!-- example-source: text-heightmap-variants
+(def band (text-heightmap "Ridley " :size 4))
+
+;; Ripetuta senza giunzioni attorno a tutta la circonferenza
+(register tube
+  (loft (heightmap (circle 10 256) band :amplitude 1.2 :tile-x :fill) (f 30)))
+
+;; Che sale lungo l'asse invece di avvolgersi
+(register column
+  (attach (loft (heightmap (circle 8 256) band :amplitude 1.2 :direction :height) (f 40))
+          (rt 60)))
+-->
+
+`:tile-x :fill` impacchetta tante copie quante ne servono per coprire la circonferenza (lo spazio finale di `"Ridley "` fa da stacco fra una e l'altra); `:direction :height` orienta il testo perché corra lungo l'asse del loft anziché attorno.
 
 ### Mesh-to-heightmap
 
-`mesh-to-heightmap` prende una mesh e ne rasterizza i valori Z in una griglia 2D:
+`text-heightmap` è la scorciatoia per il caso del testo. Ma una heightmap si può ricavare da *qualsiasi* mesh: `mesh-to-heightmap` ne rasterizza i valori di altezza in una griglia 2D, utile per trasformare un rilievo modellato a mano (un logo, un bassorilievo, una texture) in displacement applicabile a un loft:
 
 ```clojure
-;; Crea il testo come mesh piatta
-(def text-mesh (extrude-text "Ridley" :size 20 :depth 1))
-
-;; Rasterizza in heightmap
-(def hm (mesh-to-heightmap text-mesh :resolution 128))
+(def hm (mesh-to-heightmap my-relief-mesh :resolution 128))
+(register embossed (loft (heightmap (circle 20 64) hm :amplitude 1.5) (f 40)))
 ```
 
-<!-- example-source: text-heightmap
-(def text-mesh (extrude-text "Ridley" :size 20 :depth 1))
-(def hm (mesh-to-heightmap text-mesh :resolution 128))
-(register embossed
-  (loft (heightmap (circle 20 64) :amplitude 0.5 :tile-x 1 :tile-y 1)
-    (f 40)))
--->
-
-La heightmap risultante può essere usata con la shape-fn `heightmap` per applicare il rilievo del testo a qualsiasi estrusione o loft:
-
-```clojure
-(register embossed-cylinder
-  (loft
-    (heightmap (circle 20 64) hm :amplitude 1.5)
-    (f 40)))
-```
-
-`:amplitude` controlla l'altezza del rilievo. `:tile-x` e `:tile-y` ripetono la heightmap lungo i due assi del profilo.
+A differenza di `text-heightmap`, qui sei tu a dover orientare e dimensionare la mesh di partenza perché la rasterizzazione catturi la faccia giusta — `text-heightmap` esiste proprio per togliere quella complessità nel caso comune del testo.
 
 ### Heightmap tileabili
 

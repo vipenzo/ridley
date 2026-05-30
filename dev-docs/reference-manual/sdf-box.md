@@ -9,13 +9,22 @@ status: stable
 
 ## Signature
 
-`(sdf-box sx sy sz)`
+```
+(sdf-box size)        ; cube with the given side
+(sdf-box sx sy sz)    ; rectangular box
+```
 
 ## Description
 
-Construct an SDF node for an axis-aligned box with dimensions
-`sx × sy × sz`, centered at the origin. Returns a lightweight SDF tree
-map; no geometry is computed until meshing.
+Construct an SDF node for a box, centered on the current turtle pose.
+Returns a lightweight SDF tree; no geometry is computed until meshing.
+
+The 1-arg form builds a cube of side `size`; the 3-arg form takes the
+three side lengths individually — same convention as mesh `box`.
+
+Like mesh primitives, SDF primitives spawn at the current turtle pose.
+A bare `(sdf-box 10 10 10)` after `(f 30) (th 45)` lives at `(30 0 0)`
+rotated 45° around the world Z axis.
 
 For rounded corners with a properly behaved distance field (the kind
 that combines cleanly with other SDFs), use `sdf-rounded-box` rather
@@ -26,8 +35,9 @@ field uniformly, which is not a true SDF away from the surface.
 
 ## Parameters
 
+- `size` — side length of the cube (1-arg form).
 - `sx`, `sy`, `sz` — full dimensions along each axis (in world units),
-  i.e. the side lengths, not half-extents.
+  i.e. the side lengths, not half-extents (3-arg form).
 
 ## Example
 
@@ -43,19 +53,18 @@ A cubic SDF box ready for booleans, blends, or morphs.
 
 ## Notes
 
-- The box is centered on the current turtle creation-pose at
-  construction time. Position it with `translate`, `attach`, or by
-  wrapping in `turtle (…)`.
-- The argument order maps to the libfive backend's internal axes; in
-  the turtle's default pose (heading along world X, up along world Z)
-  the box dimensions follow the world axes in `sx sy sz` order.
+- The box is centered on the current turtle pose at construction time
+  — both position and orientation are baked into the resulting SDF.
+- The argument order matches mesh `box`: `sx` runs along the turtle's
+  *right* axis, `sy` along *up*, `sz` along *heading*. In the default
+  pose those map to world Y, Z, X respectively.
 - For a smooth blend with another SDF use `sdf-blend`; for a hollow
   shell use `sdf-shell`.
 
 ## See also
 
-- **SDF primitives:** `sdf-sphere`, `sdf-cyl`, `sdf-rounded-box`,
-  `sdf-torus`
+- **SDF primitives:** `sdf-sphere`, `sdf-cyl`, `sdf-cone`,
+  `sdf-rounded-box`, `sdf-torus`
 - **Booleans / blends:** `sdf-union`, `sdf-blend`, `sdf-difference`
 - **Surface offset:** `sdf-rounded-box`, `sdf-offset`, `sdf-shell`
 - **Transforms:** `translate`, `rotate`, `scale`, `attach`

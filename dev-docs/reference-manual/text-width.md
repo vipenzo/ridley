@@ -25,13 +25,14 @@ the cursor — so the result matches the actual rendered layout, not just
 the visible glyph extents.
 
 The font argument is positional (not a keyword option), like
-`char-shape`. Pass an opentype.js font object from `load-font!` or the
-loaded default (`@default-font` — gated by `font-loaded?`).
+`char-shape`. Pass a registered font id (e.g. `:roboto`, `:roboto-mono`,
+or any id added in Settings → Fonts), or `nil` for the default
+`:roboto`.
 
 ## Parameters
 
 - `text` — the string to measure.
-- `font` — an opentype.js font object.
+- `font` — a registered font id keyword, or `nil` for `:roboto`.
 - `size` — font size in units; the result is in the same units.
 
 ## Example
@@ -41,15 +42,13 @@ loaded default (`@default-font` — gated by `font-loaded?`).
 <!-- example-source: text-width-centre-label -->
 ```clojure
 ;; Centre a label on a backing plate
-(-> (load-font! :roboto)
-    (.then (fn [f]
-             (let [w (text-width "Hello" f 20)
-                   plate-w (+ w 20)]
-               (register card
-                 (concat-meshes
-                   [(box plate-w 30 4)
-                    (attach (extrude (text-shape "Hello" :size 20 :font f) (f 5))
-                            (lt (* w -0.5)))])))))
+(let [w (text-width "Hello" :roboto 20)
+      plate-w (+ w 20)]
+  (register card
+    (concat-meshes
+      [(box plate-w 30 4)
+       (attach (extrude (text-shape "Hello" :size 20) (f 5))
+               (lt (* w -0.5)))])))
 ```
 <!-- /example-source -->
 
@@ -65,5 +64,4 @@ half of it places the text centred over the plate.
 
 ## See also
 
-- **Related:** `text-shape`, `text-shapes`, `extrude-text`,
-  `text-on-path`, `load-font!`, `font-loaded?`
+- **Related:** `text-shape`, `text-shapes`, `extrude-text`, `text-on-path`

@@ -15,9 +15,9 @@ status: stable
 
 Place 3D text along a curved path: each glyph is positioned at its
 advance-width offset along the path and rotated to align with the local
-tangent. Returns a **vector of meshes**, one per glyph. Mutates the
-turtle state (each emitted mesh is added to the current turtle's mesh
-list), like other constructors.
+tangent. Returns a single mesh combining all glyphs — or `nil` if the
+text is empty. The mesh is also added to the current turtle's mesh
+list, like other constructors.
 
 Use `text-on-path` for engraved labels along arcs, names along a ring,
 or any layout where glyphs need to follow a non-straight axis. For
@@ -29,7 +29,9 @@ straight text, `extrude-text` is simpler and cheaper.
 - `path` — a recorded path (from `path` or any path-builder).
 - `:size` (default `10`) — font size in units.
 - `:depth` (default `5`) — extrusion depth perpendicular to the path.
-- `:font` (default the loaded Roboto) — opentype.js font object.
+- `:font` (default `:roboto`) — keyword id of a registered font.
+  Built-in ids are `:roboto` and `:roboto-mono`; custom ids are added
+  in Settings → Fonts (desktop).
 - `:spacing` (default `0`) — extra letter spacing on top of the
   font's advance widths. Can be negative for tight tracking.
 - `:align` (default `:start`) — `:start`, `:center`, or `:end`.
@@ -84,10 +86,9 @@ of the path if the string is longer than one revolution.
   rather than its start; this gives better-looking orientation on
   curves at the cost of a small offset relative to the path
   parameter.
-- The result is a vector of meshes. Use `concat-meshes` or feed it
-  directly to a boolean operation if you need a single solid.
+- The returned mesh is the concatenation of the per-glyph extrusions
+  and can be fed directly to boolean ops.
 
 ## See also
 
-- **Related:** `text-shape`, `extrude-text`, `text-width`,
-  `concat-meshes`, `path`, `load-font!`, `font-loaded?`
+- **Related:** `text-shape`, `extrude-text`, `text-width`, `path`

@@ -1461,10 +1461,10 @@ Use `:preserve-up` to keep letters upright on 3D paths. Set the pitch with `tv` 
 - `:roboto` — Roboto Regular (default)
 - `:roboto-mono` — Roboto Mono (monospace)
 
-**Load custom font:**
-```
-(load-font! \"/path/to/font.ttf\")  ; returns a promise
-```"
+**Custom fonts:** add them in Settings → Fonts (desktop only). Each
+custom font gets a keyword id you then pass as `:font :my-id`. Lookup
+is synchronous; an unregistered id raises a clear error pointing back
+to the panel."
       :examples
       {:text-basic {:caption "Simple 3D text"
                     :description "Extrude text shapes to create 3D letters. The :size option controls the font size in world units."}
@@ -2663,10 +2663,10 @@ Usa `:preserve-up` per mantenere le lettere verticali su percorsi 3D. Imposta l'
 - `:roboto` — Roboto Regular (default)
 - `:roboto-mono` — Roboto Mono (monospace)
 
-**Carica font personalizzato:**
-```
-(load-font! \"/path/to/font.ttf\")  ; restituisce una promise
-```"
+**Font personalizzati:** aggiungili in Impostazioni → Fonts (solo
+desktop). Ogni font custom ha un id keyword che passi poi come
+`:font :mio-id`. La lookup è sincrona; un id non registrato solleva un
+errore chiaro che rimanda al pannello."
       :examples
       {:text-basic {:caption "Testo 3D semplice"
                     :description "Estrudi forme di testo per creare lettere 3D. L'opzione :size controlla la dimensione del font in unità mondo."}

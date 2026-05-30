@@ -136,37 +136,37 @@ Le opzioni:
 
 `bezier-as` funziona sia in turtle mode diretto che dentro `path`.
 
-## 11.3 Curve strette e auto-intersezione
+## 11.3 Un limite del loft: quando la mesh non è manifold
 
-Le curve Bezier possono avere curvature strette, specialmente con tensione alta o traiettorie a U. Quando il raggio di curvatura locale è confrontabile col raggio della shape estrusa, le sezioni (ring) successive del loft sul lato interno della curva si scavalcano: il loft non se ne accorge e produce geometria auto-intersecante. `manifold?` restituisce `nil` (la mesh non è stampabile), e operazioni booleane successive sulla mesh saltano in aria.
+`loft` costruisce la mesh spazzando una shape lungo il path, ma non controlla che le sezioni successive non si compenetrino. Su certe geometrie questo produce una mesh auto-intersecante: topologicamente chiusa, ma che `manifold?` rifiuta e che non è stampabile.
 
-Il rimedio è a monte, sul path: ridurre la curvatura locale rispetto al raggio della shape. In ordine di crescente costo:
+Le direzioni di rischio sono tre, spesso combinate:
 
-1. **Smussare il path con `bezier-as`** quando hai spigoli netti (`(th 120)` o simili). Anche una smussatura leggera (`:tension 0.3`) trasforma uno spigolo in un arco di raggio finito, dando alle ring lo spazio per ruotare senza scavalcarsi.
+- **shape forate** (anelli, profili cavi): il contorno interno ruota più stretto di quello esterno e si auto-interseca prima;
+- **angoli stretti** nel path: più la curva è chiusa, più le sezioni si scavalcano sul lato concavo;
+- **path bezier**: la smussatura distribuisce la curvatura, ma il raggio minimo locale può risultare più stretto di quanto sembri — motivo per cui `bezier-as`, che di solito *migliora* un loft, su una shape forata può peggiorarlo.
 
-2. **Sostituire l'angolo con un `arc-h`/`arc-v` di raggio esplicito**: `(arc-h r 90)` dichiara esattamente con che raggio gira il path. Se `r` è almeno comparabile col raggio della shape (e meglio 2-3× più grande), il loft passa pulito.
+Le tre cose si sommano: un anello sottile su un angolo già modesto basta a far fallire il loft.
 
-3. **Abbassare il raggio della shape** se il path non si può cambiare (per esempio quando l'utente lo fornisce). Una `circle 2` su una curva che ha problemi con `circle 8` può funzionare senza modifiche al path.
+<!-- example-source: holed-shape-on-curve
+;; Anello su un angolo contenuto: manifold
+(register pipe-good
+  (loft (shape-difference (circle 8) (circle 7)) identity
+        (path (f 30) (th 90) (f 20))))
 
-4. **Spezzare il loft in tratti dritti uniti con `mesh-union`**, accettando un raccordo squadrato al posto della transizione continua.
+;; Stesso anello, angolo un po' più stretto: si auto-interseca
+(register pipe-bad
+  (attach (loft (shape-difference (circle 8) (circle 7)) identity
+                (path (f 30) (th 100) (f 20)))
+          (f 60)))
 
-### Limite noto: shape con holes su curve
+(println "Pipe good:" (if (manifold? (get-mesh :pipe-good)) "Good" "Bad"))
+(println "Pipe bad:"  (if (manifold? (get-mesh :pipe-bad))  "Good" "Bad"))
+-->
 
-Le sezioni con holes (es. `(shape-difference (circle 8) (circle 4))`) sono un caso che il loft attuale **non gestisce bene su nessuna curva non banale**, e non c'è una manopola che lo risolva. Il motivo strutturale: il ring esterno e il ring interno spazzano raggi diversi intorno al path. Quando il path curva, sul lato concavo il ring interno (raggio minore) si auto-interseca *prima* del ring esterno; il loft costruisce una mesh topologicamente chiusa ma geometricamente compenetrata, che Manifold rifiuta.
+Non ci sono controlli automatici né una manopola che risolva il caso: lo strumento è verificare con `manifold?` e, dove fallisce, cercare un bypass. Per un profilo anulare lungo una curva, due bypass affidabili:
 
-Un esempio minimo che fallisce:
+- **Costruire il tubo per differenza**: estrudi il profilo pieno (`circle 8`) lungo il path, estrudi il foro (`circle 7`) lungo lo *stesso* path, e sottrai il secondo dal primo con `mesh-difference`. Più lento, ma ogni estrusione lavora su una shape piena, molto più tollerante.
+- **Tenere il path dritto e curvare con `attach`**, applicando le rotazioni al pezzo finito invece che durante l'estrusione.
 
-```clojure
-(def turn (bezier-as (path (f 25) (th 60) (f 25)) :tension 0.4))
-(register pipe
-  (loft (shape-difference (circle 8) (circle 4)) identity turn))
-
-(println :manifold? (manifold? (get-mesh :pipe)))   ;; => nil
-```
-
-Alzare la tensione o rimpicciolire il foro **non basta**: nei nostri test entrambi continuano a produrre mesh auto-intersecanti su curvature di interesse pratico. Quando hai bisogno di un profilo anulare lungo una curva, le opzioni che funzionano davvero sono:
-
-- **Costruire il tubo con due loft separati e un boolean**: estrudi il profilo pieno (`circle 8`) lungo il path, estrudi il "cavatappi" (`circle 4`) lungo lo *stesso* path, sottrai il secondo dal primo (`mesh-difference`). Più lento, ma robusto.
-- **Mantenere il path dritto e curvare con `attach`** quando possibile, applicando le rotazioni al pezzo finito piuttosto che durante l'estrusione.
-
-La regola pratica generale resta: se `manifold? nil`, agisci sul path o sulla strategia di costruzione. Loft non ha meccanismi automatici di recupero.
+La regola pratica resta: se `manifold?` torna `nil`, il rimedio è a monte, sul path o sulla strategia di costruzione.

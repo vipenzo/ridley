@@ -3,6 +3,7 @@
   (:require [ridley.editor.state :as state]
             [ridley.turtle.core :as turtle]
             [ridley.turtle.text :as text]
+            [ridley.turtle.shape-fn :as sfn]
             [ridley.manifold.core :as manifold]))
 
 ;; ============================================================
@@ -162,6 +163,95 @@
                   (swap! @state/turtle-state-var update :meshes conj mesh-with-pose))))))))
     @meshes))
 
+(defn ^:export build-text-heightmap-mesh
+  "Build a text mesh in canonical heightmap pose: glyphs in the XY plane
+   (X = reading direction, Y = glyph height) extruded along +Z by `depth`.
+   This is extrude-text WITHOUT the turtle-orientation transform and WITHOUT
+   mutating turtle state — exactly the pose mesh-to-heightmap wants (it
+   rasterizes the XY plane and takes max-Z), so the relief reads as the
+   letters rather than as a side profile of the extrusion."
+  [txt & {:keys [size depth font curve-segments] :or {size 10 depth 1 curve-segments 8}}]
+  (let [glyph-data (text/text-glyph-data txt :size size :font font
+                                         :curve-segments curve-segments)
+        glyph-meshes
+        (keep
+         (fn [{:keys [contours x-offset]}]
+           (when (seq contours)
+             (let [{:keys [outer holes]} (classify-glyph-contours contours)]
+               (when (and outer (> (count outer) 2))
+                 (let [outer-area (contour-signed-area outer)
+                       prepared-outer (if (neg? outer-area) (vec (reverse outer)) outer)
+                       prepared-holes (mapv (fn [hole]
+                                              (if (pos? (contour-signed-area hole))
+                                                (vec (reverse hole))
+                                                hole))
+                                            holes)
+                        ;; Shift glyph horizontally by its advance offset (2D X).
+                       shift (fn [contour]
+                               (mapv (fn [[x y]] [(+ x x-offset) y]) contour))
+                       all-contours (into [(shift prepared-outer)]
+                                          (mapv shift prepared-holes))]
+                   (manifold/extrude-cross-section all-contours depth))))))
+         glyph-data)]
+    (manifold/concat-meshes (vec glyph-meshes))))
+
+(defn ^:export text-heightmap
+  "Generate a heightmap directly from text, ready for the `heightmap` shape-fn.
+   Returns the same structure as weave-heightmap / mesh-to-heightmap, plus
+   :phys-width / :phys-height / :source so the `heightmap` shape-fn can place
+   the text at its real-world size (`:physical` fit).
+
+   The letters lie in a canonical orientation: width = the text's horizontal
+   development (advance, including spaces), height = glyph height — both in
+   real :size units. Background is flat 0, letters raised. Direction, coverage
+   and tiling are decided on the `heightmap` side, not here.
+
+   Options:
+   - :size           glyph size in world units (default 5); the physical
+                     height of the relief band, preserved to the loft surface
+   - :resolution     heightmap grid size (default 256; glyphs need fine sampling)
+   - :font           font id keyword (default :roboto)
+   - :depth          extrusion depth (default 1; irrelevant after normalization)
+   - :curve-segments Bezier flattening per glyph curve. Defaults to scale with
+                     :resolution (max 16, resolution/8) so letters stay smooth;
+                     pin it to override. This — not the grid — is the dominant
+                     factor in relief smoothness.
+
+   Example:
+     (def hm (text-heightmap \"Ridley\" :size 5))
+     (register embossed
+       (loft (heightmap (circle 10 256) hm :amplitude 1.5 :center true) (f 60)))"
+  [txt & {:keys [size resolution font depth curve-segments]
+          :or {size 5 resolution 256 depth 1}}]
+  (let [;; Smooth glyph outlines: the bottleneck for relief quality is the
+        ;; Bezier flattening, NOT the raster grid. Scale segments with the
+        ;; grid resolution unless the caller pins :curve-segments.
+        cs   (or curve-segments (max 16 (quot resolution 8)))
+        mesh (build-text-heightmap-mesh txt :size size :depth depth :font font
+                                        :curve-segments cs)]
+    (when mesh
+      (let [;; Frame the grid on the text ADVANCE (which includes leading and
+            ;; trailing spaces), not on the ink bbox — so spaces become real
+            ;; flat margin and "Ridley " ≠ "Ridley" for tiling.
+            advance (or (text/text-width txt font size) 0)
+            verts   (:vertices mesh)
+            ys      (map #(nth % 1) verts)
+            y0      (reduce min ys)
+            y1      (reduce max ys)
+            adv     (if (pos? advance) advance
+                        ;; fall back to ink width if metrics are unavailable
+                        (let [xs (map #(nth % 0) verts)]
+                          (- (reduce max xs) (reduce min xs))))
+            hm (sfn/mesh-to-heightmap mesh :resolution resolution
+                                      :bounds [0 y0 adv y1])]
+        ;; Tag the heightmap with its real-world footprint so the `heightmap`
+        ;; shape-fn can place it at physical scale (height ≈ :size, width =
+        ;; advance including spaces). The mesh is in :size units.
+        (assoc hm
+               :phys-width  adv
+               :phys-height (- y1 y0)
+               :source :text)))))
+
 (defn ^:export implicit-text-on-path
   "Place text along a path, extruding each glyph perpendicular to curve.
    Each letter is positioned at its x-offset distance along the path,
@@ -213,12 +303,12 @@
                                  extra-spacing)
             ;; Sample the path at the CENTER of the glyph for orientation
             sample (turtle/sample-path-at-distance path glyph-center-dist
-                     :wrap? (= overflow :wrap)
-                     :start-pos turtle-pos
-                     :start-heading turtle-heading
-                     :start-up turtle-up
-                     :preserve-up turtle-preserve-up
-                     :reference-up turtle-reference-up)]
+                                                   :wrap? (= overflow :wrap)
+                                                   :start-pos turtle-pos
+                                                   :start-heading turtle-heading
+                                                   :start-up turtle-up
+                                                   :preserve-up turtle-preserve-up
+                                                   :reference-up turtle-reference-up)]
         (when (and sample (seq contours))
           (let [{:keys [position heading up]} sample
                 {:keys [outer holes]} (classify-glyph-contours contours)

@@ -285,6 +285,69 @@ Fill a solid volume with procedural internal structure (TPMS, strut lattice, etc
 - Marching cubes (or dual contouring) for isosurface extraction
 - DSL: `(lattice mesh :type :gyroid :scale 5 :thickness 0.3)` or `(lattice mesh :fn (fn [x y z] ...))`
 
+### Path↔SDF binding
+
+Modo per "legare" i path agli SDF, analogo concettuale di `bezier-as` ma sul versante distance field: un path produce o partecipa a un SDF, e i marker del path diventano punti di aggancio nello spazio SDF. Sblocca l'uso di operatori SDF (smooth-union, offset, blending continuo) su geometrie generate da path, oggi confinate al ramo mesh.
+
+Caso d'uso motivante — il portachiavi KHP, oggi scritto come:
+
+```clojure
+(register D
+  (mesh-union
+    (attach (extrude (rect trace-w trace-w) (play-path KHP)))
+    (on-anchors KHP
+      "key-" :align (attach (socket KP) (th 90) (tv 180) (f -2))
+      #{:start :end} (attach (washer) (tv -90)))))
+```
+
+vorremmo poterlo riscrivere in versione SDF, in particolare per ottenere raccordi smooth fra arco e socket invece di intersezioni booleane secche. Tre direzioni con DSL diverso da valutare.
+
+**A. Sweep — `sdf-extrude` (calco diretto di `extrude`).** Un profilo SDF 2D viene sweeppato lungo il path, l'output è un SDF tubo.
+
+```clojure
+(register D
+  (sdf-mesh
+    (sdf-smooth-union 1.5
+      (sdf-extrude (sdf-rect2d trace-w trace-w) KHP)
+      (on-anchors KHP
+        "key-" :align (sdf-attach (sdf-socket KP) (th 90) (tv 180) (f -2))
+        #{:start :end} (sdf-attach (sdf-washer) (tv -90))))))
+```
+
+Pro: salto dal codice mesh minimo, vocabolario familiare. Contro: serve `on-anchors` polimorfico (o gemello SDF) e un'aritmetica di pose SDF — raddoppio di superficie.
+
+**B. Bend — `sdf-bend-along` (lo spazio si piega col path).** Un SDF rettilineo (es. un box lungo `path-length`) viene riparametrizzato in arc-length lungo il path. Il path non genera niente, deforma.
+
+```clojure
+(register D
+  (sdf-bend-along KHP
+    (sdf-smooth-union 1.5
+      (sdf-box (path-length KHP) trace-w trace-w)
+      (sdf-along-axis (key-positions KHP "key-")
+        (sdf-socket KP)))))
+```
+
+I marker diventano coordinate scalari `s` lungo l'asse X di un mondo "dritto", poi tutto si piega insieme. Pro: matematicamente pulito, raccordi perfetti per costruzione, una sola operazione. Contro: DSL meno familiare (pensi in spazio dritto e ti fidi del bend), path con torsione forte distorce le sezioni, marker perdono il frame e restano solo scalari.
+
+**C. Anchors come SDF — `sdf-on-path`.** Niente sweep esplicito: il path produce solo posizioni con frame, e ogni segmento fra marker consecutivi è una capsula SDF, ogni marker è una primitiva SDF, il tutto unito smooth.
+
+```clojure
+(register D
+  (sdf-mesh
+    (sdf-on-path KHP :smooth 1.5
+      :segment    (sdf-capsule-section trace-w)
+      :marker "key-" (sdf-socket KP)
+      :marker #{:start :end} (sdf-washer))))
+```
+
+Pro: entry point unico, marker e tubo trattati uniformemente, blending smooth come default. Contro: il "tubo" è approssimazione a capsule (più capsule = SDF più costoso), meno controllo su sezioni non circolari, costringe a pensare il path come "perline su filo" invece che come traiettoria continua.
+
+**Lettura.** A è il path di minor sorpresa per chi viene da Ridley mesh, ma raddoppia il vocabolario (un `sdf-` per ogni primitiva di pose). B è il più "SDF-puro" e regalerebbe gratis modulazione del raggio lungo `s`, twist, taper — cose impossibili pulitamente con la mesh — al costo di un cambio di mentalità. C è il più compatto come DSL e probabilmente il più semplice da implementare bene, ma la semantica "perline su filo" è diversa da `extrude + on-anchors` e i raccordi tubo↔socket diventano parte dell'astrazione, non opzionali.
+
+Costo computazionale comune a tutte e tre: una `sdf-extrude` / `sdf-bend-along` / `sdf-on-path` è O(N) per sample point sui N segmenti del path, quindi un path lungo chiede BVH o grid spaziale per restare interattivo. Per path corti (≲50 segmenti) trascurabile.
+
+Da decidere prima di prototipare: quale delle tre direzioni vale la pena pagare, e se vale la pena perseguirne più di una in parallelo (A e C non sono mutuamente esclusive — A è "tubo SDF puro", C è "tubo + anchor SDF in un'unica operazione").
+
 ### Attach on mesh collections (structure-preserving)
 
 Extend `attach` to work on nested vectors of meshes, transforming all meshes while preserving the nesting structure. This enables treating function-composed groups as rigid bodies:

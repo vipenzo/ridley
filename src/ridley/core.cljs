@@ -8,6 +8,8 @@
             [ridley.viewport.xr :as xr]
             [ridley.manifold.core :as manifold]
             [ridley.turtle.text :as text]
+            [ridley.fonts.core :as fonts]
+            [ridley.fonts.storage :as fonts-storage]
             [ridley.scene.registry :as registry]
             [ridley.env :as env]
             [ridley.export.stl :as stl]
@@ -1520,6 +1522,59 @@
         "</div>"
         "</div>"))
 
+     ;; Fonts section — registry of ids usable from code via :font :id
+     (let [entries (text/list-registered-fonts)
+           desktop? (fonts-storage/supported?)]
+       (str
+        "<h3 class='settings-section-header'>Fonts</h3>"
+        "<div class='settings-field'>"
+        "<div class='settings-hint' style='margin-bottom:8px'>"
+        "Registered font ids — pass to code as <code>:font :id</code> "
+        "(e.g. <code>(extrude-text \"Hi\" :font :roboto-mono)</code>)."
+        "</div>"
+        "<table class='settings-fonts-table' "
+        "style='width:100%;border-collapse:collapse;font-size:13px'>"
+        (apply str
+               (for [{:keys [id label builtin? filename]} entries]
+                 (str "<tr style='border-bottom:1px solid #2a2a2a'>"
+                      "<td style='padding:4px 8px 4px 0;font-family:monospace'>"
+                      ":" (name id) "</td>"
+                      "<td style='padding:4px 8px;color:#999'>" (or label "") "</td>"
+                      "<td style='padding:4px 8px;color:#666;font-size:11px'>"
+                      (if builtin? "built-in" (or filename "")) "</td>"
+                      "<td style='padding:4px 0;text-align:right'>"
+                      (if builtin?
+                        ""
+                        (str "<button class='settings-toggle-btn' "
+                             "data-font-id='" (name id) "' "
+                             "data-action='delete-font'>Remove</button>"))
+                      "</td>"
+                      "</tr>")))
+        "</table>"
+        (if desktop?
+          (str "<div style='margin-top:12px;padding-top:8px;"
+               "border-top:1px solid #2a2a2a'>"
+               "<div class='settings-hint' style='margin-bottom:6px'>"
+               "Add a custom font (.ttf / .otf):</div>"
+               "<div style='display:flex;gap:6px;align-items:center;flex-wrap:wrap'>"
+               "<input type='text' id='settings-font-id' class='settings-input' "
+               "placeholder='id (e.g. inter)' style='flex:0 0 140px'>"
+               "<input type='text' id='settings-font-label' class='settings-input' "
+               "placeholder='label (e.g. Inter Bold)' style='flex:1 1 160px'>"
+               "<input type='file' id='settings-font-file' "
+               "accept='.ttf,.otf,.woff,.woff2' style='flex:1 1 200px'>"
+               "<button id='settings-font-add' class='settings-toggle-btn'>Add</button>"
+               "</div>"
+               "<div id='settings-font-status' class='settings-hint' "
+               "style='margin-top:6px;min-height:1em'></div>"
+               "</div>")
+          (str "<div class='settings-hint' style='margin-top:8px'>"
+               "Custom fonts require the desktop app. "
+               "Built-in <code>:roboto</code> and <code>:roboto-mono</code> "
+               "are available on the web."
+               "</div>"))
+        "</div>"))
+
      ;; Accessibility section (always visible, not dependent on AI)
      "<h3 class='settings-section-header'>Accessibility</h3>"
      "<div class='settings-field'>"
@@ -1648,7 +1703,52 @@
   (when-let [el (.querySelector modal "#settings-audio-feedback")]
     (.addEventListener el "change"
                        (fn [e]
-                         (settings/set-audio-feedback! (.. e -target -checked))))))
+                         (settings/set-audio-feedback! (.. e -target -checked)))))
+  ;; Font: Add button — read selected file bytes, parse, register, re-render
+  (when-let [add-btn (.querySelector modal "#settings-font-add")]
+    (.addEventListener
+     add-btn "click"
+     (fn [_]
+       (let [id-el (.querySelector modal "#settings-font-id")
+             label-el (.querySelector modal "#settings-font-label")
+             file-el (.querySelector modal "#settings-font-file")
+             status-el (.querySelector modal "#settings-font-status")
+             id-str (when id-el (.-value id-el))
+             label (when label-el (.-value label-el))
+             files (when file-el (.-files file-el))
+             file (when (and files (pos? (.-length files))) (aget files 0))
+             set-status! (fn [msg]
+                           (when status-el (set! (.-textContent status-el) msg)))]
+         (cond
+           (or (str/blank? id-str) (nil? file))
+           (set-status! "Provide an id and select a font file.")
+
+           (text/registered? (fonts/id->keyword id-str))
+           (set-status! (str "Id :" id-str " is already registered."))
+
+           :else
+           (do
+             (set-status! "Loading...")
+             (-> (.arrayBuffer file)
+                 (.then (fn [bytes]
+                          (try
+                            (fonts/register-custom-font!
+                             (fonts/id->keyword id-str)
+                             (if (str/blank? label) id-str label)
+                             (.-name file)
+                             bytes)
+                            (re-render)
+                            (catch :default e
+                              (set-status! (str "Failed: " (.-message e)))))))
+                 (.catch (fn [e]
+                           (set-status! (str "Read failed: " (.-message e))))))))))))
+  ;; Font: per-row Remove buttons
+  (doseq [btn (array-seq (.querySelectorAll modal "button[data-action='delete-font']"))]
+    (.addEventListener btn "click"
+                       (fn [_]
+                         (when-let [id-str (.getAttribute btn "data-font-id")]
+                           (fonts/unregister-custom-font! (keyword id-str))
+                           (re-render))))))
 
 (defn- show-settings-modal
   "Show the Settings modal."
@@ -2491,10 +2591,10 @@
     (-> (manifold/init!)
         (.then #(js/console.log "Manifold WASM initialized"))
         (.catch #(js/console.warn "Manifold WASM failed to initialize:" %)))
-    ;; Initialize default font for text shapes (async)
-    (-> (text/init-default-font!)
-        (.then #(js/console.log "Default font loaded"))
-        (.catch #(js/console.warn "Default font failed to load:" %)))
+    ;; Initialize font registry: built-ins + any persisted custom fonts (async)
+    (-> (fonts/init!)
+        (.then #(js/console.log "Fonts initialized"))
+        (.catch #(js/console.warn "Font init failed:" %)))
     ;; Load LLM settings and setup button
     (settings/load-settings!)
     (setup-settings)

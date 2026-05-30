@@ -47,10 +47,10 @@ Le colonne di `sdf-rounded-box` e `sdf-torus` non hanno una mesh sopra: sono for
 Come le primitive mesh, le primitive SDF nascono alla posa corrente della tartaruga. Quindi:
 
 <!-- example-source: sdf-pose-aware
+(register original (sdf-sphere 10))   ;; sfera all'origine
 (f 30)
-(register original (sdf-sphere 10))   ;; sfera centrata in (30 0 0)
-(th 90)
-(register turned (sdf-box 4 8 16))    ;; box in (30 0 0) ruotato di 90° intorno a Z
+(th 60)
+(register turned (sdf-box 4 8 16))    ;; box a (30 0 0), ruotato di 60° intorno a up
 -->
 
 Vale per `sdf-sphere`, `sdf-box`, `sdf-rounded-box`, `sdf-cyl`, `sdf-cone`, `sdf-torus` e `sdf-formula`. Le strutture infinite (`sdf-gyroid`, `sdf-schwarz-p`, `sdf-diamond`, `sdf-slats`, `sdf-bars`, `sdf-bar-cage`, `sdf-grid`) restano allineate agli assi del mondo: tipicamente le ritagli con `sdf-intersection` contro un volume posizionato.
@@ -147,14 +147,19 @@ La formula è un'espressione Clojure quotata che usa `x`, `y`, `z` come variabil
 ;; Taglia un cilindro a metà
 (tv 90)
 (register half-cyl
-  (sdf-intersection (sdf-cyl 10 20) (sdf-half-space)))
+  (sdf-intersection (attach (sdf-cyl 10 20) (tv 30)) (sdf-half-space)))
 -->
 
 `sdf-clip` è la scorciatoia per il caso comune:
 
 <!-- example-source: sdf-clip-intro
 (tv 90)
-(register clipped (sdf-clip (sdf-cyl 10 20)))    ;; equivale a (sdf-intersection ... (sdf-half-space))
+(register clipped
+  (sdf-clip
+    (sdf-blend
+      (sdf-sphere 12)
+      (attach (sdf-box 10 10 10) (f 12))
+      4)))    ;; equivale a (sdf-intersection ... (sdf-half-space))
 -->
 
 Per tenere la metà davanti alla tartaruga:
@@ -248,26 +253,26 @@ Un'insidia: `pow` con base negativa restituisce NaN (libfive calcola `pow(a,b)` 
 
 Il blend è il motivo principale per cui gli SDF esistono in Ridley. `sdf-blend` fonde due volumi con una transizione morbida che non è un raccordo geometrico calcolato a posteriori (come `fillet` sulle mesh) ma una proprietà della funzione distanza stessa.
 
-```clojure
+<!-- example-source: blend-levels
 (def a (sdf-sphere 12))
-(def b (translate (sdf-box 10 10 10) 10 0 0))
+(def b (attach (sdf-box 10 10 10) (f 12)))
 
-(register k1 (sdf-blend a b 1))    ;; blend stretto
-(register k3 (sdf-blend a b 3))    ;; blend medio
-(register k6 (sdf-blend a b 6))    ;; blend ampio
-```
+(register k1 (sdf-blend a b 1))                  ;; blend stretto
+(register k3 (attach (sdf-blend a b 3) (rt 50))) ;; blend medio
+(register k6 (attach (sdf-blend a b 6) (rt 100)));; blend ampio
+-->
 
 Il parametro `k` non ha un'unità intuitiva: è un coefficiente della funzione smooth-min. In pratica, parti da 2-3 e aggiusti a vista. Valori sotto 1 producono un blend quasi invisibile, valori sopra 10 fondono tutto in un blob.
 
 `sdf-blend-difference` è il duale: sottrae con una concavità morbida. È l'operazione per scavare incavi organici:
 
-```clojure
+<!-- example-source: blend-difference-scoop
 (register scooped
   (sdf-blend-difference
     (sdf-rounded-box 30 30 20 3)
-    (translate (sdf-sphere 15) 0 0 10)
+    (attach (sdf-cone 10 2 30) (u 10) (tv 90))
     3))
-```
+-->
 
 ## 12.3 Risoluzione e auto-meshing
 
@@ -293,11 +298,12 @@ Quando l'albero SDF contiene `sdf-shell` o `sdf-offset` piccoli, la risoluzione 
 
 Per le primitive curve (`sdf-cyl`, `sdf-cone`, `sdf-torus`) la dolcezza visiva non dipende dalla `sdf-resolution!` ma dalla **turtle resolution** corrente al momento della costruzione — esattamente come per le primitive mesh (`cyl`, `cone`, `sphere`). Il default `:n 64` dà ~64 voxel attorno al perimetro più curvo; basta alzarlo per liscere:
 
-```clojure
-;; Toro liscio solo all'interno dello scope, default altrove
+<!-- example-source: sdf-curve-resolution
+;; Toro liscio solo all'interno dello scope, default altrove.
+;; Cambia :n e riesegui per vedere l'effetto sulla dolcezza.
 (turtle (resolution :n 256)
   (register hi-ring (sdf-torus 16 6)))
-```
+-->
 
 Lo scope `(turtle …)` ti permette di mirare la risoluzione alta su una singola primitiva, lasciando il resto del modello al default. È la stessa semantica delle mesh, quindi un solo `resolution` controlla l'intera scena coerentemente.
 
@@ -316,10 +322,37 @@ I bounds sono tre intervalli `[min max]`, uno per asse. La risoluzione è in vox
 
 ```clojure
 (sdf-ensure-mesh x)                    ;; auto tutto
-(sdf-ensure-mesh sdf ref-mesh)         ;; bounds estesi per coprire ref-mesh
+(sdf-ensure-mesh sdf ref-mesh)         ;; estende i bounds per coprire ref-mesh
 (sdf-ensure-mesh sdf 30)               ;; risoluzione override
 (sdf-ensure-mesh sdf ref-mesh 30)      ;; entrambi
 ```
+
+La forma con `ref-mesh` serve a un problema specifico: gli **SDF infiniti o procedurali** (gyroid, half-space, le formule senza range dichiarati) non dicono ad `auto-bounds` quanto sono grandi, e il sistema ripiega su un cubo di default di circa `[-10 10]` per asse. Finché li guardi da soli non è un problema, ma quando li usi come *cutter* in una booleana contro una mesh più grande, il cutter viene materializzato solo in quel cubetto centrale: il resto della mesh ospite resta intatto, e il risultato è geometricamente sbagliato (pur restando manifold).
+
+Ma prima di raggiungere `ref-mesh`, c'è quasi sempre una strada migliore: **tieni la booleana in SDF e materializza solo il risultato finale**. Se il contenitore può essere un SDF, non passare per una mesh intermedia. `sdf-ensure-mesh` torna utile proprio quando un ramo SDF deve convivere con della geometria mesh nella stessa espressione — qui un loft (che è già mesh) e un box scavato da un gyroid (SDF) uniti insieme:
+
+<!-- example-source: sdf-ensure-mesh-union
+(def container (sdf-box 20 20 20))   ;; SDF, non box mesh
+(def pattern   (sdf-gyroid 8 1))
+
+(register carved
+  (mesh-union
+    (loft (tapered (twisted (rect 30 2))) (f 50))
+    (sdf-ensure-mesh (sdf-difference container pattern))))
+-->
+
+`sdf-ensure-mesh` converte il ramo SDF in mesh perché `mesh-union` possa unirlo al loft. La booleana `(sdf-difference container pattern)` resta in SDF fino a quel punto: `auto-bounds` la dimensiona partendo dal box (che conosce le sue dimensioni), e libfive valuta la difference direttamente durante il meshing, triangolando solo le porzioni di gyroid dentro il box — non esiste mai una mesh-gyroid standalone da milioni di facce. È il pattern idiomatico: tieni il lavoro in SDF il più a lungo possibile, e converti a mesh solo dove devi incontrare geometria mesh.
+
+`ref-mesh` resta la via quando l'ospite *deve* essere una mesh — un loft, una mesh importata, una mesh con anchor da preservare — e vuoi usarci un cutter SDF infinito. In quel caso il cutter va materializzato per la booleana, e `ref-mesh` gli dà i bounds giusti:
+
+```clojure
+;; Ospite mesh, cutter SDF infinito: ref-mesh dimensiona il cutter sulla sua estensione
+(mesh-difference some-loft (sdf-ensure-mesh pattern some-loft))
+```
+
+I bounds finali sono l'unione di quelli auto-stimati dell'SDF e di quelli della mesh (allargati del 30%, così la superficie non viene tagliata sul bordo). La `ref-mesh` serve solo a dimensionare la regione: non entra nella geometria del risultato. Attenzione al costo: un cutter denso (gyroid a passo fine) su bounds grandi produce moltissimi triangoli e il meshing diventa lento. Per contenerlo, allarga il periodo del pattern, abbassa la risoluzione con `sdf-resolution!`, o restringi la `ref-mesh` al solo sotto-volume da scavare.
+
+Quando l'SDF è "finito" (sfere, box, tori, cilindri, coni e le loro composizioni) niente di tutto questo serve: `auto-bounds` lo dimensiona da solo. E se controlli la definizione di una formula, l'alternativa è dichiarare `:x-range`/`:y-range` sul nodo (come per il cono in 12.1).
 
 ## 12.4 Sdf-offset: l'offset come operazione di prima classe
 
@@ -337,25 +370,23 @@ L'offset è una delle quattro vie all'offset in Ridley (insieme a `shape-offset`
 
 ## 12.5 Il pattern SDF-then-mesh
 
-Il workflow tipico con gli SDF è: costruisci l'albero SDF, materializza in mesh, poi continua con le operazioni mesh (booleane con altri pezzi, fillet, export).
+Il workflow tipico con gli SDF è: costruisci l'albero SDF, poi materializzalo in mesh nel momento in cui lo combini con operazioni mesh — booleane con altri pezzi, fillet, export. La materializzazione è implicita: avviene quando un nodo SDF finisce dentro un'operazione mesh o un `register`.
 
-```clojure
-;; 1. Costruisci in SDF
-(def organic-base
+<!-- example-source: sdf-then-mesh
+;; 1. Costruisci in SDF (come funzione, così nasce alla posa corrente)
+(defn organic-base []
   (sdf-blend
     (sdf-sphere 15)
-    (translate (sdf-cyl 8 30) 0 0 0)
+    (sdf-cyl 8 30)
     3))
 
-;; 2. Materializza (automatico al register)
-(register base organic-base)
-
-;; 3. Continua in mesh
+;; 2. Posiziona la tartaruga e materializza (automatico al register)
+(f 30) (tv 30)
 (register final
   (mesh-difference
-    base
-    (attach (cyl 4 40) (f 20))))
-```
+    (organic-base)
+    (attach (cyl 4 100))))
+-->
 
 Il passaggio SDF → mesh è irreversibile: una volta materializzato, l'oggetto è una mesh e le operazioni SDF non sono più disponibili. Non esiste una funzione inversa `mesh->sdf`. Questo significa che è consigliabile fare tutto il lavoro "organico" (blend, shell, offset, pattern) in SDF, e poi passare a mesh per le operazioni "meccaniche" (fori, agganci, assemblaggio).
 

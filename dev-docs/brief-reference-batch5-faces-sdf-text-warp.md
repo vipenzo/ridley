@@ -154,10 +154,6 @@ Non è una funzione con return value nel senso classico; è un side-effect globa
 
 Sono funzioni distinte (non varianti di arity): `text-shape` gestisce glifi compositi, `text-shapes` no. Schede separate.
 
-### Text: extrude-text return type
-
-`extrude-text` ritorna un **vettore di mesh** (uno per carattere), non un singolo mesh. La scheda deve dichiararlo nella signature e nelle Notes per non ingannare l'utente.
-
 ### Warp: i preset sono schede separate
 
 `inflate`, `dent`, `attract`, `twist`, `squash`, `roughen` sono funzioni che restituiscono un deform-fn. Ognuna ha una scheda propria (corta — signature + 1 paragrafo + esempio). La scheda madre `warp.md` le linka tutte.

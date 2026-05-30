@@ -459,6 +459,31 @@
   [path mark-name]
   (nth (implicit-mark-pos path mark-name) 2 nil))
 
+(defn ^:export implicit-path-length
+  "Total length of an OPEN path: the sum of euclidean distances between
+   consecutive 3D turtle waypoints, with NO closing edge back to the start.
+   Walks the path from the world origin (heading +X, up +Z) via the real
+   turtle replay, so the value is the true 3D length (for a planar path it
+   equals the 2D length).
+
+   The measurement is over the per-`f` waypoint polyline (the corners between
+   forward moves): for paths built from curved/bezier segments this is the
+   control polygon, which UNDERESTIMATES the smooth length. For a closed 2D
+   profile use `shape-perimeter` instead. Returns nil for non-paths."
+  [path]
+  (when (and (map? path) (= :path (:type path)) (:commands path))
+    (let [segments (turtle/path-segments path)
+          wps (turtle/compute-path-waypoints
+               segments {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})
+          positions (mapv :position wps)]
+      (loop [i 1 total 0]
+        (if (>= i (count positions))
+          total
+          (let [[x1 y1 z1] (nth positions (dec i))
+                [x2 y2 z2] (nth positions i)
+                dx (- x2 x1) dy (- y2 y1) dz (- z2 z1)]
+            (recur (inc i) (+ total (Math/sqrt (+ (* dx dx) (* dy dy) (* dz dz)))))))))))
+
 (defn ^:export implicit-look-at [name]
   (when-let [mark-pose (get @state/mark-anchors name)]
     (swap! (turtle-ref) assoc-in [:anchors name]
@@ -785,3 +810,94 @@
      (sdf-intersection shape (sdf-half-space :cut-ahead))."
   [shape]
   (sdf/sdf-intersection shape (implicit-sdf-half-space)))
+
+;; ── Turtle-aware SDF primitive wrappers ─────────────────────────
+;; SDF primitives spawn at the current turtle pose, mirroring the
+;; behaviour of mesh primitives (box, sphere, cyl). Pure constructors
+;; in sdf.core remain origin-anchored for use from internal Clojure code.
+
+(defn- transform-sdf-to-turtle
+  "Wrap an SDF node with rotate + move so it lives at the current turtle
+   pose, and stamp creation-pose accordingly. Identity transform short-
+   circuits to avoid noise in the tree."
+  [node]
+  (let [turtle @(turtle-ref)
+        position (:position turtle)
+        heading (:heading turtle)
+        up (:up turtle)
+        [px py pz] position
+        [hx hy hz] heading
+        [ux uy uz] up
+        identity-rot? (and (== hx 1) (== hy 0) (== hz 0)
+                           (== ux 0) (== uy 0) (== uz 1))
+        rotated (if identity-rot?
+                  node
+                  ;; Decompose R = [h | h×u | u] into ZYX Tait-Bryan and
+                  ;; apply via sdf-rotate. Mirrors sdf-rotate-axis logic.
+                  ;; right = h × u; only its z component feeds the roll
+                  ;; computation, so x/y components are not materialised.
+                  (let [rzv (- (* hx uy) (* hy ux))
+                        clamp1 (fn [v] (max -1.0 (min 1.0 v)))
+                        pitch-rad (- (Math/asin (clamp1 hz)))
+                        yaw-rad (Math/atan2 hy hx)
+                        roll-rad (Math/atan2 rzv uz)
+                        to-deg (fn [r] (* r (/ 180 Math/PI)))
+                        nonzero? (fn [deg] (> (Math/abs deg) 1e-9))
+                        maybe-rotate (fn [n axis deg]
+                                       (if (nonzero? deg) (sdf/sdf-rotate n axis deg) n))]
+                    (-> node
+                        (maybe-rotate :x (to-deg roll-rad))
+                        (maybe-rotate :y (to-deg pitch-rad))
+                        (maybe-rotate :z (to-deg yaw-rad)))))
+        moved (if (and (zero? px) (zero? py) (zero? pz))
+                rotated
+                (sdf/sdf-move rotated px py pz))]
+    (assoc moved :creation-pose {:position position
+                                 :heading heading
+                                 :up up})))
+
+(defn ^:export implicit-sdf-sphere [r]
+  (transform-sdf-to-turtle (sdf/sdf-sphere r)))
+
+(defn ^:export implicit-sdf-box
+  ([size] (transform-sdf-to-turtle (sdf/sdf-box size)))
+  ([a b c] (transform-sdf-to-turtle (sdf/sdf-box a b c))))
+
+(defn- segments-for-radius
+  "Voxels-around-curve target from the current turtle resolution, applied
+   to a circle of given radius. Same call mesh primitives use, so
+   `(resolution :n N)` (and :a, :s modes) drive mesh and SDF smoothness
+   uniformly."
+  [r]
+  (turtle/calc-circle-segments @(turtle-ref) (* 2 Math/PI r)))
+
+(defn ^:export implicit-sdf-cyl [r h]
+  ;; libfive's cylinder is built along Z; pre-rotate so its axis swings
+  ;; onto X (the turtle's heading in the default frame) before applying
+  ;; the turtle transform — matching mesh `cyl`, whose height runs
+  ;; along the turtle's heading.
+  (-> (sdf/sdf-cyl r h)
+      (assoc :feature-segments (segments-for-radius r))
+      (sdf/sdf-rotate :y 90)
+      transform-sdf-to-turtle))
+
+(defn ^:export implicit-sdf-cone [r1 r2 h]
+  ;; The cone is built with r1 at z=-h/2 and r2 at z=+h/2. Rotate by
+  ;; -90° around Y so r1 ends up at the +heading end (forward) — same
+  ;; convention as mesh `cone`. (sdf-cyl uses +90° because it is
+  ;; symmetric and direction is irrelevant.)
+  (-> (sdf/sdf-cone r1 r2 h)
+      (assoc :feature-segments (segments-for-radius (max r1 r2)))
+      (sdf/sdf-rotate :y -90)
+      transform-sdf-to-turtle))
+
+(defn ^:export implicit-sdf-rounded-box [a b c r]
+  (transform-sdf-to-turtle (sdf/sdf-rounded-box a b c r)))
+
+(defn ^:export implicit-sdf-torus [R r]
+  (-> (sdf/sdf-torus R r)
+      (assoc :feature-segments (segments-for-radius r))
+      transform-sdf-to-turtle))
+
+(defn ^:export implicit-sdf-formula [form]
+  (transform-sdf-to-turtle (sdf/sdf-formula form)))

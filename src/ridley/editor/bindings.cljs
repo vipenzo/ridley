@@ -162,6 +162,10 @@
    'mark-y          impl/implicit-mark-y
    'mark-z          impl/implicit-mark-z
    'bounds-2d       shape/bounds-2d
+   ;; 2D measurement (contour length)
+   'shape-perimeter  shape/shape-perimeter
+   'shape-perimeters shape/shape-perimeters
+   'path-length      impl/implicit-path-length
    ;; Fillet and chamfer (2D shape corners)
    'fillet-shape    shape/fillet-shape
    'chamfer-shape   shape/chamfer-shape
@@ -180,8 +184,6 @@
    'text-shape   text/text-shape
    'text-shapes  text/text-shapes
    'char-shape   text/char-shape
-   'load-font!   text/load-font!
-   'font-loaded? text/font-loaded?
    'text-width   text/text-width
    'extrude-text text-ops/implicit-extrude-text
    'text-on-path-impl text-ops/implicit-text-on-path
@@ -253,6 +255,7 @@
    'noisy            sfn/noisy
    'woven            sfn/woven
    'weave-heightmap   sfn/weave-heightmap
+   'text-heightmap    text-ops/text-heightmap
    'mesh-bounds       sfn/mesh-bounds
    'mesh-to-heightmap sfn/mesh-to-heightmap
    'sample-heightmap  sfn/sample-heightmap
@@ -587,11 +590,12 @@
    'mesh-laplacian   mesh-utils/mesh-laplacian
    ;; SDF operations (libfive via Rust backend)
    'sdf-node?        sdf/sdf-node?
-   'sdf-sphere       sdf/sdf-sphere
-   'sdf-box          sdf/sdf-box
-   'sdf-cyl          sdf/sdf-cyl
-   'sdf-rounded-box  sdf/sdf-rounded-box
-   'sdf-torus        sdf/sdf-torus
+   'sdf-sphere       impl/implicit-sdf-sphere
+   'sdf-box          impl/implicit-sdf-box
+   'sdf-cyl          impl/implicit-sdf-cyl
+   'sdf-cone         impl/implicit-sdf-cone
+   'sdf-rounded-box  impl/implicit-sdf-rounded-box
+   'sdf-torus        impl/implicit-sdf-torus
    'sdf-resolution!  (fn [n] (set! sdf/*sdf-resolution* n))
    'sdf-union        sdf/sdf-union
    'sdf-difference   sdf/sdf-difference
@@ -607,7 +611,7 @@
    ;; sdf-move / sdf-rotate / sdf-scale removed: use polymorphic
    ;; translate / rotate / scale (which dispatch to the SDF backend).
    'sdf-revolve      sdf/sdf-revolve
-   'sdf-formula      sdf/sdf-formula
+   'sdf-formula      impl/implicit-sdf-formula
    'sdf->mesh        sdf/materialize
    'sdf-ensure-mesh  sdf/ensure-mesh
    ;; SDF TPMS (Triply Periodic Minimal Surfaces)

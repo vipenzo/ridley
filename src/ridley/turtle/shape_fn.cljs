@@ -580,19 +580,102 @@
                      :heading [1 0 0]
                      :up [0 0 1]}}))
 
+(defn- heightmap-phys-size
+  "Physical [width height] footprint of a heightmap. Text heightmaps carry
+   explicit :phys-width/:phys-height; others fall back to the bounds span,
+   else 1×1 (treated as normalized)."
+  [hm]
+  (cond
+    (and (:phys-width hm) (:phys-height hm))
+    [(:phys-width hm) (:phys-height hm)]
+    (:bounds hm)
+    (let [[x0 y0 x1 y1] (:bounds hm)] [(- x1 x0) (- y1 y0)])
+    :else [1 1]))
+
 (defn ^:export heightmap
-  "Heightmap displacement shape-fn.
-   (heightmap (circle 20 128) hm :amplitude 2 :tile-x 4 :tile-y 3)
-   (heightmap (circle 20 128) hm :amplitude 2 :center true)  ; centered [-0.5, 0.5]"
-  [shape-or-fn hm & {:keys [amplitude tile-x tile-y offset-x offset-y center]
-                     :or {amplitude 1.0 tile-x 1 tile-y 1
-                          offset-x 0 offset-y 0 center false}}]
-  (displaced shape-or-fn
-             (fn [p t]
-               (let [u (+ offset-x (* tile-x (/ (+ (angle p) Math/PI) (* 2 Math/PI))))
-                     v (+ offset-y (* tile-y t))
-                     s (sample-heightmap hm u v)]
-                 (* amplitude (if center (- s 0.5) s))))))
+  "Wrap a heightmap onto a loft's walls as a radial relief.
+
+   Two responsibilities are split: a producer (e.g. `text-heightmap`,
+   `weave-heightmap`, `mesh-to-heightmap`) makes the heightmap; this shape-fn
+   decides HOW it lands on the surface.
+
+   Surface axes: `u` runs around the cross-section (the circumference) and `v`
+   runs along the loft path (the height).
+
+   Options:
+   - :amplitude  relief height in world units (default 1.0)
+   - :center     center sampled values around 0 → [-0.5,0.5] (default false)
+   - :direction  :circumference (heightmap width wraps around — text reads
+                 around the tube, default) or :height (heightmap width runs
+                 along the path — text climbs the wall)
+   - :fit        :physical (honor the heightmap's real size), :stretch (fill
+                 the whole surface, the classic behavior), or :auto (default:
+                 physical when the heightmap knows its size — i.e. from
+                 `text-heightmap` — else stretch)
+   - :scale      multiply the heightmap's physical size (physical mode, default 1)
+   - :surface-width   circumference override (physical; default = perimeter of
+                      the base shape)
+   - :surface-height  path length override (physical; default = the loft's own
+                      length, taken from *path-length*)
+   - :tile-x :tile-y  copies across reading / height (integer, or :fill to pack
+                      as many whole copies as the surface holds, snapping the
+                      cell so it tiles seamlessly). Default 1.
+   - :offset-x :offset-y  shift the placement, as a fraction of the surface
+                          (default centers a single copy)
+
+   (heightmap (circle 20 128) weave :amplitude 2 :tile-x 4 :tile-y 3)  ; stretch
+   (heightmap (circle 10 256) txt  :amplitude 1.5 :center true)        ; physical"
+  [shape-or-fn hm & {:keys [amplitude center direction fit scale
+                            surface-width surface-height
+                            tile-x tile-y offset-x offset-y]
+                     :or {amplitude 1.0 center false direction :circumference
+                          fit :auto scale 1.0 tile-x 1 tile-y 1}}]
+  (let [base      (if (shape-fn? shape-or-fn) (:base (meta shape-or-fn)) shape-or-fn)
+        physical? (case fit
+                    :physical true
+                    :stretch  false
+                    (boolean (:phys-width hm)))     ; :auto
+        [pw ph]   (heightmap-phys-size hm)
+        cell-w    (* pw scale)
+        cell-h    (* ph scale)
+        bg        (if center -0.5 0.0)]             ; flat background relief level
+    (displaced
+     shape-or-fn
+     (fn [p t]
+       (let [u-circ (/ (+ (angle p) Math/PI) (* 2 Math/PI))]   ; [0,1) around
+         (if-not physical?
+           ;; --- stretch mode: one (tiled) heightmap fills the whole surface ---
+           (let [ox (or offset-x 0) oy (or offset-y 0)
+                 tx (if (= tile-x :fill) 1 tile-x)
+                 ty (if (= tile-y :fill) 1 tile-y)
+                 [u v] (if (= direction :height)
+                         [(+ ox (* tx t)) (+ oy (* ty u-circ))]
+                         [(+ ox (* tx u-circ)) (+ oy (* ty t))])
+                 s (sample-heightmap hm u v)]
+             (* amplitude (if center (- s 0.5) s)))
+           ;; --- physical mode: honor the heightmap's real-world size ---
+           (let [C (or surface-width (when base (shape/shape-perimeter base)) 1.0)
+                 H (or surface-height *path-length* 1.0)
+                 ;; reading axis spans A, glyph-height axis spans B
+                 [A B] (if (= direction :height) [H C] [C H])
+                 ;; reflect the reading axis so text is NOT mirrored when read
+                 ;; from outside the surface
+                 read-pos   (if (= direction :height) (* t H) (* (- 1 u-circ) C))
+                 height-pos (if (= direction :height) (* u-circ C) (* t H))
+                 nx (if (= tile-x :fill) (max 1 (Math/round (/ A cell-w))) tile-x)
+                 ny (if (= tile-y :fill) (max 1 (Math/round (/ B cell-h))) tile-y)
+                 cw (if (= tile-x :fill) (/ A nx) cell-w)
+                 ch (if (= tile-y :fill) (/ B ny) cell-h)
+                 ;; center the tiled block by default, then shift by offset
+                 a0 (+ (* 0.5 (- A (* nx cw))) (* (or offset-x 0) A))
+                 b0 (+ (* 0.5 (- B (* ny ch))) (* (or offset-y 0) B))
+                 hu (/ (- read-pos a0) cw)          ; position in copies
+                 hv (/ (- height-pos b0) ch)]
+             (if (and (>= hu 0) (< hu nx) (>= hv 0) (< hv ny))
+               (let [s (sample-heightmap hm (mod hu 1) (mod hv 1))]
+                 (* amplitude (if center (- s 0.5) s)))
+               ;; outside the placed copies → flat background relief
+               (* amplitude bg)))))))))
 
 ;; ============================================================
 ;; Profile shape-fn (path silhouette → cross-section scaling)

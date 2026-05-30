@@ -318,7 +318,7 @@ Dispone testo 3D lungo la curva del path. Ogni lettera viene posizionata e orien
 (register title (text-on-path "Hello Ridley" curve :size 15 :depth 3))
 ```
 
-Il cap. 12 (Testo) tratta `text-on-path` in dettaglio.
+Il cap. 13 (Testo) tratta `text-on-path` in dettaglio.
 
 ### move-to (dentro attach)
 
@@ -328,21 +328,21 @@ Porta la tartaruga alla posa di un mark dentro il path. Disponibile solo nel cor
 (attach (sphere 5) (move-to my-path :at :elbow :align))
 ```
 
-### with-path, goto, path-to
+### with-path, path-to, turtle
 
-`with-path` apre uno scope in cui i mark di un path diventano anchor navigabili. Dentro lo scope, `goto` salta la tartaruga a un anchor, e `path-to` costruisce un path dalla posizione corrente a un anchor target.
+`with-path` apre uno scope in cui i mark di un path diventano anchor navigabili. Dentro lo scope, `turtle` con il nome di un anchor posiziona la tartaruga su quel mark, e `path-to` costruisce un path dalla posizione corrente a un anchor target.
 
 <!-- example-source: where-with-path -->
 ```clojure
 (def skel (path (mark :base) (f 15) (mark :mid) (f 12) (mark :top)))
 
 (with-path skel
-  (goto :base)
-  (register lower (extrude (circle 2.5) (path-to :mid))))
+  (register lower
+    (turtle :base (extrude (circle 2.5) (path-to :mid)))))
 
 (with-path skel
-  (goto :mid)
-  (register upper (extrude (circle 1.2) (path-to :top))))
+  (register upper
+    (turtle :mid (extrude (circle 1.2) (path-to :top)))))
 ```
 
 `with-path` è il pattern principale per costruire più pezzi lungo lo stesso scheletro. Ogni pezzo viene estruso da un mark al successivo, e i pezzi sono automaticamente allineati perché condividono lo stesso scheletro. Il cap. 8 (Assemblaggio) usa questo pattern in modo estensivo.
@@ -394,10 +394,10 @@ Scala un path a una dimensione target su uno o entrambi gli assi:
 |---|---|---|
 | `extrude`, `loft`, `extrude-closed` | traiettoria di estrusione | 4 |
 | `follow-path` | muove la tartaruga e traccia linee | 5.2 |
-| `text-on-path` | posiziona lettere lungo la curva | 12 |
+| `text-on-path` | posiziona lettere lungo la curva | 13 |
 | `move-to` (dentro attach) | snap della tartaruga a un mark | 5.3 |
 | `turtle` con anchor | scope posizionato su un mark | 5.4 |
-| `with-path` + `goto` + `path-to` | assemblaggio path-driven | 8 |
+| `with-path` + `turtle` + `path-to` | assemblaggio path-driven | 8 |
 | `anchors` | mappa mark→posa | 5.3 |
 | `path-to-shape` | converte in shape 2D | 5.7 |
 | `stroke-shape` | contorno con spessore | 5.7 |

@@ -56,4 +56,4 @@ example shows the predicate's role in user code.
 - **Materialization:** `sdf-ensure-mesh`, `sdf->mesh`,
   `sdf-resolution!`
 - **All SDF primitives:** `sdf-sphere`, `sdf-box`, `sdf-cyl`,
-  `sdf-rounded-box`, `sdf-torus`
+  `sdf-cone`, `sdf-rounded-box`, `sdf-torus`

@@ -50,6 +50,34 @@ Il risultato è un numero: la distanza in unità Ridley (millimetri, se stai pro
 (println (area :box1 :top))    ;; area della faccia top di box1
 -->
 
+### Perimetro di una shape e lunghezza di un percorso
+
+Per misurare il *contorno* di una shape 2D ci sono `shape-perimeter` e `shape-perimeters`; per la lunghezza di un percorso aperto c'è `path-length`.
+
+`shape-perimeter` restituisce la lunghezza del solo contorno esterno (chiuso). È la misura che serve, per esempio, per dimensionare un profilo a una circonferenza target, o per sapere quanto materiale serve a bordare una sagoma:
+
+<!-- example-source: shape-perimeter-basic :no-run
+(println (shape-perimeter (circle 50)))           ;; ≈ 314 (circonferenza)
+(println (shape-perimeter (rect 40 60)))          ;; => 200
+-->
+
+Per una shape forata (un anello, una sagoma con buchi), `shape-perimeter` misura *solo* il contorno esterno. Se ti serve anche la lunghezza dei contorni interni, `shape-perimeters` restituisce un vettore `[esterno buco1 buco2 ...]`; il primo elemento coincide con `shape-perimeter`, e per la lunghezza totale di taglio basta sommarli:
+
+<!-- example-source: shape-perimeters-basic :no-run
+(def washer (shape-difference (circle 50) (circle 30)))
+(println (shape-perimeters washer))               ;; [esterno interno]
+(println (reduce + (shape-perimeters washer)))     ;; lunghezza totale di taglio
+-->
+
+`path-length` misura la lunghezza di un percorso aperto. A differenza di `shape-perimeter`, non chiude l'anello — misura il percorso da capo a coda — e lavora in 3D: se il percorso sale nello spazio, la lunghezza riflette il tragitto reale, non la sua proiezione piana:
+
+<!-- example-source: path-length-basic :no-run
+(def p (path (f 30) (tv 90) (f 40)))
+(println (path-length p))    ;; => 70
+-->
+
+Un paio di cose da sapere sulla precisione. Le misure si riferiscono alla shape *campionata*: un cerchio è in realtà un poligono a `n` lati, quindi `shape-perimeter` lo sottostima leggermente (è il perimetro del poligono inscritto, non del cerchio ideale). Lo scarto è piccolo — attorno allo 0,16% a 32 segmenti, 0,04% a 64 — ma c'è: se ti serve la circonferenza esatta, alza la risoluzione del cerchio o calcolala analiticamente. Analogamente, `path-length` su un percorso con tratti bezier misura la polilinea dei waypoint (il poligono di controllo), quindi sottostima le curve; per un profilo chiuso curvo, `shape-perimeter` è più accurato.
+
 ## 10.2 Misurazione interattiva
 
 ### Ruler da codice

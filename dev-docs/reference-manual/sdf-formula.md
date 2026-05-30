@@ -29,6 +29,13 @@ Because `sdf-formula` is a regular function (not a macro), expressions
 are composable: build them from helper functions, store them in vars,
 splice them with `list` / `concat`, etc.
 
+The formula is evaluated in a *local frame* anchored at the current
+turtle pose: `x`, `y`, `z` inside the expression are the turtle-local
+axes (right, up, heading), and the resulting SDF is then translated /
+rotated into world space. Write the formula as if the turtle sat at
+the origin, then position the surface by moving the turtle before the
+call.
+
 > Desktop only: requires the libfive backend.
 
 ## Parameters

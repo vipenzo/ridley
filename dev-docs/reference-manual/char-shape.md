@@ -18,9 +18,9 @@ outer contour. Returns one shape, or `nil` if the glyph has no
 contours. Pure function; does not modify turtle state.
 
 Unlike `text-shape` and `text-shapes`, `char-shape` takes its font
-**positionally** (not as a keyword option). Pass an opentype.js font
-object — typically the result of `load-font!` or
-`(font-loaded?)`-gated globals.
+**positionally** (not as a keyword option). Pass a registered font id
+keyword (`:roboto`, `:roboto-mono`, or any custom id from Settings →
+Fonts), or `nil` for the default `:roboto`.
 
 `char-shape` is the lowest-level entry into glyph extraction. Most user
 code wants the higher-level functions:
@@ -35,7 +35,7 @@ character (custom kerning, manual placement, animated typography).
 ## Parameters
 
 - `char` — a single-character string, e.g. `"A"`.
-- `font` — an opentype.js font object.
+- `font` — a registered font id keyword, or `nil` for `:roboto`.
 - `size` — font size in units.
 - `:curve-segments` (default `8`) — segments per Bezier curve in the
   glyph outline.
@@ -46,11 +46,8 @@ character (custom kerning, manual placement, animated typography).
 
 <!-- example-source: char-shape-extrude-single -->
 ```clojure
-;; Need a font object — pull the loaded default via the registry helper
-(-> (load-font! :roboto)
-    (.then (fn [f]
-             (register letter
-               (extrude (char-shape "R" f 30) (f 5))))))
+;; Synchronous: pass the font id directly
+(register letter (extrude (char-shape "R" :roboto 30) (f 5)))
 ```
 <!-- /example-source -->
 
@@ -68,5 +65,4 @@ that `text-shape` uses internally, exposed for direct control.
 
 ## See also
 
-- **Related:** `text-shape`, `text-shapes`, `extrude-text`,
-  `load-font!`, `font-loaded?`
+- **Related:** `text-shape`, `text-shapes`, `extrude-text`

@@ -15,61 +15,128 @@
             [ridley.turtle.shape :as shape]))
 
 ;; ============================================================
-;; Font management
+;; Font registry
 ;; ============================================================
+;;
+;; Fonts are looked up by keyword id from a synchronous registry. Built-in
+;; ids (`:roboto`, `:roboto-mono`) are pre-loaded at startup. Custom fonts
+;; are added by the Settings → Fonts panel (desktop only) and persist
+;; across sessions via the filesystem.
+;;
+;; User-facing API: shape-producing functions accept `:font :some-id`.
+;; Resolution is synchronous; an unregistered id throws a deterministic
+;; error pointing the user to Settings → Fonts.
 
-;; Cache for loaded fonts: {url-or-key -> font-object}
-(defonce ^:private font-cache (atom {}))
+;; Registry: {id-keyword -> opentype-font-object}
+(defonce ^:private font-registry (atom {}))
 
-;; Default font (loaded at startup). Public so tests can inject a synchronously-
-;; loaded font without going through the async browser fetch path.
-(defonce default-font (atom nil))
+;; Display metadata: {id-keyword -> {:label "..." :builtin? bool :filename "..."}}
+;; Used by the Settings panel for listing.
+(defonce ^:private font-meta (atom {}))
 
-;; Built-in font paths (relative for GitHub Pages compatibility)
-(def ^:private builtin-fonts
-  {:roboto "fonts/Roboto-Regular.ttf"
-   :roboto-mono "fonts/RobotoMono-Regular.ttf"})
+(def ^:private builtin-font-specs
+  [{:id :roboto      :label "Roboto Regular" :url "fonts/Roboto-Regular.ttf"}
+   {:id :roboto-mono :label "Roboto Mono"    :url "fonts/RobotoMono-Regular.ttf"}])
 
-(defn load-font!
-  "Load a font file asynchronously. Returns a promise that resolves to the font.
+(defn register-font!
+  "Register `font` (an opentype.js Font object) under `id` (a keyword).
+   `meta` is optional display metadata: `{:label \"...\" :builtin? bool :filename \"...\"}`."
+  ([id font] (register-font! id font {}))
+  ([id font meta]
+   (swap! font-registry assoc id font)
+   (swap! font-meta assoc id meta)
+   font))
 
-   Usage:
-   (load-font! \"/fonts/custom.ttf\")      ; load by URL
-   (load-font! :roboto)                    ; load built-in font
-   (load-font! :roboto-mono)               ; load monospace"
-  [url-or-key]
-  (let [url (if (keyword? url-or-key)
-              (get builtin-fonts url-or-key)
-              url-or-key)]
-    (if-let [cached (get @font-cache url)]
-      (js/Promise.resolve cached)
-      (js/Promise.
-       (fn [resolve reject]
-         (opentype/load
-          url
-          (fn [err font]
-            (if err
-              (reject err)
-              (do
-                (swap! font-cache assoc url font)
-                (resolve font))))))))))
+(defn parse-font-bytes
+  "Parse an ArrayBuffer into an opentype Font object synchronously."
+  [array-buffer]
+  (opentype/parse array-buffer))
 
-(defn init-default-font!
-  "Initialize the default bundled font. Returns a promise.
-   Called at app startup."
+(defn unregister-font!
+  "Remove a font id from the registry. No-op if id is not registered."
+  [id]
+  (swap! font-registry dissoc id)
+  (swap! font-meta dissoc id))
+
+(defn font-info
+  "Return the metadata map for a registered font id, or nil."
+  [id]
+  (get @font-meta id))
+
+(defn registered?
+  "True if `id` (a keyword) is in the registry."
+  [id]
+  (contains? @font-registry id))
+
+(defn list-registered-fonts
+  "Return a vector of `{:id :label :builtin? :filename}` maps for all
+   registered fonts, with built-ins first."
   []
-  (-> (load-font! :roboto)
-      (.then (fn [font]
-               (reset! default-font font)
-               font))
+  (let [entries (for [[id meta] @font-meta]
+                  (assoc meta :id id))
+        builtins (filter :builtin? entries)
+        customs (->> entries
+                     (remove :builtin?)
+                     (sort-by :id))]
+    (vec (concat (sort-by :id builtins) customs))))
+
+(defn resolve-font
+  "Resolve `font-arg` to an opentype font object.
+
+   Accepts:
+   - `nil`        → resolves to `:roboto` (the default).
+   - a keyword id → synchronous lookup in the registry; throws if missing.
+   - a font object (anything non-keyword) → passthrough (for internal callers
+     that already hold the resolved object).
+
+   Errors are deterministic: an unregistered id throws immediately. There
+   is no \"loading, please retry\" path — fonts are loaded once at startup
+   or via the Settings panel."
+  [font-arg]
+  (cond
+    (nil? font-arg)
+    (or (get @font-registry :roboto)
+        (throw (js/Error. "Default font :roboto is not yet loaded. Wait for app startup to finish.")))
+
+    (keyword? font-arg)
+    (or (get @font-registry font-arg)
+        (throw (js/Error. (str "Font id " (pr-str font-arg) " is not registered. "
+                               "Add it in Settings → Fonts."))))
+
+    :else font-arg))
+
+(defn- fetch-font-url
+  "Fetch and parse a font from a URL. Returns a Promise resolving to an
+   opentype Font object."
+  [url]
+  (js/Promise.
+   (fn [resolve reject]
+     (opentype/load
+      url
+      (fn [err font]
+        (if err (reject err) (resolve font)))))))
+
+(defn init-builtin-fonts!
+  "Fetch and register the bundled built-in fonts. Returns a Promise that
+   resolves once all built-ins are in the registry."
+  []
+  (-> (js/Promise.all
+       (clj->js
+        (for [{:keys [id label url]} builtin-font-specs]
+          (-> (fetch-font-url url)
+              (.then (fn [font]
+                       (register-font! id font
+                                       {:label label
+                                        :builtin? true
+                                        :filename url})
+                       font))))))
       (.catch (fn [err]
-                (js/console.error "Failed to load default font:" err)
+                (js/console.error "Failed to load built-in fonts:" err)
                 nil))))
 
-(defn get-default-font
-  "Get the default font if loaded, nil otherwise."
-  []
-  @default-font)
+;; Backwards-compatible alias for callers still using the old name during
+;; the refactor. New code should use `init-builtin-fonts!`.
+(def init-default-font! init-builtin-fonts!)
 
 ;; ============================================================
 ;; Bezier curve flattening
@@ -304,15 +371,18 @@
 
 (defn char-shape
   "Create a shape from a single character.
+   `font` may be a registered keyword id (e.g. `:roboto-mono`), nil for
+   the default `:roboto`, or an already-resolved opentype Font object.
    Returns the outer contour as a shape (ignores holes for now)."
   [char font size & {:keys [curve-segments] :or {curve-segments 8}}]
-  (when font
-    (let [glyph (.charToGlyph font char)
-          contours (glyph->contours glyph font size :curve-segments curve-segments)]
-      (when (seq contours)
-        ;; Take the largest contour (outer boundary)
-        (let [largest (apply max-key count contours)]
-          (shape/make-shape largest {:centered? false}))))))
+  (let [font (resolve-font font)]
+    (when font
+      (let [glyph (.charToGlyph font char)
+            contours (glyph->contours glyph font size :curve-segments curve-segments)]
+        (when (seq contours)
+          ;; Take the largest contour (outer boundary)
+          (let [largest (apply max-key count contours)]
+            (shape/make-shape largest {:centered? false})))))))
 
 (defn text-shape
   "Create 2D shapes from a text string.
@@ -330,7 +400,7 @@
    (extrude (text-shape \"Hi\" :size 30) (f 5))"
   [text & {:keys [size font curve-segments]
            :or {size 10 curve-segments 8}}]
-  (let [font (or font @default-font)]
+  (let [font (resolve-font font)]
     (when font
       (let [glyphs (.stringToGlyphs font text)
             units-per-em (.-unitsPerEm font)
@@ -380,30 +450,28 @@
    Returns a vector of shapes, one for each character."
   [text & {:keys [size font curve-segments]
            :or {size 10 curve-segments 8}}]
-  (let [font (or font @default-font)]
+  (let [font (resolve-font font)]
     (when font
       (let [chars (seq text)]
         (vec (keep #(char-shape (str %) font size :curve-segments curve-segments) chars))))))
 
 (defn text-width
-  "Calculate the width of text at given size."
+  "Calculate the width of text at given size.
+   `font` may be a registered keyword id (e.g. `:roboto-mono`) or nil for
+   the default `:roboto`."
   [text font size]
-  (when font
-    (let [glyphs (.stringToGlyphs font text)
-          units-per-em (.-unitsPerEm font)
-          scale (/ size units-per-em)]
-      (reduce + (map #(* (.-advanceWidth %) scale) glyphs)))))
-
-(defn font-loaded?
-  "Check if the default font is loaded and ready."
-  []
-  (some? @default-font))
+  (let [font (resolve-font font)]
+    (when font
+      (let [glyphs (.stringToGlyphs font text)
+            units-per-em (.-unitsPerEm font)
+            scale (/ size units-per-em)]
+        (reduce + (map #(* (.-advanceWidth %) scale) glyphs))))))
 
 (defn text-metrics
   "Get metrics for text rendering: advance widths for each character.
    Returns vector of {:char c :advance-width w} maps."
   [text & {:keys [size font] :or {size 10}}]
-  (let [font (or font @default-font)]
+  (let [font (resolve-font font)]
     (when font
       (let [glyphs (.stringToGlyphs font text)
             units-per-em (.-unitsPerEm font)
@@ -421,7 +489,7 @@
    This is used by extrude-text to create properly oriented 3D text."
   [text & {:keys [size font curve-segments]
            :or {size 10 curve-segments 8}}]
-  (let [font (or font @default-font)]
+  (let [font (resolve-font font)]
     (when font
       (let [glyphs (.stringToGlyphs font text)
             units-per-em (.-unitsPerEm font)
