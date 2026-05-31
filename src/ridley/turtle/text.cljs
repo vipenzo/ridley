@@ -391,6 +391,14 @@
    - :size - font size in units (default 10)
    - :font - font object (default: built-in Roboto)
    - :curve-segments - segments for Bezier curves (default 8)
+   - :center - center the text on the turtle pose (default false). By default
+     the pose acts as a writing baseline (origin at bottom-left, text growing
+     up and forward), unlike rect/circle which spawn centered. With :center
+     true the combined ink bounding box of all glyphs is centered on the pose
+     on BOTH axes — so the text behaves like a centered primitive (handy to
+     align it to another piece or rotate it about its own center). Centering
+     is on the actual ink box, not the advance width, so leading/trailing
+     spaces do not shift the center.
 
    Returns a VECTOR of shapes. Composite glyphs (lowercase i/j, accented
    letters, umlauts, etc.) produce multiple shapes — one per outer contour,
@@ -398,50 +406,64 @@
 
    Use with extrude which combines multiple shapes into a single mesh:
    (extrude (text-shape \"Hi\" :size 30) (f 5))"
-  [text & {:keys [size font curve-segments]
+  [text & {:keys [size font curve-segments center]
            :or {size 10 curve-segments 8}}]
   (let [font (resolve-font font)]
     (when font
       (let [glyphs (.stringToGlyphs font text)
             units-per-em (.-unitsPerEm font)
-            scale (/ size units-per-em)]
-        ;; Process each glyph with proper positioning
-        (loop [idx 0
-               x-offset 0
-               shapes []]
-          (if (>= idx (.-length glyphs))
-            shapes
-            (let [glyph (aget glyphs idx)
-                  path (.getPath glyph x-offset 0 size)
-                  commands (.-commands path)
-                  contours (path-commands->contours commands curve-segments)
-                  advance-width (* (.-advanceWidth glyph) scale)
-                  ;; Flip Y and reverse points to preserve winding.
-                  ;; opentype.js getPath uses SVG coords (Y-down), we need Y-up.
-                  ;; Y flip inverts winding, reverse restores it.
-                  normalized-contours
-                  (->> contours
-                       (map (fn [contour]
-                              (vec (reverse (mapv (fn [[x y]] [x (- y)]) contour)))))
-                       (map remove-consecutive-duplicates)
-                       (filter #(> (count %) 2))
-                       vec)
-                  {:keys [outer holes]} (classify-contours normalized-contours)
-                  ;; Composite glyphs (i, j, à, ä, ñ, ...) have multiple outers.
-                  ;; Emit one shape per outer, attributing each hole to its container.
-                  outer+holes (assign-holes-to-outers outer holes)
-                  glyph-shapes (keep (fn [{:keys [outer holes]}]
-                                       (when (> (count outer) 2)
-                                         (shape/make-shape
-                                          outer
-                                          (cond-> {:centered? false
-                                                   :preserve-position? true
-                                                   :align-to-heading? true}
-                                            (seq holes) (assoc :holes holes)))))
-                                     outer+holes)]
-              (recur (inc idx)
-                     (+ x-offset advance-width)
-                     (into shapes glyph-shapes)))))))))
+            scale (/ size units-per-em)
+            ;; Phase 1: collect per-shape contour data (y-flipped, x-offset
+            ;; applied) for every glyph. Splitting build from layout lets us
+            ;; measure the whole string's box before emitting shapes.
+            shape-data
+            (loop [idx 0
+                   x-offset 0
+                   acc []]
+              (if (>= idx (.-length glyphs))
+                acc
+                (let [glyph (aget glyphs idx)
+                      path (.getPath glyph x-offset 0 size)
+                      commands (.-commands path)
+                      contours (path-commands->contours commands curve-segments)
+                      advance-width (* (.-advanceWidth glyph) scale)
+                      ;; Flip Y and reverse points to preserve winding.
+                      ;; opentype.js getPath uses SVG coords (Y-down), we need
+                      ;; Y-up. Y flip inverts winding, reverse restores it.
+                      normalized-contours
+                      (->> contours
+                           (map (fn [contour]
+                                  (vec (reverse (mapv (fn [[x y]] [x (- y)]) contour)))))
+                           (map remove-consecutive-duplicates)
+                           (filter #(> (count %) 2))
+                           vec)
+                      {:keys [outer holes]} (classify-contours normalized-contours)
+                      ;; Composite glyphs (i, j, à, ä, ñ, ...) have multiple
+                      ;; outers — one entry per outer, holes attributed to it.
+                      outer+holes (assign-holes-to-outers outer holes)]
+                  (recur (inc idx)
+                         (+ x-offset advance-width)
+                         (into acc outer+holes)))))
+            ;; Phase 2: optionally center on the combined ink bounding box.
+            [dx dy] (if center
+                      (let [pts (mapcat :outer shape-data)]
+                        (if (seq pts)
+                          (let [xs (map first pts) ys (map second pts)]
+                            [(/ (+ (reduce min xs) (reduce max xs)) 2)
+                             (/ (+ (reduce min ys) (reduce max ys)) 2)])
+                          [0 0]))
+                      [0 0])
+            shift (fn [contour] (mapv (fn [[x y]] [(- x dx) (- y dy)]) contour))]
+        (->> shape-data
+             (keep (fn [{:keys [outer holes]}]
+                     (when (> (count outer) 2)
+                       (shape/make-shape
+                        (shift outer)
+                        (cond-> {:centered? false
+                                 :preserve-position? true
+                                 :align-to-heading? true}
+                          (seq holes) (assoc :holes (mapv shift holes)))))))
+             vec)))))
 
 (defn text-shapes
   "Create multiple shapes, one per character.

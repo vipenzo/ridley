@@ -2150,8 +2150,8 @@
     :category "text"
     :status "stable"
     :since ""
-    :signature "(text-shape text & {:keys [size font curve-segments]})"
-    :description "Convert a text string into a vector of 2D shapes ready for extrusion or boolean operations. Returns a vector of shapes — **one entry per outer contour**, not per character. Pure function; does not modify turtle state."
+    :signature "(text-shape text & {:keys [size font curve-segments center]})"
+    :description "Convert a text string into a vector of 2D shapes ready for extrusion or boolean operations. Returns a vector of shapes — **one entry per outer contour**, not per character. By default the turtle pose is a writing baseline (origin bottom-left, text grows up and forward); `:center true` centers the combined ink bounding box on the pose on both axes, so the text behaves like a centered primitive (align to another piece, rotate about its own center). Pure function; does not modify turtle state."
     :path "dev-docs/reference-manual/text-shape.md"}
 
    "text-shapes"

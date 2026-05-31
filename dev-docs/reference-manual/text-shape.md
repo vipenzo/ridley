@@ -9,7 +9,7 @@ status: stable
 
 ## Signature
 
-`(text-shape text & {:keys [size font curve-segments]})`
+`(text-shape text & {:keys [size font curve-segments center]})`
 
 ## Description
 
@@ -48,6 +48,15 @@ For a one-call shortcut that goes straight to a 3D mesh, use
 - `:curve-segments` (default `8`) — number of straight segments per
   Bezier curve in the glyph outlines. Increase for smoother letters at
   large sizes.
+- `:center` (default `false`) — center the text on the turtle pose. By
+  default the pose is a writing baseline: the text starts at the pose
+  (origin at bottom-left) and grows up and forward, unlike `rect`/`circle`
+  which spawn centered on the pose. With `:center true` the **combined ink
+  bounding box** of all glyphs is centered on the pose on **both axes**, so
+  the text behaves like a centered primitive — convenient to align it to
+  another piece or rotate it about its own center. Centering uses the actual
+  ink box (not the advance width), so leading/trailing spaces do not shift
+  the center.
 
 ## Example
 
@@ -79,11 +88,26 @@ automatically.
 `:font` swaps the default Roboto for any registered id. Custom ids are
 registered in Settings → Fonts and persist across sessions.
 
+{{example: text-shape-center}}
+
+<!-- example-source: text-shape-center -->
+```clojure
+;; :center true makes the text sit centered on the turtle pose, so it
+;; rotates about its own middle instead of swinging around the baseline
+(register badge
+  (extrude (text-shape "RIDLEY" :size 30 :center true) (f 4)))
+```
+<!-- /example-source -->
+
+Without `:center`, the same call would extrude the text growing up and
+forward from the pose (baseline at the origin).
+
 ## Notes
 
 - The returned shapes are positioned in 2D with the string's baseline
-  on `y = 0`, starting at `x = 0`. The shapes carry positional metadata
-  so `extrude` preserves the relative layout.
+  on `y = 0`, starting at `x = 0` (unless `:center true`, which recenters
+  the whole string's ink box on the origin). The shapes carry positional
+  metadata so `extrude` preserves the relative layout.
 - For accurate width measurements before extrusion, use `text-width`.
 - An unregistered `:font` id raises a deterministic error pointing at
   Settings → Fonts. Built-ins (`:roboto`, `:roboto-mono`) are always

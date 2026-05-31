@@ -2503,6 +2503,11 @@ Convert text to 2D shapes using opentype.js font parsing:
 ;; Extrude for 3D text — single mesh out, ready for booleans.
 (register title (extrude (text-shape "RIDLEY" :size 40) (f 5)))
 
+;; Center the text on the turtle pose (default false = baseline at the pose).
+;; :center true centers the ink bounding box on both axes, so the text acts
+;; like a centered primitive (align to another piece, rotate about its center).
+(text-shape "Hello" :size 30 :center true)
+
 ;; Individual character shapes (one shape per character, no composite handling)
 (text-shapes "ABC" :size 20)            ; Returns vector of shapes
 
