@@ -17,6 +17,8 @@ Il testo in Ridley è geometria. Non c'è un sistema di annotazioni separato: le
 (stamp (text-shape "Hello" :size 30))
 -->
 
+Una cosa che può sorprendere è *dove* il testo appare rispetto alla tartaruga, e vale la pena fissare la logica una volta per tutte, perché le tre funzioni di testo seguono convenzioni diverse ma coerenti. `text-shape` produce la shape sul piano ortogonale all'heading, ma — a differenza di `rect`, che nasce *centrato* sulla tartaruga — usa la posa della tartaruga come *rigo di scrittura*: il testo si sviluppa verso l'alto e in avanti a partire da quel punto, come scriveresti su un foglio appoggiando la penna in basso a sinistra. Se ti serve il testo centrato sulla tartaruga (come una shape primitiva), puoi calcolarne la larghezza con `text-width` e traslarlo di metà.
+
 Il risultato non è una shape per carattere, ma una shape per *contorno esterno*. La maggior parte dei caratteri ha un solo contorno esterno, ma i caratteri composti ne hanno di più: `i` e `j` ne hanno due (corpo + puntino), `ä` e `ö` ne hanno tre (corpo + due punti). I buchi interni (il vuoto dentro la `o`, la `a`, la `B`) vengono attribuiti automaticamente al contorno esterno più piccolo che li contiene.
 
 Per le shape dei singoli caratteri (senza composizione automatica dei contorni):
@@ -87,7 +89,7 @@ Puoi passare il vettore di shape da `text-shape` direttamente a `extrude`:
 (register title (extrude-text "RIDLEY" :size 40 :depth 3))
 -->
 
-Il testo scorre lungo l'heading della tartaruga e si estrude lungo l'up. Restituisce un'unica mesh contenente tutti i glifi, pronta per essere combinata con booleane o passata a `attach`.
+Il testo scorre lungo l'heading della tartaruga (che fa da rigo di scrittura, come per `text-shape`). Restituisce un'unica mesh contenente tutti i glifi, pronta per essere combinata con booleane o passata a `attach`.
 
 ### Testo lungo un percorso
 
