@@ -438,16 +438,128 @@
             (when (> z (aget data idx))
               (aset data idx z))))))))
 
+(defn- rasterize-faces-normalized
+  "Rasterize faces (max-z point-sampling) onto a w×h grid over [x-min y-min
+   x-max y-max], then normalize finite cells to [0, 1] (binary 1/0 when the
+   z-range is 0). Background cells become 0. Returns {:data :z-min :z-max}."
+  [verts faces w h x-min y-min x-max y-max]
+  (let [n (* w h)
+        data (js/Float32Array. n)
+        _ (dotimes [i n] (aset data i js/Number.NEGATIVE_INFINITY))
+        sx (/ (- x-max x-min) w)
+        sy (/ (- y-max y-min) h)]
+    ;; Rasterize each face (handle both triangles and quads)
+    (doseq [face faces]
+      (let [v0 (nth verts (nth face 0))
+            v1 (nth verts (nth face 1))
+            v2 (nth verts (nth face 2))]
+        (rasterize-triangle! data w h x-min y-min sx sy v0 v1 v2)
+        (when (>= (count face) 4)
+          (let [v3 (nth verts (nth face 3))]
+            (rasterize-triangle! data w h x-min y-min sx sy v0 v2 v3)))))
+    ;; Normalize to [0, 1], skipping -Infinity (background) cells
+    (let [z-min (loop [i 0 m js/Number.POSITIVE_INFINITY]
+                  (if (>= i n) m
+                      (let [v (aget data i)]
+                        (recur (inc i) (if (js/isFinite v) (min m v) m)))))
+          z-max (loop [i 0 m js/Number.NEGATIVE_INFINITY]
+                  (if (>= i n) m
+                      (let [v (aget data i)]
+                        (recur (inc i) (if (js/isFinite v) (max m v) m)))))
+          z-range (- z-max z-min)]
+      (if (> z-range 0)
+        (dotimes [i n]
+          (let [v (aget data i)]
+            (aset data i (if (js/isFinite v) (/ (- v z-min) z-range) 0))))
+        ;; z-range = 0: binary heightmap (finite → 1, -Inf → 0)
+        (dotimes [i n]
+          (let [v (aget data i)]
+            (aset data i (if (js/isFinite v) 1.0 0)))))
+      {:data data :z-min z-min :z-max z-max})))
+
+(defn- box-downsample
+  "Average a (w*ss)×(h*ss) Float32Array into a w×h grid: each output cell is
+   the mean of its ss×ss source block. Turns the hard 0/1 edges of a binary
+   raster into fractional coverage (anti-aliasing), so the relief reads as a
+   smooth bevel instead of a per-cell staircase when sampled on a loft."
+  [src w h ss]
+  (let [sw (* w ss)
+        out (js/Float32Array. (* w h))
+        inv (/ 1.0 (* ss ss))]
+    (dotimes [oy h]
+      (dotimes [ox w]
+        (let [sx0 (* ox ss)
+              sy0 (* oy ss)
+              acc (loop [dy 0 a 0.0]
+                    (if (>= dy ss)
+                      a
+                      (recur (inc dy)
+                             (loop [dx 0 a2 a]
+                               (if (>= dx ss)
+                                 a2
+                                 (recur (inc dx)
+                                        (+ a2 (aget src (+ sx0 dx
+                                                           (* (+ sy0 dy) sw))))))))))]
+          (aset out (+ ox (* oy w)) (* acc inv)))))
+    out))
+
+(defn- box-blur
+  "Separable box blur of a w×h Float32Array with independent cell radii rx, ry
+   (edges clamped — each output cell averages only in-bounds neighbours). Widens
+   the edge ramp so a coarse loft resolves it as a gradient bevel rather than a
+   per-cell step. Radii in CELLS; mesh-to-heightmap derives them from a
+   world-unit :blur so the smoothing is isotropic in real space (and thus wider,
+   in cells, along an over-resolved axis — exactly where the comb is worst)."
+  [src w h rx ry]
+  (if (and (<= rx 0) (<= ry 0))
+    src
+    (let [tmp (js/Float32Array. (* w h))
+          out (js/Float32Array. (* w h))]
+      ;; horizontal pass
+      (dotimes [y h]
+        (dotimes [x w]
+          (let [x0 (max 0 (- x rx))
+                x1 (min (dec w) (+ x rx))]
+            (loop [xx x0 acc 0.0 c 0]
+              (if (> xx x1)
+                (aset tmp (+ x (* y w)) (/ acc c))
+                (recur (inc xx) (+ acc (aget src (+ xx (* y w)))) (inc c)))))))
+      ;; vertical pass
+      (dotimes [y h]
+        (dotimes [x w]
+          (let [y0 (max 0 (- y ry))
+                y1 (min (dec h) (+ y ry))]
+            (loop [yy y0 acc 0.0 c 0]
+              (if (> yy y1)
+                (aset out (+ x (* y w)) (/ acc c))
+                (recur (inc yy) (+ acc (aget tmp (+ x (* yy w)))) (inc c)))))))
+      out)))
+
 (defn ^:export mesh-to-heightmap
   "Convert a mesh to a heightmap by rasterizing max-z onto a 2D grid.
    :resolution defaults to (default-segments 2) — twice the global curve
    resolution, because heightmaps are 2D grids and benefit from finer sampling.
+
+   :supersample (default 1 = off) rasterizes the grid at this factor in each
+   axis and box-downsamples it, anti-aliasing the edges. Crucial for binary
+   reliefs (e.g. text): without it the hard 0/1 edge snaps to whole cells and
+   shows a comb/staircase once wrapped on a loft; 3–4 yields smooth letters
+   without needing a denser loft or grid.
+
+   :blur (default 0 = off) widens the edge ramp by box-blurring the grid with a
+   radius given in WORLD units (same units as the bounds). Supersampling makes
+   the edge position sub-cell accurate; blur makes the ramp wide enough that a
+   coarse loft resolves it as a smooth bevel instead of a comb. The world-unit
+   radius is converted to per-axis cell radii, so it stays isotropic in real
+   space even on a non-square footprint.
    (mesh-to-heightmap mesh)
    (mesh-to-heightmap mesh :resolution 256)
+   (mesh-to-heightmap mesh :resolution 256 :supersample 3 :blur 0.4)
    (mesh-to-heightmap mesh :resolution 128 :bounds [x0 y0 x1 y1])
    (mesh-to-heightmap mesh :resolution 128 :offset-x 0 :offset-y 0 :length-x 10 :length-y 10)"
-  [mesh & {:keys [resolution bounds offset-x offset-y length-x length-y]}]
+  [mesh & {:keys [resolution bounds offset-x offset-y length-x length-y supersample blur]}]
   (let [resolution (or resolution (extrusion/default-segments 2))
+        ss (max 1 (int (or supersample 1)))
         verts (:vertices mesh)
         faces (:faces mesh)
         auto-bounds (mesh-xy-bounds verts)
@@ -463,45 +575,23 @@
           :else auto-bounds)
         w resolution
         h resolution
-        n (* w h)
-        data (js/Float32Array. n)
-        _ (dotimes [i n] (aset data i js/Number.NEGATIVE_INFINITY))
-        sx (/ (- x-max x-min) w)
-        sy (/ (- y-max y-min) h)]
-    ;; Rasterize each face (handle both triangles and quads)
-    (doseq [face faces]
-      (let [v0 (nth verts (nth face 0))
-            v1 (nth verts (nth face 1))
-            v2 (nth verts (nth face 2))]
-        (rasterize-triangle! data w h x-min y-min sx sy v0 v1 v2)
-        (when (>= (count face) 4)
-          (let [v3 (nth verts (nth face 3))]
-            (rasterize-triangle! data w h x-min y-min sx sy v0 v2 v3)))))
-    ;; Normalize to [0, 1], skipping -Infinity cells
-    (let [z-min (loop [i 0 m js/Number.POSITIVE_INFINITY]
-                  (if (>= i n) m
-                      (let [v (aget data i)]
-                        (recur (inc i) (if (js/isFinite v) (min m v) m)))))
-          z-max (loop [i 0 m js/Number.NEGATIVE_INFINITY]
-                  (if (>= i n) m
-                      (let [v (aget data i)]
-                        (recur (inc i) (if (js/isFinite v) (max m v) m)))))
-          z-range (- z-max z-min)]
-      (if (> z-range 0)
-        (dotimes [i n]
-          (let [v (aget data i)]
-            (aset data i (if (js/isFinite v)
-                           (/ (- v z-min) z-range)
-                           0))))
-        ;; z-range = 0: binary heightmap (finite → 1, -Inf → 0)
-        (dotimes [i n]
-          (let [v (aget data i)]
-            (aset data i (if (js/isFinite v) 1.0 0)))))
-      {:type :heightmap
-       :data data
-       :width w :height h
-       :bounds [x-min y-min x-max y-max]
-       :z-min z-min :z-max z-max})))
+        ;; Rasterize at ss× resolution, then box-downsample for anti-aliasing.
+        {:keys [data z-min z-max]}
+        (rasterize-faces-normalized verts faces (* w ss) (* h ss)
+                                    x-min y-min x-max y-max)
+        downsampled (if (> ss 1) (box-downsample data w h ss) data)
+        ;; Widen the edge ramp. The world-unit radius maps to per-axis cell
+        ;; radii via the cell size, so it is isotropic in real space.
+        out (if (and blur (pos? blur))
+              (let [rx (Math/round (/ blur (/ (- x-max x-min) w)))
+                    ry (Math/round (/ blur (/ (- y-max y-min) h)))]
+                (box-blur downsampled w h rx ry))
+              downsampled)]
+    {:type :heightmap
+     :data out
+     :width w :height h
+     :bounds [x-min y-min x-max y-max]
+     :z-min z-min :z-max z-max}))
 
 (defn ^:export sample-heightmap
   "Sample a heightmap at (u, v) with bilinear interpolation.

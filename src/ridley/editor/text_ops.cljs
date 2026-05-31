@@ -218,18 +218,31 @@
    - :depth          extrusion depth (default 1; irrelevant after normalization)
    - :curve-segments Bezier flattening per glyph curve. Defaults to scale with
                      :resolution (max 16, resolution/8) so letters stay smooth;
-                     pin it to override. This — not the grid — is the dominant
-                     factor in relief smoothness.
+                     pin it to override.
+   - :supersample    Anti-aliasing factor for the raster (default 3). The relief
+                     is a binary mask (letter / background); without AA its hard
+                     0/1 edges snap to whole grid cells and show a comb/staircase
+                     once wrapped on a loft. Supersampling rasterizes at this
+                     factor and averages, giving sub-cell-accurate edge coverage.
+                     Set 1 to disable.
+   - :edge-softness  Edge-ramp width as a fraction of glyph height (default
+                     0.02). This is what actually removes faceting on a coarse
+                     loft: supersampling makes the edge position accurate, but
+                     the ramp is still ~one cell wide — too thin for a typical
+                     loft to resolve, so it combs. Softening widens the ramp to
+                     real-world scale (~loft step) so it reads as a smooth bevel,
+                     without a denser loft, grid, or curve-segments. Raise for
+                     softer letters, set 0 for crisp/binary edges.
 
    Example:
      (def hm (text-heightmap \"Ridley\" :size 5))
      (register embossed
        (loft (heightmap (circle 10 256) hm :amplitude 1.5 :center true) (f 60)))"
-  [txt & {:keys [size resolution font depth curve-segments]
-          :or {size 5 resolution 256 depth 1}}]
-  (let [;; Smooth glyph outlines: the bottleneck for relief quality is the
-        ;; Bezier flattening, NOT the raster grid. Scale segments with the
-        ;; grid resolution unless the caller pins :curve-segments.
+  [txt & {:keys [size resolution font depth curve-segments supersample edge-softness]
+          :or {size 5 resolution 256 depth 1 supersample 3 edge-softness 0.02}}]
+  (let [;; Smooth glyph outlines: scale Bezier flattening with the grid
+        ;; resolution unless the caller pins :curve-segments. (Edge smoothness
+        ;; on the loft comes from :supersample below, not from this.)
         cs   (or curve-segments (max 16 (quot resolution 8)))
         mesh (build-text-heightmap-mesh txt :size size :depth depth :font font
                                         :curve-segments cs)]
@@ -247,6 +260,10 @@
                         (let [xs (map #(nth % 0) verts)]
                           (- (reduce max xs) (reduce min xs))))
             hm (sfn/mesh-to-heightmap mesh :resolution resolution
+                                      :supersample supersample
+                                      ;; soften proportional to glyph height so
+                                      ;; the default scales with :size
+                                      :blur (* edge-softness (- y1 y0))
                                       :bounds [0 y0 adv y1])]
         ;; Tag the heightmap with its real-world footprint so the `heightmap`
         ;; shape-fn can place it at physical scale (height ≈ :size, width =

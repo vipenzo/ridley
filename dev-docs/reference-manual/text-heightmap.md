@@ -9,7 +9,7 @@ status: stable
 
 ## Signature
 
-`(text-heightmap text & {:keys [size resolution font depth]})`
+`(text-heightmap text & {:keys [size resolution font depth supersample edge-softness curve-segments]})`
 
 ## Description
 
@@ -46,15 +46,32 @@ on the `heightmap` side; this function only fixes the content and its size.
 - `:resolution` — grid size (default `256`, square). Glyphs need finer
   sampling than analytic patterns to stay legible.
 - `:curve-segments` — Bezier flattening per glyph curve. Defaults to scale
-  with `:resolution` (`max 16, resolution/8`) so letters stay smooth; pin
-  it to override. **This — not the grid — is the dominant factor in relief
-  smoothness:** raising `:resolution`, the loft step count, or the profile
-  segment count will NOT smooth faceted letters if the glyph outlines were
-  flattened coarsely.
+  with `:resolution` (`max 16, resolution/8`); pin it to override. Affects
+  the glyph *outline* fidelity, but is **not** what removes faceting on a
+  loft — see `:edge-softness`.
+- `:supersample` — anti-aliasing factor for the raster (default `3`). The
+  relief is a binary mask (letter / background); without AA the hard `0/1`
+  edge snaps to whole grid cells. Supersampling rasterises at this factor
+  and averages, so the edge position becomes sub-cell accurate. Set `1` to
+  disable.
+- `:edge-softness` — edge-ramp width as a fraction of glyph height (default
+  `0.02`). **This is what actually removes the comb/staircase on a loft.**
+  The relief edge is otherwise ~one cell wide — too thin for a typical loft
+  to resolve, so it facets. Softening widens the ramp to real-world scale
+  (≈ the loft step) so it reads as a smooth bevel — *without* a denser loft,
+  grid, or `:curve-segments`. Raise for softer letters; set `0` for crisp
+  binary edges. (Implemented as a world-unit box blur via `mesh-to-heightmap`'s
+  `:blur`, isotropic in real space.)
 - `:font` — font id keyword (default `:roboto`). Any registered font id,
   e.g. `:roboto-mono`.
 - `:depth` — extrusion depth (default `1`). Irrelevant to the output
   since heightmaps are normalised to `[0, 1]`; exposed only for symmetry.
+
+> **Faceted letters?** It is almost never `:curve-segments`, `:resolution`,
+> or the loft step count. The relief is a binary mask, and its sharp edges
+> comb when the loft samples coarser than the grid. Raise `:edge-softness`
+> (and keep `:supersample` ≥ 3) — that widens the edge ramp so even a modest
+> loft renders a smooth bevel.
 
 ## Example
 

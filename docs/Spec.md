@@ -619,9 +619,9 @@ The path's X coordinates represent the radius at each point along the extrusion.
 
 **`weave-heightmap` options:** `:threads` (4), `:spacing` (5), `:radius` (2), `:lift` (same as radius), `:resolution` (128), `:profile` (`:round` or `:flat`), `:thickness` (radius * 0.5, for `:flat` profile).
 
-**`mesh-to-heightmap` options:** `:resolution` (128), `:bounds` `[x0 y0 x1 y1]`, `:offset-x`, `:offset-y`, `:length-x`, `:length-y` (custom sampling window).
+**`mesh-to-heightmap` options:** `:resolution` (128), `:bounds` `[x0 y0 x1 y1]`, `:offset-x`, `:offset-y`, `:length-x`, `:length-y` (custom sampling window), `:supersample` (1; anti-alias edges by rasterizing N× and box-downsampling), `:blur` (0; widen the edge ramp by a box blur of this radius in world units).
 
-**`text-heightmap` options:** `:size` (5; physical relief height), `:resolution` (256, grid), `:curve-segments` (defaults to `max 16, resolution/8`; glyph-outline smoothness — the dominant quality factor, not the grid), `:font` (`:roboto`), `:depth` (1, irrelevant after normalization). Width = text advance **including spaces**, height = glyph height; both real `:size` units, carried as `:phys-width`/`:phys-height` so the `heightmap` shape-fn can place it at true size (`:physical` fit).
+**`text-heightmap` options:** `:size` (5; physical relief height), `:resolution` (256, grid), `:supersample` (3; edge anti-aliasing), `:edge-softness` (0.02; edge-ramp width as a fraction of glyph height — **this, not the grid or `:curve-segments`, removes faceting/comb on a loft**: it widens the binary mask's edge to ≈ loft step so it reads as a smooth bevel; set 0 for crisp edges), `:curve-segments` (defaults to `max 16, resolution/8`; glyph-outline fidelity only), `:font` (`:roboto`), `:depth` (1, irrelevant after normalization). Width = text advance **including spaces**, height = glyph height; both real `:size` units, carried as `:phys-width`/`:phys-height` so the `heightmap` shape-fn can place it at true size (`:physical` fit).
 
 **`heightmap-to-mesh` options:** `:z-scale` (1.0; amplify Z), `:size` (fit into NxN square at origin).
 
