@@ -17,7 +17,17 @@ Il testo in Ridley è geometria. Non c'è un sistema di annotazioni separato: le
 (stamp (text-shape "Hello" :size 30))
 -->
 
-Una cosa che può sorprendere è *dove* il testo appare rispetto alla tartaruga, e vale la pena fissare la logica una volta per tutte, perché le tre funzioni di testo seguono convenzioni diverse ma coerenti. `text-shape` produce la shape sul piano ortogonale all'heading, ma — a differenza di `rect`, che nasce *centrato* sulla tartaruga — usa la posa della tartaruga come *rigo di scrittura*: il testo si sviluppa verso l'alto e in avanti a partire da quel punto, come scriveresti su un foglio appoggiando la penna in basso a sinistra. Se ti serve il testo centrato sulla tartaruga (come una shape primitiva), puoi calcolarne la larghezza con `text-width` e traslarlo di metà.
+Una cosa che può sorprendere è *dove* il testo appare rispetto alla tartaruga, e vale la pena fissare la logica una volta per tutte, perché le tre funzioni di testo seguono convenzioni diverse ma coerenti. `text-shape` produce la shape sul piano ortogonale all'heading, ma — a differenza di `rect`, che nasce *centrato* sulla tartaruga — usa la posa della tartaruga come *rigo di scrittura*: il testo si sviluppa verso l'alto e a destra a partire da quel punto, come scriveresti su un foglio appoggiando la penna in basso a sinistra. Se ti serve il testo centrato sulla tartaruga (come una shape primitiva), passa `:center true`: la shape viene centrata su entrambi gli assi rispetto al bounding box reale dei glifi — comodo per ruotare il testo attorno al proprio centro o allinearlo a un altro pezzo.
+
+L'esempio mostra la differenza affiancando ciascuna versione a un `rect` (che è sempre centrato sulla tartaruga). In alto, `:center true`: il testo è centrato sul rettangolo. In basso, il default: il testo parte dall'angolo in basso a sinistra e si sviluppa verso l'alto e a destra.
+
+<!-- example-source: text-shape-center
+(stamp (text-shape "Hello" :size 30 :center true))
+(stamp (rect 90 30))
+(u 100)
+(stamp (text-shape "Hello" :size 30))
+(stamp (rect 90 30))
+-->
 
 Il risultato non è una shape per carattere, ma una shape per *contorno esterno*. La maggior parte dei caratteri ha un solo contorno esterno, ma i caratteri composti ne hanno di più: `i` e `j` ne hanno due (corpo + puntino), `ä` e `ö` ne hanno tre (corpo + due punti). I buchi interni (il vuoto dentro la `o`, la `a`, la `B`) vengono attribuiti automaticamente al contorno esterno più piccolo che li contiene.
 
@@ -51,7 +61,7 @@ Un font non è un oggetto da "caricare" prima dell'uso: è una risorsa registrat
 (extrude-text "RIDLEY" :size 40 :font :il-mio-font)
 ```
 
-Se passi un id non registrato, l'errore è immediato e chiaro: `Font id :x is not registered. Add it in Settings → Fonts.` Nessuna attesa, nessun "riprova": o l'id c'è, o non c'è. Tieni presente che un modello che usa un font custom funziona solo dove quell'id è stato registrato — quindi sull'app desktop di chi ha aggiunto quel font. Condividendo il modello, condividi anche il file del font e l'istruzione di registrarlo con lo stesso id; chi apre il modello nella versione web, o senza quel font, otterrà l'errore di id non registrato.
+Se passi un id non registrato, l'errore è immediato e chiaro: `Font id :x is not registered. Add it in Settings → Fonts.` Nessuna attesa, nessun "riprova": o l'id c'è, o non c'è. Tieni presente che un modello che usa un font custom funziona solo dove quell'id è stato registrato — quindi sull'app desktop di chi ha aggiunto quel font. 
 
 ### Misurare il testo
 
@@ -89,7 +99,7 @@ Puoi passare il vettore di shape da `text-shape` direttamente a `extrude`:
 (register title (extrude-text "RIDLEY" :size 40 :depth 3))
 -->
 
-Il testo scorre lungo l'heading della tartaruga (che fa da rigo di scrittura, come per `text-shape`). Restituisce un'unica mesh contenente tutti i glifi, pronta per essere combinata con booleane o passata a `attach`.
+Come `text-shape`, usa la posa della tartaruga come rigo di scrittura (il testo parte da lì, non centrato) e si estrude in profondità. Restituisce un'unica mesh contenente tutti i glifi, pronta per essere combinata con booleane o passata a `attach`.
 
 ### Testo lungo un percorso
 
@@ -131,7 +141,7 @@ Il testo 3D diventa utile quando lo combini con un pezzo tramite booleane:
 (register engraved (mesh-difference plate label))
 -->
 
-Un dettaglio sull'orientamento: il testo si sviluppa lungo l'heading della tartaruga, quindi la piastra che lo deve ospitare va dimensionata lungo lo stesso asse (qui `box 3 20 80`, con la lunghezza 80 sull'asse del testo). La `cp-f -40` sposta la creation-pose della piastra a un'estremità, così il testo — che parte dalla posa corrente — si allinea al bordo invece di centrarsi. Per testo in rilievo, usa `mesh-union` al posto di `mesh-difference`. La profondità dell'estrusione (`:depth`) controlla quanto il testo sporge o penetra. Per una targhetta a due colori (testo in contrasto sulla base), vedi il pattern bicolore nel cap. 14.
+Un dettaglio sull'orientamento, che spiega le dimensioni scelte: il testo si sviluppa lungo l'asse "di scrittura" della tartaruga, quindi la piastra che lo deve ospitare va dimensionata lungo *quello* stesso asse (qui `box 3 20 80`, con la dimensione maggiore, 80, sull'asse del testo) perché la scritta ci stia dentro. La `cp-f -40` sposta la creation-pose della piastra a un'estremità, così il testo — che parte dalla posa corrente — si allinea al bordo invece di centrarsi. Per testo in rilievo, usa `mesh-union` al posto di `mesh-difference`. La profondità dell'estrusione (`:depth`) controlla quanto il testo sporge o penetra. Per una targhetta a due colori (testo in contrasto sulla base), vedi il pattern bicolore nel cap. 14.
 
 ## 13.3 Heightmap e testo in rilievo
 
@@ -144,65 +154,35 @@ Una heightmap è una griglia 2D dove ogni cella contiene un'altezza. Usata come 
 `text-heightmap` produce direttamente una heightmap a partire da una stringa, già orientata correttamente per essere avvolta su un profilo. La passi alla shape-fn `heightmap` dentro un `loft`:
 
 <!-- example-source: text-heightmap
-(def hm (text-heightmap "Ridley" :size 5))
+(def hm (text-heightmap "Ridley" :size 20)) ; resolution 256, supersample 3, edge-softness 0.02
 (register embossed-cylinder
-  (loft (heightmap (circle 10 256) hm :amplitude 1.5 :center true) (f 60)))
+  (loft-n 256 (heightmap (circle 10 256) hm :amplitude 1.5 :direction :height :center true) (f 60)))
 -->
 
-Il risultato è un cilindro con "Ridley" in rilievo, leggibile, alto ~5 unità (la `:size` che hai chiesto). Il punto chiave è che la heightmap *conosce la propria dimensione fisica*: `:size 5` non viene stirato fino a riempire la parete, ma piazzato alla taglia reale. È la shape-fn `heightmap` a leggere quella dimensione e a posizionare il testo di conseguenza — col comportamento di default (una copia singola, centrata, alla taglia fisica). `:amplitude` controlla quanto il rilievo sporge; `:center true` lo distribuisce simmetricamente, così le lettere emergono da una superficie neutra invece di gonfiare il cilindro verso l'esterno.
+Il risultato è un cilindro con "Ridley" in rilievo, leggibile, alto ~20 unità (la `:size` che hai chiesto). Il punto chiave è che la heightmap *conosce la propria dimensione fisica*: `:size 20` non viene stirato fino a riempire la parete, ma piazzato alla taglia reale. È la shape-fn `heightmap` a leggere quella dimensione e a posizionare il testo di conseguenza — col comportamento di default (una copia singola, centrata, alla taglia fisica). `:amplitude` controlla quanto il rilievo sporge; `:center true` lo distribuisce simmetricamente, così le lettere emergono da una superficie neutra invece di gonfiare il cilindro verso l'esterno.
 
-I parametri di `text-heightmap`: `:size` (altezza fisica dei caratteri, default 5), `:font` (id del font, default `:roboto`), `:resolution` (dimensione della griglia, default 256), e `:curve-segments`. Quest'ultimo merita una nota: è il fattore che governa la *morbidezza* delle lettere, non `:resolution` né il numero di segmenti del cerchio. Se le lettere appaiono sfaccettate, è il flattening delle curve dei glifi a essere troppo grossolano — alza `:curve-segments` (di default scala con `:resolution`). Aumentare la risoluzione della griglia o del profilo non liscia lettere già sfaccettate all'origine.
+I parametri di `text-heightmap`: `:size` (altezza fisica dei caratteri, default 5), `:font` (id del font, default `:roboto`), `:resolution` (dimensione della griglia, default 256), più due manopole che governano la qualità del bordo: `:supersample` e `:edge-softness`.
+
+Vale la pena capire perché servono, perché la causa è controintuitiva. Il rilievo del testo è una *maschera binaria*: lettera (1) o sfondo (0), con un bordo netto largo una sola cella della griglia. Quando il loft campiona il profilo più rado della griglia — e quasi sempre lo fa — i suoi vertici scavalcano quel bordo netto e le lettere vengono fuori a pettine, scalettate. La tentazione è alzare la risoluzione della griglia o del loft, ma non serve: il bordo resta comunque largo una cella. La soluzione è ammorbidire il bordo stesso. `:supersample` (default 3) rasterizza a risoluzione maggiore e media, portando la posizione del bordo a precisione sub-cella; `:edge-softness` (default 0.02, cioè il 2% dell'altezza dei caratteri) allarga la rampa del bordo a una scala che il loft riesce a risolvere, trasformando lo scalino in una smussatura morbida. Sono questi due — non `:resolution` né `:curve-segments` — a togliere il pettine. Per lettere più morbide alza `:edge-softness` (es. 0.04); per bordi netti, `:edge-softness 0`. (`:curve-segments` esiste e regola la fedeltà del *contorno* dei glifi, ma non c'entra col faceting sul loft.)
+
+Una volta che il bordo è ammorbidito, un loft ragionevolmente fitto (`loft-n` con un buon numero di passi, e un cerchio a risoluzione adeguata) lo rende al meglio: i due lavorano insieme, non in alternativa. La morbidezza dà al loft una rampa da seguire invece di uno scalino netto; il loft fitto la campiona con abbastanza vertici da renderla liscia. È per questo che gli esempi qui sotto usano `loft-n 256` e `(circle ... 256)`.
 
 Un dettaglio utile: gli spazi nel testo diventano margine piatto reale. `"Ridley "` (con lo spazio finale) è più largo di `"Ridley"`, e quel margine torna comodo come stacco quando ripeti il testo attorno a un profilo.
 
 Direzione, copertura e ripetizione non sono compito di `text-heightmap` ma della shape-fn `heightmap`, che le controlla con `:direction`, `:tile-x`/`:tile-y`, `:fit`. Così la stessa heightmap si può far girare una volta attorno al cilindro, impacchettare a ripetizione lungo tutta la circonferenza, o far salire lungo l'asse:
 
 <!-- example-source: text-heightmap-variants
-(def band (text-heightmap "Ridley " :size 4))
+(def band (text-heightmap "Ridley " :size 10))
 
 ;; Ripetuta senza giunzioni attorno a tutta la circonferenza
 (register tube
-  (loft (heightmap (circle 10 256) band :amplitude 1.2 :tile-x :fill) (f 30)))
+  (loft-n 256 (heightmap (circle 10 256) band :amplitude 1.2 :tile-x :fill) (f 30)))
 
 ;; Che sale lungo l'asse invece di avvolgersi
 (register column
-  (attach (loft (heightmap (circle 8 256) band :amplitude 1.2 :direction :height) (f 40))
+  (attach (loft-n 256 (heightmap (circle 8 256) band :amplitude 1.2 :direction :height) (f 40))
           (rt 60)))
 -->
 
 `:tile-x :fill` impacchetta tante copie quante ne servono per coprire la circonferenza (lo spazio finale di `"Ridley "` fa da stacco fra una e l'altra); `:direction :height` orienta il testo perché corra lungo l'asse del loft anziché attorno.
 
-### Mesh-to-heightmap
-
-`text-heightmap` è la scorciatoia per il caso del testo. Ma una heightmap si può ricavare da *qualsiasi* mesh: `mesh-to-heightmap` ne rasterizza i valori di altezza in una griglia 2D, utile per trasformare un rilievo modellato a mano (un logo, un bassorilievo, una texture) in displacement applicabile a un loft:
-
-```clojure
-(def hm (mesh-to-heightmap my-relief-mesh :resolution 128))
-(register embossed (loft (heightmap (circle 20 64) hm :amplitude 1.5) (f 40)))
-```
-
-A differenza di `text-heightmap`, qui sei tu a dover orientare e dimensionare la mesh di partenza perché la rasterizzazione catturi la faccia giusta — `text-heightmap` esiste proprio per togliere quella complessità nel caso comune del testo.
-
-### Heightmap tileabili
-
-Per pattern ripetitivi (texture, trame), le heightmap tileabili evitano giunzioni visibili:
-
-`weave-heightmap` genera analiticamente una trama di intreccio:
-
-```clojure
-(def weave (weave-heightmap :threads 4 :spacing 5 :radius 2 :resolution 128))
-```
-
-`sample-heightmap` campiona una heightmap con interpolazione bilineare e auto-tiling:
-
-```clojure
-(sample-heightmap hm u v)    ;; u, v in [0, 1], auto-repeat
-```
-
-`heightmap-to-mesh` converte una heightmap in una mesh piatta con Z dai valori della griglia:
-
-```clojure
-(register terrain (heightmap-to-mesh hm :z-scale 3 :size 100))
-```
-
-Queste funzioni sono gli stessi strumenti usati dalla shape-fn `heightmap` del capitolo 6, presentati qui come operazioni standalone.
