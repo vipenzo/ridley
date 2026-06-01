@@ -1711,10 +1711,7 @@
      (when (and (>= n-rings 2) (>= n-pts 3))
        (let [outers (mapv :outer shell-data)
              inners (mapv :inner shell-data)
-             ;; Marching uses the dedicated :field (unclamped, linear through the
-             ;; edge → accurate sub-grid crossings even at low res) when present,
-             ;; else falls back to the thickness :values.
-             vals   (mapv #(or (:field %) (:values %)) shell-data)
+             vals   (mapv :values shell-data)
              ;; vertex welding by quantized position (shared crossings/corners
              ;; collapse to one index → watertight)
              vmap (js/Map.)
