@@ -601,7 +601,8 @@
                                      base-ring half-t vals false :offsets offs)
                               inner (extrusion/generate-shell-ring
                                      base-ring half-t vals true :offsets offs)]
-                          {:outer outer :inner inner :values vals}))
+                          {:outer outer :inner inner :values vals
+                           :field (:shell-field s)}))
                       has-holes? stamp-shape-with-holes
                       :else stamp-shape)
            get-outer (if (or shell-mode? has-holes?) :outer identity)
@@ -628,12 +629,14 @@
            midpoint-ring (cond
                            shell-mode?
                            (fn [r1 r2]
-                             {:outer (mapv (fn [p1 p2] (v+ p1 (v* (v- p2 p1) 0.5)))
-                                           (:outer r1) (:outer r2))
-                              :inner (mapv (fn [p1 p2] (v+ p1 (v* (v- p2 p1) 0.5)))
-                                           (:inner r1) (:inner r2))
-                              :values (mapv (fn [v1 v2] (* 0.5 (+ v1 v2)))
-                                            (:values r1) (:values r2))})
+                             (cond-> {:outer (mapv (fn [p1 p2] (v+ p1 (v* (v- p2 p1) 0.5)))
+                                                   (:outer r1) (:outer r2))
+                                      :inner (mapv (fn [p1 p2] (v+ p1 (v* (v- p2 p1) 0.5)))
+                                                   (:inner r1) (:inner r2))
+                                      :values (mapv (fn [v1 v2] (* 0.5 (+ v1 v2)))
+                                                    (:values r1) (:values r2))}
+                               (:field r1) (assoc :field (mapv (fn [v1 v2] (* 0.5 (+ v1 v2)))
+                                                               (:field r1) (:field r2)))))
                            has-holes?
                            (fn [r1 r2]
                              {:outer (mapv (fn [p1 p2] (v+ p1 (v* (v- p2 p1) 0.5)))

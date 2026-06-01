@@ -868,6 +868,37 @@
     [(fract (* (Math/sin h1) 43758.5453))
      (fract (* (Math/sin h2) 22578.1459))]))
 
+(defn- voronoi-edge-dist
+  "Distance from (a, t) to the nearest Voronoi cell EDGE, as d2 - d1 (second
+   nearest seed distance minus nearest). ~0 on a cell boundary, larger inside a
+   cell. Shared by the :voronoi thickness fn and its marching field fn."
+  [a t cells rows seed]
+  (let [u (* (/ (+ a Math/PI) (* 2 Math/PI)) cells)
+        v (* t rows)
+        iu (int (Math/floor u))
+        iv (int (Math/floor v))
+        [d1 d2]
+        (reduce
+         (fn [[best1 best2] [di dj]]
+           (let [ci (+ iu di)
+                 cj (+ iv dj)
+                 ci-wrapped (mod ci cells)
+                 [jx jy] (voronoi-hash ci-wrapped cj seed)
+                 cx (+ ci jx)
+                 cy (+ cj jy)
+                 du (- u cx)
+                 dv (- v cy)
+                 dist (Math/sqrt (+ (* du du) (* dv dv)))]
+             (cond
+               (< dist best1) [dist best1]
+               (< dist best2) [best1 dist]
+               :else [best1 best2])))
+         [js/Infinity js/Infinity]
+         [[-1 -1] [-1 0] [-1 1]
+          [0 -1]  [0 0]  [0 1]
+          [1 -1]  [1 0]  [1 1]])]
+    (- d2 d1)))
+
 (defn- smoothstep
   "Hermite smoothstep: 0 below e0, 1 above e1, smooth (C1) in between."
   [e0 e1 x]
@@ -954,31 +985,7 @@
       (fn [a t]
         (if (or (<= t margin) (>= t (- 1.0 margin)))
           1.0
-          (let [u (* (/ (+ a Math/PI) (* 2 Math/PI)) cells)
-                v (* t rows)
-                iu (int (Math/floor u))
-                iv (int (Math/floor v))
-                [d1 d2]
-                (reduce
-                 (fn [[best1 best2] [di dj]]
-                   (let [ci (+ iu di)
-                         cj (+ iv dj)
-                         ci-wrapped (mod ci cells)
-                         [jx jy] (voronoi-hash ci-wrapped cj seed)
-                         cx (+ ci jx)
-                         cy (+ cj jy)
-                         du (- u cx)
-                         dv (- v cy)
-                         dist (Math/sqrt (+ (* du du) (* dv dv)))]
-                     (cond
-                       (< dist best1) [dist best1]
-                       (< dist best2) [best1 dist]
-                       :else [best1 best2])))
-                 [js/Infinity js/Infinity]
-                 [[-1 -1] [-1 0] [-1 1]
-                  [0 -1]  [0 0]  [0 1]
-                  [1 -1]  [1 0]  [1 1]])
-                edge-dist (- d2 d1)]
+          (let [edge-dist (voronoi-edge-dist a t cells rows seed)]
             (if (<= band 0)
               (if (< edge-dist half-wall) 1.0 0.0)
               ;; 1 inside the stripe (small edge-dist), feather to 0 outside
@@ -987,6 +994,39 @@
     ;; Unknown style
     (throw (js/Error. (str "shell: unknown :style " style
                            ". Valid styles: :solid :lattice :checkerboard :weave :voronoi")))))
+
+(defn- style->field-fn
+  "Continuous, UNCLAMPED marching field for smooth (isocontour) shells — a
+   near-linear function of the underlying signal whose 0.5 level is the wall
+   edge. Decoupled from the thickness value: the thickness uses a clamped,
+   softened ramp (for the tapered lip), but that ramp SATURATES near the
+   boundary, so at low resolution its iso crossing snaps toward edge midpoints.
+   This field stays linear through the boundary, so the crossing lands on the
+   true edge at any resolution. nil for styles with no continuous boundary."
+  [style opts]
+  (case style
+    :voronoi
+    (let [{:keys [cells rows seed wall-width margin]
+           :or {cells 6 rows 6 seed 42 wall-width 0.3 margin 0.05}} opts
+          half-wall (* 0.5 wall-width)
+          margin (or margin 0.05)]
+      (fn [a t]
+        (if (or (<= t margin) (>= t (- 1.0 margin)))
+          1.5                                   ; forced solid, well above level
+          (+ 0.5 (- half-wall (voronoi-edge-dist a t cells rows seed))))))
+
+    :lattice
+    (let [{:keys [openings rows shift]
+           :or {openings 8 rows 12 shift 0.5}} opts]
+      (fn [a t]
+        (let [row (* t rows)
+              row-idx (int row)
+              phase (* row-idx shift (/ (* 2 Math/PI) openings))
+              circ (Math/sin (+ (* a openings) phase))
+              longit (Math/sin (* row Math/PI))]
+          (+ 0.5 (min circ longit)))))
+
+    nil))
 
 (defn ^:export shell
   "Variable-thickness hollow shell with optional patterned walls and caps.
@@ -1042,15 +1082,23 @@
         ;; continuous values flow through unchanged; only the mesh-build path
         ;; changes (see loft).
         smooth? (and (contains? #{:voronoi :lattice} style)
-                     (pos? (or (:softness opts) 0)))]
+                     (pos? (or (:softness opts) 0)))
+        ;; Marching field, DECOUPLED from the thickness value: the thickness
+        ;; ramp is clamped/softened (tapered lip) and so saturates near the
+        ;; boundary, snapping the iso cut toward edge midpoints at low res; this
+        ;; unclamped field stays linear through the edge, so the cut is accurate
+        ;; at any resolution. invert? mirrors the field about the 0.5 level too.
+        field-fn (when smooth?
+                   (let [f (style->field-fn style opts)]
+                     (if invert? (fn [a t] (- 1.0 (f a t))) f)))]
     (shape-fn shape-or-fn
               (fn [s t]
                 (let [center (shape-centroid s)
                       pts (:points s)
+                      ang (fn [p] (Math/atan2 (- (second p) (second center))
+                                              (- (first p) (first center))))
                       values (mapv (fn [p]
-                                     (let [a (Math/atan2 (- (second p) (second center))
-                                                         (- (first p) (first center)))
-                                           v (thickness-fn a t)]
+                                     (let [v (thickness-fn (ang p) t)]
                                        (if (< v threshold) 0.0 (max 0.0 (min 1.0 v)))))
                                    pts)]
                   (cond-> (assoc s
@@ -1062,7 +1110,8 @@
                     ;; cut land on grid vertices (degenerate caps/flaps). Nudging
                     ;; the level off that plateau keeps every crossing sub-grid.
                     smooth?    (assoc :shell-smooth true
-                                      :shell-level (if (= style :lattice) 0.55 0.5))
+                                      :shell-level (if (= style :lattice) 0.55 0.5)
+                                      :shell-field (mapv #(field-fn (ang %) t) pts))
                     cap-top    (assoc :shell-cap-top cap-top)
                     cap-bottom (assoc :shell-cap-bottom cap-bottom)))))))
 
