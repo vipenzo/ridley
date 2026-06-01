@@ -90,15 +90,38 @@
 ;; Revolve
 ;; ============================================================
 
+(defn- shape-fn-ring-points
+  "Union of a shape-fn's 2D profile points over EXACTLY the ring parameters a
+   revolve of `angle`° will build (t = i/steps). Measures the whole sweep —
+   including non-monotonic extents, e.g. (twisted (rect 1 10) 180) is 1 wide at
+   t=0 and t=1 but ~10 wide at t=0.5 — so axis tests cover every built ring."
+  [sf angle turtle]
+  (let [steps (turtle/calc-arc-steps turtle (* 2 Math/PI) (js/Math.abs angle))
+        n-rings (if (>= (js/Math.abs angle) 360) steps (inc steps))]
+    (mapcat #(:points (sf (/ (double %) steps))) (range n-rings))))
+
+(defn- revolve-clear-axis
+  "Plain shapes are clipped to x>=0 in pure-revolve so they don't cross the
+   revolution axis; a shape-fn can't be clipped per-ring without changing the
+   ring's point count, so when its profile STRADDLES the axis (points on both
+   sides of x=0, over any built ring) we shift it instead — an implicit
+   :pivot :left — so the whole sweep clears the axis and the revolve stays
+   manifold. A shape-fn already on one side (e.g. user-translated, or an
+   explicit pivot) is left untouched."
+  [sf angle]
+  (let [pts (shape-fn-ring-points sf angle @@state/turtle-state-var)
+        min-x (apply min (map first pts))
+        max-x (apply max (map first pts))]
+    (if (and (neg? min-x) (pos? max-x))
+      (sfn/shape-fn sf (fn [s _t] (shape/translate-shape s (- min-x) 0)))
+      sf)))
+
 (defn ^:export revolve-impl
   "Runtime dispatch for revolve."
-  ([shape-or-fn]
-   (if (sfn/shape-fn? shape-or-fn)
-     (ops/pure-revolve-shape-fn shape-or-fn 360)
-     (ops/pure-revolve shape-or-fn 360)))
+  ([shape-or-fn] (revolve-impl shape-or-fn 360))
   ([shape-or-fn angle]
    (if (sfn/shape-fn? shape-or-fn)
-     (ops/pure-revolve-shape-fn shape-or-fn angle)
+     (ops/pure-revolve-shape-fn (revolve-clear-axis shape-or-fn angle) angle)
      (ops/pure-revolve shape-or-fn angle))))
 
 ;; ============================================================
@@ -219,14 +242,9 @@
                    (and pivot (shape/shape? shape-or-fn))
                    (compute-pivot-offset shape-or-fn pivot)
                    (and pivot (sfn/shape-fn? shape-or-fn))
-                   (let [steps (turtle/calc-arc-steps current-turtle
-                                                      (* 2 Math/PI)
-                                                      (js/Math.abs angle))
-                         n-rings (if (>= (js/Math.abs angle) 360) steps (inc steps))
-                         ts (map #(/ (double %) steps) (range n-rings))]
-                     (compute-pivot-offset
-                      {:points (mapcat #(:points (shape-or-fn %)) ts)}
-                      pivot))
+                   (compute-pivot-offset
+                    {:points (shape-fn-ring-points shape-or-fn angle current-turtle)}
+                    pivot)
                    :else [0 0])
          shifted-shape (cond
                          (and pivot (shape/shape? shape-or-fn))
