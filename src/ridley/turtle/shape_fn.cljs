@@ -868,6 +868,14 @@
     [(fract (* (Math/sin h1) 43758.5453))
      (fract (* (Math/sin h2) 22578.1459))]))
 
+(defn- smoothstep
+  "Hermite smoothstep: 0 below e0, 1 above e1, smooth (C1) in between."
+  [e0 e1 x]
+  (if (<= e1 e0)
+    (if (< x e0) 0.0 1.0)
+    (let [t (-> (/ (- x e0) (- e1 e0)) (max 0.0) (min 1.0))]
+      (* t t (- 3.0 (* 2.0 t))))))
+
 (defn- style->thickness-fn
   "Convert a :style keyword + options to a thickness function (fn [a t] → 0..1)."
   [style opts]
@@ -917,10 +925,23 @@
     ;; outside. :margin (default 0.05) specifies the fraction of t at start
     ;; and end where the wall is forced solid (1.0), producing clean closed
     ;; edges instead of jagged voronoi cuts.
-    (let [{:keys [cells rows seed wall-width margin]
-           :or {cells 6 rows 6 seed 42 wall-width 0.3 margin 0.05}} opts
+    ;;
+    ;; :softness (default 0 = hard binary cut, original behavior) ramps the
+    ;; wall→opening transition over a band of width (softness * half-wall) in
+    ;; edge-dist units instead of cliffing at edge-dist = half-wall. Because a
+    ;; vertex with value 0 collapses outer+inner onto the base ring (zero
+    ;; thickness), a graded value makes the wall feather to a thin lip at the
+    ;; opening rather than dropping off a grid-locked jagged cliff — the
+    ;; shell analogue of text relief's :edge-softness. The look is soft/organic
+    ;; (not crisp-curved openings — that would need an isocontour cut).
+    (let [{:keys [cells rows seed wall-width margin softness]
+           :or {cells 6 rows 6 seed 42 wall-width 0.3 margin 0.05 softness 0}} opts
           half-wall (* 0.5 wall-width)
-          margin (or margin 0.05)]
+          margin (or margin 0.05)
+          band (* (max 0.0 softness) half-wall)
+          ;; centre the ramp on half-wall so the stripe keeps ~its width
+          e0 (- half-wall (* 0.5 band))
+          e1 (+ half-wall (* 0.5 band))]
       (fn [a t]
         (if (or (<= t margin) (>= t (- 1.0 margin)))
           1.0
@@ -949,7 +970,10 @@
                   [0 -1]  [0 0]  [0 1]
                   [1 -1]  [1 0]  [1 1]])
                 edge-dist (- d2 d1)]
-            (if (< edge-dist half-wall) 1.0 0.0)))))
+            (if (<= band 0)
+              (if (< edge-dist half-wall) 1.0 0.0)
+              ;; 1 inside the stripe (small edge-dist), feather to 0 outside
+              (- 1.0 (smoothstep e0 e1 edge-dist)))))))
 
     ;; Unknown style
     (throw (js/Error. (str "shell: unknown :style " style
@@ -971,11 +995,21 @@
 
    :voronoi extra options:
      :wall-width  width of the wall stripe in (u, v) cell units (default 0.3)
-   The :voronoi cliff is binary: openings have hard pixelated edges along the
-   ring/segment grid. To smooth them, post-process the resulting mesh with
-   (mesh-smooth m :sharp-angle 90 :refine 2) — Manifold's tangent-based
-   smoother + subdivision rounds off the staircase while preserving any
-   intentionally sharp design corners.
+     :softness    0 (default) = hard binary cut: openings are carved by dropping
+                  whole grid triangles, so their edges staircase along the
+                  ring/segment grid (raising resolution only shrinks the teeth).
+                  >0 switches to an ISOCONTOUR cut: a continuous field feeds a
+                  marching-triangles build that slices each boundary triangle
+                  exactly along the wall→opening iso-line, at sub-grid positions.
+                  Openings come out smooth (a low-poly curve FOLLOWING the
+                  boundary, not a grid staircase) at LOW resolution — far cheaper
+                  than cranking segments, and the variable wall thickness adds a
+                  graceful tapered lip. ~0.4–0.8 works well. This is the shell
+                  analogue of text relief's :edge-softness. The result stays
+                  watertight/manifold (vertices welded along the cut).
+   :softness gives soft, organic openings. For a *different* look — crisp walls
+   with rounded staircase — keep :softness 0 and post-process with
+   (mesh-smooth m :sharp-angle 90 :refine 2).
 
    Caps at the ends:
    :cap-top N                                          ; Solid cap of thickness N
@@ -991,7 +1025,12 @@
                     (style->thickness-fn (or style :solid) opts))
         thickness-fn (if invert?
                        (fn [a t] (- 1.0 (base-fn a t)))
-                       base-fn)]
+                       base-fn)
+        ;; With a continuous field (voronoi :softness > 0) we can cut openings
+        ;; along the iso-line instead of dropping whole grid triangles, giving
+        ;; smooth opening outlines at low resolution. The continuous values flow
+        ;; through unchanged; only the mesh-build path changes (see loft).
+        smooth? (and (= style :voronoi) (pos? (or (:softness opts) 0)))]
     (shape-fn shape-or-fn
               (fn [s t]
                 (let [center (shape-centroid s)
@@ -1006,6 +1045,7 @@
                                  :shell-mode true
                                  :shell-thickness thickness
                                  :shell-values values)
+                    smooth?    (assoc :shell-smooth true :shell-level 0.5)
                     cap-top    (assoc :shell-cap-top cap-top)
                     cap-bottom (assoc :shell-cap-bottom cap-bottom)))))))
 

@@ -1661,3 +1661,134 @@
                                        (or cap-faces [])))}
             creation-pose (assoc :creation-pose creation-pose))))))))
 
+(defn- shell-iso-clip
+  "Sutherland–Hodgman clip of one grid triangle against the half-plane
+   field >= level. The triangle's 3 corners carry a field value f, an outer 3D
+   position o and an inner 3D position i. Returns the inside polygon as a vector
+   of nodes {:o <outer pos> :in <inner pos> :cross <bool>} in the input winding
+   order, or nil if fewer than 3 nodes survive (no material). Crossing nodes sit
+   on the iso-line (sub-grid, interpolated) and are flagged so the rim edge can
+   be found later. Linear interpolation on shared edges makes adjacent triangles
+   agree on crossing positions, so the result welds watertight."
+  [f0 f1 f2 o0 o1 o2 i0 i1 i2 level]
+  (let [fs #js [f0 f1 f2]
+        os #js [o0 o1 o2]
+        ins #js [i0 i1 i2]
+        out #js []]
+    (dotimes [k 3]
+      (let [k1 (mod (inc k) 3)
+            fk (aget fs k) fk1 (aget fs k1)
+            in-k  (>= fk level)
+            in-k1 (>= fk1 level)]
+        (when in-k
+          (.push out {:o (aget os k) :in (aget ins k) :cross false}))
+        (when (not= in-k in-k1)
+          (let [s  (/ (- level fk) (- fk1 fk))
+                ok (aget os k) ok1 (aget os k1)
+                ik (aget ins k) ik1 (aget ins k1)
+                oc (v+ ok (v* (v- ok1 ok) s))
+                ic (v+ ik (v* (v- ik1 ik) s))]
+            (.push out {:o oc :in ic :cross true})))))
+    (when (>= (.-length out) 3) (vec out))))
+
+(defn build-shell-isocontour-mesh
+  "Smooth-opening shell build via marching triangles. Where build-shell-sweep-mesh
+   keeps or drops whole grid triangles — making opening outlines staircase along
+   the (ring × segment) grid — this clips each boundary triangle along the iso-line
+   where the continuous shell value crosses `level`, placing the cut at sub-grid
+   positions. Produces smooth openings at low resolution (the staircase becomes a
+   low-poly curve that FOLLOWS the boundary instead of zig-zagging on the grid).
+
+   Requires a CONTINUOUS field in :values (set shell :softness > 0). Emits an outer
+   skin, an inner skin (reversed winding), a rim joining them along each cut edge,
+   and full annular end caps (the :margin keeps the end rings solid). Vertices are
+   welded by quantized position so the result is watertight/manifold."
+  ([shell-data creation-pose] (build-shell-isocontour-mesh shell-data creation-pose true 0.5))
+  ([shell-data creation-pose caps? level]
+   (let [n-rings (count shell-data)
+         n-pts (count (:outer (first shell-data)))
+         level (or level 0.5)]
+     (when (and (>= n-rings 2) (>= n-pts 3))
+       (let [outers (mapv :outer shell-data)
+             inners (mapv :inner shell-data)
+             vals   (mapv :values shell-data)
+             ;; vertex welding by quantized position (shared crossings/corners
+             ;; collapse to one index → watertight)
+             vmap (js/Map.)
+             vlist #js []
+             vcount (volatile! 0)
+             key-of (fn [p]
+                      (str (Math/round (* (nth p 0) 1e5)) "_"
+                           (Math/round (* (nth p 1) 1e5)) "_"
+                           (Math/round (* (nth p 2) 1e5))))
+             vidx! (fn [p]
+                     (let [k (key-of p)]
+                       (if (.has vmap k)
+                         (.get vmap k)
+                         (let [i @vcount]
+                           (.set vmap k i)
+                           (.push vlist p)
+                           (vreset! vcount (inc i))
+                           i))))
+             faces #js []
+             ;; outer-facing tri (input winding) + matching inner tri (reversed)
+             skin! (fn [oa ob oc ia ib ic]
+                     (.push faces [(vidx! oa) (vidx! ob) (vidx! oc)])
+                     (.push faces [(vidx! ia) (vidx! ic) (vidx! ib)]))
+             ;; rim wound so its top edge runs ob→oa (opposite the outer skin's
+             ;; oa→ob) and its inner edge ia→ib (opposite the inner skin) — the
+             ;; orientation that makes the shared edges manifold-consistent
+             rim! (fn [oa ob ia ib]
+                    (.push faces [(vidx! oa) (vidx! ia) (vidx! ib)])
+                    (.push faces [(vidx! oa) (vidx! ib) (vidx! ob)]))
+             march! (fn [f0 f1 f2 oo0 oo1 oo2 ii0 ii1 ii2]
+                      (when-let [nodes (shell-iso-clip f0 f1 f2 oo0 oo1 oo2 ii0 ii1 ii2 level)]
+                        (let [nv (count nodes)
+                              nd (fn [k] (nth nodes k))]
+                          ;; fan-triangulate the inside polygon (outer + inner skin)
+                          (dotimes [k (- nv 2)]
+                            (let [a (nd 0) b (nd (inc k)) c (nd (+ k 2))]
+                              (skin! (:o a) (:o b) (:o c) (:in a) (:in b) (:in c))))
+                          ;; rim along the unique consecutive crossing→crossing edge
+                          (dotimes [k nv]
+                            (let [a (nd k) b (nd (mod (inc k) nv))]
+                              (when (and (:cross a) (:cross b))
+                                (rim! (:o a) (:o b) (:in a) (:in b))))))))]
+         ;; sweep: per cell, two marching triangles (winding matches the binary build)
+         (dotimes [ri (dec n-rings)]
+           (let [oa (nth outers ri) ob (nth outers (inc ri))
+                 ia (nth inners ri) ib (nth inners (inc ri))
+                 va (nth vals ri) vb (nth vals (inc ri))]
+             (dotimes [j n-pts]
+               (let [j1 (mod (inc j) n-pts)
+                     f00 (nth va j) f10 (nth vb j) f11 (nth vb j1) f01 (nth va j1)
+                     o00 (nth oa j) o10 (nth ob j) o11 (nth ob j1) o01 (nth oa j1)
+                     n00 (nth ia j) n10 (nth ib j) n11 (nth ib j1) n01 (nth ia j1)]
+                 ;; tri A: (ri,j)-(ri+1,j)-(ri+1,j+1)
+                 (march! f00 f10 f11 o00 o10 o11 n00 n10 n11)
+                 ;; tri B: (ri,j)-(ri+1,j+1)-(ri,j+1)
+                 (march! f00 f11 f01 o00 o11 o01 n00 n11 n01)))))
+         ;; end caps: full annulus where the (solid, margin-protected) end ring has wall
+         (let [cap-start? (or (true? caps?) (= caps? :start))
+               cap-end?   (or (true? caps?) (= caps? :end))
+               gen-cap! (fn [ri flip?]
+                          (let [os (nth outers ri) ins (nth inners ri) vs (nth vals ri)]
+                            (dotimes [j n-pts]
+                              (let [j1 (mod (inc j) n-pts)]
+                                (when (and (>= (nth vs j) level) (>= (nth vs j1) level))
+                                  (let [o0 (nth os j) o1 (nth os j1)
+                                        p0 (nth ins j) p1 (nth ins j1)]
+                                    (if flip?
+                                      (do (.push faces [(vidx! o0) (vidx! p1) (vidx! p0)])
+                                          (.push faces [(vidx! o0) (vidx! o1) (vidx! p1)]))
+                                      (do (.push faces [(vidx! o0) (vidx! p0) (vidx! p1)])
+                                          (.push faces [(vidx! o0) (vidx! p1) (vidx! o1)])))))))))]
+           (when cap-start? (gen-cap! 0 true))
+           (when cap-end?   (gen-cap! (dec n-rings) false)))
+         (schema/assert-mesh!
+          (cond-> {:type :mesh
+                   :primitive :shell
+                   :vertices (vec vlist)
+                   :faces (vec faces)}
+            creation-pose (assoc :creation-pose creation-pose))))))))
+

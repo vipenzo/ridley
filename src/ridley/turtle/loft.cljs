@@ -583,6 +583,8 @@
            ;; (shell shape-fn attaches :shell-mode to the shape)
            probe-shape (transform-fn shape 0)
            shell-mode? (boolean (:shell-mode probe-shape))
+           shell-smooth? (boolean (:shell-smooth probe-shape))
+           shell-level (or (:shell-level probe-shape) 0.5)
            shell-cap-top (:shell-cap-top probe-shape)
            shell-cap-bottom (:shell-cap-bottom probe-shape)
 
@@ -606,7 +608,9 @@
            do-build (cond
                       shell-mode?
                       (fn [rings cp caps?]
-                        (extrusion/build-shell-sweep-mesh rings cp caps?))
+                        (if shell-smooth?
+                          (extrusion/build-shell-isocontour-mesh rings cp caps? shell-level)
+                          (extrusion/build-shell-sweep-mesh rings cp caps?)))
                       has-holes?
                       (fn [rings cp caps?]
                         (build-sweep-mesh-with-holes rings cp caps?))

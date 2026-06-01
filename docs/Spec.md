@@ -666,7 +666,17 @@ Wall is symmetric: outer ring displaced outward by `thickness/2`, inner ring dis
 | `:lattice` | `:openings` (8), `:rows` (12), `:shift` (0.5) |
 | `:checkerboard` | `:cols` (8), `:rows` (8) |
 | `:weave` | `:strands` (6), `:frequency` (8), `:width` (0.3) |
-| `:voronoi` | `:cells` (6), `:rows` (6), `:seed` (42), `:wall-width` (0.3) |
+| `:voronoi` | `:cells` (6), `:rows` (6), `:seed` (42), `:wall-width` (0.3), `:softness` (0) |
+
+**Smoothing voronoi openings (`:softness`).** A `:voronoi` shell is a binary mask — by default each wall triangle is kept or dropped wholesale on the (ring × segment) grid, so opening edges come out as a grid-locked staircase, and raising resolution only shrinks the teeth (while ballooning cost). `:softness` (default `0` = original hard cut) switches to an **isocontour** build: a continuous field feeds a marching-triangles pass that slices each boundary triangle exactly along the wall→opening iso-line at sub-grid positions. Openings come out smooth — a low-poly curve *following* the boundary, not a grid staircase — at **low resolution**, far cheaper than cranking segments, with a graceful tapered lip from the variable wall thickness. `~0.4–0.8` works well; the result stays watertight/manifold. This is the shell analogue of `text-heightmap`'s `:edge-softness`. (`:softness` gives soft/organic openings; for crisp walls with merely rounded corners instead, keep `:softness 0` and post-process with `(mesh-smooth m :sharp-angle 90 :refine 2)`.)
+
+```clojure
+;; Low resolution (64) + :softness → smooth openings, fast
+(register lamp
+  (loft-n 64 (shell (circle 20 64) :thickness 2 :style :voronoi
+                    :cells 8 :rows 6 :softness 0.6)
+    (f 50)))
+```
 
 **Shell caps.** Close the ends of a shell with a solid or patterned cap:
 
