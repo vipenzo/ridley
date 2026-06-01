@@ -73,9 +73,7 @@ Una mesh è *manifold* (o *watertight*) quando rappresenta un solido chiuso: nes
 
 Le primitive (`box`, `sphere`, `cyl`, `cone`), le estrusioni chiuse, i loft, i revolve e i risultati delle operazioni booleane sono tutti manifold. È il caso normale.
 
-<!-- TODO: chiarire quali costruzioni Ridley producono effettivamente mesh non-manifold e in quali circostanze. Verificare il comportamento di shell con voronoi/lattice/checkerboard e di thickness-fn a zero rispetto a Manifold. Oggi la Spec dice che Manifold le rifiuta con status 2, ma il motivo topologico preciso non è accertato. -->
-
-Non tutte le mesh lo sono. Le aperture create dalle thickness-fn (cap. 6.9) lasciano sui bordi dei fori vertici quasi-coincidenti che la topologia legge come spigoli condivisi da più di due facce: `merge-vertices` (più sotto) li fonde e ripristina la mesh come manifold. Anche concatenazioni di operazioni booleane su numeri in virgola mobile possono lasciare vertici quasi-coincidenti con lo stesso effetto. Quando una mesh non risulta manifold, `mesh-diagnose` aiuta a capire da quale parte guardare.
+Non tutte le mesh lo sono. Vertici distinti ma spazialmente coincidenti confondono la topologia: lo spigolo fra due vertici quasi-coincidenti viene contato come condiviso da un numero sbagliato di facce. Capita soprattutto unendo geometrie senza una booleana (`concat-meshes`, che accosta le mesh senza risolverne i confini), importando una mesh esterna cucita male, o come residuo di lunghe catene di operazioni in virgola mobile. `merge-vertices` (più sotto) li fonde e di solito ripristina la mesh come manifold. Quando una mesh non risulta manifold, `mesh-diagnose` aiuta a capire da quale parte guardare.
 
 Restano due fonti di incertezza che vale la pena menzionare. La prima è la natura stessa delle shape-fn componibili (cap. 6): la loro espressività è il loro punto di forza, ma significa anche che è impossibile garantire a priori che ogni combinazione di shell, thickness-fn custom e parametri estremi produca una mesh manifold. In pratica si prova, si verifica con `mesh-diagnose`, e se serve si interviene con `merge-vertices` o `solidify`. La seconda è che Ridley è un sistema complesso e bug residui sono sempre possibili: se una costruzione che secondo questo manuale dovrebbe produrre una mesh manifold non lo fa, vale la pena segnalare il caso.
 
@@ -100,22 +98,17 @@ Per verificare rapidamente lo stato di una mesh hai due strumenti:
 
 ### Riparare una mesh
 
-Il caso più comune di mesh non-manifold sono shell e loft con aperture: `shell` con uno stile come `:lattice`, `:voronoi`, `:checkerboard` o con una thickness-fn custom che restituisce 0 in alcune zone produce buchi nella parete, e ai bordi di quei buchi restano vertici distinti ma spazialmente coincidenti. Due vertici a distanza infinitesimale l'uno dall'altro confondono la topologia: lo spigolo tra loro viene contato come condiviso da un numero sbagliato di facce, e Manifold rifiuta la mesh.
+Gli shell con aperture (`:lattice`, `:voronoi`, `:checkerboard`, o thickness-fn che vanno a zero) **non** rientrano fra questi casi: il loft li sigilla da sé, perché dove lo spessore va a zero la parete esterna e quella interna collassano sullo stesso punto, e la mesh esce già manifold. Restano invece a rischio le mesh assemblate con `concat-meshes` o importate dall'esterno.
 
-Le booleane 3D (`mesh-union`, `mesh-difference`, `mesh-intersection`) invece producono di norma output già manifold: Manifold gestisce internamente i quasi-duplicati. Quando una booleana fallisce, di solito il problema è nell'**input**, non nell'output.
+Le booleane 3D (`mesh-union`, `mesh-difference`, `mesh-intersection`) producono di norma output già manifold: Manifold gestisce internamente i quasi-duplicati. Quando una booleana fallisce, di solito il problema è nell'**input**, non nell'output.
 
-`merge-vertices` risolve il problema collassando i vertici che distano meno di un epsilon (per default `1e-6`):
+`merge-vertices` collassa i vertici che distano meno di un epsilon (per default `1e-6`), saldando le giunzioni rimaste aperte e ripristinando spesso la manifoldness:
 
 <!-- example-source: mesh-merge-vertices :no-run
-;; Shell con aperture: non-manifold per via dei bordi dei fori
-(def m (loft (shell (circle 20 64) :thickness 2
-                    :style :lattice :openings 6 :rows 4)
-             (f 40)))
-(println "before:" (boolean (manifold? m)))  ;; => false
-
-;; Dopo aver fuso i vertici coincidenti
+;; m è una mesh con vertici coincidenti ma distinti
+;; (assemblata con concat-meshes, importata, …)
 (def fixed (merge-vertices m))
-(println "after:" (boolean (manifold? fixed)))  ;; => true
+(println (boolean (manifold? fixed)))
 -->
 
 Non è una garanzia universale, ma è il primo tentativo che vale sempre la pena fare. Se la mesh ha problemi strutturali più seri (buchi veri, geometria sovrapposta), servono strategie diverse che vedremo nelle sezioni successive.

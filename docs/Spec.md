@@ -663,18 +663,18 @@ Wall is symmetric: outer ring displaced outward by `thickness/2`, inner ring dis
 | Style | Options |
 |-------|---------|
 | `:solid` | (none) |
-| `:lattice` | `:openings` (8), `:rows` (12), `:shift` (0.5), `:softness` (0) |
+| `:lattice` | `:openings` (8), `:rows` (12), `:shift` (0.5), `:softness` (0.6) |
 | `:checkerboard` | `:cols` (8), `:rows` (8) |
 | `:weave` | `:strands` (6), `:frequency` (8), `:width` (0.3) |
-| `:voronoi` | `:cells` (6), `:rows` (6), `:seed` (42), `:wall-width` (0.3), `:margin` (0.05), `:softness` (0) |
+| `:voronoi` | `:cells` (6), `:rows` (6), `:seed` (42), `:wall-width` (0.3), `:margin` (0.05), `:softness` (0.6) |
 
-**Smoothing voronoi/lattice openings (`:softness`).** A `:voronoi` or `:lattice` shell is a binary mask — by default each wall triangle is kept or dropped wholesale on the (ring × segment) grid, so opening edges come out as a grid-locked staircase, and raising resolution only shrinks the teeth (while ballooning cost). `:softness` (default `0` = original hard cut, on both styles) switches to an **isocontour** build: a continuous field feeds a marching-triangles pass that slices each boundary triangle exactly along the wall→opening iso-line at sub-grid positions. Openings come out smooth — a low-poly curve *following* the boundary, not a grid staircase — at **low resolution**, far cheaper than cranking segments, with a graceful tapered lip from the variable wall thickness. `~0.4–0.8` works well; the result stays watertight/manifold. This is the shell analogue of `text-heightmap`'s `:edge-softness`. (`:softness` gives soft/organic openings; for crisp walls with merely rounded corners instead, keep `:softness 0` and post-process with `(mesh-smooth m :sharp-angle 90 :refine 2)`.)
+**Opening edges (`:softness`).** A `:voronoi` or `:lattice` shell is a binary mask. By **default** (`:softness 0.6`) opening edges are cut with an **isocontour** build: a continuous field feeds a marching-triangles pass that slices each boundary triangle along the wall→opening iso-line at sub-grid positions, so openings read smooth — a low-poly curve *following* the boundary, not a grid staircase — with a graceful tapered lip from the variable wall thickness. `~0.4–0.8` works well; the result stays watertight/manifold. This is the shell analogue of `text-heightmap`'s `:edge-softness`. Pass `:softness 0` for the original hard binary cut (whole grid triangles kept/dropped, staircased edges); optionally follow with `(mesh-smooth m :sharp-angle 90 :refine 2)` for crisp walls with rounded corners. **Exception:** `:lattice` with `:invert?` always uses the hard cut (its band-boundary plateau doesn't close manifold under the isocontour build when inverted); `:voronoi` is fine inverted.
 
 ```clojure
-;; Low resolution (64) + :softness → smooth openings, fast
+;; Default :softness already gives smooth openings
 (register lamp
-  (loft-n 64 (shell (circle 20 64) :thickness 2 :style :voronoi
-                    :cells 8 :rows 6 :softness 0.6)
+  (loft-n 128 (shell (circle 20 128) :thickness 2 :style :voronoi
+                     :cells 8 :rows 6)
     (f 50)))
 ```
 

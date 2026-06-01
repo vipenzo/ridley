@@ -42,19 +42,21 @@ Caps (top and/or bottom) close the ends of the shell. They can be solid
 
 | Style | Options |
 |---|---|
-| `:lattice` | `:openings` (8), `:rows` (12), `:shift` (0.5), `:softness` (0) |
+| `:lattice` | `:openings` (8), `:rows` (12), `:shift` (0.5), `:softness` (0.6) |
 | `:checkerboard` | `:cols` (8), `:rows` (8) |
 | `:weave` | `:strands` (6), `:frequency` (8), `:width` (0.3) |
-| `:voronoi` | `:cells` (6), `:rows` (6), `:seed` (42), `:wall-width` (0.3), `:margin` (0.05), `:softness` (0) |
+| `:voronoi` | `:cells` (6), `:rows` (6), `:seed` (42), `:wall-width` (0.3), `:margin` (0.05), `:softness` (0.6) |
 
-`:softness` (on `:voronoi` and `:lattice`, default `0` = hard binary cut)
-switches opening edges to a smooth **isocontour** cut instead of dropping
-whole grid triangles: the wall→opening boundary is sliced at sub-grid
-positions, so openings read smooth (with a graceful tapered lip) at moderate
-resolution rather than staircasing along the ring/segment grid. `~0.4–0.8`
-works well; the result stays watertight/manifold. `:margin` (`:voronoi` only)
-forces the wall solid over this fraction of `t` at each end, closing the tube
-cleanly instead of cutting jagged cells at the rims.
+`:softness` (on `:voronoi` and `:lattice`, **default `0.6`**) cuts opening
+edges with a smooth **isocontour**: the wall→opening boundary is sliced at
+sub-grid positions, so openings read smooth (with a graceful tapered lip)
+rather than staircasing along the ring/segment grid. `~0.4–0.8` works well.
+Pass `:softness 0` for the original hard binary cut (whole grid triangles
+kept/dropped). Exception: `:lattice` with `:invert?` always uses the hard cut
+(its band-boundary plateau doesn't close manifold under the isocontour build
+when inverted; `:voronoi` is fine inverted). `:margin` (`:voronoi` only) forces
+the wall solid over this fraction of `t` at each end, closing the tube cleanly
+instead of cutting jagged cells at the rims.
 
 **Cap styles** (for `:cap-top` / `:cap-bottom` maps):
 
@@ -88,12 +90,11 @@ A plain hollow cylinder with 2-unit wall — the simplest shell.
 ```
 <!-- /example-source -->
 
-Voronoi-patterned wall: 8 cells circumferentially, 6 longitudinally.
-Without `:softness` the opening edges are a hard binary cut that staircases
-along the ring/segment grid — add `:softness 0.6` for smooth isocontour
-openings (a tapered lip), or post-process with
-`(mesh-smooth m :sharp-angle 90 :refine 2)` for crisp walls with rounded
-corners instead.
+Voronoi-patterned wall: 8 cells circumferentially, 6 longitudinally. By
+default (`:softness 0.6`) the opening edges are a smooth isocontour cut with
+a tapered lip. Pass `:softness 0` for the original hard binary cut (and
+optionally `(mesh-smooth m :sharp-angle 90 :refine 2)` for crisp walls with
+rounded corners).
 
 {{example: shell-lattice}}
 

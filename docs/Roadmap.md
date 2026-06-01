@@ -144,6 +144,8 @@ Tre completamenti sostanziosi del DSL geometrico, indipendenti fra loro.
 
 **Shell openings: marching squares al posto di marching triangles**: il taglio isocontour degli shell `:voronoi`/`:lattice` con `:softness > 0` (`build-shell-isocontour-mesh`) usa il marching *triangles* — ogni quad della griglia è spaccato da una diagonale fissa, e il bordo del rim zigzaga lungo quella diagonale, lasciando una seghettatura regolare a denti orientati uniformemente sui bordi delle strisce. Visibile solo molto zoomati e probabilmente trascurabile rispetto alle imperfezioni di una stampa reale (da verificare stampando), ma eliminabile passando al marching *squares*: bordo calcolato come un solo segmento per quad invece che per triangolo → curva liscia, denti dimezzati e senza bias direzionale. Costo: gestione dei 16 casi (incluso il caso sella) e rigenerazione di skin+rim+cap per quad; tocca la stessa funzione critica, quindi va fatto con verifica manifold + zero facce degeneri prima di considerarlo a posto. Mezza-una settimana.
 
+Limite noto correlato: il taglio isocontour di `:lattice` con `:invert? true` non si chiude manifold (il plateau dei confini di banda `longit=0` non sigilla sotto inversione), quindi quel caso ricade sul taglio binario duro. `:voronoi` invertito invece funziona. Da sistemare insieme alla riscrittura marching squares, che ridiscute comunque la chiusura di rim e cap.
+
 ### 2.5 Apertura del progetto verso l'esterno
 
 Il livello narrativo della documentazione, oggi assente. Chi arriva su `vipenzo.github.io/ridley` o sul subreddit non trova un percorso "guarda cosa puoi fare in 5 minuti", non trova un'introduzione al perché Ridley esiste, non trova esempi commentati di cosa il sistema sa fare bene.

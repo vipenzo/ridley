@@ -321,8 +321,10 @@ Lo stile controlla il pattern delle aperture nelle pareti.
 <!-- example-source: shell-voronoi -->
 ```clojure
 (register lamp
-  (loft-n 512 (shell (circle 20 512) :thickness 2 :style :voronoi :cells 8 :rows 6)
+  (loft-n 512 (shell (circle 20 512) :thickness 2 :style :voronoi
+                :cells 8 :rows 6 :softness 0.6)
     (f 50)))
+
 ```
 
 `:voronoi` distribuisce celle irregolari sulle pareti. I bordi delle celle sono materiale, l'interno è vuoto. `:cells` controlla quante celle per anello, `:rows` quanti anelli lungo il percorso.
@@ -335,6 +337,8 @@ Lo stile controlla il pattern delle aperture nelle pareti.
 ```
 
 `:lattice` produce un pattern a mattoni: file di blob solidi sfasati lungo la circonferenza. `:openings` controlla il numero di mattoni per fila, `:rows` il numero di righe. Con `:invert? true` il pattern si inverte: i mattoni diventano aperture in un guscio continuo. Senza `:invert?`, il risultato sono i mattoni staccati (utile come texture a rilievo, meno come guscio).
+
+L'opzione `:softness` (per `:voronoi` e `:lattice`, default `0.6`) controlla come vengono tagliati i bordi delle aperture. Per default il taglio è *isocontour*: il bordo viene affettato nella posizione esatta in cui la parete incontra l'apertura, fra un vertice e l'altro, e le aperture risultano lisce — con un piccolo labbro rastremato — anche a risoluzione moderata. Con `:softness 0` il taglio torna *binario*: ogni triangolo della griglia è tenuto o scartato per intero, e i bordi restano scalettati lungo la griglia di anelli e segmenti (alzare la risoluzione rimpicciolisce i denti ma non li elimina). Un valore intorno a `0.5–0.8` è il punto dolce. È l'equivalente, per gli shell, dell'`:edge-softness` del rilievo testuale (cap. 13). (`:lattice` con `:invert?` usa sempre il taglio binario.)
 
 Gli altri stili disponibili sono `:checkerboard` (scacchiera) e `:weave` (intreccio). Ognuno ha le sue opzioni specifiche; la Reference le documenta tutte. `:invert? true` funziona con tutti gli stili, comprese le thickness-fn custom passate con `:fn`.
 
