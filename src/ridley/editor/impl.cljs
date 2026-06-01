@@ -207,20 +207,26 @@
                            shape-or-fn))
                        shape-or-fn)
          ;; Compute pivot offset. Works for both plain shapes and shape-fns:
-         ;; for a shape-fn we measure the UNION of its profile across the whole
-         ;; sweep (sampled t), not just t=0 — a taper that grows the profile
-         ;; (e.g. :from 0.5 :to 1.5) is widest at the end, so a t=0-only offset
-         ;; would let the late rings straddle the axis. A translate is then
-         ;; composed onto every evaluated ring so the whole sweep clears the
-         ;; revolution axis (else the revolve self-intersects).
+         ;; for a shape-fn we measure the UNION of its profile over EXACTLY the
+         ;; ring parameters the revolve will build (t = i/steps), then compose a
+         ;; translate onto every evaluated ring so the whole sweep clears the
+         ;; axis. Sampling only the endpoints is not enough — the horizontal
+         ;; extent can peak mid-sweep and be non-monotonic (e.g.
+         ;; (twisted (rect 1 10) 180) is 1 wide at t=0 and t=1 but 10 wide at
+         ;; t=0.5). Matching the ring t's guarantees every built ring is off
+         ;; the axis, not just luckily-sampled ones.
          [dx dy] (cond
                    (and pivot (shape/shape? shape-or-fn))
                    (compute-pivot-offset shape-or-fn pivot)
                    (and pivot (sfn/shape-fn? shape-or-fn))
-                   (compute-pivot-offset
-                    {:points (mapcat #(:points (shape-or-fn %))
-                                     [0 0.25 0.5 0.75 1])}
-                    pivot)
+                   (let [steps (turtle/calc-arc-steps current-turtle
+                                                      (* 2 Math/PI)
+                                                      (js/Math.abs angle))
+                         n-rings (if (>= (js/Math.abs angle) 360) steps (inc steps))
+                         ts (map #(/ (double %) steps) (range n-rings))]
+                     (compute-pivot-offset
+                      {:points (mapcat #(:points (shape-or-fn %)) ts)}
+                      pivot))
                    :else [0 0])
          shifted-shape (cond
                          (and pivot (shape/shape? shape-or-fn))
