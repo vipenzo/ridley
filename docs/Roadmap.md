@@ -142,6 +142,8 @@ Tre completamenti sostanziosi del DSL geometrico, indipendenti fra loro.
 
 **Attach structure-preserving**: oggi `attach` accetta vettori di mesh ma li flatten ricorsivamente. Una variante structure-preserving permetterebbe di trattare gruppi nidificati come corpi rigidi, con la stessa nesting structure in input e output. Uno-due giorni di lavoro.
 
+**Shell openings: marching squares al posto di marching triangles**: il taglio isocontour degli shell `:voronoi`/`:lattice` con `:softness > 0` (`build-shell-isocontour-mesh`) usa il marching *triangles* — ogni quad della griglia è spaccato da una diagonale fissa, e il bordo del rim zigzaga lungo quella diagonale, lasciando una seghettatura regolare a denti orientati uniformemente sui bordi delle strisce. Visibile solo molto zoomati e probabilmente trascurabile rispetto alle imperfezioni di una stampa reale (da verificare stampando), ma eliminabile passando al marching *squares*: bordo calcolato come un solo segmento per quad invece che per triangolo → curva liscia, denti dimezzati e senza bias direzionale. Costo: gestione dei 16 casi (incluso il caso sella) e rigenerazione di skin+rim+cap per quad; tocca la stessa funzione critica, quindi va fatto con verifica manifold + zero facce degeneri prima di considerarlo a posto. Mezza-una settimana.
+
 ### 2.5 Apertura del progetto verso l'esterno
 
 Il livello narrativo della documentazione, oggi assente. Chi arriva su `vipenzo.github.io/ridley` o sul subreddit non trova un percorso "guarda cosa puoi fare in 5 minuti", non trova un'introduzione al perché Ridley esiste, non trova esempi commentati di cosa il sistema sa fare bene.
