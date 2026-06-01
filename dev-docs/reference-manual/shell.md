@@ -9,7 +9,7 @@ status: stable
 
 ## Signature
 
-`(shell shape-or-fn & {:keys [thickness style threshold cap-top cap-bottom fn] :as style-opts})`
+`(shell shape-or-fn & {:keys [thickness style threshold cap-top cap-bottom fn invert?] :as style-opts})`
 
 ## Description
 
@@ -34,6 +34,7 @@ Caps (top and/or bottom) close the ends of the shell. They can be solid
 | `:style` | `:solid` | Wall pattern: `:solid`, `:lattice`, `:checkerboard`, `:weave`, `:voronoi`. Ignored when `:fn` is supplied. |
 | `:fn` | — | Custom thickness function `(fn [a t] -> 0..1)` overriding `:style`. `a` = angular position (radians), `t` = path progress. |
 | `:threshold` | `0.05` | Values below this snap to 0 (no wall). |
+| `:invert?` | `false` | Swap solid/empty (`v → 1 - v`): e.g. turn `:lattice` bricks into brick-shaped openings, or a `:voronoi` wireframe into solid cells. Works with every style and with custom `:fn`. |
 | `:cap-top` | — | Number (solid cap) or map `{:thickness :style …}` (patterned cap). |
 | `:cap-bottom` | — | Same as `:cap-top` for the start of the path. |
 
@@ -41,17 +42,26 @@ Caps (top and/or bottom) close the ends of the shell. They can be solid
 
 | Style | Options |
 |---|---|
-| `:lattice` | `:openings` (8), `:rows` (12), `:shift` (0.5) |
+| `:lattice` | `:openings` (8), `:rows` (12), `:shift` (0.5), `:softness` (0) |
 | `:checkerboard` | `:cols` (8), `:rows` (8) |
 | `:weave` | `:strands` (6), `:frequency` (8), `:width` (0.3) |
-| `:voronoi` | `:cells` (6), `:rows` (6), `:seed` (42), `:wall-width` (0.3) |
+| `:voronoi` | `:cells` (6), `:rows` (6), `:seed` (42), `:wall-width` (0.3), `:margin` (0.05), `:softness` (0) |
+
+`:softness` (on `:voronoi` and `:lattice`, default `0` = hard binary cut)
+switches opening edges to a smooth **isocontour** cut instead of dropping
+whole grid triangles: the wall→opening boundary is sliced at sub-grid
+positions, so openings read smooth (with a graceful tapered lip) at moderate
+resolution rather than staircasing along the ring/segment grid. `~0.4–0.8`
+works well; the result stays watertight/manifold. `:margin` (`:voronoi` only)
+forces the wall solid over this fraction of `t` at each end, closing the tube
+cleanly instead of cutting jagged cells at the rims.
 
 **Cap styles** (for `:cap-top` / `:cap-bottom` maps):
 
 | Cap style | Options |
 |---|---|
 | `:voronoi` | `:cells` (20), `:wall` (1.5), `:seed` (0), `:relax` (2), `:resolution` (16) |
-| `:grid` | `:spacing` `[sx sy]` (`[5 5]`), `:hole` (1.5), `:inset` (0) |
+| `:grid` | `:spacing` `[sx sy]` (`[5 5]`), `:hole` (1.5), `:hole-segments` (16), `:inset` (0) |
 | `:solid` | (none; equivalent to passing a number) |
 
 ## Example
@@ -78,10 +88,12 @@ A plain hollow cylinder with 2-unit wall — the simplest shell.
 ```
 <!-- /example-source -->
 
-Voronoi-patterned wall: 8 cells circumferentially, 6 longitudinally. The
-:voronoi cliff is binary (hard pixelated edges along the ring/segment
-grid); for smoother results, post-process with
-`(mesh-smooth m :sharp-angle 90 :refine 2)`.
+Voronoi-patterned wall: 8 cells circumferentially, 6 longitudinally.
+Without `:softness` the opening edges are a hard binary cut that staircases
+along the ring/segment grid — add `:softness 0.6` for smooth isocontour
+openings (a tapered lip), or post-process with
+`(mesh-smooth m :sharp-angle 90 :refine 2)` for crisp walls with rounded
+corners instead.
 
 {{example: shell-lattice}}
 
