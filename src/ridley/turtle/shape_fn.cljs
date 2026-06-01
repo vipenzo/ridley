@@ -1057,7 +1057,12 @@
                                  :shell-mode true
                                  :shell-thickness thickness
                                  :shell-values values)
-                    smooth?    (assoc :shell-smooth true :shell-level 0.5)
+                    ;; :lattice cuts just above 0.5: its longit=0 band-boundary
+                    ;; rings sit at field exactly 0.5, which would make the iso
+                    ;; cut land on grid vertices (degenerate caps/flaps). Nudging
+                    ;; the level off that plateau keeps every crossing sub-grid.
+                    smooth?    (assoc :shell-smooth true
+                                      :shell-level (if (= style :lattice) 0.55 0.5))
                     cap-top    (assoc :shell-cap-top cap-top)
                     cap-bottom (assoc :shell-cap-bottom cap-bottom)))))))
 
