@@ -883,15 +883,24 @@
     :solid (fn [_a _t] 1.0)
 
     :lattice
-    (let [{:keys [openings rows shift]
-           :or {openings 8 rows 12 shift 0.5}} opts]
+    ;; Wall where min(circ, longit) > 0. :softness > 0 (default 0) rescales the
+    ;; SIGNED field min(circ, longit) so the wall boundary lands at 0.5 with a
+    ;; continuous ramp on both sides — letting the isocontour build cut openings
+    ;; smoothly. Without it the clamped field is flat 0 in the openings, so the
+    ;; cut would snap to grid vertices (staircase). See :voronoi / shell.
+    (let [{:keys [openings rows shift softness]
+           :or {openings 8 rows 12 shift 0.5 softness 0}} opts
+          s2 (* 2.0 (max 1e-6 softness))]
       (fn [a t]
         (let [row (* t rows)
               row-idx (int row)
               phase (* row-idx shift (/ (* 2 Math/PI) openings))
               circ (Math/sin (+ (* a openings) phase))
-              longit (Math/sin (* row Math/PI))]
-          (max 0 (min circ longit)))))
+              longit (Math/sin (* row Math/PI))
+              g (min circ longit)]
+          (if (<= softness 0)
+            (max 0 g)
+            (-> (+ 0.5 (/ g s2)) (max 0.0) (min 1.0))))))
 
     :checkerboard
     (let [{:keys [cols rows] :or {cols 8 rows 8}} opts]
@@ -995,18 +1004,19 @@
 
    :voronoi extra options:
      :wall-width  width of the wall stripe in (u, v) cell units (default 0.3)
-     :softness    0 (default) = hard binary cut: openings are carved by dropping
-                  whole grid triangles, so their edges staircase along the
-                  ring/segment grid (raising resolution only shrinks the teeth).
-                  >0 switches to an ISOCONTOUR cut: a continuous field feeds a
-                  marching-triangles build that slices each boundary triangle
-                  exactly along the wall→opening iso-line, at sub-grid positions.
-                  Openings come out smooth (a low-poly curve FOLLOWING the
-                  boundary, not a grid staircase) at LOW resolution — far cheaper
-                  than cranking segments, and the variable wall thickness adds a
-                  graceful tapered lip. ~0.4–0.8 works well. This is the shell
-                  analogue of text relief's :edge-softness. The result stays
-                  watertight/manifold (vertices welded along the cut).
+
+   :softness (:voronoi and :lattice, default 0)
+     0 = hard binary cut: openings are carved by dropping whole grid triangles,
+       so their edges staircase along the ring/segment grid (raising resolution
+       only shrinks the teeth).
+     >0 = ISOCONTOUR cut: a continuous field feeds a marching-triangles build
+       that slices each boundary triangle exactly along the wall→opening
+       iso-line, at sub-grid positions. Openings come out smooth (a low-poly
+       curve FOLLOWING the boundary, not a grid staircase) at LOW resolution —
+       far cheaper than cranking segments — and the variable wall thickness adds
+       a graceful tapered lip. ~0.4–0.8 works well; the result stays
+       watertight/manifold (vertices welded along the cut). This is the shell
+       analogue of text relief's :edge-softness.
    :softness gives soft, organic openings. For a *different* look — crisp walls
    with rounded staircase — keep :softness 0 and post-process with
    (mesh-smooth m :sharp-angle 90 :refine 2).
@@ -1026,11 +1036,13 @@
         thickness-fn (if invert?
                        (fn [a t] (- 1.0 (base-fn a t)))
                        base-fn)
-        ;; With a continuous field (voronoi :softness > 0) we can cut openings
-        ;; along the iso-line instead of dropping whole grid triangles, giving
-        ;; smooth opening outlines at low resolution. The continuous values flow
-        ;; through unchanged; only the mesh-build path changes (see loft).
-        smooth? (and (= style :voronoi) (pos? (or (:softness opts) 0)))]
+        ;; With a continuous field (:voronoi or :lattice with :softness > 0) we
+        ;; can cut openings along the iso-line instead of dropping whole grid
+        ;; triangles, giving smooth opening outlines at low resolution. The
+        ;; continuous values flow through unchanged; only the mesh-build path
+        ;; changes (see loft).
+        smooth? (and (contains? #{:voronoi :lattice} style)
+                     (pos? (or (:softness opts) 0)))]
     (shape-fn shape-or-fn
               (fn [s t]
                 (let [center (shape-centroid s)
