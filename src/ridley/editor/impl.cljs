@@ -120,9 +120,11 @@
   "Runtime dispatch for revolve."
   ([shape-or-fn] (revolve-impl shape-or-fn 360))
   ([shape-or-fn angle]
-   (if (sfn/shape-fn? shape-or-fn)
-     (ops/pure-revolve-shape-fn (revolve-clear-axis shape-or-fn angle) angle)
-     (ops/pure-revolve shape-or-fn angle))))
+   ;; Clamp to one turn (see revolve-shape): >±360 just overlaps itself.
+   (let [angle (-> angle (max -360.0) (min 360.0))]
+     (if (sfn/shape-fn? shape-or-fn)
+       (ops/pure-revolve-shape-fn (revolve-clear-axis shape-or-fn angle) angle)
+       (ops/pure-revolve shape-or-fn angle)))))
 
 ;; ============================================================
 ;; Extrude+ / Revolve+ (chainable variants)
@@ -212,7 +214,9 @@
   ([shape-or-fn]
    (revolve+-impl shape-or-fn 360))
   ([shape-or-fn angle & {:keys [pivot mark mark-cap]}]
-   (let [current-turtle @@state/turtle-state-var
+   (let [;; Clamp to one turn (see revolve-shape): >±360 just overlaps itself.
+         angle (-> angle (max -360.0) (min 360.0))
+         current-turtle @@state/turtle-state-var
          start-pose {:pos (:position current-turtle)
                      :heading (:heading current-turtle)
                      :up (:up current-turtle)}

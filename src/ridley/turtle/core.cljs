@@ -1743,7 +1743,11 @@
   ([state shape angle eval-shape-at-t]
    (if-not (shape? shape)
      state
-     (let [;; Save creation pose
+     (let [;; Clamp to one full turn: beyond ±360 the sweep wraps over itself
+           ;; (is-closed treats it as a full revolution but spreads the rings
+           ;; over the larger angle), producing self-overlapping geometry.
+           angle (-> angle (max -360.0) (min 360.0))
+           ;; Save creation pose
            creation-pose {:position (:position state)
                           :heading (:heading state)
                           :up (:up state)}

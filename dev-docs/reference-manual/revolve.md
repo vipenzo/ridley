@@ -43,6 +43,8 @@ step with `t` going from 0 (first ring) to 1 (last ring).
 - `shape` — a 2D profile, or a shape-fn, or a vector of shapes (merged
   into a single mesh).
 - `angle` — revolution angle in degrees. Optional; defaults to 360.
+  Clamped to `±360`: a larger magnitude would only sweep the profile back
+  over itself (self-overlapping geometry), so `600` behaves like `360`.
 - `:pivot` — `:left`, `:right`, `:up`, `:down`. Shifts the shape so the
   named edge sits on the revolution axis, then compensates the mesh
   position. Use for bend/corner geometry: it keeps holes intact (no
