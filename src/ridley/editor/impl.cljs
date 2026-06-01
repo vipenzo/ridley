@@ -207,16 +207,20 @@
                            shape-or-fn))
                        shape-or-fn)
          ;; Compute pivot offset. Works for both plain shapes and shape-fns:
-         ;; for a shape-fn we measure its base shape (t=0 — the widest, e.g.
-         ;; before a taper shrinks it) and compose a translate so every
-         ;; evaluated ring is shifted off the revolution axis. Without this a
-         ;; shape-fn profile (e.g. `tapered`) would straddle the axis and
-         ;; revolve into a self-intersecting, non-manifold solid.
+         ;; for a shape-fn we measure the UNION of its profile across the whole
+         ;; sweep (sampled t), not just t=0 — a taper that grows the profile
+         ;; (e.g. :from 0.5 :to 1.5) is widest at the end, so a t=0-only offset
+         ;; would let the late rings straddle the axis. A translate is then
+         ;; composed onto every evaluated ring so the whole sweep clears the
+         ;; revolution axis (else the revolve self-intersects).
          [dx dy] (cond
                    (and pivot (shape/shape? shape-or-fn))
                    (compute-pivot-offset shape-or-fn pivot)
                    (and pivot (sfn/shape-fn? shape-or-fn))
-                   (compute-pivot-offset (shape-or-fn 0) pivot)
+                   (compute-pivot-offset
+                    {:points (mapcat #(:points (shape-or-fn %))
+                                     [0 0.25 0.5 0.75 1])}
+                    pivot)
                    :else [0 0])
          shifted-shape (cond
                          (and pivot (shape/shape? shape-or-fn))
