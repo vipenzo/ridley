@@ -63,15 +63,36 @@
 (def ^:private tmp-quat (THREE/Quaternion.))
 (def ^:private tmp-vec3 (THREE/Vector3.))
 
+(def ^:private factory-cam-dir
+  "Built-in default view direction (camera position relative to target) for the
+   framing and reset-view. Looks roughly along -X (slightly -Y) at low
+   elevation, chosen so flat labels (text on the -X face) read head-on.
+   World Z stays up."
+  [-0.9319 -0.2849 0.2243])
+
+;; Current reset/framing direction (unit [x y z]). Starts at the factory
+;; default; the settings panel can overwrite it from the current camera, and
+;; the app restores a persisted value at startup via set-reset-view-dir!.
+(defonce ^:private reset-view-dir (atom factory-cam-dir))
+
+(def ^:private default-cam-dir-scale
+  "Multiplier turning the auto-fit `dist` into the camera offset length.
+   √3 preserves the framing distance of the previous (dist,dist,dist) iso view."
+  1.7320508)
+
 (defn- create-scene []
   (let [scene (THREE/Scene.)]
     (set! (.-background scene) (THREE/Color. 0x353540))
     scene))
 
 (defn- create-camera [width height]
-  (let [camera (THREE/PerspectiveCamera. 60 (/ width height) 0.1 10000)]
+  (let [camera (THREE/PerspectiveCamera. 60 (/ width height) 0.1 10000)
+        d (* 100 default-cam-dir-scale)]
     (.set (.-up camera) 0 0 1)
-    (.set (.-position camera) 100 100 100)
+    (.set (.-position camera)
+          (* d (nth @reset-view-dir 0))
+          (* d (nth @reset-view-dir 1))
+          (* d (nth @reset-view-dir 2)))
     (.lookAt camera 0 0 0)
     camera))
 
@@ -410,18 +431,16 @@
         ctx (.getContext canvas "2d")
         ;; Use provided content or show placeholder
         display-content (if (seq content) content "<empty>")]
-    ;; Debug
-    (js/console.log "Panel render:" (clj->js {:content content :width px-width :height px-height :font px-font-size}))
-    ;; Clear and draw background
+    ;; Clear and draw background (honors :bg, alpha in low byte → 0xRRGGBBAA)
     (.clearRect ctx 0 0 px-width px-height)
-    (set! (.-fillStyle ctx) "rgba(50,50,50,0.9)")
+    (set! (.-fillStyle ctx) (hex-to-rgba bg))
     (.fillRect ctx 0 0 px-width px-height)
-    ;; Draw border
-    (set! (.-strokeStyle ctx) "rgba(255,255,255,0.5)")
+    ;; Draw border (tinted from :fg)
+    (set! (.-strokeStyle ctx) (hex-to-rgba (bit-or fg 0x40)))
     (set! (.-lineWidth ctx) 3)
     (.strokeRect ctx 1 1 (- px-width 2) (- px-height 2))
-    ;; Setup text rendering - use explicit white color
-    (set! (.-fillStyle ctx) "#ffffff")
+    ;; Setup text rendering (honors :fg)
+    (set! (.-fillStyle ctx) (hex-to-rgb fg))
     (set! (.-font ctx) (str "bold " px-font-size "px Arial, sans-serif"))
     (set! (.-textBaseline ctx) "top")
     ;; Word wrap and render text
@@ -683,11 +702,13 @@
           center-z (/ (+ min-z max-z) 2)
           size (max (- max-x min-x) (- max-y min-y) (- max-z min-z) 10)
           dist (* size 2)]
+      (.set (.-up camera) 0 0 1)
       (.set (.-target controls) center-x center-y center-z)
-      (.set (.-position camera)
-            (+ center-x dist)
-            (+ center-y dist)
-            (+ center-z dist))
+      (let [d (* dist default-cam-dir-scale)]
+        (.set (.-position camera)
+              (+ center-x (* d (nth @reset-view-dir 0)))
+              (+ center-y (* d (nth @reset-view-dir 1)))
+              (+ center-z (* d (nth @reset-view-dir 2)))))
       (.update controls))))
 
 (defn- raw-arrays-bbox
@@ -921,11 +942,13 @@
               dist (* size 2)]
           ;; Fit camera (only if reset-camera? is true)
           (when reset-camera?
+            (.set (.-up camera) 0 0 1)
             (.set (.-target controls) center-x center-y center-z)
-            (.set (.-position camera)
-                  (+ center-x dist)
-                  (+ center-y dist)
-                  (+ center-z dist))
+            (let [d (* dist default-cam-dir-scale)]
+              (.set (.-position camera)
+                    (+ center-x (* d (nth @reset-view-dir 0)))
+                    (+ center-y (* d (nth @reset-view-dir 1)))
+                    (+ center-z (* d (nth @reset-view-dir 2)))))
             (.update controls))
           ;; Scale axes to extend just past the bounding box
           (when-let [{:keys [^js axes]} @state]
@@ -959,11 +982,13 @@
             center-z (/ (+ min-z max-z) 2)
             size (max (- max-x min-x) (- max-y min-y) (- max-z min-z) 10)
             dist (* size 2)]
+        (.set (.-up camera) 0 0 1)
         (.set (.-target controls) center-x center-y center-z)
-        (.set (.-position camera)
-              (+ center-x dist)
-              (+ center-y dist)
-              (+ center-z dist))
+        (let [d (* dist default-cam-dir-scale)]
+          (.set (.-position camera)
+                (+ center-x (* d (nth @reset-view-dir 0)))
+                (+ center-y (* d (nth @reset-view-dir 1)))
+                (+ center-z (* d (nth @reset-view-dir 2)))))
         (.update controls)))))
 
 ;; Track last frame time for dt computation
@@ -2133,11 +2158,13 @@
               center-z (/ (+ min-z max-z) 2)
               size (max (- max-x min-x) (- max-y min-y) (- max-z min-z) 10)
               dist (* size 2)]
+          (.set (.-up camera) 0 0 1)
           (.set (.-target controls) center-x center-y center-z)
-          (.set (.-position camera)
-                (+ center-x dist)
-                (+ center-y dist)
-                (+ center-z dist))
+          (let [d (* dist default-cam-dir-scale)]
+            (.set (.-position camera)
+                  (+ center-x (* d (nth @reset-view-dir 0)))
+                  (+ center-y (* d (nth @reset-view-dir 1)))
+                  (+ center-z (* d (nth @reset-view-dir 2)))))
           (.update controls)
           true)))))
 
@@ -2211,9 +2238,42 @@
     (let [^js camera camera
           ^js controls controls]
       (.set (.-up camera) 0 0 1)
-      (.set (.-position camera) 100 100 100)
+      (let [d (* 100 default-cam-dir-scale)]
+        (.set (.-position camera)
+              (* d (nth @reset-view-dir 0))
+              (* d (nth @reset-view-dir 1))
+              (* d (nth @reset-view-dir 2))))
       (.set (.-target controls) 0 0 0)
       (.update controls))))
+
+(defn set-reset-view-dir!
+  "Set the reset/framing view direction used by reset-camera and the per-eval
+   auto-fit. `dir` is a 3-element [x y z] vector (need not be normalized; it is
+   normalized here), or nil to revert to the built-in default."
+  [dir]
+  (if (and (sequential? dir) (= 3 (count dir)))
+    (let [[x y z] dir
+          mag (Math/sqrt (+ (* x x) (* y y) (* z z)))]
+      (reset! reset-view-dir (if (pos? mag) [(/ x mag) (/ y mag) (/ z mag)] factory-cam-dir)))
+    (reset! reset-view-dir factory-cam-dir)))
+
+(defn capture-reset-view!
+  "Capture the current camera's view DIRECTION (position relative to target,
+   normalized) as the new reset/framing direction. World up stays vertical, so
+   only azimuth and elevation are captured (no roll). Returns the new [x y z]
+   unit direction, or nil if there is no camera."
+  []
+  (when-let [{:keys [camera controls]} @state]
+    (let [p (.-position camera)
+          t (.-target controls)
+          dx (- (.-x p) (.-x t))
+          dy (- (.-y p) (.-y t))
+          dz (- (.-z p) (.-z t))
+          mag (Math/sqrt (+ (* dx dx) (* dy dy) (* dz dz)))]
+      (when (pos? mag)
+        (let [dir [(/ dx mag) (/ dy mag) (/ dz mag)]]
+          (reset! reset-view-dir dir)
+          dir)))))
 
 ;; ============================================================
 ;; Turtle indicator visibility and updates

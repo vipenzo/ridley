@@ -20,7 +20,8 @@
         :google-model "gemini-2.5-flash"
         :tier :auto}          ; :auto | :tier-1 | :tier-2 | :tier-3
    :audio-feedback true       ; Play sounds on eval success/error
-   :curve-resolution nil})    ; {:mode :n|:a|:s :value <pos-num>} or nil = built-in default
+   :curve-resolution nil      ; {:mode :n|:a|:s :value <pos-num>} or nil = built-in default
+   :reset-view-dir nil})      ; [x y z] unit view direction, or nil = built-in default
 
 ;; =============================================================================
 ;; Settings State
@@ -352,4 +353,17 @@
    or nil."
   [value]
   (swap! settings assoc :curve-resolution value)
+  (save-settings!))
+
+(defn get-reset-view-dir
+  "User's preferred reset/framing view direction as [x y z], or nil for the
+   built-in default."
+  []
+  (:reset-view-dir @settings))
+
+(defn set-reset-view-dir!
+  "Persist the user's preferred reset/framing view direction. `value` is a
+   3-element [x y z] vector, or nil to revert to the built-in default."
+  [value]
+  (swap! settings assoc :reset-view-dir value)
   (save-settings!))

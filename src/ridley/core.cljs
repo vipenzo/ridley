@@ -1522,6 +1522,29 @@
         "</div>"
         "</div>"))
 
+     ;; Viewport section — capture the current camera angle as the reset/framing view
+     (let [custom? (some? (settings/get-reset-view-dir))]
+       (str
+        "<h3 class='settings-section-header'>Viewport</h3>"
+        "<div class='settings-field'>"
+        "<label class='settings-label'>Reset view angle</label>"
+        "<div class='settings-api-key-row'>"
+        "<button class='settings-toggle-btn' id='settings-capture-reset-view'>"
+        "Use current view"
+        "</button>"
+        "<button class='settings-toggle-btn' id='settings-reset-view-default'"
+        (when-not custom? " disabled") ">"
+        "Default"
+        "</button>"
+        "</div>"
+        "<div class='settings-hint'>"
+        "Orient the viewport the way you like, then click <strong>Use current "
+        "view</strong> to make that angle the one used when fitting new results "
+        "and when you press Reset. Only the viewing direction is stored (up stays "
+        "vertical); distance keeps auto-fitting to the model."
+        "</div>"
+        "</div>"))
+
      ;; Fonts section — registry of ids usable from code via :font :id
      (let [entries (text/list-registered-fonts)
            desktop? (fonts-storage/supported?)]
@@ -1698,6 +1721,20 @@
     (.addEventListener el "click"
                        (fn [_]
                          (settings/set-curve-resolution! nil)
+                         (re-render))))
+  ;; Viewport: capture current camera angle as reset/framing direction
+  (when-let [el (.querySelector modal "#settings-capture-reset-view")]
+    (.addEventListener el "click"
+                       (fn [_]
+                         (when-let [dir (viewport/capture-reset-view!)]
+                           (settings/set-reset-view-dir! (vec dir)))
+                         (re-render))))
+  ;; Viewport: revert reset view angle to built-in default
+  (when-let [el (.querySelector modal "#settings-reset-view-default")]
+    (.addEventListener el "click"
+                       (fn [_]
+                         (settings/set-reset-view-dir! nil)
+                         (viewport/set-reset-view-dir! nil)
                          (re-render))))
   ;; Audio feedback checkbox (accessibility)
   (when-let [el (.querySelector modal "#settings-audio-feedback")]
@@ -2597,6 +2634,9 @@
         (.catch #(js/console.warn "Font init failed:" %)))
     ;; Load LLM settings and setup button
     (settings/load-settings!)
+    ;; Restore the user's preferred reset/framing view angle (if any)
+    (when-let [d (settings/get-reset-view-dir)]
+      (viewport/set-reset-view-dir! d))
     (setup-settings)
     ;; Setup sync (desktop <-> headset)
     (setup-sync)
