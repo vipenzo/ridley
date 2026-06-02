@@ -44,9 +44,19 @@
 
 (defn- cmd->code-str
   "Convert a single command to valid Clojure code.
-   :cp-f → (cp-f ...), :scale [1.1 1 1] → (scale [1.1 1 1])"
+   :cp-f → (cp-f ...). A :scale [f rt u] vector becomes the per-axis
+   stretch-f / stretch-rt / stretch-u commands — `scale` itself is not allowed
+   inside attach/path — and unit (≈1) axes are dropped."
   [[cmd val]]
   (cond
+    (= cmd :scale)
+    (let [[a b c] val
+          unit? (fn [x] (< (Math/abs (- x 1.0)) 0.001))]
+      (->> [(when-not (unit? a) (str "(stretch-f " a ")"))
+            (when-not (unit? b) (str "(stretch-rt " b ")"))
+            (when-not (unit? c) (str "(stretch-u " c ")"))]
+           (remove nil?)
+           (str/join " ")))
     (vector? val)
     (str "(" (name cmd) " [" (str/join " " val) "])")
     :else
@@ -55,7 +65,7 @@
 (defn- commands->code-str
   "Convert command vector to display/code string."
   [commands]
-  (str/join " " (map cmd->code-str commands)))
+  (str/join " " (remove str/blank? (map cmd->code-str commands))))
 
 (defn- compact-commands
   "Collapse consecutive same-type commands and remove zero-sum pairs.
