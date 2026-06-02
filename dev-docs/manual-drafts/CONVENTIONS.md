@@ -29,3 +29,9 @@ Forma da evitare:
 - Un blocco `clojure` viene eseguito dal sistema quando è preceduto dal marker `<!-- example-source: nome-esempio -->` (inline, subito prima del blocco), oppure quando il codice da eseguire è racchiuso in un commento `<!-- example-source: nome\n...codice...\n-->`.
 - Gli esempi che mostrano solo una firma o un frammento illustrativo non devono avere il marker, per non essere eseguiti.
 - Quando un blocco contiene piu di una mesh registrata con `register`, distanziare gli elementi con un movimento della tartaruga (ad esempio `(f 60)`) tra una `register` e l'altra, altrimenti si sovrappongono nel viewport.
+
+## Link alle schede Reference
+
+- Per linkare dalla prosa a una scheda Reference, usare un link Markdown con href `ref:nome`, dove `nome` e il simbolo: `[extrude](ref:extrude)`. Il renderer intercetta il click e apre il manuale sulla scheda di quel simbolo.
+- In alternativa, un link relativo al file della scheda funziona allo stesso modo: `[loft](loft.md)`. E la forma usata nei "See also" delle schede stesse.
+- Non serve linkare ogni occorrenza di un nome di funzione: i nomi dentro i blocchi di codice degli esempi mostrano gia il tooltip Reference in hover, con un bottone per aprire la scheda.

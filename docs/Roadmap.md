@@ -32,9 +32,9 @@ La documentazione di Ridley vive su tre livelli, e tutti e tre richiedono attenz
 
 Il piano è in due passaggi: prima la riorganizzazione manuale dello scheletro (decisione editoriale di come raggruppare le voci), poi il riempimento del contenuto delegabile a Code, file per file, con un brief che fornisca lo scheletro e chieda di riempirlo guardando il sorgente. Il `File Structure` finale del documento, oggi sbagliato, va riscritto da zero.
 
-**Manuale online** (`src/ridley/manual/content.cljs`, bilingue EN/IT) è già implementato e integrato nell'app, con esempi auto-eseguibili nel viewport. Il pubblico è un utente che impara facendo. Lo stato attuale ha due problemi: la struttura, cresciuta organicamente seguendo l'evoluzione delle feature, non riflette la struttura concettuale del sistema (debito già diagnosticato in 15.4.4 di `Architecture.md`); e manca una funzione di search, che con l'attuale volume di documentazione è un buco evidente (debito 15.4.3).
+**Manuale online** (bilingue EN/IT) è stato ristrutturato nella versione v1 (giugno 2026): la navigazione vive in `src/ridley/manual/structure.cljs`, la prosa in Markdown sotto `docs/manual/`, e una Reference a schede è ora sfogliabile per categoria e **cercabile** dentro il manuale (architettura descritta in §11.6 di `Architecture.md`; piano in `docs/manual-redesign-plan.md`). I due debiti storici sono chiusi: la search interna esiste (sopra l'indice `reference_index.cljs` generato al build) e la struttura è stata riorganizzata. Il monolite legacy `content.cljs` resta dietro il flag di cutover `config/new-manual?` e va rimosso a cutover consolidato. Lavoro residuo: traduzioni complete (oggi guide IT + schede EN, coperte dal fallback), schede `internals/`, guide tematiche e cap. 18.
 
-Una volta che la search del manuale esiste, è naturale estenderla per presentare anche i risultati provenienti da `Spec.md`: il documento resta separato, ma le sue pagine diventano visualizzabili online come approfondimento. Il manuale e la spec rimangono distinti per pubblico e funzione, ma comunicano nel punto in cui l'utente cerca informazione.
+Una volta che la search del manuale esiste — ed esiste — è naturale estenderla per presentare anche i risultati provenienti da `Spec.md`: il documento resta separato, ma le sue pagine diventano visualizzabili online come approfondimento. Il manuale e la spec rimangono distinti per pubblico e funzione, ma comunicano nel punto in cui l'utente cerca informazione.
 
 **User guide e supporti narrativi** sono il terzo livello e oggi non esistono. Ne parla la Parte II, sezione 2.5: è un progetto editoriale che richiede pianificazione, non manutenzione, e quindi vive in un orizzonte diverso.
 
@@ -66,9 +66,9 @@ Non-uniform scale con vector: oggi la firma è `(scale fx fy fz)` con tre numeri
 
 Pretty-print dei risultati REPL: oggi la output usa `pr-str` puro; passare a `cljs.pprint/pprint` con troncamento per output grandi rende il REPL leggibile (mezza giornata).
 
-Auto-complete custom dei binding DSL: l'editor ha autocomplete generico CodeMirror sui token del buffer corrente, ma non un completion source che pesca dai circa 250 binding SCI di Ridley. La fonte naturale è `bindings.cljs`, arricchita con docstring derivate dal manuale online (uno-due giorni).
+Auto-complete custom dei binding DSL — **fatto**: l'editor ha un completion source sui simboli Ridley, alimentato dall'indice `reference_index.cljs` (generato al build) più `clojure_core_index.cljs`, con signature e descrizione per voce.
 
-Inline documentation hover: tooltip su nome di funzione che mostra docstring derivata da `manual/content.cljs`. Estensione `hoverTooltip` di CodeMirror (due-tre giorni).
+Inline documentation hover — **fatto**: tooltip in hover sul nome di funzione (estensione `hoverTooltip` di CodeMirror) con signature e descrizione dall'indice Reference, più un bottone "apri nel manuale" che porta alla scheda completa (T-009). Lo stesso tooltip compare ora anche nei blocchi di codice degli esempi dentro il manuale.
 
 Error highlighting persistente: oggi gli errori SCI producono un flash arancio sulla riga; l'integrazione con `@codemirror/lint` darebbe marker persistenti su gutter e squiggle sotto il token problematico (una giornata).
 

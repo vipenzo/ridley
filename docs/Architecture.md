@@ -163,7 +163,7 @@ Ridley è costruito su un insieme di tecnologie scelte per supportare il modello
 
 **Test.** `cljs.test` come framework, `:node-test` come target di esecuzione (eseguito da Node, autorun all'invocazione di `npm test`). Nessun test in Rust o JavaScript nativo. La pipeline CI è un singolo workflow GitHub Actions (`test.yml`), invocato a ogni push e pull request. Il capitolo 12 documenta lo stato della copertura.
 
-**Documentazione.** Il manuale interattivo dentro l'applicazione (sezione 11.6) è bilingue italiano/inglese, scritto come stringhe i18n in moduli ClojureScript dedicati, con esempi DSL eseguibili nell'editor. Il documento di architettura (questo file) è prosa Markdown con diagrammi Mermaid. La spec del DSL (`Spec.md`) e la documentazione di sviluppo (`dev-docs/`) sono Markdown puro, in italiano.
+**Documentazione.** Il manuale interattivo dentro l'applicazione (sezione 11.6) è bilingue italiano/inglese, con la navigazione in ClojureScript (`structure.cljs`) e la prosa in Markdown su disco (`docs/manual/`), più una Reference a schede generata al build; gli esempi sono DSL eseguibili nell'editor. Il documento di architettura (questo file) è prosa Markdown con diagrammi Mermaid. La spec del DSL (`Spec.md`) e la documentazione di sviluppo (`dev-docs/`) sono Markdown puro, in italiano.
 
 ---
 
@@ -1768,31 +1768,45 @@ Architetturalmente è un sottosistema autonomo. Riceve callback dal core di Ridl
 
 ### 11.6 Manuale interattivo
 
-Il manuale di Ridley è un pannello in-app che mostra documentazione bilingue (italiano e inglese) con esempi di codice eseguibili direttamente nel viewport. Cliccando "Run" su un esempio, il codice viene caricato nell'editor e valutato come se l'utente lo avesse scritto: il manuale è quindi non solo testo, ma una superficie di apprendimento attiva, dove ogni esempio è un punto di partenza per la sperimentazione. Una funzione di copy permette di trasferire l'esempio nel proprio progetto senza eseguirlo.
+Il manuale di Ridley è un pannello in-app che mostra documentazione bilingue (italiano e inglese) con esempi di codice eseguibili direttamente nel viewport. Cliccando "Run" su un esempio, il codice viene caricato nell'editor e valutato come se l'utente lo avesse scritto: il manuale è quindi non solo testo, ma una superficie di apprendimento attiva, dove ogni esempio è un punto di partenza per la sperimentazione. Un bottone "Edit" trasferisce l'esempio nell'editor dell'utente (con conferma quando l'editor non è vuoto, così il lavoro in corso non viene sovrascritto).
 
-Il sottosistema vive in quattro file dentro `src/ridley/manual/`. Architetturalmente la separazione è netta fra rendering e contenuto, e questa separazione vale la pena nominarla in apertura.
+Il sottosistema è stato ristrutturato nella versione v1 (giugno 2026): la documentazione passa da un monolite di stringhe i18n in ClojureScript a un'architettura ibrida con la navigazione in CLJS e la prosa in Markdown su disco, affiancata da una Reference a schede sfogliabile e cercabile dentro il manuale. Il piano della ristrutturazione vive in `docs/manual-redesign-plan.md`; quanto segue descrive lo stato implementato.
 
-#### 11.6.1 Rendering e contenuto
+#### 11.6.1 Architettura ibrida: navigazione in CLJS, contenuti in Markdown
 
-I tre file di rendering (`core.cljs` per orchestrazione, `components.cljs` per i blocchi UI, `export.cljs` per la generazione delle immagini di copertina di pagina) sommano circa 660 righe di codice. Il quarto file, `content.cljs`, ne pesa quasi 3000 ma è quasi interamente blob di contenuto: due `def` grossi (una `structure` che descrive la gerarchia delle pagine, e una `i18n` che contiene le stringhe multilingua di tutte le pagine) seguiti da una decina di accessor in coda. Il rapporto fra logica e dato è circa il 3% contro il 97%. La logica vera del manuale è quindi un sottosistema di taglia normale; il volume del file `content.cljs` riflette il volume della documentazione, non la complessità architetturale del componente.
+La separazione portante è fra *navigazione* (dato strutturato, in ClojureScript) e *contenuto* (prosa ed esempi, in Markdown su disco).
 
-Lo stato del manuale vive in un atom locale `manual-state` con la pagina corrente, la lingua selezionata, lo stato di apertura del pannello, e una history delle pagine visitate per il bottone "back". Un meccanismo `add-state-watcher!` aggancia il rendering UI all'atom: quando cambia la pagina o la lingua, il pannello si ridisegna. È lo stesso pattern di altri pannelli in Ridley, niente di particolare.
+`structure.cljs` è la fonte unica di navigazione: l'elenco ordinato dei capitoli guida (id, slug pubblicato senza prefisso `NN-`, file, titoli, lingua) e la tassonomia della Reference (le 16 categorie funzioni ordinate come in `Spec.md`, più le sezioni Functions / Clojure core / Internals). Non contiene prosa né codice.
 
-L'integrazione con il resto del sistema è leggera. `setup-manual` viene chiamato da `core.cljs` durante l'inizializzazione, riceve i callback per Run e Copy (che si appoggiano a `evaluate-definitions` e a `clipboard.setText`), e da quel momento il manuale è autonomo. La generazione delle immagini di copertina di pagina si appoggia a `viewport/capture` (sezione 11.4.4) per produrre una vista prospettica a 600×400 dell'esempio rappresentativo della pagina. È l'unico punto in cui il manuale dialoga con un altro sottosistema oltre l'editor.
+I contenuti vivono in Markdown sotto `docs/manual/`: le guide in `guides/{it,en}/` (un file per capitolo), le schede Reference in `reference/{en}/` (un file per simbolo, con frontmatter `name`/`category`/`since`/`status`). Gli esempi sono inline nel Markdown dentro commenti `<!-- example-source: id … -->`, invisibili quando il file è letto come testo ma riconosciuti dal renderer. Lo script `sync-manual` (in `package.json`, eseguito su `predev`/`prerelease`) copia l'albero sotto `public/manual/` per il fetch a runtime.
 
-#### 11.6.2 Cosa manca, e perché
+`draft_renderer.cljs` è il renderer Markdown: a runtime fa il fetch del `.md`, lo converte con `marked`, e sostituisce i blocchi `example-source` con viste CodeMirror read-only dotate dei bottoni Run/Edit (rispettando i flag `:no-run` e `:warning`). La stessa pipeline serve i capitoli guida (`render-chapter!`) e le schede Reference complete (`render-card!`, che toglie frontmatter e shortcode residui). Ogni esempio gira in un contesto SCI fresco.
 
-Il manuale è completo come pipeline di rendering e di esecuzione, ma incompleto come strumento di consultazione. Mancano due cose architetturalmente significative.
+`reference_browser.cljs` è la consultazione della Reference dentro il manuale: browser per categoria (Functions e Clojure core; Internals nascosta finché non esistono schede `internals/`), una **search interna** su nome/signature/descrizione, e la scheda completa renderizzata via `draft_renderer`. La navigazione di testata usa due affordance distinte: `←` (schermata precedente, con history interna) e `↑` (livello contenente: scheda → categoria → overview → indice).
 
-La prima è una funzione di **ricerca** dentro il manuale. Oggi l'utente naviga la documentazione solo per gerarchia: apre la pagina iniziale, sceglie un capitolo, scorre fino alla sezione che gli serve. Non c'è un campo di ricerca testuale che permetta di trovare per esempio "extrude" e ricevere una lista di pagine in cui quella funzione è descritta o usata. Per un sistema con il volume di documentazione che Ridley ha già accumulato (oltre 2400 righe di stringhe i18n, distribuite in dozzine di pagine), l'assenza di search è un buco evidente.
+`reference_index.cljs` è l'indice simbolo→metadati, **generato a build time** da `scripts/build_reference_index.bb` (Babashka) leggendo le schede: niente parsing Markdown a runtime per search e tooltip. Lo stesso indice alimenta la completion e i tooltip in hover dell'editor (sezione 11.6.4) e — per i simboli senza scheda `.md` — `clojure_core_index.cljs` fornisce le voci compatte di Clojure core.
 
-La seconda è una **organizzazione più chiara della struttura**. La gerarchia attuale, definita nel grosso `def structure`, è cresciuta organicamente seguendo l'evoluzione delle feature di Ridley, e mostra i segni della crescita non pianificata: alcune pagine appartengono naturalmente a categorie identificabili (primitive, trasformazioni, motore turtle), altre vivono in zone ibride o lontane dal loro contenuto naturale. Una revisione della struttura, fatta dall'esterno con l'occhio di chi non l'ha vista nascere, produrrebbe probabilmente una gerarchia più navigabile.
+Lo stato del pannello vive nell'atom `manual-state` (pagina corrente, lingua, apertura, history); `add-state-watcher!` riaggancia il rendering all'atom. `setup-manual`, chiamato da `core.cljs` all'init, wira i callback Run/Edit e gli handler dei cross-link (sezione 11.6.4).
 
-Entrambi i debiti sono nominati per il capitolo 15. La loro entità è proporzionale al volume di documentazione che Ridley continua ad accumulare: man mano che il progetto cresce, il costo della consultazione manuale e dell'organizzazione poco chiara cresce con lui. Una funzione di search può essere implementata sopra al `def i18n` esistente con un indice in memoria costruito al setup; una riorganizzazione della struttura richiede invece più lavoro a monte (decidere le categorie giuste, ricollocare le pagine), ma una volta fatta non richiede infrastruttura aggiuntiva.
+#### 11.6.2 Bilinguismo e fallback
 
-#### 11.6.3 Sintesi
+Le guide hanno l'italiano come source-of-truth, le schede Reference l'inglese; alla v1 esistono solo le guide IT e le schede EN, e un **fallback bidirezionale** evita pagine rotte: `structure.cljs` dichiara le lingue disponibili e `resolve-guide-lang` risolve la lingua *prima* del fetch. La scelta di guidare il fallback dai metadati anziché da un 404 è deliberata: host SPA e la webview Tauri servono `index.html` con HTTP 200 per i file mancanti, quindi un fallback basato sullo status renderizzerebbe in silenzio la shell invece di ricadere sull'altra lingua.
 
-Il manuale è il sottosistema architetturalmente più semplice del capitolo. Non riscrive il sorgente, non integra servizi esterni, non offre canali di input alternativi: è una vista sulla documentazione del progetto, animata dalla possibilità di eseguire gli esempi senza uscirne. La sua semplicità riflette il suo scopo: insegnare e mostrare, non agire. La pulizia della separazione fra rendering (poche centinaia di righe) e contenuto (la quasi totalità del file `content.cljs`) è una buona pratica che il documento di architettura può segnalare come modello: quando il volume di un modulo è dominato dal contenuto, il rapporto fra contenuto e codice è la cosa da osservare, non il numero totale di righe.
+#### 11.6.3 Cutover dal manuale legacy
+
+Il monolite storico `content.cljs` (la vecchia `structure` + `i18n`) non è stato rimosso: convive dietro un flag di cutover. `config.cljs` espone `new-manual?` come `goog-define` (default `true` in dev, pinnato `true` nella config `:release` di shadow-cljs). Quando è attivo, il TOC mostra solo le guide v1 e la Reference, le pagine legacy sono nascoste (raggiungibili solo per id come fallback transitorio) e il manuale apre sull'indice. La rimozione effettiva di `content.cljs` è il passo finale, da fare quando il nuovo manuale è consolidato. `manual-output/` è declassato a build artifact (gitignored, non committato).
+
+#### 11.6.4 Cross-link e tooltip (T-009)
+
+Il manuale e l'editor sono collegati nei due sensi. `reference_browser/open-card!` apre il manuale direttamente sulla scheda di un simbolo, risolvendo il target da un nome, da uno pseudo-link `ref:NOME`, o da un link relativo `*.md` (i "See also" delle schede). Il tooltip in hover dell'editor guadagna un bottone "apri nel manuale", e gli stessi tooltip della Reference compaiono ora anche sui nomi di funzione dentro i blocchi di codice degli esempi (renderizzati in `document.body` per non essere clippati dal blocco). L'editor non dipende dal manuale: il collegamento passa per callback settati in `setup-manual` (`codemirror/set-reference-handler!`, `draft-renderer/set-link-handler!`), nello stesso stile callback-passing del capitolo 8.
+
+#### 11.6.5 Cosa resta
+
+Restano lavori di contenuto più che di infrastruttura: le traduzioni complete (oggi coperte dal fallback), le schede `internals/` che sbloccheranno la sezione Internals, le guide tematiche e il cap. 18 non ancora scritti, e la rimozione di `content.cljs` a cutover consolidato. I link tooltip→scheda e prosa→scheda — un tempo previsti come fast-follow — sono implementati (11.6.4).
+
+#### 11.6.6 Sintesi
+
+Il manuale resta un sottosistema che mostra e insegna più che agire, ma non è più il più semplice del capitolo: la v1 ne fa un piccolo sistema documentale con due tracce (guide narrative in Markdown e Reference a schede), una pipeline di build (l'indice Babashka), un renderer Markdown a runtime con esempi eseguibili, e cross-link bidirezionali con l'editor. La separazione fra navigazione (CLJS strutturato), contenuto (Markdown su disco) e indice (generato al build) è la linea architetturale da preservare quando il volume della documentazione cresce.
 
 ### 11.7 Animazione
 
