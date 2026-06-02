@@ -10,7 +10,10 @@
                 :devtools {:after-load ridley.core/reload}
                 ;; Use :simple optimizations to avoid aggressive property renaming
                 ;; that breaks interop with external JS libraries (Manifold WASM, Three.js)
-                :release {:compiler-options {:optimizations :simple}}}
+                ;; new-manual? pins the v1 manual cutover on release builds,
+                ;; independent of the dev default (brief §8).
+                :release {:compiler-options {:optimizations :simple
+                                             :closure-defines {ridley.manual.config/new-manual? true}}}}
           ;; Test build for turtle core tests
           :test {:target :node-test
                  :output-to "out/test.js"

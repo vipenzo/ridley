@@ -4,7 +4,7 @@
   "description": "3D modeling with turtle graphics",
   "private": true,
   "scripts": {
-    "sync-manual": "rm -rf public/manual/guides && mkdir -p public/manual/guides && cp -R docs/manual/guides/. public/manual/guides/",
+    "sync-manual": "rm -rf public/manual && mkdir -p public/manual && cp -R docs/manual/. public/manual/",
     "predev": "npm run sync-manual",
     "dev": "shadow-cljs watch app",
     "prerelease": "npm run sync-manual",

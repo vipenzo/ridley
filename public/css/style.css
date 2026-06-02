@@ -797,6 +797,21 @@ body.resizing-h * {
   background: #555;
 }
 
+.manual-confirm-buttons {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.manual-confirm-ok {
+  background: #b23a2e;
+}
+
+.manual-confirm-ok:hover {
+  background: #c8453a;
+}
+
 .sync-code {
   font-family: monospace;
   font-size: 36px;
@@ -1218,6 +1233,188 @@ body.resizing-h * {
 .manual-toc-link:hover {
   background: #2d4a5a;
   color: #6eb3f7;
+}
+
+/* Reference TOC entry */
+.manual-toc-reference {
+  margin-bottom: 28px;
+}
+
+.manual-toc-reference-link {
+  font-size: 15px;
+  font-weight: 600;
+  background: #2d3a2d;
+  color: #9ed49e;
+}
+
+.manual-toc-reference-link:hover {
+  background: #3a4a3a;
+  color: #b6e6b6;
+}
+
+/* ── Reference browser ───────────────────────────────────── */
+.ref-search-wrap {
+  padding: 16px 20px 0;
+  flex-shrink: 0;
+}
+
+.ref-search-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  font-size: 14px;
+  color: #ddd;
+  background: #2d2d2d;
+  border: 1px solid #3c3c3c;
+  border-radius: 6px;
+}
+
+.ref-search-input:focus {
+  outline: none;
+  border-color: #569cd6;
+}
+
+.ref-body {
+  padding: 16px 20px 24px;
+}
+
+.ref-section {
+  margin-bottom: 24px;
+}
+
+.ref-section-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #fff;
+  margin: 0 0 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #3c3c3c;
+}
+
+.ref-cat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px;
+}
+
+.ref-cat-btn {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  font-size: 14px;
+  color: #569cd6;
+  background: #252526;
+  border: 1px solid #3c3c3c;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.ref-cat-btn:hover {
+  background: #2d4a5a;
+  color: #6eb3f7;
+}
+
+.ref-cat-count {
+  font-size: 12px;
+  color: #888;
+  background: #1e1e1e;
+  border-radius: 10px;
+  padding: 1px 8px;
+}
+
+.ref-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.ref-list-item {
+  margin-bottom: 2px;
+}
+
+.ref-list-link {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  text-decoration: none;
+}
+
+.ref-list-link:hover {
+  background: #2d4a5a;
+}
+
+.ref-list-name {
+  color: #569cd6;
+  font-weight: 600;
+  font-family: var(--mono, monospace);
+}
+
+.ref-list-sig {
+  color: #888;
+  font-size: 13px;
+  font-family: var(--mono, monospace);
+}
+
+.ref-result-count {
+  color: #888;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.ref-empty {
+  color: #888;
+  font-style: italic;
+}
+
+/* Reference compact card */
+.ref-card-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.ref-card-name {
+  font-family: var(--mono, monospace);
+  color: #fff;
+  margin: 0;
+  font-size: 22px;
+}
+
+.ref-card-status {
+  font-size: 12px;
+  color: #e0a040;
+  background: #3a2f1a;
+  border-radius: 10px;
+  padding: 2px 10px;
+}
+
+.ref-card-sig {
+  background: #252526;
+  border: 1px solid #3c3c3c;
+  border-radius: 6px;
+  padding: 12px;
+  overflow-x: auto;
+  color: #d4d4d4;
+  font-family: var(--mono, monospace);
+  font-size: 14px;
+}
+
+.ref-card-desc {
+  color: #ccc;
+  line-height: 1.6;
+}
+
+.ref-card-cat {
+  color: #888;
+  font-size: 13px;
+  margin-top: 12px;
 }
 
 /* See Also section */

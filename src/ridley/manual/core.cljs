@@ -1,11 +1,13 @@
 (ns ridley.manual.core
   "Manual state management - controls the live manual panel."
-  (:require [ridley.manual.content :as content]))
+  (:require [ridley.manual.content :as content]
+            [ridley.manual.config :as config]))
 
-;; Manual state atom
+;; Manual state atom. Under the cutover flag the legacy landing page
+;; (:hello-ridley) is hidden, so open on the table of contents instead.
 (defonce manual-state
   (atom {:open? false
-         :current-page :hello-ridley
+         :current-page (if config/new-manual? :toc :hello-ridley)
          :lang :en
          :history []}))
 

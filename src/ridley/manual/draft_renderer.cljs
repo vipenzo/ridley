@@ -470,6 +470,33 @@
     (set! (.-textContent p) msg)
     (.appendChild container p)))
 
+(defn- strip-frontmatter
+  "Drop a leading YAML frontmatter block (--- … ---). Reference cards carry
+   one; guides do not. No-op when the text doesn't start with a fence."
+  [md]
+  (.replace md (js/RegExp. "^---\\n[\\s\\S]*?\\n---\\n" "") ""))
+
+(defn- strip-example-shortcodes
+  "Remove leftover {{example: id}} placeholder lines. Superseded by inline
+   example-source blocks (plan §2.4); the real code lives in those, so the
+   shortcode line would otherwise render as literal text."
+  [md]
+  (.replace md (js/RegExp. "^[ \\t]*\\{\\{example:[^}]*\\}\\}[ \\t]*$" "gm") ""))
+
+(defn- render-md-text!
+  "Shared pipeline: example-source markers → strip comments → marked → inject
+   CodeMirror panels and (optionally) a TOC button into `nav-el`."
+  [container-el raw-md nav-el]
+  (let [with-sentinels (replace-example-markers raw-md)
+        cleaned (strip-remaining-comments with-sentinels)
+        html (.parse marked cleaned)]
+    (set! (.-innerHTML container-el) html)
+    (set! (.-className container-el)
+          (str (or (.-className container-el) "") " manual-draft-content"))
+    (enhance-code-blocks! container-el)
+    (let [headings (collect-headings! container-el)]
+      (inject-toc-button! nav-el headings container-el))))
+
 (defn render-chapter!
   "Render the draft chapter identified by `page-id` into `container-el`.
    When `nav-el` is provided, a TOC button is injected into it after parsing.
@@ -483,18 +510,22 @@
    (when-let [chap (draft-chapter page-id)]
      (show-loading! container-el)
      (-> (fetch-markdown (structure/chapter-url chap lang))
-         (.then (fn [raw-md]
-                  (let [with-sentinels (replace-example-markers raw-md)
-                        cleaned (strip-remaining-comments with-sentinels)
-                        html (.parse marked cleaned)]
-                    (set! (.-innerHTML container-el) html)
-                    (set! (.-className container-el)
-                          (str (or (.-className container-el) "")
-                               " manual-draft-content"))
-                    (enhance-code-blocks! container-el)
-                    (let [headings (collect-headings! container-el)]
-                      (inject-toc-button! nav-el headings container-el)))))
+         (.then (fn [raw-md] (render-md-text! container-el raw-md nav-el)))
          (.catch (fn [err]
                    (show-error! container-el
                                 (str "Errore caricamento capitolo: " (.-message err))))))
      chap)))
+
+(defn render-card!
+  "Fetch a Reference card Markdown at `url` and render it like a mini-guide:
+   full body with runnable example-source panels. Strips the YAML frontmatter
+   and stale {{example}} shortcodes first."
+  [container-el url]
+  (show-loading! container-el)
+  (-> (fetch-markdown url)
+      (.then (fn [raw-md]
+               (let [md (-> raw-md strip-frontmatter strip-example-shortcodes)]
+                 (render-md-text! container-el md nil))))
+      (.catch (fn [err]
+                (show-error! container-el
+                             (str "Errore caricamento scheda: " (.-message err)))))))

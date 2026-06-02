@@ -28,6 +28,15 @@
    a page missing in the requested language falls back here, and vice-versa."
   :it)
 
+(def default-guide-langs
+  "Languages in which the guides exist by default. At v1 only IT is written;
+   EN requests fall back to IT. A chapter may override this with a :langs set
+   once its translation lands. Driving the fallback from metadata (rather than
+   from a fetch 404) is deliberate: SPA/Tauri hosts serve index.html with HTTP
+   200 for missing files, so a status-based fallback would silently render the
+   shell page instead of falling back."
+  #{:it})
+
 ;; ── Guide chapters ────────────────────────────────────────────
 ;;
 ;; Ordered list. One entry per chapter = one .md page.
@@ -129,10 +138,27 @@
   (let [t (:title chapter)]
     (or (get t lang) (get t source-lang) (:slug chapter))))
 
-(defn chapter-url
-  "Served URL of a chapter's Markdown in the requested language."
+(defn chapter-langs
+  "Languages a chapter is available in (defaults to default-guide-langs)."
+  [chapter]
+  (or (:langs chapter) default-guide-langs))
+
+(defn resolve-guide-lang
+  "Resolve the language to actually load for a chapter: the requested one if
+   available, else the source language, else any available one. Bidirectional
+   fallback driven by metadata, not by a fetch 404 (see default-guide-langs)."
   [chapter lang]
-  (str guides-url-base "/" (name lang) "/" (:file chapter)))
+  (let [avail (chapter-langs chapter)]
+    (cond
+      (contains? avail lang) lang
+      (contains? avail source-lang) source-lang
+      :else (first avail))))
+
+(defn chapter-url
+  "Served URL of a chapter's Markdown, resolving the language to one that
+   actually exists (bidirectional fallback)."
+  [chapter lang]
+  (str guides-url-base "/" (name (resolve-guide-lang chapter lang)) "/" (:file chapter)))
 
 (defn adjacent-chapter
   "Next/previous chapter (:next or :prev) relative to a chapter id, in order."

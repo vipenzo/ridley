@@ -1,7 +1,8 @@
 (ns ridley.manual.content
   "Manual content structure and internationalization.
    For Phase 10a, content is hardcoded. Later will load from EDN files."
-  (:require [ridley.manual.draft-renderer :as draft]))
+  (:require [ridley.manual.draft-renderer :as draft]
+            [ridley.manual.config :as config]))
 
 ;; Page structure - defines hierarchy and code examples
 ;; Examples are language-agnostic (code is the same in all languages)
@@ -2815,7 +2816,12 @@ Due set di fili vengono loftati lungo percorsi sinusoidali con `bezier-as`, poi 
                 draft/draft-chapters)})
 
 (defn- all-sections []
-  (concat (:sections structure) [drafts-section]))
+  ;; At cutover (new-manual?) only the guide chapters are listed; the legacy
+  ;; content.cljs sections are hidden (still reachable by direct id as a
+  ;; transitional fallback until content.cljs is removed).
+  (if config/new-manual?
+    [drafts-section]
+    (concat (:sections structure) [drafts-section])))
 
 ;; Helper to find a page in the structure (includes drafts)
 (defn- find-page-structure [page-id]
@@ -2888,7 +2894,9 @@ Due set di fili vengono loftati lungo percorsi sinusoidali con `bezier-as`, poi 
   "Get the title of a section in the given language."
   [section-id lang]
   (cond
-    (= section-id :drafts) (if (= lang :it) "Capitoli in bozza" "Draft Chapters")
+    (= section-id :drafts) (if config/new-manual?
+                             (if (= lang :it) "Guide" "Guides")
+                             (if (= lang :it) "Capitoli in bozza" "Draft Chapters"))
     :else
     (or (get-in i18n [lang :sections section-id :title])
         (get-in i18n [:en :sections section-id :title])

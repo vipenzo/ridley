@@ -1878,14 +1878,48 @@
         (update-turtle-indicator)
         (rebuild-turtle-dropdown!)))))
 
-(defn- copy-manual-code
-  "Copy code from manual to editor and close manual."
+(defn- apply-manual-code!
+  "Replace editor content with example code and close the manual."
   [code]
   (when @editor-view
-    ;; Replace editor content with example code
     (cm/set-value @editor-view code)
     (save-to-storage)
     (manual/close-manual!)))
+
+(defn- show-overwrite-confirm-modal
+  "HTML modal (WKWebView-safe — native confirm is blocked) asking to confirm
+   overwriting non-empty editor content. Calls on-confirm if the user accepts."
+  [on-confirm]
+  (let [modal (.createElement js/document "div")
+        overlay (.createElement js/document "div")
+        close-modal (fn [] (.remove overlay) (.remove modal))]
+    (set! (.-className overlay) "sync-modal-overlay")
+    (.addEventListener overlay "click" close-modal)
+    (set! (.-className modal) "sync-modal")
+    (set! (.-innerHTML modal)
+          (str "<div class='sync-modal-content'>"
+               "<h3>Sostituire il codice nell'editor?</h3>"
+               "<p>L'editor contiene del codice non vuoto. Aprire questo esempio lo sostituirà.</p>"
+               "<div class='manual-confirm-buttons'>"
+               "<button class='sync-close-btn manual-confirm-cancel'>Annulla</button>"
+               "<button class='sync-close-btn manual-confirm-ok'>Sostituisci</button>"
+               "</div></div>"))
+    (.appendChild js/document.body overlay)
+    (.appendChild js/document.body modal)
+    (when-let [b (.querySelector modal ".manual-confirm-cancel")]
+      (.addEventListener b "click" (fn [_] (close-modal))))
+    (when-let [b (.querySelector modal ".manual-confirm-ok")]
+      (.addEventListener b "click" (fn [_] (close-modal) (on-confirm))))))
+
+(defn- copy-manual-code
+  "Copy code from manual to editor and close manual. When the editor already
+   holds non-empty code, confirm first so the user's work is never silently
+   overwritten (manual brief §9 / §7.4)."
+  [code]
+  (when @editor-view
+    (if (str/blank? (cm/get-value @editor-view))
+      (apply-manual-code! code)
+      (show-overwrite-confirm-modal #(apply-manual-code! code)))))
 
 (defn- setup-manual
   "Setup the manual panel and button."

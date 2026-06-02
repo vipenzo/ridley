@@ -3,6 +3,7 @@
   (:require [ridley.manual.core :as manual]
             [ridley.manual.content :as content]
             [ridley.manual.draft-renderer :as draft]
+            [ridley.manual.reference-browser :as ref-browser]
             ["@codemirror/view" :as view :refer [EditorView]]
             ["@codemirror/state" :refer [EditorState]]
             ["@codemirror/language" :refer [syntaxHighlighting HighlightStyle]]
@@ -229,6 +230,19 @@
     ;; TOC content
     (let [toc-div (.createElement js/document "div")]
       (set! (.-className toc-div) "manual-toc")
+      ;; Reference browser entry (prominent, above the guide sections)
+      (let [ref-section (.createElement js/document "div")
+            ref-link (.createElement js/document "a")]
+        (set! (.-className ref-section) "manual-toc-section manual-toc-reference")
+        (set! (.-className ref-link) "manual-toc-link manual-toc-reference-link")
+        (set! (.-textContent ref-link) (if (= lang :it) "📚 Reference (funzioni)" "📚 Reference (functions)"))
+        (set! (.-href ref-link) "#")
+        (.addEventListener ref-link "click"
+                           (fn [e] (.preventDefault e)
+                             (ref-browser/reset-view!)
+                             (manual/navigate-to! :reference)))
+        (.appendChild ref-section ref-link)
+        (.appendChild toc-div ref-section))
       (doseq [section sections]
         (let [section-div (.createElement js/document "div")
               section-title (.createElement js/document "h2")
@@ -262,10 +276,16 @@
   [container]
   (let [current-page (manual/get-current-page)
         lang (manual/get-lang)]
-    ;; Handle TOC page specially
-    (if (content/toc-page? current-page)
+    ;; Handle TOC and Reference browser specially
+    (cond
+      (content/toc-page? current-page)
       (render-toc container lang)
+
+      (= current-page :reference)
+      (ref-browser/render! container lang)
+
       ;; Regular page rendering
+      :else
       (when-let [page-data (manual/get-page-data)]
         ;; Clear container
         (set! (.-innerHTML container) "")
