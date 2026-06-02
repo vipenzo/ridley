@@ -1417,6 +1417,57 @@ body.resizing-h * {
   margin-top: 12px;
 }
 
+/* Editor hover tooltip (shared by the editor and example code blocks) */
+.cm-ridley-tooltip {
+  max-width: 380px;
+  padding: 8px 10px;
+  background: #252526;
+  border: 1px solid #3c3c3c;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #d4d4d4;
+  white-space: normal;
+}
+
+.cm-ridley-tooltip-name {
+  font-family: var(--mono, monospace);
+  font-weight: 600;
+  color: #fff;
+}
+
+.cm-ridley-tooltip-sig {
+  font-family: var(--mono, monospace);
+  color: #9cdcfe;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin-top: 2px;
+}
+
+.cm-ridley-tooltip-desc {
+  margin-top: 4px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* Editor hover tooltip: "open in manual" link (T-009) */
+.cm-ridley-tooltip-open {
+  display: block;
+  margin-top: 8px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: #569cd6;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.cm-ridley-tooltip-open:hover {
+  color: #6eb3f7;
+  text-decoration: underline;
+}
+
 /* See Also section */
 .manual-see-also {
   padding: 16px 20px;

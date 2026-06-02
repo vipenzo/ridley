@@ -16,6 +16,8 @@
             [ridley.sync.peer :as sync]
             [ridley.manual.core :as manual]
             [ridley.manual.components :as manual-ui]
+            [ridley.manual.draft-renderer :as manual-draft]
+            [ridley.manual.reference-browser :as ref-browser]
             [ridley.voice.core :as voice]
             [ridley.voice.state :as voice-state]
             [ridley.voice.i18n :as voice-i18n]
@@ -1939,6 +1941,10 @@
   (manual-ui/set-callbacks!
    {:on-run run-manual-code
     :on-copy copy-manual-code})
+  ;; T-009: open a symbol's Reference card from the editor tooltip and from
+  ;; reference links (ref:NAME / *.md) in guide and card prose.
+  (cm/set-reference-handler! ref-browser/open-card!)
+  (manual-draft/set-link-handler! ref-browser/open-card!)
   ;; Watch manual state for changes
   (manual/add-state-watcher! :ui-update
                              (fn [_ _] (update-manual-visibility)))

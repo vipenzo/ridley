@@ -196,6 +196,16 @@
                               i))))]
             {:from start :to end :text (subs doc start end)}))))))
 
+;; Set by core.cljs to open a symbol's Reference card (T-009). A callback so
+;; the editor layer needn't depend on the manual namespaces.
+(defonce ^:private reference-handler (atom nil))
+
+(defn set-reference-handler!
+  "Wire the handler that opens a symbol's Reference card. Receives the symbol
+   name. When set, the hover tooltip gains an \"open in manual\" link."
+  [f]
+  (reset! reference-handler f))
+
 (defn- make-tooltip-dom
   "Build the DOM node for a reference tooltip from an entry map."
   [{:keys [name signature description]}]
@@ -213,6 +223,18 @@
     (.appendChild root title)
     (when-not (str/blank? (or signature "")) (.appendChild root sig))
     (when-not (str/blank? (or description "")) (.appendChild root desc))
+    (when-let [h @reference-handler]
+      (let [link (js/document.createElement "button")]
+        (set! (.-className link) "cm-ridley-tooltip-open")
+        (set! (.-textContent link) "Apri nel manuale →")
+        ;; mousedown fires before the hover tooltip is dismissed on blur, and
+        ;; preventDefault keeps editor focus from flickering.
+        (.addEventListener link "mousedown"
+                           (fn [ev]
+                             (.preventDefault ev)
+                             (.stopPropagation ev)
+                             (h name)))
+        (.appendChild root link)))
     root))
 
 (defn- lookup-entry [sym]

@@ -42,6 +42,35 @@
   []
   (reset! state blank-state))
 
+(defn- resolve-symbol
+  "Resolve a link target to an indexed symbol name, or nil. Accepts a bare
+   name, a ref:NAME pseudo-link, or a relative card file (…/foo.md) matched
+   against the card paths."
+  [target]
+  (when (string? target)
+    (let [t (str/trim target)
+          t (if (str/starts-with? t "ref:") (subs t 4) t)]
+      (cond
+        (contains? ref-index/reference-index t) t
+        (contains? cc-index/clojure-core-index t) t
+        (str/ends-with? t ".md")
+        (let [base (last (str/split t #"/"))]
+          (some (fn [e] (when (str/ends-with? (str (:path e)) base) (:name e)))
+                (vals ref-index/reference-index)))
+        :else nil))))
+
+(defn open-card!
+  "Open the manual's Reference directly at a symbol's detail card (T-009).
+   `target` may be a symbol name, a ref:NAME link, or a relative card .md
+   path. Returns true if it resolved and opened, false otherwise so the
+   caller can fall back to default link behaviour."
+  [target]
+  (if-let [nm (resolve-symbol target)]
+    (do (reset! state (assoc blank-state :view :detail :selected nm))
+        (manual/open-manual! :reference)
+        true)
+    false))
+
 ;; ── Navigation (history for ←, containing level for ↑) ────────
 
 (defn- snapshot [st]

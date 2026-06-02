@@ -5,13 +5,53 @@
    converts Markdown via marked, then walks the result and replaces
    ```clojure``` blocks with CodeMirror read-only views, attaching
    Run/Edit buttons when an example-source is present after the block."
-  (:require ["@codemirror/view" :refer [EditorView]]
+  (:require ["@codemirror/view" :refer [EditorView tooltips]]
             ["@codemirror/state" :refer [EditorState]]
             ["@codemirror/language" :refer [syntaxHighlighting HighlightStyle]]
             ["@lezer/highlight" :refer [tags]]
             ["@nextjournal/clojure-mode" :as clojure-mode]
             ["marked" :as marked]
+            [clojure.string :as str]
+            [ridley.editor.codemirror :as cm]
             [ridley.manual.structure :as structure]))
+
+;; ── Reference link handler (T-009) ────────────────────────────
+;; Set by core.cljs to ridley.manual.reference-browser/open-card!. Invoked
+;; when a rendered link points at a reference card. Kept as a callback to
+;; avoid a draft-renderer → reference-browser dependency cycle.
+
+(defonce ^:private link-handler (atom nil))
+
+(defn set-link-handler!
+  "Wire the handler invoked for reference links (`ref:NAME` or a relative
+   card `*.md`) clicked inside rendered guide/card content. Receives the raw
+   href and should return truthy when it handled the navigation."
+  [f]
+  (reset! link-handler f))
+
+(defn- reference-link?
+  "True for hrefs that target a reference card: the ref:NAME pseudo-scheme or
+   a relative *.md link (not an absolute URL or in-page #anchor)."
+  [href]
+  (and href
+       (or (str/starts-with? href "ref:")
+           (and (str/ends-with? href ".md")
+                (not (re-find #"^[a-z]+://" href))
+                (not (str/starts-with? href "#"))))))
+
+(defn- wire-reference-links!
+  "Intercept clicks on reference links inside `container`, routing them to the
+   link handler (which opens the matching card). Non-reference links are left
+   to default browser behaviour."
+  [container]
+  (doseq [a (array-seq (.querySelectorAll container "a"))]
+    (let [href (.getAttribute a "href")]
+      (when (reference-link? href)
+        (.addEventListener a "click"
+                           (fn [ev]
+                             (when-let [h @link-handler]
+                               (.preventDefault ev)
+                               (h href))))))))
 
 ;; ── Chapter manifest ──────────────────────────────────────────
 ;;
@@ -221,6 +261,12 @@
   (let [extensions #js [(syntaxHighlighting (create-highlight-style))
                         clojure-mode/default_extensions
                         (create-readonly-theme)
+                        ;; Reference hover tooltips (with "open in manual") on the
+                        ;; function names inside example code (shared with the editor).
+                        cm/ridley-reference-tooltip
+                        ;; Render tooltips into document.body so they aren't clipped
+                        ;; by the small, overflow-bounded example code block.
+                        (tooltips #js {:parent (.-body js/document) :position "fixed"})
                         (.of (.-editable EditorView) false)]
         state (.create EditorState
                        #js {:doc code :extensions extensions})]
@@ -494,6 +540,7 @@
     (set! (.-className container-el)
           (str (or (.-className container-el) "") " manual-draft-content"))
     (enhance-code-blocks! container-el)
+    (wire-reference-links! container-el)
     (let [headings (collect-headings! container-el)]
       (inject-toc-button! nav-el headings container-el))))
 
