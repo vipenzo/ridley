@@ -4,13 +4,13 @@
   "description": "3D modeling with turtle graphics",
   "private": true,
   "scripts": {
-    "sync-manual-drafts": "mkdir -p public/manual-drafts && cp dev-docs/manual-drafts/*.md public/manual-drafts/",
-    "predev": "npm run sync-manual-drafts",
+    "sync-manual": "rm -rf public/manual/guides && mkdir -p public/manual/guides && cp -R docs/manual/guides/. public/manual/guides/",
+    "predev": "npm run sync-manual",
     "dev": "shadow-cljs watch app",
-    "prerelease": "npm run sync-manual-drafts",
+    "prerelease": "npm run sync-manual",
     "test": "shadow-cljs compile test",
     "release": "shadow-cljs release app",
-    "clean": "rm -rf public/js docs/js public/manual-drafts",
+    "clean": "rm -rf public/js docs/js public/manual",
     "postinstall": "mkdir -p public/vendor && sed -e 's|//# sourceMappingURL=.*$||' node_modules/gif.js/dist/gif.js > public/vendor/gif.js && sed -e 's|//# sourceMappingURL=.*$||' node_modules/gif.js/dist/gif.worker.js > public/vendor/gif.worker.js"
   },
   "devDependencies": {

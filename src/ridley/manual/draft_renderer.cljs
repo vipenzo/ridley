@@ -10,34 +10,26 @@
             ["@codemirror/language" :refer [syntaxHighlighting HighlightStyle]]
             ["@lezer/highlight" :refer [tags]]
             ["@nextjournal/clojure-mode" :as clojure-mode]
-            ["marked" :as marked]))
+            ["marked" :as marked]
+            [ridley.manual.structure :as structure]))
 
 ;; ── Chapter manifest ──────────────────────────────────────────
+;;
+;; Sourced from ridley.manual.structure (the single source of truth).
+;; This thin view keeps the {:id :file :title} shape expected by the
+;; legacy content.cljs drafts-section; titles use the source language.
 
 (def draft-chapters
-  "Ordered list of draft chapters to render via this pipeline."
-  [{:id :draft-about :file "about-ridley.md"             :title "About Ridley"}
-   {:id :draft-02    :file "02-modeling-with-primitives.md" :title "2. Modellare per primitive"}
-   {:id :draft-03    :file "03-working-with-2d-shapes.md"   :title "3. Lavorare con le forme 2D"}
-   {:id :draft-04    :file "04-extrusion.md"             :title "4. Estrusione"}
-   {:id :draft-05    :file "05-paths.md"                 :title "5. Path"}
-   {:id :draft-06    :file "06-shape-fn.md"              :title "6. Shape-fn"}
-   {:id :draft-07    :file "07-mesh.md"                  :title "7. Mesh"}
-   {:id :draft-08    :file "08-assemblaggio.md"          :title "8. Assemblaggio"}
-   {:id :draft-09    :file "09-librerie.md"              :title "9. Librerie"}
-   {:id :draft-10    :file "10-analizzare-e-misurare.md" :title "10. Analizzare e misurare"}
-   {:id :draft-11    :file "11-curve-avanzate.md"        :title "11. Curve avanzate"}
-   {:id :draft-12    :file "12-sdf.md"                   :title "12. SDF"}
-   {:id :draft-13    :file "13-testo.md"                 :title "13. Testo"}
-   {:id :draft-14    :file "14-colore-e-materiali.md"    :title "14. Colore e materiali"}
-   {:id :draft-15    :file "15-debug.md"                 :title "15. Debug"}
-   {:id :draft-16    :file "16-clojure-per-ridley.md"    :title "16. Clojure per Ridley"}
-   {:id :draft-17    :file "17-esportare-e-stampare.md"  :title "17. Esportare e stampare"}])
+  "Ordered guide chapters, derived from ridley.manual.structure."
+  (mapv (fn [c] {:id    (:id c)
+                 :file  (:file c)
+                 :title (structure/chapter-title c structure/source-lang)})
+        (structure/ordered-chapters)))
 
 (defn draft-chapter
   "Return the draft chapter map for a given page id, or nil."
   [page-id]
-  (some #(when (= (:id %) page-id) %) draft-chapters))
+  (structure/chapter-by-id page-id))
 
 (defn draft-page?
   "True if the page id is a draft chapter rendered from markdown."
@@ -47,7 +39,7 @@
 (defn draft-chapter-ids
   "Page ids of all draft chapters in declaration order."
   []
-  (mapv :id draft-chapters))
+  (mapv :id (structure/ordered-chapters)))
 
 ;; ── Callbacks (shared with the main manual via set-callbacks!) ─
 
@@ -65,18 +57,19 @@
 (defonce ^:private chapter-cache (atom {}))
 
 (defn- fetch-markdown
-  "Fetch the .md file from /manual-drafts/. Returns a promise resolving to the text."
-  [filename]
-  (if-let [cached (get @chapter-cache filename)]
+  "Fetch the guide Markdown at `url` (relative to the public web root).
+   Returns a promise resolving to the text. Cached by url."
+  [url]
+  (if-let [cached (get @chapter-cache url)]
     (js/Promise.resolve cached)
-    (-> (js/fetch (str "manual-drafts/" filename))
+    (-> (js/fetch url)
         (.then (fn [resp]
                  (if (.-ok resp)
                    (.text resp)
-                   (throw (js/Error. (str "Failed to fetch " filename
+                   (throw (js/Error. (str "Failed to fetch " url
                                           " (HTTP " (.-status resp) ")"))))))
         (.then (fn [text]
-                 (swap! chapter-cache assoc filename text)
+                 (swap! chapter-cache assoc url text)
                  text)))))
 
 ;; ── Example-source marker extraction ──────────────────────────
@@ -482,12 +475,14 @@
    When `nav-el` is provided, a TOC button is injected into it after parsing.
    Returns the chapter map (or nil if page-id is not a draft chapter)."
   ([container-el page-id]
-   (render-chapter! container-el page-id nil))
+   (render-chapter! container-el page-id nil structure/source-lang))
   ([container-el page-id nav-el]
+   (render-chapter! container-el page-id nav-el structure/source-lang))
+  ([container-el page-id nav-el lang]
    (close-toc-popup!)
    (when-let [chap (draft-chapter page-id)]
      (show-loading! container-el)
-     (-> (fetch-markdown (:file chap))
+     (-> (fetch-markdown (structure/chapter-url chap lang))
          (.then (fn [raw-md]
                   (let [with-sentinels (replace-example-markers raw-md)
                         cleaned (strip-remaining-comments with-sentinels)
