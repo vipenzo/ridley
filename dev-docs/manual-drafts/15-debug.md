@@ -36,13 +36,17 @@ I pannelli si comportano come le mesh: supportano `show`/`hide`, `register`, `at
 
 Un pattern utile: un pannello che mostra le dimensioni di un pezzo mentre lo costruisci:
 
-```clojure
-(register part (box W D H))
-(register info-panel (attach (panel 30 15) (f 40)))
+<!-- example-source: panel-showing-mesh-details
+(def W 10)
+(def H 20)
+(def D 40)
+
+(register part (box W H D))
+(register info-panel (attach (panel 30 15) (f -40)))
 (out :info-panel
   (str "W=" W " D=" D " H=" H
        "\n" (:n-faces (mesh-diagnose part)) " faces"))
-```
+-->
 
 ## 15.2 Tecniche di debug
 
@@ -50,14 +54,36 @@ Un pattern utile: un pannello che mostra le dimensioni di un pezzo mentre lo cos
 
 Il modo più diretto: `println` stampa nella console del browser (e nel pannello output di Ridley):
 
-```clojure
+<!-- example-source: println :no-run
 (def m (box 20))
-(println "vertices:" (:n-verts (mesh-diagnose m)))
-(println "manifold?" (manifold? m))
-(println "bounds:" (bounds :my-piece))
-```
+(println "vertices: " (:n-verts (mesh-diagnose m)))
+(println "manifold? " (manifold? m))
+(println "bounds: " (bounds m))
+-->
 
 Non sottovalutare `println`. Per la maggior parte dei problemi ("perché questa booleana fallisce?", "quanto è grande questo pezzo?", "la creation-pose è dove penso?") un `println` mirato è più veloce di qualsiasi strumento sofisticato.
+
+### T: stampare un valore senza interrompere il flusso
+
+`T` è un helper di debug che stampa un valore con un'etichetta e lo restituisce invariato. Serve a sbirciare un valore nel mezzo di un'espressione senza doverla spezzare.
+
+<!-- example-source: tap
+(register cube (box (T "size" (* 10 3))))
+-->
+
+Stampa `size : 30` nella console e passa comunque `30` a `box`, quindi il cubo viene creato normalmente. Siccome restituisce il valore che riceve, puoi avvolgere con `T` qualsiasi sottoespressione lasciando intatto il resto del codice: è il modo più rapido per scoprire quale dei tanti valori calcolati è quello sbagliato.
+
+### Ispezionare lo stato della tartaruga
+
+Quando il dubbio non è su un valore ma su dove si trova la tartaruga, `turtle-position`, `turtle-heading` e `turtle-up` restituiscono posizione, direzione di avanzamento e vettore up correnti. Stampali per verificare che la geometria nascerà dove pensi.
+
+<!-- example-source: turtle-inspect :no-run
+(f 50)
+(println "pos:" (turtle-position))
+(th 45)
+(println "heading:" (turtle-heading))
+(println "up:" (turtle-up))
+-->
 
 ### Show/hide per isolare
 
@@ -120,13 +146,17 @@ Trattato nel dettaglio nella sezione 7.4.
 
 `tweak` è lo strumento per esplorare i parametri di un'espressione con slider in tempo reale. Valuta l'espressione, mostra il risultato nel viewport, e crea slider per i numeri letterali nel codice.
 
-```clojure
+<!-- example-source: tweak1 :no-run
 ;; Slider per il primo numero letterale (15)
-(tweak (extrude (circle 15) (f 30)))
+(register t (tweak (extrude (circle 15) (f 30))))
+-->
 
-;; Slider per tutti i numeri
-(tweak :all (extrude (circle 15) (f 30) (th 90) (f 20)))
+Slider per tutti i numeri
+<!-- example-source: tweak2 :no-run
+(register tube (tweak :all (extrude (circle 15) (f 30) (th 90) (f 20))))
+-->
 
+```clojure
 ;; Slider per un indice specifico (0-based, depth-first left-to-right)
 (tweak 2 (extrude (circle 15) (f 30) (th 90) (f 20)))    ;; tweaka 90
 
@@ -157,10 +187,10 @@ Quando passi una keyword, `tweak` opera sulla mesh registrata: nasconde l'origin
 
 `pilot` apre una sessione modale in cui la tastiera muove la tartaruga a partire dalla posa di una mesh esistente. I comandi accumulati appaiono in un pannello laterale e il loro effetto si vede nel viewport in tempo reale. Quando confermi, `pilot` sostituisce la sua chiamata nel sorgente con un `attach` contenente la sequenza di comandi.
 
-```clojure
+<!-- example-source: pilot :no-run
 (register part (box 20))
 (pilot :part)
-```
+-->
 
 Pilot ha tre modi (stile vim): movimento (`f`/`b`/`rt`/`lt`/`u`/`d`), rotazione (`th`/`tv`/`tr`), scala (`stretch-f`/`stretch-rt`/`stretch-u`). I tasti per cambiare modo e i dettagli operativi sono nella Reference.
 
@@ -168,11 +198,13 @@ Pilot ha tre modi (stile vim): movimento (`f`/`b`/`rt`/`lt`/`u`/`d`), rotazione 
 
 `stamp` renderizza una shape 2D nel viewport come contorno piatto, senza estrudere. È lo strumento per verificare che un profilo sia quello che ti aspetti prima di estrudere o loftare.
 
-```clojure
+<!-- example-source: stamp
 (stamp (circle 20))
+(u 40)
 (stamp (rect 30 15))
+(u 40)
 (stamp (text-shape "Hello" :size 20))
-```
+-->
 
 Trattato nel dettaglio nella sezione 3.6 (se presente) e usato in tutti i capitoli sulle forme 2D.
 
@@ -180,10 +212,10 @@ Trattato nel dettaglio nella sezione 3.6 (se presente) e usato in tutti i capito
 
 `follow-path` disegna un percorso nel viewport come tracciato della tartaruga, mostrando la sequenza di movimenti senza costruire geometria. È lo strumento per verificare che un path sia quello che ti aspetti prima di usarlo per un'estrusione o un loft.
 
-```clojure
+<!-- example-source: path
 (def skel (path (mark :A) (f 20) (th 45) (f 15) (mark :B)))
 (follow-path skel)
-```
+-->
 
 Trattato nel capitolo 5 (Path).
 

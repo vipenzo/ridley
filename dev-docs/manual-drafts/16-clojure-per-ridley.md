@@ -28,7 +28,7 @@ Ci sono eccezioni. `register` stesso è una di queste: non restituisce un valore
 
 `if` ha due rami: vero e falso. L'hai già visto nell'esempio sopra. La forma è `(if condizione valore-se-vero valore-se-falso)`.
 
-`when` è un `if` senza il ramo falso. Utile quando vuoi calcolare un valore solo se una condizione è vera:
+`when` è un `if` senza il ramo falso. Utile quando vuoi calcolare un valore solo se una condizione è vera (se è falsa torna nil, un valore speciale che vuol dire `assenza di valore`):
 
 ```clojure
 (when (> n 0)

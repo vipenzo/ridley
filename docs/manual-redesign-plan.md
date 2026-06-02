@@ -1,6 +1,6 @@
 # Manual Redesign — Piano di Ristrutturazione
 
-Documento di consolidamento delle decisioni prese in fase di pianificazione, prima dell'apertura dei brief di implementazione per Code. Aggiornato al **2026-05-16** (post T-008b, T-006 in corso, 2.1 completata).
+Documento di consolidamento delle decisioni prese in fase di pianificazione, prima dell'apertura dei brief di implementazione per Code. Aggiornato al **2026-06-02** (draft narrativi cap. 2-17 + about completati e rivisti dall'autore; definita la v1 del manuale; esempi inline nel Markdown).
 
 Questo documento è il **riferimento unico** del piano. Tutte le decisioni prese durante la discussione sono qui; nuove decisioni vanno consolidate qui prima di procedere.
 
@@ -41,13 +41,13 @@ La Reference si articola in tre sezioni:
 
 ### 2.3 Architettura ibrida del sorgente
 
-Il sorgente del manuale è organizzato in modo *ibrido* — la decisione strutturale più importante di questo piano.
+Il sorgente del manuale è organizzato in modo *ibrido*: la navigazione strutturata vive in ClojureScript, prosa ed esempi vivono nei file Markdown.
 
-**Cosa vive dove:**
+**Cosa vive dove (aggiornato 2026-06-02):**
 
-- **`structure.cljs`** (o file analogo): albero gerarchico del manuale, codice degli esempi, metadati strutturali (flags `:auto-run`, `:no-run`, riferimenti incrociati, caption corte). Resta in ClojureScript perché è dato strutturato di sua natura.
+- **`structure.cljs`** (o file analogo): albero gerarchico del manuale e metadati di navigazione (ordine dei capitoli, sezioni, riferimenti incrociati). Resta in ClojureScript perché è dato strutturato di sua natura.
 
-- **File Markdown su disco**: prosa narrativa di tutte le pagine. Un file per pagina per lingua. Organizzati in cartelle per sezione e capitolo.
+- **File Markdown su disco**: prosa narrativa *e codice degli esempi* di tutte le pagine. Un file per pagina per lingua. Organizzati in cartelle per sezione e capitolo. Il codice degli esempi vive inline nel Markdown dentro commenti `<!-- example-source: id ... -->`, che il renderer estrae ed esegue (vedi §2.4). Non viene trasferito in `structure.cljs`: la decisione originale di tenere il codice in `structure.cljs` è superata.
 
 **Struttura cartelle proposta:**
 
@@ -87,24 +87,23 @@ docs/manual/
 
 **Razionale:**
 
-- Il codice degli esempi resta dato strutturato, testabile, fuori dai Markdown — niente parser regex su fence Markdown.
 - La prosa vive in Markdown veri, scritti in Ulysses, con il workflow d'autore intatto.
-- La separazione produce un confine pulito: chi modifica un esempio (codice) lavora in `structure.cljs`; chi modifica prosa lavora in `.md`.
-- È compatibile con la pratica esistente (`structure` esiste già in `content.cljs`).
+- Il codice degli esempi sta accanto alla prosa che lo spiega, nello stesso file: chi scrive un capitolo controlla testo ed esempi senza saltare tra file. Il renderer riconosce i blocchi `example-source` senza parser fragili, perché il marcatore è esplicito e delimitato.
+- `structure.cljs` resta il posto della navigazione e dei metadati strutturali, compatibile con la pratica esistente (`structure` esiste già in `content.cljs`).
 
-### 2.4 Link esempi ↔ Markdown via shortcode
+### 2.4 Esempi inline nel Markdown
 
-I file Markdown referenziano gli esempi tramite shortcode minimale:
+Il codice degli esempi vive nel file Markdown della pagina, dentro un commento `example-source`:
 
 ```markdown
-{{example: first-cube}}
+<!-- example-source: first-cube
+(register Cube (box 20 20 20))
+-->
 ```
 
-Lo shortcode viene risolto al rendering: il renderer cerca l'esempio per `:id` nel `structure.cljs`, prende codice + caption + flag, e produce il blocco CodeMirror read-only con bottoni Run/Edit.
+Il renderer riconosce il marcatore, estrae il codice e produce il blocco CodeMirror read-only con bottoni Run/Edit. Essendo dentro un commento HTML, il codice è invisibile quando il Markdown viene letto come testo normale (es. in Ulysses o su GitHub), ma resta nello stesso file della prosa che lo spiega.
 
-**Modello adottato: codice/caption nel `structure.cljs`, prosa nel Markdown.**
-
-Conseguenza: la prosa che spiega un esempio sta *attorno* allo shortcode, non *dentro*. Esempio:
+La prosa che spiega un esempio sta attorno al blocco, non dentro. Esempio:
 
 ```markdown
 ## Un semplice cubo
@@ -112,14 +111,16 @@ Conseguenza: la prosa che spiega un esempio sta *attorno* allo shortcode, non *d
 Il comando `register` dà un nome alla tua forma così appare nel viewport.
 `box` crea un cubo della dimensione specificata.
 
-{{example: first-cube}}
+<!-- example-source: first-cube
+(register Cube (box 20 20 20))
+-->
 
 Questo è quello che vedrai nel viewport.
 ```
 
-Per pagine con più esempi, semplicemente più shortcode in successione, ciascuno preceduto dalla prosa che lo introduce.
+Per pagine con più esempi, più blocchi `example-source` in successione, ciascuno preceduto dalla prosa che lo introduce.
 
-**Sintassi precisa dello shortcode**: da definire in brief B. Lo shortcode mostrato è una proposta; alternative come `::: example first-cube :::` sono accettabili se più compatibili con il parser scelto.
+**Storia di questa decisione.** Il piano originale prevedeva uno shortcode `{{example: id}}` nel Markdown che puntava al codice tenuto in `structure.cljs`, con un passo di estrazione al momento del Flusso B. In pratica il codice è rimasto inline nel Markdown e il renderer lo esegue direttamente: funziona, e tiene codice e prosa nello stesso file. La decisione è stata quindi di non estrarre nulla e lasciare gli esempi dove sono (2026-06-02). Lo shortcode `{{example: id}}` e il trasferimento a `structure.cljs` sono superati; i riferimenti residui nel resto del piano (es. §4.1, §7.1, §9.2) vanno letti in questa chiave.
 
 ### 2.5 Distinzione eseguibile / illustrativo
 
@@ -612,9 +613,9 @@ Tre lavori paralleli devono procedere coordinati per chiudere il gap Spec↔codi
 
 ## 7. Esempi
 
-### 7.1 Embedded via shortcode
+### 7.1 Esempi inline nel Markdown
 
-Vedi §2.4. Il codice degli esempi vive in `structure.cljs`; i Markdown li referenziano per `:id`.
+Vedi §2.4. Il codice degli esempi vive inline nei file Markdown dentro commenti `<!-- example-source: id ... -->`; il renderer li estrae ed esegue. (Il modello shortcode + `structure.cljs` descritto nelle prime versioni del piano è superato.)
 
 ### 7.2 Eseguibili per default
 
@@ -743,6 +744,20 @@ Tre lavori lato Code devono essere conclusi prima del brief B, perché il Flusso
 - **Lint script Babashka**: pipeline di check Spec↔codice da integrare in CI/pre-release.
 - **Aggiornamento Spec.md**: integrazione dei simboli classificati A e B con le rispettive intestazioni.
 
+### 10.2 Chiusura dei punti aperti (2026-06-02)
+
+I nove punti di §10 sono stati chiusi o rinviati. Sintesi:
+
+- **1, sintassi shortcode** — superato. Gli esempi vivono inline nel Markdown dentro `<!-- example-source: id ... -->` (§2.4); niente shortcode.
+- **2, frontmatter** — la Reference mantiene il suo frontmatter (`name`, `category`, `since`, `status`); le guide hanno frontmatter zero, aprono con un heading `# N. Titolo`, e i metadati di navigazione (ordine, titolo, slug, lingua) vivono in `structure.cljs` indicizzati sul path. Le coppie di lingua si appaiano per convenzione di path.
+- **3, caption bilingui** — decaduto. Con gli esempi inline la prosa attorno al blocco fa da didascalia; non servono caption separate in `structure.cljs`.
+- **4, workflow di traduzione** — rinviato oltre la v1, si decide a prosa congelata.
+- **5, UX bug Edit** — bug confermato ancora presente (l'editor viene sovrascritto senza conferma). Da risolvere nel Brief B. Approccio raccomandato: dialog di conferma quando l'editor non è vuoto; la scelta finale fra le opzioni di §7.4 si fissa nel brief.
+- **6, migrazione di `content.cljs`** — audit dei contenuti del vecchio manuale fatto: tutto ha una collocazione nei capitoli nuovi. Orfani gestiti: `bloft` rimosso dal DSL (niente da portare), galleria preservata in `docs/examples/gallery/`, `T` e ispezione turtle aggiunti al cap. 15. La migrazione si riduce allo switch del Brief B.
+- **7, fallback `:it`/`:en`** — fallback multilingua bidirezionale come meccanismo di transizione finché le traduzioni non sono complete (mostra la lingua disponibile quando l'altra manca). Stato a regime: entrambe le lingue per ogni pagina (§5.2).
+- **8, lista Clojure core annotati** — rinviato a T-009 (search, fast-follow post-switch).
+- **9, flag frammento illustrativo** — risolto dalle convenzioni d'autore: un blocco è eseguibile se ha il marker `example-source`, illustrativo se non ce l'ha. Il marker porta due flag in uso: `:no-run` (solo Edit, nessun Run, per esempi che scrivono sulla REPL senza output nel viewport) e `:warning slow` (esecuzione di parecchi secondi).
+
 ---
 
 ## 11. Punti aperti di pianificazione
@@ -791,7 +806,7 @@ Feature in roadmap che, una volta implementate, troveranno naturale collocazione
 - Reference articolata in Functions / Clojure core / Internals.
 - Internals include shape-fn, thickness-fn, register pattern, animation hooks.
 - Architettura ibrida: `structure.cljs` per albero+codice, Markdown per prosa.
-- Shortcode minimale `{{example: id}}` con codice/caption in `structure.cljs` e prosa nel Markdown.
+- Esempi inline nel Markdown: il codice degli esempi vive dentro commenti `<!-- example-source: id ... -->` nello stesso file della prosa; il renderer li estrae ed esegue. Niente trasferimento a `structure.cljs`, niente shortcode `{{example: id}}` (modello originale superato, 2026-06-02). Vedi §2.3-§2.4.
 - Bilinguismo: IT source per Guide, EN source per Reference; commenti codice sempre EN.
 - Workflow traduzione: assistita una tantum, poi coppie di file.
 - Eseguibilità: default eseguibile, flag esplicito per frammenti.
@@ -803,6 +818,10 @@ Feature in roadmap che, una volta implementate, troveranno naturale collocazione
 - **Criterio editoriale per simboli**: tre destinazioni (Reference standard, Reference Internals, Allowlist) basate sulla domanda "per chi è scritto?". Audit Spec↔codice come prerequisito del brief B.
 - **Source-of-truth del piano**: il repo (`docs/manual-redesign-plan.md`) è la copia di lavoro viva. Il Project di Claude viene ricaricato dal repo a inizio sessione quando necessario. Decisione presa il 2026-05-16, dopo che Claude ha acquisito accesso in lettura/scrittura alla cartella del repo: un unico posto da sincronizzare, sia per Vincenzo sia per Claude.
 - **Convenzione `/docs/` vs `/dev-docs/`**: `/docs/` contiene materiale stabile destinato a pubblicazione o consultazione anche da terzi (Spec.md, Architecture.md, Roadmap.md, `manual-redesign-plan.md`, esempi). `/dev-docs/` contiene materiale interno o temporaneo (brief per Code, audit, spec di feature in lavorazione, e `reference-manual/` come cartella di lavoro durante la fase di stesura). Le schede Reference vivono in `/dev-docs/reference-manual/` finché il Flusso B non ne fissa la destinazione definitiva.
+- **Stato dei draft narrativi (2026-06-02)**: i capitoli 2-17 più `about-ridley` sono redatti in bozza e rivisti dall'autore. Considerati a posto salvo rifiniture (pulizia nomi italiani in 2.1/2.2, placeholder `[→ cap. N]` in 2.6, schede `goto`/`look-at`, scheda Internals "Naming patterns"). Le rifiniture sono rinviabili e non bloccano la v1.
+- **Definizione della v1 del manuale (2026-06-02)**: la prima versione pubblicabile comprende lo switch da `content.cljs` alla nuova struttura Markdown (cutover `on: release`) e la Reference consultabile dentro il manuale, ossia browser per categoria più search interna. Questo è il contenuto del Brief B (T-007). La Reference sfogliabile è dentro la v1 perché è una traccia primaria, non un nice-to-have come la galleria.
+- **Fast-follow dopo lo switch (2026-06-02)**: i due tipi di link verso le schede Reference, tooltip dell'editor verso scheda e prosa delle guide verso scheda, sono trattati come sessione separata successiva allo switch. La v1 regge senza: prosa eseguibile più Reference sfogliabile, due tracce affiancate ma non ancora collegate dai link.
+- **Parcheggiati fuori dalla v1 (2026-06-02)**: galleria di progetti, guide tematiche, cap. 18 "Estendere Ridley", e le rifiniture dei draft. La traduzione (guide IT verso EN, schede EN verso IT) resta dopo, a prosa congelata, con il glossario come primo passo.
 
 ### 13.2 Aperte (vedi §10 e §11)
 
@@ -836,35 +855,45 @@ Se il piano non viene aggiornato a fine sessione, ricominciano i problemi di mem
 
 #### In corso
 
-- **T-006** — Cap. 2 "Modellare per primitive": stesura completa
+- **T-007 (preparazione)** — Definizione della v1 e preparazione del Brief B
   Owner: V+C
-  Rif: cap. 2 del sommario; draft in `dev-docs/manual-drafts/02-modeling-with-primitives.md`
-  Stato: 2.1 completata 2026-05-16, esempi popolati 2026-05-17. 2.2 completata 2026-05-17. 2.3 (Un portapenne) completata 2026-05-19. 2.4 (Parametrizzare con def) completata 2026-05-19. 2.5 (Pezzi riutilizzabili con defn) completata 2026-05-19. 2.6 (Per chi viene da un CAD tradizionale) completata 2026-05-19 (dopo allineamento transform mesh↔SDF e implementazione stretch-*). Pulizia nomi: codice esempi rinominato in inglese (2.3, 2.4). **Cap. 2 completo.** Resta da fare: pulizia nomi inglesi per 2.1 e 2.2; risolvere placeholder [→ cap. N] per cp-* nella 2.6.
+  Rif: §9.2, §13.1 (definizione v1)
+  Stato: v1 definita (2026-06-02): switch da `content.cljs` + Reference consultabile nel manuale con search interna. I draft narrativi (cap. 2-17 + about) sono completi e rivisti dall'autore, quindi il contenuto a monte del Brief B è pronto salvo rifiniture rinviabili. Prossimo passo: chiudere i punti §10 ancora rilevanti e scrivere il Brief B.
 
 #### Da fare (prossimi)
 
-- **T-003** — Chiusura punti aperti §10 (gruppo "shortcode + frontmatter")
+- **T-007** — Brief B per Code (infrastruttura documentazione, = v1 del manuale)
   Owner: V+C
-  Rif: §10 punti 1, 2, 9
-  Stato: da pianificare
+  Rif: §9.2, §13.1 (definizione v1)
+  Scope v1: switch da `content.cljs` alla nuova struttura Markdown (cutover `on: release`, migrazione non distruttiva); renderer Markdown con esecuzione dei blocchi `example-source` inline; Reference consultabile nel manuale (browser per categoria + search interna); pipeline di build per `reference-index.cljs`; risoluzione bug Edit (§7.4); integrazione guide orfane (§3.3). Fuori dalla v1: i due link verso le schede (vedi T-009), galleria, guide tematiche.
+  Prerequisiti: T-001 (chiuso ✓), T-008 (chiuso ✓), T-008b (chiuso ✓); tutti i punti §10 chiusi o rinviati (✓, vedi §10.2).
+  Stato: sbloccato. Contenuti a monte pronti e punti §10 chiusi; resta da scrivere il brief.
 
-- **T-004** — Chiusura punti aperti §10 (gruppo "bilinguismo")
-  Owner: V+C
-  Rif: §10 punti 3, 4, 7
-  Stato: da pianificare
-
-- **T-005** — Chiusura punti aperti §10 (gruppo "migrazione + Edit + Clojure core")
-  Owner: V+C
-  Rif: §10 punti 5, 6, 8
-  Stato: da pianificare
-
-- **T-007** — Brief B per Code (infrastruttura documentazione)
-  Owner: V+C
-  Rif: §9.2
-  Prerequisiti: T-001 (chiuso ✓), T-008 (chiuso ✓), T-008b (chiuso ✓), tutti i T-003/004/005 chiusi
-  Stato: da iniziare quando i prerequisiti sono soddisfatti
+- **T-009** — Fast-follow: link verso le schede Reference (sessione separata, dopo lo switch)
+  Owner: V+C → Code
+  Rif: §8 (search contestuale), §2.1 (link tra tracce)
+  Scope: link dal tooltip dell'editor alla scheda completa (Flusso C, §9.3) e link dalla prosa delle guide alle schede. Sono il tessuto connettivo tra Guide e Reference; la v1 funziona senza.
+  Stato: da fare dopo lo switch della v1.
 
 #### Fatto
+
+- **T-003 / T-004 / T-005** — Chiusura dei punti aperti §10
+  Owner: V+C
+  Rif: §10, §10.2
+  Esito: i nove punti §10 chiusi o rinviati nella sessione del 2026-06-02 (dettaglio in §10.2). I tre task erano raggruppamenti dei punti e si chiudono insieme.
+  Chiuso: 2026-06-02.
+
+- **T-006** — Cap. 2 "Modellare per primitive": stesura completa
+  Owner: V+C
+  Rif: cap. 2 del sommario; draft in `dev-docs/manual-drafts/02-modeling-with-primitives.md`
+  Esito: cap. 2 completo (2.1-2.6 più 2.5b), esempi popolati. Rifiniture rinviate e tracciate in §13.1/backlog: pulizia nomi inglesi in 2.1/2.2, placeholder [→ cap. N] per cp-* nella 2.6.
+  Chiuso: 2026-05-19.
+
+- **Draft narrativi cap. 3-17** — stesura e revisione d'autore
+  Owner: V+C
+  Rif: §3.1; `dev-docs/manual-drafts/`
+  Esito: capitoli 03-17 redatti e rivisti dall'autore; con `about-ridley` (cap. 1) e il cap. 2, l'intero arco narrativo è in bozza. Esempi `example-source` inline considerati a posto salvo rifiniture. Cap. 18 "Estendere Ridley" deliberatamente non scritto (parcheggiato fuori dalla v1). Stesura distribuita su più sessioni non loggate singolarmente qui; questa voce le consolida.
+  Chiuso: 2026-06-02.
 
 - **T-008b** — Consolidamento numerazione di Spec.md (chiusura del gap §17 → §19 → §20)
   Owner: Claude (drafting brief) → Code (esecuzione) → V+C (validazione)
@@ -894,11 +923,14 @@ Se il piano non viene aggiornato a fine sessione, ricominciano i problemi di mem
 
 Task identificati ma non ancora pianificati. Da promuovere in "Da fare" quando ci si arriverà.
 
-- Cap. 3-17 delle Guide narrative: stesura capitolo per capitolo, da fare dopo T-006.
-- Schede Reference rimanenti (~80-90 schede): da fare dopo T-002 con lo schema validato. Da pianificare a blocchi per categoria.
-- Schede Reference Internals (~50 schede): da fare dopo che Spec.md è aggiornato (post T-008).
-- Guide tematiche: "Superfici parallele" come prima. Da fare quando i capitoli di riferimento (3, 4, 5, 6, 11) sono completati o almeno bozzati.
-- Brief C per Code (search contestuale CodeMirror): dopo Brief B + indice prodotto.
+- Cap. 3-17 delle Guide narrative: **stesura completata** (2026-06-02), rivista dall'autore. Resta solo rifinitura.
+- Schede Reference: il grosso è stato scritto da Code a blocchi per categoria (vedi storico). `goto`, `look-at` e `turtle-state` esistono già. Resta da scrivere la scheda Internals panoramica "Naming patterns in scene mutation". Rifiniture rinviabili, fuori dalla v1.
+- Rifiniture draft (fuori dalla v1): pulizia nomi italiani negli esempi 2.1/2.2; placeholder `[→ cap. N]` per `cp-*` in 2.6.
+- Cap. 18 "Estendere Ridley": parcheggiato, da pensare con calma, meno urgente.
+- Guide tematiche: "Superfici parallele" come prima. Parcheggiate fuori dalla v1.
+- Galleria di progetti: parcheggiata fuori dalla v1; il codice dei sei esempi è preservato in `docs/examples/gallery/` perché sopravviva allo switch. Decisione se unirla alle guide tematiche rimandata.
+- Traduzione: guide IT verso EN, schede EN verso IT. Dopo, a prosa congelata; glossario (§5.3) come primo passo.
+- Brief C per Code (search contestuale CodeMirror): confluisce in T-009 (fast-follow), dopo lo switch della v1.
 - **Scheda Internals "Naming patterns in scene mutation"**: scheda panoramica che documenta le regolarità emerse dall'audit T-001 (tutti i `register-X!` → Registry pattern, tutti i `get-X` di lookup → Registry/introspection, tutti i `show-X!`/`hide-X!` → Scene visibility, tutti gli `anim-*` → Animation API, tutti i `*-anchors*` → C/plumbing). Da scrivere come prima scheda della sezione Internals.
 
 ### 14.5 Quaderno delle decisioni emerse durante l'esecuzione
@@ -973,6 +1005,10 @@ Annotazioni operative non previste nella pianificazione, prese durante la scritt
 
 - **2026-05-20 (T-006, cap. 7.1)** — *Da chiarire: quali costruzioni Ridley producono mesh non-manifold e perché.* La Spec afferma che `shell` con stili voronoi/lattice/checkerboard e thickness-fn a zero produce mesh rifiutate da Manifold con status 2 (NotManifold). In realtà il comportamento è più sfumato: lattice produce sotto-mesh manifold disgiunte, e thickness-fn a zero dovrebbe cucire le facce laterali. Il motivo esatto del rifiuto (singolo solido non connesso? artefatti topologici?) non è accertato. Serve una verifica interattiva caso per caso con `mesh-diagnose` per capire cosa succede realmente. Nel draft del cap. 7.1 il passaggio è stato scritto in modo generico senza fare affermazioni specifiche su shell. Il TODO è nel commento HTML del draft.
 
+- **2026-06-02 (consolidamento stato + definizione v1)** — *Tre fatti e due decisioni messi a verbale.* (1) I draft narrativi cap. 2-17 più `about-ridley` sono completi e rivisti dall'autore; gli esempi `example-source` sono considerati a posto salvo rifiniture; l'incidente del cap. 7 (file sovrascritto con un placeholder) è risolto, il capitolo è in buono stato. (2) *Esempi inline nel Markdown, in via definitiva.* Gli esempi vivono dentro commenti `<!-- example-source: id ... -->` nello stesso file della prosa e il renderer li esegue direttamente. Niente estrazione verso `structure.cljs`, niente shortcode `{{example: id}}`. Questo supera la voce §14.5 del 2026-05-16 "Strategia esempi durante la stesura" (che prevedeva il trasferimento) e il modello di §2.4 originale. §2.3, §2.4, §7.1 e §13.1 aggiornati; riferimenti residui in §4.1 e §9.2 da leggere in questa chiave, ripulibili quando si tocca il Flusso B. (3) *Definizione della v1.* La prima versione pubblicabile è lo switch da `content.cljs` più la Reference consultabile nel manuale (browser per categoria + search interna): è il contenuto del Brief B (T-007). I due link verso le schede (tooltip→scheda, prosa→scheda) sono fast-follow in sessione separata dopo lo switch (T-009). Galleria, guide tematiche, cap. 18 e rifiniture restano parcheggiati; la traduzione resta dopo, a prosa congelata, glossario per primo.
+
+- **2026-06-02 (chiusura §10 + migrazione contenuti)** — *Punti §10 chiusi, contenuti orfani gestiti.* I nove punti aperti di §10 sono chiusi o rinviati (dettaglio in §10.2); T-003/004/005 chiusi di conseguenza, T-007 sbloccato. Decisioni salienti: frontmatter zero per le guide, fallback multilingua bidirezionale di transizione, flag esempi `:no-run` e `:warning slow` documentati. Migrazione `content.cljs`: confronto fatto fra `manual-output/Manuale_it.md` e i draft, tutto ha casa. Orfani: `bloft` confermato rimosso dal DSL da Vincenzo (verifica REPL), galleria (sei esempi) preservata in `docs/examples/gallery/`, `T` e `turtle-position`/`heading`/`up` aggiunti al cap. 15.2. Verifica importante: Spec.md, Architecture.md e il piano sul disco erano già puliti da `bloft`; era il `project_knowledge` a servire un indice vecchio. Lezione ribadita: per lo stato corrente dei file fidarsi del filesystem reale (grep), non del project_knowledge né del ricordo. In Architecture.md resta solo una riga storica (1915) sul port JVM, lasciata come record di sviluppo. `goto.md`/`look-at.md`/`turtle-state.md` già presenti tra le Reference.
+
 ---
 
 ## Storico revisioni
@@ -989,3 +1025,5 @@ Annotazioni operative non previste nella pianificazione, prese durante la scritt
 - **2026-05-17 (T-006, consolidamento pre-2.3)** — Consolidamento dei buchi lasciati durante la scrittura di 2.1 e 2.2 prima di proseguire con 2.3 in nuova chat. Tre interventi: (1) ricostruiti e popolati gli otto blocchi `example-source` mancanti del 2.1 (`primitive-cubo`, `primitive-parallelepipedo`, `primitive-cilindro`, `primitive-cono`, `primitive-sfera`, `primitive-attach`, `primitive-scale-uniforme`, `primitive-scale-non-uniforme`). (2) Adottata la convenzione di naming `r u f` per i parametri direzionali nelle signature di `box` e `rect` in Spec.md (decisione §14.5); aggiornato anche il paragrafo "Orientation" di §5 con la correzione di `cyl`/`cone` da "UP axis" a "forward (heading)". (3) Aggiornato `dev-docs/code-issues.md`: voce su Spec.md `box` chiusa, mantenute aperte le voci su `cyl-with-resolution`/`cone-with-resolution` docstring e su `turtle-X` vs `X` perché riguardano il codice sorgente. Stato T-006: 2.1 e 2.2 entrambe completate. Prossima sessione (nuova chat): 2.3 "Un portapenne".
 - **2026-05-19 (T-006, sezioni 2.3–2.5)** — Stesura delle sezioni 2.3 (Un portapenne), 2.4 (Parametrizzare con def) e 2.5 (Pezzi riutilizzabili con defn) del cap. 2. Pulizia nomi: codice negli esempi rinominato in inglese (convenzione fissata in §14.5). Sezione 2.6 (Per chi viene da un CAD tradizionale) bloccata: dubbio sul comportamento pivot di `scale`/`rotate` su mesh (Spec dice world/centroid, comportamento osservato è creation-pose). Brief consegnato a Code (`dev-docs/brief-transform-pivot-audit.md`). Due voci aggiunte al quaderno §14.5.
 - **2026-05-20 (consolidamento piano + stesura cap. 2.5b, 3, 4, 5)** — Stesura completa dei capitoli 3 (Lavorare con le forme 2D, 11 sezioni), 4 (Estrusione, 9 sezioni inclusi revolve e chaining), 5 (Path, 8 sezioni). Aggiunta sezione 2.5b "Tante primitive alla volta" al cap. 2. Consolidamento del piano: inserito nuovo cap. 9 "Librerie" dopo cap. 8, rinumerati tutti i capitoli da 9 in poi (ora 18 capitoli). Aggiornata mappa concettuale §3.0 (aggiunta fase "Riusare"). Aggiornato §3.1 (sommario) e §3.2 (note) con la struttura effettiva dei capitoli scritti. Decisioni consolidate: cap. 3 apre con motivazione (3.1), stamp in 3.2, profili come valori in 3.4, 3.7 mappa completa consumatori; cap. 4 include revolve (asse = up, Spec corretta) e chaining (extrude+, revolve+, transform->); cap. 5 include with-path/goto/path-to nella 5.8; cap. 7 rimossi inset-face/scale-face (non esistono); cap. 9 librerie: dettagli tecnici in cap. 18 o Internals; loft+ segnata in Roadmap §1.5. Reference: 152 schede in 4 batch (2D shapes, generative-operations, core, path+mesh). Correzioni Spec: asse revolve, refuso square→rect. Schede mancanti note: goto, look-at.
+- **2026-06-02 (consolidamento stato + definizione v1)** — Messo a verbale lo stato reale dopo diverse sessioni di stesura non loggate qui: draft narrativi cap. 2-17 più `about-ridley` completi e rivisti dall'autore, esempi inline a posto salvo rifiniture, incidente cap. 7 risolto. Decisione architetturale: gli esempi restano inline nel Markdown dentro commenti `example-source` ed eseguiti dal renderer, niente trasferimento a `structure.cljs` e niente shortcode `{{example: id}}` (§2.3, §2.4, §7.1, §13.1 aggiornati; supera la strategia esempi del 2026-05-16). Definita la v1 del manuale: switch da `content.cljs` + Reference consultabile con search interna (Brief B, T-007); i due link verso le schede diventano fast-follow post-switch (T-009). Parcheggiati fuori dalla v1: galleria, guide tematiche, cap. 18, rifiniture; traduzione dopo a prosa congelata. Aggiornati §13.1, §14.3 (T-006 chiuso, milestone draft cap. 3-17, T-007 ridefinito come v1, nuovo T-009), §14.4, §14.5.
+- **2026-06-02 (chiusura §10 + migrazione contenuti)** — Chiusi o rinviati i nove punti §10 (nuova §10.2); T-003/004/005 chiusi, T-007 sbloccato. Frontmatter zero per le guide; fallback multilingua bidirezionale; flag esempi `:no-run` e `:warning slow` documentati. Migrazione: audit `Manuale_it.md` vs draft completato; galleria preservata in `docs/examples/gallery/` (sei file), `T` + ispezione turtle aggiunti al cap. 15.2, `bloft` confermato rimosso dal DSL. Spec/Architecture/piano verificati già puliti da `bloft` sul disco (project_knowledge stale). Aggiornati §10.2 (nuova), §14.3, §14.4, §14.5.
