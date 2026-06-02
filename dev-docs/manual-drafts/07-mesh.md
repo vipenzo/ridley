@@ -34,6 +34,8 @@ La struttura minima è questa:
 
 Oltre a questi due campi essenziali, una mesh porta con sé altri dati. `:creation-pose` registra la posizione e l'orientamento della tartaruga al momento della creazione: serve a `attach` per riposizionare la mesh correttamente quando la agganci a un'altra. `:primitive` ricorda quale primitiva l'ha generata (`:box`, `:sphere`, `:cylinder`...), e `:face-groups` mappa nomi simbolici come `:top`, `:bottom`, `:front` ai gruppi di triangoli corrispondenti. Non tutte le mesh hanno questi campi: una mesh prodotta da un'operazione booleana non ha `:face-groups` predefiniti, per esempio.
 
+Quando `:creation-pose` non compare, vale il default: `{:position [0 0 0] :heading [1 0 0] :up [0 0 1]}`, cioè la tartaruga all'origine, che guarda lungo X con l'up lungo Z. È il caso di una primitiva costruita senza spostare la tartaruga, come il `(box 20)` qui sotto.
+
 ### Guardare dentro una mesh
 
 Il modo più diretto per capire una mesh è chiedere a Ridley di raccontartela. `mesh-diagnose` analizza la topologia di una mesh e restituisce una mappa con le informazioni chiave:
@@ -178,24 +180,6 @@ Le booleane richiedono input manifold. Se una mesh non lo è, l'operazione falli
 
 Se una booleana fallisce e non capisci perché, `mesh-diagnose` (sezione 7.1) è il passo successivo.
 
-### Solidify: ripulire auto-intersezioni
-
-A volte un'estrusione o un loft producono geometria che si auto-interseca: il profilo attraversa se stesso in una curva stretta, oppure due segmenti di un percorso si sovrappongono. La mesh risultante non è pulita e le booleane successive la rifiutano.
-
-`solidify` risolve il problema facendo passare la mesh attraverso Manifold, che ricalcola la superficie eliminando le intersezioni interne:
-
-```clojure
-(def messy (extrude (circle 8) (f 20) (th 120) (f 20)))
-(def clean (solidify messy))
-```
-
-<!-- example-source: bool-solidify
-(def messy (extrude (circle 8) (f 20) (th 120) (f 20)))
-(register clean (solidify messy))
--->
-
-Non serve sempre: la maggior parte delle estrusioni e dei loft producono mesh già pulite. Ma quando una booleana fallisce su una mesh che *sembra* a posto, `solidify` è il primo tentativo da fare.
-
 ### Convex hull
 
 `mesh-hull` calcola l'inviluppo convesso di una o più mesh: il più piccolo solido convesso che le contiene tutte. È un'operazione generativa, non una booleana nel senso classico: non taglia e non fonde, costruisce una forma nuova *attorno* alle mesh di partenza.
@@ -321,7 +305,7 @@ Più segmenti producono un raccordo più liscio ma con più triangoli. Per la st
 Le situazioni in cui `chamfer` e `fillet` producono risultati sbagliati o falliscono sono tipicamente tre:
 
 - **Spigoli concavi.** Entrambe le operazioni sottraggono materiale lungo lo spigolo. Su uno spigolo concavo (interno) questo scava un solco invece di smussare il raccordo. `chamfer` e `fillet` rifiutano di operare sugli spigoli concavi.
-- **Spigoli troppo vicini ad altra geometria.** Se il cutter generato per uno spigolo si avvicina o attraversa altre parti del modello, il risultato può essere geometria malformata. Il parametro `:angle` aiuta a escludere gli spigoli problematici.
+- **Spigoli troppo vicini ad altra geometria.** Se il cutter generato per uno spigolo si avvicina o attraversa altre parti del modello, il risultato può essere geometria malformata. Il parametro `:angle` aiuta a escludere gli spigoli problematici. Nel caso nel vertice del cono nell'esempio sopra il problema è dovuto ai tanti vertici dei triangoli, molto vicini tra loro, che approssimano la punta del cono.
 - **Geometrie auto-intersecanti o con tolleranze molto strette.** Le booleane sottostanti possono fallire o produrre piccoli artefatti.
 
 Se ti trovi in uno di questi casi e nessuna combinazione di `:angle` o di selezione direzionale ti soddisfa, la strategia alternativa è costruire l'oggetto direttamente come SDF (cap. 12). `sdf-blend`, `sdf-blend-difference` e simili producono raccordi morbidi *per costruzione*: lo smussamento è incorporato nelle operazioni di combinazione, non aggiunto come post-processing. Non hanno i limiti di `chamfer`/`fillet` perché non operano sulla topologia di una mesh esistente, ma sulla rappresentazione implicita.
@@ -362,7 +346,17 @@ Puoi filtrare i prismi, trasformarli, o usarli per costruire smussi asimmetrici.
 ```
 
 <!-- example-source: mesh-refine
-(register dense-box (mesh-refine (box 20) 2))
+(register sparse-box (warp (box 20) (sphere 40) (roughen 3 2)))
+
+(register not-so-dense-box
+  (attach
+    (warp (mesh-refine (box 20) 2) (sphere 40) (roughen 3 2))
+    (f 30)))
+
+(register dense-box
+  (attach
+    (warp (mesh-refine (box 20) 5) (sphere 40) (roughen 3 2))
+    (f 60)))
 -->
 
 Da solo non cambia nulla visivamente. È utile come passo preparatorio quando un'operazione successiva ha bisogno di più vertici su cui lavorare (tipicamente `warp`, che deforma spostando i vertici esistenti).
@@ -377,15 +371,12 @@ Da solo non cambia nulla visivamente. È utile come passo preparatorio quando un
 ```
 
 <!-- example-source: mesh-laplacian
+(register rough (warp (sphere 20 32 16) (sphere 40) (roughen 5 4)))
 (register smoothed
-  (mesh-laplacian
-    (loft (shell (circle 20 64) :thickness 2
-                 :style :lattice :openings 6 :rows 4)
-          (f 40))
-    :iterations 10))
+  (attach (mesh-laplacian rough :iterations 10) (f 50)))
 -->
 
-Il comportamento è selettivo: muove solo i vertici sugli spigoli il cui angolo diedrale è sotto `:feature-angle` (default 150°), lasciando le superfici piatte intatte. Questo lo rende particolarmente utile per ammorbidire l'aliasing a gradini sulle shell perforate e su altre mesh esteticamente ruvide che non puoi rendere manifold.
+Il comportamento è selettivo: muove solo i vertici sugli spigoli il cui angolo diedrale è sotto `:feature-angle` (default 150°), lasciando le superfici piatte intatte. Questo lo rende ideale per ammorbidire le mesh esteticamente ruvide: superfici irregolari da `roughen` o da displacement con noise, heightmap a bassa risoluzione, STL importati, o pezzi assemblati con `concat-meshes`. Funziona anche su mesh non-manifold, dove `fillet` e le booleane non possono operare. (Per le shell perforate non serve: i contorni delle aperture escono già lisci grazie al parametro `:softness` del cap. 6.)
 
 I parametri del ciclo di Taubin (`:lambda` 0.5, `:mu` -0.53) sono calibrati per smussare senza restringere il volume. Più iterazioni producono un effetto più marcato.
 
@@ -441,7 +432,7 @@ Le primitive hanno face group predefiniti. Per vederli:
 (list-faces b)      ;; => [{:id :top :normal [...] :center [...] ...} ...]
 ```
 
-<!-- example-source: face-ids-box
+<!-- example-source: face-ids-box :no-run
 (register b (box 20))
 (println (face-ids b))
 -->
@@ -468,7 +459,7 @@ Le mesh prodotte da operazioni booleane non hanno face group predefiniti: la fus
 (find-faces mesh :all)                          ; tutte le facce raggruppate
 ```
 
-<!-- example-source: find-faces-direction
+<!-- example-source: find-faces-direction :no-run
 (register result (mesh-difference (box 40 40 20) (cyl 10 30)))
 (println "top faces:" (count (find-faces result :top)))
 -->
@@ -498,7 +489,7 @@ Quando sai *dove* si trova la faccia che cerchi, ma non in quale direzione guard
 (largest-face mesh :top)         ;; la più grande nella direzione :top
 ```
 
-<!-- example-source: largest-face
+<!-- example-source: largest-face :no-run
 (register b (box 30 20 10))
 (println "largest face:" (:id (largest-face b)))
 -->
@@ -544,19 +535,20 @@ Per capire visivamente quale faccia stai selezionando:
 
 `attach-face` sposta i vertici di una faccia lungo la sua normale o li trasforma in posto. Non crea nuova geometria: i vertici esistenti si muovono.
 
-```clojure
-(register b (box 20))
 
-;; sposta la faccia top verso l'alto di 5 unità
-(register b (attach-face b :top (f 5)))
-
-;; operazioni multiple
-(register b (attach-face b :top (f 10) (inset 3)))
-```
 
 <!-- example-source: attach-face-move
-(register b (box 20))
-(register b (attach-face b :top (f 5)))
+(register a (box 20))
+(u 50)
+(register b (attach-face (box 20) :top (f 5)))
+
+;; operazioni multiple
+(u 50)
+(register c (attach-face (box 20) :top (f 10) (inset 3)))
+
+(u 50)
+
+(register d (clone-face (box 20) :top (inset 3) (f 10)))
 -->
 
 Le operazioni disponibili dentro `attach-face` (e dentro `clone-face`) includono i comandi tartaruga e tre operazioni specifiche per le facce:
@@ -569,24 +561,13 @@ Le operazioni disponibili dentro `attach-face` (e dentro `clone-face`) includono
 
 `(scale factor)` scala la faccia uniformemente rispetto al suo centro.
 
-Nota: `inset` e `scale` esistono solo come operazioni dentro `attach-face` e `clone-face`. Non sono funzioni standalone che puoi chiamare a top-level.
+Nota: queste forme a un solo argomento — `(inset dist)` e `(scale factor)` — agiscono sulla faccia selezionata e hanno senso solo dentro `attach-face` e `clone-face`. A top-level esiste comunque un `scale` distinto, `(scale mesh factor)` (e nelle varianti per SDF e shape 2D), che scala l'intero oggetto attorno alla sua creation-pose, non una singola faccia. Per `inset`, invece, non c'è una funzione standalone che prenda una mesh come argomento.
 
 ### Clone-face: estrudere una faccia
 
 `clone-face` duplica una faccia e la collega alla mesh con nuova geometria laterale. È l'estrusione locale: la faccia originale resta dov'era, una copia si sposta lungo la normale, e le pareti laterali chiudono il gap.
 
-```clojure
-(register b (box 20))
 
-;; estrudi la faccia top verso l'alto
-(register b (clone-face b :top (f 10)))
-
-;; estrusione a gradini
-(register b
-  (-> b
-      (clone-face :top (f 5))
-      (clone-face :top (inset 3) (f 5))))
-```
 
 <!-- example-source: clone-face-step
 (register b (box 20))
@@ -602,11 +583,6 @@ Il pattern `inset` + `f` è il più comune: restringi la faccia e poi la estrudi
 
 `face-shape` estrae il contorno di una faccia come forma 2D, pronta per essere usata in un'estrusione o in qualsiasi altra operazione che accetta una shape. Restituisce una mappa con la shape e la posa (posizione e orientamento) della faccia nello spazio:
 
-```clojure
-(def top-info (face-shape mesh (:id (largest-face mesh :top))))
-;; => {:shape <ridley-shape>
-;;     :pose {:pos [x y z] :heading [hx hy hz] :up [ux uy uz]}}
-```
 
 <!-- example-source: face-shape-extrude
 (register b (box 30 30 10))
@@ -714,10 +690,7 @@ Le operazioni viste finora lavorano sulla topologia della mesh: tagliano, fondon
 
 Il volume è una mesh ordinaria usata solo per i suoi bounds: `(sphere 25)`, `(box 30 30 20)`, `(cyl 12 40)`. Puoi posizionarlo con `attach`:
 
-```clojure
-;; volume spostato in avanti di 15
-(warp mesh (attach (sphere 15) (f 15)) (inflate 5))
-```
+
 
 <!-- example-source: warp-inflate-basic
 (register bumpy
@@ -734,32 +707,41 @@ Ridley offre sette preset che coprono i casi più comuni:
 
 `(attract strength)` tira i vertici verso il centro del volume. Strength va da 0 (nessun effetto) a 1 (tutti al centro).
 
-`(twist angle)` ruota i vertici attorno a un asse, con l'angolo che cresce linearmente lungo l'asse. Per volumi cilindrici e conici l'asse è rilevato automaticamente; per altri volumi puoi specificarlo: `(twist 90 :x)`, `(twist 90 :y)`, `(twist 90 :z)`.
+`(twist angle)` ruota i vertici attorno a un asse, con l'angolo che cresce linearmente lungo l'asse. Per volumi cilindrici e conici l'asse è rilevato automaticamente; per altri volumi (box, sfera) devi specificarlo: `(twist 90 :x)`, `(twist 90 :y)`, `(twist 90 :z)`. Due condizioni perché il twist si veda: la sezione deve essere *non* assialsimmetrica (un cilindro a molti lati torto attorno al proprio asse resta identico a se stesso, mentre un box o un prisma a poche facce mostrano la torsione), e la mesh deve avere abbastanza vertici lungo l'asse (usa `mesh-refine` o `:subdivide`, altrimenti la torsione si applica solo alle estremità).
 
 `(squash axis)` schiaccia i vertici verso un piano perpendicolare all'asse. `(squash :z)` appiattisce in Z. Con un secondo argomento puoi controllare quanto: `(squash :z 0.5)` è a metà strada tra piatto e invariato.
 
 `(roughen amplitude)` aggiunge rumore lungo le normali, creando una superficie irregolare. Con due argomenti, `(roughen amplitude frequency)`, controlli anche la frequenza spaziale del rumore.
 
-```clojure
-;; organic bump on a box
-(register bumpy (warp (box 40) (sphere 25) (inflate 5) :subdivide 2))
 
-;; dent on a sphere
-(register dented (warp (sphere 30 32 16) (attach (sphere 10) (f 15)) (dent 3)))
-
-;; twisted cylinder
-(register twisted-cyl (warp (cyl 10 40 32) (cyl 12 40) (twist 90)))
-
-;; roughened surface
-(register rough (warp (sphere 20 32 16) (sphere 22) (roughen 2 3)))
-```
 
 <!-- example-source: warp-presets
-(register bumpy (warp (box 40) (sphere 25) (inflate 5) :subdivide 2))
-(register dented (warp (sphere 30 32 16) (attach (sphere 10) (f 15)) (dent 3)))
-(register twisted-cyl (warp (cyl 10 40 32) (cyl 12 40) (twist 90)))
-(register rough (warp (sphere 20 32 16) (sphere 22) (roughen 2 3)))
+(defn transp [m]
+  (-> m
+    (color 0xffff00)
+    (material :opacity 0.2)))
+
+
+(def bump_control (attach (sphere 49.5) (u 30)))
+(register BC (transp bump_control))
+(register bumpy (warp (box 36) bump_control (inflate 7.5) :subdivide 3.3))
+
+(f 100)
+(def dent_control (attach (sphere 19) (f 13.5) (u 9)))
+(register DC (transp dent_control))
+(register dented (warp (sphere 22) dent_control (dent 12.9)))
+
+(f 100)
+(def twist_control (attach (box 40 70 40) (u 40) (f 5)))
+(register TC (transp twist_control))
+(register twisted (warp (mesh-refine (box 15 60 15) 32) twist_control (twist 90 :z)))
+
+(f 100)
+(def roughen_control (attach (sphere 22) (u 10)))
+(register RC (transp roughen_control))
+(register rough (warp (sphere 20 128 128) roughen_control (roughen 8 4)))
 -->
+L'esempio mostra per alcuni preset della funzione di deformazione la mesh che esprime il volume di influenza in giallo trasparente e la mesh deformata in azzurro.
 
 ### Concatenare deformazioni
 

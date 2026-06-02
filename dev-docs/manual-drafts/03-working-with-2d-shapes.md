@@ -449,6 +449,7 @@ Lo stesso vale per `slice-mesh`:
 (register B (attach (box 10 20 30) (tv 30) (th 15)))
 (register ring (extrude (slice-mesh :B) (f 30)))
 ```
+L'esempio crea una shape dall'intersezione del box, leggermente ruotato, con il piano XY (la tartaruga è all'origine, voltata verso +X) ed estrude quella shape in avanti.
 
 Se la sezione contiene più contorni, vengono estrusi tutti insieme. Se ne contiene uno solo, funziona comunque: un vettore con un elemento è gestito come una shape singola.
 

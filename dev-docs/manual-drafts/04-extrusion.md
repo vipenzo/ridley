@@ -318,7 +318,7 @@ La parete è simmetrica: metà dello spessore sporge verso l'esterno, metà vers
 
 Lo stile controlla il pattern delle aperture nelle pareti.
 
-<!-- example-source: shell-voronoi -->
+<!-- example-source: shell-voronoi :warning slow -->
 ```clojure
 (register lamp
   (loft-n 512 (shell (circle 20 512) :thickness 2 :style :voronoi
@@ -329,7 +329,7 @@ Lo stile controlla il pattern delle aperture nelle pareti.
 
 `:voronoi` distribuisce celle irregolari sulle pareti. I bordi delle celle sono materiale, l'interno è vuoto. `:cells` controlla quante celle per anello, `:rows` quanti anelli lungo il percorso.
 
-<!-- example-source: shell-lattice -->
+<!-- example-source: shell-lattice :warning slow  -->
 ```clojure
 (register vase
   (loft-n 512 (shell (circle 15 512) :invert? true :thickness 2 :style :lattice :openings 4 :rows 6)
@@ -338,7 +338,7 @@ Lo stile controlla il pattern delle aperture nelle pareti.
 
 `:lattice` produce un pattern a mattoni: file di blob solidi sfasati lungo la circonferenza. `:openings` controlla il numero di mattoni per fila, `:rows` il numero di righe. Con `:invert? true` il pattern si inverte: i mattoni diventano aperture in un guscio continuo. Senza `:invert?`, il risultato sono i mattoni staccati (utile come texture a rilievo, meno come guscio).
 
-L'opzione `:softness` (per `:voronoi` e `:lattice`, default `0.6`) controlla come vengono tagliati i bordi delle aperture. Per default il taglio è *isocontour*: il bordo viene affettato nella posizione esatta in cui la parete incontra l'apertura, fra un vertice e l'altro, e le aperture risultano lisce — con un piccolo labbro rastremato — anche a risoluzione moderata. Con `:softness 0` il taglio torna *binario*: ogni triangolo della griglia è tenuto o scartato per intero, e i bordi restano scalettati lungo la griglia di anelli e segmenti (alzare la risoluzione rimpicciolisce i denti ma non li elimina). Un valore intorno a `0.5–0.8` è il punto dolce. È l'equivalente, per gli shell, dell'`:edge-softness` del rilievo testuale (cap. 13). (`:lattice` con `:invert?` usa sempre il taglio binario.)
+L'opzione `:softness` (per `:voronoi` e `:lattice`, default `0.6`) controlla come vengono tagliati i bordi delle aperture. Per default il taglio è *isocontour*: il bordo viene affettato nella posizione esatta in cui la parete incontra l'apertura, fra un vertice e l'altro, e le aperture risultano lisce — con un piccolo labbro rastremato — anche a risoluzione moderata. Con `:softness 0` il taglio torna *binario*: ogni triangolo della griglia è tenuto o scartato per intero, e i bordi restano scalettati lungo la griglia di anelli e segmenti (alzare la risoluzione rimpicciolisce i denti ma non li elimina). Un valore intorno a `0.5–0.8` è il punto ottimale. È l'equivalente, per gli shell, dell'`:edge-softness` del rilievo testuale (cap. 13). (`:lattice` con `:invert?` usa sempre il taglio binario.)
 
 Gli altri stili disponibili sono `:checkerboard` (scacchiera) e `:weave` (intreccio). Ognuno ha le sue opzioni specifiche; la Reference le documenta tutte. `:invert? true` funziona con tutti gli stili, comprese le thickness-fn custom passate con `:fn`.
 
@@ -346,7 +346,7 @@ Gli altri stili disponibili sono `:checkerboard` (scacchiera) e `:weave` (intrec
 
 `shell` è una shape-fn come `tapered` o `twisted`, quindi si compone con `->`:
 
-<!-- example-source: shell-composed -->
+<!-- example-source: shell-composed :warning slow -->
 ```clojure
 (register tapered-lamp
   (loft-n 512 (-> (circle 20 512)
@@ -361,7 +361,7 @@ Una lampada che si rastrema: `shell` rende il profilo cavo con aperture Voronoi,
 
 `woven-shell` è una variante di `shell` che non si limita a variare lo spessore delle pareti: sposta anche il centro della parete radialmente, così i fili passano davanti e dietro l'uno all'altro come in un intreccio reale.
 
-<!-- example-source: woven-shell-basic -->
+<!-- example-source: woven-shell-basic :warning slow-->
 ```clojure
 (register basket
   (loft-n 512 (woven-shell (circle 20 512) :thickness 3 :strands 8)
@@ -372,17 +372,18 @@ Un cesto intrecciato. I fili diagonali si incrociano con un vero sopra/sotto tri
 
 Come `shell`, `woven-shell` si compone con altre shape-fn:
 
+<!-- example-source: woven-lamp :warning slow-->
 ```clojure
-(register twisted-basket
+(register woven-lamp
   (loft-n 512 (-> (circle 20 512)
-                  (woven-shell :thickness 3 :strands 6)
-                  (twisted :angle 90))
+                (woven-shell :thickness 3 :strands 6)
+                (tapered :to 3.5))
     (f 50)))
 ```
 
 ### Risoluzione e performance
 
-Shell e woven-shell richiedono molta risoluzione su entrambi gli assi per rendere bene i pattern. Due numeri contano: il numero di punti del cerchio (la risoluzione circumferenziale) e il numero di passi del loft (la risoluzione longitudinale). Con i default di 64 punti e 64 passi, i pattern più semplici sono già leggibili, ma per risultati davvero nitidi servono valori nell'ordine di 512 su entrambi gli assi: `(circle 20 512)` per il profilo e `loft-n 512` per i passi. Il prezzo è un calcolo lento (diversi secondi) e una mesh con molti triangoli. Durante la prototipazione conviene usare numeri più bassi (128 o 256) per iterare velocemente, e alzare per il risultato finale.
+Shell e woven-shell richiedono molta risoluzione su entrambi gli assi per rendere bene i pattern. Due numeri contano: il numero di punti del cerchio (la risoluzione della circonferenza) e il numero di passi del loft (la risoluzione longitudinale). Con i default di 64 punti e 64 passi, i pattern più semplici sono già leggibili, ma per risultati davvero nitidi servono valori nell'ordine di 512 su entrambi gli assi: `(circle 20 512)` per il profilo e `loft-n 512` per i passi. Il prezzo è un calcolo lento (diversi secondi) e una mesh con molti triangoli. Durante la prototipazione conviene usare numeri più bassi (128 o 256) per iterare velocemente, e alzare per il risultato finale.
 
 L'impostazione globale `resolution` influenza anche il numero di passi di default del loft. Se serve un controllo esplicito, `loft-n` con il numero di passi desiderato ha sempre la precedenza.
 
@@ -415,7 +416,7 @@ Con `:chamfer` la transizione è un taglio rettilineo a 45° invece di una curva
 
 ### Controllare le estremità
 
-Si può raccordare solo un'estremità:
+Si può scegliere di raccordare solo un'estremità:
 
 ```clojure
 (loft (capped shape 3 :start false) (f 50))   ; solo la fine
@@ -436,15 +437,22 @@ Un parallelepipedo con gli angoli 2D arrotondati (raggio 5) e i bordi di testa r
 
 `capped` si compone anche con `tapered`, `twisted`, e qualsiasi altra shape-fn:
 
-<!-- example-source: capped-tapered-drop -->
+<!-- example-source: capped-tapered-foot -->
 ```clojure
-(register drop
-  (loft (-> (circle 20) (tapered :to 0.3) (capped 10)) (f 40)))
+(def foot
+  (loft (-> (circle 15) (tapered :to 0.3) (capped -10)) (f 40)))
+
+(register base
+  (mesh-union
+    (attach (box 30) (f (+ 40 15)))
+    foot)
+  )
 ```
 
-Una goccia: un cerchio che si rastrema e ha le estremità raccordate.
+Capped è un utile strumento, se usato con valori negativi (-10 in questo caso) per raccordare il risultato di un loft ad altri oggetti. Nell'esempio sopra il piede si allarga per incontrare il cubo.
 
 La frazione del percorso dedicata alla transizione viene calcolata automaticamente da `capped` come rapporto fra il raggio e la lunghezza del percorso. Si può forzare con `:fraction` se il risultato automatico non va bene.
+Non è possibile avere due valori differenti per i due cap (di conseguenza non posso averne uno che si rastrema ,valori positivi, e uno che si allarga ,valori negativi). Per ottenere quell'effetto bisogna usare due loft separate.
 
 ## Revolve
 
@@ -496,7 +504,7 @@ Quando si usa `revolve` per creare una curva (un gomito di tubo, un angolo di co
   (revolve (circle 8) 90 :pivot :left))
 ```
 
-Un gomito di tubo a 90°: il bordo sinistro del cerchio sta sull'asse, quindi la rivoluzione produce una curva. Senza `:pivot` il cerchio sarebbe centrato sull'asse e la rivoluzione produrrebbe un toro (o un disco pieno, nel caso di un giro completo).
+Un gomito di tubo a 90°: il bordo sinistro del cerchio sta sull'asse, quindi la rivoluzione produce una curva. Senza `:pivot` il cerchio sarebbe centrato sull'asse e la rivoluzione produrrebbe un quarto di sfera.
 
 Le direzioni di pivot sono relative al piano 2D del profilo: `:left`, `:right`, `:up`, `:down`.
 
@@ -511,6 +519,18 @@ Come `loft`, anche `revolve` accetta shape-fn. Il profilo può variare durante l
 ```
 
 Un corno: il cerchio si riduce progressivamente durante i 270° di rivoluzione. `tapered`, `twisted`, `noisy` e tutte le altre shape-fn del cap. 6 funzionano con `revolve` esattamente come con `loft`.
+Da notare che nel caso di uso di una shape-fn la shape non ruota su se stessa, ma viene imposto un :pivot implicito, ruota su un lato, per evitare auto intersezioni.
+
+L'angolo di rotazione viene silenziosamente tagliato a 360 gradi se superiore. Valori maggiori di 360 o minori di -360 si comportano come 360/-360.
+
+<!-- example-source: i-like-this -->
+```clojure
+(resolution :n 512)
+(register i-like-this
+  (revolve (twisted (rect 2 10) :to 0.5) 600))
+  
+```
+
 
 ### Revolve vs extrude con arco
 
@@ -557,7 +577,7 @@ Il pattern funziona ma è ripetitivo: ogni segmento deve estrarre `:end-face`, a
     (extrude+ (f 20))))
 ```
 
-Stesso telaio, una sola espressione. `transform->` prende una shape iniziale e una sequenza di passi. Ad ogni passo, la shape e la posa vengono passate automaticamente dall'end-face del passo precedente. Tutte le mesh prodotte vengono fuse con `mesh-union`. Il risultato è un unico solido.
+Una sola espressione. `transform->` prende una shape iniziale e una sequenza di passi. Ad ogni passo, la shape e la posa vengono passate automaticamente dall'end-face del passo precedente. Tutte le mesh prodotte vengono fuse con `mesh-union`. Il risultato è un unico solido.
 
 Dentro `transform->`, le operazioni non prendono la shape come argomento (viene iniettata automaticamente). `(extrude+ (f 20))` riceve la shape corrente e la estrude in avanti di 20. `(revolve+ 30 :pivot :left)` riceve la shape corrente e la rivolta di 30° con il bordo sinistro sull'asse.
 

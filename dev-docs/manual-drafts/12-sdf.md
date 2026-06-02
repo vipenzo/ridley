@@ -331,7 +331,7 @@ La forma con `ref-mesh` serve a un problema specifico: gli **SDF infiniti o proc
 
 Ma prima di raggiungere `ref-mesh`, c'è quasi sempre una strada migliore: **tieni la booleana in SDF e materializza solo il risultato finale**. Se il contenitore può essere un SDF, non passare per una mesh intermedia. `sdf-ensure-mesh` torna utile proprio quando un ramo SDF deve convivere con della geometria mesh nella stessa espressione — qui un loft (che è già mesh) e un box scavato da un gyroid (SDF) uniti insieme:
 
-<!-- example-source: sdf-ensure-mesh-union
+<!-- example-source: sdf-ensure-mesh-union :warning slow
 (def container (sdf-box 20 20 20))   ;; SDF, non box mesh
 (def pattern   (sdf-gyroid 8 1))
 

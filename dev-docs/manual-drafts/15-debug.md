@@ -6,7 +6,7 @@ Quando un modello non fa quello che ti aspetti, hai bisogno di strumenti per cap
 
 I pannelli sono billboard di testo posizionati nella scena 3D. Sono lo strumento di debug più visivo: puoi piazzare un pannello accanto a un pezzo e fargli mostrare i valori che ti interessano.
 
-```clojure
+<!-- example-source: panels
 ;; Crea un pannello alla posizione corrente della tartaruga
 (register debug (panel 40 20))
 
@@ -17,19 +17,20 @@ I pannelli sono billboard di testo posizionati nella scena 3D. Sono lo strumento
 (append :debug "\nVertici: 1234")
 
 ;; Cancella il contenuto
-(clear :debug)
-```
+;(clear :debug)
+-->
 
 Le opzioni di stile:
 
-```clojure
-(register debug (panel 40 20
-  :font-size 3
-  :bg 0x333333cc        ;; sfondo semi-trasparente
+<!-- example-source: panels2
+(register debug (panel 56 15
+                  :font-size 8
+  :bg 0xff3333cc        ;; sfondo semi-trasparente (cc, byte basso, è l'alfa)
   :fg 0xffffff          ;; testo bianco
   :padding 2
   :line-height 1.4))
-```
+(out :debug "Your Ad Here")
+-->
 
 I pannelli si comportano come le mesh: supportano `show`/`hide`, `register`, `attach`/`attach!`. Puoi posizionarli con `attach` accanto al pezzo che stai debuggando.
 

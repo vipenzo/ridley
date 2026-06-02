@@ -153,7 +153,7 @@ Una heightmap è una griglia 2D dove ogni cella contiene un'altezza. Usata come 
 
 `text-heightmap` produce direttamente una heightmap a partire da una stringa, già orientata correttamente per essere avvolta su un profilo. La passi alla shape-fn `heightmap` dentro un `loft`:
 
-<!-- example-source: text-heightmap
+<!-- example-source: text-heightmap :warning slow
 (def hm (text-heightmap "Ridley" :size 20)) ; resolution 256, supersample 3, edge-softness 0.02
 (register embossed-cylinder
   (loft-n 256 (heightmap (circle 10 256) hm :amplitude 1.5 :direction :height :center true) (f 60)))
@@ -171,7 +171,7 @@ Un dettaglio utile: gli spazi nel testo diventano margine piatto reale. `"Ridley
 
 Direzione, copertura e ripetizione non sono compito di `text-heightmap` ma della shape-fn `heightmap`, che le controlla con `:direction`, `:tile-x`/`:tile-y`, `:fit`. Così la stessa heightmap si può far girare una volta attorno al cilindro, impacchettare a ripetizione lungo tutta la circonferenza, o far salire lungo l'asse:
 
-<!-- example-source: text-heightmap-variants
+<!-- example-source: text-heightmap-variants :warning slow
 (def band (text-heightmap "Ridley " :size 10))
 
 ;; Ripetuta senza giunzioni attorno a tutta la circonferenza

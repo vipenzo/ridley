@@ -420,7 +420,7 @@ Finora abbiamo costruito ogni oggetto con pochi pezzi posizionati a mano. Ma il 
 
 Prendiamo il portapenne cilindrico della sezione precedente e aggiungiamo una decorazione: una spirale di sferette che avvolge la parete esterna.
 
-<!-- example-source: spiral-vase -->
+<!-- example-source: spiral-vase :warning slow 
 ```clojure
 (def radius 40)
 (def h 80)
@@ -445,6 +445,7 @@ Prendiamo il portapenne cilindrico della sezione precedente e aggiungiamo una de
     (mesh-union vase-outer decoration)
     vase-cut))
 ```
+-->
 
 Lo schema del portapenne è lo stesso: un cilindro esterno meno uno interno sollevato di 2. La novità è `decoration`.
 

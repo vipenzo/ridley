@@ -92,10 +92,6 @@ Le proprietà disponibili sono quelle del materiale standard Three.js: `:metalne
 
 L'opacità si imposta con `:opacity` dentro `material`:
 
-```clojure
-(register ghost (material (box 30) :opacity 0.3))
-(register glass (material (sphere 15) :opacity 0.5 :color 0x88ccff))
-```
 
 <!-- example-source: material-transparent
 (register ghost (material (box 30) :opacity 0.3))
@@ -107,25 +103,6 @@ La trasparenza è utile in fase di modellazione per vedere attraverso un pezzo e
 ## 14.3 Multi-material: il pattern register + color
 
 Il workflow per stampanti multi-materiale (Bambu AMS, Prusa MMU) è semplice: registra le parti come mesh separate, assegna un colore a ciascuna, esporta in 3MF.
-
-```clojure
-;; Due parti con colori distinti
-(register base (box 40 40 3))
-(register label (attach (extrude-text "OK" :size 15 :depth 1) (u 2.5)))
-
-(color :base 0xff0000)
-(color :label 0xffffff)
-
-;; Export 3MF multi-materiale
-(export :base :label :3mf)
-```
-
-<!-- example-source: multi-material-export
-(register base (box 40 40 3))
-(register label (attach (extrude-text "OK" :size 15 :depth 1) (u 2.5)))
-(color :base 0xff0000)
-(color :label 0xffffff)
--->
 
 Nel file 3MF risultante, ogni mesh diventa un oggetto separato con il suo colore. Quando lo apri in Bambu Studio o OrcaSlicer, le parti appaiono con i colori preassegnati, pronte per essere mappate agli slot del filamento.
 
@@ -144,28 +121,71 @@ L'esempio più comune di multi-materiale è un'etichetta bicolore: una base piat
 3. Assegna colori distinti
 4. Esporta entrambe in 3MF
 
-```clojure
-(def W 60) (def D 25) (def H 3) (def text-h 1)
-
-(register base (box W D H))
-(register text-part
-  (attach (extrude-text "RIDLEY" :size 14 :depth text-h)
-          (u (/ H 2))))
-
-(color :base 0x222222)
-(color :text-part 0xffffff)
-
-(export :base :text-part :3mf)
-```
-
-<!-- example-source: bicolor-label
-(def W 60) (def D 25) (def H 3)
-(register base (box W D H))
-(register text-part
-  (attach (extrude-text "RIDLEY" :size 14 :depth 1)
-          (u (/ H 2))))
-(color :base 0x222222)
-(color :text-part 0xffffff)
--->
 
 La chiave è che base e testo sono mesh separate, non fuse con `mesh-union`. Se le unisci, diventano un unico oggetto nel 3MF e non puoi assegnare colori diversi.
+
+### Una funzione riutilizzabile: testo incassato
+
+La funzione `bicolor-label` sotto *incassa* il testo nella base: le lettere vengono sottratte dalla piastra con `mesh-difference` e riempite da una seconda mesh dello stesso spessore, così i due colori giacciono sullo stesso piano e la stampa non ha lettere sporgenti.
+
+La funzione  incapsula l'intero procedimento e restituisce un vettore con le due mesh `[base testo]`, già colorate e pronte da registrare ed esportare:
+
+
+L'uso è poi una riga: destrutturi il vettore e registri le due parti.
+
+```clojure
+(let [[base txt] (bicolor-label "Ridley")]
+  (register label-base base)
+  (register label-text txt))
+```
+
+<!-- example-source: bicolor-label-fn
+(defn bicolor-label
+  [text & {:keys [font-sz label-depth font margin-ratio tolerance full-cut
+                  base-color text-color]
+           :or   {font-sz 15 label-depth 3 font :roboto
+                  margin-ratio 1.1 tolerance 0.3 full-cut false
+                  base-color 0xffffff text-color 0xff00ff}}]
+  (let [len       (text-width text font font-sz)
+        mgn       (fn [x n] (* (+ 1 (* n (- margin-ratio 1))) x))
+        cut-depth (if full-cut label-depth (/ label-depth 2))
+        t-shape   (text-shape text :size font-sz :font font :center true)
+        n-t-shape (shape-offset t-shape tolerance)
+        base      (color (mesh-difference
+                           (attach (box (mgn len 2) (mgn font-sz 2) label-depth)
+                                   (cp-f (/ label-depth -2)))
+                           (extrude n-t-shape (f cut-depth)))
+                         base-color)
+        e-text    (color (extrude t-shape (f cut-depth)) text-color)]
+    [base e-text]))
+
+(let [[base txt] (bicolor-label "This is Ridley")]
+  (register label-base base)
+  (register label-text txt))
+  
+;(export :label-base :label-text :3mf)
+
+(let [[base txt] (bicolor-label "3D Printing is nice"
+                   :label-depth 5
+                   :full-cut true
+                   :font-sz 24
+                   :margin-ratio 1.05
+                   :tolerance 0.8
+                   :base-color 0xffff00
+                   :text-color 0x999988
+                   )] ; testo solo sul lato -X
+  (register A (attach txt (u 100)))
+  (register B (attach base (u 100))))
+
+-->
+
+I parametri:
+
+- `text` è l'unico argomento obbligatorio.
+- `:font-sz` (15), `:font` (`:roboto`) e `:label-depth` (3) controllano corpo del carattere, font e spessore della piastra.
+- `:margin-ratio` (1.1) imposta il margine attorno al testo: la piastra è dimensionata sulla larghezza reale del testo (misurata con `text-width`) più questo margine.
+- `:tolerance` (0.3) allarga il foro rispetto alle lettere (`shape-offset`), lasciando il gioco necessario perché le due parti si incastrino nella stampa multi-materiale.
+- `:base-color` (bianco) e `:text-color` (magenta) sono i due colori.
+- `:full-cut` (`false`) decide se il testo attraversa la piastra da parte a parte (`true`, scritta visibile da entrambi i lati) o resta inciso solo sulla faccia frontale fino a metà spessore (`false`, con un fondo solido del colore base).
+
+La funzione non registra né dà nomi alle mesh: restituisce un vettore, così sei tu a decidere come chiamarle e a passarle a `(export ... :3mf)`.
