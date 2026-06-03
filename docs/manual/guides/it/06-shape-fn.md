@@ -192,6 +192,18 @@ La funzione riceve due argomenti: `p` (il punto 2D `[x y]` sul profilo, prima de
 
 `displaced` è la shape-fn da usare quando nessuna delle built-in fa quello che serve. Qualsiasi pattern esprimibile come `f(posizione_sul_profilo, posizione_sul_percorso) -> spostamento_radiale` si può scrivere come `displaced`.
 
+Dentro una `displaced` puoi chiamare qualsiasi funzione matematica. Per superfici organiche o rocciose, `fbm` (fractal Brownian motion) è il mattone più utile: somma più ottave di rumore a frequenze crescenti e ampiezze decrescenti, e produce dettaglio a più scale.
+
+<!-- example-source: shapefn-fbm-rocky -->
+```clojure
+(register rocky
+  (loft (displaced (circle 15 96)
+          (fn [p t] (* 2 (fbm (* (angle p) 4) (* t 6) 4))))
+    (f 50)))
+```
+
+`(fbm x y)` campiona il campo di rumore a quelle coordinate; il terzo argomento è il numero di ottave, più ottave più dettaglio. Qui l'angolo del punto e la posizione lungo il percorso diventano le due coordinate del rumore. È lo stesso meccanismo che `noisy` usa internamente con `:octaves > 1`: se ti basta il displacement radiale standard `noisy` è più diretto, `fbm` dentro `displaced` serve quando vuoi controllo pieno sulla formula.
+
 
 ## morphed: interpolare tra due profili
 
@@ -215,6 +227,8 @@ Un quadrato che diventa un cerchio. `morphed` si occupa automaticamente di due c
 ```
 
 Il risultato di `morphed` è una transizione geometrica, non topologica: se le due shape hanno strutture di concavità molto diverse, anche con l'allineamento i punti intermedi possono autointersecarsi. Profili con la stessa struttura di concavità (entrambi convessi, o entrambi a 5 punte come stella e pentagono) producono transizioni più pulite.
+
+Esiste anche la forma grezza del morphing: `loft` chiamato con due shape, documentata anche con il nome esplicito `loft-between`. Interpola linearmente tra le due a ogni anello, ma richiede che abbiano lo stesso numero di punti e non fa l'allineamento angolare di `morphed`. Per transizioni tra shape diverse `morphed` resta la scelta giusta; `loft-between` è comodo quando le due shape sono già compatibili e vuoi solo l'interpolazione diretta.
 
 
 ## profile: il profilo come silhouette

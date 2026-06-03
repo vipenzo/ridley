@@ -388,6 +388,21 @@ Scala un path a una dimensione target su uno o entrambi gli assi:
 (register column (revolve (path-to-shape tall-path)))
 ```
 
+### subpath-y
+
+`subpath-y` ritaglia da un path la porzione compresa in una fascia di altezza, misurata come distanza dall'inizio del path, e la ri-ancora perché parta da Y=0. Serve soprattutto per prendere una sezione di un profilo da rivoluzione senza trascinarsi dietro il resto.
+
+<!-- example-source: subpath-y-band -->
+```clojure
+(def profile (path (f 5) (th 80) (f 15) (arc-h 5 -160) (f 15)))
+(register slice (revolve (path-to-shape profile)))
+(f 50)
+(register slice2 (revolve (path-to-shape (subpath-y profile 6 18))))
+
+```
+
+Solo la fascia 6..18 del profilo viene rivoltata. Restituisce `nil` se la fascia risultante ha meno di due punti.
+
 ### Riepilogo
 
 | Consumatore | Cosa fa col path | Capitolo |
@@ -403,5 +418,6 @@ Scala un path a una dimensione target su uno o entrambi gli assi:
 | `stroke-shape` | contorno con spessore | 5.7 |
 | `bezier-as` | smussatura come bezier | 4.2 |
 | `fit` | scala a dimensione target | 3 (Reference) |
+| `subpath-y` | ritaglia una fascia di altezza | 5.8 |
 
 Il path è il dato più versatile di Ridley dopo la mesh: descrive un percorso, marca posizioni, e si presta a consumatori diversi senza cambiare. Lo stesso path può essere la traiettoria di un tubo, lo scheletro di un assemblaggio, e il profilo di un piatto, tutto nello stesso script.

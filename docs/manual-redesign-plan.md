@@ -860,6 +860,25 @@ Se il piano non viene aggiornato a fine sessione, ricominciano i problemi di mem
   Rif: §9.2, §13.1 (definizione v1)
   Stato: **Fatto**. v1 definita (2026-06-02) e Brief B scritto (`dev-docs/brief-manual-infrastructure.md`). Implementazione conclusa (vedi T-007 e T-009 sotto).
 
+- **T-011** — Gap-fill copertura guide (gruppo A dell'analisi di copertura)
+  Owner: V+C
+  Rif: analisi copertura di Code (51 simboli mai citati nelle guide); metro fissato sul cap. 3
+  Scope: per i simboli del gruppo A mai citati, aggiungere nelle guide una menzione o un esempietto alla prima menzione significativa nella sezione che li tratta. Peso pieno con esempio per quelli che lo meritano, menzione onesta quando ci sono limiti, raggruppamento quando emerge una famiglia. Predicati (`shape?`, `path?`, `mesh?`, ecc.) e gruppo C (export di basso livello, helper) restano alla Reference. Niente link manuali (auto-link, T-010).
+  Progresso:
+  - cap. 3 ✓ (`voronoi-shell` + `pattern-tile` come sottosezione "Operatori generativi", verificati funzionanti; `svg-shapes`/`svg-shape` in §3.3 col vincolo del `"`; `make-shape`, `reverse-shape`; `stamp-visibility` già coperto da show/hide-stamps in §3.2)
+  - cap. 4 ✓ (`loft-between` riassegnato al cap. 6, è solo un alias del `loft` a due shape; `extrude-axis`/`extrude-z`/`extrude-y` testati no-op da Vincenzo e tolti dalla guida: la scheda Reference `extrude-axis.md` documenta una funzione che non fa nulla, da correggere o rimuovere)
+  - cap. 5 ✓ (`subpath-y` in §5.8, esempio sistemato da Vincenzo e funzionante; il 2° esempio della scheda Reference è ancora sotto indagine di Code; `bounds-2d` rimosso dalla guida perché è l'implementazione per le shape della `bounds` polimorfica, si cita `bounds` non `bounds-2d` → Reference; `path?` → Reference)
+  - cap. 6 ✓ da verificare (`fbm` come mattone in §6.3 displaced, esempio rocky dalla scheda; `loft-between` come nota in §6.4 morphed, forma grezza del morphing a due shape, senza esempio nuovo)
+  - cap. 7 ✓ (`find-sharp-edges` in §7.3 come ispezione di basso livello, prosa senza esempio; il ricordo di "averne già parlato" era probabilmente `chamfer-edges`/`chamfer-prisms`, già in §7.3 e concettualmente identici; `lay-flat` spostato al cap. 17, vedi sotto; `mesh?` → Reference)
+  - cap. 8: `cp-th`, `reset-creation-pose` (`link!`/`unlink!` spostati al gruppo B: le schede dicono che sono binding a tempo di animazione, a costruzione non muovono niente, quindi sono rigging d'animazione, non assemblaggio statico)
+  - cap. 11/turtle: `get-anchor`, `pen`
+  - cap. 12: niente del gruppo A (`sdf-revolve` derubricato a Reference, è l'implementazione SDF della `revolve` polimorfica, stesso caso di `bounds-2d`)
+  - cap. 15: `line-visibility`, `show-only-objects`, `show-turtle`, `fit-camera`
+  - cap. 17: `lay-flat` (preparazione alla stampa STL, non cap. 7; da verificare prima di documentare, Vincenzo non è sicuro che funzioni del tutto)
+  Fuori: gruppo B (animazione/interattivo) come decisione separata, ora include anche `link!`/`unlink!` (rigging parent/child a tempo di animazione); predicati e gruppo C alla Reference.
+  NB verifica: gli esempi del gap-fill sono presi dalle schede Reference e non eseguiti da Claude nel REPL; vanno fatti girare (i blocchi example-source) per confermarli, perché le schede possono essere sbagliate (caso `extrude-axis`, no-op silenzioso).
+  Stato: ritmo rallentato su richiesta (2026-06). Cap. 3-5 confermati; cap. 6-7 fatti (`fbm` da verificare). Restano cap. 8 (`cp-th`, `reset-creation-pose`), `get-anchor`/`pen` da collocare, cap. 15, e `lay-flat` al cap. 17 da verificare. Ripresa al passo dell'autore.
+
 #### Da fare (prossimi)
 
 - **T-007** — Brief B per Code (infrastruttura documentazione, = v1 del manuale)
@@ -932,12 +951,13 @@ Task identificati ma non ancora pianificati. Da promuovere in "Da fare" quando c
 - Cap. 3-17 delle Guide narrative: **stesura completata** (2026-06-02), rivista dall'autore. Resta solo rifinitura.
 - Schede Reference: il grosso è stato scritto da Code a blocchi per categoria (vedi storico). `goto`, `look-at` e `turtle-state` esistono già. Resta da scrivere la scheda Internals panoramica "Naming patterns in scene mutation". Rifiniture rinviabili, fuori dalla v1.
 - Rifiniture draft (fuori dalla v1): pulizia nomi italiani negli esempi 2.1/2.2; placeholder `[→ cap. N]` per `cp-*` in 2.6.
-- Cap. 18 "Estendere Ridley": parcheggiato, da pensare con calma, meno urgente.
+- Cap. 18 "Estendere Ridley" (guida): il lato narrativo dell'Internals. Copre come estendere Ridley: sistema librerie, modello SCI, limiti dei namespace, differenze da Clojure reale. Parcheggiato. Si accoppia alla sezione Internals della Reference (l'una insegna, l'altra cataloga). Da affrontare con il metodo interview-then-write, perché parte di quel codice ha avuto stesura vibe-coded con poca visibilità diretta.
 - Guide tematiche: "Superfici parallele" come prima. Parcheggiate fuori dalla v1.
 - Galleria di progetti: parcheggiata fuori dalla v1; il codice dei sei esempi è preservato in `docs/examples/gallery/` perché sopravviva allo switch. Decisione se unirla alle guide tematiche rimandata.
 - Traduzione: guide IT verso EN, schede EN verso IT. Dopo, a prosa congelata; glossario (§5.3) come primo passo.
 - Brief C per Code (search contestuale CodeMirror): confluisce in T-009 (fast-follow), dopo lo switch della v1.
 - Auto-link dei simboli Clojure core (`map`, `let`, ecc.) nei backtick: l'auto-linker (T-010) opera solo sul `reference-index`. Aggiungere le chiavi di `clojure-core-index` al set li renderebbe cliccabili. Opzione, da valutare se utile.
+- **Sezione Internals della Reference ("capitolo internals")**: scrivere le schede dei ~62 simboli B classificati in T-001/T-008 e raccolti in Spec §18 (9 sotto-sezioni). Oggi la sezione Internals del browser è nascosta perché senza schede (residuo di T-007). Blocco di lavoro sostanzioso, da pianificare a batch come gli altri della Reference; la prima scheda è quella panoramica qui sotto. Si accoppia al cap. 18 delle guide ("Estendere Ridley"): stesso dominio, l'una cataloga i simboli, l'altra li insegna.
 - **Scheda Internals "Naming patterns in scene mutation"**: scheda panoramica che documenta le regolarità emerse dall'audit T-001 (tutti i `register-X!` → Registry pattern, tutti i `get-X` di lookup → Registry/introspection, tutti i `show-X!`/`hide-X!` → Scene visibility, tutti gli `anim-*` → Animation API, tutti i `*-anchors*` → C/plumbing). Da scrivere come prima scheda della sezione Internals.
 
 ### 14.5 Quaderno delle decisioni emerse durante l'esecuzione

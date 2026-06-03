@@ -336,6 +336,8 @@ Se ti trovi in uno di questi casi e nessuna combinazione di `:angle` o di selezi
 
 Puoi filtrare i prismi, trasformarli, o usarli per costruire smussi asimmetrici.
 
+Un gradino più sotto ancora c'è `find-sharp-edges`, che non smussa niente: ispeziona la mesh e restituisce l'elenco degli spigoli il cui angolo diedrale supera una soglia (`:angle`, default 30°), ciascuno descritto da una mappa con vertici, posizioni, angolo, punto medio e normali. Accetta lo stesso predicato `:where` di `chamfer-edges` per filtrare per posizione. Serve a ispezionare dove cadrebbe uno smusso prima di applicarlo, o come ingresso per pipeline custom: l'elenco che produce è esattamente il formato che `chamfer-edges` e `chamfer-prisms` accettano.
+
 ### Mesh-refine: suddivisione senza smoothing
 
 `mesh-refine` suddivide i triangoli senza spostare i vertici: la forma resta identica, ma la mesh diventa più densa.

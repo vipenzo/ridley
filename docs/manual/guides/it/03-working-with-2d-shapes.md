@@ -112,7 +112,9 @@ Le coordinate possono essere passate anche come vettore, utile quando i punti ve
 
 `poly` è lo strumento giusto quando hai già le coordinate: vertici misurati da un disegno, punti generati da una formula, oppure profili semplici come triangoli e trapezi dove scrivere le coppie X/Y è più diretto che ragionare in angoli.
 
-Una cosa a cui fare attenzione: `poly` preserva l'ordine di avvolgimento che gli dai. Se i vertici sono in senso orario il profilo viene invertito, e le facce estruse guardano nella direzione sbagliata. Le booleane si comportano in modo strano, la mesh sembra intatta ma i risultati sono sbagliati. La regola è: vertici in senso antiorario nel piano destra-alto. Le primitive e `shape` correggono automaticamente l'avvolgimento; `poly` no.
+Una cosa a cui fare attenzione: `poly` preserva l'ordine di avvolgimento che gli dai. Se i vertici sono in senso orario il profilo viene invertito, e le facce estruse guardano nella direzione sbagliata. Le booleane si comportano in modo strano, la mesh sembra intatta ma i risultati sono sbagliati. La regola è: vertici in senso antiorario nel piano destra-alto. Le primitive e `shape` correggono automaticamente l'avvolgimento; `poly` no. Se te ne accorgi a cose fatte, `reverse-shape` inverte l'avvolgimento di una shape (o di un vettore di shape) e raddrizza le normali.
+
+Per i casi in cui nemmeno `poly` basta, perché i punti vengono da un calcolo, servono dei buchi, o serve controllo esplicito sull'ancoraggio, c'è il costruttore di basso livello `make-shape`: prende un vettore di punti `[x y]` (contorno esterno antiorario, eventuali buchi orari) e li avvolge in una shape. Per tutto il resto i costruttori visti sopra sono più comodi, perché impostano da soli avvolgimento e ancoraggio.
 
 ### `shape`: disegnare con la tartaruga
 
@@ -144,6 +146,10 @@ Un triangolo rettangolo con cateti 4 e 3. Due segmenti, un angolo, e il segmento
 La scelta è quasi sempre ovvia. Se hai le coordinate (misurate, calcolate, copiate da un altro programma), usa `poly`. Se pensi in termini di "vai avanti, gira, vai avanti", usa `shape`. Per profili simmetrici o standard come cerchi, rettangoli e poligoni regolari, le primitive della sezione precedente sono più espressive di entrambi.
 
 Una regola pratica: se stai per scrivere `poly` con un mucchio di coordinate calcolate a mano usando seni e coseni, probabilmente `shape` con i giusti angoli è più leggibile. Se stai per scrivere `shape` con angoli calcolati con `atan2` per raggiungere un punto specifico, probabilmente `poly` con le coordinate dirette è più semplice.
+
+### Importare da SVG
+
+Una shape può anche nascere da SVG: `svg-shapes` legge una stringa SVG e restituisce un vettore di shape (una per elemento geometrico), `svg-shape` ne prende una sola per `:id` o `:index`. È utile soprattutto per riusare arte vettoriale già esistente. C'è però un limite pratico da conoscere: la stringa passata a `(svg ...)` non può contenere il carattere `"`, perché Clojure non ha le raw string e quel carattere chiuderebbe la stringa. L'SVG scritto a mano lo aggira usando l'apice singolo negli attributi; gli SVG esportati da Inkscape o Illustrator usano i doppi apici e quindi non si incollano direttamente, vanno caricati come file. Il caricamento da file, che è la via pratica, è nel cap. 9 (Librerie).
 
 ## Profili come valori
 
@@ -305,6 +311,32 @@ Con `:miter` il rettangolo espanso resta un rettangolo, senza arrotondamenti.
 
 `shape-offset` è spesso il complemento naturale delle booleane: espandi il profilo esterno, contrai per il profilo interno, differenza per il guscio. Lo abbiamo già visto nella 3.5 con il tubo a L, ed è un pattern che si ripete di frequente.
 
+### Operatori generativi
+
+Un'ultima famiglia di operatori non modifica un profilo esistente ma ne deriva uno nuovo per via algoritmica, di solito perforandolo. Producono shape con buchi, che si estrudono e si compongono con le shape-fn come qualsiasi altra.
+
+`voronoi-shell` perfora un profilo con un motivo a celle di Voronoi: i bordi delle celle diventano materiale, gli interni diventano fori.
+
+<!-- example-source: voronoi-shell-tube -->
+```clojure
+(register voro-tube
+  (extrude (voronoi-shell (circle 20) :cells 40 :wall 1.5) (f 50)))
+```
+
+Un tubo traforato: la parete del cilindro è spezzata in 40 celle separate da nervature di 1.5. `:cells` e `:wall` controllano densità e spessore delle celle, `:seed` rende il motivo riproducibile.
+
+`pattern-tile` perfora invece con un motivo ripetuto su griglia: tassella una shape sul bounding box di un'altra e sottrae le copie che si sovrappongono.
+
+<!-- example-source: pattern-tile-grid -->
+```clojure
+(register grid-plate
+  (extrude (pattern-tile (rect 60 40) (circle 2 16) :spacing [6 6]) (f 3)))
+```
+
+Una piastra con una griglia regolare 6×6 di fori circolari. Il motivo può essere qualsiasi shape, non solo un cerchio; `:spacing` controlla il passo della griglia, `:inset` restringe ogni copia prima di sottrarla.
+
+Sono i primi di una famiglia che può crescere: operatori che generano geometria 2D da una regola invece che da coordinate o comandi tartaruga.
+
 ## Dove si usano le shape
 
 Abbiamo aperto il capitolo mostrando `extrude` come motivazione: le shape servono perché diventano solidi. Ma `extrude` non è l'unico consumatore. Ecco la mappa completa dei posti in cui una shape viene accettata come input.
@@ -354,7 +386,7 @@ Visualizza il profilo come contorno 2D nella posa corrente della tartaruga, senz
 
 ### Operatori 2D
 
-Le shape sono anche input di altri operatori 2D: le booleane (`shape-union`, `shape-difference`, `shape-intersection`, `shape-xor`), i modificatori (`shape-offset`, `fillet-shape`, `chamfer-shape`, `shape-hull`, `shape-bridge`), le trasformazioni (`scale`, `rotate`, `translate`, `morph-shape`, `resample-shape`), e `pattern-tile`. Il risultato è sempre un'altra shape, pronta per essere data in pasto a uno dei consumatori qui sopra. Li abbiamo visti nelle sezioni 3.5 e 3.6.
+Le shape sono anche input di altri operatori 2D: le booleane (`shape-union`, `shape-difference`, `shape-intersection`, `shape-xor`), i modificatori (`shape-offset`, `fillet-shape`, `chamfer-shape`, `shape-hull`, `shape-bridge`), le trasformazioni (`scale`, `rotate`, `translate`, `morph-shape`, `resample-shape`), e gli operatori generativi (`voronoi-shell`, `pattern-tile`). Il risultato è sempre un'altra shape, pronta per essere data in pasto a uno dei consumatori qui sopra. Li abbiamo visti nelle sezioni 3.5 e 3.6.
 
 ### Riepilogo
 
