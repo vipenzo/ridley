@@ -29,7 +29,7 @@
 ;; browser (header included, so the ← button reflects the current history).
 (defonce ^:private mount (atom {:container nil :lang nil}))
 
-(declare render!)
+(declare render! go!)
 
 (defn- rerender! []
   (let [{:keys [container lang]} @mount]
@@ -66,9 +66,18 @@
    caller can fall back to default link behaviour."
   [target]
   (if-let [nm (resolve-symbol target)]
-    (do (reset! state (assoc blank-state :view :detail :selected nm))
-        (manual/open-manual! :reference)
-        true)
+    (do
+      (if (and (manual/open?) (= :reference (manual/get-current-page)))
+        ;; Already inside the open browser (e.g. a card 'See also' link): an
+        ;; internal navigation, recorded in the in-Reference history.
+        (go! {:view :detail :selected nm :query ""})
+        ;; Entering from elsewhere (a guide link or the editor tooltip): start
+        ;; a fresh browser state and navigate via the manual, so the page we
+        ;; came from is pushed onto the manual history and ← returns to it.
+        (do (reset! state (assoc blank-state :view :detail :selected nm))
+            (when-not (manual/open?) (manual/open-manual!))
+            (manual/navigate-to! :reference)))
+      true)
     false))
 
 ;; ── Navigation (history for ←, containing level for ↑) ────────
