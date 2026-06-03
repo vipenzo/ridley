@@ -64,3 +64,23 @@ Il modello che vedi nel viewport è esattamente quello che finisce nel file: ste
 Le unità di Ridley sono millimetri. Se il tuo modello è parametrico, controlla con `bounds` che le dimensioni finali siano quelle che ti aspetti prima di esportare.
 
 `mesh-diagnose` (capitolo 7.1) è lo strumento per verificare che la mesh sia sana prima dell'export. La maggior parte degli slicer ripara automaticamente piccoli difetti, ma mesh con molti open-edge o non-manifold-edge possono produrre risultati imprevedibili nello slicing.
+
+## 17.3 Orientare per la stampa
+
+Lo slicer si aspetta il modello appoggiato sul piano di stampa. Se il pezzo è stato costruito in un orientamento qualsiasi, `lay-flat` lo ruota in modo che una sua faccia poggi sul piano XY del mondo, e ricentra il risultato sull'origine. È il passo esplicito per dare al pezzo l'orientamento di stampa senza rimodellarlo.
+
+<!-- example-source: lay-flat-default -->
+```clojure
+(register bracket (-> (box 30 20 8) (lay-flat)))
+```
+
+Senza argomenti `lay-flat` usa `:bottom`: prende la faccia inferiore più grande e la appoggia sul piano. Per i pezzi asimmetrici l'orientamento di stampa migliore spesso non è il fondo. Una keyword di direzione (`:top`, `:bottom`, `:up`, `:down`, `:left`, `:right`) sceglie la faccia più grande su quel lato e la mette giù.
+
+<!-- example-source: lay-flat-direction -->
+```clojure
+(register sideways (-> (box 40 10 20) (lay-flat :left)))
+```
+
+Quando la faccia di stampa non è allineata a una direzione cardinale, la si può marcare come anchor con `attach-path` e passare il nome dell'anchor a `lay-flat` (`(lay-flat :part :print-face)`): viene messo a piano il piano dell'anchor, qualunque sia il suo orientamento.
+
+Due cose da ricordare. `lay-flat` ricentra il pezzo sull'origine: se ti serve tenere un angolo preciso a `[0 0 0]`, segui con un `translate`. E opera sui vertici, non sulla `:creation-pose`, che resta all'origine di costruzione; se serve riancorarla c'è `reset-creation-pose`. Per le mesh senza face group, come i risultati di una booleana, i gruppi di facce vengono dedotti automaticamente per adiacenza complanare e la faccia più grande viene scelta da quel raggruppamento.

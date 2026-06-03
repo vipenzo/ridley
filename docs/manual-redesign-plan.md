@@ -868,16 +868,16 @@ Se il piano non viene aggiornato a fine sessione, ricominciano i problemi di mem
   - cap. 3 ✓ (`voronoi-shell` + `pattern-tile` come sottosezione "Operatori generativi", verificati funzionanti; `svg-shapes`/`svg-shape` in §3.3 col vincolo del `"`; `make-shape`, `reverse-shape`; `stamp-visibility` già coperto da show/hide-stamps in §3.2)
   - cap. 4 ✓ (`loft-between` riassegnato al cap. 6, è solo un alias del `loft` a due shape; `extrude-axis`/`extrude-z`/`extrude-y` testati no-op da Vincenzo e tolti dalla guida: la scheda Reference `extrude-axis.md` documenta una funzione che non fa nulla, da correggere o rimuovere)
   - cap. 5 ✓ (`subpath-y` in §5.8, esempio sistemato da Vincenzo e funzionante; il 2° esempio della scheda Reference è ancora sotto indagine di Code; `bounds-2d` rimosso dalla guida perché è l'implementazione per le shape della `bounds` polimorfica, si cita `bounds` non `bounds-2d` → Reference; `path?` → Reference)
-  - cap. 6 ✓ da verificare (`fbm` come mattone in §6.3 displaced, esempio rocky dalla scheda; `loft-between` come nota in §6.4 morphed, forma grezza del morphing a due shape, senza esempio nuovo)
+  - cap. 6 ✓ (`fbm` come mattone in §6.3 displaced, esempio rocky verificato funzionante; `loft-between` come nota in §6.4 morphed, forma grezza del morphing a due shape, senza esempio nuovo)
   - cap. 7 ✓ (`find-sharp-edges` in §7.3 come ispezione di basso livello, prosa senza esempio; il ricordo di "averne già parlato" era probabilmente `chamfer-edges`/`chamfer-prisms`, già in §7.3 e concettualmente identici; `lay-flat` spostato al cap. 17, vedi sotto; `mesh?` → Reference)
-  - cap. 8: `cp-th`, `reset-creation-pose` (`link!`/`unlink!` spostati al gruppo B: le schede dicono che sono binding a tempo di animazione, a costruzione non muovono niente, quindi sono rigging d'animazione, non assemblaggio statico)
-  - cap. 11/turtle: `get-anchor`, `pen`
+  - cap. 8 ✓ (famiglia di rotazione `cp-th`/`cp-tv`/`cp-tr` aggiunta in §8.2 accanto a `cp-f`/`cp-u`/`cp-rt`, esempio `cp-rotation-bracket` verificato; `reset-creation-pose` lasciata solo in Reference, Vincenzo non le trova un uso; `link!`/`unlink!` → gruppo B, binding a tempo di animazione)
+  - `get-anchor` e `pen` ✓ (collocati nel cap. 5, non "cap. 11/turtle" della triage: `get-anchor` accanto ad `anchors` in §5.8, `pen` in §5.2 con show/hide-lines)
   - cap. 12: niente del gruppo A (`sdf-revolve` derubricato a Reference, è l'implementazione SDF della `revolve` polimorfica, stesso caso di `bounds-2d`)
-  - cap. 15: `line-visibility`, `show-only-objects`, `show-turtle`, `fit-camera`
-  - cap. 17: `lay-flat` (preparazione alla stampa STL, non cap. 7; da verificare prima di documentare, Vincenzo non è sicuro che funzioni del tutto)
+  - cap. 15: niente del gruppo A. Le quattro funzioni di visibilità (`line-visibility`, `show-only-objects`, `show-turtle`, `fit-camera`) sono quasi internals: per l'uso normale sono mappate sui bottoni della UI, da codice interessano solo a chi fa qualcosa di molto particolare. Vanno al cap. 18 (Estendere Ridley) quando lo faremo, non al cap. 15.
+  - cap. 17 ✓ (`lay-flat` come nuova sezione 17.3 "Orientare per la stampa"; esempi default e direzione runnable, modalità anchor in prosa; esempi da verificare)
   Fuori: gruppo B (animazione/interattivo) come decisione separata, ora include anche `link!`/`unlink!` (rigging parent/child a tempo di animazione); predicati e gruppo C alla Reference.
   NB verifica: gli esempi del gap-fill sono presi dalle schede Reference e non eseguiti da Claude nel REPL; vanno fatti girare (i blocchi example-source) per confermarli, perché le schede possono essere sbagliate (caso `extrude-axis`, no-op silenzioso).
-  Stato: ritmo rallentato su richiesta (2026-06). Cap. 3-5 confermati; cap. 6-7 fatti (`fbm` da verificare). Restano cap. 8 (`cp-th`, `reset-creation-pose`), `get-anchor`/`pen` da collocare, cap. 15, e `lay-flat` al cap. 17 da verificare. Ripresa al passo dell'autore.
+  Stato: ritmo rallentato su richiesta (2026-06). Gruppo A CHIUSO: tutti i simboli collocati o rimandati. Cap. 3-8 e 17 fatti e confermati (`fbm`, `cp-rotation-bracket` verificati; esempi `lay-flat` da verificare); `get-anchor`/`pen` nel cap. 5. Le 4 funzioni di visibilità spostate al cap. 18 (non cap. 15). Aperti: capitolo 18 (internals/estendere, che ora raccoglie anche le 4 di visibilità) e la decisione sul capitolo Animazione (gruppo B + `link!`/`unlink!`).
 
 #### Da fare (prossimi)
 

@@ -120,6 +120,20 @@ Registrati nello stesso punto, i due cubi si dispongono in colonna, combaciando 
 
 Lo stesso shift cambia anche dove atterra ciò che agganci *al* box: qualunque cosa attaccata a `box-top-anchor` arriva sulla sua faccia superiore. Il meccanismo è uno solo; cambia il lato della relazione da cui lo guardi.
 
+### Ruotare invece di traslare
+
+`cp-f`, `cp-u`, `cp-rt` spostano la *posizione* della geometria sotto l'ancora. La famiglia gemella `cp-th`, `cp-tv`, `cp-tr` ne ruota l'*orientamento*: la geometria gira sotto l'ancora (di `-angle` attorno a up, right o heading rispettivamente) mentre l'orientamento della creation-pose resta fermo nel mondo. `(cp-th a)` ruota attorno all'up, `(cp-tv a)` attorno al right, `(cp-tr a)` attorno all'heading.
+
+La differenza rispetto a ruotare il pezzo con un normale `th`/`tv`/`tr` dentro `attach` è proprio questa: con `cp-*` l'ancora non si muove. Conta quando l'orientamento dell'ancora verrà letto a valle, tipicamente da un `move-to` che ne adotta heading e up. Ruotando la geometria con `cp-tv` invece che con `tv`, un `move-to` successivo di questo pezzo si comporta come se la rotazione non ci fosse: l'ancora punta ancora dove puntava prima.
+
+<!-- example-source: cp-rotation-bracket -->
+```clojure
+(register bracket
+  (attach (extrude (rect 8 3) (f 15)) (cp-tv 30)))
+```
+
+Il profilato si inclina di 30° sotto l'ancora, ma l'ancora continua a puntare lungo +X. Come per la famiglia di posizione, le rotazioni `cp-*` si concatenano nel frame originale della creation-pose, non in quello già ruotato.
+
 ### La creation-pose come pivot di rotazione
 
 Una rotazione applicata dentro `attach` ruota il pezzo attorno alla creation-pose. Questo è il motivo principale per cui vale la pena spostare la creation-pose: non solo per posizionare correttamente, ma per ruotare attorno al punto giusto.

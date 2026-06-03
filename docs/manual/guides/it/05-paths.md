@@ -68,6 +68,8 @@ La tartaruga percorre il path e disegna il tracciato come linea di costruzione. 
 
 Le linee tracciate dalla tartaruga (sia via `follow-path` sia da movimenti diretti) si possono mostrare o nascondere con il bottone "Lines" nella toolbar del viewport, oppure con `(show-lines)` / `(hide-lines)` da codice.
 
+`show-lines` e `hide-lines` controllano la visibilità globale delle linee già tracciate. Se invece vuoi che un singolo spostamento non lasci traccia, è la penna della tartaruga a deciderlo: `(pen :off)` (o `pen-up`) la solleva, e i movimenti successivi non disegnano; `(pen :on)` (o `pen-down`) la riabbassa. La penna è uno stato della tartaruga, ereditato dagli scope `turtle` annidati.
+
 ## Marks: tag dentro un path
 
 Un path non è solo una traiettoria: è anche un posto dove lasciare dei segnaposto. `mark` registra la posa della tartaruga (posizione, direzione, orientamento) in un punto del percorso, con un nome.
@@ -364,6 +366,8 @@ Restituisce la mappa mark→posa di un path. Usato per iterare su tutti i mark, 
 (for [m (keys (anchors my-path))]
   (attach (cyl 3 10) (move-to my-path :at m :align)))
 ```
+
+`get-anchor` è la versione per singolo nome: dentro uno scope `with-path` legge la posa completa (`:position`, `:heading`, `:up`) di un anchor dalla tartaruga corrente, oppure `nil` se quel nome non è in scope. Utile per misure e calcoli a runtime, per esempio la distanza fra due mark.
 
 ### path-to-shape, stroke-shape
 
