@@ -14,7 +14,7 @@ status: stable
 ## Description
 
 Return the angle (radians) of a 2D point relative to the origin. Defined
-as `(Math/atan2 y x)` over the point's components, so the result is in
+as `(atan2 y x)` over the point's components, so the result is in
 `(-π, π]` with `+x` mapping to `0` and `+y` mapping to `π/2`. Does not
 modify turtle state.
 
@@ -50,7 +50,7 @@ there.
 (register petals
   (loft (displaced (circle 18 96)
                    (fn [p t]
-                     (* 2 (Math/sin (* (angle p) 8)))))
+                     (* 2 (sin (* (angle p) 8)))))
         (f 20)))
 ```
 <!-- /example-source -->

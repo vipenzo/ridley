@@ -39,7 +39,7 @@ radial-from-centroid behaviour without the full `displaced` /
 ```clojure
 (def lumpy
   (displace-radial (circle 15 64)
-                   (fn [p] (* 1.5 (Math/sin (* (angle p) 5))))))
+                   (fn [p] (* 1.5 (sin (* (angle p) 5))))))
 
 (register lumpy-prism (extrude lumpy (f 10)))
 ```

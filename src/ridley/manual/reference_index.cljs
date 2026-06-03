@@ -36,7 +36,7 @@
     :status "stable"
     :since ""
     :signature "(angle p)"
-    :description "Return the angle (radians) of a 2D point relative to the origin. Defined as `(Math/atan2 y x)` over the point's components, so the result is in `(-π, π]` with `+x` mapping to `0` and `+y` mapping to `π/2`. Does not modify turtle state."
+    :description "Return the angle (radians) of a 2D point relative to the origin. Defined as `(atan2 y x)` over the point's components, so the result is in `(-π, π]` with `+x` mapping to `0` and `+y` mapping to `π/2`. Does not modify turtle state."
     :path "docs/manual/reference/en/angle.md"}
 
    "anim!"

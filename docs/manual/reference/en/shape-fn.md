@@ -41,7 +41,7 @@ package as a reusable shape-fn.
 (def pulsing
   (shape-fn (circle 20)
             (fn [s t]
-              (scale-shape s (+ 0.6 (* 0.4 (Math/sin (* t Math/PI))))))))
+              (scale-shape s (+ 0.6 (* 0.4 (sin (* t PI))))))))
 
 (register pulse (loft pulsing (f 40)))
 ```
@@ -59,7 +59,7 @@ ends, narrow in the middle.
 (def wobble
   (shape-fn (tapered (circle 20) :to 0.4)
             (fn [s t]
-              (rotate-shape s (* 30 (Math/sin (* t 4 Math/PI)))))))
+              (rotate-shape s (* 30 (sin (* t 4 PI)))))))
 
 (register wobbly-cone (loft wobble (f 40)))
 ```

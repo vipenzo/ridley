@@ -38,7 +38,7 @@ all implemented in terms of `displaced`.
 ```clojure
 (register wave
   (loft (displaced (circle 15 64)
-                   (fn [p t] (* 2 (Math/sin (+ (* (angle p) 6) (* t 8))))))
+                   (fn [p t] (* 2 (sin (+ (* (angle p) 6) (* t 8))))))
         (f 40)))
 ```
 <!-- /example-source -->

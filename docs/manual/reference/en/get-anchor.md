@@ -52,7 +52,7 @@ Inside a `with-path` scope, the wrist mark resolves to an anchor map. `get-ancho
   (let [pa (:position (get-anchor a))
         pb (:position (get-anchor b))
         d  (vec3- pb pa)]
-    (js/Math.sqrt (vec3-dot d d))))
+    (sqrt (vec3-dot d d))))
 
 (def skel (path (mark :a) (f 10) (th 30) (f 18) (mark :b)))
 

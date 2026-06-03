@@ -54,7 +54,7 @@ The commands of `segment` (including its `mark`) are inlined into
   (path
     (side-trip
       (th (if (pos? side) 90 -90))
-      (f (Math/abs side))
+      (f (abs side))
       (tv -90) (f depth) (tv 90)
       (mark mname))))
 

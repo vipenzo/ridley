@@ -80,7 +80,7 @@ the path, weft threads run around the circumference.
 (register undulating
   (loft (woven-shell (circle 20 128) :thickness 3
                      :fn (fn [a t] {:thickness 0.8
-                                    :offset (* 0.5 (Math/sin (* a 4)))}))
+                                    :offset (* 0.5 (sin (* a 4)))}))
         (f 50)))
 ```
 <!-- /example-source -->

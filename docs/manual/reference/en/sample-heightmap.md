@@ -53,8 +53,8 @@ sampler wraps so the second call is equivalent to `(0.25, 0.75)`.
                    (fn [p t]
                      (* 1.5
                         (- (sample-heightmap hm
-                                             (/ (+ (angle p) Math/PI)
-                                                (* 2 Math/PI))
+                                             (/ (+ (angle p) PI)
+                                                (* 2 PI))
                                              t)
                            0.5))))
         (f 40)))

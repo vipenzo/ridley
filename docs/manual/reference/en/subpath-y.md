@@ -58,12 +58,12 @@ the original axisymmetric surface.
 
 <!-- example-source: subpath-y-stacked -->
 ```clojure
-(def col (path (f 30) (th 90) (f 10) (th -90) (f 30)))
+(def col (path (f 30) (th 120) (f 60)))   ; a cone: radius 30 at the base, apex on the axis, ~52 tall
 
 (register lower (revolve (path-to-shape (subpath-y col 0 25))))
 (register upper (translate
-                  (revolve (path-to-shape (subpath-y col 25 60)))
-                  [0 0 25]))
+                  (revolve (path-to-shape (subpath-y col 25 52)))
+                  0 0 25))
 ```
 <!-- /example-source -->
 

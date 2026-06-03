@@ -139,7 +139,7 @@ Checkerboard pattern, useful as a base for filtered or screened surfaces.
 ```clojure
 (register custom
   (loft (shell (circle 20 64) :thickness 3
-                :fn (fn [a t] (max 0 (Math/sin (+ (* a 8) (* t Math/PI 6))))))
+                :fn (fn [a t] (max 0 (sin (+ (* a 8) (* t PI 6))))))
         (f 50)))
 ```
 <!-- /example-source -->

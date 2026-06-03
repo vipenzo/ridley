@@ -65,7 +65,7 @@ place as the spine before the side-trip — the body's `(th 90) (f 27)
   (path
     (side-trip
       (th (if (pos? side) 90 -90))
-      (f (Math/abs side))
+      (f (abs side))
       (tv -90) (f depth) (tv 90)
       (mark mname))))
 

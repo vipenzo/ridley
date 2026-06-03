@@ -45,8 +45,8 @@ control over the anchoring flags is required.
 <!-- example-source: make-shape-basic -->
 ```clojure
 (def pts (vec (for [i (range 12)]
-                (let [a (* i (/ (* 2 Math/PI) 12))]
-                  [(* 18 (Math/cos a)) (* 12 (Math/sin a))]))))
+                (let [a (* i (/ (* 2 PI) 12))]
+                  [(* 18 (cos a)) (* 12 (sin a))]))))
 (register oval (extrude (make-shape pts {:centered? true}) (f 6)))
 ```
 <!-- /example-source -->
