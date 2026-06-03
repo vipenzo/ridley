@@ -418,46 +418,49 @@
 (defn ^:export lay-flat-impl
   ([mesh] (lay-flat-impl mesh nil))
   ([mesh target]
-   (cond
-     ;; Anchor keyword from :mark
-     (and (keyword? target)
-          (not (#{:top :bottom :up :down :left :right} target)))
-     (let [pose (or (get @state/mark-anchors target)
-                    (get-in @@state/turtle-state-var [:anchors target]))]
-       (if pose
-         (lay-flat-with-normal mesh
-                               (:heading pose)
-                               (fn [rotated-verts]
-                                 (let [normal (:heading pose)
-                                       tgt [0.0 0.0 -1.0]
-                                       dot-nt (math/dot normal tgt)
-                                       rot-fn (if (> (js/Math.abs dot-nt) 0.9999)
-                                                (if (neg? dot-nt)
-                                                  identity
-                                                  (let [perp (if (> (js/Math.abs (nth normal 0)) 0.9) [0 1 0] [1 0 0])]
-                                                    #(math/rotate-point-around-axis % perp js/Math.PI)))
-                                                (let [axis (math/normalize (math/cross normal tgt))
-                                                      angle (js/Math.acos (max -1.0 (min 1.0 dot-nt)))]
-                                                  #(math/rotate-point-around-axis % axis angle)))]
-                                   (rot-fn (or (:pos pose) (:position pose))))))
-         (throw (js/Error. (str "lay-flat: no anchor named " target)))))
+   (let [mesh (if (map? mesh) mesh (or (registry/get-mesh mesh) mesh))]
+     (cond
+     ;; Anchor keyword from :mark — resolve on the mesh's own anchors (set by
+     ;; attach-path) first, then fall back to global mark / turtle state.
+       (and (keyword? target)
+            (not (#{:top :bottom :up :down :left :right} target)))
+       (let [pose (or (get-in mesh [:anchors target])
+                      (get @state/mark-anchors target)
+                      (get-in @@state/turtle-state-var [:anchors target]))]
+         (if pose
+           (lay-flat-with-normal mesh
+                                 (:heading pose)
+                                 (fn [rotated-verts]
+                                   (let [normal (:heading pose)
+                                         tgt [0.0 0.0 -1.0]
+                                         dot-nt (math/dot normal tgt)
+                                         rot-fn (if (> (js/Math.abs dot-nt) 0.9999)
+                                                  (if (neg? dot-nt)
+                                                    identity
+                                                    (let [perp (if (> (js/Math.abs (nth normal 0)) 0.9) [0 1 0] [1 0 0])]
+                                                      #(math/rotate-point-around-axis % perp js/Math.PI)))
+                                                  (let [axis (math/normalize (math/cross normal tgt))
+                                                        angle (js/Math.acos (max -1.0 (min 1.0 dot-nt)))]
+                                                    #(math/rotate-point-around-axis % axis angle)))]
+                                     (rot-fn (or (:pos pose) (:position pose))))))
+           (throw (js/Error. (str "lay-flat: no anchor named " target)))))
 
      ;; Direction keyword
-     (keyword? target)
-     (let [mesh (faces/ensure-face-groups mesh)
-           face (faces/largest-face mesh target)]
-       (when face
-         (let [info (faces/compute-face-info (:vertices mesh)
-                                             (get (:face-groups mesh) (:id face)))
-               face-indices (:vertices info)]
-           (lay-flat-with-normal mesh (:normal info)
-                                 (fn [rotated-verts]
-                                   (let [fv (mapv #(nth rotated-verts %) face-indices)]
-                                     (math/v* (reduce math/v+ fv) (/ 1.0 (count fv)))))))))
+       (keyword? target)
+       (let [mesh (faces/ensure-face-groups mesh)
+             face (faces/largest-face mesh target)]
+         (when face
+           (let [info (faces/compute-face-info (:vertices mesh)
+                                               (get (:face-groups mesh) (:id face)))
+                 face-indices (:vertices info)]
+             (lay-flat-with-normal mesh (:normal info)
+                                   (fn [rotated-verts]
+                                     (let [fv (mapv #(nth rotated-verts %) face-indices)]
+                                       (math/v* (reduce math/v+ fv) (/ 1.0 (count fv)))))))))
 
      ;; Default: bottom
-     :else
-     (lay-flat-impl mesh :bottom))))
+       :else
+       (lay-flat-impl mesh :bottom)))))
 
 ;; ============================================================
 ;; Attach: helpers for move-to replay

@@ -309,15 +309,21 @@
   (get-in @(turtle-ref) [:anchors name]))
 
 (defn ^:export implicit-attach-path
-  "Associate a path's marks as anchors on a registered mesh.
-   Resolves the path marks at the mesh's creation-pose."
-  [mesh-name path-data]
-  (when-let [mesh (registry/get-mesh mesh-name)]
-    (let [pose (or (:creation-pose mesh)
-                   {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})
-          anchors (turtle/resolve-marks pose path-data)]
-      (when (seq anchors)
-        (registry/register-mesh! mesh-name (assoc mesh :anchors anchors))))))
+  "Associate a path's marks as anchors on a mesh, resolved at the mesh's
+   creation-pose. Accepts either a registered mesh name (re-registers it in
+   place) or a mesh value (returns a new mesh, so it threads through `->`).
+   Returns the updated mesh."
+  [mesh-or-name path-data]
+  (let [by-name? (not (map? mesh-or-name))
+        mesh (if by-name? (registry/get-mesh mesh-or-name) mesh-or-name)]
+    (when mesh
+      (let [pose (or (:creation-pose mesh)
+                     {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})
+            anchors (turtle/resolve-marks pose path-data)
+            updated (cond-> mesh (seq anchors) (assoc :anchors anchors))]
+        (when (and by-name? (seq anchors))
+          (registry/register-mesh! mesh-or-name updated))
+        updated))))
 
 (defn ^:export implicit-anchors
   "Return the named anchors of a registered mesh OR a path.

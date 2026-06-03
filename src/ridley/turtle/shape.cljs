@@ -1027,8 +1027,12 @@
         eps 0.0001
         y-start (second (first pts))
         y-end (second (peek pts))
-        ;; Detect direction: -1 if path goes downward, +1 if upward
-        y-dir (if (< y-end y-start) -1 1)
+        ;; Detect direction: -1 if path goes downward, +1 if upward.
+        ;; Use eps so a path that returns to (or near) its start height — e.g.
+        ;; a closed silhouette whose last point lands ~1e-14 below the first
+        ;; from float noise — counts as upward instead of flipping all heights
+        ;; negative (which would empty every positive height range).
+        y-dir (if (< y-end (- y-start eps)) -1 1)
         ;; Convert each point to [x, height] where height >= 0
         xh-pts (mapv (fn [[x y]] [x (* y-dir (- y y-start))]) pts)
         in? (fn [[_ h]] (and (>= h (- from-h eps)) (<= h (+ to-h eps))))

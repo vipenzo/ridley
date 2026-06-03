@@ -16,6 +16,18 @@
 (defn- type-error [op-name x]
   (throw (js/Error. (str op-name ": unsupported argument type. Expected mesh, SDF, or 2D shape."))))
 
+(defn- check-offsets
+  "Validate that `args` are exactly `n` numeric offsets. Catches the common
+   (translate thing [dx dy dz]) mistake — a vector would otherwise flow into
+   vertex arithmetic and surface as a cryptic malformed-mesh error."
+  [op n args]
+  (when-not (and (= (count args) n) (every? number? args))
+    (let [names (if (= n 2) "dx dy" "dx dy dz")
+          ex    (if (= n 2) "0 5" "0 0 25")]
+      (throw (js/Error.
+              (str op ": expected " n " numeric offsets (" names ") — got " (pr-str (vec args))
+                   ". Use (" op " thing " ex "), not (" op " thing [" ex "])."))))))
+
 (defn- sdf-pivot
   "Position component of an SDF's creation-pose. Every SDF carries one
    (defaulted to world origin at construction), so this is always defined."
@@ -34,14 +46,17 @@
   (cond
     (sdf/sdf-node? thing)
     (let [[dx dy dz] args]
+      (check-offsets "translate" 3 args)
       (sdf/sdf-move thing dx dy dz))
 
     (mesh? thing)
     (let [[dx dy dz] args]
+      (check-offsets "translate" 3 args)
       (attachment/translate-mesh thing [dx dy dz]))
 
     (shape? thing)
     (let [[dx dy] args]
+      (check-offsets "translate" 2 args)
       (xform/translate thing dx dy))
 
     :else (type-error "translate" thing)))
