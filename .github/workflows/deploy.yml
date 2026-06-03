@@ -34,6 +34,9 @@ jobs:
         id: version
         run: echo "tag=${GITHUB_REF_NAME:-dev}" >> "$GITHUB_OUTPUT"
 
+      - name: Sync manual content into public/
+        run: npm run sync-manual
+
       - name: Build production
         run: npx shadow-cljs release app --config-merge '{:closure-defines {ridley.version/VERSION "${{ steps.version.outputs.tag }}"}}'
 
