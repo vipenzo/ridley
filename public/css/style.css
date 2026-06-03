@@ -2603,6 +2603,12 @@ body.resizing-h * {
 }
 .manual-draft-content a:hover { text-decoration: underline; }
 
+/* Auto-linked Reference symbols (backtick code spans): no persistent marker,
+   the affordance appears on hover so the prose isn't visibly flagged everywhere. */
+.manual-draft-content a.manual-autolink { text-decoration: none; cursor: pointer; }
+.manual-draft-content a.manual-autolink:hover { text-decoration: underline; }
+.manual-draft-content a.manual-autolink:hover code { color: #4fc1ff; }
+
 .manual-draft-content hr {
   border: none;
   border-top: 1px solid #333;

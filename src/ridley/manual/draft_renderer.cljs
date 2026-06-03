@@ -13,6 +13,7 @@
             ["marked" :as marked]
             [clojure.string :as str]
             [ridley.editor.codemirror :as cm]
+            [ridley.manual.reference-index :as ref-index]
             [ridley.manual.structure :as structure]))
 
 ;; ── Reference link handler (T-009) ────────────────────────────
@@ -52,6 +53,45 @@
                              (when-let [h @link-handler]
                                (.preventDefault ev)
                                (h href))))))))
+
+;; ── Reference auto-linking (extends T-009) ─────────────────────
+;; At render time, turn every inline backtick code span whose content is
+;; exactly a known Reference symbol into a `ref:NAME` link, so deliberate
+;; mentions of a function become clickable without hand-written markup. Match
+;; is exact against the index keys (which already carry special-char names like
+;; `extrude+` / `transform->`), so the generated `ref:NAME` resolves by name.
+
+(defonce ^:private known-symbol-names
+  (delay (set (keys ref-index/reference-index))))
+
+(defn- symbol-for-card-url
+  "Name of the Reference card served at `url`, matched against the index
+   :path basenames. Used to skip auto-linking a card's own symbol to itself."
+  [url]
+  (when (string? url)
+    (let [base (last (str/split url #"/"))]
+      (some (fn [e] (when (str/ends-with? (str (:path e)) base) (:name e)))
+            (vals ref-index/reference-index)))))
+
+(defn- autolink-references!
+  "Wrap inline `<code>` spans whose text is exactly a known Reference symbol in
+   a `ref:NAME` anchor. Skips code inside example blocks (<pre>), inside an
+   existing anchor (no double-wrapping over manual ref: links), and inside
+   headings. `current-symbol`, when set, is left unlinked (a card's own name)."
+  [container current-symbol]
+  (let [names @known-symbol-names]
+    (doseq [code (array-seq (.querySelectorAll container "code"))]
+      (let [name (str/trim (.-textContent code))]
+        (when (and (contains? names name)
+                   (not= name current-symbol)
+                   (not (.closest code "pre"))
+                   (not (.closest code "a"))
+                   (not (.closest code "h1, h2, h3, h4, h5, h6")))
+          (let [a (.createElement js/document "a")]
+            (.setAttribute a "href" (str "ref:" name))
+            (set! (.-className a) "manual-autolink")
+            (.replaceWith code a)
+            (.appendChild a code)))))))
 
 ;; ── Chapter manifest ──────────────────────────────────────────
 ;;
@@ -531,18 +571,22 @@
 
 (defn- render-md-text!
   "Shared pipeline: example-source markers → strip comments → marked → inject
-   CodeMirror panels and (optionally) a TOC button into `nav-el`."
-  [container-el raw-md nav-el]
-  (let [with-sentinels (replace-example-markers raw-md)
-        cleaned (strip-remaining-comments with-sentinels)
-        html (.parse marked cleaned)]
-    (set! (.-innerHTML container-el) html)
-    (set! (.-className container-el)
-          (str (or (.-className container-el) "") " manual-draft-content"))
-    (enhance-code-blocks! container-el)
-    (wire-reference-links! container-el)
-    (let [headings (collect-headings! container-el)]
-      (inject-toc-button! nav-el headings container-el))))
+   CodeMirror panels, auto-link Reference symbols, and (optionally) a TOC button
+   into `nav-el`. `current-symbol` (a card's own name) is left unlinked."
+  ([container-el raw-md nav-el]
+   (render-md-text! container-el raw-md nav-el nil))
+  ([container-el raw-md nav-el current-symbol]
+   (let [with-sentinels (replace-example-markers raw-md)
+         cleaned (strip-remaining-comments with-sentinels)
+         html (.parse marked cleaned)]
+     (set! (.-innerHTML container-el) html)
+     (set! (.-className container-el)
+           (str (or (.-className container-el) "") " manual-draft-content"))
+     (enhance-code-blocks! container-el)
+     (autolink-references! container-el current-symbol)
+     (wire-reference-links! container-el)
+     (let [headings (collect-headings! container-el)]
+       (inject-toc-button! nav-el headings container-el)))))
 
 (defn render-chapter!
   "Render the draft chapter identified by `page-id` into `container-el`.
@@ -572,7 +616,7 @@
   (-> (fetch-markdown url)
       (.then (fn [raw-md]
                (let [md (-> raw-md strip-frontmatter strip-example-shortcodes)]
-                 (render-md-text! container-el md nil))))
+                 (render-md-text! container-el md nil (symbol-for-card-url url)))))
       (.catch (fn [err]
                 (show-error! container-el
                              (str "Errore caricamento scheda: " (.-message err)))))))
