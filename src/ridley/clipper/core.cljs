@@ -26,21 +26,21 @@
 ;; See also: offsetOpenPath has the same bug but we only use EndType.Polygon.
 (let [co-proto (.-prototype c2/ClipperOffset)]
   (set! (.-offsetPolygon co-proto)
-    (fn [group path]
-      (this-as this
-        (let [area (.area c2/Clipper path)]
-          (when-not (and (not= (neg? area) (neg? (.-_groupDelta this)))
-                         (let [rect (.getBounds c2/Clipper path)
-                               min-dim (* (js/Math.abs (.-_groupDelta this)) 2)]
-                           (or (> min-dim (.-width rect))
-                               (> min-dim (.-height rect)))))
-            (set! (.-outPath group) #js [])
-            (let [cnt (.-length path)]
-              (loop [j 0, k (dec cnt)]
-                (when (< j cnt)
-                  (.offsetPoint this group path j k)
-                  (recur (inc j) j))))
-            (.push (.-outPaths group) (.-outPath group))))))))
+        (fn [group path]
+          (this-as this
+                   (let [area (.area c2/Clipper path)]
+                     (when-not (and (not= (neg? area) (neg? (.-_groupDelta this)))
+                                    (let [rect (.getBounds c2/Clipper path)
+                                          min-dim (* (js/Math.abs (.-_groupDelta this)) 2)]
+                                      (or (> min-dim (.-width rect))
+                                          (> min-dim (.-height rect)))))
+                       (set! (.-outPath group) #js [])
+                       (let [cnt (.-length path)]
+                         (loop [j 0, k (dec cnt)]
+                           (when (< j cnt)
+                             (.offsetPoint this group path j k)
+                             (recur (inc j) j))))
+                       (.push (.-outPaths group) (.-outPath group))))))))
 
 ;; --- Static method wrappers (preserve `this` binding) ---
 
@@ -208,21 +208,21 @@
           ;; Multiple outers — assign holes to containing outer
           (let [outer-pts (mapv #(dedup-consecutive (ensure-ccw (:points %))) outers)
                 hole-assignments (reduce
-                                   (fn [assignments hole]
-                                     (let [hole-pt (first (:points hole))
-                                           outer-idx (some (fn [idx]
-                                                             (when (point-in-polygon? hole-pt (nth outer-pts idx))
-                                                               idx))
-                                                           (range (count outer-pts)))]
-                                       (if outer-idx
-                                         (update assignments outer-idx conj (dedup-consecutive (ensure-cw (:points hole))))
-                                         assignments)))
-                                   (vec (repeat (count outers) []))
-                                   holes)]
+                                  (fn [assignments hole]
+                                    (let [hole-pt (first (:points hole))
+                                          outer-idx (some (fn [idx]
+                                                            (when (point-in-polygon? hole-pt (nth outer-pts idx))
+                                                              idx))
+                                                          (range (count outer-pts)))]
+                                      (if outer-idx
+                                        (update assignments outer-idx conj (dedup-consecutive (ensure-cw (:points hole))))
+                                        assignments)))
+                                  (vec (repeat (count outers) []))
+                                  holes)]
             (mapv (fn [outer-p hole-vecs]
                     (shape/make-shape outer-p
-                                     (cond-> {:centered? true}
-                                       (seq hole-vecs) (assoc :holes (vec hole-vecs)))))
+                                      (cond-> {:centered? true}
+                                        (seq hole-vecs) (assoc :holes (vec hole-vecs)))))
                   outer-pts
                   hole-assignments)))))))
 
@@ -237,24 +237,49 @@
         result (op-fn subject-paths clip-paths c2/FillRule.NonZero)]
     (paths-result->shape result)))
 
+(defn- union-two [a b] (or (clipper-boolean c-union a b) a))
+(defn- difference-two [a b] (or (clipper-boolean c-difference a b) a))
+(defn- intersection-two [a b] (clipper-boolean c-intersect a b))
+
+(defn- collect-shapes
+  "Normalize boolean args: accept (op a b c …) or (op [a b c …])."
+  [first-arg more]
+  (if (and (empty? more) (sequential? first-arg))
+    (vec first-arg)
+    (into [first-arg] more)))
+
 (defn ^:export shape-union
-  "Boolean union of two 2D shapes. Returns the combined shape."
-  [shape-a shape-b]
-  (or (clipper-boolean c-union shape-a shape-b)
-      shape-a))
+  "Boolean union of one or more 2D shapes. Returns the combined shape.
+
+   (shape-union a b)        ; union of two shapes
+   (shape-union a b c d)    ; union of several
+   (shape-union [a b c d])  ; union of a vector of shapes"
+  [first-arg & more]
+  (let [shapes (collect-shapes first-arg more)]
+    (case (count shapes)
+      0 nil
+      1 (first shapes)
+      (reduce union-two shapes))))
 
 (defn ^:export shape-difference
-  "Boolean difference of two 2D shapes (A minus B).
-   Returns shape-a with shape-b cut out."
-  [shape-a shape-b]
-  (or (clipper-boolean c-difference shape-a shape-b)
-      shape-a))
+  "Boolean difference of 2D shapes (A minus B minus C …). The first shape is the
+   base; the rest are cut out. Accepts separate args or a vector."
+  [first-arg & more]
+  (let [shapes (collect-shapes first-arg more)]
+    (case (count shapes)
+      0 nil
+      1 (first shapes)
+      (reduce difference-two shapes))))
 
 (defn ^:export shape-intersection
-  "Boolean intersection of two 2D shapes.
-   Returns the overlapping region."
-  [shape-a shape-b]
-  (clipper-boolean c-intersect shape-a shape-b))
+  "Boolean intersection of 2D shapes (the region common to all). Accepts
+   separate args or a vector."
+  [first-arg & more]
+  (let [shapes (collect-shapes first-arg more)]
+    (case (count shapes)
+      0 nil
+      1 (first shapes)
+      (reduce intersection-two shapes))))
 
 (defn ^:export shape-xor
   "Boolean XOR of two 2D shapes.
@@ -306,15 +331,15 @@
       pts
       (let [build (fn [pts]
                     (reduce
-                      (fn [hull p]
-                        (let [hull (loop [h hull]
-                                     (if (and (>= (count h) 2)
-                                              (<= (cross-2d (nth h (- (count h) 2))
-                                                            (peek h) p) 0))
-                                       (recur (pop h))
-                                       h))]
-                          (conj hull p)))
-                      [] pts))
+                     (fn [hull p]
+                       (let [hull (loop [h hull]
+                                    (if (and (>= (count h) 2)
+                                             (<= (cross-2d (nth h (- (count h) 2))
+                                                           (peek h) p) 0))
+                                      (recur (pop h))
+                                      h))]
+                         (conj hull p)))
+                     [] pts))
             lower (build pts)
             upper (build (rseq pts))]
         (vec (concat (butlast lower) (butlast upper)))))))

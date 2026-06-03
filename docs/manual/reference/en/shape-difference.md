@@ -10,18 +10,23 @@ status: stable
 ## Signature
 
 `(shape-difference a b)`
+`(shape-difference a b c …)`
+`(shape-difference [a b c …])`
 
 ## Description
 
-Subtract shape `b` from shape `a`: return the region of `a` that does not
-overlap `b`. When `b` is entirely inside `a` the result is a shape with a
-hole. Implemented with Clipper2; holes are preserved and propagated.
-Does not modify turtle state.
+Subtract shape `b` (and any further shapes `c`, `d`, …) from shape `a`:
+return the region of `a` that does not overlap the rest. When a subtracted
+shape is entirely inside `a` the result is a shape with a hole. Implemented
+with Clipper2; holes are preserved and propagated. Does not modify turtle
+state.
 
 ## Parameters
 
 - `a` — base shape.
-- `b` — shape to subtract.
+- `b`, … — shapes to subtract. May also be passed as a single vector
+  `[a b …]` with the first element as the base, matching the mesh
+  `difference` form.
 
 ## Example
 

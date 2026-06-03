@@ -1844,8 +1844,8 @@
     :category "2d-shapes"
     :status "stable"
     :since ""
-    :signature "(shape-difference a b)"
-    :description "Subtract shape `b` from shape `a`: return the region of `a` that does not overlap `b`. When `b` is entirely inside `a` the result is a shape with a hole. Implemented with Clipper2; holes are preserved and propagated. Does not modify turtle state."
+    :signature "(shape-difference a b)\n(shape-difference a b c …)\n(shape-difference [a b c …])"
+    :description "Subtract shape `b` (and any further shapes `c`, `d`, …) from shape `a`: return the region of `a` that does not overlap the rest. When a subtracted shape is entirely inside `a` the result is a shape with a hole. Implemented with Clipper2; holes are preserved and propagated. Does not modify turtle state."
     :path "docs/manual/reference/en/shape-difference.md"}
 
    "shape-fn"
@@ -1880,8 +1880,8 @@
     :category "2d-shapes"
     :status "stable"
     :since ""
-    :signature "(shape-intersection a b)"
-    :description "Return the region where shapes `a` and `b` overlap. Implemented with Clipper2; holes are preserved. Does not modify turtle state."
+    :signature "(shape-intersection a b)\n(shape-intersection a b c …)\n(shape-intersection [a b c …])"
+    :description "Return the region where all the given shapes overlap. Implemented with Clipper2; holes are preserved. Does not modify turtle state."
     :path "docs/manual/reference/en/shape-intersection.md"}
 
    "shape-offset"
@@ -1916,8 +1916,8 @@
     :category "2d-shapes"
     :status "stable"
     :since ""
-    :signature "(shape-union a b)"
-    :description "Combine two 2D shapes into their union: the outline that encloses both. Implemented with Clipper2; holes in either input are preserved in the result, and overlapping regions are merged. Does not modify turtle state."
+    :signature "(shape-union a b)\n(shape-union a b c …)\n(shape-union [a b c …])"
+    :description "Combine two or more 2D shapes into their union: the outline that encloses all of them. Implemented with Clipper2; holes in any input are preserved in the result, and overlapping regions are merged. Does not modify turtle state."
     :path "docs/manual/reference/en/shape-union.md"}
 
    "shape-xor"

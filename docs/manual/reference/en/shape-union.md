@@ -10,16 +10,19 @@ status: stable
 ## Signature
 
 `(shape-union a b)`
+`(shape-union a b c …)`
+`(shape-union [a b c …])`
 
 ## Description
 
-Combine two 2D shapes into their union: the outline that encloses both.
-Implemented with Clipper2; holes in either input are preserved in the
-result, and overlapping regions are merged. Does not modify turtle state.
+Combine two or more 2D shapes into their union: the outline that encloses
+all of them. Implemented with Clipper2; holes in any input are preserved in
+the result, and overlapping regions are merged. Does not modify turtle state.
 
 ## Parameters
 
-- `a`, `b` — 2D shapes.
+- `a`, `b`, … — 2D shapes. May also be passed as a single vector `[a b …]`,
+  matching the mesh `union` form.
 
 ## Example
 
