@@ -541,30 +541,71 @@
         (.dispose tex))))
   (reset! panel-objects {}))
 
-(defn- add-lights [scene]
-  (let [;; Hemisphere light for even ambient from sky/ground
-        hemi-light (THREE/HemisphereLight. 0xffffff 0x444444 0.8)
-        ;; Main light from top-front-right
-        main-light (THREE/DirectionalLight. 0xffffff 1.0)
-        ;; Fill light from opposite side (softer)
-        fill-light (THREE/DirectionalLight. 0x8888ff 0.5)
-        ;; Top-down light for horizontal surfaces
-        top-light (THREE/DirectionalLight. 0xffffff 0.6)
-        ;; Bottom fill to illuminate undersides
-        bottom-light (THREE/DirectionalLight. 0xffffff 0.4)
-        ;; Front light
-        front-light (THREE/DirectionalLight. 0xffffff 0.4)]
-    (.set (.-position main-light) 100 150 100)
-    (.set (.-position fill-light) -80 50 -50)
-    (.set (.-position top-light) 0 200 0)
-    (.set (.-position bottom-light) 0 -200 0)
-    (.set (.-position front-light) 0 50 150)
-    (.add scene hemi-light)
-    (.add scene main-light)
-    (.add scene fill-light)
-    (.add scene top-light)
-    (.add scene bottom-light)
-    (.add scene front-light)))
+;; ── Lighting ──────────────────────────────────────────────────
+;; A camera-following headlight (always on) keeps the side you are looking at
+;; lit, regardless of orbit — it shines from the camera toward the origin.
+;; A hemisphere light adds soft ambient. Around the vertical axis sit 8
+;; directional "ring" lights, 45° apart and raised 30°, each toggleable from
+;; Settings so the user picks which fill/accent directions are on.
+
+(def ^:private ring-light-count 8)
+(def ^:private ring-light-elevation-deg 30)
+
+(defonce ^:private ring-lights (atom nil))        ; vector of THREE/DirectionalLight, or nil
+(defonce ^:private ring-enabled-pref (atom nil))  ; desired on/off vector, applied when lights exist
+
+(def ^:private default-ring-enabled
+  "Ring lights on by default: the right-back quadrant relative to the default
+   camera (which looks from -X -Y). Azimuth indices 0 (+X), 1 (+X+Y), 7 (+X-Y)."
+  (vec (map #(boolean (#{0 1 7} %)) (range ring-light-count))))
+
+(defn default-light-config
+  "The built-in ring-light on/off vector (8 booleans)."
+  []
+  default-ring-enabled)
+
+(defn- ring-light-position
+  "World position of ring light `i`: azimuth i·45° around Z, raised 30°, at a
+   large radius (the directional light then points back toward the origin)."
+  [i]
+  (let [az (* i (/ (* 2 js/Math.PI) ring-light-count))
+        el (* ring-light-elevation-deg (/ js/Math.PI 180.0))
+        r 200.0
+        ch (js/Math.cos el)]
+    [(* r ch (js/Math.cos az))
+     (* r ch (js/Math.sin az))
+     (* r (js/Math.sin el))]))
+
+(defn apply-light-config!
+  "Toggle the 8 ring lights from an 8-element boolean vector. nil restores the
+   built-in default. Remembers the preference so it survives a later viewport
+   (re)init, mirroring the reset-view-dir pattern."
+  [enabled]
+  (reset! ring-enabled-pref enabled)
+  (when-let [lights @ring-lights]
+    (let [en (or enabled default-ring-enabled)]
+      (dotimes [i (count lights)]
+        (set! (.-visible ^js (nth lights i)) (boolean (nth en i false)))))))
+
+(defn- add-lights
+  "Viewport lighting: soft hemisphere ambient, a camera-following headlight
+   (child of the camera, aimed at the origin), and 8 toggleable ring lights."
+  [scene camera]
+  (let [hemi (THREE/HemisphereLight. 0xffffff 0x444444 0.5)
+        headlight (THREE/DirectionalLight. 0xffffff 0.7)]
+    (.add scene hemi)
+    ;; Headlight rides the camera and aims at the world origin (its default
+    ;; target), so it always lights the side facing the viewer.
+    (.set (.-position headlight) 0 0 0)
+    (.add camera headlight)
+    (let [lights (vec (for [i (range ring-light-count)]
+                        (let [l (THREE/DirectionalLight. 0xffffff 0.4)
+                              [x y z] (ring-light-position i)]
+                          (.set (.-position l) x y z)
+                          (.add scene l)
+                          l)))]
+      (reset! ring-lights lights)
+      (apply-light-config! @ring-enabled-pref))))
 
 (defn- create-mesh-material
   "Create mesh material from optional material map or use defaults."
@@ -1773,8 +1814,9 @@
       (set! (.-visible turtle-ind) @turtle-visible)
       ;; Initialize with default pose
       (update-turtle-indicator-pose turtle-ind @turtle-pose)
-      ;; Lights stay in scene (not affected by world rotation)
-      (add-lights scene)
+      ;; Hemisphere + ring lights live in the scene (world-fixed); the headlight
+      ;; is parented to the camera inside add-lights.
+      (add-lights scene camera)
       ;; Enable WebXR on renderer
       (xr/enable-xr renderer)
       ;; Setup VR controller (pass world-group for rotation)

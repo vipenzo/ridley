@@ -21,7 +21,8 @@
         :tier :auto}          ; :auto | :tier-1 | :tier-2 | :tier-3
    :audio-feedback true       ; Play sounds on eval success/error
    :curve-resolution nil      ; {:mode :n|:a|:s :value <pos-num>} or nil = built-in default
-   :reset-view-dir nil})      ; [x y z] unit view direction, or nil = built-in default
+   :reset-view-dir nil        ; [x y z] unit view direction, or nil = built-in default
+   :viewport-lights nil})     ; 8-element bool vector (ring lights on/off), or nil = built-in default
 
 ;; =============================================================================
 ;; Settings State
@@ -366,4 +367,17 @@
    3-element [x y z] vector, or nil to revert to the built-in default."
   [value]
   (swap! settings assoc :reset-view-dir value)
+  (save-settings!))
+
+(defn get-viewport-lights
+  "Ring-light on/off toggles as an 8-element boolean vector, or nil for the
+   built-in default."
+  []
+  (:viewport-lights @settings))
+
+(defn set-viewport-lights!
+  "Persist the ring-light on/off vector (8 booleans), or nil to revert to the
+   built-in default."
+  [value]
+  (swap! settings assoc :viewport-lights value)
   (save-settings!))

@@ -1525,7 +1525,17 @@
         "</div>"))
 
      ;; Viewport section — capture the current camera angle as the reset/framing view
-     (let [custom? (some? (settings/get-reset-view-dir))]
+     (let [custom? (some? (settings/get-reset-view-dir))
+           lights (or (settings/get-viewport-lights) (viewport/default-light-config))
+           ;; Azimuth i·45° around the vertical (Z) axis, world direction.
+           light-labels ["+X" "+X +Y" "+Y" "−X +Y" "−X" "−X −Y" "−Y" "+X −Y"]
+           light-checks (apply str
+                               (for [i (range 8)]
+                                 (str "<label class='settings-light-toggle'>"
+                                      "<input type='checkbox' id='settings-light-" i "'"
+                                      (when (nth lights i false) " checked") ">"
+                                      " <span>" (nth light-labels i) "</span>"
+                                      "</label>")))]
        (str
         "<h3 class='settings-section-header'>Viewport</h3>"
         "<div class='settings-field'>"
@@ -1544,6 +1554,16 @@
         "view</strong> to make that angle the one used when fitting new results "
         "and when you press Reset. Only the viewing direction is stored (up stays "
         "vertical); distance keeps auto-fitting to the model."
+        "</div>"
+        "</div>"
+        "<div class='settings-field'>"
+        "<label class='settings-label'>Lights</label>"
+        "<div class='settings-lights-grid'>" light-checks "</div>"
+        "<div class='settings-hint'>"
+        "Directional lights arranged radially around the vertical axis (45° "
+        "apart, raised 30°), each aimed at the centre — toggle which are on. A "
+        "headlight always follows the camera, so the side you face is lit. The "
+        "default view looks from −X −Y, so +X +Y is behind the model."
         "</div>"
         "</div>"))
 
@@ -1738,6 +1758,17 @@
                          (settings/set-reset-view-dir! nil)
                          (viewport/set-reset-view-dir! nil)
                          (re-render))))
+  ;; Viewport: ring-light on/off toggles. Each change reads all 8 boxes, then
+  ;; persists and applies the resulting vector.
+  (doseq [i (range 8)]
+    (when-let [el (.querySelector modal (str "#settings-light-" i))]
+      (.addEventListener el "change"
+                         (fn [_]
+                           (let [v (vec (for [j (range 8)]
+                                          (boolean (when-let [c (.querySelector modal (str "#settings-light-" j))]
+                                                     (.-checked c)))))]
+                             (settings/set-viewport-lights! v)
+                             (viewport/apply-light-config! v))))))
   ;; Audio feedback checkbox (accessibility)
   (when-let [el (.querySelector modal "#settings-audio-feedback")]
     (.addEventListener el "change"
@@ -2677,6 +2708,9 @@
     ;; Restore the user's preferred reset/framing view angle (if any)
     (when-let [d (settings/get-reset-view-dir)]
       (viewport/set-reset-view-dir! d))
+    ;; Restore the user's ring-light toggles (if any; nil keeps the default)
+    (when-let [v (settings/get-viewport-lights)]
+      (viewport/apply-light-config! v))
     (setup-settings)
     ;; Setup sync (desktop <-> headset)
     (setup-sync)

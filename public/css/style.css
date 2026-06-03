@@ -1762,6 +1762,24 @@ body.resizing-h * {
   margin-top: 4px;
 }
 
+/* Viewport ring-light toggles: 4-column grid of small checkboxes. */
+.settings-lights-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px 10px;
+  margin-top: 4px;
+}
+.settings-light-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: #bbb;
+  font-family: "SF Mono", "Monaco", "Menlo", "Consolas", monospace;
+  cursor: pointer;
+}
+.settings-light-toggle input { cursor: pointer; }
+
 .settings-ollama-status {
   padding: 8px 10px;
   background: #1e1e1e;
