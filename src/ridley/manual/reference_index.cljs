@@ -333,7 +333,7 @@
     :status "stable"
     :since ""
     :signature "(cone r1 r2 height)\n(cone r1 r2 height segments)"
-    :description "Create a frustum (truncated cone) mesh at the current turtle position. The frustum axis runs along the turtle's **heading**. `r1` is the radius at the base (turtle position); `r2` is the radius at the far end (at distance `height` along heading). Set `r2 = 0` for a proper cone. Returns a mesh; **does not modify turtle state**."
+    :description "Create a frustum (truncated cone) mesh at the current turtle position. The frustum axis runs along the turtle's **heading**, centered on the turtle. `r1` is the radius at the near/start end; `r2` is the radius at the far end (along heading), matching loft reading order: `(cone r1 r2 h)` ~= `(loft (circle r1) (circle r2) (f h))`. Set `r2 = 0` for a proper cone (apex at the far end). Returns a mesh; **does not modify turtle state**."
     :path "docs/manual/reference/en/cone.md"}
 
    "cp-f"

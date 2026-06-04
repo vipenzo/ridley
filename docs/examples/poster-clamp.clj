@@ -17,7 +17,7 @@
      (attach
       (mesh-union
        (cyl 1 10)
-       (attach (cone 3 1 3) (f 5)))
+       (attach (cone 1 3 3) (f 5)))
       (tv 90) (f -1) (rt y) (u -3)))))
 
 (register ClampDown

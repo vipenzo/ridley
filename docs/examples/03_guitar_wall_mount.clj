@@ -135,7 +135,7 @@
 (def hole
   (mesh-union
    (cyl 2 5 64)
-   (attach (cone 8 2 5 64) (f 2.5))
+   (attach (cone 2 8 5 64) (f 2.5))
    (attach (cyl 9 50 64) (f 28.5))))
 
 ;; Static support (no anello-mobile) so the moving ring can be animated

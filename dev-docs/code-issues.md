@@ -92,8 +92,8 @@ File interno per tracciare piccole incoerenze tra il codice sorgente di Ridley e
 - `(box r u f)` con `r=right, u=up, f=forward (heading)`
 - `(rect r u)` con `r=right, u=up`
 - `(cyl radius height)` con `height along forward (heading)`
-- `(cone r1 r2 height)` con `height along forward (heading)`, `r1=base near turtle`, `r2=top far from turtle`
+- `(cone r1 r2 height)` con `height along forward (heading)`, `r1=near/start radius` (lato −heading), `r2=far radius` (lato +heading) — ordine come loft: `(cone r1 r2 h) ≈ (loft (circle r1) (circle r2) (f h))`. **Flip 2026-06-04**: prima era `r1` verso l'avanti (+heading); invertito per allineare l'ordine dei parametri a `loft`/`extrude`. Implementazione in `make-cone-vertices`, `implicit-sdf-cone`.
 
 Il paragrafo "Orientation" è stato riscritto per chiarire che tutte le primitive con asse di sviluppo (`box`, `cyl`, `cone`) si estendono lungo forward, con sezione nel piano right–up. La nomenclatura `r u f` per i parametri direzionali è stata adottata come convenzione del DSL (vedi quaderno §14.5 del piano).
 
-**Voce gemella ancora aperta**: la docstring di `cyl-with-resolution` (e probabilmente `cone-with-resolution`) nel codice sorgente è ancora stale (vedi voce "Docstring `cyl-with-resolution` disallineata dal comportamento" qui sopra). Vanno aggiornate quando si tocca quel codice.
+**Voce gemella**: la docstring di `cone-with-resolution` è stata allineata durante il flip del 2026-06-04 (ora documenta asse=heading e r1=near/r2=far). Resta da verificare quella di `cyl-with-resolution` (vedi voce "Docstring `cyl-with-resolution` disallineata dal comportamento" qui sopra).

@@ -267,7 +267,7 @@ L'esempio definisce uno skeleton che cambia direzione, e mostra tre modi di usar
 
 (u 50)
 (color 0x000000)
-(def cn (cone 5 1 8))
+(def cn (cone 1 5 8))
 (register axle-stack-offset
   (mesh-union
     (attach cn (move-to axle-skel :at :base))

@@ -78,7 +78,7 @@ PRIMITIVES (3D solids at turtle position):
 (box width depth height)      - Rectangular box
 (sphere radius)
 (cyl radius height)           - Cylinder along heading (default: horizontal along X)
-(cone bottom-radius top-radius height)
+(cone near-radius far-radius height)   ; near = start side, far = along heading (like loft)
 
 CRITICAL: Primitives extend along the turtle's HEADING. Default heading is +X (horizontal).
 To orient a primitive vertically (along Z), use (tv 90) BEFORE creation or wrap with attach:
@@ -525,7 +525,7 @@ PRIMITIVES (3D solids at turtle position):
 (box width depth height)      - Rectangular box
 (sphere radius)
 (cyl radius height)           - Cylinder along heading (default: horizontal along X)
-(cone bottom-radius top-radius height)
+(cone near-radius far-radius height)   ; near = start side, far = along heading (like loft)
 
 CRITICAL: Primitives extend along the turtle's HEADING. Default heading is +X (horizontal).
 To orient a primitive vertically (along Z), use (tv 90) BEFORE creation or wrap with attach:

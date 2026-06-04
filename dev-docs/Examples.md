@@ -46,7 +46,7 @@ Working examples demonstrating Ridley's features.
 (cyl 15 40)
 
 ;; Cone
-(cone 20 5 30)
+(cone 5 20 30)
 ```
 
 ### Positioned Primitives
@@ -1551,7 +1551,7 @@ Different primitives have different face structures:
 ;; => (:top :bottom :side)
 
 ;; Cone: same as cylinder
-(face-ids (stamp (cone 15 5 25)))
+(face-ids (stamp (cone 5 15 25)))
 ;; => (:top :bottom :side)
 
 ;; Sphere: single surface group

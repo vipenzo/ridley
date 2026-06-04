@@ -10,15 +10,16 @@ Verità accertate (vedi diagnosi di Code, T-006 chat 2026-05-16):
 - cyl (r h): r=raggio sezione, h=altezza in avanti (wrapper
   transform-mesh-to-turtle-upright applica swap heading↔up)
 - cone (r1 r2 h): centrato sulla turtle (come box/sphere), facce a +/-h/2
-  lungo l'avanti. r1=raggio della faccia verso l'avanti (heading, = base),
-  r2=raggio della faccia dietro (= top); h=lunghezza totale (stesso wrapper di cyl)
+  lungo l'avanti. r1=raggio della faccia vicino/start (dietro, -heading),
+  r2=raggio della faccia lontana (avanti, +heading); h=lunghezza totale
+  (stesso wrapper di cyl). Ordine come loft: (cone r1 r2 h) ≈ (loft (circle r1) (circle r2) (f h))
 - sphere (r): radialmente simmetrica, orientamento poli invisibile
 
 Tutte le primitive con asse di sviluppo si estendono lungo l'avanti.
 Sezione (se presente) nel piano destra-alto. Regolarità con extrude/loft:
   (box w h d) ≈ (extrude (rect w h) (f d))
   (cyl r h)   ≈ (extrude (circle r) (f h))
-  (cone r1 r2 h) ≈ (loft (circle r2) (circle r1) (f h))  ; loft, NON extrude; cone centrato vs loft all'inizio
+  (cone r1 r2 h) ≈ (loft (circle r1) (circle r2) (f h))  ; loft, NON extrude; cone centrato vs loft all'inizio
 
 Discrepanze sorgente↔realtà tracciate in dev-docs/code-issues.md.
 =========================================================================
@@ -71,14 +72,14 @@ L'ordine "destra, alto, avanti" è inusuale rispetto a CAD più tradizionali. Un
 
 ### Il cono
 
-`cone` crea un tronco di cono: raggio della base, raggio del top, lunghezza lungo l'avanti. Come `box` e `sphere`, il cono nasce centrato sulla tartaruga: le due sezioni circolari stanno lungo l'avanti, a metà lunghezza da una parte e dall'altra, e la tartaruga è equidistante dalle due.
+`cone` crea un tronco di cono: raggio dell'estremità vicina (start), raggio dell'estremità lontana, lunghezza lungo l'avanti. Come `box` e `sphere`, il cono nasce centrato sulla tartaruga: le due sezioni circolari stanno lungo l'avanti, a metà lunghezza da una parte e dall'altra, e la tartaruga è equidistante dalle due. I due raggi seguono lo stesso ordine di lettura di `loft`: `(cone r1 r2 h)` ≈ `(loft (circle r1) (circle r2) (f h))`.
 
 <!-- example-source: primitive-cone -->
 ```clojure
 (register frustum-demo (cone 10 5 30))
 ```
 
-`(cone 10 5 30)` è un tronco di cono lungo 30, con la base di raggio 10 verso l'avanti e il top di raggio 5 dietro: la tartaruga sta al centro, a 15 da ciascuna faccia. Per un cono vero e proprio, mettere zero al raggio del top: `(cone 10 0 30)` (la punta cade sulla faccia dietro).
+`(cone 10 5 30)` è un tronco di cono lungo 30: `r1 = 10` è il raggio dell'estremità vicina (start, dietro), `r2 = 5` quello dell'estremità lontana (in avanti, lungo l'heading) — esattamente la forma di `(loft (circle 10) (circle 5) (f 30))`. La tartaruga sta al centro, a 15 da ciascuna faccia. Per un cono vero e proprio, mettere zero al raggio lontano: `(cone 10 0 30)` (la punta cade sulla faccia in avanti).
 
 ### La sfera
 
@@ -273,7 +274,7 @@ Un cilindro sottile e alto, ruotato di 90° con `tv` per metterlo verticale risp
 
 ```clojure
 (def sail (attach (scale (mesh-intersection
-                           (cone 0 30 30)
+                           (cone 30 0 30)
                            (attach (box 100) (u 50)))
                          1.5 0.1 2)
             (f 26) (u 1)))
@@ -312,7 +313,7 @@ Tutto insieme, ecco il codice completo:
 (def mast (attach (cyl 3 85) (tv 90) (f 18)))
 
 (def sail (attach (scale (mesh-intersection
-                           (cone 0 30 30)
+                           (cone 30 0 30)
                            (attach (box 100) (u 50)))
                          1.5 0.1 2)
             (f 26) (u 1)))

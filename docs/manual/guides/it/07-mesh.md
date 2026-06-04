@@ -265,12 +265,12 @@ Una premessa onesta: smussare gli spigoli di una mesh arbitraria è un problema 
 (f 60)
 (register B (-> (mesh-union
                   (box 30 30 20)
-                  (attach (cone 2 10 50) (f -10) (tv 50)))
+                  (attach (cone 10 2 50) (f -10) (tv 50)))
                 (chamfer :all 4.5)))
 (f 60)
 (register C (-> (mesh-union
                   (box 30 30 20)
-                  (attach (cone 2 10 50) (f -10) (tv 50)))
+                  (attach (cone 10 2 50) (f -10) (tv 50)))
                 (chamfer :all 4.5 :angle 90)))
 ```
 

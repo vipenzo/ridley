@@ -237,7 +237,6 @@
       [[0 (- half-h) 0]
        [0 half-h 0]]))))
 
-
 (defn- make-cylinder-faces
   "Generate cylinder face indices.
    All faces CCW when viewed from outside (standard convention).
@@ -303,24 +302,29 @@
      (update turtle-state :meshes conj mesh))))
 
 (defn- make-cone-vertices
-  "Generate cone/frustum vertices."
+  "Generate cone/frustum vertices.
+   Convention (matches loft/extrude reading order): r1 = radius at the
+   near/start end, r2 = radius at the far end. The turtle transform maps the
+   local -half-h cap onto the +heading (far) side, so that cap carries r2 and
+   the +half-h cap carries r1. Swapping r1<->r2 mirrors the frustum end-for-end.
+   Vertex array order is unchanged (first block = -half-h cap)."
   [r1 r2 height segments]
   (let [step (/ (* 2 Math/PI) segments)
         half-h (/ height 2)]
     (vec
      (concat
-      ;; Bottom circle (r1)
-      (for [i (range segments)]
-        (let [theta (* i step)]
-          [(* r1 (Math/cos theta))
-           (- half-h)
-           (* r1 (Math/sin theta))]))
-      ;; Top circle (r2)
+      ;; -half-h cap -> far end (+heading): r2
       (for [i (range segments)]
         (let [theta (* i step)]
           [(* r2 (Math/cos theta))
-           half-h
+           (- half-h)
            (* r2 (Math/sin theta))]))
+      ;; +half-h cap -> near/start end: r1
+      (for [i (range segments)]
+        (let [theta (* i step)]
+          [(* r1 (Math/cos theta))
+           half-h
+           (* r1 (Math/sin theta))]))
       ;; Center points for caps
       [[0 (- half-h) 0]
        [0 half-h 0]]))))
@@ -328,8 +332,8 @@
 (defn cone-mesh
   "Create a cone/frustum mesh centered at origin.
    Returns mesh data (not transformed, not added to scene).
-   (cone-mesh r1 r2 height) - frustum with bottom radius r1, top radius r2
-   Use r2=0 for a proper cone."
+   (cone-mesh r1 r2 height) - frustum, r1 = near/start radius, r2 = far radius
+   (matches loft reading order). Use r2=0 for a proper cone (apex at the far end)."
   ([r1 r2 height] (cone-mesh r1 r2 height 24))
   ([r1 r2 height segments]
    {:type :mesh
@@ -342,8 +346,8 @@
 (defn cone
   "Create a cone or frustum primitive at current turtle position.
    Returns turtle state with mesh added.
-   (cone r1 r2 height) - frustum with bottom radius r1, top radius r2
-   Use r2=0 for a proper cone."
+   (cone r1 r2 height) - frustum, r1 = near/start radius, r2 = far radius
+   (matches loft reading order). Use r2=0 for a proper cone."
   ([turtle-state r1 r2 height]
    (cone turtle-state r1 r2 height 24))
   ([turtle-state r1 r2 height segments]

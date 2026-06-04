@@ -199,7 +199,7 @@ The wall mount illustrates all three:
 (def hole
   (mesh-union
     (cyl 2 5 64)
-    (attach (cone 8 2 5 64) (f 2.5))
+    (attach (cone 2 8 5 64) (f 2.5))
     (attach (cyl 10 100 64) (f 52.5))))         ; mesh-side detail
 
 (register WallMount

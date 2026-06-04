@@ -172,12 +172,12 @@
      ;; Listello slot: open at the top, with an inner-wall floor
      (attach (box (- inner-w (* 2 inner-wall)) inner-d H) (u inner-wall))
      ;; Entry bevel — left side
-     (attach (cone bevel-base-r bevel-tip-r (+ inner-wall bevel-h-extra))
+     (attach (cone bevel-tip-r bevel-base-r (+ inner-wall bevel-h-extra))
              (rt (- (- (/ inner-w 2) bevel-overlap)))
              (f bevel-axial-pos)
              (th 90))
      ;; Entry bevel — right side
-     (attach (cone bevel-base-r bevel-tip-r (+ inner-wall bevel-h-extra))
+     (attach (cone bevel-tip-r bevel-base-r (+ inner-wall bevel-h-extra))
              (rt (- (/ inner-w 2) bevel-overlap))
              (f bevel-axial-pos)
              (th -90))))
@@ -222,7 +222,7 @@
             (f bracket-out)))
 
    ;; countersunk screw bevel: vertical hole through the wing's centre
-   (attach (cone screw-cs-r1 screw-cs-r2 screw-cs-depth)
+   (attach (cone screw-cs-r2 screw-cs-r1 screw-cs-depth)
            (f screw-pos-out)
            (u screw-pos-up)
            (tv 90))))

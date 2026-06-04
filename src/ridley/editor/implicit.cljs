@@ -617,7 +617,7 @@
    (transform-mesh-to-turtle (prims/sphere-mesh radius segments rings))))
 
 (defn ^:export cyl-with-resolution
-  "Create cylinder mesh at current turtle position, height along turtle's UP axis."
+  "Create cylinder mesh at current turtle position, height along the turtle's heading."
   ([radius height]
    (let [segments (turtle/calc-circle-segments @(turtle-ref) (* 2 Math/PI radius))]
      (transform-mesh-to-turtle-upright (prims/cyl-mesh radius height segments))))
@@ -629,7 +629,10 @@
    (transform-mesh-to-turtle-upright (prims/cyl-mesh radius height segments))))
 
 (defn ^:export cone-with-resolution
-  "Create cone mesh at current turtle position, height along turtle's UP axis."
+  "Create cone mesh at current turtle position, axis along the turtle's heading.
+   (cone r1 r2 height): r1 = radius at the near/start end, r2 = radius at the far
+   end (along heading), matching loft reading order:
+   (cone r1 r2 h) ~= (loft (circle r1) (circle r2) (f h))."
   ([r1 r2 height]
    (let [max-r (max r1 r2)
          segments (turtle/calc-circle-segments @(turtle-ref) (* 2 Math/PI max-r))]
@@ -888,11 +891,12 @@
       transform-sdf-to-turtle))
 
 (defn ^:export implicit-sdf-cone [r1 r2 h]
-  ;; The cone is built with r1 at z=-h/2 and r2 at z=+h/2. Rotate by
-  ;; -90° around Y so r1 ends up at the +heading end (forward) — same
-  ;; convention as mesh `cone`. (sdf-cyl uses +90° because it is
-  ;; symmetric and direction is irrelevant.)
-  (-> (sdf/sdf-cone r1 r2 h)
+  ;; New convention (matches mesh `cone` and loft reading order): r1 = near/start
+  ;; radius, r2 = far (+heading) radius. sdf-cone builds its first arg at z=-h/2,
+  ;; which the -90° Y rotate sends to the +heading end — so pass r2 there and r1
+  ;; at z=+h/2. (sdf-cyl uses +90° because it is symmetric and direction is
+  ;; irrelevant.)
+  (-> (sdf/sdf-cone r2 r1 h)
       (assoc :feature-segments (segments-for-radius (max r1 r2)))
       (sdf/sdf-rotate :y -90)
       transform-sdf-to-turtle))

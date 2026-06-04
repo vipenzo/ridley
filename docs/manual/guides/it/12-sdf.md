@@ -29,7 +29,7 @@ L'esempio dispone tutte le primitive SDF su una fila, e sopra ciascuna (dove esi
 (register s-box       (attach (sdf-box 20 30 36) (rt 100)))
 (register s-rbox      (attach (sdf-rounded-box 30 30 30 6) (rt 150)))
 (register s-cyl       (attach (sdf-cyl 15 36) (rt 200)))
-(register s-cone      (attach (sdf-cone 16 4 36) (rt 250)))
+(register s-cone      (attach (sdf-cone 4 16 36) (rt 250)))
 (register s-torus     (attach (sdf-torus 16 6) (rt 300)))
 
 ;; Fila mesh (in alto, +70 in up), allineata colonna per colonna
@@ -38,7 +38,7 @@ L'esempio dispone tutte le primitive SDF su una fila, e sopra ciascuna (dove esi
 (register m-box    (attach (box 20 30 36) (u 70) (rt 100)))
 ;; (rt 150): nessun rounded-box mesh — colonna vuota
 (register m-cyl    (attach (cyl 15 36) (u 70) (rt 200)))
-(register m-cone   (attach (cone 16 4 36) (u 70) (rt 250)))
+(register m-cone   (attach (cone 4 16 36) (u 70) (rt 250)))
 ;; (rt 300): nessun torus mesh — colonna vuota
 -->
 
@@ -270,7 +270,7 @@ Il parametro `k` non ha un'unità intuitiva: è un coefficiente della funzione s
 (register scooped
   (sdf-blend-difference
     (sdf-rounded-box 30 30 20 3)
-    (attach (sdf-cone 10 2 30) (u 10) (tv 90))
+    (attach (sdf-cone 2 10 30) (u 10) (tv 90))
     3))
 -->
 

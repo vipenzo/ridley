@@ -10,15 +10,16 @@ Verità accertate (vedi diagnosi di Code, T-006 chat 2026-05-16):
 - cyl (r h): r=raggio sezione, h=altezza in avanti (wrapper
   transform-mesh-to-turtle-upright applica swap heading↔up)
 - cone (r1 r2 h): centrato sulla turtle (come box/sphere), facce a +/-h/2
-  lungo l'avanti. r1=raggio della faccia verso l'avanti (heading, = base),
-  r2=raggio della faccia dietro (= top); h=lunghezza totale (stesso wrapper di cyl)
+  lungo l'avanti. r1=raggio della faccia vicino/start (dietro, -heading),
+  r2=raggio della faccia lontana (avanti, +heading); h=lunghezza totale
+  (stesso wrapper di cyl). Ordine come loft: (cone r1 r2 h) ≈ (loft (circle r1) (circle r2) (f h))
 - sphere (r): radialmente simmetrica, orientamento poli invisibile
 
 Tutte le primitive con asse di sviluppo si estendono lungo l'avanti.
 Sezione (se presente) nel piano destra-alto. Regolarità con extrude/loft:
   (box w h d) ≈ (extrude (rect w h) (f d))
   (cyl r h)   ≈ (extrude (circle r) (f h))
-  (cone r1 r2 h) ≈ (loft (circle r2) (circle r1) (f h))  ; loft, NON extrude; cone centrato vs loft all'inizio
+  (cone r1 r2 h) ≈ (loft (circle r1) (circle r2) (f h))  ; loft, NON extrude; cone centrato vs loft all'inizio
 
 Discrepanze sorgente↔realtà tracciate in dev-docs/code-issues.md.
 =========================================================================
@@ -71,14 +72,14 @@ The order "right, up, forward" is unusual compared to more traditional CADs. A u
 
 ### The cone
 
-`cone` creates a truncated cone: radius of the base, radius of the top, length along the heading. Like `box` and `sphere`, the cone is born centered on the turtle: its two circular faces sit along the heading, half the length to either side, and the turtle is equidistant from both.
+`cone` creates a truncated cone: radius of the near/start end, radius of the far end, length along the heading. Like `box` and `sphere`, the cone is born centered on the turtle: its two circular faces sit along the heading, half the length to either side, and the turtle is equidistant from both. The two radii follow the same reading order as `loft`: `(cone r1 r2 h)` ≈ `(loft (circle r1) (circle r2) (f h))`.
 
 <!-- example-source: primitive-cone -->
 ```clojure
 (register frustum-demo (cone 10 5 30))
 ```
 
-`(cone 10 5 30)` is a truncated cone 30 long, with the base of radius 10 facing forward and the top of radius 5 behind: the turtle sits at the center, 15 from each face. For a true cone, set the top radius to zero: `(cone 10 0 30)` (the point falls on the rear face).
+`(cone 10 5 30)` is a truncated cone 30 long: `r1 = 10` is the radius of the near/start end (behind), `r2 = 5` the radius of the far end (forward, along the heading) — exactly the shape of `(loft (circle 10) (circle 5) (f 30))`. The turtle sits at the center, 15 from each face. For a true cone, set the far radius to zero: `(cone 10 0 30)` (the point falls on the forward face).
 
 ### The sphere
 
@@ -273,7 +274,7 @@ A thin tall cylinder, rotated 90° with `tv` to make it vertical relative to the
 
 ```clojure
 (def sail (attach (scale (mesh-intersection
-                           (cone 0 30 30)
+                           (cone 30 0 30)
                            (attach (box 100) (u 50)))
                          1.5 0.1 2)
             (f 26) (u 1)))
@@ -312,7 +313,7 @@ All together, here is the complete code:
 (def mast (attach (cyl 3 85) (tv 90) (f 18)))
 
 (def sail (attach (scale (mesh-intersection
-                           (cone 0 30 30)
+                           (cone 30 0 30)
                            (attach (box 100) (u 50)))
                          1.5 0.1 2)
             (f 26) (u 1)))

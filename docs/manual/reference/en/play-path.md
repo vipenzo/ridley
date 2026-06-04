@@ -45,7 +45,7 @@ Replay the commands of a recorded path as if they had been typed verbatim inside
 (defn lift-and-rotate [h angle]
   (path (f h) (tv 90) (th angle) (tv -90)))
 
-(register marker (cone 4 12))
+(register marker (cone 4 0 12))
 
 ;; Replay the helper's path through the attach machinery
 (attach! :marker (play-path (lift-and-rotate 20 45)))

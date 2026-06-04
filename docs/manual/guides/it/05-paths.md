@@ -91,7 +91,7 @@ Un path non è solo una traiettoria: è anche un posto dove lasciare dei segnapo
     (move-to arm-path :at :elbow :align)))
 
 (register tip
-  (attach (cone 4 0 8)
+  (attach (cone 0 4 8)
     (move-to arm-path :at :hand :align)))
 ```
 

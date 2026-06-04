@@ -5,8 +5,6 @@
 (def La 10)
 (def text-depth 1.2)
 
-
-
 (def base-shape
   (-> (rect L H)
       (fillet-shape 5 :indices [2 3])))
@@ -19,10 +17,9 @@
   (mesh-difference
    (box La Da D)
    (attach (mesh-union
-            (attach (cone 5 2 3) (f 2))
+            (attach (cone 2 5 3) (f 2))
             (cyl 1 4))
            (tv 90))))
-
 
 (def sign
   (->

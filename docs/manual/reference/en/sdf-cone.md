@@ -19,8 +19,9 @@ on the current turtle pose, with its axis along the turtle's *heading*
 computed until meshing.
 
 Like mesh primitives, SDF primitives spawn at the current turtle pose.
-The larger end (`r1`) ends up at +heading (forward), the smaller end
-(`r2`) at -heading (backward), exactly as in mesh `cone`.
+`r1` is the radius at the near/start end (−heading), `r2` the radius at
+the far end (+heading, along the heading) — matching mesh `cone` and the
+reading order of `loft`: `(sdf-cone r1 r2 h)` mirrors `(cone r1 r2 h)`.
 
 Internally, `sdf-cone` is built on top of `sdf-formula` as
 `max(rho - r(z), |z| - h/2)`, where `r(z)` interpolates linearly from
@@ -33,8 +34,8 @@ rather than a perpendicular distance metric).
 
 ## Parameters
 
-- `r1` — radius at the +heading end (forward).
-- `r2` — radius at the -heading end (backward). Use `0` for a sharp tip.
+- `r1` — radius at the near/start end (−heading).
+- `r2` — radius at the far end (+heading, forward). Use `0` for a sharp tip (apex forward).
 - `h` — total height (length along the axis).
 
 ## Example
@@ -47,7 +48,7 @@ rather than a perpendicular distance metric).
 ```
 <!-- /example-source -->
 
-A truncated cone 30 units long with a 8-unit base and 3-unit top.
+A truncated cone 30 units long with an 8-unit near/start end and 3-unit far end.
 
 ## Variations
 

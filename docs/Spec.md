@@ -1005,8 +1005,8 @@ Primitives return mesh data at current turtle position:
 (cyl radius height)              ; Cylinder, height along forward (heading)
 (cyl radius height segments)     ; Custom segments
 
-(cone r1 r2 height)              ; Frustum, height along forward (heading) (r1=base near turtle, r2=top far from turtle)
-(cone r1 r2 height segments)     ; Use r2=0 for proper cone
+(cone r1 r2 height)              ; Frustum, axis along forward (heading); r1 = near/start radius, r2 = far radius — matches loft: (cone r1 r2 h) ~= (loft (circle r1) (circle r2) (f h))
+(cone r1 r2 height segments)     ; Use r2=0 for proper cone (apex at the far end)
 ```
 
 **Orientation:** all primitives with an extension axis (`box`, `cyl`, `cone`) extend along the turtle's forward axis (heading). For `box`, the section is the rectangle in the right–up plane; for `cyl` and `cone`, the section is a circle in the same plane. This matches `extrude` (which extends a 2D section along a forward path), with `box` anchored at center and `extrude` anchored at the base of the path.
@@ -2209,7 +2209,7 @@ Meshing is **lazy**: it happens automatically when an SDF meets a mesh boundary 
 (sdf-box size)                  ; Cube of given side
 (sdf-box sx sy sz)              ; Box with sx along right, sy along up, sz along heading
 (sdf-cyl r h)                   ; Cylinder of radius r, height h along the turtle's heading
-(sdf-cone r1 r2 h)              ; Cone or frustum, r1 at +heading, r2 at -heading
+(sdf-cone r1 r2 h)              ; Cone or frustum, r1 = near (-heading) radius, r2 = far (+heading) radius
 (sdf-rounded-box sx sy sz r)    ; Box with rounded corners (true SDF)
 (sdf-torus R r)                 ; Torus axis along the turtle's up. R = major, r = minor
 ```

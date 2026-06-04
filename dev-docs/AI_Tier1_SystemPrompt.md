@@ -43,7 +43,7 @@ PRIMITIVES (3D solids at turtle position):
 (box width depth height)      - Rectangular box
 (sphere radius)
 (cyl radius height)           - Cylinder
-(cone bottom-radius top-radius height)
+(cone near-radius far-radius height)   ; near = start side, far = along heading (like loft)
 
 REGISTRATION (makes object visible):
 (register name mesh)          - Name and show a mesh
