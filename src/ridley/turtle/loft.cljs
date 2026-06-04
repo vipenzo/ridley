@@ -588,9 +588,25 @@
            shell-cap-top (:shell-cap-top probe-shape)
            shell-cap-bottom (:shell-cap-bottom probe-shape)
 
-           ;; Polymorphic helpers (shell vs holes vs plain)
-           has-holes? (and (not shell-mode?) (boolean (:holes shape)))
+           ;; Embroid mode: perforate an already-thin swept wall.
+           ;; (embroid shape-fn attaches :embroid-mode to the shape)
+           embroid-mode? (boolean (:embroid-mode probe-shape))
+           embroid-level (or (:embroid-level probe-shape) 0.5)
+           ;; embroid shares shell's dual-ring ({:outer :inner :values})
+           ;; machinery for accumulation, midpoints and corner handling
+           dual-ring? (or shell-mode? embroid-mode?)
+
+           ;; Polymorphic helpers (shell vs embroid vs holes vs plain)
+           has-holes? (and (not dual-ring?) (boolean (:holes shape)))
            do-stamp (cond
+                      embroid-mode?
+                      (fn [state s]
+                        ;; Stamp the path-derived 2D faces into 3D at this pose.
+                        (let [params (extrusion/compute-stamp-transform state s)
+                              outer (extrusion/transform-2d-to-3d (:embroid-outer s) params)
+                              inner (extrusion/transform-2d-to-3d (:embroid-inner s) params)]
+                          {:outer outer :inner inner
+                           :values (:embroid-values s)}))
                       shell-mode?
                       (fn [state s]
                         (let [base-ring (stamp-shape state s)
@@ -604,8 +620,11 @@
                           {:outer outer :inner inner :values vals}))
                       has-holes? stamp-shape-with-holes
                       :else stamp-shape)
-           get-outer (if (or shell-mode? has-holes?) :outer identity)
+           get-outer (if (or dual-ring? has-holes?) :outer identity)
            do-build (cond
+                      embroid-mode?
+                      (fn [rings cp caps?]
+                        (extrusion/build-embroid-mesh rings cp caps? embroid-level))
                       shell-mode?
                       (fn [rings cp caps?]
                         (if shell-smooth?
@@ -618,15 +637,15 @@
                       (fn [rings cp caps?]
                         (build-sweep-mesh rings false cp caps?)))
            do-round-corners (cond
-                              shell-mode? (fn [& _] nil)
+                              dual-ring? (fn [& _] nil)
                               has-holes? generate-round-corner-ring-data
                               :else generate-round-corner-rings)
            do-tapered-corners (cond
-                                shell-mode? (fn [& _] nil)
+                                dual-ring? (fn [& _] nil)
                                 has-holes? generate-tapered-corner-ring-data
                                 :else generate-tapered-corner-rings)
            midpoint-ring (cond
-                           shell-mode?
+                           dual-ring?
                            (fn [r1 r2]
                              {:outer (mapv (fn [p1 p2] (v+ p1 (v* (v- p2 p1) 0.5)))
                                            (:outer r1) (:outer r2))
@@ -646,8 +665,8 @@
                            (fn [r1 r2]
                              (mapv (fn [p1 p2] (v+ p1 (v* (v- p2 p1) 0.5))) r1 r2)))
            make-cap-mesh (cond
-                           shell-mode?
-                           (fn [& _] nil) ;; shell caps handled inside build-shell-sweep-mesh
+                           dual-ring?
+                           (fn [& _] nil) ;; shell/embroid caps handled inside their builders
                            has-holes?
                            (fn [ring-or-data normal]
                              (let [outer (:outer ring-or-data)

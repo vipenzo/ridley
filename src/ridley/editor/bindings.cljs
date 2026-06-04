@@ -265,6 +265,8 @@
    ;; Shell shape-fn (variable-thickness hollow extrusion)
    'shell             sfn/shell
    'woven-shell       sfn/woven-shell
+   ;; Embroid shape-fn (perforate an already-thin swept wall)
+   'embroid           sfn/embroid
    ;; Cap fillet (smooth edge transition at extrusion ends)
    'capped            sfn/capped
    'pure-loft-shape-fn   gen-ops/pure-loft-shape-fn

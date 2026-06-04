@@ -333,7 +333,7 @@
     :status "stable"
     :since ""
     :signature "(cone r1 r2 height)\n(cone r1 r2 height segments)"
-    :description "Create a frustum (truncated cone) mesh at the current turtle position. The frustum axis runs along the turtle's **heading**, centered on the turtle. `r1` is the radius at the near/start end; `r2` is the radius at the far end (along heading), matching loft reading order: `(cone r1 r2 h)` ~= `(loft (circle r1) (circle r2) (f h))`. Set `r2 = 0` for a proper cone (apex at the far end). Returns a mesh; **does not modify turtle state**."
+    :description "Create a frustum (truncated cone) mesh centered on the current turtle position. The frustum axis runs along the turtle's **heading**, with the turtle at the center: the two circular faces sit `height/2` to either side along the heading, so the turtle is equidistant from both. `r1` is the radius at the **near/start** end (the face behind, on the −heading side); `r2` is the radius at the **far** end (the face forward, along heading). This matches the reading order of `loft`/`extrude`: `(cone r1 r2 h)` ≈ `(loft (circle r1) (circle r2) (f h))`. Set `r2 = 0` for a proper cone (apex at the far end). Returns a mesh; **does not modify turtle state**."
     :path "docs/manual/reference/en/cone.md"}
 
    "cp-f"
@@ -425,6 +425,15 @@
     :signature "(ease type t)"
     :description "Apply an easing function to a normalized fraction `t ∈ [0, 1]` and return the eased value, also in `[0, 1]`. The standalone form of the easings used by `span` inside `anim!`. Useful for previewing a curve numerically, for custom interpolations inside `anim-proc!` `gen-fn`s, or for tweak-style math that needs the same shaping the timeline applies."
     :path "docs/manual/reference/en/ease.md"}
+
+   "embroid"
+   {:name "embroid"
+    :category "generative-operations"
+    :status "experimental"
+    :since ""
+    :signature "(embroid path width & {:keys [offset resolution wall] :as opts})"
+    :description "Shape-fn that perforates a thin swept **wall** — the complement of `shell`. Where `shell` hollows a solid into a thin patterned wall, `embroid` cuts a window pattern into a wall that is *already a single surface* (a stroked path swept into a panel), the case where `shell` does not apply because there is nothing to hollow out. Think of it as making \"a portion of a shell\"."
+    :path "docs/manual/reference/en/embroid.md"}
 
    "end-describe"
    {:name "end-describe"

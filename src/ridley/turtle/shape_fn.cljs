@@ -988,6 +988,171 @@
     (throw (js/Error. (str "shell: unknown :style " style
                            ". Valid styles: :solid :lattice :checkerboard :weave :voronoi")))))
 
+;; ============================================================
+;; Panel field (for embroid) — perforation over a flat (u,t) grid
+;; ============================================================
+
+(defn- dist-to-seg
+  "Euclidean distance from (px,py) to segment (ax,ay)-(bx,by)."
+  [px py ax ay bx by]
+  (let [dx (- bx ax) dy (- by ay)
+        len2 (+ (* dx dx) (* dy dy))
+        h (if (pos? len2)
+            (max 0.0 (min 1.0 (/ (+ (* (- px ax) dx) (* (- py ay) dy)) len2)))
+            0.0)
+        ex (- px (+ ax (* h dx)))
+        ey (- py (+ ay (* h dy)))]
+    (Math/sqrt (+ (* ex ex) (* ey ey)))))
+
+(defn- point-in-poly?
+  "Even-odd ray cast: true if (x,y) is inside polygon pts."
+  [x y pts]
+  (let [n (count pts)]
+    (loop [i 0 j (dec n) inside false]
+      (if (>= i n)
+        inside
+        (let [[xi yi] (nth pts i) [xj yj] (nth pts j)
+              cross? (and (not= (> yi y) (> yj y))
+                          (< x (+ xi (/ (* (- xj xi) (- y yi)) (- yj yi)))))]
+          (recur (inc i) i (if cross? (not inside) inside)))))))
+
+(defn- signed-dist-poly
+  "Signed distance from (x,y) to polygon pts: negative inside, positive out."
+  [x y pts]
+  (let [n (count pts)
+        d (loop [i 0 best js/Infinity]
+            (if (>= i n)
+              best
+              (let [[ax ay] (nth pts i)
+                    [bx by] (nth pts (mod (inc i) n))]
+                (recur (inc i) (min best (dist-to-seg x y ax ay bx by))))))]
+    (if (point-in-poly? x y pts) (- d) d)))
+
+(defn- panel-field
+  "Return (fn [u t] -> 0..1) for a FLAT panel parameterized by
+   u (arc-length along the wall, 0..1) and t (sweep depth, 0..1).
+   Unlike style->thickness-fn this uses arc-length `u` (not an angle),
+   so cells aren't distorted on a flat wall. Returns 1 on the strut
+   walls, 0 in the openings; with :softness>0 the transition is a
+   continuous ramp for the isocontour build.
+
+   :aspect = sweep-length / wall-length, used to keep honeycomb cells
+   regular regardless of the wall's proportions.
+   :margin forces a solid frame near all four borders so the panel
+   closes manifold and stays attached to its neighbours."
+  [style {:keys [cells rows aspect wall-width margin border softness seed
+                 u-length v-length]
+          :or {cells 8 rows 12 aspect 1.0 wall-width 0.3 margin 0.05
+               softness 0.6 seed 42 u-length 1.0 v-length 1.0}
+          :as opts}]
+  (let [half-wall (* 0.5 wall-width)
+        band (* (max 0.0 softness) half-wall)
+        e0 (- half-wall (* 0.5 band))
+        e1 (+ half-wall (* 0.5 band))
+        edge->val (fn [edge-dist]
+                    (if (<= band 0)
+                      (if (< edge-dist half-wall) 1.0 0.0)
+                      (- 1.0 (smoothstep e0 e1 edge-dist))))
+        ;; Border frame. :border (world units) → uniform physical thickness on
+        ;; all four sides; otherwise :margin (fraction) per axis — which on a
+        ;; non-square wall makes the side and top/bottom borders different
+        ;; physical widths.
+        bu (if border (/ border (max 1e-6 u-length)) margin)
+        bt (if border (/ border (max 1e-6 v-length)) margin)
+        border? (fn [u t]
+                  (or (<= u bu) (>= u (- 1.0 bu))
+                      (<= t bt) (>= t (- 1.0 bt))))
+        nearest-two (fn [x y centers]
+                      (reduce
+                       (fn [[b1 b2] [cx cy]]
+                         (let [du (- x cx) dv (- y cy)
+                               d (Math/sqrt (+ (* du du) (* dv dv)))]
+                           (cond (< d b1) [d b1]
+                                 (< d b2) [b1 d]
+                                 :else [b1 b2])))
+                       [js/Infinity js/Infinity]
+                       centers))]
+    (case style
+      :honeycomb
+      ;; Voronoi of a regular triangular lattice → hexagonal cells.
+      (let [row-h (* (Math/sqrt 3) 0.5)]
+        (fn [u t]
+          (if (border? u t)
+            1.0
+            (let [x (* u cells)
+                  y (* t aspect cells)
+                  ix (Math/floor x)
+                  jy (Math/floor (/ y row-h))
+                  centers (for [dj (range -1 2) di (range -1 2)
+                                :let [cj (+ jy dj)
+                                      ci (+ ix di)
+                                      cx (+ ci (* 0.5 (mod cj 2)))
+                                      cy (* cj row-h)]]
+                            [cx cy])
+                  [d1 d2] (nearest-two x y centers)]
+              (edge->val (- d2 d1))))))
+
+      :voronoi
+      ;; Jittered cell centers → organic cells.
+      (fn [u t]
+        (if (border? u t)
+          1.0
+          (let [x (* u cells)
+                y (* t aspect rows)
+                ix (Math/floor x)
+                iy (Math/floor y)
+                centers (for [dj (range -1 2) di (range -1 2)
+                              :let [ci (+ ix di) cj (+ iy dj)
+                                    [jx jy] (voronoi-hash ci cj seed)]]
+                          [(+ ci jx) (+ cj jy)])
+                [d1 d2] (nearest-two x y centers)]
+            (edge->val (- d2 d1)))))
+
+      :pattern
+      ;; Tile an arbitrary motif shape across the wall in WORLD units and cut
+      ;; it out via signed distance (smooth, isocontour-friendly). The motif is
+      ;; the OPENING by default; :invert? makes it the solid instead.
+      (let [{:keys [pattern spacing inset grid u-length v-length invert?]
+             :or {spacing 15 inset 0 grid :square u-length 1.0 v-length 1.0
+                  invert? false}} opts
+            raw (:points pattern)
+            _ (assert (and raw (>= (count raw) 3))
+                      "embroid :pattern needs a :pattern shape with >= 3 points")
+            cx0 (/ (reduce + (map first raw)) (count raw))
+            cy0 (/ (reduce + (map second raw)) (count raw))
+            motif (mapv (fn [[x y]] [(- x cx0) (- y cy0)]) raw)
+            [sx sy0] (if (sequential? spacing) spacing [spacing spacing])
+            hex? (= grid :hex)
+            sy (if (and hex? (not (sequential? spacing)))
+                 (* sx (/ (Math/sqrt 3) 2.0))
+                 sy0)
+            band (max 1e-4 (* (max 0.0 softness) 0.15 (min sx sy)))
+            e0 (- (- inset) band)
+            e1 (+ (- inset) band)]
+        (fn [u t]
+          (if (border? u t)
+            1.0                       ; solid frame, regardless of :invert?
+            (let [px (* u u-length)
+                  py (* t v-length)
+                  jr (long (Math/round (/ py sy)))
+                  sd (reduce
+                      (fn [best dj]
+                        (let [row (+ jr dj)
+                              xoff (if (and hex? (odd? row)) (* 0.5 sx) 0.0)
+                              ccy (* row sy)
+                              ic (Math/round (/ (- px xoff) sx))]
+                          (reduce
+                           (fn [b di]
+                             (let [ccx (+ (* (+ ic di) sx) xoff)]
+                               (min b (signed-dist-poly (- px ccx) (- py ccy) motif))))
+                           best [-1 0 1])))
+                      js/Infinity [-1 0 1])
+                  val (smoothstep e0 e1 sd)]
+              (if invert? (- 1.0 val) val)))))
+
+      (throw (js/Error. (str "embroid: unknown :style " style
+                             ". Valid styles: :honeycomb :voronoi :pattern"))))))
+
 (defn ^:export shell
   "Variable-thickness hollow shell with optional patterned walls and caps.
 
@@ -1072,6 +1237,159 @@
                                       :shell-level (if (= style :lattice) 0.55 0.5))
                     cap-top    (assoc :shell-cap-top cap-top)
                     cap-bottom (assoc :shell-cap-bottom cap-bottom)))))))
+
+;; ============================================================
+;; Embroid shape-fn (perforate an already-thin swept wall)
+;; ============================================================
+
+(defn- resample-centerline
+  "Resample path waypoints to (inc n) points at ~uniform arc-length spacing.
+   path-to-2d-waypoints emits ONE point per (f …) command, so a long straight
+   segment is just 2 points while an arc is many — the embroid field then has
+   no resolution on the straights (it bands instead of tiling). This walks the
+   polyline and samples it evenly so the perforation resolves everywhere.
+   Each sample carries {:pos :dir} (dir = local segment heading)."
+  [wps n]
+  (let [cs (mapv :pos wps)
+        m (count cs)]
+    (if (< m 2)
+      wps
+      (let [seglens (mapv (fn [a b] (v2-mag (v2-sub b a))) cs (rest cs))
+            dirs    (mapv (fn [a b] (v2-normalize (v2-sub b a))) cs (rest cs))
+            cum     (vec (reductions + 0 seglens))
+            total   (last cum)
+            n       (max 1 n)
+            dstep   (/ total n)]
+        (mapv
+         (fn [k]
+           (let [s (min total (* k dstep))
+                 j (loop [j 0]
+                     (if (and (< j (- m 2)) (> s (nth cum (inc j))))
+                       (recur (inc j)) j))
+                 seg-start (nth cum j)
+                 seg-len   (nth seglens j)
+                 frac (if (pos? seg-len) (/ (- s seg-start) seg-len) 0.0)
+                 [ax ay] (nth cs j) [bx by] (nth cs (inc j))]
+             {:pos [(+ ax (* frac (- bx ax))) (+ ay (* frac (- by ay)))]
+              :dir (nth dirs j)}))
+         (range (inc n)))))))
+
+(defn- centerline-edges
+  "From a path's 2D waypoints (each {:pos :dir}) and a half-width, build the
+   two faces of a thin wall as PAIRED polylines, offset ±half-w perpendicular
+   to the path direction at every point. Robust to miters/caps (the wall is
+   rebuilt from the centerline, never from a stroke outline) and to the
+   wall's angle (the offset always follows the local path normal).
+   Returns {:outer [...] :inner [...] :us [...] :length L} in 2D, where
+   :us are normalized arc-length params along the centerline."
+  [wps half-w [ox oy]]
+  (let [cs (mapv :pos wps)
+        ds (mapv :dir wps)
+        m (count cs)
+        edge (fn [sign]
+               (mapv (fn [[cx cy] [dx dy]]
+                       ;; perpendicular to heading (dx,dy) is (-dy,dx)
+                       (let [nx (- dy) ny dx]
+                         [(+ cx (* sign nx half-w) ox)
+                          (+ cy (* sign ny half-w) oy)]))
+                     cs ds))
+        seglens (mapv (fn [a b] (v2-mag (v2-sub b a))) cs (rest cs))
+        total (reduce + 0 seglens)
+        cum (vec (reductions + 0 seglens))
+        us (if (pos? total) (mapv #(/ % total) cum) (vec (repeat m 0.0)))]
+    {:outer (edge +1) :inner (edge -1) :us us :length total}))
+
+(defn ^:export embroid
+  "Perforate the wall of a thin swept panel — like cutting a window
+   pattern into 'a portion of a shell' that is already a single wall
+   (so `shell` does not apply: there is no solid to hollow out).
+
+   Takes the PATH that defines the wall's centerline (not a shape) plus the
+   wall thickness, and lofts into a perforated wall:
+     (loft (embroid p spessore
+                    :wall {:style :honeycomb :cells 8 :rows 12 :margin 0.06})
+           (f depth))
+
+   embroid rebuilds the two faces from the path, offset ±spessore/2
+   perpendicular to the path at every point, so the perforation always runs
+   through the wall thickness regardless of how the path curves or is angled
+   (this is why it takes the path, not a stroked shape: index-pairing the
+   edges of a stroke breaks at miters/caps).
+
+   :offset [dx dy]  shift the wall in the profile plane (e.g. to stack
+                    variants the way translate would on the stroked shape)
+   :resolution n    samples along the path (u). Controls how crisp the opening
+                    edges look in the path direction; the loft step count only
+                    refines the sweep (t). Default ≈ 2·path-length; raise for
+                    smoother hexagons (mesh grows with resolution × loft steps).
+
+   :wall options (or pass them as top-level kwargs):
+     :style      :honeycomb (default, regular hexagons) | :voronoi (organic)
+                 | :pattern (tile an arbitrary motif shape)
+     :cells      openings across the wall length (default 8)
+     :rows       openings along the sweep — :voronoi only; :honeycomb
+                 derives rows from :cells to keep hexagons regular (default 12)
+     :wall-width strut width in cell units (default 0.3)
+     :margin     FRACTION near each border kept solid (default 0.05). Note:
+                 a fraction of the wall length vs the sweep depth, so on a
+                 non-square wall the side and top/bottom frames differ in width.
+     :border     world-units frame thickness, UNIFORM on all four sides
+                 (overrides :margin when given) — use this for an even border
+     :softness   isocontour ramp; >0 (default 0.6) = smooth openings,
+                 0 = hard staircased cut
+     :seed       :voronoi jitter seed (default 42)
+
+   :style :pattern options (world units):
+     :pattern    a 2D shape used as the OPENING motif, tiled across the wall
+     :spacing    grid pitch — a number or [sx sy] (default 15)
+     :grid       :square (default) | :hex (offset rows; scalar :spacing makes
+                 regular hexagonal spacing)
+     :inset      shrink the motif by this much to fatten the struts (default 0;
+                 negative grows the openings)
+     :invert?    swap: the motif becomes the SOLID, the gaps the openings
+   e.g. (embroid p 3 :wall {:style :pattern :pattern (circle 4) :spacing 12 :inset 1})"
+  [path width & {:keys [offset wall resolution] :or {offset [0 0]} :as opts}]
+  (let [wall (or wall (dissoc opts :wall :offset :resolution))
+        {:keys [style margin softness]
+         :or {style :honeycomb margin 0.05 softness 0.6}} wall
+        wps0 (shape/path-to-2d-waypoints path)
+        _ (assert (and wps0 (>= (count wps0) 2))
+                  "embroid: first argument must be a path with at least two waypoints")
+        ;; Resolution of the field ALONG THE PATH (u). This governs how jagged
+        ;; the opening edges look in the u-direction — the loft step count only
+        ;; refines the sweep (t) direction. Default ≈ 2 samples per world unit so
+        ;; the u-density roughly matches a typical sweep; bump :resolution for
+        ;; crisper hexagons (cost: mesh size grows with resolution × loft steps).
+        total0 (reduce + 0 (map (fn [a b] (v2-mag (v2-sub (:pos a) (:pos b))))
+                                wps0 (rest wps0)))
+        n-samples (-> (or resolution (* 2 (Math/round total0)))
+                      (max (* (:cells wall 8) 8))
+                      (min 1500))
+        wps (resample-centerline wps0 n-samples)
+        {:keys [outer inner us length]} (centerline-edges wps (* 0.5 width) offset)
+        ;; base shape only carries point-count / centered? for the loft API;
+        ;; the embroid do-stamp uses the stored 2D edges, not these points.
+        base (shape/stroke-shape path width)]
+    (shape-fn base
+              (fn [shp t]
+                (let [path-len (or *path-length* length)
+                      aspect (/ path-len (max 1e-6 length))
+                      field (panel-field style (assoc wall
+                                                      :aspect aspect
+                                                      :margin margin
+                                                      :softness softness
+                                                      :u-length length
+                                                      :v-length path-len))
+                      values (mapv (fn [u]
+                                     (let [v (field u t)]
+                                       (max 0.0 (min 1.0 v))))
+                                   us)]
+                  (assoc shp
+                         :embroid-mode true
+                         :embroid-outer outer
+                         :embroid-inner inner
+                         :embroid-level 0.5
+                         :embroid-values values))))))
 
 ;; ============================================================
 ;; Woven shell (thickness + radial offset for true over/under)

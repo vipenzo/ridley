@@ -1792,3 +1792,112 @@
                    :faces (vec faces)}
             creation-pose (assoc :creation-pose creation-pose))))))))
 
+;; ============================================================
+;; Embroid panel mesh (perforated thin wall — OPEN, non-wrapping)
+;; ============================================================
+
+(defn build-embroid-mesh
+  "Build a perforated thin-wall panel via marching triangles.
+
+   Like build-shell-isocontour-mesh, but the grid is a FLAT OPEN panel:
+   :outer / :inner are the two faces of an already-thin wall (the long
+   edges of a stroked ribbon), each an OPEN polyline of n-pts samples
+   along the wall (NOT a closed ring — so j does not wrap). The field in
+   :values is shared by outer and inner, so each opening is a through-hole.
+
+   Emits: outer skin, inner skin (reversed), a rim around every opening,
+   and four border rims (the wall's thickness shown along all edges of the
+   panel) so the result is watertight. The :margin in the field keeps the
+   border rows/cols solid, so the border rims land on real wall, not holes."
+  ([ring-data creation-pose] (build-embroid-mesh ring-data creation-pose true 0.5))
+  ([ring-data creation-pose _caps? level]
+   (let [n-rings (count ring-data)
+         n-pts (count (:outer (first ring-data)))
+         level (or level 0.5)]
+     (when (and (>= n-rings 2) (>= n-pts 2))
+       (let [outers (mapv :outer ring-data)
+             inners (mapv :inner ring-data)
+             vals   (mapv :values ring-data)
+             vmap (js/Map.)
+             vlist #js []
+             vcount (volatile! 0)
+             key-of (fn [p]
+                      (str (Math/round (* (nth p 0) 1e5)) "_"
+                           (Math/round (* (nth p 1) 1e5)) "_"
+                           (Math/round (* (nth p 2) 1e5))))
+             vidx! (fn [p]
+                     (let [k (key-of p)]
+                       (if (.has vmap k)
+                         (.get vmap k)
+                         (let [i @vcount]
+                           (.set vmap k i)
+                           (.push vlist p)
+                           (vreset! vcount (inc i))
+                           i))))
+             faces #js []
+             skin! (fn [oa ob oc ia ib ic]
+                     (.push faces [(vidx! oa) (vidx! ob) (vidx! oc)])
+                     (.push faces [(vidx! ia) (vidx! ic) (vidx! ib)]))
+             rim! (fn [oa ob ia ib]
+                    (.push faces [(vidx! oa) (vidx! ia) (vidx! ib)])
+                    (.push faces [(vidx! oa) (vidx! ib) (vidx! ob)]))
+             march! (fn [f0 f1 f2 oo0 oo1 oo2 ii0 ii1 ii2]
+                      (when-let [nodes (shell-iso-clip f0 f1 f2 oo0 oo1 oo2 ii0 ii1 ii2 level)]
+                        (let [nv (count nodes)
+                              nd (fn [k] (nth nodes k))]
+                          (dotimes [k (- nv 2)]
+                            (let [a (nd 0) b (nd (inc k)) c (nd (+ k 2))]
+                              (skin! (:o a) (:o b) (:o c) (:in a) (:in b) (:in c))))
+                          (dotimes [k nv]
+                            (let [a (nd k) b (nd (mod (inc k) nv))]
+                              (when (and (:cross a) (:cross b))
+                                (rim! (:o a) (:o b) (:in a) (:in b))))))))]
+         ;; sweep cells — non-wrapping in j
+         (dotimes [ri (dec n-rings)]
+           (let [oa (nth outers ri) ob (nth outers (inc ri))
+                 ia (nth inners ri) ib (nth inners (inc ri))
+                 va (nth vals ri) vb (nth vals (inc ri))]
+             (dotimes [j (dec n-pts)]
+               (let [j1 (inc j)
+                     f00 (nth va j) f10 (nth vb j) f11 (nth vb j1) f01 (nth va j1)
+                     o00 (nth oa j) o10 (nth ob j) o11 (nth ob j1) o01 (nth oa j1)
+                     n00 (nth ia j) n10 (nth ib j) n11 (nth ib j1) n01 (nth ia j1)]
+                 (march! f00 f10 f11 o00 o10 o11 n00 n10 n11)
+                 (march! f00 f11 f01 o00 o11 o01 n00 n11 n01)))))
+         ;; border rims along the two sweep-edges (j = 0 and j = n-pts-1)
+         (let [jL (dec n-pts)]
+           (dotimes [ri (dec n-rings)]
+             (let [oa (nth outers ri) ob (nth outers (inc ri))
+                   ia (nth inners ri) ib (nth inners (inc ri))]
+               (rim! (nth oa 0) (nth ob 0) (nth ia 0) (nth ib 0))
+               (rim! (nth ob jL) (nth oa jL) (nth ib jL) (nth ia jL)))))
+         ;; border rims along the two end-rows (ri = 0 and ri = last)
+         (let [o0 (nth outers 0) i0 (nth inners 0)
+               oT (nth outers (dec n-rings)) iT (nth inners (dec n-rings))]
+           (dotimes [j (dec n-pts)]
+             (let [j1 (inc j)]
+               (rim! (nth o0 j1) (nth o0 j) (nth i0 j1) (nth i0 j))
+               (rim! (nth oT j) (nth oT j1) (nth iT j) (nth iT j1)))))
+         ;; Orient consistently outward: the param-space winding gives a
+         ;; uniformly inside-out mesh when the path runs the other way, so
+         ;; flip every face if the signed volume came out negative.
+         (let [verts vlist
+               sv (areduce faces fi acc 0.0
+                           (let [f (aget faces fi)
+                                 [x0 y0 z0] (aget verts (nth f 0))
+                                 [x1 y1 z1] (aget verts (nth f 1))
+                                 [x2 y2 z2] (aget verts (nth f 2))
+                                 cx (- (* y1 z2) (* z1 y2))
+                                 cy (- (* z1 x2) (* x1 z2))
+                                 cz (- (* x1 y2) (* y1 x2))]
+                             (+ acc (* x0 cx) (* y0 cy) (* z0 cz))))
+               final-faces (if (neg? sv)
+                             (mapv (fn [[a b c]] [a c b]) faces)
+                             (vec faces))]
+           (schema/assert-mesh!
+            (cond-> {:type :mesh
+                     :primitive :embroid
+                     :vertices (vec vlist)
+                     :faces final-faces}
+              creation-pose (assoc :creation-pose creation-pose)))))))))
+

@@ -745,6 +745,53 @@ Shell and woven-shell compose with other shape-fns:
 - Circumferential detail: use `(circle r n)` or `(resample-shape shape n)`. Points per ring should be at least 2 x frequency.
 - Longitudinal detail: use `loft-n` with higher step count.
 
+### Perforated wall (embroid)
+
+`embroid` is the complement of `shell`: where `shell` hollows out a *solid* into a thin wall with openings, `embroid` perforates a wall that is *already a single surface* (a stroked path swept into a panel) — the case where `shell` does not apply because there is nothing to hollow out. Think of it as cutting a window pattern into "a portion of a shell".
+
+Unlike the other shape-fns, **`embroid` takes the path that defines the wall's centerline (not a shape) plus the wall thickness**, and rebuilds the two faces of the wall by offsetting `±width/2` *perpendicular to the path at every point*. This is why it takes the path: index-pairing the two edges of a stroked outline breaks at miters/caps, and the perpendicular offset keeps the perforation running through the wall thickness regardless of how the path curves.
+
+```clojure
+;; Honeycomb-perforated curved wall
+(register panel
+  (loft (embroid my-path 3
+                 :wall {:style :honeycomb :cells 8 :border 4})
+        (f 45)))
+```
+
+**Signature:** `(embroid path width & {:keys [offset resolution wall] :as opts})`
+
+**`embroid` options:**
+- `:wall` — a map of the pattern options below (or pass them as top-level kwargs).
+- `:offset [dx dy]` (`[0 0]`) — shift the wall in the profile plane (replaces a `translate` you would have applied to the stroked shape, e.g. to stack variants).
+- `:resolution n` (≈ `2·path-length`) — samples **along the path** (`u`). Governs how crisp the opening edges look in the path direction; the loft step count only refines the **sweep** (`t`). Raise for smoother openings (mesh grows with `resolution × loft-steps`).
+
+**Wall pattern (`:wall` / `:style`):**
+
+| Style | Options |
+|-------|---------|
+| `:honeycomb` (default) | `:cells` (8, hexes across the wall), `:wall-width` (0.3, strut width in cell units) |
+| `:voronoi` | `:cells` (8), `:rows` (12), `:seed` (42), `:wall-width` (0.3) |
+| `:pattern` | `:pattern` (a 2D shape used as the opening motif), `:spacing` (15, number or `[sx sy]`), `:grid` (`:square` / `:hex`), `:inset` (0, shrink the motif to fatten struts), `:invert?` (false, swap motif↔gaps) |
+
+Shared options: `:softness` (0.6; isocontour ramp — smooth openings vs `0` = hard staircased cut), `:margin` (0.05; **fraction** of each side kept solid) or `:border` (world-units frame thickness, **uniform** on all four sides — overrides `:margin`).
+
+```clojure
+;; Tile an arbitrary motif (round holes on a hex grid)
+(loft (embroid p 3 :wall {:style :pattern :pattern (circle 4)
+                          :spacing 12 :grid :hex :inset 0.5})
+      (f 45))
+
+;; Motif as the SOLID instead of the hole (tiles/bricks)
+(loft (embroid p 3 :wall {:style :pattern :pattern (rect 10 5)
+                          :spacing 12 :invert? true})
+      (f 45))
+```
+
+The result is watertight and manifold (each opening is a through-hole rimmed between the two faces; the `:margin`/`:border` frame keeps the panel closed and attached to its neighbours), with faces oriented outward.
+
+**Does not compose in thread with other shape-fns.** `embroid` takes a path (not a shape-fn) and, in the loft, stamps its own stored faces — so transforms applied after it (`(-> (embroid …) (tapered …))`) are silently ignored. Apply positioning with `:offset`, or `translate`/`turtle` on the resulting mesh.
+
 ### Shape preview (stamp)
 
 Visualize a 2D shape at the current turtle position/orientation as a semi-transparent surface. Shows exactly where the initial face of an `extrude` or `revolve` would appear. Useful for debugging shape placement before committing to an operation.
