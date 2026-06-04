@@ -4,7 +4,6 @@
    outer contours that must all be preserved."
   (:require [cljs.test :refer [deftest testing is use-fixtures]]
             [ridley.turtle.text :as text]
-            ["opentype.js" :as opentype]
             ["fs" :as fs]))
 
 ;; ── Pure helpers (no font needed) ───────────────────────────
@@ -59,17 +58,17 @@
 
 ;; ── End-to-end: load font from disk and verify text-shape ───
 
-(defonce ^:private font-loaded? (atom false))
-
 (defn- load-roboto! []
-  (when-not @font-loaded?
+  ;; The browser app loads built-in fonts by URL via init-builtin-fonts!, which
+  ;; doesn't work under Node. Instead read Roboto from disk and register it as
+  ;; :roboto (the id text-shape resolves to when no :font is given).
+  (when-not (text/registered? :roboto)
     (let [buf (fs/readFileSync "public/fonts/Roboto-Regular.ttf")
           ;; Node Buffer → ArrayBuffer slice for opentype.parse
           ab  (.-buffer buf)
           ab  (.slice ab (.-byteOffset buf) (+ (.-byteOffset buf) (.-byteLength buf)))
-          font (opentype/parse ab)]
-      (reset! text/default-font font)
-      (reset! font-loaded? true))))
+          font (text/parse-font-bytes ab)]
+      (text/register-font! :roboto font {:label "Roboto Regular" :builtin? true}))))
 
 (use-fixtures :once {:before (fn [] (load-roboto!))})
 
