@@ -654,6 +654,9 @@
 
    Example: (arc-h 10 90) draws a quarter circle turning left"
   [state radius angle & {:keys [steps]}]
+  (when (neg? radius)
+    (throw (js/Error. (str "arc-h: radius must be non-negative (got " radius
+                           "). To reverse the turn direction use a negative angle, e.g. (arc-h " (- radius) " -" (Math/abs angle) ")."))))
   (if (or (zero? radius) (zero? angle))
     state
     (let [angle-rad (* (Math/abs angle) (/ Math/PI 180))
@@ -692,6 +695,9 @@
 
    Example: (arc-v 10 45) draws an arc pitching upward"
   [state radius angle & {:keys [steps]}]
+  (when (neg? radius)
+    (throw (js/Error. (str "arc-v: radius must be non-negative (got " radius
+                           "). To reverse the pitch direction use a negative angle, e.g. (arc-v " (- radius) " -" (Math/abs angle) ")."))))
   (if (or (zero? radius) (zero? angle))
     state
     (let [angle-rad (* (Math/abs angle) (/ Math/PI 180))

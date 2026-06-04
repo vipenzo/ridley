@@ -76,6 +76,9 @@
 
    ;; Recording version of arc-h that decomposes into rec-f* and rec-th*
    (defn- rec-arc-h* [radius angle & {:keys [steps]}]
+     (when (neg? radius)
+       (throw (js/Error. (str \"arc-h: radius must be non-negative (got \" radius
+                              \"). To reverse the turn direction use a negative angle, e.g. (arc-h \" (- radius) \" -\" (abs angle) \").\"))))
      (when-not (or (zero? radius) (zero? angle))
        (let [angle-rad (* (abs angle) (/ PI 180))
              arc-length (* radius angle-rad)
@@ -103,6 +106,9 @@
 
    ;; Recording version of arc-v that decomposes into rec-f* and rec-tv*
    (defn- rec-arc-v* [radius angle & {:keys [steps]}]
+     (when (neg? radius)
+       (throw (js/Error. (str \"arc-v: radius must be non-negative (got \" radius
+                              \"). To reverse the pitch direction use a negative angle, e.g. (arc-v \" (- radius) \" -\" (abs angle) \").\"))))
      (when-not (or (zero? radius) (zero? angle))
        (let [angle-rad (* (abs angle) (/ PI 180))
              arc-length (* radius angle-rad)
