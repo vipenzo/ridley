@@ -65,5 +65,4 @@ coordinates to control the frequency.
 
 ## See also
 
-- **Guide:** placeholder → cap. 6 (Da funzioni matematiche a forme)
 - **Related:** `fbm`, `noisy`, `displaced`

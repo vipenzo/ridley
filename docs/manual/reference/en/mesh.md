@@ -47,6 +47,5 @@ without re-evaluating the original expressions.
 
 ## See also
 
-- **Guide:** placeholder → cap. 1 (Primi passi)
 - **Related:** `register`, `info`, `bounds`, `mesh-union`,
   `mesh-difference`

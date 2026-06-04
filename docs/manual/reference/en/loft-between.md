@@ -42,5 +42,4 @@ share point count (default resolution), so they're morph-compatible.
 
 ## See also
 
-- **Guide:** placeholder → cap. 6 (Da funzioni matematiche a forme)
 - **Related:** `loft`, `loft-n`, `morph-shape`, `resample-shape`

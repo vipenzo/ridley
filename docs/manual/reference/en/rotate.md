@@ -109,6 +109,5 @@ For 2D shapes, see [rotate-shape](rotate-shape.md).
 
 ## See also
 
-- **Guide:** placeholder → cap. 9 (Positioning & assembly)
 - **Related:** `translate`, `scale`, `attach`, `rotate-shape`,
   `reset-creation-pose`

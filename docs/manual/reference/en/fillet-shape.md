@@ -64,5 +64,4 @@ asymmetric outlines.
 
 ## See also
 
-- **Guide:** placeholder → cap. 3 (Lavorare con le forme 2D)
 - **Related:** `chamfer-shape`, `shape-offset`, `capped` (cap fillet)

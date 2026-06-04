@@ -41,5 +41,4 @@ paths use `path?`.
 
 ## See also
 
-- **Guide:** placeholder → cap. 3 (Lavorare con le forme 2D)
 - **Related:** `path?`, `shape-fn?`, `make-shape`

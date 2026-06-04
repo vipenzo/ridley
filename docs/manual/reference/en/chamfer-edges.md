@@ -85,6 +85,5 @@ chamfer on the right half of the box.
 
 ## See also
 
-- **Guide:** placeholder → cap. 7 (Mesh operations)
 - **Related:** `chamfer`, `fillet`, `chamfer-prisms`,
   `find-sharp-edges`

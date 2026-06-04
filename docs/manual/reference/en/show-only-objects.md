@@ -50,6 +50,5 @@ Clear scratch geometry without losing the registered frame.
 
 ## See also
 
-- **Guide:** placeholder → cap. 1 (Primi passi)
 - **Related:** `show-all`, `hide-all`, `show`, `hide`, `objects`,
   `registered`, `scene`

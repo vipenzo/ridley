@@ -82,5 +82,4 @@ increasing frequency — rougher, more rocky-looking surface.
 
 ## See also
 
-- **Guide:** placeholder → cap. 6 (Da funzioni matematiche a forme)
 - **Related:** `displaced`, `rugged`, `fluted`, `noise`, `fbm`

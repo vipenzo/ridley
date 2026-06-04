@@ -93,5 +93,4 @@ this avoids 14 intermediate CSG passes.
 
 ## See also
 
-- **Guide:** placeholder → cap. 7 (Mesh operations)
 - **Related:** `mesh-union`, `mesh-difference`, `mesh-intersection`

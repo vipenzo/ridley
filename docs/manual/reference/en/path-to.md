@@ -82,6 +82,5 @@ next bone from the current mark to the next.
 
 ## See also
 
-- **Guide:** placeholder → cap. 5 (Paths and anchors)
 - **Related:** `with-path`, `goto`, `look-at`, `bezier-to-anchor`,
   `mark`, `anchors`

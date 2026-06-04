@@ -66,6 +66,5 @@ and subtract the result to get a uniform 3-unit wall.
 
 ## See also
 
-- **Guide:** placeholder → cap. 3 (Lavorare con le forme 2D)
 - **Related:** `fillet-shape`, `chamfer-shape`, `shape-bridge`,
   `shape-difference`

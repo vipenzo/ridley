@@ -64,5 +64,4 @@ producing a flared horn.
 
 ## See also
 
-- **Guide:** placeholder → cap. 6 (Da funzioni matematiche a forme)
 - **Related:** `loft`, `revolve`, `shape-fn`, `profile`, `capped`

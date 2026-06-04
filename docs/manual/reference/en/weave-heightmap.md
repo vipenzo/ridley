@@ -78,6 +78,5 @@ sections — useful for woven fabric or basket weaves.
 
 ## See also
 
-- **Guide:** placeholder → cap. 6 (Da funzioni matematiche a forme)
 - **Related:** `heightmap`, `mesh-to-heightmap`, `sample-heightmap`,
   `heightmap-to-mesh`

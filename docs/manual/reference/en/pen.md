@@ -72,6 +72,5 @@ better.
 
 ## See also
 
-- **Guide:** placeholder → cap. 1 (Primi passi)
 - **Related:** `show-lines`, `hide-lines`, `lines-visible?`, `f`,
   `bezier-to`

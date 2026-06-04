@@ -61,5 +61,4 @@ sampling.
 
 ## See also
 
-- **Guide:** placeholder → cap. 7 (Mesh operations)
 - **Related:** `mesh-smooth`, `mesh-simplify`, `mesh-diagnose`

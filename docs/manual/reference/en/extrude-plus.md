@@ -70,5 +70,4 @@ this same pattern when many segments are involved.
 
 ## See also
 
-- **Guide:** placeholder → cap. 4 (Estrusione)
 - **Related:** `revolve+`, `transform->`, `extrude`, `mesh-union`

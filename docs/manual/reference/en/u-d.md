@@ -70,5 +70,4 @@ mesh without ring side-effects.
 
 ## See also
 
-- **Guide:** placeholder → cap. 1 (Primi passi)
 - **Related:** `f`, `rt`, `lt`, `attach`, `attach!`

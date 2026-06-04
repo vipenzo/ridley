@@ -43,6 +43,5 @@ The overlap of two offset circles produces a lens-shaped contour.
 
 ## See also
 
-- **Guide:** placeholder → cap. 3 (Lavorare con le forme 2D)
 - **Related:** `shape-union`, `shape-difference`, `shape-xor`,
   `shape-offset`

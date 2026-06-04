@@ -73,6 +73,5 @@ loft compatibility.
 
 ## See also
 
-- **Guide:** placeholder → cap. 3 (Lavorare con le forme 2D)
 - **Related:** `shape-bridge`, `shape-union`, `resample-shape`,
   `shape-offset`

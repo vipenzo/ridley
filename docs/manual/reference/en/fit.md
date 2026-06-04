@@ -67,6 +67,5 @@ The X extent is left untouched, so the revolve radius stays unchanged.
 
 ## See also
 
-- **Guide:** placeholder → cap. 3 (Lavorare con le forme 2D)
 - **Related:** `scale-shape`, `resample-shape`, `bounds-2d`,
   → `scale` (polymorphic, scheda futura)

@@ -63,5 +63,4 @@ the same set of points is reused across multiple shapes.
 
 ## See also
 
-- **Guide:** placeholder → cap. 3 (Lavorare con le forme 2D)
 - **Related:** `polygon`, `shape`, `make-shape`, `reverse-shape`

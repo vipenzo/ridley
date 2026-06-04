@@ -122,7 +122,6 @@ its real size; `:direction` swaps wrap-around vs climb-the-axis, and
 
 ## See also
 
-- **Guide:** placeholder → cap. 6 (Da funzioni matematiche a forme)
 - **Related:** `text-heightmap`, `mesh-to-heightmap`, `weave-heightmap`,
   `sample-heightmap`, `heightmap-to-mesh`, `shape-perimeter`, `displaced`,
   `shape-fn`

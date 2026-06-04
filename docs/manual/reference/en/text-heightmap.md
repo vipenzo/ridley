@@ -129,6 +129,5 @@ sits on the surface rather than bulging outward only.
 
 ## See also
 
-- **Guide:** placeholder → cap. 13 (Testo)
 - **Related:** `heightmap`, `weave-heightmap`, `mesh-to-heightmap`,
   `sample-heightmap`, `heightmap-to-mesh`, `extrude-text`

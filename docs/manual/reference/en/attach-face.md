@@ -104,6 +104,5 @@ the lateral face group as a whole.
 
 ## See also
 
-- **Guide:** placeholder → cap. 8 (Faces and surface features)
 - **Related:** `clone-face`, `attach`, `attach!`, `face-info`,
   `list-faces`, `find-faces`, `face-at`, `face-shape`

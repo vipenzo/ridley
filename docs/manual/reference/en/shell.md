@@ -175,6 +175,5 @@ the outer wall radius.
 
 ## See also
 
-- **Guide:** placeholder → cap. 6 (Da funzioni matematiche a forme)
 - **Related:** `woven-shell`, `voronoi-shell`, `loft`, `capped`,
   `shape-fn`

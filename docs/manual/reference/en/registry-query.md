@@ -61,5 +61,4 @@ everything-rendered.
 
 ## See also
 
-- **Guide:** placeholder → cap. 1 (Primi passi)
 - **Related:** `register`, `show`, `hide`, `info`, `bounds`, `mesh`

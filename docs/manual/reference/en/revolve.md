@@ -113,7 +113,5 @@ revolution, so a torus-like elbow is built without clipping any holes.
 
 ## See also
 
-- **Guide:** placeholder → cap. 4 (Estrusione) e cap. 6 (Da funzioni
-  matematiche a forme)
 - **Related:** `extrude`, `loft`, `revolve+`, `transform->`,
   `path-to-shape`, `translate-shape`

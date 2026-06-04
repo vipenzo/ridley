@@ -62,5 +62,4 @@ between them.
 
 ## See also
 
-- **Guide:** placeholder → cap. 3 (Lavorare con le forme 2D)
 - **Related:** `morph-shape`, `shape-hull`, `fit`

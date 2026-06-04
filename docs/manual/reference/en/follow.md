@@ -82,5 +82,4 @@ helper functions: build the fragment, then splice it wherever needed.
 
 ## See also
 
-- **Guide:** placeholder → cap. 5 (Paths and anchors)
 - **Related:** `path`, `follow-path`, `side-trip`, `mark`

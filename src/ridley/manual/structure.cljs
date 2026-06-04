@@ -51,9 +51,11 @@
 
 (def guide-chapters
   [{:id :ch-about :slug "about-ridley"             :order 1  :file "about-ridley.md"
-    :title {:it "Ridley in breve"}}
+    :langs #{:it :en}
+    :title {:it "Ridley in breve" :en "Ridley at a glance"}}
    {:id :ch-02 :slug "modeling-with-primitives"    :order 2  :file "02-modeling-with-primitives.md"
-    :title {:it "2. Modellare per primitive"}}
+    :langs #{:it :en}
+    :title {:it "2. Modellare per primitive" :en "2. Modeling with primitives"}}
    {:id :ch-03 :slug "working-with-2d-shapes"       :order 3  :file "03-working-with-2d-shapes.md"
     :title {:it "3. Lavorare con le forme 2D"}}
    {:id :ch-04 :slug "extrusion"                    :order 4  :file "04-extrusion.md"

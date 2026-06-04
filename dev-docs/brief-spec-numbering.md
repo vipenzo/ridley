@@ -54,7 +54,7 @@ Cercare in tutto il repo (escluso `.git`, `node_modules`, `.shadow-cljs`) riferi
 ```bash
 grep -rn "Spec.md#19\|Spec.md#20\|Spec §19\|Spec §20\|section 19\|section 20" \
   --include="*.md" --include="*.cljs" --include="*.bb" --include="*.edn" \
-  /Volumes/Rogue/Progetti/Ridley
+  /Users/vipenzo/Progetti/Ridley
 ```
 
 Per ciascun match: se referenzia "Internals" (era §19, diventa §18) o "Not Yet Implemented" (era §20, diventa §19), aggiornare. Se referenzia altro che si chiama §19 o §20 in un contesto diverso, lasciare invariato.

@@ -70,5 +70,4 @@ curved path.
 
 ## See also
 
-- **Guide:** placeholder → cap. 3 (Lavorare con le forme 2D)
 - **Related:** `path-to-shape`, `shape`, `shape-offset`, `path`

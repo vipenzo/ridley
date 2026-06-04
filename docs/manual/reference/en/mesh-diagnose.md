@@ -89,6 +89,5 @@ by `mesh-smooth` and the boolean operations.
 
 ## See also
 
-- **Guide:** placeholder → cap. 7 (Mesh operations)
 - **Related:** `find-sharp-edges`, `merge-vertices`, `mesh-simplify`,
   `mesh-laplacian`, `mesh-smooth`

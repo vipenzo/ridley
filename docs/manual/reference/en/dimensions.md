@@ -64,5 +64,4 @@ coordinates.
 
 ## See also
 
-- **Guide:** placeholder → cap. 1 (Primi passi)
 - **Related:** `bounds`, `info`, `mesh`

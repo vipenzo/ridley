@@ -65,6 +65,5 @@ current `joint-mode` controls how the geometry handles the turn.
 
 ## See also
 
-- **Guide:** placeholder → cap. 1 (Primi passi)
 - **Related:** `tv`, `tr`, `f`, `arc-h`, `turtle` (`:preserve-up`),
   `joint-mode`

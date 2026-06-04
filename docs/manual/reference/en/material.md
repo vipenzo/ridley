@@ -91,5 +91,4 @@ Works well inside `register` / `tweak` / threading.
 
 ## See also
 
-- **Guide:** placeholder → cap. 1 (Primi passi)
 - **Related:** `color`, `reset-material`, `register`, `tweak`

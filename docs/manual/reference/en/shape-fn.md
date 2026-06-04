@@ -80,5 +80,4 @@ composes them.
 
 ## See also
 
-- **Guide:** placeholder → cap. 6 (Da funzioni matematiche a forme)
 - **Related:** `shape-fn?`, `loft`, `revolve`, `displaced`

@@ -76,5 +76,4 @@ Full pose control via keyword overrides.
 
 ## See also
 
-- **Guide:** placeholder → cap. 1 (Primi passi)
 - **Related:** `turtle` (`:reset`), `f`, `th`, `tv`, `tr`

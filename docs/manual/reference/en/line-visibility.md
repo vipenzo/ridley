@@ -49,5 +49,4 @@ traces.
 
 ## See also
 
-- **Guide:** placeholder → cap. 1 (Primi passi)
 - **Related:** `pen`, `show`, `hide`, `stamp-visibility`

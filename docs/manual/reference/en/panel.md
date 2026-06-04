@@ -78,5 +78,4 @@ when transparency is needed.
 
 ## See also
 
-- **Guide:** placeholder → cap. 1 (Primi passi)
 - **Related:** `out`, `append`, `clear`, `panel?`, `register`

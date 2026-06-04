@@ -66,5 +66,4 @@ decorative panels.
 
 ## See also
 
-- **Guide:** placeholder → cap. 3 (Lavorare con le forme 2D)
 - **Related:** `voronoi-shell`, `shape-difference`, `shape-offset`

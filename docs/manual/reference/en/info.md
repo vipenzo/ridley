@@ -48,6 +48,5 @@ axis-aligned bounding box.
 
 ## See also
 
-- **Guide:** placeholder → cap. 1 (Primi passi)
 - **Related:** `bounds`, `mesh`, `dimensions` (`height` / `width` /
   `depth` / `top` / `bottom` / `center-*`), `registered`, `objects`

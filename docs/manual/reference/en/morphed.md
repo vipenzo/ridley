@@ -54,5 +54,4 @@ aligns them, so the blend is well-defined.
 
 ## See also
 
-- **Guide:** placeholder → cap. 6 (Da funzioni matematiche a forme)
 - **Related:** `morph-shape`, `resample-shape`, `loft`, `shape-fn`

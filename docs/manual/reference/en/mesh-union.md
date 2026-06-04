@@ -85,6 +85,5 @@ pairwise unions.
 
 ## See also
 
-- **Guide:** placeholder → cap. 7 (Mesh operations)
 - **Related:** `mesh-difference`, `mesh-intersection`, `mesh-hull`,
   `concat-meshes`, `mesh-diagnose`

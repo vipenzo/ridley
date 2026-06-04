@@ -65,6 +65,5 @@ expression.
 
 ## See also
 
-- **Guide:** placeholder → cap. 1 (Primi passi)
 - **Related:** `u`, `d`, `rt`, `lt`, `th`, `tv`, `tr`, `arc-h`,
   `bezier-to`, `pen`

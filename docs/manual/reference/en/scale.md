@@ -114,6 +114,5 @@ For shapes, see [scale-shape](scale-shape.md) for the dedicated card.
 
 ## See also
 
-- **Guide:** placeholder → cap. 9 (Positioning & assembly)
 - **Related:** `translate`, `rotate`, `attach`, `scale-shape`,
   `reset-creation-pose`, `stretch-f`, `stretch-rt`, `stretch-u`

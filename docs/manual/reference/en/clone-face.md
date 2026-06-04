@@ -110,6 +110,5 @@ with `f`, it produces taper profiles that would otherwise require a
 
 ## See also
 
-- **Guide:** placeholder → cap. 8 (Faces and surface features)
 - **Related:** `attach-face`, `extrude`, `face-info`, `list-faces`,
   `find-faces`, `face-at`, `face-shape`, `inset`

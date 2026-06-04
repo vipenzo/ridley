@@ -56,5 +56,4 @@ straight segment.
 
 ## See also
 
-- **Guide:** placeholder → cap. 4 (Estrusione)
 - **Related:** `revolve`, `extrude+`, `transform->`, `mesh-union`

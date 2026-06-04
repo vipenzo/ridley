@@ -56,5 +56,4 @@ the silhouette of `vase-sil`.
 
 ## See also
 
-- **Guide:** placeholder → cap. 6 (Da funzioni matematiche a forme)
 - **Related:** `tapered`, `loft`, `shape-fn`, `bezier-as`

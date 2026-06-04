@@ -84,6 +84,5 @@ intermediate CSG passes.
 
 ## See also
 
-- **Guide:** placeholder → cap. 7 (Mesh operations)
 - **Related:** `mesh-union`, `mesh-intersection`, `mesh-hull`,
   `concat-meshes`, `mesh-diagnose`

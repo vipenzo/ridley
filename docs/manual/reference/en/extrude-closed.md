@@ -51,6 +51,4 @@ joined by 90° turns, and the last ring closes back onto the first.
 
 ## See also
 
-- **Guide:** placeholder → cap. 4 (Estrusione) e cap. 6 (Da funzioni
-  matematiche a forme)
 - **Related:** `extrude`, `revolve`, `joint-mode`

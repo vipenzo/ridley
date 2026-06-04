@@ -98,5 +98,4 @@ helper navigates internally.
 
 ## See also
 
-- **Guide:** placeholder → cap. 5 (Paths and anchors)
 - **Related:** `path`, `follow`, `mark`, `with-path`

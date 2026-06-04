@@ -50,6 +50,5 @@ extruded, that becomes a hollow tube.
 
 ## See also
 
-- **Guide:** placeholder → cap. 3 (Lavorare con le forme 2D)
 - **Related:** `shape-union`, `shape-intersection`, `shape-xor`,
   `shape-offset`, `pattern-tile`

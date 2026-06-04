@@ -59,5 +59,4 @@ shape-fns and they apply in order.
 
 ## See also
 
-- **Guide:** placeholder → cap. 6 (Da funzioni matematiche a forme)
 - **Related:** `loft`, `tapered`, `fluted`, `shape-fn`

@@ -74,5 +74,4 @@ the voronoi step to twist and taper a perforated vase along the loft path.
 
 ## See also
 
-- **Guide:** placeholder → cap. 3 (Lavorare con le forme 2D)
 - **Related:** `pattern-tile`, `shape-offset`, `shape-difference`

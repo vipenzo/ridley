@@ -339,7 +339,7 @@
                 nav-el (.querySelector container ".manual-nav")]
             (set! (.-className draft-div) "manual-content")
             (.appendChild container draft-div)
-            (draft/render-chapter! draft-div current-page nav-el))
+            (draft/render-chapter! draft-div current-page nav-el lang))
           (do
             ;; Content
             (let [content-div (.createElement js/document "div")]

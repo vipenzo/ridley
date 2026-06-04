@@ -69,5 +69,4 @@ auto-close.
 
 ## See also
 
-- **Guide:** placeholder → cap. 3 (Lavorare con le forme 2D)
 - **Related:** `poly`, `path-to-shape`, `stroke-shape`, `make-shape`

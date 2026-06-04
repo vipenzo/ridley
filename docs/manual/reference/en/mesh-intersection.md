@@ -81,6 +81,5 @@ single CSG call. The vector form would work too: `(mesh-intersection
 
 ## See also
 
-- **Guide:** placeholder → cap. 7 (Mesh operations)
 - **Related:** `mesh-union`, `mesh-difference`, `mesh-hull`,
   `concat-meshes`

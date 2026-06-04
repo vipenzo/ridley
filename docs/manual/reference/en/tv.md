@@ -60,5 +60,4 @@ Inside `extrude`, `tv` bends the swept path in the vertical plane.
 
 ## See also
 
-- **Guide:** placeholder → cap. 1 (Primi passi)
 - **Related:** `th`, `tr`, `f`, `arc-v`, `turtle` (`:preserve-up`)

@@ -81,5 +81,4 @@ positioning primitive.
 
 ## See also
 
-- **Guide:** placeholder → cap. 5 (Paths and anchors)
 - **Related:** `path`, `follow`, `with-path`, `play-path`, `turtle`

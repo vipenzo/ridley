@@ -126,6 +126,5 @@ still resolves correctly.
 
 ## See also
 
-- **Guide:** placeholder → cap. 5 (Paths and anchors)
 - **Related:** `path`, `goto`, `look-at`, `path-to`, `move-to`,
   `anchors`, `mark`, `register`

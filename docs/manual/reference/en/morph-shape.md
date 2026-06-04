@@ -55,5 +55,4 @@ points so they're morph-compatible.
 
 ## See also
 
-- **Guide:** placeholder → cap. 3 (Lavorare con le forme 2D)
 - **Related:** `resample-shape`, `scale-shape`, `rotate-shape`

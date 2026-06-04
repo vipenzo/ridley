@@ -80,6 +80,5 @@ the original path — useful for runtime introspection.
 
 ## See also
 
-- **Guide:** placeholder → cap. 5 (Paths and anchors)
 - **Related:** `path`, `with-path`, `mark`, `attach-path`, `path-to`,
   `mark-pos`

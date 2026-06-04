@@ -91,6 +91,5 @@ semantics as `(get coll key)` followed by `(hide …)`.
 
 ## See also
 
-- **Guide:** placeholder → cap. 1 (Primi passi)
 - **Related:** `register`, `show-all`, `hide-all`, `show-only-objects`,
   `objects`, `info`

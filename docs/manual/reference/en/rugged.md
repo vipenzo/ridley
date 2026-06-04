@@ -72,5 +72,4 @@ detail layered on top.
 
 ## See also
 
-- **Guide:** placeholder → cap. 6 (Da funzioni matematiche a forme)
 - **Related:** `fluted`, `noisy`, `displaced`, `loft`, `shape-fn`

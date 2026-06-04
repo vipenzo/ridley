@@ -65,5 +65,4 @@ Forcing a low segment count yields a regular prism.
 
 ## See also
 
-- **Guide:** placeholder → cap. 2 (Costruire con primitive 3D)
 - **Related:** `cone`, `box`, `sphere`, `extrude`, `circle`

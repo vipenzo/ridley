@@ -85,6 +85,5 @@ sub-path reaches.
 
 ## See also
 
-- **Guide:** placeholder → cap. 5 (Paths and anchors)
 - **Related:** `path`, `with-path`, `mark-pos`, `mark-x`, `mark-y`,
   `anchors`, `move-to`, `side-trip`, `follow`

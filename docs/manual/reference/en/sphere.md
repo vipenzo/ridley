@@ -68,5 +68,4 @@ resolution.
 
 ## See also
 
-- **Guide:** placeholder → cap. 2 (Costruire con primitive 3D)
 - **Related:** `box`, `cyl`, `cone`, `resolution`

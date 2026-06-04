@@ -43,6 +43,5 @@ A flat slab 40 wide, 10 tall, extruded 20 units forward.
 
 ## See also
 
-- **Guide:** placeholder → cap. 3 (Lavorare con le forme 2D)
 - **Related:** `circle`, `polygon`, `fillet-shape`, `chamfer-shape`,
   `box` (3D analogue)

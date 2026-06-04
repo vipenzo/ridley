@@ -48,5 +48,4 @@ After registering geometry that doesn't fit the current view, call
 
 ## See also
 
-- **Guide:** placeholder → cap. 1 (Primi passi)
 - **Related:** `bounds`, `show-all`, `show-only-objects`

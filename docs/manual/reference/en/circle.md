@@ -61,5 +61,4 @@ Forcing a low segment count produces a regular polygon. Equivalent to
 
 ## See also
 
-- **Guide:** placeholder → cap. 3 (Lavorare con le forme 2D)
 - **Related:** `polygon`, `rect`, `star`, `extrude`, `loft`, `revolve`

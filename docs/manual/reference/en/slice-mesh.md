@@ -87,6 +87,5 @@ slice is extruded into a new solid — a common pattern for "build a
 
 ## See also
 
-- **Guide:** placeholder → cap. 7 (Mesh operations)
 - **Related:** `slice-at-plane`, `project-mesh`, `stamp`,
   `path-to-shape`

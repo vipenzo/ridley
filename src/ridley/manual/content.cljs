@@ -2873,7 +2873,7 @@ Due set di fili vengono loftati lungo percorsi sinusoidali con `bezier-as`, poi 
   (when-let [page-struct (find-page-structure page-id)]
     (if (= (:section-id page-struct) :drafts)
       {:id page-id
-       :title (:draft-title page-struct)
+       :title (or (draft/chapter-title page-id lang) (:draft-title page-struct))
        :draft? true
        :section-id :drafts}
       (let [lang-data (get-in i18n [lang :pages page-id])

@@ -176,6 +176,5 @@ See also `with-path`, `goto`, `attach-path`, `link!`, `show`, `hide`.
 
 ## See also
 
-- **Guide:** placeholder → cap. 1 (Primi passi)
 - **Related:** `show`, `hide`, `show-all`, `hide-all`,
   `show-only-objects`, `objects`, `registered`, `panel`, `with-path`

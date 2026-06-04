@@ -49,5 +49,4 @@ A hexagonal loop driven by explicit vertices. Pairing it with
 
 ## See also
 
-- **Guide:** placeholder → cap. 5 (Paths and anchors)
 - **Related:** `poly-path`, `extrude-closed`, `path`

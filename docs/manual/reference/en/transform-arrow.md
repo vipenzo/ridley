@@ -83,5 +83,4 @@ an in-progress build.
 
 ## See also
 
-- **Guide:** placeholder → cap. 4 (Estrusione)
 - **Related:** `extrude+`, `revolve+`, `mesh-union`

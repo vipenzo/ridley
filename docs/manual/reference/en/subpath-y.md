@@ -58,12 +58,13 @@ the original axisymmetric surface.
 
 <!-- example-source: subpath-y-stacked -->
 ```clojure
-(def col (path (f 30) (th 120) (f 60)))   ; a cone: radius 30 at the base, apex on the axis, ~52 tall
-
+(def col (path (f 30) (th 120) (f 60))) ; a cone: radius 30 at the base, apex on the axis, ~52 tall
+(stamp col)
 (register lower (revolve (path-to-shape (subpath-y col 0 25))))
 (register upper (translate
                   (revolve (path-to-shape (subpath-y col 25 52)))
-                  0 0 25))
+                  0 0 50))
+
 ```
 <!-- /example-source -->
 
@@ -83,5 +84,4 @@ share a single source while being treated as separate objects.
 
 ## See also
 
-- **Guide:** placeholder → cap. 5 (Paths and anchors)
 - **Related:** `offset-x`, `path-to-shape`, `revolve`, `path`

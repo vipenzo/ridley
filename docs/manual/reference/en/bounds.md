@@ -49,6 +49,5 @@ The bounds of a 40 × 20 rectangle extruded forward 30 units.
 
 ## See also
 
-- **Guide:** placeholder → cap. 1 (Primi passi)
 - **Related:** `info`, `dimensions` (`height` / `width` / `depth` /
   `top` / `bottom` / `center-*`), `bounds-2d`

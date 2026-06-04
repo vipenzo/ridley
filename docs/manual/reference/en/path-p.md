@@ -47,5 +47,4 @@ path or a list of movements" can dispatch on it.
 
 ## See also
 
-- **Guide:** placeholder → cap. 5 (Paths and anchors)
 - **Related:** `path`, `shape?`, `mesh?`

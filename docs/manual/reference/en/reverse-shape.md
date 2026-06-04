@@ -44,5 +44,4 @@ outward-facing normals.
 
 ## See also
 
-- **Guide:** placeholder → cap. 3 (Lavorare con le forme 2D)
 - **Related:** `shape-difference`, `path-to-shape`

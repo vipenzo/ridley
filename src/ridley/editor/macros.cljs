@@ -616,6 +616,13 @@
              `(-> (loft-n-impl ~steps ~first-arg (path ~dispatch-arg))
                   (add-source ~src)))))))
 
+   ;; loft-between: explicit alias for loft's two-shape mode
+   ;; (loft-between (circle 5) (circle 10) (f 30))  - taper between shapes
+   ;; Linearly interpolates between start and end shapes (must share point count).
+   ;; Returns the created mesh (can be bound with def)
+   (defmacro loft-between [start-shape end-shape & movements]
+     `(loft ~start-shape ~end-shape ~@movements))
+
    ;; revolve: create solid of revolution (lathe operation)
    ;; PURE: returns mesh without side effects (use register to make visible)
    ;; (revolve (shape (f 8) (th 90) (f 10) (th 90) (f 8)))  ; solid cylinder

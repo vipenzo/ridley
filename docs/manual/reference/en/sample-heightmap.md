@@ -73,6 +73,5 @@ pattern.
 
 ## See also
 
-- **Guide:** placeholder → cap. 6 (Da funzioni matematiche a forme)
 - **Related:** `heightmap`, `mesh-to-heightmap`, `weave-heightmap`,
   `heightmap-to-mesh`

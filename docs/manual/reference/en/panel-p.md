@@ -38,6 +38,5 @@ names.
 
 ## See also
 
-- **Guide:** placeholder → cap. 1 (Primi passi)
 - **Related:** `panel`, `out`, `append`, `clear`, `shape?`,
   `shape-fn?`, `path?`

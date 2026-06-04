@@ -44,5 +44,4 @@ default material.
 
 ## See also
 
-- **Guide:** placeholder → cap. 1 (Primi passi)
 - **Related:** `color`, `material`

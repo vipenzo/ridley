@@ -92,6 +92,5 @@ than with the visual center.
 
 ## See also
 
-- **Guide:** placeholder → cap. 9 (Positioning & assembly)
 - **Related:** `translate`, `rotate`, `scale`, `attach`,
   `bounds`, `mesh-union`, `mesh-difference`

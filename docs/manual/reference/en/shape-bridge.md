@@ -72,5 +72,4 @@ number of input shapes.
 
 ## See also
 
-- **Guide:** placeholder → cap. 3 (Lavorare con le forme 2D)
 - **Related:** `shape-hull`, `shape-offset`, `shape-union`

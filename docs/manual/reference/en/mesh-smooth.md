@@ -94,6 +94,5 @@ Lowering `:sharp-angle` smooths even the joint-mode corners that
 
 ## See also
 
-- **Guide:** placeholder → cap. 7 (Mesh operations)
 - **Related:** `mesh-refine`, `fillet`, `chamfer`, `mesh-diagnose`,
   `mesh-laplacian`, `merge-vertices`

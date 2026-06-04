@@ -44,5 +44,4 @@ A cone with 32 rings instead of the default 16, for a smoother taper.
 
 ## See also
 
-- **Guide:** placeholder → cap. 6 (Da funzioni matematiche a forme)
 - **Related:** `loft`, `extrude`

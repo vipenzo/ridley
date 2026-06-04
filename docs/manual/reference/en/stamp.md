@@ -56,6 +56,5 @@ deciding which profile to extrude.
 
 ## See also
 
-- **Guide:** placeholder → cap. 3 (Lavorare con le forme 2D)
 - **Related:** `stamp-visibility` (`show-stamps` / `hide-stamps` /
   `stamps-visible?`), `extrude`, `revolve`, `path-to-shape`

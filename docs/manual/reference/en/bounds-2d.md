@@ -82,5 +82,4 @@ geometry: a backing plate, a containing frame, or a registration mark.
 
 ## See also
 
-- **Guide:** placeholder → cap. 5 (Paths and anchors)
 - **Related:** `bounds`, `mark-pos`, `fit`, `path`

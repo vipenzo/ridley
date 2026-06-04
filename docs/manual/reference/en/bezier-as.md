@@ -69,5 +69,4 @@ per-bezier resolution.
 
 ## See also
 
-- **Guide:** placeholder → cap. 1 (Primi passi)
 - **Related:** `bezier-to`, `bezier-to-anchor`, `path`, `resolution`

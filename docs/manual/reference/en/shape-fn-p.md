@@ -42,5 +42,4 @@ constructor carry the metadata; a plain `fn` does not.
 
 ## See also
 
-- **Guide:** placeholder → cap. 6 (Da funzioni matematiche a forme)
 - **Related:** `shape-fn`, `shape?`

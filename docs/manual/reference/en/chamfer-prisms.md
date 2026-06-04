@@ -87,6 +87,5 @@ This is the escape hatch when no built-in selector (direction,
 
 ## See also
 
-- **Guide:** placeholder → cap. 7 (Mesh operations)
 - **Related:** `chamfer`, `chamfer-edges`, `find-sharp-edges`,
   `concat-meshes`

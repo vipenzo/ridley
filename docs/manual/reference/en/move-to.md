@@ -170,6 +170,5 @@ slot). The child's vertices rotate to face the anchor's heading/up.
 
 ## See also
 
-- **Guide:** placeholder → cap. 8 (Assembly)
 - **Related:** `attach`, `attach!`, `attach-path`, `play-path`,
   `cp-rotation`, `with-path`, `goto`, `path-to`

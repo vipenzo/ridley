@@ -75,5 +75,4 @@ more than the global setting.
 
 ## See also
 
-- **Guide:** placeholder → cap. 1 (Primi passi)
 - **Related:** `arc-v`, `th`, `bezier-to`, `resolution`

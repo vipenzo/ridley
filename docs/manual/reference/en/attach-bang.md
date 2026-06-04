@@ -90,6 +90,5 @@ registry with their final poses.
 
 ## See also
 
-- **Guide:** placeholder → cap. 8 (Assembly)
 - **Related:** `attach`, `move-to`, `register`, `play-path`,
   `stretch-f`, `stretch-rt`, `stretch-u`

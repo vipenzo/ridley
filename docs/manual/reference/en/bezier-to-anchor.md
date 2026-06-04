@@ -54,6 +54,8 @@ connects the current pose to `:elbow` smoothly.
 
 <!-- example-source: bezier-to-anchor-tension -->
 ```clojure
+(def skeleton (path (f 30) (mark :shoulder) (th 45) (f 20) (mark :elbow)))
+
 (with-path skeleton
   (goto :shoulder)
   (bezier-to-anchor :elbow :tension 0.5))
@@ -72,6 +74,5 @@ producing a more swooping curve.
 
 ## See also
 
-- **Guide:** placeholder → cap. 1 (Primi passi)
 - **Related:** `bezier-to`, `bezier-as`, `goto`, `look-at`, `with-path`,
   `resolution`

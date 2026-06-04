@@ -89,6 +89,5 @@ a chamfer to one side of an object.
 
 ## See also
 
-- **Guide:** placeholder → cap. 7 (Mesh operations)
 - **Related:** `chamfer-edges`, `chamfer-prisms`, `chamfer`, `fillet`,
   `mesh-diagnose`

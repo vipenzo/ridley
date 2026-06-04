@@ -48,5 +48,4 @@ registry, but the value itself is just a keyword).
 
 ## See also
 
-- **Guide:** placeholder → cap. 7 (Mesh operations)
 - **Related:** `shape?`, `path?`, `mesh-diagnose`, `info`

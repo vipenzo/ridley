@@ -78,5 +78,4 @@ CW winding (opposite of the outer).
 
 ## See also
 
-- **Guide:** placeholder → cap. 3 (Lavorare con le forme 2D)
 - **Related:** `poly`, `shape`, `circle`, `rect`, `polygon`

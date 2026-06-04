@@ -99,6 +99,5 @@ for the dedicated shape-only card.
 
 ## See also
 
-- **Guide:** placeholder → cap. 9 (Positioning & assembly)
 - **Related:** `scale`, `rotate`, `attach`, `translate-shape`,
   `transform`, `reset-creation-pose`

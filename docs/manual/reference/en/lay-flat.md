@@ -100,6 +100,5 @@ anchor's plane is laid flat regardless of orientation.
 
 ## See also
 
-- **Guide:** placeholder → cap. 7 (Mesh operations)
 - **Related:** `attach-path`, `translate`, `rotate`,
   `reset-creation-pose`, `bounds`

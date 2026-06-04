@@ -55,5 +55,4 @@ Set, extend, and clear a panel's content by registered name.
 
 ## See also
 
-- **Guide:** placeholder → cap. 1 (Primi passi)
 - **Related:** `panel`, `panel?`, `register`

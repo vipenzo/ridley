@@ -103,6 +103,5 @@ should depend on world-space size.
 
 ## See also
 
-- **Guide:** placeholder → cap. 1 (Primi passi)
 - **Related:** `arc-h`, `arc-v`, `bezier-to`, `circle`, `sphere`,
   `cyl`, `cone`, `revolve`, `loft-n`

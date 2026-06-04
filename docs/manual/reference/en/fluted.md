@@ -62,5 +62,4 @@ profile.
 
 ## See also
 
-- **Guide:** placeholder → cap. 6 (Da funzioni matematiche a forme)
 - **Related:** `rugged`, `noisy`, `tapered`, `loft`, `shape-fn`

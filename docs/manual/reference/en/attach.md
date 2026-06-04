@@ -147,7 +147,6 @@ subsequent commands operate in the target's coordinate system.
 
 ## See also
 
-- **Guide:** placeholder → cap. 8 (Assembly)
 - **Related:** `attach!`, `move-to`, `play-path`, `stretch-f`,
   `stretch-rt`, `stretch-u`, `cp-position`, `cp-rotation`,
   `transform`, `path`

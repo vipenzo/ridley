@@ -51,5 +51,4 @@ heading so its cross-section is rotated in the section plane.
 
 ## See also
 
-- **Guide:** placeholder → cap. 1 (Primi passi)
 - **Related:** `th`, `tv`, `f`, `turtle`

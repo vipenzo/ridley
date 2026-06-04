@@ -71,5 +71,4 @@ local right axis; the third along the heading.
 
 ## See also
 
-- **Guide:** placeholder → cap. 2 (Costruire con primitive 3D)
 - **Related:** `sphere`, `cyl`, `cone`, `extrude`, `rect`

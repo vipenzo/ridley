@@ -104,6 +104,5 @@ mating parts must share a heading but differ in roll.
 
 ## See also
 
-- **Guide:** placeholder → cap. 8 (Assembly)
 - **Related:** `cp-position`, `attach`, `attach!`, `move-to`,
   `reset-creation-pose`

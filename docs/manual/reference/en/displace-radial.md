@@ -59,5 +59,4 @@ shape-fn used by `loft`), this is a one-shot transformation usable with
 
 ## See also
 
-- **Guide:** placeholder → cap. 6 (Da funzioni matematiche a forme)
 - **Related:** `displaced`, `rugged`, `fluted`, `angle`, `make-shape`

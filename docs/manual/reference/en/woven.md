@@ -56,5 +56,4 @@ A woven cylinder with 8 warp threads and 6 weft threads, each lifted by
 
 ## See also
 
-- **Guide:** placeholder → cap. 6 (Da funzioni matematiche a forme)
 - **Related:** `woven-shell`, `displaced`, `noisy`, `shell`

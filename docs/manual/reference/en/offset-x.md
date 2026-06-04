@@ -55,5 +55,4 @@ revolve shell.
 
 ## See also
 
-- **Guide:** placeholder → cap. 5 (Paths and anchors)
 - **Related:** `subpath-y`, `path-to-shape`, `revolve`, `fit`

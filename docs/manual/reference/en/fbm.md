@@ -72,5 +72,4 @@ thing internally.
 
 ## See also
 
-- **Guide:** placeholder → cap. 6 (Da funzioni matematiche a forme)
 - **Related:** `noise`, `noisy`, `displaced`

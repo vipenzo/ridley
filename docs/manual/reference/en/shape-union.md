@@ -45,6 +45,5 @@ A plus sign by unioning a horizontal and a vertical rectangle.
 
 ## See also
 
-- **Guide:** placeholder → cap. 3 (Lavorare con le forme 2D)
 - **Related:** `shape-difference`, `shape-intersection`, `shape-xor`,
   `shape-offset`, `shape-hull`

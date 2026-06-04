@@ -62,6 +62,4 @@ when starting from a top-down floor plan.
 
 ## See also
 
-- **Guide:** placeholder → cap. 4 (Estrusione) e cap. 6 (Da funzioni
-  matematiche a forme)
 - **Related:** `extrude`, `extrude-closed`, `loft`

@@ -111,6 +111,13 @@
   [page-id]
   (structure/chapter-by-id page-id))
 
+(defn chapter-title
+  "Localized title for a draft chapter id, in `lang` (falling back to the
+   source language). nil if the id is not a draft chapter."
+  [page-id lang]
+  (when-let [c (structure/chapter-by-id page-id)]
+    (structure/chapter-title c lang)))
+
 (defn draft-page?
   "True if the page id is a draft chapter rendered from markdown."
   [page-id]

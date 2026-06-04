@@ -107,6 +107,5 @@ positive X — the right-hand side of the slab.
 
 ## See also
 
-- **Guide:** placeholder → cap. 7 (Mesh operations)
 - **Related:** `fillet`, `chamfer-edges`, `chamfer-prisms`,
   `find-sharp-edges`, `mesh-smooth`

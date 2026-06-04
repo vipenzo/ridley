@@ -94,5 +94,4 @@ inside `register` / `tweak` expressions.
 
 ## See also
 
-- **Guide:** placeholder → cap. 1 (Primi passi)
 - **Related:** `material`, `reset-material`, `register`

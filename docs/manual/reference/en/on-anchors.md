@@ -174,6 +174,5 @@ expression works, evaluated in the turtle scope at the anchor.
 
 ## See also
 
-- **Guide:** placeholder → cap. 8 (Assemblaggio)
 - **Related:** `anchors`, `attach`, `move-to`, `with-path`, `turtle`,
   `mark`, `attach-path`

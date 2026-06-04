@@ -14,11 +14,13 @@ status: stable
 
 ## Description
 
-Create a frustum (truncated cone) mesh at the current turtle position.
-The frustum axis runs along the turtle's **heading**. `r1` is the
-radius at the base (turtle position); `r2` is the radius at the far end
-(at distance `height` along heading). Set `r2 = 0` for a proper cone.
-Returns a mesh; **does not modify turtle state**.
+Create a frustum (truncated cone) mesh centered on the current turtle
+position. The frustum axis runs along the turtle's **heading**, with the
+turtle at the center: the two circular faces sit `height/2` to either
+side along the heading, so the turtle is equidistant from both. `r1` is
+the base radius and `r2` the top radius; the base (`r1`) is the face on
+the heading side (forward), the top (`r2`) the face behind. Set `r2 = 0`
+for a proper cone. Returns a mesh; **does not modify turtle state**.
 
 The segment count defaults to the current resolution; pass an explicit
 value to override it. The primitive carries semantic face IDs
@@ -26,9 +28,10 @@ value to override it. The primitive carries semantic face IDs
 
 ## Parameters
 
-- `r1` — base radius (at the turtle position).
-- `r2` — top radius (`height` units along the heading from the turtle).
-- `height` — length along the turtle's heading.
+- `r1` — base radius; the base is the face on the heading side (forward).
+- `r2` — top radius; the top is the face behind. Set to 0 for a sharp cone.
+- `height` — total length along the turtle's heading; the two faces sit
+  `height/2` to either side of the turtle.
 - `segments` — circumferential segments. Optional; defaults to the
   resolution setting.
 
@@ -59,11 +62,10 @@ A frustum with base radius 10, top radius 6, height 20.
 ## Notes
 
 - The axis convention matches `cyl` (axis along heading).
-- For a generative cone with varying cross-section, use
-  `(loft (tapered (circle r) :to 0) (f h))` — `cone` is the cheap
-  primitive equivalent of that case.
+- `cone` is shape-equivalent to `(loft (circle r2) (circle r1) (f height))`,
+  except that `cone` is centered on the turtle while the `loft` form is
+  anchored at its start. Use `cone` as the cheap primitive for this case.
 
 ## See also
 
-- **Guide:** placeholder → cap. 2 (Costruire con primitive 3D)
 - **Related:** `cyl`, `box`, `sphere`, `loft`, `tapered`

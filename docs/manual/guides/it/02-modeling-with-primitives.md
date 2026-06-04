@@ -9,16 +9,16 @@ Verità accertate (vedi diagnosi di Code, T-006 chat 2026-05-16):
   no swap)
 - cyl (r h): r=raggio sezione, h=altezza in avanti (wrapper
   transform-mesh-to-turtle-upright applica swap heading↔up)
-- cone (r1 r2 h): r1=raggio davanti (base, vicina alla turtle),
-  r2=raggio dietro (top, lontana dalla turtle), h=altezza in avanti
-  (stesso wrapper di cyl)
+- cone (r1 r2 h): centrato sulla turtle (come box/sphere), facce a +/-h/2
+  lungo l'avanti. r1=raggio della faccia verso l'avanti (heading, = base),
+  r2=raggio della faccia dietro (= top); h=lunghezza totale (stesso wrapper di cyl)
 - sphere (r): radialmente simmetrica, orientamento poli invisibile
 
 Tutte le primitive con asse di sviluppo si estendono lungo l'avanti.
-Sezione (se presente) nel piano destra-alto. Regolarità con extrude:
+Sezione (se presente) nel piano destra-alto. Regolarità con extrude/loft:
   (box w h d) ≈ (extrude (rect w h) (f d))
   (cyl r h)   ≈ (extrude (circle r) (f h))
-  (cone r1 r2 h) ≈ (extrude (circle r1) → (circle r2) (f h))
+  (cone r1 r2 h) ≈ (loft (circle r2) (circle r1) (f h))  ; loft, NON extrude; cone centrato vs loft all'inizio
 
 Discrepanze sorgente↔realtà tracciate in dev-docs/code-issues.md.
 =========================================================================
@@ -71,14 +71,14 @@ L'ordine "destra, alto, avanti" è inusuale rispetto a CAD più tradizionali. Un
 
 ### Il cono
 
-`cone` crea un tronco di cono: raggio della base, raggio del top, altezza in avanti. La "base" è la sezione vicina alla tartaruga, il "top" è quella lontana — coerentemente con il fatto che la primitiva nasce alla tartaruga e si estende in avanti.
+`cone` crea un tronco di cono: raggio della base, raggio del top, lunghezza lungo l'avanti. Come `box` e `sphere`, il cono nasce centrato sulla tartaruga: le due sezioni circolari stanno lungo l'avanti, a metà lunghezza da una parte e dall'altra, e la tartaruga è equidistante dalle due.
 
 <!-- example-source: primitive-cone -->
 ```clojure
 (register frustum-demo (cone 10 5 30))
 ```
 
-`(cone 10 5 30)` è un tronco di cono con la base di raggio 10 vicina alla tartaruga e il top di raggio 5 davanti, lungo 30 in avanti. Per un cono vero e proprio, mettere zero al raggio del top: `(cone 10 0 30)`.
+`(cone 10 5 30)` è un tronco di cono lungo 30, con la base di raggio 10 verso l'avanti e il top di raggio 5 dietro: la tartaruga sta al centro, a 15 da ciascuna faccia. Per un cono vero e proprio, mettere zero al raggio del top: `(cone 10 0 30)` (la punta cade sulla faccia dietro).
 
 ### La sfera
 
@@ -104,12 +104,12 @@ Le primitive nascono sulla tartaruga, quindi tutte nello stesso posto. Per costr
 
 `scale` ridimensiona una mesh. Con un solo numero la scala uniformemente; con tre numeri la scala in modo non uniforme sui tre assi.
 
-<!-- example-source: primitive-scale-uniforme -->
+<!-- example-source: primitive-scale-uniform -->
 ```clojure
 (register big-sphere (scale (sphere 10) 2))
 ```
 
-<!-- example-source: primitive-scale-non-uniforme -->
+<!-- example-source: primitive-scale-non-uniform -->
 ```clojure
 (register ellipsoid (scale (sphere 10) 1 0.5 2))
 ```
@@ -471,7 +471,7 @@ Funziona, ed è l'approccio giusto quando pensi in termini di "questa cosa va a 
 
 <!-- example-source: cad-vs-turtle -->
 ```clojure
-; stessa staffa, vocabolario locale
+; same bracket, local vocabulary
 (register shelf-bracket
   (mesh-difference
     (attach (box 40 5 30) (f 15) (rt 20))
@@ -496,4 +496,4 @@ Dentro `attach` hai lo stesso set completo che hai al top level, ma in coordinat
 
 Al top level, `translate`, `scale`, `rotate` lavorano sempre in coordinate mondo. Dentro `attach`, tutto lavora in coordinate locali. Una regola sola, nessuna eccezione.
 
-Il pivot di `scale` e `rotate` è la creation-pose della mesh, cioè la posizione della turtle nel momento in cui la primitiva è stata creata. Per primitive appena costruite è al centro della geometria, quindi non ci pensi. Quando lavori con pezzi composti o boolean il pivot può non coincidere con il centro visivo: il capitolo [→ cap. N] spiega come controllarlo con `cp-*`.
+Il pivot di `scale` e `rotate` è la creation-pose della mesh, cioè la posizione della turtle nel momento in cui la primitiva è stata creata. Per primitive appena costruite è al centro della geometria, quindi non ci pensi. Quando lavori con pezzi composti o boolean il pivot può non coincidere con il centro visivo: il capitolo 8 (Assemblaggio) spiega come controllarlo con `cp-*`.

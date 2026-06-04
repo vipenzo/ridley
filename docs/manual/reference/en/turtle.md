@@ -130,6 +130,5 @@ helices, climbing handrails.
 
 ## See also
 
-- **Guide:** placeholder → cap. 1 (Primi passi)
 - **Related:** `reset`, `f`, `th`, `tv`, `tr`, `with-path`,
   `joint-mode`, `resolution`

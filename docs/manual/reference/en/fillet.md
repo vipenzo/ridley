@@ -78,6 +78,5 @@ the mesh's axis), so only the outer rim is filleted.
 
 ## See also
 
-- **Guide:** placeholder → cap. 7 (Mesh operations)
 - **Related:** `chamfer`, `mesh-smooth`, `chamfer-edges`,
   `chamfer-prisms`, `find-sharp-edges`

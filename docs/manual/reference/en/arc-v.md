@@ -65,5 +65,4 @@ Inside `extrude`, the vertical arc becomes a hook-like swept tube.
 
 ## See also
 
-- **Guide:** placeholder → cap. 1 (Primi passi)
 - **Related:** `arc-h`, `tv`, `bezier-to`, `resolution`

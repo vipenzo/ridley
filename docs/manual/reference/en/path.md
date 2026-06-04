@@ -101,6 +101,5 @@ movements or an already-recorded path.
 
 ## See also
 
-- **Guide:** placeholder → cap. 5 (Paths and anchors)
 - **Related:** `extrude`, `loft`, `revolve`, `follow-path`, `with-path`,
   `quick-path`, `poly-path`, `mark`, `follow`, `side-trip`, `path?`

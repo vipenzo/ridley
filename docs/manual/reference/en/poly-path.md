@@ -74,5 +74,4 @@ programmatically.
 
 ## See also
 
-- **Guide:** placeholder → cap. 5 (Paths and anchors)
 - **Related:** `poly-path-closed`, `path`, `quick-path`, `poly`

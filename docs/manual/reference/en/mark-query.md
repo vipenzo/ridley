@@ -89,5 +89,4 @@ single source of truth for several derived objects.
 
 ## See also
 
-- **Guide:** placeholder → cap. 5 (Paths and anchors)
 - **Related:** `mark`, `anchors`, `bounds-2d`, `path`

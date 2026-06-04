@@ -59,5 +59,4 @@ Chamfer only specific vertices for asymmetric profiles.
 
 ## See also
 
-- **Guide:** placeholder → cap. 3 (Lavorare con le forme 2D)
 - **Related:** `fillet-shape`, `shape-offset`

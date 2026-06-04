@@ -56,5 +56,4 @@ check the current state, then restore visibility.
 
 ## See also
 
-- **Guide:** placeholder → cap. 3 (Lavorare con le forme 2D)
 - **Related:** `stamp`

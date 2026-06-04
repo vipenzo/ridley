@@ -74,5 +74,4 @@ visual comparison.
 
 ## See also
 
-- **Guide:** placeholder → cap. 5 (Paths and anchors)
 - **Related:** `path`, `poly-path`, `f`, `th`

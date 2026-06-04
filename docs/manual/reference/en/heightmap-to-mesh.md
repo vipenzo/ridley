@@ -66,6 +66,5 @@ scaled proportionally.
 
 ## See also
 
-- **Guide:** placeholder → cap. 6 (Da funzioni matematiche a forme)
 - **Related:** `mesh-to-heightmap`, `weave-heightmap`, `sample-heightmap`,
   `heightmap`

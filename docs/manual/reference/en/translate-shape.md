@@ -53,6 +53,5 @@ peanut outline.
 
 ## See also
 
-- **Guide:** placeholder → cap. 3 (Lavorare con le forme 2D)
 - **Related:** `scale-shape`, `rotate-shape`,
   [translate](translate.md) (polymorphic mesh / SDF / shape)

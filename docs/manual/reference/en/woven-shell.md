@@ -111,5 +111,4 @@ Compose with other shape-fns via `->` threading.
 
 ## See also
 
-- **Guide:** placeholder → cap. 6 (Da funzioni matematiche a forme)
 - **Related:** `shell`, `woven`, `loft`, `shape-fn`

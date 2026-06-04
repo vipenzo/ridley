@@ -57,6 +57,5 @@ to author as geometry than as a procedural function.
 
 ## See also
 
-- **Guide:** placeholder → cap. 6 (Da funzioni matematiche a forme)
 - **Related:** `heightmap-to-mesh`, `weave-heightmap`, `sample-heightmap`,
   `heightmap`

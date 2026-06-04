@@ -60,5 +60,4 @@ here, an 8-petal modulation around the contour.
 
 ## See also
 
-- **Guide:** placeholder → cap. 6 (Da funzioni matematiche a forme)
 - **Related:** `displaced`, `displace-radial`, `shape-fn`

@@ -100,6 +100,5 @@ coincides with the creation-pose, without rebuilding the mesh.
 
 ## See also
 
-- **Guide:** placeholder → cap. 8 (Assembly)
 - **Related:** `cp-rotation`, `attach`, `attach!`, `move-to`,
   `reset-creation-pose`

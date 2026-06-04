@@ -94,5 +94,4 @@ local coordinates.
 
 ## See also
 
-- **Guide:** placeholder → cap. 7 (Mesh operations)
 - **Related:** `slice-mesh`, `project-mesh`, `stamp`

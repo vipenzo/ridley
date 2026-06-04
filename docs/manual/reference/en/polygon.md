@@ -43,5 +43,4 @@ the flat sides are on the left and right.
 
 ## See also
 
-- **Guide:** placeholder → cap. 3 (Lavorare con le forme 2D)
 - **Related:** `poly`, `star`, `circle`, `rect`

@@ -54,6 +54,5 @@ Rotate a rectangle 30° in its own plane before extruding.
 
 ## See also
 
-- **Guide:** placeholder → cap. 3 (Lavorare con le forme 2D)
 - **Related:** `scale-shape`, `translate-shape`, `reverse-shape`,
   [rotate](rotate.md) (polymorphic mesh / SDF / shape)

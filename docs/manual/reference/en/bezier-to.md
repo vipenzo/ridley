@@ -79,7 +79,7 @@ shaping a single segment.
 
 <!-- example-source: bezier-to-explicit-steps -->
 ```clojure
-(bezier-to [40 0 0] :steps 64)
+(bezier-to [40 0 20] :steps 64)
 ```
 <!-- /example-source -->
 
@@ -95,6 +95,5 @@ more than the global setting.
 
 ## See also
 
-- **Guide:** placeholder → cap. 1 (Primi passi)
 - **Related:** `bezier-to-anchor`, `bezier-as`, `arc-h`, `arc-v`,
   `resolution`

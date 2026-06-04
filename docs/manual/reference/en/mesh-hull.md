@@ -80,6 +80,5 @@ suitable as a wireframe or collision volume.
 
 ## See also
 
-- **Guide:** placeholder → cap. 7 (Mesh operations)
 - **Related:** `shape-hull`, `mesh-union`, `mesh-intersection`,
   `loft-between`

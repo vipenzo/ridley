@@ -48,5 +48,4 @@ into an axisymmetric vase.
 
 ## See also
 
-- **Guide:** placeholder → cap. 3 (Lavorare con le forme 2D)
 - **Related:** `stroke-shape`, `shape`, `revolve`

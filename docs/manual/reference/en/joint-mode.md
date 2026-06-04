@@ -71,5 +71,4 @@ mitred joins.
 
 ## See also
 
-- **Guide:** placeholder → cap. 4 (Estrusione)
 - **Related:** `extrude`, `extrude-closed`, `loft`

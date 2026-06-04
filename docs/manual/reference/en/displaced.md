@@ -55,6 +55,5 @@ and a per-`t` phase shift that twists the ripple along the path.
 
 ## See also
 
-- **Guide:** placeholder → cap. 6 (Da funzioni matematiche a forme)
 - **Related:** `noisy`, `rugged`, `heightmap`, `shape-fn`,
   `displace-radial`, `angle`

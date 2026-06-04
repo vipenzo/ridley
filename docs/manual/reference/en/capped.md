@@ -106,6 +106,5 @@ tapered profile + start-cap fillet produces a teardrop.
 
 ## See also
 
-- **Guide:** placeholder → cap. 6 (Da funzioni matematiche a forme)
 - **Related:** `fillet-shape`, `chamfer-shape`, `loft`, `shape-fn`,
   `tapered`

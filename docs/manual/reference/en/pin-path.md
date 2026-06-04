@@ -97,6 +97,5 @@ combine multiple marks, or post-processing applied after the loop.
 
 ## See also
 
-- **Guide:** placeholder → cap. 8 (Assemblaggio)
 - **Related:** `anchors`, `with-path`, `on-anchors`, `mark`, `path`,
   `mark-pos`

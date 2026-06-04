@@ -90,5 +90,4 @@ move identically, so the joint between them stays where it was.
 
 ## See also
 
-- **Guide:** placeholder → cap. 9 (Positioning & assembly)
 - **Related:** `attach`, `translate`, `rotate`, `path`, `follow-path`

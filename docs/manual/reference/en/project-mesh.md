@@ -90,6 +90,5 @@ hosting block.
 
 ## See also
 
-- **Guide:** placeholder → cap. 7 (Mesh operations)
 - **Related:** `slice-mesh`, `slice-at-plane`, `stamp`,
   `path-to-shape`, `scale-shape`
