@@ -83,6 +83,11 @@ trajectory is reused across multiple operations.
 - For the lower-level world-axis form, see `extrude-axis`
   (`extrude-z` / `extrude-y`): sweep a 2D path (list of `[x y]` pairs)
   along a world axis, bypassing the turtle's heading.
+- **Profile marks become mesh anchors.** If the profile's source path
+  seeded `(mark …)`s (via `path-to-shape`/`stroke-shape`/`embroid`), the
+  extruded mesh carries them as `:anchors` on the base section, reachable
+  with `(move-to mesh :at :mark …)`; compose with a position along the
+  sweep using `:on`. See `path-to-shape` and `move-to`.
 
 ## See also
 

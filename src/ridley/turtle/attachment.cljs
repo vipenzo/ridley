@@ -35,9 +35,14 @@
       [0 0 0])))
 
 (defn- transform-poses
-  "Apply pose-fn to creation-pose and to every anchor.
+  "Apply pose-fn to creation-pose and to every (world-space) anchor.
    Keeps anchors in sync with the mesh transformation, so that
-   `move-to :at :anchor` always sees the current world position."
+   `move-to :at :anchor` always sees the current world position.
+
+   `:section-anchors` is deliberately NOT transformed: those are frame-LOCAL
+   2D section poses kept for re-deriving a profile mark at any rail cross-section
+   (phase 2). They are anchored to :creation-pose, which IS re-synced here, so
+   the section frame moves with the mesh without touching the section anchors."
   [mesh pose-fn]
   (let [apply-fn (fn [pose] (when pose (pose-fn pose)))]
     (-> mesh

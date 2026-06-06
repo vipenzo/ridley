@@ -14,6 +14,9 @@ status: stable
 `(move-to target :center)`
 `(move-to target :at anchor)`
 `(move-to target :at anchor :align)`
+`(move-to target :at profile-mark :on rail-mark/t)`
+`(move-to target :at wall-mark :face :outer/:inner)`
+`(move-to target :on rail-mark/t)`
 
 Available inside `attach` / `attach!` bodies (and inside `path`,
 where it is recorded for later replay).
@@ -59,6 +62,42 @@ current frame snaps onto the target frame (the anchor's frame in
 `:at` form, the target's creation-pose frame otherwise). The
 rotation runs in two steps: first align headings, then roll around
 the new heading to align up vectors.
+
+### Profile-mark anchors, `:on` and `:face`
+
+Anchors don't only come from `attach-path`. When a path that seeds
+`(mark …)`s is used to build a **profile** — `path-to-shape`,
+`stroke-shape`, `embroid` — and that profile is `extrude`d / `loft`ed /
+`revolve`d, the marks land on the resulting mesh as anchors (on the base
+section). So `(move-to plate :at :foot-1)` works directly on an extruded
+plate whose profile carried `:foot-1`.
+
+`:on` composes such a profile mark with a position **along the sweep**:
+
+| Form                                    | Result                                                   |
+|-----------------------------------------|----------------------------------------------------------|
+| `(move-to m :at :a :on :rail-mark)`     | profile mark `:a` at the rail's `(mark …)` cross-section  |
+| `(move-to m :at :a :on 0.5)`            | `:a` at the half-way cross-section (fraction t∈[0,1])    |
+| `(move-to m :on 0.5)`                   | the sweep centerline at half-way (no profile mark)       |
+
+`t=0` is the base section and `t=1` the end, so `(… :at :a :on 0)` is the
+same as `(… :at :a)`. The rail fraction needs no rail marks — it works on a
+plain `(f 45)` sweep. Composition is exact for `extrude` and uniform `loft`;
+under a scaling/twisting loft it uses the rail's pose frame.
+
+`:face :outer/:inner` applies to an **embroid** wall anchor (which sits on
+the wall centerline): it steps half the wall thickness onto that face, with
+`heading` = the outward face normal (opposite between the two faces). You do
+not rotate the mark in the path for this — just `(mark …)` and pick the face.
+
+```clojure
+(register rim (path (mark :foot-1) (f 30) (th 60) (mark :foot-2) (f 30) (th 60)
+                    (mark :foot-3) (f 30) (th 60) (mark :foot-4) (f 30) (th 60)
+                    (mark :foot-5) (f 30) (th 60) (mark :foot-6) (f 30)))
+(register plate (extrude (path-to-shape rim) (f 4)))
+;; a leg under each corner of the plate
+(register foot (attach leg (move-to plate :at :foot-1 :align)))
+```
 
 ## Parameters
 

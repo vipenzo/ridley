@@ -36,6 +36,8 @@ is watertight, manifold, and oriented outward. Used with `loft` (or
 | `path` | — | The wall centerline (a path, e.g. from `(path …)`). |
 | `width` | — | Wall thickness. The two faces sit `±width/2` from the centerline. |
 | `:offset` | `[0 0]` | Shift the wall in the profile plane, replacing a `translate` you would otherwise apply to the stroked shape (e.g. to stack variants). |
+| `:start-cap` / `:end-cap` | `:flat` | Shape the wall's two free ends, like `stroke-shape`: `:flat` (square butt), `:round` (half-cylinder of radius `width/2`), or `:square` (extend by `width/2`, then flat). The cap stays solid (no perforation). |
+| `:cap-steps` | `8` | Arc segments per `:round` cap. |
 | `:resolution` | ≈ `2·path-length` | Samples **along the path** (`u`). Controls how crisp the opening edges read in the path direction; the loft step count only refines the **sweep** (`t`). Raise for smoother openings (mesh grows with `resolution × loft-steps`). |
 | `:wall` | — | Map of the pattern options below (or pass them as top-level kwargs). |
 
@@ -123,6 +125,11 @@ spacing between tiles becomes the openings (a brick/tile look).
   `loft-n` once `:resolution` is set.
 - `:border` gives a uniform physical frame; `:margin` is a per-axis
   fraction and so is uneven on a non-square wall.
+- **Centerline marks become wall anchors.** A `(mark …)` on the centerline
+  path lands as a mesh anchor on the wall centerline (shifted by `:offset`).
+  Attach onto a face with `(move-to wall :at :mark :face :outer/:inner)` — it
+  steps half the thickness onto that face, heading along the outward normal
+  (opposite for the two faces). No need to rotate the mark in the path.
 
 ## See also
 

@@ -21,6 +21,15 @@ expected direction when extruded or revolved. Does not modify turtle state.
 Useful for turning a path into a `revolve` profile, or for reusing the
 silhouette of a turtle drawing as a 2D shape.
 
+If the path seeds `(mark …)`s, each mark is recorded on the shape as a
+reference to its **point index** (`:mark-refs`). When the shape is
+`extrude`d / `loft`ed / `revolve`d, those marks become mesh `:anchors`
+(reachable with `(move-to mesh :at :mark …)`). Because a mark is a point
+index, it **rides any shape-fn that scales/rotates/displaces the points**
+(`tapered`, `twisted`, …) — so a mark stays on its corner as the profile
+morphs along a loft, and `(slice-mesh mesh :on t)` hands the morphed
+profile back with its marks intact.
+
 ## Parameters
 
 - `path` — a recorded path map.
@@ -45,6 +54,10 @@ into an axisymmetric vase.
   plane will be flattened by projection.
 - For stroking a path into a filled outline (rather than projecting it as
   a closed contour), use `stroke-shape`.
+- Mark-tracking holds for shape-fns that preserve the point count/order
+  (`tapered`, `twisted`, displacement). A shape-fn that **resamples** the
+  profile (e.g. one that adds points) shifts the indices; marks then fall
+  back to their base positions.
 
 ## See also
 

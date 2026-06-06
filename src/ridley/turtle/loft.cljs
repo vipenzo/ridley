@@ -596,6 +596,21 @@
            ;; machinery for accumulation, midpoints and corner handling
            dual-ring? (or shell-mode? embroid-mode?)
 
+           ;; Profile marks → mesh anchors (resolved on the base section, stamped
+           ;; through the first-ring frame). embroid carries the wall :offset so
+           ;; centerline marks track the shifted wall, and :embroid-half-width so
+           ;; `move-to … :face :outer/:inner` can step to either wall face.
+           section-2d (extrusion/resolve-section-anchors probe-shape)
+           section-3d (let [anchors (extrusion/section-anchors->3d
+                                     section-2d
+                                     (extrusion/compute-stamp-transform
+                                      state-with-initial-heading probe-shape)
+                                     (or (:embroid-offset probe-shape) [0 0]))
+                            hw (:embroid-half-width probe-shape)]
+                        (if hw
+                          (into {} (map (fn [[k a]] [k (assoc a :half-width hw)])) anchors)
+                          anchors))
+
            ;; Polymorphic helpers (shell vs embroid vs holes vs plain)
            has-holes? (and (not dual-ring?) (boolean (:holes shape)))
            do-stamp (cond
@@ -994,10 +1009,26 @@
 
                (if (empty? segment-meshes)
                  state
-                 ;; Add all segment meshes with material to state
+                 ;; Add all segment meshes with material to state. Profile anchors
+                 ;; belong to the base section = the first segment mesh (corner
+                 ;; and cap meshes get none).
                  (let [meshes-with-material (if (:material state)
                                               (mapv #(schema/assert-mesh!
                                                       (assoc % :material (:material state)))
                                                     segment-meshes)
-                                              (mapv schema/assert-mesh! segment-meshes))]
-                   (update final-state :meshes into meshes-with-material)))))))))))
+                                              (mapv schema/assert-mesh! segment-meshes))
+                       ;; Keep the sweep rail (always) so `:on` can locate a
+                       ;; cross-section by mark or fraction; profile anchors and
+                       ;; the profile path ride on the base-section mesh (first).
+                       meshes-with-anchors (cond-> (update meshes-with-material 0
+                                                           assoc :rail-path path)
+                                             (seq section-3d)
+                                             (update 0 assoc :anchors section-3d
+                                                     :section-anchors section-2d
+                                                     :profile-shape probe-shape
+                                                     ;; the loft's per-t cross-section,
+                                                     ;; so (slice-mesh m :on t) returns the
+                                                     ;; MORPHED profile (taper/twist) — its
+                                                     ;; :mark-refs ride the scaled points.
+                                                     :profile-shape-fn (fn [t] (transform-fn shape t))))]
+                   (update final-state :meshes into meshes-with-anchors)))))))))))

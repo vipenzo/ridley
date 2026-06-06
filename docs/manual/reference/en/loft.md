@@ -108,6 +108,11 @@ in a single inlined expression.
 - For paths with tight bezier curves where rings would self-intersect,
   smooth the path first (`bezier-as`, `arc-h`, `joint-mode :round`); `loft`
   has no built-in escape hatch for genuinely overlapping rings.
+- **Profile marks become mesh anchors and ride the morph.** A marked
+  `path-to-shape` profile carries its marks as point-index references, so a
+  mark stays on its corner as the profile tapers/twists; `(move-to mesh :at
+  :mark …)` reaches it, and `(slice-mesh mesh :on t)` hands back the profile
+  at station `t` with the marks intact. See `path-to-shape` and `slice-mesh`.
 
 ## See also
 

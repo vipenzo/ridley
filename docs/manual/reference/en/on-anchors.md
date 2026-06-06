@@ -43,11 +43,27 @@ the anchors it targets.
 | regex   | `re-find` on `(name anchor-name)`            |
 | keyword | equality with `anchor-name`                  |
 | set     | `contains?` of `anchor-name` in the set      |
+| vector `[rail-sel shape-pat]` | **grid mode** — see below   |
 
 - `:align` *(optional, per clause)* — when present, the body is evaluated
   with the full anchor pose (position + heading + up). When omitted (the
   default), only the position is taken; the turtle's heading/up are
   inherited from the parent scope. Same default as `move-to`.
+
+  **Grid mode.** When the target mesh was built from a marked **profile**
+  swept along a rail (so it carries `:section-anchors` + `:rail-path`), a
+  clause pattern that is a 2-vector `[rail-sel shape-pat]` stamps the body
+  over the **product** of rail locations × matching profile marks. `rail-sel`
+  is a fraction `t∈[0,1]`, a vector of fractions, or a pattern over the rail's
+  `(mark …)` names; `shape-pat` matches the profile marks. Grid clauses are
+  independent passes — they don't interact with the flat per-anchor matching,
+  so plain clauses keep working unchanged:
+
+  ```clojure
+  ;; a peg at every foot (profile mark) × at 0, mid, end of the sweep
+  (on-anchors plate
+    [[0 0.5 1] "foot"] (cyl 2 5))
+  ```
 - `body` — a single expression. For multiple pieces on one anchor, wrap
   them in `(mesh-union …)`, `(concat-meshes …)`, or `(do …)`.
 

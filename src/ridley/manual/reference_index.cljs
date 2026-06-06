@@ -1043,7 +1043,7 @@
     :category "positioning-assembly"
     :status "stable"
     :since ""
-    :signature "(move-to target)\n(move-to target :align)\n(move-to target :center)\n(move-to target :at anchor)\n(move-to target :at anchor :align)\nattach"
+    :signature "(move-to target)\n(move-to target :align)\n(move-to target :center)\n(move-to target :at anchor)\n(move-to target :at anchor :align)\n(move-to target :at profile-mark :on rail-mark/t)\n(move-to target :at wall-mark :face :outer/:inner)\n(move-to target :on rail-mark/t)\nattach"
     :description "Inside an attach body, move the turtle to another object's pose and optionally re-align with one of that object's named anchors. `move-to` is the cleanest primitive for positioning one mesh relative to another: it translates the attached value and updates the turtle frame so subsequent commands operate in the target's coordinate system."
     :path "docs/manual/reference/en/move-to.md"}
 
@@ -2015,7 +2015,7 @@
     :category "mesh-operations"
     :status "stable"
     :since ""
-    :signature "(slice-mesh mesh-or-name)"
+    :signature "(slice-mesh mesh-or-name)\n(slice-mesh mesh-or-name :on rail-mark/t)"
     :description "Cross-section a mesh at the plane defined by the turtle's current position and heading. Returns a vector of 2D shapes — the closed contours where the slicing plane cuts through the mesh — in the plane's local coordinates."
     :path "docs/manual/reference/en/slice-mesh.md"}
 

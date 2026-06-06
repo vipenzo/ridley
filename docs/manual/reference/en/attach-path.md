@@ -75,6 +75,7 @@ Anchors named generatively let downstream code iterate over them by name. `(keys
 - **Pass a path, not a mesh.** The second argument must be a path map (the return value of `(path ...)`). Bare turtle commands are not auto-wrapped — wrap them in `(path ...)` if you have not already.
 - **Empty paths are tolerated.** A path with no `mark`s yields no anchors and the existing `:anchors` map is left untouched.
 - **Inspect anchors before assembling.** `(anchors :mesh)` returns the full map; `(get-anchor :name)` returns one pose from the live turtle. Use them to verify a skeleton resolves the way you expect before driving `move-to` / `link!`.
+- **Often unnecessary now.** When a mesh is built by `extrude`/`loft`/`revolve` from a **marked profile** (`path-to-shape`/`stroke-shape`/`embroid`), those marks already become `:anchors` automatically — no `attach-path` needed, and the rail of the sweep is reachable via `(move-to … :on …)`. `attach-path` is for meshes with **no generating path** — imported STL, boolean results, primitives — or for declaring extra feature points over an existing mesh (e.g. a print face for `lay-flat`).
 
 ## See also
 

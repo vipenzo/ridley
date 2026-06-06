@@ -10,6 +10,7 @@ status: stable
 ## Signature
 
 `(slice-mesh mesh-or-name)`
+`(slice-mesh mesh-or-name :on rail-mark/t)`
 
 ## Description
 
@@ -28,6 +29,17 @@ or an SDF node (auto-materialized via the current `*sdf-resolution*`).
 
 For a plane defined explicitly by point and normal — without using
 the turtle — see `slice-at-plane`.
+
+### `:on` — recover the generative profile
+
+`(slice-mesh mesh :on t)` is a different operation: instead of a geometric
+cut, it hands back the **generative profile** that was swept to build the
+mesh — *with its profile marks attached* — so re-extruding/lofting it
+reproduces a mesh carrying the same marks. `t` is a rail `(mark …)` name or a
+fraction `t∈[0,1]`. For a morphing `loft` (`tapered`/`twisted`/…) it returns
+the cross-section **at t** (the actual scaled/rotated shape, with marks riding
+the morphed points); for `extrude` the profile is constant. Requires a mesh
+built by `extrude`/`loft` from a marked profile.
 
 ## Parameters
 

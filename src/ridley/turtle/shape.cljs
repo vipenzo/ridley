@@ -370,11 +370,59 @@
     (vec (reverse points))
     points))
 
+(defn path-has-mark?
+  "True if a path seeds at least one (mark …). Used to decide whether to carry
+   the source path on a derived shape so its marks can become mesh anchors."
+  [path]
+  (boolean (and (map? path) (= :path (:type path))
+                (some #(= :mark (:cmd %)) (:commands path)))))
+
+(defn- compute-mark-refs
+  "Match a path's marks to vertices of the FINAL shape points, recording each as
+   {:vertex i :head-offset deg}. The mark then IS point i, so it rides any
+   shape-fn that preserves point indexing (taper/twist/displace); the heading is
+   stored as an angle off the local edge tangent so it tracks too. Uses the
+   injected resolver (handles sidetrip/tv/tr). In path-to-shape every mark sits
+   at an f-endpoint = a vertex, so all match; unmatched marks are skipped."
+  [path pts]
+  (when-let [rf @extrusion/resolve-marks-ref]
+    (let [marks (rf {:position [0 0 0] :heading [1 0 0] :up [0 0 1]} path)
+          n (count pts)
+          eps2 (* 1e-4 1e-4)]
+      (->> marks
+           (keep (fn [[nm pose]]
+                   (let [[mx my] (:position pose)
+                         [hx hy] (:heading pose)
+                         idx (first (filter (fn [i]
+                                              (let [[px py] (nth pts i)]
+                                                (< (+ (* (- px mx) (- px mx))
+                                                      (* (- py my) (- py my)))
+                                                   eps2)))
+                                            (range n)))]
+                     (when idx
+                       (let [fwd? (< (inc idx) n)
+                             [px py] (nth pts idx)
+                             [bx by] (nth pts (if fwd? (inc idx) (max 0 (dec idx))))
+                             dx (- bx px) dy (- by py)
+                             m (Math/sqrt (+ (* dx dx) (* dy dy)))
+                             [tx ty] (cond (not (pos? m)) [1.0 0.0]
+                                           fwd?           [(/ dx m) (/ dy m)]
+                                           :else          [(/ (- dx) m) (/ (- dy) m)])
+                             off (* (/ 180 Math/PI)
+                                    (Math/atan2 (- (* tx hy) (* ty hx))
+                                                (+ (* tx hx) (* ty hy))))]
+                         [nm {:vertex idx :head-offset off}])))))
+           (into {})))))
+
 (defn path-to-shape
   "Convert a path to a 2D shape by tracing the commands.
    Extracts X and Y coordinates from the 3D path.
    Automatically ensures CCW winding for correct normals.
-   Useful for creating revolve profiles from recorded paths."
+   Useful for creating revolve profiles from recorded paths.
+
+   If the path seeds marks, the source path is carried on the shape as
+   :source-path so extrude/loft/revolve can resolve those marks into mesh
+   anchors (in the section/base-face frame)."
   [path]
   (when (and (map? path) (= :path (:type path)))
     (let [commands (:commands path)
@@ -412,7 +460,10 @@
           raw-points (:points result)]
       (when (>= (count raw-points) 3)
         ;; Ensure CCW winding for correct outward-facing normals
-        (make-shape (ensure-ccw raw-points) {:centered? false})))))
+        (let [final-pts (ensure-ccw raw-points)]
+          (cond-> (make-shape final-pts {:centered? false})
+            (path-has-mark? path) (assoc :source-path path
+                                         :mark-refs (compute-mark-refs path final-pts))))))))
 
 ;; ============================================================
 ;; Stroke shape: offset a path into a 2D outline
@@ -713,7 +764,10 @@
                         (into end-cap-pts)
                         (into (rseq (vec right-pts)))
                         (into start-cap-pts))]
-        (make-shape (ensure-ccw all-pts) {:centered? true})))))
+        ;; Marks live on the path centerline; carry the source path so the
+        ;; extrude/loft step can resolve them as mesh anchors there.
+        (cond-> (make-shape (ensure-ccw all-pts) {:centered? true})
+          (path-has-mark? path) (assoc :source-path path))))))
 
 ;; ============================================================
 ;; Shape from turtle recording

@@ -1792,7 +1792,13 @@
                             [(first clauses) (rest clauses)]
                             [:concat clauses])
            parsed     (on-anchors-parse-clauses clauses)
-           n          (count parsed)
+           ;; A [rail-sel shape-pat] vector pattern is a GRID clause: stamp the
+           ;; body over the product (rail locators × profile marks). Grid clauses
+           ;; are independent passes, separate from the flat per-anchor matching.
+           grid?      (fn [c] (vector? (:pattern c)))
+           flat-parsed (vec (remove grid? parsed))
+           grid-parsed (vec (filter grid? parsed))
+           nf         (count flat-parsed)
            target-s   (gensym \"target_\")
            amap-s     (gensym \"amap_\")
            counts-s   (gensym \"counts_\")
@@ -1819,16 +1825,30 @@
                                   (list 'swap! counts-s 'update idx 'inc)
                                   (list 'swap! results-s 'conj
                                         (list 'turtle :pose pose-form body)))]))
-                       (map-indexed vector parsed))]
+                       (map-indexed vector flat-parsed))
+           grid-forms (map
+                       (fn [clause]
+                         (let [[rail-sel shape-pat] (:pattern clause)
+                               align?    (:align? clause)
+                               body      (:body clause)
+                               pose-form (if align?
+                                           pose-s
+                                           (list 'select-keys pose-s [:position]))]
+                           (list 'doseq [pose-s (list 'on-anchors-grid-poses
+                                                      target-s rail-sel shape-pat)]
+                                 (list 'swap! results-s 'conj
+                                       (list 'turtle :pose pose-form body)))))
+                       grid-parsed)]
        `(let [~target-s  ~target
               ~amap-s    (on-anchors-resolve-target ~target-s)
-              ~counts-s  (atom (vec (repeat ~n 0)))
+              ~counts-s  (atom (vec (repeat ~nf 0)))
               ~results-s (atom [])
-              ~pats-s    [~@(map :pattern parsed)]]
-          (when (seq ~amap-s)
+              ~pats-s    [~@(map :pattern flat-parsed)]]
+          (when (and (pos? ~nf) (seq ~amap-s))
             (doseq [[~aname-s ~pose-s] ~amap-s]
               (cond ~@cond-pairs)))
-          (doseq [i# (range ~n)]
+          ~@grid-forms
+          (doseq [i# (range ~nf)]
             (when (and (seq ~amap-s) (zero? (nth @~counts-s i#)))
               (on-anchors-warn-no-match! (nth ~pats-s i#) ~amap-s)))
           (let [~flat-s (vec (mapcat flatten-meshes @~results-s))]

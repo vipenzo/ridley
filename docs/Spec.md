@@ -285,6 +285,43 @@ Marks record named poses within a path. They have no effect on geometry: they si
 (def arm (path (f 30) (mark :elbow) (th 45) (f 20) (mark :hand)))
 ```
 
+**Marks become mesh anchors automatically.** When a marked path is used to build a 2D *profile* — `path-to-shape`, `stroke-shape`, or `embroid` — and that profile is then `extrude`d / `loft`ed / `revolve`d, the marks are resolved in the profile's section plane and stamped onto the resulting mesh as `:anchors` (on the base section / θ=0 seam), keeping the mark's own heading (so a `side-trip`+`th` perpendicular mark stays perpendicular). They are then usable directly:
+
+```clojure
+(def rim (path (mark :foot-1) (f 30) (th 60) (mark :foot-2) (f 30) (th 60)
+               (mark :foot-3) (f 30) (th 60) (mark :foot-4) (f 30) (th 60)
+               (mark :foot-5) (f 30) (th 60) (mark :foot-6) (f 30)))
+(register plate (extrude (path-to-shape rim) (f 4)))
+(register foot (attach leg (move-to plate :at :foot-1 :align)))   ; one per corner
+```
+
+For `embroid` the anchor sits on the wall centerline, shifted by the wall `:offset`. To attach onto a wall **face** instead of the mid-thickness centerline, pass `:face :outer` / `:inner` — the anchor steps half the wall thickness onto that face, with `heading` = the outward face normal (opposite between the two faces). You do **not** rotate the mark in the path for this; just `(mark :name)` and pick the face:
+
+```clojure
+(register bracket (attach part (move-to wall :at :mount :face :outer :align)))
+```
+
+This is distinct from `with-path`, which resolves a path's marks as a *sweep rail* from the current turtle pose; here the path is the cross-section, so the marks land where the section is stamped on the mesh. The mesh also keeps `:section-anchors` (section-frame coordinates) and the swept `:rail-path` for re-evaluating a profile mark at any cross-section along the sweep.
+
+**Composing a profile mark with the sweep (`:on`).** A profile mark gives *where in the cross-section*; the sweep rail gives *where along the extrusion*. `:on` combines them into one 3D pose. The rail location is either a rail `(mark …)` name or a **fraction** `t∈[0,1]` of the sweep (no rail marks needed — `t=0` is the base section, `t=1` the end; `:at … :on 0` ≡ `:at …`):
+
+```clojure
+(move-to plate :at :foot-1 :on :mid :align)   ; corner foot-1 at the rail's :mid mark
+(move-to plate :at :foot-1 :on 0.5)            ; corner foot-1 at half the sweep
+(move-to plate :on 0.5)                        ; sweep centerline at half (no profile mark)
+```
+
+Exact for `extrude` and uniform `loft`; under a scaling/twisting `loft` it uses the rail pose frame.
+
+**Grid stamping (`on-anchors`).** An `on-anchors` clause whose pattern is a 2-vector `[rail-sel shape-pat]` stamps the body over the **product** of rail locations × matching profile marks. `rail-sel` is a fraction, a vector of fractions, or a pattern over rail marks; `shape-pat` matches the profile marks:
+
+```clojure
+(on-anchors plate
+  [[0 0.5 1] "foot"] (cyl 2 5))   ; a peg at every foot × at 0, mid, end of the sweep
+```
+
+**Recovering the generative profile (`slice-mesh … :on`).** `(slice-mesh mesh :on t)` hands back the generative profile that was swept — **with its profile marks attached** — so re-extruding/lofting it reproduces a mesh carrying the same marks. `t` is a rail mark or fraction. For a morphing `loft` (`tapered`/`twisted`/…) it returns the cross-section **at t** (the actual scaled/rotated shape); for `extrude` the profile is constant. The marks track the morph automatically — for a `path-to-shape` profile each mark is stored as a reference to its **point index** (plus a heading offset off the local tangent), so when a shape-fn scales/rotates the points the mark rides along. (`stroke-shape`/`embroid` marks live on the centerline, not on the outline points, so they keep the simpler base resolution.) Plain `(slice-mesh mesh)` still returns the geometric cross-section cut at the turtle plane.
+
 ### Follow (splicing)
 
 `follow` splices another path's commands into the current recording:
@@ -764,6 +801,8 @@ Unlike the other shape-fns, **`embroid` takes the path that defines the wall's c
 **`embroid` options:**
 - `:wall` — a map of the pattern options below (or pass them as top-level kwargs).
 - `:offset [dx dy]` (`[0 0]`) — shift the wall in the profile plane (replaces a `translate` you would have applied to the stroked shape, e.g. to stack variants).
+- `:start-cap` / `:end-cap` (`:flat`) — shape the wall's two free ends (the path endpoints), mirroring `stroke-shape`: `:flat` (square butt), `:round` (a half-cylinder of radius `width/2`), or `:square` (extend by `width/2`, then flat). The cap is kept solid (no perforation lands on it). May be passed top-level or inside `:wall`.
+- `:cap-steps n` (`8`) — arc segments per `:round` cap.
 - `:resolution n` (≈ `2·path-length`) — samples **along the path** (`u`). Governs how crisp the opening edges look in the path direction; the loft step count only refines the **sweep** (`t`). Raise for smoother openings (mesh grows with `resolution × loft-steps`).
 
 **Wall pattern (`:wall` / `:style`):**

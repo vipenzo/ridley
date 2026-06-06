@@ -19,6 +19,57 @@
 (def normalize math/normalize)
 (def rotate-around-axis math/rotate-around-axis)
 
+;; --- Mark resolution injection -------------------------------------------
+;; `resolve-marks` lives in turtle/core, which requires this namespace, so we
+;; can't require it back. core injects it here at load time. Used to turn a
+;; profile shape's carried :source-path marks into 2D section-plane poses that
+;; extrude/loft then stamp into 3D mesh anchors.
+(defonce resolve-marks-ref (atom nil))
+
+(def ^:private section-identity-pose
+  {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})
+
+(defn mark-refs->section-anchors
+  "Resolve a shape's :mark-refs against its CURRENT :points into 2D section
+   poses {name {:position [x y 0] :heading [hx hy 0] :up [0 0 1]}}. Each ref is
+   {:vertex i :head-offset deg}: the mark IS point i, so it rides any shape-fn
+   that preserves point indexing (taper/twist/displace) for free; the heading is
+   the local edge tangent rotated by the stored offset (so it tracks too)."
+  [shape]
+  (let [pts (:points shape) n (count pts)]
+    (->> (:mark-refs shape)
+         (keep (fn [[nm {:keys [vertex head-offset]}]]
+                 (when (and (integer? vertex) (< vertex n) (>= vertex 0))
+                   (let [[px py] (nth pts vertex)
+                         fwd? (< (inc vertex) n)
+                         [bx by] (nth pts (if fwd? (inc vertex) (max 0 (dec vertex))))
+                         dx (- bx px) dy (- by py)
+                         m (Math/sqrt (+ (* dx dx) (* dy dy)))
+                         [tx ty] (cond (not (pos? m)) [1.0 0.0]
+                                       fwd?           [(/ dx m) (/ dy m)]
+                                       :else          [(/ (- dx) m) (/ (- dy) m)])
+                         rad (* (or head-offset 0) (/ Math/PI 180))
+                         ca (Math/cos rad) sa (Math/sin rad)]
+                     [nm {:position [px py 0]
+                          :heading [(- (* tx ca) (* ty sa)) (+ (* tx sa) (* ty ca)) 0]
+                          :up [0 0 1]}]))))
+         (into {}))))
+
+(defn resolve-section-anchors
+  "Resolve a profile shape's carried marks into 2D section-plane poses, by name.
+   Prefers `:mark-refs` (point-index references — morph-aware, ride shape-fns);
+   falls back to resolving `:source-path` via the injected resolver (used by
+   stroke-shape/embroid, whose points are an offset outline, not the centerline).
+   Returns {} when neither is present."
+  [shape]
+  (cond
+    (seq (:mark-refs shape)) (mark-refs->section-anchors shape)
+    :else (let [rf @resolve-marks-ref
+                sp (:source-path shape)]
+            (if (and rf sp)
+              (rf section-identity-pose sp)
+              {}))))
+
 ;; --- Numeric validation ---
 
 (defn check-num
@@ -382,6 +433,38 @@
                (+ oz (* px' xz) (* py' yz))]))
           points)))
 
+(defn section-pose->3d
+  "Map a section-plane pose {:position [x y z] :heading [hx hy hz] :up [..]} into
+   a 3D mesh pose using stamp params (the same frame extrude/loft/revolve stamp
+   the base cross-section with). The section frame {2D-x,2D-y,2D-z} maps to the
+   orthonormal stamp frame {plane-x(right), plane-y(up), plane-z(sweep normal)},
+   so directions tilted OUT of the section plane (from `tv`/`tr` marks) survive.
+   Position rides through transform-2d-to-3d (offset + origin); directions are
+   free vectors (no offset/origin)."
+  [{:keys [position heading up]} {:keys [plane-x plane-y] :as params}]
+  (let [plane-z (cross plane-x plane-y)
+        map-dir (fn [[vx vy vz]]
+                  (normalize (v+ (v+ (v* plane-x vx) (v* plane-y vy))
+                                 (v* plane-z (or vz 0)))))
+        [_ _ z] position]
+    {:position (v+ (first (transform-2d-to-3d [position] params))
+                   (v* plane-z (or z 0)))
+     :heading (map-dir heading)
+     :up (if up (map-dir up) (normalize plane-z))}))
+
+(defn section-anchors->3d
+  "Map a map of 2D section-plane poses (by name) to 3D mesh poses via stamp
+   params. `pos-shift` (default [0 0]) is added to each 2D position first — used
+   by embroid to translate centerline marks by the wall :offset."
+  ([anchors params] (section-anchors->3d anchors params [0 0]))
+  ([anchors params [sx sy]]
+   (into {}
+         (map (fn [[k pose]]
+                (let [[x y] (:position pose)]
+                  [k (section-pose->3d (assoc pose :position [(+ x sx) (+ y sy)])
+                                       params)])))
+         anchors)))
+
 (defn stamp-shape
   "Stamp a shape onto the plane perpendicular to turtle's heading.
    Returns 3D vertices of the stamped shape."
@@ -423,6 +506,24 @@
                       [(+ sx x) (+ sy y) (+ sz z)])
                     [0 0 0] ring)]
     [(/ (first sum) n) (/ (second sum) n) (/ (nth sum 2) n)]))
+
+(defn ring-plane-normal
+  "Unit normal of a ring's own plane, via Newell's method — robust for any
+   planar polygon regardless of where its centroid sits. Used for cap
+   projection: the centroid-to-centroid drift is NOT the plane normal when the
+   profile grows/shifts off-centre along a tapered loft, which skews the cap
+   projection and breaks the end caps. The sign is arbitrary (caller orients it)."
+  [ring]
+  (let [n (count ring)]
+    (normalize
+     (reduce (fn [[nx ny nz] i]
+               (let [[xi yi zi] (nth ring i)
+                     [xj yj zj] (nth ring (if (= (inc i) n) 0 (inc i)))]
+                 [(+ nx (* (- yi yj) (+ zi zj)))
+                  (+ ny (* (- zi zj) (+ xi xj)))
+                  (+ nz (* (- xi xj) (+ yi yj)))]))
+             [0.0 0.0 0.0]
+             (range n)))))
 
 (defn rotate-ring-around-axis
   "Rotate all points of a ring around an axis passing through a pivot point."
@@ -621,10 +722,18 @@
                top-dir (normalize (v- (ring-centroid last-ring)
                                       (ring-centroid (nth rings (- n-rings 2)))))
 
-               ;; Generate caps only if caps? is true
+               ;; Generate caps only if caps? is true. Project each cap onto its
+               ;; ring's OWN plane (Newell normal), not the centroid-to-centroid
+               ;; drift: under a tapered loft of an off-centre profile the
+               ;; centroid drifts sideways, so the drift normal skews the
+               ;; projection and the caps come out open. The drift is used only
+               ;; to orient the plane normal outward (bottom away from / top
+               ;; along the sweep).
                cap-faces (when caps?
-                           (let [bottom-normal (v* bottom-dir -1)
-                                 top-normal top-dir
+                           (let [bn (ring-plane-normal first-ring)
+                                 tn (ring-plane-normal last-ring)
+                                 bottom-normal (if (pos? (dot bn bottom-dir)) (v* bn -1) bn)
+                                 top-normal (if (neg? (dot tn top-dir)) (v* tn -1) tn)
                                  bottom-cap (triangulate-cap first-ring 0 bottom-normal false)
                                  top-cap (triangulate-cap last-ring last-base top-normal false)]
                              (concat bottom-cap top-cap)))]
@@ -1244,6 +1353,13 @@
           state
           (let [initial-rotations (take-while #(not= :f (:cmd %)) commands)
                 state-with-initial-heading (reduce apply-rotation-to-state state initial-rotations)
+                ;; Profile marks → mesh anchors: resolve in the section plane,
+                ;; then stamp through the SAME frame the base ring is built with
+                ;; (state-with-initial-heading, not the pre-rotation creation-pose).
+                section-2d (resolve-section-anchors shape)
+                section-3d (section-anchors->3d
+                            section-2d
+                            (compute-stamp-transform state-with-initial-heading shape))
                 rings-result
                 (loop [i 0
                        s state-with-initial-heading
@@ -1398,8 +1514,18 @@
                                    :primitive :extrusion
                                    :vertices vertices
                                    :faces all-faces
-                                   :creation-pose creation-pose}
-                            (:material state) (assoc :material (:material state))))]
+                                   :creation-pose creation-pose
+                                   ;; Keep the sweep rail so `:on` can locate a
+                                   ;; cross-section by mark OR by fraction t∈[0,1]
+                                   ;; (parametric, no marks needed).
+                                   :rail-path path}
+                            (:material state) (assoc :material (:material state))
+                            (seq section-3d) (assoc :anchors section-3d
+                                                    :section-anchors section-2d)
+                            ;; Keep the generative profile (carries its marks via
+                            ;; :source-path) so (slice-mesh m :on t) can hand it
+                            ;; back, re-extrudable into the same marked mesh.
+                            (:source-path shape) (assoc :profile-shape shape)))]
                 (update final-state :meshes conj mesh)))))))))
 
 (defn extrude-closed-from-path

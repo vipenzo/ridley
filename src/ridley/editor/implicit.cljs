@@ -753,10 +753,25 @@
    Shapes have :preserve-position? true for absolute coordinate rendering.
    Accepts a mesh map, a keyword (registered mesh name), or an SDF node
    (auto-materialized)."
-  [mesh-or-name-or-sdf]
-  (let [mesh (resolve-to-mesh mesh-or-name-or-sdf)
-        [pos heading up right] (turtle-plane-basis)]
-    (mirror-shapes-x (manifold/slice-at-plane mesh heading pos right up))))
+  [mesh-or-name-or-sdf & args]
+  (let [on (second (drop-while #(not= :on %) args))
+        mesh (resolve-to-mesh mesh-or-name-or-sdf)]
+    (if (some? on)
+      ;; `:on <mark|fraction>` → the generative profile that was swept, with its
+      ;; marks, re-extrudable into the same marked mesh. For a morphing loft
+      ;; (tapered/twisted) it returns the cross-section AT t — the morphed shape,
+      ;; whose :mark-refs ride the scaled points; for extrude it is constant.
+      (let [sfn (:profile-shape-fn mesh)
+            profile (:profile-shape mesh)]
+        (when-not (or sfn profile)
+          (throw (js/Error. "slice-mesh :on: this mesh has no recorded generative profile (it was built without profile marks, or not by extrude/loft)")))
+        (let [t (turtle/rail-fraction mesh on)]
+          (when-not t
+            (throw (js/Error. (str "slice-mesh :on: rail locator " (pr-str on)
+                                   " not found — use a rail (mark …) name or a fraction 0..1"))))
+          [(if sfn (sfn t) profile)]))
+      (let [[pos heading up right] (turtle-plane-basis)]
+        (mirror-shapes-x (manifold/slice-at-plane mesh heading pos right up))))))
 
 (defn ^:export implicit-slice-at-plane
   "Slice a mesh at an arbitrary plane (point + normal), optionally with explicit

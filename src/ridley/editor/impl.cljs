@@ -5,6 +5,7 @@
   (:require [ridley.editor.operations :as ops]
             [ridley.editor.state :as state]
             [ridley.turtle.core :as turtle]
+            [ridley.turtle.extrusion :as extrusion]
             [ridley.turtle.attachment :as attachment]
             [ridley.turtle.shape :as shape]
             [ridley.turtle.shape-fn :as sfn]
@@ -598,13 +599,101 @@
             (assoc :up tgt-u)))
       (move-to-center state target))))
 
+(defn- face-pose
+  "For an embroid wall anchor (carries :half-width), step the centerline pose
+   onto the outer or inner wall face. The wall normal is the in-plane direction
+   perpendicular to the path tangent: n = normalize(up × heading) (the +outer
+   side, matching embroid's centerline-edges). :outer steps +half-width·n with
+   heading = n; :inner steps the opposite way with heading = -n (the two faces
+   point opposite, as they must). up is unchanged."
+  [anchor face]
+  (let [hw (:half-width anchor)]
+    (when-not hw
+      (throw (js/Error. (str "move-to: :face is only valid on an embroid wall anchor "
+                             "(this anchor has no wall thickness)"))))
+    (let [sign (case face
+                 :outer 1.0
+                 :inner -1.0
+                 (throw (js/Error. (str "move-to: :face must be :outer or :inner, got " face))))
+          n (math/normalize (math/cross (:up anchor) (:heading anchor)))]
+      {:position (math/v+ (:position anchor) (math/v* n (* sign hw)))
+       :heading (math/v* n sign)
+       :up (:up anchor)})))
+
+(defn- compose-rail-pose
+  "Resolve a `:on` target. With anchor-name nil, returns the rail cross-section
+   centerline pose at the locator (`(move-to m :on 0.5)`). Otherwise composes a
+   profile section-anchor (2D section coords) at the rail locator's cross-section
+   frame (`(move-to m :at <profile> :on <rail>)`). The rail locator is a mark
+   keyword or a fraction t∈[0,1]. Exact for extrude and uniform lofts; under
+   scaling/twisting lofts it uses the rail pose frame (the realized cross-section
+   transform is not captured — a known v1 limit). Carries the profile anchor's
+   :half-width through (so :face still works)."
+  [mesh anchor-name rail-loc]
+  (let [rail-path (:rail-path mesh)]
+    (when-not rail-path
+      (throw (js/Error. "move-to :on: this mesh has no sweep rail (not built by extrude/loft)")))
+    (let [rp (turtle/rail-locator->pose mesh rail-loc)]
+      (when-not rp
+        (throw (js/Error. (str "move-to :on: rail locator " (pr-str rail-loc)
+                               " not found (use a rail (mark …) name or a fraction 0..1)"))))
+      (if (nil? anchor-name)
+        rp
+        (let [sec (get-in mesh [:section-anchors anchor-name])]
+          (when-not sec
+            (throw (js/Error. (str "move-to :on: no profile mark " anchor-name
+                                   " — the profile path needs (mark " anchor-name ")"))))
+          (let [stamp (extrusion/compute-stamp-transform rp {:centered? true})
+                composed (extrusion/section-pose->3d sec stamp)
+                hw (get-in mesh [:anchors anchor-name :half-width])]
+            (cond-> composed hw (assoc :half-width hw))))))))
+
+(defn- pattern-matches?
+  "Match an anchor name against an on-anchors pattern (keyword=, set contains?,
+   string prefix, regex re-find). Local to impl to avoid a require on implicit."
+  [pat anchor-name]
+  (cond
+    (keyword? pat)            (= pat anchor-name)
+    (set? pat)                (contains? pat anchor-name)
+    (string? pat)             (.startsWith (name anchor-name) pat)
+    (instance? js/RegExp pat) (some? (re-find pat (name anchor-name)))
+    :else                     false))
+
+(defn ^:export on-anchors-grid-poses
+  "Grid mode for on-anchors: compose the product of (rail locators) × (profile
+   marks) on a mesh into a seq of 3D poses. `rail-sel` is a number t∈[0,1], a
+   vector of such numbers, or a pattern matching the rail's (mark …) names.
+   `shape-pat` is a pattern matching the mesh's profile marks (:section-anchors).
+   Returns [] if the target has no profile marks or no rail."
+  [target rail-sel shape-pat]
+  (let [mesh (if (map? target) target (registry/get-mesh target))
+        section (:section-anchors mesh)
+        rail-path (:rail-path mesh)]
+    (if (or (nil? mesh) (empty? section) (nil? rail-path))
+      []
+      (let [shape-names (filter #(pattern-matches? shape-pat %) (keys section))
+            rail-locs (cond
+                        (number? rail-sel) [rail-sel]
+                        (vector? rail-sel) rail-sel
+                        :else (filter #(pattern-matches? rail-sel %)
+                                      (keys (turtle/resolve-marks
+                                             (:creation-pose mesh) rail-path))))]
+        (vec (for [rl rail-locs sn shape-names]
+               (compose-rail-pose mesh sn rl)))))))
+
 (defn- move-to-anchor
   "Move state to target mesh's named anchor, adopting its heading/up.
-   Anchors come from attach-path. With :align? true, also rotates the
-   attached mesh so its frame matches the anchor's frame."
-  [state target anchor-name & {:keys [align?]}]
+   Anchors come from attach-path or from profile marks. With :align? true, also
+   rotates the attached mesh so its frame matches the anchor's frame. With
+   :face :outer/:inner, steps an embroid wall anchor onto that wall face. With
+   :on <rail-mark>, composes the profile anchor with a sweep-rail mark."
+  [state target anchor-name & {:keys [align? face on]}]
   (let [mesh (resolve-mesh target)
-        anchor (when mesh (get-in mesh [:anchors anchor-name]))]
+        anchor0 (when mesh
+                  (if on
+                    (compose-rail-pose mesh anchor-name on)
+                    (get-in mesh [:anchors anchor-name])))
+        anchor (if (and anchor0 face) (face-pose anchor0 face) anchor0)]
     (if anchor
       (let [tgt-pos (:position anchor)
             tgt-h   (:heading anchor)
@@ -635,6 +724,13 @@
      (move-to :name :center)               — snap to centroid
      (move-to :name :at :anchor)           — snap to anchor (translate only)
      (move-to :name :at :anchor :align)    — snap to anchor and rotate mesh to match
+     (move-to :name :at :anchor :face :outer/:inner [:align])
+                                           — step an embroid wall anchor onto a face
+     (move-to :name :at :profile-mark :on :rail-mark/<t> [:face .. :align])
+                                           — compose a profile mark with a rail mark
+                                             or a fraction t∈[0,1] along the sweep
+     (move-to :name :on :rail-mark/<t> [:align])
+                                           — rail cross-section centerline at a mark/fraction
    Path targets are only valid with :at :anchor (paths have no creation-pose
    or centroid of their own). Anchor targets (keywords that name an anchor
    on the current turtle or in mark-anchors) are only valid with the default
@@ -653,10 +749,20 @@
       (and (= mode :center) (= (nth args 2 nil) :align))
       (throw (js/Error. "move-to: :align is not supported with :center (centroid has no frame). Use (move-to target :align) for creation-pose alignment."))
 
-      (and (= mode :at) (= (nth args 3 nil) :align))
-      (move-to-anchor state target (nth args 2) :align? true)
+      (= mode :at)
+      (let [opts (drop 3 args)
+            align? (boolean (some #{:align} opts))
+            face (second (drop-while #(not= :face %) opts))
+            on (second (drop-while #(not= :on %) opts))]
+        (move-to-anchor state target (nth args 2) :align? align? :face face :on on))
 
-      (= mode :at)     (move-to-anchor state target (nth args 2))
+      ;; Standalone rail locator: go to the sweep cross-section centerline at a
+      ;; mark or fraction, no profile anchor. (move-to mesh :on 0.5 [:align])
+      (= mode :on)
+      (let [opts (drop 3 args)
+            align? (boolean (some #{:align} opts))]
+        (move-to-anchor state target nil :align? align? :on (nth args 2)))
+
       (= mode :center) (move-to-center state target)
       (= mode :align)  (move-to-pose state target :align? true)
       :else            (move-to-pose state target))))

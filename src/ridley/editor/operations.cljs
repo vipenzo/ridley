@@ -95,7 +95,14 @@
                    :vertices combined-verts
                    :faces combined-faces
                    :creation-pose (:creation-pose (first meshes))}
-            (:material (first meshes)) (assoc :material (:material (first meshes))))
+            (:material (first meshes)) (assoc :material (:material (first meshes)))
+            ;; Carry profile anchors from the base-section mesh (always first)
+            ;; through the combine so loft results keep their mark anchors.
+            (:anchors (first meshes)) (assoc :anchors (:anchors (first meshes)))
+            (:section-anchors (first meshes)) (assoc :section-anchors (:section-anchors (first meshes)))
+            (:rail-path (first meshes)) (assoc :rail-path (:rail-path (first meshes)))
+            (:profile-shape (first meshes)) (assoc :profile-shape (:profile-shape (first meshes)))
+            (:profile-shape-fn (first meshes)) (assoc :profile-shape-fn (:profile-shape-fn (first meshes))))
           (let [m (first remaining)
                 offset (count combined-verts)
                 new-verts (:vertices m)

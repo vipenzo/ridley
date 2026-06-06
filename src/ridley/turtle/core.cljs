@@ -1398,6 +1398,11 @@
       (:anchors result))
     {}))
 
+;; Inject resolve-marks into the extrusion engine so extrude/loft can turn a
+;; profile shape's carried marks into mesh anchors (extrusion can't require this
+;; namespace — the dependency runs the other way).
+(reset! extrusion/resolve-marks-ref resolve-marks)
+
 (defn path-segments
   "Split a path's commands into segments, one per :f command.
    Each segment is a group of rotation commands followed by one :f.
@@ -1714,6 +1719,46 @@
             (when (>= cumulative dist)
               {:position pos :heading heading :up up})))))))
 
+(defn ^:export rail-locator->pose
+  "Resolve a rail locator on a mesh's stored :rail-path to a cross-section pose.
+   A locator is either a keyword (a named rail mark) or a number t in [0,1]
+   (fractional arc-length along the rail — t=0 is the base section, t=1 the end;
+   no marks needed). Resolved from the mesh's :creation-pose, so it stays correct
+   after the mesh moves. Returns {:position :heading :up} or nil."
+  [mesh rail-loc]
+  (let [rail-path (:rail-path mesh)
+        cp (or (:creation-pose mesh) {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})]
+    (when rail-path
+      (if (number? rail-loc)
+        (let [total (path-total-length rail-path)
+              t (max 0.0 (min 1.0 rail-loc))]
+          (sample-path-at-distance rail-path (* t total)
+                                   :start-pos (:position cp)
+                                   :start-heading (:heading cp)
+                                   :start-up (:up cp)))
+        (get (resolve-marks cp rail-path) rail-loc)))))
+
+(defn ^:export rail-fraction
+  "Normalised position t∈[0,1] of a rail locator along a mesh's :rail-path.
+   A number is clamped; a keyword mark gives (arc length up to the mark)/total.
+   Returns nil if the rail/mark is missing. Used to evaluate a loft's per-t
+   cross-section (slice-mesh :on)."
+  [mesh rail-loc]
+  (let [rail-path (:rail-path mesh)]
+    (when rail-path
+      (if (number? rail-loc)
+        (max 0.0 (min 1.0 rail-loc))
+        (let [total (path-total-length rail-path)
+              d (loop [cmds (:commands rail-path) acc 0]
+                  (cond
+                    (empty? cmds) nil
+                    (and (= :mark (:cmd (first cmds)))
+                         (= rail-loc (first (:args (first cmds))))) acc
+                    (#{:f :u :rt :lt} (:cmd (first cmds)))
+                    (recur (rest cmds) (+ acc (Math/abs (first (:args (first cmds))))))
+                    :else (recur (rest cmds) acc)))]
+          (when (and d (pos? total)) (/ d total)))))))
+
 ;; ============================================================
 ;; Revolve (lathe operation)
 ;; ============================================================
@@ -1810,6 +1855,13 @@
            up (:up state)
            ;; Right vector = heading × up (initial radial direction at θ=0)
            right (normalize (cross heading up))
+           ;; Profile marks → mesh anchors, resolved on the θ=0 seam. revolve
+           ;; maps raw 2D points (X=radius, Y=axis) with offset [0 0] regardless
+           ;; of :centered?, so the section-anchor mapping must match.
+           section-2d (extrusion/resolve-section-anchors shape)
+           section-3d (extrusion/section-anchors->3d
+                       section-2d
+                       {:plane-x right :plane-y up :offset [0 0] :origin pos})
            ;; Destructure orientation vectors once (avoid repeated nth)
            [pos-x pos-y pos-z] pos
            [up-x up-y up-z] up
@@ -1953,7 +2005,9 @@
                           :vertices vertices
                           :faces all-faces
                           :creation-pose creation-pose}
-                   (:material state) (assoc :material (:material state))))]
+                   (:material state) (assoc :material (:material state))
+                   (seq section-3d) (assoc :anchors section-3d
+                                           :section-anchors section-2d)))]
        (update state :meshes conj mesh)))))
 
 ;; ============================================================

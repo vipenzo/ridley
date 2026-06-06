@@ -1274,15 +1274,58 @@
               :dir (nth dirs j)}))
          (range (inc n)))))))
 
+(defn- cap-columns
+  "Extra {:outer :inner} wall columns that cap ONE free end of the wall, in
+   the same ±half-w thin-wall representation `centerline-edges` produces.
+
+   `c` is the end centerline point, `perp` the +outer-side unit normal
+   (= [-dy dx] of the local heading, matching `centerline-edges`), `outward`
+   the unit heading pointing AWAY from the wall, `[ox oy]` the wall offset.
+
+   :square — one column extended by half-w along `outward`, skins kept
+             parallel; the existing flat end-rim then squares it off.
+   :round  — `steps` columns that, together with the wall's terminal column
+             (s=0, not emitted here), trace a TRUE semicircle of radius
+             half-w: outer walks the 0→90° quarter, inner the 90→180° quarter,
+             both meeting at the tip (c + outward·half-w). The mesh builder
+             stitches consecutive columns into a watertight half-cylinder.
+
+   Columns are ordered from the wall outward (s small → s=1 = tip)."
+  [c perp outward half-w style steps [ox oy]]
+  (let [[cx cy] c [px py] perp [wx wy] outward]
+    (case style
+      :square
+      (let [ex (+ cx (* wx half-w)) ey (+ cy (* wy half-w))]
+        [{:outer [(+ ex (* px half-w) ox) (+ ey (* py half-w) oy)]
+          :inner [(- (+ ex ox) (* px half-w)) (- (+ ey oy) (* py half-w))]}])
+      :round
+      (mapv (fn [k]
+              (let [s (/ k steps)              ; (0,1]; k=steps → tip
+                    a (* s (/ Math/PI 2))
+                    ca (Math/cos a) sa (Math/sin a)]
+                {:outer [(+ cx (* half-w (+ (* ca px) (* sa wx))) ox)
+                         (+ cy (* half-w (+ (* ca py) (* sa wy))) oy)]
+                 :inner [(+ cx (* half-w (+ (* (- ca) px) (* sa wx))) ox)
+                         (+ cy (* half-w (+ (* (- ca) py) (* sa wy))) oy)]}))
+            (range 1 (inc steps)))
+      nil)))
+
 (defn- centerline-edges
   "From a path's 2D waypoints (each {:pos :dir}) and a half-width, build the
    two faces of a thin wall as PAIRED polylines, offset ±half-w perpendicular
    to the path direction at every point. Robust to miters/caps (the wall is
    rebuilt from the centerline, never from a stroke outline) and to the
    wall's angle (the offset always follows the local path normal).
-   Returns {:outer [...] :inner [...] :us [...] :length L} in 2D, where
-   :us are normalized arc-length params along the centerline."
-  [wps half-w [ox oy]]
+
+   `start-cap`/`end-cap` (:flat default, :round, :square) shape the two FREE
+   ends of the wall (the path endpoints) by prepending/appending cap columns
+   (see `cap-columns`). Returns
+   {:outer [...] :inner [...] :us [...] :length L
+    :n-start-cap k :n-end-cap k} in 2D, where :us are normalized arc-length
+   params along the centerline and the cap counts tell callers which leading/
+   trailing columns must be forced solid (no perforation on the cap)."
+  [wps half-w [ox oy] & {:keys [start-cap end-cap cap-steps]
+                         :or {start-cap :flat end-cap :flat cap-steps 8}}]
   (let [cs (mapv :pos wps)
         ds (mapv :dir wps)
         m (count cs)
@@ -1293,11 +1336,26 @@
                          [(+ cx (* sign nx half-w) ox)
                           (+ cy (* sign ny half-w) oy)]))
                      cs ds))
+        outer (edge +1)
+        inner (edge -1)
         seglens (mapv (fn [a b] (v2-mag (v2-sub b a))) cs (rest cs))
         total (reduce + 0 seglens)
         cum (vec (reductions + 0 seglens))
-        us (if (pos? total) (mapv #(/ % total) cum) (vec (repeat m 0.0)))]
-    {:outer (edge +1) :inner (edge -1) :us us :length total}))
+        us (if (pos? total) (mapv #(/ % total) cum) (vec (repeat m 0.0)))
+        ;; perp = [-dy dx] of the local heading; outward = heading away from
+        ;; the wall. Start cap columns run tip→wall, so reverse them so the
+        ;; array index stays monotone along the path.
+        [d0x d0y] (first ds) [dLx dLy] (last ds)
+        start-cols (vec (reverse
+                         (cap-columns (first cs) [(- d0y) d0x] [(- d0x) (- d0y)]
+                                      half-w start-cap cap-steps [ox oy])))
+        end-cols (vec (cap-columns (last cs) [(- dLy) dLx] [dLx dLy]
+                                   half-w end-cap cap-steps [ox oy]))
+        n-s (count start-cols) n-e (count end-cols)]
+    {:outer (-> (mapv :outer start-cols) (into outer) (into (map :outer end-cols)))
+     :inner (-> (mapv :inner start-cols) (into inner) (into (map :inner end-cols)))
+     :us (-> (vec (repeat n-s 0.0)) (into us) (into (repeat n-e 1.0)))
+     :length total :n-start-cap n-s :n-end-cap n-e}))
 
 (defn ^:export embroid
   "Perforate the wall of a thin swept panel — like cutting a window
@@ -1318,6 +1376,11 @@
 
    :offset [dx dy]  shift the wall in the profile plane (e.g. to stack
                     variants the way translate would on the stroked shape)
+   :start-cap       shape the wall's first free end: :flat (default, square
+   :end-cap         butt), :round (half-cylinder of radius spessore/2), or
+                    :square (extend by spessore/2 then flat). Mirrors
+                    stroke-shape; the cap stays solid (no perforation on it).
+   :cap-steps n     arc segments per :round cap (default 8)
    :resolution n    samples along the path (u). Controls how crisp the opening
                     edges look in the path direction; the loft step count only
                     refines the sweep (t). Default ≈ 2·path-length; raise for
@@ -1352,6 +1415,11 @@
   (let [wall (or wall (dissoc opts :wall :offset :resolution))
         {:keys [style margin softness]
          :or {style :honeycomb margin 0.05 softness 0.6}} wall
+        ;; Caps shape the wall's ends (like :offset/:resolution), not the
+        ;; perforation pattern — so read them top-level, falling back to :wall.
+        start-cap (or (:start-cap opts) (:start-cap wall) :flat)
+        end-cap   (or (:end-cap opts) (:end-cap wall) :flat)
+        cap-steps (or (:cap-steps opts) (:cap-steps wall) 8)
         wps0 (shape/path-to-2d-waypoints path)
         _ (assert (and wps0 (>= (count wps0) 2))
                   "embroid: first argument must be a path with at least two waypoints")
@@ -1366,10 +1434,18 @@
                       (max (* (:cells wall 8) 8))
                       (min 1500))
         wps (resample-centerline wps0 n-samples)
-        {:keys [outer inner us length]} (centerline-edges wps (* 0.5 width) offset)
+        {:keys [outer inner us length n-start-cap n-end-cap]}
+        (centerline-edges wps (* 0.5 width) offset
+                          :start-cap start-cap :end-cap end-cap :cap-steps cap-steps)
+        n-cols (count us)
         ;; base shape only carries point-count / centered? for the loft API;
         ;; the embroid do-stamp uses the stored 2D edges, not these points.
-        base (shape/stroke-shape path width)]
+        ;; Marks live on the centerline (offset 0); carry the source path and the
+        ;; wall :offset so the loft step resolves them as anchors on the wall.
+        base (cond-> (shape/stroke-shape path width :start-cap start-cap :end-cap end-cap)
+               (shape/path-has-mark? path) (assoc :source-path path
+                                                  :embroid-offset offset
+                                                  :embroid-half-width (* 0.5 width)))]
     (shape-fn base
               (fn [shp t]
                 (let [path-len (or *path-length* length)
@@ -1380,10 +1456,15 @@
                                                       :softness softness
                                                       :u-length length
                                                       :v-length path-len))
-                      values (mapv (fn [u]
-                                     (let [v (field u t)]
-                                       (max 0.0 (min 1.0 v))))
-                                   us)]
+                      ;; Cap columns are forced solid (1.0) so no perforation
+                      ;; lands on the rounded/squared ends.
+                      values (vec (map-indexed
+                                   (fn [i u]
+                                     (if (or (< i n-start-cap)
+                                             (>= i (- n-cols n-end-cap)))
+                                       1.0
+                                       (max 0.0 (min 1.0 (field u t)))))
+                                   us))]
                   (assoc shp
                          :embroid-mode true
                          :embroid-outer outer
