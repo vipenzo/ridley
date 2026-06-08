@@ -38,8 +38,7 @@
             [ridley.workspace.panel :as workspace-panel]
             [ridley.anim.core :as anim]
             [ridley.anim.playback :as anim-playback]
-            [ridley.editor.test-mode :as test-mode]
-            [ridley.editor.pilot-mode :as pilot-mode]
+            [ridley.editor.modal-evaluator :as modal]
             [ridley.version :as version]
             [ridley.audio :as audio]))
 
@@ -259,9 +258,10 @@
         (sync-voice-state)
         ;; Audio feedback
         (audio/play-feedback! true)
-        ;; Check if pilot mode was requested during evaluation
-        (when (pilot-mode/requested?)
-          (pilot-mode/enter!))))))
+        ;; Check if a deferred modal session (pilot, edit-bezier, …) was
+        ;; requested during evaluation; enter it now that the eval is complete.
+        (when (modal/requested?)
+          (modal/enter!))))))
 
 (defn- evaluate-definitions
   "Evaluate only the definitions panel (for Cmd+Enter).
@@ -282,11 +282,22 @@
          (evaluate-definitions-sci reset-camera?))
        0)))))
 
+(defn- evaluate-definitions-user!
+  "User-initiated definitions run (Run button / Cmd+Enter). Cancels any active
+   modal session first, then evaluates — so re-running while a tweak/pilot/
+   edit-bezier session is open is clean and predictable instead of throwing a
+   mutex error or leaving a half-open session. The programmatic run-definitions
+   path (run-definitions-fn = evaluate-definitions, used by a session's own
+   confirm/cancel) intentionally does NOT close, to avoid re-entering teardown."
+  []
+  (modal/force-close-active!)
+  (evaluate-definitions))
+
 (defn ^:export run-definitions!
   "Run the definitions panel (same as pressing the Run button).
    Exposed to SCI so screen-reader users can evaluate from the REPL."
   []
-  (evaluate-definitions)
+  (evaluate-definitions-user!)
   nil)
 
 (defn- handle-ai-command
@@ -470,9 +481,9 @@
           ;; Normal REPL evaluation
             :else
             (do
-            ;; Cancel any active test/tweak session
-              (when (test-mode/active?)
-                (test-mode/cancel!))
+            ;; Cancel any active modal session before a fresh REPL eval
+              (when (modal/active?)
+                (modal/cancel-active!))
             ;; Send to connected clients if we're the host
               (when (= :host @sync-mode)
                 (sync/send-repl-command input))
@@ -485,7 +496,7 @@
                   (do
                     (hide-error)
                     (add-repl-entry input (:implicit-result result) false (:print-output result))
-                    (when-not (test-mode/active?)
+                    (when-not (modal/active?)
                       (when-let [render-data (repl/extract-render-data result)]
                         (registry/add-lines! (:lines render-data))
                         (registry/add-stamps! (or (:stamps render-data) []))
@@ -848,7 +859,7 @@
         file-input (.getElementById js/document "file-input")]
     ;; Run button - evaluate definitions
     (.addEventListener run-btn "click"
-                       (fn [_] (evaluate-definitions)))
+                       (fn [_] (evaluate-definitions-user!)))
     ;; Save button
     (.addEventListener save-btn "click"
                        (fn [_] (save-definitions)))
@@ -2829,11 +2840,11 @@
                            (save-to-storage)
                            (send-script-debounced)
                            (sync-voice-state))
-              :on-run evaluate-definitions
+              :on-run evaluate-definitions-user!
               :on-selection-change (fn []
                                      (maybe-update-ai-focus!)
                                      (sync-voice-state))}))
-    ;; Wire editor content getter for test_mode
+    ;; Wire editor content getter for tweak_mode
     (reset! editor-state/get-editor-content
             (fn [] (when @editor-view (cm/get-value @editor-view))))
     (reset! repl-input-el repl-input)

@@ -774,6 +774,31 @@ Draw smooth bezier curves to target positions.
   (bezier-to-anchor :end))
 ```
 
+### Bezier in Local Frame (`:local`)
+
+```clojure
+;; The :local flag reads target + control points in the turtle's local
+;; [right up heading] frame instead of world coordinates, so the curve
+;; follows the turtle wherever you place it.
+(f 20) (th 30)
+(bezier-to [0 0 40] [13 10 13] [27 10 27] :local)  ; pose-independent curve
+```
+
+### Authoring a Bezier Interactively (`edit-bezier`)
+
+```clojure
+;; From the definitions panel (Cmd+Enter): opens a keyboard-driven 3D editor.
+;; Tab cycles the end/control points, arrows move them, Enter confirms.
+;; edit-bezier stands in for a (bezier-to … :local) call — use it wherever
+;; bezier-to goes. On confirm the marker is rewritten to the edited call.
+(extrude (circle 4)
+  (edit-bezier))
+
+;; As a 2D profile seed for stroke-shape (planar editing aligned to the result):
+(register wall
+  (extrude (stroke-shape (path (edit-bezier :shape)) 3) (f 20)))
+```
+
 ---
 
 ## Resolution Control

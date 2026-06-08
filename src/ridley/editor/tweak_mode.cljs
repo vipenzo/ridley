@@ -1,11 +1,15 @@
-(ns ridley.editor.test-mode
-  "Interactive test/tweak mode for REPL expressions.
+(ns ridley.editor.tweak-mode
+  "Interactive tweak mode for REPL expressions.
    Evaluates an expression, shows the result in the viewport, and creates
    interactive sliders for numeric literals. Moving a slider re-evaluates
-   the expression and updates the preview in real-time."
+   the expression and updates the preview in real-time.
+
+   Formerly ridley.editor.test-mode (renamed: the 'test' name was a
+   historical artifact that collided with the test/ folder)."
   (:require [sci.core :as sci]
             [ridley.editor.state :as state]
             [ridley.editor.codemirror :as cm]
+            [ridley.editor.modal-evaluator :as modal]
             [ridley.scene.registry :as registry]
             [ridley.turtle.core :as turtle]
             [ridley.turtle.shape :as shape]
@@ -19,9 +23,8 @@
 
 (defonce ^:private test-state (atom nil))
 
-;; When true, the next (tweak ...) macro invocation is silently ignored.
-;; Used by cancel! in script mode to prevent re-entering tweak on re-eval.
-(defonce ^:private skip-next-tweak (atom false))
+;; The skip flag that stops a tweak re-eval from re-entering the (tweak ...) macro
+;; now lives in modal-evaluator (shared across all modal evaluators).
 ;; When active:
 ;; {:form            <quoted s-expr>
 ;;  :literals        [{:index :value :label :parent-fn :parent-form :arg-idx} ...]
@@ -190,47 +193,12 @@
 ;; Script-mode helpers — find (tweak ...) in editor text
 ;; ============================================================
 
-(defn- skip-string
-  "Given text and index of the opening quote, return index after closing quote, or -1."
-  [text start]
-  (let [len (count text)]
-    (loop [j (inc start)]
-      (cond
-        (>= j len) -1
-        (= (.charAt text j) "\\") (recur (+ j 2))
-        (= (.charAt text j) "\"") (inc j)
-        :else (recur (inc j))))))
-
-(defn- find-matching-paren
-  "Given text and the index of an opening paren, return the index
-   one past the matching closing paren. Handles nested parens, strings,
-   and line comments. Returns -1 if unbalanced."
-  [text start]
-  (let [len (count text)]
-    (loop [i (inc start) depth 1]
-      (cond
-        (>= i len) -1
-        (zero? depth) i
-        :else
-        (let [ch (.charAt text i)]
-          (case ch
-            "(" (recur (inc i) (inc depth))
-            ")" (if (= depth 1) (inc i) (recur (inc i) (dec depth)))
-            "\"" (let [after (skip-string text i)]
-                   (if (neg? after) -1 (recur after depth)))
-            ";" (let [nl (.indexOf text "\n" i)]
-                  (if (neg? nl) -1 (recur (inc nl) depth)))
-            (recur (inc i) depth)))))))
-
 (defn- find-tweak-bounds
   "Find the character bounds [from, to) of the (tweak ...) form in editor text.
-   Returns [from to] or nil if not found."
+   Returns [from to] or nil if not found. The robust paren/string/comment-aware
+   matcher lives in modal-evaluator (shared with edit-bezier)."
   [editor-text]
-  (let [idx (.indexOf editor-text "(tweak ")]
-    (when (>= idx 0)
-      (let [end (find-matching-paren editor-text idx)]
-        (when (pos? end)
-          [idx end])))))
+  (modal/find-form-bounds editor-text "(tweak "))
 
 ;; ============================================================
 ;; Evaluate and preview
@@ -242,47 +210,32 @@
 (defn- build-modified-script
   "Build the full editor script with (tweak ...) replaced by the current expression."
   [form-str]
-  (let [{:keys [tweak-from tweak-to]} @test-state
-        editor-text (cm/get-value)]
-    (str (.substring editor-text 0 tweak-from)
-         form-str
-         (.substring editor-text tweak-to))))
+  (let [{:keys [tweak-from tweak-to]} @test-state]
+    (modal/splice-source (cm/get-value) tweak-from tweak-to form-str)))
 
 (defn- evaluate-and-preview-script!
   "Script mode: re-evaluate the full editor script with (tweak ...) replaced.
-   Returns the evaluated result on success, nil on error."
+   Returns :ok on success, nil on error. The shared re-eval boilerplate (clear
+   scene, reset turtle, arm skip flag, eval, push scene, refresh) lives in
+   modal-evaluator; here we add only the tweak-specific turtle-indicator update."
   []
   (when-let [{:keys [current-values]} @test-state]
     (let [form (:form @test-state)
           modified-form (substitute-values form current-values)
           form-str (pr-str modified-form)]
-      (try
-        (let [modified-script (build-modified-script form-str)]
-          (registry/clear-all!)
-          (state/reset-turtle!)
-          (state/reset-scene-accumulator!)
-          (state/reset-print-buffer!)
-          (let [ctx @state/sci-ctx-ref]
-            (reset! skip-next-tweak true)
-            (sci/eval-string modified-script ctx))
-          (let [{:keys [lines stamps]} @state/scene-accumulator]
-            (registry/set-lines! (vec (or lines [])))
-            (registry/set-stamps! (vec (or stamps []))))
-          (registry/refresh-viewport! false)
-          ;; Update turtle indicator to reflect new creation-pose
-          (let [source (viewport/get-turtle-source)]
-            (cond
-              (and (map? source) (:mesh source))
-              (when-let [mesh (registry/get-mesh (:mesh source))]
-                (when-let [pose (:creation-pose mesh)]
-                  (viewport/update-turtle-pose pose)))
+      (when (modal/reeval-script! #(build-modified-script form-str)
+                                  "tweak script eval error:")
+        ;; Update turtle indicator to reflect new creation-pose
+        (let [source (viewport/get-turtle-source)]
+          (cond
+            (and (map? source) (:mesh source))
+            (when-let [mesh (registry/get-mesh (:mesh source))]
+              (when-let [pose (:creation-pose mesh)]
+                (viewport/update-turtle-pose pose)))
 
-              (= source :global)
-              (viewport/update-turtle-pose (state/get-turtle-pose))))
-          :ok)
-        (catch :default e
-          (js/console.warn "tweak script eval error:" (.-message e))
-          nil)))))
+            (= source :global)
+            (viewport/update-turtle-pose (state/get-turtle-pose))))
+        :ok))))
 
 (defn- evaluate-and-preview-repl!
   "REPL mode: evaluate the tweaked expression in isolation and show preview.
@@ -369,11 +322,9 @@
 (defn- cleanup-ui!
   "Remove slider panel and escape handler."
   []
-  (when-let [panel-el (:panel-el @test-state)]
-    (when-let [parent (.-parentNode panel-el)]
-      (.removeChild parent panel-el)))
-  (when-let [esc-handler (:esc-handler @test-state)]
-    (.removeEventListener js/document "keydown" esc-handler)))
+  (modal/unmount-panel! (:panel-el @test-state))
+  ;; Escape handler is bubble-phase (capture? false) — see create-slider-ui!.
+  (modal/remove-keydown! (:esc-handler @test-state) false))
 
 (defn cancel!
   "Cancel test mode: discard changes, clear preview, restore turtle.
@@ -394,10 +345,10 @@
 
       ;; Script-only mode: re-evaluate the original script to restore viewport
       tweak-from
-      (do (reset! skip-next-tweak true)
-          (when-let [f @state/run-definitions-fn] (f))))
+      (do (modal/arm-skip!)
+          (modal/run-definitions!)))
     (cleanup-ui!)
-    (state/release-interactive-mode!)
+    (modal/release!)
     (reset! test-state nil)))
 
 (defn confirm!
@@ -439,9 +390,9 @@
 
         ;; Script-only mode: replace (tweak ...) in editor and re-evaluate
         (and tweak-from tweak-to)
-        (do (cm/replace-range tweak-from tweak-to final-str)
+        (do (modal/replace-source! tweak-from tweak-to final-str)
             (state/capture-println (str "tweak: " final-str))
-            (when-let [f @state/run-definitions-fn] (f)))
+            (modal/run-definitions!))
 
         ;; Plain REPL mode: just print
         :else
@@ -449,7 +400,7 @@
       (measure/clear-ruler-overrides!)
       (measure/refresh-rulers!)
       (cleanup-ui!)
-      (state/release-interactive-mode!)
+      (modal/release!)
       (reset! test-state nil))))
 
 ;; ============================================================
@@ -593,17 +544,16 @@
       (.appendChild btn-row cancel-btn)
       (.appendChild panel btn-row))
     ;; Insert into repl-terminal before repl-input-line
-    (when-let [terminal (.getElementById js/document "repl-terminal")]
-      (when-let [input-line (.getElementById js/document "repl-input-line")]
-        (.insertBefore terminal panel input-line)))
+    (modal/mount-panel! panel)
     ;; Store panel reference
     (swap! test-state assoc :panel-el panel)
-    ;; Escape key handler
+    ;; Escape key handler (bubble phase — tweak only listens for Escape and lets
+    ;; the slider/value inputs handle their own keys, unlike pilot's capture handler)
     (let [esc-handler (fn [e]
                         (when (= (.-key e) "Escape")
                           (cancel!)))]
       (swap! test-state assoc :esc-handler esc-handler)
-      (.addEventListener js/document "keydown" esc-handler))))
+      (modal/install-keydown! esc-handler false))))
 
 ;; ============================================================
 ;; Symbol inlining — resolve def'd data before walking
@@ -681,13 +631,13 @@
   ([quoted-form filt] (start! quoted-form filt nil nil))
   ([quoted-form filt registry-name] (start! quoted-form filt registry-name nil))
   ([quoted-form filt registry-name locals]
-   (if @skip-next-tweak
-     ;; Skip — cancel! in script mode sets this to avoid re-entry on re-eval
-     (do (reset! skip-next-tweak false) nil)
+   (if (modal/consume-skip!)
+     ;; Skip — cancel! in script mode armed this to avoid re-entry on re-eval
+     nil
      ;; Normal entry
      (do
        ;; Claim interactive slot — throws if pilot or another tweak is active
-       (state/claim-interactive-mode! :tweak)
+       (modal/claim! :tweak)
        ;; In registry mode, hide the original mesh first
        (when registry-name
          (registry/hide-mesh! registry-name)
@@ -704,13 +654,16 @@
            (state/capture-println
             (str "tweak: " total " numeric literals found, max 32 — narrow with (tweak [0 1 2] expr)")))
          (if (or (zero? total) (> total 32))
-           ;; No numeric literals or too many — just evaluate and show result
+           ;; No numeric literals or too many — no session opens, so release the
+           ;; interactive slot we just claimed (otherwise the mutex leaks and the
+           ;; next tweak throws "already in a tweak session").
            (do (when (zero? total)
                  (state/capture-println "tweak: no numeric literals found"))
                ;; Re-show if registry mode
                (when registry-name
                  (registry/show-mesh! registry-name)
                  (registry/refresh-viewport! true))
+               (modal/release!)
                nil)
            (let [;; Resolve filter to set of indices
                  selected (resolve-filter filt total)
@@ -759,7 +712,7 @@
                    (when from-script initial-result))
                  ;; Evaluation failed — clean up, don't show sliders
                  (do
-                   (state/release-interactive-mode!)
+                   (modal/release!)
                    (when registry-name
                      (registry/show-mesh! registry-name)
                      (registry/refresh-viewport! true))
@@ -780,3 +733,32 @@
             (str "tweak: no source form for " name " — use (tweak " name " expr)"))
            nil)
        (start! form filt name locals)))))
+
+(defn- force-close!
+  "Tear down the tweak UI and release the slot without restoring/re-evaluating.
+   Used before a user-initiated definitions run (which re-evaluates anyway)."
+  []
+  (when @test-state
+    (viewport/clear-preview!)
+    (measure/clear-ruler-overrides!)
+    (measure/refresh-rulers!)
+    (cleanup-ui!)
+    (modal/release!)
+    (reset! test-state nil)))
+
+;; ============================================================
+;; Modal-evaluator registration
+;; ============================================================
+
+;; Tweak is the degenerate synchronous case of the two-phase pattern: it opens
+;; inside start! (claim + deferred slider creation), so it never has a pending
+;; request for the post-eval driver to fulfill — requested? is constantly false
+;; and enter! is a no-op. It registers active?/cancel!/close! so the generic
+;; driver in core.cljs can poll, cancel, and force-close it without naming this
+;; module.
+(modal/register-kind! :tweak
+                      {:requested? (constantly false)
+                       :enter!     (fn [])
+                       :active?    active?
+                       :cancel!    cancel!
+                       :close!     force-close!})

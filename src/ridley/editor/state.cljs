@@ -4,7 +4,7 @@
   (:require [ridley.turtle.core :as turtle]
             [sci.core :as sci]))
 
-;; Editor content getter — set by core.cljs, used by test_mode.cljs
+;; Editor content getter — set by core.cljs, used by tweak_mode.cljs
 (defonce get-editor-content (atom nil))
 
 ;; SCI dynamic var holding the current turtle atom.
@@ -96,8 +96,8 @@
                    (#(assoc % :reference-up (or (:reference-up %) (:up %))))))]
     base))
 
-;; SCI context reference — set by repl.cljs, read by test_mode.cljs.
-;; This avoids a circular dependency (repl → bindings → test-mode → repl).
+;; SCI context reference — set by repl.cljs, read by tweak_mode.cljs.
+;; This avoids a circular dependency (repl → bindings → tweak-mode → repl).
 (defonce sci-ctx-ref (atom nil))
 
 ;; Run-definitions callback — set by core.cljs, read by bindings.cljs.
@@ -132,7 +132,7 @@
 ;; ============================================================
 
 ;; Tracks which interactive mode is active (nil, :pilot, or :tweak).
-;; Lives in state.cljs so both pilot-mode and test-mode can check
+;; Lives in state.cljs so both pilot-mode and tweak-mode can check
 ;; without importing each other (which would create circular deps).
 (defonce interactive-mode (atom nil))
 

@@ -170,7 +170,7 @@
     :category "turtle-movement"
     :status "stable"
     :since ""
-    :signature "(bezier-to target)\n(bezier-to target & {:keys [steps]})\n(bezier-to target ctrl)\n(bezier-to target ctrl-1 ctrl-2)"
+    :signature "(bezier-to target)\n(bezier-to target & {:keys [steps]})\n(bezier-to target ctrl)\n(bezier-to target ctrl-1 ctrl-2)\n(bezier-to target ctrl-1 ctrl-2 :local)"
     :description "Move the turtle to `target` along a smooth bezier curve, updating heading at each step to remain tangent to the curve. **Modifies turtle state.**"
     :path "docs/manual/reference/en/bezier-to.md"}
 
@@ -425,6 +425,15 @@
     :signature "(ease type t)"
     :description "Apply an easing function to a normalized fraction `t ∈ [0, 1]` and return the eased value, also in `[0, 1]`. The standalone form of the easings used by `span` inside `anim!`. Useful for previewing a curve numerically, for custom interpolations inside `anim-proc!` `gen-fn`s, or for tweak-style math that needs the same shaping the timeline applies."
     :path "docs/manual/reference/en/ease.md"}
+
+   "edit-bezier"
+   {:name "edit-bezier"
+    :category "live-interactive"
+    :status "stable"
+    :since ""
+    :signature "(edit-bezier)\n(edit-bezier :shape)\n(edit-bezier :wireframe)\n(edit-bezier end ctrl-1 ctrl-2)"
+    :description "Author a cubic Bezier curve interactively, in 3D, from the keyboard — instead of solving the cubic by hand for its control points. `edit-bezier` is a stand-in for a `(bezier-to … :local)` call and is used **wherever `bezier-to` is**: top-level, or inside `(path …)` / `(attach …)`. Run it from the **definitions panel** (Cmd+Enter), not the REPL."
+    :path "docs/manual/reference/en/edit-bezier.md"}
 
    "embroid"
    {:name "embroid"

@@ -6,7 +6,7 @@
   (:require [sci.core :as sci]
             [ridley.editor.state :as state]
             [ridley.editor.codemirror :as cm]
-            [ridley.scene.registry :as registry]
+            [ridley.editor.modal-evaluator :as modal]
             [ridley.viewport.core :as viewport]
             [clojure.string :as str]))
 
@@ -19,9 +19,8 @@
 
 (defonce pilot-state (atom nil))
 
-;; When true, the next (pilot ...) macro invocation is silently ignored.
-;; Used by cancel! to prevent re-entering pilot mode on re-eval.
-(defonce ^:private skip-next-pilot (atom false))
+;; The skip flag that stops a pilot re-eval from re-entering the (pilot ...) macro
+;; now lives in modal-evaluator (shared across all modal evaluators).
 ;; When active:
 ;; {:source-expr   "cubo"          — source text of pilot argument
 ;;  :pilot-text    "(pilot :cubo)" — exact text in editor
@@ -117,11 +116,8 @@
   "Build the full editor script with (pilot ...) replaced by attach code."
   [commands]
   (let [{:keys [pilot-from pilot-to]} @pilot-state
-        editor-text (cm/get-value)
         replacement (build-replacement-code commands)]
-    (str (.substring editor-text 0 pilot-from)
-         replacement
-         (.substring editor-text pilot-to))))
+    (modal/splice-source (cm/get-value) pilot-from pilot-to replacement)))
 
 (defn- eval-with-commands-repl!
   "REPL mode: evaluate replacement code and show preview without touching editor."
@@ -137,30 +133,19 @@
       (js/console.warn "pilot eval error (repl):" (.-message e)))))
 
 (defn- eval-with-commands-script!
-  "Script mode: re-evaluate full editor script with (pilot ...) replaced."
+  "Script mode: re-evaluate full editor script with (pilot ...) replaced. The
+   shared re-eval boilerplate (clear scene, reset turtle, arm skip flag, eval,
+   push scene, refresh) lives in modal-evaluator; here we add only the pilot-
+   specific turtle + wireframe preview from a second eval of the replacement."
   [commands]
-  (try
-    (let [modified-script (build-modified-script commands)]
-      (registry/clear-all!)
-      (state/reset-turtle!)
-      (state/reset-scene-accumulator!)
-      (state/reset-print-buffer!)
-      (let [ctx @state/sci-ctx-ref]
-        (reset! skip-next-pilot true)
-        (sci/eval-string modified-script ctx))
-      (let [{:keys [lines stamps]} @state/scene-accumulator]
-        (registry/set-lines! (vec (or lines [])))
-        (registry/set-stamps! (vec (or stamps []))))
-      (registry/refresh-viewport! false)
-      ;; Turtle + wireframe from SCI eval
-      (let [replacement (build-replacement-code commands)
-            mesh-result (try (sci/eval-string replacement @state/sci-ctx-ref)
-                             (catch :default _ nil))]
-        (when (and (map? mesh-result) (:creation-pose mesh-result))
-          (viewport/update-turtle-pose (:creation-pose mesh-result))
-          (viewport/show-wireframe-preview! mesh-result))))
-    (catch :default e
-      (js/console.warn "pilot eval error:" (.-message e)))))
+  (when (modal/reeval-script! #(build-modified-script commands) "pilot eval error:")
+    ;; Turtle + wireframe from SCI eval
+    (let [replacement (build-replacement-code commands)
+          mesh-result (try (sci/eval-string replacement @state/sci-ctx-ref)
+                           (catch :default _ nil))]
+      (when (and (map? mesh-result) (:creation-pose mesh-result))
+        (viewport/update-turtle-pose (:creation-pose mesh-result))
+        (viewport/show-wireframe-preview! mesh-result)))))
 
 (defn- eval-with-commands!
   "Re-evaluate with current pilot commands. Dispatches to REPL or script mode."
@@ -205,11 +190,8 @@
 (defn- cleanup!
   "Remove panel and key handler."
   []
-  (when-let [panel (:panel-el @pilot-state)]
-    (when-let [parent (.-parentNode panel)]
-      (.removeChild parent panel)))
-  (when-let [handler (:key-handler @pilot-state)]
-    (.removeEventListener js/document "keydown" handler true))
+  (modal/unmount-panel! (:panel-el @pilot-state))
+  (modal/remove-keydown! (:key-handler @pilot-state))
   ;; Restore turtle source and clear preview
   (viewport/set-turtle-source! :global)
   (viewport/clear-preview!))
@@ -226,26 +208,26 @@
         ;; REPL mode: just print the expression
         (state/capture-println code)
         ;; Script mode: replace in editor and re-evaluate
-        (do (cm/replace-range pilot-from pilot-to code)
+        (do (modal/replace-source! pilot-from pilot-to code)
             (state/capture-println (str "pilot: " code))))
       (cleanup!)
-      (state/release-interactive-mode!)
+      (modal/release!)
       (reset! pilot-state nil)
       (when-not from-repl
-        (when-let [f @state/run-definitions-fn] (f))))))
+        (modal/run-definitions!)))))
 
 (defn cancel!
   "Cancel pilot mode: restore original state."
   []
   (let [from-repl (:from-repl @pilot-state)]
     (cleanup!)
-    (state/release-interactive-mode!)
+    (modal/release!)
     (reset! pilot-state nil)
     (when-not from-repl
-      ;; Set skip flag so the (pilot ...) macro doesn't re-trigger
-      (reset! skip-next-pilot true)
+      ;; Arm skip flag so the (pilot ...) macro doesn't re-trigger
+      (modal/arm-skip!)
       ;; Re-evaluate original script to restore
-      (when-let [f @state/run-definitions-fn] (f)))))
+      (modal/run-definitions!))))
 
 ;; ============================================================
 ;; UI Panel
@@ -312,9 +294,7 @@
     (.addEventListener (.querySelector panel ".pilot-btn-cancel") "click"
                        (fn [_] (cancel!)))
     ;; Insert into repl-terminal before repl-input-line
-    (when-let [terminal (.getElementById js/document "repl-terminal")]
-      (when-let [input-line (.getElementById js/document "repl-input-line")]
-        (.insertBefore terminal panel input-line)))
+    (modal/mount-panel! panel)
     panel))
 
 ;; ============================================================
@@ -530,16 +510,16 @@
     (when (and (= :pilot @state/interactive-mode) (not live?))
       (when ps (cleanup!))
       (reset! pilot-state nil)
-      (state/release-interactive-mode!))))
+      (modal/release!))))
 
 (defn ^:export request!
   "Called by the pilot macro during script evaluation.
    quoted-arg: the source form as written (unevaluated, e.g. 'cubo or '(get-mesh :cubo))
    value: the evaluated mesh value"
   [quoted-arg value]
-  (if @skip-next-pilot
-    ;; cancel!/re-eval set the skip flag — just pass through the mesh
-    (do (reset! skip-next-pilot false) value)
+  (if (modal/consume-skip!)
+    ;; cancel!/re-eval armed the skip flag — just pass through the mesh
+    value
     ;; Normal path
     (let [_ (clear-orphan-state!)
           obj value
@@ -564,7 +544,7 @@
           (throw (js/Error. (str "pilot: cannot find '" pilot-pattern "' in editor"))))
         ;; All validation passed — claim slot and store request.
         ;; Claim is the LAST possible failure point so no error can leave it dangling.
-        (state/claim-interactive-mode! :pilot)
+        (modal/claim! :pilot)
         (reset! pilot-state
                 {:source-expr   (str quoted-arg) ;; source text of the argument
                  :pilot-text    pilot-pattern
@@ -598,7 +578,7 @@
     ;; Install keyboard handler (capture phase to intercept before editor)
     (let [handler on-pilot-keydown]
       (swap! pilot-state assoc :key-handler handler)
-      (.addEventListener js/document "keydown" handler true))
+      (modal/install-keydown! handler))
     ;; Show turtle indicator on the piloted mesh's creation-pose
     (viewport/set-turtle-source! {:custom (:creation-pose @pilot-state)})
     (viewport/update-turtle-pose (:creation-pose @pilot-state))
@@ -616,3 +596,27 @@
     (state/capture-println
      (str "pilot: interactive mode for " (:source-expr @pilot-state)
           " — arrows to move, Shift+arrows to rotate, Enter to confirm, Esc to cancel"))))
+
+(defn- force-close!
+  "Tear down the pilot UI and release the slot without re-evaluating. Used before
+   a user-initiated definitions run (which re-evaluates anyway)."
+  []
+  (when @pilot-state
+    (cleanup!)
+    (modal/release!)
+    (reset! pilot-state nil)))
+
+;; ============================================================
+;; Modal-evaluator registration
+;; ============================================================
+
+;; Pilot is a deferred two-phase session: request! runs during the eval and
+;; returns the existing mesh without installing the handler; the post-eval driver
+;; in core.cljs calls enter! once the eval completes. It registers all hooks so
+;; the generic driver can poll/enter/cancel/close it without naming this module.
+(modal/register-kind! :pilot
+                      {:requested? requested?
+                       :enter!     enter!
+                       :active?    active?
+                       :cancel!    cancel!
+                       :close!     force-close!})

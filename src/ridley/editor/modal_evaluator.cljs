@@ -1,0 +1,262 @@
+(ns ridley.editor.modal-evaluator
+  "Shared skeleton for modal evaluators — interactive DSL sessions that open
+   during/after an eval, preview live in the viewport, and rewrite the source on
+   confirm. Concrete sessions (tweak, pilot, edit-bezier) provide only their
+   specific logic; this layer owns the mechanics they all share:
+
+   - the central mutex (one modal session at a time), re-exported from state
+   - the skip flag that stops a session's own re-eval from re-entering its macro
+   - mounting/unmounting the DOM panel under the REPL input line
+   - installing/removing the global keydown handler (capture phase by default)
+   - the script-mode re-eval boilerplate (clear scene, reset turtle, eval, refresh)
+   - committing the rewritten source (cm/replace-range + run-definitions)
+   - the two-phase entry driver (request! during eval, enter! after eval).
+
+   Two-phase entry (Architecture §11.2.4, §15.2.1). In Ridley the eval owns the
+   flow and the session waits for it. A deferred session (pilot, edit-bezier)
+   returns a value to the in-flight eval from request! WITHOUT installing its
+   handler, and the post-eval driver in core.cljs — (requested?) then (enter!) —
+   installs it once the eval completes. Tweak is the degenerate synchronous case:
+   it opens inside its own start! and registers requested? → false, so the generic
+   driver skips it. Either way the driver here is the single owner of that loop;
+   core.cljs no longer names any concrete module."
+  (:require [sci.core :as sci]
+            [ridley.editor.state :as state]
+            [ridley.editor.codemirror :as cm]
+            [ridley.scene.registry :as registry]))
+
+;; ============================================================
+;; Skip flag — shared across all modal evaluators
+;; ============================================================
+
+;; When armed, the next modal macro invocation (tweak-start!, pilot-request!, …)
+;; passes through silently instead of opening a session. Armed by a session's own
+;; re-eval / cancel so the macro it re-runs doesn't recursively re-enter. Only one
+;; session is ever active (mutex), so a single shared flag is sufficient.
+(defonce ^:private skip-next (atom false))
+
+(defn arm-skip!
+  "Arm the skip flag so the next modal macro invocation passes through."
+  []
+  (reset! skip-next true))
+
+(defn consume-skip!
+  "If the skip flag is armed, disarm it and return true; otherwise return false."
+  []
+  (if @skip-next
+    (do (reset! skip-next false) true)
+    false))
+
+;; ============================================================
+;; Mutex — one modal session at a time
+;; ============================================================
+
+(defn claim!
+  "Claim the single interactive-mode slot for `kind`. Throws (same exception as
+   today) if another modal session is already active."
+  [kind]
+  (state/claim-interactive-mode! kind))
+
+(defn release!
+  "Release the interactive-mode slot."
+  []
+  (state/release-interactive-mode!))
+
+;; ============================================================
+;; DOM panel — mounted under the REPL input line
+;; ============================================================
+
+(defn mount-panel!
+  "Insert a session panel into the REPL terminal, just above the input line.
+   Returns the panel element."
+  [panel-el]
+  (when-let [terminal (.getElementById js/document "repl-terminal")]
+    (when-let [input-line (.getElementById js/document "repl-input-line")]
+      (.insertBefore terminal panel-el input-line)))
+  panel-el)
+
+(defn unmount-panel!
+  "Remove a session panel from its parent, if mounted."
+  [panel-el]
+  (when (and panel-el (.-parentNode panel-el))
+    (.removeChild (.-parentNode panel-el) panel-el)))
+
+;; ============================================================
+;; Global keydown handler
+;; ============================================================
+
+(defn install-keydown!
+  "Install a global keydown handler. Capture phase by default (intercepts before
+   the editor); pass capture? false for a plain bubble-phase listener. Returns the
+   handler so the caller can store it for removal."
+  ([handler] (install-keydown! handler true))
+  ([handler capture?]
+   (.addEventListener js/document "keydown" handler capture?)
+   handler))
+
+(defn remove-keydown!
+  "Remove a previously installed keydown handler. The capture? flag must match
+   the one used at install time."
+  ([handler] (remove-keydown! handler true))
+  ([handler capture?]
+   (when handler
+     (.removeEventListener js/document "keydown" handler capture?))))
+
+;; ============================================================
+;; Source commit
+;; ============================================================
+
+(defn splice-source
+  "Return `text` with its [from to) character range replaced by `replacement`.
+   The pure text operation shared by every modal evaluator's 'build the modified
+   script' step (and by edit-bezier's marker → sibling-forms rewrite)."
+  [text from to replacement]
+  (str (.substring text 0 from) replacement (.substring text to)))
+
+(defn- skip-string
+  "Given text and the index of an opening quote, return the index after the
+   closing quote, or -1 if unterminated."
+  [text start]
+  (let [len (count text)]
+    (loop [j (inc start)]
+      (cond
+        (>= j len) -1
+        (= (.charAt text j) "\\") (recur (+ j 2))
+        (= (.charAt text j) "\"") (inc j)
+        :else (recur (inc j))))))
+
+(defn- find-matching-paren
+  "Given text and the index of an opening paren, return the index one past the
+   matching closing paren. Handles nested parens, strings, and line comments.
+   Returns -1 if unbalanced."
+  [text start]
+  (let [len (count text)]
+    (loop [i (inc start) depth 1]
+      (cond
+        (>= i len) -1
+        (zero? depth) i
+        :else
+        (let [ch (.charAt text i)]
+          (case ch
+            "(" (recur (inc i) (inc depth))
+            ")" (if (= depth 1) (inc i) (recur (inc i) (dec depth)))
+            "\"" (let [after (skip-string text i)]
+                   (if (neg? after) -1 (recur after depth)))
+            ";" (let [nl (.indexOf text "\n" i)]
+                  (if (neg? nl) -1 (recur (inc nl) depth)))
+            (recur (inc i) depth)))))))
+
+(defn find-form-bounds
+  "Find the [from to) character bounds of the first form in `text` whose opening
+   matches `prefix` (e.g. \"(tweak \" or \"(edit-bezier\"). Returns [from to] or
+   nil. Shared by every modal evaluator that locates its own marker in the source."
+  [text prefix]
+  (let [idx (.indexOf text prefix)]
+    (when (>= idx 0)
+      (let [end (find-matching-paren text idx)]
+        (when (pos? end) [idx end])))))
+
+(defn replace-source!
+  "Replace the [from to) character range of the editor with `code`."
+  [from to code]
+  (cm/replace-range from to code))
+
+(defn run-definitions!
+  "Re-run the whole definitions buffer (the commit step in script mode)."
+  []
+  (when-let [f @state/run-definitions-fn] (f)))
+
+;; ============================================================
+;; Shared script-mode re-eval boilerplate
+;; ============================================================
+
+(defn reeval-script!
+  "Run the modified script (with the modal marker replaced) in script mode and
+   push the resulting scene to the viewport. `build-script-fn` is a 0-arg fn that
+   returns the full editor text with the marker substituted. Returns :ok on
+   success, nil on error (logged with `err-prefix`). Callers do their own
+   session-specific follow-up (turtle indicator, wireframe preview) on :ok.
+
+   `arm-skip?` (default true) arms the skip flag before the eval, so that — if the
+   marker survives in the modified script (e.g. stale offsets) — its own macro
+   passes through instead of re-entering. Callers whose modified script reliably
+   has the marker replaced by literals (edit-bezier's live preview) pass false, to
+   avoid leaving the flag armed for the next modal macro."
+  ([build-script-fn err-prefix] (reeval-script! build-script-fn err-prefix true))
+  ([build-script-fn err-prefix arm-skip?]
+   (try
+     (let [script (build-script-fn)]
+       (registry/clear-all!)
+       (state/reset-turtle!)
+       (state/reset-scene-accumulator!)
+       (state/reset-print-buffer!)
+       (let [ctx @state/sci-ctx-ref]
+         (when arm-skip? (arm-skip!))
+         (sci/eval-string script ctx))
+       (let [{:keys [lines stamps]} @state/scene-accumulator]
+         (registry/set-lines! (vec (or lines [])))
+         (registry/set-stamps! (vec (or stamps []))))
+       (registry/refresh-viewport! false)
+       :ok)
+     (catch :default e
+       (js/console.warn err-prefix (.-message e))
+       nil))))
+
+;; ============================================================
+;; Two-phase entry driver — generic dispatch over registered kinds
+;; ============================================================
+
+;; kind → {:requested? fn :enter! fn :active? fn :cancel! fn}. Concrete modules
+;; push their spec at load time. This namespace never requires them, which keeps
+;; the dependency arrow one-way (modules → modal-evaluator) and cycle-free.
+(defonce ^:private kinds (atom {}))
+
+(defn register-kind!
+  "Register a concrete modal evaluator. `spec` is a map of:
+     :requested? (fn [] bool) — a deferred request is pending, awaiting enter!
+     :enter!     (fn [])      — install the interactive UI (deferred phase)
+     :active?    (fn [] bool) — a session of this kind is live
+     :cancel!    (fn [])      — cancel the live session
+   A synchronous session (tweak) registers :requested? → false and :enter! as a
+   no-op, since it opens inside its own start!."
+  [kind spec]
+  (swap! kinds assoc kind spec))
+
+(defn- pending-kind
+  "The kind whose deferred request is pending, or nil."
+  []
+  (some (fn [[k {:keys [requested?]}]]
+          (when (and requested? (requested?)) k))
+        @kinds))
+
+(defn requested?
+  "True if any registered modal session has a pending two-phase request."
+  []
+  (boolean (pending-kind)))
+
+(defn enter!
+  "Enter the pending modal session (deferred phase). No-op if none pending."
+  []
+  (when-let [k (pending-kind)]
+    (when-let [f (:enter! (get @kinds k))] (f))))
+
+(defn active?
+  "True if any registered modal session is currently active."
+  []
+  (boolean (some (fn [[_ {:keys [active?]}]] (and active? (active?))) @kinds)))
+
+(defn cancel-active!
+  "Cancel whichever modal session is currently active. No-op if none."
+  []
+  (doseq [[_ {:keys [active? cancel!]}] @kinds]
+    (when (and active? (active?) cancel!) (cancel!))))
+
+(defn force-close-active!
+  "Tear down whichever modal session is active and release the slot, WITHOUT the
+   session's own restore re-eval — used before a user-initiated definitions run
+   (Run button / Cmd+Enter), which re-evaluates the buffer anyway. Falls back to
+   :cancel! for sessions that register no :close! hook. No-op if none active."
+  []
+  (doseq [[_ {:keys [active? close! cancel!]}] @kinds]
+    (when (and active? (active?))
+      (cond close! (close!) cancel! (cancel!)))))

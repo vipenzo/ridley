@@ -88,6 +88,46 @@ Il numero di passi della curva segue `resolution`, oppure lo specifichi:
 (bezier-to [30 0 20] :steps 32)
 ```
 
+### Coordinate mondo o locali
+
+Di default il punto di destinazione e i punti di controllo sono coordinate del mondo: `[30 0 20]` è quel punto nello spazio, dovunque si trovi la tartaruga. Con il flag `:local` le stesse coordinate vengono lette nel frame locale della tartaruga, cioè nella terna `[right up heading]` con origine nella posizione corrente:
+
+```clojure
+(bezier-to [0 0 40] [10 0 15] [10 0 25] :local)
+```
+
+Qui `[0 0 40]` significa "40 unità in avanti lungo l'heading", non un punto fisso nello spazio. La differenza conta quando vuoi che la stessa curva funzioni ovunque metti la tartaruga: una `bezier-to` in coordinate mondo è ancorata a quei numeri, una `:local` segue la posa. È anche la forma che produce `edit-bezier`, ed è ciò che le permette di riscrivere una curva indipendente dalla posizione di partenza.
+
+### edit-bezier: disegnare la curva invece di calcolarla
+
+I punti di controllo di una Bezier cubica sono potenti ma poco intuitivi: per far seguire alla curva il profilo di un oggetto dovresti calcolarli a mano, e l'unica via esatta è risolvere l'equazione della cubica. `edit-bezier` ribalta il problema: invece di calcolare i punti di controllo, li disegni.
+
+Si usa al posto di `bezier-to`, ovunque questa vada, e si lancia dal codice della definizione (Cmd+Enter), non dalla REPL:
+
+<!-- example-source: edit-bezier-draw :no-run
+(register handle
+  (extrude (circle 3) (edit-bezier)))
+-->
+
+Quando valuti, `edit-bezier` disegna una curva di default valida, così che `extrude` e `register` girino comunque, e apre una sessione modale. Il punto di partenza è la posa della tartaruga in quel punto del codice: non è editabile e non viene mai scritto a sorgente, si ricalcola a ogni valutazione. Gli altri tre punti, il punto di arrivo e i due di controllo, sono mobili: li vedi nel viewport insieme al poligono di controllo e alla curva di anteprima, che si aggiorna mentre li sposti. Tab cicla fra i tre punti, le frecce muovono quello selezionato (con il terzo asse raggiungibile da tastiera), Enter conferma ed Esc annulla. I tasti precisi e le opzioni sono nella Reference.
+
+Alla conferma la chiamata `(edit-bezier)` viene riscritta nella `bezier-to` corrispondente, in coordinate locali:
+
+```clojure
+(bezier-to [12 0 38] [4 0 14] [9 0 30] :local)
+```
+
+È qui che `:local` torna utile: i punti sono espressi nel frame della posa di partenza, quindi la curva resta corretta anche se sposti il codice che la precede, e riaprirla è un round-trip esatto. Per ri-editare una curva già prodotta, passi i suoi punti espliciti a `edit-bezier`.
+
+C'è anche un modo `:shape`, pensato per disegnare un profilo 2D da dare a `stroke-shape`: la curva è planare e l'anteprima è allineata alla sezione che verrà estrusa. È la variante adatta proprio al caso da cui siamo partiti, far seguire a un bordo il profilo di un oggetto.
+
+<!-- example-source: edit-bezier-profile :no-run
+(register wall
+  (extrude (stroke-shape (path (edit-bezier :shape)) 3) (f 20)))
+-->
+
+`edit-bezier` è una sessione modale come `tweak` e `pilot` (§ 15.3) e ne condivide i limiti: si apre una volta sola per valutazione e non convive con un'altra sessione interattiva già aperta.
+
 ### Bezier-to-anchor: curva verso un marcatore
 
 `bezier-to-anchor` costruisce una Bezier cubica che collega la posizione corrente della tartaruga a un marcatore nominato. I punti di controllo vengono generati automaticamente usando gli heading di partenza e di arrivo, garantendo continuità tangenziale (la curva esce tangente al tuo heading e arriva tangente all'heading del marcatore):

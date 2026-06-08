@@ -24,8 +24,9 @@
             [ridley.anim.easing :as easing]
             [ridley.anim.preprocess :as anim-preprocess]
             [ridley.turtle.shape-fn :as sfn]
-            [ridley.editor.test-mode :as test-mode]
+            [ridley.editor.tweak-mode :as tweak-mode]
             [ridley.editor.pilot-mode :as pilot-mode]
+            [ridley.editor.edit-bezier :as edit-bezier]
             [ridley.editor.impl :as macro-impl]
             [ridley.geometry.warp :as warp]
             [ridley.library.svg :as svg]
@@ -569,11 +570,14 @@
    'clone-face-impl     macro-impl/clone-face-impl
    'attach!-impl        macro-impl/attach!-impl
    'set-creation-pose!-impl macro-impl/set-creation-pose!-impl
-   ;; Test/tweak mode
-   'tweak-start!             test-mode/start!
-   'tweak-start-registered!  test-mode/start-registered!
+   ;; Tweak mode
+   'tweak-start!             tweak-mode/start!
+   'tweak-start-registered!  tweak-mode/start-registered!
    ;; Pilot mode (interactive mesh positioning)
    'pilot-request!           pilot-mode/request!
+   ;; edit-bezier (interactive cubic Bezier authoring) — the `edit-bezier` macro
+   ;; (in macros.cljs) expands to a bezier-to call and calls this to open the session
+   'edit-bezier-request!     edit-bezier/request!
    ;; Source form storage
    'set-source-form!    registry/set-source-form!
    'get-source-form     registry/get-source-form

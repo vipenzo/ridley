@@ -88,6 +88,46 @@ The number of steps of the curve follows `resolution`, or you specify it:
 (bezier-to [30 0 20] :steps 32)
 ```
 
+### World or local coordinates
+
+By default the destination point and the control points are world coordinates: `[30 0 20]` is that point in space, wherever the turtle happens to be. With the `:local` flag the same coordinates are read in the turtle's local frame, that is in the `[right up heading]` triple with origin at the current position:
+
+```clojure
+(bezier-to [0 0 40] [10 0 15] [10 0 25] :local)
+```
+
+Here `[0 0 40]` means "40 units forward along the heading", not a fixed point in space. The difference matters when you want the same curve to work wherever you place the turtle: a `bezier-to` in world coordinates is pinned to those numbers, a `:local` one follows the pose. It is also the form that `edit-bezier` produces, and it is what lets it rewrite a curve that is independent of its start position.
+
+### edit-bezier: drawing the curve instead of computing it
+
+The control points of a cubic Bezier are powerful but not very intuitive: to make the curve follow the profile of an object you would have to compute them by hand, and the only exact way is to solve the cubic equation. `edit-bezier` flips the problem: instead of computing the control points, you draw them.
+
+It is used in place of `bezier-to`, anywhere that goes, and it is launched from the definitions code (Cmd+Enter), not from the REPL:
+
+<!-- example-source: edit-bezier-draw :no-run
+(register handle
+  (extrude (circle 3) (edit-bezier)))
+-->
+
+When you evaluate, `edit-bezier` draws a valid default curve, so that `extrude` and `register` still run, and opens a modal session. The start point is the turtle pose at that point in the code: it is not editable and is never written to source, it is recomputed on each evaluation. The other three points, the end point and the two control points, are movable: you see them in the viewport together with the control polygon and the preview curve, which updates as you move them. Tab cycles through the three points, the arrows move the selected one (with the third axis reachable from the keyboard), Enter confirms and Esc cancels. The precise keys and the options are in the Reference.
+
+On confirm the `(edit-bezier)` call is rewritten into the corresponding `bezier-to`, in local coordinates:
+
+```clojure
+(bezier-to [12 0 38] [4 0 14] [9 0 30] :local)
+```
+
+This is where `:local` becomes useful: the points are expressed in the frame of the start pose, so the curve stays correct even if you move the code that precedes it, and reopening it is an exact round-trip. To re-edit a curve you have already produced, pass its explicit points to `edit-bezier`.
+
+There is also a `:shape` mode, meant for drawing a 2D profile to feed to `stroke-shape`: the curve is planar and the preview is aligned to the cross-section that will be extruded. It is the variant suited precisely to the case we started from, making an edge follow the profile of an object.
+
+<!-- example-source: edit-bezier-profile :no-run
+(register wall
+  (extrude (stroke-shape (path (edit-bezier :shape)) 3) (f 20)))
+-->
+
+`edit-bezier` is a modal session like `tweak` and `pilot` (§ 15.3) and shares their limits: it opens once per evaluation and does not coexist with another interactive session already open.
+
 ### Bezier-to-anchor: a curve toward a marker
 
 `bezier-to-anchor` builds a cubic Bezier that connects the turtle's current position to a named marker. The control points are generated automatically using the start and end headings, guaranteeing tangential continuity (the curve exits tangent to your heading and arrives tangent to the marker's heading):

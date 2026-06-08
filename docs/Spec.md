@@ -71,6 +71,11 @@ Draw smooth bezier curves to target positions:
 ;; Cubic bezier (2 control points)
 (bezier-to [x y z] [c1x c1y c1z] [c2x c2y c2z])
 
+;; Local frame: with :local, the target and control points are read in the
+;; turtle's local [right up heading] frame (origin = current turtle position)
+;; instead of world coordinates, making the call pose-independent.
+(bezier-to [x y z] [c1x c1y c1z] [c2x c2y c2z] :local)
+
 ;; Bezier to named anchor (uses both headings for smooth connection)
 (bezier-to-anchor :name)
 (bezier-to-anchor :name :steps 24)
@@ -2941,6 +2946,40 @@ The `tweak` macro provides interactive parameter exploration with real-time prev
 - OK confirms and prints the final expression; Cancel (or Escape) discards.
 - Auto-cancels when a new REPL command is entered.
 - Debounced re-evaluation (~100ms).
+
+### Edit Bezier
+
+`edit-bezier` authors a cubic Bezier curve interactively in 3D, from the keyboard, instead of solving the cubic by hand for the control points. It is a stand-in for a `(bezier-to … :local)` call and is used **wherever `bezier-to` is** — top-level, or inside `(path …)` / `(attach …)` — from the **definitions panel** (Cmd+Enter):
+
+```clojure
+(edit-bezier)                                  ; opens the editor with a default curve
+(edit-bezier :shape)                           ; planar editing for a 2D shape seed (alias :as-shape-seed)
+(edit-bezier :wireframe)                        ; defer downstream re-eval to Insert
+(edit-bezier [40 0 0] [13 10 0] [27 10 0])     ; re-open an existing curve
+(follow-path (path (edit-bezier)))             ; as a path
+(stroke-shape (path (edit-bezier :shape)) 3)   ; as a 2D profile seed
+```
+
+While editing, `(edit-bezier …)` draws a valid default curve so downstream operations run; on confirm it is rewritten to the edited `(bezier-to … :local)`. The marker opens a modal session. The start point P0 is the turtle pose at the call site — it is never written to source, and is recomputed on each eval. Three movable points (the end point and the two control points) are shown in the viewport along with the control polygon and a live preview curve; the turtle indicator marks P0.
+
+**Flags** (keyword args, any order):
+- `:as-shape-seed` — author the curve as a 2D profile for `stroke-shape`. The emitted `bezier-to` lies in the `heading`/`right` frame (the path's own 2D trace plane, which `stroke-shape` / `path-to-2d-waypoints` read), but the on-screen overlay is drawn **where the `stroke-shape` of the path will end up** — the extruded cross-section (length along world Y, bow along world Z) — so the handles line up with the resulting wall. Without the flag the editor is fully 3D and the overlay shows the path itself.
+- `:wireframe` — nudges update only the ephemeral path/handles; the downstream geometry (e.g. `stroke-shape`/`extrude`) is re-evaluated only on demand (`Insert`). Without it, the downstream re-evaluates live (debounced) on every nudge.
+
+**Keys:**
+- `Tab` — cycle the three movable points (end → ctrl1 → ctrl2).
+- Arrows — move the selected point. 3D mode: `←`/`→` = *heading* (the curve's length), `↑`/`↓` = *left*, `Shift`+`↑`/`↓` = *up* (depth). `:as-shape-seed` mode (planar): `←`/`→` = *length*, `↑`/`↓` = *bow* (visual up/down of the cross-section); `Shift` is disabled.
+- Type digits — set the step size (mm); `Backspace` edits the buffer.
+- `Insert` — force a downstream re-evaluation (useful in `:wireframe` mode).
+- `Enter` — confirm; `Esc` — cancel.
+
+**On confirm**, the whole `(edit-bezier …)` marker is replaced by a complete call:
+
+```clojure
+(bezier-to [ex ey ez] [c1x c1y c1z] [c2x c2y c2z] :local)
+```
+
+The vectors are expressed in P0's local `[right up heading]` frame (see the `:local` flag under [Bezier](#bezier)), so the call is pose-independent and re-opening it via `(edit-bezier ex… c1… c2…)` reproduces the same curve. **Cancel** leaves the source unchanged (the marker stays, drawing its default curve).
 
 ### Animation
 

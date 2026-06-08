@@ -194,6 +194,10 @@ When you pass a keyword, `tweak` operates on the registered mesh: it hides the o
 
 Pilot has three modes (vim-style): movement (`f`/`b`/`rt`/`lt`/`u`/`d`), rotation (`th`/`tv`/`tr`), scale (`stretch-f`/`stretch-rt`/`stretch-u`). The keys to change mode and the operational details are in the Reference.
 
+### A third session: edit-bezier
+
+`edit-bezier` uses the same modal mechanism as `tweak` and `pilot` to draw a cubic Bezier curve from the keyboard, and on confirm it rewrites it to source as `bezier-to`. Since it is first of all a tool for curves, it is covered in § 11.2.
+
 ## 15.4 Previewing shapes
 
 `stamp` renders a 2D shape in the viewport as a flat outline, without extruding. It is the tool to verify that a profile is what you expect before extruding or lofting.

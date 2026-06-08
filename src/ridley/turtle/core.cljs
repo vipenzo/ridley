@@ -766,6 +766,19 @@
      state
      (range steps))))
 
+(defn- local->world
+  "Convert a vector expressed in the turtle's local [right up heading] frame
+   (origin at the turtle position) to world coordinates:
+   world = p0 + a·right + b·up + c·heading. The basis is orthonormal, so this is
+   exactly inverted by projecting onto the same axes — see edit-bezier."
+  [state [a b c]]
+  (let [p0 (:position state)
+        right (normalize (cross (:heading state) (:up state)))]
+    (v+ p0
+        (v+ (v* right a)
+            (v+ (v* (:up state) b)
+                (v* (:heading state) c))))))
+
 (defn bezier-to
   "Draw a bezier curve to target position.
 
@@ -775,14 +788,28 @@
    (bezier-to state target [c1...] [c2...])    ; cubic with 2 control points
    (bezier-to state target :steps 24)          ; auto with more steps
    (bezier-to state target [c1] [c2] :steps 24); explicit with more steps
+   (bezier-to state target [c1] [c2] :local)   ; vectors in turtle-local frame
 
    With 0 control points: generates smooth curve starting along current heading
    With 1 control point: quadratic bezier
-   With 2 control points: cubic bezier"
+   With 2 control points: cubic bezier
+
+   Coordinate frame: by default target and control points are world coordinates.
+   With the :local flag, they are read in the turtle's local [right up heading]
+   frame (origin = current turtle position), making the call pose-independent.
+   This is what edit-bezier emits."
   [state target & args]
   (let [;; Separate vector args (control points) from keyword args
         {control-points true options false} (group-by vector? args)
+        ;; :local is a bare flag (no value) — pull it out before hash-map parsing,
+        ;; which requires even-count key/value pairs.
+        local? (boolean (some #{:local} options))
+        options (remove #{:local} options)
         {:keys [steps]} (apply hash-map (flatten options))
+        ;; In :local mode, target and control points are given in the turtle's
+        ;; local frame — map them to world before the world-space bezier math.
+        target (if local? (local->world state target) target)
+        control-points (if local? (mapv #(local->world state %) control-points) control-points)
         p0 (:position state)
         p3 (vec target)
         approx-length (magnitude (v- p3 p0))

@@ -237,10 +237,23 @@
    (defn- rec-bezier-to* [target & args]
      (let [grouped (group-by vector? args)
            control-points (get grouped true)
-           options (get grouped false)
+           all-options (get grouped false)
+           ;; :local is a bare flag — pull it out before hash-map parsing.
+           local? (boolean (some #{:local} all-options))
+           options (remove #{:local} all-options)
            steps (get (apply hash-map (flatten options)) :steps)
            state @path-recorder
            p0 (:position state)
+           ;; :local mode: target/control-points are in the turtle-local
+           ;; [right up heading] frame (origin = recorder position) — map to world.
+           to-world (fn [[a b c]]
+                      (let [right (rec-normalize (rec-cross (:heading state) (:up state)))
+                            up (:up state) heading (:heading state)]
+                        [(+ (nth p0 0) (* a (nth right 0)) (* b (nth up 0)) (* c (nth heading 0)))
+                         (+ (nth p0 1) (* a (nth right 1)) (* b (nth up 1)) (* c (nth heading 1)))
+                         (+ (nth p0 2) (* a (nth right 2)) (* b (nth up 2)) (* c (nth heading 2)))]))
+           target (if local? (to-world target) target)
+           control-points (if local? (mapv to-world control-points) control-points)
            start-heading (:heading state)
            p3 (vec target)
            dx0 (- (nth p3 0) (nth p0 0))
@@ -1954,6 +1967,27 @@
 
    (defmacro pilot [arg]
      `(pilot-request! '~arg ~arg))
+
+   ;; ============================================================
+   ;; edit-bezier — interactive cubic Bezier authoring
+   ;; ============================================================
+
+   ;; (edit-bezier) / (edit-bezier :shape) / (edit-bezier [end] [c1] [c2] …)
+   ;; A stand-in for a (bezier-to … :local) call: usable wherever bezier-to is —
+   ;; top-level, inside (path …), (attach …). It expands to a bezier-to of the
+   ;; session's initial points so the eval draws a valid default curve, and opens
+   ;; an interactive session; on confirm the whole (edit-bezier …) marker is
+   ;; rewritten to the edited (bezier-to … :local). Flags: :shape (alias
+   ;; :as-shape-seed), :wireframe. `bezier-to` is left unqualified so it resolves
+   ;; to the recording version inside (path …) and the implicit one at top level.
+   (defmacro edit-bezier [& args]
+     (let [vecs  (vec (filter vector? args))
+           flags (set (filter keyword? args))
+           shape? (boolean (or (contains? flags :as-shape-seed) (contains? flags :shape)))
+           wf?    (boolean (contains? flags :wireframe))
+           provided (when (= 3 (count vecs)) vecs)]
+       `(apply ~'bezier-to
+               (conj (edit-bezier-request! ~shape? ~wf? ~provided) :local))))
 
    ;; set-creation-pose!: move the origin/grip of a registered mesh
    ;; without moving its geometry. The turtle commands define the new pose.
