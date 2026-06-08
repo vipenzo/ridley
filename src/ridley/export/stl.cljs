@@ -240,6 +240,53 @@
               (fn [_] (reject (js/Error. "pick-save-path request failed"))))
         (.send xhr (js/JSON.stringify (clj->js body))))))))
 
+(defn desktop-pick-open-path
+  "Open native open dialog via Rust geo_server. Returns Promise<string|nil>
+   (path or nil if cancelled).
+
+   Options:
+     :title    dialog title (default \"Open\")
+     :filters  vec of {:name str :extensions [str ...]}
+               (default: .clj/.cljs/.edn)"
+  ([] (desktop-pick-open-path nil))
+  ([{:keys [title filters]}]
+   (js/Promise.
+    (fn [resolve reject]
+      (let [xhr (js/XMLHttpRequest.)
+            body (cond-> {}
+                   title   (assoc :title title)
+                   filters (assoc :filters (mapv (fn [{:keys [name extensions]}]
+                                                   {:name name :extensions (vec extensions)})
+                                                 filters)))]
+        (.open xhr "POST" (str geo-server-url "/pick-open-path") true)
+        (.setRequestHeader xhr "Content-Type" "application/json")
+        (set! (.-onload xhr)
+              (fn [_]
+                (if (= 200 (.-status xhr))
+                  (let [resp (js/JSON.parse (.-responseText xhr))]
+                    (if (nil? resp) (resolve nil) (resolve (.-path resp))))
+                  (reject (js/Error. (.-responseText xhr))))))
+        (set! (.-onerror xhr)
+              (fn [_] (reject (js/Error. "pick-open-path request failed"))))
+        (.send xhr (js/JSON.stringify (clj->js body))))))))
+
+(defn desktop-read-file
+  "Read a text file from disk via Rust geo_server. Returns Promise<string>."
+  [file-path]
+  (js/Promise.
+   (fn [resolve reject]
+     (let [xhr (js/XMLHttpRequest.)]
+       (.open xhr "POST" (str geo-server-url "/read-file") true)
+       (.setRequestHeader xhr "X-File-Path" file-path)
+       (set! (.-onload xhr)
+             (fn [_]
+               (if (= 200 (.-status xhr))
+                 (resolve (.-responseText xhr))
+                 (reject (js/Error. (.-responseText xhr))))))
+       (set! (.-onerror xhr)
+             (fn [_] (reject (js/Error. "read-file request failed"))))
+       (.send xhr "")))))
+
 (defn desktop-write-file
   "Write a Blob (or string) to a file path via Rust geo_server. Returns Promise<nil>."
   [blob file-path]

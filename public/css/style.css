@@ -1909,6 +1909,61 @@ body.resizing-h * {
   transform: rotate(-90deg);
 }
 
+/* Workspaces panel — reuses library-* item styles, own header scoping */
+#workspace-panel {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid #3c3c3c;
+  flex-shrink: 0;
+}
+
+#workspace-panel.collapsed .library-list {
+  display: none;
+}
+
+#workspace-panel .section-header {
+  padding: 4px 16px;
+  cursor: pointer;
+  user-select: none;
+}
+
+#workspace-panel .section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#workspace-panel.collapsed .library-collapse-icon {
+  transform: rotate(-90deg);
+}
+
+.workspace-item.ws-current {
+  background: #094771;
+  border-left: 2px solid #007acc;
+}
+
+.workspace-item.ws-current .library-name {
+  color: #fff;
+  font-weight: 600;
+}
+
+.ws-file-name {
+  font-size: 10px;
+  color: #6a6a6a;
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-dirty-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #e2c08d;
+  flex-shrink: 0;
+}
+
 .library-list {
   max-height: 200px;
   overflow-y: auto;

@@ -32,7 +32,10 @@
             [ridley.ui.prompt-panel :as prompt-panel]
             [ridley.library.panel :as lib-panel]
             [ridley.library.core :as lib-core]
+            [ridley.library.storage :as lib-storage]
             [ridley.library.builtin :as lib-builtin]
+            [ridley.workspace.store :as workspace]
+            [ridley.workspace.panel :as workspace-panel]
             [ridley.anim.core :as anim]
             [ridley.anim.playback :as anim-playback]
             [ridley.editor.test-mode :as test-mode]
@@ -62,6 +65,7 @@
 (declare save-to-storage)
 (declare send-script-debounced)
 (declare maybe-update-ai-focus!)
+(declare open-code-in-new-workspace!)
 
 (defn- show-error [msg]
   (when-let [el @error-el]
@@ -520,18 +524,22 @@
 ;; Save/Load functionality
 ;; ============================================================
 
-(def ^:private storage-key "ridley-definitions")
-
 (defn- save-to-storage
-  "Auto-save definitions to localStorage."
+  "Auto-save the editor content into the current workspace (session store).
+   This is the single persistence point, also used by voice-undo and
+   auto-session."
   []
   (when-let [content (cm/get-value @editor-view)]
-    (.setItem js/localStorage storage-key content)))
+    (workspace/set-current-content! content)
+    ;; Keep the dirty indicator live for file-bound workspaces.
+    (workspace-panel/on-content-changed!)))
 
-(defn- load-from-storage
-  "Load definitions from localStorage if available."
+(defn- refocus-editor!
+  "Return keyboard focus to the editor after a native file dialog closes.
+   File dialogs steal focus and don't reliably restore it; the small delay
+   lets the dialog finish dismissing before we grab focus back."
   []
-  (.getItem js/localStorage storage-key))
+  (js/setTimeout #(cm/focus @editor-view) 50))
 
 (defn- download-blob-fallback
   "Download a blob using the traditional createElement('a') method."
@@ -582,21 +590,114 @@
     :else
     (download-blob-fallback blob filename)))
 
-(defn- save-definitions []
-  (when-let [content (cm/get-value @editor-view)]
-    (let [blob (js/Blob. #js [content] #js {:type "text/plain"})]
-      (save-blob-with-picker blob "definitions.clj"
-                             "Clojure files" "text/plain" #js [".clj"])
-      ;; Also save to localStorage
-      (save-to-storage))))
+;; ── Workspace-aware Save / Save As / Open ─────────────────────
+;; Save/Open operate on the current workspace. On desktop a workspace can be
+;; bound to a file (:file-path); Save writes back to it without a picker, while
+;; Save As always prompts and (re)binds. On web there is no real path, so both
+;; fall back to the browser's export picker.
 
-(defn- load-definitions [file]
+(declare open-file-in-workspace!)
+
+(defn- ws-basename [path]
+  (when path (last (str/split path #"[\\/]"))))
+
+(defn- suggest-filename
+  "A sensible suggested filename for the current workspace."
+  [w]
+  (let [n (or (:name w) "workspace")]
+    (if (re-find #"\.[A-Za-z0-9]+$" n) n (str n ".clj"))))
+
+;; The file holds a header with the workspace's library list (serialize-file),
+;; stripped on read (parse-file). `content` is always the bare code body.
+
+(defn- desktop-save-to-path!
+  "Write the serialized workspace (header + `content`) to an already-bound
+   `path`, mark synced (code + libraries), refresh indicator."
+  [content path]
+  (let [libs (lib-storage/get-active-libraries)]
+    (-> (stl/desktop-write-file (workspace/serialize-file libs content) path)
+        (.then (fn [_]
+                 (when-let [id (workspace/current-id)]
+                   (workspace/mark-synced! id content libs))
+                 (workspace-panel/render!)))
+        (.catch (fn [err] (js/console.warn "save error:" err) nil)))))
+
+(defn- desktop-save-as!
+  "Prompt for a path, write the serialized workspace, bind the current workspace."
+  [content]
+  (let [libs (lib-storage/get-active-libraries)]
+    (-> (stl/desktop-pick-save-path
+         (suggest-filename (workspace/current))
+         {:title "Save As" :filters [{:name "Clojure files" :extensions ["clj"]}]})
+        (.then (fn [path]
+                 (when path
+                   (-> (stl/desktop-write-file (workspace/serialize-file libs content) path)
+                       (.then (fn [_]
+                                (when-let [id (workspace/current-id)]
+                                  (workspace/bind-file! id path content libs (ws-basename path)))
+                                (workspace-panel/render!)))))))
+        (.catch (fn [err] (js/console.warn "save-as error:" err) nil))
+        (.finally refocus-editor!))))
+
+(defn- web-export!
+  "Web Save/Save As: download the serialized workspace via the browser picker."
+  [content w]
+  (let [libs (lib-storage/get-active-libraries)
+        blob (js/Blob. #js [(workspace/serialize-file libs content)]
+                       #js {:type "text/plain"})]
+    (some-> (save-blob-with-picker blob (suggest-filename w)
+                                   "Clojure files" "text/plain" #js [".clj"])
+            (.finally refocus-editor!))))
+
+(defn- save-definitions
+  "Save the current workspace. Desktop bound → write back; otherwise Save As."
+  []
+  (when-let [content (cm/get-value @editor-view)]
+    (save-to-storage)
+    (let [w (workspace/current)]
+      (cond
+        (and (env/desktop?) (:file-path w)) (desktop-save-to-path! content (:file-path w))
+        (env/desktop?)                      (desktop-save-as! content)
+        :else                               (web-export! content w)))))
+
+(defn- save-definitions-as
+  "Always prompt for a new path/name (Save As)."
+  []
+  (when-let [content (cm/get-value @editor-view)]
+    (save-to-storage)
+    (if (env/desktop?)
+      (desktop-save-as! content)
+      (web-export! content (workspace/current)))))
+
+(defn- open-from-disk
+  "Open a file into a NEW workspace. Desktop uses the native dialog and binds
+   the workspace to the chosen path; web triggers the hidden file input. The
+   library-list header is parsed out and the bare body goes into the editor."
+  []
+  (if (env/desktop?)
+    (-> (stl/desktop-pick-open-path
+         {:title "Open" :filters [{:name "Clojure files" :extensions ["clj" "cljs" "edn"]}]})
+        (.then (fn [path]
+                 (when path
+                   (-> (stl/desktop-read-file path)
+                       (.then (fn [text]
+                                (let [{:keys [libraries body]} (workspace/parse-file text)]
+                                  (open-file-in-workspace! body {:path path :libraries libraries}))))))))
+        (.catch (fn [err] (js/console.warn "open error:" err) nil))
+        (.finally refocus-editor!))
+    (when-let [fi (.getElementById js/document "file-input")]
+      (.click fi))))
+
+(defn- load-definitions
+  "Web file-input handler: read a File into a new (named) workspace, stripping
+   the library-list header."
+  [file]
   (let [reader (js/FileReader.)]
     (set! (.-onload reader)
           (fn [e]
-            (cm/set-value @editor-view (.. e -target -result))
-        ;; Auto-save to localStorage after loading
-            (save-to-storage)))
+            (let [{:keys [libraries body]} (workspace/parse-file (.. e -target -result))]
+              (open-file-in-workspace! body {:name (.-name file) :libraries libraries}))
+            (refocus-editor!)))
     (.readAsText reader file)))
 
 ;; ============================================================
@@ -731,6 +832,7 @@
 (defn- setup-save-load []
   (let [run-btn (.getElementById js/document "btn-run")
         save-btn (.getElementById js/document "btn-save")
+        save-as-btn (.getElementById js/document "btn-save-as")
         load-btn (.getElementById js/document "btn-load")
         export-btn (.getElementById js/document "btn-export")
         export-menu (.getElementById js/document "export-menu")
@@ -750,9 +852,13 @@
     ;; Save button
     (.addEventListener save-btn "click"
                        (fn [_] (save-definitions)))
-    ;; Load button - open file picker for local files
+    ;; Save As button
+    (when save-as-btn
+      (.addEventListener save-as-btn "click"
+                         (fn [_] (save-definitions-as))))
+    ;; Open button - load a file into a new workspace
     (.addEventListener load-btn "click"
-                       (fn [_] (.click file-input)))
+                       (fn [_] (open-from-disk)))
     ;; Export dropdown menu
     (when export-btn
       (.addEventListener export-btn "click"
@@ -1866,12 +1972,14 @@
   (let [editor-section (.getElementById js/document "explicit-section")
         repl-section (.getElementById js/document "repl-section")
         section-divider (.querySelector js/document ".section-divider")
+        workspace-panel (.getElementById js/document "workspace-panel")
         library-panel (.getElementById js/document "library-panel")
         manual-container (.getElementById js/document "manual-container")]
     (if (manual/open?)
       ;; Show manual, hide editor
       (do
         (when editor-section (set! (.-style.display editor-section) "none"))
+        (when workspace-panel (set! (.-style.display workspace-panel) "none"))
         (when library-panel (set! (.-style.display library-panel) "none"))
         (when repl-section (set! (.-style.display repl-section) "none"))
         (when section-divider (set! (.-style.display section-divider) "none"))
@@ -1883,6 +1991,7 @@
       ;; Hide manual, show editor
       (do
         (when editor-section (set! (.-style.display editor-section) "flex"))
+        (when workspace-panel (set! (.-style.display workspace-panel) "flex"))
         (when library-panel (set! (.-style.display library-panel) "flex"))
         (when repl-section (set! (.-style.display repl-section) "flex"))
         (when section-divider (set! (.-style.display section-divider) "block"))
@@ -1911,48 +2020,14 @@
         (update-turtle-indicator)
         (rebuild-turtle-dropdown!)))))
 
-(defn- apply-manual-code!
-  "Replace editor content with example code and close the manual."
-  [code]
-  (when @editor-view
-    (cm/set-value @editor-view code)
-    (save-to-storage)
-    (manual/close-manual!)))
-
-(defn- show-overwrite-confirm-modal
-  "HTML modal (WKWebView-safe — native confirm is blocked) asking to confirm
-   overwriting non-empty editor content. Calls on-confirm if the user accepts."
-  [on-confirm]
-  (let [modal (.createElement js/document "div")
-        overlay (.createElement js/document "div")
-        close-modal (fn [] (.remove overlay) (.remove modal))]
-    (set! (.-className overlay) "sync-modal-overlay")
-    (.addEventListener overlay "click" close-modal)
-    (set! (.-className modal) "sync-modal")
-    (set! (.-innerHTML modal)
-          (str "<div class='sync-modal-content'>"
-               "<h3>Sostituire il codice nell'editor?</h3>"
-               "<p>L'editor contiene del codice non vuoto. Aprire questo esempio lo sostituirà.</p>"
-               "<div class='manual-confirm-buttons'>"
-               "<button class='sync-close-btn manual-confirm-cancel'>Annulla</button>"
-               "<button class='sync-close-btn manual-confirm-ok'>Sostituisci</button>"
-               "</div></div>"))
-    (.appendChild js/document.body overlay)
-    (.appendChild js/document.body modal)
-    (when-let [b (.querySelector modal ".manual-confirm-cancel")]
-      (.addEventListener b "click" (fn [_] (close-modal))))
-    (when-let [b (.querySelector modal ".manual-confirm-ok")]
-      (.addEventListener b "click" (fn [_] (close-modal) (on-confirm))))))
-
 (defn- copy-manual-code
-  "Copy code from manual to editor and close manual. When the editor already
-   holds non-empty code, confirm first so the user's work is never silently
-   overwritten (manual brief §9 / §7.4)."
+  "Open a manual example in a fresh workspace and close the manual. The user's
+   current work stays in its own workspace — it is never overwritten, so no
+   confirmation is needed (replaces the old overwrite-confirm modal)."
   [code]
   (when @editor-view
-    (if (str/blank? (cm/get-value @editor-view))
-      (apply-manual-code! code)
-      (show-overwrite-confirm-modal #(apply-manual-code! code)))))
+    (open-code-in-new-workspace! code)
+    (manual/close-manual!)))
 
 (defn- setup-manual
   "Setup the manual panel and button."
@@ -1993,6 +2068,103 @@
                              (.remove (.-classList ln-btn) "active")))))))
 
 ;; ============================================================
+;; Workspaces (first-class editor documents)
+;; ============================================================
+
+;; Library set ↔ workspace bridge. The GLOBAL active-library list (read on every
+;; run by load-active-libraries) is treated as a projection of the current
+;; workspace. We project workspace→global when a workspace becomes current, and
+;; capture global→workspace when the user toggles libraries in the panel.
+
+(defn- apply-workspace-libraries!
+  "Project the current workspace's library set onto the global active list. A
+   legacy workspace (no :libraries yet) instead ADOPTS the current global list
+   (transparent migration). Resets the SCI context when the set actually changed
+   so the REPL and next run see the right libraries (no automatic re-run)."
+  []
+  (let [libs (workspace/current-libraries)]
+    (if (nil? libs)
+      (workspace/set-current-libraries! (lib-storage/get-active-libraries))
+      (when (not= (vec libs) (vec (lib-storage/get-active-libraries)))
+        (lib-storage/set-active-libraries! (vec libs))
+        (repl/reset-ctx!)))
+    (lib-panel/render!)))
+
+(defn- capture-active-libraries!
+  "Record the global active-library list onto the current workspace (after the
+   user toggles libraries in the panel), and refresh the dirty indicator."
+  []
+  (workspace/set-current-libraries! (lib-storage/get-active-libraries))
+  (workspace-panel/on-content-changed!))
+
+(defn- switch-workspace!
+  "Persist the current editor content, switch the current pointer to `id`,
+   load that workspace's content into the editor, and project the target
+   workspace's library set."
+  [id]
+  (when (and @editor-view (not= id (workspace/current-id)))
+    (save-to-storage)                       ;; persist the doc we're leaving
+    (workspace/set-current! id)
+    (when-let [w (workspace/get-workspace id)]
+      (cm/set-value @editor-view (:content w)))
+    (workspace-panel/render!)
+    (apply-workspace-libraries!)))
+
+(defn- open-code-in-new-workspace!
+  "Park the current work (it already lives in its workspace), create a fresh
+   ephemeral workspace holding `code`, and switch to it. Used by the manual
+   'Edit example' flow so the user's work is never overwritten. The new
+   workspace inherits the current library set."
+  [code]
+  (when @editor-view
+    (save-to-storage)
+    (let [id (workspace/new-workspace! code)]
+      (workspace/set-current! id)
+      (cm/set-value @editor-view code)
+      (workspace-panel/render!)
+      (apply-workspace-libraries!))))
+
+(defn- close-workspace!
+  "Close workspace `id`. If it is the current one, move to a neighbour (creating
+   a fresh empty workspace if none remain) WITHOUT persisting the closed content."
+  [id]
+  (if (= id (workspace/current-id))
+    (let [remaining (remove #(= (:id %) id) (workspace/list-workspaces))
+          target-id (or (:id (first remaining)) (workspace/new-workspace! ""))]
+      (workspace/remove-workspace! id)
+      (workspace/set-current! target-id)
+      (when (and @editor-view (workspace/get-workspace target-id))
+        (cm/set-value @editor-view (:content (workspace/get-workspace target-id))))
+      (workspace-panel/render!)
+      (apply-workspace-libraries!))
+    (do (workspace/remove-workspace! id)
+        (workspace-panel/render!))))
+
+(defn- open-file-in-workspace!
+  "Create a new workspace from `content` (the bare code body), switch to it, and
+   (on desktop) bind it to `:path`, or name it `:name` (web). `:libraries` is the
+   set parsed from the file header (nil for an external file → inherit current)."
+  [content {:keys [path name libraries]}]
+  (when @editor-view
+    (save-to-storage)
+    (let [id (workspace/new-workspace! content libraries)
+          ws-libs (:libraries (workspace/get-workspace id))]
+      (cond
+        path (workspace/bind-file! id path content ws-libs (ws-basename path))
+        name (workspace/rename! id name))
+      (workspace/set-current! id)
+      (cm/set-value @editor-view content)
+      (workspace-panel/render!)
+      (apply-workspace-libraries!))))
+
+(defn- setup-workspace-panel
+  "Setup the Workspaces panel — switching/creating/renaming/closing documents."
+  []
+  (workspace-panel/setup!
+   {:switch-to switch-workspace!
+    :close close-workspace!}))
+
+;; ============================================================
 ;; Library Panel
 ;; ============================================================
 
@@ -2007,7 +2179,9 @@
     :on-edit (fn [lib-name]
                (lib-panel/enter-edit-mode! lib-name))
     :on-change (fn []
-                 ;; Reset SCI context and re-evaluate definitions
+                 ;; Record the new active set onto the current workspace, then
+                 ;; reset the SCI context and re-evaluate definitions.
+                 (capture-active-libraries!)
                  (repl/reset-ctx!)
                  (evaluate-definitions))}))
 
@@ -2643,7 +2817,9 @@
         repl-input (.getElementById js/document "repl-input")
         repl-history (.getElementById js/document "repl-history")
         error-panel (.getElementById js/document "error-panel")
-        initial-content (or (load-from-storage) default-code)]
+        ;; Seed/migrate the workspace session store, then open the current doc.
+        initial-content (or (:content (workspace/ensure-initialized! default-code))
+                            default-code)]
     ;; Create CodeMirror editor
     (reset! editor-view
             (cm/create-editor
@@ -2720,6 +2896,11 @@
     (lib-builtin/install-builtins!)
     ;; Setup library panel
     (setup-library-panel)
+    ;; Setup workspaces panel (multi-document editor)
+    (setup-workspace-panel)
+    ;; Project the current workspace's library set onto the global active list
+    ;; (adopts the existing global list for legacy workspaces).
+    (apply-workspace-libraries!)
     ;; Setup picking status bar (Alt+Click mesh selection)
     (setup-picking-status-bar)
     ;; Initialize voice input system

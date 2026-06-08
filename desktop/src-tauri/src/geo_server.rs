@@ -75,6 +75,60 @@ fn handle_pick_save_path(request: &mut tiny_http::Request) -> Result<String, Str
     }
 }
 
+/// Open a native open dialog, return the chosen path (no data read yet).
+///
+/// Request body (all optional):
+///   { "title": "Open",
+///     "filters": [{"name": "Clojure files", "extensions": ["clj"]}, ...] }
+fn handle_pick_open_path(request: &mut tiny_http::Request) -> Result<String, String> {
+    let mut body = String::new();
+    request
+        .as_reader()
+        .read_to_string(&mut body)
+        .map_err(|e| format!("read error: {}", e))?;
+
+    #[derive(serde::Deserialize)]
+    struct Filter {
+        name: String,
+        extensions: Vec<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Req {
+        #[serde(default)]
+        title: Option<String>,
+        #[serde(default)]
+        filters: Option<Vec<Filter>>,
+    }
+    // Empty body is valid (all fields optional).
+    let req: Req = if body.trim().is_empty() {
+        Req { title: None, filters: None }
+    } else {
+        serde_json::from_str(&body).map_err(|e| format!("JSON parse error: {}", e))?
+    };
+
+    let mut dialog = rfd::FileDialog::new().set_title(req.title.as_deref().unwrap_or("Open"));
+
+    match req.filters {
+        Some(fs) if !fs.is_empty() => {
+            for f in fs {
+                let ext_refs: Vec<&str> = f.extensions.iter().map(|s| s.as_str()).collect();
+                dialog = dialog.add_filter(&f.name, &ext_refs);
+            }
+        }
+        _ => {
+            dialog = dialog.add_filter("Clojure files", &["clj", "cljs", "edn"]);
+        }
+    }
+
+    match dialog.pick_file() {
+        Some(path) => Ok(format!(
+            "{{\"path\":\"{}\"}}",
+            path.to_string_lossy().replace('\\', "\\\\").replace('"', "\\\"")
+        )),
+        None => Ok("null".to_string()),
+    }
+}
+
 /// Read a file from disk. Path comes from X-File-Path header.
 fn handle_read_file(request: &mut tiny_http::Request) -> Result<Vec<u8>, String> {
     let path = request
@@ -194,6 +248,20 @@ pub fn start() {
             // /pick-save-path — open native dialog, return chosen path (JSON body)
             if path == "/pick-save-path" {
                 let (status, json) = match handle_pick_save_path(&mut request) {
+                    Ok(json) => (200, json),
+                    Err(e) => (500, format!("{{\"error\":\"{}\"}}", e)),
+                };
+                let resp = Response::from_string(json)
+                    .with_status_code(status)
+                    .with_header(cors.clone())
+                    .with_header(content_type.clone());
+                let _ = request.respond(resp);
+                continue;
+            }
+
+            // /pick-open-path — open native open dialog, return chosen path (JSON body)
+            if path == "/pick-open-path" {
+                let (status, json) = match handle_pick_open_path(&mut request) {
                     Ok(json) => (200, json),
                     Err(e) => (500, format!("{{\"error\":\"{}\"}}", e)),
                 };

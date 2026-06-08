@@ -1,10 +1,26 @@
-# 9. Librerie
+# 9. Workspaces e Librerie
+
+Due cose contengono il codice che scrivi: il *Workspace*, il documento su cui stai lavorando, e le *librerie*, il codice riusabile che richiami da qualunque documento. Questo capitolo copre entrambe.
+
+## 9.1 Workspaces
+
+Il codice che scrivi nell'editor vive in un *Workspace*. Un Workspace è un documento: un programma Ridley con un nome, che persiste fra una sessione e l'altra. Puoi tenerne aperti diversi, ciascuno con il suo contenuto, e passare dall'uno all'altro senza perdere niente.
+
+La sezione "Workspaces" del pannello elenca i documenti aperti. Da lì crei un nuovo Workspace, lo rinomini, lo duplichi, lo chiudi, o passi a un altro. Quando chiudi il Workspace corrente, Ridley passa a uno di quelli vicini, così c'è sempre un documento attivo.
+
+Aprire un esempio del manuale non tocca più il tuo lavoro. Quando premi "Edit" su un esempio, Ridley lo apre in un nuovo Workspace e ci passa sopra, lasciando intatto il documento su cui stavi lavorando.
+
+Sul desktop i Workspace si salvano e si riaprono come file con i bottoni Save, Save As e Open, che aprono le finestre di dialogo native del sistema ("Open" è il bottone che prima si chiamava "Load"). Quando un Workspace è legato a un file su disco, un puntino accanto al nome segnala che il contenuto in memoria è disallineato da quello salvato. Nella versione web il documento vive nel browser, l'aggancio ai file è più limitato e il puntino non compare.
+
+Workspace e librerie restano due cose distinte: una libreria è codice riutilizzabile che attivi e richiami da un altro programma, un Workspace è il programma stesso. Per fare prove senza toccare il progetto corrente, apri un Workspace nuovo: nascono apposta per questo.
+
+Ogni Workspace ricorda però quali librerie ha attive. Le librerie restano un asset condiviso, comune a tutti i Workspace, ma l'elenco di quelle abilitate fa parte del Workspace: quando passi a un altro Workspace, le librerie attive cambiano di conseguenza, e un Workspace nuovo eredita quelle del corrente. Quando salvi un Workspace su file, l'elenco delle librerie attive viene salvato insieme al codice, così riaprendolo ritrovi le stesse librerie abilitate.
 
 Una libreria è un blocco di codice Ridley salvato con un nome, separato dal sorgente nell'editor. Una volta attivata, le sue funzioni diventano raggiungibili dal tuo codice tramite un prefisso: se la libreria si chiama `shapes` e definisce `hexagon`, la usi con `(shapes/hexagon)`.
 
 Le librerie sono il modo in cui accumuli codice riusabile fra un progetto e l'altro: forme parametriche, pattern di assemblaggio, utility che ti ritrovi a riscrivere ogni volta. Sono anche il meccanismo con cui Ridley importa asset esterni (SVG e STL).
 
-## 9.1 A cosa servono le librerie
+## 9.2 A cosa servono le librerie
 
 Il codice nell'editor è il tuo progetto corrente. Ogni volta che premi Cmd+Enter, viene analizzato da zero in un contesto fresco: i `def` e i `defn` nascono, vivono per la durata dell'eval, e scompaiono alla successiva. Se definisci una funzione utile in un progetto e vuoi usarla in un altro, devi copiarla a mano.
 
@@ -12,7 +28,7 @@ Le librerie risolvono questo problema. Una libreria è persistente (sopravvive f
 
 Un uso tipico: hai scritto una funzione `rounded-rect` parametrica che ti piace. La copi in una libreria chiamata `my-shapes`, e da quel momento ogni progetto può usare `(my-shapes/rounded-rect 40 20 5)` senza ridefinirla.
 
-## 9.2 Usare una libreria
+## 9.3 Usare una libreria
 
 ### Il pannello librerie
 
@@ -23,6 +39,8 @@ Il pannello librerie è accessibile dalla sidebar. Mostra la lista delle libreri
 Attivare una libreria significa renderla disponibile nel contesto dell'eval. Al prossimo Cmd+Enter, le sue funzioni saranno raggiungibili con il prefisso.
 
 Disattivare una libreria la rimuove dal contesto: le chiamate con il suo prefisso produrranno un errore.
+
+La selezione delle librerie attive è legata al Workspace corrente: cambia quando passi a un altro Workspace e viene salvata insieme al documento (vedi 9.1).
 
 L'attivazione non è automatica per le dipendenze. Se la libreria A dichiara di richiedere B, devi attivare entrambe manualmente. Se B non è attiva, A viene saltata con un warning.
 
@@ -38,7 +56,7 @@ Il nome può contenere lo slash (per esempio `robot/arm`), ma è un nome singolo
 
 A ogni Cmd+Enter, il contesto SCI viene ricostruito da zero. Tutte le librerie attive vengono caricate nell'ordine topologico (rispettando le dipendenze dichiarate), analizzate in sequenza, e i loro simboli pubblici diventano disponibili. Non c'è caching: se il sorgente di una libreria è cambiato, il prossimo eval lo vedrà.
 
-## 9.3 Librerie built-in: SVG e STL import
+## 9.4 Librerie built-in: SVG e STL import
 
 Ridley usa il sistema librerie per importare asset esterni. Il risultato dell'import è una libreria ordinaria, indistinguibile da una scritta a mano. Puoi ispezionarla, modificarla, esportarla.
 
@@ -76,7 +94,7 @@ Il pannello non entra in edit mode dopo l'import STL, perché modificare a mano 
 
 Anche se il sorgente base64 non è leggibile, la libreria resta editabile in modo utile. Un caso comune: il file STL è stato salvato in metri invece che in millimetri, e la mesh risultante è mille volte troppo grande. Basta aprire la libreria e aggiungere un `(scale model 0.001)` dopo il `decode-mesh`.
 
-## 9.4 Creare una libreria propria
+## 9.5 Creare una libreria propria
 
 ### Dal pannello
 
@@ -117,11 +135,7 @@ Se una libreria usa funzioni di un'altra, dichiaralo nell'header. L'header è la
 
 Ridley legge questa dichiarazione e carica le dipendenze prima della libreria corrente. Se una dipendenza non è attiva o non esiste, la libreria viene saltata con un warning.
 
-### Librerie come workpad
-
-Un uso laterale del sistema: creare una libreria vuota come spazio di lavoro separato. Apri l'edit mode, scrivi codice sperimentale, premi Cmd+Enter per testarlo, e quando hai finito torni al tuo progetto con "Back". Il sorgente principale resta intatto. È un modo pratico per fare esperimenti senza inquinare il programma corrente.
-
-## 9.5 Condividere librerie
+## 9.6 Condividere librerie
 
 ### Export
 
