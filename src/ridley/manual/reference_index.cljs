@@ -782,7 +782,7 @@
     :category "mesh-operations"
     :status "stable"
     :since ""
-    :signature "(lay-flat mesh)\n(lay-flat mesh target)"
+    :signature "(lay-flat mesh)\n(lay-flat mesh target)\n(lay-flat mesh path)\n(lay-flat mesh path mark)"
     :description "Rotate a mesh so that one of its faces ends up flush with the world XY plane, then re-center the result at the origin. Designed for preparing a model for 3D-print export: a slicer expects the model sitting on a flat bed, and `lay-flat` is the explicit step to put it there without re-modelling."
     :path "docs/manual/reference/en/lay-flat.md"}
 

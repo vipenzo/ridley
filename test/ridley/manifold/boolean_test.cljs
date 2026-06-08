@@ -159,3 +159,31 @@
       (is true "Skipped: Manifold WASM not available in node")
       (let [result (manifold/difference [box-a box-b])]
         (is (some? result))))))
+
+;; ── anchor inheritance through derived meshes (pure) ────────
+;; carry-meta is what every boolean / hull / refine result runs to inherit the
+;; first operand's metadata. Verifying it covers the WASM-gated path: a boolean
+;; no longer drops named anchors (they are world poses, valid on the result
+;; whose first-operand geometry is unmoved).
+
+(deftest carry-meta-inherits-anchor-family
+  (testing "anchors, section-anchors and rail-path ride from the source"
+    (let [src {:creation-pose {:position [1 2 3] :heading [1 0 0] :up [0 0 1]}
+               :material {:color 7}
+               :anchors {:foot {:position [5 0 0] :heading [0 -1 0] :up [-1 0 0]}}
+               :section-anchors {:foot {:position [5 0 0]}}
+               :rail-path {:type :path :commands [{:cmd :f :args [4]}]}}
+          out (#'manifold/carry-meta {:type :mesh :vertices [] :faces []} src)]
+      (is (= (:anchors src) (:anchors out)) "named anchors survive")
+      (is (= (:section-anchors src) (:section-anchors out)) ":on section coords survive")
+      (is (= (:rail-path src) (:rail-path out)) "rail survives for :on")
+      (is (= (:creation-pose src) (:creation-pose out)) "creation-pose still inherited")
+      (is (= (:material src) (:material out)) "material still inherited"))))
+
+(deftest carry-meta-noop-without-anchors
+  (testing "a source with no anchors adds none (mesh stays clean)"
+    (let [out (#'manifold/carry-meta {:type :mesh :vertices [] :faces []}
+                                     {:creation-pose {:position [0 0 0] :heading [1 0 0] :up [0 0 1]}})]
+      (is (not (contains? out :anchors)))
+      (is (not (contains? out :section-anchors)))
+      (is (not (contains? out :rail-path))))))

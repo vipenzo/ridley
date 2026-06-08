@@ -416,11 +416,52 @@
         ;; Remove raw-arrays cache so viewport uses the transformed CLJS vertices
         (dissoc :ridley.manifold.core/raw-arrays :ridley.manifold.core/manifold-cache))))
 
+(defn- lay-flat-at-pose
+  "Lay the mesh flat so the plane through `pose` lands face-down on Z=0:
+   `pose`'s :heading is the face normal, its position a point on the plane."
+  [mesh pose]
+  (lay-flat-with-normal mesh
+                        (:heading pose)
+                        (fn [_rotated-verts]
+                          (let [normal (:heading pose)
+                                tgt [0.0 0.0 -1.0]
+                                dot-nt (math/dot normal tgt)
+                                rot-fn (if (> (js/Math.abs dot-nt) 0.9999)
+                                         (if (neg? dot-nt)
+                                           identity
+                                           (let [perp (if (> (js/Math.abs (nth normal 0)) 0.9) [0 1 0] [1 0 0])]
+                                             #(math/rotate-point-around-axis % perp js/Math.PI)))
+                                         (let [axis (math/normalize (math/cross normal tgt))
+                                               angle (js/Math.acos (max -1.0 (min 1.0 dot-nt)))]
+                                           #(math/rotate-point-around-axis % axis angle)))]
+                            (rot-fn (or (:pos pose) (:position pose)))))))
+
+(defn- lay-flat-path-pose
+  "Resolve a print-face pose from a path's marks at the mesh's creation-pose.
+   With a single mark, picks it; otherwise requires the mark name."
+  [mesh path mark-name]
+  (let [cp (or (:creation-pose mesh) {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})
+        marks (turtle/resolve-marks cp path)]
+    (cond
+      (keyword? mark-name) (or (get marks mark-name)
+                               (throw (js/Error. (str "lay-flat: no mark " mark-name " on the path"))))
+      (empty? marks)       (throw (js/Error. "lay-flat: the path has no (mark …) to lay flat"))
+      (= 1 (count marks))  (val (first marks))
+      :else                (throw (js/Error. (str "lay-flat: the path has several marks "
+                                                  (vec (keys marks))
+                                                  " — pass one: (lay-flat mesh path :mark)"))))))
+
 (defn ^:export lay-flat-impl
   ([mesh] (lay-flat-impl mesh nil))
-  ([mesh target]
+  ([mesh target] (lay-flat-impl mesh target nil))
+  ([mesh target mark-name]
    (let [mesh (if (map? mesh) mesh (or (registry/get-mesh mesh) mesh))]
      (cond
+     ;; Path with a print-face mark — resolve it at the mesh's creation-pose and
+     ;; lay that plane flat. Self-contained: no attach-path step needed.
+       (and (map? target) (= :path (:type target)))
+       (lay-flat-at-pose mesh (lay-flat-path-pose mesh target mark-name))
+
      ;; Anchor keyword from :mark — resolve on the mesh's own anchors (set by
      ;; attach-path) first, then fall back to global mark / turtle state.
        (and (keyword? target)
@@ -429,21 +470,7 @@
                       (get @state/mark-anchors target)
                       (get-in @@state/turtle-state-var [:anchors target]))]
          (if pose
-           (lay-flat-with-normal mesh
-                                 (:heading pose)
-                                 (fn [rotated-verts]
-                                   (let [normal (:heading pose)
-                                         tgt [0.0 0.0 -1.0]
-                                         dot-nt (math/dot normal tgt)
-                                         rot-fn (if (> (js/Math.abs dot-nt) 0.9999)
-                                                  (if (neg? dot-nt)
-                                                    identity
-                                                    (let [perp (if (> (js/Math.abs (nth normal 0)) 0.9) [0 1 0] [1 0 0])]
-                                                      #(math/rotate-point-around-axis % perp js/Math.PI)))
-                                                  (let [axis (math/normalize (math/cross normal tgt))
-                                                        angle (js/Math.acos (max -1.0 (min 1.0 dot-nt)))]
-                                                    #(math/rotate-point-around-axis % axis angle)))]
-                                     (rot-fn (or (:pos pose) (:position pose))))))
+           (lay-flat-at-pose mesh pose)
            (throw (js/Error. (str "lay-flat: no anchor named " target)))))
 
      ;; Direction keyword

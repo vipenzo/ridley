@@ -226,6 +226,20 @@
      :volume 0
      :surface-area 0}))
 
+(defn- carry-meta
+  "Carry a source mesh's pose/material/anchor metadata onto a derived result
+   (boolean, hull, refine, …). The result keeps the source's geometry in place,
+   so the source's world-space :creation-pose and :anchors stay valid on it —
+   together with the :section-anchors/:rail-path that re-derive composed (:on)
+   poses from that pose. This is why a boolean no longer drops named anchors."
+  [result source]
+  (cond-> result
+    (:creation-pose source)   (assoc :creation-pose (:creation-pose source))
+    (:material source)        (assoc :material (:material source))
+    (:anchors source)         (assoc :anchors (:anchors source))
+    (:section-anchors source) (assoc :section-anchors (:section-anchors source))
+    (:rail-path source)       (assoc :rail-path (:rail-path source))))
+
 ;; ============================================================
 ;; Self-union (resolve self-intersections)
 ;; ============================================================
@@ -247,9 +261,7 @@
               ^js raw-result (.add m1 m2)
               ^js clean (.asOriginal raw-result)
               output (manifold->mesh clean)
-              output (cond-> output
-                       (:creation-pose ridley-mesh) (assoc :creation-pose (:creation-pose ridley-mesh))
-                       (:material ridley-mesh) (assoc :material (:material ridley-mesh)))]
+              output (carry-meta output ridley-mesh)]
           (.delete m1)
           (.delete m2)
           (.delete raw-result)
@@ -324,9 +336,7 @@
         (let [^js raw-result (.add ma mb)
               ^js result (.asOriginal raw-result)
               output (manifold->mesh result)
-              output (cond-> output
-                       (:creation-pose mesh-a) (assoc :creation-pose (:creation-pose mesh-a))
-                       (:material mesh-a) (assoc :material (:material mesh-a)))]
+              output (carry-meta output mesh-a)]
           (.delete ma)
           (.delete mb)
           (.delete raw-result)
@@ -386,9 +396,7 @@
         (let [^js raw-result (.subtract ma mb)
               ^js result (.asOriginal raw-result)
               output (manifold->mesh result)
-              output (cond-> output
-                       (:creation-pose mesh-a) (assoc :creation-pose (:creation-pose mesh-a))
-                       (:material mesh-a) (assoc :material (:material mesh-a)))]
+              output (carry-meta output mesh-a)]
           (.delete ma)
           (.delete mb)
           (.delete raw-result)
@@ -423,9 +431,7 @@
         (let [^js raw-result (.intersect ma mb)
               ^js result (.asOriginal raw-result)
               output (manifold->mesh result)
-              output (cond-> output
-                       (:creation-pose mesh-a) (assoc :creation-pose (:creation-pose mesh-a))
-                       (:material mesh-a) (assoc :material (:material mesh-a)))]
+              output (carry-meta output mesh-a)]
           (.delete ma)
           (.delete mb)
           (.delete raw-result)
@@ -476,9 +482,7 @@
                 ^js result (.asOriginal raw-result)
                 output (manifold->mesh result)
                 first-mesh (first meshes)
-                output (cond-> output
-                         (:creation-pose first-mesh) (assoc :creation-pose (:creation-pose first-mesh))
-                         (:material first-mesh) (assoc :material (:material first-mesh)))]
+                output (carry-meta output first-mesh)]
             ;; Clean up inputs
             (doseq [m manifolds]
               (.delete m))
@@ -513,9 +517,7 @@
         (let [^js m (mesh->manifold ridley-mesh)
               ^js refined (.refine m n)
               output (manifold->mesh refined)
-              output (cond-> output
-                       (:creation-pose ridley-mesh) (assoc :creation-pose (:creation-pose ridley-mesh))
-                       (:material ridley-mesh) (assoc :material (:material ridley-mesh)))]
+              output (carry-meta output ridley-mesh)]
           (.delete m)
           (.delete refined)
           (schema/assert-mesh! output))
@@ -573,9 +575,7 @@
                              (.refine smoothed refine)
                              smoothed)
               output (manifold->mesh refined)
-              output (cond-> output
-                       (:creation-pose ridley-mesh) (assoc :creation-pose (:creation-pose ridley-mesh))
-                       (:material ridley-mesh) (assoc :material (:material ridley-mesh)))]
+              output (carry-meta output ridley-mesh)]
           (.delete m)
           (when-not (identical? smoothed refined) (.delete smoothed))
           (.delete refined)
@@ -625,9 +625,7 @@
                 first-mesh-arg (first (filter #(and (map? %) (:vertices %))
                                               (if (and (= 1 (count args)) (vector? (first args)))
                                                 (first args) args)))
-                output (cond-> output
-                         (:creation-pose first-mesh-arg) (assoc :creation-pose (:creation-pose first-mesh-arg))
-                         (:material first-mesh-arg) (assoc :material (:material first-mesh-arg)))]
+                output (carry-meta output first-mesh-arg)]
             (.delete raw-result)
             (.delete result)
             (schema/assert-mesh! output))

@@ -11,6 +11,8 @@ status: stable
 
 `(lay-flat mesh)`
 `(lay-flat mesh target)`
+`(lay-flat mesh path)`
+`(lay-flat mesh path mark)`
 
 ## Description
 
@@ -20,23 +22,31 @@ preparing a model for 3D-print export: a slicer expects the model
 sitting on a flat bed, and `lay-flat` is the explicit step to put it
 there without re-modelling.
 
-Two selection modes:
+Three selection modes:
 
 - **Direction keyword** — `:top`, `:bottom`, `:up`, `:down`,
   `:left`, `:right`. `lay-flat` finds the LARGEST face whose normal
   points in that direction and lays it down. Default (no argument)
   is `:bottom`.
+- **Path** — a path value carrying a `(mark …)`. `lay-flat` resolves
+  the mark at the mesh's creation-pose and lays that plane flat (the
+  mark's heading is the face normal). This is the self-contained way
+  to lay a print face that is not on a cardinal direction — no
+  separate `attach-path` step. With several marks, pass the name as a
+  third argument: `(lay-flat mesh path :name)`.
 - **Anchor keyword** — any other keyword. `lay-flat` resolves it as
-  a mark anchor (set by `attach-path`) on the mesh and lays the
-  anchor's plane flat. Useful when a named anchor was pre-positioned
-  to mark the intended print face.
+  a named anchor already on the mesh (e.g. from `attach-path`, or a
+  profile mark) and lays the anchor's plane flat.
 
 Returns a new mesh; the input is unchanged.
 
 ## Parameters
 
 - `mesh` — a mesh value or a registered name.
-- `target` (optional) — direction keyword or anchor keyword as above.
+- `target` (optional) — a direction keyword, a path with a `(mark …)`,
+  or a named-anchor keyword, as above.
+- `mark` (optional, with a path) — the name of the mark to use when the
+  path carries more than one.
 
 ## Example
 
@@ -70,21 +80,20 @@ For asymmetric parts the optimal print orientation is often not the
 default bottom. The direction keyword picks the largest face on the
 specified side and lays it down.
 
-{{example: lay-flat-anchor}}
+{{example: lay-flat-path}}
 
-<!-- example-source: lay-flat-anchor -->
+<!-- example-source: lay-flat-path -->
 ```clojure
-;; Predefine an anchor at the desired print face, then lay it flat
+;; Mark the desired print face with a path and lay it flat in one step
 (register part (box 30 20 8))
-(attach-path :part (path (mark :print-face)))
-
-(register oriented (lay-flat :part :print-face))
+(register oriented (lay-flat part (path (tv 35) (mark :print-face))))
 ```
 <!-- /example-source -->
 
-When the print face is not aligned with a cardinal direction, mark
-it as a named anchor and pass that keyword to `lay-flat`. The
-anchor's plane is laid flat regardless of orientation.
+When the print face is not on a cardinal direction, point a path's
+mark along the face normal and hand the path to `lay-flat`. The mark
+is resolved at the part's creation-pose and its plane is laid flat —
+no separate `attach-path` step.
 
 ## Notes
 

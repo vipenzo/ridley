@@ -303,6 +303,8 @@ For `embroid` the anchor sits on the wall centerline, shifted by the wall `:offs
 
 This is distinct from `with-path`, which resolves a path's marks as a *sweep rail* from the current turtle pose; here the path is the cross-section, so the marks land where the section is stamped on the mesh. The mesh also keeps `:section-anchors` (section-frame coordinates) and the swept `:rail-path` for re-evaluating a profile mark at any cross-section along the sweep.
 
+Anchors are world poses, so they **survive boolean operations**: `mesh-union` / `mesh-difference` / `mesh-intersection` (and `hull`, `mesh-refine`, `mesh-smooth`) inherit the first operand's anchors along with its `:creation-pose` — the first operand's geometry is left in place, so its named features stay valid on the result. `(move-to (mesh-difference part hole) :at :foot-1)` works.
+
 **Composing a profile mark with the sweep (`:on`).** A profile mark gives *where in the cross-section*; the sweep rail gives *where along the extrusion*. `:on` combines them into one 3D pose. The rail location is either a rail `(mark …)` name or a **fraction** `t∈[0,1]` of the sweep (no rail marks needed — `t=0` is the base section, `t=1` the end; `:at … :on 0` ≡ `:at …`):
 
 ```clojure
