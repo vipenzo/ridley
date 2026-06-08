@@ -29,19 +29,20 @@ Nel cap. 4 abbiamo scritto comandi tartaruga direttamente dentro `extrude`: `(ex
 
 <!-- example-source: path-basic -->
 ```clojure
-(def square-path
+(def curl-path
   (path
-    (dotimes [_ 4]
-      (f 20) (th 90))))
+    (dotimes [i 12]
+      (f 20) (th (if (odd? i) 40 10)))))
 
-(register tube-a (extrude (circle 5) square-path))
-(f 40)
-(register tube-b (extrude (rect 8 4) square-path))
+(register tube-a (extrude (circle 5) curl-path))
+(u -50)
+(register tube-b (extrude (rect 8 4) curl-path))
+
 ```
 
-`path` cattura i comandi dentro il suo corpo (quattro ripetizioni di "avanti 20, gira 90°") e restituisce un dato. `def` gli dà un nome. Lo stesso `square-path` viene poi usato in due estrusioni diverse, con due shape diverse, in due posizioni diverse. Il percorso è scritto una volta sola.
+`path` cattura i comandi dentro il suo corpo e restituisce un dato. `def` gli dà un nome. Qui il ciclo gira dodici volte, e a ogni curva `if` sceglie l'angolo: 40° più ampi sui passi dispari, 10° più dolci sui pari, così il percorso si arrotola invece di andare dritto. Lo stesso `curl-path` viene poi usato in due estrusioni diverse, con due shape diverse, in due posizioni diverse. Il percorso è scritto una volta sola.
 
-Dentro `path` puoi usare qualsiasi codice Clojure: `dotimes` per i cicli, `if` per le scelte, `let` per variabili locali. Il codice Clojure viene eseguito al momento della creazione del path, ma nel path finiscono solo i comandi tartaruga che quel codice produce. Il `(dotimes [_ 4] (f 20) (th 90))` viene eseguito durante il recording: il `dotimes` gira quattro volte, e nel path finiscono 4 `f` e 4 `th`, non un loop. Il path non sa che quei comandi sono stati generati da un ciclo.
+Dentro `path` puoi usare qualsiasi codice Clojure: `dotimes` per i cicli, `if` per le scelte, `let` per variabili locali: l'esempio sopra usa i primi due. Il codice Clojure viene eseguito al momento della creazione del path, ma nel path finiscono solo i comandi tartaruga che quel codice produce. Il `(dotimes [i 12] (f 20) (th ...))` viene eseguito durante il recording: il `dotimes` gira dodici volte, e nel path finiscono 12 `f` e 12 `th`, non un loop, e nemmeno l'`if`: solo l'angolo che ha scelto a ogni passo. Il path non sa che quei comandi sono stati generati da un ciclo.
 
 Un path non modifica la tartaruga principale. Quando scrivi `(def p (path (f 100)))`, la tartaruga resta dov'era. Il path è solo un dato, una sequenza di istruzioni registrate. Diventano movimento reale solo quando un consumatore le interpreta: `extrude`, `loft`, `follow-path`, `text-on-path`.
 
@@ -266,6 +267,24 @@ Lo stesso path `rim` serve due scopi: come shape (via `path-to-shape`) per estru
 
 Questo è il caso d'uso principale di `path-to-shape`: quando il profilo e lo scheletro sono la stessa curva, non serve descriverli due volte.
 
+C'è di più. Quando il path che converti contiene dei `mark`, `path-to-shape` non li scarta: li registra sulla shape come riferimenti all'indice del punto corrispondente. Da lì i mark viaggiano con la shape, ed estrudendo, loftando o rivoltando quella shape diventano anchor della mesh risultante, raggiungibili con `(move-to mesh :at :nome)` come un qualsiasi anchor di scheletro.
+
+<!-- example-source: path-to-shape-marks -->
+```clojure
+(def prof
+  (path (f 20) (th 90) (f 20) (th 90) (mark :corner)  (f 20) (th 90) (f 20)))
+
+(register block (extrude (path-to-shape prof) (f 15)))
+
+(register pin
+  (attach (cone 2 0 5) (move-to :block :at :corner :on 1)))
+
+```
+
+Il profilo è un quadrato con un mark su un angolo. La box estrusa eredita quel mark come anchor, e `move-to :block :at :corner :on 1` ci aggancia un perno senza ricalcolare dove sta l'angolo: la mesh si porta dietro i suoi punti notevoli, senza bisogno di tenere in giro il path originale.
+
+Siccome un mark è un indice di punto e non una coordinata fissa, segue la shape anche quando questa viene deformata. Una shape-fn come `tapered` o `twisted` scala e ruota i punti del profilo lungo il loft, e il mark resta sul suo angolo mentre il profilo cambia. Vale finché la shape-fn preserva numero e ordine dei punti: una che ricampiona il profilo, aggiungendo punti, sposta gli indici e i mark ricadono sulle posizioni di base. Su questa proprietà si appoggia `(slice-mesh mesh :on t)`, che restituisce il profilo generativo a una data altezza del loft con i mark al posto giusto (cap. 7.5).
+
 Una limitazione attuale: `path-to-shape` funziona solo su path confinati nel piano destra-alto (comandi `f` e `th`). Se il path contiene `tv` o `tr` (movimenti fuori dal piano), vengono ignorati silenziosamente. Una proiezione 3D→2D vera è in Roadmap.
 
 ### stroke-shape
@@ -303,6 +322,7 @@ Il consumatore principale. Trascinano una shape lungo il percorso del path. Li a
 ```clojure
 (def my-path (path (f 20) (arc-h 15 90) (f 20)))
 (register tube (extrude (circle 5) my-path))
+(u 30)
 (register vase (loft (tapered (circle 15) :to 0.5) my-path))
 ```
 

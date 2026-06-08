@@ -8,7 +8,7 @@ Struttura del capitolo:
 4.3  Quick path ed estrusione chiusa (qp, extrude-closed)
 4.4  Transizioni di forma e modalità giunzione (joint-mode)
 4.5  Risoluzione e dettaglio (resolution)
-4.6  Shell e woven shell (loft + shell shape-fn)
+4.6  Shell, woven shell e embroid (loft + shell/embroid shape-fn)
 4.7  Raccordi sui cap (capped)
 4.8  Revolve (asse = up della tartaruga, verificato 2026-05-20)
 4.9  Chaining: extrude+, revolve+, transform->
@@ -18,6 +18,7 @@ Decisioni:
 - chaining aggiunto al cap. 4
 - asse revolve = up (Spec corretta il 2026-05-20, era sbagliata)
 - loft+ non esiste ancora, segnato in Roadmap §1.5
+- embroid aggiunto al 4.6 come complemento di shell (2026-06-06); possibile futura migrazione di alcuni pattern di embroid (es. :pattern) a shell, da valutare
 =========================================================================
 -->
 
@@ -288,7 +289,7 @@ Per casi puntuali, molte funzioni accettano un override diretto senza cambiare l
 
 Una regola pratica: il default (`:n 64`) produce curve già morbide per la maggior parte degli usi. Per la prototipazione veloce si può abbassare a `:n 16` o `:n 32` per ridurre la geometria e accelerare le booleane. Non serve cambiare la risoluzione globale se solo alcune curve richiedono un trattamento diverso: gli override puntuali come `(circle 15 128)` o `(arc-h 10 90 :steps 32)` sono fatti apposta.
 
-## Shell e woven shell
+## Shell, woven shell e embroid
 
 Fin qui abbiamo estruso profili pieni. Ma molti oggetti reali sono cavi: vasi, lampade, contenitori, paralumi. `shell` è una shape-fn che trasforma un profilo pieno in un guscio cavo con pareti di spessore controllato, con la possibilità di aprire finestre decorative nelle pareti.
 
@@ -380,6 +381,40 @@ Come `shell`, `woven-shell` si compone con altre shape-fn:
                 (tapered :to 3.5))
     (f 50)))
 ```
+
+### Embroid: traforare
+
+`shell` parte da un profilo pieno e lo svuota, lasciando pareti sottili con un pattern di aperture. `embroid` copre il caso complementare: una parete che è già una superficie sottile, non un solido da svuotare, e vi ritaglia dentro lo stesso tipo di finestre. È il caso in cui `shell` non si applica, perché non c'è niente da svuotare. Conviene pensarla come "fare una porzione di guscio".
+
+A differenza delle altre shape-fn, `embroid` non prende una shape ma il path che definisce la linea mediana della parete, più lo spessore. Costruisce le due facce della parete spostandosi di `±spessore/2` perpendicolarmente al path in ogni punto, quindi la perforazione attraversa lo spessore qualunque sia la curvatura del percorso. Ogni apertura è un foro passante rifinito tra le due facce, e il risultato è watertight e manifold. Come `shell`, è una shape-fn e va usata con `loft`.
+
+<!-- example-source: embroid-wall -->
+```clojure
+(register panel
+  (loft (embroid (path (f 3) (arc-h 50 90) (f 70))
+          3
+          :resolution 400
+          :wall {:style :honeycomb :cells 8 :border 4})
+    (f 45)))
+```
+
+Una parete curva traforata con un nido d'ape regolare e una cornice piena di 4 unità su tutti i lati. Il primo argomento di `embroid` è il path della linea mediana (un tratto dritto, un arco di 90°, un altro tratto dritto), il secondo è lo spessore. Sia il tratto dritto sia quello curvo vengono perforati, perché il pattern segue il percorso invece di una direzione fissa.
+
+Lo stile `:honeycomb` è il default. Con `:style :pattern` si usa una shape qualsiasi come motivo dell'apertura:
+
+<!-- example-source: embroid-holes -->
+```clojure
+(register grille
+  (loft (embroid (path (f 3) (arc-h 50 90) (f 70))
+          3
+          :wall {:style :pattern :pattern (circle 4)
+                 :spacing 12 :grid :hex :inset 0.5})
+    (f 45)))
+```
+
+Fori tondi su griglia esagonale. `:spacing` è il passo della griglia, `:grid` sceglie tra disposizione quadrata o esagonale sfalsata, `:inset` rimpicciolisce il motivo per ingrossare i ponticelli fra un foro e l'altro. C'è anche `:style :voronoi`, come per `shell`. La scheda Reference di [embroid](ref:embroid) documenta tutte le opzioni di pattern, cornice e tappi.
+
+Due punti pratici. La nitidezza dei bordi lungo il percorso si regola con `:resolution` (campioni lungo il path), indipendentemente dal numero di passi del loft, che raffina solo la direzione di sweep: di solito non serve un `loft-n` alto una volta fissata `:resolution`. E a differenza di `shell`, `embroid` non si compone con `->` come le altre shape-fn: nel loft applica le proprie facce già pronte, quindi una `tapered` o una `twisted` aggiunte dopo vengono ignorate in silenzio. Per riposizionarla si usa l'opzione `:offset`, oppure si trasla la mesh risultante.
 
 ### Risoluzione e performance
 

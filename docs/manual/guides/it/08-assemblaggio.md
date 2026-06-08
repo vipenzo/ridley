@@ -80,6 +80,12 @@ Un prefisso troppo corto può catturare marcatori che non vorresti. La stringa `
 
 L'ordine di iterazione sui marcatori è quello di inserimento nel path. Se il tuo body produce pezzi che dipendono dall'ordine (per esempio numerati progressivamente), tienine conto. Se i marcatori rappresentano un insieme di pezzi equivalenti, l'ordine non conta.
 
+### Il mark come filo conduttore
+
+Vale la pena fermarsi su una cosa che lega questo capitolo ai precedenti. Un `mark` non vive solo dentro un path: lo stesso segnaposto attraversa l'intera pipeline. Piantato su un profilo, sopravvive a `path-to-shape` come riferimento a un punto della shape (cap. 5.7). Diventa un anchor della mesh quando quella shape viene estrusa o loftata, e resta valido anche attraverso le operazioni booleane. Cavalca le deformazioni delle shape-fn, restando sul suo punto mentre il profilo muta lungo il loft (cap. 6). E si recupera con `(slice-mesh mesh :on t)` a qualsiasi altezza del percorso (cap. 7.5).
+
+Il risultato pratico è che un pezzo costruito da un profilo marcato arriva all'assemblaggio già con i suoi punti di aggancio: lo stesso `mark` che hai usato per disegnare la forma è quello su cui agganci i componenti, senza ridichiararlo. E gli anchor che la mesh si porta dietro si usano come i marker di uno skeleton: `move-to` per agganciare un singolo componente, `on-anchors` per distribuirne molti, perché entrambi accettano indifferentemente un path o una mesh con anchor.
+
 ## 8.2 Creation-pose e creation-pose shifting
 
 Ogni mesh ha un punto di ancoraggio: la posizione e l'orientamento della tartaruga al momento della creazione. È la *creation-pose*. Pensala come la maniglia del pezzo: quando in seguito scrivi `(attach mesh ...)`, la tartaruga afferra `mesh` proprio lì, e da lì la sposta, la ruota, la aggancia altrove.
@@ -310,7 +316,11 @@ Un'avvertenza sulla semantica: la regola "i marcatori del path sono posizioni as
 
 ### Come i marcatori finiscono su una mesh
 
-Finora `move-to` con `:at` ha sempre cercato i marcatori in un path. Ma anche le mesh registrate possono avere marcatori: `attach-path` associa un path (con i suoi marcatori) a una mesh già registrata.
+Finora `move-to` con `:at` ha sempre cercato i marcatori in un path, ma anche una mesh può portarli con sé, e nella maggior parte dei casi ce li ritrova senza che tu faccia niente.
+
+Una mesh costruita da un profilo marcato (`path-to-shape`, `stroke-shape`, `embroid`) eredita i mark del profilo come anchor (cap. 5.7): è il caso più comune. Quegli anchor sopravvivono anche alle operazioni booleane: il risultato di `mesh-union`, `mesh-difference` o `mesh-intersection` conserva gli anchor della prima mesh operando, perché la booleana lascia ferma la geometria del primo operando e gli anchor sono pose nel mondo. Così puoi forare o fondere un pezzo e continuare ad agganciare componenti sui suoi anchor. Anche costruire dentro uno scope `with-path` lascia i mark del path sulla mesh che ne esce.
+
+Resta un solo caso che nessuno di questi copre: una mesh che non ha alcun path generatore, come un STL importato o una primitiva nuda. Lì `attach-path` è la via esplicita per dichiarare degli anchor sopra una geometria già costruita.
 
 <!-- example-source: attach-path-mesh
 (register column (cyl 5 60))
@@ -318,9 +328,7 @@ Finora `move-to` con `:at` ha sempre cercato i marcatori in un path. Ma anche le
 (register cap (attach (sphere 8) (move-to :column :at :top)))
 -->
 
-Il path viene agganciato alla creation-pose corrente della mesh (in questo caso al centro del cilindro), poi `mark` registra i suoi punti rispetto a quel frame. Da quel momento la mesh ha marcatori utilizzabili come quelli di uno skeleton.
-
-I marcatori creati con `mark` dentro un `attach` su SDF sopravvivono automaticamente attraverso le operazioni booleane e la materializzazione (vedi cap. 12). Per le mesh, `attach-path` è la via esplicita per dichiarare marcatori "sopra" una geometria già costruita.
+Il path viene agganciato alla creation-pose corrente della mesh, poi `mark` registra i suoi punti rispetto a quel frame, e da lì la mesh ha anchor utilizzabili come quelli di uno skeleton.
 
 ### Play-path: replay di un percorso
 

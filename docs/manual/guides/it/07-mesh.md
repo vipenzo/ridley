@@ -626,6 +626,26 @@ Le coordinate delle shape risultanti sono nel sistema locale del piano di taglio
 
 Un uso tipico è il reverse engineering di un profilo: hai una mesh, vuoi riusare una sezione come base per un nuovo pezzo. Per esempio, un O-ring che segue il bordo di un contenitore, o un rinforzo che abbraccia un profilo irregolare.
 
+### Slice-mesh :on: recuperare il profilo generativo
+
+Con la chiave `:on`, `slice-mesh` fa una cosa diversa dal taglio geometrico: invece di intersecare la mesh con un piano, restituisce il profilo generativo che è stato spazzato per costruirla, con i suoi mark attaccati. Funziona sulle mesh nate da `extrude` o `loft` a partire da un profilo marcato (cap. 5.7).
+
+```clojure
+(slice-mesh :mesh :on :mark-name)   ; alla posizione di un mark del rail
+(slice-mesh :mesh :on 0.5)          ; a metà del percorso (t fra 0 e 1)
+```
+
+L'argomento dopo `:on` è il nome di un `mark` lungo il rail del loft, oppure una frazione `t` fra 0 e 1. Per un'estrusione il profilo è costante, quindi `:on` restituisce sempre la stessa shape. Per un loft che muta (`tapered`, `twisted`, qualsiasi shape-fn) restituisce la sezione trasversale a quel `t`: la shape effettivamente scalata e ruotata a quell'altezza, con i mark che cavalcano i punti deformati.
+
+```clojure
+;; recupera il profilo a metà di un loft che si rastrema, e ricostruisci da lì
+(register horn (loft (tapered (path-to-shape marked-profile) :to 0.4) (f 50)))
+(def waist (slice-mesh :horn :on 0.5))
+(register collar (extrude waist (f 3)))
+```
+
+Questa è la differenza chiave rispetto al taglio. `slice-mesh :mesh` senza `:on` ti dà il contorno geometrico dove un piano interseca la mesh: una curva chiusa, senza memoria di come la mesh è stata costruita. `slice-mesh :mesh :on t` ti dà il profilo generativo, lo stesso dato 2D che ri-estruso o ri-loftato riproduce una mesh con gli stessi mark. Il primo serve per il reverse engineering di una sezione qualunque, il secondo per recuperare un profilo che sai essere stato generato, con i suoi punti notevoli al posto giusto.
+
 ### Slice-at-plane: taglio senza tartaruga
 
 Se il piano di taglio viene da un calcolo e non dalla posa della tartaruga, `slice-at-plane` è la forma esplicita:

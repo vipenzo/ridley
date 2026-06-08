@@ -215,7 +215,7 @@ Una avvertenza: le versioni con blend (`(sdf-grid period thickness blend-k)`) us
 
 Le operazioni disponibili nella formula sono: aritmetiche (`+`, `-`, `*`, `/`), trigonometriche (`sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`), matematiche (`sqrt`, `abs`, `exp`, `log`, `pow`, `mod`, `square`, `neg`), e comparazione (`min`, `max`).
 
-Un esempio più solido di come `sdf-formula` permette di costruire primitive da zero: `sdf-cone` è definito internamente proprio così. Un tronco di cono con raggio `r1` alla base (z = -h/2), `r2` in cima (z = +h/2) e altezza `h` ha questo campo distanza:
+Un esempio più solido di come `sdf-formula` permette di costruire primitive da zero: è esattamente il principio con cui si costruisce una primitiva come `sdf-cone`. Un tronco di cono con raggio `r1` alla base (z = -h/2), `r2` in cima (z = +h/2) e altezza `h` ha questo campo distanza:
 
 <!-- example-source: sdf-formula-cone
 ;; Definizione di sdf-cone usando sdf-formula

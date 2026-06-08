@@ -57,35 +57,50 @@
     :langs #{:it :en}
     :title {:it "2. Modellare per primitive" :en "2. Modeling with primitives"}}
    {:id :ch-03 :slug "working-with-2d-shapes"       :order 3  :file "03-working-with-2d-shapes.md"
-    :title {:it "3. Lavorare con le forme 2D"}}
+    :langs #{:it :en}
+    :title {:it "3. Lavorare con le forme 2D" :en "3. Working with 2D shapes"}}
    {:id :ch-04 :slug "extrusion"                    :order 4  :file "04-extrusion.md"
-    :title {:it "4. Estrusione"}}
+    :langs #{:it :en}
+    :title {:it "4. Estrusione" :en "4. Extrusion"}}
    {:id :ch-05 :slug "paths"                        :order 5  :file "05-paths.md"
-    :title {:it "5. Path"}}
+    :langs #{:it :en}
+    :title {:it "5. Path" :en "5. Paths"}}
    {:id :ch-06 :slug "shape-fn"                     :order 6  :file "06-shape-fn.md"
-    :title {:it "6. Da funzioni matematiche a forme"}}
+    :langs #{:it :en}
+    :title {:it "6. Da funzioni matematiche a forme" :en "6. From mathematical functions to shapes"}}
    {:id :ch-07 :slug "mesh"                         :order 7  :file "07-mesh.md"
-    :title {:it "7. Mesh"}}
+    :langs #{:it :en}
+    :title {:it "7. Mesh" :en "7. Mesh"}}
    {:id :ch-08 :slug "assemblaggio"                 :order 8  :file "08-assemblaggio.md"
-    :title {:it "8. Assemblaggio"}}
+    :langs #{:it :en}
+    :title {:it "8. Assemblaggio" :en "8. Assembly"}}
    {:id :ch-09 :slug "librerie"                     :order 9  :file "09-librerie.md"
-    :title {:it "9. Librerie"}}
+    :langs #{:it :en}
+    :title {:it "9. Workspaces e Librerie" :en "9. Workspaces and Libraries"}}
    {:id :ch-10 :slug "analizzare-e-misurare"        :order 10 :file "10-analizzare-e-misurare.md"
-    :title {:it "10. Analizzare e misurare"}}
+    :langs #{:it :en}
+    :title {:it "10. Analizzare e misurare" :en "10. Analyzing and measuring"}}
    {:id :ch-11 :slug "curve-avanzate"               :order 11 :file "11-curve-avanzate.md"
-    :title {:it "11. Curve avanzate"}}
+    :langs #{:it :en}
+    :title {:it "11. Curve avanzate" :en "11. Advanced curves"}}
    {:id :ch-12 :slug "sdf"                           :order 12 :file "12-sdf.md"
-    :title {:it "12. Lavorare con gli SDF"}}
+    :langs #{:it :en}
+    :title {:it "12. Lavorare con gli SDF" :en "12. Working with SDFs"}}
    {:id :ch-13 :slug "testo"                        :order 13 :file "13-testo.md"
-    :title {:it "13. Testo"}}
+    :langs #{:it :en}
+    :title {:it "13. Testo" :en "13. Text"}}
    {:id :ch-14 :slug "colore-e-materiali"           :order 14 :file "14-colore-e-materiali.md"
-    :title {:it "14. Colore e materiali"}}
+    :langs #{:it :en}
+    :title {:it "14. Colore e materiali" :en "14. Color and materials"}}
    {:id :ch-15 :slug "debug"                        :order 15 :file "15-debug.md"
-    :title {:it "15. Mettere a fuoco e risolvere i problemi"}}
+    :langs #{:it :en}
+    :title {:it "15. Mettere a fuoco e risolvere i problemi" :en "15. Focusing in and troubleshooting"}}
    {:id :ch-16 :slug "clojure-per-ridley"           :order 16 :file "16-clojure-per-ridley.md"
-    :title {:it "16. Clojure per Ridley"}}
+    :langs #{:it :en}
+    :title {:it "16. Clojure per Ridley" :en "16. Clojure for Ridley"}}
    {:id :ch-17 :slug "esportare-e-stampare"         :order 17 :file "17-esportare-e-stampare.md"
-    :title {:it "17. Esportare e stampare"}}])
+    :langs #{:it :en}
+    :title {:it "17. Esportare e stampare" :en "17. Exporting and printing"}}])
 
 ;; ── Reference taxonomy ────────────────────────────────────────
 ;;

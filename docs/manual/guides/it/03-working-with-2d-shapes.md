@@ -12,7 +12,7 @@ Struttura del capitolo:
 3.7  Dove si usano le shape (mappa dei consumatori)
 3.8  Generare shape da mesh (slice-mesh, project-mesh, face-shape)
 3.9  Più forme alla volta (vettori di shape)
-3.10 Forme di testo (cenno + rimando cap. 12)
+3.10 Forme di testo (cenno + rimando cap. 13)
 3.11 Forme riutilizzabili (defn che restituisce shape)
 
 Decisione strutturale: la 3.1 apre con un esempio motivazionale
@@ -147,9 +147,26 @@ La scelta è quasi sempre ovvia. Se hai le coordinate (misurate, calcolate, copi
 
 Una regola pratica: se stai per scrivere `poly` con un mucchio di coordinate calcolate a mano usando seni e coseni, probabilmente `shape` con i giusti angoli è più leggibile. Se stai per scrivere `shape` con angoli calcolati con `atan2` per raggiungere un punto specifico, probabilmente `poly` con le coordinate dirette è più semplice.
 
+C'è poi un caso in cui `shape` non ha rivali: la generazione procedurale, in stile Logo. Quando il profilo è un motivo che si ripete, un ciclo che emette comandi tartaruga è molto più diretto del calcolare i vertici a uno a uno. Questo sole nasce da diciotto ripetizioni dello stesso dente:
+
+<!-- example-source: shape-sun -->
+```clojure
+(def sun
+  (shape
+    (dotimes [_ 18]
+      (f 2)
+      (th 80) (f 5) (th -160) (f 5) (th 80)
+      (f 2)
+      (th -20))))
+
+(stamp sun)
+```
+
+Con `poly` avresti dovuto calcolare con seno e coseno ogni vertice delle punte e degli incavi; con `shape` descrivi un dente una volta sola e lo ripeti con `dotimes`. È lo stesso principio della tartaruga di Logo: la forma emerge dal movimento, non dalle coordinate.
+
 ### Importare da SVG
 
-Una shape può anche nascere da SVG: `svg-shapes` legge una stringa SVG e restituisce un vettore di shape (una per elemento geometrico), `svg-shape` ne prende una sola per `:id` o `:index`. È utile soprattutto per riusare arte vettoriale già esistente. C'è però un limite pratico da conoscere: la stringa passata a `(svg ...)` non può contenere il carattere `"`, perché Clojure non ha le raw string e quel carattere chiuderebbe la stringa. L'SVG scritto a mano lo aggira usando l'apice singolo negli attributi; gli SVG esportati da Inkscape o Illustrator usano i doppi apici e quindi non si incollano direttamente, vanno caricati come file. Il caricamento da file, che è la via pratica, è nel cap. 9 (Librerie).
+Una shape può anche nascere da SVG: `svg-shapes` legge una stringa SVG e restituisce un vettore di shape (una per elemento geometrico), `svg-shape` ne prende una sola per `:id` o `:index`. È utile soprattutto per riusare arte vettoriale già esistente. C'è però un limite pratico da conoscere: la stringa passata a `(svg ...)` non può contenere il carattere `"`, perché Clojure non ha le raw string e quel carattere chiuderebbe la stringa. L'SVG scritto a mano lo aggira usando l'apice singolo negli attributi; gli SVG esportati da Inkscape o Illustrator usano i doppi apici e quindi non si incollano direttamente, vanno caricati come file. Il caricamento da file, che è la via pratica, è nel cap. 9 (Workspaces e Librerie).
 
 ## Profili come valori
 
@@ -298,9 +315,9 @@ Delta negativo: il rettangolo si contrae di 3 su tutti i lati. Utile per generar
 
 Il tipo di giunzione agli angoli si controlla con `:join-type`:
 
-- `:round` (default) — angoli arrotondati
-- `:square` — angoli squadrati, estesi
-- `:miter` — angoli vivi, estesi a punta
+- `:round` (default): angoli arrotondati
+- `:square`: angoli squadrati, estesi
+- `:miter`: angoli vivi, estesi a punta
 
 <!-- example-source: offset-miter -->
 ```clojure
@@ -457,7 +474,7 @@ Una box vista da un'angolazione obliqua: la tartaruga si sposta e ruota, poi `pr
   (extrude (:shape top) (f 20)))
 ```
 
-L'argomento `face-id` è l'identificativo di una faccia, ottenuto con le funzioni di selezione facce come `find-faces` e `largest-face` (cap. 9). Il risultato è una mappa con `:shape` (la shape 2D) e `:pose` (posizione e orientamento della faccia nel mondo). Passando la posa a `turtle`, l'estrusione parte esattamente dalla faccia estratta, nella direzione giusta. È il modo più preciso per "continuare" una mesh da una delle sue facce.
+L'argomento `face-id` è l'identificativo di una faccia, ottenuto con le funzioni di selezione facce come `find-faces` e `largest-face` (cap. 10). Il risultato è una mappa con `:shape` (la shape 2D) e `:pose` (posizione e orientamento della faccia nel mondo). Passando la posa a `turtle`, l'estrusione parte esattamente dalla faccia estratta, nella direzione giusta. È il modo più preciso per "continuare" una mesh da una delle sue facce.
 
 ### Il flusso inverso
 
@@ -500,7 +517,7 @@ La regola è semplice: dove accetti una shape, accetti anche un vettore di shape
 
 Il font di default è Roboto. `:size` controlla l'altezza delle lettere. Il risultato è un vettore di shape (una per glifo), che `extrude` gestisce direttamente come visto nella sezione precedente.
 
-Il testo in Ridley va oltre la semplice estrusione di lettere: il cap. 12 copre font custom, testo che segue una curva con `text-on-path`, e misurazione dell'ingombro con `text-width`. Qui il punto è solo che le shape di testo sono shape normali: si possono trasformare, combinare con booleane, dare in pasto a `loft` o `revolve` esattamente come qualsiasi altra shape.
+Il testo in Ridley va oltre la semplice estrusione di lettere: il cap. 13 copre font custom, testo che segue una curva con `text-on-path`, e misurazione dell'ingombro con `text-width`. Qui il punto è solo che le shape di testo sono shape normali: si possono trasformare, combinare con booleane, dare in pasto a `loft` o `revolve` esattamente come qualsiasi altra shape.
 
 <!-- example-source: text-shape-difference -->
 ```clojure

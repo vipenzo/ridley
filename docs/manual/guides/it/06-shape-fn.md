@@ -21,6 +21,7 @@ che il cap. 4 non ha toccato.
 
 Vincoli:
 - shell deve essere l'ultima nella catena di composizione
+- embroid non si compone in catena: stampa le proprie facce (cap. 4.6), eccezione più forte di shell
 - loft-n controlla i passi longitudinali (resolution non influenza loft)
 - shell/woven-shell richiedono risoluzione ~512 su entrambi gli assi
 =========================================================================
@@ -391,6 +392,10 @@ La catena si legge dall'alto in basso: cerchio, poi scanalature, poi rastremazio
 ```
 
 L'eccezione è `tapered`: `tapered` *dopo* `shell` funziona perché `tapered` preserva il metadata di shell. In pratica, la regola si riduce a: metti `shell` o `woven-shell` dopo le shape-fn che modificano la geometria del profilo (`fluted`, `twisted`, `noisy`, ecc.), ma `tapered` può stare sia prima sia dopo.
+
+### Il caso di embroid
+
+`embroid` (cap. 4.6) è una shape-fn particolare: nel loft non trasforma il profilo passo per passo come le altre, ma stampa direttamente le proprie facce, già costruite a partire dal path. Per questo non si compone con `->`. Qualsiasi shape-fn messa dopo `embroid` nella catena viene ignorata in silenzio, perché non c'è un profilo intermedio su cui agire. È un'eccezione più forte di quella di shell: shell deve solo stare in fondo, embroid non entra proprio in catena. Per riposizionare il risultato si usa l'opzione `:offset` di `embroid`, oppure si trasla la mesh dopo il loft.
 
 ### Risoluzione
 
