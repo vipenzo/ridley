@@ -1030,6 +1030,141 @@
                           [tx ty])))))]
        {:type :path :commands commands}))))
 
+;; --- 3D path waypoints + rebuild (reverse-path / mirror-path) --------------
+;; Tracing the full turtle frame (position, heading, up) here, locally, because
+;; ridley.turtle.shape can't require ridley.turtle.core (that would close the
+;; core → loft → clipper → shape cycle). 2D profiles are the planar special case
+;; (z = 0, up = [0 0 1]).
+
+(defn- v3- [[a b c] [d e f]] [(- a d) (- b e) (- c f)])
+(defn- v3+ [[a b c] [d e f]] [(+ a d) (+ b e) (+ c f)])
+(defn- v3* [[a b c] s] [(* a s) (* b s) (* c s)])
+(defn- v3-dot [[a b c] [d e f]] (+ (* a d) (* b e) (* c f)))
+(defn- v3-cross [[a b c] [d e f]]
+  [(- (* b f) (* c e)) (- (* c d) (* a f)) (- (* a e) (* b d))])
+(defn- v3-mag [v] (Math/sqrt (v3-dot v v)))
+(defn- v3-normalize [v]
+  (let [m (v3-mag v)] (if (> m 1e-9) (v3* v (/ 1.0 m)) v)))
+(defn- to-vec3 [v] (if (>= (count v) 3) (vec (take 3 v)) [(nth v 0) (nth v 1) 0]))
+
+(defn- v3-rotate
+  "Rodrigues: rotate vector v around unit axis k by `deg` degrees."
+  [v k deg]
+  (let [r (* deg (/ Math/PI 180))
+        c (Math/cos r) s (Math/sin r)
+        kv (v3-cross k v)
+        kk (* (v3-dot k v) (- 1 c))]
+    (v3+ (v3+ (v3* v c) (v3* kv s)) (v3* k kk))))
+
+(defn path-to-3d-waypoints
+  "Trace a path's full turtle frame. Returns a vector of {:pos :heading :up}
+   (3D), one per position, starting at the origin pose. Handles f/b/u/lt/rt
+   moves and th/tv/tr/set-heading rotations (right = heading × up)."
+  [path]
+  (when (and (map? path) (= :path (:type path)))
+    (let [final
+          (reduce
+           (fn [{:keys [pos heading up] :as st} {:keys [cmd args]}]
+             (let [right (v3-normalize (v3-cross heading up))
+                   d (first args)
+                   move (fn [dir dist]
+                          (let [np (v3+ pos (v3* dir dist))]
+                            (assoc st :pos np
+                                   :waypoints (conj (:waypoints st)
+                                                    {:pos np :heading heading :up up}))))]
+               (case cmd
+                 :f  (move heading d)
+                 :b  (move heading (- d))
+                 :u  (move up d)
+                 :rt (move right d)
+                 :lt (move right (- d))
+                 :th (assoc st :heading (v3-normalize (v3-rotate heading up d)))
+                 :tv (assoc st :heading (v3-normalize (v3-rotate heading right d))
+                            :up (v3-normalize (v3-rotate up right d)))
+                 :tr (assoc st :up (v3-normalize (v3-rotate up heading d)))
+                 :set-heading (assoc st :heading (v3-normalize (to-vec3 (first args)))
+                                     :up (v3-normalize (to-vec3 (second args))))
+                 st)))
+           (let [p0 {:pos [0 0 0] :heading [1 0 0] :up [0 0 1]}]
+             (assoc p0 :waypoints [p0]))
+           (:commands path))
+          wps (:waypoints final)]
+      ;; The trailing rotation a bezier emits sets the final frame but adds no
+      ;; waypoint, so carry the final heading/up onto the last waypoint — that's
+      ;; the exact end tangent mirror-path needs.
+      (if (seq wps)
+        (assoc wps (dec (count wps))
+               (assoc (peek wps) :heading (:heading final) :up (:up final)))
+        wps))))
+
+(defn- poses->path
+  "Rebuild a path from a list of {:pos :up} poses. Shifts so the first pose sits
+   at the origin (a relative path: following it continues from the current pose),
+   and emits set-heading + forward per segment, the up re-orthogonalized to the
+   segment direction so the swept frame stays well-defined."
+  [poses]
+  (when (>= (count poses) 2)
+    (let [origin (:pos (first poses))]
+      (loop [cur [0 0 0]
+             ps (rest poses)
+             cmds []]
+        (if (empty? ps)
+          {:type :path :commands cmds}
+          (let [{:keys [pos up]} (first ps)
+                tgt (v3- pos origin)
+                delta (v3- tgt cur)
+                dist (v3-mag delta)]
+            (if (< dist 1e-6)
+              (recur cur (rest ps) cmds)
+              (let [dir (v3* delta (/ 1.0 dist))
+                    up* (let [u (v3- up (v3* dir (v3-dot up dir)))]
+                          (if (> (v3-mag u) 1e-6) (v3-normalize u)
+                              (v3-normalize (v3-cross dir [0 0 1]))))]
+                (recur tgt (rest ps)
+                       (conj cmds
+                             {:cmd :set-heading :args [dir up*]}
+                             {:cmd :f :args [dist]}))))))))))
+
+(defn ^:export reverse-path
+  "Return a new path tracing `path`'s waypoints in reverse order (last → first).
+   Rebuilt from poses and shifted to start at the origin, so
+   `(follow-path (reverse-path p))` retraces p backward from the current pose.
+   Works in 3D (the full turtle frame is carried)."
+  [path]
+  (let [wps (path-to-3d-waypoints path)]
+    (when (and wps (>= (count wps) 2))
+      (poses->path (vec (reverse wps))))))
+
+(defn ^:export mirror-path
+  "Return a new path: `path` reflected across the plane through its END point.
+   For a curve meant to be symmetric about that plane — e.g. half of a symmetric
+   corner — `(reverse-path (mirror-path half))` is the continuation that completes
+   it: follow the half, then follow this, and the two halves join into the full
+   symmetric curve.
+
+   The mirror PLANE normal defaults to the heading at the end of the path (its
+   normal is the turtle's heading there; the plane itself spans the right and up
+   axes — exactly the turtle's right/up plane). Because that heading is read from
+   the discretized curve, the default is approximate; pass the normal `[nx ny]` /
+   `[nx ny nz]` explicitly for an exact result. For a corner whose chord runs
+   along the 45° diagonal, the symmetry-plane normal is that diagonal, `[1 1]`.
+   Works in 3D."
+  ([path]
+   (let [wps (path-to-3d-waypoints path)]
+     (when (and wps (>= (count wps) 2))
+       (mirror-path path (:heading (last wps))))))
+  ([path normal]
+   (let [wps (path-to-3d-waypoints path)]
+     (when (and wps (>= (count wps) 2))
+       (let [n (v3-normalize (to-vec3 normal))
+             a (:pos (last wps))
+             reflect-pt (fn [p] (v3- p (v3* n (* 2 (v3-dot (v3- p a) n)))))
+             reflect-v  (fn [v] (v3- v (v3* n (* 2 (v3-dot v n)))))]
+         (poses->path
+          (mapv (fn [{:keys [pos up]}]
+                  {:pos (reflect-pt pos) :up (reflect-v up)})
+                wps)))))))
+
 (defn ^:export poly-path
   "Create an open path from flat x y coordinate pairs.
    Like poly but produces a path instead of a shape.

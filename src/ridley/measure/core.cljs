@@ -64,11 +64,11 @@
   (when (seq args)
     (let [first-arg (first args)]
       (cond
-        ;; Vector of 3 numbers → direct point
+        ;; Vector of 2 or 3 numbers → direct point (2D padded to z=0)
         (and (vector? first-arg)
-             (= 3 (count first-arg))
+             (#{2 3} (count first-arg))
              (every? number? first-arg))
-        [first-arg (rest args)]
+        [(if (= 2 (count first-arg)) (conj first-arg 0) first-arg) (rest args)]
 
         ;; Keyword → mesh name, possibly followed by face-id
         (keyword? first-arg)
@@ -78,8 +78,8 @@
                      (get-in mesh [:face-groups second-arg]))
               ;; Mesh + face → face center
               (let [info (faces/compute-face-info
-                           (:vertices mesh)
-                           (get-in mesh [:face-groups second-arg]))]
+                          (:vertices mesh)
+                          (get-in mesh [:face-groups second-arg]))]
                 [(:center info) (drop 2 args)])
               ;; Just mesh name → centroid
               [(mesh-centroid mesh) (rest args)])))
@@ -106,6 +106,28 @@
   [& args]
   (when-let [[p1 p2] (parse-two-points args)]
     (math/magnitude (math/v- p2 p1))))
+
+(defn ^:export seg-mid
+  "Midpoint of segment `i` (0-based) of `path` — the i-th edge, between waypoints
+   i and i+1. Returns [x y 0]. Useful with `ruler`/`distance` to measure to where
+   a control-polygon (midpoint) spline actually passes."
+  [path i]
+  (let [wps (shape/path-to-2d-waypoints path)]
+    (when (and wps (< (inc i) (count wps)))
+      (let [[ax ay] (:pos (nth wps i))
+            [bx by] (:pos (nth wps (inc i)))]
+        [(/ (+ ax bx) 2.0) (/ (+ ay by) 2.0) 0]))))
+
+(defn ^:export mid
+  "Midpoint. `(mid a b)` of two points; `(mid path i)` of segment i of a path
+   (so e.g. `(ruler [0 45] (mid ps 1))` measures to the midpoint of ps's 2nd
+   segment). Returns [x y z]."
+  [a b]
+  (if (and (map? a) (= :path (:type a)))
+    (seg-mid a b)
+    (let [pa (if (= 2 (count a)) (conj (vec a) 0) (vec a))
+          pb (if (= 2 (count b)) (conj (vec b) 0) (vec b))]
+      (math/v* (math/v+ pa pb) 0.5))))
 
 (defn ^:export bounds
   "Get bounding box of a mesh, shape, or path.

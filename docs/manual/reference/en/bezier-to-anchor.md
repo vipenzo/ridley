@@ -10,7 +10,8 @@ status: stable
 ## Signature
 
 `(bezier-to-anchor name)`
-`(bezier-to-anchor name & {:keys [steps tension]})`
+`(bezier-to-anchor path :at name)`
+`(bezier-to-anchor name & {:keys [steps tension tension-end]})`
 
 ## Description
 
@@ -19,9 +20,15 @@ respects both the current heading and the anchor's heading, producing a
 C1-continuous connection. **Modifies turtle state.**
 
 Anchors are named poses created by resolving marks via `with-path` (see
-Spec §2 *Anchors & Navigation*). The control points of the bezier are
+Spec §2 *Anchors & Navigation*). As a shorthand, pass a path directly with
+`:at`, e.g. `(bezier-to-anchor my-path :at :tip)`, to resolve the mark from
+that path at the current pose without an enclosing `with-path` (mirrors the
+`(turtle path :at :name)` form; anchors are restored afterwards). The control points of the bezier are
 derived from the two headings; `:tension` adjusts how far the control
-points sit from each endpoint.
+points sit from each endpoint. By default both control points use the same
+`:tension` (symmetric handles); pass `:tension-end` to give the arrival
+control point a different distance (asymmetric handles), while both handle
+directions stay locked to the headings.
 
 ## Parameters
 
@@ -29,7 +36,10 @@ points sit from each endpoint.
 - `:steps` — number of segments along the curve. Defaults to the
   resolution setting.
 - `:tension` — control-point distance factor as a fraction of the
-  straight-line distance. Default `0.33`.
+  straight-line distance. Default `0.33`. Applies to both handles unless
+  `:tension-end` is given.
+- `:tension-end` — distance factor for the arrival (anchor-side) control
+  point only. Defaults to `:tension`, i.e. symmetric handles.
 
 ## Example
 

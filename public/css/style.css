@@ -232,7 +232,7 @@ html, body {
 }
 
 /* Pilot mode panel */
-#pilot-panel {
+.modal-panel {
   background: #252540;
   border-top: 1px solid #4a4a6a;
   padding: 8px 12px;
@@ -240,7 +240,7 @@ html, body {
   font-size: 12px;
 }
 
-#pilot-panel .pilot-header {
+.modal-panel .pilot-header {
   color: #dcdcaa;
   font-weight: bold;
   margin-bottom: 6px;
@@ -249,7 +249,7 @@ html, body {
   gap: 8px;
 }
 
-#pilot-panel .pilot-mode-badge {
+.modal-panel .pilot-mode-badge {
   font-size: 10px;
   padding: 1px 6px;
   border-radius: 3px;
@@ -258,31 +258,38 @@ html, body {
   font-weight: normal;
 }
 
-#pilot-panel .pilot-mode-badge.pilot-mode-scale {
+.modal-panel .pilot-mode-badge.pilot-mode-scale {
   background: #4f3d26;
   color: #dfb87d;
 }
 
-#pilot-panel .pilot-controls {
+.modal-panel .pilot-controls {
   display: flex;
   gap: 16px;
   color: #9cdcfe;
   margin-bottom: 6px;
 }
 
-#pilot-panel .pilot-step-value,
-#pilot-panel .pilot-angle-value,
-#pilot-panel .pilot-scale-value {
+.modal-panel .pilot-step-value,
+.modal-panel .pilot-angle-value,
+.modal-panel .pilot-scale-value,
+.modal-panel .eb-step {
   color: #ce9178;
   font-variant-numeric: tabular-nums;
 }
 
-#pilot-panel .pilot-active-param {
+/* edit-bezier: the currently selected point / handle name */
+.modal-panel .eb-point {
+  color: #dcdcaa;
+  font-weight: bold;
+}
+
+.modal-panel .pilot-active-param {
   border-bottom: 2px solid #569cd6;
   padding-bottom: 1px;
 }
 
-#pilot-panel .pilot-commands {
+.modal-panel .pilot-commands {
   color: #d4d4d4;
   padding: 4px 0;
   min-height: 18px;
@@ -291,14 +298,14 @@ html, body {
   overflow-y: auto;
 }
 
-#pilot-panel .pilot-buttons {
+.modal-panel .pilot-buttons {
   display: flex;
   gap: 8px;
   margin-top: 6px;
   justify-content: flex-end;
 }
 
-#pilot-panel .pilot-btn {
+.modal-panel .pilot-btn {
   padding: 3px 14px;
   border: 1px solid #4a4a6a;
   border-radius: 3px;
@@ -309,16 +316,16 @@ html, body {
   cursor: pointer;
 }
 
-#pilot-panel .pilot-btn:hover {
+.modal-panel .pilot-btn:hover {
   background: #3d3d54;
 }
 
-#pilot-panel .pilot-btn-ok {
+.modal-panel .pilot-btn-ok {
   background: #264f2e;
   border-color: #3a7d44;
 }
 
-#pilot-panel .pilot-btn-ok:hover {
+.modal-panel .pilot-btn-ok:hover {
   background: #2d6634;
 }
 

@@ -742,6 +742,30 @@ Draw smooth bezier curves to target positions.
 (bezier-to-anchor :target)
 ```
 
+### Bezier to Anchor — asymmetric & path-first
+
+```clojure
+;; A scaffold path supplies the endpoints and tangent directions via marks.
+(def ps (path (mark :start) (f 45) (th 90) (f 45) (mark :end)))
+
+;; Path-first form: resolve :end from ps inline (no with-path needed).
+;; One tension = symmetric handles; :tension-end gives asymmetric handles.
+(path (bezier-to-anchor ps :at :end :tension 0.57))
+(path (bezier-to-anchor ps :at :end :tension 0.5 :tension-end 0.2))
+```
+
+### Completing a symmetric curve — half + mirror
+
+```clojure
+;; Author only half (O → midpoint M), then mirror across the symmetry axis
+;; and reverse it so the halves join into the full symmetric curve.
+(def half (path (bezier-to [36.06 8.94 0] [18.09 0 0] [29.34 2.21 0])))
+(def full (path (follow-path half)
+                (follow-path (reverse-path (mirror-path half)))))
+```
+
+See `examples/spigolo-quattro-modi.clj` for the same corner built four ways.
+
 ### Bezier Extrusion
 
 ```clojure

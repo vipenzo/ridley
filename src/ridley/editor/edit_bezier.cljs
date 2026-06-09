@@ -51,6 +51,13 @@
 (def ^:private default-length 40)
 (def ^:private point-labels ["end" "ctrl1" "ctrl2"])
 
+;; Anchor / tension mode (the (edit-bezier path :at :mark [:symmetric]) form):
+;; the endpoints and tangent directions are fixed by the path's marks, so the
+;; only editable degrees of freedom are the control-point distances (tensions).
+(def ^:private default-tension 0.5)
+(def ^:private tension-step 0.02)
+(def ^:private tension-fine-step 0.005)
+
 ;; Colors for the ephemeral geometry
 (def ^:private curve-color 0xff9933)  ; preview curve — orange
 (def ^:private poly-color  0x6699ff)  ; control polygon — blue
@@ -148,29 +155,32 @@
   "Redraw the ephemeral geometry from the current session state. Called on every
    nudge — the preview is session-driven, not a re-evaluation of the user code."
   []
-  (when-let [{:keys [p0 points selected shape-seed?]} @session]
-    (let [[end c1 c2] points
-          p0w  (:position p0)
-          end-w (pt->world p0 shape-seed? end)
-          c1w  (pt->world p0 shape-seed? c1)
-          c2w  (pt->world p0 shape-seed? c2)
-          movable [end-w c1w c2w]
-          segs (concat
-                ;; preview curve
-                (curve-segments p0w c1w c2w end-w)
-                ;; control polygon: P0 → c1 → c2 → end
-                [{:from p0w :to c1w :color poly-color}
-                 {:from c1w :to c2w :color poly-color}
-                 {:from c2w :to end-w :color poly-color}]
-                ;; fixed start point
-                (cross-segments p0w 2 p0-color)
-                ;; three movable points (selected one larger + highlighted)
-                (mapcat (fn [[i pw]]
-                          (cross-segments pw
-                                          (if (= i selected) 4 2)
-                                          (if (= i selected) sel-color pt-color)))
-                        (map-indexed vector movable)))]
-      (viewport/show-preview! [{:type :lines :data (vec segs)}]))))
+  (when-let [{:keys [p0 points selected shape-seed? anchor-mode?]} @session]
+    ;; Anchor / tension mode draws no ephemeral control polygon — the live
+    ;; downstream geometry (the real bezier-to-anchor call) is the preview.
+    (when-not anchor-mode?
+      (let [[end c1 c2] points
+            p0w  (:position p0)
+            end-w (pt->world p0 shape-seed? end)
+            c1w  (pt->world p0 shape-seed? c1)
+            c2w  (pt->world p0 shape-seed? c2)
+            movable [end-w c1w c2w]
+            segs (concat
+                  ;; preview curve
+                  (curve-segments p0w c1w c2w end-w)
+                  ;; control polygon: P0 → c1 → c2 → end
+                  [{:from p0w :to c1w :color poly-color}
+                   {:from c1w :to c2w :color poly-color}
+                   {:from c2w :to end-w :color poly-color}]
+                  ;; fixed start point
+                  (cross-segments p0w 2 p0-color)
+                  ;; three movable points (selected one larger + highlighted)
+                  (mapcat (fn [[i pw]]
+                            (cross-segments pw
+                                            (if (= i selected) 4 2)
+                                            (if (= i selected) sel-color pt-color)))
+                          (map-indexed vector movable)))]
+        (viewport/show-preview! [{:type :lines :data (vec segs)}])))))
 
 ;; ============================================================
 ;; Live re-eval (downstream geometry)
@@ -181,6 +191,26 @@
    stand-in for this call, so confirming swaps the whole marker for it."
   [[end c1 c2]]
   (str "(bezier-to " (fmt-vec end) " " (fmt-vec c1) " " (fmt-vec c2) " :local)"))
+
+(defn- anchor->code
+  "The replacement form for the anchor / tension mode: a complete
+   (bezier-to-anchor path :at :mark :tension …) call. Symmetric emits a single
+   :tension; asymmetric adds :tension-end. The path is emitted as the original
+   source expression so the call stays self-contained (round-trips into a new
+   edit-bezier session)."
+  [{:keys [path-src mark symmetric? tension tension-end]}]
+  (str "(bezier-to-anchor " path-src " :at " mark
+       " :tension " (fmt-num tension)
+       (when-not symmetric? (str " :tension-end " (fmt-num tension-end)))
+       ")"))
+
+(defn- current-code
+  "The replacement source for the active session, dispatching on mode."
+  []
+  (let [s @session]
+    (if (:anchor-mode? s)
+      (anchor->code s)
+      (points->code (:points s)))))
 
 (defn- find-marker
   "Locate the (edit-bezier …) marker in the current editor buffer. Re-found fresh
@@ -194,7 +224,7 @@
    real editor source is only rewritten on confirm."
   []
   (let [[from to] (find-marker)]
-    (modal/splice-source (cm/get-value) from to (points->code (:points @session)))))
+    (modal/splice-source (cm/get-value) from to (current-code))))
 
 (defn- live-reeval!
   "Re-evaluate a copy of the script with the marker replaced by the current
@@ -224,34 +254,66 @@
 ;; UI panel
 ;; ============================================================
 
+(defn- anchor-point-label
+  "Which handle the arrows currently drive, for the panel."
+  [{:keys [symmetric? selected]}]
+  (cond symmetric?         "both"
+        (= :end selected)  "end"
+        :else              "start"))
+
+(defn- anchor-step-label
+  "Tension readout: a single value when symmetric, start / end when asymmetric."
+  [{:keys [symmetric? tension tension-end]}]
+  (if symmetric?
+    (fmt-num tension)
+    (str (fmt-num tension) " / " (fmt-num tension-end))))
+
 (defn update-panel!
-  "Refresh the selected-point label and step display."
+  "Refresh the selected-point label and step display (mode-aware)."
   []
   (when-let [panel (:panel-el @session)]
-    (when-let [el (.querySelector panel ".eb-point")]
-      (set! (.-textContent el) (nth point-labels (:selected @session))))
-    (when-let [el (.querySelector panel ".eb-step")]
-      (let [buf (:digit-buffer @session)]
-        (set! (.-textContent el)
-              (if (seq buf) (str buf "_") (str (:step @session) "mm")))))))
+    (let [s @session]
+      (if (:anchor-mode? s)
+        (do
+          (when-let [el (.querySelector panel ".eb-point")]
+            (set! (.-textContent el) (anchor-point-label s)))
+          (when-let [el (.querySelector panel ".eb-step")]
+            (set! (.-textContent el) (anchor-step-label s))))
+        (do
+          (when-let [el (.querySelector panel ".eb-point")]
+            (set! (.-textContent el) (nth point-labels (:selected s))))
+          (when-let [el (.querySelector panel ".eb-step")]
+            (let [buf (:digit-buffer s)]
+              (set! (.-textContent el)
+                    (if (seq buf) (str buf "_") (str (:step s) "mm"))))))))))
 
 (defn- create-panel!
   "Create the edit-bezier UI panel (reusing pilot's CSS classes) and mount it."
   []
-  (let [shape-seed? (:shape-seed? @session)
-        wf? (:wireframe? @session)
-        mode (str (if shape-seed? "shape-seed" "3D")
-                  (when wf? " · wireframe"))
-        hint (str "Tab: next point · ←→↑↓: move"
-                  (when-not shape-seed? " · Shift+↑↓: depth")
-                  " · digits: step · Ins: re-eval · Enter: OK · Esc: cancel")
+  (let [s @session
+        anchor? (:anchor-mode? s)
+        shape-seed? (:shape-seed? s)
+        wf? (:wireframe? s)
+        mode (if anchor?
+               (if (:symmetric? s) "tension · symmetric" "tension")
+               (str (if shape-seed? "shape-seed" "3D")
+                    (when wf? " · wireframe")))
+        hint (if anchor?
+               (str "↑↓: tension · Shift: fine"
+                    (when-not (:symmetric? s) " · Tab: switch handle")
+                    " · Enter: OK · Esc: cancel")
+               (str "Tab: next point · ←→↑↓: move"
+                    (when-not shape-seed? " · Shift+↑↓: depth")
+                    " · digits: step · Ins: re-eval · Enter: OK · Esc: cancel"))
+        point-label (if anchor? "Handle" "Point")
         panel (.createElement js/document "div")]
     (set! (.-id panel) "edit-bezier-panel")
     (set! (.-innerHTML panel)
-          (str "<div class='pilot-header'>edit-bezier — " mode "</div>"
+          (str "<div class='pilot-header'>edit-bezier"
+               "<span class='pilot-mode-badge'>" mode "</span></div>"
                "<div class='pilot-controls'>"
-               "<span>Point: <span class='eb-point'>end</span></span>"
-               "<span>Step: <span class='eb-step'>5mm</span></span>"
+               "<span>" point-label ": <span class='eb-point'>end</span></span>"
+               "<span>" (if anchor? "Tension" "Step") ": <span class='eb-step'>5mm</span></span>"
                "</div>"
                "<div class='pilot-commands'>" hint "</div>"
                "<div class='pilot-buttons'>"
@@ -315,59 +377,109 @@
       "ArrowDown"  (if shift? [1 -1] [0 1])
       nil)))
 
-(defn- on-keydown [e]
-  (when (:entered? @session)
-    (let [key (.-key e)
-          shift? (.-shiftKey e)
-          digit (digit-key key)]
-      (cond
+;; --- Anchor / tension mode keymap ----------------------------------------
+
+(defn- tension-key
+  "Which tension the arrows adjust: :tension-end only when asymmetric and the end
+   handle is selected, else :tension."
+  []
+  (let [s @session]
+    (if (and (not (:symmetric? s)) (= :end (:selected s))) :tension-end :tension)))
+
+(defn- adjust-tension!
+  "Nudge the selected tension by delta, clamped to >= 0, then refresh."
+  [delta]
+  (swap! session update (tension-key) #(max 0 (+ % delta)))
+  (refresh-preview!)
+  (update-panel!))
+
+(defn- on-keydown-anchor [e key shift?]
+  (let [step (if shift? tension-fine-step tension-step)]
+    (cond
+      ;; Tab: switch the adjusted handle (asymmetric only)
+      (= key "Tab")
+      (do (.preventDefault e) (.stopPropagation e)
+          (when-not (:symmetric? @session)
+            (swap! session update :selected #(if (= % :end) :start :end)))
+          (update-panel!))
+
+      ;; Arrows raise/lower the selected tension (Shift = fine step)
+      (#{"ArrowUp" "ArrowRight"} key)
+      (do (.preventDefault e) (.stopPropagation e) (adjust-tension! step))
+
+      (#{"ArrowDown" "ArrowLeft"} key)
+      (do (.preventDefault e) (.stopPropagation e) (adjust-tension! (- step)))
+
+      (= key "Enter")
+      (do (.preventDefault e) (.stopPropagation e) (confirm!))
+
+      (= key "Escape")
+      (do (.preventDefault e) (.stopPropagation e) (cancel!))
+
+      :else nil)))
+
+;; --- Free 3-point mode keymap --------------------------------------------
+
+(defn- on-keydown-free [e key shift?]
+  (let [digit (digit-key key)]
+    (cond
         ;; Tab: cycle the three movable points
-        (= key "Tab")
-        (do (.preventDefault e) (.stopPropagation e)
-            (flush-digit!)
-            (swap! session update :selected #(mod (inc %) 3))
-            (render!) (update-panel!))
+      (= key "Tab")
+      (do (.preventDefault e) (.stopPropagation e)
+          (flush-digit!)
+          (swap! session update :selected #(mod (inc %) 3))
+          (render!) (update-panel!))
 
         ;; Digit input → accumulate the step value (pilot-style)
-        digit
-        (do (.preventDefault e) (.stopPropagation e)
-            (swap! session update :digit-buffer str digit)
-            (update-panel!))
+      digit
+      (do (.preventDefault e) (.stopPropagation e)
+          (swap! session update :digit-buffer str digit)
+          (update-panel!))
 
         ;; Decimal point in the step buffer
-        (and (= key ".") (seq (:digit-buffer @session)))
-        (do (.preventDefault e) (.stopPropagation e)
-            (when-not (str/includes? (:digit-buffer @session) ".")
-              (swap! session update :digit-buffer str "."))
-            (update-panel!))
+      (and (= key ".") (seq (:digit-buffer @session)))
+      (do (.preventDefault e) (.stopPropagation e)
+          (when-not (str/includes? (:digit-buffer @session) ".")
+            (swap! session update :digit-buffer str "."))
+          (update-panel!))
 
         ;; Arrows — axis mapping depends on the mode (see arrow->axis). Always
         ;; swallowed so the editor doesn't move the cursor / select text; a no-op
         ;; mapping (e.g. Shift+arrows in :as-shape-seed) just does nothing.
-        (#{"ArrowUp" "ArrowDown" "ArrowLeft" "ArrowRight"} key)
-        (do (.preventDefault e) (.stopPropagation e) (flush-digit!)
-            (when-let [[axis sign] (arrow->axis key shift? (:shape-seed? @session))]
-              (nudge! axis sign)))
+      (#{"ArrowUp" "ArrowDown" "ArrowLeft" "ArrowRight"} key)
+      (do (.preventDefault e) (.stopPropagation e) (flush-digit!)
+          (when-let [[axis sign] (arrow->axis key shift? (:shape-seed? @session))]
+            (nudge! axis sign)))
 
         ;; Insert: force a downstream re-eval on demand (useful in :wireframe mode)
-        (= key "Insert")
-        (do (.preventDefault e) (.stopPropagation e) (flush-digit!) (live-reeval!))
+      (= key "Insert")
+      (do (.preventDefault e) (.stopPropagation e) (flush-digit!) (live-reeval!))
 
         ;; Backspace: undo digit input
-        (= key "Backspace")
-        (do (.preventDefault e) (.stopPropagation e)
-            (swap! session update :digit-buffer
-                   #(subs % 0 (max 0 (dec (count %)))))
-            (update-panel!))
+      (= key "Backspace")
+      (do (.preventDefault e) (.stopPropagation e)
+          (swap! session update :digit-buffer
+                 #(subs % 0 (max 0 (dec (count %)))))
+          (update-panel!))
 
         ;; Confirm / cancel
-        (= key "Enter")
-        (do (.preventDefault e) (.stopPropagation e) (flush-digit!) (confirm!))
+      (= key "Enter")
+      (do (.preventDefault e) (.stopPropagation e) (flush-digit!) (confirm!))
 
-        (= key "Escape")
-        (do (.preventDefault e) (.stopPropagation e) (cancel!))
+      (= key "Escape")
+      (do (.preventDefault e) (.stopPropagation e) (cancel!))
 
-        :else nil))))
+      :else nil)))
+
+(defn- on-keydown
+  "Global keydown dispatcher: route to the active mode's keymap."
+  [e]
+  (when (:entered? @session)
+    (let [key (.-key e)
+          shift? (.-shiftKey e)]
+      (if (:anchor-mode? @session)
+        (on-keydown-anchor e key shift?)
+        (on-keydown-free e key shift?)))))
 
 ;; ============================================================
 ;; Confirm / Cancel / Cleanup
@@ -385,9 +497,9 @@
    (bezier-to [end] [c1] [c2] :local), then re-run the definitions. Sessions only
    ever open in script mode (see request!)."
   []
-  (when-let [{:keys [points]} @session]
+  (when @session
     (let [[from to] (find-marker)
-          code (points->code points)]
+          code (current-code)]
       (when from
         (modal/replace-source! from to code)
         (state/capture-println (str "edit-bezier: " code)))
@@ -475,6 +587,45 @@
                          :entered?     false})
         points))))
 
+(defn ^:export edit-bezier-anchor-request!
+  "Called by the (edit-bezier path :at :mark [:symmetric]) macro expansion. Opens
+   a tension-editing session and ALWAYS returns the bezier-to-anchor option seq so
+   the macro's (apply bezier-to-anchor path :at mark …) draws a default curve
+   during the eval. `path-expr` is the path source form (for emission), `mark` the
+   anchor keyword, `symmetric?` selects one shared tension vs two independent ones.
+   Same script-mode / skip / REPL guards as request!."
+  [path-expr mark symmetric?]
+  (let [opts (if symmetric?
+               (list :tension default-tension)
+               (list :tension default-tension :tension-end default-tension))]
+    (cond
+      ;; A re-eval armed the skip flag — pass through without opening a session.
+      (modal/consume-skip!)
+      opts
+
+      ;; REPL mode: can't host the interactive session — draw a default + hint.
+      (not= :definitions @state/eval-source-var)
+      (do (state/capture-println
+           "edit-bezier: open it from the definitions panel (Cmd+Enter), not the REPL")
+          opts)
+
+      :else
+      (do
+        (clear-orphan!)
+        (when (nil? (find-marker))
+          (throw (js/Error. (str "edit-bezier: cannot find '" marker-prefix " …)' in editor"))))
+        (modal/claim! :edit-bezier)
+        (reset! session {:p0           (state/get-turtle-pose)
+                         :anchor-mode? true
+                         :path-src     (pr-str path-expr)
+                         :mark         mark
+                         :symmetric?   symmetric?
+                         :tension      default-tension
+                         :tension-end  default-tension
+                         :selected     :start
+                         :entered?     false})
+        opts))))
+
 (defn requested?
   "Check if an edit-bezier session was requested during evaluation."
   []
@@ -503,8 +654,12 @@
       (render!)
       (live-reeval!))
     (state/capture-println
-     (str "edit-bezier: Tab cycles points, arrows move, type digits to set step, "
-          "Ins re-evaluates, Enter to confirm, Esc to cancel"))))
+     (if (:anchor-mode? @session)
+       (str "edit-bezier: ↑↓ adjust tension"
+            (when-not (:symmetric? @session) ", Tab switches handle")
+            ", Enter to confirm, Esc to cancel")
+       (str "edit-bezier: Tab cycles points, arrows move, type digits to set step, "
+            "Ins re-evaluates, Enter to confirm, Esc to cancel")))))
 
 ;; ============================================================
 ;; Modal-evaluator registration

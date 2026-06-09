@@ -68,8 +68,11 @@
 
 (defn mount-panel!
   "Insert a session panel into the REPL terminal, just above the input line.
-   Returns the panel element."
+   Tags it with the shared `modal-panel` class so every modal evaluator's panel
+   picks up the same styling (see public/css/style.css). Returns the panel
+   element."
   [panel-el]
+  (.add (.-classList panel-el) "modal-panel")
   (when-let [terminal (.getElementById js/document "repl-terminal")]
     (when-let [input-line (.getElementById js/document "repl-input-line")]
       (.insertBefore terminal panel-el input-line)))

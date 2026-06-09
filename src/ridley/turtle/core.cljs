@@ -839,6 +839,10 @@
                        #(cubic-bezier-point p0 c1 c2 p3 %)
                        #(cubic-bezier-tangent p0 c1 c2 p3 %)))))))
 
+;; Defined later in this namespace; forward-declared for the path-first
+;; bezier-to-anchor form below.
+(declare path? resolve-marks)
+
 (defn bezier-to-anchor
   "Draw a bezier curve to a named anchor position.
    When auto-generating control points (no explicit [c1] [c2] provided),
@@ -849,28 +853,42 @@
    (bezier-to-anchor state :name)              ; auto control points (respects both headings)
    (bezier-to-anchor state :name [c1] [c2])    ; explicit control points
    (bezier-to-anchor state :name :steps 24)    ; auto with more steps
-   (bezier-to-anchor state :name :tension 0.5) ; control curve width (0=tight, 1=wide)"
-  [state anchor-name & args]
-  (if-let [anchor (get-in state [:anchors anchor-name])]
-    (let [{control-points true options false} (group-by vector? args)
-          {:keys [steps tension]} (apply hash-map (flatten options))
-          n-controls (count control-points)]
-      (if (zero? n-controls)
+   (bezier-to-anchor state :name :tension 0.5) ; control curve width (0=tight, 1=wide)
+   (bezier-to-anchor state path :at :name)     ; resolve :name from a path inline"
+  [state target & args]
+  (let [;; Path-first form: (bezier-to-anchor path [:at] :name & opts) resolves
+        ;; the mark from the path at the current pose, no with-path needed.
+        path-first? (path? target)
+        [anchor-name args] (if path-first?
+                             (let [[a & more] args]
+                               (if (= :at a) [(first more) (rest more)] [a more]))
+                             [target args])
+        anchor (if path-first?
+                 (get (resolve-marks state target) anchor-name)
+                 (get-in state [:anchors anchor-name]))]
+    (if anchor
+      (let [{control-points true options false} (group-by vector? args)
+            {:keys [steps tension tension-end]} (apply hash-map (flatten options))
+            n-controls (count control-points)]
+        (if (zero? n-controls)
         ;; Auto-generate control points using BOTH headings
-        (let [p0 (:position state)
-              p3 (:position anchor)
-              approx-length (magnitude (v- p3 p0))
-              actual-steps (or steps (calc-bezier-steps state approx-length))
-              [c1 c2] (auto-control-points-with-target-heading
-                       p0 (:heading state) p3 (:heading anchor) (or tension 0.33))]
-          (if (< approx-length 0.001)
-            state
-            (bezier-walk state actual-steps
-                         #(cubic-bezier-point p0 c1 c2 p3 %)
-                         #(cubic-bezier-tangent p0 c1 c2 p3 %))))
+          (let [p0 (:position state)
+                p3 (:position anchor)
+                approx-length (magnitude (v- p3 p0))
+                actual-steps (or steps (calc-bezier-steps state approx-length))
+              ;; tension-end defaults to tension → symmetric handles; give it a
+              ;; distinct value for asymmetric control-point distances.
+                [c1 c2] (auto-control-points-with-target-heading
+                         p0 (:heading state) p3 (:heading anchor)
+                         (or tension 0.33) (or tension-end tension 0.33))]
+            (if (< approx-length 0.001)
+              state
+              (bezier-walk state actual-steps
+                           #(cubic-bezier-point p0 c1 c2 p3 %)
+                           #(cubic-bezier-tangent p0 c1 c2 p3 %))))
         ;; Explicit control points - delegate to bezier-to
-        (apply bezier-to state (:position anchor) args)))
-    state))
+          (apply bezier-to state (:position anchor) args)))
+      state)))
 
 ;; --- Joint mode (for future corner styles) ---
 
@@ -1200,8 +1218,6 @@
   "Check if x is a path."
   [x]
   (and (map? x) (= :path (:type x))))
-
-(declare resolve-marks)
 
 (defn make-path
   "Create a path from a vector of recorded commands. Each command is
@@ -1596,6 +1612,45 @@
         (assoc :heading final-heading)  ; restore tangent heading
         (assoc :up final-up))))
 
+(defn compute-midpoint-walk
+  "Pure walk data for the control-polygon (midpoint) spline. The path's vertices
+   are treated as OFF-curve control points; the curve passes through each segment
+   midpoint (and the clamped endpoints), tangent to the polygon there, and is C1.
+   One quadratic per interior vertex, degree-elevated to a cubic so the existing
+   sampler is reused. With fewer than one interior vertex it falls back to the
+   straight polyline. This is the dual of compute-bezier-walk (vertices on-curve)."
+  [segments init-pose calc-steps-fn]
+  (let [wps (compute-path-waypoints segments init-pose)
+        V (mapv :position wps)
+        n (count V)]
+    (if (< n 3)
+      (compute-bezier-walk segments init-pose {:tension 0.0 :calc-steps-fn calc-steps-fn})
+      (let [mid (fn [a b] (v* (v+ a b) 0.5))
+            MP (mapv #(mid (nth V %) (nth V (inc %))) (range (dec n)))
+            last-k (- n 2)]
+        (loop [k 1
+               pose init-pose
+               results []]
+          (if (> k last-k)
+            results
+            (let [A (if (= k 1) (nth V 0) (nth MP (dec k)))
+                  C (nth V k)
+                  B (if (= k last-k) (nth V (dec n)) (nth MP k))
+                  ;; degree-elevate the quadratic [A C B] to a cubic
+                  c1 (v+ A (v* (v- C A) (/ 2.0 3.0)))
+                  c2 (v+ B (v* (v- C B) (/ 2.0 3.0)))
+                  seg-len (magnitude (v- B A))
+                  steps (if calc-steps-fn (calc-steps-fn seg-len) 16)
+                  walk-steps (sample-bezier-segment A c1 c2 B steps (:heading pose) (:up pose))
+                  final-pose (if (seq walk-steps)
+                               (let [ls (peek walk-steps)]
+                                 {:position (:to ls) :heading (:final-heading ls) :up (:final-up ls)})
+                               (assoc pose :position B))]
+              (recur (inc k) final-pose
+                     (conj results {:walk-steps walk-steps
+                                    :target-pose final-pose
+                                    :segment-index (dec k)})))))))))
+
 (defn bezier-as
   "Draw a bezier curve that smoothly approximates a turtle path.
    Produces one cubic bezier per segment in the path, with C1 continuity
@@ -1613,7 +1668,7 @@
    :cubic              - use Catmull-Rom tangents for smoother global curves
    :steps              - bezier resolution (default from resolution settings)"
   [state p & args]
-  (let [{:keys [tension steps max-segment-length cubic]} (apply hash-map args)
+  (let [{:keys [tension steps max-segment-length cubic control]} (apply hash-map args)
         segments (path-segments p)
         ;; Optionally subdivide long segments
         segments (if max-segment-length
@@ -1623,13 +1678,16 @@
       state
       ;; Use pure function to compute walk data
       (let [init-pose (select-keys state [:position :heading :up])
-            calc-steps-fn (when-not steps
-                            #(calc-bezier-steps state %))
-            walk-data (compute-bezier-walk
-                       segments init-pose
-                       {:tension (or tension 0.33)
-                        :cubic cubic
-                        :calc-steps-fn (or calc-steps-fn (constantly (or steps 16)))})]
+            calc-steps-fn (or (when-not steps #(calc-bezier-steps state %))
+                              (constantly (or steps 16)))
+            walk-data (if control
+                        ;; control-polygon (midpoint) spline: vertices are controls
+                        (compute-midpoint-walk segments init-pose calc-steps-fn)
+                        (compute-bezier-walk
+                         segments init-pose
+                         {:tension (or tension 0.33)
+                          :cubic cubic
+                          :calc-steps-fn calc-steps-fn}))]
         ;; Apply walk steps to state
         (reduce
          (fn [current-state segment-data]

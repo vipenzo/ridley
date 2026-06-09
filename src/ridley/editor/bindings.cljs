@@ -156,6 +156,8 @@
    'poly-path       shape/poly-path
    'poly-path-closed shape/poly-path-closed
    'subpath-y       shape/subpath-y
+   'reverse-path    shape/reverse-path
+   'mirror-path     shape/mirror-path
    'offset-x        shape/offset-x
    'fit             shape/fit
    'mark-pos        impl/implicit-mark-pos
@@ -297,6 +299,8 @@
    ;; Measurement
    'distance        measure/distance
    'ruler           measure/ruler
+   'mid             measure/mid
+   'seg-mid         measure/seg-mid
    'bounds          measure/bounds
    'area            measure/area
    'clear-rulers    measure/clear-rulers
@@ -347,6 +351,7 @@
    'path-segments-impl  turtle/path-segments
    'subdivide-segment-impl turtle/subdivide-segment
    'compute-bezier-walk-impl turtle/compute-bezier-walk
+   'compute-midpoint-walk-impl turtle/compute-midpoint-walk
    'extrude-closed-path-impl gen-ops/implicit-extrude-closed-path
    'extrude-path-impl        gen-ops/implicit-extrude-path
    'pure-extrude-path        gen-ops/pure-extrude-path  ; Pure version (no side effects)
@@ -578,6 +583,7 @@
    ;; edit-bezier (interactive cubic Bezier authoring) — the `edit-bezier` macro
    ;; (in macros.cljs) expands to a bezier-to call and calls this to open the session
    'edit-bezier-request!     edit-bezier/request!
+   'edit-bezier-anchor-request! edit-bezier/edit-bezier-anchor-request!
    ;; Source form storage
    'set-source-form!    registry/set-source-form!
    'get-source-form     registry/get-source-form

@@ -87,17 +87,24 @@
    - 0 = very tight curve (almost angular)
    - 0.33 = default, balanced curve
    - 0.5-0.7 = wider, smoother curves
-   - 1 = very wide curve"
+   - 1 = very wide curve
+
+   With six args, tension-start and tension-end are applied independently to
+   the two control points (asymmetric handles); with one tension the curve is
+   symmetric. Both handle directions stay locked to the headings either way."
   ([p0 start-heading p3 target-heading]
    (auto-control-points-with-target-heading p0 start-heading p3 target-heading 0.33))
   ([p0 start-heading p3 target-heading tension]
+   (auto-control-points-with-target-heading p0 start-heading p3 target-heading tension tension))
+  ([p0 start-heading p3 target-heading tension-start tension-end]
    (let [dist (magnitude (v- p3 p0))
-         factor (or tension 0.33)
+         f0 (or tension-start 0.33)
+         f1 (or tension-end 0.33)
          ;; First control point: extend from start along start heading
-         c1 (v+ p0 (v* start-heading (* dist factor)))
+         c1 (v+ p0 (v* start-heading (* dist f0)))
          ;; Second control point: extend from end opposite to target heading
          ;; (the curve arrives in the direction of target-heading)
-         c2 (v+ p3 (v* (v* target-heading -1) (* dist factor)))]
+         c2 (v+ p3 (v* (v* target-heading -1) (* dist f1)))]
      [c1 c2])))
 
 ;; ============================================================

@@ -161,8 +161,8 @@
     :category "turtle-movement"
     :status "stable"
     :since ""
-    :signature "(bezier-as path)\n(bezier-as path & {:keys [tension steps cubic max-segment-length]})"
-    :description "Smooth a recorded path with one bezier curve per segment, keeping C1 continuity at the junctions. Returns a new path; does not modify turtle state on its own."
+    :signature "(bezier-as path)\n(bezier-as path & {:keys [tension steps cubic max-segment-length control]})"
+    :description "Smooth a recorded path with one bezier curve per segment, keeping C1 continuity at the junctions. Returns a new path; does not modify turtle state on its own. With `:control true` the vertices are treated as off-curve CONTROL points instead of interpolated: the curve passes through the segment midpoints (clamped at the ends), rounding the control polygon — the dual of the default interpolating mode."
     :path "docs/manual/reference/en/bezier-as.md"}
 
    "bezier-to"
@@ -179,7 +179,7 @@
     :category "turtle-movement"
     :status "stable"
     :since ""
-    :signature "(bezier-to-anchor name)\n(bezier-to-anchor name & {:keys [steps tension]})"
+    :signature "(bezier-to-anchor name)\n(bezier-to-anchor path :at name)\n(bezier-to-anchor name & {:keys [steps tension tension-end]})"
     :description "Move the turtle to a named anchor along a smooth bezier curve that respects both the current heading and the anchor's heading, producing a C1-continuous connection. **Modifies turtle state.**"
     :path "docs/manual/reference/en/bezier-to-anchor.md"}
 
@@ -431,8 +431,8 @@
     :category "live-interactive"
     :status "stable"
     :since ""
-    :signature "(edit-bezier)\n(edit-bezier :shape)\n(edit-bezier :wireframe)\n(edit-bezier end ctrl-1 ctrl-2)"
-    :description "Author a cubic Bezier curve interactively, in 3D, from the keyboard — instead of solving the cubic by hand for its control points. `edit-bezier` is a stand-in for a `(bezier-to … :local)` call and is used **wherever `bezier-to` is**: top-level, or inside `(path …)` / `(attach …)`. Run it from the **definitions panel** (Cmd+Enter), not the REPL."
+    :signature "(edit-bezier)\n(edit-bezier :shape)\n(edit-bezier :wireframe)\n(edit-bezier end ctrl-1 ctrl-2)\n(edit-bezier path :at :mark)\n(edit-bezier path :at :mark :symmetric)"
+    :description "Author a cubic Bezier curve interactively, in 3D, from the keyboard — instead of solving the cubic by hand for its control points. `edit-bezier` is a stand-in for a `(bezier-to … :local)` call and is used **wherever `bezier-to` is**: top-level, or inside `(path …)` / `(attach …)`. The anchor form `(edit-bezier path :at :mark)` instead fixes the endpoints and tangents from a path's marks and edits only the control-point distances (tensions), rewriting to a `bezier-to-anchor` on confirm. Run it from the **definitions panel** (Cmd+Enter), not the REPL."
     :path "docs/manual/reference/en/edit-bezier.md"}
 
    "embroid"
@@ -1253,6 +1253,24 @@
     :signature "(poly-path x1 y1 x2 y2 …)\n(poly-path [x1 y1 x2 y2 …])"
     :description "Build an open path from explicit 2D coordinate pairs. Internally, `poly-path` reconstructs the turtle commands (`f`, `th`) needed to walk through the given points in order, starting at the origin and heading along +X. The result is a path map identical in structure to a `path` recording."
     :path "docs/manual/reference/en/poly-path.md"}
+
+   "reverse-path"
+   {:name "reverse-path"
+    :category "path"
+    :status "stable"
+    :since ""
+    :signature "(reverse-path path)"
+    :description "Return a new path tracing `path`'s waypoints in reverse order (last → first), rebuilt from points and shifted to start at the origin, so `(follow-path (reverse-path p))` retraces `p` backward from the current pose. Works in 3D (the full turtle frame is carried)."
+    :path "docs/manual/reference/en/reverse-path.md"}
+
+   "mirror-path"
+   {:name "mirror-path"
+    :category "path"
+    :status "stable"
+    :since ""
+    :signature "(mirror-path path)\n(mirror-path path normal)"
+    :description "Return `path` reflected across the plane through its END point. For a curve meant to be symmetric about that plane — e.g. half of a symmetric corner — `(reverse-path (mirror-path half))` is the continuation that completes it. With one argument the plane normal is the end heading — the turtle's right/up plane there; since a path ends facing the true tangent (beziers record the analytic end tangent), the default is accurate and needs no axis. Pass `[nx ny]`/`[nx ny nz]` only to mirror across a different plane. Works in 3D."
+    :path "docs/manual/reference/en/mirror-path.md"}
 
    "poly-path-closed"
    {:name "poly-path-closed"

@@ -184,7 +184,7 @@
    ;; Recording version of bezier-as
    ;; Uses relative rotations (th/tv) instead of absolute set-heading
    ;; to produce orientation-independent paths.
-   (defn- rec-bezier-as* [p & {:keys [tension steps max-segment-length cubic]}]
+   (defn- rec-bezier-as* [p & {:keys [tension steps max-segment-length cubic control]}]
      (let [path-segs (path-segments-impl p)
            path-segs (if max-segment-length
                        (vec (mapcat #(subdivide-segment-impl % max-segment-length) path-segs))
@@ -203,12 +203,15 @@
                                      :n scaled-res
                                      :a scaled-res
                                      :s (max 1 (int (ceil (/ seg-length res-value)))))))
-               ;; Use pure function to compute walk data
-               walk-data (compute-bezier-walk-impl
-                           path-segs init-pose
-                           {:tension (or tension 0.33)
-                            :cubic cubic
-                            :calc-steps-fn calc-steps-fn})]
+               ;; Use pure function to compute walk data. :control switches to the
+               ;; control-polygon (midpoint) spline — vertices become controls.
+               walk-data (if control
+                           (compute-midpoint-walk-impl path-segs init-pose calc-steps-fn)
+                           (compute-bezier-walk-impl
+                            path-segs init-pose
+                            {:tension (or tension 0.33)
+                             :cubic cubic
+                             :calc-steps-fn calc-steps-fn}))]
            ;; Apply walk steps using relative rotations
            (doseq [segment-data walk-data]
              (when-not (:degenerate segment-data)
@@ -336,15 +339,44 @@
                      ;; Continue with next segment, propagating the up vector
                      (recur (rest remaining-segments) new-up))
                    ;; Skip zero-length segment, keep current up
-                   (recur (rest remaining-segments) current-up)))))))))
+                   (recur (rest remaining-segments) current-up)))))
+           ;; Leave the turtle facing the analytic END TANGENT (∝ p3 − c2), like
+           ;; the runtime bezier-walk — not the last chord. So continuing the path
+           ;; (f …) stays tangent, and a symmetric mirror reads the exact axis.
+           (let [edx (- (nth p3 0) (nth c2 0))
+                 edy (- (nth p3 1) (nth c2 1))
+                 edz (- (nth p3 2) (nth c2 2))
+                 elen (sqrt (+ (* edx edx) (* edy edy) (* edz edz)))]
+             (when (> elen 0.001)
+               (let [end-dir (rec-normalize [edx edy edz])
+                     [th-a tv-a] (rec-compute-rotation-angles
+                                  (:heading @path-recorder) (:up @path-recorder) end-dir)]
+                 (when (> (abs th-a) 0.001) (rec-th* th-a))
+                 (when (> (abs tv-a) 0.001) (rec-tv* tv-a)))))))))
 
    ;; Recording version of bezier-to-anchor
    ;; Like rec-bezier-to* but gets target from anchor and uses both headings
    ;; IMPORTANT: Anchor positions are in world coordinates, but the path-recorder
    ;; works in local coordinates starting at [0,0,0]. We must compute the
    ;; relative position from the turtle's current world position to the anchor.
-   (defn- rec-bezier-to-anchor* [anchor-name & args]
-     (when-let [anchor (get-anchor anchor-name)]
+   (defn- rec-bezier-to-anchor* [target & raw-args]
+     (let [;; Path-first form: (bezier-to-anchor path [:at] :mark & opts) — sugar
+           ;; for (with-path path (bezier-to-anchor :mark ...)). Resolve the path's
+           ;; marks at the current turtle pose, look the mark up, then restore
+           ;; anchors so the inline use leaves no trace.
+           path-first? (and (map? target) (= :path (:type target)))
+           [anchor-name args] (if path-first?
+                                (let [[a & more] raw-args]
+                                  (if (= :at a) [(first more) (vec (rest more))] [a (vec more)]))
+                                [target (vec raw-args)])
+           anchor (if path-first?
+                    (let [saved (save-anchors*)]
+                      (resolve-and-merge-marks* target)
+                      (let [a (get-anchor anchor-name)]
+                        (restore-anchors* saved)
+                        a))
+                    (get-anchor anchor-name))]
+       (when anchor
        (let [;; Get turtle's world position to compute relative target
              turtle-pos (turtle-position)
              anchor-pos (:position anchor)
@@ -358,6 +390,8 @@
              opts-map (apply hash-map (flatten options))
              steps (get opts-map :steps)
              tension (get opts-map :tension 0.33)  ; default tension
+             ;; tension-end defaults to tension → symmetric handles
+             tension-end (get opts-map :tension-end tension)
              n-controls (count control-points)]
          (if (> n-controls 0)
            ;; Explicit control points provided - delegate to rec-bezier-to*
@@ -385,10 +419,12 @@
                                         :n res-value
                                         :a res-value
                                         :s (max 1 (int (ceil (/ approx-length res-value))))))
-                     ;; Auto control points using BOTH headings, with tension
+                     ;; Auto control points using BOTH headings, with tension.
+                     ;; tension drives c1 (start), tension-end drives c2 (end) —
+                     ;; equal values give symmetric handles.
                      c1 (mapv + p0 (mapv #(* % (* approx-length tension)) start-heading))
                      ;; c2 extends from target in opposite direction of target heading
-                     c2 (mapv + p3 (mapv #(* % (* approx-length (- tension))) target-heading))
+                     c2 (mapv + p3 (mapv #(* % (* approx-length (- tension-end))) target-heading))
                      ;; Bezier point function
                      cubic-point (fn [t]
                                    (let [t2 (- 1 t)
@@ -439,7 +475,19 @@
                              (when (> (abs tv-angle) 0.001) (rec-tv* tv-angle)))
                            (rec-f* dist)
                            (recur (rest remaining-segments) new-up false))
-                         (recur (rest remaining-segments) current-up false))))))))))))
+                         (recur (rest remaining-segments) current-up false)))))
+                 ;; End facing the analytic end tangent (∝ p3 − c2 = the anchor
+                 ;; heading), like the runtime bezier-walk — not the last chord.
+                 (let [edx (- (nth p3 0) (nth c2 0))
+                       edy (- (nth p3 1) (nth c2 1))
+                       edz (- (nth p3 2) (nth c2 2))
+                       elen (sqrt (+ (* edx edx) (* edy edy) (* edz edz)))]
+                   (when (> elen 0.001)
+                     (let [end-dir (rec-normalize [edx edy edz])
+                           [th-a tv-a] (rec-compute-rotation-angles
+                                        (:heading @path-recorder) (:up @path-recorder) end-dir)]
+                       (when (> (abs th-a) 0.001) (rec-th* th-a))
+                       (when (> (abs tv-a) 0.001) (rec-tv* tv-a)))))))))))))
 
    ;; path: record turtle movements for later replay
    ;; (def p (path (f 20) (th 90) (f 20))) - record a path
@@ -468,6 +516,9 @@
               ~'resolution rec-resolution*
               ~'mark rec-mark*
               ~'follow rec-follow*
+              ;; alias: `follow-path` records too inside (path …), matching the
+              ;; global `follow-path` that replays on the live turtle outside it
+              ~'follow-path rec-follow*
               ~'side-trip-fn rec-side-trip*
               ~'inset rec-inset*
               ~'scale rec-scale*
@@ -1908,20 +1959,52 @@
    ;; (tweak n :A)              — tweak registered mesh, slider n
    ;; (tweak :all :A expr)      — tweak registered mesh, explicit expression, all sliders
 
-   ;; Collect non-fn-position symbols from a form (for tweak locals capture).
-   ;; These symbols may be let-bound locals that need to be captured at runtime.
-   (defn- collect-arg-symbols [form]
+   ;; Symbols introduced by a binding target (a symbol or a destructuring form).
+   ;; Over-approximates (every symbol in the target) — safe for free-var capture.
+   (defn- binding-target-syms [t]
      (cond
-       (symbol? form) (if (= '_ form) #{} #{form})
-       (and (list? form) (seq form))
-       (reduce into #{} (map collect-arg-symbols (rest form)))
-       (vector? form)
-       (reduce into #{} (map collect-arg-symbols form))
-       (map? form)
-       (reduce into #{} (map collect-arg-symbols (mapcat identity form)))
-       (set? form)
-       (reduce into #{} (map collect-arg-symbols form))
+       (symbol? t) (if (#{'_ '&} t) #{} #{t})
+       (vector? t) (reduce into #{} (map binding-target-syms t))
+       (map? t) (reduce into #{} (map binding-target-syms (concat (keys t) (vals t))))
        :else #{}))
+
+   ;; Collect the FREE non-fn-position symbols of a form (for tweak locals capture)
+   ;; — symbols that may be locals from the SURROUNDING scope. Excludes fn-position
+   ;; heads and, crucially, symbols bound WITHIN the form by let/loop/fn/when-let…
+   ;; (so wrapping `(tweak :all (let [x 24] …))` no longer tries to capture x).
+   (defn- collect-arg-symbols
+     ([form] (collect-arg-symbols form #{}))
+     ([form bound]
+      (cond
+        (symbol? form) (if (or (= '_ form) (contains? bound form)) #{} #{form})
+        (and (seq? form) (seq form))
+        (let [h (first form)]
+          (cond
+            ;; let-family: each value sees prior bindings; body sees all
+            (and (contains? '#{let let* loop when-let if-let when-some if-some} h)
+                 (vector? (second form)))
+            (let [step (reduce (fn [[fr bnd] [tgt val]]
+                                 [(into fr (collect-arg-symbols val bnd))
+                                  (into bnd (binding-target-syms tgt))])
+                               [#{} bound] (partition 2 (second form)))]
+              (into (first step)
+                    (reduce into #{} (map #(collect-arg-symbols % (second step)) (drop 2 form)))))
+            ;; fn: parameters are bound in the body
+            (contains? '#{fn fn*} h)
+            (let [rst (rest form)
+                  rst (if (symbol? (first rst)) (rest rst) rst)
+                  params (first rst)]
+              (if (vector? params)
+                (let [bound* (into bound (binding-target-syms params))]
+                  (reduce into #{} (map #(collect-arg-symbols % bound*) (rest rst))))
+                (reduce into #{} (map #(collect-arg-symbols % bound) (rest form)))))
+            (= 'quote h) #{}
+            :else
+            (reduce into #{} (map #(collect-arg-symbols % bound) (rest form)))))
+        (vector? form) (reduce into #{} (map #(collect-arg-symbols % bound) form))
+        (map? form) (reduce into #{} (map #(collect-arg-symbols % bound) (mapcat identity form)))
+        (set? form) (reduce into #{} (map #(collect-arg-symbols % bound) form))
+        :else #{})))
 
    (defn- tweak-locals-form
      \"Generate a (hash-map 'sym1 sym1 'sym2 sym2 ...) form for captured locals.\"
@@ -1980,14 +2063,27 @@
    ;; rewritten to the edited (bezier-to … :local). Flags: :shape (alias
    ;; :as-shape-seed), :wireframe. `bezier-to` is left unqualified so it resolves
    ;; to the recording version inside (path …) and the implicit one at top level.
+   ;; Two forms:
+   ;;   free 3-point — (edit-bezier) / (edit-bezier :shape) / (edit-bezier [e][c1][c2] …)
+   ;;     → expands to a (bezier-to … :local) of the session's points.
+   ;;   anchor/tension — (edit-bezier path :at :mark [:symmetric])
+   ;;     → fixes endpoints + tangents from the path's marks and edits only the
+   ;;       control-point distances; expands to a (bezier-to-anchor path :at :mark
+   ;;       :tension …) so the eval draws a default and confirm rewrites the tension.
    (defmacro edit-bezier [& args]
-     (let [vecs  (vec (filter vector? args))
-           flags (set (filter keyword? args))
-           shape? (boolean (or (contains? flags :as-shape-seed) (contains? flags :shape)))
-           wf?    (boolean (contains? flags :wireframe))
-           provided (when (= 3 (count vecs)) vecs)]
-       `(apply ~'bezier-to
-               (conj (edit-bezier-request! ~shape? ~wf? ~provided) :local))))
+     (if (some #{:at} args)
+       (let [path-expr  (first args)
+             mark       (second (drop-while #(not= :at %) args))
+             symmetric? (boolean (some #{:symmetric} args))]
+         `(apply ~'bezier-to-anchor ~path-expr :at ~mark
+                 (edit-bezier-anchor-request! '~path-expr ~mark ~symmetric?)))
+       (let [vecs  (vec (filter vector? args))
+             flags (set (filter keyword? args))
+             shape? (boolean (or (contains? flags :as-shape-seed) (contains? flags :shape)))
+             wf?    (boolean (contains? flags :wireframe))
+             provided (when (= 3 (count vecs)) vecs)]
+         `(apply ~'bezier-to
+                 (conj (edit-bezier-request! ~shape? ~wf? ~provided) :local)))))
 
    ;; set-creation-pose!: move the origin/grip of a registered mesh
    ;; without moving its geometry. The turtle commands define the new pose.

@@ -79,7 +79,9 @@ Draw smooth bezier curves to target positions:
 ;; Bezier to named anchor (uses both headings for smooth connection)
 (bezier-to-anchor :name)
 (bezier-to-anchor :name :steps 24)
-(bezier-to-anchor :name :tension 0.5)   ; Control point distance (default 0.33)
+(bezier-to-anchor :name :tension 0.5)   ; Control point distance (default 0.33, both handles)
+(bezier-to-anchor :name :tension 0.5 :tension-end 0.2) ; asymmetric handles (directions stay locked to headings)
+(bezier-to-anchor my-path :at :name)    ; resolve :name from a path inline (no with-path needed)
 ```
 
 **Bezier along path.** Smooth bezier approximation of an existing turtle path, with C1 continuity at segment junctions:
@@ -90,7 +92,10 @@ Draw smooth bezier curves to target positions:
 (bezier-as my-path :steps 32)                ; Resolution per bezier segment
 (bezier-as my-path :cubic true)              ; Catmull-Rom spline tangents
 (bezier-as my-path :max-segment-length 20)   ; Subdivide long segments first
+(bezier-as my-path :control true)            ; vertices = CONTROL points (see below)
 ```
+
+**Control-polygon mode (`:control true`).** The default `bezier-as` interpolates — the curve passes *through* the path's vertices. With `:control true` the vertices become **off-curve control points** instead: the curve passes through each segment's *midpoint*, tangent to the polygon there, and is C1 (one quadratic per interior vertex; endpoints clamped, so the curve still starts at the first vertex and ends at the last). This is the dual of the default mode — it *rounds* the control polygon (like a quadratic B-spline / TrueType outline). Feeding a corner's two legs rounds the corner; the more vertices, the finer the control over the shape.
 
 Works both in direct turtle mode and inside `path` recordings.
 
@@ -418,6 +423,11 @@ Create paths from coordinate pairs (like `poly` for shapes):
 (shape-perimeters shape)             ; [outer hole1 hole2 ...] per-contour lengths
 (path-length path)                   ; Length of open path (3D, no closing edge)
 
+;; Reverse / mirror (3D — full turtle frame carried; common on 2D profiles)
+(reverse-path path)                  ; trace path's waypoints in reverse
+(mirror-path path)                   ; reflect across plane whose normal = end heading (the true tangent)
+(mirror-path path [nx ny])           ; reflect across plane with an explicit normal
+
 ;; Extract portion of path by height
 (subpath-y path from-h to-h)         ; Clip path vertically, output starts at Y=0
 
@@ -431,6 +441,16 @@ Create paths from coordinate pairs (like `poly` for shapes):
 ;; Type predicate
 (path? x)                            ; true if x is a path map
 ```
+
+**Completing a symmetric curve from one half.** Author half of a symmetric curve (start → midpoint `M`), then mirror it across the symmetry axis and reverse it so the two pieces join head-to-tail:
+
+```clojure
+(def half (path (bezier-to [36.06 8.94 0] [18.09 0 0] [29.34 2.21 0])))  ; O → M
+(def full (path (follow-path half)
+                (follow-path (reverse-path (mirror-path half)))))           ; O → M → E
+```
+
+`mirror-path` reflects across the plane through the half's end point; its one-argument form uses the **end heading** as the plane normal (so the plane is the turtle's right/up plane there). A path ends facing the true tangent of its last segment — a `bezier-to` records the analytic end tangent, exactly like the turtle-level `bezier-to`, so `(f …)` after it continues tangent — which makes the default accurate without naming an axis. Pass a normal explicitly only to mirror across a different plane. Both work in 3D. See `examples/spigolo-quattro-modi.clj` for the same corner built four ways (`bezier-to` with computed handles, `bezier-to-anchor` with a tension, `edit-bezier`, and half + mirror).
 
 ---
 
@@ -1760,9 +1780,20 @@ Query distances, areas, and bounding boxes:
 (ruler :box1 :box2)                ; ruler between centroids
 (ruler :box1 :top [0 0 50])       ; ruler from face to point
 (ruler [0 0 0] [100 0 0])         ; ruler between points
+(ruler [0 45] (mid ps 1))         ; 2D points accepted; mid of a path segment
 
 (clear-rulers)                     ; remove all rulers
 ```
+
+Point specs accept 2D vectors too (`[x y]`, padded to `z=0`). Two helpers produce points to measure to:
+
+```clojure
+(mid [0 0] [10 4])                 ; midpoint of two points → [5 2 0]
+(mid my-path 1)                    ; midpoint of segment 1 (the 2nd edge) of a path
+(seg-mid my-path 1)                ; same, explicit
+```
+
+Handy with the control-polygon `bezier-as :control`, whose curve passes through the segment midpoints: e.g. tune a control polygon by iterating until `(distance [0 a] (mid poly 1))` reaches a target.
 
 Rulers show a line with endpoint markers and a floating distance label.
 
@@ -2958,7 +2989,11 @@ The `tweak` macro provides interactive parameter exploration with real-time prev
 (edit-bezier [40 0 0] [13 10 0] [27 10 0])     ; re-open an existing curve
 (follow-path (path (edit-bezier)))             ; as a path
 (stroke-shape (path (edit-bezier :shape)) 3)   ; as a 2D profile seed
+(edit-bezier ps :at :end)                      ; anchor form — edit tensions (2 DOF)
+(edit-bezier ps :at :end :symmetric)           ; anchor form — single shared tension
 ```
+
+**Anchor / tension form.** `(edit-bezier path :at :mark)` edits a curve whose endpoints and tangent directions are fixed by the path's marks (start = current pose, end = the named mark); only the control-point distances (tensions) are editable, with the handle directions locked to the headings. It is the visual way to author a `bezier-to-anchor` — the arrows raise/lower the tension and the live extruded result reshapes (no ephemeral control polygon is drawn). `:symmetric` ties the two tensions into one shared value (the natural choice for symmetric corners; `Tab` switches handles only in the asymmetric case). On confirm the marker is rewritten to `(bezier-to-anchor path :at :mark :tension t)` (plus `:tension-end` when asymmetric), keeping `path` as the original expression.
 
 While editing, `(edit-bezier …)` draws a valid default curve so downstream operations run; on confirm it is rewritten to the edited `(bezier-to … :local)`. The marker opens a modal session. The start point P0 is the turtle pose at the call site — it is never written to source, and is recomputed on each eval. Three movable points (the end point and the two control points) are shown in the viewport along with the control polygon and a live preview curve; the turtle indicator marks P0.
 
