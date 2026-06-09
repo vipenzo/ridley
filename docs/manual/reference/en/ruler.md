@@ -23,10 +23,15 @@ a measurement call. Argument forms are identical to `distance`.
 
 A point specification is one of:
 
-- a `[x y z]` vector,
+- a `[x y z]` vector (a 2D `[x y]` is accepted too, padded to `z=0`),
 - a registered mesh name (keyword) — resolves to its centroid,
 - a mesh name followed by a face id (keyword) — resolves to that face's
   centre.
+
+The helpers `mid` (midpoint of two points, or of a path segment via
+`(mid path i)`) and `seg-mid` produce points to measure to — handy with
+the control-polygon `bezier-as :control`, whose curve passes through the
+segment midpoints: e.g. `(ruler [0 45] (mid poly 1))`.
 
 Rulers persist across REPL evaluations: useful for keeping reference
 distances visible while iterating on geometry. Re-evaluating the buffer

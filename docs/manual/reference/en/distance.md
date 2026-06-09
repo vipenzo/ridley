@@ -22,10 +22,15 @@ not modify turtle state.
 
 A point specification is one of:
 
-- a `[x y z]` vector — used as-is;
+- a `[x y z]` vector — used as-is (a 2D `[x y]` is accepted too, padded
+  to `z=0`);
 - a registered mesh name (keyword) — resolves to the mesh's centroid;
 - a mesh name followed by a face id (keyword) — resolves to the face's
   centre.
+
+The helpers `mid` and `seg-mid` produce points to measure to — e.g.
+`(distance [0 45] (mid my-path 1))` for the midpoint of a path's 2nd
+segment.
 
 The arguments are parsed greedily from left to right: a keyword followed
 by another keyword *that names a face on it* is interpreted as

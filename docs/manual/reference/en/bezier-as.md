@@ -10,7 +10,8 @@ status: stable
 ## Signature
 
 `(bezier-as path)`
-`(bezier-as path & {:keys [tension steps cubic max-segment-length]})`
+`(bezier-as path & {:keys [tension steps cubic max-segment-length control]})`
+`(bezier-as path :control true)`
 
 ## Description
 
@@ -32,6 +33,13 @@ recorded path).
   bezier). Default `false` (quadratic).
 - `:max-segment-length` — subdivide long input segments before smoothing
   so each bezier covers at most this length. Useful for sparse paths.
+- `:control` — when `true`, treat the path's vertices as **off-curve
+  control points** instead of interpolating them: the curve passes through
+  each segment *midpoint*, tangent to the polygon there, with the ends
+  clamped (one quadratic per interior vertex). This *rounds* the control
+  polygon — the dual of the default interpolating mode — like a quadratic
+  B-spline / TrueType outline. `:tension`/`:cubic` don't apply here (the
+  shape is fixed by the polygon).
 
 ## Example
 
@@ -59,6 +67,20 @@ Smooth a piecewise-linear path and extrude along the resulting curve.
 
 Higher `:tension` produces a more swoopy result; `:steps` controls the
 per-bezier resolution.
+
+{{example: bezier-as-control}}
+
+<!-- example-source: bezier-as-control -->
+```clojure
+;; vertices as control points: the L's corner is rounded into a fillet
+(def corner (path (f 30) (th 90) (f 30)))
+(register wall (extrude (stroke-shape (bezier-as corner :control true) 3) (f 10)))
+```
+<!-- /example-source -->
+
+`:control` rounds the control polygon (curve through the midpoints) rather
+than passing through the vertices — handy for filleting corners or shaping
+a profile by its control polygon. See `examples/spigolo-quattro-modi.clj`.
 
 ## Notes
 

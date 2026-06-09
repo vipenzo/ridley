@@ -19,9 +19,11 @@ advanced segment by segment; marks created during recording are NOT
 re-emitted (the live turtle has no recorder). If the pen is down,
 lines are drawn just as if the commands had been issued directly.
 
-`follow-path` is the turtle-level counterpart of `follow`: where
-`follow` splices a path into another recording, `follow-path` walks
-the path on the actual turtle.
+`follow-path` is the turtle-level counterpart of `follow`. On the live
+turtle it walks the path; **inside a `(path …)` recording it splices the
+path's commands into the recording** (the same as `follow`), so the two
+names are interchangeable there. This is what lets you stitch paths
+together, e.g. `(path (follow-path a) (follow-path b))`.
 
 ## Parameters
 

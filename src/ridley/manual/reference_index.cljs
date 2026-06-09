@@ -417,6 +417,24 @@
     :description "Measure the Euclidean distance between two point specifications. Returns a number, or `nil` if either side cannot be resolved. Pure function; does not modify turtle state."
     :path "docs/manual/reference/en/distance.md"}
 
+   "mid"
+   {:name "mid"
+    :category "faces"
+    :status "stable"
+    :since ""
+    :signature "(mid a b)\n(mid path i)"
+    :description "Midpoint helper returning a point. `(mid a b)` is the midpoint of two points (2D padded to z=0); `(mid path i)` is the midpoint of segment i (0-based) of a path. Pairs with `ruler`/`distance`, and lands exactly where a control-polygon `bezier-as :control` curve passes."
+    :path "docs/manual/reference/en/mid.md"}
+
+   "seg-mid"
+   {:name "seg-mid"
+    :category "faces"
+    :status "stable"
+    :since ""
+    :signature "(seg-mid path i)"
+    :description "Midpoint of segment i (0-based) of a path — the explicit spelling of `(mid path i)`. Returns [x y 0]. Useful with `ruler`/`distance` to measure to where a control-polygon (`bezier-as :control`) curve passes."
+    :path "docs/manual/reference/en/seg-mid.md"}
+
    "ease"
    {:name "ease"
     :category "live-interactive"
