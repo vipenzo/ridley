@@ -13,6 +13,7 @@ status: stable
 `(ruler mesh-name face-id q)`
 `(ruler p mesh-name face-id)`
 `(ruler mesh-name face-id other-name other-face-id)`
+`(ruler target :at anchor-name target :at anchor-name)`
 
 ## Description
 
@@ -26,7 +27,11 @@ A point specification is one of:
 - a `[x y z]` vector (a 2D `[x y]` is accepted too, padded to `z=0`),
 - a registered mesh name (keyword) — resolves to its centroid,
 - a mesh name followed by a face id (keyword) — resolves to that face's
-  centre.
+  centre,
+- `<target> :at <name>` — a named anchor / profile mark in world space
+  (as placed by `extrude` / `loft` / `revolve`), so the ruler stays
+  attached to the geometry; on a path it resolves a mark in the path's
+  own frame.
 
 The helpers `mid` (midpoint of two points, or of a path segment via
 `(mid path i)`) and `seg-mid` produce points to measure to — handy with

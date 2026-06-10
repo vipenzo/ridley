@@ -428,6 +428,9 @@ Create paths from coordinate pairs (like `poly` for shapes):
 (mirror-path path)                   ; reflect across plane whose normal = end heading (the true tangent)
 (mirror-path path [nx ny])           ; reflect across plane with an explicit normal
 
+;; Insert a mark at a fraction of the path's arc length (returns a NEW path)
+(add-mark path :name 0.5)            ; mark at the arc-length midpoint of the spine
+
 ;; Extract portion of path by height
 (subpath-y path from-h to-h)         ; Clip path vertically, output starts at Y=0
 
@@ -449,6 +452,8 @@ Create paths from coordinate pairs (like `poly` for shapes):
 (def full (path (follow-path half)
                 (follow-path (reverse-path (mirror-path half)))))           ; O → M → E
 ```
+
+`add-mark` returns a **new** path (the input is untouched) with a mark inserted at `fraction` (0..1) of the path's total spine length — it walks the top-level movement commands (`:f`/`:u`/`:rt`/`:lt`; side-trips and rotations are zero-length) and splits the straddling segment so the mark lands exactly there. Because it's just a path mark, it rides `extrude`/`loft`/`revolve` into the mesh as an `:anchor` — so a ruler to it measures the realized geometry, not a fixed construction point. E.g. to track a bezier's actual bow as you tweak its tension: `(register wall (extrude (stroke-shape (add-mark (path (bezier-to-anchor ps :at :end :tension 0.5)) :apex 0.5) 3) (f 10)))` then `(ruler :wall :at :start :wall :at :apex)`.
 
 `mirror-path` reflects across the plane through the half's end point; its one-argument form uses the **end heading** as the plane normal (so the plane is the turtle's right/up plane there). A path ends facing the true tangent of its last segment — a `bezier-to` records the analytic end tangent, exactly like the turtle-level `bezier-to`, so `(f …)` after it continues tangent — which makes the default accurate without naming an axis. Pass a normal explicitly only to mirror across a different plane. Both work in 3D. See `examples/spigolo-quattro-modi.clj` for the same corner built four ways (`bezier-to` with computed handles, `bezier-to-anchor` with a tension, `edit-bezier`, and half + mirror).
 
@@ -1766,6 +1771,9 @@ Query distances, areas, and bounding boxes:
 ;; Mixed: face center to point
 (distance :box1 :top [0 0 50])
 
+;; Named anchor / profile mark (world-space, as placed by extrude/loft/revolve)
+(distance :wall :at :center :wall :at :D)
+
 ;; Bounding box
 (bounds :box1)
 ;; => {:min [x y z] :max [x y z] :size [x y z] :center [x y z]}
@@ -1781,9 +1789,18 @@ Query distances, areas, and bounding boxes:
 (ruler :box1 :top [0 0 50])       ; ruler from face to point
 (ruler [0 0 0] [100 0 0])         ; ruler between points
 (ruler [0 45] (mid ps 1))         ; 2D points accepted; mid of a path segment
+(ruler :wall :at :start :wall :at :D) ; named anchors / profile marks (world-space)
 
 (clear-rulers)                     ; remove all rulers
 ```
+
+**Anchors as ruler endpoints.** `<mesh> :at <name>` resolves a named anchor on a
+registered mesh in **world space** — including profile marks that `extrude`/`loft`/
+`revolve` stamped from the source path. This is the placement-correct way to measure
+on swept geometry: a bare path or 2D shape has no 3D placement, so resolve the anchor
+from the *mesh* (where the section→world transform has already been applied), not from
+the path. `<path> :at <name>` is also accepted but resolves marks in the path's own
+frame (origin), not where any extrusion placed them.
 
 Point specs accept 2D vectors too (`[x y]`, padded to `z=0`). Two helpers produce points to measure to:
 
@@ -2929,13 +2946,15 @@ The desktop toolbar has buttons for:
 
 ## 14. Live & Interactive
 
+**Modal sessions.** `tweak`, `edit-bezier`, and `pilot` open a *modal session*: only one runs at a time, and while one is open the **editor is read-only** to the user. This is deliberate — these tools rewrite their own source form on confirm (splicing literals / a `bezier-to-anchor` / an `attach` back over the marker), and a hand-edit meanwhile would invalidate that text replacement. Programmatic edits (the confirm-time rewrite) still go through. **Switching workspace closes the active session** (without re-evaluating) before swapping the buffer, so a session never outlives the document it was editing.
+
 ### Tweaking
 
 The `tweak` macro provides interactive parameter exploration with real-time preview. It evaluates an expression, displays the result in the viewport, and creates sliders for numeric literals.
 
 ```clojure
-;; Default: slider for first literal only
-(tweak (extrude (circle 15) (f 30)))                       ; edits 15
+;; Default (no filter): a slider for EVERY literal — same as :all
+(tweak (extrude (circle 15) (f 30)))                       ; edits 15 and 30
 
 ;; Specific index (0-based; literals collected depth-first, left-to-right)
 (tweak 2 (extrude (circle 15) (f 30) (th 90) (f 20)))      ; indices: 0=15 1=30 2=90 3=20 ; edits 90
@@ -2993,7 +3012,7 @@ The `tweak` macro provides interactive parameter exploration with real-time prev
 (edit-bezier ps :at :end :symmetric)           ; anchor form — single shared tension
 ```
 
-**Anchor / tension form.** `(edit-bezier path :at :mark)` edits a curve whose endpoints and tangent directions are fixed by the path's marks (start = current pose, end = the named mark); only the control-point distances (tensions) are editable, with the handle directions locked to the headings. It is the visual way to author a `bezier-to-anchor` — the arrows raise/lower the tension and the live extruded result reshapes (no ephemeral control polygon is drawn). `:symmetric` ties the two tensions into one shared value (the natural choice for symmetric corners; `Tab` switches handles only in the asymmetric case). On confirm the marker is rewritten to `(bezier-to-anchor path :at :mark :tension t)` (plus `:tension-end` when asymmetric), keeping `path` as the original expression.
+**Anchor / tension form.** `(edit-bezier path :at :mark)` edits a curve whose endpoints and tangent directions are fixed by the path's marks (start = current pose, end = the named mark); only the control-point distances (tensions) are editable, with the handle directions locked to the headings. It is the visual way to author a `bezier-to-anchor`. The panel shows a **tension slider** (one when `:symmetric`, two — start / end — otherwise); drag it, or use the arrow keys (`↑↓`, `Shift` for a fine step), and the live extruded result reshapes (no ephemeral control polygon is drawn). Slider and keys stay in sync. `:symmetric` ties the two tensions into one shared value (the natural choice for symmetric corners; `Tab` switches handles only in the asymmetric case). On confirm the marker is rewritten to `(bezier-to-anchor path :at :mark :tension t)` (plus `:tension-end` when asymmetric), keeping `path` as the original expression.
 
 While editing, `(edit-bezier …)` draws a valid default curve so downstream operations run; on confirm it is rewritten to the edited `(bezier-to … :local)`. The marker opens a modal session. The start point P0 is the turtle pose at the call site — it is never written to source, and is recomputed on each eval. Three movable points (the end point and the two control points) are shown in the viewport along with the control polygon and a live preview curve; the turtle indicator marks P0.
 
@@ -3667,7 +3686,7 @@ Lower-level construction primitives behind the `anim!` / `anim-proc!` macros, pl
 
 ### 18.7 Collisions & pilot
 
-Collision callbacks fire during animation playback when two registered meshes intersect; pilot mode is the interactive positioning loop documented under §13.
+Collision callbacks fire during animation playback when two registered meshes intersect; pilot mode is the interactive positioning loop documented under §13. Like the other modal sessions (§14), pilot makes the editor read-only while open and is closed when you switch workspace.
 
 | Function | Description |
 |----------|-------------|

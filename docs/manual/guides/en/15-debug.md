@@ -147,7 +147,7 @@ Covered in detail in section 7.4.
 `tweak` is the tool for exploring the parameters of an expression with real-time sliders. It evaluates the expression, shows the result in the viewport, and creates sliders for the literal numbers in the code.
 
 <!-- example-source: tweak1 :no-run
-;; Slider for the first literal number (15)
+;; No filter: sliders for every literal number (15 and 30) — same as :all
 (register t (tweak (extrude (circle 15) (f 30))))
 -->
 

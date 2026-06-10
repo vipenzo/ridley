@@ -29,6 +29,8 @@ Ridley offers tools to answer these questions both from code (in the REPL or in 
 
 The result is a number: the distance in Ridley units (millimeters, if you are designing for 3D printing).
 
+A reference can also be a named anchor of a mesh, with the `:at` form: `(distance mesh :at :name ...)`. The anchors are the marks a shape carries with it after `path-to-shape` and extrusion (see §5.7), so you can measure between notable points of the geometry without recomputing their coordinates. `ruler` (§10.2) accepts the same forms.
+
 ### Bounds
 
 `bounds` returns the bounding box of a registered mesh:
@@ -93,6 +95,8 @@ A couple of things to know about precision. The measures refer to the *sampled* 
 -->
 
 The rulers persist between REPL commands (you can add more than one and inspect them together), but they are automatically cleared at the next Cmd+Enter. `(clear-rulers)` removes them manually.
+
+With the `:at` form the ruler latches onto a named anchor of the mesh instead of a fixed point: since the marks follow the mesh even after `attach` and `mesh-union`, it stays attached to the right point. In §11.3 this is used to measure the real bulge of a curve with a `:center` to `:apex` ruler mounted on the mesh.
 
 ### Interactive rulers with Shift+Click
 

@@ -158,6 +158,7 @@
    'subpath-y       shape/subpath-y
    'reverse-path    shape/reverse-path
    'mirror-path     shape/mirror-path
+   'add-mark        turtle/add-mark
    'offset-x        shape/offset-x
    'fit             shape/fit
    'mark-pos        impl/implicit-mark-pos

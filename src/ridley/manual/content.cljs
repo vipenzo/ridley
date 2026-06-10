@@ -1198,7 +1198,7 @@ Add `println` statements between operations to see the sequence of events. This 
       :content "The `tweak` macro turns numeric literals in your expression into interactive sliders, letting you explore parameter values in real time.
 
 ```
-(tweak expr)              ; slider for first literal
+(tweak expr)              ; sliders for ALL literals (same as :all)
 (tweak n expr)            ; slider at index n
 (tweak -1 expr)           ; last literal (Python-style)
 (tweak [0 2] expr)        ; multiple indices
@@ -1214,8 +1214,8 @@ Add `println` statements between operations to see the sequence of events. This 
 
 **Controls:** drag the slider to change a value. Use `−`/`+` to zoom the range. Press **OK** to keep the result or **Cancel** (Esc) to discard."
       :examples
-      {:tweak-basic {:caption "Tweak first literal"
-                     :description "Drag the slider to change the value `30` (the forward distance). The viewport updates in real time."}
+      {:tweak-basic {:caption "Tweak all literals"
+                     :description "With no filter, every numeric literal gets a slider. Drag any of them and the viewport updates in real time."}
        :tweak-indexed {:caption "Tweak by index"
                        :description "Index `2` selects the third numeric literal. Negative indices count from the end."}
        :tweak-all {:caption "All sliders"
@@ -2400,7 +2400,7 @@ Aggiungi istruzioni `println` tra le operazioni per vedere la sequenza degli eve
       :content "La macro `tweak` trasforma i letterali numerici della tua espressione in slider interattivi, permettendoti di esplorare i valori dei parametri in tempo reale.
 
 ```
-(tweak expr)              ; slider per il primo letterale
+(tweak expr)              ; slider per TUTTI i letterali (come :all)
 (tweak n expr)            ; slider all'indice n
 (tweak -1 expr)           ; ultimo letterale (stile Python)
 (tweak [0 2] expr)        ; indici multipli
@@ -2416,8 +2416,8 @@ Aggiungi istruzioni `println` tra le operazioni per vedere la sequenza degli eve
 
 **Controlli:** trascina lo slider per cambiare un valore. Usa `−`/`+` per zoomare il range. Premi **OK** per confermare o **Cancel** (Esc) per annullare."
       :examples
-      {:tweak-basic {:caption "Tweak primo letterale"
-                     :description "Trascina lo slider per cambiare il valore `30` (la distanza in avanti). Il viewport si aggiorna in tempo reale."}
+      {:tweak-basic {:caption "Tweak di tutti i letterali"
+                     :description "Senza filtro, ogni letterale numerico ottiene uno slider. Trascinane uno qualsiasi e il viewport si aggiorna in tempo reale."}
        :tweak-indexed {:caption "Tweak per indice"
                        :description "L'indice `2` seleziona il terzo letterale numerico. Indici negativi contano dalla fine."}
        :tweak-all {:caption "Tutti gli slider"

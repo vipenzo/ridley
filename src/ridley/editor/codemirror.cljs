@@ -36,6 +36,10 @@
 (defonce ^:private line-numbers-compartment (Compartment.))
 (defonce ^:private line-numbers-on? (atom false))
 
+;; Editable toggle — read-only during modal sessions (edit-bezier/tweak/pilot)
+;; so user edits can't invalidate the source rewrite done on confirm.
+(defonce ^:private editable-compartment (Compartment.))
+
 ;; ============================================================
 ;; AI Focus Indicator — highlights current form for AI context
 ;; ============================================================
@@ -419,8 +423,9 @@
    - initial-value: initial content string
    - on-change: callback when content changes
    - on-run: callback for Cmd+Enter
+   - on-tweak: callback for Mod-Shift-t (wrap selection in tweak)
    - on-selection-change: callback when selection/cursor changes"
-  [{:keys [parent initial-value on-change on-run on-selection-change]}]
+  [{:keys [parent initial-value on-change on-run on-tweak on-selection-change]}]
   (let [extensions (cond-> [;; Basic editor features
                             (highlightSpecialChars)
                             (history)
@@ -455,6 +460,12 @@
                             (create-selection-layer-fix)
                             ;; Keymaps (run-keymap first for priority)
                             (create-run-keymap on-run)
+                            ;; Mod-Alt-t: wrap the selection in (tweak …) and run
+                            ;; (Mod-Shift-t is reserved by the browser — reopen tab)
+                            (.of keymap #js [#js {:key "Mod-Alt-t"
+                                                  :run (fn [_view]
+                                                         (when on-tweak (on-tweak))
+                                                         true)}])
                             (.of keymap clojure-mode/paredit_keymap)
                             (.of keymap historyKeymap)
                             (.of keymap closeBracketsKeymap)
@@ -470,7 +481,10 @@
                                                          (.blur (.-contentDOM view))
                                                          true)}])
                             ;; Line numbers (off by default, toggled dynamically)
-                            (.of line-numbers-compartment #js [])]
+                            (.of line-numbers-compartment #js [])
+                            ;; Editable toggle (default editable; modal sessions
+                            ;; reconfigure this to read-only)
+                            (.of editable-compartment #js [])]
                      ;; Add change listener if provided
                      on-change (conj (create-change-listener on-change))
                      ;; Add selection change listener if provided
@@ -516,6 +530,16 @@
       (.dispatch view
                  #js {:effects (.reconfigure line-numbers-compartment ext)})
       on?)))
+
+(defn set-read-only!
+  "Make the editor read-only to the user (`read-only?` true) or editable again.
+   Uses `EditorView.editable`, which blocks user input only — PROGRAMMATIC changes
+   (a modal session's confirm-time source rewrite via `replace-range`) still go
+   through. Idempotent; safe to call when no view exists."
+  [read-only?]
+  (when-let [view @editor-instance]
+    (let [ext (if read-only? (.of (.-editable EditorView) false) #js [])]
+      (.dispatch view #js {:effects (.reconfigure editable-compartment ext)}))))
 
 (defn line-numbers-visible?
   "Returns whether line numbers are currently shown."

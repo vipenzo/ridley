@@ -39,6 +39,7 @@
             [ridley.anim.core :as anim]
             [ridley.anim.playback :as anim-playback]
             [ridley.editor.modal-evaluator :as modal]
+            [ridley.editor.tweak-mode :as tweak-mode]
             [ridley.version :as version]
             [ridley.audio :as audio]))
 
@@ -2114,6 +2115,7 @@
    workspace's library set."
   [id]
   (when (and @editor-view (not= id (workspace/current-id)))
+    (modal/force-close-active!)             ;; end any modal session before swapping the buffer
     (save-to-storage)                       ;; persist the doc we're leaving
     (workspace/set-current! id)
     (when-let [w (workspace/get-workspace id)]
@@ -2128,6 +2130,7 @@
    workspace inherits the current library set."
   [code]
   (when @editor-view
+    (modal/force-close-active!)
     (save-to-storage)
     (let [id (workspace/new-workspace! code)]
       (workspace/set-current! id)
@@ -2142,6 +2145,7 @@
   (if (= id (workspace/current-id))
     (let [remaining (remove #(= (:id %) id) (workspace/list-workspaces))
           target-id (or (:id (first remaining)) (workspace/new-workspace! ""))]
+      (modal/force-close-active!)           ;; closing the current doc replaces the buffer
       (workspace/remove-workspace! id)
       (workspace/set-current! target-id)
       (when (and @editor-view (workspace/get-workspace target-id))
@@ -2157,6 +2161,7 @@
    set parsed from the file header (nil for an external file → inherit current)."
   [content {:keys [path name libraries]}]
   (when @editor-view
+    (modal/force-close-active!)
     (save-to-storage)
     (let [id (workspace/new-workspace! content libraries)
           ws-libs (:libraries (workspace/get-workspace id))]
@@ -2822,6 +2827,35 @@
     (translate (sdf-box 8 8 8) 12 0 0)
     3))")
 
+(defn- install-tweak-context-menu!
+  "Attach a right-click menu to the editor that wraps the current selection in
+   (tweak …) and runs it. The single 'Tweak' item delegates to
+   tweak-mode/tweak-selection!, which auto-picks (tweak n) vs (tweak :all …)."
+  [container]
+  (when container
+    (.addEventListener
+     container "contextmenu"
+     (fn [e]
+       (.preventDefault e)
+       ;; Remove any stale menu
+       (when-let [old (.getElementById js/document "tweak-context-menu")]
+         (.remove old))
+       (let [menu (.createElement js/document "div")]
+         (set! (.-id menu) "tweak-context-menu")
+         (set! (.-className menu) "tweak-context-menu")
+         (set! (.. menu -style -left) (str (.-clientX e) "px"))
+         (set! (.. menu -style -top) (str (.-clientY e) "px"))
+         (set! (.-innerHTML menu) "<div class='tcm-item'>Tweak</div>")
+         (.addEventListener (.querySelector menu ".tcm-item") "click"
+                            (fn [_] (.remove menu) (tweak-mode/tweak-selection!)))
+         (.appendChild (.-body js/document) menu)
+         ;; Dismiss on the next outside click
+         (let [dismiss (fn dismiss [ev]
+                         (when-not (.contains menu (.-target ev))
+                           (.remove menu)
+                           (.removeEventListener js/document "mousedown" dismiss true)))]
+           (js/setTimeout #(.addEventListener js/document "mousedown" dismiss true) 0)))))))
+
 (defn init []
   (let [canvas (.getElementById js/document "viewport")
         editor-container (.getElementById js/document "editor-explicit")
@@ -2841,9 +2875,12 @@
                            (send-script-debounced)
                            (sync-voice-state))
               :on-run evaluate-definitions-user!
+              :on-tweak (fn [] (tweak-mode/tweak-selection!))
               :on-selection-change (fn []
                                      (maybe-update-ai-focus!)
                                      (sync-voice-state))}))
+    ;; Right-click in the editor → "Tweak" menu (wraps the selection in tweak)
+    (install-tweak-context-menu! editor-container)
     ;; Wire editor content getter for tweak_mode
     (reset! editor-state/get-editor-content
             (fn [] (when @editor-view (cm/get-value @editor-view))))

@@ -47,19 +47,44 @@
     (do (reset! skip-next false) true)
     false))
 
+;; Transient-tweak flag: set by the editor's "Tweak this value" command, which
+;; auto-wraps a selection in (tweak …). It carries the ORIGINAL selected text so
+;; that cancelling the session can restore it (unwrap the auto-inserted wrapper).
+;; Confirm needs nothing extra — tweak already bakes the value over the wrapper.
+(defonce ^:private tweak-transient (atom nil))
+
+(defn arm-tweak-transient!
+  "Mark the next tweak session as transient (auto-wrapped), carrying `restore-text`
+   — the original source to put back if the session is cancelled."
+  [restore-text]
+  (reset! tweak-transient restore-text))
+
+(defn consume-tweak-transient!
+  "Return the pending transient restore-text (clearing it), or nil if none."
+  []
+  (let [v @tweak-transient]
+    (reset! tweak-transient nil)
+    v))
+
 ;; ============================================================
 ;; Mutex — one modal session at a time
 ;; ============================================================
 
 (defn claim!
   "Claim the single interactive-mode slot for `kind`. Throws (same exception as
-   today) if another modal session is already active."
+   today) if another modal session is already active. On a successful claim the
+   editor is made read-only, so user edits can't invalidate the source rewrite
+   the session performs on confirm."
   [kind]
-  (state/claim-interactive-mode! kind))
+  (state/claim-interactive-mode! kind)   ;; throws if busy — read-only only on success
+  (cm/set-read-only! true))
 
 (defn release!
-  "Release the interactive-mode slot."
+  "Release the interactive-mode slot and make the editor editable again. Every
+   teardown path (confirm! / cancel! / force-close!) routes through here, so the
+   editor is always restored."
   []
+  (cm/set-read-only! false)
   (state/release-interactive-mode!))
 
 ;; ============================================================

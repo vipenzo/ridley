@@ -55,6 +55,7 @@ After confirmation, the editor text containing `(pilot cubo)` is replaced with a
 - **Two contexts: REPL vs script.** Invocations from the REPL skip the editor-rewrite step (there is no `(pilot ...)` literal to find); script-mode invocations require the form to be present in the editor text or `pilot-request!` raises an error.
 - **Single-slot interactive mode.** Pilot competes with other interactive modes (e.g. `tweak`) for a global slot. Only one can be active at a time; the second one raises.
 - **SDF support.** Pilot accepts SDF nodes in addition to meshes. The interactive session drives the node's creation-pose; on confirm, the attached commands apply to the SDF.
+- **Modal session.** While pilot is open the editor is **read-only** (it rewrites its own source on confirm, so a hand-edit would break the substitution). **Switching workspace closes the session** before swapping the buffer.
 
 ## See also
 

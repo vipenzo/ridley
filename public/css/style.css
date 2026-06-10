@@ -132,14 +132,14 @@ html, body {
   font-size: 12px;
 }
 
-#test-slider-panel .slider-row {
+.modal-panel .slider-row {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-bottom: 4px;
 }
 
-#test-slider-panel .slider-label {
+.modal-panel .slider-label {
   color: #9cdcfe;
   min-width: 100px;
   text-align: right;
@@ -148,21 +148,21 @@ html, body {
   text-overflow: ellipsis;
 }
 
-#test-slider-panel .test-slider {
+.modal-panel .test-slider {
   flex: 1;
   height: 4px;
   accent-color: #569cd6;
   cursor: pointer;
 }
 
-#test-slider-panel .slider-value {
+.modal-panel .slider-value {
   color: #ce9178;
   min-width: 50px;
   text-align: left;
   font-variant-numeric: tabular-nums;
 }
 
-#test-slider-panel .slider-value-input {
+.modal-panel .slider-value-input {
   width: 70px;
   min-width: 50px;
   background: #1e1e30;
@@ -177,11 +177,11 @@ html, body {
   outline: none;
 }
 
-#test-slider-panel .slider-value-input:focus {
+.modal-panel .slider-value-input:focus {
   border-color: #7cbcf7;
 }
 
-#test-slider-panel .test-zoom-btn {
+.modal-panel .test-zoom-btn {
   width: 20px;
   height: 20px;
   padding: 0;
@@ -196,18 +196,18 @@ html, body {
   flex-shrink: 0;
 }
 
-#test-slider-panel .test-zoom-btn:hover {
+.modal-panel .test-zoom-btn:hover {
   background: #3d3d54;
 }
 
-#test-slider-panel .test-buttons {
+.modal-panel .test-buttons {
   display: flex;
   gap: 8px;
   margin-top: 6px;
   justify-content: flex-end;
 }
 
-#test-slider-panel .test-btn {
+.modal-panel .test-btn {
   padding: 3px 14px;
   border: 1px solid #4a4a6a;
   border-radius: 3px;
@@ -218,16 +218,16 @@ html, body {
   cursor: pointer;
 }
 
-#test-slider-panel .test-btn:hover {
+.modal-panel .test-btn:hover {
   background: #3d3d54;
 }
 
-#test-slider-panel .test-btn-ok {
+.modal-panel .test-btn-ok {
   background: #264f2e;
   border-color: #3a7d44;
 }
 
-#test-slider-panel .test-btn-ok:hover {
+.modal-panel .test-btn-ok:hover {
   background: #2d6634;
 }
 
@@ -327,6 +327,30 @@ html, body {
 
 .modal-panel .pilot-btn-ok:hover {
   background: #2d6634;
+}
+
+/* Editor right-click "Tweak" menu */
+.tweak-context-menu {
+  position: fixed;
+  background: #2d2d2d;
+  border: 1px solid #454545;
+  border-radius: 4px;
+  padding: 4px 0;
+  z-index: 10000;
+  min-width: 90px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+
+.tweak-context-menu .tcm-item {
+  padding: 6px 16px;
+  color: #d4d4d4;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.tweak-context-menu .tcm-item:hover {
+  background: #094771;
+  color: #fff;
 }
 
 .section-header {

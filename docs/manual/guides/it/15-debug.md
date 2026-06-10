@@ -147,7 +147,7 @@ Trattato nel dettaglio nella sezione 7.4.
 `tweak` è lo strumento per esplorare i parametri di un'espressione con slider in tempo reale. Valuta l'espressione, mostra il risultato nel viewport, e crea slider per i numeri letterali nel codice.
 
 <!-- example-source: tweak1 :no-run
-;; Slider per il primo numero letterale (15)
+;; Senza filtro: slider per ogni numero letterale (15 e 30) — come :all
 (register t (tweak (extrude (circle 15) (f 30))))
 -->
 

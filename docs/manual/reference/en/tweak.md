@@ -22,7 +22,7 @@ status: stable
 
 Macro for interactive parameter exploration with live sliders. Evaluates `expr`, displays the result in the viewport, and creates sliders for the numeric literals it finds in the source form. Moving a slider re-evaluates the expression with the substituted value (~100 ms debounce) and updates the preview.
 
-Numeric literals are collected depth-first, left-to-right and indexed from `0`. A negative index counts from the end (Python-style). A vector of indices selects multiple literals; `:all` selects every literal in the form.
+Numeric literals are collected depth-first, left-to-right and indexed from `0`. A negative index counts from the end (Python-style). A vector of indices selects multiple literals; `:all` selects every literal in the form. **With no filter at all** — `(tweak expr)` — every literal gets a slider, the same as `:all` (the common case: tweak the whole thing).
 
 When the first argument is a keyword, `tweak` switches to **registry mode**: it operates on the named registered mesh, hides the original during the session, re-registers the result on **OK**, and restores the original on **Cancel**. A bare `(tweak :name)` re-runs the source form that `register` stored automatically; the explicit form `(tweak :name expr)` overrides that with a new expression.
 
@@ -33,7 +33,7 @@ Each slider has a default range of `[value * 0.1, value * 3]` (or `[-50, 50]` wh
 - `expr` — the expression to preview and tweak. Numeric literals inside it become slider-controlled.
 - `n` — integer index of the literal to tweak (negative counts from the end).
 - `[n1 n2 ...]` — vector of indices; one slider per selected literal.
-- `:all` — slider for every numeric literal in the form.
+- `:all` — slider for every numeric literal in the form (also the default when no filter is given).
 - `:reg-name` — keyword naming a registered mesh; switches to registry mode.
 - `filter` — index, index-vector, or `:all`; combines with a registry name.
 
@@ -43,12 +43,12 @@ Each slider has a default range of `[value * 0.1, value * 3]` (or `[-50, 50]` wh
 
 <!-- example-source: tweak-default -->
 ```clojure
-;; Default: one slider for the first literal only (the circle radius)
+;; Default (no filter): one slider per literal — same as :all
 (tweak (extrude (circle 15) (f 30)))
 ```
 <!-- /example-source -->
 
-A single slider appears for `15`. Drag it to see the cylinder radius change in real time; press OK to commit the value back into the form.
+Two sliders appear, for `15` and `30`. Drag them to see the cylinder's radius and length change in real time; press OK to commit the values back into the form. Pass an index (or vector, or `:all`) to narrow the set.
 
 ## Variations
 
@@ -85,10 +85,10 @@ Vectors mix positive and negative indices freely. `:all` opens one slider per li
 ;; Register first, then tweak the stored source form
 (register vase (extrude (circle 20) (f 50)))
 
-;; Slider for the first literal of the stored form (the radius)
+;; No filter: sliders for every literal of the stored form (radius and length)
 (tweak :vase)
 
-;; Same thing with all literals
+;; Explicit :all is the same as the bare form
 (tweak :all :vase)
 
 ;; Override the source: tweak with an explicit expression bound to :vase
@@ -107,6 +107,7 @@ Registry mode keeps the scene clean: the original `:vase` is hidden while you tw
 - **Literal collection is syntactic, not semantic.** A literal `15` inside a comment or string is not collected; a `15` inside a quoted form is. Wrap a number in `(+ 0 N)` to hide it from the collector when you do not want a slider for it.
 - **Live preview detects the result type.** Meshes, shapes, and paths each render with the appropriate preview widget; non-renderable results show a placeholder.
 - **`anim-proc!` for time-driven exploration.** When the parameter you want to sweep is `t` rather than a discrete pick, `anim-proc!` gives you a 0→1 timeline and a `gen-fn` per frame; `tweak` is for ad-hoc value picking.
+- **Modal session.** While a `tweak` session is open the editor is **read-only** (it rewrites its own source on confirm, so a hand-edit would break the substitution) and only one modal session — `tweak`, `edit-bezier`, or `pilot` — runs at a time. **Switching workspace closes the session** before swapping the buffer.
 
 ## See also
 

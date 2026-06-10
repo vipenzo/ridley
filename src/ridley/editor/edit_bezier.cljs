@@ -17,6 +17,7 @@
   (:require [ridley.editor.state :as state]
             [ridley.editor.codemirror :as cm]
             [ridley.editor.modal-evaluator :as modal]
+            [ridley.editor.ui :as ui]
             [ridley.turtle.core :as turtle]
             [ridley.turtle.bezier :as bezier]
             [ridley.viewport.core :as viewport]
@@ -233,6 +234,10 @@
    arm-skip? is false: the modified script has the marker replaced, so there is no
    (edit-bezier) to re-enter and no flag to leave armed."
   []
+  ;; Clear stale ruler overlays first: the re-evaled buffer re-runs its own
+  ;; (ruler …) forms, which append — without this they stack across nudges and
+  ;; the reading never comes back down. The script recreates the live ones.
+  (viewport/clear-rulers!)
   (modal/reeval-script! build-modified-script "edit-bezier eval error:" false)
   (render!))
 
@@ -261,13 +266,6 @@
         (= :end selected)  "end"
         :else              "start"))
 
-(defn- anchor-step-label
-  "Tension readout: a single value when symmetric, start / end when asymmetric."
-  [{:keys [symmetric? tension tension-end]}]
-  (if symmetric?
-    (fmt-num tension)
-    (str (fmt-num tension) " / " (fmt-num tension-end))))
-
 (defn update-panel!
   "Refresh the selected-point label and step display (mode-aware)."
   []
@@ -277,8 +275,11 @@
         (do
           (when-let [el (.querySelector panel ".eb-point")]
             (set! (.-textContent el) (anchor-point-label s)))
-          (when-let [el (.querySelector panel ".eb-step")]
-            (set! (.-textContent el) (anchor-step-label s))))
+          ;; Keyboard nudges push the current tension(s) back into the slider(s).
+          (when-let [sl (get-in s [:sliders :tension])]
+            ((:set-value! sl) (:tension s)))
+          (when-let [sl (get-in s [:sliders :tension-end])]
+            (when-not (:symmetric? s) ((:set-value! sl) (:tension-end s)))))
         (do
           (when-let [el (.querySelector panel ".eb-point")]
             (set! (.-textContent el) (nth point-labels (:selected s))))
@@ -287,8 +288,48 @@
               (set! (.-textContent el)
                     (if (seq buf) (str buf "_") (str (:step s) "mm"))))))))))
 
+;; --- Tension sliders (anchor / tension mode) -----------------------------
+
+(defn- tension-range
+  "Slider [min max step] for a tension: 0 up to a generous max, fine step.
+   Tensions are clamped >= 0 and usually live in ~0..1.5; zoom widens if needed."
+  [v]
+  [0 (max 1.5 (* 2 v)) 0.01])
+
+(defn- on-tension-input
+  "Slider handler for the tension named by `which` (:tension or :tension-end):
+   store it (clamped >= 0) and refresh the live preview. Deliberately does NOT
+   call update-panel! — the slider already shows the value, and re-pushing it
+   mid-drag would fight the thumb."
+  [which]
+  (fn [v]
+    (swap! session assoc which (max 0 v))
+    (refresh-preview!)))
+
+(defn- build-tension-sliders!
+  "Build the tension slider row(s) into the panel's .eb-sliders container and
+   stash their handles in session under :sliders, so keyboard nudges can sync."
+  [panel s]
+  (when-let [container (.querySelector panel ".eb-sliders")]
+    (let [sym? (:symmetric? s)
+          t-row (ui/create-slider-row {:label    (if sym? "tension" "tension start")
+                                       :value    (:tension s)
+                                       :range-fn tension-range
+                                       :on-input (on-tension-input :tension)})]
+      (.appendChild container (:row t-row))
+      (swap! session assoc-in [:sliders :tension] t-row)
+      (when-not sym?
+        (let [e-row (ui/create-slider-row {:label    "tension end"
+                                           :value    (:tension-end s)
+                                           :range-fn tension-range
+                                           :on-input (on-tension-input :tension-end)})]
+          (.appendChild container (:row e-row))
+          (swap! session assoc-in [:sliders :tension-end] e-row))))))
+
 (defn- create-panel!
-  "Create the edit-bezier UI panel (reusing pilot's CSS classes) and mount it."
+  "Create the edit-bezier UI panel (reusing pilot's CSS classes) and mount it.
+   In anchor / tension mode it also mounts one (symmetric) or two (asymmetric)
+   tension sliders alongside the keyboard controls."
   []
   (let [s @session
         anchor? (:anchor-mode? s)
@@ -299,7 +340,7 @@
                (str (if shape-seed? "shape-seed" "3D")
                     (when wf? " · wireframe")))
         hint (if anchor?
-               (str "↑↓: tension · Shift: fine"
+               (str "drag sliders · ↑↓: tension · Shift: fine"
                     (when-not (:symmetric? s) " · Tab: switch handle")
                     " · Enter: OK · Esc: cancel")
                (str "Tab: next point · ←→↑↓: move"
@@ -313,13 +354,17 @@
                "<span class='pilot-mode-badge'>" mode "</span></div>"
                "<div class='pilot-controls'>"
                "<span>" point-label ": <span class='eb-point'>end</span></span>"
-               "<span>" (if anchor? "Tension" "Step") ": <span class='eb-step'>5mm</span></span>"
+               ;; Free mode shows the step readout as text; anchor mode shows
+               ;; tension via the sliders below instead.
+               (if anchor? "" "<span>Step: <span class='eb-step'>5mm</span></span>")
                "</div>"
+               (when anchor? "<div class='eb-sliders'></div>")
                "<div class='pilot-commands'>" hint "</div>"
                "<div class='pilot-buttons'>"
                "<button class='pilot-btn pilot-btn-ok eb-ok'>OK</button>"
                "<button class='pilot-btn pilot-btn-cancel eb-cancel'>Cancel</button>"
                "</div>"))
+    (when anchor? (build-tension-sliders! panel s))
     (.addEventListener (.querySelector panel ".eb-ok") "click" (fn [_] (confirm!)))
     (.addEventListener (.querySelector panel ".eb-cancel") "click" (fn [_] (cancel!)))
     (modal/mount-panel! panel)

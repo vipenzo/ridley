@@ -120,6 +120,8 @@ To query a single mark without going through `move-to`:
 
 `mark-pos` returns the 3D coordinates of the mark. `mark-x`, `mark-y`, `mark-z` return the individual components. They are useful when you need the numeric position, not the movement of the turtle.
 
+While `mark` leaves a marker during the recording of the path, `add-mark` adds one to an already-built path, at a fractional position along its length: `(add-mark p :apex 0.5)` puts `:apex` at the path's midpoint, measured by arc length. It is useful when the point you need does not coincide with any command of the path, for example the apex of a curve. We will see it at work in §11.3.
+
 ## Side-trip: branches that return to the spine
 
 Often a path has a main spine (the axis along which the structure develops) and side branches where marks are left for accessory components. Without a dedicated mechanism, each branch would have to manually undo its own movements to bring the turtle back to the spine: turn right, forward 20, leave a mark, back 20, turn left. Fragile and tedious.
@@ -442,5 +444,6 @@ Only the 6..18 band of the profile is revolved. It returns `nil` if the resultin
 | `bezier-as` | smoothing as a bezier | 4.2 |
 | `fit` | scales to a target size | 3 (Reference) |
 | `subpath-y` | cuts a height band | 5.8 |
+| `add-mark` | adds a mark at a fractional position | 5.3 |
 
 The path is the most versatile piece of data in Ridley after the mesh: it describes a route, marks positions, and lends itself to different consumers without changing. The same path can be the trajectory of a tube, the skeleton of an assembly, and the profile of a plate, all in the same script.

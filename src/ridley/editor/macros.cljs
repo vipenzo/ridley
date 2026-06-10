@@ -1949,7 +1949,7 @@
    ;; ============================================================
    ;; tweak: interactive parameter tweaking with sliders
    ;; ============================================================
-   ;; (tweak expr)              — slider for first numeric literal only
+   ;; (tweak expr)              — sliders for ALL numeric literals (same as :all)
    ;; (tweak n expr)            — slider for literal at index n (negative = from end)
    ;; (tweak [n1 n2] expr)     — sliders for selected literals
    ;; (tweak :all expr)         — sliders for all literals

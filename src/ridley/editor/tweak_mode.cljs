@@ -10,6 +10,7 @@
             [ridley.editor.state :as state]
             [ridley.editor.codemirror :as cm]
             [ridley.editor.modal-evaluator :as modal]
+            [ridley.editor.ui :as ui]
             [ridley.scene.registry :as registry]
             [ridley.turtle.core :as turtle]
             [ridley.turtle.shape :as shape]
@@ -116,18 +117,19 @@
 
 (defn- resolve-filter
   "Resolve a filter spec into a set of valid indices.
-   nil → #{0}, int → #{n}, neg-int → #{count+n}, vec → set, :all → all."
+   nil → all (no filter = tweak every parameter), int → #{n},
+   neg-int → #{count+n}, vec → set, :all → all."
   [filt total-count]
   (let [resolve-idx (fn [n]
                       (let [resolved (if (neg? n) (+ total-count n) n)]
                         (when (and (>= resolved 0) (< resolved total-count))
                           resolved)))]
     (cond
-      (nil? filt) #{0}
+      (nil? filt) (set (range total-count))
       (= :all filt) (set (range total-count))
       (integer? filt) (if-let [i (resolve-idx filt)] #{i} #{})
       (sequential? filt) (into #{} (keep resolve-idx) filt)
-      :else #{0})))
+      :else (set (range total-count)))))
 
 ;; ============================================================
 ;; Expression substitution
@@ -156,22 +158,6 @@
 
                 :else form))]
       (walk form))))
-
-;; ============================================================
-;; Slider range computation
-;; ============================================================
-
-(defn- slider-range
-  "Compute [min max step] for a slider given an initial value."
-  [value]
-  (if (zero? value)
-    [-50 50 1]
-    (let [lo (* value 0.1)
-          hi (* value 3)
-          mn (min lo hi)
-          mx (max lo hi)
-          step (if (integer? value) 1 0.1)]
-      [mn mx step])))
 
 ;; ============================================================
 ;; Index map formatting
@@ -331,7 +317,8 @@
    In registry mode, re-shows the original mesh.
    In script-only mode, re-evaluates the original script."
   []
-  (when-let [{:keys [saved-turtle registry-name tweak-from]} @test-state]
+  (when-let [{:keys [saved-turtle registry-name tweak-from tweak-to
+                     transient-restore]} @test-state]
     (reset! @state/turtle-state-var saved-turtle)
     (viewport/clear-preview!)
     (measure/clear-ruler-overrides!)
@@ -343,9 +330,13 @@
       (do (registry/show-mesh! registry-name)
           (registry/refresh-viewport! true))
 
-      ;; Script-only mode: re-evaluate the original script to restore viewport
+      ;; Script-only mode: re-evaluate the original script to restore viewport.
+      ;; If the session was auto-wrapped by the editor command, first remove the
+      ;; (tweak …) wrapper, restoring the original text it stood in for.
       tweak-from
-      (do (modal/arm-skip!)
+      (do (when transient-restore
+            (modal/replace-source! tweak-from tweak-to transient-restore))
+          (modal/arm-skip!)
           (modal/run-definitions!)))
     (cleanup-ui!)
     (modal/release!)
@@ -404,24 +395,6 @@
       (reset! test-state nil))))
 
 ;; ============================================================
-;; Number formatting
-;; ============================================================
-
-(defn- format-value
-  "Format a numeric value for display, limiting decimal places.
-   Integers stay as-is. Floats get up to 2 decimal places,
-   removing trailing zeros."
-  [v]
-  (if (== v (Math/round v))
-    (str (long v))
-    (let [s (.toFixed v 2)]
-      ;; Remove trailing zeros: "1.50" → "1.5", "1.00" → "1"
-      (cond
-        (str/ends-with? s "00") (subs s 0 (- (count s) 3))
-        (str/ends-with? s "0")  (subs s 0 (dec (count s)))
-        :else s))))
-
-;; ============================================================
 ;; Slider UI
 ;; ============================================================
 
@@ -433,101 +406,18 @@
     ;; Create sliders for selected literals
     (doseq [lit (filter #(contains? selected-indices (:index %)) literals)]
       (let [{:keys [index value label]} lit
-            [smin smax step] (slider-range value)
-            row (.createElement js/document "div")
-            label-el (.createElement js/document "span")
-            slider (.createElement js/document "input")
-            value-el (.createElement js/document "span")]
-        (.add (.-classList row) "slider-row")
-        (.add (.-classList label-el) "slider-label")
-        (set! (.-textContent label-el) label)
-        (.add (.-classList value-el) "slider-value")
-        (set! (.-textContent value-el) (format-value value))
-        (set! (.-title value-el) "Click to type a value")
-        (set! (.-style.-cursor value-el) "pointer")
-        (set! (.-type slider) "range")
-        (set! (.-min slider) (str smin))
-        (set! (.-max slider) (str smax))
-        (set! (.-step slider) (str step))
-        (set! (.-value slider) (str value))
-        (.add (.-classList slider) "test-slider")
-        ;; Helper: apply a new value from slider or keyboard input
-        (let [timeout (atom nil)
-              apply-value! (fn [new-val]
-                             (set! (.-textContent value-el) (format-value new-val))
-                             (set! (.-value slider) (str new-val))
-                             (when-let [t @timeout] (js/clearTimeout t))
-                             (reset! timeout
-                                     (js/setTimeout
-                                      (fn []
-                                        (swap! test-state assoc-in [:current-values index] new-val)
-                                        (evaluate-and-preview!))
-                                      100)))]
-          ;; Slider drag handler
-          (.addEventListener slider "input"
-                             (fn [_e]
-                               (apply-value! (js/parseFloat (.-value slider)))))
-          ;; Click on value → inline number input
-          (.addEventListener value-el "click"
-                             (fn [_e]
-                               (let [input (.createElement js/document "input")]
-                                 (set! (.-type input) "number")
-                                 (set! (.-value input) (.-textContent value-el))
-                                 (.add (.-classList input) "slider-value-input")
-                                 ;; Replace the span with the input
-                                 (.replaceWith value-el input)
-                                 (.focus input)
-                                 (.select input)
-                                 ;; Commit on Enter or blur
-                                 (let [commit! (fn []
-                                                 (let [v (js/parseFloat (.-value input))]
-                                                   (when (and (js/isFinite v) (not (js/isNaN v)))
-                                                     ;; Re-center slider range around the new value
-                                                     (let [[new-min new-max new-step] (slider-range v)]
-                                                       (set! (.-min slider) (str new-min))
-                                                       (set! (.-max slider) (str new-max))
-                                                       (set! (.-step slider) (str new-step)))
-                                                     (apply-value! v))
-                                                   ;; Restore the span
-                                                   (.replaceWith input value-el)))]
-                                   (.addEventListener input "blur" (fn [_] (commit!)))
-                                   (.addEventListener input "keydown"
-                                                      (fn [e]
-                                                        (when (= (.-key e) "Enter")
-                                                          (.preventDefault e)
-                                                          (commit!))
-                                                        (when (= (.-key e) "Escape")
-                                                          (.preventDefault e)
-                                                          (.replaceWith input value-el)))))))))
-        ;; Zoom buttons: re-center range on current value
-        (let [zoom-fn (fn [factor]
-                        (let [cur (js/parseFloat (.-value slider))
-                              old-min (js/parseFloat (.-min slider))
-                              old-max (js/parseFloat (.-max slider))
-                              half-span (/ (* (- old-max old-min) factor) 2)
-                              old-step (js/parseFloat (.-step slider))
-                              new-step (if (> factor 1)
-                                         (* old-step 2)
-                                         (max 0.01 (/ old-step 2)))]
-                          (set! (.-min slider) (str (- cur half-span)))
-                          (set! (.-max slider) (str (+ cur half-span)))
-                          (set! (.-step slider) (str new-step))
-                          (set! (.-value slider) (str cur))))
-              zoom-out (.createElement js/document "button")
-              zoom-in (.createElement js/document "button")]
-          (.add (.-classList zoom-out) "test-zoom-btn")
-          (.add (.-classList zoom-in) "test-zoom-btn")
-          (set! (.-textContent zoom-out) "+")
-          (set! (.-textContent zoom-in) "\u2212")  ;; minus sign
-          (set! (.-title zoom-out) "Wider range")
-          (set! (.-title zoom-in) "Narrower range (more precise)")
-          (.addEventListener zoom-out "click" (fn [_] (zoom-fn 2)))
-          (.addEventListener zoom-in "click" (fn [_] (zoom-fn 0.5)))
-          (.appendChild row label-el)
-          (.appendChild row zoom-in)
-          (.appendChild row slider)
-          (.appendChild row zoom-out)
-          (.appendChild row value-el))
+            timeout (atom nil)
+            {:keys [row]} (ui/create-slider-row
+                           {:label label
+                            :value value
+                            :on-input (fn [new-val]
+                                        (when-let [t @timeout] (js/clearTimeout t))
+                                        (reset! timeout
+                                                (js/setTimeout
+                                                 (fn []
+                                                   (swap! test-state assoc-in [:current-values index] new-val)
+                                                   (evaluate-and-preview!))
+                                                 100)))})]
         (.appendChild panel row)))
     ;; OK / Cancel buttons
     (let [btn-row (.createElement js/document "div")
@@ -624,7 +514,7 @@
 (defn ^:export start!
   "Enter test mode. Called by the test macro via SCI bindings.
    quoted-form: the expression as data (not evaluated)
-   filt: nil (first only), int, neg-int, vector, or :all
+   filt: nil (all — same as :all), int, neg-int, vector, or :all
    registry-name: optional keyword — when set, hides the registered mesh on enter
                   and re-registers on confirm / re-shows on cancel
    locals: optional map of {symbol value} for let-bound vars captured by macro"
@@ -689,7 +579,10 @@
                                  :saved-turtle saved-turtle
                                  :registry-name registry-name
                                  :tweak-from tweak-from
-                                 :tweak-to tweak-to})
+                                 :tweak-to tweak-to
+                                 ;; transient = auto-wrapped by the editor command;
+                                 ;; carries the text to restore on cancel (unwrap).
+                                 :transient-restore (modal/consume-tweak-transient!)})
              ;; Initial eval always uses REPL path (we're inside script eval,
              ;; can't re-eval the full script recursively)
              (let [initial-result (evaluate-and-preview-repl!)]
@@ -733,6 +626,29 @@
             (str "tweak: no source form for " name " — use (tweak " name " expr)"))
            nil)
        (start! form filt name locals)))))
+
+(defn- numeric-literal?
+  "True if s is (just) a single numeric literal, ignoring surrounding space."
+  [s]
+  (boolean (re-matches #"\s*-?\d+(\.\d+)?\s*" s)))
+
+(defn ^:export tweak-selection!
+  "Editor command: wrap the current selection in (tweak …) and run the script,
+   turning the selected value(s) into sliders. A single numeric literal becomes
+   (tweak n); anything else becomes (tweak :all …) (a slider per literal inside).
+   The session is marked transient with the original text: on confirm tweak bakes
+   the values over the wrapper, on cancel the wrapper is removed and the text
+   restored. No-op if the selection is empty."
+  []
+  (let [{:keys [from to text]} (cm/get-selection)]
+    (if (and text (seq (str/trim text)))
+      (let [wrapped (if (numeric-literal? text)
+                      (str "(tweak " (str/trim text) ")")
+                      (str "(tweak :all " text ")"))]
+        (modal/arm-tweak-transient! text)
+        (cm/replace-range from to wrapped)
+        (modal/run-definitions!))
+      (state/capture-println "tweak: select a value (or expression) first"))))
 
 (defn- force-close!
   "Tear down the tweak UI and release the slot without restoring/re-evaluating.

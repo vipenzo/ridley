@@ -43,9 +43,11 @@ directions are fixed by the path's marks** (start = the current pose, end =
 the named mark). The only editable degrees of freedom are the two
 control-point distances (the *tensions*); the handle directions stay locked
 to the headings. This is the visual way to author a `bezier-to-anchor`
-without guessing tensions — drag until the curve looks right. `:symmetric`
-ties the two tensions into one (a single shared value), the natural choice
-for symmetric corners.
+without guessing tensions. The panel shows a **tension slider** (one when
+`:symmetric`, two — start / end — otherwise); drag it, or use the arrow keys
+(`↑↓`, `Shift` for a fine step) — the two stay in sync. `:symmetric` ties the
+two tensions into one (a single shared value), the natural choice for
+symmetric corners (`Tab` switches the active handle in the asymmetric case).
 
 The preview is the **live downstream geometry**: the marker draws a real
 `bezier-to-anchor` call, so the extruded result reshapes as you change the
@@ -130,6 +132,10 @@ solve.
   pattern); not for use inside a loop or a multiply-called function.
 - The mutex blocks `edit-bezier` from opening while `tweak` or `pilot`
   is active, and vice versa.
+- **Modal session.** While the session is open the editor is **read-only**
+  (it rewrites its own source on confirm, so a hand-edit would break the
+  text replacement). **Switching workspace closes the session** before
+  swapping the buffer.
 
 ## See also
 

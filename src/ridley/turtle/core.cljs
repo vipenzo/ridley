@@ -1713,6 +1713,52 @@
          (reduce + 0))
     0))
 
+(defn ^:export add-mark
+  "Return a NEW path with a mark named `mark-name` inserted at `fraction`
+   (0..1) of the path's total arc length — the existing path is not mutated.
+
+   The path is walked along its spine (top-level movement commands :f/:u/:rt/:lt;
+   side-trips and pure rotations have zero spine length). The movement command
+   that straddles the target distance is split so the mark lands exactly there.
+
+   Like any path mark, the inserted mark rides extrude/loft/revolve into the
+   mesh as an :anchor — so a ruler to it tracks the realized geometry:
+   (add-mark (path (bezier-to-anchor ps :at :end :tension 0.5)) :apex 0.5)
+   then (ruler :wall :at :center :wall :at :apex)."
+  [path mark-name fraction]
+  (if-not (path? path)
+    path
+    (let [total (path-total-length path)
+          target (* (max 0.0 (min 1.0 fraction)) total)
+          move? (fn [c] (contains? #{:f :u :rt :lt} (:cmd c)))
+          eps 1.0e-9
+          mark-cmd {:cmd :mark :args [mark-name]}]
+      (loop [cmds (:commands path)
+             acc 0.0
+             out []]
+        (if (empty? cmds)
+          ;; target at/after the end → append the mark last
+          (make-path (conj out mark-cmd))
+          (let [cmd (first cmds)]
+            (if (move? cmd)
+              (let [raw (first (:args cmd))
+                    d (Math/abs raw)
+                    sgn (if (neg? raw) -1.0 1.0)
+                    next-acc (+ acc d)]
+                (if (and (pos? d) (>= next-acc (- target eps)))
+                  ;; target lands inside this move — split (move a)(mark)(move b)
+                  (let [a (- target acc)
+                        b (- d a)
+                        k (:cmd cmd)
+                        out (cond-> out
+                              (> a eps) (conj {:cmd k :args [(* sgn a)]}))
+                        out (conj out mark-cmd)
+                        out (cond-> out
+                              (> b eps) (conj {:cmd k :args [(* sgn b)]}))]
+                    (make-path (into out (rest cmds))))
+                  (recur (rest cmds) next-acc (conj out cmd))))
+              (recur (rest cmds) acc (conj out cmd)))))))))
+
 (defn ^:export sample-path-at-distance
   "Sample a path at a specific arc-length distance.
    Returns {:position [x y z] :heading [x y z] :up [x y z]} or nil if past end.

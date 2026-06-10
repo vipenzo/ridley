@@ -17,6 +17,7 @@
   (:require [ridley.scene.registry :as registry]
             [ridley.geometry.faces :as faces]
             [ridley.math :as math]
+            [ridley.turtle.core :as turtle]
             [ridley.turtle.shape :as shape]
             [ridley.viewport.core :as viewport]))
 
@@ -56,13 +57,36 @@
     (when (pos? n)
       (math/v* (reduce math/v+ [0 0 0] verts) (/ 1.0 n)))))
 
+(defn- anchor-position
+  "Resolve a named anchor/mark position [x y z] from `obj`:
+   - keyword → registered mesh name; reads its world-space :anchors
+   - mesh value (map with :anchors) → its :anchors
+   - path value → resolves the path's marks at the world origin (the path's
+     own frame). NOTE: a path/shape has no 3D placement — for a ruler that
+     lands on extruded geometry, read the anchor from the registered MESH,
+     whose anchors extrude already stamped into world space."
+  [obj name]
+  (cond
+    (keyword? obj)
+    (when-let [m (resolve-mesh obj)]
+      (get-in m [:anchors name :position]))
+
+    (and (map? obj) (= :path (:type obj)))
+    (get-in (turtle/resolve-marks
+             {:position [0 0 0] :heading [1 0 0] :up [0 0 1]} obj)
+            [name :position])
+
+    (map? obj)
+    (get-in obj [:anchors name :position])))
+
 (defn- consume-point-spec
   "Consume a point specification from the front of args.
    Returns [point remaining-args] or nil if invalid.
    Greedily tries mesh+face pair before falling back to mesh centroid."
   [args]
   (when (seq args)
-    (let [first-arg (first args)]
+    (let [first-arg (first args)
+          second-arg (second args)]
       (cond
         ;; Vector of 2 or 3 numbers → direct point (2D padded to z=0)
         (and (vector? first-arg)
@@ -70,19 +94,23 @@
              (every? number? first-arg))
         [(if (= 2 (count first-arg)) (conj first-arg 0) first-arg) (rest args)]
 
+        ;; <object> :at <anchor-name> → named anchor/mark on a mesh or path
+        (= second-arg :at)
+        (when-let [pos (anchor-position first-arg (nth args 2 nil))]
+          [pos (drop 3 args)])
+
         ;; Keyword → mesh name, possibly followed by face-id
         (keyword? first-arg)
         (when-let [mesh (resolve-mesh first-arg)]
-          (let [second-arg (second args)]
-            (if (and (keyword? second-arg)
-                     (get-in mesh [:face-groups second-arg]))
-              ;; Mesh + face → face center
-              (let [info (faces/compute-face-info
-                          (:vertices mesh)
-                          (get-in mesh [:face-groups second-arg]))]
-                [(:center info) (drop 2 args)])
-              ;; Just mesh name → centroid
-              [(mesh-centroid mesh) (rest args)])))
+          (if (and (keyword? second-arg)
+                   (get-in mesh [:face-groups second-arg]))
+            ;; Mesh + face → face center
+            (let [info (faces/compute-face-info
+                        (:vertices mesh)
+                        (get-in mesh [:face-groups second-arg]))]
+              [(:center info) (drop 2 args)])
+            ;; Just mesh name → centroid
+            [(mesh-centroid mesh) (rest args)]))
 
         :else nil))))
 
@@ -101,6 +129,7 @@
   "Calculate distance between two point specifications.
    (distance :box1 :box2)                — between mesh centroids
    (distance :box1 :top :box2 :bottom)   — between face centers
+   (distance :wall :at :D :wall :at :end)— between named anchors/marks
    (distance [0 0 0] [100 0 0])         — between points
    Returns the distance as a number, or nil if points cannot be resolved."
   [& args]
@@ -172,6 +201,7 @@
    Same argument forms as distance.
    (ruler :box1 :box2)
    (ruler :box1 :top [0 0 50])
+   (ruler :wall :at :center :wall :at :D)   ; named anchors (world-space)
    (ruler [0 0 0] [100 0 0])
    Returns the distance as a number."
   [& args]

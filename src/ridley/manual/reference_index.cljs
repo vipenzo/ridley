@@ -413,8 +413,8 @@
     :category "faces"
     :status "stable"
     :since ""
-    :signature "(distance p q)\n(distance mesh-name face-id q)\n(distance p mesh-name face-id)\n(distance mesh-name face-id other-name other-face-id)"
-    :description "Measure the Euclidean distance between two point specifications. Returns a number, or `nil` if either side cannot be resolved. Pure function; does not modify turtle state."
+    :signature "(distance p q)\n(distance mesh-name face-id q)\n(distance p mesh-name face-id)\n(distance mesh-name face-id other-name other-face-id)\n(distance target :at anchor-name target :at anchor-name)"
+    :description "Measure the Euclidean distance between two point specifications. Returns a number, or `nil` if either side cannot be resolved. Pure function; does not modify turtle state. A point spec also accepts `<target> :at <name>`: a named anchor on a registered mesh or mesh value (world-space, as placed by extrude/loft/revolve), or a mark resolved from a path (in the path's own frame)."
     :path "docs/manual/reference/en/distance.md"}
 
    "mid"
@@ -450,7 +450,7 @@
     :status "stable"
     :since ""
     :signature "(edit-bezier)\n(edit-bezier :shape)\n(edit-bezier :wireframe)\n(edit-bezier end ctrl-1 ctrl-2)\n(edit-bezier path :at :mark)\n(edit-bezier path :at :mark :symmetric)"
-    :description "Author a cubic Bezier curve interactively, in 3D, from the keyboard — instead of solving the cubic by hand for its control points. `edit-bezier` is a stand-in for a `(bezier-to … :local)` call and is used **wherever `bezier-to` is**: top-level, or inside `(path …)` / `(attach …)`. The anchor form `(edit-bezier path :at :mark)` instead fixes the endpoints and tangents from a path's marks and edits only the control-point distances (tensions), rewriting to a `bezier-to-anchor` on confirm. Run it from the **definitions panel** (Cmd+Enter), not the REPL."
+    :description "Author a cubic Bezier curve interactively, in 3D, from the keyboard — instead of solving the cubic by hand for its control points. `edit-bezier` is a stand-in for a `(bezier-to … :local)` call and is used **wherever `bezier-to` is**: top-level, or inside `(path …)` / `(attach …)`. The anchor form `(edit-bezier path :at :mark)` instead fixes the endpoints and tangents from a path's marks and edits only the control-point distances (tensions) — via tension slider(s) (one when `:symmetric`, two otherwise) or the arrow keys — rewriting to a `bezier-to-anchor` on confirm. Run it from the **definitions panel** (Cmd+Enter), not the REPL. The editor is read-only while the session is open (it rewrites its own source on confirm) and the session closes if you switch workspace."
     :path "docs/manual/reference/en/edit-bezier.md"}
 
    "embroid"
@@ -1224,7 +1224,7 @@
     :status "experimental"
     :since ""
     :signature "(pilot-request! quoted-arg value)"
-    :description "Low-level entry point of **pilot mode**: an interactive session in which the keyboard drives turtle commands to position or orient a mesh or SDF node directly in the viewport. On confirmation, the editor source text is rewritten — the `(pilot ...)` form is replaced by an `(attach! ...)` form carrying the commands you typed during the session."
+    :description "Low-level entry point of **pilot mode**: an interactive session in which the keyboard drives turtle commands to position or orient a mesh or SDF node directly in the viewport. On confirmation, the editor source text is rewritten — the `(pilot ...)` form is replaced by an `(attach! ...)` form carrying the commands you typed during the session. Like every modal session, the editor is read-only while it is open (it rewrites its own source on confirm) and the session closes if you switch workspace."
     :path "docs/manual/reference/en/pilot-request-bang.md"}
 
    "pin-path"
@@ -1271,6 +1271,15 @@
     :signature "(poly-path x1 y1 x2 y2 …)\n(poly-path [x1 y1 x2 y2 …])"
     :description "Build an open path from explicit 2D coordinate pairs. Internally, `poly-path` reconstructs the turtle commands (`f`, `th`) needed to walk through the given points in order, starting at the origin and heading along +X. The result is a path map identical in structure to a `path` recording."
     :path "docs/manual/reference/en/poly-path.md"}
+
+   "add-mark"
+   {:name "add-mark"
+    :category "path"
+    :status "stable"
+    :since ""
+    :signature "(add-mark path name fraction)"
+    :description "Return a NEW path (the input is untouched) with a mark named `name` inserted at `fraction` (0..1) of the path's total spine arc length. Walks the top-level movement commands (`:f`/`:u`/`:rt`/`:lt`; side-trips and rotations are zero-length) and splits the straddling segment so the mark lands exactly there. Like any path mark it rides extrude/loft/revolve into the mesh as an `:anchor`, so a ruler to it measures realized geometry (e.g. a bezier's true bow) rather than a fixed construction point."
+    :path "docs/manual/reference/en/add-mark.md"}
 
    "reverse-path"
    {:name "reverse-path"
@@ -1511,8 +1520,8 @@
     :category "faces"
     :status "stable"
     :since ""
-    :signature "(ruler p q)\n(ruler mesh-name face-id q)\n(ruler p mesh-name face-id)\n(ruler mesh-name face-id other-name other-face-id)"
-    :description "Draw a visible distance ruler between two point specifications in the viewport, and return the measured distance. Side-effecting (adds to the ruler overlay) but also returns the numeric value, so `ruler` doubles as a measurement call. Argument forms are identical to `distance`."
+    :signature "(ruler p q)\n(ruler mesh-name face-id q)\n(ruler p mesh-name face-id)\n(ruler mesh-name face-id other-name other-face-id)\n(ruler target :at anchor-name target :at anchor-name)"
+    :description "Draw a visible distance ruler between two point specifications in the viewport, and return the measured distance. Side-effecting (adds to the ruler overlay) but also returns the numeric value, so `ruler` doubles as a measurement call. Argument forms are identical to `distance`, including `<target> :at <name>` for a named anchor / profile mark (world-space, as placed by extrude/loft/revolve)."
     :path "docs/manual/reference/en/ruler.md"}
 
    "sample-heightmap"
@@ -2313,7 +2322,7 @@
     :status "stable"
     :since ""
     :signature "(tweak expr)\n(tweak n expr)\n(tweak [n1 n2 ...] expr)\n(tweak :all expr)\n(tweak :reg-name)\n(tweak :reg-name expr)\n(tweak filter :reg-name)\n(tweak filter :reg-name expr)"
-    :description "Macro for interactive parameter exploration with live sliders. Evaluates `expr`, displays the result in the viewport, and creates sliders for the numeric literals it finds in the source form. Moving a slider re-evaluates the expression with the substituted value (~100 ms debounce) and updates the preview."
+    :description "Macro for interactive parameter exploration with live sliders. Evaluates `expr`, displays the result in the viewport, and creates sliders for the numeric literals it finds in the source form. Moving a slider re-evaluates the expression with the substituted value (~100 ms debounce) and updates the preview. With no filter, `(tweak expr)` tweaks EVERY literal (same as `:all`); pass an index / vector / `:all` to narrow the set. The editor is read-only while a session is open (it rewrites its own source on confirm) and the session closes if you switch workspace."
     :path "docs/manual/reference/en/tweak.md"}
 
    "twist"

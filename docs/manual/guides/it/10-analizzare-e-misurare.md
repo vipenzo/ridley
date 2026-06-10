@@ -29,6 +29,8 @@ Ridley offre strumenti per rispondere a queste domande sia da codice (nella REPL
 
 Il risultato è un numero: la distanza in unità Ridley (millimetri, se stai progettando per la stampa 3D).
 
+Un riferimento può anche essere un anchor nominato di una mesh, con la forma `:at`: `(distance mesh :at :nome ...)`. Gli anchor sono i mark che una shape si porta dietro dopo `path-to-shape` ed estrusione (cfr. §5.7), così puoi misurare fra punti notevoli della geometria senza ricalcolarne le coordinate. `ruler` (§10.2) accetta le stesse forme.
+
 ### Bounds
 
 `bounds` restituisce il bounding box di una mesh registrata:
@@ -93,6 +95,8 @@ Un paio di cose da sapere sulla precisione. Le misure si riferiscono alla shape 
 -->
 
 I ruler persistono fra comandi REPL (puoi aggiungerne più d'uno e ispezionarli insieme), ma vengono cancellati automaticamente al prossimo Cmd+Enter. `(clear-rulers)` li rimuove manualmente.
+
+Con la forma `:at` il righello aggancia un anchor nominato della mesh invece di un punto fisso: siccome i mark seguono la mesh anche dopo `attach` e `mesh-union`, resta attaccato al punto giusto. Nel §11.3 questo serve a misurare il bombaggio reale di una curva con un righello da `:center` a `:apex` montato sulla mesh.
 
 ### Ruler interattivi con Shift+Click
 

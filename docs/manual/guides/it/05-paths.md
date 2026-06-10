@@ -120,6 +120,8 @@ Per interrogare un singolo mark senza passare da `move-to`:
 
 `mark-pos` restituisce le coordinate 3D del mark. `mark-x`, `mark-y`, `mark-z` restituiscono le singole componenti. Sono utili quando serve la posizione numerica, non lo spostamento della tartaruga.
 
+Mentre `mark` lascia un segnaposto durante la registrazione del path, `add-mark` ne aggiunge uno a un path già costruito, a una posizione frazionaria lungo la sua lunghezza: `(add-mark p :apex 0.5)` mette `:apex` a metà percorso, misurato per lunghezza d'arco. È utile quando il punto che ti serve non coincide con nessun comando del path, per esempio l'apice di una curva. Lo vedremo all'opera nel §11.3.
+
 ## Side-trip: rami che tornano alla spina
 
 Spesso un path ha una spina principale (l'asse lungo cui si sviluppa la struttura) e dei rami laterali dove si lasciano mark per componenti accessori. Senza un meccanismo dedicato, ogni ramo dovrebbe disfare manualmente i propri movimenti per riportare la tartaruga sulla spina: gira a destra, avanti 20, lascia un mark, indietro 20, gira a sinistra. Fragile e noioso.
@@ -443,5 +445,6 @@ Solo la fascia 6..18 del profilo viene rivoltata. Restituisce `nil` se la fascia
 | `bezier-as` | smussatura come bezier | 4.2 |
 | `fit` | scala a dimensione target | 3 (Reference) |
 | `subpath-y` | ritaglia una fascia di altezza | 5.8 |
+| `add-mark` | aggiunge un mark a posizione frazionaria | 5.3 |
 
 Il path è il dato più versatile di Ridley dopo la mesh: descrive un percorso, marca posizioni, e si presta a consumatori diversi senza cambiare. Lo stesso path può essere la traiettoria di un tubo, lo scheletro di un assemblaggio, e il profilo di un piatto, tutto nello stesso script.

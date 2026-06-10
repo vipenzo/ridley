@@ -13,6 +13,7 @@ status: stable
 `(distance mesh-name face-id q)`
 `(distance p mesh-name face-id)`
 `(distance mesh-name face-id other-name other-face-id)`
+`(distance target :at anchor-name target :at anchor-name)`
 
 ## Description
 
@@ -26,7 +27,11 @@ A point specification is one of:
   to `z=0`);
 - a registered mesh name (keyword) — resolves to the mesh's centroid;
 - a mesh name followed by a face id (keyword) — resolves to the face's
-  centre.
+  centre;
+- `<target> :at <name>` — a named anchor. On a registered mesh (or mesh
+  value) it reads the world-space `:anchors` left by `extrude` / `loft` /
+  `revolve` (so it tracks the placed geometry); on a path it resolves a
+  `mark` in the path's own frame.
 
 The helpers `mid` and `seg-mid` produce points to measure to — e.g.
 `(distance [0 45] (mid my-path 1))` for the midpoint of a path's 2nd
