@@ -22,7 +22,19 @@ A few characteristics that distinguish Ridley from other CAD-as-code tools:
 
 For the full picture, see [docs/Architecture.md](docs/Architecture.md) (Italian; English translation planned).
 
-## Quick Start
+## Install
+
+**Browser** (nothing to install): [vipenzo.github.io/Ridley](https://vipenzo.github.io/Ridley/)
+
+**Desktop app (macOS)**, which adds SDF modeling, on-disk libraries, GIF export, and native file dialogs:
+
+```bash
+brew install --cask vipenzo/ridley/ridley
+```
+
+If Homebrew asks about tap trust: `brew trust --cask vipenzo/ridley/ridley`. Alternatively, download the DMG from the [latest release](https://github.com/vipenzo/ridley/releases/latest); in that case macOS will warn on first launch (the app isn't notarized): allow it from System Settings → Privacy & Security ("Open Anyway"). The brew route takes care of this for you.
+
+## Running from source
 
 ```bash
 npm install
@@ -107,7 +119,7 @@ The [`examples/`](examples/) directory contains 23 complete models. A few highli
 
 Ridley is developed primarily by a single author with extensive AI assistance for implementation. Architecture and design decisions remain author-driven; AI is used as an implementation accelerator, not as a designer. This model is documented openly in [docs/Architecture.md](docs/Architecture.md).
 
-The project is in active development as of April 2026. Feature scope is broad and many subsystems are stable, but some areas are explicitly works in progress: voice and WebXR integration are paused pending design work, AI integration efficacy has known limits, certain test clusters were lost in a recent refactor and are being recovered. The architecture document discusses these openly in its technical debt chapter.
+The project is in active development as of June 2026. Feature scope is broad and most subsystems are stable; the test suite is green (298 tests / 847 assertions as of 3.1). Some areas remain explicitly works in progress: voice and WebXR integration are paused pending design work, and AI integration efficacy has known limits. The architecture document discusses these openly in its technical debt chapter.
 
 Issues and pull requests are welcome but expect slow turnaround. Substantial contributions are best preceded by a discussion in an issue.
 
