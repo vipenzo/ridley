@@ -63,7 +63,7 @@ jobs:
             --config-merge "{:closure-defines {ridley.version/VERSION \"${{ steps.tag.outputs.value }}\"}}"
 
       - name: Install Tauri CLI
-        run: cargo install tauri-cli --version "^2"
+        run: cargo install tauri-cli --version "^2" --locked
 
       - name: Build Tauri app
         working-directory: desktop/src-tauri
