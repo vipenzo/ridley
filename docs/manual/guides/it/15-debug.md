@@ -1,5 +1,7 @@
 # 15. Mettere a fuoco e risolvere i problemi
 
+<!-- level: intermediate -->
+
 Quando un modello non fa quello che ti aspetti, hai bisogno di strumenti per capire cosa sta succedendo. Ridley ne offre diversi, da quelli più semplici (stampare un valore nella console) a quelli più sofisticati (tweaking interattivo con slider, pannelli 3D posizionati nella scena). Questo capitolo li raccoglie in un unico posto, con rimandi ai capitoli dove sono già stati introdotti.
 
 ## 15.1 Pannelli 3D di testo
@@ -198,31 +200,13 @@ Pilot ha tre modi (stile vim): movimento (`f`/`b`/`rt`/`lt`/`u`/`d`), rotazione 
 
 `edit-bezier` usa lo stesso meccanismo modale di `tweak` e `pilot` per disegnare da tastiera una curva di Bezier cubica, e alla conferma la riscrive a sorgente come `bezier-to`. Siccome è prima di tutto uno strumento per le curve, è trattata nel § 11.2.
 
-## 15.4 Anteprima forme
+## 15.4 Dove trovare gli strumenti
 
-`stamp` renderizza una shape 2D nel viewport come contorno piatto, senza estrudere. È lo strumento per verificare che un profilo sia quello che ti aspetti prima di estrudere o loftare.
+Alcuni strumenti che usi in fase di debug hanno la loro casa in altri capitoli. Il promemoria, in una tabella:
 
-<!-- example-source: stamp
-(stamp (circle 20))
-(u 40)
-(stamp (rect 30 15))
-(u 40)
-(stamp (text-shape "Hello" :size 20))
--->
-
-Trattato nel dettaglio nella sezione 3.6 (se presente) e usato in tutti i capitoli sulle forme 2D.
-
-## 15.5 Follow path
-
-`follow-path` disegna un percorso nel viewport come tracciato della tartaruga, mostrando la sequenza di movimenti senza costruire geometria. È lo strumento per verificare che un path sia quello che ti aspetti prima di usarlo per un'estrusione o un loft.
-
-<!-- example-source: path
-(def skel (path (mark :A) (f 20) (th 45) (f 15) (mark :B)))
-(follow-path skel)
--->
-
-Trattato nel capitolo 5 (Path).
-
-## 15.6 Misurazione
-
-`ruler`, `distance`, `bounds`, e la misurazione interattiva con Shift+Click sono trattati nel capitolo 10 (Analizzare e misurare). Qui il promemoria: se non sai quanto è grande un pezzo o a che distanza sono due punti, il capitolo 10 ha tutti gli strumenti.
+| Strumento | A cosa serve quando indaghi | Casa |
+|---|---|---|
+| `stamp` | vedere un profilo 2D prima di estruderlo o loftarlo | § 3.2 |
+| `follow-path` | vedere un path come tracciato, senza costruire geometria | § 5.2 |
+| `ruler`, `distance`, `bounds`, Shift+Click | misure e quote, anche interattive | cap. 10 |
+| `mesh-diagnose`, `manifold?` | capire perché una mesh non è sana | § 7.7 |

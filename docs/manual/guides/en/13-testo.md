@@ -1,5 +1,7 @@
 # 13. Text
 
+<!-- level: intermediate -->
+
 Text in Ridley is geometry. There is no separate annotation system: the letters are 2D shapes that you can extrude, combine with booleans, place along a path, or use as a heightmap to create reliefs. This chapter covers the three modes: text as a 2D shape, text as extruded 3D geometry, and text as a raised displacement.
 
 ## 13.1 2D text shapes

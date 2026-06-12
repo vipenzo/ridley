@@ -19,6 +19,25 @@
     (and (= (count a) (count b))
          (every? true? (map #(approx= %1 %2 t) a b)))))
 
+;; ── 0. Harness binding canary ────────────────────────────────
+;; The SCI harness (sci_harness.cljs) keeps a hand-maintained `base-bindings`
+;; that mirrors the browser-free subset of production bindings (bindings.cljs).
+;; If a production macro in `macro-defs` references an `*-impl` binding from a
+;; `defn` body (e.g. compute-midpoint-walk-impl in rec-bezier-as*), SCI resolves
+;; it eagerly when loading macro-defs — so a binding missing from the harness
+;; makes the ENTIRE macro layer fail to load, cascading into ~every harness test
+;; failing at once (easily misread as "environmental"). This canary turns that
+;; cascade into one clear failure: if it fails, add the named binding to
+;; sci_harness.cljs `base-bindings` (its value is in bindings.cljs).
+
+(deftest harness-macro-defs-loads
+  (testing "Production macro-defs loads in the SCI harness without unresolved-symbol errors"
+    (let [{:keys [error]} (h/eval-dsl "nil")]
+      (is (nil? error)
+          (str "macro-defs failed to load in the SCI harness — the harness "
+               "base-bindings is missing a binding referenced eagerly by a macro. "
+               "Add it to test/ridley/editor/sci_harness.cljs. Error: " error)))))
+
 ;; ── 1. Path recording basics ─────────────────────────────────
 
 (deftest path-f-only

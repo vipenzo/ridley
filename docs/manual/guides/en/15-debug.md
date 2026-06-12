@@ -1,5 +1,7 @@
 # 15. Focusing in and troubleshooting
 
+<!-- level: intermediate -->
+
 When a model does not do what you expect, you need tools to understand what is happening. Ridley offers several, from the simplest (printing a value in the console) to the more sophisticated (interactive tweaking with sliders, 3D panels positioned in the scene). This chapter gathers them in one place, with references to the chapters where they were already introduced.
 
 ## 15.1 3D text panels
@@ -198,31 +200,13 @@ Pilot has three modes (vim-style): movement (`f`/`b`/`rt`/`lt`/`u`/`d`), rotatio
 
 `edit-bezier` uses the same modal mechanism as `tweak` and `pilot` to draw a cubic Bezier curve from the keyboard, and on confirm it rewrites it to source as `bezier-to`. Since it is first of all a tool for curves, it is covered in § 11.2.
 
-## 15.4 Previewing shapes
+## 15.4 Where the tools live
 
-`stamp` renders a 2D shape in the viewport as a flat outline, without extruding. It is the tool to verify that a profile is what you expect before extruding or lofting.
+Some of the tools you reach for while debugging have their home in other chapters. The reminder, in one table:
 
-<!-- example-source: stamp
-(stamp (circle 20))
-(u 40)
-(stamp (rect 30 15))
-(u 40)
-(stamp (text-shape "Hello" :size 20))
--->
-
-Covered in detail in section 3.6 (if present) and used throughout the chapters on 2D shapes.
-
-## 15.5 Follow path
-
-`follow-path` draws a path in the viewport as the turtle's trace, showing the sequence of movements without building geometry. It is the tool to verify that a path is what you expect before using it for an extrusion or a loft.
-
-<!-- example-source: path
-(def skel (path (mark :A) (f 20) (th 45) (f 15) (mark :B)))
-(follow-path skel)
--->
-
-Covered in chapter 5 (Paths).
-
-## 15.6 Measurement
-
-`ruler`, `distance`, `bounds`, and interactive measurement with Shift+Click are covered in chapter 10 (Analyzing and measuring). Here the reminder: if you do not know how big a piece is or how far apart two points are, chapter 10 has all the tools.
+| Tool | What it is for when investigating | Home |
+|---|---|---|
+| `stamp` | seeing a 2D profile before extruding or lofting it | § 3.2 |
+| `follow-path` | seeing a path as a trace, without building geometry | § 5.2 |
+| `ruler`, `distance`, `bounds`, Shift+Click | measures and dimensions, interactive too | ch. 10 |
+| `mesh-diagnose`, `manifold?` | understanding why a mesh is not healthy | § 7.7 |

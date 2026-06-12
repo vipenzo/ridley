@@ -31,9 +31,13 @@ identical to the `stamp` / `extrude` convention. To tilt the revolution
 axis, change the turtle's pose with `(tv …)` before calling `revolve`.
 
 With no angle, the revolution is a full 360°. With an explicit angle (in
-degrees), the revolution is partial. Shapes with vertices at `x < 0` are
-auto-clipped at the revolution axis to prevent self-intersecting
-geometry.
+degrees), the revolution is partial. A **solid** profile with vertices at
+`x < 0` is auto-clipped at the revolution axis to prevent
+self-intersecting geometry — so a centered shape keeps only its
+positive-X half (e.g. `(revolve (rect 20 10) 90)` sweeps a 10-wide
+section, not 20). A **shape-fn** can't be clipped ring by ring without
+changing the point count, so a straddling shape-fn is shifted off the
+axis instead (an implicit `:pivot :left`).
 
 A shape-fn is also accepted: the profile is evaluated at each revolution
 step with `t` going from 0 (first ring) to 1 (last ring).
@@ -104,8 +108,9 @@ revolution, so a torus-like elbow is built without clipping any holes.
 - The rotation axis is the turtle's **up** vector — not heading. To
   revolve around a different direction, tilt the turtle pose with
   `(tv …)` before the call.
-- Profiles with vertices at `x < 0` are clipped at the axis (unless
-  `:pivot` is used). Use `translate-shape` to shift the profile outward
+- A **solid** profile with vertices at `x < 0` is clipped at the axis
+  (unless `:pivot` is used); a straddling **shape-fn** is auto-shifted
+  off the axis instead. Use `translate-shape` to move a profile outward
   for hollow tori.
 - Shape-fns parameterised by `t` apply to revolution the same way they
   do to `loft`: `t = 0` at the first ring, `t = 1` at the last.

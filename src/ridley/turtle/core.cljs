@@ -789,10 +789,17 @@
    (bezier-to state target :steps 24)          ; auto with more steps
    (bezier-to state target [c1] [c2] :steps 24); explicit with more steps
    (bezier-to state target [c1] [c2] :local)   ; vectors in turtle-local frame
+   (bezier-to state target :preserve-heading)  ; arrive tangent to current heading
+   (bezier-to state target :preserve-heading :tension 0.5) ; wider belly
 
    With 0 control points: generates smooth curve starting along current heading
    With 1 control point: quadratic bezier
    With 2 control points: cubic bezier
+
+   :preserve-heading (only with 0 control points): the curve arrives tangent to
+   the current heading instead of along the start→end chord, so the turtle's
+   heading is unchanged and a following (f …) welds without a cusp. :tension
+   (default 0.33) controls how far the control points extend (curve width).
 
    Coordinate frame: by default target and control points are world coordinates.
    With the :local flag, they are read in the turtle's local [right up heading]
@@ -804,8 +811,11 @@
         ;; :local is a bare flag (no value) — pull it out before hash-map parsing,
         ;; which requires even-count key/value pairs.
         local? (boolean (some #{:local} options))
-        options (remove #{:local} options)
-        {:keys [steps]} (apply hash-map (flatten options))
+        ;; :preserve-heading is a bare flag too: make the curve arrive tangent to
+        ;; the current heading (turtle heading unchanged), not along the chord.
+        preserve-heading? (boolean (some #{:preserve-heading} options))
+        options (remove #{:local :preserve-heading} options)
+        {:keys [steps tension]} (apply hash-map (flatten options))
         ;; In :local mode, target and control points are given in the turtle's
         ;; local frame — map them to world before the world-space bezier math.
         target (if local? (local->world state target) target)
@@ -834,7 +844,12 @@
 
         ;; 0 control points: auto-generate cubic
         :else
-        (let [[c1 c2] (auto-control-points p0 (:heading state) p3)]
+        (let [[c1 c2] (if preserve-heading?
+                        ;; Arrive tangent to the current heading: target heading
+                        ;; = start heading, so the turtle heading is unchanged.
+                        (auto-control-points-with-target-heading
+                         p0 (:heading state) p3 (:heading state) (or tension 0.33))
+                        (auto-control-points p0 (:heading state) p3))]
           (bezier-walk state actual-steps
                        #(cubic-bezier-point p0 c1 c2 p3 %)
                        #(cubic-bezier-tangent p0 c1 c2 p3 %)))))))

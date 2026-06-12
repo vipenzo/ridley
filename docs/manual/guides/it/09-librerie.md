@@ -1,5 +1,7 @@
 # 9. Workspaces e Librerie
 
+<!-- level: base -->
+
 Due cose contengono il codice che scrivi: il *Workspace*, il documento su cui stai lavorando, e le *librerie*, il codice riusabile che richiami da qualunque documento. Questo capitolo copre entrambe.
 
 ## 9.1 Workspaces

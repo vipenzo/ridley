@@ -1436,9 +1436,16 @@
                           next-shorten-start (if (and (not is-last) has-corner-rotation)
                                                (:shorten-start (nth segments (inc i)))
                                                0)
-                          next-start-pos (if (seq smooth-transition-rings)
-                                           (ring-centroid (last smooth-transition-rings))
-                                           (v+ corner-pos (v* (:heading s4) next-shorten-start)))
+                          ;; The spine must advance along the TRUE path position
+                          ;; (corner-pos), never the centroid of the smooth-transition
+                          ;; rings: those are rotated around a pivot offset by the
+                          ;; profile radius, so on a consistently-turning curve (e.g.
+                          ;; arc-h) their centroid drifts forward, making the extruded
+                          ;; tube overshoot the path end by one profile radius per 90
+                          ;; degrees of turn. (loft tracks the path and is unaffected.)
+                          ;; The smooth rings are still emitted into the mesh for visual
+                          ;; smoothing; only the spine tracking is fixed here.
+                          next-start-pos (v+ corner-pos (v* (:heading s4) next-shorten-start))
                           s-next (assoc s4 :position next-start-pos)
 
                           new-rings (cond-> rings

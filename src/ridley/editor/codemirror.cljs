@@ -21,7 +21,8 @@
                                             foldGutter foldKeymap
                                             syntaxHighlighting syntaxTree
                                             HighlightStyle]]
-            ["@codemirror/search" :refer [searchKeymap highlightSelectionMatches]]
+            ["@codemirror/search" :refer [searchKeymap highlightSelectionMatches
+                                          openSearchPanel]]
             ["@codemirror/autocomplete" :refer [closeBrackets closeBracketsKeymap
                                                 autocompletion acceptCompletion]]
             ["@lezer/highlight" :refer [tags]]
@@ -639,6 +640,134 @@
   ([from to] (delete-range @editor-instance from to))
   ([view from to]
    (replace-range view from to "")))
+
+;; ============================================================
+;; Clipboard / search editor commands — wired into the editor's
+;; right-click context menu (see core.cljs install-editor-context-menu!).
+;; ============================================================
+
+(defn has-selection?
+  "True when there's a non-empty selection in the editor."
+  ([] (has-selection? @editor-instance))
+  ([view]
+   (boolean
+    (when view
+      (let [sel (.. view -state -selection -main)]
+        (not= (.-from sel) (.-to sel)))))))
+
+(defn- clipboard-write!
+  "Write `text` to the system clipboard. Prefers the async Clipboard API;
+   falls back to a hidden textarea + execCommand for WKWebView/Tauri where
+   navigator.clipboard may be unavailable or blocked."
+  [text]
+  (let [fallback (fn []
+                   (let [ta (.createElement js/document "textarea")]
+                     (set! (.-value ta) text)
+                     (set! (.. ta -style -position) "fixed")
+                     (set! (.. ta -style -opacity) "0")
+                     (.appendChild (.-body js/document) ta)
+                     (.select ta)
+                     (try (.execCommand js/document "copy") (catch :default _ nil))
+                     (.remove ta)))]
+    (if-let [clip (.-clipboard js/navigator)]
+      (-> (.writeText clip text)
+          (.catch (fn [_] (fallback))))
+      (fallback))))
+
+(defn copy-selection!
+  "Copy the current selection to the clipboard. No-op when empty."
+  ([] (copy-selection! @editor-instance))
+  ([view]
+   (when view
+     (let [{:keys [text]} (get-selection view)]
+       (when (seq text)
+         (clipboard-write! text))))))
+
+(defn cut-selection!
+  "Cut the current selection: copy to clipboard, then delete it. No-op when empty."
+  ([] (cut-selection! @editor-instance))
+  ([view]
+   (when view
+     (let [{:keys [from to text]} (get-selection view)]
+       (when (seq text)
+         (clipboard-write! text)
+         (delete-range view from to)
+         (.focus view))))))
+
+(defn paste-clipboard!
+  "Paste clipboard text over the current selection (or at the cursor).
+   Uses the async Clipboard API; `on-fail` (optional) is called with no args
+   when the clipboard can't be read (e.g. WKWebView without permission)."
+  ([] (paste-clipboard! @editor-instance nil))
+  ([view] (paste-clipboard! view nil))
+  ([view on-fail]
+   (when view
+     (let [clip (.-clipboard js/navigator)
+           insert (fn [text]
+                    (when (some? text)
+                      (let [sel (.. view -state -selection -main)]
+                        (.dispatch view
+                                   #js {:changes #js {:from (.-from sel)
+                                                      :to (.-to sel)
+                                                      :insert text}
+                                        :selection #js {:anchor (+ (.-from sel) (count text))}})
+                        (.focus view))))]
+       (if (and clip (.-readText clip))
+         (-> (.readText clip)
+             (.then insert)
+             (.catch (fn [_] (when on-fail (on-fail)))))
+         (when on-fail (on-fail)))))))
+
+(defn select-all!
+  "Select the entire document."
+  ([] (select-all! @editor-instance))
+  ([view]
+   (when view
+     (.dispatch view
+                #js {:selection #js {:anchor 0 :head (.. view -state -doc -length)}})
+     (.focus view))))
+
+(defn open-search!
+  "Open CodeMirror's search panel (same as Cmd-F)."
+  ([] (open-search! @editor-instance))
+  ([view]
+   (when view
+     (.focus view)
+     (openSearchPanel view))))
+
+(declare get-form-at-cursor find-matching-close open-brackets close-brackets)
+
+(defn goto-matching-bracket!
+  "Move the cursor to the matching bracket. When the cursor sits on an opening
+   bracket, jump to just after its close; on a closing bracket, jump to its open.
+   Otherwise jump to the close of the enclosing form. No-op when not in a form."
+  ([] (goto-matching-bracket! @editor-instance))
+  ([view]
+   (when view
+     (let [state (.-state view)
+           doc-text (.toString (.-doc state))
+           doc-len (count doc-text)
+           pos (.. state -selection -main -head)
+           ch (when (< pos doc-len) (.charAt doc-text pos))]
+       (cond
+         ;; On an opening bracket → jump to just past the matching close.
+         (and ch (open-brackets ch))
+         (when-let [end (find-matching-close doc-text pos doc-len)]
+           (.dispatch view #js {:selection #js {:anchor end :head end}
+                                :effects (.scrollIntoView EditorView end)})
+           (.focus view))
+         ;; On a closing bracket → jump to its matching open.
+         (and ch (close-brackets ch))
+         (when-let [{:keys [from]} (get-form-at-cursor view)]
+           (.dispatch view #js {:selection #js {:anchor from :head from}
+                                :effects (.scrollIntoView EditorView from)})
+           (.focus view))
+         ;; Anywhere inside a form → jump to the form's close bracket.
+         :else
+         (when-let [{:keys [to]} (get-form-at-cursor view)]
+           (.dispatch view #js {:selection #js {:anchor to :head to}
+                                :effects (.scrollIntoView EditorView to)})
+           (.focus view)))))))
 
 (def ^:private ai-block-start ";; >>> AI")
 (def ^:private ai-block-end   ";; <<< AI")

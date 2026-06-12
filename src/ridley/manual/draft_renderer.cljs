@@ -268,6 +268,41 @@
                        (attr-fragment "data-warning" warning)
                        "></div>\n\n"))))))
 
+;; ── Level marker extraction (brief: dev-docs/brief-level-badges.md) ─
+;;
+;; A level marker is an HTML comment on its own line declaring the
+;; difficulty of a chapter or section, optionally with prerequisites:
+;;
+;;     <!-- level: base -->
+;;     <!-- level: advanced | prereq: 3 5 -->
+;;
+;; replace-level-markers turns each marker into a block-level sentinel div
+;; that survives Markdown parsing; apply-level-badges! later attaches a chip
+;; to the nearest preceding heading. The level token and prereqs ride along
+;; as data-* attributes. This MUST run before strip-remaining-comments, which
+;; deletes every remaining HTML comment — an unrecognized token is left in
+;; place so it gets stripped there (silent degradation, no badge, no error).
+
+(def ^:private valid-levels #{"base" "intermediate" "advanced"})
+
+(defn- replace-level-markers
+  "Replace each <!-- level: TOKEN [| prereq: REFS] --> marker with a sentinel
+   div carrying data-level / data-prereq. Markers with an unknown level token
+   are left untouched (and thus stripped downstream)."
+  [markdown]
+  (let [pat (js/RegExp.
+             "<!--[ \\t]*level[ \\t]*:[ \\t]*([A-Za-z]+)[ \\t]*(?:\\|[ \\t]*prereq[ \\t]*:[ \\t]*([^|>]*?))?[ \\t]*-->"
+             "g")]
+    (.replace markdown pat
+              (fn [match level prereq]
+                (if (contains? valid-levels level)
+                  (let [prereq (when prereq (.trim prereq))]
+                    (str "\n\n<div class=\"draft-level-badge\" data-level=\"" level "\""
+                         (attr-fragment "data-prereq"
+                                        (when (and prereq (pos? (.-length prereq))) prereq))
+                         "></div>\n\n"))
+                  match)))))
+
 (defn- strip-remaining-comments
   "Strip any HTML comments left over after marker replacement. Catches author
    notes at the top of files and any old-format <!-- example-source: id\\n code -->
@@ -547,6 +582,86 @@
   (doseq [orphan (array-seq (.querySelectorAll root ".draft-example-source, .draft-runnable-panel"))]
     (.remove orphan)))
 
+;; ── Level badges (brief: dev-docs/brief-level-badges.md) ───────
+
+(def ^:private level-labels
+  "Localized chip text per level token. Tokens are language-neutral in the
+   source files; only the rendered label is localized."
+  {:it {"base" "base" "intermediate" "intermedio" "advanced" "avanzato"}
+   :en {"base" "basic" "intermediate" "intermediate" "advanced" "advanced"}})
+
+(defn- format-prereqs
+  "Render a prereq reference list, order preserved. Emits the `cap.`/`ch.`
+   prefix once at the head (only when a chapter ref is present) and prefixes
+   each section ref (one containing a dot) with `§`."
+  [lang refs]
+  (let [section?    (fn [r] (str/includes? r "."))
+        has-chapter (some (complement section?) refs)
+        prefix      (if has-chapter (if (= lang :en) "ch. " "cap. ") "")
+        body        (str/join ", " (map (fn [r] (if (section? r) (str "§" r) r)) refs))
+        label       (if (= lang :en) "Prerequisites: " "Prerequisiti: ")]
+    (str label prefix body)))
+
+(defn- make-level-badge
+  "Build the chip span for a level marker. `chapter?` selects the larger
+   chapter variant over the inline section variant. Prereqs (a raw
+   space-separated string) render as adjacent text and as the chip's tooltip."
+  [lang level prereq chapter?]
+  (let [label (get-in level-labels [lang level] level)
+        badge (.createElement js/document "span")]
+    (set! (.-className badge)
+          (str "manual-level-badge manual-level-" level " "
+               (if chapter? "manual-level-chapter" "manual-level-section")))
+    (let [txt (.createElement js/document "span")]
+      (set! (.-className txt) "manual-level-text")
+      (set! (.-textContent txt) label)
+      (.appendChild badge txt))
+    (when (and prereq (pos? (.-length (.trim prereq))))
+      (let [refs (vec (.split (.trim prereq) (js/RegExp. "\\s+")))
+            text (format-prereqs lang refs)
+            pre  (.createElement js/document "span")]
+        (set! (.-className pre) "manual-level-prereq")
+        (set! (.-textContent pre) text)
+        (set! (.-title badge) text)
+        (.appendChild badge pre)))
+    badge))
+
+(defn level-chip
+  "Public: build a standalone chapter-level chip span (no prereqs) for use
+   outside the page body, e.g. next to a chapter title in the TOC. Same palette
+   and localized labels as the in-page chapter badge. `level` is a token string
+   (\"base\"/\"intermediate\"/\"advanced\"). Returns a DOM span."
+  [lang level]
+  (make-level-badge lang level nil true))
+
+(defn- nearest-heading
+  "Walk previous siblings of `el` until an h1–h6 element, or nil."
+  [el]
+  (loop [sib (.-previousElementSibling el)]
+    (when sib
+      (if (re-find #"^H[1-6]$" (.-tagName sib))
+        sib
+        (recur (.-previousElementSibling sib))))))
+
+(defn- apply-level-badges!
+  "Attach a level chip to the nearest preceding heading for each sentinel
+   produced by replace-level-markers, then remove the sentinel. The first
+   sentinel for a given heading wins; later ones for the same heading are
+   skipped (one marker per heading). Headings without a marker get nothing —
+   inherited levels are intentionally not rendered."
+  [root lang]
+  (doseq [sentinel (vec (array-seq (.querySelectorAll root ".draft-level-badge")))]
+    (let [level   (.getAttribute sentinel "data-level")
+          prereq  (.getAttribute sentinel "data-prereq")
+          ^js heading (nearest-heading sentinel)]
+      (when (and heading (not (.. heading -dataset -levelBadged)))
+        (let [chapter? (= (.-tagName heading) "H1")
+              badge    (make-level-badge lang level prereq chapter?)]
+          (set! (.. heading -dataset -levelBadged) "true")
+          (.appendChild heading (.createTextNode js/document " "))
+          (.appendChild heading badge)))
+      (.remove sentinel))))
+
 ;; ── Public render entry point ─────────────────────────────────
 
 (defn- show-loading! [container]
@@ -581,19 +696,25 @@
    CodeMirror panels, auto-link Reference symbols, and (optionally) a TOC button
    into `nav-el`. `current-symbol` (a card's own name) is left unlinked."
   ([container-el raw-md nav-el]
-   (render-md-text! container-el raw-md nav-el nil))
+   (render-md-text! container-el raw-md nav-el nil structure/source-lang))
   ([container-el raw-md nav-el current-symbol]
+   (render-md-text! container-el raw-md nav-el current-symbol structure/source-lang))
+  ([container-el raw-md nav-el current-symbol lang]
    (let [with-sentinels (replace-example-markers raw-md)
-         cleaned (strip-remaining-comments with-sentinels)
+         with-levels (replace-level-markers with-sentinels)
+         cleaned (strip-remaining-comments with-levels)
          html (.parse marked cleaned)]
      (set! (.-innerHTML container-el) html)
      (set! (.-className container-el)
            (str (or (.-className container-el) "") " manual-draft-content"))
      (enhance-code-blocks! container-el)
-     (autolink-references! container-el current-symbol)
-     (wire-reference-links! container-el)
+     ;; Collect headings (ids + TOC text) BEFORE badges, so neither the
+     ;; slugified anchor ids nor the TOC labels pick up the badge text.
      (let [headings (collect-headings! container-el)]
-       (inject-toc-button! nav-el headings container-el)))))
+       (inject-toc-button! nav-el headings container-el))
+     (apply-level-badges! container-el lang)
+     (autolink-references! container-el current-symbol)
+     (wire-reference-links! container-el))))
 
 (defn render-chapter!
   "Render the draft chapter identified by `page-id` into `container-el`.
@@ -608,7 +729,7 @@
    (when-let [chap (draft-chapter page-id)]
      (show-loading! container-el)
      (-> (fetch-markdown (structure/chapter-url chap lang))
-         (.then (fn [raw-md] (render-md-text! container-el raw-md nav-el)))
+         (.then (fn [raw-md] (render-md-text! container-el raw-md nav-el nil lang)))
          (.catch (fn [err]
                    (show-error! container-el
                                 (str "Errore caricamento capitolo: " (.-message err))))))

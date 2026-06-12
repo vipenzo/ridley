@@ -105,6 +105,15 @@ in a single inlined expression.
   a single mesh, so downstream booleans need no manual `concat-meshes`.
 - Joint modes (`(joint-mode :flat | :round | :tapered)`) apply to `loft` as
   they do to `extrude` and control corner geometry where the path turns.
+- **At a sharp corner the profile is frozen across the joint.** `loft` splits
+  the path at real corners (`th`/`tv`/`tr`) into separate segment meshes joined
+  by a miter, and a miter must share one cross-section on both sides — so the
+  profile is held constant at the corner's `t` value through the bend instead of
+  progressing. The taper (or any shape-fn variation) pauses across the joint; the
+  constant-shape zone grows with the turn angle (the miter scales as
+  `tan(angle/2)`), so it is negligible for gentle turns and conspicuous at sharp
+  ones. Smooth curves (`arc-h`/`arc-v`, beziers) are not treated as corners and
+  do not trigger this. `extrude` is unaffected — its profile is static anyway.
 - For paths with tight bezier curves where rings would self-intersect,
   smooth the path first (`bezier-as`, `arc-h`, `joint-mode :round`); `loft`
   has no built-in escape hatch for genuinely overlapping rings.

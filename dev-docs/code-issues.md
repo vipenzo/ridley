@@ -4,6 +4,18 @@ File interno per tracciare piccole incoerenze tra il codice sorgente di Ridley e
 
 ## Aperto
 
+### Il salto status bar → editor non è sincronizzato col workspace di provenienza
+
+**Contesto**: il source tracking (Opzione/⌥+Click su una mesh nel viewport → catena di link nella status bar → click sul link → salto all'editor) assume che il codice che ha generato la mesh sia quello attualmente nell'editor. Non è sempre vero: se dopo il Run si cambia workspace, o se la mesh è stata generata dal Run di un esempio del manuale, il link porta a una posizione dell'editor corrente che non corrisponde al codice di provenienza. Il problema è probabilmente più generale: il viewport conserva la scena dell'ultimo Run, ma non ricorda *quale* workspace/documento l'ha prodotta, quindi editor e viewport possono divergere silenziosamente.
+
+**Riproduzione**: Run di un esempio dal manuale (o Run in un workspace A, poi switch a B) → ⌥+Click sulla mesh → click sul link nella status bar → l'editor mostra codice che non c'entra.
+
+**Comportamento atteso** (da definire): come minimo, il link potrebbe portare con sé l'identità del documento di provenienza e avvisare (o switchare) quando non coincide con l'editor corrente; più in generale, la scena potrebbe ricordare il workspace che l'ha generata.
+
+**Impatto**: minore (feature di comodità, il caso comune funziona), ma mina la fiducia nel source tracking proprio nei casi in cui servirebbe di più. Candidato per la Roadmap più che fix immediato: tocca l'architettura della sincronizzazione viewport↔workspace.
+
+**Scoperta**: verifica interattiva del cap. 1 del manuale, Vincenzo, 2026-06-12.
+
 ### `tr` dentro extrude produce geometria degenere
 
 **Contesto**: un `tr` (rollio) dentro un percorso di estrusione provoca uno sfasamento repentino dei punti corrispondenti tra due ring adiacenti. Il risultato è un pezzo di geometria degenere (facce attorcigliate).

@@ -1,5 +1,7 @@
 # 8. Assemblaggio
 
+<!-- level: intermediate -->
+
 Fino a qui hai costruito pezzi singoli: una mesh, un'estrusione, una forma modellata con le shape-fn. Questo capitolo spiega come metterli insieme.
 
 Assemblare in Ridley significa posizionare componenti nello spazio usando la tartaruga come strumento di posizionamento. Il principio è lo stesso che hai usato finora per muoverti e costruire: dai comandi alla tartaruga (`f`, `th`, `tv`, `rt`...), e lei si sposta. La differenza è che ora la tartaruga trascina con sé un pezzo già costruito invece di costruirne uno nuovo.
@@ -453,7 +455,7 @@ Quando costruisci un assemblaggio, ogni comando tartaruga modifica lo stato glob
 
 ### Side-trip
 
-`side-trip` è il meccanismo principale. All'interno di un `path`, esegue una sequenza di comandi e poi ripristina lo stato della tartaruga al punto di partenza:
+`side-trip` (§ 5.4) è il meccanismo principale: esegue il blocco e riporta la tartaruga al punto di partenza. In un assemblaggio diventa lo strumento di branching:
 
 <!-- example-source: side-trip-branching
 (def skel

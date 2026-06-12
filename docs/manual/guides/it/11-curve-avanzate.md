@@ -1,35 +1,18 @@
 # 11. Curve avanzate
 
+<!-- level: advanced -->
+
 Nei capitoli precedenti hai costruito percorsi con segmenti dritti (`f`) e cambi di direzione (`th`, `tv`). Per molti modelli basta, ma non tutti: un manico curvo, un profilo aerodinamico, un tubo che segue una traiettoria fluida richiedono curve vere. Ridley offre due famiglie di curve: gli archi (cerchio a raggio e angolo noti) e le Bezier (curve libere controllate da punti).
 
 ## 11.1 Archi
 
-Un arco è un segmento di cerchio. La tartaruga si muove lungo l'arco, girando progressivamente di un angolo dato con un raggio dato.
-
-```clojure
-(arc-h 10 90)       ;; arco orizzontale: raggio 10, 90°
-(arc-h 10 -90)      ;; direzione opposta
-(arc-v 10 90)       ;; arco verticale
-```
-
-`arc-h` gira attorno all'asse up della tartaruga (arco nel piano orizzontale). `arc-v` gira attorno all'asse right (arco nel piano verticale). Angolo positivo = direzione standard di rotazione, negativo = opposta.
-
-Un arco è di fatto una sequenza di piccoli `f` + `th` (o `tv`), dove il numero di passi dipende da `resolution`. Puoi sovrascriverlo per singola chiamata:
+Gli archi li hai già usati nel cap. 4: `arc-h` curva nel piano orizzontale (attorno all'asse up della tartaruga), `arc-v` in quello verticale (attorno all'asse right); angolo positivo nella direzione standard di rotazione, negativo nell'opposta. Sotto il cofano un arco è una sequenza di piccoli `f` + `th` (o `tv`): il numero di passi dipende da `resolution` e si sovrascrive per singola chiamata con `:steps`:
 
 ```clojure
 (arc-h 10 90 :steps 32)    ;; 32 passi invece del default
 ```
 
-Gli archi si concatenano fra loro e con segmenti dritti. La curva a S è il pattern classico:
-
-<!-- example-source: arc-s-tube
-(register s-tube
-  (extrude (circle 3)
-    (arc-h 15 90)
-    (arc-h 15 -90)))
--->
-
-La giunzione fra i due archi è liscia perché la tartaruga esce dal primo arco con l'heading tangente alla curva, e il secondo arco parte da lì.
+Due archi consecutivi si raccordano lisci da sé: la tartaruga esce dal primo con l'heading tangente alla curva, e il secondo parte da lì. Quello che il cap. 4 non diceva è che gli archi sono comandi tartaruga a tutti gli effetti, e questo ha una conseguenza preziosa per i path.
 
 ### Archi dentro path ed extrude
 
@@ -69,6 +52,15 @@ La forma più semplice è `bezier-to` con solo il punto di destinazione:
 ```
 
 Senza punti di controllo espliciti, Ridley genera automaticamente i control point in modo che la curva parta tangente all'heading corrente della tartaruga. Il risultato è una curva liscia che "esce" dalla direzione in cui stai guardando e arriva al punto target.
+
+All'**arrivo**, di default, la curva è tangente alla corda inizio→fine: la tartaruga finisce rivolta verso il target, non più nella direzione di partenza. Con il flag `:preserve-heading` la curva arriva invece tangente all'heading corrente, che resta così **invariato**: un movimento successivo si salda senza cuspidi.
+
+```clojure
+(bezier-to [20 30 0] :preserve-heading)   ;; arriva tangente all'heading corrente
+(f 10)                                     ;; prosegue dritto, senza spigolo
+```
+
+È la forma comoda per chiudere un profilo in cui un lato è curvo e gli altri dritti: la curva si raccorda con i segmenti retti senza che tu debba calcolare i punti di controllo. `:tension` (default `0.33`) regola quanto bomba la curva — più alto, pancia più larga. È in pratica un `bezier-to-anchor` verso un'ancora con il tuo stesso heading, ma senza dover definire l'ancora.
 
 Con un punto di controllo (Bezier quadratica):
 

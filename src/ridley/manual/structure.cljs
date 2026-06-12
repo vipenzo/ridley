@@ -46,13 +46,19 @@
 ;;   :file  Markdown filename (kept with NN- prefix for natural on-disk sort)
 ;;   :title {:it ... :en ...}  — :en optional, falls back to :it
 ;;
-;; Only IT titles exist at v1; EN falls back. about-ridley stands in as the
-;; chapter-1 intro (the dedicated \"Per iniziare\" tutorial is not yet written).
+;; Out-of-numbering pages (about, how-to-read) use fractional :order values so
+;; the numbered chapters keep :order = chapter number.
 
 (def guide-chapters
-  [{:id :ch-about :slug "about-ridley"             :order 1  :file "about-ridley.md"
+  [{:id :ch-about :slug "about-ridley"             :order 0  :file "about-ridley.md"
     :langs #{:it :en}
     :title {:it "Ridley in breve" :en "Ridley at a glance"}}
+   {:id :ch-howto :slug "how-to-read"               :order 0.5 :file "how-to-read.md"
+    :langs #{:it :en}
+    :title {:it "Come leggere questo manuale" :en "How to read this manual"}}
+   {:id :ch-01 :slug "getting-started"              :order 1  :file "01-getting-started.md"
+    :langs #{:it :en}
+    :title {:it "1. Per iniziare" :en "1. Getting started"}}
    {:id :ch-02 :slug "modeling-with-primitives"    :order 2  :file "02-modeling-with-primitives.md"
     :langs #{:it :en}
     :title {:it "2. Modellare per primitive" :en "2. Modeling with primitives"}}

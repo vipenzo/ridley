@@ -1,5 +1,7 @@
 # 12. Working with SDFs
 
+<!-- level: intermediate -->
+
 Up to here you have built everything with meshes: vertices, faces, triangles. SDFs (Signed Distance Fields) are Ridley's alternative modeling system. Where meshes describe the surface of an object as a network of triangles, an SDF describes an object as a mathematical function that, given a point in space, says how far it is from the surface. Points outside the object have a positive distance, points inside a negative one, points on the surface have a distance of zero.
 
 The practical difference is that some operations that with meshes are impossible or fragile become natural with SDFs: soft blends between volumes, uniform hollow shells, infinite repetitive patterns, sculptural deformations. The price is that an SDF stays abstract until you materialize it into a mesh to see it, export it, or print it.
@@ -199,6 +201,8 @@ A third construct is the parallel slits, which are subtracted from a container:
 A warning: the versions with blend (`(sdf-grid period thickness blend-k)`) use libfive's exponential blend, which does not produce a valid SDF. The gradient can invert at the junctions, causing flipped normals if combined with `sdf-intersection` or `sdf-difference`. For printable pieces, prefer the sharp-edged version (without `blend-k`).
 
 ### Custom formulas
+
+<!-- level: advanced -->
 
 `sdf-formula` compiles a quoted Clojure expression into an SDF tree. The variables `x`, `y`, `z` represent the spatial coordinates. Also available are `r` (distance from the origin), `rho` (cylindrical radius), `theta` (azimuthal angle), `phi` (polar angle):
 

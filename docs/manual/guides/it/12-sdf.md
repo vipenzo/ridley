@@ -1,5 +1,7 @@
 # 12. Lavorare con gli SDF
 
+<!-- level: intermediate -->
+
 Fino a qui hai costruito tutto con le mesh: vertici, facce, triangoli. Gli SDF (Signed Distance Fields) sono il sistema di modellazione alternativo di Ridley. Dove le mesh descrivono la superficie di un oggetto come una rete di triangoli, un SDF descrive un oggetto come una funzione matematica che, dato un punto nello spazio, dice a che distanza si trova dalla superficie. Punti fuori dall'oggetto hanno distanza positiva, punti dentro negativa, punti sulla superficie hanno distanza zero.
 
 La differenza pratica è che alcune operazioni che con le mesh sono impossibili o fragili diventano naturali con gli SDF: raccordi morbidi fra volumi, gusci cavi uniformi, pattern ripetitivi infiniti, deformazioni scultoree. Il prezzo è che un SDF resta astratto finché non lo materializzi in una mesh per vederlo, esportarlo o stamparlo.
@@ -199,6 +201,8 @@ Un terzo costrutto sono le fenditure parallele, che si sottraggono da un conteni
 Una avvertenza: le versioni con blend (`(sdf-grid period thickness blend-k)`) usano il blend esponenziale di libfive, che non produce un SDF valido. Il gradiente può invertirsi alle giunzioni, causando normali capovolte se combinato con `sdf-intersection` o `sdf-difference`. Per pezzi stampabili, preferisci la versione a spigoli vivi (senza `blend-k`).
 
 ### Formule custom
+
+<!-- level: advanced -->
 
 `sdf-formula` compila un'espressione Clojure quotata in un albero SDF. Le variabili `x`, `y`, `z` rappresentano le coordinate spaziali. Sono disponibili anche `r` (distanza dall'origine), `rho` (raggio cilindrico), `theta` (angolo azimutale), `phi` (angolo polare):
 

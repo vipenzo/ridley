@@ -3,6 +3,7 @@
   (:require [ridley.manual.core :as manual]
             [ridley.manual.content :as content]
             [ridley.manual.draft-renderer :as draft]
+            [ridley.manual.manual-levels :as manual-levels]
             [ridley.manual.reference-browser :as ref-browser]
             ["@codemirror/view" :as view :refer [EditorView]]
             ["@codemirror/state" :refer [EditorState]]
@@ -259,6 +260,11 @@
               (set! (.-className page-link) "manual-toc-link")
               (set! (.-textContent page-link) (:title page-data))
               (set! (.-href page-link) "#")
+              ;; Level chip next to the chapter title, inside the link so it sits
+              ;; inline. Single source of truth: the chapter marker in the .md,
+              ;; surfaced via the generated manual-levels map.
+              (when-let [level (get manual-levels/chapter-levels (:id page))]
+                (.appendChild page-link (draft/level-chip lang level)))
               (.addEventListener page-link "click"
                                  (fn [e]
                                    (.preventDefault e)

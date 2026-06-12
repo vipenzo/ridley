@@ -1,5 +1,7 @@
 # 8. Assembly
 
+<!-- level: intermediate -->
+
 Up to here you have built single pieces: a mesh, an extrusion, a shape modeled with shape-fns. This chapter explains how to put them together.
 
 Assembling in Ridley means positioning components in space using the turtle as a positioning tool. The principle is the same one you have used so far to move and build: you give commands to the turtle (`f`, `th`, `tv`, `rt`...), and it moves. The difference is that now the turtle drags along an already-built piece instead of building a new one.
@@ -453,7 +455,7 @@ When you build an assembly, every turtle command modifies the global state: posi
 
 ### Side-trip
 
-`side-trip` is the main mechanism. Inside a `path`, it runs a sequence of commands and then restores the turtle's state to the starting point:
+`side-trip` (§ 5.4) is the main mechanism: it runs its block and brings the turtle back to the starting point. In an assembly it becomes the branching tool:
 
 <!-- example-source: side-trip-branching
 (def skel

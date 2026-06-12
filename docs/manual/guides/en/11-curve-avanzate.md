@@ -1,35 +1,18 @@
 # 11. Advanced curves
 
+<!-- level: advanced -->
+
 In the previous chapters you built paths with straight segments (`f`) and direction changes (`th`, `tv`). For many models that is enough, but not for all: a curved handle, an aerodynamic profile, a tube that follows a fluid trajectory require real curves. Ridley offers two families of curves: arcs (a circle of known radius and angle) and Beziers (free curves controlled by points).
 
 ## 11.1 Arcs
 
-An arc is a segment of a circle. The turtle moves along the arc, progressively turning by a given angle with a given radius.
-
-```clojure
-(arc-h 10 90)       ;; horizontal arc: radius 10, 90°
-(arc-h 10 -90)      ;; opposite direction
-(arc-v 10 90)       ;; vertical arc
-```
-
-`arc-h` turns around the turtle's up axis (an arc in the horizontal plane). `arc-v` turns around the right axis (an arc in the vertical plane). Positive angle = standard rotation direction, negative = opposite.
-
-An arc is in fact a sequence of small `f` + `th` (or `tv`), where the number of steps depends on `resolution`. You can override it per call:
+You have already used arcs in chapter 4: `arc-h` curves in the horizontal plane (around the turtle's up axis), `arc-v` in the vertical one (around the right axis); a positive angle goes in the standard direction of rotation, a negative one the opposite way. Under the hood an arc is a sequence of small `f` + `th` (or `tv`) steps: their number depends on `resolution` and can be overridden per call with `:steps`:
 
 ```clojure
 (arc-h 10 90 :steps 32)    ;; 32 steps instead of the default
 ```
 
-Arcs chain with one another and with straight segments. The S-curve is the classic pattern:
-
-<!-- example-source: arc-s-tube
-(register s-tube
-  (extrude (circle 3)
-    (arc-h 15 90)
-    (arc-h 15 -90)))
--->
-
-The junction between the two arcs is smooth because the turtle exits the first arc with the heading tangent to the curve, and the second arc starts from there.
+Two consecutive arcs join smoothly by themselves: the turtle leaves the first one with its heading tangent to the curve, and the second one starts from there. What chapter 4 did not say is that arcs are turtle commands in every respect, and this has a precious consequence for paths.
 
 ### Arcs inside path and extrude
 
@@ -69,6 +52,15 @@ The simplest form is `bezier-to` with just the destination point:
 ```
 
 Without explicit control points, Ridley automatically generates the control points so that the curve starts tangent to the turtle's current heading. The result is a smooth curve that "exits" the direction you are looking in and arrives at the target point.
+
+On **arrival**, by default the curve is tangent to the start→end chord: the turtle ends up facing the target, no longer its starting direction. The `:preserve-heading` flag instead makes the curve arrive tangent to the current heading, which therefore stays **unchanged** — a following movement welds on without a cusp.
+
+```clojure
+(bezier-to [20 30 0] :preserve-heading)   ;; arrives tangent to the current heading
+(f 10)                                     ;; continues straight, no corner
+```
+
+This is the convenient form for closing a profile where one side is curved and the others straight: the curve joins the straight segments without you having to compute the control points. `:tension` (default `0.33`) sets how much the curve bows — higher means a wider belly. It is effectively a `bezier-to-anchor` toward an anchor with your own heading, but without having to define the anchor.
 
 With one control point (a quadratic Bezier):
 

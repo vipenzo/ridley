@@ -20,6 +20,14 @@ Clojure è un dialetto moderno di Lisp, una famiglia di linguaggi di programmazi
 
 Concretamente: i verbi che compongono Ridley non si distinguono come forma dai verbi base del linguaggio, e l'utente può crearne di suoi, fino a costruire un linguaggio personalizzato specifico per le sue esigenze. Si parte scrivendo `(box 20)` e si finisce, senza che ci sia un confine percepibile, a scrivere `(la-mia-cornice 80 60 12)`, che si comporta esattamente come una primitiva.
 
+E non vale solo per gli oggetti: in Ridley le funzioni sono materiale da costruzione. Una shape-fn è una funzione che fa variare un profilo lungo il percorso, una thickness-fn è una funzione che modula lo spessore di una parete, una SDF personalizzata è una formula di distanza scritta da te. Il confine fra usare Ridley ed estenderlo, semplicemente, non c'è.
+
+C'è poi una qualità più silenziosa: la sintassi di Clojure è quasi tutta sostanza. Un modello si legge come una distinta di operazioni, senza cerimonie né punteggiatura di contorno; lo stesso modello, scritto in un linguaggio convenzionale, sarebbe più lungo e più rumoroso.
+
+Tutto, in Ridley, è un dato che si può guardare dentro: forme, percorsi e mesh sono normali strutture Clojure, ispezionabili dalla REPL. E i dati si portano dietro la propria storia: una mesh estrusa lungo un percorso ricorda i punti notevoli (i *mark*) annotati su quel percorso, e quei punti si possono ripescare dalla mesh molto tempo dopo averla creata, perfino dopo che è passata per le operazioni booleane.
+
+Infine l'eredità più profonda del Lisp: le forme di controllo del linguaggio non sono un set chiuso, se ne possono creare di nuove. `on-anchors` ne è l'esempio più riuscito: prende i mark che viaggiano dentro un percorso o una mesh e li trasforma in una frase del linguaggio ("per ogni punto con questo ruolo, costruisci qui questo pezzo"): una forma espressiva che difficilmente un linguaggio fuori dalla famiglia Lisp avrebbe potuto offrire.
+
 ## Basato sulla tartaruga
 
 La "Geometria della Tartaruga" è un paradigma proposto da un linguaggio di programmazione nato per insegnare ai bambini a programmare, si chiamava Logo. Il concetto di fondo è di immaginare di dare comandi di movimento a una tartaruga (stilizzata sullo schermo). Comandi come "vai avanti di 5 unità", "gira a destra di 90 gradi". A fronte di questi comandi la tartaruga del Logo si muoveva sullo schermo lasciando traccia del suo percorso (un comando "penna su" o "penna giù" permetteva di muoversi lasciando la traccia o semplicemente di riposizionarsi).

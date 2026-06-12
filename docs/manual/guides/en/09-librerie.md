@@ -1,5 +1,7 @@
 # 9. Workspaces and Libraries
 
+<!-- level: base -->
+
 Two things hold the code you write: the *Workspace*, the document you are working in, and *libraries*, the reusable code you call from any document. This chapter covers both.
 
 ## 9.1 Workspaces

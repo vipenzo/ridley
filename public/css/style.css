@@ -353,6 +353,22 @@ html, body {
   color: #fff;
 }
 
+.tweak-context-menu .tcm-item.tcm-disabled {
+  color: #6b6b6b;
+  cursor: default;
+}
+
+.tweak-context-menu .tcm-item.tcm-disabled:hover {
+  background: transparent;
+  color: #6b6b6b;
+}
+
+.tweak-context-menu .tcm-sep {
+  height: 1px;
+  margin: 4px 0;
+  background: #454545;
+}
+
 .section-header {
   display: flex;
   align-items: center;
@@ -1192,6 +1208,64 @@ body.resizing-h * {
   border-top: 1px solid #3c3c3c;
   background: #1e1e1e;
   margin: 0;
+}
+
+/* ── Level badges (dev-docs/brief-level-badges.md) ───────────── */
+
+.manual-level-badge {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 1px 8px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  font-weight: 500;
+  vertical-align: middle;
+  white-space: nowrap;
+  cursor: default;
+}
+
+/* Chapter chip: sits next to the h1 title. */
+.manual-level-chapter {
+  margin-left: 10px;
+  font-size: 12px;
+}
+
+/* Section chip: smaller, pushed to the right of the heading text. */
+.manual-level-section {
+  float: right;
+  margin-top: 2px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.manual-level-prereq {
+  font-weight: 400;
+  font-size: 0.85em;
+  text-transform: none;
+  letter-spacing: 0;
+  color: #a0a0a0;
+}
+
+/* Muted, theme-coherent tints — no aggressive traffic-light colors. */
+.manual-level-base {
+  color: #8fbf8f;
+  border-color: rgba(120, 180, 120, 0.35);
+  background: rgba(120, 180, 120, 0.10);
+}
+
+.manual-level-intermediate {
+  color: #c9b079;
+  border-color: rgba(200, 170, 110, 0.35);
+  background: rgba(200, 170, 110, 0.10);
+}
+
+.manual-level-advanced {
+  color: #c08fc0;
+  border-color: rgba(190, 130, 190, 0.35);
+  background: rgba(190, 130, 190, 0.10);
 }
 
 .manual-page-nav {

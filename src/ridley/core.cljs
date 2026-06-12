@@ -61,6 +61,7 @@
 ;; Manual panel state
 (defonce ^:private manual-panel (atom nil))
 
+(declare evaluate-definitions)
 (declare sync-voice-state)
 (declare save-to-storage)
 (declare send-script-debounced)
@@ -262,7 +263,16 @@
         ;; Check if a deferred modal session (pilot, edit-bezier, …) was
         ;; requested during evaluation; enter it now that the eval is complete.
         (when (modal/requested?)
-          (modal/enter!))))))
+          (modal/enter!))))
+    ;; Safety net for the editor's right-click "Tweak": if it auto-wrapped a
+    ;; selection in (tweak …) but the wrapped script failed to open a session
+    ;; (so the transient is still pending), roll the wrapper back to the original
+    ;; selection and re-run the now-clean source. Otherwise the user is left
+    ;; staring at a broken (tweak …) baked into the buffer with no way out.
+    (when (modal/restore-failed-tweak-transient!)
+      (hide-error)
+      (add-repl-entry "[Tweak]" "Selection couldn't be tweaked (script error) — selection restored." false)
+      (evaluate-definitions))))
 
 (defn- evaluate-definitions
   "Evaluate only the definitions panel (for Cmd+Enter).
@@ -2827,10 +2837,32 @@
     (translate (sdf-box 8 8 8) 12 0 0)
     3))")
 
-(defn- install-tweak-context-menu!
-  "Attach a right-click menu to the editor that wraps the current selection in
-   (tweak …) and runs it. The single 'Tweak' item delegates to
-   tweak-mode/tweak-selection!, which auto-picks (tweak n) vs (tweak :all …)."
+(defn- editor-context-menu-items
+  "The right-click menu model, recomputed each time the menu opens so that
+   selection-dependent items reflect the current state. Each item is either
+   {:separator true} or {:label … :run fn :enabled? bool}."
+  []
+  (let [sel? (cm/has-selection?)]
+    [{:label "Cut"        :enabled? sel? :run #(cm/cut-selection!)}
+     {:label "Copy"       :enabled? sel? :run #(cm/copy-selection!)}
+     {:label "Paste"      :enabled? true :run #(cm/paste-clipboard!
+                                                (cm/get-editor)
+                                                (fn [] (js/console.warn "Paste: clipboard unavailable")))}
+     {:label "Select All" :enabled? true :run #(cm/select-all!)}
+     {:separator true}
+     {:label "Search…"    :enabled? true :run #(cm/open-search!)}
+     {:separator true}
+     {:label "Slurp →"            :enabled? true :run #(cm/slurp-form)}
+     {:label "← Barf"             :enabled? true :run #(cm/barf-form)}
+     {:label "Go to matching )"   :enabled? true :run #(cm/goto-matching-bracket!)}
+     {:separator true}
+     {:label "Tweak"      :enabled? sel? :run #(tweak-mode/tweak-selection!)}]))
+
+(defn- install-editor-context-menu!
+  "Attach a right-click menu to the editor with standard editing commands
+   (cut/copy/paste/select-all), search, a few paredit operations, and the
+   Tweak command. Replaces the browser's native menu (which preventDefault
+   suppresses) because the native menu is absent/incomplete under WKWebView."
   [container]
   (when container
     (.addEventListener
@@ -2845,10 +2877,28 @@
          (set! (.-className menu) "tweak-context-menu")
          (set! (.. menu -style -left) (str (.-clientX e) "px"))
          (set! (.. menu -style -top) (str (.-clientY e) "px"))
-         (set! (.-innerHTML menu) "<div class='tcm-item'>Tweak</div>")
-         (.addEventListener (.querySelector menu ".tcm-item") "click"
-                            (fn [_] (.remove menu) (tweak-mode/tweak-selection!)))
+         (doseq [item (editor-context-menu-items)]
+           (if (:separator item)
+             (let [sep (.createElement js/document "div")]
+               (set! (.-className sep) "tcm-sep")
+               (.appendChild menu sep))
+             (let [{:keys [label run enabled?]} item
+                   el (.createElement js/document "div")]
+               (set! (.-className el) (if enabled? "tcm-item" "tcm-item tcm-disabled"))
+               (set! (.-textContent el) label)
+               (when enabled?
+                 (.addEventListener el "click"
+                                    (fn [_] (.remove menu) (run))))
+               (.appendChild menu el))))
          (.appendChild (.-body js/document) menu)
+         ;; Keep the menu on-screen if it would overflow the viewport bottom/right.
+         (let [r (.getBoundingClientRect menu)
+               vw (.-innerWidth js/window)
+               vh (.-innerHeight js/window)]
+           (when (> (.-right r) vw)
+             (set! (.. menu -style -left) (str (max 0 (- (.-clientX e) (.-width r))) "px")))
+           (when (> (.-bottom r) vh)
+             (set! (.. menu -style -top) (str (max 0 (- (.-clientY e) (.-height r))) "px"))))
          ;; Dismiss on the next outside click
          (let [dismiss (fn dismiss [ev]
                          (when-not (.contains menu (.-target ev))
@@ -2879,8 +2929,8 @@
               :on-selection-change (fn []
                                      (maybe-update-ai-focus!)
                                      (sync-voice-state))}))
-    ;; Right-click in the editor → "Tweak" menu (wraps the selection in tweak)
-    (install-tweak-context-menu! editor-container)
+    ;; Right-click in the editor → editing/search/paredit/tweak context menu
+    (install-editor-context-menu! editor-container)
     ;; Wire editor content getter for tweak_mode
     (reset! editor-state/get-editor-content
             (fn [] (when @editor-view (cm/get-value @editor-view))))

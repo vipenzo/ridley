@@ -170,8 +170,8 @@
     :category "turtle-movement"
     :status "stable"
     :since ""
-    :signature "(bezier-to target)\n(bezier-to target & {:keys [steps]})\n(bezier-to target ctrl)\n(bezier-to target ctrl-1 ctrl-2)\n(bezier-to target ctrl-1 ctrl-2 :local)"
-    :description "Move the turtle to `target` along a smooth bezier curve, updating heading at each step to remain tangent to the curve. **Modifies turtle state.**"
+    :signature "(bezier-to target)\n(bezier-to target & {:keys [steps]})\n(bezier-to target ctrl)\n(bezier-to target ctrl-1 ctrl-2)\n(bezier-to target ctrl-1 ctrl-2 :local)\n(bezier-to target :preserve-heading)\n(bezier-to target :preserve-heading :tension 0.5)"
+    :description "Move the turtle to `target` along a smooth bezier curve, updating heading at each step to remain tangent to the curve. **Modifies turtle state.** With no control points the curve normally ends facing the start→end chord; `:preserve-heading` makes it arrive tangent to the current heading (heading unchanged), so a following movement welds on without a cusp. `:tension` (default 0.33) sets the curve width."
     :path "docs/manual/reference/en/bezier-to.md"}
 
    "bezier-to-anchor"
@@ -1458,7 +1458,7 @@
     :status "stable"
     :since ""
     :signature "(revolve shape)\n(revolve shape angle)\n(revolve shape angle & {:keys [pivot]})\n(revolve shape-fn)"
-    :description "Rotate a 2D profile around the turtle's **up** axis to produce a solid of revolution (lathe). The revolution axis passes through the turtle's current position. Returns a mesh; does not modify turtle state."
+    :description "Rotate a 2D profile around the turtle's **up** axis to produce a solid of revolution (lathe). The profile's X is the radial distance from the axis (which passes through the turtle's position), Y is the position along it. A solid profile with X<0 vertices is auto-clipped at the axis (so a centered shape keeps only its positive-X half); a straddling shape-fn is auto-shifted instead. Returns a mesh; does not modify turtle state."
     :path "docs/manual/reference/en/revolve.md"}
 
    "revolve+"
@@ -2007,7 +2007,7 @@
     :status "stable"
     :since ""
     :signature "(shell shape-or-fn & {:keys [thickness style threshold cap-top cap-bottom fn invert?] :as style-opts})"
-    :description "Shape-fn that produces a hollow extrusion with variable-thickness walls and optional openings. At each ring, the profile is annotated with a per-vertex thickness value (`0` = no wall, `1` = full thickness); the loft uses these to build an inner and outer wall around each point. The wall pattern is chosen via `:style` (one of `:solid`, `:lattice`, `:checkerboard`, `:weave`, `:voronoi`) or supplied as a custom function via `:fn`. Used with `loft` or `revolve`. Does not modify turtle state."
+    :description "Shape-fn that produces a hollow extrusion with variable-thickness walls and optional openings. At each ring, the profile is annotated with a per-vertex thickness value (`0` = no wall, `1` = full thickness); the loft uses these to build an inner and outer wall around each point. The wall pattern is chosen via `:style` (one of `:solid`, `:lattice`, `:checkerboard`, `:weave`, `:voronoi`) or supplied as a custom function via `:fn`. `:cap-top`/`:cap-bottom` close the ends — by convention **top** is the extrusion's arrival end (where the path finishes) and **bottom** its start (the turtle's pose when the loft begins). Used with `loft` or `revolve`. Does not modify turtle state."
     :path "docs/manual/reference/en/shell.md"}
 
    "show"

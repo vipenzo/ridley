@@ -1792,6 +1792,8 @@ I contenuti vivono in Markdown sotto `docs/manual/`: le guide in `guides/{it,en}
 
 `reference_index.cljs` è l'indice simbolo→metadati, **generato a build time** da `scripts/build_reference_index.bb` (Babashka) leggendo le schede: niente parsing Markdown a runtime per search e tooltip. Lo stesso indice alimenta la completion e i tooltip in hover dell'editor (sezione 11.6.4) e — per i simboli senza scheda `.md` — `clojure_core_index.cljs` fornisce le voci compatte di Clojure core.
 
+`manual_levels.cljs` è la mappa capitolo→livello (`base`/`intermediate`/`advanced`), anch'essa **generata a build time** da `scripts/build_manual_levels.bb` leggendo il primo marker `<!-- level: … -->` di ogni guida (la fonte di verità resta il marker nel `.md`; il file è una cache derivata, da rigenerare dopo aver toccato i marker di capitolo, come `reference_index`). La consuma il sommario (`components.cljs` → `render-toc`), che affianca al titolo di ogni capitolo lo stesso chip di livello della pagina via `draft_renderer/level-chip`. In pagina i chip restano renderizzati a runtime dai marker (`apply-level-badges!`): entrambi i percorsi derivano dallo stesso marker, quindi una sola fonte di verità.
+
 Lo stato del pannello vive nell'atom `manual-state` (pagina corrente, lingua, apertura, history); `add-state-watcher!` riaggancia il rendering all'atom. `setup-manual`, chiamato da `core.cljs` all'init, wira i callback Run/Edit e gli handler dei cross-link (sezione 11.6.4).
 
 #### 11.6.2 Bilinguismo e fallback

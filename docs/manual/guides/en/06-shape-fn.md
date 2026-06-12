@@ -10,24 +10,28 @@ Struttura del capitolo:
 6.5  profile: il profilo come silhouette
 6.6  heightmap: displacement da mappa di altezze
 6.7  mesh-to-heightmap e heightmap tileabili
-6.8  Comporre shape-fn
-6.9  Thickness-fn: controllare lo spessore delle pareti
-6.10 Scrivere una shape-fn propria
+6.8  Shell, woven shell e embroid (loft + shell/embroid shape-fn)
+6.9  Raccordi sui cap (capped)
+6.10 Comporre shape-fn
+6.11 Thickness-fn: controllare lo spessore delle pareti
+6.12 Scrivere una shape-fn propria
 
-Prerequisiti: cap. 3 (shape 2D), cap. 4 (extrude, loft, shell intro), cap. 5 (path).
-Il cap. 4 ha già introdotto shell/woven-shell (4.6), capped (4.7), composizione
-via threading. Qui si approfondisce il meccanismo e si coprono le shape-fn
-che il cap. 4 non ha toccato.
+Prerequisiti: cap. 3 (shape 2D), cap. 4 (extrude, loft), cap. 5 (path).
+Il cap. 4 introduce extrude/loft e chiude con una sezione-ponte sulle shape-fn.
+Shell, woven-shell, capped ed embroid vivono qui (spostati dal cap. 4 il
+2026-06-10). Qui si copre l'intero meccanismo delle shape-fn.
 
 Vincoli:
 - shell deve essere l'ultima nella catena di composizione
-- embroid non si compone in catena: stampa le proprie facce (cap. 4.6), eccezione più forte di shell
+- embroid non si compone in catena: stampa le proprie facce (vedi la sezione embroid), eccezione più forte di shell
 - loft-n controlla i passi longitudinali (resolution non influenza loft)
 - shell/woven-shell richiedono risoluzione ~512 su entrambi gli assi
 =========================================================================
 -->
 
 # From mathematical functions to shapes
+
+<!-- level: advanced -->
 
 > This chapter is among the most advanced in the manual. Shape-fns are a powerful tool, but not essential to start modeling: with the primitives, extrusions, and boolean operations of the previous chapters you can already build a lot. If you are reading the manual for the first time, you can skip to chapter 7 and come back here when you feel the need for surfaces that vary along the path, procedural textures, or decorated shells.
 
@@ -81,7 +85,7 @@ Scales the profile uniformly. At `t = 0` the profile has scale 1 (or the value o
 (rt 50)
 
 ;; Expansion: from radius 10 to radius 20
-(register horn (loft (tapered (circle 10) :from 0.5 :to 1) (f 40)))
+(register horn (loft (tapered (circle 20) :from 0.5 :to 1) (f 40)))
 ```
 
 `:to` and `:from` are ratios relative to the original size of the profile: `0.5` halves it, `2` doubles it. If you omit `:from`, the starting value is 1.
@@ -152,7 +156,7 @@ Moves the vertices radially using a continuous noise function. Unlike `rugged` (
 <!-- example-source: shapefn-noisy -->
 ```clojure
 (register organic
-  (loft (noisy (circle 15 64) :amplitude 2 :scale 3) (f 40)))
+  (loft (noisy (circle 15 256) :amplitude 3 :scale 3) (f 40)))
 ```
 
 The options control the character of the noise:
@@ -294,7 +298,7 @@ Resolution matters on both axes. The heightmap itself must have enough pixels no
 
 Any mesh can become a heightmap. `mesh-to-heightmap` looks at the mesh from above (the Z axis), rasterizes the Z values into a 2D grid, and returns a heightmap ready to use with the `heightmap` shape-fn.
 
-<!-- example-source: shapefn-mesh-to-heightmap -->
+<!-- example-source: shapefn-mesh-to-heightmap :warning slow -->
 ```clojure
 ;; A sphere becomes a dome-shaped height map
 (def dome-hm (mesh-to-heightmap (sphere 10 32 16) :resolution 128))
@@ -361,6 +365,204 @@ The heightmap produced by `weave-heightmap` is tileable by construction: the edg
 ```
 
 
+## Shell, woven shell and embroid
+
+The shape-fns seen so far deform a profile that stays solid. But many real objects are hollow: vases, lamps, containers, lampshades. `shell` is a shape-fn that turns a solid profile into a hollow shell with walls of controlled thickness, with the option of opening decorative windows in the walls.
+
+Since `shell` is a shape-fn (the profile changes along the path, going from solid to hollow), it needs `loft` instead of `extrude`. The practical difference is minimal: where before you wrote `(extrude shape ...)`, now you write `(loft (shell shape ...) ...)`.
+
+<!-- example-source: shell-solid -->
+```clojure
+(register cup
+  (loft (shell (circle 20 64) :thickness 2 :style :solid)
+    (f 40)))
+```
+
+A cup: a circle extruded as a shell with walls 2 thick. `:style :solid` produces solid walls, with no openings. The result is a hollow cylinder open at both ends: the shell has neither bottom nor lid. To close them, `shell` accepts the options `:cap-top` and `:cap-bottom`. A number produces a solid cap of the given thickness; a map produces a patterned cap (Voronoi, grid).
+
+<!-- example-source: shell-cup-with-bottom -->
+```clojure
+(register cup-with-bottom
+  (loft (shell (circle 20 64) :thickness 2 :style :solid :cap-bottom 2)
+    (f 40)))
+```
+
+With `:cap-bottom 2` the cup has a closed bottom, 2 thick. The top stays open, as you would expect from a cup.
+
+The wall is symmetric: half the thickness sticks outward, half inward relative to the original profile.
+
+### Opening styles
+
+The style controls the pattern of the openings in the walls.
+
+<!-- example-source: shell-voronoi :warning slow -->
+```clojure
+(register lamp
+  (loft-n 512 (shell (circle 20 512) :thickness 2 :style :voronoi
+                :cells 8 :rows 6 :softness 0.6)
+    (f 50)))
+
+```
+
+`:voronoi` distributes irregular cells over the walls. The cell edges are material, the interior is empty. `:cells` controls how many cells per ring, `:rows` how many rings along the path.
+
+<!-- example-source: shell-lattice :warning slow -->
+```clojure
+(register vase
+  (loft-n 512 (shell (circle 15 512) :invert? true :thickness 2 :style :lattice :openings 4 :rows 6)
+    (f 60)))
+```
+
+`:lattice` produces a brick pattern: rows of solid blobs staggered along the circumference. `:openings` controls the number of bricks per row, `:rows` the number of rows. With `:invert? true` the pattern is inverted: the bricks become openings in a continuous shell. Without `:invert?`, the result is detached bricks (useful as a relief texture, less so as a shell).
+
+The `:softness` option (for `:voronoi` and `:lattice`, default `0.6`) controls how the edges of the openings are cut. By default the cut is *isocontour*: the edge is sliced at the exact position where the wall meets the opening, between one vertex and the next, and the openings come out smooth (with a small tapered lip) even at moderate resolution. With `:softness 0` the cut goes back to *binary*: each triangle of the grid is kept or discarded as a whole, and the edges stay stepped along the grid of rings and segments (raising the resolution shrinks the teeth but does not eliminate them). A value around `0.5–0.8` is the sweet spot. It is the equivalent, for shells, of the `:edge-softness` of text relief (chapter 13). (`:lattice` with `:invert?` always uses the binary cut.)
+
+The other available styles are `:checkerboard` and `:weave`. Each has its own specific options; the Reference documents them all. `:invert? true` works with all styles, including custom thickness-fns passed with `:fn`.
+
+### Shell in composition
+
+`shell` is a shape-fn like `tapered` or `twisted`, so it composes with `->`:
+
+<!-- example-source: shell-composed :warning slow -->
+```clojure
+(register tapered-lamp
+  (loft-n 512 (-> (circle 20 512)
+                  (shell :thickness 2 :style :voronoi :cells 8 :rows 6)
+                  (tapered :to 0.5))
+    (f 60)))
+```
+
+A lamp that tapers: `shell` makes the profile hollow with Voronoi openings, `tapered` reduces it progressively along the path. The two transformations are applied in sequence to each ring of the loft. The general picture of composition, including the rule that `shell` always closes the chain, is the subject of the "Composing shape-fns" section further on.
+
+### Woven shell
+
+`woven-shell` is a variant of `shell` that does not just vary the wall thickness: it also shifts the wall center radially, so the strands pass in front of and behind one another as in a real weave.
+
+<!-- example-source: woven-shell-basic :warning slow -->
+```clojure
+(register basket
+  (loft-n 512 (woven-shell (circle 20 512) :thickness 3 :strands 8)
+    (f 50)))
+```
+
+A woven basket. The diagonal strands cross with a true three-dimensional over/under, not just a pattern of holes. `:strands` controls the number of strands; `:mode :orthogonal` produces a warp-and-weft weave (wicker-like) instead of the default diagonal pattern.
+
+Like `shell`, `woven-shell` composes with other shape-fns:
+
+<!-- example-source: woven-lamp :warning slow -->
+```clojure
+(register woven-lamp
+  (loft-n 512 (-> (circle 20 512)
+                (woven-shell :thickness 3 :strands 6)
+                (tapered :to 3.5))
+    (f 50)))
+```
+
+### Embroid: perforating a wall
+
+`shell` starts from a solid profile and hollows it out, leaving thin walls with a pattern of openings. `embroid` covers the complementary case: a wall that is already a thin surface, not a solid to hollow out, and cuts the same kind of windows into it. It is the case where `shell` does not apply, because there is nothing to hollow. Think of it as "making a slice of a shell".
+
+Unlike the other shape-fns, `embroid` does not take a shape but the path that defines the wall's centerline, plus the thickness. It builds the two faces of the wall by offsetting `±thickness/2` perpendicular to the path at each point, so the perforation goes through the thickness whatever the curvature of the path. Each opening is a through hole finished between the two faces, and the result is watertight and manifold. Like `shell`, it is a shape-fn and is used with `loft`.
+
+<!-- example-source: embroid-wall -->
+```clojure
+(register panel
+  (loft (embroid (path (f 3) (arc-h 50 90) (f 70))
+          3
+          :resolution 400
+          :wall {:style :honeycomb :cells 8 :border 4})
+    (f 45)))
+```
+
+A curved wall perforated with a regular honeycomb and a solid 4-unit border on all sides. The first argument of `embroid` is the centerline path (a straight stretch, a 90° arc, another straight stretch), the second is the thickness. Both the straight and the curved stretch are perforated, because the pattern follows the path rather than a fixed direction.
+
+The `:honeycomb` style is the default. With `:style :pattern` any shape can be used as the opening motif:
+
+<!-- example-source: embroid-holes -->
+```clojure
+(register grille
+  (loft (embroid (path (f 3) (arc-h 50 90) (f 70))
+          3
+          :wall {:style :pattern :pattern (circle 4)
+                 :spacing 12 :grid :hex :inset 0.5})
+    (f 45)))
+```
+
+Round holes on a hexagonal grid. `:spacing` is the grid pitch, `:grid` chooses between a square or a staggered hexagonal layout, `:inset` shrinks the motif to thicken the bridges between holes. There is also `:style :voronoi`, as for `shell`. The [embroid](ref:embroid) Reference card documents all the pattern, border and cap options.
+
+Two practical points. The sharpness of the edges along the path is controlled by `:resolution` (samples along the path), independently of the number of loft steps, which only refines the sweep direction: usually you do not need a high `loft-n` once `:resolution` is set. And unlike `shell`, `embroid` does not compose with `->` like the other shape-fns: in the loft it stamps its own ready-made faces, so a `tapered` or a `twisted` added afterwards is silently ignored. To reposition it use embroid's `:offset` option, or translate the resulting mesh.
+
+### Resolution and performance
+
+Shell and woven-shell need a lot of resolution on both axes to render the patterns well. Two numbers matter: the number of points in the circle (the circumferential resolution) and the number of loft steps (the longitudinal resolution). With the defaults of 64 points and 64 steps, the simpler patterns are already legible, but for truly crisp results you need values on the order of 512 on both axes: `(circle 20 512)` for the profile and `loft-n 512` for the steps. The price is slow computation (several seconds) and a mesh with many triangles. During prototyping it is better to use lower numbers (128 or 256) to iterate quickly, and raise them for the final result.
+
+The global `resolution` setting also affects the default number of loft steps. If explicit control is needed, `loft-n` with the desired number of steps always takes precedence.
+
+## Fillets on the caps
+
+An extruded solid has sharp edges where the section meets the end faces (the "caps"). In chapter 3 we saw `fillet-shape` for rounding the 2D corners of the profile (the edges along the extrusion direction). `capped` rounds the other set of edges: those where the profile meets the closing faces, at the two ends.
+
+<!-- example-source: capped-basic -->
+```clojure
+(register rounded-bar
+  (loft (capped (rect 30 15) 3) (f 50)))
+```
+
+`capped` takes a shape and a radius, and produces a shape-fn that fillets the ends: the profile starts from zero, grows to full size within the first 3 mm, stays constant along the path, and returns to zero in the last 3 mm. The transition follows a quarter-circle profile, so the fillet is smooth. The result is a box with rounded end edges.
+
+Like `shell`, `capped` is a shape-fn and requires `loft` instead of `extrude`.
+
+### Fillet and chamfer on the caps
+
+`capped` has two modes: fillet (default) and chamfer.
+
+```clojure
+(loft (capped shape 3) (f 50))                ; fillet (quarter circle)
+(loft (capped shape 3 :mode :chamfer) (f 50)) ; chamfer (linear transition)
+```
+
+With `:chamfer` the transition is a straight 45° cut instead of a curve.
+
+### Controlling the ends
+
+You can choose to fillet only one end:
+
+```clojure
+(loft (capped shape 3 :start false) (f 50))   ; only the end
+(loft (capped shape 3 :end false) (f 50))     ; only the start
+```
+
+### Composing with fillet-shape and other shape-fns
+
+`fillet-shape` rounds the 2D corners of the profile. `capped` rounds the 3D end edges. The two operations are orthogonal and compose:
+
+<!-- example-source: capped-fillet-composed -->
+```clojure
+(register rounded-box
+  (loft (-> (rect 40 20) (fillet-shape 5) (capped 3)) (f 50)))
+```
+
+A box with rounded 2D corners (radius 5) and filleted end edges (radius 3). The result is an object with all edges soft, obtained by composing two independent operations.
+
+`capped` also composes with `tapered`, `twisted`, and any other shape-fn:
+
+<!-- example-source: capped-tapered-foot -->
+```clojure
+(def foot
+  (loft (-> (circle 15) (tapered :to 0.3) (capped -10)) (f 40)))
+
+(register base
+  (mesh-union
+    (attach (box 30) (f (+ 40 15)))
+    foot)
+  )
+```
+
+`capped` is a useful tool, when used with negative values (-10 in this case), for blending the result of a loft into other objects. In the example above the foot widens to meet the cube.
+
+The fraction of the path devoted to the transition is computed automatically by `capped` as the ratio between the radius and the path length. It can be forced with `:fraction` if the automatic result is not satisfactory.
+It is not possible to have two different values for the two caps (consequently you cannot have one that tapers, with positive values, and one that widens, with negative values). To get that effect you have to use two separate lofts.
+
 ## Composing shape-fns
 
 Shape-fns compose with `->` threading. Each shape-fn in the chain wraps the previous one: when the loft evaluates the chain at a given `t`, execution proceeds from the inside outward.
@@ -395,19 +597,26 @@ The exception is `tapered`: `tapered` *after* `shell` works because `tapered` pr
 
 ### The embroid case
 
-`embroid` (chapter 4.6) is a special shape-fn: in the loft it does not transform the profile step by step like the others, but stamps its own faces directly, already built from the path. For this reason it does not compose with `->`. Any shape-fn placed after `embroid` in the chain is silently ignored, because there is no intermediate profile to act on. It is a stronger exception than shell's: shell only has to come last, embroid does not enter the chain at all. To reposition the result, use embroid's `:offset` option, or translate the mesh after the loft.
+`embroid` (seen above) is a special shape-fn: in the loft it does not transform the profile step by step like the others, but stamps its own faces directly, already built from the path. For this reason it does not compose with `->`. Any shape-fn placed after `embroid` in the chain is silently ignored, because there is no intermediate profile to act on. It is a stronger exception than shell's: shell only has to come last, embroid does not enter the chain at all. To reposition the result, use embroid's `:offset` option, or translate the mesh after the loft.
 
 ### Resolution
 
-Composing shape-fns does not change how many steps the loft takes. If the result looks faceted in the path direction, raise the number of steps with `loft-n`:
+Composing shape-fns does not change how many steps the loft takes. It matters, though, when the profile varies **non-linearly along the path**: a twist (`twisted`), an undulation, or a curved path. A linear variation (`tapered`) or one that is constant along `t` (the straight grooves of `fluted`) is reproduced exactly even with few steps, so raising the resolution changes nothing.
+
+Here the two shape-fns on their own would not need resolution: but `twisted` makes the grooves spiral, and the spiral is a curve in the path direction that the loft approximates with straight chords between one ring and the next. With few steps it looks segmented; with many, smooth. If the result looks faceted in the path direction, raise the number of steps with `loft-n`:
 
 <!-- example-source: shapefn-compose-resolution -->
 ```clojure
-(register smooth-column
+;; few steps: the spiral of the grooves looks segmented
+(register coarse
+  (loft-n 12
+    (-> (circle 15 64) (fluted :flutes 12 :depth 1.5) (twisted :angle 180))
+    (f 80)))
+(u -50)
+;; many steps: the spiral is smooth
+(register smooth
   (loft-n 128
-    (-> (circle 15 128)
-        (fluted :flutes 20 :depth 1.5)
-        (tapered :to 0.85))
+    (-> (circle 15 64) (fluted :flutes 12 :depth 1.5) (twisted :angle 180))
     (f 80)))
 ```
 
@@ -416,7 +625,7 @@ Composing shape-fns does not change how many steps the loft takes. If the result
 
 ## Thickness-fns: controlling wall thickness
 
-In chapter 4 we used `shell` with the built-in styles (`:voronoi`, `:lattice`, `:weave`, `:checkerboard`). Each of those styles is a prepackaged thickness-fn: a function that tells the loft how thick the wall must be at each point.
+In the section on `shell` we used the built-in styles (`:voronoi`, `:lattice`, `:weave`, `:checkerboard`). Each of those styles is a prepackaged thickness-fn: a function that tells the loft how thick the wall must be at each point.
 
 The thickness-fn has the signature `(fn [angle t] -> 0..1)`. The two arguments are the coordinates of a point on the surface of the shell:
 

@@ -1,5 +1,7 @@
 # 14. Color and materials
 
+<!-- level: base -->
+
 In Ridley color is a modeling tool, not just a visualization one. The colors you assign to the meshes determine how the parts will be mapped to the filaments in multi-material printing. This chapter covers color assignment, material properties, and the workflow for exporting multi-color models.
 
 ## 14.1 Coloring shapes

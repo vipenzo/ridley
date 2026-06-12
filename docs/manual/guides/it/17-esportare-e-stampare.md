@@ -1,5 +1,7 @@
 # 17. Esportare e stampare
 
+<!-- level: base -->
+
 Una volta che il modello è pronto nel viewport, lo esporti come file per lo slicer o per un altro software. Ridley supporta due formati: STL (il formato universale della stampa 3D) e 3MF (il formato più recente, con supporto per colori e materiali multipli).
 
 ## 17.1 STL
@@ -63,7 +65,7 @@ Il modello che vedi nel viewport è esattamente quello che finisce nel file: ste
 
 Le unità di Ridley sono millimetri. Se il tuo modello è parametrico, controlla con `bounds` che le dimensioni finali siano quelle che ti aspetti prima di esportare.
 
-`mesh-diagnose` (capitolo 7.1) è lo strumento per verificare che la mesh sia sana prima dell'export. La maggior parte degli slicer ripara automaticamente piccoli difetti, ma mesh con molti open-edge o non-manifold-edge possono produrre risultati imprevedibili nello slicing.
+`mesh-diagnose` (capitolo 7.7) è lo strumento per verificare che la mesh sia sana prima dell'export. La maggior parte degli slicer ripara automaticamente piccoli difetti, ma mesh con molti open-edge o non-manifold-edge possono produrre risultati imprevedibili nello slicing.
 
 ## 17.3 Orientare per la stampa
 

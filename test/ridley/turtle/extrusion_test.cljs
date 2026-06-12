@@ -278,6 +278,32 @@
       (is (some? mesh) "Multi-corner extrusion should work")
       (is (> (count (:faces mesh)) 20) "Should have substantial face count"))))
 
+(deftest extrude-smooth-arc-no-radius-overshoot
+  (testing "Extrusion along a smooth arc tracks the path end (no profile-radius overshoot)"
+    ;; A 90-degree turn split into 36 small steps (~2.5 deg each) lands every step
+    ;; in the 'smooth transition' band (above ~1.15 deg, below the 10 deg corner
+    ;; threshold), exercising the rounded-corner ring path. That path pivots each
+    ;; transition ring around a point offset by the profile radius; on a
+    ;; consistently-turning arc the spine used to drift forward by ~one radius per
+    ;; 90 degrees of turn, so the extruded tube overshot the path end (loft tracks
+    ;; the path and was unaffected). The final heading is +Y, so the end cap is flat
+    ;; in the XZ plane and the tube's max Y equals the spine end Y.
+    (let [n 36
+          step-angle (/ 90.0 n)
+          arc-cmds (vec (mapcat (fn [_] [{:cmd :th :args [step-angle]}
+                                         {:cmd :f :args [1.0]}])
+                                (range n)))
+          path (t/make-path arc-cmds)
+          path-end-y (second (:position (t/run-path (t/make-turtle) path)))
+          circ (shape/circle-shape 5 12)
+          mesh (last (:meshes (t/extrude-from-path (t/make-turtle) circ path)))
+          max-y (second (:max (h/mesh-bounding-box mesh)))]
+      (is (some? mesh) "Extrude along arc should produce a mesh")
+      ;; Before the fix max-y overshot path-end-y by ~5 (the profile radius).
+      (is (h/approx= max-y path-end-y 1.0)
+          (str "Tube max-Y (" max-y ") should match path end Y (" path-end-y
+               "); a ~+5 overshoot (the profile radius) is the regression.")))))
+
 (deftest extrude-with-roll
   (testing "Extrusion with tr (roll) works"
     (let [rect (shape/rect-shape 10 6)

@@ -1,5 +1,7 @@
 # 10. Analizzare e misurare
 
+<!-- level: intermediate -->
+
 Modellare non è solo costruire: è anche capire cosa hai costruito. Quanto è largo questo pezzo? I due fori sono alla distanza giusta? La mesh è watertight o ha buchi? Questa sezione è entrata da qualche parte in modo strano?
 
 Ridley offre strumenti per rispondere a queste domande sia da codice (nella REPL o nel programma) sia interattivamente (con il mouse nel viewport). Questo capitolo li raccoglie tutti.
@@ -133,23 +135,13 @@ Le direzioni sono relative alla creation-pose della mesh, non al mondo:
   (flash-face (get-mesh :my-piece) (:id face)))
 -->
 
-`:threshold` controlla la tolleranza dell'allineamento (default 0.7, dove 1.0 è perfetto):
-
-```clojure
-(find-faces mesh :top :threshold 0.9)    ;; solo facce molto allineate
-```
-
-`:where` aggiunge un predicato sulla mappa della faccia:
-
-```clojure
-(find-faces mesh :top :where #(> (:area %) 100))    ;; solo facce grandi
-```
+Le opzioni di raffinamento (`:threshold` per la tolleranza dell'allineamento, `:where` per i predicati sulla faccia) sono nella 7.4.
 
 Le funzioni di selezione puntuale (`face-at`, `face-nearest`, `largest-face`) sono trattate nella 7.4. Qui il punto è che `find-faces` è utile non solo per *fare* qualcosa con le facce, ma anche per *capire* la struttura di una mesh dopo una serie di operazioni booleane.
 
 ## 10.4 Diagnostica della mesh
 
-Gli strumenti di diagnostica della mesh (`mesh-diagnose`, `mesh-status`, `merge-vertices`) sono trattati nella sezione 7.1. Qui aggiungiamo una precisazione su `manifold?`.
+Gli strumenti di diagnostica della mesh (`mesh-diagnose`, `mesh-status`, `merge-vertices`) sono trattati nella sezione 7.7. Qui aggiungiamo una precisazione su `manifold?`.
 
 `manifold?` restituisce `true` se la mesh è watertight, `nil` altrimenti. Il motivo del `nil` (e non `false`) è che sotto il cofano Manifold WASM lancia un'eccezione quando l'oggetto non è manifold, e Ridley la cattura restituendo `nil`. In pratica non cambia nulla (entrambi sono falsy), ma vale la pena saperlo se usi il risultato in un `cond` o in un'espressione che distingue `false` da `nil`.
 

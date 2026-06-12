@@ -27,6 +27,8 @@ Discrepanze sorgente↔realtà tracciate in dev-docs/code-issues.md.
 
 # Modellare per primitive
 
+<!-- level: base -->
+
 Il modo più intuitivo di modellare un nuovo oggetto in qualsiasi CAD è farlo assemblando oggetti più elementari. Questi, chiamati in genere "primitive", sono forme come cubi, parallelepipedi, cilindri, sfere, coni e simili.
 
 Ridley supporta anche questo modo di lavorare, tra molti altri. Ed è spesso il modo più intuitivo, oltre che il più semplice da usare. Gli strumenti sono le primitive stesse — `box` per cubi e parallelepipedi, `cyl` per cilindri, `cone` per coni e tronchi di cono, `sphere` per le sfere — più alcune funzioni che permettono di spostarle (`attach`), di deformarle (`scale`) e di comporle: `mesh-union` per unirle in un unico oggetto, `mesh-difference` per scavare da un oggetto la forma di un altro, `mesh-intersection` per tenere la parte comune a due oggetti, `mesh-hull` per costruirne l'inviluppo convesso.
@@ -205,11 +207,11 @@ Il pattern più semplice e utile della modellazione per primitive è anche il pi
 ```clojure
 (register pen-holder
   (mesh-difference
-    (box 40 40 80)
-    (attach (box 36 40 76) (u 2))))
+    (box 40 80 40)
+    (attach (box 36 80 36) (u 2))))
 ```
 
-`(box 40 40 80)` è il blocco esterno: largo 40, profondo 40, alto 80. `(box 36 40 76)` è la cavità: 4 mm più stretta in larghezza e 4 mm più corta in profondità, stessa altezza. `(attach ... (u 2))` la solleva di 2: così il fondo rimane pieno, spesso 2, e la cima è aperta.
+`(box 40 80 40)` è il blocco esterno: largo 40, alto 80, profondo 40. `(box 36 80 36)` è la cavità: 4 mm più stretta in larghezza e 4 mm meno profonda, stessa altezza. `(attach ... (u 2))` la solleva di 2: così il fondo rimane pieno, spesso 2, e la cima è aperta.
 
 Questo pattern — un volume pieno meno una cavità sollevata — non dipende dalla forma: dipende solo dall'operazione. Lo ritroveremo fra poco nella barca.
 
@@ -226,9 +228,6 @@ Cambiando primitiva il portapenne cambia aspetto, ma la logica è identica.
 ```
 
 Cilindro esterno di raggio 20, alto 80, ruotato in verticale con `(tv 90)`. Cilindro interno di raggio 18 (spessore parete: 2), ruotato allo stesso modo e sollevato di 2 con `(f 2)` per lasciare il fondo. Ricorda che `cyl` estrude in avanti: dopo `(tv 90)` l'avanti diventa l'alto, quindi `(f 2)` solleva il cilindro interno.
-
-Se pensi di stampare il portapenne, l'unico numero che conta davvero è lo spessore delle pareti: 2 mm reggono per la maggior parte dei filamenti, 3 mm se vuoi più solidità. Lo spessore del fondo è il valore passato a `(f ...)` dopo il `(tv 90)`.
-
 <!-- example-source: sturdy-pen-holder -->
 ```clojure
 (def wall 3)
@@ -416,13 +415,13 @@ Quattro chiamate con parametri diversi producono quattro scomparti: uno tondo gr
 Se decidi che tutti gli scomparti devono avere il fondo più spesso, cambi `wall` e tutte e quattro le chiamate si aggiornano.
 
 ## Tante primitive alla volta
+<!-- level: advanced -->
 
 Finora abbiamo costruito ogni oggetto con pochi pezzi posizionati a mano. Ma il linguaggio che sta sotto Ridley è un linguaggio di programmazione, e un linguaggio di programmazione sa fare i cicli. Possiamo generare decine di primitive con un'espressione sola.
 
 Prendiamo il portapenne cilindrico della sezione precedente e aggiungiamo una decorazione: una spirale di sferette che avvolge la parete esterna.
 
 <!-- example-source: spiral-vase :warning slow 
-```clojure
 (def radius 40)
 (def h 80)
 (def n-spheres 36)
@@ -445,7 +444,6 @@ Prendiamo il portapenne cilindrico della sezione precedente e aggiungiamo una de
   (mesh-difference
     (mesh-union vase-outer decoration)
     vase-cut))
-```
 -->
 
 Lo schema del portapenne è lo stesso: un cilindro esterno meno uno interno sollevato di 2. La novità è `decoration`.

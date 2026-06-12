@@ -1356,6 +1356,7 @@ Positive angle = pitch up, negative = pitch down.
 (bezier-to [x y z])                    ; auto control points
 (bezier-to [x y z] [c1])               ; quadratic (1 control)
 (bezier-to [x y z] [c1] [c2])          ; cubic (2 controls)
+(bezier-to [x y z] :preserve-heading)  ; arrives tangent to current heading
 (bezier-to-anchor :name)               ; bezier to named anchor
 (bezier-as (path ...))                 ; one bezier per segment
 (bezier-as (path ...) :tension 0.5)    ; wider curve
@@ -1363,7 +1364,7 @@ Positive angle = pitch up, negative = pitch down.
 (bezier-as (path ...) :max-segment-length 20) ; subdivide long segments
 ```
 
-`bezier-to` with no control points creates a curve tangent to the current heading.
+`bezier-to` with no control points creates a curve tangent to the current heading. It normally ends facing the start→end chord; add `:preserve-heading` to arrive tangent to the current heading instead (heading unchanged), so a following `(f …)` welds on without a cusp. `:tension` (default 0.33) sets the curve width.
 
 `bezier-to-anchor` is smarter: it respects **both** the current heading AND the anchor's saved heading, creating a smooth S-curve that honors both directions.
 
@@ -2558,6 +2559,7 @@ Angolo positivo = beccheggia su, negativo = beccheggia giù.
 (bezier-to [x y z])                    ; punti di controllo automatici
 (bezier-to [x y z] [c1])               ; quadratica (1 controllo)
 (bezier-to [x y z] [c1] [c2])          ; cubica (2 controlli)
+(bezier-to [x y z] :preserve-heading)  ; arriva tangente all'heading corrente
 (bezier-to-anchor :nome)               ; bezier verso ancora nominata
 (bezier-as (path ...))                 ; una bezier per segmento
 (bezier-as (path ...) :tension 0.5)    ; curva più ampia
@@ -2565,7 +2567,7 @@ Angolo positivo = beccheggia su, negativo = beccheggia giù.
 (bezier-as (path ...) :max-segment-length 20) ; suddividi segmenti lunghi
 ```
 
-`bezier-to` senza punti di controllo crea una curva tangente alla direzione corrente.
+`bezier-to` senza punti di controllo crea una curva tangente alla direzione corrente. Di default arriva tangente alla corda inizio→fine; aggiungi `:preserve-heading` per arrivare invece tangente all'heading corrente (heading invariato), così un `(f …)` successivo si salda senza cuspidi. `:tension` (default 0.33) regola l'ampiezza della curva.
 
 `bezier-to-anchor` è più intelligente: rispetta **sia** la direzione corrente CHE la direzione salvata nell'ancora, creando una curva a S morbida che onora entrambe le direzioni.
 

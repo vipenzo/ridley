@@ -243,8 +243,13 @@
            all-options (get grouped false)
            ;; :local is a bare flag — pull it out before hash-map parsing.
            local? (boolean (some #{:local} all-options))
-           options (remove #{:local} all-options)
-           steps (get (apply hash-map (flatten options)) :steps)
+           ;; :preserve-heading: arrive tangent to current heading (heading
+           ;; unchanged), not along the chord — mirror of turtle/bezier-to.
+           preserve-heading? (boolean (some #{:preserve-heading} all-options))
+           options (remove #{:local :preserve-heading} all-options)
+           opt-map (apply hash-map (flatten options))
+           steps (get opt-map :steps)
+           tension (get opt-map :tension 0.33)
            state @path-recorder
            p0 (:position state)
            ;; :local mode: target/control-points are in the turtle-local
@@ -281,12 +286,20 @@
                          (= n-controls 1) (let [cp (vec (first control-points))]
                                             [cp cp])
                          :else ;; Auto control points
-                         (let [heading start-heading]
-                           [(mapv + p0 (mapv #(* % (* approx-length 0.33)) heading))
-                            (let [to-start (rec-normalize [(- (nth p0 0) (nth p3 0))
-                                                           (- (nth p0 1) (nth p3 1))
-                                                           (- (nth p0 2) (nth p3 2))])]
-                              (mapv + p3 (mapv #(* % (* approx-length 0.33)) to-start)))]))
+                         ;; tension applies only with :preserve-heading (parity
+                         ;; with turtle/bezier-to, whose chord case is fixed 0.33).
+                         (let [heading start-heading
+                               f (if preserve-heading? tension 0.33)
+                               d (* approx-length f)]
+                           [(mapv + p0 (mapv #(* % d) heading))
+                            (if preserve-heading?
+                              ;; c2 behind p3 along heading → arrives tangent to
+                              ;; the start heading, so the heading is preserved.
+                              (mapv - p3 (mapv #(* % d) heading))
+                              (let [to-start (rec-normalize [(- (nth p0 0) (nth p3 0))
+                                                             (- (nth p0 1) (nth p3 1))
+                                                             (- (nth p0 2) (nth p3 2))])]
+                                (mapv + p3 (mapv #(* % d) to-start))))]))
                ;; Bezier point function
                cubic-point (fn [t]
                              (let [t2 (- 1 t)

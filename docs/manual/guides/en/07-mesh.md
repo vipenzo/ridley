@@ -8,11 +8,13 @@ Convenzioni accertate per il capitolo 7:
 - manifold? e mesh-status richiedono Manifold WASM.
 - merge-vertices è il fix più comune per mesh non-manifold dopo CSG.
 - inset-face e scale-face NON esistono come binding SCI.
+- Riorganizzazione 2026-06-12: diagnosi/riparazione spostate dalla 7.1 alla 7.7 (in coda), framing dalla rarità; la 7.2 definisce manifold inline.
 - Codice esempi in inglese, prosa in italiano. No em-dash.
 -->
 
 # 7. Mesh
 
+<!-- level: advanced -->
 
 ## 7.1 What a mesh is
 
@@ -34,88 +36,9 @@ The minimal structure is this:
 
 Besides these two essential fields, a mesh carries other data. `:creation-pose` records the position and orientation of the turtle at the moment of creation: it is what `attach` uses to reposition the mesh correctly when you attach it to another. `:primitive` remembers which primitive generated it (`:box`, `:sphere`, `:cylinder`...), and `:face-groups` maps symbolic names like `:top`, `:bottom`, `:front` to the corresponding groups of triangles. Not all meshes have these fields: a mesh produced by a boolean operation has no predefined `:face-groups`, for example.
 
-When `:creation-pose` does not appear, the default applies: `{:position [0 0 0] :heading [1 0 0] :up [0 0 1]}`, that is, the turtle at the origin, looking along X with up along Z. This is the case of a primitive built without moving the turtle, like the `(box 20)` below.
+When `:creation-pose` does not appear, the default applies: `{:position [0 0 0] :heading [1 0 0] :up [0 0 1]}`, that is, the turtle at the origin, looking along X with up along Z. This is the case of a primitive built without moving the turtle, like a `(box 20)`.
 
-### Looking inside a mesh
-
-The most direct way to understand a mesh is to ask Ridley to describe it for you. `mesh-diagnose` analyzes the topology of a mesh and returns a map with the key information:
-
-```clojure
-(def m (box 20))
-(mesh-diagnose m)
-;; => {:n-verts 8
-;;     :n-faces 12
-;;     :n-edges 18
-;;     :edge-incidence-distribution {2 18}
-;;     :open-edges 0
-;;     :non-manifold-edges 0
-;;     :degenerate-faces 0
-;;     :euler-characteristic 2
-;;     :is-watertight? true}
-```
-
-<!-- example-source: mesh-diagnose-box
-(register m (box 20))
-(println (mesh-diagnose m))
--->
-
-The numbers tell the story of the mesh. A cube has 8 vertices, 12 (triangular) faces, 18 edges. The `:edge-incidence-distribution` says how many edges are shared by how many faces: `{2 18}` means all 18 edges are shared by exactly 2 faces. This is the healthy case: each edge has a face on one side and one on the other, no holes, no overlaps.
-
-`:open-edges` counts the edges that belong to a single face: they are the borders of a hole. `:non-manifold-edges` counts the edges shared by three or more faces: they are T-junctions, double walls, geometry that cannot exist as a physical object. `:is-watertight?` is `true` when both are zero.
-
-The Euler characteristic (`:euler-characteristic`) is a topological invariant: for a closed sphere it is 2, for a torus it is 0. If the number does not match what you expect, the mesh has some structural problem.
-
-`mesh-diagnose` is pure ClojureScript: it does not need Manifold, it runs everywhere, and it is light enough to call freely during development.
-
-### Manifold and non-manifold
-
-The word "manifold" comes up often when working with meshes, and it is worth clarifying it right away because it determines what you can do with an object.
-
-A mesh is *manifold* (or *watertight*) when it represents a closed solid: no holes, no edge shared by more than two faces, no degenerate triangle. It is the digital equivalent of a physical object you could fill with water without any leaking out.
-
-The primitives (`box`, `sphere`, `cyl`, `cone`), the closed extrusions, the lofts, the revolves, and the results of boolean operations are all manifold. This is the normal case.
-
-Not all meshes are. Distinct but spatially coincident vertices confuse the topology: the edge between two near-coincident vertices is counted as shared by the wrong number of faces. This happens above all when combining geometry without a boolean (`concat-meshes`, which juxtaposes meshes without resolving their boundaries), importing a poorly stitched external mesh, or as a residue of long chains of floating-point operations. `merge-vertices` (below) merges them and usually restores the mesh to manifold. When a mesh does not come out manifold, `mesh-diagnose` helps you understand where to look.
-
-Two sources of uncertainty are worth mentioning. The first is the very nature of composable shape-fns (chapter 6): their expressiveness is their strength, but it also means it is impossible to guarantee in advance that every combination of shell, custom thickness-fn, and extreme parameters produces a manifold mesh. In practice you try it, verify with `mesh-diagnose`, and if needed step in with `merge-vertices` or `solidify`. The second is that Ridley is a complex system and residual bugs are always possible: if a construction that according to this manual should produce a manifold mesh does not, it is worth reporting the case.
-
-The distinction matters because some operations require manifold input. `mesh-union`, `mesh-difference`, and `mesh-intersection` work only on watertight meshes: Manifold (the WASM library that performs these operations) rejects the others. If you try a boolean on a non-manifold mesh, you get an error.
-
-The important point is that "non-manifold" does not mean "broken". A mesh that Manifold rejects can still render correctly in the viewport, export to STL, and most slicers (Bambu Studio, OrcaSlicer, PrusaSlicer, Cura) accept it without trouble: they automatically repair the small gaps and slice the result. That mesh simply cannot take part in certain operations.
-
-To quickly check the status of a mesh you have two tools:
-
-```clojure
-(manifold? m)     ;; => true / nil
-(mesh-status m)   ;; => detailed status information
-```
-
-<!-- example-source: mesh-manifold-check
-(register solid (box 20))
-(println "manifold?" (manifold? solid))
-(println "status:" (mesh-status solid))
--->
-
-`manifold?` is the quick check: it returns `true` if the mesh is watertight, `nil` otherwise (not `false`, because under the hood Manifold WASM throws an exception that gets caught). `mesh-status` gives more detail. If a mesh does not pass and you do not understand why, `mesh-diagnose` is the triage tool: it tells you exactly how many open-edges and non-manifold-edges there are, and from there you can decide how to step in.
-
-### Repairing a mesh
-
-Shells with openings (`:lattice`, `:voronoi`, `:checkerboard`, or thickness-fns that go to zero) do **not** fall among these cases: the loft seals them itself, because where the thickness goes to zero the outer wall and the inner one collapse onto the same point, and the mesh comes out manifold already. What remains at risk are meshes assembled with `concat-meshes` or imported from outside.
-
-3D booleans (`mesh-union`, `mesh-difference`, `mesh-intersection`) normally produce already-manifold output: Manifold handles the near-duplicates internally. When a boolean fails, the problem is usually in the **input**, not the output.
-
-`merge-vertices` collapses the vertices that are less than an epsilon apart (by default `1e-6`), welding the joints that remained open and often restoring manifoldness:
-
-<!-- example-source: mesh-merge-vertices :no-run
-;; m is a mesh with coincident but distinct vertices
-;; (assembled with concat-meshes, imported, …)
-(def fixed (merge-vertices m))
-(println (boolean (manifold? fixed)))
--->
-
-It is not a universal guarantee, but it is the first attempt always worth making. If the mesh has more serious structural problems (real holes, overlapping geometry), different strategies are needed, which we will see in the following sections.
-
-`mesh-diagnose` remains the triage tool. If after `merge-vertices` the mesh is still non-manifold, look at `:open-edges` and `:non-manifold-edges` in the diagnosis: they tell you whether the problem is holes (open) or anomalous junctions (non-manifold), and from there you choose the right path.
+The rest of the chapter works on this data: booleans combine meshes (7.2), fillets and chamfers refine them (7.3), faces are found and modified (7.4), sections bring a mesh back to 2D (7.5), `warp` deforms it in space (7.6). At the end, 7.7 gathers diagnosis and repair for the rare cases where a mesh is not healthy.
 
 ## 7.2 3D boolean operations
 
@@ -165,7 +88,7 @@ For `mesh-difference`, the order matters: the first element is always the base, 
 
 ### Checking a mesh's status
 
-Booleans require manifold input. If a mesh is not manifold, the operation fails. Two tools to check beforehand:
+Booleans require *manifold* (or *watertight*) input: meshes that represent a closed solid, with no holes and no anomalous edges. This is the normal case: everything that comes out of primitives, extrusions, lofts, revolves, and booleans is manifold by construction. If a mesh is not, the operation fails. Two tools to check beforehand:
 
 ```clojure
 (manifold? m)     ;; => true / nil
@@ -178,7 +101,7 @@ Booleans require manifold input. If a mesh is not manifold, the operation fails.
 (println "status:" (mesh-status cube))
 -->
 
-If a boolean fails and you do not understand why, `mesh-diagnose` (section 7.1) is the next step.
+If a boolean fails and you do not understand why, section 7.7 at the end of the chapter has the diagnosis and repair tools.
 
 ### Convex hull
 
@@ -816,3 +739,88 @@ The hermite falloff (from `smooth-falloff`) is already applied by the system bef
 `warp` is the right choice when the effect you want does not express itself with a geometric profile. An organic bulge on a mechanical piece, an irregular surface that simulates natural material, a localized twist: these effects are described more easily as "move the vertices like this" than as "extrude this shape along that path".
 
 For global, uniform deformations (twisting a whole piece, tapering), the shape-fns of chapter 6 are often more natural: the deformation is part of the shape's definition, not a post-hoc operation. `warp` is at its best when the deformation is *localized* to a specific region of an already-built piece.
+
+## 7.7 Diagnosis and repair
+
+We close with the tools for the cases where a mesh is not healthy. Let us say it right away: in real use these cases are rare. Primitives, extrusions, lofts, revolves, and the results of boolean operations produce correct meshes by construction; you can model for months without ever meeting a broken one. The exceptions almost always come through three doors: geometries juxtaposed without booleans (`concat-meshes`), meshes imported from outside, and extreme combinations of shape-fns. For those moments, Ridley has a complete diagnostic toolkit.
+
+### Looking inside a mesh
+
+The most direct way to understand a mesh is to ask Ridley to describe it for you. `mesh-diagnose` analyzes the topology of a mesh and returns a map with the key information:
+
+```clojure
+(def m (box 20))
+(mesh-diagnose m)
+;; => {:n-verts 8
+;;     :n-faces 12
+;;     :n-edges 18
+;;     :edge-incidence-distribution {2 18}
+;;     :open-edges 0
+;;     :non-manifold-edges 0
+;;     :degenerate-faces 0
+;;     :euler-characteristic 2
+;;     :is-watertight? true}
+```
+
+<!-- example-source: mesh-diagnose-box
+(register m (box 20))
+(println (mesh-diagnose m))
+-->
+
+The numbers tell the story of the mesh. A cube has 8 vertices, 12 (triangular) faces, 18 edges. The `:edge-incidence-distribution` says how many edges are shared by how many faces: `{2 18}` means all 18 edges are shared by exactly 2 faces. This is the healthy case: each edge has a face on one side and one on the other, no holes, no overlaps.
+
+`:open-edges` counts the edges that belong to a single face: they are the borders of a hole. `:non-manifold-edges` counts the edges shared by three or more faces: they are T-junctions, double walls, geometry that cannot exist as a physical object. `:is-watertight?` is `true` when both are zero.
+
+The Euler characteristic (`:euler-characteristic`) is a topological invariant: for a closed sphere it is 2, for a torus it is 0. If the number does not match what you expect, the mesh has some structural problem.
+
+`mesh-diagnose` is pure ClojureScript: it does not need Manifold, it runs everywhere, and it is light enough to call freely during development.
+
+### Manifold and non-manifold
+
+The word "manifold" already appeared with the booleans (7.2); here we clarify it in full, because it determines what you can do with an object.
+
+A mesh is *manifold* (or *watertight*) when it represents a closed solid: no holes, no edge shared by more than two faces, no degenerate triangle. It is the digital equivalent of a physical object you could fill with water without any leaking out.
+
+The primitives (`box`, `sphere`, `cyl`, `cone`), the closed extrusions, the lofts, the revolves, and the results of boolean operations are all manifold. This is the normal case.
+
+Not all meshes are. Distinct but spatially coincident vertices confuse the topology: the edge between two near-coincident vertices is counted as shared by the wrong number of faces. This happens above all when combining geometry without a boolean (`concat-meshes`, which juxtaposes meshes without resolving their boundaries), importing a poorly stitched external mesh, or as a residue of long chains of floating-point operations. `merge-vertices` (below) merges them and usually restores the mesh to manifold. When a mesh does not come out manifold, `mesh-diagnose` helps you understand where to look.
+
+Two sources of uncertainty are worth mentioning. The first is the very nature of composable shape-fns (chapter 6): their expressiveness is their strength, but it also means it is impossible to guarantee in advance that every combination of shell, custom thickness-fn, and extreme parameters produces a manifold mesh. In practice you try it, verify with `mesh-diagnose`, and if needed step in with `merge-vertices` or `solidify`. The second is that Ridley is a complex system and residual bugs are always possible: if a construction that according to this manual should produce a manifold mesh does not, it is worth reporting the case.
+
+The distinction matters because some operations require manifold input. `mesh-union`, `mesh-difference`, and `mesh-intersection` work only on watertight meshes: Manifold (the WASM library that performs these operations) rejects the others. If you try a boolean on a non-manifold mesh, you get an error.
+
+The important point is that "non-manifold" does not mean "broken". A mesh that Manifold rejects can still render correctly in the viewport, export to STL, and most slicers (Bambu Studio, OrcaSlicer, PrusaSlicer, Cura) accept it without trouble: they automatically repair the small gaps and slice the result. That mesh simply cannot take part in certain operations.
+
+To quickly check the status of a mesh there are the two tools already seen in 7.2:
+
+```clojure
+(manifold? m)     ;; => true / nil
+(mesh-status m)   ;; => detailed status information
+```
+
+<!-- example-source: mesh-manifold-check
+(register solid (box 20))
+(println "manifold?" (manifold? solid))
+(println "status:" (mesh-status solid))
+-->
+
+`manifold?` is the quick check: it returns `true` if the mesh is watertight, `nil` otherwise (not `false`, because under the hood Manifold WASM throws an exception that gets caught). `mesh-status` gives more detail. If a mesh does not pass and you do not understand why, `mesh-diagnose` is the triage tool: it tells you exactly how many open-edges and non-manifold-edges there are, and from there you can decide how to step in.
+
+### Repairing a mesh
+
+Shells with openings (`:lattice`, `:voronoi`, `:checkerboard`, or thickness-fns that go to zero) do **not** fall among these cases: the loft seals them itself, because where the thickness goes to zero the outer wall and the inner one collapse onto the same point, and the mesh comes out manifold already. What remains at risk are meshes assembled with `concat-meshes` or imported from outside.
+
+3D booleans (`mesh-union`, `mesh-difference`, `mesh-intersection`) normally produce already-manifold output: Manifold handles the near-duplicates internally. When a boolean fails, the problem is usually in the **input**, not the output.
+
+`merge-vertices` collapses the vertices that are less than an epsilon apart (by default `1e-6`), welding the joints that remained open and often restoring manifoldness:
+
+<!-- example-source: mesh-merge-vertices :no-run
+;; m is a mesh with coincident but distinct vertices
+;; (assembled with concat-meshes, imported, …)
+(def fixed (merge-vertices m))
+(println (boolean (manifold? fixed)))
+-->
+
+It is not a universal guarantee, but it is the first attempt always worth making. If the mesh has more serious structural problems (real holes, overlapping geometry), different strategies are needed, judged case by case: intervening upstream in the construction, or rebuilding the geometry of the problem area.
+
+`mesh-diagnose` remains the triage tool. If after `merge-vertices` the mesh is still non-manifold, look at `:open-edges` and `:non-manifold-edges` in the diagnosis: they tell you whether the problem is holes (open) or anomalous junctions (non-manifold), and from there you choose the right path.

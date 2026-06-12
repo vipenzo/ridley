@@ -1,5 +1,7 @@
 # 17. Exporting and printing
 
+<!-- level: base -->
+
 Once the model is ready in the viewport, you export it as a file for the slicer or for other software. Ridley supports two formats: STL (the universal 3D printing format) and 3MF (the more recent format, with support for colors and multiple materials).
 
 ## 17.1 STL
@@ -63,7 +65,7 @@ The model you see in the viewport is exactly what ends up in the file: same dime
 
 Ridley's units are millimeters. If your model is parametric, check with `bounds` that the final dimensions are what you expect before exporting.
 
-`mesh-diagnose` (chapter 7.1) is the tool to verify that the mesh is healthy before export. Most slicers automatically repair small defects, but meshes with many open-edges or non-manifold-edges can produce unpredictable results in slicing.
+`mesh-diagnose` (chapter 7.7) is the tool to verify that the mesh is healthy before export. Most slicers automatically repair small defects, but meshes with many open-edges or non-manifold-edges can produce unpredictable results in slicing.
 
 ## 17.3 Orienting for printing
 

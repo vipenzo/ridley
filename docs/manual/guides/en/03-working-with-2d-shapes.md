@@ -25,6 +25,8 @@ visualizzazione, non in una sezione dedicata.
 
 # Working with 2D shapes
 
+<!-- level: base -->
+
 ## What shapes are for
 
 In the previous chapter we built every piece from a 3D primitive: `box`, `cyl`, `sphere`, `cone`. It works, but there is a limit: you cannot freely choose the cross-section of an object. A cylinder always has a circular section, a box always a rectangular one. If you want a tube with a hexagonal section, or an L-shaped bar, primitives are not enough.
@@ -386,8 +388,11 @@ Rotates the profile around the turtle's axis, producing a solid of revolution. T
 
 <!-- example-source: where-revolve -->
 ```clojure
-(register bowl
-  (revolve (shape (f 20) (th -90) (f 30) (th -90) (f 15))))
+(def profile (shape-difference
+               (rect 20 20)
+               (translate-shape (circle 18) -5 8.5)
+               ))
+(register bowl (revolve profile))
 ```
 
 A bowl: the profile (a sort of open U) is rotated 360° around the up axis. `revolve` accepts shape-fns too, so the profile can vary during the rotation.
@@ -419,66 +424,9 @@ The typical flow is: build the shape (3.1-3.4), work it with booleans and modifi
 
 ## Generating shapes from meshes
 
-So far we have built shapes from scratch: coordinates, turtle commands, primitives, compositions. But sometimes the profile you need already exists, hidden inside a 3D mesh: the section of a vase at a certain height, the silhouette of a piece seen from above, the outline of a face. Three operations extract it.
+So far we have built shapes from scratch: coordinates, turtle commands, primitives, compositions. But sometimes the profile you need already exists, hidden inside a 3D mesh: the section of a vase at a certain height, the outline of a piece seen from above, the contour of a face. Three operations extract it: `slice-mesh` cuts the mesh with the turtle's plane and returns the contour of the section, `project-mesh` projects its silhouette onto the plane, `face-shape` extracts the outline of a single face. The result is always a standard shape (or a vector of shapes), ready for `extrude`, `loft`, or any operator in this chapter: the 2D → 3D flow also works in reverse.
 
-### slice-mesh
-
-`slice-mesh` cuts a mesh with the turtle's plane and returns the section outline as a vector of shapes.
-
-<!-- example-source: slice-mesh-bowl -->
-```clojure
-(register bowl
-  (revolve (shape (f 20) (th 90) (f 30) (th 90) (f 15))))
-
-(tv 90) (f 15)
-(def shp (slice-mesh :bowl))
-(f 20)
-(stamp shp)
-```
-
-The first block builds a bowl by revolution. Then the turtle rotates 90° upward (so it faces +Z) and advances by 15: now the turtle's plane is a horizontal plane at height 15. `slice-mesh` cuts the bowl with that plane and returns the section outline. The turtle advances another 20 to exit the mesh, so the `stamp` of the section is visible in the viewport.
-
-The result is a vector because the section can have several disconnected contours (a mesh with holes, or several separate bodies that intersect the same plane). Each contour is a standard shape, ready for `extrude`, `loft`, or any 2D operator.
-
-`slice-mesh` accepts a registered name (`:bowl`), a mesh, or an SDF node. The plane is always the turtle's: the position decides where it cuts, the forward direction decides the plane's normal.
-
-To cut with a plane that does not depend on the turtle, there is `slice-at-plane`:
-
-```clojure
-(slice-at-plane :bowl [0 0 1] [0 0 15])
-```
-
-Same operation, but the plane is defined by a normal and a point in world coordinates.
-
-### project-mesh
-
-`project-mesh` projects the mesh onto the turtle's plane and returns the silhouette as a vector of shapes. Where `slice-mesh` gives the section *at* the plane, `project-mesh` gives the shadow *on* the plane.
-
-<!-- example-source: project-mesh-silhouette -->
-```clojure
-(register B (box 10 20 30))
-(tv 15) (th 40) (f 40)
-(stamp (project-mesh :B))
-```
-
-A box seen from an oblique angle: the turtle moves and rotates, then `project-mesh` projects the box onto the turtle's current plane and returns the silhouette as a vector of shapes. The result is an irregular hexagon, the silhouette of a box seen at a slant. Useful for deriving a 2D footprint from a 3D piece, for example to extrude a clearance pocket slightly larger than the silhouette.
-
-### face-shape
-
-`face-shape` extracts the outline of a specific face of a mesh as a 2D shape, together with the pose (position and orientation) of the face.
-
-```clojure
-(def top (face-shape my-mesh face-id))
-
-(turtle (:pose top)
-  (extrude (:shape top) (f 20)))
-```
-
-The `face-id` argument is the identifier of a face, obtained with the face-selection functions like `find-faces` and `largest-face` (chapter 10). The result is a map with `:shape` (the 2D shape) and `:pose` (the position and orientation of the face in the world). By passing the pose to `turtle`, the extrusion starts exactly from the extracted face, in the right direction. It is the most precise way to "continue" a mesh from one of its faces.
-
-### The reverse flow
-
-These three operations close a loop: sections 3.1-3.6 build shapes to turn them into meshes (via extrude, loft, revolve); this section extracts shapes from existing meshes to reuse them as input for new operations. The piece you have already built becomes raw material for the next one.
+These operations work on meshes and their cutting planes, concepts of chapter 7: their home is section 7.5, with the examples and the special cases. Here it is enough to know they exist: when a mesh already contains the profile you need, you do not have to redraw it.
 
 ## Several shapes at once
 
@@ -541,7 +489,7 @@ In chapter 2 we saw `defn` for creating reusable 3D pieces. The same holds for s
     (translate-shape (rect web (- h flange)) 0 (/ (- h flange) -2))))
 
 (register small (extrude (t-profile 20 30 4 3) (f 40)))
-(rt 30)
+(rt 40)
 (register large (extrude (t-profile 40 50 6 4) (f 60)))
 ```
 

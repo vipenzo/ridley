@@ -1,5 +1,7 @@
 # 14. Colore e materiali
 
+<!-- level: base -->
+
 In Ridley il colore è uno strumento di modellazione, non solo di visualizzazione. I colori che assegni alle mesh determinano come le parti verranno mappate ai filamenti nella stampa multi-materiale. Questo capitolo copre l'assegnazione dei colori, le proprietà dei materiali, e il workflow per esportare modelli multi-colore.
 
 ## 14.1 Colorare le forme

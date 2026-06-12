@@ -27,6 +27,8 @@ Discrepanze sorgente↔realtà tracciate in dev-docs/code-issues.md.
 
 # Modeling with primitives
 
+<!-- level: base -->
+
 The most intuitive way to model a new object in any CAD is to assemble it from more elementary objects. These, usually called "primitives", are shapes like cubes, boxes, cylinders, spheres, cones, and the like.
 
 Ridley supports this way of working too, among many others. And it is often the most intuitive, as well as the simplest to use. The tools are the primitives themselves: `box` for cubes and boxes, `cyl` for cylinders, `cone` for cones and truncated cones, `sphere` for spheres, plus a few functions that let you move them (`attach`), deform them (`scale`), and compose them: `mesh-union` to join them into a single object, `mesh-difference` to carve the shape of one object out of another, `mesh-intersection` to keep the part common to two objects, `mesh-hull` to build their convex hull.
@@ -205,11 +207,11 @@ The simplest and most useful pattern in primitive modeling is also the oldest in
 ```clojure
 (register pen-holder
   (mesh-difference
-    (box 40 40 80)
-    (attach (box 36 40 76) (u 2))))
+    (box 40 80 40)
+    (attach (box 36 80 36) (u 2))))
 ```
 
-`(box 40 40 80)` is the outer block: 40 wide, 40 deep, 80 tall. `(box 36 40 76)` is the cavity: 4 mm narrower in width and 4 mm shorter in depth, same height. `(attach ... (u 2))` raises it by 2: this way the bottom stays solid, 2 thick, and the top is open.
+`(box 40 80 40)` is the outer block: 40 wide, 80 tall, 40 deep. `(box 36 80 36)` is the cavity: 4 mm narrower in width and 4 mm shallower in depth, same height. `(attach ... (u 2))` raises it by 2: this way the bottom stays solid, 2 thick, and the top is open.
 
 This pattern, a solid volume minus a raised cavity, does not depend on the shape: it depends only on the operation. We will meet it again shortly in the boat.
 
@@ -226,9 +228,6 @@ Changing the primitive changes the look of the pen holder, but the logic is iden
 ```
 
 Outer cylinder of radius 20, 80 tall, rotated upright with `(tv 90)`. Inner cylinder of radius 18 (wall thickness: 2), rotated the same way and raised by 2 with `(f 2)` to leave the bottom. Remember that `cyl` extrudes forward: after `(tv 90)` forward becomes up, so `(f 2)` raises the inner cylinder.
-
-If you plan to print the pen holder, the only number that really matters is the wall thickness: 2 mm holds for most filaments, 3 mm if you want more sturdiness. The bottom thickness is the value passed to `(f ...)` after the `(tv 90)`.
-
 <!-- example-source: sturdy-pen-holder -->
 ```clojure
 (def wall 3)
@@ -416,13 +415,13 @@ Four calls with different parameters produce four compartments: a large round on
 If you decide all the compartments should have a thicker bottom, you change `wall` and all four calls update.
 
 ## Many primitives at once
+<!-- level: advanced -->
 
 So far we have built each object with a few pieces placed by hand. But the language underneath Ridley is a programming language, and a programming language can do loops. We can generate dozens of primitives with a single expression.
 
 Let us take the cylindrical pen holder from the previous section and add a decoration: a spiral of little spheres wrapping around the outer wall.
 
 <!-- example-source: spiral-vase :warning slow 
-```clojure
 (def radius 40)
 (def h 80)
 (def n-spheres 36)
@@ -445,7 +444,6 @@ Let us take the cylindrical pen holder from the previous section and add a decor
   (mesh-difference
     (mesh-union vase-outer decoration)
     vase-cut))
-```
 -->
 
 The pen holder scheme is the same: an outer cylinder minus an inner one raised by 2. The new thing is `decoration`.

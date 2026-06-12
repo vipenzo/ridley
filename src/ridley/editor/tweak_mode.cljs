@@ -635,20 +635,37 @@
 (defn ^:export tweak-selection!
   "Editor command: wrap the current selection in (tweak …) and run the script,
    turning the selected value(s) into sliders. A single numeric literal becomes
-   (tweak n); anything else becomes (tweak :all …) (a slider per literal inside).
-   The session is marked transient with the original text: on confirm tweak bakes
-   the values over the wrapper, on cancel the wrapper is removed and the text
-   restored. No-op if the selection is empty."
+   (tweak n); a balanced, complete expression becomes (tweak :all …) (a slider per
+   literal inside). The selection is validated first: an empty or malformed
+   selection (e.g. one that accidentally grabbed a trailing paren, like \"2)\") is
+   rejected without touching the buffer, since wrapping it would corrupt the
+   script. The session is marked transient with the original text: on confirm
+   tweak bakes the values over the wrapper, on cancel the wrapper is removed and
+   the text restored, and if the wrapped script fails to evaluate the wrapper is
+   rolled back (see modal/restore-failed-tweak-transient!)."
   []
-  (let [{:keys [from to text]} (cm/get-selection)]
-    (if (and text (seq (str/trim text)))
-      (let [wrapped (if (numeric-literal? text)
-                      (str "(tweak " (str/trim text) ")")
-                      (str "(tweak :all " text ")"))]
-        (modal/arm-tweak-transient! text)
+  (let [{:keys [from to text]} (cm/get-selection)
+        trimmed (some-> text str/trim)
+        numeric? (and text (numeric-literal? text))]
+    (cond
+      ;; Reject paths run no eval, so capture-println (buffered, flushed during an
+      ;; eval) would never surface — write straight to the REPL history instead.
+      (or (nil? trimmed) (empty? trimmed))
+      (add-repl-output! "tweak: select a value (or expression) first")
+
+      (or numeric? (modal/balanced-source? trimmed))
+      (let [wrapped (if numeric?
+                      (str "(tweak " trimmed ")")
+                      (str "(tweak :all " trimmed ")"))]
+        ;; Carry the original text + wrapper position so a cancel (unwrap) or a
+        ;; failed eval (rollback) can restore the selection exactly.
+        (modal/arm-tweak-transient! text from wrapped)
         (cm/replace-range from to wrapped)
         (modal/run-definitions!))
-      (state/capture-println "tweak: select a value (or expression) first"))))
+
+      :else
+      (add-repl-output!
+       "tweak: select a single number or a complete expression — the selection isn't balanced (a stray bracket?)"))))
 
 (defn- force-close!
   "Tear down the tweak UI and release the slot without restoring/re-evaluating.

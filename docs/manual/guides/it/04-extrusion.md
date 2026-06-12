@@ -8,21 +8,22 @@ Struttura del capitolo:
 4.3  Quick path ed estrusione chiusa (qp, extrude-closed)
 4.4  Transizioni di forma e modalità giunzione (joint-mode)
 4.5  Risoluzione e dettaglio (resolution)
-4.6  Shell, woven shell e embroid (loft + shell/embroid shape-fn)
-4.7  Raccordi sui cap (capped)
-4.8  Revolve (asse = up della tartaruga, verificato 2026-05-20)
-4.9  Chaining: extrude+, revolve+, transform->
+4.6  Oltre l'estrusione piena (sezione-ponte verso il cap. 6)
+4.7  Revolve (asse = up della tartaruga, verificato 2026-05-20)
+4.8  Chaining: extrude+, revolve+, transform->
 
 Decisioni:
 - revolve aggiunto al cap. 4 (non era nel piano originale)
 - chaining aggiunto al cap. 4
 - asse revolve = up (Spec corretta il 2026-05-20, era sbagliata)
 - loft+ non esiste ancora, segnato in Roadmap §1.5
-- embroid aggiunto al 4.6 come complemento di shell (2026-06-06); possibile futura migrazione di alcuni pattern di embroid (es. :pattern) a shell, da valutare
+- embroid aggiunto al 4.6 come complemento di shell (2026-06-06); shell/woven-shell/capped/embroid spostati al cap. 6 il 2026-06-10 (brief dev-docs/brief-shapefn-move.md)
 =========================================================================
 -->
 
 # Estrusione
+
+<!-- level: base -->
 
 ## Il concetto
 
@@ -134,7 +135,7 @@ Per traiettorie che non sono archi di cerchio, ci sono le curve di Bezier. `bezi
 
 Un profilato rettangolare che sale dolcemente da dove si trova la tartaruga verso il punto `[30 0 20]` (30 in avanti e 20 in alto rispetto all'origine, se la tartaruga è nella posa di default). I punti di controllo vengono generati automaticamente in modo tangente alla direzione corrente della tartaruga.
 
-Per curve più controllate, `bezier-to` accetta uno o due punti di controllo espliciti. E `bezier-as` prende un path esistente e lo percorre come curva di Bezier morbida, utile per smussare un percorso a segmenti. I dettagli sono nel cap. 5 (Path) e nella Reference.
+Per curve più controllate, `bezier-to` accetta uno o due punti di controllo espliciti. E `bezier-as` prende un path esistente e lo percorre come curva di Bezier morbida, utile per smussare un percorso a segmenti. La casa delle curve è il cap. 11: punti di controllo espliciti, coordinate locali, curve verso i marcatori, e il disegno interattivo con `edit-bezier`.
 
 ### Combinare tutto
 
@@ -289,205 +290,18 @@ Per casi puntuali, molte funzioni accettano un override diretto senza cambiare l
 
 Una regola pratica: il default (`:n 64`) produce curve già morbide per la maggior parte degli usi. Per la prototipazione veloce si può abbassare a `:n 16` o `:n 32` per ridurre la geometria e accelerare le booleane. Non serve cambiare la risoluzione globale se solo alcune curve richiedono un trattamento diverso: gli override puntuali come `(circle 15 128)` o `(arc-h 10 90 :steps 32)` sono fatti apposta.
 
-## Shell, woven shell e embroid
+## Oltre l'estrusione piena
 
-Fin qui abbiamo estruso profili pieni. Ma molti oggetti reali sono cavi: vasi, lampade, contenitori, paralumi. `shell` è una shape-fn che trasforma un profilo pieno in un guscio cavo con pareti di spessore controllato, con la possibilità di aprire finestre decorative nelle pareti.
+Fin qui abbiamo estruso profili pieni e costanti. Ma molti oggetti reali sono cavi (vasi, lampade, contenitori) o cambiano sezione lungo il percorso: si rastremano, si torcono, si gonfiano. In Ridley questo è il territorio di `loft` e delle shape-fn, funzioni che descrivono come il profilo varia da un capo all'altro del percorso. Un assaggio:
 
-Siccome `shell` è una shape-fn (il profilo cambia lungo il percorso, passando da pieno a cavo), serve `loft` al posto di `extrude`. La differenza pratica è minima: dove prima scrivevi `(extrude shape ...)`, ora scrivi `(loft (shell shape ...) ...)`.
-
-<!-- example-source: shell-solid -->
+<!-- example-source: beyond-solid-extrusion -->
 ```clojure
 (register cup
-  (loft (shell (circle 20 64) :thickness 2 :style :solid)
+  (loft (shell (circle 20 64) :thickness 2 :style :solid :cap-top 2)
     (f 40)))
 ```
 
-Un bicchiere: un cerchio estruso come guscio con pareti spesse 2. `:style :solid` produce pareti piene, senza aperture. Il risultato è un cilindro cavo aperto da entrambi i lati: il guscio non ha né fondo né coperchio. Per chiuderli, `shell` accetta le opzioni `:cap-top` e `:cap-bottom`. Un numero produce un tappo pieno dello spessore indicato; una mappa produce un tappo con pattern (Voronoi, griglia).
-
-<!-- example-source: shell-cup-with-bottom -->
-```clojure
-(register cup-with-bottom
-  (loft (shell (circle 20 64) :thickness 2 :style :solid :cap-bottom 2)
-    (f 40)))
-```
-
-Con `:cap-bottom 2` il bicchiere ha il fondo chiuso, spesso 2. Il top resta aperto, come ci si aspetta da un bicchiere.
-
-La parete è simmetrica: metà dello spessore sporge verso l'esterno, metà verso l'interno rispetto al profilo originale.
-
-### Stili di apertura
-
-Lo stile controlla il pattern delle aperture nelle pareti.
-
-<!-- example-source: shell-voronoi :warning slow -->
-```clojure
-(register lamp
-  (loft-n 512 (shell (circle 20 512) :thickness 2 :style :voronoi
-                :cells 8 :rows 6 :softness 0.6)
-    (f 50)))
-
-```
-
-`:voronoi` distribuisce celle irregolari sulle pareti. I bordi delle celle sono materiale, l'interno è vuoto. `:cells` controlla quante celle per anello, `:rows` quanti anelli lungo il percorso.
-
-<!-- example-source: shell-lattice :warning slow  -->
-```clojure
-(register vase
-  (loft-n 512 (shell (circle 15 512) :invert? true :thickness 2 :style :lattice :openings 4 :rows 6)
-    (f 60)))
-```
-
-`:lattice` produce un pattern a mattoni: file di blob solidi sfasati lungo la circonferenza. `:openings` controlla il numero di mattoni per fila, `:rows` il numero di righe. Con `:invert? true` il pattern si inverte: i mattoni diventano aperture in un guscio continuo. Senza `:invert?`, il risultato sono i mattoni staccati (utile come texture a rilievo, meno come guscio).
-
-L'opzione `:softness` (per `:voronoi` e `:lattice`, default `0.6`) controlla come vengono tagliati i bordi delle aperture. Per default il taglio è *isocontour*: il bordo viene affettato nella posizione esatta in cui la parete incontra l'apertura, fra un vertice e l'altro, e le aperture risultano lisce — con un piccolo labbro rastremato — anche a risoluzione moderata. Con `:softness 0` il taglio torna *binario*: ogni triangolo della griglia è tenuto o scartato per intero, e i bordi restano scalettati lungo la griglia di anelli e segmenti (alzare la risoluzione rimpicciolisce i denti ma non li elimina). Un valore intorno a `0.5–0.8` è il punto ottimale. È l'equivalente, per gli shell, dell'`:edge-softness` del rilievo testuale (cap. 13). (`:lattice` con `:invert?` usa sempre il taglio binario.)
-
-Gli altri stili disponibili sono `:checkerboard` (scacchiera) e `:weave` (intreccio). Ognuno ha le sue opzioni specifiche; la Reference le documenta tutte. `:invert? true` funziona con tutti gli stili, comprese le thickness-fn custom passate con `:fn`.
-
-### Comporre con altre shape-fn
-
-`shell` è una shape-fn come `tapered` o `twisted`, quindi si compone con `->`:
-
-<!-- example-source: shell-composed :warning slow -->
-```clojure
-(register tapered-lamp
-  (loft-n 512 (-> (circle 20 512)
-                  (shell :thickness 2 :style :voronoi :cells 8 :rows 6)
-                  (tapered :to 0.5))
-    (f 60)))
-```
-
-Una lampada che si rastrema: `shell` rende il profilo cavo con aperture Voronoi, `tapered` lo riduce progressivamente lungo il percorso. Le due trasformazioni si applicano in sequenza a ogni anello del loft.
-
-### Woven shell
-
-`woven-shell` è una variante di `shell` che non si limita a variare lo spessore delle pareti: sposta anche il centro della parete radialmente, così i fili passano davanti e dietro l'uno all'altro come in un intreccio reale.
-
-<!-- example-source: woven-shell-basic :warning slow-->
-```clojure
-(register basket
-  (loft-n 512 (woven-shell (circle 20 512) :thickness 3 :strands 8)
-    (f 50)))
-```
-
-Un cesto intrecciato. I fili diagonali si incrociano con un vero sopra/sotto tridimensionale, non solo un pattern di fori. `:strands` controlla il numero di fili; `:mode :orthogonal` produce un intreccio a trama e ordito (tipo vimini) invece del pattern diagonale di default.
-
-Come `shell`, `woven-shell` si compone con altre shape-fn:
-
-<!-- example-source: woven-lamp :warning slow-->
-```clojure
-(register woven-lamp
-  (loft-n 512 (-> (circle 20 512)
-                (woven-shell :thickness 3 :strands 6)
-                (tapered :to 3.5))
-    (f 50)))
-```
-
-### Embroid: traforare
-
-`shell` parte da un profilo pieno e lo svuota, lasciando pareti sottili con un pattern di aperture. `embroid` copre il caso complementare: una parete che è già una superficie sottile, non un solido da svuotare, e vi ritaglia dentro lo stesso tipo di finestre. È il caso in cui `shell` non si applica, perché non c'è niente da svuotare. Conviene pensarla come "fare una porzione di guscio".
-
-A differenza delle altre shape-fn, `embroid` non prende una shape ma il path che definisce la linea mediana della parete, più lo spessore. Costruisce le due facce della parete spostandosi di `±spessore/2` perpendicolarmente al path in ogni punto, quindi la perforazione attraversa lo spessore qualunque sia la curvatura del percorso. Ogni apertura è un foro passante rifinito tra le due facce, e il risultato è watertight e manifold. Come `shell`, è una shape-fn e va usata con `loft`.
-
-<!-- example-source: embroid-wall -->
-```clojure
-(register panel
-  (loft (embroid (path (f 3) (arc-h 50 90) (f 70))
-          3
-          :resolution 400
-          :wall {:style :honeycomb :cells 8 :border 4})
-    (f 45)))
-```
-
-Una parete curva traforata con un nido d'ape regolare e una cornice piena di 4 unità su tutti i lati. Il primo argomento di `embroid` è il path della linea mediana (un tratto dritto, un arco di 90°, un altro tratto dritto), il secondo è lo spessore. Sia il tratto dritto sia quello curvo vengono perforati, perché il pattern segue il percorso invece di una direzione fissa.
-
-Lo stile `:honeycomb` è il default. Con `:style :pattern` si usa una shape qualsiasi come motivo dell'apertura:
-
-<!-- example-source: embroid-holes -->
-```clojure
-(register grille
-  (loft (embroid (path (f 3) (arc-h 50 90) (f 70))
-          3
-          :wall {:style :pattern :pattern (circle 4)
-                 :spacing 12 :grid :hex :inset 0.5})
-    (f 45)))
-```
-
-Fori tondi su griglia esagonale. `:spacing` è il passo della griglia, `:grid` sceglie tra disposizione quadrata o esagonale sfalsata, `:inset` rimpicciolisce il motivo per ingrossare i ponticelli fra un foro e l'altro. C'è anche `:style :voronoi`, come per `shell`. La scheda Reference di [embroid](ref:embroid) documenta tutte le opzioni di pattern, cornice e tappi.
-
-Due punti pratici. La nitidezza dei bordi lungo il percorso si regola con `:resolution` (campioni lungo il path), indipendentemente dal numero di passi del loft, che raffina solo la direzione di sweep: di solito non serve un `loft-n` alto una volta fissata `:resolution`. E a differenza di `shell`, `embroid` non si compone con `->` come le altre shape-fn: nel loft applica le proprie facce già pronte, quindi una `tapered` o una `twisted` aggiunte dopo vengono ignorate in silenzio. Per riposizionarla si usa l'opzione `:offset`, oppure si trasla la mesh risultante.
-
-### Risoluzione e performance
-
-Shell e woven-shell richiedono molta risoluzione su entrambi gli assi per rendere bene i pattern. Due numeri contano: il numero di punti del cerchio (la risoluzione della circonferenza) e il numero di passi del loft (la risoluzione longitudinale). Con i default di 64 punti e 64 passi, i pattern più semplici sono già leggibili, ma per risultati davvero nitidi servono valori nell'ordine di 512 su entrambi gli assi: `(circle 20 512)` per il profilo e `loft-n 512` per i passi. Il prezzo è un calcolo lento (diversi secondi) e una mesh con molti triangoli. Durante la prototipazione conviene usare numeri più bassi (128 o 256) per iterare velocemente, e alzare per il risultato finale.
-
-L'impostazione globale `resolution` influenza anche il numero di passi di default del loft. Se serve un controllo esplicito, `loft-n` con il numero di passi desiderato ha sempre la precedenza.
-
-Il cap. 6 tratta le shape-fn in profondità: composizione, shape-fn custom, thickness-fn. Qui l'obiettivo era mostrare che l'estrusione cava è a portata di mano senza uscire dal flusso shape → loft.
-
-## Raccordi sui cap
-
-Un solido estruso ha spigoli vivi dove la sezione incontra le facce di testa (i "cap"). Nel cap. 3 abbiamo visto `fillet-shape` per arrotondare gli angoli 2D del profilo (gli spigoli lungo la direzione di estrusione). `capped` arrotonda l'altro set di spigoli: quelli dove il profilo incontra le facce di chiusura, alle due estremità.
-
-<!-- example-source: capped-basic -->
-```clojure
-(register rounded-bar
-  (loft (capped (rect 30 15) 3) (f 50)))
-```
-
-`capped` prende una shape e un raggio, e produce una shape-fn che raccorda le estremità: il profilo parte da zero, cresce fino alla dimensione piena nel giro dei primi 3 mm, resta costante lungo il percorso, e torna a zero negli ultimi 3 mm. La transizione segue un profilo a quarto di cerchio, quindi il raccordo è morbido. Il risultato è un parallelepipedo con i bordi di testa arrotondati.
-
-Come `shell`, `capped` è una shape-fn e richiede `loft` al posto di `extrude`.
-
-### Fillet e chamfer sui cap
-
-`capped` ha due modalità: raccordo (default) e smusso.
-
-```clojure
-(loft (capped shape 3) (f 50))                ; raccordo (quarto di cerchio)
-(loft (capped shape 3 :mode :chamfer) (f 50)) ; smusso (transizione lineare)
-```
-
-Con `:chamfer` la transizione è un taglio rettilineo a 45° invece di una curva.
-
-### Controllare le estremità
-
-Si può scegliere di raccordare solo un'estremità:
-
-```clojure
-(loft (capped shape 3 :start false) (f 50))   ; solo la fine
-(loft (capped shape 3 :end false) (f 50))     ; solo l'inizio
-```
-
-### Comporre con fillet-shape e altre shape-fn
-
-`fillet-shape` arrotonda gli angoli 2D del profilo. `capped` arrotonda i bordi 3D di testa. Le due operazioni sono ortogonali e si compongono:
-
-<!-- example-source: capped-fillet-composed -->
-```clojure
-(register rounded-box
-  (loft (-> (rect 40 20) (fillet-shape 5) (capped 3)) (f 50)))
-```
-
-Un parallelepipedo con gli angoli 2D arrotondati (raggio 5) e i bordi di testa raccordati (raggio 3). Il risultato è un oggetto con tutti gli spigoli morbidi, ottenuto componendo due operazioni indipendenti.
-
-`capped` si compone anche con `tapered`, `twisted`, e qualsiasi altra shape-fn:
-
-<!-- example-source: capped-tapered-foot -->
-```clojure
-(def foot
-  (loft (-> (circle 15) (tapered :to 0.3) (capped -10)) (f 40)))
-
-(register base
-  (mesh-union
-    (attach (box 30) (f (+ 40 15)))
-    foot)
-  )
-```
-
-Capped è un utile strumento, se usato con valori negativi (-10 in questo caso) per raccordare il risultato di un loft ad altri oggetti. Nell'esempio sopra il piede si allarga per incontrare il cubo.
-
-La frazione del percorso dedicata alla transizione viene calcolata automaticamente da `capped` come rapporto fra il raggio e la lunghezza del percorso. Si può forzare con `:fraction` se il risultato automatico non va bene.
-Non è possibile avere due valori differenti per i due cap (di conseguenza non posso averne uno che si rastrema ,valori positivi, e uno che si allarga ,valori negativi). Per ottenere quell'effetto bisogna usare due loft separate.
+Dove prima scrivevi `(extrude shape ...)`, qui scrivi `(loft (shell shape ...) ...)`: il profilo passa da pieno a guscio, e il risultato è un bicchiere a pareti sottili (spessore 2) con un'estremità chiusa. Per convenzione chiamiamo **top** il punto di **arrivo** dell'estrusione — qui in alto, dopo `(f 40)` — e **bottom** quello di **partenza**: `:cap-top 2` chiude quindi l'estremità lontana con un disco pieno di spessore 2, lasciando aperta quella da cui parte la tartaruga. (Usiamo `:cap-top` invece di `:cap-bottom` solo perché, con il viewport al reset, la cappa chiusa resta in vista.) Le shape-fn non si fermano qui: gusci con aperture decorative, intrecci, rastremazioni, torsioni, superfici rugose, e qualsiasi combinazione di queste. Il cap. 6 è la loro casa: puoi leggerlo subito dopo questo capitolo, o tornarci quando un progetto lo richiede.
 
 ## Revolve
 
@@ -528,6 +342,8 @@ Con un secondo argomento si controlla l'angolo di rivoluzione:
 ```
 
 Un quarto di rivoluzione: il rettangolo ruota solo di 90° invece di 360°. Utile per settori, spicchi, e geometrie parziali.
+
+Un dettaglio può sorprendere: `rect 20 10` è centrato sull'origine, quindi va da X=−10 a X=+10, eppure la sezione che vedi ruotare è quadrata (10×10), non 20×10. Il motivo è che la X del profilo è la distanza dall'asse, e `revolve` **scarta la parte con X negativa**: del rettangolo resta solo la metà destra (larga 10), che ruota fino all'altezza 10. Per sfruttare l'intera larghezza del profilo lo si sposta tutto da un lato dell'asse — è il compito di `:pivot`, qui sotto. (Il clipping vale per le shape piene; una shape-fn che attraversa l'asse non può essere tagliata ring per ring, quindi viene traslata in automatico — un `:pivot :left` implicito.)
 
 ### Pivot
 
@@ -572,6 +388,8 @@ L'angolo di rotazione viene silenziosamente tagliato a 360 gradi se superiore. V
 Un gomito si può fare sia con `revolve` che con `extrude` + `arc-h`. La differenza: `extrude` + arco trascina il profilo lungo una curva, quindi la sezione resta perpendicolare alla traiettoria. `revolve` ruota il profilo attorno a un asse, quindi la sezione resta perpendicolare al piano di rotazione. Per angoli piccoli i risultati sono quasi identici; per angoli grandi (90° e oltre) la geometria diverge. Come regola pratica: `revolve` con `:pivot` per gomiti e angoli architettonici, `extrude` + arco per tubi che seguono un percorso.
 
 ## Chaining: extrude+, revolve+, transform->
+
+<!-- level: advanced -->
 
 Immagina di costruire un telaio: un tratto dritto, una curva a 30°, un altro tratto dritto, una curva in senso opposto, un tratto finale. Con `extrude` e `revolve` normali dovresti costruire ogni segmento separatamente, posizionare la tartaruga alla fine del segmento precedente, e poi fare `mesh-union` di tutti i pezzi. È fattibile, ma verboso e fragile: se cambi un angolo, tutti i segmenti successivi devono essere riposizionati a mano.
 

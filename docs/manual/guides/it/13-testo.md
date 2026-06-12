@@ -1,5 +1,7 @@
 # 13. Testo
 
+<!-- level: intermediate -->
+
 Il testo in Ridley è geometria. Non c'è un sistema di annotazioni separato: le lettere sono shape 2D che puoi estrudere, combinare con booleane, piazzare lungo un percorso, o usare come heightmap per creare rilievi. Questo capitolo copre le tre modalità: testo come forma 2D, testo come geometria 3D estrusa, e testo come displacement in rilievo.
 
 ## 13.1 Forme di testo 2D

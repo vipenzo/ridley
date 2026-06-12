@@ -1,5 +1,7 @@
 # 16. Clojure for Ridley
 
+<!-- level: base -->
+
 Ridley uses a subset of Clojure as its language. If you come from Python, JavaScript, or a traditional CAD, the parenthesized syntax can seem alien. This chapter covers the minimum needed to write Ridley models without having to read a book on Clojure. If you already know Clojure or another Lisp, you can skip straight to chapter 17.
 
 ## 16.1 Control structures

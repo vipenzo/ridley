@@ -561,7 +561,10 @@
    steps: number of rings to generate (defaults to (default-segments state 1))
 
    At corners, generates SEPARATE meshes for each segment (no joint mesh).
-   Use mesh-union to combine them if needed."
+   Use mesh-union to combine them if needed. The miter joining two segments
+   shares one cross-section, so the profile is held constant at the corner's
+   t value across the joint (the taper/shape-fn pauses through a sharp bend;
+   the effect scales with the turn angle). Smooth curves aren't corners."
   ([state shape transform-fn path]
    (loft-from-path state shape transform-fn path (extrusion/default-segments state 1)))
   ([state shape transform-fn path steps]

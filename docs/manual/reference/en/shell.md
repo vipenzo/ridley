@@ -24,6 +24,9 @@ state.
 
 Caps (top and/or bottom) close the ends of the shell. They can be solid
 (a single thickness number) or patterned (a map with their own `:style`).
+By convention **top** is the extrusion's **arrival** end (where the path
+finishes) and **bottom** is its **start** (the turtle's pose when the
+loft begins): `:cap-top` closes the far end, `:cap-bottom` the near one.
 
 ## Parameters
 
@@ -35,8 +38,8 @@ Caps (top and/or bottom) close the ends of the shell. They can be solid
 | `:fn` | — | Custom thickness function `(fn [a t] -> 0..1)` overriding `:style`. `a` = angular position (radians), `t` = path progress. |
 | `:threshold` | `0.05` | Values below this snap to 0 (no wall). |
 | `:invert?` | `false` | Swap solid/empty (`v → 1 - v`): e.g. turn `:lattice` bricks into brick-shaped openings, or a `:voronoi` wireframe into solid cells. Works with every style and with custom `:fn`. |
-| `:cap-top` | — | Number (solid cap) or map `{:thickness :style …}` (patterned cap). |
-| `:cap-bottom` | — | Same as `:cap-top` for the start of the path. |
+| `:cap-top` | — | Close the **arrival** end (where the path finishes). Number (solid cap) or map `{:thickness :style …}` (patterned cap). |
+| `:cap-bottom` | — | Same as `:cap-top`, for the **start** end (the turtle's pose when the loft begins). |
 
 **Style-specific options** (passed at the same level as `:thickness`):
 

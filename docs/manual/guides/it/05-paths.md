@@ -21,6 +21,8 @@ Decisioni:
 
 # Path: registrare il movimento
 
+<!-- level: base -->
+
 ## Cos'è un path
 
 Nel cap. 4 abbiamo scritto comandi tartaruga direttamente dentro `extrude`: `(extrude (circle 10) (f 20) (th 45) (f 20))`. Il percorso è definito sul posto e usato immediatamente. Ma a volte serve lo stesso percorso in più punti: come traiettoria di un'estrusione, come posizione di componenti lungo uno scheletro, come curva da visualizzare nel viewport. Riscriverlo ogni volta è fragile e noioso.
@@ -233,15 +235,7 @@ Un rettangolo chiuso, utile come percorso per `extrude-closed`.
 
 ### quick-path
 
-`quick-path` (alias `qp`) è il costruttore compatto che abbiamo già visto nel cap. 4: numeri e angoli si alternano.
-
-<!-- example-source: quick-path-zigzag -->
-```clojure
-(def zigzag (qp 20 60 20 -120 20 60 20))
-(register bar (extrude (rect 5 3) zigzag))
-```
-
-`qp` è comodo per percorsi rettilinei con angoli noti. `poly-path` è comodo quando hai le coordinate. `path` con comandi tartaruga è il più flessibile: archi, bezier, side-trip, mark.
+`quick-path` (alias `qp`) è il costruttore compatto del cap. 4: numeri e angoli si alternano, e `(qp 20 60 20 -120 20 60 20)` è uno zigzag scritto in una riga. Qui basta il criterio di scelta: `qp` è comodo per percorsi rettilinei con angoli noti, `poly-path` quando hai le coordinate, e `path` con comandi tartaruga è il più flessibile: archi, bezier, side-trip, mark.
 
 ## Path come embrioni di forma
 
@@ -263,9 +257,13 @@ Un path descrive un percorso. Una shape descrive un contorno. Ma i due concetti 
     (mark :foot-6) (f 30)))
 
 (register plate (extrude (path-to-shape rim) (f 4)))
+(register feet (on-anchors plate
+                 "foot" (cone 1 3 10)))
 ```
 
 Lo stesso path `rim` serve due scopi: come shape (via `path-to-shape`) per estrudere il piatto, e come scheletro (via i mark) per piazzare i piedi. Un unico dato, due consumatori, nessuna possibilità che divergano.
+
+La riga dei piedi usa `on-anchors`, qui per la prima volta: distribuisce un pezzo su ogni anchor che matcha un pattern — la stringa `"foot"` seleziona tutti i mark `foot-…` e su ciascuno costruisce un cono. È la macro principale per distribuire componenti sui marcatori; la vedremo a fondo nel § 8.1. Nota che la passiamo a `plate` (la mesh), non a `rim` (il path): è la mesh a portarsi dietro gli anchor già trasformati nel frame 3D dell'estrusione.
 
 Questo è il caso d'uso principale di `path-to-shape`: quando il profilo e lo scheletro sono la stessa curva, non serve descriverli due volte.
 
@@ -414,6 +412,17 @@ Scala un path a una dimensione target su uno o entrambi gli assi:
 (register column (revolve (path-to-shape tall-path)))
 ```
 
+### path-length
+
+`path-length` misura la lunghezza di un percorso aperto, da capo a coda, in 3D. È trattata a fondo nel cap. 10 (Analizzare e misurare): la citiamo qui perché è la più diretta delle funzioni che *leggono* un path invece di consumarlo per costruire geometria.
+
+```clojure
+(def p (path (f 30) (th 90) (f 40)))
+(path-length p)   ; => 70
+```
+
+Attenzione a non confonderla con l'altezza del path: `path-length` misura il *tragitto* percorso (un path orizzontale è lungo ma alto zero), non la sua estensione verticale. Per quest'ultima serve `bounds-2d`, che useremo subito qui sotto.
+
 ### subpath-y
 
 `subpath-y` ritaglia da un path la porzione compresa in una fascia di altezza, misurata come distanza dall'inizio del path, e la ri-ancora perché parta da Y=0. Serve soprattutto per prendere una sezione di un profilo da rivoluzione senza trascinarsi dietro il resto.
@@ -423,11 +432,12 @@ Scala un path a una dimensione target su uno o entrambi gli assi:
 (def profile (path (f 5) (th 80) (f 15) (arc-h 5 -160) (f 15)))
 (register slice (revolve (path-to-shape profile)))
 (f 50)
-(register slice2 (revolve (path-to-shape (subpath-y profile 6 18))))
+(register slice2 (revolve (path-to-shape
+                   (subpath-y profile 6 (second (:size (bounds-2d profile)))))))
 
 ```
 
-Solo la fascia 6..18 del profilo viene rivoltata. Restituisce `nil` se la fascia risultante ha meno di due punti.
+La fascia parte dall'altezza 6 e arriva fino in cima al profilo. Invece di indovinare il valore finale (qui sarebbe ~18.9), lo ricaviamo: `bounds-2d` restituisce il riquadro di contenimento del path come `{:min … :max … :size [larghezza altezza]}`, e `(second (:size …))` ne estrae l'altezza. `subpath-y` restituisce `nil` se la fascia risultante ha meno di due punti.
 
 ### Riepilogo
 
@@ -444,6 +454,8 @@ Solo la fascia 6..18 del profilo viene rivoltata. Restituisce `nil` se la fascia
 | `stroke-shape` | contorno con spessore | 5.7 |
 | `bezier-as` | smussatura come bezier | 4.2 |
 | `fit` | scala a dimensione target | 3 (Reference) |
+| `path-length` | lunghezza del percorso aperto (3D) | 10 |
+| `bounds-2d` | riquadro di contenimento (min/max/size) | 10 |
 | `subpath-y` | ritaglia una fascia di altezza | 5.8 |
 | `add-mark` | aggiunge un mark a posizione frazionaria | 5.3 |
 

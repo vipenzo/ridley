@@ -21,6 +21,8 @@ Decisioni:
 
 # Paths: recording movement
 
+<!-- level: base -->
+
 ## What a path is
 
 In chapter 4 we wrote turtle commands directly inside `extrude`: `(extrude (circle 10) (f 20) (th 45) (f 20))`. The path is defined on the spot and used immediately. But sometimes you need the same path in several places: as the trajectory of an extrusion, as the position of components along a skeleton, as a curve to display in the viewport. Rewriting it every time is fragile and tedious.
@@ -233,15 +235,7 @@ A closed rectangle, useful as a path for `extrude-closed`.
 
 ### quick-path
 
-`quick-path` (alias `qp`) is the compact constructor we already saw in chapter 4: numbers and angles alternate.
-
-<!-- example-source: quick-path-zigzag -->
-```clojure
-(def zigzag (qp 20 60 20 -120 20 60 20))
-(register bar (extrude (rect 5 3) zigzag))
-```
-
-`qp` is handy for straight paths with known angles. `poly-path` is handy when you have the coordinates. `path` with turtle commands is the most flexible: arcs, beziers, side-trips, marks.
+`quick-path` (alias `qp`) is the compact constructor from chapter 4: numbers and angles alternate, and `(qp 20 60 20 -120 20 60 20)` is a zigzag written in one line. Here the selection rule is enough: `qp` is handy for straight runs with known angles, `poly-path` when you have coordinates, and `path` with turtle commands is the most flexible: arcs, beziers, side-trips, marks.
 
 ## Paths as shape embryos
 
@@ -263,9 +257,13 @@ A path describes a route. A shape describes an outline. But the two concepts tou
     (mark :foot-6) (f 30)))
 
 (register plate (extrude (path-to-shape rim) (f 4)))
+(register feet (on-anchors plate
+                 "foot" (cone 1 3 10)))
 ```
 
 The same path `rim` serves two purposes: as a shape (via `path-to-shape`) to extrude the plate, and as a skeleton (via the marks) to place the feet. A single piece of data, two consumers, no chance they diverge.
+
+The feet line uses `on-anchors`, here for the first time: it distributes a piece over every anchor matching a pattern — the string `"foot"` selects all the `foot-…` marks and builds a cone on each. It is the main macro for distributing components over markers; we will cover it fully in § 8.1. Note that we pass it `plate` (the mesh), not `rim` (the path): it is the mesh that carries the anchors already transformed into the extrusion's 3D frame.
 
 This is the main use case of `path-to-shape`: when the profile and the skeleton are the same curve, there is no need to describe them twice.
 
@@ -413,6 +411,17 @@ Scales a path to a target size on one or both axes:
 (register column (revolve (path-to-shape tall-path)))
 ```
 
+### path-length
+
+`path-length` measures the length of an open path, end to end, in 3D. It is covered in depth in ch. 10 (Analyzing and measuring): we mention it here because it is the most direct of the functions that *read* a path instead of consuming it to build geometry.
+
+```clojure
+(def p (path (f 30) (th 90) (f 40)))
+(path-length p)   ; => 70
+```
+
+Do not confuse it with the path's height: `path-length` measures the *route* travelled (a horizontal path is long but zero tall), not its vertical extent. For the latter you want `bounds-2d`, which we use just below.
+
 ### subpath-y
 
 `subpath-y` cuts from a path the portion contained in a height band, measured as the distance from the start of the path, and re-anchors it so it starts from Y=0. It is useful above all for taking a section of a revolution profile without dragging the rest along.
@@ -422,11 +431,12 @@ Scales a path to a target size on one or both axes:
 (def profile (path (f 5) (th 80) (f 15) (arc-h 5 -160) (f 15)))
 (register slice (revolve (path-to-shape profile)))
 (f 50)
-(register slice2 (revolve (path-to-shape (subpath-y profile 6 18))))
+(register slice2 (revolve (path-to-shape
+                   (subpath-y profile 6 (second (:size (bounds-2d profile)))))))
 
 ```
 
-Only the 6..18 band of the profile is revolved. It returns `nil` if the resulting band has fewer than two points.
+The band starts at height 6 and runs all the way to the top of the profile. Instead of guessing the upper value (here it would be ~18.9), we derive it: `bounds-2d` returns the path's bounding box as `{:min … :max … :size [width height]}`, and `(second (:size …))` extracts the height. `subpath-y` returns `nil` if the resulting band has fewer than two points.
 
 ### Summary
 
@@ -443,6 +453,8 @@ Only the 6..18 band of the profile is revolved. It returns `nil` if the resultin
 | `stroke-shape` | outline with thickness | 5.7 |
 | `bezier-as` | smoothing as a bezier | 4.2 |
 | `fit` | scales to a target size | 3 (Reference) |
+| `path-length` | length of the open path (3D) | 10 |
+| `bounds-2d` | bounding box (min/max/size) | 10 |
 | `subpath-y` | cuts a height band | 5.8 |
 | `add-mark` | adds a mark at a fractional position | 5.3 |
 

@@ -1,5 +1,7 @@
 # 10. Analyzing and measuring
 
+<!-- level: intermediate -->
+
 Modeling is not only building: it is also understanding what you have built. How wide is this piece? Are the two holes at the right distance? Is the mesh watertight or does it have holes? Did this section come out wrong somewhere?
 
 Ridley offers tools to answer these questions both from code (in the REPL or in the program) and interactively (with the mouse in the viewport). This chapter gathers them all.
@@ -133,23 +135,13 @@ The directions are relative to the creation-pose of the mesh, not to the world:
   (flash-face (get-mesh :my-piece) (:id face)))
 -->
 
-`:threshold` controls the tolerance of the alignment (default 0.7, where 1.0 is perfect):
-
-```clojure
-(find-faces mesh :top :threshold 0.9)    ;; only very aligned faces
-```
-
-`:where` adds a predicate on the face's map:
-
-```clojure
-(find-faces mesh :top :where #(> (:area %) 100))    ;; only large faces
-```
+The refinement options (`:threshold` for alignment tolerance, `:where` for predicates on the face) are in 7.4.
 
 The point-selection functions (`face-at`, `face-nearest`, `largest-face`) are covered in 7.4. The point here is that `find-faces` is useful not only for *doing* something with the faces, but also for *understanding* the structure of a mesh after a series of boolean operations.
 
 ## 10.4 Mesh diagnostics
 
-The mesh diagnostic tools (`mesh-diagnose`, `mesh-status`, `merge-vertices`) are covered in section 7.1. Here we add one clarification about `manifold?`.
+The mesh diagnostic tools (`mesh-diagnose`, `mesh-status`, `merge-vertices`) are covered in section 7.7. Here we add one clarification about `manifold?`.
 
 `manifold?` returns `true` if the mesh is watertight, `nil` otherwise. The reason for the `nil` (and not `false`) is that under the hood Manifold WASM throws an exception when the object is not manifold, and Ridley catches it, returning `nil`. In practice it changes nothing (both are falsy), but it is worth knowing if you use the result in a `cond` or in an expression that distinguishes `false` from `nil`.
 

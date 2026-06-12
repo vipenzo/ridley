@@ -20,6 +20,14 @@ Clojure is a modern dialect of Lisp, a family of programming languages as old as
 
 Concretely: the verbs that make up Ridley are no different in form from the language's own verbs, and you can create your own, all the way to building a custom language tailored to your needs. You start by writing `(box 20)` and you end up, with no perceptible boundary, writing `(my-frame 80 60 12)`, which behaves exactly like a primitive.
 
+And this does not hold for objects only: in Ridley, functions are building material. A shape-fn is a function that makes a profile vary along the path, a thickness-fn is a function that modulates the thickness of a wall, a custom SDF is a distance formula written by you. The boundary between using Ridley and extending it simply is not there.
+
+Then there is a quieter quality: Clojure's syntax is almost all substance. A model reads like a list of operations, with no ceremony and no decorative punctuation; the same model, written in a conventional language, would be longer and noisier.
+
+Everything in Ridley is data you can look inside: shapes, paths, and meshes are ordinary Clojure structures, inspectable from the REPL. And the data carries its own history: a mesh extruded along a path remembers the notable points (the *marks*) annotated on that path, and those points can be fished back out of the mesh long after it was created, even after it has been through boolean operations.
+
+Finally, the deepest part of the Lisp inheritance: the language's control forms are not a closed set, new ones can be created. `on-anchors` is the best example: it takes the marks traveling inside a path or a mesh and turns them into a phrase of the language ("for every point with this role, build this piece here"): an expressive form that a language outside the Lisp family could hardly have offered.
+
 ## Turtle-based
 
 Turtle Geometry is a paradigm introduced by a programming language created to teach children to program, called Logo. The basic idea is to imagine giving movement commands to a turtle (drawn schematically on screen). Commands like "go forward 5 units", "turn right 90 degrees". In response to these commands the Logo turtle moved across the screen leaving a trace of its path (a "pen up" or "pen down" command let you move while drawing the trace, or simply reposition without drawing).

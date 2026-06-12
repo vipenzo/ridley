@@ -93,71 +93,84 @@ pattern are skipped silently — filtering only a subset is a normal use.
         (mark :mid-post-0) (f 20)
         (mark :mid-post-1) (f 20)
         (mark :end-post-finish)))
-(def end-post (cyl 8 40))
-(def mid-post (cyl 4 30))
+(defn end-post [] (attach (cyl 8 40) (cp-f -20) (tv 90)))
+(defn mid-post [] (attach (cyl 4 30) (cp-f -15) (tv 90)))
 (register fence
   (on-anchors row-skel
-    "end-post-" :align (attach end-post)
-    "mid-post-" :align (attach mid-post)))
+    "end-post-" (end-post)
+    "mid-post-" (mid-post)))
 -->
 
 Two roles (`end-post`, `mid-post`) are dispatched by name prefix on the
-same skeleton. `:align` snaps each component to the marker's frame.
+same skeleton. Each role is a 0-arg helper that **builds its post inline**
+(`tv 90` stands the cylinder up, `cp-f` drops its base onto the anchor), so
+the geometry is born at the anchor's pose — see the note on building bodies
+inline below.
 
 ## Variations
 
 {{example: on-anchors-feet}}
 
 <!-- example-source: on-anchors-feet
-(def W 80) (def D 50)
-(def plate-skel
-  (path (rt (/ W 2)) (u (/ D 2)) (mark :foot-1)
-        (u (- D)) (mark :foot-2)
-        (rt (- W)) (mark :foot-3)
-        (u D) (mark :foot-4)))
-(def foot (cyl 4 20))
-(def plate (extrude (rect W D) (f 3)))
+(def W 80) (def D 50) (def inset 5)
+(def hx (- (/ D 2) inset))
+(def hy (- (/ W 2) inset))
+(def leg-skel
+  (path (f hx) (rt hy) (mark :leg-1)
+        (f (* -2 hx)) (mark :leg-2)
+        (rt (* -2 hy)) (mark :leg-3)
+        (f (* 2 hx)) (mark :leg-4)))
+(defn leg [] (attach (cyl 4 30) (cp-f -15) (tv -90)))
+(def top (extrude (rect W D) (tv 90) (f 3)))
 (register table
-  (mesh-union plate
-    (on-anchors plate-skel
-      "foot-" (attach foot))))
+  (mesh-union top
+    (on-anchors leg-skel
+      "leg-" (leg))))
 -->
 
-No `:align` — vertical feet attach by position only, retaining their
-construction orientation regardless of the path's local heading.
+The four legs are dispatched by the `"leg-"` prefix and unioned with the
+host `top` mesh. No `:align` — each leg is built inline at its anchor and
+turned downward with `tv -90`, so it hangs below the table regardless of the
+skeleton's local heading.
 
 {{example: on-anchors-set}}
 
 <!-- example-source: on-anchors-set
-(def W 80) (def D 50)
-(def skel
-  (path (rt (/ W 2)) (u (/ D 2)) (mark :foot-1)
-        (u (- D)) (mark :foot-2)
-        (rt (- W)) (mark :foot-3)
-        (u D) (mark :foot-4)))
-(def long-foot  (cyl 4 30))
-(def short-foot (cyl 4 15))
+(def W 80) (def D 50) (def inset 5)
+(def hx (- (/ D 2) inset))
+(def hy (- (/ W 2) inset))
+(def leg-skel
+  (path (f hx) (rt hy) (mark :leg-1)
+        (f (* -2 hx)) (mark :leg-2)
+        (rt (* -2 hy)) (mark :leg-3)
+        (f (* 2 hx)) (mark :leg-4)))
+(defn long-leg  [] (attach (cyl 4 40) (cp-f -20) (tv -90)))
+(defn short-leg [] (attach (cyl 4 20) (cp-f -10) (tv -90)))
 (register stand
-  (on-anchors skel
-    #{:foot-1 :foot-3} (attach long-foot)
-    #{:foot-2 :foot-4} (attach short-foot)))
+  (on-anchors leg-skel
+    #{:leg-1 :leg-3} (long-leg)
+    #{:leg-2 :leg-4} (short-leg)))
 -->
 
-A set pattern picks an explicit subset of anchors by name.
+A set pattern picks an explicit subset of anchors by name — here the two
+diagonal pairs get long and short legs respectively.
 
 {{example: on-anchors-direct}}
 
 <!-- example-source: on-anchors-direct
 (def skel
-  (path (mark :end-1) (f 20) (mark :mid) (f 20) (mark :end-2)))
+  (path (mark :end-1) (f 30) (tv 40) (mark :mid) (f 30) (tv 40) (mark :end-2)))
 (register markers
-  (on-anchors skel :align
-    "end-" (cyl 8 40)
-    :mid   (cyl 4 30)))
+  (on-anchors skel
+    "end-" :align (cyl 6 30)
+    :mid   :align (cyl 4 24)))
 -->
 
-The body need not be an `attach` — any primitive or composite mesh
-expression works, evaluated in the turtle scope at the anchor.
+The body need not be an `attach` — a bare primitive works, evaluated in the
+turtle scope at the anchor. Here `:align` is a **per-clause** flag (it sits
+between the pattern and its body): with it, each cylinder takes the anchor's
+full pose, so along this climbing path the markers tilt to follow the local
+heading. Drop `:align` and they would all stay axis-aligned.
 
 ## Notes
 
@@ -175,6 +188,16 @@ expression works, evaluated in the turtle scope at the anchor.
   `(turtle :pose <pose> body)`. Subsequent turtle commands (`f`, `th`,
   `attach`, …) all operate in that scope; on body exit, the parent
   turtle state is restored.
+- **Build the body geometry inline.** A primitive is born at the *current*
+  turtle pose, so constructing it inside the body (`(cyl …)`, or a 0-arg
+  helper that builds and returns one) places it at the anchor. A mesh built
+  earlier with `def` carries its own origin pose, and `(attach that-mesh)`
+  replays its attach-path from a fresh turtle — it does **not** relocate the
+  mesh to the anchor. So `(attach (cyl 8 40) …)` lands on the anchor, but
+  `(def post (cyl 8 40))` followed by `(attach post)` leaves every instance
+  stacked at the origin. Reach for `def` only to share a *shape/profile*,
+  not a finished mesh you intend to scatter; otherwise wrap construction in a
+  `(defn post [] …)` helper as the examples do.
 - **No fallthrough.** If no pattern matches an anchor, that anchor is
   silently skipped. To detect this, use a final `#".*"` regex clause.
 - **Path marks resolve at the *current* turtle pose**, not at the

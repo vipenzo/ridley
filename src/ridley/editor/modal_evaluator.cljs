@@ -49,22 +49,45 @@
 
 ;; Transient-tweak flag: set by the editor's "Tweak this value" command, which
 ;; auto-wraps a selection in (tweak …). It carries the ORIGINAL selected text so
-;; that cancelling the session can restore it (unwrap the auto-inserted wrapper).
-;; Confirm needs nothing extra — tweak already bakes the value over the wrapper.
+;; that cancelling the session can restore it (unwrap the auto-inserted wrapper),
+;; plus the wrapper's position (`from`/`wrapped`) so that a FAILED wrap — one that
+;; never opened a session because the modified script errored — can be rolled back
+;; (see restore-failed-tweak-transient!). Confirm needs nothing extra — tweak
+;; already bakes the value over the wrapper.
+;; Value: {:restore text :from int :wrapped str} or nil.
 (defonce ^:private tweak-transient (atom nil))
 
 (defn arm-tweak-transient!
-  "Mark the next tweak session as transient (auto-wrapped), carrying `restore-text`
-   — the original source to put back if the session is cancelled."
-  [restore-text]
-  (reset! tweak-transient restore-text))
+  "Mark the next tweak session as transient (auto-wrapped by the editor command).
+   `restore-text` is the original selection to put back if the session is
+   cancelled. The optional `from`/`wrapped` locate the inserted (tweak …) wrapper
+   so a failed eval (the wrap never opened a session) can be rolled back."
+  ([restore-text] (arm-tweak-transient! restore-text nil nil))
+  ([restore-text from wrapped]
+   (reset! tweak-transient {:restore restore-text :from from :wrapped wrapped})))
 
 (defn consume-tweak-transient!
-  "Return the pending transient restore-text (clearing it), or nil if none."
+  "Return the pending transient restore-text (clearing the whole transient), or
+   nil if none. Called by tweak start! once a session successfully opens, so the
+   wrap is no longer pending and restore-failed-tweak-transient! becomes a no-op."
   []
   (let [v @tweak-transient]
     (reset! tweak-transient nil)
-    v))
+    (:restore v)))
+
+(defn restore-failed-tweak-transient!
+  "Safety net for the editor's auto-wrap. If a transient tweak is still pending
+   AFTER a definitions run — i.e. start! never consumed it because the wrapped
+   script failed to evaluate, so no session opened — roll the (tweak …) wrapper
+   back to the original selection text in the editor. Returns true if it restored,
+   false (no-op) otherwise. The caller re-runs definitions to refresh the viewport
+   from the now-clean source."
+  []
+  (when-let [{:keys [restore from wrapped]} @tweak-transient]
+    (reset! tweak-transient nil)
+    (when (and from wrapped restore)
+      (cm/replace-range from (+ from (count wrapped)) restore)
+      true)))
 
 ;; ============================================================
 ;; Mutex — one modal session at a time
@@ -183,6 +206,32 @@
     (when (>= idx 0)
       (let [end (find-matching-paren text idx)]
         (when (pos? end) [idx end])))))
+
+(defn balanced-source?
+  "True if `text` is one or more complete, well-formed s-expressions: brackets
+   balanced and properly nested (a closer matches the most recent opener),
+   respecting strings and line comments. A bare token (e.g. \"2\") counts as
+   balanced. Empty/whitespace-only text is not. Used to reject malformed editor
+   selections like \"2)\" before wrapping them in a modal (tweak …) form."
+  [text]
+  (let [len (count text)
+        closer {"(" ")" "[" "]" "{" "}"}
+        opener? #{"(" "[" "{"}
+        closer? #{")" "]" "}"}]
+    (and (pos? (count (.trim text)))
+         (loop [i 0 stack ()]
+           (if (>= i len)
+             (empty? stack)
+             (let [ch (.charAt text i)]
+               (cond
+                 (opener? ch) (recur (inc i) (conj stack (closer ch)))
+                 (closer? ch) (and (seq stack) (= ch (first stack))
+                                   (recur (inc i) (rest stack)))
+                 (= ch "\"") (let [after (skip-string text i)]
+                               (and (pos? after) (recur after stack)))
+                 (= ch ";") (let [nl (.indexOf text "\n" i)]
+                              (if (neg? nl) (empty? stack) (recur (inc nl) stack)))
+                 :else (recur (inc i) stack))))))))
 
 (defn replace-source!
   "Replace the [from to) character range of the editor with `code`."

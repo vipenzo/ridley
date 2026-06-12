@@ -25,6 +25,8 @@ visualizzazione, non in una sezione dedicata.
 
 # Lavorare con le forme 2D
 
+<!-- level: base -->
+
 ## A cosa servono le shape
 
 Nel capitolo precedente abbiamo costruito ogni pezzo da una primitiva 3D: `box`, `cyl`, `sphere`, `cone`. Funziona, ma c'è un limite: non puoi scegliere liberamente la sezione di un oggetto. Un cilindro ha sempre sezione circolare, un parallelepipedo sempre rettangolare. Se vuoi un tubo a sezione esagonale, o un profilato a L, le primitive non bastano.
@@ -386,8 +388,11 @@ Ruota il profilo attorno all'asse della tartaruga, producendo un solido di rivol
 
 <!-- example-source: where-revolve -->
 ```clojure
-(register bowl
-  (revolve (shape (f 20) (th -90) (f 30) (th -90) (f 15))))
+(def profile (shape-difference
+               (rect 20 20)
+               (translate-shape (circle 18) -5 8.5)
+               ))
+(register bowl (revolve profile))
 ```
 
 Una ciotola: il profilo (una specie di U aperta) viene ruotato di 360° attorno all'asse up. Anche `revolve` accetta shape-fn, quindi il profilo può variare durante la rotazione.
@@ -419,66 +424,9 @@ Il flusso tipico è: costruisci la shape (3.1-3.4), lavorala con booleane e modi
 
 ## Generare shape da mesh
 
-Finora abbiamo costruito le shape da zero: coordinate, comandi tartaruga, primitive, composizioni. Ma a volte il profilo che serve esiste già, nascosto dentro una mesh 3D: la sezione di un vaso a una certa altezza, la sagoma di un pezzo vista dall'alto, il contorno di una faccia. Tre operazioni lo estraggono.
+Finora abbiamo costruito le shape da zero: coordinate, comandi tartaruga, primitive, composizioni. Ma a volte il profilo che serve esiste già, nascosto dentro una mesh 3D: la sezione di un vaso a una certa altezza, la sagoma di un pezzo vista dall'alto, il contorno di una faccia. Tre operazioni lo estraggono: `slice-mesh` taglia la mesh con il piano della tartaruga e restituisce il contorno della sezione, `project-mesh` ne proietta la silhouette sul piano, `face-shape` estrae il contorno di una singola faccia. Il risultato è sempre una shape standard (o un vettore di shape), pronta per `extrude`, `loft` o qualsiasi operatore di questo capitolo: il flusso 2D → 3D funziona anche all'inverso.
 
-### slice-mesh
-
-`slice-mesh` taglia una mesh con il piano della tartaruga e restituisce il contorno della sezione come vettore di shape.
-
-<!-- example-source: slice-mesh-bowl -->
-```clojure
-(register bowl
-  (revolve (shape (f 20) (th 90) (f 30) (th 90) (f 15))))
-
-(tv 90) (f 15)
-(def shp (slice-mesh :bowl))
-(f 20)
-(stamp shp)
-```
-
-Il primo blocco costruisce una ciotola per rivoluzione. Poi la tartaruga ruota di 90° verso l'alto (così guarda verso +Z) e avanza di 15: ora il piano della tartaruga è un piano orizzontale a quota 15. `slice-mesh` taglia la ciotola con quel piano e restituisce il contorno della sezione. La tartaruga avanza di altri 20 per uscire dalla mesh, così lo `stamp` della sezione è visibile nel viewport.
-
-Il risultato è un vettore perché la sezione può avere più contorni disconnessi (una mesh con buchi, o più corpi separati che intersecano lo stesso piano). Ogni contorno è una shape standard, pronta per `extrude`, `loft`, o qualsiasi operatore 2D.
-
-`slice-mesh` accetta un nome registrato (`:bowl`), una mesh, o un nodo SDF. Il piano è sempre quello della tartaruga: la posizione decide dove taglia, la direzione avanti decide la normale del piano.
-
-Per tagliare con un piano che non dipende dalla tartaruga, c'è `slice-at-plane`:
-
-```clojure
-(slice-at-plane :bowl [0 0 1] [0 0 15])
-```
-
-Stessa operazione, ma il piano è definito da una normale e un punto in coordinate mondo.
-
-### project-mesh
-
-`project-mesh` proietta la mesh sul piano della tartaruga e restituisce la sagoma (silhouette) come vettore di shape. Dove `slice-mesh` dà la sezione *al* piano, `project-mesh` dà l'ombra *sul* piano.
-
-<!-- example-source: project-mesh-silhouette -->
-```clojure
-(register B (box 10 20 30))
-(tv 15) (th 40) (f 40)
-(stamp (project-mesh :B))
-```
-
-Una box vista da un'angolazione obliqua: la tartaruga si sposta e ruota, poi `project-mesh` proietta la box sul piano corrente della tartaruga e restituisce la sagoma come vettore di shape. Il risultato è un esagono irregolare — la silhouette di un parallelepipedo visto di sbieco. Utile per ricavare un footprint 2D da un pezzo 3D, ad esempio per estrudere una tasca di clearance leggermente più grande della sagoma.
-
-### face-shape
-
-`face-shape` estrae il contorno di una faccia specifica di una mesh come shape 2D, insieme alla posa (posizione e orientamento) della faccia.
-
-```clojure
-(def top (face-shape my-mesh face-id))
-
-(turtle (:pose top)
-  (extrude (:shape top) (f 20)))
-```
-
-L'argomento `face-id` è l'identificativo di una faccia, ottenuto con le funzioni di selezione facce come `find-faces` e `largest-face` (cap. 10). Il risultato è una mappa con `:shape` (la shape 2D) e `:pose` (posizione e orientamento della faccia nel mondo). Passando la posa a `turtle`, l'estrusione parte esattamente dalla faccia estratta, nella direzione giusta. È il modo più preciso per "continuare" una mesh da una delle sue facce.
-
-### Il flusso inverso
-
-Queste tre operazioni chiudono un cerchio: le sezioni 3.1-3.6 costruiscono shape per farle diventare mesh (via extrude, loft, revolve); questa sezione estrae shape da mesh esistenti per riusarle come input di nuove operazioni. Il pezzo che hai già costruito diventa materia prima per il pezzo successivo.
+Queste operazioni lavorano sulle mesh e sui loro piani di taglio, concetti del cap. 7: la loro casa è la sezione 7.5, con gli esempi e i casi particolari. Qui basta sapere che esistono: quando una mesh contiene già il profilo che ti serve, non devi ridisegnarlo.
 
 ## Più forme alla volta
 
@@ -541,7 +489,7 @@ Nel cap. 2 abbiamo visto `defn` per creare pezzi 3D riutilizzabili. Lo stesso va
     (translate-shape (rect web (- h flange)) 0 (/ (- h flange) -2))))
 
 (register small (extrude (t-profile 20 30 4 3) (f 40)))
-(rt 30)
+(rt 40)
 (register large (extrude (t-profile 40 50 6 4) (f 60)))
 ```
 
