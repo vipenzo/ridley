@@ -126,7 +126,6 @@ The [`examples/`](examples/) directory contains 20+ complete models. A few highl
 | `cerniera.clj` | Parametric pipe clamp with a living hinge — a real, printable functional part |
 | `meshing-gears.clj` | Two spur gears that mesh and counter-rotate, animated with `anim!` |
 | `multiboard.clj` | A full parametric Multiboard tile set (the most ambitious example) |
-| `canvas-weave.clj` | A cup embossed with a woven-canvas texture via mesh-to-heightmap (slow to render) |
 | `twisted-vase.clj` | Vase with procedural twist and fluting |
 | `sdf-vase.clj` | A shelled, grid-cut vase built with signed distance functions (desktop) |
 | `recursive-tree.clj` | Recursive branching structure |
