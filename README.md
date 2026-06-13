@@ -16,7 +16,7 @@ A few characteristics that distinguish Ridley from other CAD-as-code tools:
 
 - **General purpose language**: Clojure as full programming language, not a restricted DSL. Write functions, build personal libraries, share them as code.
 - **Two geometric representations**: meshes (universal, fast booleans via Manifold WASM) and signed distance functions (analytic, smooth blends, available in desktop via libfive).
-- **Live interaction modes**: tweak (real-time sliders for numeric literals), pilot (interactive turtle steering), face picking from the viewport. All produce code as output, preserving the textual model.
+- **Live interaction modes**: tweak (real-time sliders for numeric literals), pilot (position and resize a mesh with the arrow keys, mapped to turtle moves), edit-bezier (draw curves by dragging control points and tension), face picking from the viewport. All produce code as output, preserving the textual model.
 - **Multimodal AI integration**: code generation, mesh description, iterative refinement loop with vision feedback.
 - **Voice and WebXR**: alternative input channels designed for headset-first workflows.
 
@@ -24,7 +24,7 @@ For the full picture, see [docs/Architecture.md](docs/Architecture.md) (Italian;
 
 ## Install
 
-**Browser** (nothing to install): [vipenzo.github.io/Ridley](https://vipenzo.github.io/Ridley/)
+**Browser** (nothing to install): [vipenzo.github.io/ridley](https://vipenzo.github.io/ridley/)
 
 **Desktop app (macOS)**, which adds SDF modeling, on-disk libraries, GIF export, and native file dialogs:
 
@@ -96,24 +96,37 @@ Each primitive inherits the turtle's current pose. Rotate first, then place a bo
     (attach (cyl 5 30) :base)))
 ```
 
+### Things that move
+
+```clojure
+;; two gears that mesh and spin in opposite directions
+(def gp (gear-pair :ratio 2 :size 60 :thickness 8 :bore 5))
+(register gear1 (:gear1 gp))
+(register gear2 (attach (:gear2 gp) (rt (:distance gp)) (tr (:phase gp))))
+
+(anim! :spin1 4.0 :gear1 :loop (span 1.0 :linear (tr 360)))
+(anim! :spin2 4.0 :gear2 :loop (span 1.0 :linear (tr -720)))
+(play!)
+```
+
 ## Examples
 
-The [`examples/`](examples/) directory contains 23 complete models. A few highlights:
+The [`examples/`](examples/) directory contains 20+ complete models. A few highlights:
 
 | File | What it shows |
 |------|---------------|
-| `supporto.clj` | Parametric pipe clamp ("supporto" = bracket; the model in the screenshot above) |
-| `spiral-shell.clj` | Organic shell with logarithmic spiral growth |
+| `cerniera.clj` | Parametric pipe clamp with a living hinge — a real, printable functional part |
+| `meshing-gears.clj` | Two spur gears that mesh and counter-rotate, animated with `anim!` |
+| `multiboard.clj` | A full parametric Multiboard tile set (the most ambitious example) |
+| `canvas-weave.clj` | A cup embossed with a woven-canvas texture via mesh-to-heightmap (slow to render) |
 | `twisted-vase.clj` | Vase with procedural twist and fluting |
-| `embossed-column.clj` | Column with heightmap-based surface displacement |
-| `dice.clj` | Six-sided die with boolean-carved pips |
+| `sdf-vase.clj` | A shelled, grid-cut vase built with signed distance functions (desktop) |
 | `recursive-tree.clj` | Recursive branching structure |
 
 ## Documentation
 
 - [docs/Architecture.md](docs/Architecture.md): comprehensive architectural overview of the project (Italian; English translation planned).
-- The interactive manual inside the application (click "Manual" in the toolbar) covers the full language with bilingual descriptions and runnable examples.
-- The `dev-docs/` directory contains development specs, audits, and design notes for individual subsystems.
+- The interactive manual inside the application (click "Manual" in the toolbar) covers the full language with bilingual (EN/IT) guides, reading paths for different backgrounds, and runnable examples.
 
 ## Project status
 
