@@ -17,7 +17,7 @@
     (sdf-offset (sdf-box inner-box inner-h inner-box) round-radius)
     spessore)
    ;; Cut off top to leave it open
-   (sdf-move (sdf-box (+ base-side 10) (* 2 round-radius) (+ base-side 10)) 0 0 (/ H 2))))
+   (translate (sdf-box (+ base-side 10) (* 2 round-radius) (+ base-side 10)) 0 0 (/ H 2))))
 
 (comment
   ;; Gyroid-perforated walls + solid bottom rim for rigidity
@@ -31,11 +31,11 @@
 
      ;; Solid bottom rim (a band at the base for strength)
      (sdf-intersection container
-                       (sdf-move (sdf-box
+                       (translate (sdf-box
                                   (+ base-side 10) (* spessore 3) (+ base-side 10))
                                  0 0 (- (/ spessore 2) (/ H 2))))
      (sdf-intersection container
-                       (sdf-move (sdf-box
+                       (translate (sdf-box
                                   (+ base-side 10) (* spessore 3) (+ base-side 10))
                                  0 0 (- (/ H 2) round-radius))))))
 
@@ -54,10 +54,10 @@
            (concat
             ;; serie 1: array lungo Y, taglia le pareti X
             (for [i (range n-slats)]
-              (sdf-move base-slat 0 (+ (- half) (* i slat-pitch)) 0))
+              (translate base-slat 0 (+ (- half) (* i slat-pitch)) 0))
             ;; serie 2: ruotata 90° attorno a Z, array lungo X, taglia le pareti Y
             (for [i (range n-slats)]
-              (sdf-move (sdf-rotate base-slat :z 90)
+              (translate (rotate base-slat :z 90)
                         (+ (- half) (* i slat-pitch)) 0 0))))))
 
 (def _glass (sdf-difference container slats))

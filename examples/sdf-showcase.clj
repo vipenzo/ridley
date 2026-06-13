@@ -1,4 +1,4 @@
-;; SDF via SCI — test all major operations
+;; SDF showcase — all major operations in one place
 ;; Requires the Rust geometry server (Tauri desktop mode)
 
 ;; Basic primitives
@@ -8,7 +8,7 @@
 (register blend
           (sdf-blend
            (sdf-sphere 8)
-           (sdf-move (sdf-box 12 12 12) 6 0 0)
+           (translate (sdf-box 12 12 12) 6 0 0)
            0.5))
 
 ;; Shell + TPMS infill
