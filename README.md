@@ -46,16 +46,21 @@ npx shadow-cljs watch app
 
 The interface has two panels: the **Editor** for definitions and a **REPL** for interactive commands. Both evaluate the same code; the editor rebuilds the whole scene on Run, the REPL accumulates incremental commands.
 
+Each block below is self-contained: copy it, paste it into the editor, and click the green ▶ to run. Shapes appear in the viewport as you `register` them.
+
 ### Movement and primitives
 
 ```clojure
 (f 30)            ; move forward along heading
 (th 90)           ; turn horizontal (yaw)
 (tv 45)           ; turn vertical (pitch)
+(f 30)
 
-(box 20)          ; cube at current pose
-(sphere 15)       ; sphere
-(cyl 10 30)       ; cylinder
+(register A (box 20))          ; cube at current pose
+(rt 30)
+(register B (sphere 15))       ; sphere
+(rt 30)
+(register C (cyl 10 30))       ; cylinder
 ```
 
 Each primitive inherits the turtle's current pose. Rotate first, then place a box, and the box appears rotated.
@@ -64,14 +69,17 @@ Each primitive inherits the turtle's current pose. Rotate first, then place a bo
 
 ```clojure
 ;; extrude a 2D profile along a turtle path
-(extrude (circle 10) (f 30) (th 45) (f 20))
+(register tube (extrude (circle 10) (f 30) (th 45) (f 20)))
 
+(rt 60)
 ;; loft a profile that twists along the way
-(loft (twisted (circle 15) :angle 180) (f 40))
+(register twist (loft (twisted (circle 15) :angle 180) (f 40)))
 
+(rt 60)
 ;; loft with a tapered, fluted profile
-(loft (fluted (tapered (circle 20) :to 0.6) :flutes 12 :depth 2)
-      (f 50))
+(register flute
+  (loft (fluted (tapered (circle 20) :to 0.6) :flutes 12 :depth 2)
+        (f 50)))
 ```
 
 ### Boolean operations
@@ -80,32 +88,32 @@ Each primitive inherits the turtle's current pose. Rotate first, then place a bo
 (def a (box 20))
 (f 10)
 (def b (sphere 15))
-(mesh-difference a b)
+(register carved (mesh-difference a b))
 ```
 
 ### Named scene objects
 
 ```clojure
 ;; register a mesh under a name; it becomes visible in the viewport
-(register :base (extrude (rect 40 40) (f 5)))
+(register base (extrude (rect 40 40) (f 5)))
 
 ;; build something from named pieces
-(register :assembly
+(register assembly
   (mesh-union
-    (get-mesh :base)
-    (attach (cyl 5 30) :base)))
+    base
+    (attach (cyl 5 30) base)))
 ```
 
 ### Things that move
 
 ```clojure
-;; two gears that mesh and spin in opposite directions
-(def gp (gear-pair :ratio 2 :size 60 :thickness 8 :bore 5))
-(register gear1 (:gear1 gp))
-(register gear2 (attach (:gear2 gp) (rt (:distance gp)) (tr (:phase gp))))
+;; two meshes, each looping at its own speed
+(register slow (loft (twisted (rect 24 24) :angle 120) (f 45)))
+(rt 70)
+(register fast (box 18))
 
-(anim! :spin1 4.0 :gear1 :loop (span 1.0 :linear (tr 360)))
-(anim! :spin2 4.0 :gear2 :loop (span 1.0 :linear (tr -720)))
+(anim! :a 4.0 :slow :loop (span 1.0 :linear (tr 360)))
+(anim! :b 2.0 :fast :loop (span 1.0 :linear (tr 360)))
 (play!)
 ```
 

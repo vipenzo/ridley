@@ -6,16 +6,19 @@
 ;
 ; The large gear drives the small one at a 2:1 ratio:
 ; for every revolution of gear1, gear2 spins twice.
+;
+; Requires the 'gears' library — enable it in the Libraries panel.
+; Library functions are namespaced, hence the gears/ prefix.
 
 ; =====================
 ; 1. Create the gear pair
 ; =====================
 
-(def gp (gear-pair :ratio 2
-                   :size 60
-                   :thickness 8
-                   :tolerance :fdm
-                   :bore 5))
+(def gp (gears/gear-pair :ratio 2
+                         :size 60
+                         :thickness 8
+                         :tolerance :fdm
+                         :bore 5))
 
 ; =====================
 ; 2. Register meshes
@@ -36,12 +39,12 @@
 
 ; Large gear: one full turn in 4 seconds
 (anim! :spin1 4.0 :gear1 :loop
-  (span 1.0 :linear (tr 360)))
+       (span 1.0 :linear (tr 360)))
 
 ; Small gear: counter-rotate at ratio speed
 ; Negative because meshing gears turn in opposite directions
 (anim! :spin2 4.0 :gear2 :loop
-  (span 1.0 :linear (tr (* -1 (:ratio gp) 360))))
+       (span 1.0 :linear (tr (* -1 (:ratio gp) 360))))
 
 ; =====================
 ; 4. Start!
