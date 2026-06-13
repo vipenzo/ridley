@@ -1238,6 +1238,14 @@
       state
       (let [initial-rotations (take-while #(not= :f (:cmd %)) commands)
             state-with-initial-heading (reduce apply-rotation-to-state state initial-rotations)
+            ;; Keep an arc-started section's start cap perpendicular to the
+            ;; incoming heading (see extrude-from-path for the full rationale).
+            arc-lead-rot (when (and (seq initial-rotations)
+                                    (= :lead (:arc-cap (last initial-rotations))))
+                           (last initial-rotations))
+            start-cap-state (if arc-lead-rot
+                              (reduce apply-rotation-to-state state (butlast initial-rotations))
+                              state-with-initial-heading)
             rings-result
             (loop [i 0
                    s state-with-initial-heading
@@ -1259,11 +1267,25 @@
                       s1 (assoc s :position start-pos)
 
                       emit-start? (or (zero? i) prev-had-corner)
-                      start-data (when emit-start? (stamp-shape-with-holes s1 shape))
+                      start-data (when emit-start?
+                                   (stamp-shape-with-holes
+                                    (if (zero? i)
+                                      (assoc start-cap-state :position start-pos)
+                                      s1)
+                                    shape))
 
                       end-pos (v+ start-pos (v* (:heading s1) effective-dist))
                       s2 (assoc s1 :position end-pos)
-                      end-data (stamp-shape-with-holes s2 shape)
+                      ;; Last ring of an arc-ended path: apply the trailing
+                      ;; half-step so the end cap is perpendicular to the
+                      ;; outgoing heading (see extrude-from-path).
+                      trail-cap-rot (when is-last
+                                      (first (filter #(= :trail (:arc-cap %)) rotations)))
+                      end-data (stamp-shape-with-holes
+                                (if trail-cap-rot
+                                  (apply-rotation-to-state s2 trail-cap-rot)
+                                  s2)
+                                shape)
 
                       corner-pos (v+ end-pos (v* (:heading s2) shorten-end))
                       s3 (assoc s2 :position corner-pos)
@@ -1353,6 +1375,21 @@
           state
           (let [initial-rotations (take-while #(not= :f (:cmd %)) commands)
                 state-with-initial-heading (reduce apply-rotation-to-state state initial-rotations)
+                ;; arc-h/arc-v decompose into a leading half-step rotation,
+                ;; straight segments, and a trailing half-step (midpoint
+                ;; integration). When an arc is the FIRST movement of the path,
+                ;; that leading half-step would tilt the start cap by half a step
+                ;; off the incoming heading, so the section no longer welds flush
+                ;; to whatever precedes it (e.g. the prior leg of a transform->
+                ;; chain). The half-steps are tagged :arc-cap by the recorder.
+                ;; Keep the start cap perpendicular to the pre-arc heading; the
+                ;; half-step still advances the spine along the first chord.
+                arc-lead-rot (when (and (seq initial-rotations)
+                                        (= :lead (:arc-cap (last initial-rotations))))
+                               (last initial-rotations))
+                start-cap-state (if arc-lead-rot
+                                  (reduce apply-rotation-to-state state (butlast initial-rotations))
+                                  state-with-initial-heading)
                 ;; Profile marks → mesh anchors: resolve in the section plane,
                 ;; then stamp through the SAME frame the base ring is built with
                 ;; (state-with-initial-heading, not the pre-rotation creation-pose).
@@ -1381,11 +1418,26 @@
                           s1 (assoc s :position start-pos)
 
                           emit-start-ring? (or (zero? i) prev-had-corner)
-                          start-ring (when emit-start-ring? (stamp-shape s1 shape))
+                          ;; First ring of an arc-started path: stamp it with the
+                          ;; pre-arc frame so the cap stays flush with the incoming
+                          ;; heading (see start-cap-state above).
+                          start-ring (when emit-start-ring?
+                                       (stamp-shape (if (zero? i)
+                                                      (assoc start-cap-state :position start-pos)
+                                                      s1)
+                                                    shape))
 
                           end-pos (v+ start-pos (v* (:heading s1) effective-dist))
                           s2 (assoc s1 :position end-pos)
-                          end-ring (stamp-shape s2 shape)
+                          ;; Last ring of an arc-ended path: apply the trailing
+                          ;; half-step so the end cap is perpendicular to the
+                          ;; outgoing heading rather than short by half a step.
+                          trail-cap-rot (when is-last
+                                          (first (filter #(= :trail (:arc-cap %)) rotations)))
+                          end-ring (stamp-shape (if trail-cap-rot
+                                                  (apply-rotation-to-state s2 trail-cap-rot)
+                                                  s2)
+                                                shape)
 
                           corner-pos (v+ end-pos (v* (:heading s2) shorten-end))
                           s3 (assoc s2 :position corner-pos)

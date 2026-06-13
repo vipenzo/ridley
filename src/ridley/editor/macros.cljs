@@ -14,6 +14,18 @@
      (swap! path-recorder rec-tv angle))
    (defn- rec-tr* [angle]
      (swap! path-recorder rec-tr angle))
+   ;; Like rec-th*/rec-tv* but tag the recorded command with :arc-cap so the
+   ;; extruder can recognize an arc's leading/trailing half-step (see rec-arc-h*).
+   (defn- rec-th-cap* [angle cap]
+     (swap! path-recorder
+            (fn [s]
+              (let [s2 (rec-th s angle)]
+                (assoc-in s2 [:recording (dec (count (:recording s2))) :arc-cap] cap)))))
+   (defn- rec-tv-cap* [angle cap]
+     (swap! path-recorder
+            (fn [s]
+              (let [s2 (rec-tv s angle)]
+                (assoc-in s2 [:recording (dec (count (:recording s2))) :arc-cap] cap)))))
    (defn- rec-set-heading* [heading up]
      (swap! path-recorder rec-set-heading heading up))
    (defn- rec-u* [dist]
@@ -94,15 +106,19 @@
              step-angle-rad (/ angle-rad actual-steps)
              step-dist (* 2 radius (sin (/ step-angle-rad 2)))
              half-angle (/ step-angle-deg 2)]
-         ;; First: rotate half and move
-         (rec-th* half-angle)
+         ;; First: rotate half and move. Tag the leading/trailing half-steps
+         ;; with :arc-cap so extrude-from-path can keep the section's start/end
+         ;; caps perpendicular to the incoming/outgoing heading when the arc is
+         ;; the first/last movement of a path (otherwise they tilt by half a
+         ;; step and the section no longer welds flush — see extrude-from-path).
+         (rec-th-cap* half-angle :lead)
          (rec-f* step-dist)
          ;; Middle steps
          (dotimes [_ (dec actual-steps)]
            (rec-th* step-angle-deg)
            (rec-f* step-dist))
          ;; Final half rotation
-         (rec-th* half-angle))))
+         (rec-th-cap* half-angle :trail))))
 
    ;; Recording version of arc-v that decomposes into rec-f* and rec-tv*
    (defn- rec-arc-v* [radius angle & {:keys [steps]}]
@@ -123,15 +139,16 @@
              step-angle-rad (/ angle-rad actual-steps)
              step-dist (* 2 radius (sin (/ step-angle-rad 2)))
              half-angle (/ step-angle-deg 2)]
-         ;; First: rotate half and move
-         (rec-tv* half-angle)
+         ;; First: rotate half and move. See rec-arc-h* for why the leading and
+         ;; trailing half-steps are tagged with :arc-cap.
+         (rec-tv-cap* half-angle :lead)
          (rec-f* step-dist)
          ;; Middle steps
          (dotimes [_ (dec actual-steps)]
            (rec-tv* step-angle-deg)
            (rec-f* step-dist))
          ;; Final half rotation
-         (rec-tv* half-angle))))
+         (rec-tv-cap* half-angle :trail))))
 
    ;; Helper: normalize a 3D vector
    (defn- rec-normalize [v]
