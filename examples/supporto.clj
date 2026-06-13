@@ -1,3 +1,4 @@
+;; Ridley Workspace — Libraries: gears
 ;; Pipe clamp for 30mm wooden poles (garden trellis)
 ;; Square base plate + open C-ring clamp
 
@@ -10,19 +11,18 @@
 (def screw-inset 5) ; hole distance from edge
 (def corner-r 4) ; base plate corner radius
 (def clamp-length 25)
-
 ;; Derived
 (def ring-r (/ pipe-d 2)) ; inner ring radius
 (defn neg [x] (* -1 x))
 
 ;; --- Base plate ---
-(def hole (circle (/ screw-d 2) 16))
+(def hole (circle (/ screw-d 2) 128))
 (def si (- (/ base-side 2) screw-inset))
 
 (def base-shape
   (shape-difference
    (fillet-shape (rect base-side base-side) corner-r)
-   (circle ring-r 48)))
+   (circle ring-r 128)))
 
 (def base (-> base-shape
               (extrude (f base-h))
@@ -41,8 +41,8 @@
 ;; --- Clamp ring ---
 (def ring-section
   (shape-difference
-   (circle (+ ring-r wall) 48)
-   (circle ring-r 48)))
+   (circle (+ ring-r wall) 128)
+   (circle ring-r 128)))
 
 (def clamp-mesh
   (-> (loft (capped ring-section -7 :end false :fraction 0.4) (f clamp-length))
