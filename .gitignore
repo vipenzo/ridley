@@ -28,3 +28,6 @@ desktop/src-tauri/gen/
 .DS_Store
 Thumbs.db
 manual-output/
+
+# Local-only announcement / release drafts
+announcements/
