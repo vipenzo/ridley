@@ -103,6 +103,7 @@ A one-second loop modulates the box dimensions with a sine. `:loop` re-runs forw
 
 ## Notes
 
+- **The target must be a registered mesh.** `:target` names a mesh that already exists in the scene via `(register <name> …)`. `anim-proc!` replaces that registered mesh each frame — it does not create one. Pointing `:target` at a bare `defn` (a function, not a registered mesh) registers nothing in the scene, so nothing renders and the animation has no mesh to update. Always `(register …)` the target first.
 - **Performance budget.** `gen-fn` runs every frame (default 60 fps). Keep it cheap: avoid `mesh-union`, `mesh-difference`, `mesh-hull`, and other CSG ops inside the function. Vertex transforms, profile changes, and pure extrusions are usually fast enough.
 - **Constant face count helps.** When the mesh keeps the same `:faces` topology between frames, Ridley can take a fast path that updates vertex buffers in place. Changing point counts (e.g. `(circle 12)` one frame, `(circle 24)` the next) forces a full re-upload.
 - **`gen-fn` sees the eased `t`.** If you want the raw linear fraction, pass `:linear` as the easing.

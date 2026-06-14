@@ -36,11 +36,14 @@ When more than one procedural animation is registered, name the primary one with
 
 <!-- example-source: anim-export-gif-basic -->
 ```clojure
-;; Define a procedural animation, then export it
-(anim-proc! :spin
+;; Register the target mesh, then animate it procedurally
+(register part (box 20 20 5))
+
+;; (anim-proc! :name duration :target easing [loop-mode] gen-fn)
+;; gen-fn returns a fresh mesh each frame; it replaces the :part target.
+(anim-proc! :spin 6.0 :part :linear :loop
   (fn [t]
-    (register part (attach (box 20 20 5)
-                           (tr (* t 360))))))
+    (attach part (tr (* t 360)))))
 
 (play! :spin)
 
@@ -52,7 +55,7 @@ When more than one procedural animation is registered, name the primary one with
 ```
 <!-- /example-source -->
 
-A simple spinning box: the procedural animation rotates a register at each frame, then `anim-export-gif` drives it off-realtime for 6 seconds at 15 fps and produces a 720-pixel-wide GIF.
+A simple spinning box: the `gen-fn` returns the box rolled by `t · 360°` each frame, replacing the registered `:part` target. `:loop` keeps it spinning and `:linear` gives constant speed. Then `anim-export-gif` drives it off-realtime for 6 seconds at 15 fps and produces a 720-pixel-wide GIF.
 
 ## Variations
 
@@ -61,13 +64,14 @@ A simple spinning box: the procedural animation rotates a register at each frame
 <!-- example-source: anim-export-gif-multi -->
 ```clojure
 ;; Two procedural animations in lockstep: pick the primary with :anim
-(anim-proc! :ring
-  (fn [t]
-    (register ring (attach (cyl 20 3) (tr (* t 360))))))
+(register ring (cyl 20 3))
+(register slider (box 5 5 5))
 
-(anim-proc! :slider
-  (fn [t]
-    (register slider (attach (box 5) (f (* t 30))))))
+(anim-proc! :ring 6.0 :ring :linear :loop
+  (fn [t] (attach ring (tr (* t 360)))))
+
+(anim-proc! :slider 6.0 :slider :linear :loop
+  (fn [t] (attach slider (f (* t 30)))))
 
 (play! :ring)
 (play! :slider)
