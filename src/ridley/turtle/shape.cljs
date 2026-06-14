@@ -428,11 +428,26 @@
                          [nm {:vertex idx :head-offset off}])))))
            (into {})))))
 
+(defn- leading-move-to-xy
+  "If the first command of `commands` is a (move-to [x y …]), return [x y];
+   otherwise [0 0]. Lets a path anchor its trace at an absolute start point
+   instead of the implicit origin (used by edit-path's baked output)."
+  [commands]
+  (let [c (first commands)]
+    (if (and c (= :move-to (:cmd c)))
+      (let [t (first (:args c))]
+        [(first t) (second t)])
+      [0 0])))
+
 (defn path-to-shape
   "Convert a path to a 2D shape by tracing the commands.
    Extracts X and Y coordinates from the 3D path.
    Automatically ensures CCW winding for correct normals.
    Useful for creating revolve profiles from recorded paths.
+
+   A leading (move-to [x y]) anchors the trace at that absolute point (no spurious
+   [0 0] vertex), so a path baked by edit-path lands in the same 2D frame as the
+   board it was traced over.
 
    If the path seeds marks, the source path is carried on the shape as
    :source-path so extrude/loft/revolve can resolve those marks into mesh
@@ -440,6 +455,7 @@
   [path]
   (when (and (map? path) (= :path (:type path)))
     (let [commands (:commands path)
+          [sx sy] (leading-move-to-xy commands)
           ;; Trace the path to collect 2D points
           result (reduce
                   (fn [{:keys [pos heading points]} cmd]
@@ -453,6 +469,13 @@
                            {:pos new-pos
                             :heading heading
                             :points (conj points new-pos)})
+                      ;; A move-to repositions the pen without drawing a segment.
+                      ;; The leading one is already the seed, so this is a no-op
+                      ;; reposition that doesn't append a point.
+                      :move-to (let [t (first (:args cmd))]
+                                 {:pos [(first t) (second t)]
+                                  :heading heading
+                                  :points points})
                       :th (let [angle (first (:args cmd))
                                 rad (* angle (/ Math/PI 180))
                                 hx (first heading)
@@ -469,7 +492,7 @@
                                      {:pos pos :heading new-heading :points points})
                       ;; Skip unknown commands
                       {:pos pos :heading heading :points points}))
-                  {:pos [0 0] :heading [1 0 0] :points [[0 0]]}
+                  {:pos [sx sy] :heading [1 0 0] :points [[sx sy]]}
                   commands)
           raw-points (:points result)]
       (when (>= (count raw-points) 3)
@@ -518,10 +541,13 @@
 
 (defn path-to-2d-waypoints
   "Extract 2D waypoints (position + heading direction) from a path.
-   Projects XY from 3D turtle state. Returns vector of {:pos [x y] :dir [dx dy]}."
+   Projects XY from 3D turtle state. Returns vector of {:pos [x y] :dir [dx dy]}.
+   A leading (move-to [x y]) anchors the first waypoint at that absolute point
+   (so edit-path can round-trip a baked path back into editable nodes)."
   [path]
   (when (and (map? path) (= :path (:type path)))
-    (let [commands (:commands path)]
+    (let [commands (:commands path)
+          [sx sy] (leading-move-to-xy commands)]
       (:waypoints
        (reduce
         (fn [{:keys [pos heading waypoints]} cmd]
@@ -532,6 +558,9 @@
                               (+ (second pos) (* hy dist))]]
                  {:pos new-pos :heading heading
                   :waypoints (conj waypoints {:pos new-pos :dir heading})})
+            :move-to (let [t (first (:args cmd))]
+                       {:pos [(first t) (second t)] :heading heading
+                        :waypoints waypoints})
             :th (let [angle (first (:args cmd))
                       rad (* angle (/ Math/PI 180))
                       hx (first heading) hy (second heading)
@@ -545,7 +574,7 @@
                             :heading [(first h) (second h)]
                             :waypoints waypoints})
             {:pos pos :heading heading :waypoints waypoints}))
-        {:pos [0 0] :heading [1 0] :waypoints [{:pos [0 0] :dir [1 0]}]}
+        {:pos [sx sy] :heading [1 0] :waypoints [{:pos [sx sy] :dir [1 0]}]}
         commands)))))
 
 ;; mark-pos / mark-x / mark-y / mark-z were here, but a correct trace

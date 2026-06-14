@@ -486,6 +486,8 @@ In progress.
 - [x] [anim-list](anim-list.md)
 - [x] [ease](ease.md)
 - [x] [pilot-request!](pilot-request-bang.md)
+- [x] [edit-bezier](edit-bezier.md)
+- [x] [edit-path](edit-path.md)
 - [x] [picking](picking.md) — `selected` / `selected-mesh` / `selected-face` /
   `selected-name` / `source-of` / `origin-of` / `last-op`
 

@@ -27,6 +27,7 @@
             [ridley.editor.tweak-mode :as tweak-mode]
             [ridley.editor.pilot-mode :as pilot-mode]
             [ridley.editor.edit-bezier :as edit-bezier]
+            [ridley.editor.edit-path :as edit-path]
             [ridley.editor.impl :as macro-impl]
             [ridley.geometry.warp :as warp]
             [ridley.library.svg :as svg]
@@ -586,6 +587,9 @@
    ;; (in macros.cljs) expands to a bezier-to call and calls this to open the session
    'edit-bezier-request!     edit-bezier/request!
    'edit-bezier-anchor-request! edit-bezier/edit-bezier-anchor-request!
+   ;; edit-path (interactive polyline tracing) — the `edit-path` macro expands to
+   ;; (edit-path-request! (path …)), which opens the session and returns a path
+   'edit-path-request!       edit-path/request!
    ;; Source form storage
    'set-source-form!    registry/set-source-form!
    'get-source-form     registry/get-source-form

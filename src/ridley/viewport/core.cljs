@@ -39,6 +39,18 @@
 (defonce ^:private stamps-visible (atom true))
 (defonce ^:private stamps-object (atom nil))
 (defonce ^:private current-stamps (atom []))
+;; Opacity applied to reference-image stamps (set-image). Dimmed by edit-path so
+;; the traced overlay reads clearly over a light image; persists across re-evals.
+(defonce ^:private image-stamp-opacity (atom 1.0))
+;; When true, the viewport's own click interactions (shift+click measure, alt+click
+;; pick) are suppressed — set by edit-path so a stray click can't open a ruler /
+;; change selection mid-trace.
+(defonce ^:private interaction-locked (atom false))
+
+(defn lock-interaction!
+  "Suppress (true) or restore (false) the viewport's measure/pick click handlers."
+  [locked?]
+  (reset! interaction-locked (boolean locked?)))
 
 ;; Panel (3D text billboard) objects
 ;; Maps panel name -> {:mesh THREE.Mesh :canvas OffscreenCanvas :texture THREE.CanvasTexture}
@@ -952,6 +964,7 @@
         (.setAttribute geom "position" (THREE/BufferAttribute. positions 3))
         (.computeVertexNormals geom)
         (set! (.-renderOrder mesh) -1)
+        (set! (.. mesh -userData -isImageStamp) true)  ; for live dimming (edit-path)
         (-> (stl/desktop-read-file-blob path)
             (.then (fn [blob]
                      (let [url (js/URL.createObjectURL blob)]
@@ -970,11 +983,25 @@
                                   (.setAttribute geom "uv"
                                                  (THREE/BufferAttribute. uvs 2))
                                   (set! (.-map material) tex)
-                                  (set! (.-opacity material) 1.0)
+                                  (set! (.-opacity material) @image-stamp-opacity)
                                   (set! (.-needsUpdate material) true)))))))
             (.catch (fn [err]
                       (js/console.warn "set-image: failed to load" path err))))
         mesh))))
+
+(defn set-image-stamp-opacity!
+  "Set the opacity applied to reference-image stamps (set-image). Persists across
+   re-evals and updates any currently-rendered image stamps live. Used by edit-path
+   to dim the image while tracing so the overlay reads clearly."
+  [opacity]
+  (reset! image-stamp-opacity opacity)
+  (when-let [^js grp @stamps-object]
+    (.traverse grp (fn [^js child]
+                     (when (.. child -userData -isImageStamp)
+                       (when-let [^js mat (.-material child)]
+                         ;; leave still-loading (opacity 0, no map) meshes alone
+                         (when (.-map mat)
+                           (set! (.-opacity mat) opacity))))))))
 
 (defn- update-stamps-display
   "Update or create the stamps visualization objects."
@@ -1671,7 +1698,7 @@
    Alt+Click: select object or drill to face.
    Alt+Shift+Click: toggle face in/out of selection."
   [^js event]
-  (when (.-altKey event)
+  (when (and (not @interaction-locked) (.-altKey event))
     (.preventDefault event)
     (when-let [{:keys [camera world-group canvas]} @state]
       (let [^js canvas canvas
@@ -1730,7 +1757,7 @@
   "Shift+Click handler for interactive measurement.
    First click: place marker. Second click: create ruler between markers."
   [^js event]
-  (when (and (.-shiftKey event) (not (.-altKey event)))
+  (when (and (not @interaction-locked) (.-shiftKey event) (not (.-altKey event)))
     (.preventDefault event)
     (if-let [hit-point (raycast-point event)]
       ;; Hit something
@@ -2201,11 +2228,26 @@
   (when-let [{:keys [world-group]} @state]
     (doseq [^js obj @preview-objects]
       (.remove world-group obj)
-      (when-let [geom (.-geometry obj)]
-        (.dispose geom))
-      (when-let [mat (.-material obj)]
-        (.dispose mat)))
+      ;; traverse so Group children (e.g. :dots spheres) are disposed too
+      (.traverse obj (fn [^js c]
+                       (when-let [geom (.-geometry c)] (.dispose geom))
+                       (when-let [mat (.-material c)] (.dispose mat)))))
     (reset! preview-objects [])))
+
+(defn- create-dot-meshes
+  "A Group of small filled spheres (filled node markers), drawn on top so they read
+   over any background. dots: [{:pos [x y z] :radius r :color hex} …]."
+  [dots]
+  (let [grp (THREE/Group.)]
+    (doseq [{:keys [pos radius color]} dots]
+      (let [geom (THREE/SphereGeometry. (or radius 1.5) 14 14)
+            mat (THREE/MeshBasicMaterial. #js {:color (or color 0xffffff)
+                                               :depthTest false})
+            ^js m (THREE/Mesh. geom mat)]
+        (.set (.-position m) (nth pos 0) (nth pos 1) (nth pos 2))
+        (set! (.-renderOrder m) 1001)
+        (.add grp m)))
+    grp))
 
 (defn show-preview!
   "Show temporary preview objects in the viewport (for test mode).
@@ -2217,16 +2259,67 @@
   [items]
   (clear-preview!)
   (when-let [{:keys [world-group]} @state]
-    (doseq [{:keys [type data]} items]
+    (doseq [{:keys [type data on-top]} items]
       (when-let [^js obj
                  (case type
                    :mesh (when (and (seq (:vertices data)) (seq (:faces data)))
                            (create-three-mesh data))
                    :stamp (create-stamp-mesh data)
                    :lines (when (seq data) (create-line-segments data))
+                   :dots (when (seq data) (create-dot-meshes data))
                    nil)]
+        ;; :on-top draws the item over everything (no depth test) — used by
+        ;; edit-path so the trace overlay is never hidden by the image or the
+        ;; live extruded result.
+        (when on-top
+          (set! (.-renderOrder obj) 1000)
+          (when-let [^js mat (.-material obj)]
+            (set! (.-depthTest mat) false)))
         (.add world-group obj)
         (swap! preview-objects conj obj)))))
+
+(defn raycast-world-point
+  "Public: world-group-local [x y z] under a mouse/pointer event, or nil."
+  [event]
+  (raycast-point event))
+
+(defn raycast-plane-point
+  "World-group-local [x y z] where the pointer ray meets the infinite plane through
+   `origin` (local) with `normal` (local). Unlike raycast-world-point this needs no
+   geometry under the cursor — used by edit-path to place nodes on the working plane
+   even with no reference image, and to keep them off any geometry in front."
+  [^js event origin normal]
+  (when-let [{:keys [^js camera ^js world-group ^js canvas]} @state]
+    (let [rect (.getBoundingClientRect canvas)
+          nx (- (* (/ (- (.-clientX event) (.-left rect)) (.-width rect)) 2) 1)
+          ny (- 1 (* (/ (- (.-clientY event) (.-top rect)) (.-height rect)) 2))
+          raycaster (THREE/Raycaster.)]
+      (.setFromCamera raycaster (THREE/Vector2. nx ny) camera)
+      ;; Bring the ray into world-group-local space (the group may be rotated),
+      ;; where origin/normal and the returned point live.
+      (let [inv (.invert (.clone (.-matrixWorld world-group)))
+            ray (.applyMatrix4 (.clone (.-ray raycaster)) inv)
+            [ox oy oz] origin
+            [nx2 ny2 nz2] normal
+            plane (.setFromNormalAndCoplanarPoint
+                   (THREE/Plane.)
+                   (.normalize (THREE/Vector3. nx2 ny2 nz2))
+                   (THREE/Vector3. ox oy oz))
+            target (THREE/Vector3.)]
+        (when (.intersectPlane ray plane target)
+          [(.-x target) (.-y target) (.-z target)])))))
+
+(defn set-controls-enabled!
+  "Enable/disable the orbit controls (edit-path disables them while dragging a node
+   so the drag doesn't also rotate the view)."
+  [enabled?]
+  (when-let [^js c (:controls @state)]
+    (set! (.-enabled c) (boolean enabled?))))
+
+(defn get-canvas
+  "The viewport canvas element (for editors that install their own listeners)."
+  []
+  (:canvas @state))
 
 (defn highlight-mesh-by-name!
   "Highlight a mesh by its registry name (orange outline + emissive tint).

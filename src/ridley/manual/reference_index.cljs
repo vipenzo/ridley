@@ -444,6 +444,15 @@
     :description "Author a cubic Bezier curve interactively, in 3D, from the keyboard — instead of solving the cubic by hand for its control points. `edit-bezier` is a stand-in for a `(bezier-to … :local)` call and is used **wherever `bezier-to` is**: top-level, or inside `(path …)` / `(attach …)`. Run it from the **definitions panel** (Cmd+Enter), not the REPL."
     :path "docs/manual/reference/en/edit-bezier.md"}
 
+   "edit-path"
+   {:name "edit-path"
+    :category "live-interactive"
+    :status "stable"
+    :since ""
+    :signature "(edit-path)\n(edit-path (move-to [x y]) (th a) (f d) …)"
+    :description "A **pen tool** for tracing a polyline interactively — draw over a reference image (see `set-image`) and clip the piece you need. `edit-path` wraps a path body and opens an interactive session from the **definitions panel** (Cmd+Enter), not the REPL."
+    :path "docs/manual/reference/en/edit-path.md"}
+
    "embroid"
    {:name "embroid"
     :category "generative-operations"

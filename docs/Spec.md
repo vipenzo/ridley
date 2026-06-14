@@ -3051,6 +3051,42 @@ While editing, `(edit-bezier …)` draws a valid default curve so downstream ope
 
 The vectors are expressed in P0's local `[right up heading]` frame (see the `:local` flag under [Bezier](#bezier)), so the call is pose-independent and re-opening it via `(edit-bezier ex… c1… c2…)` reproduces the same curve. **Cancel** leaves the source unchanged (the marker stays, drawing its default curve).
 
+### Edit Path
+
+`edit-path` is a **pen tool** for tracing a polyline over a reference image (see [`set-image`](#set-image)) and clipping the piece you need. It wraps a path body and opens an interactive session from the **definitions panel** (Cmd+Enter):
+
+```clojure
+;; Trace a region over a stamped board image, then clip it out:
+(register cut
+  (extrude (shape-intersection board
+                               (path-to-shape (edit-path)))   ; ← trace, then clip
+           (f 4)))
+```
+
+Unlike `edit-bezier`, `edit-path` is **not** a persistent primitive. On confirm it rewrites its `(edit-path …)` marker to a plain `(path …)`, so re-running the script does **not** re-enter editing. To edit an existing path again, **rename `path` → `edit-path`** — the editor reads the body's nodes back (a leading `move-to` is honored, see below).
+
+**Workflow.** Open `(edit-path)` (empty → a small starting triangle), then:
+- **Click a segment** to insert a point there (split it); **click elsewhere** to append a point at the end; **drag a node** to move it. Orbiting still works — only grabbing a node or a segment suppresses it for that drag.
+- `Tab` cycles the selected node; **arrows** nudge it; type digits to set the step (mm).
+- `Delete` removes the selected node.
+- `Enter` confirms; `Esc` cancels.
+
+`edit-path` does **not** need a reference image — clicks land on the turtle's working plane, so it works as a standalone polygon/region drawing tool. When a `set-image` board is present it makes a convenient tracing backdrop; while editing the image is **dimmed** and the overlay (red polyline, filled node dots) is drawn on top so it reads even over a light image. Measure/pick clicks are suppressed during the session.
+
+**Straight segments only (MVP), but marks/side-trips are preserved.** The snapshot drives node positions from `f` / `th` / `set-heading` and a leading `move-to`. `mark` and `side-trip` are **attached to the node** they sit at: such nodes render **green** and are **protected from deletion** (so their data — marks become mesh anchors — is never lost), and they are re-emitted on confirm. A non-leading `move-to` is **rejected with an error** (the node model can't express it). Everything else — arcs (`arc-h`/`arc-v`), beziers (`bezier-to`/`-anchor`/`-as`), out-of-plane `tv`/`tr`, `u`/`rt`/`lt` — is still **dropped** from the editable nodes and the baked output (confirming replaces them with straight lines); a warning lists what was dropped. So wrap straight-line paths (optionally with marks/side-trips) for now; per-segment arcs/beziers and `rt`/`lt` conversion are planned.
+
+**On confirm**, the marker is rewritten to a plain path anchored at the first node:
+
+```clojure
+(path (move-to [x0 y0]) (th a1) (f d1) (th a2) (f d2) …)
+```
+
+The leading `(move-to [x0 y0])` makes [`path-to-shape`](#path-to-shape) seed the trace from the **absolute** start point (no spurious `[0 0]` vertex), so the traced shape lands in the same 2D frame as the board it was drawn over and the `shape-intersection` clip aligns. **Cancel** leaves the source unchanged.
+
+Nodes are edited in the **turtle's stamp plane** at the call site (x-axis = `right` = heading × up, y-axis = `up`) — the same 2D frame the board uses. With the default pose that is the **YZ world plane**, so horizontal arrows move along world Y, vertical arrows along Z, and world X is never touched (the path stays on the image plane). Clicks raycast onto scene meshes and are projected onto that plane.
+
+MVP traces **straight segments** only; per-segment arcs and beziers are planned. Like `tweak` / `edit-bezier` / `pilot` it is a modal session (one at a time, editor read-only while open).
+
 ### Animation
 
 Define timeline-based animations that preprocess turtle commands into per-frame pose arrays for O(1) playback.

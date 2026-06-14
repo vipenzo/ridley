@@ -2115,6 +2115,20 @@
          `(apply ~'bezier-to
                  (conj (edit-bezier-request! ~shape? ~wf? ~provided) :local)))))
 
+   ;; ============================================================
+   ;; edit-path — interactive polyline tracing (pen tool)
+   ;; ============================================================
+
+   ;; (edit-path) / (edit-path (move-to [x y]) (th a) (f d) …)
+   ;; Wraps a path body. Opens a session to add nodes (click on the image), move
+   ;; the selected node (arrows) and delete it (Del); on confirm the whole
+   ;; (edit-path …) marker is rewritten to a plain (path (move-to …) (th …)(f …) …),
+   ;; so re-running does NOT re-enter editing (rename path→edit-path to edit again).
+   ;; Expands to (edit-path-request! (path …)), which returns a path value so a
+   ;; surrounding (path-to-shape …) runs during the eval.
+   (defmacro edit-path [& body]
+     `(edit-path-request! (path ~@body)))
+
    ;; set-creation-pose!: move the origin/grip of a registered mesh
    ;; without moving its geometry. The turtle commands define the new pose.
    ;; (set-creation-pose! :name (f 10) (th 45))
