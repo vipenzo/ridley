@@ -140,6 +140,7 @@
    ;; Shape transforms
    'scale-shape     shape/scale-shape
    'scale           shape/scale-shape
+   'set-image       shape/set-image
    'rotate-shape    xform/rotate
    'translate       xform/translate
    'morph           xform/morph

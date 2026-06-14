@@ -597,7 +597,23 @@ Load 2D outlines from external sources. Parsed contours become standard Ridley s
                                    ; Both must have same point count
 
 (resample-shape shape n)           ; Resample to n points (for morph compatibility)
+
+(set-image shape path width        ; Attach a reference image to the shape
+           offset-x offset-y)      ; (desktop only — see below)
 ```
+
+**`set-image`** attaches a reference image to a shape, for tracing over it with paths/beziers. The image becomes visible **only when the shape is `stamp`ed**, UV-mapped onto the stamped polygon in the shape's own 2D frame — so it is **clipped to the shape's outline**:
+
+```clojure
+(stamp (set-image (rect 120 90) "/Users/me/ref/foto.png" 120 0 0))
+```
+
+- `path` — absolute file path to an image. **Desktop only**: the bytes are read through the Rust server (`/read-file`); on the web build nothing loads.
+- `width` — the image width in the shape's **local 2D units**, so it shares the coordinate frame you trace in. This is how you calibrate scale: if a known feature should be *N* units long, pick `width` so it measures *N* (verify with the `ruler`).
+- `offset-x`, `offset-y` — the image's **lower-left corner** in the shape's 2D coordinates. Note these are raw shape coordinates: a centred `(rect 200 100)` spans `[-100,100]×[-50,50]`, so its lower-left is at `(-100,-50)` — pass that to cover the whole rect.
+- The image **height is derived from its aspect ratio** (no distortion).
+
+Because the image rides on the **shape attribute**, it survives 2D booleans (`shape-union` / `shape-difference` / `shape-intersection` / `shape-xor`): the result keeps the first operand's `:image`, and since it is clipped to the outline, **only the fragment inside the resulting polygon is drawn**. E.g. intersecting an image-bearing rect with a small window shows just that window's slice of the image. The image is a viewport aid: it is not exported, not part of mesh CSG, and (for now) does not survive `extrude` into the mesh.
 
 `translate`, `scale`, `rotate` are **polymorphic** (mesh / SDF / 2D shape — see [Top-level transforms](#top-level-transforms)). The `*-shape` aliases continue to work; pick whichever form reads better in context.
 

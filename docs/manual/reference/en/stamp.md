@@ -53,8 +53,11 @@ deciding which profile to extrude.
   visible from both sides). Shapes with holes are correctly triangulated.
 - Toggle the global visibility with `show-stamps` / `hide-stamps`, or via
   the "Stamps" toggle in the viewport toolbar (see `stamp-visibility`).
+- If the shape carries a reference image (`set-image`), the stamp shows the
+  image UV-mapped onto the polygon (clipped to the outline) instead of the
+  plain orange fill — the way to display a tracing backdrop.
 
 ## See also
 
 - **Related:** `stamp-visibility` (`show-stamps` / `hide-stamps` /
-  `stamps-visible?`), `extrude`, `revolve`, `path-to-shape`
+  `stamps-visible?`), `extrude`, `revolve`, `path-to-shape`, `set-image`

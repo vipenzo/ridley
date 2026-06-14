@@ -5,6 +5,7 @@
             [ridley.viewport.xr :as xr]
             [ridley.anim.playback :as anim-playback]
             [ridley.manifold.core :as manifold]
+            [ridley.export.stl :as stl]
             [clojure.string :as str]))
 
 (defonce ^:private state (atom nil))
@@ -904,6 +905,77 @@
       (.computeVertexNormals geom)
       (THREE/Mesh. geom material))))
 
+(defn- dispose-stamp-child!
+  "Dispose a stamp-group child: geometry, material, any texture map, and revoke a
+   reference-image object URL stashed on userData (see create-stamp-image-mesh)."
+  [^js child]
+  (when-let [geom (.-geometry child)]
+    (.dispose geom))
+  (when-let [^js mat (.-material child)]
+    (when-let [^js tex (.-map mat)]
+      (.dispose tex))
+    (.dispose mat))
+  (when-let [url (.. child -userData -imageUrl)]
+    (js/URL.revokeObjectURL url)))
+
+(defn- create-stamp-image-mesh
+  "Texture a stamp's own polygon with a reference :image (set via set-image). The
+   image is UV-mapped from each vertex's 2D shape coordinate, so it is clipped to
+   the stamped outline — after a 2D boolean only the fragment inside the resulting
+   polygon shows. The texture loads asynchronously (desktop only, via the Rust
+   server); the mesh stays invisible until it is ready, then the UVs are set using
+   the image aspect ratio. Returns the mesh immediately, or nil if unusable."
+  [{:keys [vertices faces image]}]
+  (let [{:keys [path width offset verts-2d]} image
+        [iox ioy] (or offset [0 0])]
+    (when (and path width (seq vertices) (seq faces) (seq verts-2d))
+      (let [n-verts (count vertices)
+            ;; De-index faces to flat triangles, carrying each vertex's 2D coord
+            ;; in lockstep so UVs line up with positions.
+            tri (mapcat (fn [[i0 i1 i2]]
+                          (when (and (< i0 n-verts) (< i1 n-verts) (< i2 n-verts))
+                            [[(nth vertices i0) (nth verts-2d i0)]
+                             [(nth vertices i1) (nth verts-2d i1)]
+                             [(nth vertices i2) (nth verts-2d i2)]]))
+                        faces)
+            positions (js/Float32Array. (clj->js (mapcat first tri)))
+            ;; Local 2D coords relative to the image's lower-left (offset). Final
+            ;; UVs need the image aspect ratio, so defer to the load callback.
+            locals (mapv (fn [[_ [px py]]] [(- px iox) (- py ioy)]) tri)
+            geom (THREE/BufferGeometry.)
+            material (THREE/MeshBasicMaterial.
+                      #js {:transparent true
+                           :side THREE/DoubleSide
+                           :depthWrite false
+                           :opacity 0.0})                 ; hidden until texture loads
+            mesh (THREE/Mesh. geom material)]
+        (.setAttribute geom "position" (THREE/BufferAttribute. positions 3))
+        (.computeVertexNormals geom)
+        (set! (.-renderOrder mesh) -1)
+        (-> (stl/desktop-read-file-blob path)
+            (.then (fn [blob]
+                     (let [url (js/URL.createObjectURL blob)]
+                       (set! (.. mesh -userData -imageUrl) url)
+                       (.load (THREE/TextureLoader.) url
+                              (fn [^js tex]
+                                (let [img (.-image tex)
+                                      iw (.-width img)
+                                      ih (.-height img)
+                                      aspect (if (pos? ih) (/ iw ih) 1)
+                                      h (/ width aspect)
+                                      uvs (js/Float32Array.
+                                           (clj->js (mapcat (fn [[dx dy]]
+                                                              [(/ dx width) (/ dy h)])
+                                                            locals)))]
+                                  (.setAttribute geom "uv"
+                                                 (THREE/BufferAttribute. uvs 2))
+                                  (set! (.-map material) tex)
+                                  (set! (.-opacity material) 1.0)
+                                  (set! (.-needsUpdate material) true)))))))
+            (.catch (fn [err]
+                      (js/console.warn "set-image: failed to load" path err))))
+        mesh))))
+
 (defn- update-stamps-display
   "Update or create the stamps visualization objects."
   [world-group stamps]
@@ -911,18 +983,19 @@
   (when-let [^js old-obj @stamps-object]
     (.remove world-group old-obj)
     ;; Dispose children
-    (.traverse old-obj (fn [^js child]
-                         (when-let [geom (.-geometry child)]
-                           (.dispose geom))
-                         (when-let [mat (.-material child)]
-                           (.dispose mat))))
+    (.traverse old-obj dispose-stamp-child!)
     (reset! stamps-object nil))
   ;; Create new stamps group if visible and we have stamps
   (when (and @stamps-visible (seq stamps))
     (let [group (THREE/Group.)]
       (doseq [stamp-data stamps]
-        (when-let [mesh (create-stamp-mesh stamp-data)]
-          (.add group mesh)))
+        (if (:image stamp-data)
+          ;; Image stamp: texture the polygon itself (clipped to the outline),
+          ;; in place of the plain semi-transparent fill.
+          (when-let [img-mesh (create-stamp-image-mesh stamp-data)]
+            (.add group img-mesh))
+          (when-let [mesh (create-stamp-mesh stamp-data)]
+            (.add group mesh))))
       (when (pos? (.-length (.-children group)))
         (set! (.-name group) "stamp-surfaces")
         (reset! stamps-object group)
@@ -2399,11 +2472,7 @@
   [world-group]
   (when-let [^js obj @stamps-object]
     (.remove world-group obj)
-    (.traverse obj (fn [^js child]
-                     (when-let [geom (.-geometry child)]
-                       (.dispose geom))
-                     (when-let [mat (.-material child)]
-                       (.dispose mat))))
+    (.traverse obj dispose-stamp-child!)
     (reset! stamps-object nil)))
 
 (defn toggle-stamps

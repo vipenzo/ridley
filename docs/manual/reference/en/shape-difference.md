@@ -48,7 +48,10 @@ extruded, that becomes a hollow tube.
 - All subsequent extrusion operations (`extrude`, `loft`, `revolve`)
   correctly handle the resulting holes.
 
+- A reference image (`set-image`) on the base shape (the first operand)
+  carries over to the result and stays clipped to the outline when stamped.
+
 ## See also
 
 - **Related:** `shape-union`, `shape-intersection`, `shape-xor`,
-  `shape-offset`, `pattern-tile`
+  `shape-offset`, `pattern-tile`, `set-image`

@@ -1063,7 +1063,13 @@
         holes-2d (or (:holes shape) [])
         faces (earcut-triangulate outer-2d holes-2d)]
     (cond-> {:vertices all-verts :faces faces}
-      color (assoc :color color))))
+      color (assoc :color color)
+      ;; Carry a reference image (set via set-image) into the stamp. Store the
+      ;; per-vertex 2D coords (same order as :vertices) so the viewport can UV-map
+      ;; the image onto the stamped polygon — clipping it to the actual outline.
+      (:image shape) (assoc :image (assoc (:image shape)
+                                          :verts-2d (into (vec outer-2d)
+                                                          (apply concat holes-2d)))))))
 
 (defn stamp-debug
   "Visualize a 2D shape (or vector of shapes) at the current turtle position/orientation.

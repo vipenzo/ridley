@@ -40,8 +40,12 @@ The overlap of two offset circles produces a lens-shaped contour.
 ## Notes
 
 - Returns an empty shape when the inputs do not overlap.
+- A reference image (`set-image`) on the first operand carries over to the
+  result. Since the image is clipped to the shape outline, intersecting an
+  image-bearing shape with a window keeps only that window's slice of the
+  image when stamped.
 
 ## See also
 
 - **Related:** `shape-union`, `shape-difference`, `shape-xor`,
-  `shape-offset`
+  `shape-offset`, `set-image`

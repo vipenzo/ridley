@@ -228,6 +228,23 @@
 
 ;; --- Boolean operations ---
 
+(defn- shapes->image
+  "The first :image attribute among a seq of operand shapes (earlier operands
+   win). 2D booleans don't change the shape's plane/frame, so a reference image
+   (set via set-image) stays valid on the result."
+  [shapes]
+  (some :image shapes))
+
+(defn- with-image
+  "Attach img (if non-nil) to a boolean result, which is a single shape or a
+   vector of shapes (shape-xor). nil/non-shape results pass through unchanged."
+  [result img]
+  (cond
+    (or (nil? img) (nil? result)) result
+    (vector? result) (mapv #(if (shape/shape? %) (assoc % :image img) %) result)
+    (shape/shape? result) (assoc result :image img)
+    :else result))
+
 (defn- clipper-boolean
   "Execute a Clipper2 boolean operation.
    Returns a Ridley shape (outer + holes) or nil."
@@ -256,30 +273,35 @@
    (shape-union [a b c d])  ; union of a vector of shapes"
   [first-arg & more]
   (let [shapes (collect-shapes first-arg more)]
-    (case (count shapes)
-      0 nil
-      1 (first shapes)
-      (reduce union-two shapes))))
+    (-> (case (count shapes)
+          0 nil
+          1 (first shapes)
+          (reduce union-two shapes))
+        (with-image (shapes->image shapes)))))
 
 (defn ^:export shape-difference
   "Boolean difference of 2D shapes (A minus B minus C …). The first shape is the
    base; the rest are cut out. Accepts separate args or a vector."
   [first-arg & more]
   (let [shapes (collect-shapes first-arg more)]
-    (case (count shapes)
-      0 nil
-      1 (first shapes)
-      (reduce difference-two shapes))))
+    (-> (case (count shapes)
+          0 nil
+          1 (first shapes)
+          (reduce difference-two shapes))
+        ;; Difference keeps the base (A) frame; A is the first operand, so its
+        ;; image wins naturally.
+        (with-image (shapes->image shapes)))))
 
 (defn ^:export shape-intersection
   "Boolean intersection of 2D shapes (the region common to all). Accepts
    separate args or a vector."
   [first-arg & more]
   (let [shapes (collect-shapes first-arg more)]
-    (case (count shapes)
-      0 nil
-      1 (first shapes)
-      (reduce intersection-two shapes))))
+    (-> (case (count shapes)
+          0 nil
+          1 (first shapes)
+          (reduce intersection-two shapes))
+        (with-image (shapes->image shapes)))))
 
 (defn ^:export shape-xor
   "Boolean XOR of two 2D shapes.
@@ -289,8 +311,9 @@
   (let [subject-paths (shape->clipper-paths shape-a)
         clip-paths (shape->clipper-paths shape-b)
         result (c-xor subject-paths clip-paths c2/FillRule.NonZero)]
-    (or (paths-result->shapes result)
-        [shape-a])))
+    (-> (or (paths-result->shapes result)
+            [shape-a])
+        (with-image (shapes->image [shape-a shape-b])))))
 
 ;; --- Offset ---
 

@@ -43,6 +43,20 @@
   [x]
   (and (map? x) (= :shape (:type x))))
 
+(defn ^:export set-image
+  "Attach a reference image to a shape. The image becomes visible only when the
+   shape is stamped, coplanar with the profile, in the same 2D frame you trace in.
+
+   - path: absolute file path to an image (desktop only — read via the Rust server).
+   - width: image width in the shape's local 2D units (calibrates the scale).
+   - offset-x, offset-y: lower-left corner of the image in the shape's 2D frame.
+
+   The image height is derived from its aspect ratio (no distortion)."
+  [shape path width offset-x offset-y]
+  (assoc shape :image {:path path
+                       :width width
+                       :offset [offset-x offset-y]}))
+
 ;; ============================================================
 ;; Built-in shapes (centered at origin)
 ;; ============================================================

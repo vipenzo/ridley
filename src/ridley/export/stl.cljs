@@ -287,6 +287,25 @@
              (fn [_] (reject (js/Error. "read-file request failed"))))
        (.send xhr "")))))
 
+(defn desktop-read-file-blob
+  "Read a binary file from disk via Rust geo_server. Returns Promise<Blob>.
+   Used for images and other binary assets (see desktop-read-file for text)."
+  [file-path]
+  (js/Promise.
+   (fn [resolve reject]
+     (let [xhr (js/XMLHttpRequest.)]
+       (.open xhr "POST" (str geo-server-url "/read-file") true)
+       (.setRequestHeader xhr "X-File-Path" file-path)
+       (set! (.-responseType xhr) "blob")
+       (set! (.-onload xhr)
+             (fn [_]
+               (if (= 200 (.-status xhr))
+                 (resolve (.-response xhr))
+                 (reject (js/Error. (str "read-file failed: " (.-status xhr)))))))
+       (set! (.-onerror xhr)
+             (fn [_] (reject (js/Error. "read-file request failed"))))
+       (.send xhr "")))))
+
 (defn desktop-write-file
   "Write a Blob (or string) to a file path via Rust geo_server. Returns Promise<nil>."
   [blob file-path]

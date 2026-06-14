@@ -43,7 +43,10 @@ A plus sign by unioning a horizontal and a vertical rectangle.
 - All shape transforms (`scale`, `rotate`, `translate`, `morph-shape`) and
   extrusion operations propagate holes correctly.
 
+- A reference image (`set-image`) on the first operand carries over to the
+  result and stays clipped to the combined outline when stamped.
+
 ## See also
 
 - **Related:** `shape-difference`, `shape-intersection`, `shape-xor`,
-  `shape-offset`, `shape-hull`
+  `shape-offset`, `shape-hull`, `set-image`

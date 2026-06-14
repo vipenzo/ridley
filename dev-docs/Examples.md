@@ -162,6 +162,35 @@ Move the turtle first, then extrude:
 (extrude (circle 10) (f 30))   ; Diagonal cylinder
 ```
 
+### Reference Image (tracing) — desktop only
+
+Attach an image to a shape and `stamp` it to get a flat, correctly-scaled backdrop
+to trace over with paths/beziers. `width` is in the shape's 2D units, so it doubles
+as scale calibration; the height follows the image aspect ratio.
+
+```clojure
+;; Lay the photo flat, 120 units wide, lower-left at the rect's lower-left corner
+;; (a centred rect 120×90 spans [-60,60]×[-45,45]). The image is UV-mapped onto the
+;; stamped polygon, so it is clipped to the shape's outline.
+(stamp (set-image (rect 120 90) "/Users/me/ref/blueprint.png" 120 -60 -45))
+
+;; Calibrate: if a 2 cm reference mark in the photo should read 20 units,
+;; tweak `width` until the ruler (shift+click two points) measures 20.
+```
+
+Because the image is a shape attribute it survives 2D booleans, and being clipped to
+the outline you see only the fragment inside the result. Crop the bottom-right of a
+photo by intersecting with a window:
+
+```clojure
+(def board (set-image (rect 200 100) "/Users/me/ref/photo.jpg" 200 -100 -50))
+(def window (translate-shape (rect 50 20) 75 -40))   ; bottom-right region
+(stamp (shape-intersection board window))            ; only that slice of the photo
+```
+
+The image is a viewport aid: it is not exported, not part of CSG, and is shown only
+while the shape is stamped.
+
 ### Multiple Shapes
 
 ```clojure

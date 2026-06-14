@@ -34,6 +34,7 @@ Brief: `dev-docs/brief-reference-batch1-2d-shapes.md`.
 - [x] [chamfer-shape](chamfer-shape.md)
 - [x] [shape-hull](shape-hull.md)
 - [x] [shape-bridge](shape-bridge.md)
+- [x] [set-image](set-image.md)
 
 ### Transformations
 

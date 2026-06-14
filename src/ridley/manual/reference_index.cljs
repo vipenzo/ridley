@@ -3,7 +3,16 @@
 (ns ridley.manual.reference-index)
 
 (def reference-index
-  {"ai-ask"
+  {"add-mark"
+   {:name "add-mark"
+    :category "path"
+    :status "stable"
+    :since ""
+    :signature "(add-mark path name fraction)"
+    :description "Return a **new** path (the input is left untouched) with a mark named `name` inserted at `fraction` (0..1) of the path's total spine arc length."
+    :path "docs/manual/reference/en/add-mark.md"}
+
+   "ai-ask"
    {:name "ai-ask"
     :category "ai-describe"
     :status "stable"
@@ -161,8 +170,8 @@
     :category "turtle-movement"
     :status "stable"
     :since ""
-    :signature "(bezier-as path)\n(bezier-as path & {:keys [tension steps cubic max-segment-length control]})"
-    :description "Smooth a recorded path with one bezier curve per segment, keeping C1 continuity at the junctions. Returns a new path; does not modify turtle state on its own. With `:control true` the vertices are treated as off-curve CONTROL points instead of interpolated: the curve passes through the segment midpoints (clamped at the ends), rounding the control polygon — the dual of the default interpolating mode."
+    :signature "(bezier-as path)\n(bezier-as path & {:keys [tension steps cubic max-segment-length control]})\n(bezier-as path :control true)"
+    :description "Smooth a recorded path with one bezier curve per segment, keeping C1 continuity at the junctions. Returns a new path; does not modify turtle state on its own."
     :path "docs/manual/reference/en/bezier-as.md"}
 
    "bezier-to"
@@ -171,7 +180,7 @@
     :status "stable"
     :since ""
     :signature "(bezier-to target)\n(bezier-to target & {:keys [steps]})\n(bezier-to target ctrl)\n(bezier-to target ctrl-1 ctrl-2)\n(bezier-to target ctrl-1 ctrl-2 :local)\n(bezier-to target :preserve-heading)\n(bezier-to target :preserve-heading :tension 0.5)"
-    :description "Move the turtle to `target` along a smooth bezier curve, updating heading at each step to remain tangent to the curve. **Modifies turtle state.** With no control points the curve normally ends facing the start→end chord; `:preserve-heading` makes it arrive tangent to the current heading (heading unchanged), so a following movement welds on without a cusp. `:tension` (default 0.33) sets the curve width."
+    :description "Move the turtle to `target` along a smooth bezier curve, updating heading at each step to remain tangent to the curve. **Modifies turtle state.**"
     :path "docs/manual/reference/en/bezier-to.md"}
 
    "bezier-to-anchor"
@@ -414,26 +423,8 @@
     :status "stable"
     :since ""
     :signature "(distance p q)\n(distance mesh-name face-id q)\n(distance p mesh-name face-id)\n(distance mesh-name face-id other-name other-face-id)\n(distance target :at anchor-name target :at anchor-name)"
-    :description "Measure the Euclidean distance between two point specifications. Returns a number, or `nil` if either side cannot be resolved. Pure function; does not modify turtle state. A point spec also accepts `<target> :at <name>`: a named anchor on a registered mesh or mesh value (world-space, as placed by extrude/loft/revolve), or a mark resolved from a path (in the path's own frame)."
+    :description "Measure the Euclidean distance between two point specifications. Returns a number, or `nil` if either side cannot be resolved. Pure function; does not modify turtle state."
     :path "docs/manual/reference/en/distance.md"}
-
-   "mid"
-   {:name "mid"
-    :category "faces"
-    :status "stable"
-    :since ""
-    :signature "(mid a b)\n(mid path i)"
-    :description "Midpoint helper returning a point. `(mid a b)` is the midpoint of two points (2D padded to z=0); `(mid path i)` is the midpoint of segment i (0-based) of a path. Pairs with `ruler`/`distance`, and lands exactly where a control-polygon `bezier-as :control` curve passes."
-    :path "docs/manual/reference/en/mid.md"}
-
-   "seg-mid"
-   {:name "seg-mid"
-    :category "faces"
-    :status "stable"
-    :since ""
-    :signature "(seg-mid path i)"
-    :description "Midpoint of segment i (0-based) of a path — the explicit spelling of `(mid path i)`. Returns [x y 0]. Useful with `ruler`/`distance` to measure to where a control-polygon (`bezier-as :control`) curve passes."
-    :path "docs/manual/reference/en/seg-mid.md"}
 
    "ease"
    {:name "ease"
@@ -450,7 +441,7 @@
     :status "stable"
     :since ""
     :signature "(edit-bezier)\n(edit-bezier :shape)\n(edit-bezier :wireframe)\n(edit-bezier end ctrl-1 ctrl-2)\n(edit-bezier path :at :mark)\n(edit-bezier path :at :mark :symmetric)"
-    :description "Author a cubic Bezier curve interactively, in 3D, from the keyboard — instead of solving the cubic by hand for its control points. `edit-bezier` is a stand-in for a `(bezier-to … :local)` call and is used **wherever `bezier-to` is**: top-level, or inside `(path …)` / `(attach …)`. The anchor form `(edit-bezier path :at :mark)` instead fixes the endpoints and tangents from a path's marks and edits only the control-point distances (tensions) — via tension slider(s) (one when `:symmetric`, two otherwise) or the arrow keys — rewriting to a `bezier-to-anchor` on confirm. Run it from the **definitions panel** (Cmd+Enter), not the REPL. The editor is read-only while the session is open (it rewrites its own source on confirm) and the session closes if you switch workspace."
+    :description "Author a cubic Bezier curve interactively, in 3D, from the keyboard — instead of solving the cubic by hand for its control points. `edit-bezier` is a stand-in for a `(bezier-to … :local)` call and is used **wherever `bezier-to` is**: top-level, or inside `(path …)` / `(attach …)`. Run it from the **definitions panel** (Cmd+Enter), not the REPL."
     :path "docs/manual/reference/en/edit-bezier.md"}
 
    "embroid"
@@ -1047,6 +1038,24 @@
     :description "Return `true` if `x` is a mesh value — a map containing the `:vertices` and `:faces` keys typical of a Ridley mesh — and `false` otherwise. Useful for helper functions that accept either a mesh, a shape, an SDF, or a name reference and need to dispatch on type."
     :path "docs/manual/reference/en/mesh-p.md"}
 
+   "mid"
+   {:name "mid"
+    :category "faces"
+    :status "stable"
+    :since ""
+    :signature "(mid a b)\n(mid path i)"
+    :description "Midpoint helper, returning a `[x y z]` point. Two forms:"
+    :path "docs/manual/reference/en/mid.md"}
+
+   "mirror-path"
+   {:name "mirror-path"
+    :category "path"
+    :status "stable"
+    :since ""
+    :signature "(mirror-path path)\n(mirror-path path normal)"
+    :description "Return `path` reflected across the **plane through its end point**. The intended use is completing a curve that should be symmetric about that plane: author one half, mirror it, and reverse the mirror so the two pieces join head-to-tail into the whole."
+    :path "docs/manual/reference/en/mirror-path.md"}
+
    "morph-shape"
    {:name "morph-shape"
     :category "2d-shapes"
@@ -1224,7 +1233,7 @@
     :status "experimental"
     :since ""
     :signature "(pilot-request! quoted-arg value)"
-    :description "Low-level entry point of **pilot mode**: an interactive session in which the keyboard drives turtle commands to position or orient a mesh or SDF node directly in the viewport. On confirmation, the editor source text is rewritten — the `(pilot ...)` form is replaced by an `(attach! ...)` form carrying the commands you typed during the session. Like every modal session, the editor is read-only while it is open (it rewrites its own source on confirm) and the session closes if you switch workspace."
+    :description "Low-level entry point of **pilot mode**: an interactive session in which the keyboard drives turtle commands to position or orient a mesh or SDF node directly in the viewport. On confirmation, the editor source text is rewritten — the `(pilot ...)` form is replaced by an `(attach! ...)` form carrying the commands you typed during the session."
     :path "docs/manual/reference/en/pilot-request-bang.md"}
 
    "pin-path"
@@ -1271,33 +1280,6 @@
     :signature "(poly-path x1 y1 x2 y2 …)\n(poly-path [x1 y1 x2 y2 …])"
     :description "Build an open path from explicit 2D coordinate pairs. Internally, `poly-path` reconstructs the turtle commands (`f`, `th`) needed to walk through the given points in order, starting at the origin and heading along +X. The result is a path map identical in structure to a `path` recording."
     :path "docs/manual/reference/en/poly-path.md"}
-
-   "add-mark"
-   {:name "add-mark"
-    :category "path"
-    :status "stable"
-    :since ""
-    :signature "(add-mark path name fraction)"
-    :description "Return a NEW path (the input is untouched) with a mark named `name` inserted at `fraction` (0..1) of the path's total spine arc length. Walks the top-level movement commands (`:f`/`:u`/`:rt`/`:lt`; side-trips and rotations are zero-length) and splits the straddling segment so the mark lands exactly there. Like any path mark it rides extrude/loft/revolve into the mesh as an `:anchor`, so a ruler to it measures realized geometry (e.g. a bezier's true bow) rather than a fixed construction point."
-    :path "docs/manual/reference/en/add-mark.md"}
-
-   "reverse-path"
-   {:name "reverse-path"
-    :category "path"
-    :status "stable"
-    :since ""
-    :signature "(reverse-path path)"
-    :description "Return a new path tracing `path`'s waypoints in reverse order (last → first), rebuilt from points and shifted to start at the origin, so `(follow-path (reverse-path p))` retraces `p` backward from the current pose. Works in 3D (the full turtle frame is carried)."
-    :path "docs/manual/reference/en/reverse-path.md"}
-
-   "mirror-path"
-   {:name "mirror-path"
-    :category "path"
-    :status "stable"
-    :since ""
-    :signature "(mirror-path path)\n(mirror-path path normal)"
-    :description "Return `path` reflected across the plane through its END point. For a curve meant to be symmetric about that plane — e.g. half of a symmetric corner — `(reverse-path (mirror-path half))` is the continuation that completes it. With one argument the plane normal is the end heading — the turtle's right/up plane there; since a path ends facing the true tangent (beziers record the analytic end tangent), the default is accurate and needs no axis. Pass `[nx ny]`/`[nx ny nz]` only to mirror across a different plane. Works in 3D."
-    :path "docs/manual/reference/en/mirror-path.md"}
 
    "poly-path-closed"
    {:name "poly-path-closed"
@@ -1443,6 +1425,15 @@
     :description "Set the global resolution mode for curves and circular primitives. **Modifies turtle state.** The setting persists on the turtle until changed again."
     :path "docs/manual/reference/en/resolution.md"}
 
+   "reverse-path"
+   {:name "reverse-path"
+    :category "path"
+    :status "stable"
+    :since ""
+    :signature "(reverse-path path)"
+    :description "Return a new path that traces `path`'s waypoints in reverse order (last point first). The result is rebuilt from points (`set-heading` + forward commands) and shifted to start at the origin, so following it retraces the original backward from the current turtle pose:"
+    :path "docs/manual/reference/en/reverse-path.md"}
+
    "reverse-shape"
    {:name "reverse-shape"
     :category "2d-shapes"
@@ -1458,7 +1449,7 @@
     :status "stable"
     :since ""
     :signature "(revolve shape)\n(revolve shape angle)\n(revolve shape angle & {:keys [pivot]})\n(revolve shape-fn)"
-    :description "Rotate a 2D profile around the turtle's **up** axis to produce a solid of revolution (lathe). The profile's X is the radial distance from the axis (which passes through the turtle's position), Y is the position along it. A solid profile with X<0 vertices is auto-clipped at the axis (so a centered shape keeps only its positive-X half); a straddling shape-fn is auto-shifted instead. Returns a mesh; does not modify turtle state."
+    :description "Rotate a 2D profile around the turtle's **up** axis to produce a solid of revolution (lathe). The revolution axis passes through the turtle's current position. Returns a mesh; does not modify turtle state."
     :path "docs/manual/reference/en/revolve.md"}
 
    "revolve+"
@@ -1521,7 +1512,7 @@
     :status "stable"
     :since ""
     :signature "(ruler p q)\n(ruler mesh-name face-id q)\n(ruler p mesh-name face-id)\n(ruler mesh-name face-id other-name other-face-id)\n(ruler target :at anchor-name target :at anchor-name)"
-    :description "Draw a visible distance ruler between two point specifications in the viewport, and return the measured distance. Side-effecting (adds to the ruler overlay) but also returns the numeric value, so `ruler` doubles as a measurement call. Argument forms are identical to `distance`, including `<target> :at <name>` for a named anchor / profile mark (world-space, as placed by extrude/loft/revolve)."
+    :description "Draw a visible distance ruler between two point specifications in the viewport, and return the measured distance. Side-effecting (adds to the ruler overlay) but also returns the numeric value, so `ruler` doubles as a measurement call. Argument forms are identical to `distance`."
     :path "docs/manual/reference/en/ruler.md"}
 
    "sample-heightmap"
@@ -1875,6 +1866,15 @@
     :description "Jump an animation's playhead to a fractional position in `[0, 1]`. Useful for scrubbing through a timeline by hand, inspecting a specific keyframe, or aligning two animations to the same logical moment."
     :path "docs/manual/reference/en/seek-bang.md"}
 
+   "seg-mid"
+   {:name "seg-mid"
+    :category "faces"
+    :status "stable"
+    :since ""
+    :signature "(seg-mid path i)"
+    :description "Return the midpoint of segment `i` (0-based) of `path` — the i-th edge, between waypoints `i` and `i+1`. Returns a `[x y 0]` point. This is the explicit spelling of the `(mid path i)` form."
+    :path "docs/manual/reference/en/seg-mid.md"}
+
    "selected"
    {:name "selected"
     :category "live-interactive"
@@ -1883,6 +1883,15 @@
     :signature "(selected)\n(selected-mesh)\n(selected-face)\n(selected-name)\n(source-of mesh-name)\n(origin-of mesh-name)\n(last-op mesh-name)"
     :description "Seven REPL-callable helpers that expose the viewport's **picking state** — the currently selected mesh, the drilled face, and the construction history captured by `register`. Useful for live introspection while you click around the viewport, and as the data source for AI describe and custom debug overlays."
     :path "docs/manual/reference/en/picking.md"}
+
+   "set-image"
+   {:name "set-image"
+    :category "2d-shapes"
+    :status "stable"
+    :since ""
+    :signature "(set-image shape path width offset-x offset-y)"
+    :description "Attach a reference image to a 2D shape, to trace over it with paths and beziers. The image becomes visible **only when the shape is `stamp`ed** — it is UV-mapped onto the stamped polygon in the shape's own 2D frame, so it is **clipped to the shape's outline**. Returns a new shape carrying the image attribute; the input is untouched and turtle state is unchanged."
+    :path "docs/manual/reference/en/set-image.md"}
 
    "shape"
    {:name "shape"
@@ -2007,7 +2016,7 @@
     :status "stable"
     :since ""
     :signature "(shell shape-or-fn & {:keys [thickness style threshold cap-top cap-bottom fn invert?] :as style-opts})"
-    :description "Shape-fn that produces a hollow extrusion with variable-thickness walls and optional openings. At each ring, the profile is annotated with a per-vertex thickness value (`0` = no wall, `1` = full thickness); the loft uses these to build an inner and outer wall around each point. The wall pattern is chosen via `:style` (one of `:solid`, `:lattice`, `:checkerboard`, `:weave`, `:voronoi`) or supplied as a custom function via `:fn`. `:cap-top`/`:cap-bottom` close the ends — by convention **top** is the extrusion's arrival end (where the path finishes) and **bottom** its start (the turtle's pose when the loft begins). Used with `loft` or `revolve`. Does not modify turtle state."
+    :description "Shape-fn that produces a hollow extrusion with variable-thickness walls and optional openings. At each ring, the profile is annotated with a per-vertex thickness value (`0` = no wall, `1` = full thickness); the loft uses these to build an inner and outer wall around each point. The wall pattern is chosen via `:style` (one of `:solid`, `:lattice`, `:checkerboard`, `:weave`, `:voronoi`) or supplied as a custom function via `:fn`. Used with `loft` or `revolve`. Does not modify turtle state."
     :path "docs/manual/reference/en/shell.md"}
 
    "show"
@@ -2322,7 +2331,7 @@
     :status "stable"
     :since ""
     :signature "(tweak expr)\n(tweak n expr)\n(tweak [n1 n2 ...] expr)\n(tweak :all expr)\n(tweak :reg-name)\n(tweak :reg-name expr)\n(tweak filter :reg-name)\n(tweak filter :reg-name expr)"
-    :description "Macro for interactive parameter exploration with live sliders. Evaluates `expr`, displays the result in the viewport, and creates sliders for the numeric literals it finds in the source form. Moving a slider re-evaluates the expression with the substituted value (~100 ms debounce) and updates the preview. With no filter, `(tweak expr)` tweaks EVERY literal (same as `:all`); pass an index / vector / `:all` to narrow the set. The editor is read-only while a session is open (it rewrites its own source on confirm) and the session closes if you switch workspace."
+    :description "Macro for interactive parameter exploration with live sliders. Evaluates `expr`, displays the result in the viewport, and creates sliders for the numeric literals it finds in the source form. Moving a slider re-evaluates the expression with the substituted value (~100 ms debounce) and updates the preview."
     :path "docs/manual/reference/en/tweak.md"}
 
    "twist"

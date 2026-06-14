@@ -47,6 +47,10 @@ meshes.
 - For the single-shape booleans, see `shape-union`, `shape-difference`,
   `shape-intersection`.
 
+- A reference image (`set-image`) on an operand carries over to every
+  result region, each clipped to its own outline when stamped.
+
 ## See also
 
-- **Related:** `shape-union`, `shape-difference`, `shape-intersection`
+- **Related:** `shape-union`, `shape-difference`, `shape-intersection`,
+  `set-image`

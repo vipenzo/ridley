@@ -151,6 +151,7 @@
    'translate-shape shape/translate-shape
    'scale-shape     shape/scale-shape
    'reverse-shape   shape/reverse-shape
+   'set-image       shape/set-image
    'path-to-shape   shape/path-to-shape
    'stroke-shape    shape/stroke-shape
    'poly-path       shape/poly-path
