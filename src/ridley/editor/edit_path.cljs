@@ -452,8 +452,8 @@
                "</div>"
                "<div class='pilot-commands'>"
                "click: add · drag node/handle: move · Tab: next · c: curve · "
-               "x: cusp · ←→↑↓: node · Shift+↑↓: c1 · Alt+↑↓: c2 · "
-               "Del: delete · Enter: OK · Esc: cancel"
+               "x: cusp · Ins/i: split · ←→↑↓: node · Shift+↑↓: c1 · Alt+↑↓: c2 · "
+               "⌘Z: undo · Del: delete · Enter: OK · Esc: cancel"
                "</div>"
                "<div class='pilot-buttons'>"
                "<button class='pilot-btn pilot-btn-ok ep-ok'>OK</button>"
@@ -465,12 +465,44 @@
     panel))
 
 ;; ============================================================
+;; Undo
+;; ============================================================
+;; A simple snapshot stack of {:nodes :selected}. push-undo! is called once at the
+;; START of each user action (before it mutates), so a drag is one undo step, not
+;; one per pointermove. Low-level helpers (move-node!, insert-node!) do NOT push;
+;; their callers do.
+
+(def ^:private undo-limit 100)
+
+(defn- push-undo! []
+  (let [snap (select-keys @session [:nodes :selected])]
+    (swap! session update :undo
+           (fn [u] (let [u (conj (vec u) snap)]
+                     (if (> (count u) undo-limit)
+                       (subvec u (- (count u) undo-limit))
+                       u))))))
+
+(defn- undo! []
+  (let [u (:undo @session)]
+    (if (seq u)
+      (let [snap (peek u)]
+        (swap! session #(-> %
+                            (assoc :nodes (:nodes snap)
+                                   :selected (:selected snap)
+                                   :undo (pop u))
+                            (dissoc :dragging :dragging-handle)))
+        (refresh-preview!)
+        (update-panel!))
+      (state/capture-println "edit-path: nothing to undo"))))
+
+;; ============================================================
 ;; Editing operations
 ;; ============================================================
 
 (defn- append-node!
   "Append a node at 2D plane coord `pos` at the end of the path and select it."
   [pos]
+  (push-undo!)
   (let [nodes (vec (:nodes @session))]
     (swap! session assoc :nodes (conj nodes {:pos pos :tail []})
            :selected (count nodes))
@@ -485,6 +517,46 @@
   (swap! session assoc :selected idx)
   (refresh-preview!)
   (update-panel!))
+
+(defn- mid2 [[ax ay] [bx by]] [(/ (+ ax bx) 2) (/ (+ ay by) 2)])
+
+(defn- split-segment!
+  "Insert a node at the midpoint of the segment ENTERING the selected node (between
+   sel-1 and sel) and select it. A straight segment splits at the chord midpoint; a
+   bezier splits with de Casteljau at t=0.5 so the curve's shape is preserved.
+
+   With the FIRST node selected (no incoming segment) the **closing segment**
+   (last → first) is split instead: a node is appended in the tail, at the midpoint
+   between the last and first nodes. This is consistent with the mouse (the dim
+   closing segment is visible and divisible) and gives a way to extend the tail;
+   used in a `path-to-shape` it lands exactly on the polygon's closing edge. With
+   only two nodes there is no closing loop, so the single segment is split."
+  []
+  (let [s @session nodes (:nodes s) sel (:selected s) n (count nodes)]
+    (when (>= n 2)
+      (if (and (zero? sel) (>= n 3))
+        ;; closing segment is straight → append the chord midpoint (append-node!
+        ;; pushes undo and selects the new node).
+        (append-node! (mid2 (node-pos (last nodes)) (node-pos (first nodes))))
+        (let [i (if (pos? sel) sel 1)          ; new node goes at index i (before node i)
+              a (nth nodes (dec i))
+              b (nth nodes i)
+              pa (node-pos a) pb (node-pos b)]
+          (push-undo!)
+          (if-let [{:keys [c1 c2]} (:bez b)]
+            (let [m01 (mid2 pa c1) m12 (mid2 c1 c2) m23 (mid2 c2 pb)
+                  m012 (mid2 m01 m12) m123 (mid2 m12 m23)
+                  mp (mid2 m012 m123)
+                  newn {:pos mp :tail [] :bez {:c1 m01 :c2 m012}}]
+              (swap! session
+                     (fn [s]
+                       (-> s
+                           (assoc-in [:nodes i :bez] {:c1 m123 :c2 m23})
+                           (update :nodes #(vec (concat (take i %) [newn] (drop i %))))
+                           (assoc :selected i))))
+              (swap! session update :nodes reconstrain-handles)
+              (refresh-preview!) (update-panel!))
+            (insert-node! i (mid2 pa pb))))))))   ; insert-node! selects i
 
 (defn- notable?
   "A node whose orientation is preserved on move: it carries a mark/side-trip, or
@@ -517,6 +589,7 @@
   [axis sign]
   (let [s @session i (:selected s) step (:step s)]
     (when (and (seq (:nodes s)) (< i (count (:nodes s))))
+      (push-undo!)
       (let [[x y] (node-pos (nth (:nodes s) i))
             np (if (zero? axis) [(+ x (* sign step)) y] [x (+ y (* sign step))])]
         (move-node! i np))
@@ -529,6 +602,7 @@
   [which axis sign]
   (let [s @session i (:selected s) step (:step s)]
     (when (get-in (:nodes s) [i :bez which])
+      (push-undo!)
       (swap! session update-in [:nodes i :bez which axis] + (* sign step))
       (swap! session update :nodes reconstrain-handles)
       (refresh-preview!)
@@ -541,6 +615,7 @@
   []
   (let [s @session i (:selected s) nodes (:nodes s)]
     (when (and (pos? i) (< i (count nodes)))
+      (push-undo!)
       (if (:bez (nth nodes i))
         (swap! session update-in [:nodes i] dissoc :bez)
         (let [[ax ay] (node-pos (nth nodes (dec i)))
@@ -557,6 +632,7 @@
   []
   (let [s @session i (:selected s)]
     (when (< i (count (:nodes s)))
+      (push-undo!)
       (swap! session update-in [:nodes i :smooth?] #(if (false? %) true false))
       (swap! session update :nodes reconstrain-handles)
       (refresh-preview!)
@@ -570,11 +646,13 @@
         ;; it would drop that data, so refuse rather than lose it.
         (state/capture-println
          "edit-path: this node carries a mark/side-trip (green) and can't be deleted.")
-        (let [nodes' (vec (concat (take i nodes) (drop (inc i) nodes)))]
-          (swap! session assoc :nodes nodes'
-                 :selected (max 0 (min (dec (count nodes')) i)))
-          (refresh-preview!)
-          (update-panel!))))))
+        (do
+          (push-undo!)
+          (let [nodes' (vec (concat (take i nodes) (drop (inc i) nodes)))]
+            (swap! session assoc :nodes nodes'
+                   :selected (max 0 (min (dec (count nodes')) i)))
+            (refresh-preview!)
+            (update-panel!)))))))
 
 ;; ============================================================
 ;; Mouse: click empty → add, click/drag a node → select/move
@@ -647,6 +725,8 @@
     (viewport/raycast-plane-point e (:position pose) (:heading pose))))
 
 (defn- grab-node! [idx]
+  ;; No undo push here: a bare click that only selects shouldn't add an undo step.
+  ;; The push is deferred to the first actual drag move (see on-pointer-move).
   (swap! session assoc :selected idx :dragging idx)
   (viewport/set-controls-enabled! false)
   (render!) (update-panel!))
@@ -667,15 +747,18 @@
         (grab-node! n-idx)
 
         ;; Otherwise a bezier control handle (when the click isn't on a node).
+        ;; Undo push deferred to the first drag move (a bare click doesn't change it).
         handle
         (do (swap! session assoc :dragging-handle handle)
             (viewport/set-controls-enabled! false))
 
         ;; On a segment → insert a node there (split), even between close nodes,
-        ;; then drag it.
+        ;; then drag it. Inserting IS a mutation, so push undo now and mark the
+        ;; drag as already pushed.
         seg
-        (do (insert-node! (:index seg) (:point seg))
-            (swap! session assoc :dragging (:index seg))
+        (do (push-undo!)
+            (insert-node! (:index seg) (:point seg))
+            (swap! session assoc :dragging (:index seg) :drag-pushed? true)
             (viewport/set-controls-enabled! false))
 
         ;; Otherwise remember the press: a still click appends, a drag orbits.
@@ -688,6 +771,7 @@
       (cond
         (:dragging-handle s)
         (when-let [w (click-plane-point e s)]
+          (when-not (:drag-pushed? s) (push-undo!) (swap! session assoc :drag-pushed? true))
           (let [{:keys [idx which]} (:dragging-handle s)]
             (swap! session assoc-in [:nodes idx :bez which]
                    (world->plane (plane-basis (:pose s)) w))
@@ -698,6 +782,7 @@
 
         (:dragging s)
         (when-let [w (click-plane-point e s)]
+          (when-not (:drag-pushed? s) (push-undo!) (swap! session assoc :drag-pushed? true))
           (move-node! (:dragging s) (world->plane (plane-basis (:pose s)) w))
           (refresh-preview!))))))
 
@@ -705,12 +790,12 @@
   (let [s @session]
     (cond
       (:dragging-handle s)
-      (do (swap! session dissoc :dragging-handle)
+      (do (swap! session dissoc :dragging-handle :drag-pushed?)
           (viewport/set-controls-enabled! true)
           (refresh-preview!) (update-panel!))
 
       (:dragging s)
-      (do (swap! session dissoc :dragging)
+      (do (swap! session dissoc :dragging :drag-pushed?)
           (viewport/set-controls-enabled! true)
           (refresh-preview!) (update-panel!))
 
@@ -752,6 +837,10 @@
     (let [key (.-key e)
           digit (digit-key key)]
       (cond
+        ;; Cmd/Ctrl+Z → undo the last action.
+        (and (or (.-metaKey e) (.-ctrlKey e)) (#{"z" "Z"} key))
+        (do (.preventDefault e) (.stopPropagation e) (flush-digit!) (undo!))
+
         (= key "Tab")
         (do (.preventDefault e) (.stopPropagation e)
             (flush-digit!)
@@ -783,6 +872,12 @@
 
         (#{"Delete"} key)
         (do (.preventDefault e) (.stopPropagation e) (delete-node!))
+
+        ;; Insert a node at the midpoint of the segment entering the selected node.
+        ;; Match by .-key, by .-code (PC keyboards send code "Insert" regardless of
+        ;; the produced key), and the Mac "Help" key; "i" is the laptop alias.
+        (or (#{"Insert" "Help" "i" "I"} key) (= (.-code e) "Insert"))
+        (do (.preventDefault e) (.stopPropagation e) (split-segment!))
 
         ;; toggle the selected node's incoming segment straight ↔ bezier curve
         (#{"c" "C"} key)
@@ -893,6 +988,7 @@
                          :selected     (max 0 (dec (count nodes)))
                          :step         5
                          :digit-buffer ""
+                         :undo         []
                          :pose         (state/get-turtle-pose)
                          :entered?     false})
         (nodes->path nodes)))))

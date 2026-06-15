@@ -74,8 +74,20 @@ plane, so `edit-path` works as a standalone polygon / region drawing tool. A
   the entry direction into the next node.
 - `x` — toggle the selected node **smooth ↔ cusp**. A cusp frees the node's
   **outgoing** handle (shown magenta) so the curve can leave at any angle.
+- `Insert` (or `i`) — insert a node at the **midpoint of the segment entering the
+  selected node** (splits it in half). A straight segment splits at the chord
+  midpoint; a bezier splits with de Casteljau at t=0.5, so the curve's shape is
+  preserved. With the **first** node selected (no incoming segment) the **closing
+  segment** (last → first) is split instead: a node is appended in the tail at the
+  midpoint between the last and first nodes — the way to extend the tail, and on a
+  `path-to-shape` it lands exactly on the polygon's closing edge (mirrors the mouse,
+  where the dim closing segment is visible and divisible). (`i` is provided because
+  most Mac laptops lack an `Insert` key.)
 - `Delete` — remove the selected node (green nodes carrying a mark/side-trip are
   protected and won't be deleted).
+- `Cmd`/`Ctrl`+`Z` — **undo** the last action (add / move / handle / curve / cusp /
+  split / delete). A bare click that only selects a node is not an undo step; a
+  whole drag is one step.
 - `Enter` — confirm; `Esc` — cancel.
 
 While the session is open the reference image is **dimmed** and the overlay is drawn
