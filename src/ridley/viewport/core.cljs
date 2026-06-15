@@ -2236,23 +2236,25 @@
 
 (defn- create-dot-meshes
   "A Group of small node markers drawn on top so they read over any background.
-   dots: [{:pos [x y z] :radius r :color hex :ring bool :normal [x y z]} …].
-   :ring renders a torus (a dot with a hole) oriented in the plane whose normal
-   is :normal — used to mark the path's start node."
+   dots: [{:pos [x y z] :radius r :color hex :ring bool :square bool :normal […]} …].
+   :ring renders a torus (a dot with a hole), :square a flat quad — both oriented in
+   the plane whose normal is :normal; otherwise a sphere."
   [dots]
   (let [grp (THREE/Group.)]
-    (doseq [{:keys [pos radius color ring normal]} dots]
+    (doseq [{:keys [pos radius color ring square normal]} dots]
       (let [r (or radius 1.5)
-            geom (if ring
-                   (THREE/TorusGeometry. r (* r 0.42) 8 18)
-                   (THREE/SphereGeometry. r 14 14))
+            geom (cond
+                   ring   (THREE/TorusGeometry. r (* r 0.42) 8 18)
+                   square (THREE/PlaneGeometry. (* r 2) (* r 2))
+                   :else  (THREE/SphereGeometry. r 14 14))
             mat (THREE/MeshBasicMaterial. #js {:color (or color 0xffffff)
-                                               :depthTest false})
+                                               :depthTest false
+                                               :side THREE/DoubleSide})
             ^js m (THREE/Mesh. geom mat)]
         (.set (.-position m) (nth pos 0) (nth pos 1) (nth pos 2))
-        ;; orient the torus hole-axis (local +Z) along the plane normal so it
-        ;; reads as a ring when viewed face-on (the usual tracing view)
-        (when (and ring normal)
+        ;; orient ring/quad to lie in the working plane (normal → local +Z) so they
+        ;; read as a ring / square when viewed face-on (the usual tracing view)
+        (when (and (or ring square) normal)
           (.lookAt m (+ (nth pos 0) (nth normal 0))
                    (+ (nth pos 1) (nth normal 1))
                    (+ (nth pos 2) (nth normal 2))))

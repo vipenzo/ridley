@@ -3066,7 +3066,8 @@ The vectors are expressed in P0's local `[right up heading]` frame (see the `:lo
 Unlike `edit-bezier`, `edit-path` is **not** a persistent primitive. On confirm it rewrites its `(edit-path …)` marker to a plain `(path …)`, so re-running the script does **not** re-enter editing. To edit an existing path again, **rename `path` → `edit-path`** — the editor reads the body's nodes back (a leading `move-to` is honored, see below).
 
 **Workflow.** Open `(edit-path)` (empty → a small starting triangle), then:
-- **Click a segment** to insert a point there (split it); **click elsewhere** to append a point at the end; **drag a node** to move it. Orbiting still works — only grabbing a node or a segment suppresses it for that drag.
+- **Click a segment** to insert a point there (split it); **click elsewhere** to append a point at the end; **drag a node** to move it. Orbiting still works — only grabbing a node, handle or segment suppresses it for that drag.
+- Press **`c`** to toggle the selected node's **incoming segment** between a straight line and a **cubic bezier**; it bakes to a compact `(bezier-to …)`. The handles are **directional**: the start handle stays tangent to how the path arrives at the start node (length only — it slides along that line, so curves join smoothly), and the end handle is free, setting the entry direction into the next node. Press **`x`** to toggle a node **smooth ↔ cusp** (a cusp frees its outgoing handle, shown magenta, for a sharp corner). (Per-segment arcs are still planned.)
 - `Tab` cycles the selected node; **arrows** nudge it; type digits to set the step (mm).
 - `Delete` removes the selected node.
 - `Enter` confirms; `Esc` cancels.

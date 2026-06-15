@@ -23,6 +23,7 @@
             [ridley.editor.codemirror :as cm]
             [ridley.editor.modal-evaluator :as modal]
             [ridley.math :as m]
+            [ridley.turtle.bezier :as bezier]
             [ridley.viewport.core :as viewport]
             [clojure.string :as str]))
 
@@ -53,15 +54,19 @@
 (def ^:private sel-color    0xffdd00) ; selected node — yellow
 (def ^:private mark-color   0x00dd66) ; node carrying a mark / side-trip — green
 (def ^:private exit-color   0xff8800) ; last (exit) node — orange (defines exit heading)
-(def ^:private node-radius     1.25)  ; filled dot radius (plane units)
-(def ^:private node-radius-sel 2.0)   ; selected dot radius
+(def ^:private handle-color 0x33ddff) ; bezier control handles — cyan
+(def ^:private cusp-color   0xff44cc) ; freed (cusp) outgoing handle — magenta
+(def ^:private handle-radius   0.45)  ; bezier handle square half-size
+(def ^:private node-radius     0.625) ; filled dot radius (plane units)
+(def ^:private node-radius-sel 1.0)   ; selected dot radius
 
 ;; Dim the reference image to this opacity while tracing, so the overlay reads.
 (def ^:private edit-dim 0.4)
-;; Right on a node (within this) a click always grabs it, even on a short segment.
-(def ^:private node-snap 6)
-;; Looser node-grab radius, used only when the click isn't on a segment.
-(def ^:private hit-threshold 12)
+;; Grab a node only when the click is essentially within its dot (tight, so it
+;; doesn't swallow nearby control points).
+(def ^:private node-snap 1.5)
+;; Grab radius for the (small) control-point squares.
+(def ^:private handle-snap 2.5)
 ;; How close a click must be to a segment to insert a node there (split).
 ;; Generous: an imprecise click near the path still splits instead of missing.
 (def ^:private seg-threshold 16)
@@ -110,6 +115,47 @@
 (defn- rotate-dir [[hx hy] deg]
   (let [r (* deg (/ js/Math.PI 180)) c (js/Math.cos r) s (js/Math.sin r)]
     [(- (* hx c) (* hy s)) (+ (* hx s) (* hy c))]))
+
+;; -- bezier tangent constraint (directional handles) ----------------------
+;; c1 (start handle) stays tangent to how the path ARRIVES at the start node, so
+;; a smooth node leaves tangent to what precedes; c2 (end handle) is free and sets
+;; the arrival direction. A cusp node (:smooth? false) frees its outgoing c1.
+
+(defn- incoming-tangent
+  "Unit direction the path arrives at node i with (= the tangent that a smooth c1
+   leaving i must lie along)."
+  [nodes i]
+  (cond
+    (zero? i) [1 0]
+    (:bez (nth nodes i)) (v2-norm (let [[bx by] (node-pos (nth nodes i))
+                                        [cx cy] (:c2 (:bez (nth nodes i)))]
+                                    [(- bx cx) (- by cy)]))
+    :else (v2-norm (let [[bx by] (node-pos (nth nodes i))
+                         [ax ay] (node-pos (nth nodes (dec i)))]
+                     [(- bx ax) (- by ay)]))))
+
+(defn- reconstrain-handles
+  "Project each bezier segment's c1 onto its start node's incoming tangent (keeping
+   its length), so smooth nodes stay tangent-continuous. Cusp start nodes are left
+   free. Single pass — a node's incoming tangent depends on its c2/pos, not on the
+   c1's being constrained."
+  [nodes]
+  (reduce
+   (fn [ns i]
+     (if (:bez (nth ns i))
+       (let [a (dec i)]
+         (if (false? (:smooth? (nth ns a)))
+           ns                                   ; cusp start node → c1 free
+           (let [[ax ay] (node-pos (nth ns a))
+                 [c1x c1y] (:c1 (:bez (nth ns i)))
+                 [tx ty] (incoming-tangent ns a)
+                 ;; length = projection of the (possibly free-dragged) c1 onto the
+                 ;; tangent, clamped ≥ 0, so the handle slides along the fixed line
+                 len (max 0 (+ (* (- c1x ax) tx) (* (- c1y ay) ty)))]
+             (assoc-in ns [i :bez :c1] [(+ ax (* len tx)) (+ ay (* len ty))]))))
+       ns))
+   nodes
+   (range 1 (count nodes))))
 
 ;; -- generic command serializer (for node tails and side-trip bodies) -----
 
@@ -182,10 +228,22 @@
         (if (empty? remaining)
           out
           (let [node (first remaining)
-                to (node-pos node)
-                [cmds ch1] (segment-cmds ch from to (:heading node))]
-            (recur ch1 to (rest remaining)
-                   (-> out (into cmds) (into (:tail node))))))))))
+                to (node-pos node)]
+            (if-let [{:keys [c1 c2]} (:bez node)]
+              ;; Cubic bezier segment: explicit control points (absolute). Emits a
+              ;; compact (bezier-to …) that the standard macro re-tessellates; the
+              ;; heading after is the end tangent (c2 → end).
+              (let [end-tan (v2-norm [(- (first to) (first c2)) (- (second to) (second c2))])]
+                (recur end-tan to (rest remaining)
+                       (-> out
+                           (conj {:cmd :bezier-to
+                                  :args [[(first to) (second to) 0]
+                                         [(first c1) (second c1) 0]
+                                         [(first c2) (second c2) 0]]})
+                           (into (:tail node)))))
+              (let [[cmds ch1] (segment-cmds ch from to (:heading node))]
+                (recur ch1 to (rest remaining)
+                       (-> out (into cmds) (into (:tail node))))))))))))
 
 (defn- nodes->path
   "A path value from the current nodes — returned by request! so the downstream
@@ -284,39 +342,59 @@
 ;; ============================================================
 
 (defn- render!
-  "Redraw the ephemeral polyline (lines) + filled node dots from the session state."
+  "Redraw the ephemeral path (straight + bezier segments), bezier handles, and the
+   node dots from the current session state."
   []
   (when-let [{:keys [nodes selected pose]} @session]
     (let [basis (plane-basis pose)
-          normal (m/cross (:px basis) (:py basis))   ; working-plane normal (for the start ring)
-          pts (mapv #(plane->world basis (node-pos %)) nodes)
+          normal (m/cross (:px basis) (:py basis))   ; working-plane normal (start ring)
+          ->w #(plane->world basis %)
+          pts (mapv #(->w (node-pos %)) nodes)
           n (count pts)
-          edges (when (>= n 2)
-                  (mapv (fn [a b] {:from a :to b :color line-color})
-                        pts (rest pts)))
-          closing (when (>= n 3)
-                    [{:from (last pts) :to (first pts) :color close-color}])
-          segs (vec (concat edges closing))
-          dots (mapv (fn [i pw]
-                       (let [marked? (seq (:tail (nth nodes i)))
-                             start?  (zero? i)
-                             exit?   (= i (dec n))]
-                         (cond-> {:pos pw
-                                  ;; Selection is shown by SIZE only, so the semantic
-                                  ;; colour stays visible while dragging.
-                                  :radius (if (= i selected) node-radius-sel node-radius)
-                                  ;; mark (green) > endpoints start/exit (orange) >
-                                  ;; selected (yellow) > plain (blue)
-                                  :color  (cond marked?            mark-color
-                                                (or start? exit?)  exit-color
-                                                (= i selected)     sel-color
-                                                :else              node-color)}
-                           ;; the start node is a ring (a dot with a hole) so it's
-                           ;; distinct from the solid exit dot
-                           start? (assoc :ring true :normal normal))))
-                     (range n) pts)]
-      ;; :on-top keeps the overlay visible over the (dimmed) image and the live
-      ;; extruded result; dots are filled spheres so individual nodes read clearly.
+          ;; per-segment lines: bezier-tessellated where the node carries :bez
+          seg-lines (mapcat
+                     (fn [i]
+                       (let [a (nth pts (dec i)) b (nth pts i)]
+                         (if-let [{:keys [c1 c2]} (:bez (nth nodes i))]
+                           (let [c1w (->w c1) c2w (->w c2) steps 24
+                                 cp (mapv #(bezier/cubic-bezier-point a c1w c2w b (/ % steps))
+                                          (range (inc steps)))]
+                             (mapv (fn [p q] {:from p :to q :color line-color}) cp (rest cp)))
+                           [{:from a :to b :color line-color}])))
+                     (range 1 n))
+          closing (when (>= n 3) [{:from (last pts) :to (first pts) :color close-color}])
+          ;; handle lines (endpoint → control point) for bezier segments; the c1
+          ;; handle shows magenta when its start node is a cusp (freed)
+          handle-lines (mapcat
+                        (fn [i]
+                          (when-let [{:keys [c1 c2]} (:bez (nth nodes i))]
+                            (let [c1col (if (false? (:smooth? (nth nodes (dec i)))) cusp-color handle-color)]
+                              [{:from (nth pts (dec i)) :to (->w c1) :color c1col}
+                               {:from (nth pts i) :to (->w c2) :color handle-color}])))
+                        (range 1 n))
+          segs (vec (concat seg-lines closing handle-lines))
+          node-dots (mapv (fn [i pw]
+                            (let [marked? (seq (:tail (nth nodes i)))
+                                  start?  (zero? i)
+                                  exit?   (= i (dec n))]
+                              (cond-> {:pos pw
+                                       :radius (if (= i selected) node-radius-sel node-radius)
+                                       :color  (cond marked?            mark-color
+                                                     (or start? exit?)  exit-color
+                                                     (= i selected)     sel-color
+                                                     :else              node-color)}
+                                start? (assoc :ring true :normal normal))))
+                          (range n) pts)
+          handle-dots (mapcat
+                       (fn [i]
+                         (when-let [{:keys [c1 c2]} (:bez (nth nodes i))]
+                           (let [c1col (if (false? (:smooth? (nth nodes (dec i)))) cusp-color handle-color)]
+                             ;; control points are little squares (shape sets them
+                             ;; apart from the round nodes — no extra colour needed)
+                             [{:pos (->w c1) :radius handle-radius :color c1col :square true :normal normal}
+                              {:pos (->w c2) :radius handle-radius :color handle-color :square true :normal normal}])))
+                       (range 1 n))
+          dots (vec (concat node-dots handle-dots))]
       (viewport/show-preview! [{:type :lines :data segs :on-top true}
                                {:type :dots :data dots}]))))
 
@@ -373,7 +451,8 @@
                "<span>Step: <span class='ep-step'>5mm</span></span>"
                "</div>"
                "<div class='pilot-commands'>"
-               "click: add · drag node: move · Tab: next · ←→↑↓: nudge · "
+               "click: add · drag node/handle: move · Tab: next · c: curve · "
+               "x: cusp · ←→↑↓: node · Shift+↑↓: c1 · Alt+↑↓: c2 · "
                "Del: delete · Enter: OK · Esc: cancel"
                "</div>"
                "<div class='pilot-buttons'>"
@@ -414,20 +493,72 @@
   (or (seq (:tail (nth nodes idx)))
       (= idx (dec (count nodes)))))
 
-(defn- node-moved!
-  "After moving node `idx`, drop its explicit heading unless it's notable, so a
-   plain corner follows the new geometry while marks / the exit node keep theirs."
-  [idx]
-  (when-not (notable? (:nodes @session) idx)
-    (swap! session assoc-in [:nodes idx :heading] nil)))
+(defn- move-node!
+  "Set node `idx` to absolute 2D `new-pos`, dragging its attached bezier handles
+   (its incoming :c2 and the next segment's :c1) along by the same delta, and
+   dropping its explicit heading unless it's notable."
+  [idx new-pos]
+  (let [nodes (:nodes @session)
+        [ox oy] (node-pos (nth nodes idx))
+        dx (- (first new-pos) ox) dy (- (second new-pos) oy)
+        tr (fn [[x y]] [(+ x dx) (+ y dy)])]
+    (swap! session
+           (fn [s]
+             (cond-> (assoc-in s [:nodes idx :pos] new-pos)
+               (get-in nodes [idx :bez])       (update-in [:nodes idx :bez :c2] tr)
+               (get-in nodes [(inc idx) :bez]) (update-in [:nodes (inc idx) :bez :c1] tr))))
+    (when-not (notable? (:nodes @session) idx)
+      (swap! session assoc-in [:nodes idx :heading] nil))
+    ;; moving a node changes incoming tangents → re-snap smooth bezier handles
+    (swap! session update :nodes reconstrain-handles)))
 
 (defn- nudge!
   "Move the selected node by sign·step along axis 0=x / 1=y."
   [axis sign]
   (let [s @session i (:selected s) step (:step s)]
     (when (and (seq (:nodes s)) (< i (count (:nodes s))))
-      (swap! session update-in [:nodes i :pos axis] + (* sign step))
-      (node-moved! i)
+      (let [[x y] (node-pos (nth (:nodes s) i))
+            np (if (zero? axis) [(+ x (* sign step)) y] [x (+ y (* sign step))])]
+        (move-node! i np))
+      (refresh-preview!)
+      (update-panel!))))
+
+(defn- nudge-handle!
+  "Move control point `which` (:c1/:c2) of the selected node's bezier by sign·step
+   along axis 0=x / 1=y, then re-snap (a smooth c1 stays on its tangent = length)."
+  [which axis sign]
+  (let [s @session i (:selected s) step (:step s)]
+    (when (get-in (:nodes s) [i :bez which])
+      (swap! session update-in [:nodes i :bez which axis] + (* sign step))
+      (swap! session update :nodes reconstrain-handles)
+      (refresh-preview!)
+      (update-panel!))))
+
+(defn- toggle-bezier!
+  "Toggle the selected node's incoming segment between straight and cubic bezier.
+   On enabling, the control points start at 1/3 and 2/3 along the chord; the start
+   handle (c1) is then snapped to the start node's tangent."
+  []
+  (let [s @session i (:selected s) nodes (:nodes s)]
+    (when (and (pos? i) (< i (count nodes)))
+      (if (:bez (nth nodes i))
+        (swap! session update-in [:nodes i] dissoc :bez)
+        (let [[ax ay] (node-pos (nth nodes (dec i)))
+              [bx by] (node-pos (nth nodes i))
+              along (fn [t] [(+ ax (* (- bx ax) t)) (+ ay (* (- by ay) t))])]
+          (swap! session assoc-in [:nodes i :bez] {:c1 (along (/ 1.0 3)) :c2 (along (/ 2.0 3))})))
+      (swap! session update :nodes reconstrain-handles)
+      (refresh-preview!)
+      (update-panel!))))
+
+(defn- toggle-cusp!
+  "Toggle the selected node between smooth and cusp. A cusp frees its OUTGOING
+   bezier handle (c1 of the next segment) so the curve can leave at any angle."
+  []
+  (let [s @session i (:selected s)]
+    (when (< i (count (:nodes s)))
+      (swap! session update-in [:nodes i :smooth?] #(if (false? %) true false))
+      (swap! session update :nodes reconstrain-handles)
       (refresh-preview!)
       (update-panel!))))
 
@@ -490,6 +621,21 @@
       (when (<= (:d2 best) (* seg-threshold seg-threshold))
         best))))
 
+(defn- nearest-handle
+  "The bezier control handle closest to plane point p within handle-snap, as
+   {:idx i :which :c1/:c2}, or nil."
+  [nodes [px py]]
+  (let [cands (mapcat (fn [i]
+                        (when-let [{:keys [c1 c2]} (:bez (nth nodes i))]
+                          [{:idx i :which :c1 :pos c1} {:idx i :which :c2 :pos c2}]))
+                      (range (count nodes)))]
+    (when (seq cands)
+      (let [d2 (fn [h] (let [[hx hy] (:pos h)]
+                         (+ (* (- hx px) (- hx px)) (* (- hy py) (- hy py)))))
+            best (apply min-key d2 cands)]
+        (when (<= (d2 best) (* handle-snap handle-snap))
+          (select-keys best [:idx :which]))))))
+
 (defn- plain-click? [^js e]
   (and (not (.-altKey e)) (not (.-shiftKey e))
        (not (.-ctrlKey e)) (not (.-metaKey e))))
@@ -511,23 +657,26 @@
           basis (plane-basis (:pose s))
           w (click-plane-point e s)
           p2 (when w (world->plane basis w))
+          handle (when p2 (nearest-handle (:nodes s) p2))
           [n-idx n-d2] (when p2 (nearest-node-d2 (:nodes s) p2))
           seg (when p2 (nearest-segment (:nodes s) p2))]
       (cond
-        ;; Right on a node → grab it (wins even on a short segment).
+        ;; Right on a node → grab it (wins over a nearby handle/segment, so moving a
+        ;; node doesn't accidentally catch a control point).
         (and n-idx (<= n-d2 (* node-snap node-snap)))
         (grab-node! n-idx)
 
+        ;; Otherwise a bezier control handle (when the click isn't on a node).
+        handle
+        (do (swap! session assoc :dragging-handle handle)
+            (viewport/set-controls-enabled! false))
+
         ;; On a segment → insert a node there (split), even between close nodes,
-        ;; then drag it. (Prefers insert over the looser node-grab below.)
+        ;; then drag it.
         seg
         (do (insert-node! (:index seg) (:point seg))
             (swap! session assoc :dragging (:index seg))
             (viewport/set-controls-enabled! false))
-
-        ;; Looser node grab when the click isn't on a segment.
-        (and n-idx (<= n-d2 (* hit-threshold hit-threshold)))
-        (grab-node! n-idx)
 
         ;; Otherwise remember the press: a still click appends, a drag orbits.
         :else
@@ -535,16 +684,31 @@
 
 (defn- on-pointer-move [^js e]
   (let [s @session]
-    (when (and (:entered? s) (:dragging s))
-      (when-let [w (click-plane-point e s)]
-        (swap! session assoc-in [:nodes (:dragging s) :pos]
-               (world->plane (plane-basis (:pose s)) w))
-        (node-moved! (:dragging s))
-        (refresh-preview!)))))
+    (when (:entered? s)
+      (cond
+        (:dragging-handle s)
+        (when-let [w (click-plane-point e s)]
+          (let [{:keys [idx which]} (:dragging-handle s)]
+            (swap! session assoc-in [:nodes idx :bez which]
+                   (world->plane (plane-basis (:pose s)) w))
+            ;; c1 → snap to the start node's tangent (unless cusp); c2 free but
+            ;; re-snaps the next segment's c1 (its incoming tangent changed)
+            (swap! session update :nodes reconstrain-handles)
+            (refresh-preview!)))
+
+        (:dragging s)
+        (when-let [w (click-plane-point e s)]
+          (move-node! (:dragging s) (world->plane (plane-basis (:pose s)) w))
+          (refresh-preview!))))))
 
 (defn- on-pointer-up [^js e]
   (let [s @session]
     (cond
+      (:dragging-handle s)
+      (do (swap! session dissoc :dragging-handle)
+          (viewport/set-controls-enabled! true)
+          (refresh-preview!) (update-panel!))
+
       (:dragging s)
       (do (swap! session dissoc :dragging)
           (viewport/set-controls-enabled! true)
@@ -609,10 +773,24 @@
         (#{"ArrowUp" "ArrowDown" "ArrowLeft" "ArrowRight"} key)
         (do (.preventDefault e) (.stopPropagation e) (flush-digit!)
             (when-let [[axis sign] (arrow->axis key)]
-              (nudge! axis sign)))
+              ;; Shift+arrows nudge c1, Alt+arrows nudge c2 of the selected node's
+              ;; bezier (Ctrl/Cmd are reserved by macOS for spaces); plain arrows
+              ;; move the node.
+              (cond
+                (.-shiftKey e)                          (nudge-handle! :c1 axis sign)
+                (.-altKey e)                            (nudge-handle! :c2 axis sign)
+                :else                                   (nudge! axis sign))))
 
         (#{"Delete"} key)
         (do (.preventDefault e) (.stopPropagation e) (delete-node!))
+
+        ;; toggle the selected node's incoming segment straight ↔ bezier curve
+        (#{"c" "C"} key)
+        (do (.preventDefault e) (.stopPropagation e) (toggle-bezier!))
+
+        ;; toggle the selected node smooth ↔ cusp (frees its outgoing handle)
+        (#{"x" "X"} key)
+        (do (.preventDefault e) (.stopPropagation e) (toggle-cusp!))
 
         (= key "Backspace")
         (do (.preventDefault e) (.stopPropagation e)

@@ -59,7 +59,21 @@ plane, so `edit-path` works as a standalone polygon / region drawing tool. A
 - Arrows — nudge the selected node in the working plane (`←`/`→` = the plane's
   horizontal = world Y by default, `↑`/`↓` = vertical = world Z); world X (off the
   image plane) is never touched.
+- `Shift`+arrows — nudge the selected bezier node's **start handle (c1)**;
+  `Alt`+arrows — nudge its **end handle (c2)** (`Ctrl`/`Cmd` are reserved by macOS
+  for switching spaces). Both re-apply the tangent constraint after the move (a
+  smooth c1 stays on its tangent — only its length changes). No-op on a node
+  without a bezier segment.
 - Type digits — set the step size (mm); `Backspace` edits the buffer.
+- `c` — toggle the selected node's **incoming segment** between a straight line and
+  a **cubic bezier**. A bezier shows two control handles (small squares, to set them
+  apart from the round nodes); it bakes to a compact
+  `(bezier-to …)`. Handles are **directional**: the start handle (c1) stays tangent
+  to how the path arrives at the start node (you only set its length — it slides
+  along that line), so curves join smoothly; the end handle (c2) is free and sets
+  the entry direction into the next node.
+- `x` — toggle the selected node **smooth ↔ cusp**. A cusp frees the node's
+  **outgoing** handle (shown magenta) so the curve can leave at any angle.
 - `Delete` — remove the selected node (green nodes carrying a mark/side-trip are
   protected and won't be deleted).
 - `Enter` — confirm; `Esc` — cancel.
@@ -86,8 +100,10 @@ the photo region.
 
 ## Notes
 
-- **Straight segments (MVP).** Node positions and heading come from `f`, `th`,
-  `set-heading`, `rt`, `lt` and a leading `move-to`.
+- **Segment types.** A straight segment bakes to `f` / `rt` / `lt` / `th`+`f`; a
+  **cubic bezier** segment (press `c` on the destination node) bakes to a compact
+  `(bezier-to …)`. Node positions and heading come from `f`, `th`, `set-heading`,
+  `rt`, `lt` and a leading `move-to`. (Per-segment **arcs** are still planned.)
 - **`rt`/`lt`** are in-plane strafes (heading kept) and round-trip as `rt`/`lt`;
   a corner whose heading actually turns stays `(th …)(f …)`.
 - **Orientation is preserved** where it matters: the last (exit) node and marks
