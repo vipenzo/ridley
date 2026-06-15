@@ -371,23 +371,32 @@
   [c]
   (contains? #{:f :th :rt :lt} (:cmd c)))
 
-(defn- group-arc-runs
-  "Collapse each :arc-cap :lead … :arc-cap :trail run of in-plane commands into a
-   single {:cmd :arc-run :sub [...]} group. A run with any out-of-plane move is left
-   as-is (it falls through to the normal per-command handling / drop)."
+(defn- group-curve-runs
+  "Collapse each tessellated curve run back into a single group so seed->nodes can
+   rebuild it as one node:
+   - a bezier carries a :pure {:cmd :bezier-to :c1 :c2 :end :span n} tag on its first
+     command (added by rec-bezier-to*) → {:cmd :bezier-node :pure …}, skipping :span;
+   - an arc is a :arc-cap :lead … :arc-cap :trail run of in-plane commands →
+     {:cmd :arc-run :sub […]}.
+   Out-of-plane curves are left as-is (they fall through to the normal drop)."
   [cmds]
   (loop [cs cmds out []]
     (if (empty? cs)
       out
       (let [c (first cs)]
-        (if (= :lead (:arc-cap c))
+        (cond
+          (and (:pure c) (= :bezier-to (:cmd (:pure c))))
+          (recur (drop (:span (:pure c)) cs) (conj out {:cmd :bezier-node :pure (:pure c)}))
+
+          (= :lead (:arc-cap c))
           (let [[run more] (split-with #(not= :trail (:arc-cap %)) cs)
                 run (vec (concat run (take 1 more)))   ; include the :trail command
                 more (rest more)]
             (if (and (>= (count run) 2) (every? in-plane-cmd? run))
               (recur more (conj out {:cmd :arc-run :sub run}))
               (recur more (into out run))))
-          (recur (rest cs) (conj out c)))))))
+
+          :else (recur (rest cs) (conj out c)))))))
 
 (defn- walk-arc-sub
   "Walk an arc run's in-plane sub-commands from [pos heading], collecting the f-step
@@ -447,6 +456,17 @@
                      :th (assoc st :heading (rotate-dir heading (first (:args cmd))))
                      :set-heading (let [[h _] (:args cmd)]
                                     (assoc st :heading (v2-norm [(first h) (second h)])))
+                     ;; a baked bezier → one bezier node (resolved c1/c2/end from
+                     ;; the :pure tag; planar path → take x,y). Exit heading ∝ end−c2.
+                     :bezier-node
+                     (let [{:keys [c1 c2 end]} (:pure cmd)
+                           xy (fn [p] [(nth p 0) (nth p 1)])
+                           ehead (v2-norm [(- (nth end 0) (nth c2 0))
+                                           (- (nth end 1) (nth c2 1))])]
+                       (-> st
+                           (assoc :pos (xy end) :heading ehead)
+                           (update :nodes conj {:pos (xy end) :heading nil :tail []
+                                                :bez {:c1 (xy c1) :c2 (xy c2)}})))
                      ;; a baked arc run → one arc node (belly sampled mid-run)
                      :arc-run
                      (let [w (walk-arc-sub (:pos st) heading (:sub cmd))
@@ -463,7 +483,7 @@
                      (update st :dropped conj (:cmd cmd))))
                  {:pos [sx sy] :heading [1 0]
                   :nodes [{:pos [sx sy] :heading nil :tail []}] :dropped []}
-                 (group-arc-runs cmds))
+                 (group-curve-runs cmds))
             ;; the last node keeps the final (exit) heading — captures trailing turns
             nodes (let [ns (:nodes res)]
                     (assoc-in ns [(dec (count ns)) :heading] (:heading res)))]

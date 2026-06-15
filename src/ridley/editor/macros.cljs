@@ -287,7 +287,8 @@
            approx-length (sqrt (+ (* dx0 dx0) (* dy0 dy0) (* dz0 dz0)))]
        (when (> approx-length 0.001)
          (swap! path-recorder assoc :bezier true)
-         (let [res-mode (get-in state [:resolution :mode] :n)
+         (let [start-idx (count (:recording @path-recorder))   ; for :pure tag (re-edit)
+               res-mode (get-in state [:resolution :mode] :n)
                res-value (get-in state [:resolution :value] 16)
                actual-steps (or steps
                                 (case res-mode
@@ -382,7 +383,15 @@
                      [th-a tv-a] (rec-compute-rotation-angles
                                   (:heading @path-recorder) (:up @path-recorder) end-dir)]
                  (when (> (abs th-a) 0.001) (rec-th* th-a))
-                 (when (> (abs tv-a) 0.001) (rec-tv* tv-a)))))))))
+                 (when (> (abs tv-a) 0.001) (rec-tv* tv-a)))))
+           ;; Tag the first emitted step with the resolved curve, so edit-path can
+           ;; recover this bezier as one node on re-open (the tessellated steps carry
+           ;; no curve info). Riders like this are ignored by every other consumer.
+           (let [end-idx (count (:recording @path-recorder))]
+             (when (> end-idx start-idx)
+               (swap! path-recorder assoc-in [:recording start-idx :pure]
+                      {:cmd :bezier-to :c1 c1 :c2 c2 :end p3
+                       :span (- end-idx start-idx)})))))))
 
    ;; Recording version of bezier-to-anchor
    ;; Like rec-bezier-to* but gets target from anchor and uses both headings

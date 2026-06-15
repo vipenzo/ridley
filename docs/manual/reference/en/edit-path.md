@@ -23,7 +23,8 @@ Unlike `edit-bezier`, `edit-path` is **not** a persistent primitive. On confirm 
 rewrites its `(edit-path …)` marker to a plain `(path …)`, so re-running the script
 does **not** re-enter editing. To edit an existing path again, **rename
 `path` → `edit-path`**: the editor reads the body's nodes back (a leading `move-to`
-is honored, and a baked `arc-h` is recovered as an arc node — see Notes).
+is honored, and baked `arc-h` / `bezier-to` curves are recovered as curve nodes —
+see Notes).
 
 Empty `(edit-path)` starts from a small triangle so the downstream is valid and
 there is something to drag; click to add your own nodes and delete the rest.
@@ -147,11 +148,12 @@ the photo region.
   they sit at: those nodes render **green**, are **protected from deletion** (marks
   become mesh anchors — never lost), and are re-emitted on confirm.
 - A **non-leading `move-to` is rejected** with an error.
-- **Arcs round-trip.** Re-opening a baked path recovers an in-plane `arc-h` as a
-  single arc node (the tessellated run is collapsed back via its `:arc-cap` tags and
-  a 3-point fit), so the curve survives a refine-and-re-edit cycle. Beziers,
-  `arc-v`, and out-of-plane `u`/`tv`/`tr` are still **dropped** on re-open (replaced
-  with straight segments); a warning lists what was dropped.
+- **Arcs and beziers round-trip.** Re-opening a baked path recovers an in-plane
+  `arc-h` (collapsed via its `:arc-cap` tags + a 3-point fit) and a `bezier-to`
+  (rebuilt from a `:pure` tag `rec-bezier-to*` leaves on the run) each as a single
+  curve node — so a traced curve survives a refine-and-re-edit cycle. `arc-v` and
+  out-of-plane `u`/`tv`/`tr` are still **dropped** on re-open (replaced with straight
+  segments); a warning lists what was dropped.
 - **Not a persistent primitive.** Confirm bakes a `(path …)`; re-running does not
   re-open editing. Rename `path` → `edit-path` to edit again.
 - **Modal session.** Like `tweak` / `edit-bezier` / `pilot`, one runs at a time and
