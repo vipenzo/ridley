@@ -38,7 +38,7 @@ Nodes are edited in the **turtle's stamp plane** at the call site (x-axis =
 default pose that is the **YZ world plane**: horizontal arrows move along world Y,
 vertical arrows along Z, and world X is never touched.
 
-MVP traces **straight segments** only; per-segment arcs and beziers are planned.
+Segments can be **straight**, **cubic bezier** (`c`), or **circular arc** (`a`).
 
 ## Parameters
 
@@ -74,6 +74,14 @@ plane, so `edit-path` works as a standalone polygon / region drawing tool. A
   into the next node. c1 has a minimum length (a fraction of the chord) so it never
   collapses onto the node — a zero-length handle gives the cubic an undefined start
   tangent and makes downstream `stroke-shape` self-overlap.
+- `a` — toggle the selected node's **incoming segment** between a straight line and
+  a **circular arc**. An arc shows a single **belly handle** (a square): a free
+  point the arc passes through — drag it to fit a curve while tracing. The three
+  points (start node, belly, end node) define the circle. It bakes to a
+  heading-relative `(th …)(arc-h r sweep)`, so like the straight segments it stays
+  attached if you edit the path before it. A belly dragged onto the chord (no
+  bulge) bakes as a straight segment. Bezier and arc are mutually exclusive on a
+  segment (`a`/`c` switch between them).
 - `x` — toggle the selected node **smooth ↔ cusp**. A cusp frees the node's
   **outgoing** handle (shown magenta) so the curve can leave at any angle.
 - `Insert` (or `i`) — insert a node at the **midpoint of the segment entering the
@@ -115,10 +123,9 @@ the photo region.
 ## Notes
 
 - **Segment types.** A straight segment bakes to `f` / `rt` / `lt` / `th`+`f`; a
-  **cubic bezier** segment (press `c` on the destination node) bakes to a compact
-  `(bezier-to … :local)`. Node positions and heading come from `f`, `th`,
-  `set-heading`, `rt`, `lt` and a leading `move-to`. (Per-segment **arcs** are still
-  planned.)
+  **cubic bezier** segment (press `c`) bakes to a compact `(bezier-to … :local)`; a
+  **circular arc** (press `a`) bakes to `(th …)(arc-h r sweep)`. Node positions and
+  heading come from `f`, `th`, `set-heading`, `rt`, `lt` and a leading `move-to`.
 - **Beziers bake `:local`** — the control points are emitted in the start node's
   turtle frame, so the curve stays attached if you later hand-edit the `f`/`th`
   before it (the curve follows the turtle). Absolute control points would detach

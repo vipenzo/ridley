@@ -116,6 +116,58 @@
   (let [r (* deg (/ js/Math.PI 180)) c (js/Math.cos r) s (js/Math.sin r)]
     [(- (* hx c) (* hy s)) (+ (* hx s) (* hy c))]))
 
+;; -- arc segments (3-point circular arc: A → belly M → B) -----------------
+;; An arc segment carries a single free "belly" handle M, a point the arc passes
+;; through. A, M, B define a unique circle; the minor arc through M is the segment.
+;; It bakes to a heading-relative (th …)(arc-h r sweep), so it stays attached like
+;; the straight segments (no absolute coords).
+
+(defn- circle-from-3
+  "Circumcircle of three 2D points → {:center [cx cy] :r r}, or nil if collinear."
+  [[ax ay] [mx my] [bx by]]
+  (let [d (* 2 (+ (* ax (- my by)) (* mx (- by ay)) (* bx (- ay my))))]
+    (when (> (js/Math.abs d) 1e-6)
+      (let [a2 (+ (* ax ax) (* ay ay)) m2 (+ (* mx mx) (* my my)) b2 (+ (* bx bx) (* by by))
+            cx (/ (+ (* a2 (- my by)) (* m2 (- by ay)) (* b2 (- ay my))) d)
+            cy (/ (+ (* a2 (- bx mx)) (* m2 (- ax bx)) (* b2 (- mx ax))) d)]
+        {:center [cx cy]
+         :r (js/Math.sqrt (+ (* (- ax cx) (- ax cx)) (* (- ay cy) (- ay cy))))}))))
+
+(defn- norm-2pi [a]
+  (let [t (mod a (* 2 js/Math.PI))] (if (< t 0) (+ t (* 2 js/Math.PI)) t)))
+
+(defn- arc-geom
+  "Geometry of the arc A → M → B: {:center :r :sweep-deg :entry-tan :start-ang}, or
+   nil if the points are collinear (caller bakes a straight segment instead).
+   sweep-deg follows arc-h's convention (positive = left / CCW). entry-tan is the
+   unit tangent leaving A along the arc."
+  [A M B]
+  (when-let [{:keys [center r]} (circle-from-3 A M B)]
+    (let [[cx cy] center
+          ang (fn [[x y]] (js/Math.atan2 (- y cy) (- x cx)))
+          aA (ang A) aM (ang M) aB (ang B)
+          ccw-sweep (norm-2pi (- aB aA))           ; CCW arc length A→B
+          ccw-to-M  (norm-2pi (- aM aA))
+          ccw? (<= ccw-to-M ccw-sweep)             ; does the CCW arc A→B pass through M?
+          sweep (if ccw? ccw-sweep (- (- (* 2 js/Math.PI) ccw-sweep)))
+          radial [(- (first A) cx) (- (second A) cy)]
+          tan (if ccw? [(- (second radial)) (first radial)]   ; +90° from radius
+                  [(second radial) (- (first radial))])]  ; -90°
+      {:center center :r r :start-ang aA
+       :sweep-deg (* sweep (/ 180 js/Math.PI))
+       :entry-tan (v2-norm tan)})))
+
+(defn- arc-tess
+  "Tessellated 2D points along the arc A → M → B (inclusive of both ends), or nil
+   if degenerate."
+  [A M B steps]
+  (when-let [{:keys [center r start-ang sweep-deg]} (arc-geom A M B)]
+    (let [[cx cy] center
+          sweep (* sweep-deg (/ js/Math.PI 180))]
+      (mapv (fn [i] (let [a (+ start-ang (* (/ i steps) sweep))]
+                      [(+ cx (* r (js/Math.cos a))) (+ cy (* r (js/Math.sin a)))]))
+            (range (inc steps))))))
+
 ;; -- bezier tangent constraint (directional handles) ----------------------
 ;; c1 (start handle) stays tangent to how the path ARRIVES at the start node, so
 ;; a smooth node leaves tangent to what precedes; c2 (end handle) is free and sets
@@ -254,12 +306,14 @@
           out
           (let [node (first remaining)
                 to (node-pos node)]
-            (if-let [{:keys [c1 c2]} (:bez node)]
+            (cond
               ;; Cubic bezier segment: control points emitted in the start node's
               ;; local frame (:local) so the curve stays attached when the path
               ;; before it is edited; the standard macro re-tessellates it. The
               ;; heading after is the end tangent (c2 → end).
-              (let [end-tan (v2-norm [(- (first to) (first c2)) (- (second to) (second c2))])]
+              (:bez node)
+              (let [{:keys [c1 c2]} (:bez node)
+                    end-tan (v2-norm [(- (first to) (first c2)) (- (second to) (second c2))])]
                 (recur end-tan to (rest remaining)
                        (-> out
                            (conj {:cmd :bezier-to
@@ -268,6 +322,25 @@
                                          (pt->local from ch c2)
                                          :local]})
                            (into (:tail node)))))
+
+              ;; Circular arc through the belly point: heading-relative
+              ;; (th entry)(arc-h r sweep) — already attached (no absolute coords).
+              ;; A collinear belly is degenerate → fall back to a straight segment.
+              (:arc node)
+              (if-let [{:keys [r sweep-deg entry-tan]} (arc-geom from (:belly (:arc node)) to)]
+                (let [entry-th (signed-angle ch entry-tan)
+                      new-h (rotate-dir entry-tan sweep-deg)]
+                  (recur new-h to (rest remaining)
+                         (-> out
+                             (cond-> (> (js/Math.abs entry-th) 1e-6)
+                               (conj {:cmd :th :args [entry-th]}))
+                             (conj {:cmd :arc-h :args [r sweep-deg]})
+                             (into (:tail node)))))
+                (let [[cmds ch1] (segment-cmds ch from to (:heading node))]
+                  (recur ch1 to (rest remaining)
+                         (-> out (into cmds) (into (:tail node))))))
+
+              :else
               (let [[cmds ch1] (segment-cmds ch from to (:heading node))]
                 (recur ch1 to (rest remaining)
                        (-> out (into cmds) (into (:tail node))))))))))))
@@ -378,26 +451,43 @@
           ->w #(plane->world basis %)
           pts (mapv #(->w (node-pos %)) nodes)
           n (count pts)
-          ;; per-segment lines: bezier-tessellated where the node carries :bez
+          ;; per-segment lines: bezier-tessellated / arc-tessellated / straight
           seg-lines (mapcat
                      (fn [i]
-                       (let [a (nth pts (dec i)) b (nth pts i)]
-                         (if-let [{:keys [c1 c2]} (:bez (nth nodes i))]
-                           (let [c1w (->w c1) c2w (->w c2) steps 24
+                       (let [a (nth pts (dec i)) b (nth pts i)
+                             a2 (node-pos (nth nodes (dec i))) b2 (node-pos (nth nodes i))]
+                         (cond
+                           (:bez (nth nodes i))
+                           (let [{:keys [c1 c2]} (:bez (nth nodes i))
+                                 c1w (->w c1) c2w (->w c2) steps 24
                                  cp (mapv #(bezier/cubic-bezier-point a c1w c2w b (/ % steps))
                                           (range (inc steps)))]
                              (mapv (fn [p q] {:from p :to q :color line-color}) cp (rest cp)))
-                           [{:from a :to b :color line-color}])))
+
+                           (:arc (nth nodes i))
+                           (if-let [tp (arc-tess a2 (:belly (:arc (nth nodes i))) b2 24)]
+                             (let [tw (mapv ->w tp)]
+                               (mapv (fn [p q] {:from p :to q :color line-color}) tw (rest tw)))
+                             [{:from a :to b :color line-color}])
+
+                           :else [{:from a :to b :color line-color}])))
                      (range 1 n))
           closing (when (>= n 3) [{:from (last pts) :to (first pts) :color close-color}])
-          ;; handle lines (endpoint → control point) for bezier segments; the c1
-          ;; handle shows magenta when its start node is a cusp (freed)
+          ;; handle lines: bezier endpoint → control point (c1 magenta when its
+          ;; start node is a cusp); arc chord-midpoint → belly
           handle-lines (mapcat
                         (fn [i]
-                          (when-let [{:keys [c1 c2]} (:bez (nth nodes i))]
-                            (let [c1col (if (false? (:smooth? (nth nodes (dec i)))) cusp-color handle-color)]
+                          (cond
+                            (:bez (nth nodes i))
+                            (let [{:keys [c1 c2]} (:bez (nth nodes i))
+                                  c1col (if (false? (:smooth? (nth nodes (dec i)))) cusp-color handle-color)]
                               [{:from (nth pts (dec i)) :to (->w c1) :color c1col}
-                               {:from (nth pts i) :to (->w c2) :color handle-color}])))
+                               {:from (nth pts i) :to (->w c2) :color handle-color}])
+
+                            (:arc (nth nodes i))
+                            (let [a (nth pts (dec i)) b (nth pts i)
+                                  cmid (m/v* (m/v+ a b) 0.5)]
+                              [{:from cmid :to (->w (:belly (:arc (nth nodes i)))) :color handle-color}])))
                         (range 1 n))
           segs (vec (concat seg-lines closing handle-lines))
           node-dots (mapv (fn [i pw]
@@ -414,12 +504,18 @@
                           (range n) pts)
           handle-dots (mapcat
                        (fn [i]
-                         (when-let [{:keys [c1 c2]} (:bez (nth nodes i))]
-                           (let [c1col (if (false? (:smooth? (nth nodes (dec i)))) cusp-color handle-color)]
+                         (cond
+                           (:bez (nth nodes i))
+                           (let [{:keys [c1 c2]} (:bez (nth nodes i))
+                                 c1col (if (false? (:smooth? (nth nodes (dec i)))) cusp-color handle-color)]
                              ;; control points are little squares (shape sets them
                              ;; apart from the round nodes — no extra colour needed)
                              [{:pos (->w c1) :radius handle-radius :color c1col :square true :normal normal}
-                              {:pos (->w c2) :radius handle-radius :color handle-color :square true :normal normal}])))
+                              {:pos (->w c2) :radius handle-radius :color handle-color :square true :normal normal}])
+
+                           (:arc (nth nodes i))
+                           [{:pos (->w (:belly (:arc (nth nodes i)))) :radius handle-radius
+                             :color handle-color :square true :normal normal}]))
                        (range 1 n))
           dots (vec (concat node-dots handle-dots))]
       (viewport/show-preview! [{:type :lines :data segs :on-top true}
@@ -479,7 +575,7 @@
                "</div>"
                "<div class='pilot-commands'>"
                "click: add · drag node/handle: move · Tab: next · c: curve · "
-               "x: cusp · Ins/i: split · ←→↑↓: node · Shift+↑↓: c1 · Alt+↑↓: c2 · "
+               "a: arc · x: cusp · Ins/i: split · ←→↑↓: node · Shift+↑↓: c1 · Alt+↑↓: c2 · "
                "⌘Z: undo · Del: delete · Enter: OK · Esc: cancel"
                "</div>"
                "<div class='pilot-buttons'>"
@@ -570,8 +666,11 @@
               b (nth nodes i)
               pa (node-pos a) pb (node-pos b)]
           (push-undo!)
-          (if-let [{:keys [c1 c2]} (:bez b)]
-            (let [m01 (mid2 pa c1) m12 (mid2 c1 c2) m23 (mid2 c2 pb)
+          (cond
+            ;; bezier: de Casteljau split at t=0.5 (curve shape preserved)
+            (:bez b)
+            (let [{:keys [c1 c2]} (:bez b)
+                  m01 (mid2 pa c1) m12 (mid2 c1 c2) m23 (mid2 c2 pb)
                   m012 (mid2 m01 m12) m123 (mid2 m12 m23)
                   mp (mid2 m012 m123)
                   newn {:pos mp :tail [] :bez {:c1 m01 :c2 m012}}]
@@ -583,7 +682,23 @@
                            (assoc :selected i))))
               (swap! session update :nodes reconstrain-handles)
               (refresh-preview!) (update-panel!))
-            (insert-node! i (mid2 pa pb))))))))   ; insert-node! selects i
+
+            ;; arc: split into two arcs at t=0.5, each keeping a belly on the
+            ;; original circle (the t=0.25 / t=0.75 points) → same overall curve
+            (:arc b)
+            (if-let [tp (arc-tess pa (:belly (:arc b)) pb 4)]
+              (let [newn {:pos (nth tp 2) :tail [] :arc {:belly (nth tp 1)}}]
+                (swap! session
+                       (fn [s]
+                         (-> s
+                             (assoc-in [:nodes i :arc :belly] (nth tp 3))
+                             (update :nodes #(vec (concat (take i %) [newn] (drop i %))))
+                             (assoc :selected i))))
+                (refresh-preview!) (update-panel!))
+              (insert-node! i (mid2 pa pb)))
+
+            :else
+            (insert-node! i (mid2 pa pb)))))))) ; insert-node! selects i
 
 (defn- notable?
   "A node whose orientation is preserved on move: it carries a mark/side-trip, or
@@ -648,8 +763,35 @@
         (let [[ax ay] (node-pos (nth nodes (dec i)))
               [bx by] (node-pos (nth nodes i))
               along (fn [t] [(+ ax (* (- bx ax) t)) (+ ay (* (- by ay) t))])]
+          ;; bezier and arc are mutually exclusive segment types
+          (swap! session update-in [:nodes i] dissoc :arc)
           (swap! session assoc-in [:nodes i :bez] {:c1 (along (/ 1.0 3)) :c2 (along (/ 2.0 3))})))
       (swap! session update :nodes reconstrain-handles)
+      (refresh-preview!)
+      (update-panel!))))
+
+(defn- toggle-arc!
+  "Toggle the selected node's incoming segment between straight and a circular arc.
+   On enabling, the belly handle starts bulged ~20% of the chord to one side; drag
+   it to any point the arc should pass through."
+  []
+  (let [s @session i (:selected s) nodes (:nodes s)]
+    (when (and (pos? i) (< i (count nodes)))
+      (push-undo!)
+      (if (:arc (nth nodes i))
+        (swap! session update-in [:nodes i] dissoc :arc)
+        (let [[ax ay] (node-pos (nth nodes (dec i)))
+              [bx by] (node-pos (nth nodes i))
+              mx (/ (+ ax bx) 2.0) my (/ (+ ay by) 2.0)
+              dx (- bx ax) dy (- by ay)
+              chord (js/Math.sqrt (+ (* dx dx) (* dy dy)))
+              [px py] (if (> chord 1e-6) [(/ (- dy) chord) (/ dx chord)] [0 1])
+              bulge (* 0.2 chord)
+              belly [(+ mx (* px bulge)) (+ my (* py bulge))]]
+          (swap! session (fn [st]
+                           (-> st
+                               (update-in [:nodes i] dissoc :bez)
+                               (assoc-in [:nodes i :arc] {:belly belly}))))))
       (refresh-preview!)
       (update-panel!))))
 
@@ -727,12 +869,16 @@
         best))))
 
 (defn- nearest-handle
-  "The bezier control handle closest to plane point p within handle-snap, as
-   {:idx i :which :c1/:c2}, or nil."
+  "The bezier control handle or arc belly closest to plane point p within
+   handle-snap, as {:idx i :which :c1/:c2/:belly}, or nil."
   [nodes [px py]]
   (let [cands (mapcat (fn [i]
-                        (when-let [{:keys [c1 c2]} (:bez (nth nodes i))]
-                          [{:idx i :which :c1 :pos c1} {:idx i :which :c2 :pos c2}]))
+                        (cond
+                          (:bez (nth nodes i))
+                          (let [{:keys [c1 c2]} (:bez (nth nodes i))]
+                            [{:idx i :which :c1 :pos c1} {:idx i :which :c2 :pos c2}])
+                          (:arc (nth nodes i))
+                          [{:idx i :which :belly :pos (:belly (:arc (nth nodes i)))}]))
                       (range (count nodes)))]
     (when (seq cands)
       (let [d2 (fn [h] (let [[hx hy] (:pos h)]
@@ -799,12 +945,16 @@
         (:dragging-handle s)
         (when-let [w (click-plane-point e s)]
           (when-not (:drag-pushed? s) (push-undo!) (swap! session assoc :drag-pushed? true))
-          (let [{:keys [idx which]} (:dragging-handle s)]
-            (swap! session assoc-in [:nodes idx :bez which]
-                   (world->plane (plane-basis (:pose s)) w))
-            ;; c1 → snap to the start node's tangent (unless cusp); c2 free but
-            ;; re-snaps the next segment's c1 (its incoming tangent changed)
-            (swap! session update :nodes reconstrain-handles)
+          (let [{:keys [idx which]} (:dragging-handle s)
+                p2 (world->plane (plane-basis (:pose s)) w)]
+            (if (= which :belly)
+              ;; arc belly: a free through-point; the 3-point arc reshapes to fit
+              (swap! session assoc-in [:nodes idx :arc :belly] p2)
+              (do
+                (swap! session assoc-in [:nodes idx :bez which] p2)
+                ;; c1 → snap to the start node's tangent (unless cusp); c2 free but
+                ;; re-snaps the next segment's c1 (its incoming tangent changed)
+                (swap! session update :nodes reconstrain-handles)))
             (refresh-preview!)))
 
         (:dragging s)
@@ -909,6 +1059,10 @@
         ;; toggle the selected node's incoming segment straight ↔ bezier curve
         (#{"c" "C"} key)
         (do (.preventDefault e) (.stopPropagation e) (toggle-bezier!))
+
+        ;; toggle the selected node's incoming segment straight ↔ circular arc
+        (#{"a" "A"} key)
+        (do (.preventDefault e) (.stopPropagation e) (toggle-arc!))
 
         ;; toggle the selected node smooth ↔ cusp (frees its outgoing handle)
         (#{"x" "X"} key)
