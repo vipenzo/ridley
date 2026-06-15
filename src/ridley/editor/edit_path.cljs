@@ -134,11 +134,18 @@
                          [ax ay] (node-pos (nth nodes (dec i)))]
                      [(- bx ax) (- by ay)]))))
 
+;; Smallest c1 handle length, as a fraction of the segment chord. A handle can't
+;; collapse onto the start node: a zero-length handle gives the cubic an undefined
+;; start tangent and clusters the tessellation points, which makes stroke-shape's
+;; offset self-overlap pathologically (pinches / stray faces on extrude).
+(def ^:private min-handle-frac 0.1)
+
 (defn- reconstrain-handles
   "Project each bezier segment's c1 onto its start node's incoming tangent (keeping
-   its length), so smooth nodes stay tangent-continuous. Cusp start nodes are left
-   free. Single pass — a node's incoming tangent depends on its c2/pos, not on the
-   c1's being constrained."
+   its length, with a small minimum so it never collapses onto the start node), so
+   smooth nodes stay tangent-continuous. Cusp start nodes are left free. Single
+   pass — a node's incoming tangent depends on its c2/pos, not on the c1's being
+   constrained."
   [nodes]
   (reduce
    (fn [ns i]
@@ -147,11 +154,15 @@
          (if (false? (:smooth? (nth ns a)))
            ns                                   ; cusp start node → c1 free
            (let [[ax ay] (node-pos (nth ns a))
+                 [bx by] (node-pos (nth ns i))
                  [c1x c1y] (:c1 (:bez (nth ns i)))
                  [tx ty] (incoming-tangent ns a)
+                 chord (js/Math.sqrt (+ (* (- bx ax) (- bx ax)) (* (- by ay) (- by ay))))
                  ;; length = projection of the (possibly free-dragged) c1 onto the
-                 ;; tangent, clamped ≥ 0, so the handle slides along the fixed line
-                 len (max 0 (+ (* (- c1x ax) tx) (* (- c1y ay) ty)))]
+                 ;; tangent, floored at a fraction of the chord so the handle slides
+                 ;; along the fixed line but never degenerates to the node itself
+                 len (max (* min-handle-frac chord)
+                          (+ (* (- c1x ax) tx) (* (- c1y ay) ty)))]
              (assoc-in ns [i :bez :c1] [(+ ax (* len tx)) (+ ay (* len ty))]))))
        ns))
    nodes
@@ -176,6 +187,20 @@
 ;; -- nodes → path commands / code ----------------------------------------
 
 (defn- th-cmd [ch to-dir] {:cmd :th :args [(signed-angle ch to-dir)]})
+
+(defn- pt->local
+  "Express 2D plane point P in the turtle-local [right up heading] frame at a bezier
+   start (position `from`, heading `ch`), as [a 0 c] for (bezier-to … :local). The
+   in-plane right is heading × up = [chy -chx]; up is out of plane → component 0.
+   Emitting the bezier relative to the start node keeps it attached when the path
+   that precedes it is edited (the curve follows the turtle), instead of detaching
+   like absolute control points do."
+  [from ch P]
+  (let [dx (- (first P) (first from)) dy (- (second P) (second from))
+        [hx hy] ch]
+    [(+ (* dx hy) (* dy (- hx)))    ; d · right = d · [hy -hx]
+     0
+     (+ (* dx hx) (* dy hy))]))     ; d · heading
 
 (defn- segment-cmds
   "Commands to reach `to` from `from` given current heading `ch`, leaving the
@@ -230,16 +255,18 @@
           (let [node (first remaining)
                 to (node-pos node)]
             (if-let [{:keys [c1 c2]} (:bez node)]
-              ;; Cubic bezier segment: explicit control points (absolute). Emits a
-              ;; compact (bezier-to …) that the standard macro re-tessellates; the
+              ;; Cubic bezier segment: control points emitted in the start node's
+              ;; local frame (:local) so the curve stays attached when the path
+              ;; before it is edited; the standard macro re-tessellates it. The
               ;; heading after is the end tangent (c2 → end).
               (let [end-tan (v2-norm [(- (first to) (first c2)) (- (second to) (second c2))])]
                 (recur end-tan to (rest remaining)
                        (-> out
                            (conj {:cmd :bezier-to
-                                  :args [[(first to) (second to) 0]
-                                         [(first c1) (second c1) 0]
-                                         [(first c2) (second c2) 0]]})
+                                  :args [(pt->local from ch to)
+                                         (pt->local from ch c1)
+                                         (pt->local from ch c2)
+                                         :local]})
                            (into (:tail node)))))
               (let [[cmds ch1] (segment-cmds ch from to (:heading node))]
                 (recur ch1 to (rest remaining)

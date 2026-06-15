@@ -67,11 +67,13 @@ plane, so `edit-path` works as a standalone polygon / region drawing tool. A
 - Type digits — set the step size (mm); `Backspace` edits the buffer.
 - `c` — toggle the selected node's **incoming segment** between a straight line and
   a **cubic bezier**. A bezier shows two control handles (small squares, to set them
-  apart from the round nodes); it bakes to a compact
-  `(bezier-to …)`. Handles are **directional**: the start handle (c1) stays tangent
-  to how the path arrives at the start node (you only set its length — it slides
-  along that line), so curves join smoothly; the end handle (c2) is free and sets
-  the entry direction into the next node.
+  apart from the round nodes); it bakes to a compact `(bezier-to … :local)`.
+  Handles are **directional**: the start handle (c1) stays tangent to how the path
+  arrives at the start node (you only set its length — it slides along that line),
+  so curves join smoothly; the end handle (c2) is free and sets the entry direction
+  into the next node. c1 has a minimum length (a fraction of the chord) so it never
+  collapses onto the node — a zero-length handle gives the cubic an undefined start
+  tangent and makes downstream `stroke-shape` self-overlap.
 - `x` — toggle the selected node **smooth ↔ cusp**. A cusp frees the node's
   **outgoing** handle (shown magenta) so the curve can leave at any angle.
 - `Insert` (or `i`) — insert a node at the **midpoint of the segment entering the
@@ -114,8 +116,14 @@ the photo region.
 
 - **Segment types.** A straight segment bakes to `f` / `rt` / `lt` / `th`+`f`; a
   **cubic bezier** segment (press `c` on the destination node) bakes to a compact
-  `(bezier-to …)`. Node positions and heading come from `f`, `th`, `set-heading`,
-  `rt`, `lt` and a leading `move-to`. (Per-segment **arcs** are still planned.)
+  `(bezier-to … :local)`. Node positions and heading come from `f`, `th`,
+  `set-heading`, `rt`, `lt` and a leading `move-to`. (Per-segment **arcs** are still
+  planned.)
+- **Beziers bake `:local`** — the control points are emitted in the start node's
+  turtle frame, so the curve stays attached if you later hand-edit the `f`/`th`
+  before it (the curve follows the turtle). Absolute control points would detach
+  when the preceding path moves. The baked geometry is identical to the on-screen
+  curve.
 - **`rt`/`lt`** are in-plane strafes (heading kept) and round-trip as `rt`/`lt`;
   a corner whose heading actually turns stays `(th …)(f …)`.
 - **Orientation is preserved** where it matters: the last (exit) node and marks
