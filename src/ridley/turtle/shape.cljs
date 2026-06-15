@@ -469,6 +469,14 @@
                            {:pos new-pos
                             :heading heading
                             :points (conj points new-pos)})
+                      ;; rt/lt are in-plane strafes (move along right/left of the
+                      ;; heading, which itself is unchanged). right = [hy -hx].
+                      :rt (let [d (first (:args cmd)) hx (first heading) hy (second heading)
+                                new-pos [(+ (first pos) (* hy d)) (- (second pos) (* hx d))]]
+                            {:pos new-pos :heading heading :points (conj points new-pos)})
+                      :lt (let [d (first (:args cmd)) hx (first heading) hy (second heading)
+                                new-pos [(- (first pos) (* hy d)) (+ (second pos) (* hx d))]]
+                            {:pos new-pos :heading heading :points (conj points new-pos)})
                       ;; A move-to repositions the pen without drawing a segment.
                       ;; The leading one is already the seed, so this is a no-op
                       ;; reposition that doesn't append a point.
@@ -558,6 +566,15 @@
                               (+ (second pos) (* hy dist))]]
                  {:pos new-pos :heading heading
                   :waypoints (conj waypoints {:pos new-pos :dir heading})})
+            ;; rt/lt: in-plane strafe (heading kept), right = [hy -hx]
+            :rt (let [d (first (:args cmd)) hx (first heading) hy (second heading)
+                      new-pos [(+ (first pos) (* hy d)) (- (second pos) (* hx d))]]
+                  {:pos new-pos :heading heading
+                   :waypoints (conj waypoints {:pos new-pos :dir heading})})
+            :lt (let [d (first (:args cmd)) hx (first heading) hy (second heading)
+                      new-pos [(- (first pos) (* hy d)) (+ (second pos) (* hx d))]]
+                  {:pos new-pos :heading heading
+                   :waypoints (conj waypoints {:pos new-pos :dir heading})})
             :move-to (let [t (first (:args cmd))]
                        {:pos [(first t) (second t)] :heading heading
                         :waypoints waypoints})

@@ -52,6 +52,7 @@
 (def ^:private node-color   0x2277ff) ; unselected node — blue
 (def ^:private sel-color    0xffdd00) ; selected node — yellow
 (def ^:private mark-color   0x00dd66) ; node carrying a mark / side-trip — green
+(def ^:private exit-color   0xff8800) ; last (exit) node — orange (defines exit heading)
 (def ^:private node-radius     1.25)  ; filled dot radius (plane units)
 (def ^:private node-radius-sel 2.0)   ; selected dot radius
 
@@ -82,11 +83,22 @@
 ;; ============================================================
 ;; Nodes ↔ path (the bake)
 ;; ============================================================
-;; A node is {:pos [px py] :tail [cmd …]}. :tail holds the record-only commands
-;; (mark, side-trip) that sit at this node, so they travel with it through
-;; insert / move / delete and are re-emitted on bake.
+;; A node is {:pos [px py] :heading [hx hy]|nil :tail [cmd …]}.
+;;  :heading — the desired turtle heading AT this node, or nil = follow geometry.
+;;             Kept for notable nodes (marks, the last/exit node) and strafes
+;;             (rt/lt), so orientation is preserved; nil for plain corners.
+;;  :tail    — record-only commands (mark, side-trip) issued at this node; they
+;;             travel with it through insert / move / delete and are re-emitted.
 
 (defn- node-pos [node] (:pos node))
+
+(defn- v2-norm [[x y]]
+  (let [m (js/Math.sqrt (+ (* x x) (* y y)))]
+    (if (> m 1e-9) [(/ x m) (/ y m)] [1 0])))
+(defn- v2-dot [[ax ay] [bx by]] (+ (* ax bx) (* ay by)))
+(defn- right-of [[hx hy]] [hy (- hx)])     ; turtle 'right' in the 2D trace frame
+(defn- left-of  [[hx hy]] [(- hy) hx])
+(defn- dir-eq? [a b] (> (v2-dot a b) 0.99995))
 
 (defn- signed-angle
   "Signed angle (degrees) turning from 2D unit dir a to dir b."
@@ -94,6 +106,10 @@
   (* (/ 180 js/Math.PI)
      (js/Math.atan2 (- (* ax by) (* ay bx))
                     (+ (* ax bx) (* ay by)))))
+
+(defn- rotate-dir [[hx hy] deg]
+  (let [r (* deg (/ js/Math.PI 180)) c (js/Math.cos r) s (js/Math.sin r)]
+    [(- (* hx c) (* hy s)) (+ (* hx s) (* hy c))]))
 
 ;; -- generic command serializer (for node tails and side-trip bodies) -----
 
@@ -113,30 +129,63 @@
 
 ;; -- nodes → path commands / code ----------------------------------------
 
+(defn- th-cmd [ch to-dir] {:cmd :th :args [(signed-angle ch to-dir)]})
+
+(defn- segment-cmds
+  "Commands to reach `to` from `from` given current heading `ch`, leaving the
+   turtle with heading `desired-h` (nil = face the movement). Returns
+   [cmds new-heading]. Uses (rt)/(lt) only for a true strafe — when the desired
+   heading is unchanged from `ch` and the move is perpendicular — otherwise faces
+   the movement with (th)(f) and adds a heading correction if `desired-h` differs."
+  [ch from to desired-h]
+  (let [dx (- (first to) (first from)) dy (- (second to) (second from))
+        dist (js/Math.sqrt (+ (* dx dx) (* dy dy)))]
+    (if (< dist 1e-9)
+      ;; no move: just a heading correction if asked
+      (if (and desired-h (not (dir-eq? ch desired-h)))
+        [[(th-cmd ch desired-h)] desired-h]
+        [[] ch])
+      (let [dir (v2-norm [dx dy])
+            keep? (and desired-h (dir-eq? desired-h ch))]  ; strafe / forward intent
+        (cond
+          (and keep? (dir-eq? dir ch))            [[{:cmd :f :args [dist]}] ch]
+          (and keep? (dir-eq? dir (right-of ch))) [[{:cmd :rt :args [dist]}] ch]
+          (and keep? (dir-eq? dir (left-of ch)))  [[{:cmd :lt :args [dist]}] ch]
+          :else
+          (let [base (if (dir-eq? dir ch)
+                       [{:cmd :f :args [dist]}]
+                       [(th-cmd ch dir) {:cmd :f :args [dist]}])
+                corr (when (and desired-h (not (dir-eq? dir desired-h)))
+                       (th-cmd dir desired-h))]
+            [(cond-> base corr (conj corr)) (if corr desired-h dir)]))))))
+
 (defn- nodes->commands
   "Path commands for the nodes: a leading move-to anchors the absolute start, then
-   relative th/f per segment, with each node's :tail (marks / side-trips) emitted
-   right after the move that reaches it."
+   per segment the minimal move (f / rt / lt / th+f) that reaches the next node and
+   leaves it with the node's heading, with each node's :tail emitted after it."
   [nodes]
   (if (empty? nodes)
     []
-    (loop [prev-dir [1 0]
-           from (node-pos (first nodes))
-           remaining (rest nodes)
-           out (into [{:cmd :move-to :args [from]}] (:tail (first nodes)))]
-      (if (empty? remaining)
-        out
-        (let [node (first remaining)
-              [tx ty] (node-pos node) [fx fy] from
-              dx (- tx fx) dy (- ty fy)
-              dist (js/Math.sqrt (+ (* dx dx) (* dy dy)))
-              dir (if (> dist 1e-9) [(/ dx dist) (/ dy dist)] prev-dir)
-              turn (signed-angle prev-dir dir)]
-          (recur dir [tx ty] (rest remaining)
-                 (-> out
-                     (conj {:cmd :th :args [turn]})
-                     (conj {:cmd :f :args [dist]})
-                     (into (:tail node)))))))))
+    (let [n0 (first nodes)
+          [sx sy] (node-pos n0)
+          ;; A leading move-to is only needed to anchor a start that isn't the
+          ;; origin; at the origin it's redundant (path-to-shape / run-path seed
+          ;; [0 0] there) so the bake stays clean.
+          at-origin? (and (< (js/Math.abs sx) 1e-6) (< (js/Math.abs sy) 1e-6))
+          [corr0 ch0] (segment-cmds [1 0] (node-pos n0) (node-pos n0) (:heading n0))]
+      (loop [ch ch0
+             from (node-pos n0)
+             remaining (rest nodes)
+             out (-> (if at-origin? [] [{:cmd :move-to :args [[sx sy]]}])
+                     (into corr0)
+                     (into (:tail n0)))]
+        (if (empty? remaining)
+          out
+          (let [node (first remaining)
+                to (node-pos node)
+                [cmds ch1] (segment-cmds ch from to (:heading node))]
+            (recur ch1 to (rest remaining)
+                   (-> out (into cmds) (into (:tail node))))))))))
 
 (defn- nodes->path
   "A path value from the current nodes — returned by request! so the downstream
@@ -146,25 +195,26 @@
 
 (defn- nodes->code
   "The replacement source: a complete (path (move-to …) (th …)(f …) …) form,
-   carrying any preserved marks / side-trips. The (edit-path …) marker is a
-   stand-in for this, so confirming swaps it in."
+   carrying preserved marks / side-trips and orientation. The (edit-path …) marker
+   is a stand-in for this, so confirming swaps it in."
   [nodes]
   (str "(path"
        (apply str (map #(str " " (cmd->code %)) (nodes->commands nodes)))
        ")"))
 
 (defn- seed->nodes
-  "Parse the seed path body into {:nodes [{:pos :tail} …] :dropped [cmd-kw …]}.
-   f/th/set-heading drive the 2D positions; mark/side-trip attach to the current
-   node's :tail; a leading move-to anchors the start. Throws on a non-leading
-   move-to (the node model can't express it). Unsupported commands (arcs, beziers,
-   rt/lt/u/tv/tr, …) are dropped and reported."
+  "Parse the seed path body into {:nodes [{:pos :heading :tail} …] :dropped […]}.
+   f/th/set-heading drive positions and heading; rt/lt are in-plane strafes
+   (heading kept); mark/side-trip attach to the current node's :tail; a leading
+   move-to anchors the start. The last node keeps its final (exit) heading. Throws
+   on a non-leading move-to. Unsupported commands (arcs, beziers, u/tv/tr, …) are
+   dropped and reported."
   [seed-path]
   (let [cmds (when (and (map? seed-path) (= :path (:type seed-path)))
                (:commands seed-path))]
     (cond
       (empty? cmds)
-      {:nodes (mapv (fn [p] {:pos p :tail []}) default-nodes) :dropped []}
+      {:nodes (mapv (fn [p] {:pos p :heading nil :tail []}) default-nodes) :dropped []}
 
       (some (fn [[i c]] (and (pos? i) (= :move-to (:cmd c))))
             (map-indexed vector cmds))
@@ -175,28 +225,32 @@
                       (if (= :move-to (:cmd c0))
                         (let [t (first (:args c0))] [(first t) (second t)])
                         [0 0]))
+            move (fn [st delta-dir d]
+                   (let [pos (:pos st) heading (:heading st)
+                         np [(+ (first pos) (* (first delta-dir) d))
+                             (+ (second pos) (* (second delta-dir) d))]]
+                     (-> st (assoc :pos np)
+                         (update :nodes conj {:pos np :heading heading :tail []}))))
             res (reduce
-                 (fn [{:keys [pos heading nodes] :as st} cmd]
+                 (fn [{:keys [heading nodes] :as st} cmd]
                    (case (:cmd cmd)
                      :move-to st                       ; leading one already used
-                     :f (let [d (first (:args cmd)) [hx hy] heading
-                              np [(+ (first pos) (* hx d)) (+ (second pos) (* hy d))]]
-                          (-> st (assoc :pos np) (update :nodes conj {:pos np :tail []})))
-                     :th (let [a (first (:args cmd)) r (* a (/ js/Math.PI 180))
-                               [hx hy] heading]
-                           (assoc st :heading
-                                  [(- (* hx (js/Math.cos r)) (* hy (js/Math.sin r)))
-                                   (+ (* hx (js/Math.sin r)) (* hy (js/Math.cos r)))]))
+                     :f  (move st heading (first (:args cmd)))
+                     :rt (move st (right-of heading) (first (:args cmd)))
+                     :lt (move st (left-of heading) (first (:args cmd)))
+                     :th (assoc st :heading (rotate-dir heading (first (:args cmd))))
                      :set-heading (let [[h _] (:args cmd)]
-                                    (assoc st :heading [(first h) (second h)]))
+                                    (assoc st :heading (v2-norm [(first h) (second h)])))
                      (:mark :side-trip)
                      (update-in st [:nodes (dec (count nodes)) :tail] conj cmd)
-                     ;; unsupported: drop (position may diverge), report it
                      (update st :dropped conj (:cmd cmd))))
                  {:pos [sx sy] :heading [1 0]
-                  :nodes [{:pos [sx sy] :tail []}] :dropped []}
-                 cmds)]
-        {:nodes (:nodes res) :dropped (vec (distinct (:dropped res)))}))))
+                  :nodes [{:pos [sx sy] :heading nil :tail []}] :dropped []}
+                 cmds)
+            ;; the last node keeps the final (exit) heading — captures trailing turns
+            nodes (let [ns (:nodes res)]
+                    (assoc-in ns [(dec (count ns)) :heading] (:heading res)))]
+        {:nodes nodes :dropped (vec (distinct (:dropped res)))}))))
 
 ;; ============================================================
 ;; Working plane (the turtle's stamp plane at the call site)
@@ -234,6 +288,7 @@
   []
   (when-let [{:keys [nodes selected pose]} @session]
     (let [basis (plane-basis pose)
+          normal (m/cross (:px basis) (:py basis))   ; working-plane normal (for the start ring)
           pts (mapv #(plane->world basis (node-pos %)) nodes)
           n (count pts)
           edges (when (>= n 2)
@@ -243,14 +298,22 @@
                     [{:from (last pts) :to (first pts) :color close-color}])
           segs (vec (concat edges closing))
           dots (mapv (fn [i pw]
-                       (let [marked? (seq (:tail (nth nodes i)))]
-                         {:pos pw
-                          :radius (if (= i selected) node-radius-sel node-radius)
-                          ;; selected wins for color; otherwise a marked node (mark
-                          ;; / side-trip — can't be deleted) shows green.
-                          :color  (cond (= i selected) sel-color
-                                        marked?        mark-color
-                                        :else          node-color)}))
+                       (let [marked? (seq (:tail (nth nodes i)))
+                             start?  (zero? i)
+                             exit?   (= i (dec n))]
+                         (cond-> {:pos pw
+                                  ;; Selection is shown by SIZE only, so the semantic
+                                  ;; colour stays visible while dragging.
+                                  :radius (if (= i selected) node-radius-sel node-radius)
+                                  ;; mark (green) > endpoints start/exit (orange) >
+                                  ;; selected (yellow) > plain (blue)
+                                  :color  (cond marked?            mark-color
+                                                (or start? exit?)  exit-color
+                                                (= i selected)     sel-color
+                                                :else              node-color)}
+                           ;; the start node is a ring (a dot with a hole) so it's
+                           ;; distinct from the solid exit dot
+                           start? (assoc :ring true :normal normal))))
                      (range n) pts)]
       ;; :on-top keeps the overlay visible over the (dimmed) image and the live
       ;; extruded result; dots are filled spheres so individual nodes read clearly.
@@ -344,12 +407,27 @@
   (refresh-preview!)
   (update-panel!))
 
+(defn- notable?
+  "A node whose orientation is preserved on move: it carries a mark/side-trip, or
+   it is the last (exit) node."
+  [nodes idx]
+  (or (seq (:tail (nth nodes idx)))
+      (= idx (dec (count nodes)))))
+
+(defn- node-moved!
+  "After moving node `idx`, drop its explicit heading unless it's notable, so a
+   plain corner follows the new geometry while marks / the exit node keep theirs."
+  [idx]
+  (when-not (notable? (:nodes @session) idx)
+    (swap! session assoc-in [:nodes idx :heading] nil)))
+
 (defn- nudge!
   "Move the selected node by sign·step along axis 0=x / 1=y."
   [axis sign]
   (let [s @session i (:selected s) step (:step s)]
     (when (and (seq (:nodes s)) (< i (count (:nodes s))))
       (swap! session update-in [:nodes i :pos axis] + (* sign step))
+      (node-moved! i)
       (refresh-preview!)
       (update-panel!))))
 
@@ -461,6 +539,7 @@
       (when-let [w (click-plane-point e s)]
         (swap! session assoc-in [:nodes (:dragging s) :pos]
                (world->plane (plane-basis (:pose s)) w))
+        (node-moved! (:dragging s))
         (refresh-preview!)))))
 
 (defn- on-pointer-up [^js e]
@@ -623,9 +702,9 @@
         (clear-orphan!)
         (when (nil? (find-marker))
           (throw (js/Error. (str "edit-path: cannot find '" marker-prefix " …)' in editor"))))
-        ;; mark/side-trip are preserved (attached to nodes); arcs, beziers and the
-        ;; in/out-of-plane moves (rt/lt/u/tv/tr) are not yet editable — warn that
-        ;; confirming drops them and replaces with straight segments.
+        ;; f/th/set-heading/rt/lt/mark/side-trip are handled; arcs, beziers and the
+        ;; out-of-plane moves (u/tv/tr) are not yet editable — warn that confirming
+        ;; drops them and replaces with straight segments.
         (when (seq dropped)
           (state/capture-println
            (str "edit-path: WARNING — body contains " dropped

@@ -3073,7 +3073,14 @@ Unlike `edit-bezier`, `edit-path` is **not** a persistent primitive. On confirm 
 
 `edit-path` does **not** need a reference image — clicks land on the turtle's working plane, so it works as a standalone polygon/region drawing tool. When a `set-image` board is present it makes a convenient tracing backdrop; while editing the image is **dimmed** and the overlay (red polyline, filled node dots) is drawn on top so it reads even over a light image. Measure/pick clicks are suppressed during the session.
 
-**Straight segments only (MVP), but marks/side-trips are preserved.** The snapshot drives node positions from `f` / `th` / `set-heading` and a leading `move-to`. `mark` and `side-trip` are **attached to the node** they sit at: such nodes render **green** and are **protected from deletion** (so their data — marks become mesh anchors — is never lost), and they are re-emitted on confirm. A non-leading `move-to` is **rejected with an error** (the node model can't express it). Everything else — arcs (`arc-h`/`arc-v`), beziers (`bezier-to`/`-anchor`/`-as`), out-of-plane `tv`/`tr`, `u`/`rt`/`lt` — is still **dropped** from the editable nodes and the baked output (confirming replaces them with straight lines); a warning lists what was dropped. So wrap straight-line paths (optionally with marks/side-trips) for now; per-segment arcs/beziers and `rt`/`lt` conversion are planned.
+**Straight segments (MVP), with marks/side-trips/orientation preserved.** Node positions and heading come from `f` / `th` / `set-heading` / `rt` / `lt` and a leading `move-to`:
+- `rt` / `lt` are in-plane strafes (heading unchanged) — they round-trip as `rt` / `lt`, and a re-baked corner whose heading actually turns stays `(th …)(f …)`.
+- Per-node **orientation is kept** where it matters: at the last (exit) node and at marks the heading is preserved (so a trailing turn / anchor orientation survives); plain corners follow the geometry. Moving a plain corner re-derives its heading; moving a mark or the exit node keeps it.
+- `mark` and `side-trip` **attach to their node**: those nodes render **green**, are **protected from deletion** (marks become mesh anchors — never lost), and are re-emitted on confirm.
+- A non-leading `move-to` is **rejected with an error**.
+- Arcs (`arc-h`/`arc-v`), beziers, and the out-of-plane moves (`u`/`tv`/`tr`) are still **dropped** (confirming replaces them with straight lines); a warning lists what was dropped.
+
+This is a temporary stage: a future revision will visualize/edit headings at notable points and add/edit/remove marks directly. Per-segment arcs/beziers and a 3D edit-path (for assembly paths) are planned.
 
 **On confirm**, the marker is rewritten to a plain path anchored at the first node:
 
@@ -3081,7 +3088,7 @@ Unlike `edit-bezier`, `edit-path` is **not** a persistent primitive. On confirm 
 (path (move-to [x0 y0]) (th a1) (f d1) (th a2) (f d2) …)
 ```
 
-The leading `(move-to [x0 y0])` makes [`path-to-shape`](#path-to-shape) seed the trace from the **absolute** start point (no spurious `[0 0]` vertex), so the traced shape lands in the same 2D frame as the board it was drawn over and the `shape-intersection` clip aligns. **Cancel** leaves the source unchanged.
+The leading `(move-to [x0 y0])` makes [`path-to-shape`](#path-to-shape) seed the trace from the **absolute** start point (no spurious `[0 0]` vertex), so the traced shape lands in the same 2D frame as the board it was drawn over and the `shape-intersection` clip aligns. It is emitted **only when the start isn't at the origin** — a path starting at the origin bakes as a plain `(path (f …) …)`. The start node is drawn as an orange **ring**, the exit node as a solid orange dot. **Cancel** leaves the source unchanged.
 
 Nodes are edited in the **turtle's stamp plane** at the call site (x-axis = `right` = heading × up, y-axis = `up`) — the same 2D frame the board uses. With the default pose that is the **YZ world plane**, so horizontal arrows move along world Y, vertical arrows along Z, and world X is never touched (the path stays on the image plane). Clicks raycast onto scene meshes and are projected onto that plane.
 

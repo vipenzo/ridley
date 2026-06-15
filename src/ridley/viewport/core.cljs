@@ -2235,16 +2235,27 @@
     (reset! preview-objects [])))
 
 (defn- create-dot-meshes
-  "A Group of small filled spheres (filled node markers), drawn on top so they read
-   over any background. dots: [{:pos [x y z] :radius r :color hex} …]."
+  "A Group of small node markers drawn on top so they read over any background.
+   dots: [{:pos [x y z] :radius r :color hex :ring bool :normal [x y z]} …].
+   :ring renders a torus (a dot with a hole) oriented in the plane whose normal
+   is :normal — used to mark the path's start node."
   [dots]
   (let [grp (THREE/Group.)]
-    (doseq [{:keys [pos radius color]} dots]
-      (let [geom (THREE/SphereGeometry. (or radius 1.5) 14 14)
+    (doseq [{:keys [pos radius color ring normal]} dots]
+      (let [r (or radius 1.5)
+            geom (if ring
+                   (THREE/TorusGeometry. r (* r 0.42) 8 18)
+                   (THREE/SphereGeometry. r 14 14))
             mat (THREE/MeshBasicMaterial. #js {:color (or color 0xffffff)
                                                :depthTest false})
             ^js m (THREE/Mesh. geom mat)]
         (.set (.-position m) (nth pos 0) (nth pos 1) (nth pos 2))
+        ;; orient the torus hole-axis (local +Z) along the plane normal so it
+        ;; reads as a ring when viewed face-on (the usual tracing view)
+        (when (and ring normal)
+          (.lookAt m (+ (nth pos 0) (nth normal 0))
+                   (+ (nth pos 1) (nth normal 1))
+                   (+ (nth pos 2) (nth normal 2))))
         (set! (.-renderOrder m) 1001)
         (.add grp m)))
     grp))

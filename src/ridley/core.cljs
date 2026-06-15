@@ -217,7 +217,14 @@
     (if-let [error (:error result)]
       (do
         (show-error error)
-        (audio/play-feedback! false))
+        (audio/play-feedback! false)
+        ;; A deferred modal session (edit-path / edit-bezier / pilot) claims the
+        ;; mutex (editor read-only) during eval and is only entered by the success
+        ;; branch below. If the eval errored, that never happens — tear the pending
+        ;; session down so the editor isn't left read-only with no panel/keys to
+        ;; escape.
+        (when (modal/requested?)
+          (modal/force-close-active!)))
       (do
         ;; Show library load warnings if any
         (let [lib-warnings @lib-core/load-warnings]

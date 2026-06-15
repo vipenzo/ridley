@@ -86,16 +86,27 @@ the photo region.
 
 ## Notes
 
-- **Straight segments only (MVP).** Node positions come from `f`, `th`,
-  `set-heading` and a leading `move-to`.
+- **Straight segments (MVP).** Node positions and heading come from `f`, `th`,
+  `set-heading`, `rt`, `lt` and a leading `move-to`.
+- **`rt`/`lt`** are in-plane strafes (heading kept) and round-trip as `rt`/`lt`;
+  a corner whose heading actually turns stays `(th …)(f …)`.
+- **Orientation is preserved** where it matters: the last (exit) node and marks
+  keep their heading; plain corners follow the geometry. Moving a plain corner
+  re-derives its heading; moving a mark or the exit node keeps it.
+- **Node colours** are semantic and stay visible even while selected (selection is
+  shown by a larger dot): **green** = carries a mark/side-trip (protected), **orange**
+  = an endpoint of the open path — the **start** node is an orange **ring** (a dot
+  with a hole), the **exit** node a solid orange dot — **yellow** = a plain selected
+  node, **blue** = plain.
+- The baked path only includes a leading `(move-to …)` when the start node isn't at
+  the origin; a path starting at the origin bakes as a plain `(path (f …) …)`.
 - **Marks & side-trips are preserved.** `mark` and `side-trip` attach to the node
-  they sit at: those nodes render **green** and are **protected from deletion**
-  (their data — marks become mesh anchors — is never lost), and they are re-emitted
-  on confirm.
+  they sit at: those nodes render **green**, are **protected from deletion** (marks
+  become mesh anchors — never lost), and are re-emitted on confirm.
 - A **non-leading `move-to` is rejected** with an error.
-- Everything else (`arc-h`/`arc-v`, `bezier-to`/`-anchor`/`-as`, out-of-plane
-  `tv`/`tr`, `u`/`rt`/`lt`) is **dropped** from the nodes and the baked output
-  (confirming replaces it with straight segments); a warning lists what was dropped.
+- Arcs (`arc-h`/`arc-v`), beziers, and out-of-plane `u`/`tv`/`tr` are **dropped**
+  from the nodes and the baked output (confirming replaces them with straight
+  segments); a warning lists what was dropped.
 - **Not a persistent primitive.** Confirm bakes a `(path …)`; re-running does not
   re-open editing. Rename `path` → `edit-path` to edit again.
 - **Modal session.** Like `tweak` / `edit-bezier` / `pilot`, one runs at a time and

@@ -1439,6 +1439,17 @@
                                  :heading (:heading s)
                                  :up (:up s)})
                 :side-trip (run-side-trip s (first args))
+                ;; A move-to with a coordinate vector sets the position directly —
+                ;; so mark resolution honors a leading move-to the same way
+                ;; path-to-shape / path-to-2d-waypoints do, keeping the anchors
+                ;; aligned with the geometry. (move-to to a mark keyword stays a
+                ;; no-op here; it is handled in attach context.)
+                :move-to (let [t (first args)]
+                           (if (and (sequential? t) (number? (first t)))
+                             (assoc s :position
+                                    [(first t) (second t)
+                                     (if (> (count t) 2) (nth t 2) (nth (:position s) 2 0))])
+                             s))
                 s))
             state
             (:commands path))
