@@ -360,13 +360,61 @@
        (apply str (map #(str " " (cmd->code %)) (nodes->commands nodes)))
        ")"))
 
+;; -- arc-run recovery (re-editing a baked arc) ---------------------------
+;; rec-arc-h* tessellates an arc into f/th steps, tagging the leading and trailing
+;; half-rotations with :arc-cap :lead / :trail. Those tags ride along in the path
+;; value's :commands, so we can find an arc run and collapse it back into ONE arc
+;; node (belly = a point sampled on the run, which fits the exact circle).
+
+(defn- in-plane-cmd?
+  "A command that keeps the trace in the working plane (recoverable as an arc node)."
+  [c]
+  (contains? #{:f :th :rt :lt} (:cmd c)))
+
+(defn- group-arc-runs
+  "Collapse each :arc-cap :lead … :arc-cap :trail run of in-plane commands into a
+   single {:cmd :arc-run :sub [...]} group. A run with any out-of-plane move is left
+   as-is (it falls through to the normal per-command handling / drop)."
+  [cmds]
+  (loop [cs cmds out []]
+    (if (empty? cs)
+      out
+      (let [c (first cs)]
+        (if (= :lead (:arc-cap c))
+          (let [[run more] (split-with #(not= :trail (:arc-cap %)) cs)
+                run (vec (concat run (take 1 more)))   ; include the :trail command
+                more (rest more)]
+            (if (and (>= (count run) 2) (every? in-plane-cmd? run))
+              (recur more (conj out {:cmd :arc-run :sub run}))
+              (recur more (into out run))))
+          (recur (rest cs) (conj out c)))))))
+
+(defn- walk-arc-sub
+  "Walk an arc run's in-plane sub-commands from [pos heading], collecting the f-step
+   points (inclusive of the start). Returns {:pts [...] :heading exit-heading}. The
+   points lie on the arc's circle, so any of them fits the exact arc (3-point)."
+  [pos heading sub]
+  (let [step (fn [{:keys [pos heading pts]} dir d]
+               (let [np [(+ (first pos) (* (first dir) d))
+                         (+ (second pos) (* (second dir) d))]]
+                 {:pos np :heading heading :pts (conj pts np)}))]
+    (reduce (fn [{:keys [heading] :as s} c]
+              (case (:cmd c)
+                :f  (step s heading (first (:args c)))
+                :rt (step s (right-of heading) (first (:args c)))
+                :lt (step s (left-of heading) (first (:args c)))
+                :th (assoc s :heading (rotate-dir heading (first (:args c))))
+                s))
+            {:pos pos :heading heading :pts [pos]}
+            sub)))
+
 (defn- seed->nodes
   "Parse the seed path body into {:nodes [{:pos :heading :tail} …] :dropped […]}.
    f/th/set-heading drive positions and heading; rt/lt are in-plane strafes
-   (heading kept); mark/side-trip attach to the current node's :tail; a leading
-   move-to anchors the start. The last node keeps its final (exit) heading. Throws
-   on a non-leading move-to. Unsupported commands (arcs, beziers, u/tv/tr, …) are
-   dropped and reported."
+   (heading kept); a baked arc run (:arc-cap-tagged f/th) is recovered as one arc
+   node; mark/side-trip attach to the current node's :tail; a leading move-to
+   anchors the start. The last node keeps its final (exit) heading. Throws on a
+   non-leading move-to. Unsupported commands (beziers, u/tv/tr, …) are dropped."
   [seed-path]
   (let [cmds (when (and (map? seed-path) (= :path (:type seed-path)))
                (:commands seed-path))]
@@ -399,12 +447,23 @@
                      :th (assoc st :heading (rotate-dir heading (first (:args cmd))))
                      :set-heading (let [[h _] (:args cmd)]
                                     (assoc st :heading (v2-norm [(first h) (second h)])))
+                     ;; a baked arc run → one arc node (belly sampled mid-run)
+                     :arc-run
+                     (let [w (walk-arc-sub (:pos st) heading (:sub cmd))
+                           pts (:pts w)
+                           end (last pts)
+                           belly (nth pts (quot (count pts) 2))]
+                       (-> st
+                           (assoc :pos end :heading (:heading w))
+                           (update :nodes conj
+                                   (cond-> {:pos end :heading nil :tail []}
+                                     (>= (count pts) 3) (assoc :arc {:belly belly})))))
                      (:mark :side-trip)
                      (update-in st [:nodes (dec (count nodes)) :tail] conj cmd)
                      (update st :dropped conj (:cmd cmd))))
                  {:pos [sx sy] :heading [1 0]
                   :nodes [{:pos [sx sy] :heading nil :tail []}] :dropped []}
-                 cmds)
+                 (group-arc-runs cmds))
             ;; the last node keeps the final (exit) heading — captures trailing turns
             nodes (let [ns (:nodes res)]
                     (assoc-in ns [(dec (count ns)) :heading] (:heading res)))]
