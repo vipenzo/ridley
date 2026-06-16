@@ -160,6 +160,7 @@
    'subpath-y       shape/subpath-y
    'reverse-path    shape/reverse-path
    'mirror-path     shape/mirror-path
+   'ensure-untwisted shape/ensure-untwisted
    'add-mark        turtle/add-mark
    'offset-x        shape/offset-x
    'fit             shape/fit

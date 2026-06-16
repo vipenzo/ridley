@@ -1153,6 +1153,73 @@
               (path-to-3d-waypoints path)))
       (path-to-2d-waypoints path))))
 
+;; -- rotation-minimizing frame (twist-free sweep) ------------------------------
+;; extrude/loft orient the swept section by the turtle's up, which on a NON-planar
+;; rail accumulates a roll (holonomy) and makes the tube "spiral". These rebuild a
+;; rail with a parallel-transported up so the frame is twist-free.
+
+(defn- rmf-rot
+  "Rotate v around unit axis by ang radians (Rodrigues)."
+  [v axis ang]
+  (let [c (Math/cos ang) s (Math/sin ang)]
+    (v3+ (v3* v c)
+         (v3+ (v3* (v3-cross axis v) s)
+              (v3* axis (* (v3-dot axis v) (- 1 c)))))))
+
+(defn- rmf-safe-up
+  "Up perpendicular to dir, from reference ref; never zero (switches reference when
+   ref ∥ dir, else a zero up would collapse the section frame)."
+  [dir ref]
+  (let [u (v3- ref (v3* dir (v3-dot ref dir)))]
+    (if (> (v3-mag u) 1e-6)
+      (v3-normalize u)
+      (let [alt (if (> (Math/abs (nth dir 2)) 0.9) [1 0 0] [0 0 1])]
+        (v3-normalize (v3- alt (v3* dir (v3-dot alt dir))))))))
+
+(defn- rmf-transport
+  "Parallel-transport up `u` from heading `h` to heading `d` (minimal rotation)."
+  [u h d]
+  (let [dt (max -1.0 (min 1.0 (v3-dot h d)))]
+    (if (> dt 0.999999)
+      u
+      (let [axis (v3-cross h d) am (v3-mag axis)]
+        (if (< am 1e-9)
+          (rmf-safe-up d u)
+          (rmf-rot u (v3* axis (/ 1.0 am)) (Math/acos dt)))))))
+
+(defn positions->rmf-commands
+  "set-heading + f commands tracing world `positions` (≥ 2 points) with a
+   rotation-minimizing (parallel-transport) up, shifted so the first point is the
+   origin (a relative rail). The swept frame is twist-free however the rail bends."
+  [positions]
+  (when (>= (count positions) 2)
+    (let [origin (first positions)]
+      (loop [cur [0 0 0] prev-dir nil up nil ps (rest positions) cmds []]
+        (if (empty? ps)
+          cmds
+          (let [tgt (v3- (first ps) origin) delta (v3- tgt cur) dist (v3-mag delta)]
+            (if (< dist 1e-6)
+              (recur cur prev-dir up (rest ps) cmds)
+              (let [dir (v3-normalize delta)
+                    up* (if prev-dir (rmf-transport up prev-dir dir) (rmf-safe-up dir [0 0 1]))]
+                (recur tgt dir up* (rest ps)
+                       (conj cmds {:cmd :set-heading :args [dir up*]} {:cmd :f :args [dist]}))))))))))
+
+(defn ^:export ensure-untwisted
+  "Re-frame a 3D rail for a twist-free sweep: keep the node positions, but rederive
+   the turtle up by parallel transport, so extrude/loft don't roll (spiral) the
+   section along a NON-planar rail. Positions come from the path's traced waypoints
+   (curves become their tessellated polyline). For a planar rail it's effectively a
+   no-op (the up was already twist-free). Call it by hand when a hand-written
+   non-planar rail's tube twists: (extrude prof (ensure-untwisted my-path))."
+  [path]
+  (if (and (map? path) (= :path (:type path)))
+    (let [pts (mapv :pos (path-to-3d-waypoints path))]
+      (if (>= (count pts) 2)
+        {:type :path :commands (positions->rmf-commands pts)}
+        path))
+    path))
+
 (defn- poses->path
   "Rebuild a path from a list of {:pos :up} poses. Shifts so the first pose sits
    at the origin (a relative path: following it continues from the current pose),
