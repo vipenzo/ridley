@@ -2322,6 +2322,19 @@
         (when (.intersectPlane ray plane target)
           [(.-x target) (.-y target) (.-z target)])))))
 
+(defn world->screen
+  "Project a world-group-local [x y z] point to canvas-relative screen pixels
+   [px py], or nil. Used for screen-space hit-testing of 3D nodes (so any visible
+   node can be grabbed regardless of the active editing plane)."
+  [[x y z]]
+  (when-let [{:keys [^js camera ^js world-group ^js canvas]} @state]
+    (let [v (THREE/Vector3. x y z)]
+      (.applyMatrix4 v (.-matrixWorld world-group))   ; local → world
+      (.project v camera)                              ; world → NDC
+      (let [rect (.getBoundingClientRect canvas)]
+        [(+ (.-left rect) (* (/ (+ (.-x v) 1) 2) (.-width rect)))
+         (+ (.-top rect) (* (/ (- 1 (.-y v)) 2) (.-height rect)))]))))
+
 (defn set-controls-enabled!
   "Enable/disable the orbit controls (edit-path disables them while dragging a node
    so the drag doesn't also rotate the view)."

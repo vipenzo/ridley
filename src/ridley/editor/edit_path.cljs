@@ -71,6 +71,9 @@
 ;; How close a click must be to a segment to insert a node there (split).
 ;; Generous: an imprecise click near the path still splits instead of missing.
 (def ^:private seg-threshold 16)
+;; 3D nodes are grabbed in SCREEN space (so any visible node can be picked
+;; regardless of the active plane): max click distance in pixels.
+(def ^:private node-px-snap 16)
 
 ;; ============================================================
 ;; Number formatting (shared style with edit-bezier)
@@ -725,16 +728,36 @@
 ;; Ephemeral geometry
 ;; ============================================================
 
+;; A faint grid drawn in the active working plane, centred on the selected node, so
+;; you can read the plane's orientation and gauge distances while editing in 3D.
+(def ^:private grid-color 0x3a4a66)
+(def ^:private grid-step  10)
+(def ^:private grid-half  60)
+
+(defn- plane-grid-lines
+  "Grid lines spanning the active plane (px,py) centred at `c`."
+  [{:keys [px py]} c]
+  (let [ks (range (- grid-half) (inc grid-half) grid-step)
+        seg (fn [u v k]
+              (let [a (m/v+ c (m/v+ (m/v* u k) (m/v* v (- grid-half))))
+                    b (m/v+ c (m/v+ (m/v* u k) (m/v* v grid-half)))]
+                {:from a :to b :color grid-color}))]
+    (vec (concat (map #(seg px py %) ks)
+                 (map #(seg py px %) ks)))))
+
 (defn- render-3d!
   "Redraw the 3D rail (straight-segment MVP): node positions in world space, drawn
    as rings oriented to the active working plane — the ring foreshortens to a line
-   when the plane is edge-on to the camera, signalling 'orbit to edit here'."
+   when the plane is edge-on to the camera, signalling 'orbit to edit here'. A faint
+   grid in the active plane (centred on the selected node) gives a spatial reference."
   [s]
   (let [{:keys [nodes selected]} s
         basis (active-basis s)
         normal (m/normalize (m/cross (:px basis) (:py basis)))
         pts (mapv #(node->world s %) nodes)
         n (count pts)
+        grid-c (if (and (seq pts) (< selected n)) (nth pts selected) (:origin basis))
+        grid-lines (plane-grid-lines basis grid-c)
         ;; a 3D path is an OPEN rail (extrude/loft trajectory) — no closing segment
         seg-lines (mapv (fn [i] {:from (nth pts (dec i)) :to (nth pts i) :color line-color})
                         (range 1 n))
@@ -748,7 +771,8 @@
                                           (= i selected)    sel-color
                                           :else             node-color)}))
                         (range n) pts)]
-    (viewport/show-preview! [{:type :lines :data (vec seg-lines) :on-top true}
+    (viewport/show-preview! [{:type :lines :data grid-lines}
+                             {:type :lines :data (vec seg-lines) :on-top true}
                              {:type :dots :data node-dots}])))
 
 (defn- render!
@@ -874,7 +898,12 @@
         (set! (.-textContent el)
               (str "nodes: " (count (:nodes s)) " · sel: " (:selected s)
                    (when (three-d? s)
-                     (str " · plane: " (name (:plane s :f)) " (f/r/u)")))))
+                     (let [sel (:selected s)
+                           p (some-> (:nodes s) (nth sel nil) :pos)
+                           r1 #(/ (js/Math.round (* % 10)) 10)]
+                       (str " · plane: " (name (:plane s :f)) " (f/r/u)"
+                            (when (and p (vector? p))
+                              (str " · [" (r1 (nth p 0)) " " (r1 (nth p 1)) " " (r1 (nth p 2)) "]"))))))))
       (when-let [el (.querySelector panel ".ep-step")]
         (let [buf (:digit-buffer s)]
           (set! (.-textContent el)
@@ -893,8 +922,9 @@
                "</div>"
                "<div class='pilot-commands'>"
                (if td?
-                 (str "click: add · drag node: move · Tab: next · f/r/u: plane · "
-                      "←→↑↓: move in plane · ⌘Z: undo · Del: delete · Enter: OK · Esc: cancel")
+                 (str "click: add · drag node: move · Shift+drag: axis-lock · Tab: next · "
+                      "f/r/u: plane · ←→↑↓: move in plane · ⌘Z: undo · Del: delete · "
+                      "Enter: OK · Esc: cancel")
                  (str "click: add · drag node/handle: move · Tab: next · c: curve · "
                       "a: arc · x: cusp · Ins/i: split · ←→↑↓: node · Shift+↑↓: c1 · Alt+↑↓: c2 · "
                       "⌘Z: undo · Del: delete · Enter: OK · Esc: cancel"))
@@ -1167,6 +1197,20 @@
             idx (apply min-key d2 (range (count nodes)))]
         [idx (d2 idx)]))))
 
+(defn- nearest-node-screen
+  "[idx d2-pixels] of the 3D node whose screen projection is closest to the pointer
+   event, or nil. Screen-space so a node at any depth (any editing plane) can be
+   grabbed if it's visible under the cursor."
+  [s ^js e]
+  (let [nodes (:nodes s)
+        mx (.-clientX e) my (.-clientY e)]
+    (when (seq nodes)
+      (let [d2 (fn [i] (if-let [[sx sy] (viewport/world->screen (:pos (nth nodes i)))]
+                         (let [dx (- sx mx) dy (- sy my)] (+ (* dx dx) (* dy dy)))
+                         js/Infinity))
+            idx (apply min-key d2 (range (count nodes)))]
+        [idx (d2 idx)]))))
+
 (defn- seg-closest
   "Closest point on segment a→b to p, with squared distance. {:point :d2}."
   [[ax ay] [bx by] [px py]]
@@ -1247,12 +1291,16 @@
           p2 (when w (world->plane basis w))
           two-d? (not (three-d? s))
           handle (when (and two-d? p2) (nearest-handle (:nodes s) p2))
-          [n-idx n-d2] (when p2 (nearest-node-d2 s p2))
+          ;; 3D grabs in screen space (pixels); 2D in plane units.
+          [n-idx n-d2] (if two-d?
+                         (when p2 (nearest-node-d2 s p2))
+                         (nearest-node-screen s e))
+          node-snap2 (if two-d? (* node-snap node-snap) (* node-px-snap node-px-snap))
           seg (when (and two-d? p2) (nearest-segment (:nodes s) p2))]
       (cond
         ;; Right on a node → grab it (wins over a nearby handle/segment, so moving a
         ;; node doesn't accidentally catch a control point).
-        (and n-idx (<= n-d2 (* node-snap node-snap)))
+        (and n-idx (<= n-d2 node-snap2))
         (grab-node! n-idx)
 
         ;; Otherwise a bezier control handle (when the click isn't on a node).
@@ -1296,7 +1344,17 @@
         (:dragging s)
         (when-let [w (click-plane-point e s)]
           (when-not (:drag-pushed? s) (push-undo!) (swap! session assoc :drag-pushed? true))
-          (move-node! (:dragging s) (world->stored s w))
+          ;; 3D Shift+drag → axis-lock: keep only the dominant in-plane axis of the
+          ;; move (relative to the drag anchor), so the node slides along one axis.
+          (let [w (if (and (three-d? s) (.-shiftKey e) (:drag-anchor s))
+                    (let [b (active-basis s)
+                          d (m/v- w (:drag-anchor s))
+                          da (m/dot d (:px b)) db (m/dot d (:py b))
+                          along-x? (>= (js/Math.abs da) (js/Math.abs db))]
+                      (m/v+ (:drag-anchor s)
+                            (m/v* (if along-x? (:px b) (:py b)) (if along-x? da db))))
+                    w)]
+            (move-node! (:dragging s) (world->stored s w)))
           (refresh-preview!))))))
 
 (defn- on-pointer-up [^js e]
