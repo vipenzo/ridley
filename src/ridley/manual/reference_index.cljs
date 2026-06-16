@@ -449,8 +449,8 @@
     :category "live-interactive"
     :status "stable"
     :since ""
-    :signature "(edit-path)\n(edit-path (move-to [x y]) (th a) (f d) …)"
-    :description "A **pen tool** for tracing a polyline interactively — draw over a reference image (see `set-image`) and clip the piece you need. `edit-path` wraps a path body and opens an interactive session from the **definitions panel** (Cmd+Enter), not the REPL."
+    :signature "(edit-path-2d)\n(edit-path-2d (move-to [a b]) (tv α) (f d) …)\nedit-path"
+    :description "A **pen tool** for tracing a planar polyline interactively — draw over a reference image (see `set-image`) and clip the piece you need. `edit-path-2d` wraps a [`path-2d`](#path-2d) body and opens an interactive session from the **definitions panel** (Cmd+Enter), not the REPL. Its result is a `:2d` path that lives in the `(right,up)` plane, so it reads un-rotated and feeds `path-to-shape` / `stroke-shape` directly."
     :path "docs/manual/reference/en/edit-path.md"}
 
    "embroid"

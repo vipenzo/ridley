@@ -9,30 +9,35 @@ status: stable
 
 ## Signature
 
-`(edit-path)`
-`(edit-path (move-to [x y]) (th a) (f d) …)`
+`(edit-path-2d)`
+`(edit-path-2d (move-to [a b]) (tv α) (f d) …)`
+
+(`edit-path` is a **temporary** alias of `edit-path-2d` — the bare `edit-path`
+name is reserved for the future 3D path editor.)
 
 ## Description
 
-A **pen tool** for tracing a polyline interactively — draw over a reference image
-(see `set-image`) and clip the piece you need. `edit-path` wraps a path body and
-opens an interactive session from the **definitions panel** (Cmd+Enter), not the
-REPL.
+A **pen tool** for tracing a planar polyline interactively — draw over a reference
+image (see `set-image`) and clip the piece you need. `edit-path-2d` wraps a
+[`path-2d`](#path-2d) body and opens an interactive session from the **definitions
+panel** (Cmd+Enter), not the REPL. Its result is a `:2d` path that lives in the
+`(right,up)` plane, so it reads un-rotated and feeds `path-to-shape` /
+`stroke-shape` directly.
 
-Unlike `edit-bezier`, `edit-path` is **not** a persistent primitive. On confirm it
-rewrites its `(edit-path …)` marker to a plain `(path …)`, so re-running the script
-does **not** re-enter editing. To edit an existing path again, **rename
-`path` → `edit-path`**: the editor reads the body's nodes back (a leading `move-to`
-is honored, and baked `arc-h` / `bezier-to` curves are recovered as curve nodes —
-see Notes).
+Unlike `edit-bezier`, `edit-path-2d` is **not** a persistent primitive. On confirm
+it rewrites its `(edit-path-2d …)` marker to a `(path-2d (move-to …) (tv …)(f …) …)`,
+so re-running the script does **not** re-enter editing. To edit an existing path
+again, **rename `path-2d` → `edit-path-2d`**: the editor normalizes the body via
+`ensure-path-2d` and reads its nodes back (a leading `move-to` is honored, and baked
+`arc-v` / `bezier-to` curves are recovered as curve nodes — see Notes).
 
-Empty `(edit-path)` starts from a small triangle so the downstream is valid and
+Empty `(edit-path-2d)` starts from a small triangle so the downstream is valid and
 there is something to drag; click to add your own nodes and delete the rest.
 
-The baked path is anchored with a leading `(move-to [x0 y0])`, so `path-to-shape`
+The baked path is anchored with a leading `(move-to [a0 b0])`, so `path-to-shape`
 seeds the trace from the **absolute** start point (no spurious `[0 0]` vertex) and
 the traced shape lands in the same 2D frame as the board it was drawn over —
-`(shape-intersection board (path-to-shape (edit-path …)))` clips correctly.
+`(shape-intersection board (path-to-shape (edit-path-2d …)))` clips correctly.
 
 Nodes are edited in the **turtle's stamp plane** at the call site (x-axis =
 `right` = heading × up, y-axis = `up`) — the same 2D frame the board uses. With the

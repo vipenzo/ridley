@@ -3078,19 +3078,19 @@ The vectors are expressed in P0's local `[right up heading]` frame (see the `:lo
 
 ### Edit Path
 
-`edit-path` is a **pen tool** for tracing a polyline over a reference image (see [`set-image`](#set-image)) and clipping the piece you need. It wraps a path body and opens an interactive session from the **definitions panel** (Cmd+Enter):
+`edit-path-2d` is a **pen tool** for tracing a planar polyline over a reference image (see [`set-image`](#set-image)) and clipping the piece you need. It wraps a [`path-2d`](#planar-paths-path-2d) body and opens an interactive session from the **definitions panel** (Cmd+Enter). Its result is a `:2d` path, so it feeds `path-to-shape` / `stroke-shape` directly. (`edit-path` is a **temporary** alias — that bare name is reserved for the future 3D path editor.)
 
 ```clojure
 ;; Trace a region over a stamped board image, then clip it out:
 (register cut
   (extrude (shape-intersection board
-                               (path-to-shape (edit-path)))   ; ← trace, then clip
+                               (path-to-shape (edit-path-2d)))   ; ← trace, then clip
            (f 4)))
 ```
 
-Unlike `edit-bezier`, `edit-path` is **not** a persistent primitive. On confirm it rewrites its `(edit-path …)` marker to a plain `(path …)`, so re-running the script does **not** re-enter editing. To edit an existing path again, **rename `path` → `edit-path`** — the editor reads the body's nodes back (a leading `move-to` is honored, see below).
+Unlike `edit-bezier`, `edit-path-2d` is **not** a persistent primitive. On confirm it rewrites its `(edit-path-2d …)` marker to a `(path-2d …)`, so re-running the script does **not** re-enter editing. To edit an existing path again, **rename `path-2d` → `edit-path-2d`** — the editor normalizes the seed via `ensure-path-2d` and reads its nodes back (a leading `move-to` is honored, and baked `arc-v` / `bezier-to` curves are recovered as curve nodes, see below).
 
-**Workflow.** Open `(edit-path)` (empty → a small starting triangle), then:
+**Workflow.** Open `(edit-path-2d)` (empty → a small starting triangle), then:
 - **Click a segment** to insert a point there (split it); **click elsewhere** to append a point at the end; **drag a node** to move it. Orbiting still works — only grabbing a node, handle or segment suppresses it for that drag.
 - Press **`c`** to toggle the selected node's **incoming segment** between a straight line and a **cubic bezier**; it bakes to a compact `(bezier-to …)`. The handles are **directional**: the start handle stays tangent to how the path arrives at the start node (length only — it slides along that line, so curves join smoothly), and the end handle is free, setting the entry direction into the next node. Press **`x`** to toggle a node **smooth ↔ cusp** (a cusp frees its outgoing handle, shown magenta, for a sharp corner). (Per-segment arcs are still planned.)
 - `Tab` cycles the selected node; **arrows** nudge it; type digits to set the step (mm).
@@ -3099,22 +3099,22 @@ Unlike `edit-bezier`, `edit-path` is **not** a persistent primitive. On confirm 
 
 `edit-path` does **not** need a reference image — clicks land on the turtle's working plane, so it works as a standalone polygon/region drawing tool. When a `set-image` board is present it makes a convenient tracing backdrop; while editing the image is **dimmed** and the overlay (red polyline, filled node dots) is drawn on top so it reads even over a light image. Measure/pick clicks are suppressed during the session.
 
-**Straight segments (MVP), with marks/side-trips/orientation preserved.** Node positions and heading come from `f` / `th` / `set-heading` / `rt` / `lt` and a leading `move-to`:
-- `rt` / `lt` are in-plane strafes (heading unchanged) — they round-trip as `rt` / `lt`, and a re-baked corner whose heading actually turns stays `(th …)(f …)`.
+**Marks/side-trips/orientation preserved.** Node positions and heading come from `f` / `th`(→`tv`) / `set-heading` and a leading `move-to`:
+- Strafes and turns bake as `(tv …)(f …)`: in the `(right,up)` plane the turtle's `right` is the plane normal, so native `rt`/`lt` would leave the plane — a perpendicular strafe bakes as `(tv ±90)(f)(tv ∓90)` instead, keeping the trace planar.
 - Per-node **orientation is kept** where it matters: at the last (exit) node and at marks the heading is preserved (so a trailing turn / anchor orientation survives); plain corners follow the geometry. Moving a plain corner re-derives its heading; moving a mark or the exit node keeps it.
 - `mark` and `side-trip` **attach to their node**: those nodes render **green**, are **protected from deletion** (marks become mesh anchors — never lost), and are re-emitted on confirm.
 - A non-leading `move-to` is **rejected with an error**.
-- Arcs (`arc-h`/`arc-v`), beziers, and the out-of-plane moves (`u`/`tv`/`tr`) are still **dropped** (confirming replaces them with straight lines); a warning lists what was dropped.
+- Re-opening a baked path recovers arcs (`arc-v`) and beziers (`bezier-to`) as curve nodes; out-of-plane `:3d` moves (`u`/`tr`) on a legacy path degrade to straight segments (a warning lists what was dropped).
 
-This is a temporary stage: a future revision will visualize/edit headings at notable points and add/edit/remove marks directly. Per-segment arcs/beziers and a 3D edit-path (for assembly paths) are planned.
+A future revision will visualize/edit headings at notable points and add/edit/remove marks directly; a 3D edit-path (for assembly rails) is planned.
 
-**On confirm**, the marker is rewritten to a plain path anchored at the first node:
+**On confirm**, the marker is rewritten to a `path-2d` anchored at the first node:
 
 ```clojure
-(path (move-to [x0 y0]) (th a1) (f d1) (th a2) (f d2) …)
+(path-2d (move-to [a0 b0]) (tv a1) (f d1) (tv a2) (f d2) …)
 ```
 
-The leading `(move-to [x0 y0])` makes [`path-to-shape`](#path-to-shape) seed the trace from the **absolute** start point (no spurious `[0 0]` vertex), so the traced shape lands in the same 2D frame as the board it was drawn over and the `shape-intersection` clip aligns. It is emitted **only when the start isn't at the origin** — a path starting at the origin bakes as a plain `(path (f …) …)`. The start node is drawn as an orange **ring**, the exit node as a solid orange dot. **Cancel** leaves the source unchanged.
+The leading `(move-to [a0 b0])` makes [`path-to-shape`](#path-to-shape) (via `ensure-path-2d`) seed the trace from the **absolute** start point (no spurious `[0 0]` vertex), so the traced shape lands in the same 2D frame as the board it was drawn over and the `shape-intersection` clip aligns. It is emitted **only when the start isn't at the origin** — a path starting at the origin bakes as `(path-2d (f …) …)`. The start node is drawn as an orange **ring**, the exit node as a solid orange dot. **Cancel** leaves the source unchanged.
 
 Nodes are edited in the **turtle's stamp plane** at the call site (x-axis = `right` = heading × up, y-axis = `up`) — the same 2D frame the board uses. With the default pose that is the **YZ world plane**, so horizontal arrows move along world Y, vertical arrows along Z, and world X is never touched (the path stays on the image plane). Clicks raycast onto scene meshes and are projected onto that plane.
 

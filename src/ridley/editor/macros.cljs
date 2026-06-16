@@ -2150,18 +2150,26 @@
                  (conj (edit-bezier-request! ~shape? ~wf? ~provided) :local)))))
 
    ;; ============================================================
-   ;; edit-path — interactive polyline tracing (pen tool)
+   ;; edit-path-2d — interactive planar polyline tracing (pen tool)
    ;; ============================================================
 
-   ;; (edit-path) / (edit-path (move-to [x y]) (th a) (f d) …)
-   ;; Wraps a path body. Opens a session to add nodes (click on the image), move
-   ;; the selected node (arrows) and delete it (Del); on confirm the whole
-   ;; (edit-path …) marker is rewritten to a plain (path (move-to …) (th …)(f …) …),
-   ;; so re-running does NOT re-enter editing (rename path→edit-path to edit again).
-   ;; Expands to (edit-path-request! (path …)), which returns a path value so a
-   ;; surrounding (path-to-shape …) runs during the eval.
+   ;; (edit-path-2d) / (edit-path-2d (move-to [a b]) (tv a) (f d) …)
+   ;; Wraps a PLANAR path body. Opens a session to add nodes (click on the image),
+   ;; move the selected node (arrows) and delete it (Del); on confirm the whole
+   ;; (edit-path-2d …) marker is rewritten to a (path-2d (move-to …) (tv …)(f …) …),
+   ;; so re-running does NOT re-enter editing (rename path-2d→edit-path-2d to edit
+   ;; again). Expands to (edit-path-request! (path-2d …)) — the body is interpreted
+   ;; in the (right,up) plane so the trace and the resulting shape coincide; the
+   ;; editor normalizes the :2d seed back to plane coords via ensure-path-2d /
+   ;; project-2d-to-xy. Returns a path value so a surrounding (path-to-shape …) runs.
+   (defmacro edit-path-2d [& body]
+     `(edit-path-request! (path-2d ~@body)))
+
+   ;; edit-path — TEMPORARY alias of edit-path-2d. The bare `edit-path` name is
+   ;; reserved for the future 3D path editor; until that lands it forwards to the
+   ;; planar editor so existing scripts keep working.
    (defmacro edit-path [& body]
-     `(edit-path-request! (path ~@body)))
+     `(edit-path-request! (path-2d ~@body)))
 
    ;; set-creation-pose!: move the origin/grip of a registered mesh
    ;; without moving its geometry. The turtle commands define the new pose.

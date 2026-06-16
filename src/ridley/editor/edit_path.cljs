@@ -272,8 +272,9 @@
             keep? (and desired-h (dir-eq? desired-h ch))]  ; strafe / forward intent
         (cond
           (and keep? (dir-eq? dir ch))            [[{:cmd :f :args [dist]}] ch]
-          (and keep? (dir-eq? dir (right-of ch))) [[{:cmd :rt :args [dist]}] ch]
-          (and keep? (dir-eq? dir (left-of ch)))  [[{:cmd :lt :args [dist]}] ch]
+          ;; A perpendicular strafe bakes as (th ±90)(f)(th ∓90) rather than rt/lt:
+          ;; in the path-2d frame the turtle's right is the plane normal, so native
+          ;; rt/lt would leave the plane — th+f keeps the bake genuinely planar.
           :else
           (let [base (if (dir-eq? dir ch)
                        [{:cmd :f :args [dist]}]
@@ -351,13 +352,41 @@
   [nodes]
   {:type :path :commands (nodes->commands nodes)})
 
+(declare cmd->code-2d)
+
+(defn- bez-local->2d
+  "Rewrite a bezier-to :local control point for a path-2d bake. The editor frames
+   it as [a 0 c] (a along the in-plane right of the (a,b) frame, c along heading),
+   but in path-2d's frame the in-plane perpendicular is up, not right (right is the
+   plane normal), and that up points opposite the editor's right — so the
+   perpendicular component moves to the up slot, negated: [a 0 c] → [0 -a c]."
+  [[a _ c]]
+  [0 (- a) c])
+
+(defn- cmd->code-2d
+  "Serialize a command for a (path-2d …) bake. The trace lives in the (right,up)
+   plane, where the in-plane turn is tv and the in-plane arc is arc-v, so map
+   th→tv and arc-h→arc-v — emitting the natural planar names for readability (the
+   path-2d macro also aliases th/arc-h, so either reads the same). bezier-to :local
+   control points are re-framed into path-2d's local frame."
+  [{:keys [cmd args] :as c}]
+  (case cmd
+    :th    (cmd->code (assoc c :cmd :tv))
+    :arc-h (cmd->code (assoc c :cmd :arc-v))
+    :bezier-to (if (= :local (last args))
+                 (cmd->code (assoc c :args (conj (mapv bez-local->2d (butlast args)) :local)))
+                 (cmd->code c))
+    :side-trip (str "(side-trip "
+                    (str/join " " (map cmd->code-2d (:commands (first args)))) ")")
+    (cmd->code c)))
+
 (defn- nodes->code
-  "The replacement source: a complete (path (move-to …) (th …)(f …) …) form,
-   carrying preserved marks / side-trips and orientation. The (edit-path …) marker
-   is a stand-in for this, so confirming swaps it in."
+  "The replacement source: a complete (path-2d (move-to …) (tv …)(f …) …) form,
+   carrying preserved marks / side-trips and orientation. The (edit-path-2d …)
+   marker is a stand-in for this, so confirming swaps it in."
   [nodes]
-  (str "(path"
-       (apply str (map #(str " " (cmd->code %)) (nodes->commands nodes)))
+  (str "(path-2d"
+       (apply str (map #(str " " (cmd->code-2d %)) (nodes->commands nodes)))
        ")"))
 
 ;; -- arc-run recovery (re-editing a baked arc) ---------------------------
@@ -488,6 +517,49 @@
             nodes (let [ns (:nodes res)]
                     (assoc-in ns [(dec (count ns)) :heading] (:heading res)))]
         {:nodes nodes :dropped (vec (distinct (:dropped res)))}))))
+
+(defn- project-2d-to-xy
+  "Normalize a :2d path value (its commands trace the (right,up) plane) into an
+   (a,b)-plane path that seed->nodes can read — the inverse of the path-2d macro +
+   nodes->code bake. Drops the leading (th -90) seed, maps tv→th / arc-v→arc-h, and
+   projects every 3D coordinate (set-heading directions and the :pure bezier rider's
+   c1/c2/end) onto shape coords (a,b) = (-y, z). The :arc-cap / :pure rider tags ride
+   along so arc and bezier recovery keep working on a re-opened :2d path.
+
+   A :3d path is returned unchanged (its commands are already in (a,b) = (x,y))."
+  [path]
+  (if-not (= :2d (:species path))
+    path
+    (let [cmds (:commands path)
+          ;; drop the leading seed the path-2d macro prepends ((th -90))
+          cmds (if (and (= :th (:cmd (first cmds)))
+                        (= -90 (first (:args (first cmds)))))
+                 (rest cmds)
+                 cmds)
+          ;; A leading (move-to [a b]) anchors the start; seed->nodes traces the
+          ;; straight/arc nodes from there, but a bezier's :pure rider carries
+          ;; origin-frame coords (the recorder doesn't apply move-to while
+          ;; recording), so offset those by the anchor to land in the same frame.
+          mv (some (fn [{:keys [cmd args]}] (when (= :move-to cmd) (first args))) cmds)
+          ox (if mv (first mv) 0)
+          oy (if mv (second mv) 0)
+          proj-pt (fn [p] [(- (nth p 1)) (nth p 2)])              ; [x y z] → [-y z]
+          proj-pt+off (fn [p] (let [[a b] (proj-pt p)] [(+ a ox) (+ b oy)]))
+          conv (fn conv [{:keys [cmd args] :as c}]
+                 (case cmd
+                   :tv          (assoc c :cmd :th)
+                   :arc-v       (assoc c :cmd :arc-h)
+                   :set-heading (assoc c :args [(proj-pt (first args))])
+                   :side-trip   (assoc c :args [(update (first args) :commands #(mapv conv %))])
+                   c))
+          proj-rider (fn [c]
+                       (if-let [pure (:pure c)]
+                         (assoc c :pure (-> pure
+                                            (update :c1 proj-pt+off)
+                                            (update :c2 proj-pt+off)
+                                            (update :end proj-pt+off)))
+                         c))]
+      {:type :path :commands (mapv (comp proj-rider conv) cmds)})))
 
 ;; ============================================================
 ;; Working plane (the turtle's stamp plane at the call site)
@@ -646,7 +718,7 @@
   (let [panel (.createElement js/document "div")]
     (set! (.-id panel) "edit-path-panel")
     (set! (.-innerHTML panel)
-          (str "<div class='pilot-header'>edit-path"
+          (str "<div class='pilot-header'>edit-path-2d"
                "<span class='pilot-mode-badge'>polyline</span></div>"
                "<div class='pilot-controls'>"
                "<span class='ep-info'>nodes: 0 · sel: 0</span>"
@@ -1220,7 +1292,7 @@
    so the surrounding (path-to-shape …) runs during the eval. Script-mode only —
    from the REPL it just returns the path with a hint, like edit-bezier."
   [seed-path]
-  (let [{:keys [nodes dropped]} (seed->nodes seed-path)]
+  (let [{:keys [nodes dropped]} (seed->nodes (project-2d-to-xy seed-path))]
     (cond
       (modal/consume-skip!)
       (nodes->path nodes)
@@ -1280,7 +1352,7 @@
     (update-panel!)
     (live-reeval!)
     (state/capture-println
-     (str "edit-path: click to add nodes, drag a node to move it, Tab cycles, "
+     (str "edit-path-2d: click to add nodes, drag a node to move it, Tab cycles, "
           "arrows nudge, Del deletes, Enter to confirm, Esc to cancel"))))
 
 ;; ============================================================

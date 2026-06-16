@@ -1132,11 +1132,18 @@
   [path]
   (when (and (map? path) (= :path (:type path)))
     (if (= :2d (:species path))
-      (mapv (fn [{:keys [pos heading]}]
-              (let [[_ y z] pos
-                    [_ hy hz] heading]
-                {:pos [(- y) z] :dir [(- hy) hz]}))
-            (path-to-3d-waypoints path))
+      ;; A leading (move-to [a b]) anchors the start in shape coords. The 3D
+      ;; trace ignores move-to (path-to-3d-waypoints has no such case), so the
+      ;; trace is relative to the origin; offset the projected points by (a,b).
+      (let [mv (some (fn [{:keys [cmd args]}] (when (= :move-to cmd) (first args)))
+                     (:commands path))
+            ox (if mv (first mv) 0)
+            oy (if mv (second mv) 0)]
+        (mapv (fn [{:keys [pos heading]}]
+                (let [[_ y z] pos
+                      [_ hy hz] heading]
+                  {:pos [(+ (- y) ox) (+ z oy)] :dir [(- hy) hz]}))
+              (path-to-3d-waypoints path)))
       (path-to-2d-waypoints path))))
 
 (defn- poses->path
