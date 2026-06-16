@@ -909,8 +909,8 @@
                "<div class='pilot-commands'>"
                (if td?
                  (str "click: add · drag node: move · Shift+drag: axis-lock · Tab: next · "
-                      "f/r/u: plane · ←→↑↓: move in plane · ⌘Z: undo · Del: delete · "
-                      "Enter: OK · Esc: cancel")
+                      "Ins/i: split · f/r/u: plane · ←→↑↓: move in plane · ⌘Z: undo · "
+                      "Del: delete · Enter: OK · Esc: cancel")
                  (str "click: add · drag node/handle: move · Tab: next · c: curve · "
                       "a: arc · x: cusp · Ins/i: split · ←→↑↓: node · Shift+↑↓: c1 · Alt+↑↓: c2 · "
                       "⌘Z: undo · Del: delete · Enter: OK · Esc: cancel"))
@@ -1005,6 +1005,7 @@
   (update-panel!))
 
 (defn- mid2 [[ax ay] [bx by]] [(/ (+ ax bx) 2) (/ (+ ay by) 2)])
+(defn- midv "Midpoint of two vectors of any dimension." [a b] (mapv #(/ (+ %1 %2) 2) a b))
 
 (defn- split-segment!
   "Insert a node at the midpoint of the segment ENTERING the selected node (between
@@ -1019,7 +1020,17 @@
    only two nodes there is no closing loop, so the single segment is split."
   []
   (let [s @session nodes (:nodes s) sel (:selected s) n (count nodes)]
-    (when (>= n 2)
+    (cond
+      ;; 3D: open rail, straight only — split the incoming segment at its 3D
+      ;; midpoint. Node 0 is the pinned anchor, so there's nothing before it.
+      (three-d? s)
+      (when (and (>= sel 1) (< sel n))
+        (push-undo!)
+        (insert-node! sel (midv (node-pos (nth nodes (dec sel))) (node-pos (nth nodes sel)))))
+
+      (< n 2) nil
+
+      :else
       (if (and (zero? sel) (>= n 3))
         ;; closing segment is straight → append the chord midpoint (append-node!
         ;; pushes undo and selects the new node).
@@ -1552,12 +1563,10 @@
         (#{"Delete"} key)
         (do (.preventDefault e) (.stopPropagation e) (delete-node!))
 
-        ;; Insert a node at the midpoint of the segment entering the selected node.
-        ;; Match by .-key, by .-code (PC keyboards send code "Insert" regardless of
-        ;; the produced key), and the Mac "Help" key; "i" is the laptop alias.
-        ;; (2D only for now — 3D split comes with the curve phase.)
-        (and (not (three-d? @session))
-             (or (#{"Insert" "Help" "i" "I"} key) (= (.-code e) "Insert")))
+        ;; Insert a node at the midpoint of the segment entering the selected node
+        ;; (2D and 3D). Match by .-key, by .-code (PC keyboards send code "Insert"
+        ;; regardless of the produced key), and the Mac "Help" key; "i" is the alias.
+        (or (#{"Insert" "Help" "i" "I"} key) (= (.-code e) "Insert"))
         (do (.preventDefault e) (.stopPropagation e) (split-segment!))
 
         ;; toggle the selected node's incoming segment straight ↔ bezier curve (2D)

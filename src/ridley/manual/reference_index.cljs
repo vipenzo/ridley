@@ -480,6 +480,15 @@
     :description "Return `mesh` unchanged if it already carries `:face-groups`; otherwise compute groups via `auto-face-groups` and assoc them. Pure function; returns a (possibly new) mesh value."
     :path "docs/manual/reference/en/ensure-face-groups.md"}
 
+   "ensure-untwisted"
+   {:name "ensure-untwisted"
+    :category "path"
+    :status "stable"
+    :since ""
+    :signature "(ensure-untwisted path)"
+    :description "Re-frame a 3D rail so a sweep along it does **not twist**. The node positions are kept exactly; only the turtle's `up` is recomputed, by **parallel transport** (a rotation-minimizing frame), and the rail is rebuilt as `(set-heading …)(f …)` per segment."
+    :path "docs/manual/reference/en/ensure-untwisted.md"}
+
    "export"
    {:name "export"
     :category "export"
@@ -1892,6 +1901,15 @@
     :signature "(selected)\n(selected-mesh)\n(selected-face)\n(selected-name)\n(source-of mesh-name)\n(origin-of mesh-name)\n(last-op mesh-name)"
     :description "Seven REPL-callable helpers that expose the viewport's **picking state** — the currently selected mesh, the drilled face, and the construction history captured by `register`. Useful for live introspection while you click around the viewport, and as the data source for AI describe and custom debug overlays."
     :path "docs/manual/reference/en/picking.md"}
+
+   "set-heading"
+   {:name "set-heading"
+    :category "turtle-movement"
+    :status "stable"
+    :since ""
+    :signature "(set-heading [hx hy hz] [ux uy uz])"
+    :description "Set the turtle's frame **absolutely** inside a `(path …)`: `heading` is the new forward direction and `up` the new up direction (the right vector is derived as `heading × up`). Unlike the relative turns `th` / `tv` / `tr`, which rotate the current frame, `set-heading` replaces it outright."
+    :path "docs/manual/reference/en/set-heading.md"}
 
    "set-image"
    {:name "set-image"
