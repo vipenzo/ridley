@@ -222,7 +222,10 @@
   [filename & {:keys [fps duration width anim overwrite]
                :or {fps 15 width 720 overwrite false}}]
   (when-not (env/desktop?)
-    (throw (js/Error. "anim-export-gif: only available in the desktop build")))
+    (throw (js/Error.
+            (str "anim-export-gif needs to write files to disk, which only the "
+                 "Ridley desktop app can do — GIF export isn't available in the "
+                 "web version. Use the desktop app to export animations."))))
   (when-not (and (string? filename) (pos? (count filename)))
     (throw (js/Error. "anim-export-gif: filename must be a non-empty string")))
   (let [filename (normalize-filename filename)

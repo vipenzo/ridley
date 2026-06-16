@@ -2837,12 +2837,10 @@
 ;; Initialization
 ;; ============================================================
 
-(def ^:private default-code "; Run with Cmd+Enter, then use REPL below
-(register Blob
-  (sdf-blend
-    (sdf-sphere 10)
-    (translate (sdf-box 8 8 8) 12 0 0)
-    3))")
+(def ^:private default-code "; Run with Cmd+Enter, then use the REPL below.
+; Shapes appear in the viewport as you register them.
+(register tube
+  (extrude (circle 10) (f 30) (th 45) (f 20)))")
 
 (defn- editor-context-menu-items
   "The right-click menu model, recomputed each time the menu opens so that

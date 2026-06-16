@@ -3,22 +3,41 @@
    SDF nodes are pure data — descriptions of implicit surfaces.
    Meshing is lazy: happens automatically at register/boolean/export boundaries.
    This is the CLJS version — calls the Rust server via synchronous XMLHttpRequest."
-  (:require [ridley.math :as math]))
+  (:require [ridley.math :as math]
+            [ridley.env :as env]))
 
 (def ^:private server-url "http://127.0.0.1:12321")
+
+(def ^:private unavailable-msg
+  "SDF functions (sdf-sphere, sdf-box, sdf-blend, …) need the geometry server,
+which only ships with the Ridley desktop app — they aren't available in the web
+version. Try the desktop app, or build this shape with the mesh primitives
+(box, cyl, sphere, loft, extrude, …) instead.")
+
+(def ^:private server-down-msg
+  "Couldn't reach the geometry server at http://127.0.0.1:12321. SDF functions
+need the Rust backend — make sure the desktop app's geometry server is running.")
 
 ;; ── HTTP transport (same pattern as manifold/native) ────────────
 
 (defn- invoke-sync
-  "Synchronous HTTP POST to the Rust geometry server. Returns parsed JS object."
+  "Synchronous HTTP POST to the Rust geometry server. Returns parsed JS object.
+   When the server is unreachable, throws a human-readable error explaining that
+   SDF is a desktop-only feature (the web build has no geometry server)."
   [endpoint body-js]
   (let [xhr (js/XMLHttpRequest.)]
     (.open xhr "POST" (str server-url endpoint) false)
     (.setRequestHeader xhr "Content-Type" "application/json")
-    (.send xhr (js/JSON.stringify body-js))
-    (if (= 200 (.-status xhr))
-      (js/JSON.parse (.-responseText xhr))
-      (throw (js/Error. (str "SDF error: " (.-responseText xhr)))))))
+    (try
+      (.send xhr (js/JSON.stringify body-js))
+      (catch :default _
+        ;; Synchronous XHR throws when it can't reach the host at all.
+        (throw (js/Error. (if (env/desktop?) server-down-msg unavailable-msg)))))
+    (cond
+      (= 200 (.-status xhr)) (js/JSON.parse (.-responseText xhr))
+      ;; status 0 = network failure that didn't throw (some browsers)
+      (zero? (.-status xhr)) (throw (js/Error. (if (env/desktop?) server-down-msg unavailable-msg)))
+      :else (throw (js/Error. (str "SDF error: " (.-responseText xhr)))))))
 
 (defn- js->mesh
   "Convert parsed JSON to Ridley mesh with typed arrays for zero-copy Three.js rendering.
