@@ -412,34 +412,65 @@
       (mapv (fn [p] {:pos p :heading nil :up nil :tail []})
             [[0 -20 -20] [0 20 -20] [0 0 20]]))))
 
+(defn- safe-up
+  "An up vector perpendicular to `dir`, derived from reference `ref`. Falls back to
+   a different reference when `ref` is (near-)parallel to `dir`, so the result is
+   never the zero vector — a zero up collapses the swept section's frame
+   (right = heading × up = 0 → the tube tapers to a point)."
+  [dir ref]
+  (let [u (m/v- ref (m/v* dir (m/dot ref dir)))]
+    (if (> (m/magnitude u) 1e-6)
+      (m/normalize u)
+      (let [alt (if (> (js/Math.abs (nth dir 2)) 0.9) [1 0 0] [0 0 1])]
+        (m/normalize (m/v- alt (m/v* dir (m/dot alt dir))))))))
+
+(defn- transport-up
+  "Parallel-transport `prev-up` from `prev-dir` to `new-dir`: rotate it by the
+   minimal rotation aligning the directions (Rodrigues), then re-orthogonalize. A
+   smooth, twist-free frame along the rail that never degenerates."
+  [prev-up prev-dir new-dir]
+  (let [d (max -1.0 (min 1.0 (m/dot prev-dir new-dir)))]
+    (if (> d 0.9999)
+      (safe-up new-dir prev-up)
+      (let [axis (m/cross prev-dir new-dir)
+            am (m/magnitude axis)]
+        (if (< am 1e-6)
+          (safe-up new-dir prev-up)                  ; ~opposite → just reproject
+          (let [ax (m/v* axis (/ 1.0 am))
+                ang (js/Math.acos d)
+                ca (js/Math.cos ang) sa (js/Math.sin ang)
+                rot (m/v+ (m/v* prev-up ca)
+                          (m/v+ (m/v* (m/cross ax prev-up) sa)
+                                (m/v* ax (* (m/dot ax prev-up) (- 1 ca)))))]
+            (safe-up new-dir rot)))))))
+
 (defn- nodes->commands-3d
-  "Commands tracing the 3D nodes: per segment a (set-heading dir up)(f dist), with
-   up re-orthogonalized to the segment direction (parallel-transport-ish) so the
-   swept frame stays well-defined. The trace is shifted so the first node sits at
-   the origin (a relative rail, followed from the turtle pose). Coincident nodes
-   are skipped."
+  "Commands tracing the 3D nodes: per segment a (set-heading dir up)(f dist). The up
+   is parallel-transported along the rail from a seeded initial up (frame derived
+   from geometry — positions-only philosophy), so it stays smooth and non-degenerate.
+   The trace is shifted so the first node sits at the origin (a relative rail).
+   Coincident nodes are skipped."
   [nodes]
   (if (< (count nodes) 2)
     []
     (let [origin (:pos (first nodes))]
       (loop [cur [0 0 0]
+             prev-dir nil
+             prev-up nil
              ps (rest nodes)
              cmds []]
         (if (empty? ps)
           cmds
-          (let [{:keys [pos up]} (first ps)
-                tgt (m/v- pos origin)
+          (let [tgt (m/v- (:pos (first ps)) origin)
                 delta (m/v- tgt cur)
                 dist (m/magnitude delta)]
             (if (< dist 1e-6)
-              (recur cur (rest ps) cmds)
+              (recur cur prev-dir prev-up (rest ps) cmds)
               (let [dir (m/normalize delta)
-                    up0 (or up [0 0 1])
-                    up* (let [u (m/v- up0 (m/v* dir (m/dot up0 dir)))]
-                          (if (> (m/magnitude u) 1e-6)
-                            (m/normalize u)
-                            (m/normalize (m/cross dir [0 0 1]))))]
-                (recur tgt (rest ps)
+                    up* (if prev-dir
+                          (transport-up prev-up prev-dir dir)
+                          (safe-up dir [0 0 1]))]
+                (recur tgt dir up* (rest ps)
                        (conj cmds
                              {:cmd :set-heading :args [dir up*]}
                              {:cmd :f :args [dist]}))))))))))
