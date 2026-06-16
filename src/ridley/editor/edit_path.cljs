@@ -756,7 +756,12 @@
         normal (m/normalize (m/cross (:px basis) (:py basis)))
         pts (mapv #(node->world s %) nodes)
         n (count pts)
-        grid-c (if (and (seq pts) (< selected n)) (nth pts selected) (:origin basis))
+        ;; grid stays anchored at the plane origin in-plane (fixed), shifted only
+        ;; along the normal (the axis that moved) to sit at the selected node's depth
+        grid-c (let [o (:origin basis)]
+                 (if (and (seq pts) (< selected n))
+                   (m/v+ o (m/v* normal (m/dot (m/v- (nth pts selected) o) normal)))
+                   o))
         grid-lines (plane-grid-lines basis grid-c)
         ;; a 3D path is an OPEN rail (extrude/loft trajectory) — no closing segment
         seg-lines (mapv (fn [i] {:from (nth pts (dec i)) :to (nth pts i) :color line-color})
