@@ -417,51 +417,39 @@
       ;; A 0-segment path extrudes to an empty mesh (no error) until the 2nd node.
       [{:pos [0 0 0] :heading nil :up nil :tail []}])))
 
-(defn- safe-up
-  "An up vector perpendicular to `dir`, derived from reference `ref`. Falls back to
-   a different reference when `ref` is (near-)parallel to `dir`, so the result is
-   never the zero vector — a zero up collapses the swept section's frame
-   (right = heading × up = 0 → the tube tapers to a point)."
-  [dir ref]
-  (let [u (m/v- ref (m/v* dir (m/dot ref dir)))]
-    (if (> (m/magnitude u) 1e-6)
-      (m/normalize u)
-      (let [alt (if (> (js/Math.abs (nth dir 2)) 0.9) [1 0 0] [0 0 1])]
-        (m/normalize (m/v- alt (m/v* dir (m/dot alt dir))))))))
+(defn- rot-axis
+  "Rotate vector v around unit axis by ang radians (Rodrigues)."
+  [axis v ang]
+  (let [ca (js/Math.cos ang) sa (js/Math.sin ang)]
+    (m/v+ (m/v* v ca)
+          (m/v+ (m/v* (m/cross axis v) sa)
+                (m/v* axis (* (m/dot axis v) (- 1 ca)))))))
 
-(defn- transport-up
-  "Parallel-transport `prev-up` from `prev-dir` to `new-dir`: rotate it by the
-   minimal rotation aligning the directions (Rodrigues), then re-orthogonalize. A
-   smooth, twist-free frame along the rail that never degenerates."
-  [prev-up prev-dir new-dir]
-  (let [d (max -1.0 (min 1.0 (m/dot prev-dir new-dir)))]
-    (if (> d 0.9999)
-      (safe-up new-dir prev-up)
-      (let [axis (m/cross prev-dir new-dir)
-            am (m/magnitude axis)]
-        (if (< am 1e-6)
-          (safe-up new-dir prev-up)                  ; ~opposite → just reproject
-          (let [ax (m/v* axis (/ 1.0 am))
-                ang (js/Math.acos d)
-                ca (js/Math.cos ang) sa (js/Math.sin ang)
-                rot (m/v+ (m/v* prev-up ca)
-                          (m/v+ (m/v* (m/cross ax prev-up) sa)
-                                (m/v* ax (* (m/dot ax prev-up) (- 1 ca)))))]
-            (safe-up new-dir rot)))))))
+(defn- turn-angles
+  "Yaw (th) and pitch (tv) in DEGREES that turn heading `h` (with up `u`) onto the
+   unit direction `d`: th rotates around up, tv around the right axis — matching the
+   turtle. Derived from d's components in the (heading,right,up) frame."
+  [h u d]
+  (let [r (m/normalize (m/cross h u))
+        dh (m/dot d h) dr (m/dot d r) du (m/dot d u)
+        deg (/ 180 js/Math.PI)]
+    [(* deg (js/Math.atan2 (- dr) dh))
+     (* deg (js/Math.atan2 du (js/Math.sqrt (+ (* dh dh) (* dr dr)))))]))
 
 (defn- nodes->commands-3d
-  "Commands tracing the 3D nodes: per segment a (set-heading dir up)(f dist). The up
-   is parallel-transported along the rail from a seeded initial up (frame derived
-   from geometry — positions-only philosophy), so it stays smooth and non-degenerate.
-   The trace is shifted so the first node sits at the origin (a relative rail).
-   Coincident nodes are skipped."
+  "Commands tracing the 3D nodes: per segment, relative (th yaw)(tv pitch)(f dist)
+   that turn the turtle from its current frame onto the segment direction — the
+   natural, readable Ridley rail form. The turtle's up evolves with tv (no roll), so
+   the swept frame is well-defined with no explicit up (and can't go degenerate).
+   The trace starts at the origin (a relative rail; node 0 is the pinned anchor).
+   Coincident nodes and ~zero turns are skipped."
   [nodes]
   (if (< (count nodes) 2)
     []
-    (let [origin (:pos (first nodes))]
+    (let [origin (:pos (first nodes))
+          rad #(* % (/ js/Math.PI 180))]
       (loop [cur [0 0 0]
-             prev-dir nil
-             prev-up nil
+             h [1 0 0] u [0 0 1]
              ps (rest nodes)
              cmds []]
         (if (empty? ps)
@@ -470,15 +458,18 @@
                 delta (m/v- tgt cur)
                 dist (m/magnitude delta)]
             (if (< dist 1e-6)
-              (recur cur prev-dir prev-up (rest ps) cmds)
-              (let [dir (m/normalize delta)
-                    up* (if prev-dir
-                          (transport-up prev-up prev-dir dir)
-                          (safe-up dir [0 0 1]))]
-                (recur tgt dir up* (rest ps)
-                       (conj cmds
-                             {:cmd :set-heading :args [dir up*]}
-                             {:cmd :f :args [dist]}))))))))))
+              (recur cur h u (rest ps) cmds)
+              (let [d (m/normalize delta)
+                    [a b] (turn-angles h u d)
+                    h1 (rot-axis u h (rad a))            ; th: heading around up
+                    r1 (m/normalize (m/cross h1 u))
+                    h2 (rot-axis r1 h1 (rad b))          ; tv: heading around new right
+                    u2 (rot-axis r1 u (rad b))           ; up follows tv
+                    cmds (cond-> cmds
+                           (> (js/Math.abs a) 1e-4) (conj {:cmd :th :args [a]})
+                           (> (js/Math.abs b) 1e-4) (conj {:cmd :tv :args [b]})
+                           true                     (conj {:cmd :f :args [dist]}))]
+                (recur tgt h2 u2 (rest ps) cmds)))))))))
 
 (defn- nodes->code-3d
   "The replacement source for a 3D edit: a (path (set-heading …)(f …) …) rail. The
@@ -1159,17 +1150,11 @@
       (refresh-preview!)
       (update-panel!))))
 
-;; -- 3D precision fields: the selected node's incoming segment as length + angle.
-;; Length is the segment magnitude; angle is measured IN the active plane — relative
-;; to the previous segment for node ≥ 2, else absolute (vs the plane's px axis).
-
-(defn- rot-axis
-  "Rotate vector v around unit axis by ang radians (Rodrigues)."
-  [axis v ang]
-  (let [ca (js/Math.cos ang) sa (js/Math.sin ang)]
-    (m/v+ (m/v* v ca)
-          (m/v+ (m/v* (m/cross axis v) sa)
-                (m/v* axis (* (m/dot axis v) (- 1 ca)))))))
+;; -- 3D precision fields: the selected node's incoming segment as length + angle,
+;; both measured IN the active plane (so they change when you switch f/r/u): the
+;; segment is projected onto the plane; the out-of-plane component is preserved
+;; when editing. Angle is relative to the previous segment for node ≥ 2, else
+;; absolute (vs the plane's px axis).
 
 (defn- seg-dir [s i]
   (m/normalize (m/v- (:pos (nth (:nodes s) i)) (:pos (nth (:nodes s) (dec i))))))
