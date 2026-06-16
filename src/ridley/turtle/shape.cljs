@@ -404,7 +404,11 @@
    at an f-endpoint = a vertex, so all match; unmatched marks are skipped."
   [path pts]
   (when-let [rf @extrusion/resolve-marks-ref]
-    (let [marks (rf {:position [0 0 0] :heading [1 0 0] :up [0 0 1]} path)
+    (let [marks (if (= :2d (:species path))
+                  ;; :2d trace lives in (right,up); project marks to (a,b) so they
+                  ;; match the projected shape points (same as ensure-path-2d).
+                  (extrusion/resolve-2d-source-anchors rf path)
+                  (rf {:position [0 0 0] :heading [1 0 0] :up [0 0 1]} path))
           n (count pts)
           eps2 (* 1e-4 1e-4)]
       (->> marks

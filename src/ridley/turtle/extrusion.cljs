@@ -55,6 +55,29 @@
                           :up [0 0 1]}]))))
          (into {}))))
 
+(defn resolve-2d-source-anchors
+  "Resolve a :2d source-path's marks into 2D section poses. The path's commands
+   trace the (right,up) plane, so the resolver gives poses in that plane (x≈0);
+   project them onto the section frame (a,b) = (-y, z) — matching ensure-path-2d's
+   profile projection — so the anchors line up with the projected shape points. A
+   leading (move-to [a b]) is stripped before tracing (the resolver would apply it
+   as a raw 3D jump out of the plane) and re-added as an (a,b) offset, exactly as
+   ensure-path-2d does for the trace."
+  [rf sp]
+  (let [mv (some (fn [{:keys [cmd args]}] (when (= :move-to cmd) (first args)))
+                 (:commands sp))
+        ox (if mv (first mv) 0)
+        oy (if mv (second mv) 0)
+        sp* (update sp :commands (fn [cs] (filterv #(not= :move-to (:cmd %)) cs)))]
+    (into {}
+          (map (fn [[nm {:keys [position heading]}]]
+                 (let [[_ py pz] position
+                       [_ hy hz] heading]
+                   [nm {:position [(+ (- py) ox) (+ pz oy) 0]
+                        :heading [(- hy) hz 0]
+                        :up [0 0 1]}])))
+          (rf section-identity-pose sp*))))
+
 (defn resolve-section-anchors
   "Resolve a profile shape's carried marks into 2D section-plane poses, by name.
    Prefers `:mark-refs` (point-index references — morph-aware, ride shape-fns);
@@ -66,9 +89,10 @@
     (seq (:mark-refs shape)) (mark-refs->section-anchors shape)
     :else (let [rf @resolve-marks-ref
                 sp (:source-path shape)]
-            (if (and rf sp)
-              (rf section-identity-pose sp)
-              {}))))
+            (cond
+              (not (and rf sp))    {}
+              (= :2d (:species sp)) (resolve-2d-source-anchors rf sp)
+              :else                 (rf section-identity-pose sp)))))
 
 ;; --- Numeric validation ---
 
