@@ -29,7 +29,7 @@
             [clojure.string :as str]))
 
 (declare confirm! cancel! render! update-panel! refresh-preview!
-         set-seg-len! set-seg-angle! seg-len seg-angle-deg)
+         set-seg-len! set-seg-angle! seg-len seg-angle-deg set-plane!)
 
 ;; ============================================================
 ;; State
@@ -905,16 +905,19 @@
         (set! (.-textContent el)
               (str "nodes: " (count (:nodes s)) " · sel: " (:selected s)
                    (when (three-d? s)
-                     (let [sel (:selected s)
-                           p (some-> (:nodes s) (nth sel nil) :pos)
+                     (let [p (some-> (:nodes s) (nth (:selected s) nil) :pos)
                            r1 #(/ (js/Math.round (* % 10)) 10)]
-                       (str " · plane: " (name (:plane s :f)) " (f/r/u)"
-                            (when (and p (vector? p))
-                              (str " · [" (r1 (nth p 0)) " " (r1 (nth p 1)) " " (r1 (nth p 2)) "]"))))))))
-      (when-let [el (.querySelector panel ".ep-step")]
+                       (when (and p (vector? p))
+                         (str " · [" (r1 (nth p 0)) " " (r1 (nth p 1)) " " (r1 (nth p 2)) "]")))))))
+      ;; plane radios reflect the active plane
+      (when (three-d? s)
+        (doseq [[cls pl] [[".ep-plane-f" :f] [".ep-plane-r" :r] [".ep-plane-u" :u]]]
+          (when-let [^js rb (.querySelector panel cls)]
+            (set! (.-checked rb) (= pl (:plane s :f))))))
+      (when-let [^js el (.querySelector panel ".ep-step")]
         (let [buf (:digit-buffer s)]
-          (set! (.-textContent el)
-                (if (seq buf) (str buf "_") (str (:step s) "mm")))))
+          (when (not= el (.-activeElement js/document))
+            (set! (.-value el) (str (if (seq buf) buf (:step s)))))))
       ;; 3D precision fields: the selected node's incoming segment (len + in-plane
       ;; angle). Node 0 (the anchor) and 2D have none — disabled. Don't clobber a
       ;; field the user is currently editing.
@@ -938,9 +941,15 @@
     (set! (.-innerHTML panel)
           (str "<div class='pilot-header'>" (if td? "edit-path" "edit-path-2d")
                "<span class='pilot-mode-badge'>" (if td? "3D rail" "polyline") "</span></div>"
-               "<div class='pilot-controls'>"
+               "<div class='pilot-controls' style='display:flex;gap:12px;align-items:center;flex-wrap:wrap'>"
                "<span class='ep-info'>nodes: 0 · sel: 0</span>"
-               "<span>Step: <span class='ep-step'>5mm</span></span>"
+               (when td?
+                 (str "<span class='ep-planes'>plane: "
+                      "<label><input type='radio' name='ep-plane' class='ep-plane-f'>f</label> "
+                      "<label><input type='radio' name='ep-plane' class='ep-plane-r'>r</label> "
+                      "<label><input type='radio' name='ep-plane' class='ep-plane-u'>u</label></span>"))
+               "<span>Step <input class='ep-step' type='number' step='1' min='0' "
+               "style='width:56px'>mm</span>"
                "</div>"
                "<div class='pilot-commands'>"
                (if td?
@@ -975,6 +984,14 @@
                          (fn [^js e] (let [v (js/parseFloat (.. e -target -value))
                                            i (:selected @session)]
                                        (when (js/isFinite v) (set-seg-angle! i v))))))
+    (when-let [^js step-in (.querySelector panel ".ep-step")]
+      (.addEventListener step-in "change"
+                         (fn [^js e] (let [v (js/parseFloat (.. e -target -value))]
+                                       (when (and (js/isFinite v) (pos? v))
+                                         (swap! session assoc :step v :digit-buffer ""))))))
+    (doseq [[cls pl] [[".ep-plane-f" :f] [".ep-plane-r" :r] [".ep-plane-u" :u]]]
+      (when-let [^js rb (.querySelector panel cls)]
+        (.addEventListener rb "change" (fn [_] (set-plane! pl)))))
     (modal/mount-panel! panel)
     panel))
 
@@ -1384,8 +1401,15 @@
   (viewport/set-controls-enabled! false)
   (render!) (update-panel!))
 
+(defn- shift-grab?
+  "Shift (only) held in 3D — used to start an axis-locked node drag. Other
+   modifiers fall through to the camera."
+  [^js e]
+  (and (three-d? @session) (.-shiftKey e)
+       (not (.-altKey e)) (not (.-ctrlKey e)) (not (.-metaKey e))))
+
 (defn- on-pointer-down [^js e]
-  (when (and (:entered? @session) (plain-click? e))
+  (when (and (:entered? @session) (or (plain-click? e) (shift-grab? e)))
     (let [s @session
           basis (active-basis s)
           w (click-plane-point e s)
@@ -1400,9 +1424,13 @@
           seg (when (and two-d? p2) (nearest-segment (:nodes s) p2))]
       (cond
         ;; Right on a node → grab it (wins over a nearby handle/segment, so moving a
-        ;; node doesn't accidentally catch a control point).
+        ;; node doesn't accidentally catch a control point). Shift+grab → axis-lock.
         (and n-idx (<= n-d2 node-snap2))
         (grab-node! n-idx)
+
+        ;; Shift with no node under the cursor → leave it to the camera (orbit/pan).
+        (not (plain-click? e))
+        nil
 
         ;; Otherwise a bezier control handle (when the click isn't on a node).
         ;; Undo push deferred to the first drag move (a bare click doesn't change it).
