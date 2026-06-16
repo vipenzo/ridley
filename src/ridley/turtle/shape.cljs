@@ -1187,31 +1187,68 @@
           (rmf-safe-up d u)
           (rmf-rot u (v3* axis (/ 1.0 am)) (Math/acos dt)))))))
 
+(defn- rmf-norm180 [d] (- (mod (+ d 180) 360) 180))
+
+(defn- rmf-turn-angles
+  "Yaw (th) and pitch (tv) in DEGREES to turn heading `h` (up `u`) onto dir `d`.
+   Picks the smaller of the two yaw/pitch solutions (pitch 'over the top' instead of
+   a 180° yaw), so planar bends stay pure tv."
+  [h u d]
+  (let [r (v3-normalize (v3-cross h u))
+        dh (v3-dot d h) dr (v3-dot d r) du (v3-dot d u)
+        deg (/ 180 Math/PI)
+        a1 (rmf-norm180 (* deg (Math/atan2 (- dr) dh)))
+        b1 (rmf-norm180 (* deg (Math/atan2 du (Math/sqrt (+ (* dh dh) (* dr dr))))))
+        a2 (rmf-norm180 (* deg (Math/atan2 dr (- dh))))
+        b2 (rmf-norm180 (- 180 b1))]
+    (if (<= (+ (Math/abs a1) (Math/abs b1)) (+ (Math/abs a2) (Math/abs b2)))
+      [a1 b1] [a2 b2])))
+
+(defn- rmf-signed-angle
+  "Signed angle (DEG) rotating a→b about unit axis n."
+  [a b n]
+  (* (/ 180 Math/PI) (Math/atan2 (v3-dot (v3-cross a b) n) (v3-dot a b))))
+
 (defn positions->rmf-commands
-  "set-heading + f commands tracing world `positions` (≥ 2 points) with a
-   rotation-minimizing (parallel-transport) up, shifted so the first point is the
-   origin (a relative rail). The swept frame is twist-free however the rail bends."
+  "RELATIVE (th yaw)(tv pitch)(tr roll)(f dist) commands tracing world `positions`
+   (≥ 2 points), shifted so the first point is the origin. th+tv aim the heading;
+   the tr rolls the up onto the rotation-minimizing (parallel-transport) up, so the
+   swept section is twist-free however the rail bends. Because the turns are
+   RELATIVE, the rail composes under the consumption pose (it rotates/translates
+   with the turtle), unlike absolute set-heading. Planar rails need no tr (clean
+   th/tv)."
   [positions]
   (when (>= (count positions) 2)
-    (let [origin (first positions)]
-      (loop [cur [0 0 0] prev-dir nil up nil ps (rest positions) cmds []]
+    (let [origin (first positions)
+          rad #(* % (/ Math/PI 180))]
+      (loop [cur [0 0 0] h [1 0 0] u [0 0 1] ps (rest positions) cmds []]
         (if (empty? ps)
           cmds
           (let [tgt (v3- (first ps) origin) delta (v3- tgt cur) dist (v3-mag delta)]
             (if (< dist 1e-6)
-              (recur cur prev-dir up (rest ps) cmds)
-              (let [dir (v3-normalize delta)
-                    up* (if prev-dir (rmf-transport up prev-dir dir) (rmf-safe-up dir [0 0 1]))]
-                (recur tgt dir up* (rest ps)
-                       (conj cmds {:cmd :set-heading :args [dir up*]} {:cmd :f :args [dist]}))))))))))
+              (recur cur h u (rest ps) cmds)
+              (let [d (v3-normalize delta)
+                    [a b] (rmf-turn-angles h u d)
+                    h1 (rmf-rot h u (rad a))                 ; th: heading around up
+                    r1 (v3-normalize (v3-cross h1 u))
+                    u-thtv (rmf-rot u r1 (rad b))            ; up after tv
+                    u-pt (rmf-transport u h d)               ; twist-free up
+                    g (rmf-signed-angle u-thtv u-pt d)       ; tr roll to correct
+                    cmds (cond-> cmds
+                           (> (Math/abs a) 1e-4) (conj {:cmd :th :args [a]})
+                           (> (Math/abs b) 1e-4) (conj {:cmd :tv :args [b]})
+                           (> (Math/abs g) 1e-4) (conj {:cmd :tr :args [g]})
+                           true                  (conj {:cmd :f :args [dist]}))]
+                (recur tgt d u-pt (rest ps) cmds)))))))))
 
 (defn ^:export ensure-untwisted
   "Re-frame a 3D rail for a twist-free sweep: keep the node positions, but rederive
    the turtle up by parallel transport, so extrude/loft don't roll (spiral) the
-   section along a NON-planar rail. Positions come from the path's traced waypoints
-   (curves become their tessellated polyline). For a planar rail it's effectively a
-   no-op (the up was already twist-free). Call it by hand when a hand-written
-   non-planar rail's tube twists: (extrude prof (ensure-untwisted my-path))."
+   section along a NON-planar rail. Rebuilt with RELATIVE turns (th/tv/tr) so the
+   rail still composes under the consumption pose. Positions come from the path's
+   traced waypoints (curves become their tessellated polyline). For a planar rail
+   it's effectively a no-op (the up was already twist-free). Call it by hand when a
+   hand-written non-planar rail's tube twists: (extrude prof (ensure-untwisted p))."
   [path]
   (if (and (map? path) (= :path (:type path)))
     (let [pts (mapv :pos (path-to-3d-waypoints path))]

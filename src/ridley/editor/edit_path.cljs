@@ -426,12 +426,13 @@
                 (m/v* axis (* (m/dot axis v) (- 1 ca)))))))
 
 (defn- nodes->commands-3d
-  "Commands tracing the 3D nodes as a twist-free rail: per segment a
-   (set-heading [dir][up])(f dist) with a rotation-minimizing (parallel-transport)
-   up, so extrude/loft never roll the section along a non-planar rail. Verbose, but
-   the baked rail isn't meant to be hand-edited. The trace starts at the origin (a
-   relative rail; node 0 is the pinned anchor). Delegates to the shared frame
-   builder so a hand-written path can get the same via (ensure-untwisted …)."
+  "Commands tracing the 3D nodes as a twist-free rail: per segment relative
+   (th)(tv)(tr)(f) with a rotation-minimizing (parallel-transport) up, so
+   extrude/loft never roll the section along a non-planar rail AND the rail still
+   composes under the consumption pose (relative turns, unlike absolute
+   set-heading). Planar rails stay clean th/tv (no tr). The trace starts at the
+   origin (a relative rail; node 0 is the pinned anchor). Delegates to the shared
+   builder so a hand-written path gets the same via (ensure-untwisted …)."
   [nodes]
   (vec (shape/positions->rmf-commands (mapv :pos nodes))))
 

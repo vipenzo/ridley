@@ -25,11 +25,18 @@ current frame, `set-heading` replaces it outright.
 ```
 
 It is mainly used by **generated** paths rather than hand-written ones:
-`reverse-path`, `mirror-path`, [`ensure-untwisted`](#ensure-untwisted) and the 3D
-`edit-path` bake all emit `(set-heading …)(f …)` per segment, because carrying an
-explicit per-segment frame lets them control the swept-section orientation exactly
-(e.g. a twist-free rail). For tracing a path by hand, prefer the relative turns —
-they read better and compose from any pose.
+`reverse-path` / `mirror-path` emit `(set-heading …)(f …)` per segment. For tracing
+a path by hand, prefer the relative turns — they read better and **compose under
+the consumption pose**.
+
+⚠️ **Composition caveat.** Because `set-heading` is absolute, a path that uses it
+follows the consumption pose's **translation** (it starts at the turtle's position)
+but **not its rotation** — the heading snaps to the literal vectors regardless of
+how the turtle is oriented. A purely relative path (`th`/`tv`/`tr`) rotates *and*
+translates with the pose. That's why the 3D `edit-path` bake and
+[`ensure-untwisted`](#ensure-untwisted) use **relative** turns (a `tr` roll for the
+twist-free frame), not `set-heading`: a rail placed via `attach` / `on-anchors` /
+after a turtle rotation must rotate with its pose.
 
 ## Parameters
 
@@ -39,12 +46,12 @@ they read better and compose from any pose.
 
 ## Notes
 
-- `set-heading` is **absolute**: it does not depend on the current frame, so two
-  consecutive `set-heading`s ignore the rotation between them. This is what makes a
-  generated rail's frame reproducible regardless of how it is placed.
-- A path is still **pose-less / relative**: `set-heading` sets the frame relative to
-  the consumption pose, not in world space — `follow-path` / extrude place it from
-  the current turtle pose like any path.
+- `set-heading` is **absolute**: it ignores the current frame, so any prior turn
+  (or the consumption pose's orientation) is overwritten. Handy for a fixed
+  reference orientation; the trade-off is the composition caveat above.
+- Position still follows the consumption pose: `set-heading` doesn't move the
+  turtle, and `f` advances from wherever it is, so the rail starts at the pose's
+  position (only the orientation is absolute).
 
 ## See also
 

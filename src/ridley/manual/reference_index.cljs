@@ -486,7 +486,7 @@
     :status "stable"
     :since ""
     :signature "(ensure-untwisted path)"
-    :description "Re-frame a 3D rail so a sweep along it does **not twist**. The node positions are kept exactly; only the turtle's `up` is recomputed, by **parallel transport** (a rotation-minimizing frame), and the rail is rebuilt as `(set-heading …)(f …)` per segment."
+    :description "Re-frame a 3D rail so a sweep along it does **not twist**. The node positions are kept exactly; only the turtle's `up` is recomputed, by **parallel transport** (a rotation-minimizing frame), and the rail is rebuilt with **relative** turns — `(th …)(tv …)(tr …)(f …)` per segment (the `tr` rolls onto the twist-free up). The turns are relative, so the re-framed rail still composes under the consumption pose (rotates/translates with the turtle)."
     :path "docs/manual/reference/en/ensure-untwisted.md"}
 
    "export"

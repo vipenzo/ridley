@@ -15,8 +15,10 @@ status: stable
 
 Re-frame a 3D rail so a sweep along it does **not twist**. The node positions are
 kept exactly; only the turtle's `up` is recomputed, by **parallel transport** (a
-rotation-minimizing frame), and the rail is rebuilt as `(set-heading …)(f …)` per
-segment.
+rotation-minimizing frame), and the rail is rebuilt with **relative** turns —
+`(th …)(tv …)(tr …)(f …)` per segment (the `tr` rolls onto the twist-free up). The
+turns are relative, so the re-framed rail still composes under the consumption pose
+(rotates/translates with the turtle).
 
 ```clojure
 ;; a hand-written non-planar rail whose extruded tube spirals:
@@ -49,9 +51,9 @@ For a **planar** rail there is no holonomy, so `ensure-untwisted` changes nothin
   hand-written non-planar rail can still twist until you wrap it in
   `ensure-untwisted`. Paths baked by the 3D `edit-path` already carry a twist-free
   frame, so they don't need it.
-- It rebuilds the rail with `set-heading` per segment, so any `arc` / `bezier`
-  curvature becomes its tessellated polyline (the shape is preserved, the curve
-  metadata is not).
+- It rebuilds the rail from the traced waypoints, so any `arc` / `bezier` curvature
+  becomes its tessellated polyline (the shape is preserved, the curve metadata is
+  not).
 - Related to `:preserve-up` (used by `text-on-path`), which keeps the section
   aligned to a *fixed reference* up. `ensure-untwisted` uses parallel transport
   instead — no fixed reference, so it stays well-defined even where the rail runs
@@ -59,5 +61,5 @@ For a **planar** rail there is no holonomy, so `ensure-untwisted` changes nothin
 
 ## See also
 
-- [`set-heading`](#set-heading) — the per-segment frame it emits
+- `th` / `tv` / `tr` — the relative turns it emits
 - `extrude`, `loft` — the rail consumers that orient by `up`
