@@ -1163,8 +1163,20 @@
   (let [b (active-basis s)]
     (js/Math.atan2 (m/dot v (:py b)) (m/dot v (:px b)))))
 
-(defn- seg-len [s i]
-  (m/magnitude (m/v- (:pos (nth (:nodes s) i)) (:pos (nth (:nodes s) (dec i))))))
+(defn- seg-inplane
+  "The incoming segment vector of node i split as [in-plane out-of-plane] in the
+   active plane (out-of-plane is along the plane normal)."
+  [s i]
+  (let [nrm (active-plane-normal s)
+        seg (m/v- (:pos (nth (:nodes s) i)) (:pos (nth (:nodes s) (dec i))))
+        op (m/v* nrm (m/dot seg nrm))]
+    [(m/v- seg op) op]))
+
+(defn- seg-len
+  "Length of the incoming segment's projection onto the active plane (so it changes
+   with f/r/u, like the angle; 0 when the segment is perpendicular to the plane)."
+  [s i]
+  (m/magnitude (first (seg-inplane s i))))
 
 (defn- seg-angle-deg
   "Incoming-segment angle (degrees) of node i in the active plane: relative to the
@@ -1178,10 +1190,14 @@
 (defn- set-seg-len! [i len]
   (let [s @session]
     (when (and (>= i 1) (< i (count (:nodes s))) (pos? len))
-      (push-undo!)
-      (let [prev (:pos (nth (:nodes s) (dec i)))]
-        (move-node! i (m/v+ prev (m/v* (seg-dir s i) len))))
-      (refresh-preview!) (update-panel!))))
+      (let [[ip op] (seg-inplane s i)
+            ipm (m/magnitude ip)]
+        ;; scale the in-plane component to `len`, preserving the out-of-plane part
+        (when (> ipm 1e-6)
+          (push-undo!)
+          (let [prev (:pos (nth (:nodes s) (dec i)))]
+            (move-node! i (m/v+ prev (m/v+ (m/v* ip (/ len ipm)) op))))
+          (refresh-preview!) (update-panel!))))))
 
 (defn- set-seg-angle! [i deg]
   (let [s @session]
