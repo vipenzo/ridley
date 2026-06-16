@@ -436,18 +436,37 @@
     [(* deg (js/Math.atan2 (- dr) dh))
      (* deg (js/Math.atan2 du (js/Math.sqrt (+ (* dh dh) (* dr dr)))))]))
 
+(defn- transport-up
+  "Parallel-transport up `u` from heading `h` to heading `d`: rotate it by the
+   minimal rotation aligning h→d. A twist-free reference up for the new direction."
+  [u h d]
+  (let [dt (max -1.0 (min 1.0 (m/dot h d)))]
+    (if (> dt 0.999999)
+      u
+      (let [axis (m/cross h d) am (m/magnitude axis)]
+        (if (< am 1e-9)
+          u                                       ; ~180° reversal: ambiguous, keep u
+          (rot-axis (m/v* axis (/ 1.0 am)) u (js/Math.acos dt)))))))
+
+(defn- signed-angle-around
+  "Signed angle (radians) rotating a→b about unit axis n."
+  [a b n]
+  (js/Math.atan2 (m/dot (m/cross a b) n) (m/dot a b)))
+
 (defn- nodes->commands-3d
-  "Commands tracing the 3D nodes: per segment, relative (th yaw)(tv pitch)(f dist)
-   that turn the turtle from its current frame onto the segment direction — the
-   natural, readable Ridley rail form. The turtle's up evolves with tv (no roll), so
-   the swept frame is well-defined with no explicit up (and can't go degenerate).
-   The trace starts at the origin (a relative rail; node 0 is the pinned anchor).
-   Coincident nodes and ~zero turns are skipped."
+  "Commands tracing the 3D nodes: per segment, relative (th yaw)(tv pitch)(tr roll)
+   (f dist) that turn the turtle from its current frame onto the segment direction
+   — the natural, readable Ridley rail form. th+tv aim the heading; the tr corrects
+   the up to the twist-free PARALLEL-TRANSPORT up, so a big yaw (e.g. a near-180°
+   reversal) doesn't twist the swept section. The trace starts at the origin (a
+   relative rail; node 0 is the pinned anchor). Coincident nodes / ~zero turns are
+   skipped."
   [nodes]
   (if (< (count nodes) 2)
     []
     (let [origin (:pos (first nodes))
-          rad #(* % (/ js/Math.PI 180))]
+          rad #(* % (/ js/Math.PI 180))
+          deg #(* % (/ 180 js/Math.PI))]
       (loop [cur [0 0 0]
              h [1 0 0] u [0 0 1]
              ps (rest nodes)
@@ -463,13 +482,15 @@
                     [a b] (turn-angles h u d)
                     h1 (rot-axis u h (rad a))            ; th: heading around up
                     r1 (m/normalize (m/cross h1 u))
-                    h2 (rot-axis r1 h1 (rad b))          ; tv: heading around new right
-                    u2 (rot-axis r1 u (rad b))           ; up follows tv
+                    u-thtv (rot-axis r1 u (rad b))       ; up after tv (heading now d)
+                    u-pt (transport-up u h d)            ; twist-free target up
+                    g (deg (signed-angle-around u-thtv u-pt d))  ; roll to correct
                     cmds (cond-> cmds
                            (> (js/Math.abs a) 1e-4) (conj {:cmd :th :args [a]})
                            (> (js/Math.abs b) 1e-4) (conj {:cmd :tv :args [b]})
+                           (> (js/Math.abs g) 1e-4) (conj {:cmd :tr :args [g]})
                            true                     (conj {:cmd :f :args [dist]}))]
-                (recur tgt h2 u2 (rest ps) cmds)))))))))
+                (recur tgt d u-pt (rest ps) cmds)))))))))
 
 (defn- nodes->code-3d
   "The replacement source for a 3D edit: a (path (set-heading …)(f …) …) rail. The
