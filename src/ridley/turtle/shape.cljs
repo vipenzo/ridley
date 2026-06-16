@@ -1105,8 +1105,15 @@
                  :tv (assoc st :heading (v3-normalize (v3-rotate heading right d))
                             :up (v3-normalize (v3-rotate up right d)))
                  :tr (assoc st :up (v3-normalize (v3-rotate up heading d)))
-                 :set-heading (assoc st :heading (v3-normalize (to-vec3 (first args)))
-                                     :up (v3-normalize (to-vec3 (second args))))
+                 :set-heading (if (= :local (nth args 2 nil))
+                                ;; :local — vectors in the current [right up heading]
+                                ;; frame → world, so the rail composes with the pose.
+                                (let [l->w (fn [[lx ly lz]]
+                                             (v3+ (v3* right lx) (v3+ (v3* up ly) (v3* heading lz))))]
+                                  (assoc st :heading (v3-normalize (l->w (to-vec3 (first args))))
+                                         :up (v3-normalize (l->w (to-vec3 (second args))))))
+                                (assoc st :heading (v3-normalize (to-vec3 (first args)))
+                                       :up (v3-normalize (to-vec3 (second args)))))
                  st)))
            (let [p0 {:pos [0 0 0] :heading [1 0 0] :up [0 0 1]}]
              (assoc p0 :waypoints [p0]))
@@ -1187,40 +1194,17 @@
           (rmf-safe-up d u)
           (rmf-rot u (v3* axis (/ 1.0 am)) (Math/acos dt)))))))
 
-(defn- rmf-norm180 [d] (- (mod (+ d 180) 360) 180))
-
-(defn- rmf-turn-angles
-  "Yaw (th) and pitch (tv) in DEGREES to turn heading `h` (up `u`) onto dir `d`.
-   Picks the smaller of the two yaw/pitch solutions (pitch 'over the top' instead of
-   a 180° yaw), so planar bends stay pure tv."
-  [h u d]
-  (let [r (v3-normalize (v3-cross h u))
-        dh (v3-dot d h) dr (v3-dot d r) du (v3-dot d u)
-        deg (/ 180 Math/PI)
-        a1 (rmf-norm180 (* deg (Math/atan2 (- dr) dh)))
-        b1 (rmf-norm180 (* deg (Math/atan2 du (Math/sqrt (+ (* dh dh) (* dr dr))))))
-        a2 (rmf-norm180 (* deg (Math/atan2 dr (- dh))))
-        b2 (rmf-norm180 (- 180 b1))]
-    (if (<= (+ (Math/abs a1) (Math/abs b1)) (+ (Math/abs a2) (Math/abs b2)))
-      [a1 b1] [a2 b2])))
-
-(defn- rmf-signed-angle
-  "Signed angle (DEG) rotating a→b about unit axis n."
-  [a b n]
-  (* (/ 180 Math/PI) (Math/atan2 (v3-dot (v3-cross a b) n) (v3-dot a b))))
-
 (defn positions->rmf-commands
-  "RELATIVE (th yaw)(tv pitch)(tr roll)(f dist) commands tracing world `positions`
-   (≥ 2 points), shifted so the first point is the origin. th+tv aim the heading;
-   the tr rolls the up onto the rotation-minimizing (parallel-transport) up, so the
-   swept section is twist-free however the rail bends. Because the turns are
-   RELATIVE, the rail composes under the consumption pose (it rotates/translates
-   with the turtle), unlike absolute set-heading. Planar rails need no tr (clean
-   th/tv)."
+  "Commands tracing world `positions` (≥ 2 points) as a twist-free rail, shifted so
+   the first point is the origin. Per segment: `(set-heading [h-local][up-local] :local)`
+   + `(f dist)`, where the new heading and the rotation-minimizing (parallel-transport)
+   up are expressed in the PREVIOUS segment's [right up heading] frame. Because the
+   frame is given relative to the current frame (`:local`), the rail composes under
+   the consumption pose (rotates/translates with the turtle) — unlike absolute
+   set-heading — while the parallel-transported up keeps the section twist-free."
   [positions]
   (when (>= (count positions) 2)
-    (let [origin (first positions)
-          rad #(* % (/ Math/PI 180))]
+    (let [origin (first positions)]
       (loop [cur [0 0 0] h [1 0 0] u [0 0 1] ps (rest positions) cmds []]
         (if (empty? ps)
           cmds
@@ -1228,24 +1212,20 @@
             (if (< dist 1e-6)
               (recur cur h u (rest ps) cmds)
               (let [d (v3-normalize delta)
-                    [a b] (rmf-turn-angles h u d)
-                    h1 (rmf-rot h u (rad a))                 ; th: heading around up
-                    r1 (v3-normalize (v3-cross h1 u))
-                    u-thtv (rmf-rot u r1 (rad b))            ; up after tv
-                    u-pt (rmf-transport u h d)               ; twist-free up
-                    g (rmf-signed-angle u-thtv u-pt d)       ; tr roll to correct
-                    cmds (cond-> cmds
-                           (> (Math/abs a) 1e-4) (conj {:cmd :th :args [a]})
-                           (> (Math/abs b) 1e-4) (conj {:cmd :tv :args [b]})
-                           (> (Math/abs g) 1e-4) (conj {:cmd :tr :args [g]})
-                           true                  (conj {:cmd :f :args [dist]}))]
-                (recur tgt d u-pt (rest ps) cmds)))))))))
+                    up* (rmf-transport u h d)                 ; twist-free up (world)
+                    r (v3-normalize (v3-cross h u))
+                    w->l (fn [v] [(v3-dot v r) (v3-dot v u) (v3-dot v h)])  ; world → local frame
+                    h-loc (w->l d) up-loc (w->l up*)]
+                (recur tgt d up* (rest ps)
+                       (conj cmds {:cmd :set-heading :args [h-loc up-loc :local]}
+                             {:cmd :f :args [dist]}))))))))))
 
 (defn ^:export ensure-untwisted
   "Re-frame a 3D rail for a twist-free sweep: keep the node positions, but rederive
    the turtle up by parallel transport, so extrude/loft don't roll (spiral) the
-   section along a NON-planar rail. Rebuilt with RELATIVE turns (th/tv/tr) so the
-   rail still composes under the consumption pose. Positions come from the path's
+   section along a NON-planar rail. Rebuilt with per-segment (set-heading … :local),
+   i.e. frames RELATIVE to the previous one, so the rail still composes under the
+   consumption pose (rotates with it). Positions come from the path's
    traced waypoints (curves become their tessellated polyline). For a planar rail
    it's effectively a no-op (the up was already twist-free). Call it by hand when a
    hand-written non-planar rail's tube twists: (extrude prof (ensure-untwisted p))."

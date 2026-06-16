@@ -10,6 +10,7 @@ status: stable
 ## Signature
 
 `(set-heading [hx hy hz] [ux uy uz])`
+`(set-heading [hx hy hz] [ux uy uz] :local)`
 
 ## Description
 
@@ -29,14 +30,29 @@ It is mainly used by **generated** paths rather than hand-written ones:
 a path by hand, prefer the relative turns — they read better and **compose under
 the consumption pose**.
 
-⚠️ **Composition caveat.** Because `set-heading` is absolute, a path that uses it
-follows the consumption pose's **translation** (it starts at the turtle's position)
-but **not its rotation** — the heading snaps to the literal vectors regardless of
-how the turtle is oriented. A purely relative path (`th`/`tv`/`tr`) rotates *and*
-translates with the pose. That's why the 3D `edit-path` bake and
-[`ensure-untwisted`](#ensure-untwisted) use **relative** turns (a `tr` roll for the
-twist-free frame), not `set-heading`: a rail placed via `attach` / `on-anchors` /
-after a turtle rotation must rotate with its pose.
+### `:local` — the composing variant
+
+With a trailing `:local`, the two vectors are read in the **current frame's basis**
+`[right up heading]` (so `[1 0 0]` means "along right", `[0 0 1]` "along heading")
+and mapped to world. Because they're relative to the current frame, a `:local`
+set-heading **composes under the consumption pose** — it rotates *and* translates
+with the turtle, like `th`/`tv`/`tr`.
+
+```clojure
+;; both vectors relative to where the turtle currently points:
+(path (set-heading [0 1 0] [0 0 1] :local) (f 10))   ; turn left (toward +up-from-right…)
+```
+
+This is what the 3D `edit-path` bake and [`ensure-untwisted`](#ensure-untwisted)
+emit per segment — the new frame expressed in the previous segment's frame — so a
+rail placed via `attach` / `on-anchors` / after a turtle rotation **rotates with its
+pose**, while still carrying an explicit (twist-free) up.
+
+⚠️ **Plain (absolute) caveat.** Without `:local`, `set-heading` is absolute: a path
+using it follows the pose's **translation** (starts at the turtle's position) but
+**not its rotation** — the heading snaps to the literal world vectors regardless of
+the turtle's orientation. Use `:local` (or the relative turns) when the path must
+rotate with its pose.
 
 ## Parameters
 

@@ -15,10 +15,11 @@ status: stable
 
 Re-frame a 3D rail so a sweep along it does **not twist**. The node positions are
 kept exactly; only the turtle's `up` is recomputed, by **parallel transport** (a
-rotation-minimizing frame), and the rail is rebuilt with **relative** turns —
-`(th …)(tv …)(tr …)(f …)` per segment (the `tr` rolls onto the twist-free up). The
-turns are relative, so the re-framed rail still composes under the consumption pose
-(rotates/translates with the turtle).
+rotation-minimizing frame), and the rail is rebuilt as
+`(set-heading [dir][up] :local)(f …)` per segment — each frame given in the previous
+segment's frame. Because `:local` is relative, the re-framed rail still composes
+under the consumption pose (rotates/translates with the turtle), while the
+parallel-transport up keeps the section twist-free.
 
 ```clojure
 ;; a hand-written non-planar rail whose extruded tube spirals:
@@ -61,5 +62,5 @@ For a **planar** rail there is no holonomy, so `ensure-untwisted` changes nothin
 
 ## See also
 
-- `th` / `tv` / `tr` — the relative turns it emits
+- [`set-heading`](#set-heading) — the `:local` per-segment frame it emits
 - `extrude`, `loft` — the rail consumers that orient by `up`

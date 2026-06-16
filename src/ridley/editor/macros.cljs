@@ -26,8 +26,8 @@
             (fn [s]
               (let [s2 (rec-tv s angle)]
                 (assoc-in s2 [:recording (dec (count (:recording s2))) :arc-cap] cap)))))
-   (defn- rec-set-heading* [heading up]
-     (swap! path-recorder rec-set-heading heading up))
+   (defn- rec-set-heading* [heading up & [flag]]
+     (swap! path-recorder rec-set-heading heading up flag))
    (defn- rec-u* [dist]
      (swap! path-recorder rec-u dist))
    (defn- rec-rt* [dist]

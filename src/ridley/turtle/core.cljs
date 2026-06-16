@@ -1311,13 +1311,24 @@
 (defn rec-lt [state dist]
   (record-cmd state :lt [dist] #(move-left % dist)))
 
+(defn apply-set-heading
+  "Apply a set-heading command's args [heading up flag] to a turtle state. With a
+   trailing :local flag the vectors are in the CURRENT [right up heading] frame (so
+   the path composes with the consumption pose — rotates with it); otherwise they
+   are absolute. right = heading × up."
+  [s [heading up flag]]
+  (if (= :local flag)
+    (let [h (:heading s) u (:up s) r (normalize (cross h u))
+          l->w (fn [[lx ly lz]] (v+ (v* r lx) (v+ (v* u ly) (v* h lz))))]
+      (-> s (assoc :heading (normalize (l->w heading))) (assoc :up (normalize (l->w up)))))
+    (-> s (assoc :heading (normalize heading)) (assoc :up (normalize up)))))
+
 (defn rec-set-heading
-  "Record a set-heading command that directly sets heading and up vectors."
-  [state heading up]
-  (record-cmd state :set-heading [heading up]
-              #(-> %
-                   (assoc :heading (normalize heading))
-                   (assoc :up (normalize up)))))
+  "Record a set-heading command. A trailing `:local` flag means heading/up are in the
+   current frame (composes with the pose); otherwise absolute. See apply-set-heading."
+  [state heading up & [flag]]
+  (let [args (if flag [heading up flag] [heading up])]
+    (record-cmd state :set-heading args #(apply-set-heading % args))))
 
 ;; Record-only commands: these don't affect heading/position during recording
 ;; because they are context-dependent (only meaningful in attach/face context).
@@ -1431,9 +1442,7 @@
                 :u  (move-up s (first args))
                 :lt (move-left s (first args))
                 :rt (move-right s (first args))
-                :set-heading (-> s
-                                 (assoc :heading (normalize (first args)))
-                                 (assoc :up (normalize (second args))))
+                :set-heading (apply-set-heading s args)
                 :mark (assoc-in s [:anchors (first args)]
                                 {:position (:position s)
                                  :heading (:heading s)
@@ -1518,9 +1527,7 @@
                             :th (th s (first args))
                             :tv (tv s (first args))
                             :tr (tr s (first args))
-                            :set-heading (-> s
-                                             (assoc :heading (normalize (first args)))
-                                             (assoc :up (normalize (second args))))
+                            :set-heading (apply-set-heading s args)
                             s))
                         state
                         (:rotations segment))]

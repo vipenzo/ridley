@@ -246,10 +246,19 @@
               rad (deg->rad angle)
               new-up (rotate-around-axis (:up state) (:heading state) rad)]
           (assoc state :up new-up))
-    :set-heading (let [[heading up] (:args rotation)]
-                   (-> state
-                       (assoc :heading (normalize heading))
-                       (assoc :up (normalize up))))
+    :set-heading (let [[heading up flag] (:args rotation)]
+                   (if (= :local flag)
+                     ;; :local — heading/up are expressed in the CURRENT frame basis
+                     ;; [right up heading]; map to world so the frame composes with
+                     ;; the consumption pose (rotates with it). right = heading × up.
+                     (let [h (:heading state) u (:up state) r (normalize (cross h u))
+                           l->w (fn [[lx ly lz]] (v+ (v* r lx) (v+ (v* u ly) (v* h lz))))]
+                       (-> state
+                           (assoc :heading (normalize (l->w heading)))
+                           (assoc :up (normalize (l->w up)))))
+                     (-> state
+                         (assoc :heading (normalize heading))
+                         (assoc :up (normalize up)))))
     state))
 
 ;; --- Triangulation (earcut) ---

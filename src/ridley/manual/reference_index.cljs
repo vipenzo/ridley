@@ -486,7 +486,7 @@
     :status "stable"
     :since ""
     :signature "(ensure-untwisted path)"
-    :description "Re-frame a 3D rail so a sweep along it does **not twist**. The node positions are kept exactly; only the turtle's `up` is recomputed, by **parallel transport** (a rotation-minimizing frame), and the rail is rebuilt with **relative** turns — `(th …)(tv …)(tr …)(f …)` per segment (the `tr` rolls onto the twist-free up). The turns are relative, so the re-framed rail still composes under the consumption pose (rotates/translates with the turtle)."
+    :description "Re-frame a 3D rail so a sweep along it does **not twist**. The node positions are kept exactly; only the turtle's `up` is recomputed, by **parallel transport** (a rotation-minimizing frame), and the rail is rebuilt as `(set-heading [dir][up] :local)(f …)` per segment — each frame given in the previous segment's frame. Because `:local` is relative, the re-framed rail still composes under the consumption pose (rotates/translates with the turtle), while the parallel-transport up keeps the section twist-free."
     :path "docs/manual/reference/en/ensure-untwisted.md"}
 
    "export"
@@ -1907,7 +1907,7 @@
     :category "turtle-movement"
     :status "stable"
     :since ""
-    :signature "(set-heading [hx hy hz] [ux uy uz])"
+    :signature "(set-heading [hx hy hz] [ux uy uz])\n(set-heading [hx hy hz] [ux uy uz] :local)"
     :description "Set the turtle's frame **absolutely** inside a `(path …)`: `heading` is the new forward direction and `up` the new up direction (the right vector is derived as `heading × up`). Unlike the relative turns `th` / `tv` / `tr`, which rotate the current frame, `set-heading` replaces it outright."
     :path "docs/manual/reference/en/set-heading.md"}
 
