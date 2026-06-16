@@ -287,6 +287,31 @@ Paths record turtle movements as abstract data for later replay in extrusions. P
 (register tube (extrude (circle 5) my-path))
 ```
 
+### Planar paths (`path-2d`)
+
+A plain `path` is a **3D rail** — a turtle in space, consumed in its own frame by `extrude`/`loft`. When you instead want a path as a **2D profile** (via `path-to-shape` → `extrude`/`revolve`), use `path-2d`. It records its trace in the same plane a shape stamps into — the turtle's `(right, up)` plane — so the profile is never "rotated" relative to how you drew it. The defining invariant:
+
+```clojure
+(follow-path P)  ≡  (stamp (path-to-shape P))      ; world points coincide
+```
+
+`path-2d` is pose-less like `path` (the consumer supplies absolute placement). A plane has only one in-plane turn and one strafe, and the turtle's native `right`/roll would leave the plane, so inside `path-2d` the commands collapse:
+
+| You write | Means | Sign |
+|-----------|-------|------|
+| `th` = `tv` = `tr` | the single in-plane turn | `+` = left |
+| `rt` = `u`         | strafe | `+` one way |
+| `lt` = `down`      | strafe | `+` the other way |
+| `arc-h` = `arc-v`  | the single in-plane arc | sign = direction |
+| `f` / `b`          | forward / back | unchanged |
+
+```clojure
+(def L (path-2d (f 20) (th 90) (f 8) (th 90) (f 12) (th 90) (f 8)))
+(register part (extrude (path-to-shape L) (f 5)))
+```
+
+The result is tagged `:species :2d`. Planar consumers (`path-to-shape`, `stroke-shape`, `bounds-2d`) normalize it through `ensure-path-2d`; **rail** consumers (`extrude`-along-path, `loft`) keep the 3D path, so `path-2d` is fully non-breaking — an ordinary `path` is `:3d` and behaves exactly as before.
+
 ### Marks
 
 Marks record named poses within a path. They have no effect on geometry: they simply tag the turtle's position and orientation at that point.

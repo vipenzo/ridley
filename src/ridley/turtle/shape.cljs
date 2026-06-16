@@ -13,6 +13,10 @@
    - Turtle moves (extrusion is a side-effect)"
   (:require [ridley.turtle.extrusion :as extrusion]))
 
+;; Forward declarations: ensure-path-2d (the planar-consumer normalizer) and the
+;; 2D/3D tracers are defined later but referenced by earlier planar consumers.
+(declare ensure-path-2d path-to-2d-waypoints path-to-3d-waypoints)
+
 ;; ============================================================
 ;; Shape data structure
 ;; ============================================================
@@ -454,55 +458,7 @@
    anchors (in the section/base-face frame)."
   [path]
   (when (and (map? path) (= :path (:type path)))
-    (let [commands (:commands path)
-          [sx sy] (leading-move-to-xy commands)
-          ;; Trace the path to collect 2D points
-          result (reduce
-                  (fn [{:keys [pos heading points]} cmd]
-                    (case (:cmd cmd)
-                      :f (let [dist (first (:args cmd))
-                               ;; Use only XY components of heading
-                               hx (first heading)
-                               hy (second heading)
-                               new-pos [(+ (first pos) (* hx dist))
-                                        (+ (second pos) (* hy dist))]]
-                           {:pos new-pos
-                            :heading heading
-                            :points (conj points new-pos)})
-                      ;; rt/lt are in-plane strafes (move along right/left of the
-                      ;; heading, which itself is unchanged). right = [hy -hx].
-                      :rt (let [d (first (:args cmd)) hx (first heading) hy (second heading)
-                                new-pos [(+ (first pos) (* hy d)) (- (second pos) (* hx d))]]
-                            {:pos new-pos :heading heading :points (conj points new-pos)})
-                      :lt (let [d (first (:args cmd)) hx (first heading) hy (second heading)
-                                new-pos [(- (first pos) (* hy d)) (+ (second pos) (* hx d))]]
-                            {:pos new-pos :heading heading :points (conj points new-pos)})
-                      ;; A move-to repositions the pen without drawing a segment.
-                      ;; The leading one is already the seed, so this is a no-op
-                      ;; reposition that doesn't append a point.
-                      :move-to (let [t (first (:args cmd))]
-                                 {:pos [(first t) (second t)]
-                                  :heading heading
-                                  :points points})
-                      :th (let [angle (first (:args cmd))
-                                rad (* angle (/ Math/PI 180))
-                                hx (first heading)
-                                hy (second heading)
-                                cos-a (Math/cos rad)
-                                sin-a (Math/sin rad)
-                                new-heading [(- (* hx cos-a) (* hy sin-a))
-                                             (+ (* hx sin-a) (* hy cos-a))
-                                             0]]
-                            {:pos pos :heading new-heading :points points})
-                      :set-heading (let [[h _up] (:args cmd)
-                                         ;; Extract XY from 3D heading
-                                         new-heading [(first h) (second h) 0]]
-                                     {:pos pos :heading new-heading :points points})
-                      ;; Skip unknown commands
-                      {:pos pos :heading heading :points points}))
-                  {:pos [sx sy] :heading [1 0 0] :points [[sx sy]]}
-                  commands)
-          raw-points (:points result)]
+    (let [raw-points (mapv :pos (ensure-path-2d path))]
       (when (>= (count raw-points) 3)
         ;; Ensure CCW winding for correct outward-facing normals
         (let [final-pts (ensure-ccw raw-points)]
@@ -609,7 +565,7 @@
   [obj]
   (let [pts (cond
               (and (map? obj) (= :path (:type obj)))
-              (let [wps (path-to-2d-waypoints obj)]
+              (let [wps (ensure-path-2d obj)]
                 (mapv :pos wps))
               (and (map? obj) (= :shape (:type obj)))
               (:points obj))]
@@ -767,7 +723,7 @@
   [path width & {:keys [start-cap end-cap join miter-limit]
                  :or {start-cap :flat end-cap :flat join :miter miter-limit 4}}]
   (assert (number? width) "stroke-shape requires a width argument: (stroke-shape path width)")
-  (let [wps (path-to-2d-waypoints path)
+  (let [wps (ensure-path-2d path)
         n (count wps)
         half-w (/ width 2.0)]
     (when (and wps (>= n 2))
@@ -1156,6 +1112,32 @@
         (assoc wps (dec (count wps))
                (assoc (peek wps) :heading (:heading final) :up (:up final)))
         wps))))
+
+(defn ^:export ensure-path-2d
+  "Normalize any path to a planar 2D trace at the planar-consumer boundary
+   (path-to-shape, stroke-shape, bounds-2d, 2D booleans). Returns a vector of
+   2D waypoints [{:pos [a b] :dir [da db]} ...].
+
+   - :2d species (from path-2d / edit-path): the path is recorded so its trace
+     lives in its frame's (right, up) plane — the same plane a shape stamps into.
+     3D-trace the full turtle frame and project each pose onto the canonical
+     right = [0 -1 0] and up = [0 0 1] (a = -y, b = z). The projection is
+     lossless (the trace never leaves that plane) and re-embed is identity, so
+     `(follow-path P)` == `(stamp (path-to-shape P))` holds by construction.
+   - :3d (default): today's XY tracer (legacy, non-breaking) via
+     path-to-2d-waypoints.
+
+   Rail consumers (extrude-from-path, loft) keep the 3D path; only planar
+   consumers route through here."
+  [path]
+  (when (and (map? path) (= :path (:type path)))
+    (if (= :2d (:species path))
+      (mapv (fn [{:keys [pos heading]}]
+              (let [[_ y z] pos
+                    [_ hy hz] heading]
+                {:pos [(- y) z] :dir [(- hy) hz]}))
+            (path-to-3d-waypoints path))
+      (path-to-2d-waypoints path))))
 
 (defn- poses->path
   "Rebuild a path from a list of {:pos :up} poses. Shifts so the first pose sits

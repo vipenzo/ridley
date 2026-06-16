@@ -583,6 +583,31 @@
                       result# (if (:bezier rec-state#) (assoc result# :bezier true) result#)]
                   result#)))))))
 
+   ;; path-2d: record a PLANAR path whose trace lives in the (right, up) plane —
+   ;; the same plane a shape stamps into. So a 2D path feels un-rotated:
+   ;;   (follow-path P) == (stamp (path-to-shape P)).
+   ;; Pose-less like `path`; the consumer supplies absolute placement at use time.
+   ;; A leading (th -90) seeds the heading onto the incoming `right`, so f/tv trace
+   ;; in (right, up). A plane has only one in-plane turn and one strafe, and the
+   ;; turtle's native `right`/`tr` would leave the plane, so inside path-2d:
+   ;;   th = tv = tr   → the single in-plane turn (positive = left)
+   ;;   rt = u         → strafe (positive); lt = down → opposite strafe
+   ;;   arc-h = arc-v  → the single in-plane arc
+   ;; f/b stay forward/back. Result is tagged :species :2d; planar consumers
+   ;; (path-to-shape, stroke-shape, …) normalize it via ensure-path-2d.
+   ;; (def p (path-2d (f 20) (th 90) (f 20)))
+   (defmacro path-2d [& body]
+     `(assoc
+       (~'path
+        (~'th -90)
+        (let [~'th ~'tv
+              ~'tr ~'tv
+              ~'rt ~'u
+              ~'lt ~'down
+              ~'arc-h ~'arc-v]
+          ~@body))
+       :species :2d))
+
    ;; side-trip: scoped sub-path that doesn't move the spine
    ;; (path
    ;;   (mark :A)

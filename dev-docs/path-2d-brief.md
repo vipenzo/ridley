@@ -1,8 +1,10 @@
 # Brief: `path-2d` species + `ensure-path-2d` normalizer
 
-Status: **design agreed & validated in REPL (2026-06-15), NOT yet built.**
-High blast-radius (touches `path-to-shape`, a core consumer, and the `macro-defs`
-string). Build in a focused session.
+Status: **BUILT 2026-06-15 (phases 1–5).** `path-2d` macro + `ensure-path-2d`
+normalizer shipped; `path-to-shape` / `stroke-shape` / `bounds-2d` routed through
+it; acceptance invariant verified in REPL; full suite green (298 tests, 0 fail).
+Remaining: phase 6 — `edit-path` emits `:2d` (the 3D-path-editing chapter resumes
+from here).
 
 ## Problem
 
@@ -95,19 +97,23 @@ construction**.
 
 ## Build plan (next session)
 
-1. `path-2d` macro: seed pose so the trace is in `(right, up)`. NOTE: `set-heading`
-   is **not bound inside `(path …)`** today — `path-2d` must seed the heading itself.
-2. `ensure-path-2d`: 3D-trace (via `path-to-3d-waypoints`, which DOES handle
-   `tv`/`set-heading`) + project onto carried `(right, up)`; identity on `:2d`;
-   legacy `(x,y)` on `:3d`. NOTE: `path-to-shape` is currently a 2D-only (`th`)
-   tracer that **ignores `tv`/`arc-v`** — that's why this needs a real 3D
-   trace+project, not `(x,y)` extraction.
-3. Route `path-to-shape` / `stroke-shape` through `ensure-path-2d`.
-4. The shape must carry enough that `stamp` places it to satisfy the invariant
-   (both follow and stamp use the same consumption pose).
-5. `follow-path` of a `:2d` replays so its trace lands in `(right, up)` of the
-   consumption pose; assert the invariant as a test.
-6. Then: `edit-path` emits `:2d`; 3D-path-editing design resumes from here.
+1. ✅ `path-2d` macro ([macros.cljs](../src/ridley/editor/macros.cljs)): seeds with a
+   leading `(th -90)` (rotates incoming heading onto incoming `right`, pose-lessly —
+   `set-heading` is **not bound inside `(path …)`**). Inside the body the symbols
+   collapse: `th=tv=tr` (in-plane turn), `rt=u` / `lt=down` (strafe),
+   `arc-h=arc-v`. Result `(assoc … :species :2d)`.
+2. ✅ `ensure-path-2d` ([shape.cljs](../src/ridley/turtle/shape.cljs)): `:2d` →
+   `path-to-3d-waypoints` + project each pose onto canonical `right=[0 -1 0]`,
+   `up=[0 0 1]` (`a=-y, b=z`); `:3d` → legacy `path-to-2d-waypoints` (the XY tracer
+   that ignores `tv`). Returns 2D waypoints `[{:pos :dir} …]`.
+3. ✅ `path-to-shape` (`(mapv :pos (ensure-path-2d …))`), `stroke-shape`, `bounds-2d`
+   all routed through `ensure-path-2d`. `:3d` output byte-identical (verified).
+4. ✅ Invariant holds by construction — same canonical `(right,up)` for project &
+   re-embed; `stamp` and `follow` share the consumption pose.
+5. ✅ Verified in REPL: `follow-path` trace == `stamp(path-to-shape)` world points,
+   exactly, for the square. `extrude` of a `path-2d` profile == the `path` profile
+   mesh (10 v / 16 f).
+6. ⏳ TODO: `edit-path` emits `:2d`; 3D-path-editing design resumes from here.
 
 ## Related
 
