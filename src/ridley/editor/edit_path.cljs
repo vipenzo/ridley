@@ -1659,9 +1659,11 @@
    from the REPL it just returns the path with a hint, like edit-bezier."
   [seed-path]
   (let [mode (if (= :2d (:species seed-path)) :2d :3d)
+        ;; seed->nodes (2D) returns {:nodes :dropped}; seed->nodes-3d returns a
+        ;; plain node vector — wrap it so the destructuring works in both modes.
         {:keys [nodes dropped]} (if (= mode :2d)
                                   (seed->nodes (project-2d-to-xy seed-path))
-                                  (seed->nodes-3d seed-path))
+                                  {:nodes (seed->nodes-3d seed-path) :dropped []})
         live (fn [] (if (= mode :3d)
                       {:type :path :commands (nodes->commands-3d nodes)}
                       (nodes->path nodes)))]
