@@ -24,6 +24,7 @@
             [ridley.editor.modal-evaluator :as modal]
             [ridley.math :as m]
             [ridley.turtle.bezier :as bezier]
+            [ridley.turtle.shape :as shape]
             [ridley.viewport.core :as viewport]
             [clojure.string :as str]))
 
@@ -387,6 +388,68 @@
   [nodes]
   (str "(path-2d"
        (apply str (map #(str " " (cmd->code-2d %)) (nodes->commands nodes)))
+       ")"))
+
+;; ============================================================
+;; 3D nodes ↔ path (edit-path — straight-segment MVP, phase 1)
+;; ============================================================
+;; A 3D path is a rail (consumed by extrude-along-path / loft in its own frame),
+;; so nodes carry full 3D positions and the turtle frame is DERIVED from the
+;; geometry (tangent + parallel-transported up), exactly like the 2D editor
+;; derives heading from the segment. Curves/marks and the working-plane UI come in
+;; later phases.
+
+(defn- seed->nodes-3d
+  "Recover 3D editor nodes from a :3d path: one node per traced waypoint, carrying
+   the full turtle frame {:pos :heading :up}. Straight-segment MVP."
+  [seed-path]
+  (let [wps (shape/path-to-3d-waypoints seed-path)]
+    (if (and wps (>= (count wps) 2))
+      (mapv (fn [{:keys [pos heading up]}]
+              {:pos pos :heading heading :up up :tail []})
+            wps)
+      ;; empty/degenerate → a small default triangle in the f-plane (YZ at origin)
+      (mapv (fn [p] {:pos p :heading nil :up nil :tail []})
+            [[0 -20 -20] [0 20 -20] [0 0 20]]))))
+
+(defn- nodes->commands-3d
+  "Commands tracing the 3D nodes: per segment a (set-heading dir up)(f dist), with
+   up re-orthogonalized to the segment direction (parallel-transport-ish) so the
+   swept frame stays well-defined. The trace is shifted so the first node sits at
+   the origin (a relative rail, followed from the turtle pose). Coincident nodes
+   are skipped."
+  [nodes]
+  (if (< (count nodes) 2)
+    []
+    (let [origin (:pos (first nodes))]
+      (loop [cur [0 0 0]
+             ps (rest nodes)
+             cmds []]
+        (if (empty? ps)
+          cmds
+          (let [{:keys [pos up]} (first ps)
+                tgt (m/v- pos origin)
+                delta (m/v- tgt cur)
+                dist (m/magnitude delta)]
+            (if (< dist 1e-6)
+              (recur cur (rest ps) cmds)
+              (let [dir (m/normalize delta)
+                    up0 (or up [0 0 1])
+                    up* (let [u (m/v- up0 (m/v* dir (m/dot up0 dir)))]
+                          (if (> (m/magnitude u) 1e-6)
+                            (m/normalize u)
+                            (m/normalize (m/cross dir [0 0 1]))))]
+                (recur tgt (rest ps)
+                       (conj cmds
+                             {:cmd :set-heading :args [dir up*]}
+                             {:cmd :f :args [dist]}))))))))))
+
+(defn- nodes->code-3d
+  "The replacement source for a 3D edit: a (path (set-heading …)(f …) …) rail. The
+   (edit-path …) marker is a stand-in for this."
+  [nodes]
+  (str "(path"
+       (apply str (map #(str " " (cmd->code %)) (nodes->commands-3d nodes)))
        ")"))
 
 ;; -- arc-run recovery (re-editing a baked arc) ---------------------------

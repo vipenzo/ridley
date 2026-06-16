@@ -543,6 +543,7 @@
               ~'th rec-th*
               ~'tv rec-tv*
               ~'tr rec-tr*
+              ~'set-heading rec-set-heading*
               ~'u rec-u*
               ~'down (fn [dist#] (rec-u* (- dist#)))
               ~'rt rec-rt*
