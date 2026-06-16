@@ -2166,11 +2166,13 @@
    (defmacro edit-path-2d [& body]
      `(edit-path-request! (path-2d ~@body)))
 
-   ;; edit-path — TEMPORARY alias of edit-path-2d. The bare `edit-path` name is
-   ;; reserved for the future 3D path editor; until that lands it forwards to the
-   ;; planar editor so existing scripts keep working.
+   ;; edit-path — interactive 3D path (rail) editor. Wraps a plain (path …) body
+   ;; (a :3d path), so edit-path-request! opens the 3D session (species :2d → 2D
+   ;; editor, otherwise → 3D). On confirm it bakes a (path (set-heading …)(f …) …)
+   ;; rail; rename path → edit-path to re-edit. The 3D editor edits in a selectable
+   ;; working plane (f/r/u) of the turtle frame; default f = the edit-path-2d plane.
    (defmacro edit-path [& body]
-     `(edit-path-request! (path-2d ~@body)))
+     `(edit-path-request! (path ~@body)))
 
    ;; set-creation-pose!: move the origin/grip of a registered mesh
    ;; without moving its geometry. The turtle commands define the new pose.

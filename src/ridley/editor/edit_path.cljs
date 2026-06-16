@@ -651,95 +651,165 @@
   [{:keys [origin px py]} [a b]]
   (m/v+ origin (m/v+ (m/v* px a) (m/v* py b))))
 
+;; -- mode seam: 2D edits in a fixed plane (nodes store [a b]); 3D edits a rail in
+;; world space (nodes store [x y z]) within a SELECTABLE working plane of the
+;; turtle frame, named by its normal: :f ⊥forward = (right,up) = the 2D plane,
+;; :r ⊥right = (forward,up), :u ⊥up = (forward,right).
+
+(defn- three-d? [s] (= :3d (:mode s)))
+
+(defn- active-basis
+  "World-space basis {:origin :px :py} of the session's active working plane."
+  [s]
+  (let [{:keys [position heading up]} (:pose s)]
+    (if (three-d? s)
+      (let [right (m/normalize (m/cross heading up))]
+        (case (:plane s :f)
+          :f {:origin position :px right        :py up}
+          :r {:origin position :px heading      :py up}
+          :u {:origin position :px heading      :py right}))
+      (plane-basis (:pose s)))))
+
+(defn- node->world
+  "World position of a node: in 3D :pos is already world; in 2D lift [a b]."
+  [s node]
+  (if (three-d? s) (:pos node) (plane->world (active-basis s) (:pos node))))
+
+(defn- world->stored
+  "Convert a world point on the active plane to a node's stored :pos for the mode:
+   3D keeps world, 2D projects to [a b]."
+  [s w]
+  (if (three-d? s) w (world->plane (active-basis s) w)))
+
+(defn- node-plane-pos
+  "Active-plane [a b] coords of a node, for screen-ish hit-testing: 2D :pos is
+   already plane coords; 3D projects the world :pos onto the active plane."
+  [s node]
+  (if (three-d? s) (world->plane (active-basis s) (:pos node)) (:pos node)))
+
+(defn- active-plane-normal [s]
+  (let [b (active-basis s)] (m/normalize (m/cross (:px b) (:py b)))))
+
 ;; ============================================================
 ;; Ephemeral geometry
 ;; ============================================================
+
+(defn- render-3d!
+  "Redraw the 3D rail (straight-segment MVP): node positions in world space, drawn
+   as rings oriented to the active working plane — the ring foreshortens to a line
+   when the plane is edge-on to the camera, signalling 'orbit to edit here'."
+  [s]
+  (let [{:keys [nodes selected]} s
+        basis (active-basis s)
+        normal (m/normalize (m/cross (:px basis) (:py basis)))
+        pts (mapv #(node->world s %) nodes)
+        n (count pts)
+        seg-lines (mapv (fn [i] {:from (nth pts (dec i)) :to (nth pts i) :color line-color})
+                        (range 1 n))
+        closing (when (>= n 3) [{:from (last pts) :to (first pts) :color close-color}])
+        node-dots (mapv (fn [i pw]
+                          (let [marked? (seq (:tail (nth nodes i)))
+                                start? (zero? i) exit? (= i (dec n))]
+                            {:pos pw :ring true :normal normal
+                             :radius (if (= i selected) node-radius-sel node-radius)
+                             :color (cond marked?           mark-color
+                                          (or start? exit?) exit-color
+                                          (= i selected)    sel-color
+                                          :else             node-color)}))
+                        (range n) pts)]
+    (viewport/show-preview! [{:type :lines :data (vec (concat seg-lines closing)) :on-top true}
+                             {:type :dots :data node-dots}])))
 
 (defn- render!
   "Redraw the ephemeral path (straight + bezier segments), bezier handles, and the
    node dots from the current session state."
   []
-  (when-let [{:keys [nodes selected pose]} @session]
-    (let [basis (plane-basis pose)
-          normal (m/cross (:px basis) (:py basis))   ; working-plane normal (start ring)
-          ->w #(plane->world basis %)
-          pts (mapv #(->w (node-pos %)) nodes)
-          n (count pts)
+  (if (three-d? @session)
+    (render-3d! @session)
+    (when-let [{:keys [nodes selected pose]} @session]
+      (let [basis (plane-basis pose)
+            normal (m/cross (:px basis) (:py basis))   ; working-plane normal (start ring)
+            ->w #(plane->world basis %)
+            pts (mapv #(->w (node-pos %)) nodes)
+            n (count pts)
           ;; per-segment lines: bezier-tessellated / arc-tessellated / straight
-          seg-lines (mapcat
-                     (fn [i]
-                       (let [a (nth pts (dec i)) b (nth pts i)
-                             a2 (node-pos (nth nodes (dec i))) b2 (node-pos (nth nodes i))]
-                         (cond
-                           (:bez (nth nodes i))
-                           (let [{:keys [c1 c2]} (:bez (nth nodes i))
-                                 c1w (->w c1) c2w (->w c2) steps 24
-                                 cp (mapv #(bezier/cubic-bezier-point a c1w c2w b (/ % steps))
-                                          (range (inc steps)))]
-                             (mapv (fn [p q] {:from p :to q :color line-color}) cp (rest cp)))
+            seg-lines (mapcat
+                       (fn [i]
+                         (let [a (nth pts (dec i)) b (nth pts i)
+                               a2 (node-pos (nth nodes (dec i))) b2 (node-pos (nth nodes i))]
+                           (cond
+                             (:bez (nth nodes i))
+                             (let [{:keys [c1 c2]} (:bez (nth nodes i))
+                                   c1w (->w c1) c2w (->w c2) steps 24
+                                   cp (mapv #(bezier/cubic-bezier-point a c1w c2w b (/ % steps))
+                                            (range (inc steps)))]
+                               (mapv (fn [p q] {:from p :to q :color line-color}) cp (rest cp)))
 
-                           (:arc (nth nodes i))
-                           (if-let [tp (arc-tess a2 (:belly (:arc (nth nodes i))) b2 24)]
-                             (let [tw (mapv ->w tp)]
-                               (mapv (fn [p q] {:from p :to q :color line-color}) tw (rest tw)))
-                             [{:from a :to b :color line-color}])
+                             (:arc (nth nodes i))
+                             (if-let [tp (arc-tess a2 (:belly (:arc (nth nodes i))) b2 24)]
+                               (let [tw (mapv ->w tp)]
+                                 (mapv (fn [p q] {:from p :to q :color line-color}) tw (rest tw)))
+                               [{:from a :to b :color line-color}])
 
-                           :else [{:from a :to b :color line-color}])))
-                     (range 1 n))
-          closing (when (>= n 3) [{:from (last pts) :to (first pts) :color close-color}])
+                             :else [{:from a :to b :color line-color}])))
+                       (range 1 n))
+            closing (when (>= n 3) [{:from (last pts) :to (first pts) :color close-color}])
           ;; handle lines: bezier endpoint → control point (c1 magenta when its
           ;; start node is a cusp); arc chord-midpoint → belly
-          handle-lines (mapcat
-                        (fn [i]
-                          (cond
-                            (:bez (nth nodes i))
-                            (let [{:keys [c1 c2]} (:bez (nth nodes i))
-                                  c1col (if (false? (:smooth? (nth nodes (dec i)))) cusp-color handle-color)]
-                              [{:from (nth pts (dec i)) :to (->w c1) :color c1col}
-                               {:from (nth pts i) :to (->w c2) :color handle-color}])
+            handle-lines (mapcat
+                          (fn [i]
+                            (cond
+                              (:bez (nth nodes i))
+                              (let [{:keys [c1 c2]} (:bez (nth nodes i))
+                                    c1col (if (false? (:smooth? (nth nodes (dec i)))) cusp-color handle-color)]
+                                [{:from (nth pts (dec i)) :to (->w c1) :color c1col}
+                                 {:from (nth pts i) :to (->w c2) :color handle-color}])
 
-                            (:arc (nth nodes i))
-                            (let [a (nth pts (dec i)) b (nth pts i)
-                                  cmid (m/v* (m/v+ a b) 0.5)]
-                              [{:from cmid :to (->w (:belly (:arc (nth nodes i)))) :color handle-color}])))
-                        (range 1 n))
-          segs (vec (concat seg-lines closing handle-lines))
-          node-dots (mapv (fn [i pw]
-                            (let [marked? (seq (:tail (nth nodes i)))
-                                  start?  (zero? i)
-                                  exit?   (= i (dec n))]
-                              (cond-> {:pos pw
-                                       :radius (if (= i selected) node-radius-sel node-radius)
-                                       :color  (cond marked?            mark-color
-                                                     (or start? exit?)  exit-color
-                                                     (= i selected)     sel-color
-                                                     :else              node-color)}
-                                start? (assoc :ring true :normal normal))))
-                          (range n) pts)
-          handle-dots (mapcat
-                       (fn [i]
-                         (cond
-                           (:bez (nth nodes i))
-                           (let [{:keys [c1 c2]} (:bez (nth nodes i))
-                                 c1col (if (false? (:smooth? (nth nodes (dec i)))) cusp-color handle-color)]
+                              (:arc (nth nodes i))
+                              (let [a (nth pts (dec i)) b (nth pts i)
+                                    cmid (m/v* (m/v+ a b) 0.5)]
+                                [{:from cmid :to (->w (:belly (:arc (nth nodes i)))) :color handle-color}])))
+                          (range 1 n))
+            segs (vec (concat seg-lines closing handle-lines))
+            node-dots (mapv (fn [i pw]
+                              (let [marked? (seq (:tail (nth nodes i)))
+                                    start?  (zero? i)
+                                    exit?   (= i (dec n))]
+                                (cond-> {:pos pw
+                                         :radius (if (= i selected) node-radius-sel node-radius)
+                                         :color  (cond marked?            mark-color
+                                                       (or start? exit?)  exit-color
+                                                       (= i selected)     sel-color
+                                                       :else              node-color)}
+                                  start? (assoc :ring true :normal normal))))
+                            (range n) pts)
+            handle-dots (mapcat
+                         (fn [i]
+                           (cond
+                             (:bez (nth nodes i))
+                             (let [{:keys [c1 c2]} (:bez (nth nodes i))
+                                   c1col (if (false? (:smooth? (nth nodes (dec i)))) cusp-color handle-color)]
                              ;; control points are little squares (shape sets them
                              ;; apart from the round nodes — no extra colour needed)
-                             [{:pos (->w c1) :radius handle-radius :color c1col :square true :normal normal}
-                              {:pos (->w c2) :radius handle-radius :color handle-color :square true :normal normal}])
+                               [{:pos (->w c1) :radius handle-radius :color c1col :square true :normal normal}
+                                {:pos (->w c2) :radius handle-radius :color handle-color :square true :normal normal}])
 
-                           (:arc (nth nodes i))
-                           [{:pos (->w (:belly (:arc (nth nodes i)))) :radius handle-radius
-                             :color handle-color :square true :normal normal}]))
-                       (range 1 n))
-          dots (vec (concat node-dots handle-dots))]
-      (viewport/show-preview! [{:type :lines :data segs :on-top true}
-                               {:type :dots :data dots}]))))
+                             (:arc (nth nodes i))
+                             [{:pos (->w (:belly (:arc (nth nodes i)))) :radius handle-radius
+                               :color handle-color :square true :normal normal}]))
+                         (range 1 n))
+            dots (vec (concat node-dots handle-dots))]
+        (viewport/show-preview! [{:type :lines :data segs :on-top true}
+                                 {:type :dots :data dots}])))))
 
 ;; ============================================================
 ;; Live re-eval (downstream geometry)
 ;; ============================================================
 
-(defn- current-code [] (nodes->code (:nodes @session)))
+(defn- current-code []
+  (if (three-d? @session)
+    (nodes->code-3d (:nodes @session))
+    (nodes->code (:nodes @session))))
 
 (defn- find-marker []
   (modal/find-form-bounds (cm/get-value) marker-prefix))
@@ -771,26 +841,32 @@
     (let [s @session]
       (when-let [el (.querySelector panel ".ep-info")]
         (set! (.-textContent el)
-              (str "nodes: " (count (:nodes s)) " · sel: " (:selected s))))
+              (str "nodes: " (count (:nodes s)) " · sel: " (:selected s)
+                   (when (three-d? s)
+                     (str " · plane: " (name (:plane s :f)) " (f/r/u)")))))
       (when-let [el (.querySelector panel ".ep-step")]
         (let [buf (:digit-buffer s)]
           (set! (.-textContent el)
                 (if (seq buf) (str buf "_") (str (:step s) "mm"))))))))
 
 (defn- create-panel! []
-  (let [panel (.createElement js/document "div")]
+  (let [panel (.createElement js/document "div")
+        td? (three-d? @session)]
     (set! (.-id panel) "edit-path-panel")
     (set! (.-innerHTML panel)
-          (str "<div class='pilot-header'>edit-path-2d"
-               "<span class='pilot-mode-badge'>polyline</span></div>"
+          (str "<div class='pilot-header'>" (if td? "edit-path" "edit-path-2d")
+               "<span class='pilot-mode-badge'>" (if td? "3D rail" "polyline") "</span></div>"
                "<div class='pilot-controls'>"
                "<span class='ep-info'>nodes: 0 · sel: 0</span>"
                "<span>Step: <span class='ep-step'>5mm</span></span>"
                "</div>"
                "<div class='pilot-commands'>"
-               "click: add · drag node/handle: move · Tab: next · c: curve · "
-               "a: arc · x: cusp · Ins/i: split · ←→↑↓: node · Shift+↑↓: c1 · Alt+↑↓: c2 · "
-               "⌘Z: undo · Del: delete · Enter: OK · Esc: cancel"
+               (if td?
+                 (str "click: add · drag node: move · Tab: next · f/r/u: plane · "
+                      "←→↑↓: move in plane · ⌘Z: undo · Del: delete · Enter: OK · Esc: cancel")
+                 (str "click: add · drag node/handle: move · Tab: next · c: curve · "
+                      "a: arc · x: cusp · Ins/i: split · ←→↑↓: node · Shift+↑↓: c1 · Alt+↑↓: c2 · "
+                      "⌘Z: undo · Del: delete · Enter: OK · Esc: cancel"))
                "</div>"
                "<div class='pilot-buttons'>"
                "<button class='pilot-btn pilot-btn-ok ep-ok'>OK</button>"
@@ -941,13 +1017,18 @@
     (swap! session update :nodes reconstrain-handles)))
 
 (defn- nudge!
-  "Move the selected node by sign·step along axis 0=x / 1=y."
+  "Move the selected node by sign·step along the active plane's axis 0 (px) / 1 (py).
+   In 3D the node moves in world space along that plane axis; in 2D along [a b]."
   [axis sign]
   (let [s @session i (:selected s) step (:step s)]
     (when (and (seq (:nodes s)) (< i (count (:nodes s))))
       (push-undo!)
-      (let [[x y] (node-pos (nth (:nodes s) i))
-            np (if (zero? axis) [(+ x (* sign step)) y] [x (+ y (* sign step))])]
+      (let [np (if (three-d? s)
+                 (let [b (active-basis s)
+                       ax (if (zero? axis) (:px b) (:py b))]
+                   (m/v+ (:pos (nth (:nodes s) i)) (m/v* ax (* sign step))))
+                 (let [[x y] (node-pos (nth (:nodes s) i))]
+                   (if (zero? axis) [(+ x (* sign step)) y] [x (+ y (* sign step))])))]
         (move-node! i np))
       (refresh-preview!)
       (update-panel!))))
@@ -1045,14 +1126,15 @@
 ;; on empty space (no movement) adds a node.
 
 (defn- nearest-node-d2
-  "[idx d2] of the node closest to plane point p, or nil if there are none."
-  [nodes [px py]]
-  (when (seq nodes)
-    (let [d2 (fn [i] (let [[nx ny] (node-pos (nth nodes i))
-                           dx (- nx px) dy (- ny py)]
-                       (+ (* dx dx) (* dy dy))))
-          idx (apply min-key d2 (range (count nodes)))]
-      [idx (d2 idx)])))
+  "[idx d2] of the node closest to active-plane point p, or nil if there are none."
+  [s [px py]]
+  (let [nodes (:nodes s)]
+    (when (seq nodes)
+      (let [d2 (fn [i] (let [[nx ny] (node-plane-pos s (nth nodes i))
+                             dx (- nx px) dy (- ny py)]
+                         (+ (* dx dx) (* dy dy))))
+            idx (apply min-key d2 (range (count nodes)))]
+        [idx (d2 idx)]))))
 
 (defn- seg-closest
   "Closest point on segment a→b to p, with squared distance. {:point :d2}."
@@ -1106,27 +1188,36 @@
        (not (.-ctrlKey e)) (not (.-metaKey e))))
 
 (defn- click-plane-point
-  "World point where the pointer ray meets the working plane (no geometry needed)."
+  "World point where the pointer ray meets the active working plane. In 3D the plane
+   normal is the active-plane normal and it passes through the drag anchor (the node
+   being dragged, to preserve its depth) or the pose origin; in 2D it's the stamp
+   plane through the pose."
   [^js e s]
-  (let [pose (:pose s)]
-    (viewport/raycast-plane-point e (:position pose) (:heading pose))))
+  (if (three-d? s)
+    (viewport/raycast-plane-point e (or (:drag-anchor s) (:position (:pose s)))
+                                  (active-plane-normal s))
+    (let [pose (:pose s)]
+      (viewport/raycast-plane-point e (:position pose) (:heading pose)))))
 
 (defn- grab-node! [idx]
   ;; No undo push here: a bare click that only selects shouldn't add an undo step.
   ;; The push is deferred to the first actual drag move (see on-pointer-move).
-  (swap! session assoc :selected idx :dragging idx)
+  ;; In 3D, anchor the drag plane at the node's depth so it moves within its plane.
+  (let [anchor (when (three-d? @session) (:pos (nth (:nodes @session) idx)))]
+    (swap! session assoc :selected idx :dragging idx :drag-anchor anchor))
   (viewport/set-controls-enabled! false)
   (render!) (update-panel!))
 
 (defn- on-pointer-down [^js e]
   (when (and (:entered? @session) (plain-click? e))
     (let [s @session
-          basis (plane-basis (:pose s))
+          basis (active-basis s)
           w (click-plane-point e s)
           p2 (when w (world->plane basis w))
-          handle (when p2 (nearest-handle (:nodes s) p2))
-          [n-idx n-d2] (when p2 (nearest-node-d2 (:nodes s) p2))
-          seg (when p2 (nearest-segment (:nodes s) p2))]
+          two-d? (not (three-d? s))
+          handle (when (and two-d? p2) (nearest-handle (:nodes s) p2))
+          [n-idx n-d2] (when p2 (nearest-node-d2 s p2))
+          seg (when (and two-d? p2) (nearest-segment (:nodes s) p2))]
       (cond
         ;; Right on a node → grab it (wins over a nearby handle/segment, so moving a
         ;; node doesn't accidentally catch a control point).
@@ -1174,7 +1265,7 @@
         (:dragging s)
         (when-let [w (click-plane-point e s)]
           (when-not (:drag-pushed? s) (push-undo!) (swap! session assoc :drag-pushed? true))
-          (move-node! (:dragging s) (world->plane (plane-basis (:pose s)) w))
+          (move-node! (:dragging s) (world->stored s w))
           (refresh-preview!))))))
 
 (defn- on-pointer-up [^js e]
@@ -1186,7 +1277,7 @@
           (refresh-preview!) (update-panel!))
 
       (:dragging s)
-      (do (swap! session dissoc :dragging :drag-pushed?)
+      (do (swap! session dissoc :dragging :drag-pushed? :drag-anchor)
           (viewport/set-controls-enabled! true)
           (refresh-preview!) (update-panel!))
 
@@ -1196,7 +1287,7 @@
                      (js/Math.abs (- (.-clientY e) dy)))]
         ;; A click (barely moved) appends a node; a real drag was an orbit.
         (when (and (< moved 5) (:pt (:down s)))
-          (append-node! (world->plane (plane-basis (:pose s)) (:pt (:down s)))))
+          (append-node! (world->stored s (:pt (:down s)))))
         (swap! session dissoc :down)))))
 
 ;; ============================================================
@@ -1222,6 +1313,13 @@
     "ArrowUp"    [1 1]
     "ArrowDown"  [1 -1]
     nil))
+
+(defn- set-plane!
+  "Select the active 3D working plane (named by its normal axis): :f ⊥forward,
+   :r ⊥right, :u ⊥up. Re-renders so the node rings reorient to the new plane."
+  [plane]
+  (swap! session assoc :plane plane)
+  (render!) (update-panel!))
 
 (defn- on-keydown [e]
   (when (:entered? @session)
@@ -1257,9 +1355,9 @@
               ;; bezier (Ctrl/Cmd are reserved by macOS for spaces); plain arrows
               ;; move the node.
               (cond
-                (.-shiftKey e)                          (nudge-handle! :c1 axis sign)
-                (.-altKey e)                            (nudge-handle! :c2 axis sign)
-                :else                                   (nudge! axis sign))))
+                (and (not (three-d? @session)) (.-shiftKey e)) (nudge-handle! :c1 axis sign)
+                (and (not (three-d? @session)) (.-altKey e))   (nudge-handle! :c2 axis sign)
+                :else                                          (nudge! axis sign))))
 
         (#{"Delete"} key)
         (do (.preventDefault e) (.stopPropagation e) (delete-node!))
@@ -1267,20 +1365,28 @@
         ;; Insert a node at the midpoint of the segment entering the selected node.
         ;; Match by .-key, by .-code (PC keyboards send code "Insert" regardless of
         ;; the produced key), and the Mac "Help" key; "i" is the laptop alias.
-        (or (#{"Insert" "Help" "i" "I"} key) (= (.-code e) "Insert"))
+        ;; (2D only for now — 3D split comes with the curve phase.)
+        (and (not (three-d? @session))
+             (or (#{"Insert" "Help" "i" "I"} key) (= (.-code e) "Insert")))
         (do (.preventDefault e) (.stopPropagation e) (split-segment!))
 
-        ;; toggle the selected node's incoming segment straight ↔ bezier curve
-        (#{"c" "C"} key)
+        ;; toggle the selected node's incoming segment straight ↔ bezier curve (2D)
+        (and (not (three-d? @session)) (#{"c" "C"} key))
         (do (.preventDefault e) (.stopPropagation e) (toggle-bezier!))
 
-        ;; toggle the selected node's incoming segment straight ↔ circular arc
-        (#{"a" "A"} key)
+        ;; toggle the selected node's incoming segment straight ↔ circular arc (2D)
+        (and (not (three-d? @session)) (#{"a" "A"} key))
         (do (.preventDefault e) (.stopPropagation e) (toggle-arc!))
 
-        ;; toggle the selected node smooth ↔ cusp (frees its outgoing handle)
-        (#{"x" "X"} key)
+        ;; toggle the selected node smooth ↔ cusp (frees its outgoing handle) (2D)
+        (and (not (three-d? @session)) (#{"x" "X"} key))
         (do (.preventDefault e) (.stopPropagation e) (toggle-cusp!))
+
+        ;; 3D only: select the active working plane (named by its normal axis)
+        ;; f ⊥forward (= the 2D plane), r ⊥right, u ⊥up.
+        (and (three-d? @session) (#{"f" "F" "r" "R" "u" "U"} key))
+        (do (.preventDefault e) (.stopPropagation e)
+            (set-plane! (case key ("f" "F") :f ("r" "R") :r :u)))
 
         (= key "Backspace")
         (do (.preventDefault e) (.stopPropagation e)
@@ -1355,38 +1461,45 @@
    so the surrounding (path-to-shape …) runs during the eval. Script-mode only —
    from the REPL it just returns the path with a hint, like edit-bezier."
   [seed-path]
-  (let [{:keys [nodes dropped]} (seed->nodes (project-2d-to-xy seed-path))]
+  (let [mode (if (= :2d (:species seed-path)) :2d :3d)
+        {:keys [nodes dropped]} (if (= mode :2d)
+                                  (seed->nodes (project-2d-to-xy seed-path))
+                                  (seed->nodes-3d seed-path))
+        live (fn [] (if (= mode :3d)
+                      {:type :path :commands (nodes->commands-3d nodes)}
+                      (nodes->path nodes)))]
     (cond
       (modal/consume-skip!)
-      (nodes->path nodes)
+      (live)
 
       (not= :definitions @state/eval-source-var)
       (do (state/capture-println
            "edit-path: open it from the definitions panel (Cmd+Enter), not the REPL")
-          (nodes->path nodes))
+          (live))
 
       :else
       (do
         (clear-orphan!)
         (when (nil? (find-marker))
           (throw (js/Error. (str "edit-path: cannot find '" marker-prefix " …)' in editor"))))
-        ;; f/th/set-heading/rt/lt/mark/side-trip are handled; arcs, beziers and the
-        ;; out-of-plane moves (u/tv/tr) are not yet editable — warn that confirming
-        ;; drops them and replaces with straight segments.
+        ;; 2D: f/th/set-heading/mark/side-trip handled; arcs/beziers recovered.
+        ;; 3D MVP: straight segments only — curves/marks come in a later phase.
         (when (seq dropped)
           (state/capture-println
            (str "edit-path: WARNING — body contains " dropped
-                " which this MVP cannot edit; confirming will replace them with "
-                "straight segments.")))
+                " which this editor cannot edit yet; confirming will replace them "
+                "with straight segments.")))
         (modal/claim! :edit-path)
         (reset! session {:nodes        nodes
                          :selected     (max 0 (dec (count nodes)))
                          :step         5
                          :digit-buffer ""
                          :undo         []
+                         :mode         mode
+                         :plane        :f
                          :pose         (state/get-turtle-pose)
                          :entered?     false})
-        (nodes->path nodes)))))
+        (live)))))
 
 (defn requested? []
   (and (some? @session) (not (:entered? @session))))
