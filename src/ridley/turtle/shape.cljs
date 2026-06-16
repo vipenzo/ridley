@@ -381,11 +381,14 @@
          2))))
 
 (defn- ensure-ccw
-  "Ensure points are in counter-clockwise order (positive signed area).
-   Reverses points if they are clockwise."
+  "Ensure points are in counter-clockwise order (positive signed area), keeping the
+   FIRST vertex fixed. A clockwise ring is flipped by reversing all points AFTER the
+   first (`[p0 p1 … pn]` → `[p0 pn … p1]`), which gives the same ring traversed the
+   other way but with the same start vertex — so the shape's seam / origin stays at
+   the trace start instead of jumping to the last node for clockwise-wound paths."
   [points]
   (if (neg? (signed-area-2d points))
-    (vec (reverse points))
+    (into [(first points)] (reverse (rest points)))
     points))
 
 (defn path-has-mark?
