@@ -412,11 +412,10 @@
       (mapv (fn [{:keys [pos heading up]}]
               {:pos pos :heading heading :up up :tail []})
             wps)
-      ;; empty/degenerate → start anchored at the origin with one short segment in
-      ;; the default f-plane (rising along +Z/up), so the rail is immediately valid
-      ;; and there is a clear reference point rather than a floating default.
-      (mapv (fn [p] {:pos p :heading nil :up nil :tail []})
-            [[0 0 0] [0 0 20]]))))
+      ;; empty → just the anchor node at the origin (already present, not inserted
+      ;; by the user and not movable); the user clicks to add the rail from there.
+      ;; A 0-segment path extrudes to an empty mesh (no error) until the 2nd node.
+      [{:pos [0 0 0] :heading nil :up nil :tail []}])))
 
 (defn- safe-up
   "An up vector perpendicular to `dir`, derived from reference `ref`. Falls back to
