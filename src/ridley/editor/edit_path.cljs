@@ -28,7 +28,8 @@
             [ridley.viewport.core :as viewport]
             [clojure.string :as str]))
 
-(declare confirm! cancel! render! update-panel! refresh-preview!)
+(declare confirm! cancel! render! update-panel! refresh-preview!
+         set-seg-len! set-seg-angle! seg-len seg-angle-deg)
 
 ;; ============================================================
 ;; State
@@ -914,7 +915,22 @@
       (when-let [el (.querySelector panel ".ep-step")]
         (let [buf (:digit-buffer s)]
           (set! (.-textContent el)
-                (if (seq buf) (str buf "_") (str (:step s) "mm"))))))))
+                (if (seq buf) (str buf "_") (str (:step s) "mm")))))
+      ;; 3D precision fields: the selected node's incoming segment (len + in-plane
+      ;; angle). Node 0 (the anchor) and 2D have none — disabled. Don't clobber a
+      ;; field the user is currently editing.
+      (when (three-d? s)
+        (let [i (:selected s) n (count (:nodes s))
+              seg? (and (>= i 1) (< i n))
+              focused (.-activeElement js/document)
+              r1 #(/ (js/Math.round (* % 10)) 10)]
+          (doseq [[cls val] [[".ep-len" (when seg? (seg-len s i))]
+                             [".ep-ang" (when seg? (seg-angle-deg s i))]]]
+            (when-let [^js el (.querySelector panel cls)]
+              (set! (.-disabled el) (not seg?))
+              (cond
+                (not seg?)        (set! (.-value el) "")
+                (not= el focused) (set! (.-value el) (str (r1 val)))))))))))
 
 (defn- create-panel! []
   (let [panel (.createElement js/document "div")
@@ -936,12 +952,30 @@
                       "a: arc · x: cusp · Ins/i: split · ←→↑↓: node · Shift+↑↓: c1 · Alt+↑↓: c2 · "
                       "⌘Z: undo · Del: delete · Enter: OK · Esc: cancel"))
                "</div>"
+               ;; 3D precision: the selected node's incoming segment (len + in-plane angle)
+               (when td?
+                 (str "<div class='ep-precision' style='display:flex;gap:10px;align-items:center'>"
+                      "<label>len <input class='ep-len' type='number' step='1' "
+                      "style='width:64px' disabled></label>"
+                      "<label>ang° <input class='ep-ang' type='number' step='1' "
+                      "style='width:64px' disabled></label>"
+                      "</div>"))
                "<div class='pilot-buttons'>"
                "<button class='pilot-btn pilot-btn-ok ep-ok'>OK</button>"
                "<button class='pilot-btn pilot-btn-cancel ep-cancel'>Cancel</button>"
                "</div>"))
     (.addEventListener (.querySelector panel ".ep-ok") "click" (fn [_] (confirm!)))
     (.addEventListener (.querySelector panel ".ep-cancel") "click" (fn [_] (cancel!)))
+    (when-let [^js len-in (.querySelector panel ".ep-len")]
+      (.addEventListener len-in "change"
+                         (fn [^js e] (let [v (js/parseFloat (.. e -target -value))
+                                           i (:selected @session)]
+                                       (when (js/isFinite v) (set-seg-len! i v))))))
+    (when-let [^js ang-in (.querySelector panel ".ep-ang")]
+      (.addEventListener ang-in "change"
+                         (fn [^js e] (let [v (js/parseFloat (.. e -target -value))
+                                           i (:selected @session)]
+                                       (when (js/isFinite v) (set-seg-angle! i v))))))
     (modal/mount-panel! panel)
     panel))
 
@@ -1065,31 +1099,39 @@
   (or (seq (:tail (nth nodes idx)))
       (= idx (dec (count nodes)))))
 
+(defn- pinned?
+  "In 3D the first node is the rail's anchor (the origin of the relative path) — it
+   is fixed at the origin and cannot be moved; its world placement comes from the
+   consuming turtle pose (moves / cp-*)."
+  [s idx]
+  (and (three-d? s) (zero? idx)))
+
 (defn- move-node!
   "Set node `idx` to absolute 2D `new-pos`, dragging its attached bezier handles
    (its incoming :c2 and the next segment's :c1) along by the same delta, and
    dropping its explicit heading unless it's notable."
   [idx new-pos]
-  (let [nodes (:nodes @session)
-        [ox oy] (node-pos (nth nodes idx))
-        dx (- (first new-pos) ox) dy (- (second new-pos) oy)
-        tr (fn [[x y]] [(+ x dx) (+ y dy)])]
-    (swap! session
-           (fn [s]
-             (cond-> (assoc-in s [:nodes idx :pos] new-pos)
-               (get-in nodes [idx :bez])       (update-in [:nodes idx :bez :c2] tr)
-               (get-in nodes [(inc idx) :bez]) (update-in [:nodes (inc idx) :bez :c1] tr))))
-    (when-not (notable? (:nodes @session) idx)
-      (swap! session assoc-in [:nodes idx :heading] nil))
-    ;; moving a node changes incoming tangents → re-snap smooth bezier handles
-    (swap! session update :nodes reconstrain-handles)))
+  (when-not (pinned? @session idx)
+    (let [nodes (:nodes @session)
+          [ox oy] (node-pos (nth nodes idx))
+          dx (- (first new-pos) ox) dy (- (second new-pos) oy)
+          tr (fn [[x y]] [(+ x dx) (+ y dy)])]
+      (swap! session
+             (fn [s]
+               (cond-> (assoc-in s [:nodes idx :pos] new-pos)
+                 (get-in nodes [idx :bez])       (update-in [:nodes idx :bez :c2] tr)
+                 (get-in nodes [(inc idx) :bez]) (update-in [:nodes (inc idx) :bez :c1] tr))))
+      (when-not (notable? (:nodes @session) idx)
+        (swap! session assoc-in [:nodes idx :heading] nil))
+      ;; moving a node changes incoming tangents → re-snap smooth bezier handles
+      (swap! session update :nodes reconstrain-handles))))
 
 (defn- nudge!
   "Move the selected node by sign·step along the active plane's axis 0 (px) / 1 (py).
    In 3D the node moves in world space along that plane axis; in 2D along [a b]."
   [axis sign]
   (let [s @session i (:selected s) step (:step s)]
-    (when (and (seq (:nodes s)) (< i (count (:nodes s))))
+    (when (and (seq (:nodes s)) (< i (count (:nodes s))) (not (pinned? s i)))
       (push-undo!)
       (let [np (if (three-d? s)
                  (let [b (active-basis s)
@@ -1100,6 +1142,59 @@
         (move-node! i np))
       (refresh-preview!)
       (update-panel!))))
+
+;; -- 3D precision fields: the selected node's incoming segment as length + angle.
+;; Length is the segment magnitude; angle is measured IN the active plane — relative
+;; to the previous segment for node ≥ 2, else absolute (vs the plane's px axis).
+
+(defn- rot-axis
+  "Rotate vector v around unit axis by ang radians (Rodrigues)."
+  [axis v ang]
+  (let [ca (js/Math.cos ang) sa (js/Math.sin ang)]
+    (m/v+ (m/v* v ca)
+          (m/v+ (m/v* (m/cross axis v) sa)
+                (m/v* axis (* (m/dot axis v) (- 1 ca)))))))
+
+(defn- seg-dir [s i]
+  (m/normalize (m/v- (:pos (nth (:nodes s) i)) (:pos (nth (:nodes s) (dec i))))))
+
+(defn- in-plane-angle [s v]
+  (let [b (active-basis s)]
+    (js/Math.atan2 (m/dot v (:py b)) (m/dot v (:px b)))))
+
+(defn- seg-len [s i]
+  (m/magnitude (m/v- (:pos (nth (:nodes s) i)) (:pos (nth (:nodes s) (dec i))))))
+
+(defn- seg-angle-deg
+  "Incoming-segment angle (degrees) of node i in the active plane: relative to the
+   previous segment for i ≥ 2, else absolute. Normalized to (-180,180]."
+  [s i]
+  (let [cur (in-plane-angle s (seg-dir s i))
+        ref (if (>= i 2) (in-plane-angle s (seg-dir s (dec i))) 0)
+        deg (* (- cur ref) (/ 180 js/Math.PI))]
+    (- (mod (+ deg 180) 360) 180)))
+
+(defn- set-seg-len! [i len]
+  (let [s @session]
+    (when (and (>= i 1) (< i (count (:nodes s))) (pos? len))
+      (push-undo!)
+      (let [prev (:pos (nth (:nodes s) (dec i)))]
+        (move-node! i (m/v+ prev (m/v* (seg-dir s i) len))))
+      (refresh-preview!) (update-panel!))))
+
+(defn- set-seg-angle! [i deg]
+  (let [s @session]
+    (when (and (>= i 1) (< i (count (:nodes s))))
+      (push-undo!)
+      (let [prev (:pos (nth (:nodes s) (dec i)))
+            cur-v (m/v- (:pos (nth (:nodes s) i)) prev)
+            len (m/magnitude cur-v)
+            ref (if (>= i 2) (in-plane-angle s (seg-dir s (dec i))) 0)
+            target (+ ref (* deg (/ js/Math.PI 180)))
+            delta (- target (in-plane-angle s cur-v))
+            new-dir (rot-axis (active-plane-normal s) (m/normalize cur-v) delta)]
+        (move-node! i (m/v+ prev (m/v* new-dir len))))
+      (refresh-preview!) (update-panel!))))
 
 (defn- nudge-handle!
   "Move control point `which` (:c1/:c2) of the selected node's bezier by sign·step
@@ -1417,8 +1512,15 @@
   (swap! session assoc :plane plane)
   (render!) (update-panel!))
 
+(defn- input-focused?
+  "True when a panel <input> (the 3D precision fields) has focus — then editor
+   keys must be left to the input (so digits/Enter edit the field, not the path)."
+  []
+  (when-let [^js a (.-activeElement js/document)]
+    (= "INPUT" (.-tagName a))))
+
 (defn- on-keydown [e]
-  (when (:entered? @session)
+  (when (and (:entered? @session) (not (input-focused?)))
     (let [key (.-key e)
           digit (digit-key key)]
       (cond
