@@ -704,9 +704,9 @@
         normal (m/normalize (m/cross (:px basis) (:py basis)))
         pts (mapv #(node->world s %) nodes)
         n (count pts)
+        ;; a 3D path is an OPEN rail (extrude/loft trajectory) — no closing segment
         seg-lines (mapv (fn [i] {:from (nth pts (dec i)) :to (nth pts i) :color line-color})
                         (range 1 n))
-        closing (when (>= n 3) [{:from (last pts) :to (first pts) :color close-color}])
         node-dots (mapv (fn [i pw]
                           (let [marked? (seq (:tail (nth nodes i)))
                                 start? (zero? i) exit? (= i (dec n))]
@@ -717,7 +717,7 @@
                                           (= i selected)    sel-color
                                           :else             node-color)}))
                         (range n) pts)]
-    (viewport/show-preview! [{:type :lines :data (vec (concat seg-lines closing)) :on-top true}
+    (viewport/show-preview! [{:type :lines :data (vec seg-lines) :on-top true}
                              {:type :dots :data node-dots}])))
 
 (defn- render!
