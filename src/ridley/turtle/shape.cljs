@@ -439,6 +439,20 @@
                          [nm {:vertex idx :head-offset off}])))))
            (into {})))))
 
+(defn- drop-closing-dup
+  "For a CLOSED path (edit-path-2d's :closed? flag), the baked closing segment runs the
+   trace back to node 0, leaving a trailing vertex at (≈) the start; make-shape closes
+   implicitly, so that vertex would only add a degenerate seam edge. Drop it. The bake
+   rounds coordinates, so the return is approximate — use a generous tolerance, safe
+   because the flag tells us this last vertex IS the seam return. Open paths (no flag)
+   are untouched."
+  [pts closed?]
+  (if (and closed? (> (count pts) 1)
+           (let [[ax ay] (first pts) [bx by] (peek pts)]
+             (< (+ (* (- ax bx) (- ax bx)) (* (- ay by) (- ay by))) 1.0)))
+    (subvec pts 0 (dec (count pts)))
+    pts))
+
 (defn- leading-move-to-xy
   "If the first command of `commands` is a (move-to [x y …]), return [x y];
    otherwise [0 0]. Lets a path anchor its trace at an absolute start point
@@ -465,7 +479,7 @@
    anchors (in the section/base-face frame)."
   [path]
   (when (and (map? path) (= :path (:type path)))
-    (let [raw-points (mapv :pos (ensure-path-2d path))]
+    (let [raw-points (drop-closing-dup (mapv :pos (ensure-path-2d path)) (:closed? path))]
       (when (>= (count raw-points) 3)
         ;; Ensure CCW winding for correct outward-facing normals
         (let [final-pts (ensure-ccw raw-points)]

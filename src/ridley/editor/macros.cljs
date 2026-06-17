@@ -597,17 +597,24 @@
    ;; f/b stay forward/back. Result is tagged :species :2d; planar consumers
    ;; (path-to-shape, stroke-shape, …) normalize it via ensure-path-2d.
    ;; (def p (path-2d (f 20) (th 90) (f 20)))
+   ;; A leading :closed flag marks the path CLOSED (edit-path-2d's closing segment,
+   ;; last → first, is a real editable seam): it sets :closed? on the value and is
+   ;; otherwise dropped from the body. path-to-shape uses it to drop the doubled
+   ;; seam vertex; everything else ignores it.
    (defmacro path-2d [& body]
-     `(assoc
-       (~'path
-        (~'th -90)
-        (let [~'th ~'tv
-              ~'tr ~'tv
-              ~'rt ~'u
-              ~'lt ~'down
-              ~'arc-h ~'arc-v]
-          ~@body))
-       :species :2d))
+     (let [closed? (= :closed (first body))
+           body (if closed? (rest body) body)]
+       `(assoc
+         (~'path
+          (~'th -90)
+          (let [~'th ~'tv
+                ~'tr ~'tv
+                ~'rt ~'u
+                ~'lt ~'down
+                ~'arc-h ~'arc-v]
+            ~@body))
+         :species :2d
+         :closed? ~closed?)))
 
    ;; side-trip: scoped sub-path that doesn't move the spine
    ;; (path
