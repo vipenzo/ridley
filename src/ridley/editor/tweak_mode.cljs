@@ -209,8 +209,11 @@
     (let [form (:form @test-state)
           modified-form (substitute-values form current-values)
           form-str (pr-str modified-form)]
+      ;; arm-skip? false: the modified script has (tweak …) replaced by the current
+      ;; literals (no macro to re-enter), so arming would just leave the flag set and
+      ;; make the NEXT tweak invocation pass through (the "every other time" bug).
       (when (modal/reeval-script! #(build-modified-script form-str)
-                                  "tweak script eval error:")
+                                  "tweak script eval error:" false)
         ;; Update turtle indicator to reflect new creation-pose
         (let [source (viewport/get-turtle-source)]
           (cond
@@ -336,7 +339,11 @@
       tweak-from
       (do (when transient-restore
             (modal/replace-source! tweak-from tweak-to transient-restore))
-          (modal/arm-skip!)
+          ;; Only arm the skip when the (tweak …) form SURVIVES the re-run (a permanent
+          ;; tweak in the user's source), so its re-eval passes through instead of
+          ;; re-entering. For an editor-wrapped (transient) tweak the wrapper was just
+          ;; removed, so arming would leak into the next tweak invocation.
+          (when-not transient-restore (modal/arm-skip!))
           (modal/run-definitions!)))
     (cleanup-ui!)
     (modal/release!)
