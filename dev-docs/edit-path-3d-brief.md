@@ -1,9 +1,106 @@
 # Brief: path-2d / edit-path-2d / edit-path-3d (path editing arc)
 
-Status: **path-2d + edit-path-2d + edit-path-3d (straight segments) BUILT & working
-in-app (2026-06-16, branch `fix/arc-cap-flush-extrude`).** Next: **Phase 3 — 3D
-curves (arc/bezier)** in edit-path-3d, and optionally an extrude `:minimize-twist`
-option. This brief is the resume point for a fresh chat.
+Status: **path-2d + edit-path-2d + edit-path-3d BUILT & working
+in-app (2026-06-16, branch `fix/arc-cap-flush-extrude`).** Curves:
+- **2D editor**: tangent "raccordo" **arc** (`a` → `arc-v`) + free **bezier** (`c`).
+- **3D editor**: curves are **béziers** (`c` free, `a` arc-shaped) — see Phase 3b. The
+  3D arc-as-`arc-h` approach was dropped (it twisted the tube at the seam); the
+  *language* keeps `arc-h`/`arc-v` for hand-written clarity, and a hand-written `arc-h`
+  opened in the 3D editor is converted to a bezier on input.
+
+Headless round-trips verified, `npm test` 298/847 green, pending in-app eyeball.
+Optional later: an extrude `:minimize-twist` option. This brief is the resume point.
+
+### Phase 3b (3D béziers) — the 3D editor's curve primitive
+
+**Why bezier, not arc, in 3D.** A 3D arc baked as `(set-heading [t][normal] :local)
+(arc-h …)` keeps the centerline smooth but forces the section `up` = the arc-plane
+normal, which JUMPS (up to 180°) vs the straight's RMF up at the seam → the extruded
+tube twists/pinches at the arc entry (observed in-app). Tessellating the arc into one
+RMF sweep fixes the twist but bloats the source/re-edit into hundreds of nodes. The
+**cubic bezier** solves both: `bezier-to` tessellates at eval-time with its OWN
+rotation-minimizing frame (`rec-bezier-to*` parallel-transports the up → continuous,
+no pinch) yet the **source is one compact `(bezier-to [end][c1][c2] :local)`**, and the
+run carries a `:pure` tag so re-edit recovers it as a single node. Verified headless:
+out-of-plane bezier rail has continuous up (no seam jump); exact c1/c2 round-trip.
+
+Implementation (all [edit_path.cljs](../src/ridley/editor/edit_path.cljs)):
+- node model `:bez {:c1 :c2}` (world 3-vec handles, free — no tangent re-snap in 3D).
+- `bezier-frame-3d` (tessellate + projection-RMF → :pts/:exit-h/:exit-u, mirroring
+  `rec-bezier-to*` so the walk's post-bezier frame matches the recorder's) ·
+  `walk-3d-segments` (:bez/:straight, single source for bake + render) ·
+  `nodes->commands-3d` (bezier → one `bezier-to :local`; straight → set-heading/f).
+- recover: `group-arc-runs-3d` collapses `:pure` (bezier, with move-count) and
+  `:arc-cap` (hand `arc-h`) runs; `seed->nodes-3d` builds a bez node from `:pure`
+  (exact) or converts an arc run via `arc-run->bez`/`arc->bez-handles` (L=(4/3)tan(θ/4)r).
+- interaction: `toggle-bezier!` (**`c`**, free bezier, c1 along incoming tangent) ·
+  `toggle-arc!` (2D **`a`** = toggle arc-v; 3D **`t`** = a BOTH-ends-tangent raccordo:
+  c1 along the incoming heading, c2 along the OUTGOING direction toward the next node, so
+  the corner is smooth on both sides — the deliberate exception to "each curve sets its
+  own arrival heading"; falls back to an arc-shaped bezier on the last node). 3D `t`
+  ALWAYS (re)applies the tangent fit (never reverts to a line — that's `c`'s toggle job;
+  re-pressing `t` re-fits after moving a neighbour) · `render-3d!` (bezier tessellation + c1/c2 squares + guide lines) ·
+  `nearest-bez-handle-screen` + screen-space handle grab/drag **constrained to the
+  active plane** (raycast through the handle's depth ⊥ the active-plane normal);
+  **Shift+drag a handle = length-only** (slides along its fixed direction from the
+  anchor node, escaping the plane — `:dir`/`:anchor` stashed on grab) ·
+  `move-node!`/`nudge!`/`nudge-handle!` dimension-agnostic (handle nudge moves along the
+  active px/py) · `split-segment!` de Casteljau in 3D · keys `c`/`t` + Shift/Alt-arrow
+  handle nudge for 3D (`x` cusp stays 2D-only — 3D handles are already free).
+  Distinct key `t` (not `a`) for the 3D raccordo so it doesn't clash with 2D's arc.
+
+### Phase 3a (2D arcs) — TANGENT "raccordo" model
+
+### Phase 3a (arcs) — TANGENT "raccordo" model, 2D + 3D
+
+An arc node carries just **`:arc {}`** (no belly). It is the unique circular arc that
+leaves its start node **tangent to the incoming heading** and ends at the next node —
+a rounded corner, so there is **no cusp at the start**. Geometry note (the question
+that drove this): an arc constrained by (start position, start tangent, end position)
+**always exists and is unique** — only the start tangent is pinned, not the end's — so
+there is never an "impossible" case needing a bezier promotion; the sole degenerate is
+*tangent ∥ chord*, which falls back to a straight. (A tangent pointing away from B is
+still valid, just a large sweep.) Chains of arcs are smooth throughout, because each
+arc takes the previous arc's exit tangent as its own incoming tangent.
+
+Bake — **2D** (profile, planar, no section twist): a bare **`(arc-v r sweep)`** (no
+leading `th`, since it's already tangent); recoverable for free because `rec-arc-v*`
+re-tessellates into `:arc-cap`-tagged steps, so the tag machinery finds the run →
+single arc node on re-edit.
+
+Bake — **3D** (rail, extruded): tessellate the arc to points and frame the WHOLE rail
+(straight endpoints + arc points) with ONE rotation-minimizing sweep via
+`positions->rmf-commands`. This is required for a clean tube: an arc baked as
+`(set-heading [t][normal] :local)(arc-h …)` keeps the *centerline* continuous but
+forces the section `up` = the arc-plane normal, which JUMPS relative to the straight's
+RMF up at the seam (up to 180°) → a sudden section roll that pinches/twists the
+extrusion at the arc's entry (observed in-app). Feeding tessellated points through RMF
+keeps `up` continuous everywhere (verified: no seam jump). **Trade-off:** the 3D baked
+source is set-heading/f only (no `arc-h`), so re-editing a 3D arc recovers it as its
+tessellated polyline, not a single arc node — restoring single-node 3D re-edit needs
+geometric arc-detection in `seed->nodes-3d` (a follow-up). 2D re-edit is unaffected.
+
+Implementation (all in [edit_path.cljs](../src/ridley/editor/edit_path.cljs)):
+- geometry: `tangent-arc-geom-3d`/`tangent-arc-tess-3d` (world) and
+  `tangent-arc-2d`/`tangent-arc-tess-2d` (plane); `rmf-transport-up`.
+- frame walks (single source of truth for render + split, mirroring the bake's heading
+  tracking): `walk-3d-segments`, `walk-2d-segments`.
+- bake: `nodes->commands-3d` (walk → set-heading :local + arc-h) and the 2D
+  `nodes->commands` arc branch (→ bare arc-h, no th).
+- recover: `group-arc-runs-3d` + `seed->nodes-3d`, and the 2D `seed->nodes` arc-run
+  branch — both rebuild the node as `:arc {}` (the arc is re-derived from the incoming
+  heading + node positions, which reproduces the baked tangent arc exactly).
+- interaction: `toggle-arc!` (2D + 3D → `:arc {}`, no belly), `render!`/`render-3d!`
+  tessellate via the walk, `split-segment!` splits an arc into two tangent arcs at the
+  mid-sweep point, `a` key ungated for 3D. **Belly handle / hit-test / drag removed**
+  (the arc has no free handle now).
+
+Verified headlessly: 3D (XY, tilted plane, mixed straight/arc/straight/arc — bake emits
+`set-heading [0 0 1] …` before arc-h ⇒ heading continuous, endpoints exact, recovery
+clean) and 2D (`(path-2d (f 20) (arc-v 10 180) (f 20))` — no th, exact recovery, valid
+67-pt rounded profile). `npm test` 298/847, 0 failures.
+
+**Still 2D-only (Phase 3b):** béziers (`c`), cusp (`x`), Shift/Alt-arrow handle nudge.
 
 Related memory: `project_path_2d_3d.md`, `project_edit_path_3d.md`,
 `project_edit_path_reedit.md` (2D curve recovery). Earlier brief: `path-2d-brief.md`

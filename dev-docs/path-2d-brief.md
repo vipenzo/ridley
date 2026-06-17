@@ -120,3 +120,4 @@ construction**.
 - memory `project_path_2d_3d.md` (this design)
 - memory `project_edit_path_reedit.md` (`:pure-path` / `ensure-path` — same pattern)
 - memory `project_stroke_self_intersection.md` (known stroke limitation)
+     

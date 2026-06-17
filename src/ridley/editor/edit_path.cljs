@@ -29,7 +29,8 @@
             [clojure.string :as str]))
 
 (declare confirm! cancel! render! update-panel! refresh-preview!
-         set-seg-len! set-seg-angle! seg-len seg-angle-deg set-plane!)
+         set-seg-len! set-seg-angle! seg-len seg-angle-deg set-plane!
+         group-arc-runs-3d arc->bez-handles)
 
 ;; ============================================================
 ;; State
@@ -121,57 +122,79 @@
   (let [r (* deg (/ js/Math.PI 180)) c (js/Math.cos r) s (js/Math.sin r)]
     [(- (* hx c) (* hy s)) (+ (* hx s) (* hy c))]))
 
-;; -- arc segments (3-point circular arc: A → belly M → B) -----------------
-;; An arc segment carries a single free "belly" handle M, a point the arc passes
-;; through. A, M, B define a unique circle; the minor arc through M is the segment.
-;; It bakes to a heading-relative (th …)(arc-h r sweep), so it stays attached like
-;; the straight segments (no absolute coords).
+;; -- 2D tangent "raccordo" arc -------------------------------------------------
+;; Like the 3D arc: leaves the start node TANGENT to the incoming heading and ends
+;; at the next node — a rounded corner, no cusp. Determined by A + incoming dir + B,
+;; so the node carries just `:arc {}` (no belly). Bakes to a bare (arc-h r sweep)
+;; (no leading th, since it's already tangent).
 
-(defn- circle-from-3
-  "Circumcircle of three 2D points → {:center [cx cy] :r r}, or nil if collinear."
-  [[ax ay] [mx my] [bx by]]
-  (let [d (* 2 (+ (* ax (- my by)) (* mx (- by ay)) (* bx (- ay my))))]
-    (when (> (js/Math.abs d) 1e-6)
-      (let [a2 (+ (* ax ax) (* ay ay)) m2 (+ (* mx mx) (* my my)) b2 (+ (* bx bx) (* by by))
-            cx (/ (+ (* a2 (- my by)) (* m2 (- by ay)) (* b2 (- ay my))) d)
-            cy (/ (+ (* a2 (- bx mx)) (* m2 (- ax bx)) (* b2 (- mx ax))) d)]
-        {:center [cx cy]
-         :r (js/Math.sqrt (+ (* (- ax cx) (- ax cx)) (* (- ay cy) (- ay cy))))}))))
+(defn- tangent-arc-2d
+  "2D circular arc leaving A tangent to unit dir t, ending at B. Returns
+   {:r :sweep-deg :exit-dir :center}, sweep in arc-h convention (+ = left / CCW), or
+   nil if t ∥ (B−A) (degenerate → straight). The arc leaves A along +t (smooth)."
+  [[ax ay] [tx ty] [bx by]]
+  (let [cx (- bx ax) cy (- by ay)
+        clen (js/Math.sqrt (+ (* cx cx) (* cy cy)))]
+    (when (> clen 1e-9)
+      (let [lx (- ty) ly tx                       ; left-normal of t (+90°)
+            side (+ (* lx cx) (* ly cy))]         ; >0 B to the left, <0 to the right
+        (when (> (js/Math.abs side) 1e-9)         ; t ∦ chord
+          (let [left? (>= side 0)
+                px (if left? lx (- lx)) py (if left? ly (- ly))   ; perp toward B
+                r (/ (* clen clen) (* 2 (js/Math.abs side)))
+                ccx (+ ax (* px r)) ccy (+ ay (* py r))           ; center
+                vax (- ax ccx) vay (- ay ccy)
+                vbx (- bx ccx) vby (- by ccy)
+                raw (js/Math.atan2 (- (* vax vby) (* vay vbx))    ; signed (−π, π]
+                                   (+ (* vax vbx) (* vay vby)))
+                sweep (if left?
+                        (if (< raw 0) (+ raw (* 2 js/Math.PI)) raw)    ; CCW  [0, 2π)
+                        (if (> raw 0) (- raw (* 2 js/Math.PI)) raw))   ; CW  (−2π, 0]
+                sweep-deg (* sweep (/ 180 js/Math.PI))]
+            {:r r :sweep-deg sweep-deg :center [ccx ccy]
+             :exit-dir (rotate-dir [tx ty] sweep-deg)}))))))
 
-(defn- norm-2pi [a]
-  (let [t (mod a (* 2 js/Math.PI))] (if (< t 0) (+ t (* 2 js/Math.PI)) t)))
-
-(defn- arc-geom
-  "Geometry of the arc A → M → B: {:center :r :sweep-deg :entry-tan :start-ang}, or
-   nil if the points are collinear (caller bakes a straight segment instead).
-   sweep-deg follows arc-h's convention (positive = left / CCW). entry-tan is the
-   unit tangent leaving A along the arc."
-  [A M B]
-  (when-let [{:keys [center r]} (circle-from-3 A M B)]
+(defn- tangent-arc-tess-2d
+  "Tessellated 2D points along the 2D tangent arc (A tangent t → B), inclusive of
+   both ends, or nil if degenerate."
+  [A t B steps]
+  (when-let [{:keys [center sweep-deg]} (tangent-arc-2d A t B)]
     (let [[cx cy] center
-          ang (fn [[x y]] (js/Math.atan2 (- y cy) (- x cx)))
-          aA (ang A) aM (ang M) aB (ang B)
-          ccw-sweep (norm-2pi (- aB aA))           ; CCW arc length A→B
-          ccw-to-M  (norm-2pi (- aM aA))
-          ccw? (<= ccw-to-M ccw-sweep)             ; does the CCW arc A→B pass through M?
-          sweep (if ccw? ccw-sweep (- (- (* 2 js/Math.PI) ccw-sweep)))
-          radial [(- (first A) cx) (- (second A) cy)]
-          tan (if ccw? [(- (second radial)) (first radial)]   ; +90° from radius
-                  [(second radial) (- (first radial))])]  ; -90°
-      {:center center :r r :start-ang aA
-       :sweep-deg (* sweep (/ 180 js/Math.PI))
-       :entry-tan (v2-norm tan)})))
-
-(defn- arc-tess
-  "Tessellated 2D points along the arc A → M → B (inclusive of both ends), or nil
-   if degenerate."
-  [A M B steps]
-  (when-let [{:keys [center r start-ang sweep-deg]} (arc-geom A M B)]
-    (let [[cx cy] center
-          sweep (* sweep-deg (/ js/Math.PI 180))]
-      (mapv (fn [i] (let [a (+ start-ang (* (/ i steps) sweep))]
-                      [(+ cx (* r (js/Math.cos a))) (+ cy (* r (js/Math.sin a)))]))
+          va [(- (first A) cx) (- (second A) cy)]]
+      (mapv (fn [k] (let [[rx ry] (rotate-dir va (* (/ k steps) sweep-deg))]
+                      [(+ cx rx) (+ cy ry)]))
             (range (inc steps))))))
+
+(defn- walk-2d-segments
+  "Per-segment info for the 2D nodes, tracking the heading (straights face the chord,
+   tangent arcs leave along their exit tangent, beziers along the end tangent), from
+   the start heading [1 0]. Returns one map per segment: {:kind :a :b :ch} and, for an
+   arc, {:geom … :pts (2d tessellation)}. Plane coords. Used by render! + arc split;
+   the bake (nodes->commands) tracks the same heading via its own (richer) walk."
+  [nodes]
+  (loop [i 1 ch [1 0] segs []]
+    (if (>= i (count nodes))
+      segs
+      (let [from (node-pos (nth nodes (dec i))) to (node-pos (nth nodes i))
+            node (nth nodes i)]
+        (cond
+          (:arc node)
+          (if-let [g (tangent-arc-2d from ch to)]
+            (recur (inc i) (:exit-dir g)
+                   (conj segs {:kind :arc :a from :b to :ch ch :geom g
+                               :pts (tangent-arc-tess-2d from ch to 24)}))
+            (recur (inc i) (v2-norm [(- (first to) (first from)) (- (second to) (second from))])
+                   (conj segs {:kind :straight :a from :b to :ch ch})))
+
+          (:bez node)
+          (let [{:keys [c2]} (:bez node)
+                eh (v2-norm [(- (first to) (first c2)) (- (second to) (second c2))])]
+            (recur (inc i) eh (conj segs {:kind :bez :a from :b to :ch ch})))
+
+          :else
+          (let [dx (- (first to) (first from)) dy (- (second to) (second from))]
+            (recur (inc i) (if (> (+ (* dx dx) (* dy dy)) 1e-18) (v2-norm [dx dy]) ch)
+                   (conj segs {:kind :straight :a from :b to :ch ch}))))))))
 
 ;; -- bezier tangent constraint (directional handles) ----------------------
 ;; c1 (start handle) stays tangent to how the path ARRIVES at the start node, so
@@ -329,19 +352,16 @@
                                          :local]})
                            (into (:tail node)))))
 
-              ;; Circular arc through the belly point: heading-relative
-              ;; (th entry)(arc-h r sweep) — already attached (no absolute coords).
-              ;; A collinear belly is degenerate → fall back to a straight segment.
+              ;; Tangent "raccordo" arc: leaves the start node along the current
+              ;; heading (so no leading th → smooth, no cusp) and ends at the next
+              ;; node, baking to a bare (arc-h r sweep) — heading-relative, attached.
+              ;; A degenerate arc (heading ∥ chord) falls back to a straight segment.
               (:arc node)
-              (if-let [{:keys [r sweep-deg entry-tan]} (arc-geom from (:belly (:arc node)) to)]
-                (let [entry-th (signed-angle ch entry-tan)
-                      new-h (rotate-dir entry-tan sweep-deg)]
-                  (recur new-h to (rest remaining)
-                         (-> out
-                             (cond-> (> (js/Math.abs entry-th) 1e-6)
-                               (conj {:cmd :th :args [entry-th]}))
-                             (conj {:cmd :arc-h :args [r sweep-deg]})
-                             (into (:tail node)))))
+              (if-let [{:keys [r sweep-deg exit-dir]} (tangent-arc-2d from ch to)]
+                (recur exit-dir to (rest remaining)
+                       (-> out
+                           (conj {:cmd :arc-h :args [r sweep-deg]})
+                           (into (:tail node))))
                 (let [[cmds ch1] (segment-cmds ch from to (:heading node))]
                   (recur ch1 to (rest remaining)
                          (-> out (into cmds) (into (:tail node))))))
@@ -403,15 +423,64 @@
 ;; derives heading from the segment. Curves/marks and the working-plane UI come in
 ;; later phases.
 
+(def ^:private move-cmd? #{:f :b :u :rt :lt})
+
+(defn- arc-run->bez
+  "Approximate a baked arc run (waypoints A … B) with a cubic bezier: c1/c2 from the
+   end tangents + the arc's L=(4/3)tan(θ/4)r handle length, θ = the tangent turn. Used
+   on input to convert a hand-written arc-h into an editable, twist-free bezier node
+   (the editor itself no longer bakes arcs in 3D)."
+  [run-wps]
+  (let [A (:pos (first run-wps)) B (:pos (last run-wps))
+        n (count run-wps)
+        entry (m/normalize (m/v- (:pos (nth run-wps 1)) A))
+        exit  (m/normalize (m/v- B (:pos (nth run-wps (- n 2)))))
+        chord (m/magnitude (m/v- B A))
+        theta (js/Math.acos (max -1.0 (min 1.0 (m/dot entry exit))))
+        r (if (> (js/Math.sin (/ theta 2)) 1e-6) (/ chord (* 2 (js/Math.sin (/ theta 2)))) chord)]
+    (arc->bez-handles A B entry exit (* theta (/ 180 js/Math.PI)) r)))
+
 (defn- seed->nodes-3d
-  "Recover 3D editor nodes from a :3d path: one node per traced waypoint, carrying
-   the full turtle frame {:pos :heading :up}. Straight-segment MVP."
+  "Recover 3D editor nodes from a :3d path. A move command (f / b / u / rt / lt) is one
+   straight node at its traced waypoint. A baked bezier run (:pure tag) collapses to ONE
+   bezier node (c1/c2/end from the tag — exact round-trip for the editor's own output).
+   A baked arc run (:arc-cap, from a HAND-WRITTEN arc-h) is converted to an equivalent
+   bezier node (see arc-run->bez). Rotations / set-heading add no node. Node 0 is the
+   pinned anchor at the origin."
   [seed-path]
-  (let [wps (shape/path-to-3d-waypoints seed-path)]
-    (if (and wps (>= (count wps) 2))
-      (mapv (fn [{:keys [pos heading up]}]
-              {:pos pos :heading heading :up up :tail []})
-            wps)
+  (let [wps (shape/path-to-3d-waypoints seed-path)
+        cmds (when (and (map? seed-path) (= :path (:type seed-path))) (:commands seed-path))]
+    (if (and wps (>= (count wps) 2) (seq cmds))
+      (let [n (count wps)
+            anchor {:pos (:pos (first wps)) :heading nil :up nil :tail []}]
+        (loop [gs (group-arc-runs-3d cmds) mi 0 nodes [anchor]]
+          (if (empty? gs)
+            nodes
+            (let [g (first gs)]
+              (cond
+                (= :bezier-node (:cmd g))
+                (let [{:keys [c1 c2 end]} (:pure g)
+                      end-i (min (dec n) (+ mi (:moves g)))]
+                  (recur (rest gs) end-i
+                         (conj nodes {:pos (vec end) :heading nil :up nil :tail []
+                                      :bez {:c1 (vec c1) :c2 (vec c2)}})))
+
+                (= :arc-run (:cmd g))
+                (let [k (count (filter #(move-cmd? (:cmd %)) (:sub g)))
+                      end-i (min (dec n) (+ mi k))
+                      run-wps (subvec wps mi (inc end-i))]
+                  (recur (rest gs) end-i
+                         (conj nodes (cond-> {:pos (:pos (nth wps end-i))
+                                              :heading nil :up nil :tail []}
+                                       (>= (count run-wps) 3) (assoc :bez (arc-run->bez run-wps))))))
+
+                (move-cmd? (:cmd g))
+                (let [mi' (min (dec n) (inc mi))]
+                  (recur (rest gs) mi'
+                         (conj nodes {:pos (:pos (nth wps mi')) :heading nil :up nil :tail []})))
+
+                ;; rotations / set-heading / marks: no new node
+                :else (recur (rest gs) mi nodes))))))
       ;; empty → just the anchor node at the origin (already present, not inserted
       ;; by the user and not movable); the user clicks to add the rail from there.
       ;; A 0-segment path extrudes to an empty mesh (no error) until the 2nd node.
@@ -425,17 +494,148 @@
           (m/v+ (m/v* (m/cross axis v) sa)
                 (m/v* axis (* (m/dot axis v) (- 1 ca)))))))
 
-(defn- nodes->commands-3d
-  "Commands tracing the 3D nodes as a twist-free rail: per segment
-   (set-heading [dir][up] :local)(f dist), where the new heading and the
-   rotation-minimizing (parallel-transport) up are given in the previous segment's
-   frame. `:local` makes the rail compose under the consumption pose (rotates with
-   the turtle, unlike absolute set-heading) and the parallel-transport up keeps the
-   section twist-free. The trace starts at the origin (node 0 is the pinned anchor).
-   Delegates to the shared builder so a hand-written path gets the same via
-   (ensure-untwisted …)."
+(defn- rmf-transport-up
+  "Parallel-transport up `u` from heading `h` to heading `d` (minimal rotation), so
+   the swept section stays twist-free across a straight 3D segment. Mirrors
+   shape/rmf-transport (the bake's RMF builder) for the editor's per-segment walk."
+  [u h d]
+  (let [dt (max -1.0 (min 1.0 (m/dot h d)))]
+    (if (> dt 0.999999)
+      u
+      (let [axis (m/cross h d) am (m/magnitude axis)]
+        (if (< am 1e-9)
+          u
+          (rot-axis (m/v* axis (/ 1.0 am)) u (js/Math.acos dt)))))))
+
+;; -- 3D arc segments (tangent "raccordo" arc) ----------------------------------
+;; An arc leaves its start node A TANGENT to the incoming heading and ends at the
+;; next node B — a fillet-like rounded corner, so there's no cusp at the start. Given
+;; A, the unit incoming tangent t, and B, the circular arc is UNIQUE (its plane and
+;; radius are determined), so the node carries just `:arc {}` — no free belly handle.
+;; It bakes to (set-heading [t][normal] :local)(arc-h r sweep): the arc-plane normal
+;; as up makes arc-h trace the arc; entry = t so the heading is continuous (smooth).
+;; Recoverable via the :arc-cap tag machinery, like a hand-written arc-h.
+
+(defn- tangent-arc-geom-3d
+  "Circular arc leaving world point A tangent to unit dir t, ending at B. Returns
+   {:r :sweep-deg :entry-tan :exit-tan :normal :center}, or nil if t is parallel to
+   (B−A) (the arc degenerates to a straight line). entry-tan = t (smooth start);
+   normal is the arc-plane normal (the `up` for arc-h); sweep-deg follows arc-h's
+   convention (+ = left / CCW around normal); the arc travels CCW around normal,
+   which leaves A along +t."
+  [A t B]
+  (let [c (m/v- B A) clen (m/magnitude c)]
+    (when (> clen 1e-9)
+      (let [tc (m/cross t c)]
+        (when (> (m/magnitude tc) 1e-6)            ; t ∦ chord
+          (let [n (m/normalize tc)                 ; plane normal
+                perp (m/cross n t)                 ; ⊥ t, toward B (perp·c > 0)
+                pc (m/dot perp c)
+                r (/ (* clen clen) (* 2 pc))
+                center (m/v+ A (m/v* perp r))
+                va (m/v- A center) vb (m/v- B center) r2 (* r r)
+                cosw (max -1.0 (min 1.0 (/ (m/dot va vb) r2)))
+                sinw (/ (m/dot (m/cross va vb) n) r2)
+                ang (js/Math.atan2 sinw cosw)      ; (−π, π]
+                sweep-rad (if (< ang 0) (+ ang (* 2 js/Math.PI)) ang)]  ; CCW [0, 2π)
+            {:r r :sweep-deg (* sweep-rad (/ 180 js/Math.PI))
+             :entry-tan t :exit-tan (rot-axis n t sweep-rad)
+             :normal n :center center}))))))
+
+(defn- arc->bez-handles
+  "Cubic-bezier control points (world) approximating a circular arc from A to B,
+   leaving tangent to entry-tan, arriving tangent to exit-tan, with the standard
+   L = (4/3)·tan(θ/4)·r handle length. Turns a tangent 'raccordo' arc (and a
+   hand-written arc-h opened in the 3D editor) into an editable, twist-free bezier."
+  [A B entry-tan exit-tan sweep-deg r]
+  (let [theta (* (js/Math.abs sweep-deg) (/ js/Math.PI 180))
+        L (* (/ 4.0 3.0) (js/Math.tan (/ theta 4)) r)]
+    {:c1 (m/v+ A (m/v* entry-tan L))
+     :c2 (m/v- B (m/v* exit-tan L))}))
+
+;; -- 3D bezier segments --------------------------------------------------------
+;; The 3D editor's curve primitive is the cubic bezier (node carries :bez {:c1 :c2},
+;; world handles). It bakes to ONE compact (bezier-to [end][c1][c2] :local) command —
+;; bezier-to tessellates at eval-time with its OWN rotation-minimizing frame (the up
+;; is parallel-transported, continuous across the seam → no pinch), and tags the run
+;; with :pure so re-edit recovers it as a single node. Arcs are NOT baked in 3D: the
+;; `a` key and a hand-written arc-h are converted to an equivalent bezier (see
+;; arc->bez-handles), keeping the baked rail compact and twist-free.
+
+(defn- bezier-frame-3d
+  "Tessellate the cubic bezier A→c1→c2→B and propagate the up by projection-RMF from
+   the entry up, mirroring rec-bezier-to*. Returns {:pts :exit-h :exit-u}: exit-h = the
+   analytic end tangent (∝ B−c2), exit-u = the RMF up at the end. Keeps the editor's
+   frame walk in sync with how bezier-to bakes (so the next segment's :local coords are
+   expressed in the correct frame)."
+  [A c1 c2 B entry-u steps]
+  (let [pts (mapv #(bezier/cubic-bezier-point A c1 c2 B (/ % steps)) (range (inc steps)))
+        u-final (reduce (fn [u [p q]]
+                          (let [d (m/v- q p)]
+                            (if (> (m/magnitude d) 1e-9)
+                              (let [dir (m/normalize d)
+                                    proj (m/v- u (m/v* dir (m/dot u dir)))]
+                                (if (> (m/magnitude proj) 1e-9) (m/normalize proj) u))
+                              u)))
+                        entry-u (map vector pts (rest pts)))
+        end-dir (let [d (m/v- B c2)]
+                  (cond (> (m/magnitude d) 1e-9) (m/normalize d)
+                        (> (m/magnitude (m/v- B A)) 1e-9) (m/normalize (m/v- B A))
+                        :else [1 0 0]))
+        exit-u (let [proj (m/v- u-final (m/v* end-dir (m/dot u-final end-dir)))]
+                 (if (> (m/magnitude proj) 1e-9) (m/normalize proj) u-final))]
+    {:pts pts :exit-h end-dir :exit-u exit-u}))
+
+(defn- walk-3d-segments
+  "Walk the 3D nodes from the rail start (origin, heading [1 0 0], up [0 0 1]),
+   tracking the turtle frame, and return one map per segment: a straight
+   {:kind :straight :a :b :h :u :dir :dist :up*} or a bezier
+   {:kind :bez :a :b :h :u :c1 :c2 :pts …}, where :h/:u is the frame BEFORE the segment
+   (for the :local bake). Single source of truth shared by the bake
+   (nodes->commands-3d) and render-3d!."
   [nodes]
-  (vec (shape/positions->rmf-commands (mapv :pos nodes))))
+  (loop [i 1 h [1 0 0] u [0 0 1] segs []]
+    (if (>= i (count nodes))
+      segs
+      (let [a (node-pos (nth nodes (dec i)))
+            b (node-pos (nth nodes i))
+            node (nth nodes i)]
+        (if-let [{:keys [c1 c2]} (:bez node)]
+          (let [{:keys [pts exit-h exit-u]} (bezier-frame-3d a c1 c2 b u 24)]
+            (recur (inc i) exit-h exit-u
+                   (conj segs {:kind :bez :a a :b b :h h :u u :c1 c1 :c2 c2 :pts pts})))
+          (let [d (m/v- b a) dist (m/magnitude d)]
+            (if (< dist 1e-9)
+              (recur (inc i) h u segs)
+              (let [dir (m/normalize d) up* (rmf-transport-up u h dir)]
+                (recur (inc i) dir up*
+                       (conj segs {:kind :straight :a a :b b :h h :u u
+                                   :dir dir :dist dist :up* up*}))))))))))
+
+(defn- nodes->commands-3d
+  "Commands tracing the 3D nodes as a TWIST-FREE rail. Per straight segment:
+   (set-heading [dir][up] :local)(f dist) with the rotation-minimizing up. Per bezier
+   segment: ONE (bezier-to [end][c1][c2] :local) — compact in the source, and
+   bezier-to frames itself with a rotation-minimizing sweep at eval-time, so the up is
+   continuous across the seam (no pinch) and the run carries a :pure tag for re-edit.
+   `:local` makes the whole rail compose under the consumption pose. Node 0 is the
+   pinned anchor at the origin. With no curves this delegates to the proven
+   positions->rmf-commands (byte-identical to ensure-untwisted)."
+  [nodes]
+  (cond
+    (< (count nodes) 2) []
+    (not (some :bez nodes)) (vec (shape/positions->rmf-commands (mapv :pos nodes)))
+    :else
+    (vec (mapcat
+          (fn [{:keys [kind a b h u c1 c2 dir dist up*]}]
+            (let [right (m/normalize (m/cross h u))
+                  w->l (fn [v] [(m/dot v right) (m/dot v u) (m/dot v h)])
+                  to-local (fn [p] (w->l (m/v- p a)))]
+              (if (= kind :bez)
+                [{:cmd :bezier-to :args [(to-local b) (to-local c1) (to-local c2) :local]}]
+                [{:cmd :set-heading :args [(w->l dir) (w->l up*) :local]}
+                 {:cmd :f :args [dist]}])))
+          (walk-3d-segments nodes)))))
 
 (defn- nodes->code-3d
   "The replacement source for a 3D edit: a (path (set-heading …)(f …) …) rail. The
@@ -478,6 +678,37 @@
                 run (vec (concat run (take 1 more)))   ; include the :trail command
                 more (rest more)]
             (if (and (>= (count run) 2) (every? in-plane-cmd? run))
+              (recur more (conj out {:cmd :arc-run :sub run}))
+              (recur more (into out run))))
+
+          :else (recur (rest cs) (conj out c)))))))
+
+(defn- group-arc-runs-3d
+  "Collapse a 3D rail's tessellated curve runs so seed->nodes-3d can rebuild each as
+   one node:
+   - a bezier carries a :pure {:cmd :bezier-to :c1 :c2 :end :span n} tag on its first
+     command → {:cmd :bezier-node :pure … :moves <#move cmds in the run>};
+   - an arc is an :arc-cap :lead…:trail run → {:cmd :arc-run :sub […]}.
+   Every other command passes through individually (seed->nodes-3d counts move
+   commands to index the traced waypoints, so it must see them all)."
+  [cmds]
+  (loop [cs cmds out []]
+    (if (empty? cs)
+      out
+      (let [c (first cs)]
+        (cond
+          (and (:pure c) (= :bezier-to (:cmd (:pure c))))
+          (let [span (:span (:pure c))
+                run (take span cs)]
+            (recur (drop span cs)
+                   (conj out {:cmd :bezier-node :pure (:pure c)
+                              :moves (count (filter #(move-cmd? (:cmd %)) run))})))
+
+          (= :lead (:arc-cap c))
+          (let [[run more] (split-with #(not= :trail (:arc-cap %)) cs)
+                run (vec (concat run (take 1 more)))   ; include the :trail command
+                more (rest more)]
+            (if (>= (count run) 2)
               (recur more (conj out {:cmd :arc-run :sub run}))
               (recur more (into out run))))
 
@@ -552,17 +783,18 @@
                            (assoc :pos (xy end) :heading ehead)
                            (update :nodes conj {:pos (xy end) :heading nil :tail []
                                                 :bez {:c1 (xy c1) :c2 (xy c2)}})))
-                     ;; a baked arc run → one arc node (belly sampled mid-run)
+                     ;; a baked arc run → one tangent-arc node (no belly: the arc is
+                     ;; recovered from the incoming heading + node positions; the
+                     ;; baked arc was tangent, so re-baking reproduces it)
                      :arc-run
                      (let [w (walk-arc-sub (:pos st) heading (:sub cmd))
                            pts (:pts w)
-                           end (last pts)
-                           belly (nth pts (quot (count pts) 2))]
+                           end (last pts)]
                        (-> st
                            (assoc :pos end :heading (:heading w))
                            (update :nodes conj
                                    (cond-> {:pos end :heading nil :tail []}
-                                     (>= (count pts) 3) (assoc :arc {:belly belly})))))
+                                     (>= (count pts) 3) (assoc :arc {})))))
                      (:mark :side-trip)
                      (update-in st [:nodes (dec (count nodes)) :tail] conj cmd)
                      (update st :dropped conj (:cmd cmd))))
@@ -705,10 +937,11 @@
                  (map #(seg py px %) ks)))))
 
 (defn- render-3d!
-  "Redraw the 3D rail (straight-segment MVP): node positions in world space, drawn
-   as rings oriented to the active working plane — the ring foreshortens to a line
-   when the plane is edge-on to the camera, signalling 'orbit to edit here'. A faint
-   grid in the active plane (centred on the selected node) gives a spatial reference."
+  "Redraw the 3D rail: node positions in world space, drawn as rings oriented to the
+   active working plane — the ring foreshortens to a line when the plane is edge-on to
+   the camera, signalling 'orbit to edit here'. A bezier segment is drawn as its
+   tessellation with its two control handles (squares + guide lines). A faint grid in
+   the active plane (centred on the selected node) gives a spatial reference."
   [s]
   (let [{:keys [nodes selected]} s
         basis (active-basis s)
@@ -722,9 +955,28 @@
                    (m/v+ o (m/v* normal (m/dot (m/v- (nth pts selected) o) normal)))
                    o))
         grid-lines (plane-grid-lines basis grid-c)
-        ;; a 3D path is an OPEN rail (extrude/loft trajectory) — no closing segment
-        seg-lines (mapv (fn [i] {:from (nth pts (dec i)) :to (nth pts i) :color line-color})
-                        (range 1 n))
+        ;; a 3D path is an OPEN rail (extrude/loft trajectory) — no closing segment.
+        ;; Bezier segments tessellate (via the shared frame walk); straights are a line.
+        segs (walk-3d-segments nodes)
+        seg-lines (mapcat
+                   (fn [{:keys [kind a b pts]}]
+                     (if (and (= kind :bez) (seq pts))
+                       (mapv (fn [p q] {:from p :to q :color line-color}) pts (rest pts))
+                       [{:from a :to b :color line-color}]))
+                   segs)
+        ;; bezier handle guide lines: start→c1, end→c2
+        handle-lines (mapcat
+                      (fn [{:keys [kind a b c1 c2]}]
+                        (when (= kind :bez)
+                          [{:from a :to c1 :color handle-color}
+                           {:from b :to c2 :color handle-color}]))
+                      segs)
+        handle-dots (mapcat
+                     (fn [{:keys [kind c1 c2]}]
+                       (when (= kind :bez)
+                         [{:pos c1 :radius handle-radius :color handle-color :square true :normal normal}
+                          {:pos c2 :radius handle-radius :color handle-color :square true :normal normal}]))
+                     segs)
         node-dots (mapv (fn [i pw]
                           (let [marked? (seq (:tail (nth nodes i)))
                                 start? (zero? i) exit? (= i (dec n))]
@@ -736,8 +988,8 @@
                                           :else             node-color)}))
                         (range n) pts)]
     (viewport/show-preview! [{:type :lines :data grid-lines}
-                             {:type :lines :data (vec seg-lines) :on-top true}
-                             {:type :dots :data node-dots}])))
+                             {:type :lines :data (vec (concat seg-lines handle-lines)) :on-top true}
+                             {:type :dots :data (vec (concat node-dots handle-dots))}])))
 
 (defn- render!
   "Redraw the ephemeral path (straight + bezier segments), bezier handles, and the
@@ -751,11 +1003,17 @@
             ->w #(plane->world basis %)
             pts (mapv #(->w (node-pos %)) nodes)
             n (count pts)
+            ;; arc tessellations (world) keyed by end-node index, with the right
+            ;; incoming heading per node (shared walk; tangent arcs leave smooth)
+            arc-pts (into {} (keep-indexed
+                              (fn [k seg]
+                                (when (and (= :arc (:kind seg)) (seq (:pts seg)))
+                                  [(inc k) (mapv ->w (:pts seg))]))
+                              (walk-2d-segments nodes)))
           ;; per-segment lines: bezier-tessellated / arc-tessellated / straight
             seg-lines (mapcat
                        (fn [i]
-                         (let [a (nth pts (dec i)) b (nth pts i)
-                               a2 (node-pos (nth nodes (dec i))) b2 (node-pos (nth nodes i))]
+                         (let [a (nth pts (dec i)) b (nth pts i)]
                            (cond
                              (:bez (nth nodes i))
                              (let [{:keys [c1 c2]} (:bez (nth nodes i))
@@ -764,30 +1022,22 @@
                                             (range (inc steps)))]
                                (mapv (fn [p q] {:from p :to q :color line-color}) cp (rest cp)))
 
-                             (:arc (nth nodes i))
-                             (if-let [tp (arc-tess a2 (:belly (:arc (nth nodes i))) b2 24)]
-                               (let [tw (mapv ->w tp)]
-                                 (mapv (fn [p q] {:from p :to q :color line-color}) tw (rest tw)))
-                               [{:from a :to b :color line-color}])
+                             (arc-pts i)
+                             (let [tw (arc-pts i)]
+                               (mapv (fn [p q] {:from p :to q :color line-color}) tw (rest tw)))
 
                              :else [{:from a :to b :color line-color}])))
                        (range 1 n))
             closing (when (>= n 3) [{:from (last pts) :to (first pts) :color close-color}])
           ;; handle lines: bezier endpoint → control point (c1 magenta when its
-          ;; start node is a cusp); arc chord-midpoint → belly
+          ;; start node is a cusp). Tangent arcs have no handle.
             handle-lines (mapcat
                           (fn [i]
-                            (cond
-                              (:bez (nth nodes i))
+                            (when (:bez (nth nodes i))
                               (let [{:keys [c1 c2]} (:bez (nth nodes i))
                                     c1col (if (false? (:smooth? (nth nodes (dec i)))) cusp-color handle-color)]
                                 [{:from (nth pts (dec i)) :to (->w c1) :color c1col}
-                                 {:from (nth pts i) :to (->w c2) :color handle-color}])
-
-                              (:arc (nth nodes i))
-                              (let [a (nth pts (dec i)) b (nth pts i)
-                                    cmid (m/v* (m/v+ a b) 0.5)]
-                                [{:from cmid :to (->w (:belly (:arc (nth nodes i)))) :color handle-color}])))
+                                 {:from (nth pts i) :to (->w c2) :color handle-color}])))
                           (range 1 n))
             segs (vec (concat seg-lines closing handle-lines))
             node-dots (mapv (fn [i pw]
@@ -804,18 +1054,13 @@
                             (range n) pts)
             handle-dots (mapcat
                          (fn [i]
-                           (cond
-                             (:bez (nth nodes i))
+                           (when (:bez (nth nodes i))
                              (let [{:keys [c1 c2]} (:bez (nth nodes i))
                                    c1col (if (false? (:smooth? (nth nodes (dec i)))) cusp-color handle-color)]
                              ;; control points are little squares (shape sets them
                              ;; apart from the round nodes — no extra colour needed)
                                [{:pos (->w c1) :radius handle-radius :color c1col :square true :normal normal}
-                                {:pos (->w c2) :radius handle-radius :color handle-color :square true :normal normal}])
-
-                             (:arc (nth nodes i))
-                             [{:pos (->w (:belly (:arc (nth nodes i)))) :radius handle-radius
-                               :color handle-color :square true :normal normal}]))
+                                {:pos (->w c2) :radius handle-radius :color handle-color :square true :normal normal}])))
                          (range 1 n))
             dots (vec (concat node-dots handle-dots))]
         (viewport/show-preview! [{:type :lines :data segs :on-top true}
@@ -1023,12 +1268,27 @@
   []
   (let [s @session nodes (:nodes s) sel (:selected s) n (count nodes)]
     (cond
-      ;; 3D: open rail, straight only — split the incoming segment at its 3D
-      ;; midpoint. Node 0 is the pinned anchor, so there's nothing before it.
+      ;; 3D: open rail — split the incoming segment. A bezier splits with de Casteljau
+      ;; at t=0.5 (curve shape preserved); a straight splits at the 3D midpoint. Node 0
+      ;; is the pinned anchor, so there's nothing before it.
       (three-d? s)
       (when (and (>= sel 1) (< sel n))
         (push-undo!)
-        (insert-node! sel (midv (node-pos (nth nodes (dec sel))) (node-pos (nth nodes sel)))))
+        (let [b (nth nodes sel)
+              pa (node-pos (nth nodes (dec sel))) pb (node-pos b)]
+          (if-let [{:keys [c1 c2]} (:bez b)]
+            (let [m01 (midv pa c1) m12 (midv c1 c2) m23 (midv c2 pb)
+                  m012 (midv m01 m12) m123 (midv m12 m23)
+                  mp (midv m012 m123)
+                  newn {:pos mp :tail [] :bez {:c1 m01 :c2 m012}}]
+              (swap! session
+                     (fn [st]
+                       (-> st
+                           (assoc-in [:nodes sel :bez] {:c1 m123 :c2 m23})
+                           (update :nodes #(vec (concat (take sel %) [newn] (drop sel %))))
+                           (assoc :selected sel))))
+              (refresh-preview!) (update-panel!))
+            (insert-node! sel (midv pa pb)))))
 
       (< n 2) nil
 
@@ -1059,19 +1319,22 @@
               (swap! session update :nodes reconstrain-handles)
               (refresh-preview!) (update-panel!))
 
-            ;; arc: split into two arcs at t=0.5, each keeping a belly on the
-            ;; original circle (the t=0.25 / t=0.75 points) → same overall curve
+            ;; tangent arc: split into two tangent arcs at the mid-sweep point. Both
+            ;; halves stay tangent to their incoming heading, so the overall arc is
+            ;; preserved (the new node just carries the :arc flag).
             (:arc b)
-            (if-let [tp (arc-tess pa (:belly (:arc b)) pb 4)]
-              (let [newn {:pos (nth tp 2) :tail [] :arc {:belly (nth tp 1)}}]
-                (swap! session
-                       (fn [s]
-                         (-> s
-                             (assoc-in [:nodes i :arc :belly] (nth tp 3))
-                             (update :nodes #(vec (concat (take i %) [newn] (drop i %))))
-                             (assoc :selected i))))
-                (refresh-preview!) (update-panel!))
-              (insert-node! i (mid2 pa pb)))
+            (let [seg (nth (walk-2d-segments nodes) (dec i) nil)]
+              (if (and (= :arc (:kind seg)) (seq (:pts seg)))
+                (let [pts (:pts seg)
+                      mid (nth pts (quot (count pts) 2))
+                      newn {:pos mid :tail [] :arc {}}]
+                  (swap! session
+                         (fn [s]
+                           (-> s
+                               (update :nodes #(vec (concat (take i %) [newn] (drop i %))))
+                               (assoc :selected i))))
+                  (refresh-preview!) (update-panel!))
+                (insert-node! i (mid2 pa pb))))
 
             :else
             (insert-node! i (mid2 pa pb)))))))) ; insert-node! selects i
@@ -1091,15 +1354,14 @@
   (and (three-d? s) (zero? idx)))
 
 (defn- move-node!
-  "Set node `idx` to absolute 2D `new-pos`, dragging its attached bezier handles
-   (its incoming :c2 and the next segment's :c1) along by the same delta, and
-   dropping its explicit heading unless it's notable."
+  "Set node `idx` to absolute `new-pos` (2D [a b] or 3D [x y z]), dragging its attached
+   bezier handles (its incoming :c2 and the next segment's :c1) along by the same
+   delta, and dropping its explicit heading unless it's notable."
   [idx new-pos]
   (when-not (pinned? @session idx)
     (let [nodes (:nodes @session)
-          [ox oy] (node-pos (nth nodes idx))
-          dx (- (first new-pos) ox) dy (- (second new-pos) oy)
-          tr (fn [[x y]] [(+ x dx) (+ y dy)])]
+          delta (mapv - new-pos (node-pos (nth nodes idx)))
+          tr (fn [p] (mapv + p delta))]
       (swap! session
              (fn [s]
                (cond-> (assoc-in s [:nodes idx :pos] new-pos)
@@ -1107,8 +1369,10 @@
                  (get-in nodes [(inc idx) :bez]) (update-in [:nodes (inc idx) :bez :c1] tr))))
       (when-not (notable? (:nodes @session) idx)
         (swap! session assoc-in [:nodes idx :heading] nil))
-      ;; moving a node changes incoming tangents → re-snap smooth bezier handles
-      (swap! session update :nodes reconstrain-handles))))
+      ;; 2D: moving a node changes incoming tangents → re-snap smooth bezier handles.
+      ;; 3D handles are free (no tangent constraint), so leave them.
+      (when-not (three-d? @session)
+        (swap! session update :nodes reconstrain-handles)))))
 
 (defn- nudge!
   "Move the selected node by sign·step along the active plane's axis 0 (px) / 1 (py).
@@ -1191,59 +1455,94 @@
       (refresh-preview!) (update-panel!))))
 
 (defn- nudge-handle!
-  "Move control point `which` (:c1/:c2) of the selected node's bezier by sign·step
-   along axis 0=x / 1=y, then re-snap (a smooth c1 stays on its tangent = length)."
+  "Move control point `which` (:c1/:c2) of the selected node's bezier by sign·step.
+   2D: along axis 0=x / 1=y, then re-snap (a smooth c1 stays on its tangent). 3D: along
+   the active plane axis (px/py), free (no re-snap)."
   [which axis sign]
   (let [s @session i (:selected s) step (:step s)]
     (when (get-in (:nodes s) [i :bez which])
       (push-undo!)
-      (swap! session update-in [:nodes i :bez which axis] + (* sign step))
-      (swap! session update :nodes reconstrain-handles)
+      (if (three-d? s)
+        (let [b (active-basis s) ax (if (zero? axis) (:px b) (:py b))]
+          (swap! session update-in [:nodes i :bez which] #(m/v+ % (m/v* ax (* sign step)))))
+        (do (swap! session update-in [:nodes i :bez which axis] + (* sign step))
+            (swap! session update :nodes reconstrain-handles)))
       (refresh-preview!)
       (update-panel!))))
 
+(defn- incoming-heading-3d
+  "Unit heading the rail arrives at node (dec i) with (= the tangent a curve leaving
+   that node should start along), from the shared frame walk."
+  [nodes i]
+  (or (:h (nth (walk-3d-segments nodes) (dec i) nil)) [1 0 0]))
+
 (defn- toggle-bezier!
   "Toggle the selected node's incoming segment between straight and cubic bezier.
-   On enabling, the control points start at 1/3 and 2/3 along the chord; the start
-   handle (c1) is then snapped to the start node's tangent."
+   On enabling, the control points start at 1/3 (along the incoming tangent, so the
+   start is smooth) and 2/3 along the chord. 2D handles then snap to the tangent;
+   3D handles are free."
   []
   (let [s @session i (:selected s) nodes (:nodes s)]
     (when (and (pos? i) (< i (count nodes)))
       (push-undo!)
       (if (:bez (nth nodes i))
         (swap! session update-in [:nodes i] dissoc :bez)
-        (let [[ax ay] (node-pos (nth nodes (dec i)))
-              [bx by] (node-pos (nth nodes i))
-              along (fn [t] [(+ ax (* (- bx ax) t)) (+ ay (* (- by ay) t))])]
-          ;; bezier and arc are mutually exclusive segment types
-          (swap! session update-in [:nodes i] dissoc :arc)
-          (swap! session assoc-in [:nodes i :bez] {:c1 (along (/ 1.0 3)) :c2 (along (/ 2.0 3))})))
-      (swap! session update :nodes reconstrain-handles)
+        (if (three-d? s)
+          (let [A (node-pos (nth nodes (dec i))) B (node-pos (nth nodes i))
+                h (incoming-heading-3d nodes i)
+                chord (m/magnitude (m/v- B A))]
+            (swap! session assoc-in [:nodes i :bez]
+                   {:c1 (m/v+ A (m/v* h (/ chord 3.0)))            ; along incoming → smooth
+                    :c2 (m/v+ A (m/v* (m/v- B A) (/ 2.0 3)))}))
+          (let [[ax ay] (node-pos (nth nodes (dec i)))
+                [bx by] (node-pos (nth nodes i))
+                along (fn [t] [(+ ax (* (- bx ax) t)) (+ ay (* (- by ay) t))])]
+            ;; bezier and arc are mutually exclusive segment types
+            (swap! session update-in [:nodes i] dissoc :arc)
+            (swap! session assoc-in [:nodes i :bez] {:c1 (along (/ 1.0 3)) :c2 (along (/ 2.0 3))}))))
+      (when-not (three-d? s) (swap! session update :nodes reconstrain-handles))
       (refresh-preview!)
       (update-panel!))))
 
 (defn- toggle-arc!
-  "Toggle the selected node's incoming segment between straight and a circular arc.
-   On enabling, the belly handle starts bulged ~20% of the chord to one side; drag
-   it to any point the arc should pass through."
+  "Make the selected node's incoming segment a 'raccordo' — a rounded corner.
+
+   3D (`t`): ALWAYS (re)apply a both-ends-tangent bezier — it leaves the start node
+   along the incoming heading AND arrives at the end node along the OUTGOING direction
+   (toward the next node), so the corner is smooth on both sides. This is the
+   deliberate exception to 'each curve sets its own arrival heading' (a circular arc
+   can't do it — over-determined — but a bezier can). It never turns the segment back
+   into a line (that's `c`'s job); re-pressing `t` re-fits the tangents (handy after
+   moving a neighbour). On the last node (no outgoing) it falls back to an arc-shaped
+   bezier (smooth start only). Handles stay editable.
+
+   2D (`a`): toggle a true tangent `arc-v` on/off (smooth start only)."
   []
   (let [s @session i (:selected s) nodes (:nodes s)]
     (when (and (pos? i) (< i (count nodes)))
       (push-undo!)
-      (if (:arc (nth nodes i))
-        (swap! session update-in [:nodes i] dissoc :arc)
-        (let [[ax ay] (node-pos (nth nodes (dec i)))
-              [bx by] (node-pos (nth nodes i))
-              mx (/ (+ ax bx) 2.0) my (/ (+ ay by) 2.0)
-              dx (- bx ax) dy (- by ay)
-              chord (js/Math.sqrt (+ (* dx dx) (* dy dy)))
-              [px py] (if (> chord 1e-6) [(/ (- dy) chord) (/ dx chord)] [0 1])
-              bulge (* 0.2 chord)
-              belly [(+ mx (* px bulge)) (+ my (* py bulge))]]
+      (if (three-d? s)
+        (let [A (node-pos (nth nodes (dec i))) B (node-pos (nth nodes i))
+              h (incoming-heading-3d nodes i)
+              L (/ (m/magnitude (m/v- B A)) 3.0)
+              nxt (when (< (inc i) (count nodes)) (node-pos (nth nodes (inc i))))
+              out-dir (when nxt (let [d (m/v- nxt B)]
+                                  (when (> (m/magnitude d) 1e-9) (m/normalize d))))
+              handles (if out-dir
+                        ;; tangent at BOTH ends
+                        {:c1 (m/v+ A (m/v* h L)) :c2 (m/v- B (m/v* out-dir L))}
+                        ;; last node → arc-shaped (tangent at start only)
+                        (if-let [g (tangent-arc-geom-3d A h B)]
+                          (arc->bez-handles A B (:entry-tan g) (:exit-tan g) (:sweep-deg g) (:r g))
+                          {:c1 (m/v+ A (m/v* h L)) :c2 (m/v+ A (m/v* (m/v- B A) (/ 2.0 3)))}))]
+          (swap! session assoc-in [:nodes i :bez] handles))
+        ;; 2D: true tangent arc-v (no belly; shape from incoming heading + positions)
+        (if (:arc (nth nodes i))
+          (swap! session update-in [:nodes i] dissoc :arc)
           (swap! session (fn [st]
                            (-> st
                                (update-in [:nodes i] dissoc :bez)
-                               (assoc-in [:nodes i :arc] {:belly belly}))))))
+                               (assoc-in [:nodes i :arc] {}))))))
       (refresh-preview!)
       (update-panel!))))
 
@@ -1336,22 +1635,38 @@
         best))))
 
 (defn- nearest-handle
-  "The bezier control handle or arc belly closest to plane point p within
-   handle-snap, as {:idx i :which :c1/:c2/:belly}, or nil."
+  "The bezier control handle closest to plane point p within handle-snap, as
+   {:idx i :which :c1/:c2}, or nil. (Tangent arcs have no handle.)"
   [nodes [px py]]
   (let [cands (mapcat (fn [i]
-                        (cond
-                          (:bez (nth nodes i))
+                        (when (:bez (nth nodes i))
                           (let [{:keys [c1 c2]} (:bez (nth nodes i))]
-                            [{:idx i :which :c1 :pos c1} {:idx i :which :c2 :pos c2}])
-                          (:arc (nth nodes i))
-                          [{:idx i :which :belly :pos (:belly (:arc (nth nodes i)))}]))
+                            [{:idx i :which :c1 :pos c1} {:idx i :which :c2 :pos c2}])))
                       (range (count nodes)))]
     (when (seq cands)
       (let [d2 (fn [h] (let [[hx hy] (:pos h)]
                          (+ (* (- hx px) (- hx px)) (* (- hy py) (- hy py)))))
             best (apply min-key d2 cands)]
         (when (<= (d2 best) (* handle-snap handle-snap))
+          (select-keys best [:idx :which]))))))
+
+(defn- nearest-bez-handle-screen
+  "The 3D bezier control handle (c1/c2 of any node) whose screen projection is closest
+   to the pointer, within node-px-snap, as {:idx i :which :c1/:c2}, or nil. Screen-space
+   so a handle at any depth is grabbable, like the nodes."
+  [s ^js e]
+  (let [nodes (:nodes s) mx (.-clientX e) my (.-clientY e)
+        cands (mapcat (fn [i]
+                        (when-let [{:keys [c1 c2]} (:bez (nth nodes i))]
+                          (keep (fn [[which p]]
+                                  (when-let [[sx sy] (viewport/world->screen p)]
+                                    {:idx i :which which
+                                     :d2 (+ (* (- sx mx) (- sx mx)) (* (- sy my) (- sy my)))}))
+                                [[:c1 c1] [:c2 c2]])))
+                      (range (count nodes)))]
+    (when (seq cands)
+      (let [best (apply min-key :d2 cands)]
+        (when (<= (:d2 best) (* node-px-snap node-px-snap))
           (select-keys best [:idx :which]))))))
 
 (defn- plain-click? [^js e]
@@ -1393,7 +1708,11 @@
           w (click-plane-point e s)
           p2 (when w (world->plane basis w))
           two-d? (not (three-d? s))
-          handle (when (and two-d? p2) (nearest-handle (:nodes s) p2))
+          ;; bezier control handles: 2D in plane units, 3D in screen space (found even
+          ;; under Shift, which grabs the handle in length-only mode — see move).
+          handle (if two-d?
+                   (when p2 (nearest-handle (:nodes s) p2))
+                   (nearest-bez-handle-screen s e))
           ;; 3D grabs in screen space (pixels); 2D in plane units.
           [n-idx n-d2] (if two-d?
                          (when p2 (nearest-node-d2 s p2))
@@ -1406,15 +1725,26 @@
         (and n-idx (<= n-d2 node-snap2))
         (grab-node! n-idx)
 
-        ;; Shift with no node under the cursor → leave it to the camera (orbit/pan).
+        ;; A bezier control handle (when the click isn't on a node). Wins over the
+        ;; camera even under Shift (Shift+drag = length-only). Undo push deferred to the
+        ;; first drag move. In 3D record the handle's depth (drag plane) plus its anchor
+        ;; node + direction, for the plane-constrained and length-only drags.
+        handle
+        (let [h3 (if (three-d? s)
+                   (let [{:keys [idx which]} handle
+                         anchor (node-pos (nth (:nodes s) (if (= which :c1) (dec idx) idx)))
+                         hpos (get-in (:nodes s) [idx :bez which])
+                         d (m/v- hpos anchor)]
+                     (swap! session assoc :drag-anchor hpos)
+                     (cond-> handle (> (m/magnitude d) 1e-9)
+                             (assoc :anchor anchor :dir (m/normalize d))))
+                   handle)]
+          (swap! session assoc :dragging-handle h3)
+          (viewport/set-controls-enabled! false))
+
+        ;; Shift with no node/handle under the cursor → leave it to the camera.
         (not (plain-click? e))
         nil
-
-        ;; Otherwise a bezier control handle (when the click isn't on a node).
-        ;; Undo push deferred to the first drag move (a bare click doesn't change it).
-        handle
-        (do (swap! session assoc :dragging-handle handle)
-            (viewport/set-controls-enabled! false))
 
         ;; On a segment → insert a node there (split), even between close nodes,
         ;; then drag it. Inserting IS a mutation, so push undo now and mark the
@@ -1436,13 +1766,18 @@
         (:dragging-handle s)
         (when-let [w (click-plane-point e s)]
           (when-not (:drag-pushed? s) (push-undo!) (swap! session assoc :drag-pushed? true))
-          (let [{:keys [idx which]} (:dragging-handle s)
-                p2 (world->plane (plane-basis (:pose s)) w)]
-            (if (= which :belly)
-              ;; arc belly: a free through-point; the 3-point arc reshapes to fit
-              (swap! session assoc-in [:nodes idx :arc :belly] p2)
+          (let [{:keys [idx which anchor dir]} (:dragging-handle s)]
+            (if (three-d? s)
+              (if (and (.-shiftKey e) dir)
+                ;; Shift: length-only — slide the handle along its fixed direction from
+                ;; the anchor node (escapes the active-plane constraint).
+                (let [len (max 0.5 (m/dot (m/v- w anchor) dir))]
+                  (swap! session assoc-in [:nodes idx :bez which] (m/v+ anchor (m/v* dir len))))
+                ;; plain: a free world point on the active plane (deproject target)
+                (swap! session assoc-in [:nodes idx :bez which] w))
               (do
-                (swap! session assoc-in [:nodes idx :bez which] p2)
+                (swap! session assoc-in [:nodes idx :bez which]
+                       (world->plane (plane-basis (:pose s)) w))
                 ;; c1 → snap to the start node's tangent (unless cusp); c2 free but
                 ;; re-snaps the next segment's c1 (its incoming tangent changed)
                 (swap! session update :nodes reconstrain-handles)))
@@ -1468,7 +1803,7 @@
   (let [s @session]
     (cond
       (:dragging-handle s)
-      (do (swap! session dissoc :dragging-handle :drag-pushed?)
+      (do (swap! session dissoc :dragging-handle :drag-pushed? :drag-anchor)
           (viewport/set-controls-enabled! true)
           (refresh-preview!) (update-panel!))
 
@@ -1555,12 +1890,12 @@
         (do (.preventDefault e) (.stopPropagation e) (flush-digit!)
             (when-let [[axis sign] (arrow->axis key)]
               ;; Shift+arrows nudge c1, Alt+arrows nudge c2 of the selected node's
-              ;; bezier (Ctrl/Cmd are reserved by macOS for spaces); plain arrows
-              ;; move the node.
+              ;; bezier (2D + 3D; no-op if the node isn't a bezier); plain arrows move
+              ;; the node. (Ctrl/Cmd are reserved by macOS for spaces.)
               (cond
-                (and (not (three-d? @session)) (.-shiftKey e)) (nudge-handle! :c1 axis sign)
-                (and (not (three-d? @session)) (.-altKey e))   (nudge-handle! :c2 axis sign)
-                :else                                          (nudge! axis sign))))
+                (.-shiftKey e) (nudge-handle! :c1 axis sign)
+                (.-altKey e)   (nudge-handle! :c2 axis sign)
+                :else          (nudge! axis sign))))
 
         (#{"Delete"} key)
         (do (.preventDefault e) (.stopPropagation e) (delete-node!))
@@ -1571,12 +1906,17 @@
         (or (#{"Insert" "Help" "i" "I"} key) (= (.-code e) "Insert"))
         (do (.preventDefault e) (.stopPropagation e) (split-segment!))
 
-        ;; toggle the selected node's incoming segment straight ↔ bezier curve (2D)
-        (and (not (three-d? @session)) (#{"c" "C"} key))
+        ;; toggle the selected node's incoming segment straight ↔ bezier curve (2D + 3D)
+        (#{"c" "C"} key)
         (do (.preventDefault e) (.stopPropagation e) (toggle-bezier!))
 
-        ;; toggle the selected node's incoming segment straight ↔ circular arc (2D)
+        ;; raccordo (tangent curve). 2D: `a` → a true tangent arc-v (smooth start).
+        ;; 3D: `t` → a both-ends-tangent bezier (distinct key, since `a` already means
+        ;; the planar arc in 2D and the 3D raccordo is a different beast).
         (and (not (three-d? @session)) (#{"a" "A"} key))
+        (do (.preventDefault e) (.stopPropagation e) (toggle-arc!))
+
+        (and (three-d? @session) (#{"t" "T"} key))
         (do (.preventDefault e) (.stopPropagation e) (toggle-arc!))
 
         ;; toggle the selected node smooth ↔ cusp (frees its outgoing handle) (2D)
