@@ -64,6 +64,9 @@
 ;; Preview objects for test mode (temporary visualization, outside registry)
 (defonce ^:private preview-objects (atom []))
 
+;; Ephemeral billboard text labels (e.g. edit-path mark names) — [{:mesh :texture :text}]
+(defonce ^:private label-objects (atom []))
+
 ;; Ruler measurement overlay objects [{:group THREE.Group} ...]
 (defonce ^:private ruler-objects (atom []))
 
@@ -533,12 +536,15 @@
     (set! (.-needsUpdate ^js texture) true)))
 
 (defn- update-panels-billboard
-  "Update all panels to face the camera (billboard effect)."
+  "Update all panels (and ephemeral labels) to face the camera (billboard effect)."
   [^js camera]
-  (doseq [[_name panel-obj] @panel-objects]
-    (when-let [mesh (:mesh panel-obj)]
-      ;; Copy camera quaternion for billboard effect
-      (.copy (.-quaternion ^js mesh) (.-quaternion camera)))))
+  (let [q (.-quaternion camera)]
+    (doseq [[_name panel-obj] @panel-objects]
+      (when-let [mesh (:mesh panel-obj)]
+        (.copy (.-quaternion ^js mesh) q)))
+    (doseq [obj @label-objects]
+      (when-let [mesh (:mesh obj)]
+        (.copy (.-quaternion ^js mesh) q)))))
 
 (defn- clear-panels
   "Remove all panel objects from the scene."
@@ -2290,6 +2296,40 @@
             (set! (.-depthTest mat) false)))
         (.add world-group obj)
         (swap! preview-objects conj obj)))))
+
+(defn clear-labels!
+  "Remove all ephemeral billboard labels."
+  []
+  (when-let [{:keys [^js world-group]} @state]
+    (doseq [obj @label-objects]
+      (when-let [^js mesh (:mesh obj)]
+        (.remove world-group mesh)
+        (some-> (.-geometry mesh) .dispose)
+        (some-> (.-material mesh) .dispose)
+        (some-> ^js (:texture obj) .dispose))))
+  (reset! label-objects []))
+
+(defn set-labels!
+  "Show ephemeral billboard text labels, cleared/replaced each call (like show-preview!,
+   so they survive a live scene re-eval that empties the world group). Each label is
+   {:text str :position [x y z] (world-group-local) :color hex}. They face the camera
+   each frame (the render loop billboards them)."
+  [labels]
+  (clear-labels!)
+  (when-let [{:keys [^js world-group]} @state]
+    (doseq [{:keys [text position color] :or {color 0x9affc0}} labels]
+      (let [t (str text)
+            fs 2.4
+            pd {:width (max 5 (+ 2.5 (* 0.62 fs (count t)))) :height (+ 1.8 fs)
+                :position position :heading [0 0 1] :up [0 1 0]
+                :content t :style {:font-size fs :bg 0x1c2433ee :fg color :padding 0.7}}
+            {:keys [^js mesh] :as obj} (create-panel-mesh pd)]
+        ;; draw labels on top of geometry (a node on the rail centerline would
+        ;; otherwise sit inside the extruded tube and be occluded)
+        (set! (.-renderOrder mesh) 1001)
+        (when-let [^js mat (.-material mesh)] (set! (.-depthTest mat) false))
+        (.add world-group mesh)
+        (swap! label-objects conj (assoc obj :text t))))))
 
 (defn raycast-world-point
   "Public: world-group-local [x y z] under a mouse/pointer event, or nil."

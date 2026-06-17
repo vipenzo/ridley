@@ -30,7 +30,7 @@
 
 (declare confirm! cancel! render! update-panel! refresh-preview!
          set-seg-len! set-seg-angle! seg-len seg-angle-deg set-plane!
-         group-arc-runs-3d arc->bez-handles)
+         group-arc-runs-3d arc->bez-handles set-node-mark! node-mark-name)
 
 ;; ============================================================
 ;; State
@@ -479,7 +479,13 @@
                   (recur (rest gs) mi'
                          (conj nodes {:pos (:pos (nth wps mi')) :heading nil :up nil :tail []})))
 
-                ;; rotations / set-heading / marks: no new node
+                ;; a mark / side-trip attaches to the current (last) node's :tail —
+                ;; record-only, it rides through edits and re-emits in the bake
+                (#{:mark :side-trip} (:cmd g))
+                (recur (rest gs) mi
+                       (update-in nodes [(dec (count nodes)) :tail] (fnil conj []) g))
+
+                ;; rotations / set-heading: no new node
                 :else (recur (rest gs) mi nodes))))))
       ;; empty → just the anchor node at the origin (already present, not inserted
       ;; by the user and not movable); the user clicks to add the rail from there.
@@ -603,13 +609,13 @@
         (if-let [{:keys [c1 c2]} (:bez node)]
           (let [{:keys [pts exit-h exit-u]} (bezier-frame-3d a c1 c2 b u 24)]
             (recur (inc i) exit-h exit-u
-                   (conj segs {:kind :bez :a a :b b :h h :u u :c1 c1 :c2 c2 :pts pts})))
+                   (conj segs {:kind :bez :i i :a a :b b :h h :u u :c1 c1 :c2 c2 :pts pts})))
           (let [d (m/v- b a) dist (m/magnitude d)]
             (if (< dist 1e-9)
               (recur (inc i) h u segs)
               (let [dir (m/normalize d) up* (rmf-transport-up u h dir)]
                 (recur (inc i) dir up*
-                       (conj segs {:kind :straight :a a :b b :h h :u u
+                       (conj segs {:kind :straight :i i :a a :b b :h h :u u
                                    :dir dir :dist dist :up* up*}))))))))))
 
 (defn- nodes->commands-3d
@@ -623,19 +629,26 @@
    positions->rmf-commands (byte-identical to ensure-untwisted)."
   [nodes]
   (cond
-    (< (count nodes) 2) []
-    (not (some :bez nodes)) (vec (shape/positions->rmf-commands (mapv :pos nodes)))
+    (< (count nodes) 2) (vec (:tail (first nodes)))   ; lone anchor: just its marks
+    ;; fast path only when there's nothing to interleave (no curves, no marks)
+    (and (not (some :bez nodes)) (not (some (comp seq :tail) nodes)))
+    (vec (shape/positions->rmf-commands (mapv :pos nodes)))
     :else
-    (vec (mapcat
-          (fn [{:keys [kind a b h u c1 c2 dir dist up*]}]
-            (let [right (m/normalize (m/cross h u))
-                  w->l (fn [v] [(m/dot v right) (m/dot v u) (m/dot v h)])
-                  to-local (fn [p] (w->l (m/v- p a)))]
-              (if (= kind :bez)
-                [{:cmd :bezier-to :args [(to-local b) (to-local c1) (to-local c2) :local]}]
-                [{:cmd :set-heading :args [(w->l dir) (w->l up*) :local]}
-                 {:cmd :f :args [dist]}])))
-          (walk-3d-segments nodes)))))
+    ;; per-segment builder, interleaving each node's :tail (mark / side-trip) after the
+    ;; geometry that reaches it — node 0's tail leads, then each end node's tail.
+    (vec (concat
+          (:tail (first nodes))
+          (mapcat
+           (fn [{:keys [kind i a b h u c1 c2 dir dist up*]}]
+             (let [right (m/normalize (m/cross h u))
+                   w->l (fn [v] [(m/dot v right) (m/dot v u) (m/dot v h)])
+                   to-local (fn [p] (w->l (m/v- p a)))
+                   geom (if (= kind :bez)
+                          [{:cmd :bezier-to :args [(to-local b) (to-local c1) (to-local c2) :local]}]
+                          [{:cmd :set-heading :args [(w->l dir) (w->l up*) :local]}
+                           {:cmd :f :args [dist]}])]
+               (into geom (:tail (nth nodes i)))))
+           (walk-3d-segments nodes))))))
 
 (defn- nodes->code-3d
   "The replacement source for a 3D edit: a (path (set-heading …)(f …) …) rail. The
@@ -936,12 +949,30 @@
     (vec (concat (map #(seg px py %) ks)
                  (map #(seg py px %) ks)))))
 
+(defn- update-mark-labels!
+  "Push billboard labels for the marked nodes (their mark name floats at the node and
+   faces the camera). `pts` are the nodes' world positions in the render's frame. The
+   labels can be hidden (Shift+m) when they get in the way of editing a node."
+  [nodes pts]
+  (viewport/set-labels!
+   (when-not (:labels-hidden? @session)
+     (keep (fn [i] (when-let [nm (node-mark-name (nth nodes i))]
+                     {:text (name nm) :position (nth pts i)}))
+           (range (count nodes))))))
+
+(defn- toggle-labels!
+  "Show/hide the mark billboard labels (they occlude the node they sit on while editing)."
+  []
+  (swap! session update :labels-hidden? not)
+  (render!))
+
 (defn- render-3d!
   "Redraw the 3D rail: node positions in world space, drawn as rings oriented to the
    active working plane — the ring foreshortens to a line when the plane is edge-on to
    the camera, signalling 'orbit to edit here'. A bezier segment is drawn as its
    tessellation with its two control handles (squares + guide lines). A faint grid in
-   the active plane (centred on the selected node) gives a spatial reference."
+   the active plane (centred on the selected node) gives a spatial reference. Mark
+   names float at their nodes as billboard labels."
   [s]
   (let [{:keys [nodes selected]} s
         basis (active-basis s)
@@ -989,7 +1020,8 @@
                         (range n) pts)]
     (viewport/show-preview! [{:type :lines :data grid-lines}
                              {:type :lines :data (vec (concat seg-lines handle-lines)) :on-top true}
-                             {:type :dots :data (vec (concat node-dots handle-dots))}])))
+                             {:type :dots :data (vec (concat node-dots handle-dots))}])
+    (update-mark-labels! nodes pts)))
 
 (defn- render!
   "Redraw the ephemeral path (straight + bezier segments), bezier handles, and the
@@ -1064,7 +1096,8 @@
                          (range 1 n))
             dots (vec (concat node-dots handle-dots))]
         (viewport/show-preview! [{:type :lines :data segs :on-top true}
-                                 {:type :dots :data dots}])))))
+                                 {:type :dots :data dots}])
+        (update-mark-labels! nodes pts)))))
 
 ;; ============================================================
 ;; Live re-eval (downstream geometry)
@@ -1134,7 +1167,12 @@
               (set! (.-disabled el) (not seg?))
               (cond
                 (not seg?)        (set! (.-value el) "")
-                (not= el focused) (set! (.-value el) (str (r1 val)))))))))))
+                (not= el focused) (set! (.-value el) (str (r1 val))))))))
+      ;; mark name of the selected node (2D + 3D); don't clobber while editing it
+      (when-let [^js el (.querySelector panel ".ep-mark")]
+        (when (not= el (.-activeElement js/document))
+          (let [nm (some-> (:nodes s) (nth (:selected s) nil) node-mark-name)]
+            (set! (.-value el) (if nm (name nm) ""))))))))
 
 (defn- create-panel! []
   (let [panel (.createElement js/document "div")
@@ -1155,12 +1193,13 @@
                "</div>"
                "<div class='pilot-commands'>"
                (if td?
-                 (str "click: add · drag node: move · Shift+drag: axis-lock · Tab: next · "
-                      "Ins/i: split · f/r/u: plane · ←→↑↓: move in plane · ⌘Z: undo · "
-                      "Del: delete · Enter: OK · Esc: cancel")
+                 (str "click: add · drag node/handle · Shift+drag node: axis-lock · "
+                      "Shift+drag handle: length · Tab: next · c: curve · t: raccordo · "
+                      "m: mark · Shift+m: labels · Ins/i: split · f/r/u: plane · ←→↑↓: move · "
+                      "Shift/Alt+↑↓: handles · ⌘Z: undo · Del · Enter: OK · Esc: cancel")
                  (str "click: add · drag node/handle: move · Tab: next · c: curve · "
-                      "a: arc · x: cusp · Ins/i: split · ←→↑↓: node · Shift+↑↓: c1 · Alt+↑↓: c2 · "
-                      "⌘Z: undo · Del: delete · Enter: OK · Esc: cancel"))
+                      "a: arc · x: cusp · m: mark · Ins/i: split · ←→↑↓: node · Shift+↑↓: c1 · "
+                      "Alt+↑↓: c2 · ⌘Z: undo · Del · Enter: OK · Esc: cancel"))
                "</div>"
                ;; 3D precision: the selected node's incoming segment (len + in-plane angle)
                (when td?
@@ -1170,6 +1209,12 @@
                       "<label>ang° <input class='ep-ang' type='number' step='1' "
                       "style='width:64px' disabled></label>"
                       "</div>"))
+               ;; mark (named anchor) of the selected node — blank = none (2D + 3D)
+               "<div class='ep-mark-row' style='display:flex;gap:6px;align-items:center'>"
+               "<label>mark <input id='ep-mark-input' class='ep-mark' type='text' "
+               "placeholder='(none)' style='width:96px'></label>"
+               "<span class='ep-mark-hint' style='opacity:.6'>m to add</span>"
+               "</div>"
                "<div class='pilot-buttons'>"
                "<button class='pilot-btn pilot-btn-ok ep-ok'>OK</button>"
                "<button class='pilot-btn pilot-btn-cancel ep-cancel'>Cancel</button>"
@@ -1194,6 +1239,10 @@
     (doseq [[cls pl] [[".ep-plane-f" :f] [".ep-plane-r" :r] [".ep-plane-u" :u]]]
       (when-let [^js rb (.querySelector panel cls)]
         (.addEventListener rb "change" (fn [_] (set-plane! pl)))))
+    (when-let [^js mark-in (.querySelector panel ".ep-mark")]
+      ;; commit on Tab / blur (the `change` event), exactly like the numeric fields —
+      ;; Enter is left to mean only "OK the editor", never "commit the field".
+      (.addEventListener mark-in "change" (fn [^js e] (set-node-mark! (.. e -target -value)))))
     (modal/mount-panel! panel)
     panel))
 
@@ -1574,6 +1623,45 @@
             (refresh-preview!)
             (update-panel!)))))))
 
+;; -- marks: a named anchor point on the path, carried on the node's :tail as a
+;; record-only (mark :name) command (it rides edits and re-emits in the bake). Each
+;; node holds at most one mark for editing; side-trips on the tail are preserved.
+
+(defn- node-mark-name
+  "The keyword name of the first :mark on the node's :tail, or nil."
+  [node]
+  (some (fn [c] (when (= :mark (:cmd c)) (first (:args c)))) (:tail node)))
+
+(defn- set-node-mark!
+  "Set the selected node's mark to `nm` (a string, sans colon): blank removes the mark,
+   otherwise add it / rename it, keeping any side-trips already on the tail."
+  [nm]
+  (let [s @session i (:selected s) nodes (:nodes s)]
+    (when (< i (count nodes))
+      (let [nm (str/replace (str/trim (str nm)) #"\s+" "-")
+            without (vec (remove #(= :mark (:cmd %)) (:tail (nth nodes i))))
+            new-tail (if (seq nm)
+                       (vec (cons {:cmd :mark :args [(keyword nm)]} without))
+                       without)]
+        (when (not= new-tail (vec (:tail (nth nodes i))))
+          (push-undo!)
+          (swap! session assoc-in [:nodes i :tail] new-tail)
+          (refresh-preview!)
+          (update-panel!))))))
+
+(defn- add-mark-quick!
+  "`m` key: give the selected node a mark with a default unique name (:m1, :m2, …) and
+   focus the panel field to rename. If it already has a mark, just focus the field."
+  []
+  (let [s @session i (:selected s) nodes (:nodes s)
+        focus! #(some-> (.getElementById js/document "ep-mark-input") (doto .focus .select))]
+    (when (< i (count nodes))
+      (when-not (node-mark-name (nth nodes i))
+        (let [used (set (keep node-mark-name nodes))
+              nm (first (remove used (map #(keyword (str "m" %)) (iterate inc 1))))]
+          (set-node-mark! (name nm))))
+      (focus!))))
+
 ;; ============================================================
 ;; Mouse: click empty → add, click/drag a node → select/move
 ;; ============================================================
@@ -1923,6 +2011,14 @@
         (and (not (three-d? @session)) (#{"x" "X"} key))
         (do (.preventDefault e) (.stopPropagation e) (toggle-cusp!))
 
+        ;; Shift+m toggles the mark billboard labels (they can occlude a node you're editing)
+        (and (.-shiftKey e) (#{"m" "M"} key))
+        (do (.preventDefault e) (.stopPropagation e) (toggle-labels!))
+
+        ;; mark the selected node (named anchor) and focus the panel field to rename
+        (#{"m" "M"} key)
+        (do (.preventDefault e) (.stopPropagation e) (add-mark-quick!))
+
         ;; 3D only: select the active working plane (named by its normal axis)
         ;; f ⊥forward (= the 2D plane), r ⊥right, u ⊥up.
         (and (three-d? @session) (#{"f" "F" "r" "R" "u" "U"} key))
@@ -1961,7 +2057,8 @@
   (viewport/set-controls-enabled! true)        ; in case a drag was interrupted
   (viewport/lock-interaction! false)           ; restore measure/pick
   (viewport/set-image-stamp-opacity! 1.0)      ; restore the reference image
-  (viewport/clear-preview!))
+  (viewport/clear-preview!)
+  (viewport/clear-labels!))
 
 (defn confirm! []
   (when @session

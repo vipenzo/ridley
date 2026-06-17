@@ -46,38 +46,56 @@
                  shapes)]
     (wrap-results results)))
 
+(defn- merge-rail-anchors
+  "Merge a sweep path's RAIL marks (resolved from `pose`) into the result mesh's
+   :anchors, so `(on-anchors mesh :mark …)` can attach at a mark placed on the rail —
+   not just at profile (cross-section) marks. Works whether the path was extruded or
+   (for bezier paths) lofted. A profile mark of the same name wins. `result` may be a
+   single mesh or a vector of meshes."
+  [result path pose]
+  (let [rail (turtle/resolve-marks pose path)]
+    (if (seq rail)
+      (let [merge1 (fn [m] (if (and (map? m) (= :mesh (:type m)))
+                             (update m :anchors #(merge rail %))
+                             m))]
+        (if (vector? result) (mapv merge1 result) (merge1 result)))
+      result)))
+
 (defn ^:export pure-extrude-path
   "Pure extrude function - creates mesh without side effects.
    Starts from current turtle position/orientation.
    For bezier paths, delegates to loft with identity transform (avoids
-   shortening artifacts from micro-rotations in bezier walk steps)."
+   shortening artifacts from micro-rotations in bezier walk steps).
+   Marks on the rail become mesh anchors (see merge-rail-anchors)."
   [shape-or-shapes path]
-  (if (:bezier path)
-    ;; Bezier paths: use loft with identity transform.
-    ;; extrude's analyze-open-path computes shortening from summed absolute
-    ;; rotation angles, but bezier micro-rotations (chord→final→chord) cause
-    ;; excessive shortening even when the net heading change is small.
-    (pure-loft-path shape-or-shapes (fn [s _] s) path)
-    ;; Normal path: standard extrude
-    (let [shapes (if (vector? shape-or-shapes) shape-or-shapes [shape-or-shapes])
-          current-turtle @@state/turtle-state-var
-          initial-state (if current-turtle
-                          (-> (turtle/make-turtle)
-                              (assoc :position (:position current-turtle))
-                              (assoc :heading (:heading current-turtle))
-                              (assoc :up (:up current-turtle))
-                              (assoc :joint-mode (:joint-mode current-turtle))
-                              (assoc :resolution (:resolution current-turtle))
-                              (assoc :material (:material current-turtle)))
-                          (turtle/make-turtle))
-          results (reduce
-                   (fn [acc shape]
-                     (let [state (turtle/extrude-from-path initial-state shape path)
-                           mesh (last (:meshes state))]
-                       (if mesh (conj acc mesh) acc)))
-                   []
-                   shapes)]
-      (wrap-results results))))
+  (let [current-turtle @@state/turtle-state-var
+        result
+        (if (:bezier path)
+          ;; Bezier paths: use loft with identity transform.
+          ;; extrude's analyze-open-path computes shortening from summed absolute
+          ;; rotation angles, but bezier micro-rotations (chord→final→chord) cause
+          ;; excessive shortening even when the net heading change is small.
+          (pure-loft-path shape-or-shapes (fn [s _] s) path)
+          ;; Normal path: standard extrude
+          (let [shapes (if (vector? shape-or-shapes) shape-or-shapes [shape-or-shapes])
+                initial-state (if current-turtle
+                                (-> (turtle/make-turtle)
+                                    (assoc :position (:position current-turtle))
+                                    (assoc :heading (:heading current-turtle))
+                                    (assoc :up (:up current-turtle))
+                                    (assoc :joint-mode (:joint-mode current-turtle))
+                                    (assoc :resolution (:resolution current-turtle))
+                                    (assoc :material (:material current-turtle)))
+                                (turtle/make-turtle))
+                results (reduce
+                         (fn [acc shape]
+                           (let [state (turtle/extrude-from-path initial-state shape path)
+                                 mesh (last (:meshes state))]
+                             (if mesh (conj acc mesh) acc)))
+                         []
+                         shapes)]
+            (wrap-results results)))]
+    (merge-rail-anchors result path (or current-turtle (turtle/make-turtle)))))
 
 (defn- combine-meshes
   "Combine multiple meshes into one by concatenating vertices and reindexing faces.

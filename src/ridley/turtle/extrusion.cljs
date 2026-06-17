@@ -1601,6 +1601,13 @@
 
                     all-faces (vec (concat bottom-cap-faces side-faces top-cap-faces))
 
+                    ;; Marks on the RAIL itself become mesh anchors too (centerline
+                    ;; pose at the mark — heading along the sweep, up the section up),
+                    ;; so `(on-anchors tube :mark …)` can attach there. They share the
+                    ;; absolute creation frame with the section (profile) anchors, so
+                    ;; they merge directly; a profile mark wins a name clash.
+                    rail-anchors (when-let [rf @resolve-marks-ref] (rf state path))
+                    all-anchors (merge rail-anchors section-3d)
                     mesh (schema/assert-mesh!
                           (cond-> {:type :mesh
                                    :primitive :extrusion
@@ -1612,8 +1619,8 @@
                                    ;; (parametric, no marks needed).
                                    :rail-path path}
                             (:material state) (assoc :material (:material state))
-                            (seq section-3d) (assoc :anchors section-3d
-                                                    :section-anchors section-2d)
+                            (seq all-anchors) (assoc :anchors all-anchors)
+                            (seq section-2d) (assoc :section-anchors section-2d)
                             ;; Keep the generative profile (carries its marks via
                             ;; :source-path) so (slice-mesh m :on t) can hand it
                             ;; back, re-extrudable into the same marked mesh.

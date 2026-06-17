@@ -49,6 +49,41 @@ Implementation (all [edit_path.cljs](../src/ridley/editor/edit_path.cljs)):
   handle nudge for 3D (`x` cusp stays 2D-only — 3D handles are already free).
   Distinct key `t` (not `a`) for the 3D raccordo so it doesn't clash with 2D's arc.
 
+### Marks — editable named anchors on nodes (2D + 3D)
+
+A mark is just a named point: `(mark :name)` on a node's `:tail` (record-only, rides
+edits, re-emits in the bake). Now editable in both editors:
+- **Data/plumbing**: 2D already carried `:tail`; 3D didn't — fixed so
+  `nodes->commands-3d` re-emits each node's tail (anchor's first, then per end node via
+  the walk's `:i`) and `seed->nodes-3d` captures `:mark`/`:side-trip` into the tail.
+- **Editing**: panel **"mark" text field** for the selected node (blank = remove; 2D+3D,
+  focus-safe via `update-panel!`); **`m` key** quick-adds a default unique name (`:m1`…)
+  and focuses the field to rename. `node-mark-name`/`set-node-mark!`/`add-mark-quick!`.
+  Marked nodes stay green + delete-protected (clear the mark to delete the node).
+- **Visualization (option B)**: mark names float at their nodes as **camera-facing
+  billboard labels** — new `viewport/set-labels!`/`clear-labels!` (reuse
+  `create-panel-mesh`; billboarded in the render loop alongside scene panels; a
+  same-texts fast path just repositions meshes so dragging a marked node doesn't thrash
+  textures). edit-path's `render!`/`render-3d!` push labels; `cleanup!` clears them.
+- Verified: mark round-trip 2D (`(path-2d (f 20)(mark :corner)(tv 90)(f 20))`) and 3D
+  (`(mark :foo)`/`(mark :bar)` preserved through seed→bake). npm test 298/847 green.
+- **Label toggle**: `Shift+m` shows/hides the billboard labels (they occlude the node
+  they sit on while editing) — session flag `:labels-hidden?` honored by
+  `update-mark-labels!`. Labels also draw on top (depthTest off) so a node on the rail
+  centerline isn't hidden inside the extruded tube. `set-labels!` always clears+recreates
+  (a fast-path that repositioned meshes broke when the live re-eval emptied world-group).
+- **RAIL marks → mesh anchors (the payoff)**: a `(mark :name)` on the *rail* now becomes
+  a mesh `:anchor` at the centerline (pose = rail frame), so `(on-anchors tube :name …)`
+  attaches there — previously only PROFILE/section marks became anchors. Implemented in
+  `operations/merge-rail-anchors` (resolve the path's rail marks via `turtle/resolve-marks`
+  from the consumption pose, merge into the result's `:anchors`; profile mark wins a name
+  clash). Injected in `pure-extrude-path` so it covers BOTH the normal extrude AND the
+  bezier→`pure-loft-path` delegation (a path with `bezier-to` has `:bezier true` and is
+  lofted, bypassing `extrude-from-path`); `extrude-from-path` also carries them for the
+  implicit/direct callers. Verified: `(extrude (circle 3) rail-with-(mark :joint))` →
+  `:anchors {:joint …}` → `(on-anchors tube :joint :align (attach (cone …)))` places the
+  cone. Not yet wired for user-facing `loft`/`revolve` spines (follow-up).
+
 ### Phase 3a (2D arcs) — TANGENT "raccordo" model
 
 ### Phase 3a (arcs) — TANGENT "raccordo" model, 2D + 3D
