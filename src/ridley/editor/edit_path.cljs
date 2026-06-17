@@ -1181,39 +1181,38 @@
     (set! (.-innerHTML panel)
           (str "<div class='pilot-header'>" (if td? "edit-path" "edit-path-2d")
                "<span class='pilot-mode-badge'>" (if td? "3D rail" "polyline") "</span></div>"
-               "<div class='pilot-controls' style='display:flex;gap:12px;align-items:center;flex-wrap:wrap'>"
-               "<span class='ep-info'>nodes: 0 · sel: 0</span>"
+               ;; status line
+               "<div class='ep-info'>nodes: 0 · sel: 0</div>"
+               ;; global options for the whole path / editor (working plane + nudge step)
+               "<div class='ep-section'><span class='ep-section-label'>Path</span>"
                (when td?
-                 (str "<span class='ep-planes'>plane: "
-                      "<label><input type='radio' name='ep-plane' class='ep-plane-f'>f</label> "
-                      "<label><input type='radio' name='ep-plane' class='ep-plane-r'>r</label> "
+                 (str "<span class='ep-planes'>plane "
+                      "<label><input type='radio' name='ep-plane' class='ep-plane-f'>f</label>"
+                      "<label><input type='radio' name='ep-plane' class='ep-plane-r'>r</label>"
                       "<label><input type='radio' name='ep-plane' class='ep-plane-u'>u</label></span>"))
-               "<span>Step <input class='ep-step' type='number' step='1' min='0' "
-               "style='width:56px'>mm</span>"
+               "<label>step <input class='ep-step' type='number' step='1' min='0' "
+               "style='width:52px'> mm</label>"
                "</div>"
-               "<div class='pilot-commands'>"
+               ;; parameters of the currently selected node (segment len/angle + mark)
+               "<div class='ep-section'><span class='ep-section-label'>Node</span>"
+               (when td?
+                 (str "<label>len <input class='ep-len' type='number' step='1' "
+                      "style='width:60px' disabled></label>"
+                      "<label>ang° <input class='ep-ang' type='number' step='1' "
+                      "style='width:60px' disabled></label>"))
+               "<label>mark <input id='ep-mark-input' class='ep-mark' type='text' "
+               "placeholder='(none)' style='width:90px'></label>"
+               "</div>"
+               ;; keyboard help (collapsed behind the header "?" toggle)
+               "<div class='pilot-commands modal-help'>"
                (if td?
                  (str "click: add · drag node/handle · Shift+drag node: axis-lock · "
                       "Shift+drag handle: length · Tab: next · c: curve · t: raccordo · "
                       "m: mark · Shift+m: labels · Ins/i: split · f/r/u: plane · ←→↑↓: move · "
                       "Shift/Alt+↑↓: handles · ⌘Z: undo · Del · Enter: OK · Esc: cancel")
                  (str "click: add · drag node/handle: move · Tab: next · c: curve · "
-                      "a: arc · x: cusp · m: mark · Ins/i: split · ←→↑↓: node · Shift+↑↓: c1 · "
-                      "Alt+↑↓: c2 · ⌘Z: undo · Del · Enter: OK · Esc: cancel"))
-               "</div>"
-               ;; 3D precision: the selected node's incoming segment (len + in-plane angle)
-               (when td?
-                 (str "<div class='ep-precision' style='display:flex;gap:10px;align-items:center'>"
-                      "<label>len <input class='ep-len' type='number' step='1' "
-                      "style='width:64px' disabled></label>"
-                      "<label>ang° <input class='ep-ang' type='number' step='1' "
-                      "style='width:64px' disabled></label>"
-                      "</div>"))
-               ;; mark (named anchor) of the selected node — blank = none (2D + 3D)
-               "<div class='ep-mark-row' style='display:flex;gap:6px;align-items:center'>"
-               "<label>mark <input id='ep-mark-input' class='ep-mark' type='text' "
-               "placeholder='(none)' style='width:96px'></label>"
-               "<span class='ep-mark-hint' style='opacity:.6'>m to add</span>"
+                      "a: arc · t: raccordo · x: cusp · m: mark · Ins/i: split · ←→↑↓: node · "
+                      "Shift+↑↓: c1 · Alt+↑↓: c2 · ⌘Z: undo · Del · Enter: OK · Esc: cancel"))
                "</div>"
                "<div class='pilot-buttons'>"
                "<button class='pilot-btn pilot-btn-ok ep-ok'>OK</button>"
@@ -1554,44 +1553,58 @@
       (update-panel!))))
 
 (defn- toggle-arc!
-  "Make the selected node's incoming segment a 'raccordo' — a rounded corner.
+  "2D `a`: toggle the selected node's incoming segment to a true tangent `arc-v` on/off
+   — a circular arc leaving the start node tangent to the incoming heading (smooth start
+   only; shape from the incoming heading + node positions, no free belly). For a
+   both-ends-tangent smooth corner use `t` (toggle-tangent!). 2D only — 3D rounds with
+   a bezier (`t`), since arc-h on a 3D rail twists the tube."
+  []
+  (let [s @session i (:selected s) nodes (:nodes s)]
+    (when (and (pos? i) (< i (count nodes)) (not (three-d? s)))
+      (push-undo!)
+      (if (:arc (nth nodes i))
+        (swap! session update-in [:nodes i] dissoc :arc)
+        (swap! session (fn [st]
+                         (-> st
+                             (update-in [:nodes i] dissoc :bez)
+                             (assoc-in [:nodes i :arc] {})))))
+      (refresh-preview!)
+      (update-panel!))))
 
-   3D (`t`): ALWAYS (re)apply a both-ends-tangent bezier — it leaves the start node
-   along the incoming heading AND arrives at the end node along the OUTGOING direction
-   (toward the next node), so the corner is smooth on both sides. This is the
-   deliberate exception to 'each curve sets its own arrival heading' (a circular arc
-   can't do it — over-determined — but a bezier can). It never turns the segment back
-   into a line (that's `c`'s job); re-pressing `t` re-fits the tangents (handy after
-   moving a neighbour). On the last node (no outgoing) it falls back to an arc-shaped
-   bezier (smooth start only). Handles stay editable.
-
-   2D (`a`): toggle a true tangent `arc-v` on/off (smooth start only)."
+(defn- toggle-tangent!
+  "`t` (2D + 3D): make/refit the selected node's incoming segment a 'raccordo' — a
+   BOTH-ends-tangent bezier. c1 leaves the start node along the incoming heading AND c2
+   arrives along the OUTGOING direction (toward the next node), so the corner is smooth
+   on both sides. This is the deliberate exception to 'each curve sets its own arrival
+   heading' — a circular arc can't do it (over-determined), a bezier can. Always
+   (re)applies (never reverts to a line — that's `c`); re-pressing re-fits the tangents
+   after a neighbour moves. On the last node (no outgoing) it falls back to a
+   start-tangent-only curve. Handles stay editable; in 2D the start handle then re-snaps
+   to the tangent via reconstrain-handles."
   []
   (let [s @session i (:selected s) nodes (:nodes s)]
     (when (and (pos? i) (< i (count nodes)))
       (push-undo!)
-      (if (three-d? s)
-        (let [A (node-pos (nth nodes (dec i))) B (node-pos (nth nodes i))
-              h (incoming-heading-3d nodes i)
-              L (/ (m/magnitude (m/v- B A)) 3.0)
-              nxt (when (< (inc i) (count nodes)) (node-pos (nth nodes (inc i))))
-              out-dir (when nxt (let [d (m/v- nxt B)]
-                                  (when (> (m/magnitude d) 1e-9) (m/normalize d))))
-              handles (if out-dir
-                        ;; tangent at BOTH ends
-                        {:c1 (m/v+ A (m/v* h L)) :c2 (m/v- B (m/v* out-dir L))}
-                        ;; last node → arc-shaped (tangent at start only)
-                        (if-let [g (tangent-arc-geom-3d A h B)]
-                          (arc->bez-handles A B (:entry-tan g) (:exit-tan g) (:sweep-deg g) (:r g))
-                          {:c1 (m/v+ A (m/v* h L)) :c2 (m/v+ A (m/v* (m/v- B A) (/ 2.0 3)))}))]
-          (swap! session assoc-in [:nodes i :bez] handles))
-        ;; 2D: true tangent arc-v (no belly; shape from incoming heading + positions)
-        (if (:arc (nth nodes i))
-          (swap! session update-in [:nodes i] dissoc :arc)
-          (swap! session (fn [st]
-                           (-> st
-                               (update-in [:nodes i] dissoc :bez)
-                               (assoc-in [:nodes i :arc] {}))))))
+      (let [A (node-pos (nth nodes (dec i))) B (node-pos (nth nodes i))
+            L (/ (m/magnitude (m/v- B A)) 3.0)
+            nxt (when (< (inc i) (count nodes)) (node-pos (nth nodes (inc i))))
+            norm (if (three-d? s) m/normalize v2-norm)
+            out-dir (when nxt (let [d (m/v- nxt B)] (when (> (m/magnitude d) 1e-9) (norm d))))
+            h (if (three-d? s) (incoming-heading-3d nodes i) (incoming-tangent nodes (dec i)))
+            handles (cond
+                      out-dir                       ; tangent at BOTH ends
+                      {:c1 (m/v+ A (m/v* h L)) :c2 (m/v- B (m/v* out-dir L))}
+                      ;; last node, 3D: an arc-shaped bezier (start-tangent only)
+                      (three-d? s)
+                      (if-let [g (tangent-arc-geom-3d A h B)]
+                        (arc->bez-handles A B (:entry-tan g) (:exit-tan g) (:sweep-deg g) (:r g))
+                        {:c1 (m/v+ A (m/v* h L)) :c2 (m/v+ A (m/v* (m/v- B A) (/ 2.0 3)))})
+                      ;; last node, 2D: start-tangent c1, c2 at 2/3 chord
+                      :else
+                      {:c1 (m/v+ A (m/v* h L)) :c2 (m/v+ A (m/v* (m/v- B A) (/ 2.0 3)))})]
+        (swap! session (fn [st] (-> st (update-in [:nodes i] dissoc :arc)
+                                    (assoc-in [:nodes i :bez] handles)))))
+      (when-not (three-d? s) (swap! session update :nodes reconstrain-handles))
       (refresh-preview!)
       (update-panel!))))
 
@@ -1998,13 +2011,13 @@
         (#{"c" "C"} key)
         (do (.preventDefault e) (.stopPropagation e) (toggle-bezier!))
 
-        ;; raccordo (tangent curve). 2D: `a` → a true tangent arc-v (smooth start).
-        ;; 3D: `t` → a both-ends-tangent bezier (distinct key, since `a` already means
-        ;; the planar arc in 2D and the 3D raccordo is a different beast).
-        (and (not (three-d? @session)) (#{"a" "A"} key))
-        (do (.preventDefault e) (.stopPropagation e) (toggle-arc!))
+        ;; `t` (2D + 3D): both-ends-tangent bezier raccordo (smooth corner).
+        (#{"t" "T"} key)
+        (do (.preventDefault e) (.stopPropagation e) (toggle-tangent!))
 
-        (and (three-d? @session) (#{"t" "T"} key))
+        ;; `a` (2D only): a true tangent arc-v (smooth start only; `a` means the planar
+        ;; arc in 2D — 3D rounds with `t`'s bezier instead, see toggle-arc!).
+        (and (not (three-d? @session)) (#{"a" "A"} key))
         (do (.preventDefault e) (.stopPropagation e) (toggle-arc!))
 
         ;; toggle the selected node smooth ↔ cusp (frees its outgoing handle) (2D)

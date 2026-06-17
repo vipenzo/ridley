@@ -249,6 +249,29 @@ html, body {
   gap: 8px;
 }
 
+/* "?" toggle that reveals the collapsed keyboard-shortcut help (.modal-help) */
+.modal-panel .modal-help-toggle {
+  margin-left: auto;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  line-height: 16px;
+  font-size: 12px;
+  font-weight: bold;
+  border-radius: 50%;
+  border: 1px solid #5a6a8a;
+  background: transparent;
+  color: #9bb0d0;
+  cursor: pointer;
+}
+
+.modal-panel .modal-help-toggle:hover,
+.modal-panel .modal-help-toggle.active {
+  background: #3a4a66;
+  color: #fff;
+}
+
 .modal-panel .pilot-mode-badge {
   font-size: 10px;
   padding: 1px 6px;
@@ -296,6 +319,44 @@ html, body {
   word-wrap: break-word;
   max-height: 60px;
   overflow-y: auto;
+}
+
+/* edit-path: status line + the Path / Node parameter sections */
+.modal-panel .ep-info {
+  color: #7a8aa0;
+  font-size: 11px;
+  margin-bottom: 6px;
+}
+
+.modal-panel .ep-section {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+  padding-left: 6px;
+  border-left: 2px solid #3a4a66;
+}
+
+.modal-panel .ep-section-label {
+  color: #8a8a8a;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  width: 36px;
+  flex: none;
+}
+
+.modal-panel .ep-section label,
+.modal-panel .ep-planes {
+  color: #9cdcfe;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.modal-panel .ep-planes label {
+  gap: 2px;
 }
 
 .modal-panel .pilot-buttons {

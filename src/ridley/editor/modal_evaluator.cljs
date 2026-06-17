@@ -121,6 +121,24 @@
    element."
   [panel-el]
   (.add (.-classList panel-el) "modal-panel")
+  ;; Declutter: any element tagged `.modal-help` (the keyboard-shortcut cheatsheet) is
+  ;; collapsed by default and revealed by a small "?" toggle dropped into the header.
+  ;; Editors opt in just by adding the class — the toggle is wired here, once.
+  (when-let [^js help (.querySelector panel-el ".modal-help")]
+    (set! (.. help -style -display) "none")
+    (when-let [^js header (.querySelector panel-el ".pilot-header")]
+      (let [^js btn (.createElement js/document "button")]
+        (set! (.-type btn) "button")
+        (set! (.-className btn) "modal-help-toggle")
+        (set! (.-textContent btn) "?")
+        (set! (.-title btn) "Keyboard shortcuts")
+        (.addEventListener btn "click"
+                           (fn [^js e]
+                             (.preventDefault e)
+                             (let [hidden? (= "none" (.. help -style -display))]
+                               (set! (.. help -style -display) (if hidden? "block" "none"))
+                               (.toggle (.-classList btn) "active" hidden?))))
+        (.appendChild header btn))))
   (when-let [terminal (.getElementById js/document "repl-terminal")]
     (when-let [input-line (.getElementById js/document "repl-input-line")]
       (.insertBefore terminal panel-el input-line)))

@@ -359,7 +359,7 @@
                (if anchor? "" "<span>Step: <span class='eb-step'>5mm</span></span>")
                "</div>"
                (when anchor? "<div class='eb-sliders'></div>")
-               "<div class='pilot-commands'>" hint "</div>"
+               "<div class='pilot-commands modal-help'>" hint "</div>"
                "<div class='pilot-buttons'>"
                "<button class='pilot-btn pilot-btn-ok eb-ok'>OK</button>"
                "<button class='pilot-btn pilot-btn-cancel eb-cancel'>Cancel</button>"
