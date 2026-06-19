@@ -52,8 +52,9 @@ Segments can be **straight**, **cubic bezier** (`c`), or **circular arc** (`a`).
   `(move-to [x y])` sets the absolute start. Empty opens a default triangle.
 
 It does **not** require a reference image: clicks land on the turtle's working
-plane, so `edit-path` works as a standalone polygon / region drawing tool. A
-`set-image` board, when present, just makes a convenient backdrop to trace.
+plane, so `edit-path-2d` works as a standalone polygon / region drawing tool. An
+`image-board` (or `set-image`) board, when present, just makes a convenient backdrop
+to trace.
 
 ## Mouse & keys
 
@@ -116,18 +117,19 @@ on top, so the trace reads even over a light image.
 
 <!-- example-source: edit-path-2d-basic :no-run :warning desktop-only -->
 ```clojure
-;; Trace a region over a stamped board image, then clip that piece out.
-(def board (set-image (rect 200 100) "/Users/me/ref/photo.jpg" 200 -100 -50))
-(stamp board)
+;; Lay a calibrated photo board at the turtle, trace the outline, extrude.
+(stamp (image-board "/Users/me/ref/part.jpg" 200 [0 0] [-100 -50] [200 100]))
 
-(register cut
-  (extrude (shape-intersection board (path-to-shape (edit-path-2d))) (f 4)))
+(register part
+  (extrude (path-to-shape (edit-path-2d) :preserve-position true) (f 4)))
 ```
 <!-- /example-source -->
 
-Open from the definitions panel; click around the detail you want, confirm, and the
-`(edit-path-2d)` marker becomes a plain `(path-2d (move-to …) (tv …)(f …) …)` that
-clips the photo region.
+Open from the definitions panel; click around the object's outline, confirm, and the
+`(edit-path-2d)` marker becomes a plain `(path-2d (move-to …) (tv …)(f …) …)`. The
+`:preserve-position` flag keeps the creation pose on the turtle point you framed with
+`image-board` — see `image-board` / `edit-image-board` for placing and calibrating the
+photo.
 
 ## Notes
 

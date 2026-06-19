@@ -1953,7 +1953,7 @@
     :status "stable"
     :since ""
     :signature "(set-image shape path width offset-x offset-y)"
-    :description "Attach a reference image to a 2D shape, to trace over it with paths and beziers. The image becomes visible **only when the shape is `stamp`ed** — it is UV-mapped onto the stamped polygon in the shape's own 2D frame, so it is **clipped to the shape's outline**. Returns a new shape carrying the image attribute; the input is untouched and turtle state is unchanged."
+    :description "> **For the usual \"trace a photo\" workflow, reach for `image-board` / > `edit-image-board` instead.** They wrap `set-image` on a `preserve-position?` > rectangle and give you a calibrated, croppable board whose framed point becomes > the extruded mesh's creation pose. `set-image` is the **low-level primitive** they > build on — use it directly when you need an image on an **arbitrary shape** (not > just a rect), or to rely on the image **surviving 2D booleans** (below)."
     :path "docs/manual/reference/en/set-image.md"}
 
    "shape"

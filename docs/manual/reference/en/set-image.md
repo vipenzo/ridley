@@ -13,6 +13,13 @@ status: stable
 
 ## Description
 
+> **For the usual "trace a photo" workflow, reach for `image-board` /
+> `edit-image-board` instead.** They wrap `set-image` on a `preserve-position?`
+> rectangle and give you a calibrated, croppable board whose framed point becomes
+> the extruded mesh's creation pose. `set-image` is the **low-level primitive** they
+> build on — use it directly when you need an image on an **arbitrary shape** (not
+> just a rect), or to rely on the image **surviving 2D booleans** (below).
+
 Attach a reference image to a 2D shape, to trace over it with paths and
 beziers. The image becomes visible **only when the shape is `stamp`ed** — it
 is UV-mapped onto the stamped polygon in the shape's own 2D frame, so it is
@@ -79,5 +86,5 @@ window's slice of the photo — handy for isolating one detail to trace.
 
 ## See also
 
-- **Related:** `stamp`, `shape-intersection`, `shape-difference`,
-  `translate-shape`, `ruler`
+- **Related:** `image-board`, `edit-image-board`, `stamp`, `shape-intersection`,
+  `shape-difference`, `translate-shape`, `ruler`
