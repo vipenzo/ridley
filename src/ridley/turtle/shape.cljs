@@ -973,10 +973,12 @@
                                   (mapv lerp-pt h1 h2)
                                   h1))
                               holes1 holes2))]
+        ;; NB: this enumerates by hand which shape attrs survive the rebuild. A new
+        ;; shape attr can silently fall through here the same way :preserve-position?
+        ;; once did (see dev-docs/code-issues.md). Carry shape1's anchoring so a
+        ;; preserve-position? profile lofts at its raw coords (parity with extrude /
+        ;; loft shape-fn), not re-anchored on its first vertex.
         (make-shape new-pts (cond-> {:centered? (:centered? shape1)
-                                     ;; carry shape1's anchoring so a preserve-position?
-                                     ;; profile lofts at its raw coords (parity with extrude
-                                     ;; / loft shape-fn), not re-anchored on its first vertex
                                      :preserve-position? (:preserve-position? shape1)}
                               new-holes (assoc :holes new-holes)))))))
 

@@ -4,6 +4,18 @@ File interno per tracciare piccole incoerenze tra il codice sorgente di Ridley e
 
 ## Aperto
 
+### Ricostruire una shape enumera a mano gli attributi che sopravvivono
+
+**Contesto**: `lerp-shape` (e a monte `make-shape`) ricostruisce la shape elencando **esplicitamente** quali attributi ricopiare (`:centered?`, `:holes`, `:preserve-position?`, …). Ogni nuovo attributo shape che qualcuno aggiunge rischia di cadere silenziosamente in questa ricostruzione — esattamente come `:preserve-position?` veniva perso dal loft two-shape (fix `2fb18f6`): nessun errore, solo geometria spostata di nascosto.
+
+**Esempio (la trappola, già scattata una volta)**: `(loft profilo-preserve-position altro-profilo (f d))` ri-ancorava le sezioni sul primo vertice perché `lerp-shape` copiava `:centered?` ma non `:preserve-position?`.
+
+**Comportamento atteso** (da definire, non agire ora): propagare TUTTI gli attributi di anchoring/rendering rilevanti dalla shape sorgente, non un sottoinsieme hardcoded — es. una whitelist condivisa di "shape attrs da preservare nella ricostruzione", usata sia da `lerp-shape` sia dalle altre trasformazioni che ricostruiscono shape (`resample`, `align-to-shape`, …).
+
+**Impatto**: basso oggi (gli attributi attuali sono coperti, e il test `preserve_position_test` blinda l'osservabile per stamp/extrude/loft), ma è una trappola latente: il prossimo attributo cadrà nello stesso modo, senza feedback. Candidato per un refactor quando si tocca `make-shape`/`lerp-shape`.
+
+**Scoperta**: verifica del `:preserve-position?` nel workflow image-board, 2026-06-19.
+
 ### Il salto status bar → editor non è sincronizzato col workspace di provenienza
 
 **Contesto**: il source tracking (Opzione/⌥+Click su una mesh nel viewport → catena di link nella status bar → click sul link → salto all'editor) assume che il codice che ha generato la mesh sia quello attualmente nell'editor. Non è sempre vero: se dopo il Run si cambia workspace, o se la mesh è stata generata dal Run di un esempio del manuale, il link porta a una posizione dell'editor corrente che non corrisponde al codice di provenienza. Il problema è probabilmente più generale: il viewport conserva la scena dell'ultimo Run, ma non ricorda *quale* workspace/documento l'ha prodotta, quindi editor e viewport possono divergere silenziosamente.
