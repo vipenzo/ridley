@@ -58,7 +58,8 @@
 (def ^:private sel-color    0xffdd00) ; selected node — yellow
 (def ^:private mark-color   0x00dd66) ; node carrying a mark / side-trip — green
 (def ^:private exit-color   0xff8800) ; last (exit) node — orange (defines exit heading)
-(def ^:private handle-color 0x33ddff) ; bezier control handles — cyan
+(def ^:private handle-color 0x33ddff) ; FREE bezier handle (sets the tangent) — bright cyan
+(def ^:private handle-len-color 0x2b8a99) ; length-only handle (direction locked by smoothness) — muted teal
 (def ^:private cusp-color   0xff44cc) ; freed (cusp) outgoing handle — magenta
 (def ^:private handle-radius   0.45)  ; bezier handle square half-size
 (def ^:private node-radius     0.625) ; filled dot radius (plane units)
@@ -1237,14 +1238,14 @@
                           (fn [i]
                             (when (:bez (nth nodes i))
                               (let [{:keys [c1 c2]} (:bez (nth nodes i))
-                                    c1col (if (false? (:smooth? (nth nodes (dec i)))) cusp-color handle-color)]
+                                    c1col (if (false? (:smooth? (nth nodes (dec i)))) cusp-color handle-len-color)]
                                 [{:from (nth pts (dec i)) :to (->w c1) :color c1col}
                                  {:from (nth pts i) :to (->w c2) :color handle-color}])))
                           (range 1 n))
             ;; closed seam handles: node 0's :bez c1 (near the last node) / c2 (near node 0)
             closing-handle-lines (when (and cl (:bez (first nodes)))
                                    (let [{:keys [c1 c2]} (:bez (first nodes))
-                                         c1col (if (false? (:smooth? (peek nodes))) cusp-color handle-color)]
+                                         c1col (if (false? (:smooth? (peek nodes))) cusp-color handle-len-color)]
                                      [{:from (peek pts) :to (->w c1) :color c1col}
                                       {:from (first pts) :to (->w c2) :color handle-color}]))
             segs (vec (concat seg-lines closing handle-lines closing-handle-lines))
@@ -1266,7 +1267,7 @@
                          (fn [i]
                            (when (:bez (nth nodes i))
                              (let [{:keys [c1 c2]} (:bez (nth nodes i))
-                                   c1col (if (false? (:smooth? (nth nodes (dec i)))) cusp-color handle-color)]
+                                   c1col (if (false? (:smooth? (nth nodes (dec i)))) cusp-color handle-len-color)]
                              ;; control points are little squares (shape sets them
                              ;; apart from the round nodes — no extra colour needed)
                                [{:pos (->w c1) :radius handle-radius :color c1col :square true :normal normal}
@@ -1274,7 +1275,7 @@
                          (range 1 n))
             closing-handle-dots (when (and cl (:bez (first nodes)))
                                   (let [{:keys [c1 c2]} (:bez (first nodes))
-                                        c1col (if (false? (:smooth? (peek nodes))) cusp-color handle-color)]
+                                        c1col (if (false? (:smooth? (peek nodes))) cusp-color handle-len-color)]
                                     [{:pos (->w c1) :radius handle-radius :color c1col :square true :normal normal}
                                      {:pos (->w c2) :radius handle-radius :color handle-color :square true :normal normal}]))
             dots (vec (concat node-dots handle-dots closing-handle-dots))]

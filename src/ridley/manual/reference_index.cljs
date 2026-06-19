@@ -444,6 +444,15 @@
     :description "Author a cubic Bezier curve interactively, in 3D, from the keyboard — instead of solving the cubic by hand for its control points. `edit-bezier` is a stand-in for a `(bezier-to … :local)` call and is used **wherever `bezier-to` is**: top-level, or inside `(path …)` / `(attach …)`. Run it from the **definitions panel** (Cmd+Enter), not the REPL."
     :path "docs/manual/reference/en/edit-bezier.md"}
 
+   "edit-image-board"
+   {:name "edit-image-board"
+    :category "live-interactive"
+    :status "stable"
+    :since ""
+    :signature "(edit-image-board path)\n(edit-image-board path scale [imx imy] [orx ory] [w h])"
+    :description "Interactive editor for an `image-board` — place, scale and crop a reference photo with on-screen handles and a calibration ruler, then trace it with `edit-path-2d`. Open it from the **definitions panel** (Cmd+Enter), not the REPL, and wrap the form in `(stamp …)` to see the image. On **OK** the `(edit-image-board …)` marker is rewritten to `(image-board path scale [imx imy] [orx ory] [w h])` with the values you set; on **Esc** it is restored. Like `tweak` / `edit-path-2d`, one modal runs at a time and the editor is read-only while open."
+    :path "docs/manual/reference/en/edit-image-board.md"}
+
    "edit-path"
    {:name "edit-path"
     :category "live-interactive"
@@ -776,6 +785,15 @@
     :signature "(highlight-face mesh face-id)\n(highlight-face mesh face-id color)"
     :description "Add a persistent coloured overlay to one face of `mesh` in the viewport. Returns `true` if the face was found and highlighted, `nil` otherwise. Side-effecting: mutates the viewport, not the mesh."
     :path "docs/manual/reference/en/highlight-face.md"}
+
+   "image-board"
+   {:name "image-board"
+    :category "2d-shapes"
+    :status "stable"
+    :since ""
+    :signature "(image-board path scale-factor [imx imy] [orx ory] [w h])"
+    :description "Build a rectangular **tracing board** carrying a reference photo, ready to trace over with `edit-path-2d`. It is a convenience wrapper over `set-image` on a `preserve-position?` rectangle: unlike a bare `(set-image (rect …) …)`, the board keeps the **turtle fixed at `[0 0]`**, so stamping it places the rect relative to the turtle by `[orx ory]` and leaves the turtle exactly on the point that will become the extruded mesh's **creation pose** — typically a point *off* the contour you trace."
+    :path "docs/manual/reference/en/image-board.md"}
 
    "inflate"
    {:name "inflate"
@@ -1182,6 +1200,15 @@
     :description "Record turtle movement commands as a reusable data value. The body is executed in a recording context where turtle-movement names (`f`, `th`, `tv`, `tr`, `u`, `d`, `rt`, `lt`, `arc-h`, `arc-v`, `bezier-to`, …) are shadowed: instead of moving the live turtle, they append commands to an internal recorder. Returns a path map."
     :path "docs/manual/reference/en/path.md"}
 
+   "path-2d"
+   {:name "path-2d"
+    :category "path"
+    :status "stable"
+    :since ""
+    :signature "(path-2d & body)\n(path-2d :closed & body)"
+    :description "Record a **planar** path — a 2D profile, as opposed to `path`'s 3D rail. `path-2d` traces in the same plane a shape stamps into (the turtle's `(right, up)` plane), so a profile fed to `path-to-shape` is never \"rotated\" relative to how you drew it. The defining invariant: `(follow-path P)` and `(stamp (path-to-shape P))` land on the **same world points**."
+    :path "docs/manual/reference/en/path-2d.md"}
+
    "path-length"
    {:name "path-length"
     :category "path"
@@ -1205,7 +1232,7 @@
     :category "2d-shapes"
     :status "stable"
     :since ""
-    :signature "(path-to-shape path)"
+    :signature "(path-to-shape path)\n(path-to-shape path :preserve-position true)"
     :description "Convert a recorded 3D path into a 2D shape by projecting onto the XY plane. The resulting contour uses the X and Y components of each waypoint as the shape's points and is automatically rewound to CCW so normals point in the expected direction when extruded or revolved. Does not modify turtle state."
     :path "docs/manual/reference/en/path-to-shape.md"}
 
@@ -2204,7 +2231,7 @@
     :category "2d-shapes"
     :status "stable"
     :since ""
-    :signature "(stroke-shape path width)\n(stroke-shape path width & {:keys [start-cap end-cap join miter-limit]})"
+    :signature "(stroke-shape path width)\n(stroke-shape path width & {:keys [start-cap end-cap join miter-limit preserve-position]})"
     :description "Build a 2D outline shape by stroking a recorded path with a given width. The result is a closed contour suitable for `extrude`, `revolve`, `loft`, and the shape booleans. Does not modify turtle state."
     :path "docs/manual/reference/en/stroke-shape.md"}
 

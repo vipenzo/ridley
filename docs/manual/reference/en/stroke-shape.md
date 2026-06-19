@@ -10,7 +10,7 @@ status: stable
 ## Signature
 
 `(stroke-shape path width)`
-`(stroke-shape path width & {:keys [start-cap end-cap join miter-limit]})`
+`(stroke-shape path width & {:keys [start-cap end-cap join miter-limit preserve-position]})`
 
 ## Description
 
@@ -30,6 +30,11 @@ on each side, with the chosen end caps and join style.
 - `:join` — corner join style: `:miter` (default), `:bevel`, `:round`.
 - `:miter-limit` — maximum miter ratio before falling back to bevel
   (default `4`).
+- `:preserve-position` — when `true` (opt-in, default off), the outline is marked
+  `:preserve-position?`, so the path's frame origin `[0 0]` (rather than the
+  re-centred outline) becomes the extruded/stamped mesh's **creation pose**. Use it
+  for image-traced strokes (see `image-board`) so the creation pose lands on the
+  turtle point you framed.
 
 ## Example
 

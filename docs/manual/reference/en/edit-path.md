@@ -74,10 +74,13 @@ plane, so `edit-path` works as a standalone polygon / region drawing tool. A
 - `c` — toggle the selected node's **incoming segment** between a straight line and
   a **cubic bezier**. A bezier shows two control handles (small squares, to set them
   apart from the round nodes); it bakes to a compact `(bezier-to … :local)`.
-  Handles are **directional**: the start handle (c1) stays tangent to how the path
-  arrives at the start node (you only set its length — it slides along that line),
-  so curves join smoothly; the end handle (c2) is free and sets the entry direction
-  into the next node. c1 has a minimum length (a fraction of the chord) so it never
+  Handles are **directional**, and **colour-coded** so you can tell them apart: the
+  **free** handle (c2, **bright cyan**) is dragged anywhere and sets the entry
+  direction into the next node; the **length-only** handle (c1, **muted teal**) stays
+  tangent to how the path arrives at the start node — you only set its length, it
+  slides along that line — so curves join smoothly. (A **cusp** node's freed outgoing
+  handle is **magenta**; see `x`.) `Alt`+drag grabs a handle without moving the node.
+  c1 has a minimum length (a fraction of the chord) so it never
   collapses onto the node — a zero-length handle gives the cubic an undefined start
   tangent and makes downstream `stroke-shape` self-overlap.
 - `a` — toggle the selected node's **incoming segment** between a straight line and
@@ -159,8 +162,12 @@ the photo region.
   curve node — so a traced curve survives a refine-and-re-edit cycle. `arc-v` and
   out-of-plane `u`/`tv`/`tr` are still **dropped** on re-open (replaced with straight
   segments); a warning lists what was dropped.
-- **Not a persistent primitive.** Confirm bakes a `(path …)`; re-running does not
-  re-open editing. Rename `path` → `edit-path` to edit again.
+- **Not a persistent primitive.** Confirm bakes a `(path-2d …)`; re-running does not
+  re-open editing. Rename `path-2d` → `edit-path-2d` to edit again.
+- **Closed mode.** A panel toggle (and the closing segment) make the path **closed**,
+  so the seam (last → first) is a real, editable segment — select node 0 and press
+  `c` / `t` to curve it. Handy for `path-to-shape` profiles, where it controls the
+  seam's bezier handles.
 - **Modal session.** Like `tweak` / `edit-bezier` / `pilot`, one runs at a time and
   the editor is read-only while open; switching workspace closes the session.
 - **Desktop tracing.** Node placement raycasts onto scene meshes (e.g. the stamped
@@ -168,5 +175,5 @@ the photo region.
 
 ## See also
 
-- **Related:** `set-image`, `path-to-shape`, `shape-intersection`, `edit-bezier`,
-  `path`, `move-to`
+- **Related:** `path-2d`, `image-board`, `edit-image-board`, `set-image`,
+  `path-to-shape`, `shape-intersection`, `edit-bezier`, `path`, `move-to`

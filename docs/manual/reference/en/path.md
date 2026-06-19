@@ -101,5 +101,5 @@ movements or an already-recorded path.
 
 ## See also
 
-- **Related:** `extrude`, `loft`, `revolve`, `follow-path`, `with-path`,
+- **Related:** `path-2d`, `extrude`, `loft`, `revolve`, `follow-path`, `with-path`,
   `quick-path`, `poly-path`, `mark`, `follow`, `side-trip`, `path?`

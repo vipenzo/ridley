@@ -2253,8 +2253,14 @@
                    ring   (THREE/TorusGeometry. r (* r 0.42) 8 18)
                    square (THREE/PlaneGeometry. (* r 2) (* r 2))
                    :else  (THREE/SphereGeometry. r 14 14))
+            ;; transparent + depthWrite false puts dots in the transparent pass at
+            ;; their high renderOrder, so they draw OVER a transparent reference image
+            ;; (set-image, opacity 1) instead of being hidden behind it. Opacity stays
+            ;; 1 → visually identical, only the draw pass/order changes.
             mat (THREE/MeshBasicMaterial. #js {:color (or color 0xffffff)
                                                :depthTest false
+                                               :depthWrite false
+                                               :transparent true
                                                :side THREE/DoubleSide})
             ^js m (THREE/Mesh. geom mat)]
         (.set (.-position m) (nth pos 0) (nth pos 1) (nth pos 2))
@@ -2293,7 +2299,11 @@
         (when on-top
           (set! (.-renderOrder obj) 1000)
           (when-let [^js mat (.-material obj)]
-            (set! (.-depthTest mat) false)))
+            (set! (.-depthTest mat) false)
+            ;; transparent → drawn in the transparent pass at this high renderOrder,
+            ;; so on-top lines sit OVER a transparent reference image (set-image,
+            ;; opacity 1) instead of being hidden behind it. Opacity unchanged.
+            (set! (.-transparent mat) true)))
         (.add world-group obj)
         (swap! preview-objects conj obj)))))
 

@@ -61,6 +61,33 @@
                        :width width
                        :offset [offset-x offset-y]}))
 
+(defn ^:export image-board
+  "Build a rectangular tracing board carrying a reference image, ready for
+   edit-path-2d. Unlike a bare (set-image (rect …) …), the board is
+   preserve-position?, so it keeps the TURTLE fixed at [0 0]: stamping it places
+   the rect relative to the turtle by [orx ory] and leaves the turtle exactly on
+   the point you want to become the extruded mesh's creation pose (typically OFF
+   the contour you will trace).
+
+   - path:         absolute image file path (desktop only — read via Rust server).
+   - scale-factor: image width in Ridley units (calibrates scale — verify with ruler).
+   - [imx imy]:    image lower-left corner RELATIVE to the rect's lower-left corner
+                   (frames which part of the photo shows in the window). Because it
+                   is relative to the rect, sliding [orx ory] carries the image along
+                   — once framed, you don't re-correct [imx imy].
+   - [orx ory]:    rect lower-left corner relative to the turtle (moves rect + image
+                   together). Turtle-centered → [(- (/ w 2)) (- (/ h 2))].
+   - [w h]:        rect dimensions.
+
+   Tweak scale-factor / [imx imy] / [orx ory] until the object sits where you want
+   and the turtle [0 0] is on your chosen creation-pose point. Then trace with
+   edit-path-2d and extrude with the matching :preserve-position flag:
+     (extrude (path-to-shape outline :preserve-position true) (f depth))"
+  [path scale-factor [imx imy] [orx ory] [w h]]
+  (-> (make-shape [[orx ory] [(+ orx w) ory] [(+ orx w) (+ ory h)] [orx (+ ory h)]]
+                  {:preserve-position? true})
+      (set-image path scale-factor (+ orx imx) (+ ory imy))))
+
 ;; ============================================================
 ;; Built-in shapes (centered at origin)
 ;; ============================================================
@@ -476,14 +503,20 @@
 
    If the path seeds marks, the source path is carried on the shape as
    :source-path so extrude/loft/revolve can resolve those marks into mesh
-   anchors (in the section/base-face frame)."
-  [path]
+   anchors (in the section/base-face frame).
+
+   :preserve-position true (opt-in) keeps the path's frame origin [0 0] as the
+   extruded/stamped mesh's creation pose (instead of re-origining on the first
+   vertex). Use it for image-traced outlines so the creation pose lands on the
+   turtle point you set up the board around — typically OFF the contour."
+  [path & {:keys [preserve-position]}]
   (when (and (map? path) (= :path (:type path)))
     (let [raw-points (drop-closing-dup (mapv :pos (ensure-path-2d path)) (:closed? path))]
       (when (>= (count raw-points) 3)
         ;; Ensure CCW winding for correct outward-facing normals
         (let [final-pts (ensure-ccw raw-points)]
-          (cond-> (make-shape final-pts {:centered? false})
+          (cond-> (make-shape final-pts {:centered? false
+                                         :preserve-position? preserve-position})
             (path-has-mark? path) (assoc :source-path path
                                          :mark-refs (compute-mark-refs path final-pts))))))))
 
@@ -739,9 +772,11 @@
    - :end-cap    :flat (default), :round, :square
    - :join       :miter (default), :bevel, :round
    - :miter-limit  maximum miter ratio before falling back to bevel (default 4)
+   - :preserve-position true - keep the path's frame origin [0 0] as the mesh
+     creation pose (instead of re-centering); for image-traced outlines.
 
    Returns a shape suitable for extrude, revolve, etc."
-  [path width & {:keys [start-cap end-cap join miter-limit]
+  [path width & {:keys [start-cap end-cap join miter-limit preserve-position]
                  :or {start-cap :flat end-cap :flat join :miter miter-limit 4}}]
   (assert (number? width) "stroke-shape requires a width argument: (stroke-shape path width)")
   (let [wps (ensure-path-2d path)
@@ -803,7 +838,8 @@
                         (into start-cap-pts))]
         ;; Marks live on the path centerline; carry the source path so the
         ;; extrude/loft step can resolve them as mesh anchors there.
-        (cond-> (make-shape (ensure-ccw all-pts) {:centered? true})
+        (cond-> (make-shape (ensure-ccw all-pts) {:centered? true
+                                                  :preserve-position? preserve-position})
           (path-has-mark? path) (assoc :source-path path))))))
 
 ;; ============================================================

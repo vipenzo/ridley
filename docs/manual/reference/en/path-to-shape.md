@@ -10,6 +10,7 @@ status: stable
 ## Signature
 
 `(path-to-shape path)`
+`(path-to-shape path :preserve-position true)`
 
 ## Description
 
@@ -33,6 +34,12 @@ profile back with its marks intact.
 ## Parameters
 
 - `path` — a recorded path map.
+- `:preserve-position` — when `true` (opt-in, default off), the resulting shape is
+  marked `:preserve-position?`, so the profile's frame origin `[0 0]` becomes the
+  extruded/stamped mesh's **creation pose** instead of the first traced vertex. Use
+  it for image-traced outlines (see `image-board` / `edit-image-board`) so the
+  creation pose lands on the turtle point you framed — typically *off* the contour.
+  Off by default, so existing profiles are unchanged.
 
 ## Example
 
@@ -61,4 +68,4 @@ into an axisymmetric vase.
 
 ## See also
 
-- **Related:** `stroke-shape`, `shape`, `revolve`
+- **Related:** `stroke-shape`, `shape`, `revolve`, `image-board`, `edit-image-board`

@@ -141,6 +141,7 @@
    'scale-shape     shape/scale-shape
    'scale           shape/scale-shape
    'set-image       shape/set-image
+   'image-board     shape/image-board
    'rotate-shape    xform/rotate
    'translate       xform/translate
    'morph           xform/morph

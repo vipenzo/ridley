@@ -28,6 +28,7 @@
             [ridley.editor.pilot-mode :as pilot-mode]
             [ridley.editor.edit-bezier :as edit-bezier]
             [ridley.editor.edit-path :as edit-path]
+            [ridley.editor.edit-image-board :as edit-image-board]
             [ridley.editor.impl :as macro-impl]
             [ridley.geometry.warp :as warp]
             [ridley.library.svg :as svg]
@@ -153,6 +154,7 @@
    'scale-shape     shape/scale-shape
    'reverse-shape   shape/reverse-shape
    'set-image       shape/set-image
+   'image-board     shape/image-board
    'path-to-shape   shape/path-to-shape
    'stroke-shape    shape/stroke-shape
    'poly-path       shape/poly-path
@@ -591,6 +593,10 @@
    ;; edit-path (interactive polyline tracing) — the `edit-path` macro expands to
    ;; (edit-path-request! (path …)), which opens the session and returns a path
    'edit-path-request!       edit-path/request!
+   ;; edit-image-board (interactive reference-photo board) — the `edit-image-board`
+   ;; macro expands to (edit-image-board-request! …); returns a live image-board
+   ;; shape and opens the calibration session.
+   'edit-image-board-request! edit-image-board/request!
    ;; Source form storage
    'set-source-form!    registry/set-source-form!
    'get-source-form     registry/get-source-form

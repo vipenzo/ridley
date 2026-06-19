@@ -2181,6 +2181,15 @@
    (defmacro edit-path [& body]
      `(edit-path-request! (path ~@body)))
 
+   ;; edit-image-board — interactive editor for an `image-board` reference photo.
+   ;; (edit-image-board PATH) first time, or
+   ;; (edit-image-board PATH scale [imx imy] [orx ory] [w h]) to re-edit.
+   ;; Expands to (edit-image-board-request! …), which returns a live image-board
+   ;; shape (wrap in (stamp …) to see it) and opens the session. On confirm the
+   ;; marker is rewritten to (image-board …) with the calibrated values.
+   (defmacro edit-image-board [& args]
+     `(edit-image-board-request! ~@args))
+
    ;; set-creation-pose!: move the origin/grip of a registered mesh
    ;; without moving its geometry. The turtle commands define the new pose.
    ;; (set-creation-pose! :name (f 10) (th 45))

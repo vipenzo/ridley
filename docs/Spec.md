@@ -569,10 +569,11 @@ When a 2D shape is projected onto the turtle's plane (in `extrude`, `stamp`, `re
 
 `:centered? true` and `:preserve-position? true` produce the same numerical offset (`[0 0]`); the distinction is documentary intent. Use `:centered?` for shapes that are geometrically symmetric around their 2D origin; use `:preserve-position?` for shapes whose 2D coordinates are already meaningful in some plane-local frame and must not be rebased.
 
-In normal use you do not set these flags directly: the built-in constructors pick the right default. Two cases where `:preserve-position? true` matters explicitly:
+In normal use you do not set these flags directly: the built-in constructors pick the right default. Three cases where `:preserve-position? true` matters explicitly:
 
 - **Letters from `text-on-path`** carry per-letter offsets that encode their position along the word. Re-anchoring each letter to the turtle would collapse them to a single point.
 - **Shapes returned by `slice-mesh`** are in plane-local coordinates (origin = turtle, X = right, Y = up) and the points already encode their absolute position in that frame. Without the flag, the slice would visually drift relative to the source mesh when fed to `stamp`.
+- **Image-traced outlines** via `(path-to-shape outline :preserve-position true)` / `(stroke-shape outline w :preserve-position true)` (opt-in, default off). The traced nodes are in board coordinates, and the flag keeps the profile's frame origin `[0 0]` — the turtle point you framed with `image-board` — as the extruded mesh's **creation pose**, instead of re-anchoring on the first traced vertex. The creation pose then lands on your chosen point even though it sits off the contour.
 
 A fourth flag, `:align-to-heading?`, swaps the plane axes so 2D x maps to the turtle's heading direction (used internally by `text-on-path` to make letters progress along the curve). It is not normally set by user code.
 
@@ -639,6 +640,21 @@ Load 2D outlines from external sources. Parsed contours become standard Ridley s
 - The image **height is derived from its aspect ratio** (no distortion).
 
 Because the image rides on the **shape attribute**, it survives 2D booleans (`shape-union` / `shape-difference` / `shape-intersection` / `shape-xor`): the result keeps the first operand's `:image`, and since it is clipped to the outline, **only the fragment inside the resulting polygon is drawn**. E.g. intersecting an image-bearing rect with a small window shows just that window's slice of the image. The image is a viewport aid: it is not exported, not part of mesh CSG, and (for now) does not survive `extrude` into the mesh.
+
+**`image-board`** is a convenience wrapper that builds a ready-to-trace board:
+
+```clojure
+(image-board path scale-factor [imx imy] [orx ory] [w h])
+```
+
+It puts the image on a **`preserve-position?` rectangle**, so the turtle stays at `[0 0]`: stamping the board places the rect relative to the turtle by `[orx ory]` and leaves the turtle on the point that will become the extruded mesh's **creation pose**. `scale-factor` is the image width in units; `[imx imy]` frames the photo **relative to the rect corner** (so moving `[orx ory]` carries the image along); `[orx ory]` is the rect corner relative to the turtle; `[w h]` is the crop rect. Trace it with `edit-path-2d`, then extrude through `(path-to-shape outline :preserve-position true)` (or `stroke-shape … :preserve-position true`) so the creation pose lands on the framed turtle point — generally *off* the contour:
+
+```clojure
+(stamp (image-board "/Users/me/ref/part.jpg" 200 [0 0] [-100 -50] [200 100]))
+(register part (extrude (path-to-shape (edit-path-2d) :preserve-position true) (f 4)))
+```
+
+**`edit-image-board`** is the interactive editor for a board — drag handles to move / crop / pan the photo, calibrate `scale` by dragging a two-point ruler onto a feature of known length and pressing **set scale** (recompute is explicit, never on drag), with a white ✛ marking the creation pose. Open it from the definitions panel; on **OK** it rewrites `(edit-image-board …)` to `(image-board … )` with the calibrated values. Rename `image-board` → `edit-image-board` to re-edit. Desktop only.
 
 `translate`, `scale`, `rotate` are **polymorphic** (mesh / SDF / 2D shape — see [Top-level transforms](#top-level-transforms)). The `*-shape` aliases continue to work; pick whichever form reads better in context.
 
