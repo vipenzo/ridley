@@ -10,6 +10,7 @@ Struttura del capitolo:
 5.5  Comporre path: follow e splicing
 5.6  Path da coordinate (poly-path, quick-path)
 5.7  Path come embrioni di forma (path-to-shape, stroke-shape)
+     5.7.1 path-2d: path planare (species :2d) con edit-path-2d; invariante follow-path = stamp(path-to-shape)
 5.8  Cose che accettano un path (mappa dei consumatori)
 
 Decisioni:
@@ -309,6 +310,25 @@ Il path `curve` diventa una shape larga 3 (1.5 per lato) che segue il percorso, 
 ```
 
 I cap disponibili sono `:round` e `:flat`. Le giunzioni sono `:round` (default), `:miter` (a punta), `:square`.
+
+### path-2d: il path che vive nel piano della shape
+
+`path-to-shape` proietta un path 3D sul piano destra-alto, e abbiamo visto che ignora i movimenti fuori dal piano (`tv`, `tr`). Quando il percorso che ti serve è già un profilo piano, c'è una variante che nasce piana: `path-2d`.
+
+`path-2d` registra un percorso come `path`, ma nel piano destra-alto, lo stesso in cui le shape vengono stampate. Lo costruisci con gli stessi comandi (`f`, archi, `bezier-to`, `mark`, `side-trip`, un `move-to` iniziale), con una semplificazione: nel piano c'è una sola rotazione, quindi `th`, `tv` e `tr` collassano nello stesso giro e non c'è modo di uscire dal piano per sbaglio.
+
+<!-- example-source: path-2d-c-profile -->
+```clojure
+;; un profilo a C disegnato come path piano, poi estruso
+(def c-prof (path-2d (f 20) (th 90) (f 8) (th 90) (f 12) (th 90) (f 8)))
+(register part (extrude (path-to-shape c-prof) (f 5)))
+```
+
+La proprietà che lo rende affidabile è un'invariante: `(follow-path P)` e `(stamp (path-to-shape P))` cadono sugli stessi punti del mondo. Il profilo che vedi tracciare è esattamente il profilo che ottieni come shape, senza rotazioni o sorprese. Con `:closed` come primo argomento il percorso si chiude e il segmento di chiusura diventa una cucitura vera, che `path-to-shape` usa per non duplicare il vertice.
+
+`path-2d` è non-breaking: un `path` normale resta un rail 3D e si comporta come prima. I consumatori piani (`path-to-shape`, `stroke-shape`, `bounds-2d`) accettano entrambi; i consumatori-rail (`extrude` lungo un percorso, `loft`) tengono il path 3D. La scelta fra `path` e `path-2d` è solo *in quale piano cade il tracciato*, più l'ergonomia: lo stesso contorno disegnato nei due modi dà la stessa shape.
+
+L'editor interattivo di `path-2d` è `edit-path-2d`, il pen tool modale che all'uscita compila un `path-2d`. È lo strumento dietro il ricalco di un contorno da una foto del cap. 3: lì il `path-2d` lo disegni sopra l'immagine calibrata, qui lo scrivi a mano, ma il dato prodotto è lo stesso.
 
 ## Cose che accettano un path
 

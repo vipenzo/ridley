@@ -7,6 +7,8 @@ Struttura del capitolo:
 3.2  Forme predefinite (circle, rect, polygon, star + stamp)
 3.3  Forme personalizzate (poly, shape)
 3.4  Profili come valori (concetto: shape è valore nel piano locale turtle)
+     3.4.1 Ancoraggio: dove atterra il profilo (preserve-position?) — paga il rimando sospeso di make-shape (3.3)
+     3.4.2 Ricalcare un contorno da una foto (cenno: image-board + edit-path-2d, no-run desktop-only; path-2d nel cap. 5)
 3.5  Booleane 2D
 3.6  Raccordi e smussi 2D (fillet, chamfer, offset)
 3.7  Dove si usano le shape (mappa dei consumatori)
@@ -51,7 +53,7 @@ The first argument to `extrude` is a shape: a C-shaped profile drawn with the 2D
 
 The bridge with the previous chapter is direct: `(box 10 20 30)` produces the same solid as `(extrude (rect 10 20) (f 30))`. Primitives are shortcuts for the most common sections; shapes are the general tool.
 
-Extrusion is only one of the consumers of shapes. There are others: `loft` (extrudes while deforming the profile along the path), `revolve` (rotates the profile around an axis), `stamp` (displays the 2D profile without producing a solid). We will see them all at the end of the chapter (§3.7). For now there is just one point: shapes are the *raw material*, and this chapter explains how to create and work it. The following chapters explain how to turn it into solids.
+Extrusion is only one of the consumers of shapes. There are others: `loft` (extrudes while deforming the profile along the path), `revolve` (rotates the profile around an axis), `stamp` (displays the 2D profile without producing a solid). We will see them all at the end of the chapter, in «Where shapes are used». For now there is just one point: shapes are the *raw material*, and this chapter explains how to create and work it. The following chapters explain how to turn it into solids.
 
 ## Predefined shapes
 
@@ -225,6 +227,49 @@ The third: a parametric profile is simply a function that returns a shape.
 
 This way of thinking about profiles, as values to pass around and not as entities that live on a plane, is the biggest conceptual difference from sketch-based CAD. Once it is internalized, the rest of the chapter flows: every operation on shapes (booleans, fillets, offsets) produces a new value that you can feed to any consumer.
 
+### Where the profile lands: anchoring
+
+We have just said that the consumer reads the turtle's pose and projects the profile. One question remains: *which* point of the profile ends up on the turtle? The answer is anchoring: it is the "explicit control over the anchoring" that `make-shape` provides when the convenient constructors are not enough. You can see it with `stamp`, without extruding.
+
+The primitives are centered: their center falls on the turtle. A non-centered custom shape lands instead with its *first vertex* on the turtle, wherever its points sit in the plane.
+
+<!-- example-source: anchoring-first-vertex -->
+```clojure
+;; non-centered profile: the first vertex [30 10] falls on the turtle
+(stamp (make-shape [[30 10] [50 10] [40 30]] {:centered? false}))
+```
+
+The `:preserve-position?` attribute changes the rule: the shape is placed with its raw coordinates, that is, it is the `[0 0]` of the plane that falls on the turtle, not a vertex of the outline. If the points sit far from the origin, the grip stays there, even outside the profile.
+
+<!-- example-source: anchoring-preserve-position -->
+```clojure
+;; same profile, but now the [0 0] of the plane falls on the turtle
+(stamp (make-shape [[30 10] [50 10] [40 30]] {:preserve-position? true}))
+```
+
+Anchoring decides the grip of the profile and, when you extrude it, the grip of the mesh. We use it right below, in tracing from a photo, to make the grip land on the point we framed and not on the first traced vertex.
+
+### Tracing an outline from a photo
+
+Sometimes the profile you need already exists in the real world: the outline of a tool, of a gasket, of a part to remake. Instead of measuring its vertices by hand, you can photograph it next to a ruler, calibrate the photo to real-world dimensions, and trace its outline.
+
+The round trip is three moves. `image-board` loads the photo onto a tracing rectangle, scaled to real size; `edit-image-board` is the interactive way to set it up, with handles to move and crop and a two-click ruler to fix the scale. `edit-path-2d` is the modal editor you use to trace the outline over the photo, and on exit it bakes a `path-2d`. `path-to-shape` turns it into a shape, which you extrude.
+
+<!-- example-source: trace-from-photo :no-run :warning desktop-only -->
+```clojure
+;; photo calibrated to 200 units wide, turtle centered on the board
+(stamp (image-board "/path/to/photo.jpg" 200 [0 0] [-100 -50] [200 100]))
+
+;; trace the outline and then extrude it
+(register part
+  (extrude (path-to-shape (edit-path-2d) :preserve-position true) (f 4)))
+```
+<!-- /example-source -->
+
+Here the anchoring from above comes back: the `:preserve-position` on `path-to-shape` makes the mesh's grip land on the point you framed with the board (the turtle at `[0 0]`), not on the first point of the outline. This is exactly why `image-board` keeps the turtle fixed there.
+
+It is only a glimpse. `image-board` and `edit-image-board` work on desktop only: the photo is read by the server, and the web build does not show it. `path-2d` and its editor are path material (chapter 5); the details of all these functions are in their reference cards.
+
 ## 2D booleans
 
 Shapes combine with the same logical operations as 3D meshes: union, difference, intersection, exclusive or. The result is a new shape, ready to be extruded or worked further.
@@ -328,7 +373,7 @@ The type of join at the corners is controlled with `:join-type`:
 
 With `:miter` the expanded rectangle stays a rectangle, with no rounding.
 
-`shape-offset` is often the natural complement of the booleans: expand for the outer profile, contract for the inner profile, difference for the shell. We have already seen it in 3.5 with the L-tube, and it is a pattern that recurs frequently.
+`shape-offset` is often the natural complement of the booleans: expand for the outer profile, contract for the inner profile, difference for the shell. We have already seen it above with the L-tube, and it is a pattern that recurs frequently.
 
 ### Generative operators
 
@@ -420,13 +465,13 @@ Shapes are also the input of other 2D operators: the booleans (`shape-union`, `s
 | `stamp` | 2D preview (no solid) | — |
 | 2D operators | another shape | 3 |
 
-The typical flow is: build the shape (3.1-3.4), work it with booleans and modifiers (3.5-3.6), then feed it to a consumer. The shape is the raw material, the consumer is the tool that turns it into a solid.
+The typical flow is: build the shape, work it with booleans and modifiers, then feed it to a consumer. The shape is the raw material, the consumer is the tool that turns it into a solid.
 
 ## Generating shapes from meshes
 
 So far we have built shapes from scratch: coordinates, turtle commands, primitives, compositions. But sometimes the profile you need already exists, hidden inside a 3D mesh: the section of a vase at a certain height, the outline of a piece seen from above, the contour of a face. Three operations extract it: `slice-mesh` cuts the mesh with the turtle's plane and returns the contour of the section, `project-mesh` projects its silhouette onto the plane, `face-shape` extracts the outline of a single face. The result is always a standard shape (or a vector of shapes), ready for `extrude`, `loft`, or any operator in this chapter: the 2D → 3D flow also works in reverse.
 
-These operations work on meshes and their cutting planes, concepts of chapter 7: their home is section 7.5, with the examples and the special cases. Here it is enough to know they exist: when a mesh already contains the profile you need, you do not have to redraw it.
+These operations work on meshes and their cutting planes, concepts of chapter 7: their home is there, with the examples and the special cases. Here it is enough to know they exist: when a mesh already contains the profile you need, you do not have to redraw it.
 
 ## Several shapes at once
 
@@ -512,4 +557,4 @@ Composition goes beyond numeric parameters. A function can accept a shape as an 
 
 `hollow` takes any shape and makes a hollow version of it, contracting the outline by `wall` and subtracting it from the original. It works with circles, polygons, rectangles, custom profiles: the "solid minus contraction" pattern does not depend on the shape, it depends only on the operation.
 
-This is the same principle seen in 3.4: a shape is a value, a function that returns a shape is a factory of values. By combining `defn` with the 2D operators of this chapter, you build a personal library of parametric profiles that you reuse throughout the model.
+This is the same principle as in «Profiles as values»: a shape is a value, a function that returns a shape is a factory of values. By combining `defn` with the 2D operators of this chapter, you build a personal library of parametric profiles that you reuse throughout the model.

@@ -54,6 +54,8 @@ Un profilato a L lungo 40. La shape è il profilo a L del cap. 3, il percorso è
 
 `extrude` non modifica lo stato della tartaruga: dopo la chiamata la tartaruga è esattamente dove era prima. La mesh nasce nella posizione corrente della tartaruga, con la sezione nel piano destra-alto e il percorso che parte in avanti. È la stessa convenzione delle primitive: `(box 10 20 30)` produce lo stesso solido di `(extrude (rect 10 20) (f 30))`, a parte il punto di ancoraggio (la box è centrata, l'estrusione parte dalla base).
 
+Quel punto di ancoraggio è la presa su cui atterra `attach` quando monti la mesh in un assemblaggio, e dipende dall'ancoraggio del profilo: di default la presa cade sul primo vertice (per l'estrusione, la base), ma un profilo con `:preserve-position?` la tiene sul `[0 0]` che hai inquadrato. È lo stesso meccanismo del cap. 3, in «Dove atterra il profilo: l'ancoraggio».
+
 Il percorso può anche essere un path registrato in precedenza:
 
 <!-- example-source: extrude-recorded-path -->

@@ -54,6 +54,8 @@ An L-shaped bar 40 long. The shape is the L profile from chapter 3, the path is 
 
 `extrude` does not change the turtle's state: after the call the turtle is exactly where it was before. The mesh is born at the turtle's current position, with the section in the right-up plane and the path starting forward. It is the same convention as the primitives: `(box 10 20 30)` produces the same solid as `(extrude (rect 10 20) (f 30))`, apart from the anchor point (the box is centered, the extrusion starts from the base).
 
+That anchor point is the grip `attach` lands on when you mount the mesh in an assembly, and it depends on the profile's anchoring: by default the grip falls on the first vertex (for an extrusion, the base), but a profile with `:preserve-position?` keeps it on the `[0 0]` you framed. It is the same mechanism as in chapter 3, in «Where the profile lands: anchoring».
+
 The path can also be a previously recorded path:
 
 <!-- example-source: extrude-recorded-path -->

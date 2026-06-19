@@ -7,6 +7,8 @@ Struttura del capitolo:
 3.2  Forme predefinite (circle, rect, polygon, star + stamp)
 3.3  Forme personalizzate (poly, shape)
 3.4  Profili come valori (concetto: shape è valore nel piano locale turtle)
+     3.4.1 Ancoraggio: dove atterra il profilo (preserve-position?) — paga il rimando sospeso di make-shape (3.3)
+     3.4.2 Ricalcare un contorno da una foto (cenno: image-board + edit-path-2d, no-run desktop-only; path-2d nel cap. 5)
 3.5  Booleane 2D
 3.6  Raccordi e smussi 2D (fillet, chamfer, offset)
 3.7  Dove si usano le shape (mappa dei consumatori)
@@ -51,7 +53,7 @@ Il primo argomento di `extrude` è una shape: un profilo a C disegnato con i com
 
 Il ponte con il capitolo precedente è diretto: `(box 10 20 30)` produce lo stesso solido di `(extrude (rect 10 20) (f 30))`. Le primitive sono scorciatoie per le sezioni più comuni; le shape sono lo strumento generale.
 
-L'estrusione è solo uno dei consumatori di shape. Ce ne sono altri: `loft` (estrude deformando il profilo lungo il percorso), `revolve` (ruota il profilo attorno a un asse), `stamp` (visualizza il profilo 2D senza produrre un solido). Li vedremo tutti alla fine del capitolo (§3.7). Per adesso il punto è uno solo: le shape sono il *materiale grezzo*, e questo capitolo spiega come crearlo e lavorarlo. I capitoli successivi spiegano come trasformarlo in solidi.
+L'estrusione è solo uno dei consumatori di shape. Ce ne sono altri: `loft` (estrude deformando il profilo lungo il percorso), `revolve` (ruota il profilo attorno a un asse), `stamp` (visualizza il profilo 2D senza produrre un solido). Li vedremo tutti alla fine del capitolo, in «Dove si usano le shape». Per adesso il punto è uno solo: le shape sono il *materiale grezzo*, e questo capitolo spiega come crearlo e lavorarlo. I capitoli successivi spiegano come trasformarlo in solidi.
 
 ## Forme predefinite
 
@@ -225,6 +227,49 @@ La terza: un profilo parametrico è semplicemente una funzione che restituisce u
 
 Questo modo di pensare ai profili, come valori da passare in giro e non come entità che vivono su un piano, è la differenza concettuale più grossa rispetto al CAD a sketch. Una volta interiorizzata, il resto del capitolo scorre: ogni operazione sulle shape (booleane, raccordi, offset) produce un nuovo valore che si può dare in pasto a qualsiasi consumatore.
 
+### Dove atterra il profilo: l'ancoraggio
+
+Abbiamo appena detto che il consumatore legge la posa della tartaruga e proietta il profilo. Resta una domanda: *quale* punto del profilo finisce sulla tartaruga? La risposta è l'ancoraggio: è il "controllo esplicito sull'ancoraggio" che `make-shape` mette a disposizione quando i costruttori comodi non bastano. Si vede con `stamp`, senza estrudere.
+
+Le primitive sono centrate: il loro centro cade sulla tartaruga. Una shape custom non centrata atterra invece con il suo *primo vertice* sulla tartaruga, ovunque stiano i suoi punti nel piano.
+
+<!-- example-source: anchoring-first-vertex -->
+```clojure
+;; profilo non centrato: il primo vertice [30 10] cade sulla tartaruga
+(stamp (make-shape [[30 10] [50 10] [40 30]] {:centered? false}))
+```
+
+L'attributo `:preserve-position?` cambia la regola: la shape viene piazzata con le coordinate grezze, cioè è il `[0 0]` del piano a cadere sulla tartaruga, non un vertice del contorno. Se i punti stanno lontani dall'origine, la presa resta lì, anche fuori dal profilo.
+
+<!-- example-source: anchoring-preserve-position -->
+```clojure
+;; stesso profilo, ma ora è il [0 0] del piano a cadere sulla tartaruga
+(stamp (make-shape [[30 10] [50 10] [40 30]] {:preserve-position? true}))
+```
+
+L'ancoraggio decide la presa del profilo e, quando lo estrudi, la presa della mesh. Lo sfruttiamo subito qui sotto, nel ricalco da foto, per far cadere la presa sul punto che abbiamo inquadrato e non sul primo punto tracciato.
+
+### Ricalcare un contorno da una foto
+
+A volte il profilo che ti serve esiste già nel mondo reale: la sagoma di un attrezzo, di una guarnizione, di un pezzo da rifare. Invece di misurarne i vertici a mano puoi fotografarlo accanto a un righello, calibrare la foto a dimensioni reali e ricalcarne il contorno.
+
+Il giro è in tre mosse. `image-board` carica la foto su un rettangolo di tracciamento, scalata a misura reale; `edit-image-board` è il modo interattivo per sistemarla, con maniglie per spostare e ritagliare e un righello a due click per fissare la scala. `edit-path-2d` è l'editor modale con cui ricalchi il contorno sopra la foto, e all'uscita compila un `path-2d`. `path-to-shape` lo trasforma in una shape, che estrudi.
+
+<!-- example-source: trace-from-photo :no-run :warning desktop-only -->
+```clojure
+;; foto calibrata a 200 unità di larghezza, tartaruga centrata sul board
+(stamp (image-board "/path/to/photo.jpg" 200 [0 0] [-100 -50] [200 100]))
+
+;; ricalca il contorno e poi estrudilo
+(register part
+  (extrude (path-to-shape (edit-path-2d) :preserve-position true) (f 4)))
+```
+<!-- /example-source -->
+
+Qui torna l'ancoraggio visto sopra: il `:preserve-position` su `path-to-shape` fa cadere la presa della mesh sul punto che hai inquadrato con il board (la tartaruga a `[0 0]`), non sul primo punto del contorno. È proprio per questo che `image-board` tiene la tartaruga ferma lì.
+
+È solo un cenno. `image-board` ed `edit-image-board` funzionano solo da desktop: la foto viene letta dal server e il build web non la mostra. Il `path-2d` e il suo editor sono materiale dei path (cap. 5); i dettagli di tutte queste funzioni stanno nelle rispettive schede di riferimento.
+
 ## Booleane 2D
 
 Le shape si combinano con le stesse operazioni logiche delle mesh 3D: unione, differenza, intersezione, or esclusivo. Il risultato è una nuova shape, pronta per essere estrusa o lavorata ulteriormente.
@@ -328,7 +373,7 @@ Il tipo di giunzione agli angoli si controlla con `:join-type`:
 
 Con `:miter` il rettangolo espanso resta un rettangolo, senza arrotondamenti.
 
-`shape-offset` è spesso il complemento naturale delle booleane: espandi il profilo esterno, contrai per il profilo interno, differenza per il guscio. Lo abbiamo già visto nella 3.5 con il tubo a L, ed è un pattern che si ripete di frequente.
+`shape-offset` è spesso il complemento naturale delle booleane: espandi il profilo esterno, contrai per il profilo interno, differenza per il guscio. Lo abbiamo già visto più sopra con il tubo a L, ed è un pattern che si ripete di frequente.
 
 ### Operatori generativi
 
@@ -420,13 +465,13 @@ Le shape sono anche input di altri operatori 2D: le booleane (`shape-union`, `sh
 | `stamp` | preview 2D (nessun solido) | — |
 | operatori 2D | altra shape | 3 |
 
-Il flusso tipico è: costruisci la shape (3.1-3.4), lavorala con booleane e modificatori (3.5-3.6), poi dalla in pasto a un consumatore. La shape è il materiale grezzo, il consumatore è lo strumento che ne fa un solido.
+Il flusso tipico è: costruisci la shape, la lavori con booleane e modificatori, poi la dai in pasto a un consumatore. La shape è il materiale grezzo, il consumatore è lo strumento che ne fa un solido.
 
 ## Generare shape da mesh
 
 Finora abbiamo costruito le shape da zero: coordinate, comandi tartaruga, primitive, composizioni. Ma a volte il profilo che serve esiste già, nascosto dentro una mesh 3D: la sezione di un vaso a una certa altezza, la sagoma di un pezzo vista dall'alto, il contorno di una faccia. Tre operazioni lo estraggono: `slice-mesh` taglia la mesh con il piano della tartaruga e restituisce il contorno della sezione, `project-mesh` ne proietta la silhouette sul piano, `face-shape` estrae il contorno di una singola faccia. Il risultato è sempre una shape standard (o un vettore di shape), pronta per `extrude`, `loft` o qualsiasi operatore di questo capitolo: il flusso 2D → 3D funziona anche all'inverso.
 
-Queste operazioni lavorano sulle mesh e sui loro piani di taglio, concetti del cap. 7: la loro casa è la sezione 7.5, con gli esempi e i casi particolari. Qui basta sapere che esistono: quando una mesh contiene già il profilo che ti serve, non devi ridisegnarlo.
+Queste operazioni lavorano sulle mesh e sui loro piani di taglio, concetti del cap. 7: la loro casa è lì, con gli esempi e i casi particolari. Qui basta sapere che esistono: quando una mesh contiene già il profilo che ti serve, non devi ridisegnarlo.
 
 ## Più forme alla volta
 
@@ -512,4 +557,4 @@ La composizione va oltre i parametri numerici. Una funzione può accettare una s
 
 `hollow` prende una shape qualsiasi e ne fa una versione cava, contraendo il contorno di `wall` e sottraendolo dall'originale. Funziona con cerchi, poligoni, rettangoli, profili custom: il pattern "pieno meno contrazione" non dipende dalla forma, dipende solo dall'operazione.
 
-Questo è lo stesso principio visto nella 3.4: una shape è un valore, una funzione che restituisce una shape è una fabbrica di valori. Combinando `defn` con gli operatori 2D di questo capitolo, si costruisce una libreria personale di profili parametrici che si riusano in tutto il modello.
+Questo è lo stesso principio di «Profili come valori»: una shape è un valore, una funzione che restituisce una shape è una fabbrica di valori. Combinando `defn` con gli operatori 2D di questo capitolo, si costruisce una libreria personale di profili parametrici che si riusano in tutto il modello.
