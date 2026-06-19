@@ -458,9 +458,18 @@
     :category "live-interactive"
     :status "stable"
     :since ""
-    :signature "(edit-path-2d)\n(edit-path-2d (move-to [a b]) (tv α) (f d) …)\nedit-path"
-    :description "A **pen tool** for tracing a planar polyline interactively — draw over a reference image (see `set-image`) and clip the piece you need. `edit-path-2d` wraps a [`path-2d`](#path-2d) body and opens an interactive session from the **definitions panel** (Cmd+Enter), not the REPL. Its result is a `:2d` path that lives in the `(right,up)` plane, so it reads un-rotated and feeds `path-to-shape` / `stroke-shape` directly."
+    :signature "(edit-path)\n(edit-path (f d) (tv α) (f d) …)"
+    :description "An interactive editor for a **3D rail** — a `path` consumed in its own frame by `extrude`-along-path and `loft`, not a flat profile. It wraps a plain `(path …)` body and opens a session from the **definitions panel** (Cmd+Enter), not the REPL. The rail is a chain of nodes in 3D space; node 0 (the **anchor**) is pinned at the origin, and the rest are placed/edited in a selectable working plane."
     :path "docs/manual/reference/en/edit-path.md"}
+
+   "edit-path-2d"
+   {:name "edit-path-2d"
+    :category "live-interactive"
+    :status "stable"
+    :since ""
+    :signature "(edit-path-2d)\n(edit-path-2d (move-to [a b]) (tv α) (f d) …)"
+    :description "A **pen tool** for tracing a planar polyline interactively — draw over a reference image (see `set-image`) and clip the piece you need. `edit-path-2d` wraps a [`path-2d`](#path-2d) body and opens an interactive session from the **definitions panel** (Cmd+Enter), not the REPL. Its result is a `:2d` path that lives in the `(right,up)` plane, so it reads un-rotated and feeds `path-to-shape` / `stroke-shape` directly."
+    :path "docs/manual/reference/en/edit-path-2d.md"}
 
    "embroid"
    {:name "embroid"

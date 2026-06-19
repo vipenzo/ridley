@@ -3094,7 +3094,9 @@ The vectors are expressed in P0's local `[right up heading]` frame (see the `:lo
 
 ### Edit Path
 
-`edit-path-2d` is a **pen tool** for tracing a planar polyline over a reference image (see [`set-image`](#set-image)) and clipping the piece you need. It wraps a [`path-2d`](#planar-paths-path-2d) body and opens an interactive session from the **definitions panel** (Cmd+Enter). Its result is a `:2d` path, so it feeds `path-to-shape` / `stroke-shape` directly. (`edit-path` is a **temporary** alias — that bare name is reserved for the future 3D path editor.)
+There are **two** path editors, dispatched by path species: `edit-path-2d` edits a planar **2D profile**, and `edit-path` edits a **3D rail** (see [Edit Path — 3D rail](#edit-path--3d-rail) below).
+
+`edit-path-2d` is a **pen tool** for tracing a planar polyline over a reference image (see [`set-image`](#set-image)) and clipping the piece you need. It wraps a [`path-2d`](#planar-paths-path-2d) body and opens an interactive session from the **definitions panel** (Cmd+Enter). Its result is a `:2d` path, so it feeds `path-to-shape` / `stroke-shape` directly.
 
 ```clojure
 ;; Trace a region over a stamped board image, then clip it out:
@@ -3108,7 +3110,7 @@ Unlike `edit-bezier`, `edit-path-2d` is **not** a persistent primitive. On confi
 
 **Workflow.** Open `(edit-path-2d)` (empty → a small starting triangle), then:
 - **Click a segment** to insert a point there (split it); **click elsewhere** to append a point at the end; **drag a node** to move it. Orbiting still works — only grabbing a node, handle or segment suppresses it for that drag.
-- Press **`c`** to toggle the selected node's **incoming segment** between a straight line and a **cubic bezier**; it bakes to a compact `(bezier-to …)`. The handles are **directional**: the start handle stays tangent to how the path arrives at the start node (length only — it slides along that line, so curves join smoothly), and the end handle is free, setting the entry direction into the next node. Press **`x`** to toggle a node **smooth ↔ cusp** (a cusp frees its outgoing handle, shown magenta, for a sharp corner). (Per-segment arcs are still planned.)
+- Press **`c`** to toggle the selected node's **incoming segment** between a straight line and a **cubic bezier**; it bakes to a compact `(bezier-to …)`. The handles are **directional**: the start handle stays tangent to how the path arrives at the start node (length only — it slides along that line, so curves join smoothly), and the end handle is free, setting the entry direction into the next node. The handles are **colour-coded**: the free end handle is **bright cyan**, the length-only start handle **muted teal**, a freed cusp handle **magenta**. Press **`x`** to toggle a node **smooth ↔ cusp** (a cusp frees its outgoing handle for a sharp corner), and **`a`** to make the incoming segment a tangent **circular arc** (a rounded corner, baked as `arc-v`).
 - `Tab` cycles the selected node; **arrows** nudge it; type digits to set the step (mm).
 - `Delete` removes the selected node.
 - `Enter` confirms; `Esc` cancels.
@@ -3122,7 +3124,7 @@ Unlike `edit-bezier`, `edit-path-2d` is **not** a persistent primitive. On confi
 - A non-leading `move-to` is **rejected with an error**.
 - Re-opening a baked path recovers arcs (`arc-v`) and beziers (`bezier-to`) as curve nodes; out-of-plane `:3d` moves (`u`/`tr`) on a legacy path degrade to straight segments (a warning lists what was dropped).
 
-A future revision will visualize/edit headings at notable points and add/edit/remove marks directly; a 3D edit-path (for assembly rails) is planned.
+Marks are editable directly (the panel's **mark** field, or `m` to quick-add and `Shift+m` to toggle the labels); a marked node stays green and delete-protected.
 
 **On confirm**, the marker is rewritten to a `path-2d` anchored at the first node:
 
@@ -3134,7 +3136,13 @@ The leading `(move-to [a0 b0])` makes [`path-to-shape`](#path-to-shape) (via `en
 
 Nodes are edited in the **turtle's stamp plane** at the call site (x-axis = `right` = heading × up, y-axis = `up`) — the same 2D frame the board uses. With the default pose that is the **YZ world plane**, so horizontal arrows move along world Y, vertical arrows along Z, and world X is never touched (the path stays on the image plane). Clicks raycast onto scene meshes and are projected onto that plane.
 
-MVP traces **straight segments** only; per-segment arcs and beziers are planned. Like `tweak` / `edit-bezier` / `pilot` it is a modal session (one at a time, editor read-only while open).
+Segments can be **straight**, **cubic bezier** (`c`), or tangent **circular arc** (`a`); both round-trip on re-edit. Like `tweak` / `edit-bezier` / `pilot` it is a modal session (one at a time, editor read-only while open).
+
+#### Edit Path — 3D rail
+
+`edit-path` (no `-2d`) edits a **3D rail** — a `path` consumed in its own frame by `extrude`-along-path and `loft`, *not* a flat profile. It wraps a plain `(path …)` body (species `:3d`); a `(path-2d …)` body opens `edit-path-2d` instead. Node 0 (the anchor) is pinned at the origin, and nodes are placed in a **selectable working plane** of the turtle frame, named by its normal — `f` (⊥heading = `(right,up)`, the default), `r` (⊥right = `(heading,up)`), `u` (⊥up = `(heading,right)`) — chosen with the panel radios or the `f`/`r`/`u` keys. Drag a node (Shift = axis-lock), nudge with arrows or the per-plane **len/angle** fields, curve a segment with `c` (free bezier) or `t` (both-ends-tangent raccordo), split with `Ins`/`i`, mark with `m`.
+
+On confirm it bakes a `(path …)` of **relative** `set-heading`/`f` segments (rotation-minimizing, so the swept section stays twist-free) plus `(bezier-to … :local)` curves. Rename `path` → `edit-path` to re-edit. Because `extrude` of a **non-planar** rail can still pick up a section roll (holonomy), wrap a twisted result's rail in [`ensure-untwisted`](#orientation-utilities). See the `edit-path` reference card for the full key map.
 
 ### Animation
 
