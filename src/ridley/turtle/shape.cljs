@@ -973,7 +973,11 @@
                                   (mapv lerp-pt h1 h2)
                                   h1))
                               holes1 holes2))]
-        (make-shape new-pts (cond-> {:centered? (:centered? shape1)}
+        (make-shape new-pts (cond-> {:centered? (:centered? shape1)
+                                     ;; carry shape1's anchoring so a preserve-position?
+                                     ;; profile lofts at its raw coords (parity with extrude
+                                     ;; / loft shape-fn), not re-anchored on its first vertex
+                                     :preserve-position? (:preserve-position? shape1)}
                               new-holes (assoc :holes new-holes)))))))
 
 (defn make-lerp-fn
