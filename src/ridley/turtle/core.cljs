@@ -1712,9 +1712,16 @@
         ;; Optionally subdivide long segments
         segments (if max-segment-length
                    (vec (mapcat #(subdivide-segment % max-segment-length) segments))
-                   segments)]
+                   segments)
+        ;; Marks in the source path sit at segment boundaries, where the bezier
+        ;; curve coincides with the polyline (the bezier endpoints ARE the
+        ;; waypoints). So resolve them at the entry pose — same poses the
+        ;; un-bezier'd path would record — and carry them onto the result, since
+        ;; path-segments/segment->state otherwise drop :mark commands silently.
+        marks (resolve-marks state p)
+        carry-marks (fn [st] (if (seq marks) (update st :anchors merge marks) st))]
     (if (empty? segments)
-      state
+      (carry-marks state)
       ;; Use pure function to compute walk data
       (let [init-pose (select-keys state [:position :heading :up])
             calc-steps-fn (or (when-not steps #(calc-bezier-steps state %))
@@ -1728,15 +1735,16 @@
                           :cubic cubic
                           :calc-steps-fn calc-steps-fn}))]
         ;; Apply walk steps to state
-        (reduce
-         (fn [current-state segment-data]
-           (if (:degenerate segment-data)
-             ;; Degenerate segment: apply rotations via segment->state
-             (segment->state current-state (nth segments (:segment-index segment-data)))
-             ;; Normal segment: apply walk steps
-             (reduce apply-walk-step current-state (:walk-steps segment-data))))
-         state
-         walk-data)))))
+        (carry-marks
+         (reduce
+          (fn [current-state segment-data]
+            (if (:degenerate segment-data)
+              ;; Degenerate segment: apply rotations via segment->state
+              (segment->state current-state (nth segments (:segment-index segment-data)))
+              ;; Normal segment: apply walk steps
+              (reduce apply-walk-step current-state (:walk-steps segment-data))))
+          state
+          walk-data))))))
 
 ;; ============================================================
 ;; Path sampling for text-on-path

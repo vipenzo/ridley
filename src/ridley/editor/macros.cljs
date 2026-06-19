@@ -205,7 +205,19 @@
      (let [path-segs (path-segments-impl p)
            path-segs (if max-segment-length
                        (vec (mapcat #(subdivide-segment-impl % max-segment-length) path-segs))
-                       path-segs)]
+                       path-segs)
+           ;; Marks in the source path sit at segment boundaries. path-segments
+           ;; stashes each in the :rotations of the segment it precedes; a mark
+           ;; trailing the last movement has no segment to land in, so capture it
+           ;; separately. We re-emit them as :mark commands so they ride the
+           ;; realized curve — on the curve, with its tangent heading (see the
+           ;; per-mode emission below; :control needs a snap since its vertices
+           ;; are off-curve).
+           marks-of (fn [rots]
+                      (keep (fn [c] (when (= :mark (:cmd c)) (first (:args c)))) rots))
+           cmds (vec (:commands p))
+           last-f (last (keep-indexed (fn [i c] (when (= :f (:cmd c)) i)) cmds))
+           trailing-marks (marks-of (if last-f (subvec cmds (inc last-f)) cmds))]
        (when (seq path-segs)
          (swap! path-recorder assoc :bezier true)
          (let [init-state @path-recorder
@@ -229,25 +241,53 @@
                             {:tension (or tension 0.33)
                              :cubic cubic
                              :calc-steps-fn calc-steps-fn}))]
-           ;; Apply walk steps using relative rotations
-           (doseq [segment-data walk-data]
-             (when-not (:degenerate segment-data)
-               (doseq [step (:walk-steps segment-data)]
-                 (let [{:keys [dist chord-heading final-heading final-up]} step
-                       ;; Convert absolute chord-heading to relative th/tv rotations
-                       current-heading (:heading @path-recorder)
-                       current-up (:up @path-recorder)
-                       [th-angle tv-angle] (rec-compute-rotation-angles current-heading current-up chord-heading)]
-                   ;; Apply rotations then move forward
-                   (when (> (abs th-angle) 0.001) (rec-th* th-angle))
-                   (when (> (abs tv-angle) 0.001) (rec-tv* tv-angle))
-                   (rec-f* dist)
-                   ;; Rotate to final-heading for tangent continuity
-                   (let [current-heading2 (:heading @path-recorder)
-                         current-up2 (:up @path-recorder)
-                         [th2 tv2] (rec-compute-rotation-angles current-heading2 current-up2 final-heading)]
-                     (when (> (abs th2) 0.001) (rec-th* th2))
-                     (when (> (abs tv2) 0.001) (rec-tv* tv2)))))))))))
+           ;; Apply each walk step as relative rotations, re-emitting marks so
+           ;; they ride the realized curve (on-curve position, curve tangent
+           ;; heading). seg-marks[i] holds the marks the source path stashed at
+           ;; the boundary preceding segment i.
+           (let [seg-marks  (mapv (fn [seg] (vec (marks-of (:rotations seg)))) path-segs)
+                 emit       (fn [ms] (doseq [m ms] (rec-mark* m)))
+                 apply-step (fn [step]
+                              (let [{:keys [dist chord-heading final-heading]} step
+                                    ;; Convert absolute chord-heading to relative th/tv rotations
+                                    ch (:heading @path-recorder)
+                                    cu (:up @path-recorder)
+                                    [tha tva] (rec-compute-rotation-angles ch cu chord-heading)]
+                                (when (> (abs tha) 0.001) (rec-th* tha))
+                                (when (> (abs tva) 0.001) (rec-tv* tva))
+                                (rec-f* dist)
+                                ;; Rotate to final-heading for tangent continuity
+                                (let [ch2 (:heading @path-recorder)
+                                      cu2 (:up @path-recorder)
+                                      [th2 tv2] (rec-compute-rotation-angles ch2 cu2 final-heading)]
+                                  (when (> (abs th2) 0.001) (rec-th* th2))
+                                  (when (> (abs tv2) 0.001) (rec-tv* tv2)))))]
+             (if control
+               ;; :control — vertices are OFF-curve control points, so a vertex
+               ;; has no boundary ON the curve. Snap each interior vertex's marks
+               ;; to the apex (mid step) of the piece that bows around it; the
+               ;; clamped endpoints carry the vertex-0 (lead) and trailing marks.
+               ;; (Without this the midpoint walk's segment indexing skips them
+               ;; and the marks vanish silently.)
+               (do
+                 (emit (get seg-marks 0))
+                 (doseq [segment-data walk-data]
+                   (let [ms    (get seg-marks (inc (:segment-index segment-data)))
+                         stepv (vec (:walk-steps segment-data))
+                         midi  (quot (count stepv) 2)]
+                     (if (seq stepv)
+                       (doseq [i (range (count stepv))]
+                         (when (and (seq ms) (= i midi)) (emit ms))
+                         (apply-step (nth stepv i)))
+                       (emit ms)))))
+               ;; default / :cubic — vertices lie ON the curve, so emit each
+               ;; vertex's marks at its exact boundary, before leaving it.
+               (doseq [segment-data walk-data]
+                 (emit (get seg-marks (:segment-index segment-data)))
+                 (when-not (:degenerate segment-data)
+                   (doseq [step (:walk-steps segment-data)] (apply-step step)))))
+             ;; Marks trailing the final movement land at the end pose.
+             (emit trailing-marks))))))
 
 
 

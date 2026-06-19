@@ -240,6 +240,33 @@
     (:section-anchors source) (assoc :section-anchors (:section-anchors source))
     (:rail-path source)       (assoc :rail-path (:rail-path source))))
 
+(defn- index-tagged-anchors
+  "Build index-tagged copies of `meshes`' anchors: operand i's anchor `:name`
+   becomes `:i|name`. Anchors are world poses, so every operand's marks stay
+   valid on a boolean result (the geometry is left in place) — this lets the
+   marks of ALL operands survive a boolean, not just the first.
+
+   The bare names from operand 0 are kept separately by `carry-meta` (so
+   `:at :name` lookups still resolve), so these tagged copies are purely
+   additive. Select them uniformly with a regex on the name, e.g.
+   `(on-anchors result #\"\\|foot\" …)` to hit every operand's :foot."
+  [meshes]
+  (apply merge
+         (map-indexed
+          (fn [i m]
+            (reduce-kv (fn [acc k v]
+                         (assoc acc (keyword (str i "|" (name k))) v))
+                       {} (:anchors m)))
+          meshes)))
+
+(defn- carry-indexed-anchors
+  "Merge index-tagged anchors of all `meshes` onto a boolean `result`,
+   alongside the bare operand-0 anchors that `carry-meta` already kept."
+  [result meshes]
+  (let [tagged (index-tagged-anchors meshes)]
+    (cond-> result
+      (and result (seq tagged)) (update :anchors merge tagged))))
+
 ;; ============================================================
 ;; Self-union (resolve self-intersections)
 ;; ============================================================
@@ -377,7 +404,7 @@
     (case (count meshes)
       0 nil
       1 (first meshes)
-      (tree-union (vec meshes)))))
+      (carry-indexed-anchors (tree-union (vec meshes)) meshes))))
 
 (defn- difference-two
   "Compute the difference of exactly two meshes (A - B).
@@ -418,7 +445,7 @@
                  (into [first-arg] more))
         meshes (coerce-to-meshes "difference" meshes)]
     (when (>= (count meshes) 2)
-      (reduce difference-two meshes))))
+      (carry-indexed-anchors (reduce difference-two meshes) meshes))))
 
 (defn- intersection-two
   "Compute the intersection of exactly two meshes.
@@ -453,7 +480,7 @@
                  (into [first-arg] more))
         meshes (coerce-to-meshes "intersection" meshes)]
     (when (>= (count meshes) 2)
-      (reduce intersection-two meshes))))
+      (carry-indexed-anchors (reduce intersection-two meshes) meshes))))
 
 (defn hull
   "Compute the convex hull of one or more meshes.
