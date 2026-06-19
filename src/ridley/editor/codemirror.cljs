@@ -392,6 +392,38 @@
                (apply-fix)
                #js {:update (fn [_update] (apply-fix))}))))
 
+(defn- webkit-not-blink?
+  "True on Safari / WKWebView (e.g. the Tauri desktop build), false on Blink
+   (Chrome/Edge) and other engines. Used to gate a WebKit-only workaround."
+  []
+  (let [ua (.. js/navigator -userAgent)]
+    (boolean (and (re-find #"AppleWebKit" ua)
+                  (not (re-find #"Chrome|Chromium|Edg/" ua))))))
+
+(defn- create-scrollbar-focus-fix
+  "WebKit-only fix for a focus/horizontal-scroll selection bug.
+
+   Dragging the horizontal scrollbar moves focus from .cm-content to
+   .cm-scroller, leaving the content blurred. The next click then refocuses
+   .cm-content, and WebKit resets scrollLeft to 0 *before* resolving the caret:
+   the cursor lands at whatever the click point maps to at scroll 0 (wrong
+   position) and, because the anchor was captured at the old scroll, a spurious
+   backward selection appears whose length ≈ the scroll offset.
+
+   Bouncing focus straight back to .cm-content (without scrolling) keeps the
+   subsequent click an in-focus click, so WebKit never resets the scroll and the
+   caret resolves at the real pointer position. Blink doesn't focus the scroller
+   on scrollbar drag, so this is gated to WebKit and is a no-op elsewhere."
+  []
+  (.define ViewPlugin
+           (fn [^js view]
+             (let [scroller (.-scrollDOM view)
+                   content (.-contentDOM view)
+                   on-focus (fn [_e] (.focus content #js {:preventScroll true}))]
+               (.addEventListener scroller "focus" on-focus true)
+               #js {:destroy (fn []
+                               (.removeEventListener scroller "focus" on-focus true))}))))
+
 (defn- create-run-keymap
   "Create keymap for Cmd+Enter to run code."
   [on-run]
@@ -459,6 +491,9 @@
                             (create-theme)
                             ;; Selection layer inline style fix
                             (create-selection-layer-fix)
+                            ;; WebKit-only: prevent scrollbar-drag focus theft
+                            ;; from corrupting the next click's caret/selection
+                            (when (webkit-not-blink?) (create-scrollbar-focus-fix))
                             ;; Keymaps (run-keymap first for priority)
                             (create-run-keymap on-run)
                             ;; Mod-Alt-t: wrap the selection in (tweak …) and run
