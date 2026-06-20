@@ -400,29 +400,42 @@
     (boolean (and (re-find #"AppleWebKit" ua)
                   (not (re-find #"Chrome|Chromium|Edg/" ua))))))
 
-(defn- create-scrollbar-focus-fix
-  "WebKit-only fix for a focus/horizontal-scroll selection bug.
+(defn- create-webkit-refocus-fix
+  "WebKit-only fix for a focus/scroll selection-corruption bug (both axes).
 
-   Dragging the horizontal scrollbar moves focus from .cm-content to
-   .cm-scroller, leaving the content blurred. The next click then refocuses
-   .cm-content, and WebKit resets scrollLeft to 0 *before* resolving the caret:
-   the cursor lands at whatever the click point maps to at scroll 0 (wrong
-   position) and, because the anchor was captured at the old scroll, a spurious
-   backward selection appears whose length ≈ the scroll offset.
+   When .cm-content is blurred — because dragging a scrollbar moved focus to
+   .cm-scroller, or a click landed outside the editor (e.g. the 3D viewport) —
+   and the view has since scrolled, the next click that refocuses .cm-content
+   makes WebKit scroll the *old* selection back into view *before* resolving the
+   new caret. The caret then lands at whatever the click point maps to after the
+   reset (wrong position), and because one end was captured at the old scroll a
+   spurious selection appears whose length ≈ the scroll offset. Blink doesn't do
+   this, so the whole thing is gated to WebKit and is a no-op elsewhere.
 
-   Bouncing focus straight back to .cm-content (without scrolling) keeps the
-   subsequent click an in-focus click, so WebKit never resets the scroll and the
-   caret resolves at the real pointer position. Blink doesn't focus the scroller
-   on scrollbar drag, so this is gated to WebKit and is a no-op elsewhere."
+   We pre-empt WebKit: on a refocusing mousedown we place a collapsed caret at
+   the click point ourselves (caretRangeFromPoint, read at the *current* scroll)
+   and focus with preventScroll. WebKit then finds the selection already at a
+   visible point and scrolls nowhere, so the caret resolves correctly and no
+   stray selection is produced. Skipped for shift/alt clicks so selection-extend
+   and rectangular selection keep working."
   []
   (.define ViewPlugin
            (fn [^js view]
-             (let [scroller (.-scrollDOM view)
-                   content (.-contentDOM view)
-                   on-focus (fn [_e] (.focus content #js {:preventScroll true}))]
-               (.addEventListener scroller "focus" on-focus true)
+             (let [content (.-contentDOM view)
+                   on-down (fn [^js e]
+                             (when (and (not (identical? (.-activeElement js/document) content))
+                                        (not (.-shiftKey e))
+                                        (not (.-altKey e))
+                                        (.-caretRangeFromPoint js/document))
+                               (when-let [r (.caretRangeFromPoint js/document
+                                                                  (.-clientX e) (.-clientY e))]
+                                 (let [sel (.getSelection js/window)]
+                                   (.removeAllRanges sel)
+                                   (.addRange sel r)))
+                               (.focus content #js {:preventScroll true})))]
+               (.addEventListener content "mousedown" on-down true)
                #js {:destroy (fn []
-                               (.removeEventListener scroller "focus" on-focus true))}))))
+                               (.removeEventListener content "mousedown" on-down true))}))))
 
 (defn- create-run-keymap
   "Create keymap for Cmd+Enter to run code."
@@ -491,9 +504,9 @@
                             (create-theme)
                             ;; Selection layer inline style fix
                             (create-selection-layer-fix)
-                            ;; WebKit-only: prevent scrollbar-drag focus theft
-                            ;; from corrupting the next click's caret/selection
-                            (when (webkit-not-blink?) (create-scrollbar-focus-fix))
+                            ;; WebKit-only: prevent a blur+scroll refocus click
+                            ;; from corrupting the caret/selection (both axes)
+                            (when (webkit-not-blink?) (create-webkit-refocus-fix))
                             ;; Keymaps (run-keymap first for priority)
                             (create-run-keymap on-run)
                             ;; Mod-Alt-t: wrap the selection in (tweak …) and run
