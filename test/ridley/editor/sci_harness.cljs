@@ -321,6 +321,7 @@
    ;; Real boolean union requires Manifold WASM which is unavailable in CLJ test env.
    'mesh-union-impl     (fn [& meshes] (manifold/concat-meshes (vec meshes)))
    'on-anchors-match?   impl/on-anchors-match?
+   'on-anchors-captures impl/on-anchors-captures
    'on-anchors-warn-no-match!
    (fn [pattern anchor-map]
      (swap! on-anchors-warnings conj {:pattern pattern :anchor-map anchor-map}))})

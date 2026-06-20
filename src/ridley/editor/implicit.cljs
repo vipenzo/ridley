@@ -426,6 +426,21 @@
                  (pr-str (type pat)) ": " (pr-str pat)
                  ". Use string, regex, keyword, or set.")))))
 
+(defn ^:export on-anchors-captures
+  "Return the capture vector for an on-anchors match, as [full g1 g2 ...].
+   For a regex pattern this normalizes the re-find result (a bare string when
+   the regex has no groups becomes [string]); for keyword/set/string patterns
+   it returns [(name anchor-name)]. The on-anchors macro binds element 0 to `$`
+   and elements 1..9 to `$1`..`$9` inside each clause body."
+  [pat anchor-name]
+  (if (instance? js/RegExp pat)
+    (let [m (re-find pat (name anchor-name))]
+      (cond
+        (nil? m)    [(name anchor-name)]
+        (string? m) [m]
+        :else       (vec m)))
+    [(name anchor-name)]))
+
 (defn ^:export on-anchors-warn-no-match!
   "Emit a console warning that an on-anchors pattern did not match any anchor
    in the given anchor map. Lists the available anchor names."

@@ -389,3 +389,38 @@
           {:keys [result error]} (run code)]
       (is (nil? error) (str "Should not error: " error))
       (is (= 1 (count (:vertices result)))))))
+
+;; ── Match bindings: anchor / $ / $1 ──────────────────────────────
+
+(deftest capture-anchor-binding
+  (testing "`anchor` is bound to the matched anchor keyword inside the body"
+    (let [code "(def skel (path (mark :a) (f 5) (mark :b)))
+                (on-anchors skel :vec
+                  #\".*\" {:vertices [[0 0 0]] :faces [] :tag anchor})"
+          {:keys [result error]} (run code)]
+      (is (nil? error) (str "Should not error: " error))
+      (is (= #{:a :b} (set (map :tag result)))))))
+
+(deftest capture-regex-groups
+  (testing "`$` exposes the full match and `$1` the first capture group, so one
+            regex clause can replace N hand-written clauses"
+    (let [code "(def tags {\"0\" :zero \"1\" :one \"2\" :two})
+                (def skel (path (mark :arm-0) (f 5) (mark :arm-1) (f 5) (mark :arm-2)))
+                (on-anchors skel :vec
+                  #\"arm-(\\d)\"
+                  {:vertices [[0 0 0]] :faces []
+                   :full $ :tag (tags $1)})"
+          {:keys [result error]} (run code)]
+      (is (nil? error) (str "Should not error: " error))
+      (is (= #{"arm-0" "arm-1" "arm-2"} (set (map :full result))))
+      (is (= #{:zero :one :two} (set (map :tag result)))))))
+
+(deftest capture-no-group-regex
+  (testing "a regex with no capture group leaves $1 nil; $ is the whole match"
+    (let [code "(def skel (path (mark :a) (f 5) (mark :b)))
+                (on-anchors skel :vec
+                  #\".*\" {:vertices [[0 0 0]] :faces [] :full $ :g1 $1})"
+          {:keys [result error]} (run code)]
+      (is (nil? error) (str "Should not error: " error))
+      (is (= #{"a" "b"} (set (map :full result))))
+      (is (every? nil? (map :g1 result))))))

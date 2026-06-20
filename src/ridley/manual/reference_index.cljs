@@ -1170,7 +1170,7 @@
     :status "stable"
     :since ""
     :signature "(on-anchors target [combine-mode] pattern [:align] body ...)"
-    :description "Iterate over the anchors of a path or mesh and evaluate a body per matching anchor, with the turtle positioned at that anchor. Each clause pairs a **pattern** with a **body**; for every anchor, clauses are tested in order and the first matching clause's body runs (no fallthrough). The body is evaluated inside an implicit `(turtle :pose <anchor-pose> body)` scope, so turtle primitives (`f`, `th`, `attach`, `cyl`, …) operate relative to the anchor."
+    :description "Iterate over the anchors of a path or mesh and evaluate a body per matching anchor, with the turtle positioned at that anchor. Each clause pairs a **pattern** with a **body**; for every anchor, clauses are tested in order and the first matching clause's body runs (no fallthrough). The body is evaluated inside an implicit `(turtle :pose <anchor-pose> body)` scope, so turtle primitives (`f`, `th`, `attach`, `cyl`, …) operate relative to the anchor. The matched anchor is exposed to the body via `anchor` (the keyword), `$` (the full match string) and `$1`..`$9` (regex capture groups), so one parameterized regex clause can replace several near-identical ones."
     :path "docs/manual/reference/en/on-anchors.md"}
 
    "out"

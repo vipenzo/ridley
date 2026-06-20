@@ -67,6 +67,31 @@ the anchors it targets.
 - `body` — a single expression. For multiple pieces on one anchor, wrap
   them in `(mesh-union …)`, `(concat-meshes …)`, or `(do …)`.
 
+### Match bindings
+
+Inside each flat clause body these symbols are bound to the **anchor that
+matched**, so one parameterized clause can replace several near-identical
+ones:
+
+| Symbol   | Value                                                              |
+|----------|-------------------------------------------------------------------|
+| `anchor` | the matched anchor name (keyword, e.g. `:0|here`)                  |
+| `$`      | the full match string — `(name anchor)` for non-regex patterns, the `re-find` match for a regex |
+| `$1`..`$9` | regex capture groups (strings), or `nil` when the group is absent |
+
+```clojure
+;; four scissor holders, one per arm, dispatched by the captured digit
+(def arm-tags {"0" :red-small "1" :red-big "2" :green "3" :purple})
+(on-anchors Arms
+  #"(\d)\|here" :align
+  (attach (mkmesh (arm-tags $1)) (f 10) (tv -220)))
+```
+
+> The SCI context has **no** `js/parseInt` or `parse-long`, so `$1` is a
+> string. Index a string-keyed map (`{"0" …}`) rather than parsing it to a
+> number. These bindings are not available in **grid-mode** clauses (which
+> have no single matched anchor).
+
 ## Returns
 
 Depends on `combine-mode`:
@@ -182,8 +207,9 @@ heading. Drop `:align` and they would all stay axis-aligned.
   heading/up. Add `:align` to also rotate the body's local frame onto
   the anchor's frame.
 - **Pattern resolution order is anchors-major.** For each anchor, the
-  patterns are tested in order; not the other way around. This means a
-  body cannot inspect *which* pattern matched.
+  patterns are tested in order; not the other way around. A body cannot
+  inspect *which* pattern matched, but it can inspect *which anchor*
+  matched it — via the `anchor` / `$` / `$1`..`$9` bindings above.
 - **Body inside a turtle scope.** Each body runs inside an implicit
   `(turtle :pose <pose> body)`. Subsequent turtle commands (`f`, `th`,
   `attach`, …) all operate in that scope; on body exit, the parent

@@ -1923,6 +1923,16 @@
    ;; as move-to). :align before the body activates full pose alignment
    ;; (position + heading + up) for that clause.
    ;;
+   ;; Match bindings available inside each (flat) clause body:
+   ;;   anchor → the matched anchor name (keyword, e.g. :0|here)
+   ;;   $      → the full match string (= (name anchor) for non-regex patterns;
+   ;;            the re-find match for regex patterns)
+   ;;   $1..$9 → regex capture groups (strings), or nil when absent
+   ;; This lets ONE regex clause replace N hand-written clauses, e.g.
+   ;;   (on-anchors mesh #\"(\\d)\\|here\" :align (place (tags $1)))
+   ;; (Note: the SCI context has no js/parseInt or parse-long, so index a
+   ;;  string-keyed map — {\"0\" …} — rather than parsing $1 to a number.)
+   ;;
    ;; Combine mode (optional, immediately after target):
    ;;   :concat (default) → (concat-meshes …) — fast geometric merge; safe
    ;;                       when per-anchor bodies are disjoint.
@@ -1982,6 +1992,7 @@
            pats-s     (gensym \"pats_\")
            aname-s    (gensym \"aname_\")
            pose-s     (gensym \"pose_\")
+           caps-s     (gensym \"caps_\")
            flat-s     (gensym \"flat_\")
            combine-form (case mode
                           :vec    flat-s
@@ -2000,7 +2011,18 @@
                             (list 'do
                                   (list 'swap! counts-s 'update idx 'inc)
                                   (list 'swap! results-s 'conj
-                                        (list 'turtle :pose pose-form body)))]))
+                                        (list 'let
+                                              (into ['anchor aname-s
+                                                     caps-s (list 'on-anchors-captures
+                                                                  (list 'nth pats-s idx)
+                                                                  aname-s)
+                                                     '$ (list 'nth caps-s 0 nil)]
+                                                    (mapcat
+                                                     (fn [n#]
+                                                       [(symbol (str \"$\" n#))
+                                                        (list 'nth caps-s n# nil)])
+                                                     (range 1 10)))
+                                              (list 'turtle :pose pose-form body))))]))
                        (map-indexed vector flat-parsed))
            grid-forms (map
                        (fn [clause]

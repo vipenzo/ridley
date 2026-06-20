@@ -551,6 +551,7 @@
    ;; on-anchors macro runtime helpers
    'on-anchors-resolve-target impl/on-anchors-resolve-target
    'on-anchors-match?         impl/on-anchors-match?
+   'on-anchors-captures       impl/on-anchors-captures
    'on-anchors-warn-no-match! impl/on-anchors-warn-no-match!
    'on-anchors-grid-poses     macro-impl/on-anchors-grid-poses
    ;; Animation internals (used by anim! / span / anim-proc! macros)

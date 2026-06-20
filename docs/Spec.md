@@ -2249,6 +2249,17 @@ Patterns:
 
 The result is `(concat-meshes …)` of all body values, with nested sequences flattened via `flatten-meshes`; non-mesh values are silently dropped. A console warning is emitted for any pattern that matched zero anchors, listing the available names. Anchors not matched by any pattern are silently skipped (filtering only a subset is normal).
 
+**Match bindings.** Inside each (flat) clause body, three symbols are bound to the anchor that matched, so one parameterized regex clause can replace several near-identical ones: `anchor` (the matched anchor name, a keyword), `$` (the full match string — `(name anchor)` for non-regex patterns, the `re-find` match for a regex), and `$1`..`$9` (regex capture groups as strings, or `nil` when absent). Since the SCI context has no `js/parseInt`/`parse-long`, index a string-keyed map with `$1` rather than parsing it to a number. Example — four parts, one per radial arm, dispatched by the captured digit:
+
+```clojure
+(def arm-tags {"0" :red-small "1" :red-big "2" :green "3" :purple})
+(on-anchors arms
+  #"(\d)\|here" :align
+  (attach (mkmesh (arm-tags $1)) (f 10)))
+```
+
+These bindings are not available in grid-mode clauses (which have no single matched anchor).
+
 **Path marks resolve at the current turtle pose**, like `with-path` does — *not* at the world origin (unlike `(anchors path)`, which always inspects from origin, and `(move-to path :at name)`, which uses absolute marks). This makes `on-anchors` composable: a function that builds its geometry through `on-anchors path` lands its pieces wherever the caller has positioned the turtle, so the same component can be re-distributed by an outer `on-anchors` over another skeleton. Mesh targets are unaffected — a mesh's `:anchors` are stored in world coordinates and used as-is.
 
 For ad-hoc per-anchor logic that does not fit the `on-anchors` dispatch shape, `(pin-path path)` exposes the same resolver as a plain function — it returns the `{anchor-name → pose}` map at the current turtle pose, with no scope and no side effects. Use it in a custom `for` over anchors when the per-anchor work is more dynamic than a fixed set of clauses (e.g. parameters keyed by anchor name, or post-processing applied after the loop).
