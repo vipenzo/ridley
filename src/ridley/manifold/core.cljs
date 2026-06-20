@@ -694,6 +694,7 @@
       (loop [remaining (seq meshes)
              all-verts []
              all-faces []
+             all-cap-images []
              offset 0]
         (if (not remaining)
           (let [base-pose (or (:creation-pose (first meshes)) default-creation-pose)
@@ -708,14 +709,30 @@
                       :vertices all-verts
                       :faces all-faces
                       :creation-pose (assoc base-pose :position centroid)}
-               (:material (first meshes)) (assoc :material (:material (first meshes))))))
+               (:material (first meshes)) (assoc :material (:material (first meshes)))
+               ;; Carry reference-image decals (set-image → extrude) through the
+               ;; merge: their tris/uv index into :vertices, so shift them by each
+               ;; sub-mesh's base offset. Lets many imaged caps (e.g. on-anchors
+               ;; :concat over distinct photos) survive as one mesh.
+               (seq all-cap-images) (assoc :cap-images all-cap-images))))
           (let [m (first remaining)
                 verts (:vertices m)
                 faces (:faces m)
-                shifted (mapv (fn [face] (mapv #(+ % offset) face)) faces)]
+                shifted (mapv (fn [face] (mapv #(+ % offset) face)) faces)
+                shifted-cap-images
+                (mapv (fn [e]
+                        (-> e
+                            (update :tris (fn [tris]
+                                            (mapv (fn [t] (mapv #(+ % offset) t)) tris)))
+                            (update :uv (fn [uv]
+                                          (persistent!
+                                           (reduce-kv (fn [acc k v] (assoc! acc (+ k offset) v))
+                                                      (transient {}) uv))))))
+                      (:cap-images m))]
             (recur (next remaining)
                    (into all-verts verts)
                    (into all-faces shifted)
+                   (into all-cap-images shifted-cap-images)
                    (+ offset (count verts)))))))))
 
 ;; ============================================================

@@ -293,6 +293,35 @@
     (vec (for [i (range 0 n-indices 3)]
            [(aget result i) (aget result (+ i 1)) (aget result (+ i 2))]))))
 
+(defn attach-cap-image
+  "Propagate a profile's reference :image (set via set-image) onto an extruded
+   `mesh` so it shows on the base cap, the same way a stamped shape shows its
+   image. We append a self-contained decal entry to the mesh's `:cap-images`
+   vector:
+     {:path :width :offset            — image calibration (from set-image)
+      :tris  [[i j k] ...]            — the profile's 2D earcut, as indices into
+                                        the mesh's :vertices (the first ring sits
+                                        at the start, outer ++ holes)
+      :uv    {vertex-index [px py]}}  — per-cap-vertex 2D coord, keyed by index
+
+   Indices (not absolute positions) mean the decal tracks every baked-in transform
+   (translate/rotate/scale rewrite :vertices but leave the indices valid), and a
+   VECTOR of entries with index keys lets `concat-meshes` MERGE many imaged meshes
+   into one (e.g. on-anchors :concat) by offsetting tris/uv per sub-mesh — each
+   cap keeps its own photo. CSG (mesh-union/-difference) rewrites :vertices
+   wholesale and naturally drops the decals. No-op without an image."
+  [mesh shape]
+  (if-let [img (:image shape)]
+    (let [holes (or (:holes shape) [])
+          pts   (into (vec (:points shape)) (apply concat holes))
+          entry {:path   (:path img)
+                 :width  (:width img)
+                 :offset (:offset img)
+                 :tris   (earcut-triangulate (:points shape) holes)
+                 :uv     (zipmap (range (count pts)) pts)}]
+      (update mesh :cap-images (fnil conj []) entry))
+    mesh))
+
 (defn- libtess-triangulate
   "Triangulate a 2D polygon with holes using libtess (GLU tessellator).
    More robust than earcut for complex polygons with many holes.
@@ -1253,7 +1282,7 @@
                              (:material state) (assoc :material (:material state)))]
         (-> state
             (assoc :position end-pos)
-            (update :meshes conj mesh-with-pose)))
+            (update :meshes conj (attach-cap-image mesh-with-pose shape))))
       state)))
 
 (defn- extrude-with-holes-from-path
@@ -1383,7 +1412,7 @@
                                      (cond-> mesh
                                        (:material state) (assoc :material (:material state))))]
             (if mesh-with-material
-              (update final-state :meshes conj mesh-with-material)
+              (update final-state :meshes conj (attach-cap-image mesh-with-material shape))
               state)))))))
 
 (defn extrude-from-path
@@ -1625,7 +1654,7 @@
                             ;; :source-path) so (slice-mesh m :on t) can hand it
                             ;; back, re-extrudable into the same marked mesh.
                             (:source-path shape) (assoc :profile-shape shape)))]
-                (update final-state :meshes conj mesh)))))))))
+                (update final-state :meshes conj (attach-cap-image mesh shape))))))))))
 
 (defn extrude-closed-from-path
   "Extrude a shape along a closed path, creating a torus-like mesh.

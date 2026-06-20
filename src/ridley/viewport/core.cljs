@@ -743,8 +743,15 @@
       (.remove world-group obj)
       (when-let [geom (.-geometry obj)]
         (.dispose geom))
-      (when-let [mat (.-material obj)]
-        (.dispose mat)))))
+      (when-let [^js mat (.-material obj)]
+        ;; Image-stamp decals (set-image propagated onto extruded meshes) carry a
+        ;; texture map + object URL — dispose/revoke them like dispose-stamp-child!,
+        ;; else each re-eval leaks a GPU texture. No-op for plain meshes.
+        (when-let [^js tex (.-map mat)]
+          (.dispose tex))
+        (.dispose mat))
+      (when-let [url (.. obj -userData -imageUrl)]
+        (js/URL.revokeObjectURL url)))))
 
 (defn- fit-camera-to-geometry
   "Adjust camera to fit geometry in view."
@@ -1060,7 +1067,35 @@
       (let [^js mesh (create-three-mesh mesh-data)]
         (when-let [reg-name (:registry-name mesh-data)]
           (set! (.. mesh -userData -registryName) reg-name))
-        (.add world-group mesh)))
+        (.add world-group mesh)
+        ;; Reference image (set-image) propagated through extrude: render it as a
+        ;; decal on the base cap, reusing the stamp image renderer. :cap-faces
+        ;; index into the mesh's own (world-space, transform-baked) :vertices, so
+        ;; the decal tracks any translate/rotate/scale applied to the mesh.
+        ;; Reference-image decals (set-image propagated through extrude) on the
+        ;; mesh's base cap(s). Each entry's tris/uv index into the mesh's own
+        ;; (world-space, transform-baked) :vertices; reindex to a local array per
+        ;; entry and reuse the stamp image renderer.
+        (doseq [{:keys [path width offset tris uv]} (:cap-images mesh-data)]
+          (let [idxs     (vec (distinct (apply concat tris)))
+                local-of (zipmap idxs (range))
+                verts    (:vertices mesh-data)]
+            (when-let [^js img-mesh (create-stamp-image-mesh
+                                     {:vertices (mapv #(nth verts %) idxs)
+                                      :faces    (mapv (fn [t] (mapv local-of t)) tris)
+                                      :image    {:path path :width width :offset offset
+                                                 :verts-2d (mapv #(get uv %) idxs)}})]
+              ;; Unlike a flat stamp, this decal is coplanar with the solid's opaque
+              ;; cap face: draw it AFTER the solid (renderOrder) and pull it slightly
+              ;; forward in the depth buffer (polygonOffset) so it wins the depth test
+              ;; instead of being occluded by / z-fighting the cap. (Stamps keep their
+              ;; own renderOrder -1; we only override it here.)
+              (set! (.-renderOrder img-mesh) 1)
+              (let [^js m (.-material img-mesh)]
+                (set! (.-polygonOffset m) true)
+                (set! (.-polygonOffsetFactor m) -1)
+                (set! (.-polygonOffsetUnits m) -1))
+              (.add world-group img-mesh))))))
     ;; Add panels to world-group
     (doseq [panel-data panels]
       (when (= :panel (:type panel-data))
