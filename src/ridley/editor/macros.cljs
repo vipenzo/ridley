@@ -26,6 +26,20 @@
             (fn [s]
               (let [s2 (rec-tv s angle)]
                 (assoc-in s2 [:recording (dec (count (:recording s2))) :arc-cap] cap)))))
+   ;; Like rec-th*/rec-tv* but tag the recorded command :smooth so the extruder
+   ;; treats it as a tessellated-curve step, NOT a hard corner (no per-step
+   ;; shortening / joint rings). Keeping it a th/tv (vs set-heading) preserves the
+   ;; 2D projection of a bezier used inside a path-2d (path-to-shape).
+   (defn- rec-th-smooth* [angle]
+     (swap! path-recorder
+            (fn [s]
+              (let [s2 (rec-th s angle)]
+                (assoc-in s2 [:recording (dec (count (:recording s2))) :smooth] true)))))
+   (defn- rec-tv-smooth* [angle]
+     (swap! path-recorder
+            (fn [s]
+              (let [s2 (rec-tv s angle)]
+                (assoc-in s2 [:recording (dec (count (:recording s2))) :smooth] true)))))
    (defn- rec-set-heading* [heading up & [flag]]
      (swap! path-recorder rec-set-heading heading up flag))
    (defn- rec-u* [dist]
@@ -378,7 +392,13 @@
                                  {:dir (if (> dist 0.001) (rec-normalize [dx dy dz]) nil)
                                   :dist dist})))]
            ;; Walk through segments using rotation-minimizing frame
-           ;; This propagates the up vector smoothly to avoid twist/concave faces
+           ;; This propagates the up vector smoothly to avoid twist/concave faces.
+           ;; Each step is recorded as relative th/tv (NOT set-heading) so that the
+           ;; 2D projection (path-to-shape / ensure-path-2d) of a bezier in a
+           ;; path-2d is preserved. The steps are tagged :smooth so extrude/loft
+           ;; don't treat the tessellated curve as a chain of hard corners (see
+           ;; smooth-rotation? in extrusion.cljs) — that corner treatment folds a
+           ;; swept profile on a curved rail.
            (loop [remaining-segments segments
                   current-up (:up state)]
              (when (seq remaining-segments)
@@ -399,12 +419,12 @@
                                     (if (> right-len 0.001)
                                       (rec-normalize (rec-cross right dir))
                                       current-up)))]
-                     ;; Rotate to segment direction using relative th/tv
+                     ;; Rotate to segment direction using relative th/tv (tagged :smooth)
                      (let [cur-heading (:heading @path-recorder)
                            cur-up (:up @path-recorder)
                            [th-angle tv-angle] (rec-compute-rotation-angles cur-heading cur-up dir)]
-                       (when (> (abs th-angle) 0.001) (rec-th* th-angle))
-                       (when (> (abs tv-angle) 0.001) (rec-tv* tv-angle)))
+                       (when (> (abs th-angle) 0.001) (rec-th-smooth* th-angle))
+                       (when (> (abs tv-angle) 0.001) (rec-tv-smooth* tv-angle)))
                      ;; Move forward
                      (rec-f* dist)
                      ;; Continue with next segment, propagating the up vector
@@ -422,8 +442,8 @@
                (let [end-dir (rec-normalize [edx edy edz])
                      [th-a tv-a] (rec-compute-rotation-angles
                                   (:heading @path-recorder) (:up @path-recorder) end-dir)]
-                 (when (> (abs th-a) 0.001) (rec-th* th-a))
-                 (when (> (abs tv-a) 0.001) (rec-tv* tv-a)))))
+                 (when (> (abs th-a) 0.001) (rec-th-smooth* th-a))
+                 (when (> (abs tv-a) 0.001) (rec-tv-smooth* tv-a)))))
            ;; Tag the first emitted step with the resolved curve, so edit-path can
            ;; recover this bezier as one node on re-open (the tessellated steps carry
            ;; no curve info). Riders like this are ignored by every other consumer.
@@ -523,9 +543,9 @@
                                            dist (sqrt (+ (* dx dx) (* dy dy) (* dz dz)))]
                                        {:dir (if (> dist 0.001) (rec-normalize [dx dy dz]) nil)
                                         :dist dist})))]
-                 ;; Walk through segments using rotation-minimizing frame
-                 ;; Use path-recorder's up vector (maintains path's local frame)
-                 ;; IMPORTANT: First segment uses start-heading for smooth connection
+                 ;; Walk through segments using rotation-minimizing frame, emitting
+                 ;; relative th/tv (tagged :smooth) + f per step — see rec-bezier-to*.
+                 ;; First segment uses start-heading for a smooth connection.
                  (loop [remaining-segments segments
                         current-up (:up state)
                         first-segment? true]
@@ -546,12 +566,12 @@
                                           (if (> right-len 0.001)
                                             (rec-normalize (rec-cross right effective-dir))
                                             current-up)))]
-                           ;; Rotate to segment direction using relative th/tv
+                           ;; Rotate to segment direction using relative th/tv (tagged :smooth)
                            (let [cur-heading (:heading @path-recorder)
                                  cur-up (:up @path-recorder)
                                  [th-angle tv-angle] (rec-compute-rotation-angles cur-heading cur-up effective-dir)]
-                             (when (> (abs th-angle) 0.001) (rec-th* th-angle))
-                             (when (> (abs tv-angle) 0.001) (rec-tv* tv-angle)))
+                             (when (> (abs th-angle) 0.001) (rec-th-smooth* th-angle))
+                             (when (> (abs tv-angle) 0.001) (rec-tv-smooth* tv-angle)))
                            (rec-f* dist)
                            (recur (rest remaining-segments) new-up false))
                          (recur (rest remaining-segments) current-up false)))))
@@ -565,8 +585,8 @@
                      (let [end-dir (rec-normalize [edx edy edz])
                            [th-a tv-a] (rec-compute-rotation-angles
                                         (:heading @path-recorder) (:up @path-recorder) end-dir)]
-                       (when (> (abs th-a) 0.001) (rec-th* th-a))
-                       (when (> (abs tv-a) 0.001) (rec-tv* tv-a)))))))))))))
+                       (when (> (abs th-a) 0.001) (rec-th-smooth* th-a))
+                       (when (> (abs tv-a) 0.001) (rec-tv-smooth* tv-a)))))))))))))
 
    ;; path: record turtle movements for later replay
    ;; (def p (path (f 20) (th 90) (f 20))) - record a path

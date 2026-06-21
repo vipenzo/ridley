@@ -1101,6 +1101,15 @@
   [cmd]
   (#{:th :tv :tr} cmd))
 
+(defn corner-rotation?
+  "Check if a recorded command MAP is a HARD corner (needs shortening + joint
+   rings). A th/tv/tr is a corner unless tagged :smooth — bezier-to records its
+   tessellated curve as :smooth th/tv so the curve isn't shortened into a fold on
+   a curved rail (the th/tv form, vs set-heading, keeps the 2D projection of a
+   bezier inside a path-2d intact)."
+  [c]
+  (and (is-corner-rotation? (:cmd c)) (not (:smooth c))))
+
 (defn is-annotation?
   "Record-only commands that carry no geometric effect during extrusion
    (purely labels or attach-context metadata). Path-analysis loops that
@@ -1144,7 +1153,7 @@
         n-forwards (count forwards)
         total-explicit-rotation (reduce
                                  (fn [sum cmd]
-                                   (if (is-corner-rotation? (:cmd cmd))
+                                   (if (corner-rotation? cmd)
                                      (+ sum (Math/abs (first (:args cmd))))
                                      sum))
                                  0
@@ -1226,7 +1235,7 @@
                                        (is-annotation? (:cmd c)) (recur (dec i) rots)
                                        :else                     rots))))
               angle-before (reduce + 0 (map (fn [r]
-                                              (if (is-corner-rotation? (:cmd r))
+                                              (if (corner-rotation? r)
                                                 (Math/abs (first (:args r)))
                                                 0))
                                             rotations-before))
@@ -1240,7 +1249,7 @@
                                       (is-annotation? (:cmd c)) (recur (inc i) rots)
                                       :else                     rots))))
               angle-after (reduce + 0 (map (fn [r]
-                                             (if (is-corner-rotation? (:cmd r))
+                                             (if (corner-rotation? r)
                                                (Math/abs (first (:args r)))
                                                0))
                                            rotations-after))]
@@ -1323,7 +1332,7 @@
                       effective-dist (- dist shorten-start shorten-end)
                       is-last (= i (dec n-segments))
                       joint-mode (or (:joint-mode state) :flat)
-                      has-corner-rotation (some #(is-corner-rotation? (:cmd %)) rotations)
+                      has-corner-rotation (some corner-rotation? rotations)
 
                       start-pos (:position s)
                       s1 (assoc s :position start-pos)
@@ -1474,7 +1483,7 @@
                           effective-dist (- dist shorten-start shorten-end)
                           is-last (= i (dec n-segments))
                           joint-mode (or (:joint-mode state) :flat)
-                          any-corner-cmds (some #(is-corner-rotation? (:cmd %)) rotations)
+                          any-corner-cmds (some corner-rotation? rotations)
 
                           start-pos (:position s)
                           s1 (assoc s :position start-pos)
@@ -1540,7 +1549,14 @@
                           (if (and heading-angle
                                    (not has-corner-rotation)
                                    (not is-last)
-                                   (seq rotations))
+                                   (seq rotations)
+                                   ;; A bezier's tessellated steps (:smooth) are
+                                   ;; already finely sampled — inserting pivot-
+                                   ;; rotated transition rings (offset by the full
+                                   ;; profile radius) makes them self-intersect on
+                                   ;; a curved rail. Skip them: the per-step end
+                                   ;; rings already form the smooth tube.
+                                   (not (some :smooth rotations)))
                             (let [n-smooth (max 1 (int (Math/ceil (/ heading-angle (/ Math/PI 12)))))]
                               (generate-round-corner-rings
                                end-ring end-pos old-heading new-heading
@@ -1687,7 +1703,7 @@
                         rotations (:rotations-after seg)
                         effective-dist (- dist shorten-start shorten-end)
                         joint-mode (or (:joint-mode state) :flat)
-                        has-corner-rotation (some #(is-corner-rotation? (:cmd %)) rotations)
+                        has-corner-rotation (some corner-rotation? rotations)
 
                         next-seg (nth segments (mod (inc i) n-segments))
                         next-shorten-start (:shorten-start next-seg)
@@ -1736,7 +1752,10 @@
                         smooth-transition-rings
                         (if (and heading-angle
                                  (not has-corner-rotation)
-                                 (seq rotations))
+                                 (seq rotations)
+                                 ;; skip pivot-rotated transition rings for a
+                                 ;; bezier's :smooth tessellation (see other loop)
+                                 (not (some :smooth rotations)))
                           (let [n-smooth (max 1 (int (Math/ceil (/ heading-angle (/ Math/PI 12)))))]
                             (generate-round-corner-rings
                              end-ring end-pos old-heading new-heading

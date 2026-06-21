@@ -64,36 +64,33 @@
 (defn ^:export pure-extrude-path
   "Pure extrude function - creates mesh without side effects.
    Starts from current turtle position/orientation.
-   For bezier paths, delegates to loft with identity transform (avoids
-   shortening artifacts from micro-rotations in bezier walk steps).
    Marks on the rail become mesh anchors (see merge-rail-anchors)."
   [shape-or-shapes path]
-  (if (:bezier path)
-    ;; Bezier paths: use loft with identity transform (it carries rail marks too).
-    ;; extrude's analyze-open-path computes shortening from summed absolute
-    ;; rotation angles, but bezier micro-rotations (chord→final→chord) cause
-    ;; excessive shortening even when the net heading change is small.
-    (pure-loft-path shape-or-shapes (fn [s _] s) path)
-    ;; Normal path: standard extrude (extrude-from-path carries rail marks → anchors)
-    (let [shapes (if (vector? shape-or-shapes) shape-or-shapes [shape-or-shapes])
-          current-turtle @@state/turtle-state-var
-          initial-state (if current-turtle
-                          (-> (turtle/make-turtle)
-                              (assoc :position (:position current-turtle))
-                              (assoc :heading (:heading current-turtle))
-                              (assoc :up (:up current-turtle))
-                              (assoc :joint-mode (:joint-mode current-turtle))
-                              (assoc :resolution (:resolution current-turtle))
-                              (assoc :material (:material current-turtle)))
-                          (turtle/make-turtle))
-          results (reduce
-                   (fn [acc shape]
-                     (let [state (turtle/extrude-from-path initial-state shape path)
-                           mesh (last (:meshes state))]
-                       (if mesh (conj acc mesh) acc)))
-                   []
-                   shapes)]
-      (wrap-results results))))
+  ;; NOTE: bezier rails used to be delegated to loft to dodge the corner
+  ;; shortening that extrude's analyze-open-path applied to a bezier's
+  ;; tessellated micro-rotations. That is fixed properly now — the recorder tags
+  ;; those steps :smooth and corner-rotation? skips them — so extrude-from-path
+  ;; sweeps a bezier correctly (perpendicular, no fold). Loft is NOT used here:
+  ;; on a near-straight rail its frame interpolation tumbles the section.
+  (let [shapes (if (vector? shape-or-shapes) shape-or-shapes [shape-or-shapes])
+        current-turtle @@state/turtle-state-var
+        initial-state (if current-turtle
+                        (-> (turtle/make-turtle)
+                            (assoc :position (:position current-turtle))
+                            (assoc :heading (:heading current-turtle))
+                            (assoc :up (:up current-turtle))
+                            (assoc :joint-mode (:joint-mode current-turtle))
+                            (assoc :resolution (:resolution current-turtle))
+                            (assoc :material (:material current-turtle)))
+                        (turtle/make-turtle))
+        results (reduce
+                 (fn [acc shape]
+                   (let [state (turtle/extrude-from-path initial-state shape path)
+                         mesh (last (:meshes state))]
+                     (if mesh (conj acc mesh) acc)))
+                 []
+                 shapes)]
+    (wrap-results results)))
 
 (defn- combine-meshes
   "Combine multiple meshes into one by concatenating vertices and reindexing faces.

@@ -3,7 +3,8 @@
    Tests that the macro layer (path, shape, extrude, loft, revolve)
    works correctly through SCI evaluation."
   (:require [cljs.test :refer [deftest testing is]]
-            [ridley.editor.sci-harness :as h]))
+            [ridley.editor.sci-harness :as h]
+            [ridley.geometry.mesh-utils :as mu]))
 
 ;; ── Helpers ──────────────────────────────────────────────────
 
@@ -119,6 +120,115 @@
       (is (nil? error))
       (is (map? result))
       (is (seq (:vertices result))))))
+
+;; ── 4b. Bezier-rail sweep is manifold ────────────────────────
+;; Regression: bezier-to recorded its tessellated curve as relative :th/:tv
+;; steps. extrude/loft treat :th/:tv as CORNERS (is-corner-rotation?), so each
+;; step got per-step shortening (radius·tan θ/2) + joint rings — which folds an
+;; asymmetric profile swept along a curved rail onto itself, yielding a
+;; non-manifold, non-watertight mesh. bezier-to now records :th/:tv tagged
+;; :smooth (which corner-rotation? excludes), so the curve is swept as a smooth
+;; rail — by extrude-from-path, NOT loft (loft's frame interpolation tumbles the
+;; section on a near-straight rail; that delegation was removed).
+
+(def ^:private tri-profile
+  ;; an off-centre triangle (shape-radius ≈ 26.7) — its asymmetry is what made
+  ;; the old corner-shortening fold the sweep.
+  "(path-to-shape (path-2d (move-to [-20 -20]) (f 40) (tv 116.57) (f 44.72)))")
+
+(defn- axis-extent [verts axis]
+  (let [vs (map #(nth % axis) verts)]
+    (- (apply max vs) (apply min vs))))
+
+(defn- sweep-diag
+  "Eval an extrude DSL string and return {:error e :diag mesh-diagnose :extent [dx dy dz]}."
+  [code]
+  (let [{:keys [result error]} (h/eval-dsl code)]
+    {:error error
+     :diag (when (and (nil? error) (map? result) (seq (:vertices result)))
+             (mu/mesh-diagnose result))
+     :extent (when (and (nil? error) (map? result) (seq (:vertices result)))
+               (mapv #(axis-extent (:vertices result) %) [0 1 2]))}))
+
+(deftest extrude-bezier-rail-is-watertight
+  (testing "asymmetric profile swept along a bezier rail is watertight + manifold"
+    (let [{:keys [error diag]}
+          (sweep-diag (str "(extrude " tri-profile
+                           " (path (bezier-to [0 0 90] [5 0 15] [0 0 60] :local) (f 20)))"))]
+      (is (nil? error) (str "should not error: " error))
+      (is (some? diag) "should produce a mesh")
+      (is (zero? (:non-manifold-edges diag))
+          (str "bezier-rail sweep must have no non-manifold edges, got "
+               (:non-manifold-edges diag)))
+      (is (:is-watertight? diag) "bezier-rail sweep must be watertight")
+      ;; orientation guard: the 40-wide / 40-tall triangle cross-section must stay
+      ;; ~40 across y and z — loft's tumbling frame blew these up to >100 (the
+      ;; "travels edge-on" bug). x is the rail (~0..110), so only y,z are bounded.
+      (let [[_ dy dz] (:extent (sweep-diag (str "(extrude " tri-profile
+                                                " (path (bezier-to [0 0 90] [5 0 15] [0 0 60] :local) (f 20)))")))]
+        (is (< dy 60) (str "cross-section y-extent must stay near the profile width, got " dy))
+        (is (< dz 60) (str "cross-section z-extent must stay near the profile height, got " dz))))))
+
+(deftest extrude-monotonic-bezier-rail-is-watertight
+  (testing "single-bend (no inflection) bezier rail is also watertight"
+    (let [{:keys [error diag]}
+          (sweep-diag (str "(extrude " tri-profile
+                           " (path (bezier-to [30 0 80] :local)))"))]
+      (is (nil? error) (str "should not error: " error))
+      (is (some? diag) "should produce a mesh")
+      (is (zero? (:non-manifold-edges diag)))
+      (is (:is-watertight? diag)))))
+
+(deftest extrude-straight-and-arc-rails-still-watertight
+  (testing "no regression: same profile on straight + arc rails stays watertight"
+    (doseq [rail ["(path (f 100))"
+                  "(path (arc-h 120 40))"]]
+      (let [{:keys [error diag]}
+            (sweep-diag (str "(extrude " tri-profile " " rail ")"))]
+        (is (nil? error) (str rail " should not error: " error))
+        (is (zero? (:non-manifold-edges diag)) (str rail " non-manifold"))
+        (is (:is-watertight? diag) (str rail " not watertight"))))))
+
+(deftest extrude-bezier-to-anchor-rail-is-watertight
+  (testing "bezier-to-anchor rail (the other recorder branch switched to :set-heading) sweeps cleanly"
+    (let [{:keys [error diag]}
+          (sweep-diag (str "(let [ps (path (mark :start) (f 40) (th 90) (f 40) (mark :end))]"
+                           "  (extrude (circle 6) (path (bezier-to-anchor ps :at :end :tension 0.55))))"))]
+      (is (nil? error) (str "should not error: " error))
+      (is (some? diag) "should produce a mesh")
+      (is (zero? (:non-manifold-edges diag)) "anchor-rail sweep must be manifold")
+      (is (:is-watertight? diag) "anchor-rail sweep must be watertight"))))
+
+;; ── 4c. Bezier re-edit rider survives ────────────────────────
+;; edit-path / edit-path-2d recover a baked bezier as ONE node by reading the
+;; :pure {:cmd :bezier-to :c1 :c2 :end :span n} rider on the run's FIRST command
+;; and skipping :span commands (group-arc-runs / -3d). The switch to :set-heading
+;; must keep that rider intact, or re-opening a curve (e.g. one emitted by
+;; edit-bezier) would tessellate into many straight nodes.
+
+(deftest bezier-records-pure-rider-for-reedit
+  (testing "a recorded bezier-to tags its first command with a :pure bezier rider spanning the whole run"
+    (let [{:keys [result error]}
+          (h/eval-dsl "(path (bezier-to [0 0 50] [5 0 15] [0 0 40] :local))")
+          cmds  (:commands result)
+          fc    (first cmds)
+          pure  (:pure fc)]
+      (is (nil? error) (str "should not error: " error))
+      (is (some? pure) "first command carries a :pure rider")
+      (is (= :bezier-to (:cmd pure)) ":pure rider marks a bezier")
+      (is (= (count cmds) (:span pure))
+          (str ":span (" (:span pure) ") must cover all " (count cmds) " emitted commands"))
+      (is (and (:c1 pure) (:c2 pure) (:end pure)) ":pure preserves the curve control points + end")
+      ;; the tessellated curve is recorded as relative th/tv (preserves the 2D
+      ;; projection of a bezier in a path-2d), each tagged :smooth so extrude
+      ;; skips corner treatment. seed->nodes indexes waypoints by :f count.
+      (is (every? #(= :th (:cmd %))
+                  (filter #(#{:th :tv} (:cmd %)) cmds))
+          "planar bezier tessellates into :th rotations (no :tv)")
+      (is (every? :smooth (filter #(#{:th :tv} (:cmd %)) cmds))
+          "every tessellation rotation is tagged :smooth")
+      (is (pos? (count (filter #(= :f (:cmd %)) cmds)))
+          "the curve tessellates into at least one forward step"))))
 
 ;; ── 5. Loft basic ───────────────────────────────────────────
 

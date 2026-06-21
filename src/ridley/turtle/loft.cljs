@@ -28,6 +28,7 @@
 (def apply-rotation-to-state extrusion/apply-rotation-to-state)
 (def is-rotation? extrusion/is-rotation?)
 (def is-corner-rotation? extrusion/is-corner-rotation?)
+(def corner-rotation? extrusion/corner-rotation?)
 (def calc-shorten-for-angle extrusion/calc-shorten-for-angle)
 (def ring-centroid extrusion/ring-centroid)
 (def triangulate-cap extrusion/triangulate-cap)
@@ -446,9 +447,12 @@
                                     (if (is-rotation? (:cmd c))
                                       (recur (inc i) (conj rots c))
                                       rots))))
-              ;; Check if there's a corner rotation after
+              ;; Check if there's a corner rotation after. A bezier's tessellated
+              ;; steps are tagged :smooth (corner-rotation? excludes them) so the
+              ;; curve isn't shortened into a self-intersecting fold — the reason
+              ;; pure-extrude-path routes bezier rails here instead of extrude.
               has-corner-after (and (not is-last)
-                                    (some #(is-corner-rotation? (:cmd %)) rotations-after))]
+                                    (some corner-rotation? rotations-after))]
           {:cmd :f
            :dist dist
            :has-corner-after has-corner-after
