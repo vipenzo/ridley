@@ -686,23 +686,9 @@
                            :else
                            (fn [r1 r2]
                              (mapv (fn [p1 p2] (v+ p1 (v* (v- p2 p1) 0.5))) r1 r2)))
-           make-cap-mesh (cond
-                           dual-ring?
-                           (fn [& _] nil) ;; shell/embroid caps handled inside their builders
-                           has-holes?
-                           (fn [ring-or-data normal]
-                             (let [outer (:outer ring-or-data)
-                                   holes (or (:holes ring-or-data) [])]
-                               (when (>= (count outer) 3)
-                                 {:type :mesh :primitive :cap
-                                  :vertices (vec (concat outer (apply concat holes)))
-                                  :faces (triangulate-cap-with-holes outer holes 0 normal false)})))
-                           :else
-                           (fn [ring-or-data normal]
-                             (when (>= (count ring-or-data) 3)
-                               {:type :mesh :primitive :cap
-                                :vertices (vec ring-or-data)
-                                :faces (triangulate-cap ring-or-data 0 normal false)})))
+           ;; (make-cap-mesh removed: it built the redundant separate end caps —
+           ;; the double-capping that produced non-manifold geometry. do-build now
+           ;; caps each true end exactly once, inline.)
 
            ;; Total visible path distance (does NOT include hidden/shortening)
            total-visible-dist (reduce + 0 (map :dist segments))
@@ -784,35 +770,23 @@
                           loft-second-ring nil] ;; second ring (for start cap normal)
                      (if (>= seg-idx n-segments)
                        ;; Flush remaining accumulated rings as final mesh.
-                       ;; When no corner segments exist, build WITH caps so cap faces
-                       ;; share vertex indices with side faces (required for manifold mesh).
-                       ;; When corners exist, caps must be separate meshes since intermediate
-                       ;; segments shouldn't have caps at their boundaries.
+                       ;; do-build caps the TRUE ends inline so cap faces share
+                       ;; vertex indices with the side walls (manifold by
+                       ;; construction, like extrude): the first section caps its
+                       ;; :start, this final flush caps its :end. Intermediate
+                       ;; sections sit between corner seams and stay open there.
+                       ;; (The ends used to ALSO be capped by separate
+                       ;; make-cap-mesh sub-meshes when corners existed — that
+                       ;; double-capping produced coincident duplicate faces that
+                       ;; the seam-weld stacked into non-manifold edges. Removed.)
                        (let [no-corners (empty? finished-meshes)
-                             ;; Cap only the TRUE sweep ends: a single smooth
-                             ;; section caps both; otherwise this final flush is
-                             ;; the last section, so cap only its end (:end). Its
-                             ;; start sits at a corner seam and must stay open.
+                             ;; A single smooth section caps both ends; otherwise
+                             ;; this is the last section, so cap only its :end.
                              final-caps (if no-corners true :end)
                              final-meshes (if (>= (count acc-rings) 2)
                                             (conj finished-meshes
                                                   (do-build (vec acc-rings) creation-pose final-caps))
                                             finished-meshes)
-                             ;; Generate separate cap meshes only when corners exist
-                             last-ring (when-not no-corners (last acc-rings))
-                             second-to-last (when (and (not no-corners) (>= (count acc-rings) 2))
-                                              (nth acc-rings (- (count acc-rings) 2)))
-                             bottom-normal (when (and (not no-corners) loft-first-ring loft-second-ring)
-                                             (v* (normalize (v- (ring-centroid (get-outer loft-second-ring))
-                                                                (ring-centroid (get-outer loft-first-ring))))
-                                                 -1))
-                             top-normal (when (and last-ring second-to-last)
-                                          (normalize (v- (ring-centroid (get-outer last-ring))
-                                                         (ring-centroid (get-outer second-to-last)))))
-                             bottom-cap (when (and loft-first-ring bottom-normal)
-                                          (make-cap-mesh loft-first-ring bottom-normal))
-                             top-cap (when (and last-ring top-normal)
-                                       (make-cap-mesh last-ring top-normal))
                              ;; Generate thick caps for shell mode
                              solid-cap-top
                              (when (and shell-mode? shell-cap-top (pos? total-effective-dist))
@@ -836,8 +810,6 @@
                                  m))
                              ;; Combine shell + caps (just concatenate — no boolean union)
                              all-meshes (cond-> final-meshes
-                                          bottom-cap (conj bottom-cap)
-                                          top-cap (conj top-cap)
                                           solid-cap-top (conj solid-cap-top)
                                           solid-cap-bottom (conj solid-cap-bottom))]
                          {:meshes all-meshes

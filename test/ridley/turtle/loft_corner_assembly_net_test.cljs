@@ -203,16 +203,16 @@
   (is true))
 
 (deftest visible-manifestation-sharp-corner-hole
-  ;; HIGHEST-VALUE GUARDRAIL. The defect is usually topological-only (invisible).
-  ;; The ONE visible manifestation found: at a SHARP corner the loft per-piece
-  ;; assembly fails to CLOSE — it leaves OPEN EDGES (oe>0), i.e. missing faces / a
-  ;; hole, visible at render. Extrude at the SAME corner is watertight (oe=0, see
-  ;; extrude-sharp-corner-is-watertight in loft_nm_isolation_test), proving the
-  ;; hole is the loft assembly, not a generic sharp-angle limitation. EXPECTED-RED:
-  ;; asserts oe=0 / watertight; current loft th150 gives oe=5.
-  (testing "loft along a sharp (th 150) corner leaves a VISIBLE open-edge hole"
+  ;; HIGHEST-VALUE GUARDRAIL — the one VISIBLE manifestation. Pre-fix, a SHARP
+  ;; corner (th 150) left oe=5 OPEN EDGES (a real hole, visible at render) while
+  ;; extrude closed the same corner. TAPPA-1 RESULT: removing the double-capping
+  ;; CLOSED the hole (oe 5→0) — the redundant separate cap was mis-stitching at
+  ;; the sharp angle. So the `oe=0` assertion below now PASSES (the visible bug is
+  ;; fixed). The `watertight` assertion still depends on nm=0, so it stays RED
+  ;; until tappa-2 closes the residual corner-bridge seam (b) (th150 nm: 154→93).
+  (testing "loft along a sharp (th 150) corner: hole closed (oe=0); watertight pending tappa-2"
     (let [r (d (lp (shape/circle-shape 10 32) "(path (f 20) (th 150) (f 20))"))]
       (is (nil? (:err r)) (str "mesh must build: " (:err r)))
       (is (zero? (:oe r))
-          (str "TARGET oe=0 (no hole); CURRENT oe=" (:oe r) " — VISIBLE HOLE (EXPECTED-RED)"))
-      (is (true? (:wt r)) (str "TARGET watertight; CURRENT wt=" (:wt r))))))
+          (str "TARGET oe=0 (no hole) — tappa-1 closed it; CURRENT oe=" (:oe r)))
+      (is (true? (:wt r)) (str "TARGET watertight (pending tappa-2 / b); CURRENT wt=" (:wt r))))))

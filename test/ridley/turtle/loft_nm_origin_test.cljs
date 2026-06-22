@@ -103,29 +103,29 @@
     (is (pos? (:nm (topo lweld))) "loft post-weld is non-manifold (weld stacks geometry)")))
 
 (deftest part1-cap-isolation
-  ;; Diagnostic: disable ONLY the separate make-cap-mesh (loft.cljs:812-815) by
-  ;; dropping the :primitive :cap sub-meshes before welding, leaving do-build's
-  ;; own :start/:end caps in place. PURELY in-test — production code untouched.
-  (println "\n==== PART 1: isolate double-capping (drop separate :cap sub-meshes) ====")
+  ;; TAPPA-1 DONE: the double-capping is removed in production (loft no longer
+  ;; emits separate make-cap-mesh sub-meshes; do-build caps each true end once).
+  ;; This test now documents the POST-FIX invariant: the FULL loft mesh already
+  ;; has no duplicate cap faces, so dropping the (now non-existent) :cap sub-meshes
+  ;; changes nothing — full == no-sep-caps. The residual corner-bridge component
+  ;; (b) (nm=64 at one corner) remains, by design, for tappa-2.
+  (println "\n==== PART 1: double-capping removed (tappa-1) ====")
   (let [p (rail "(path (f 20) (th 90) (f 20))")
         lsubs (:meshes (turtle/loft-from-path init circ id p 64))
         caps  (filter #(= :cap (:primitive %)) lsubs)
         full  (mu/merge-vertices (raw-combine lsubs) 1e-4)
         nocap (mu/merge-vertices (raw-combine (remove #(= :cap (:primitive %)) lsubs)) 1e-4)]
-    (println ">>> separate :cap sub-meshes:" (count caps) " face-counts:" (mapv #(count (:faces %)) caps))
-    (println ">>> FULL (baseline)       :" (topo full)  " dup-faces:" (dup-faces full)
+    (println ">>> separate :cap sub-meshes:" (count caps) " (was 2 pre-fix; 0 now)")
+    (println ">>> FULL       :" (topo full)  " dup-faces:" (dup-faces full)
              " incidence:" (:by-incidence (nm-mid-spread full)))
-    (println ">>> NO separate caps      :" (topo nocap) " dup-faces:" (dup-faces nocap)
-             " incidence:" (:by-incidence (nm-mid-spread nocap)))
-    (println ">>> delta nm:" (- (:nm (topo full)) (:nm (topo nocap))))
-    ;; locks separability of (a): dropping the double-cap removes ALL duplicate
-    ;; faces and a clean nm quota, WITHOUT opening edges or zeroing the residual
-    ;; corner-bridge component (b).
-    (is (pos? (:dup-face-total (dup-faces full))) "double-capping yields duplicate faces")
-    (is (zero? (:dup-face-total (dup-faces nocap))) "removing separate caps removes ALL dup faces")
-    (is (< (:nm (topo nocap)) (:nm (topo full))) "double-cap removal drops nm (separable)")
-    (is (zero? (:oe (topo nocap))) "do-build caps still close the ends (oe=0)")
-    (is (pos? (:nm (topo nocap))) "residual corner-bridge component (b) remains")))
+    (println ">>> NO sep caps:" (topo nocap) " dup-faces:" (dup-faces nocap))
+    ;; post-fix invariants: no double-cap, full == no-sep-caps, ends still closed,
+    ;; residual (b) remains.
+    (is (zero? (count caps)) "tappa-1: loft emits no separate :cap sub-meshes")
+    (is (zero? (:dup-face-total (dup-faces full))) "tappa-1: full mesh has no duplicate cap faces")
+    (is (= (:nm (topo nocap)) (:nm (topo full))) "tappa-1: separate caps gone → full == no-sep-caps")
+    (is (zero? (:oe (topo full))) "do-build caps close the ends (oe=0)")
+    (is (pos? (:nm (topo full))) "residual corner-bridge component (b) remains (tappa-2)")))
 
 (deftest part2-revolve-corner
   (println "\n==== PART 2: revolve of a profile WITH hard corners ====")
