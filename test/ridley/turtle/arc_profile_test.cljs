@@ -55,3 +55,18 @@
           (str "arc-profile revolve must have no non-manifold edges, got "
                (:non-manifold-edges diag)))
       (is (:is-watertight? diag) "arc-profile revolve must be watertight"))))
+
+;; ── Guardrail 3: revolve of a HARD-corner profile (revolve is solid) ──
+;; The loft non-manifold defect (see loft_nm_isolation_test) does NOT reach
+;; revolve: revolve uses its own continuous grid builder (revolve-shape), so a
+;; profile with hard 90° corners revolves watertight. This locks that the smooth
+;; arc guardrail above is solid, not green by a lucky parameter combination.
+(deftest hard-corner-profile-revolve-is-watertight
+  (testing "a rectangular (4 hard 90° corners) profile revolves into a watertight solid"
+    (let [{:keys [error diag faces]} (diag "(revolve (rect 10 20) 360)")]
+      (is (nil? error) (str "should not error: " error))
+      (is (pos? faces) "mesh has faces")
+      (is (zero? (:non-manifold-edges diag))
+          (str "hard-corner revolve must have no non-manifold edges, got "
+               (:non-manifold-edges diag)))
+      (is (:is-watertight? diag) "hard-corner revolve must be watertight"))))
