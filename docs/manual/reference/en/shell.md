@@ -22,6 +22,10 @@ wall pattern is chosen via `:style` (one of `:solid`, `:lattice`,
 via `:fn`. Used with `loft` or `revolve`. Does not modify turtle
 state.
 
+`:pattern` tiles an arbitrary 2D motif shape around the wall (the
+shell analogue of `embroid`'s `:pattern`), instead of a procedural
+texture — see the parameter table and the `shell-pattern` example.
+
 Caps (top and/or bottom) close the ends of the shell. They can be solid
 (a single thickness number) or patterned (a map with their own `:style`).
 By convention **top** is the extrusion's **arrival** end (where the path
@@ -34,7 +38,7 @@ loft begins): `:cap-top` closes the far end, `:cap-bottom` the near one.
 |---|---|---|
 | `shape-or-fn` | — | Base profile (shape or shape-fn). |
 | `:thickness` | `2` | Wall thickness. Outer ring offset outward by `thickness/2`, inner ring inward by the same amount. |
-| `:style` | `:solid` | Wall pattern: `:solid`, `:lattice`, `:checkerboard`, `:weave`, `:voronoi`. Ignored when `:fn` is supplied. |
+| `:style` | `:solid` | Wall pattern: `:solid`, `:lattice`, `:checkerboard`, `:weave`, `:voronoi`, `:pattern`. Ignored when `:fn` is supplied. |
 | `:fn` | — | Custom thickness function `(fn [a t] -> 0..1)` overriding `:style`. `a` = angular position (radians), `t` = path progress. |
 | `:threshold` | `0.05` | Values below this snap to 0 (no wall). |
 | `:invert?` | `false` | Swap solid/empty (`v → 1 - v`): e.g. turn `:lattice` bricks into brick-shaped openings, or a `:voronoi` wireframe into solid cells. Works with every style and with custom `:fn`. |
@@ -49,6 +53,15 @@ loft begins): `:cap-top` closes the far end, `:cap-bottom` the near one.
 | `:checkerboard` | `:cols` (8), `:rows` (8) |
 | `:weave` | `:strands` (6), `:frequency` (8), `:width` (0.3) |
 | `:voronoi` | `:cells` (6), `:rows` (6), `:seed` (42), `:wall-width` (0.3), `:margin` (0.05), `:softness` (0.6) |
+| `:pattern` | `:pattern` (motif shape, ≥3 pts), `:cells` (8), `:rows` (6), `:grid` (`:square` / `:hex`), `:inset` (0), `:margin` (0.05), `:softness` (0.6) |
+
+`:pattern` (the shell counterpart of `embroid`'s `:pattern`) tiles an
+arbitrary 2D motif **by arc-length around the perimeter**, in *cell units*:
+`:cells` motifs span the circumference and `:rows` span the sweep, so any
+integer `:cells` wraps seamlessly at the seam. The motif is the **opening**
+by default; `:invert?` makes it the solid. `:grid :hex` offsets alternate
+rows by half a cell; `:inset` grows (>0) / shrinks (<0) the motif in cell
+units to thin/fatten the struts.
 
 `:softness` (on `:voronoi` and `:lattice`, **default `0.6`**) cuts opening
 edges with a smooth **isocontour**: the wall→opening boundary is sliced at
@@ -136,6 +149,23 @@ Woven-style pattern: interlocking strands modulate the wall thickness.
 
 Checkerboard pattern, useful as a base for filtered or screened surfaces.
 
+{{example: shell-pattern}}
+
+<!-- example-source: shell-pattern -->
+```clojure
+(register motif-tube
+  (loft (shell (circle 20 96) :thickness 3
+                :style :pattern :pattern (circle 24) :cells 12 :rows 8)
+        (f 60)))
+```
+<!-- /example-source -->
+
+Tiles a circular motif as openings: 12 around the perimeter, 8 along the
+sweep. Use a higher-resolution motif (e.g. `(circle 24)`, not `(circle 6)`)
+for smooth holes — the motif's own point count sets how round the openings
+read. `:invert? true` swaps it to solid discs on an open wall; `:grid :hex`
+staggers the rows.
+
 {{example: shell-custom-fn}}
 
 <!-- example-source: shell-custom-fn -->
@@ -175,6 +205,12 @@ the outer wall radius.
   `(-> (circle 20 64) (shell :thickness 2 :style :voronoi …) (tapered :to 0.5))`.
 - The current `joint-mode` does not affect shell walls (they follow the
   per-ring thickness function rather than corner geometry).
+- **Curved rails:** patterned shells are intended for straight or smoothly
+  curved sweeps. An `arc-h`/`arc-v` rail is recorded as a chain of hard
+  corners, so the loft splits it into many segments and the openings
+  staircase/facet along the curve (the mesh stays watertight). For a clean
+  curved patterned wall, sweep along a **bezier rail** (`bezier-to`, which
+  is smooth) or raise the motif/`loft` resolution.
 
 ## See also
 

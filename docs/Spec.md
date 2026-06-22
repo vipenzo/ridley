@@ -694,7 +694,7 @@ A shape-fn is a function `(fn [t] -> shape)` with metadata `{:type :shape-fn}`. 
 | `(woven shape :warp n :weft m)` | Interlocking over/under woven fabric pattern |
 | `(heightmap shape hm :amplitude a)` | Displacement from a rasterized heightmap |
 | `(profile shape path)` | Scale cross-section to match a path silhouette |
-| `(shell shape :thickness n :style s)` | Hollow extrusion with wall pattern (`:solid` `:voronoi` `:lattice` `:checkerboard` `:weave`) |
+| `(shell shape :thickness n :style s)` | Hollow extrusion with wall pattern (`:solid` `:voronoi` `:lattice` `:checkerboard` `:weave` `:pattern`) |
 | `(shell shape :thickness n :fn f)` | Hollow extrusion with custom thickness function |
 | `(woven-shell shape :thickness n ...)` | Shell with radial offset for true over/under weave |
 
@@ -775,6 +775,8 @@ The path's X coordinates represent the radius at each point along the extrusion.
 (shell (circle 20 64) :thickness 2 :style :lattice :openings 8 :rows 12)  ; Grid openings
 (shell (circle 20 64) :thickness 2 :style :checkerboard :cols 8 :rows 8)  ; Checkerboard
 (shell (circle 20 64) :thickness 2 :style :weave :strands 6 :frequency 8) ; Woven pattern
+(shell (circle 20 96) :thickness 3 :style :pattern :pattern (circle 24)   ; Tiled motif holes
+       :cells 12 :rows 8)
 
 ;; Custom thickness function
 (shell (circle 20 64) :thickness 3
@@ -799,6 +801,9 @@ Wall is symmetric: outer ring displaced outward by `thickness/2`, inner ring dis
 | `:checkerboard` | `:cols` (8), `:rows` (8) |
 | `:weave` | `:strands` (6), `:frequency` (8), `:width` (0.3) |
 | `:voronoi` | `:cells` (6), `:rows` (6), `:seed` (42), `:wall-width` (0.3), `:margin` (0.05), `:softness` (0.6) |
+| `:pattern` | `:pattern` (motif shape, ≥3 pts), `:cells` (8), `:rows` (6), `:grid` (`:square`/`:hex`), `:inset` (0), `:margin` (0.05), `:softness` (0.6) |
+
+**Tiled motifs (`:pattern`).** The shell counterpart of `embroid`'s `:pattern`: tiles an arbitrary 2D motif shape around the wall **by arc-length**, in *cell units* — `:cells` motifs span the perimeter and `:rows` span the sweep, so any integer `:cells` wraps seamlessly at the seam. The motif is the **opening** by default (`:invert?` makes it the solid); `:grid :hex` offsets alternate rows by half a cell; `:inset` grows (>0) / shrinks (<0) the motif in cell units. Use a high-resolution motif (`(circle 24)`, not `(circle 6)`) for round holes — the motif's own point count sets how smooth the openings read.
 
 **Opening edges (`:softness`).** A `:voronoi` or `:lattice` shell is a binary mask. By **default** (`:softness 0.6`) opening edges are cut with an **isocontour** build: a continuous field feeds a marching-triangles pass that slices each boundary triangle along the wall→opening iso-line at sub-grid positions, so openings read smooth — a low-poly curve *following* the boundary, not a grid staircase — with a graceful tapered lip from the variable wall thickness. `~0.4–0.8` works well; the result stays watertight/manifold. This is the shell analogue of `text-heightmap`'s `:edge-softness`. Pass `:softness 0` for the original hard binary cut (whole grid triangles kept/dropped, staircased edges); optionally follow with `(mesh-smooth m :sharp-angle 90 :refine 2)` for crisp walls with rounded corners. **Exception:** `:lattice` with `:invert?` always uses the hard cut (its band-boundary plateau doesn't close manifold under the isocontour build when inverted); `:voronoi` is fine inverted.
 
@@ -925,6 +930,8 @@ Shared options: `:softness` (0.6; isocontour ramp — smooth openings vs `0` = h
 The result is watertight and manifold (each opening is a through-hole rimmed between the two faces; the `:margin`/`:border` frame keeps the panel closed and attached to its neighbours), with faces oriented outward.
 
 **Does not compose in thread with other shape-fns.** `embroid` takes a path (not a shape-fn) and, in the loft, stamps its own stored faces — so transforms applied after it (`(-> (embroid …) (tapered …))`) are silently ignored. Apply positioning with `:offset`, or `translate`/`turtle` on the resulting mesh.
+
+**Curved sweep rails (shell & embroid).** Both `shell` and `embroid` ride the loft's dual-ring machinery, which is intended for straight or *smoothly* curved sweeps. A curved **profile** is fine (the `embroid` path may bend freely, and stays watertight). A curved **rail**, however — `arc-h`/`arc-v` — is recorded as a chain of *hard corners*: the loft splits it into many segments, so the openings staircase/facet and pick up faint radial seams along the curve (the mesh is still watertight/manifold — the seams are cosmetic). For a patterned wall that curves *as it is swept*, use a **bezier rail** (`bezier-to`, recorded smooth so the sweep is not split) instead of `arc-h`/`arc-v`, or raise the motif/`loft` resolution.
 
 ### Shape preview (stamp)
 
@@ -3126,8 +3133,8 @@ There are **two** path editors, dispatched by path species: `edit-path-2d` edits
 Unlike `edit-bezier`, `edit-path-2d` is **not** a persistent primitive. On confirm it rewrites its `(edit-path-2d …)` marker to a `(path-2d …)`, so re-running the script does **not** re-enter editing. To edit an existing path again, **rename `path-2d` → `edit-path-2d`** — the editor normalizes the seed via `ensure-path-2d` and reads its nodes back (a leading `move-to` is honored, and baked `arc-v` / `bezier-to` curves are recovered as curve nodes, see below).
 
 **Workflow.** Open `(edit-path-2d)` (empty → a small starting triangle), then:
-- **Click a segment** to insert a point there (split it); **click elsewhere** to append a point at the end; **drag a node** to move it. Orbiting still works — only grabbing a node, handle or segment suppresses it for that drag.
-- Press **`c`** to toggle the selected node's **incoming segment** between a straight line and a **cubic bezier**; it bakes to a compact `(bezier-to …)`. The handles are **directional**: the start handle stays tangent to how the path arrives at the start node (length only — it slides along that line, so curves join smoothly), and the end handle is free, setting the entry direction into the next node. The handles are **colour-coded**: the free end handle is **bright cyan**, the length-only start handle **muted teal**, a freed cusp handle **magenta**. Press **`x`** to toggle a node **smooth ↔ cusp** (a cusp frees its outgoing handle for a sharp corner), and **`a`** to make the incoming segment a tangent **circular arc** (a rounded corner, baked as `arc-v`).
+- **Click a segment** to insert a point there (split it); **click elsewhere** to append a point at the end; **drag a node** to move it. Orbiting still works — only grabbing a node, handle or segment suppresses it for that drag. New nodes default to a **smooth bezier** whose handles start collinear with the chord — the segment looks straight and bakes as a clean line until you shape it, but is curvable without first pressing `c`.
+- Press **`c`** to toggle the selected node's **incoming segment** between a straight line and a **cubic bezier**; it bakes to a compact `(bezier-to …)` (a bezier left collinear with the chord bakes back as a clean line). The handles are **directional**: the start handle stays tangent to how the path arrives at the start node (length only — it slides along that line, so curves join smoothly), and the end handle is free, setting the entry direction into the next node. The handles are **colour-coded**: the free end handle is **bright cyan**, the length-only start handle **muted teal**, a freed cusp handle **magenta**. Press **`x`** to toggle a node **smooth ↔ cusp** (a cusp frees its outgoing handle for a sharp corner; the first node of an open path is implicitly a cusp), and **`a`** to make the incoming segment a tangent **circular arc** (a rounded corner, baked as `arc-v`). **`Shift+A`** makes every segment a smooth bezier and clears all cusps (tangent-continuous everywhere); **`Shift+X`** is the inverse, turning every segment back into a straight line. These work the same way in the 3D `edit-path` rail editor.
 - `Tab` cycles the selected node; **arrows** nudge it; type digits to set the step (mm).
 - `Delete` removes the selected node.
 - `Enter` confirms; `Esc` cancels.

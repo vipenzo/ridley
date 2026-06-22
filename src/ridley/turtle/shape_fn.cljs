@@ -876,8 +876,30 @@
     (let [t (-> (/ (- x e0) (- e1 e0)) (max 0.0) (min 1.0))]
       (* t t (- 3.0 (* 2.0 t))))))
 
+;; signed-dist-poly is defined further down (with the panel-field helpers);
+;; the :pattern style below calls it at runtime, so a forward declaration is
+;; enough to keep the compiler from warning about an undeclared var.
+(declare signed-dist-poly)
+
+(defn- perimeter-fractions
+  "Cumulative arc-length fraction (0..1) at each point of a closed polyline.
+   First point is 0; spacing between fractions follows the real edge lengths,
+   so a :pattern motif tiles by distance along the wall (not by vertex index)."
+  [pts]
+  (let [n (count pts)
+        seglens (mapv (fn [i]
+                        (let [[x0 y0] (nth pts i)
+                              [x1 y1] (nth pts (mod (inc i) n))
+                              dx (- x1 x0) dy (- y1 y0)]
+                          (Math/sqrt (+ (* dx dx) (* dy dy)))))
+                      (range n))
+        total (max 1e-9 (reduce + seglens))]
+    (mapv #(/ % total) (take n (reductions + 0.0 seglens)))))
+
 (defn- style->thickness-fn
-  "Convert a :style keyword + options to a thickness function (fn [a t] → 0..1)."
+  "Convert a :style keyword + options to a thickness function (fn [a t] → 0..1).
+   For :pattern the first arg is the perimeter fraction u (0..1) instead of an
+   angle — shell feeds it arc-length so the motif tiles undistorted."
   [style opts]
   (case style
     :solid (fn [_a _t] 1.0)
@@ -984,9 +1006,54 @@
               ;; 1 inside the stripe (small edge-dist), feather to 0 outside
               (- 1.0 (smoothstep e0 e1 edge-dist)))))))
 
+    :pattern
+    ;; Tile an arbitrary motif shape around the wall and cut it out via signed
+    ;; distance (smooth, isocontour-friendly). Unlike embroid's world-unit
+    ;; :pattern this is parameterized in CELL units: :cells motifs span the
+    ;; perimeter (u 0..1) and :rows span the sweep (t 0..1), so the tiling wraps
+    ;; seamlessly at the seam for any integer :cells. The motif is the OPENING by
+    ;; default; shell's top-level :invert? turns it into the solid instead.
+    (let [{:keys [pattern cells rows inset grid margin softness]
+           :or {cells 8 rows 6 inset 0 grid :square margin 0.05 softness 0}} opts
+          raw (:points pattern)
+          _ (assert (and raw (>= (count raw) 3))
+                    "shell :pattern needs a :pattern shape with >= 3 points")
+          xs (map first raw) ys (map second raw)
+          minx (reduce min xs) maxx (reduce max xs)
+          miny (reduce min ys) maxy (reduce max ys)
+          cx0 (* 0.5 (+ minx maxx)) cy0 (* 0.5 (+ miny maxy))
+          span (max 1e-6 (- maxx minx) (- maxy miny))
+          ;; fit the motif into ~0.8 of the unit cell, leaving struts between tiles
+          scale (/ 0.8 span)
+          motif (mapv (fn [[x y]] [(* (- x cx0) scale) (* (- y cy0) scale)]) raw)
+          hex? (= grid :hex)
+          band (max 1e-4 (* (max 0.0 softness) 0.15))
+          e0 (- (- inset) band)
+          e1 (+ (- inset) band)]
+      (fn [u t]
+        ;; solid frame at the sweep ends so caps close cleanly (like :voronoi)
+        (if (or (<= t margin) (>= t (- 1.0 margin)))
+          1.0
+          (let [cu (* u cells)
+                cv (* t rows)
+                jr (long (Math/round cv))
+                sd (reduce
+                    (fn [best dj]
+                      (let [row (+ jr dj)
+                            xoff (if (and hex? (odd? row)) 0.5 0.0)
+                            ic (Math/round (- cu xoff))]
+                        (reduce
+                         (fn [b di]
+                           (let [ccx (+ ic di xoff)]
+                             (min b (signed-dist-poly (- cu ccx) (- cv row) motif))))
+                         best [-1 0 1])))
+                    js/Infinity [-1 0 1])]
+            ;; sd<0 inside motif → 0 (opening); sd>0 outside → 1 (solid wall)
+            (smoothstep e0 e1 sd)))))
+
     ;; Unknown style
     (throw (js/Error. (str "shell: unknown :style " style
-                           ". Valid styles: :solid :lattice :checkerboard :weave :voronoi")))))
+                           ". Valid styles: :solid :lattice :checkerboard :weave :voronoi :pattern")))))
 
 ;; ============================================================
 ;; Panel field (for embroid) — perforation over a flat (u,t) grid
@@ -1162,6 +1229,7 @@
    (shell shape :thickness 2 :style :lattice :openings 8 :rows 12); Grid openings
    (shell shape :thickness 2 :style :checkerboard :cols 8 :rows 8); Checkerboard
    (shell shape :thickness 2 :style :weave :strands 6 :frequency 8); Woven pattern
+   (shell shape :thickness 2 :style :pattern :pattern (circle 6))  ; Tiled motif holes
    (shell shape :thickness 2 :fn (fn [a t] ...))                   ; Custom function
 
    Add :invert? true to swap solid/empty (e.g. turn :lattice bricks into a
@@ -1169,6 +1237,18 @@
 
    :voronoi extra options:
      :wall-width  width of the wall stripe in (u, v) cell units (default 0.3)
+
+   :pattern extra options (the shell analogue of embroid's :pattern — tiles an
+   arbitrary 2D motif shape around the wall instead of a procedural texture):
+     :pattern  a 2D shape (>= 3 points) used as the repeating motif; it is the
+               OPENING by default (use :invert? to make it the solid)
+     :cells    motifs around the perimeter (default 8); any integer wraps
+               seamlessly at the seam since spacing is derived per cell
+     :rows     motifs along the sweep (default 6)
+     :grid     :square (default) or :hex (offsets alternate rows by half a cell)
+     :inset    grow (>0) / shrink (<0) the motif in cell units to fatten/thin
+               the struts (default 0)
+     :margin   fraction of the sweep at each end forced solid (default 0.05)
 
    :softness (:voronoi and :lattice, default 0.6)
      >0 (default) = ISOCONTOUR cut: a continuous field feeds a marching-triangles
@@ -1204,7 +1284,7 @@
         ;; Exception: :lattice + :invert? keeps the hard cut — its longit=0
         ;; band-boundary plateau doesn't close manifold under the isocontour
         ;; build when inverted (voronoi is fine inverted).
-        eff-soft (if (and (contains? #{:voronoi :lattice} style)
+        eff-soft (if (and (contains? #{:voronoi :lattice :pattern} style)
                           (not (and (= style :lattice) invert?)))
                    (or (:softness opts) 0.6)
                    0)
@@ -1214,17 +1294,24 @@
         thickness-fn (if invert?
                        (fn [a t] (- 1.0 (base-fn a t)))
                        base-fn)
-        smooth? (pos? eff-soft)]
+        smooth? (pos? eff-soft)
+        ;; :pattern tiles a motif by distance ALONG the wall, so it needs the
+        ;; per-point arc-length fraction (u) rather than the centroid angle.
+        pattern? (= style :pattern)]
     (shape-fn shape-or-fn
               (fn [s t]
                 (let [center (shape-centroid s)
                       pts (:points s)
-                      values (mapv (fn [p]
-                                     (let [a (Math/atan2 (- (second p) (second center))
-                                                         (- (first p) (first center)))
-                                           v (thickness-fn a t)]
+                      params (if pattern?
+                               (perimeter-fractions pts)
+                               (mapv (fn [p]
+                                       (Math/atan2 (- (second p) (second center))
+                                                   (- (first p) (first center))))
+                                     pts))
+                      values (mapv (fn [param]
+                                     (let [v (thickness-fn param t)]
                                        (if (< v threshold) 0.0 (max 0.0 (min 1.0 v)))))
-                                   pts)]
+                                   params)]
                   (cond-> (assoc s
                                  :shell-mode true
                                  :shell-thickness thickness

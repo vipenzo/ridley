@@ -2235,9 +2235,14 @@
              flags (set (filter keyword? args))
              shape? (boolean (or (contains? flags :as-shape-seed) (contains? flags :shape)))
              wf?    (boolean (contains? flags :wireframe))
+             ;; Seed coordinate frame mirrors bezier-to: a :local seed is taken
+             ;; as-is (round-tripping our own emitted output); without :local the
+             ;; seed is WORLD and gets projected into the local frame, so editing
+             ;; a hand-written (bezier-to …) preserves its curve.
+             seed-local? (boolean (contains? flags :local))
              provided (when (= 3 (count vecs)) vecs)]
          `(apply ~'bezier-to
-                 (conj (edit-bezier-request! ~shape? ~wf? ~provided) :local)))))
+                 (conj (edit-bezier-request! ~shape? ~wf? ~provided ~seed-local?) :local)))))
 
    ;; ============================================================
    ;; edit-path-2d — interactive planar polyline tracing (pen tool)

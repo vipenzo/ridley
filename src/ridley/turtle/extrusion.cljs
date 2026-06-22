@@ -2083,10 +2083,16 @@
    panel) so the result is watertight. The :margin in the field keeps the
    border rows/cols solid, so the border rims land on real wall, not holes."
   ([ring-data creation-pose] (build-embroid-mesh ring-data creation-pose true 0.5))
-  ([ring-data creation-pose _caps? level]
+  ([ring-data creation-pose caps? level]
    (let [n-rings (count ring-data)
          n-pts (count (:outer (first ring-data)))
-         level (or level 0.5)]
+         level (or level 0.5)
+         ;; End-row rims close the SWEEP ends. Like shell's caps they must be
+         ;; emitted only at the true ends, never at an internal seam between two
+         ;; sub-meshes of a split (curved-rail) loft — otherwise the globally
+         ;; welded :combined mesh stacks both seam rims and goes non-manifold.
+         cap-start? (or (true? caps?) (= caps? :start))
+         cap-end?   (or (true? caps?) (= caps? :end))]
      (when (and (>= n-rings 2) (>= n-pts 2))
        (let [outers (mapv :outer ring-data)
              inners (mapv :inner ring-data)
@@ -2137,20 +2143,26 @@
                      n00 (nth ia j) n10 (nth ib j) n11 (nth ib j1) n01 (nth ia j1)]
                  (march! f00 f10 f11 o00 o10 o11 n00 n10 n11)
                  (march! f00 f11 f01 o00 o11 o01 n00 n11 n01)))))
-         ;; border rims along the two sweep-edges (j = 0 and j = n-pts-1)
+         ;; border rims along the two sweep-edges (j = 0 and j = n-pts-1) — the
+         ;; wall's free side edges; always present, and continuous across seams.
          (let [jL (dec n-pts)]
            (dotimes [ri (dec n-rings)]
              (let [oa (nth outers ri) ob (nth outers (inc ri))
                    ia (nth inners ri) ib (nth inners (inc ri))]
                (rim! (nth oa 0) (nth ob 0) (nth ia 0) (nth ib 0))
                (rim! (nth ob jL) (nth oa jL) (nth ib jL) (nth ia jL)))))
-         ;; border rims along the two end-rows (ri = 0 and ri = last)
-         (let [o0 (nth outers 0) i0 (nth inners 0)
-               oT (nth outers (dec n-rings)) iT (nth inners (dec n-rings))]
-           (dotimes [j (dec n-pts)]
-             (let [j1 (inc j)]
-               (rim! (nth o0 j1) (nth o0 j) (nth i0 j1) (nth i0 j))
-               (rim! (nth oT j) (nth oT j1) (nth iT j) (nth iT j1)))))
+         ;; border rims along the two end-rows — only at TRUE sweep ends, so a
+         ;; split (curved-rail) loft doesn't double them at internal seams.
+         (when cap-start?
+           (let [o0 (nth outers 0) i0 (nth inners 0)]
+             (dotimes [j (dec n-pts)]
+               (let [j1 (inc j)]
+                 (rim! (nth o0 j1) (nth o0 j) (nth i0 j1) (nth i0 j))))))
+         (when cap-end?
+           (let [oT (nth outers (dec n-rings)) iT (nth inners (dec n-rings))]
+             (dotimes [j (dec n-pts)]
+               (let [j1 (inc j)]
+                 (rim! (nth oT j) (nth oT j1) (nth iT j) (nth iT j1))))))
          ;; Orient consistently outward: the param-space winding gives a
          ;; uniformly inside-out mesh when the path runs the other way, so
          ;; flip every face if the signed volume came out negative.

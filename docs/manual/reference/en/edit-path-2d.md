@@ -45,6 +45,9 @@ default pose that is the **YZ world plane**: horizontal arrows move along world 
 vertical arrows along Z, and world X is never touched.
 
 Segments can be **straight**, **cubic bezier** (`c`), or **circular arc** (`a`).
+New nodes you draw default to a **smooth bezier** whose handles start collinear with
+the chord — so the segment looks straight and bakes as a clean line until you shape
+it, but every node is immediately curvable without first pressing `c`.
 
 ## Parameters
 
@@ -93,7 +96,13 @@ to trace.
   bulge) bakes as a straight segment. Bezier and arc are mutually exclusive on a
   segment (`a`/`c` switch between them).
 - `x` — toggle the selected node **smooth ↔ cusp**. A cusp frees the node's
-  **outgoing** handle (shown magenta) so the curve can leave at any angle.
+  **outgoing** handle (shown magenta) so the curve can leave at any angle. (The first
+  node of an open path is implicitly a cusp — there is no incoming segment to be
+  tangent to, so the first segment stays as you draw it.)
+- `Shift`+`A` — make **every** segment a smooth bezier and clear all cusps (the path
+  becomes tangent-continuous everywhere: corners round, straight runs stay straight).
+- `Shift`+`X` — the inverse: turn **every** segment back into a straight line
+  (drops all beziers and arcs).
 - `Insert` (or `i`) — insert a node at the **midpoint of the segment entering the
   selected node** (splits it in half). A straight segment splits at the chord
   midpoint; a bezier splits with de Casteljau at t=0.5, so the curve's shape is

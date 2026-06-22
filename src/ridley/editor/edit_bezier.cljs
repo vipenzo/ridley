@@ -92,6 +92,20 @@
                             (turtle/v+ (turtle/v* up b)
                                        (turtle/v* heading c)))))))
 
+(defn- world->pt
+  "Inverse of pt->world: project a WORLD position into the stored local frame
+   [a=right, b=up, c=heading], so a world-coordinate bezier seed (e.g. a
+   hand-written `(bezier-to … )` without `:local`) round-trips into the editor."
+  [{:keys [position heading up]} shape-seed? w]
+  (let [right (turtle/normalize (turtle/cross heading up))
+        d  (turtle/v- w position)
+        dr (turtle/dot d right)
+        du (turtle/dot d up)
+        dh (turtle/dot d heading)]
+    (if shape-seed?
+      [(- du) dh dr]     ; forward used c→right, (−a)→up, b→heading
+      [dr du dh])))
+
 (defn- default-points
   "A gentle starting curve, so there is something visible to move. Order matches
    bezier-to: [end c1 c2], where c1 is the start-tangent handle (off P0) and c2 is
@@ -598,10 +612,19 @@
    REPL could never complete — there we just return the points and hint, without
    claiming the mutex (avoiding a stuck slot). On a skip-flagged re-eval (cancel /
    live preview) we likewise just return the points without re-opening."
-  [shape-seed? wireframe? provided]
+  [shape-seed? wireframe? provided seed-local?]
   (let [p0 (state/get-turtle-pose)
-        points (if (and provided (= 3 (count provided)))
+        points (cond
+                 ;; Seed already in the editor's local frame (round-tripping an
+                 ;; (edit-bezier … :local) — i.e. our own emitted output).
+                 (and provided (= 3 (count provided)) seed-local?)
                  (mapv vec provided)
+                 ;; Seed is WORLD coordinates (a hand-written bezier-to without
+                 ;; :local). Project into the local frame so the curve is
+                 ;; preserved instead of being reinterpreted as local.
+                 (and provided (= 3 (count provided)))
+                 (mapv #(world->pt p0 shape-seed? %) provided)
+                 :else
                  (default-points shape-seed?))]
     (cond
       ;; A re-eval armed the skip flag — pass through without opening a session.

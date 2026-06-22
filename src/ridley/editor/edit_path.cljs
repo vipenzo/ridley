@@ -274,20 +274,51 @@
 ;; offset self-overlap pathologically (pinches / stray faces on extrude).
 (def ^:private min-handle-frac 0.1)
 
+(defn- lerp
+  "Point at fraction t along A→B. Dimension-generic (2D plane / 3D rail points)."
+  [A B t]
+  (mapv (fn [a b] (+ a (* (- b a) t))) A B))
+
+(defn- straight-bez?
+  "True when the cubic A→c1→c2→B is geometrically the straight segment A→B: both
+   control points sit on the chord (tight tolerance) and between the ends, in order.
+   Lets a 'straight' default/edited bezier bake as a clean line (f/th, set-heading+f)
+   instead of a bezier-to. Dimension-generic."
+  [A c1 c2 B]
+  (let [vsub  (fn [p q] (mapv - p q))
+        vdot  (fn [p q] (reduce + (map * p q)))
+        d     (vsub B A)
+        chord (js/Math.sqrt (vdot d d))]
+    (if (< chord 1e-9)
+      false
+      (let [u   (mapv #(/ % chord) d)
+            eps (* 1e-6 chord)
+            ;; projection length of P onto the chord (nil if off-line / past an end)
+            on  (fn [P]
+                  (let [w    (vsub P A)
+                        t    (vdot w u)
+                        proj (lerp A B (/ t chord))
+                        pd   (let [e (vsub P proj)] (js/Math.sqrt (vdot e e)))]
+                    (when (and (< pd eps) (>= t (- eps)) (<= t (+ chord eps))) t)))
+            t1 (on c1) t2 (on c2)]
+        (boolean (and t1 t2 (<= t1 (+ t2 eps))))))))
+
 (defn- reconstrain-handles
   "Project each bezier segment's c1 onto its start node's incoming tangent (keeping
    its length, with a small minimum so it never collapses onto the start node), so
-   smooth nodes stay tangent-continuous. Cusp start nodes are left free. Single
-   pass — a node's incoming tangent depends on its c2/pos, not on the c1's being
-   constrained. When `closed?`, node 0's :bez is the closing segment (start node =
-   the last node), so its c1 is reconstrained too."
+   smooth nodes stay tangent-continuous. Cusp start nodes are left free, as is the
+   first node of an OPEN path (no incoming segment → no tangent to continue, so the
+   first segment stays as drawn). Single pass — a node's incoming tangent depends on
+   its c2/pos, not on the c1's being constrained. When `closed?`, node 0's :bez is the
+   closing segment (start node = the last node), so its c1 is reconstrained too."
   ([nodes] (reconstrain-handles nodes false))
   ([nodes closed?]
    (let [n (count nodes)
          ;; project node `i`'s :bez :c1 onto the incoming tangent at its start node
          ;; `a` (so a smooth seam stays tangent-continuous; a cusp start is left free)
          project (fn [ns i a]
-                   (if (false? (:smooth? (nth ns a)))
+                   (if (or (false? (:smooth? (nth ns a)))
+                           (and (not closed?) (zero? a)))   ; open start: free
                      ns
                      (let [[ax ay] (node-pos (nth ns a))
                            [bx by] (node-pos (nth ns i))
@@ -376,6 +407,8 @@
   [ch from n0]
   (let [to (node-pos n0)]
     (cond
+      (and (:bez n0) (straight-bez? from (:c1 (:bez n0)) (:c2 (:bez n0)) to))
+      (first (segment-cmds ch from to nil))
       (:bez n0)
       (let [{:keys [c1 c2]} (:bez n0)]
         [{:cmd :bezier-to :args [(pt->local from ch to)
@@ -429,6 +462,14 @@
                    ;; before it is edited; the standard macro re-tessellates it. The
                    ;; heading after is the end tangent (c2 → end); the 3D frame advances
                    ;; via bezier-frame-3d (matches eval, may flip the in-plane normal).
+                   ;; A bezier whose handles are collinear with the chord is straight —
+                   ;; bake it as a clean f/th line (keeps polygons/faceted profiles tidy).
+                   (and (:bez node) (straight-bez? from (:c1 (:bez node)) (:c2 (:bez node)) to))
+                   (let [[cmds ch1] (segment-cmds ch from to (:heading node))
+                         [h3' u3'] (straight-frame h3 u3 ch1)]
+                     (recur ch1 to h3' u3' (rest remaining)
+                            (-> out (into (emit cmds)) (into (:tail node)))))
+
                    (:bez node)
                    (let [{:keys [c1 c2]} (:bez node)
                          end-tan (v2-norm [(- (first to) (first c2)) (- (second to) (second c2))])
@@ -705,8 +746,12 @@
       segs
       (let [a (node-pos (nth nodes (dec i)))
             b (node-pos (nth nodes i))
-            node (nth nodes i)]
-        (if-let [{:keys [c1 c2]} (:bez node)]
+            node (nth nodes i)
+            ;; a bezier with collinear handles is geometrically straight → walk (and
+            ;; bake) it as a straight segment, so it emits set-heading+f, not bezier-to.
+            bez (when-let [{:keys [c1 c2]} (:bez node)]
+                  (when-not (straight-bez? a c1 c2 b) (:bez node)))]
+        (if-let [{:keys [c1 c2]} bez]
           (let [{:keys [pts exit-h exit-u]} (bezier-frame-3d a c1 c2 b u 24)]
             (recur (inc i) exit-h exit-u
                    (conj segs {:kind :bez :i i :a a :b b :h h :u u :c1 c1 :c2 c2 :pts pts})))
@@ -717,6 +762,30 @@
                 (recur (inc i) dir up*
                        (conj segs {:kind :straight :i i :a a :b b :h h :u u
                                    :dir dir :dist dist :up* up*}))))))))))
+
+(defn- reconstrain-handles-3d
+  "3D analogue of reconstrain-handles: project each bezier segment's c1 onto the
+   tangent the rail arrives at its start node with (from the shared frame walk), so
+   smooth nodes stay tangent-continuous; cusp start nodes (`:smooth? false`) are left
+   free, as is the rail's first segment (node 0 is the anchor — no incoming tangent,
+   so the segment stays as drawn). Single forward pass — the arrival heading at a node
+   depends on the previous segment's c2/positions, not on the c1's being constrained."
+  [nodes]
+  (let [n (count nodes)]
+    (reduce
+     (fn [ns i]
+       (if (and (:bez (nth ns i))
+                (pos? (dec i))                        ; i≥2: node 0 anchor has no tangent
+                (not (false? (:smooth? (nth ns (dec i))))))
+         (let [A     (node-pos (nth ns (dec i)))
+               B     (node-pos (nth ns i))
+               c1    (:c1 (:bez (nth ns i)))
+               h     (or (:h (nth (walk-3d-segments ns) (dec i) nil)) [1 0 0])
+               chord (m/magnitude (m/v- B A))
+               len   (max (* min-handle-frac chord) (m/dot (m/v- c1 A) h))]
+           (assoc-in ns [i :bez :c1] (m/v+ A (m/v* h len))))
+         ns))
+     nodes (range 1 n))))
 
 (defn- nodes->commands-3d
   "Commands tracing the 3D nodes as a TWIST-FREE rail. Per straight segment:
@@ -1050,10 +1119,13 @@
         :else                                 nil))
 
 (defn- reconstrain!
-  "swap!-fn: re-snap the session's bezier handles to their tangents, honouring the
-   closed flag (so node 0's closing handle is constrained too)."
+  "swap!-fn: re-snap the session's bezier handles to their tangents so smooth nodes
+   stay tangent-continuous. 2D honours the closed flag (node 0's closing handle is
+   constrained too); 3D rails are open."
   [s]
-  (update s :nodes reconstrain-handles (boolean (closed? s))))
+  (if (three-d? s)
+    (update s :nodes reconstrain-handles-3d)
+    (update s :nodes reconstrain-handles (boolean (closed? s)))))
 
 (defn- active-basis
   "World-space basis {:origin :px :py} of the session's active working plane."
@@ -1400,10 +1472,12 @@
                (if td?
                  (str "click: add · drag node/handle · Shift+drag node: axis-lock · "
                       "Shift+drag handle: length · Tab: next · c: curve · t: raccordo · "
+                      "x: cusp · Shift+A: smooth all · Shift+X: lines all · "
                       "m: mark · Shift+m: labels · Ins/i: split · f/r/u: plane · ←→↑↓: move · "
                       "Shift/Alt+↑↓: handles · ⌘Z: undo · Del · Enter: OK · Esc: cancel")
                  (str "click: add · drag node/handle: move · Alt+drag: handle only · "
-                      "Tab: next · c: curve · a: arc · t: raccordo · x: cusp · m: mark · "
+                      "Tab: next · c: curve · a: arc · t: raccordo · x: cusp · "
+                      "Shift+A: smooth all · Shift+X: lines all · m: mark · "
                       "Ins/i: split · ←→↑↓: node · Shift+↑↓: c1 · Alt+↑↓: c2 · "
                       "⌘Z: undo · Del · Enter: OK · Esc: cancel"))
                "</div>"
@@ -1476,13 +1550,32 @@
 ;; Editing operations
 ;; ============================================================
 
-(defn- append-node!
-  "Append a node at 2D plane coord `pos` at the end of the path and select it."
+(defn- append-plain-node!
+  "Append a STRAIGHT node at coord `pos` at the end of the path and select it (no
+   curve). Used where a split must preserve a straight segment (the closing seam)."
   [pos]
   (push-undo!)
   (let [nodes (vec (:nodes @session))]
     (swap! session assoc :nodes (conj nodes {:pos pos :tail []})
            :selected (count nodes))
+    (refresh-preview!)
+    (update-panel!)))
+
+(defn- append-node!
+  "Append a node at coord `pos` at the end of the path and select it. New segments
+   default to a SMOOTH bezier (handles collinear with the chord, so it looks straight
+   but is immediately shapeable, and bakes as a clean line until curved); the first
+   node has no incoming segment so it stays a bare point. 2D + 3D."
+  [pos]
+  (push-undo!)
+  (let [nodes (vec (:nodes @session))
+        node  (if (seq nodes)
+                (let [A (node-pos (peek nodes))]
+                  {:pos pos :tail [] :bez {:c1 (lerp A pos (/ 1.0 3))
+                                           :c2 (lerp A pos (/ 2.0 3))}})
+                {:pos pos :tail []})]
+    (swap! session assoc :nodes (conj nodes node) :selected (count nodes))
+    (swap! session reconstrain!)
     (refresh-preview!)
     (update-panel!)))
 
@@ -1538,9 +1631,9 @@
 
       :else
       (if (and (zero? sel) (>= n 3))
-        ;; closing segment is straight → append the chord midpoint (append-node!
-        ;; pushes undo and selects the new node).
-        (append-node! (mid2 (node-pos (last nodes)) (node-pos (first nodes))))
+        ;; closing segment is straight → append the chord midpoint as a plain node
+        ;; (append-plain-node! pushes undo and selects it; keeps the split straight).
+        (append-plain-node! (mid2 (node-pos (last nodes)) (node-pos (first nodes))))
         (let [i (if (pos? sel) sel 1)          ; new node goes at index i (before node i)
               a (nth nodes (dec i))
               b (nth nodes i)
@@ -1619,10 +1712,9 @@
                  closing-c1?                     (update-in [:nodes 0 :bez :c1] tr))))
       (when-not (notable? (:nodes @session) idx)
         (swap! session assoc-in [:nodes idx :heading] nil))
-      ;; 2D: moving a node changes incoming tangents → re-snap smooth bezier handles.
-      ;; 3D handles are free (no tangent constraint), so leave them.
-      (when-not (three-d? @session)
-        (swap! session reconstrain!)))))
+      ;; moving a node changes incoming tangents → re-snap smooth bezier handles
+      ;; (cusp nodes are left free). 2D + 3D.
+      (swap! session reconstrain!))))
 
 (defn- nudge!
   "Move the selected node by sign·step along the active plane's axis 0 (px) / 1 (py).
@@ -1706,8 +1798,8 @@
 
 (defn- nudge-handle!
   "Move control point `which` (:c1/:c2) of the selected node's bezier by sign·step.
-   2D: along axis 0=x / 1=y, then re-snap (a smooth c1 stays on its tangent). 3D: along
-   the active plane axis (px/py), free (no re-snap)."
+   2D: along axis 0=x / 1=y. 3D: along the active plane axis (px/py). Then re-snap, so
+   a smooth c1 slides along its tangent (length-only) while a cusp's stays free."
   [which axis sign]
   (let [s @session i (:selected s) step (:step s)]
     (when (get-in (:nodes s) [i :bez which])
@@ -1715,8 +1807,8 @@
       (if (three-d? s)
         (let [b (active-basis s) ax (if (zero? axis) (:px b) (:py b))]
           (swap! session update-in [:nodes i :bez which] #(m/v+ % (m/v* ax (* sign step)))))
-        (do (swap! session update-in [:nodes i :bez which axis] + (* sign step))
-            (swap! session reconstrain!)))
+        (swap! session update-in [:nodes i :bez which axis] + (* sign step)))
+      (swap! session reconstrain!)
       (refresh-preview!)
       (update-panel!))))
 
@@ -1754,7 +1846,7 @@
             ;; bezier and arc are mutually exclusive segment types
             (swap! session update-in [:nodes i] dissoc :arc)
             (swap! session assoc-in [:nodes i :bez] {:c1 (along (/ 1.0 3)) :c2 (along (/ 2.0 3))}))))
-      (when-not (three-d? s) (swap! session reconstrain!))
+      (swap! session reconstrain!)
       (refresh-preview!)
       (update-panel!))))
 
@@ -1813,7 +1905,7 @@
                       {:c1 (m/v+ A (m/v* h L)) :c2 (m/v+ A (m/v* (m/v- B A) (/ 2.0 3)))})]
         (swap! session (fn [st] (-> st (update-in [:nodes i] dissoc :arc)
                                     (assoc-in [:nodes i :bez] handles)))))
-      (when-not (three-d? s) (swap! session reconstrain!))
+      (swap! session reconstrain!)
       (refresh-preview!)
       (update-panel!))))
 
@@ -1828,6 +1920,48 @@
       (swap! session reconstrain!)
       (refresh-preview!)
       (update-panel!))))
+
+(defn- smooth-all!
+  "Shift+A: make EVERY segment a smooth bezier and clear all cusps. Segments that are
+   already bezier keep their handles (only the cusp flag is cleared); straight/arc
+   segments gain default chord-proportional handles. The single reconstrain then makes
+   every node tangent-continuous (G1) — a corner rounds, a straight run stays straight.
+   2D (incl. the closed seam) + 3D."
+  []
+  (let [s @session
+        td (three-d? s)
+        cl (closed? s)
+        n (count (:nodes s))
+        idxs (cond-> (vec (range 1 n))
+               (and (not td) cl (>= n 3)) (conj 0))]   ; closed 2D: node 0's seam too
+    (when (seq idxs)
+      (push-undo!)
+      (swap! session update :nodes
+             (fn [nds]
+               (reduce (fn [acc i]
+                         (let [pi   (if (zero? i) (dec n) (dec i))   ; closed seam → last
+                               A    (node-pos (nth acc pi))
+                               B    (node-pos (nth acc i))
+                               node (dissoc (nth acc i) :arc :smooth?)
+                               node (if (:bez node)
+                                      node
+                                      (assoc node :bez {:c1 (lerp A B (/ 1.0 3))
+                                                        :c2 (lerp A B (/ 2.0 3))}))]
+                           (assoc acc i node)))
+                       nds idxs)))
+      (swap! session reconstrain!)
+      (refresh-preview!)
+      (update-panel!))))
+
+(defn- linear-all!
+  "Shift+X: the inverse of Shift+A — drop every curve, turning all segments back into
+   straight lines (removes :bez and :arc, and the cusp flag). 2D + 3D."
+  []
+  (when (seq (:nodes @session))
+    (push-undo!)
+    (swap! session update :nodes #(mapv (fn [nd] (dissoc nd :bez :arc :smooth?)) %))
+    (refresh-preview!)
+    (update-panel!)))
 
 (defn- toggle-closed!
   "2D: toggle the path between OPEN and CLOSED. Closed makes the closing segment
@@ -2116,12 +2250,11 @@
                   (swap! session assoc-in [:nodes idx :bez which] (m/v+ anchor (m/v* dir len))))
                 ;; plain: a free world point on the active plane (deproject target)
                 (swap! session assoc-in [:nodes idx :bez which] w))
-              (do
-                (swap! session assoc-in [:nodes idx :bez which]
-                       (world->plane (plane-basis (:pose s)) w))
-                ;; c1 → snap to the start node's tangent (unless cusp); c2 free but
-                ;; re-snaps the next segment's c1 (its incoming tangent changed)
-                (swap! session reconstrain!)))
+              (swap! session assoc-in [:nodes idx :bez which]
+                     (world->plane (plane-basis (:pose s)) w)))
+            ;; c1 → snap to the start node's tangent (unless cusp); c2 free but re-snaps
+            ;; the next segment's c1 (its incoming tangent changed). 2D + 3D.
+            (swap! session reconstrain!)
             (refresh-preview!)))
 
         (:dragging s)
@@ -2255,13 +2388,21 @@
         (#{"t" "T"} key)
         (do (.preventDefault e) (.stopPropagation e) (toggle-tangent!))
 
+        ;; Shift+A: make ALL segments smooth beziers (no cusps) (2D + 3D).
+        (and (.-shiftKey e) (#{"a" "A"} key))
+        (do (.preventDefault e) (.stopPropagation e) (smooth-all!))
+
+        ;; Shift+X: the inverse — turn ALL segments back into straight lines (2D + 3D).
+        (and (.-shiftKey e) (#{"x" "X"} key))
+        (do (.preventDefault e) (.stopPropagation e) (linear-all!))
+
         ;; `a` (2D only): a true tangent arc-v (smooth start only; `a` means the planar
         ;; arc in 2D — 3D rounds with `t`'s bezier instead, see toggle-arc!).
         (and (not (three-d? @session)) (#{"a" "A"} key))
         (do (.preventDefault e) (.stopPropagation e) (toggle-arc!))
 
-        ;; toggle the selected node smooth ↔ cusp (frees its outgoing handle) (2D)
-        (and (not (three-d? @session)) (#{"x" "X"} key))
+        ;; toggle the selected node smooth ↔ cusp (frees its outgoing handle) (2D + 3D)
+        (#{"x" "X"} key)
         (do (.preventDefault e) (.stopPropagation e) (toggle-cusp!))
 
         ;; Shift+m toggles the mark billboard labels (they can occlude a node you're editing)

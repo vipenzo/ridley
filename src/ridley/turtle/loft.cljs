@@ -789,9 +789,14 @@
                        ;; When corners exist, caps must be separate meshes since intermediate
                        ;; segments shouldn't have caps at their boundaries.
                        (let [no-corners (empty? finished-meshes)
+                             ;; Cap only the TRUE sweep ends: a single smooth
+                             ;; section caps both; otherwise this final flush is
+                             ;; the last section, so cap only its end (:end). Its
+                             ;; start sits at a corner seam and must stay open.
+                             final-caps (if no-corners true :end)
                              final-meshes (if (>= (count acc-rings) 2)
                                             (conj finished-meshes
-                                                  (do-build (vec acc-rings) creation-pose no-corners))
+                                                  (do-build (vec acc-rings) creation-pose final-caps))
                                             finished-meshes)
                              ;; Generate separate cap meshes only when corners exist
                              last-ring (when-not no-corners (last acc-rings))
@@ -908,9 +913,12 @@
 
                          (if has-corner
                            ;; Corner: flush accumulated rings as a mesh, generate corner bridge
-                           (let [;; Build mesh from accumulated rings (no caps - will be combined)
+                           (let [;; First section caps its START (the loft's true
+                                 ;; beginning); later sections sit between corner
+                                 ;; seams and stay open there.
+                                 section-caps (if (empty? finished-meshes) :start false)
                                  section-mesh (when (>= (count new-acc-rings) 2)
-                                                (do-build (vec new-acc-rings) creation-pose false))
+                                                (do-build (vec new-acc-rings) creation-pose section-caps))
 
                                  ;; Next segment starts at corner + R_n along new heading
                                  next-start-pos (v+ corner-base (v* (:heading s-rotated) r-n))

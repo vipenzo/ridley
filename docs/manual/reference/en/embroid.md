@@ -125,6 +125,13 @@ spacing between tiles becomes the openings (a brick/tile look).
   `loft-n` once `:resolution` is set.
 - `:border` gives a uniform physical frame; `:margin` is a per-axis
   fraction and so is uneven on a non-square wall.
+- **Curving the wall vs curving the sweep are different.** A curved
+  *profile path* (`arc-h` inside the `embroid` path, as above) is fully
+  supported and stays watertight. A curved *loft rail* is recorded as a
+  chain of hard corners, so the openings staircase and pick up faint
+  radial seams along the curve (the mesh is still watertight/manifold).
+  For a wall that curves *as it is swept*, sweep along a **bezier rail**
+  (`bezier-to`, which is smooth) rather than `arc-h`/`arc-v`.
 - **Centerline marks become wall anchors.** A `(mark …)` on the centerline
   path lands as a mesh anchor on the wall centerline (shifted by `:offset`).
   Attach onto a face with `(move-to wall :at :mark :face :outer/:inner)` — it

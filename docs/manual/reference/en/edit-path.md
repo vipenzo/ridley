@@ -51,19 +51,27 @@ Switch plane to move a node along the third axis the previous plane could not re
 ## Mouse & keys
 
 - **Click** — add a node on the active plane (through the pose); **click a segment**
-  splits it there.
+  splits it there. New nodes default to a **smooth bezier** (handles collinear with
+  the chord, so it looks straight and bakes as a clean line until you shape it).
 - **Drag a node** — move it in the active plane (screen-space grab; its depth is kept
   ⊥ the active-plane normal). **Shift+drag** locks the move to a single axis.
 - `Tab` — cycle the selected node. **Arrows** nudge it in the active plane; the
   panel's numeric **len** / **angle** fields set the selected segment precisely (per
   active plane).
-- `c` — toggle the incoming segment between a **straight line** and a **free cubic
-  bezier**. The two handles (square markers) are **free** in 3D (no tangent re-snap).
-  `Shift`/`Alt`+arrows nudge the handles; **Shift+drag a handle** is length-only (it
-  slides along its direction from the node, escaping the plane).
+- `c` — toggle the incoming segment between a **straight line** and a **cubic
+  bezier**. On a **smooth** node the outgoing handle (c1) re-snaps to the rail's
+  tangent (length-only); make the node a **cusp** (`x`) to free it. `Shift`/`Alt`+
+  arrows nudge the handles; **Shift+drag a handle** is length-only (it slides along
+  its direction from the node, escaping the plane).
 - `t` — **raccordo**: turn the corner into a both-ends-tangent bezier — smooth on the
   incoming heading *and* toward the next node. Re-press to re-fit after moving a
   neighbour.
+- `x` — toggle the selected node **smooth ↔ cusp**. A cusp frees its **outgoing**
+  handle (magenta) so the rail can leave at any angle. (Node 0 is the anchor — its
+  segment has no incoming tangent, so it is always free.)
+- `Shift`+`A` — make **every** segment a smooth bezier and clear all cusps (the rail
+  becomes tangent-continuous everywhere). `Shift`+`X` — the inverse: turn **every**
+  segment back into a straight line.
 - `Insert` (or `i`) — split the segment entering the selected node (de Casteljau at
   t=0.5 on a bezier, so the curve's shape is preserved).
 - `m` — add / rename a **mark** on the node (it renders **green** and is protected
