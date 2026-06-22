@@ -50,6 +50,36 @@
         (str label " — TARGET nm=0; CURRENT nm=" (:nm r) " (EXPECTED-RED: loft corner-assembly defect)"))
     (is (true? (:wt r)) (str label " — TARGET watertight; CURRENT wt=" (:wt r)))))
 
+(defn- bbox [mesh]
+  (mapv (fn [ax] (let [xs (map #(nth % ax) (:vertices mesh))]
+                   [(/ (Math/round (* 1000 (apply min xs))) 1000.0)
+                    (/ (Math/round (* 1000 (apply max xs))) 1000.0)]))
+        [0 1 2]))
+
+;; tappa-2 extra criterion (shape coincidence). The corner-assembly refactor must
+;; NOT change geometry where it was already correct. The straight (no-corner) loft
+;; path is untouched → its bbox AND face count must stay byte-identical. The
+;; cornered loft's bbox (shape envelope) must also be preserved; only its face
+;; count drops (seam caps / doubled corner stop stacking — that IS the fix).
+(deftest shape-coincidence-smooth-segment
+  (let [straight (lp (shape/circle-shape 10 32) "(path (f 50))")
+        cornered (lp (shape/circle-shape 10 32) "(path (f 20) (th 90) (f 20))")]
+    (println "\n==== SHAPE COINCIDENCE ====")
+    (println ">>> STRAIGHT bbox" (bbox straight) "faces" (count (:faces straight)))
+    (println ">>> CORNERED bbox" (bbox cornered) "faces" (count (:faces cornered)))
+    ;; Pre-tappa-2 baseline (captured on commit 70bcf5a). The straight loft path
+    ;; is NOT touched by the corner-assembly refactor → bbox AND face count must
+    ;; stay EXACTLY these. The cornered loft's bbox (shape) must be preserved;
+    ;; its face count is allowed to drop (the fix stops the corner stacking).
+    (is (= [[0.0 50.0] [-10.0 10.0] [-10.0 10.0]] (bbox straight))
+        "straight loft bbox must be unchanged by the refactor")
+    (is (= 4156 (count (:faces straight)))
+        "straight loft face count must be unchanged (path untouched)")
+    (is (= [[0.0 30.0] [-10.0 20.0] [-10.0 10.0]] (bbox cornered))
+        "cornered loft bbox (shape envelope) must be preserved")
+    (is (<= (count (:faces cornered)) 4340)
+        "cornered loft face count must not grow (no new stacking)")))
+
 ;; ── PART 1 — distinct generation mechanisms ─────────────────
 
 (deftest mech-1-single-convex-corner
@@ -102,6 +132,20 @@
                               (ops/pure-loft-two-shapes (shape/circle-shape 10 32)
                                                         (shape/circle-shape 6 24)
                                                         (rail "(path (f 20) (th 90) (f 20))") 64))))
+
+(deftest mech-7-variant-sharp-corner
+  ;; Explicit verification (tappa-2): a VARIANT section (scale/twist that changes
+  ;; WHILE turning the corner) at a SHARP angle — the part of the loft domain that
+  ;; extrude (constant profile) cannot model, so the continuous build must be
+  ;; checked here directly, not assumed healed by corollary from the constant case.
+  (testing "tapered shape-fn along a sharp th150 corner"
+    (assert-target-watertight "loft (tapered circle :to 0.4) / (f 20)(th 150)(f 20)"
+                              (ops/pure-loft-shape-fn (sfn/tapered (shape/circle-shape 10 32) :to 0.4)
+                                                      (rail "(path (f 20) (th 150) (f 20))") 64)))
+  (testing "twisted shape-fn along a sharp th150 corner"
+    (assert-target-watertight "loft (twisted circle :angle 90) / (f 20)(th 150)(f 20)"
+                              (ops/pure-loft-shape-fn (sfn/twisted (shape/circle-shape 10 32) :angle 90)
+                                                      (rail "(path (f 20) (th 150) (f 20))") 64))))
 
 ;; ── PART 2 — isolate the two contributors (staged-fix criterion) ──
 

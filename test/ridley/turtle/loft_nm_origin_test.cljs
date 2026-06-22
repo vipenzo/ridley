@@ -94,38 +94,34 @@
     (println ">>> EXTRUDE sub-meshes:" (count esubs)
              " | face-count:" (count (:faces emesh)))
     (println "     topo:" (topo emesh) "  dup-faces:" (dup-faces emesh))
-    ;; locks: extrude = 1 continuous mesh & manifold; loft = many sub-meshes,
-    ;; clean pre-weld but non-manifold post-weld (nm born at the weld).
+    ;; POST-FIX (tappa-1 + tappa-2): the plain loft now uses the SAME continuous
+    ;; build as extrude — ONE sub-mesh, manifold, no weld-stacking. (Pre-fix this
+    ;; deftest documented loft building many sub-meshes whose post-weld was
+    ;; non-manifold; that mechanism is gone now.)
     (is (= 1 (count esubs)) "extrude builds ONE sub-mesh")
     (is (zero? (:nm (topo emesh))) "extrude is manifold")
-    (is (> (count lsubs) 1) "loft builds MANY sub-meshes")
-    (is (zero? (:nm (topo lraw))) "loft pre-weld is manifold (clean sub-meshes)")
-    (is (pos? (:nm (topo lweld))) "loft post-weld is non-manifold (weld stacks geometry)")))
+    (is (= 1 (count lsubs)) "tappa-2: loft now builds ONE continuous sub-mesh (like extrude)")
+    (is (zero? (:nm (topo lweld))) "tappa-2: loft corner mesh is manifold (no weld-stacking)")))
 
 (deftest part1-cap-isolation
-  ;; TAPPA-1 DONE: the double-capping is removed in production (loft no longer
-  ;; emits separate make-cap-mesh sub-meshes; do-build caps each true end once).
-  ;; This test now documents the POST-FIX invariant: the FULL loft mesh already
-  ;; has no duplicate cap faces, so dropping the (now non-existent) :cap sub-meshes
-  ;; changes nothing — full == no-sep-caps. The residual corner-bridge component
-  ;; (b) (nm=64 at one corner) remains, by design, for tappa-2.
-  (println "\n==== PART 1: double-capping removed (tappa-1) ====")
+  ;; CORNER-ASSEMBLY FIXED (tappa-1 double-capping + tappa-2 continuous build).
+  ;; The plain loft one-corner mesh is now fully manifold: no separate :cap
+  ;; sub-meshes, no duplicate faces, ends closed, AND the corner-bridge seam (b)
+  ;; is gone (nm=0). (Pre-fix this documented the double-cap + residual bridge.)
+  (println "\n==== PART 1: corner-assembly fixed (tappa-1 + tappa-2) ====")
   (let [p (rail "(path (f 20) (th 90) (f 20))")
         lsubs (:meshes (turtle/loft-from-path init circ id p 64))
         caps  (filter #(= :cap (:primitive %)) lsubs)
-        full  (mu/merge-vertices (raw-combine lsubs) 1e-4)
-        nocap (mu/merge-vertices (raw-combine (remove #(= :cap (:primitive %)) lsubs)) 1e-4)]
-    (println ">>> separate :cap sub-meshes:" (count caps) " (was 2 pre-fix; 0 now)")
+        full  (mu/merge-vertices (raw-combine lsubs) 1e-4)]
+    (println ">>> separate :cap sub-meshes:" (count caps) " (was 2 pre-tappa-1; 0 now)")
+    (println ">>> sub-meshes:" (count lsubs) " (was 5 pre-tappa-2; 1 now)")
     (println ">>> FULL       :" (topo full)  " dup-faces:" (dup-faces full)
              " incidence:" (:by-incidence (nm-mid-spread full)))
-    (println ">>> NO sep caps:" (topo nocap) " dup-faces:" (dup-faces nocap))
-    ;; post-fix invariants: no double-cap, full == no-sep-caps, ends still closed,
-    ;; residual (b) remains.
+    ;; post-fix invariants: no double-cap, single continuous mesh, manifold.
     (is (zero? (count caps)) "tappa-1: loft emits no separate :cap sub-meshes")
     (is (zero? (:dup-face-total (dup-faces full))) "tappa-1: full mesh has no duplicate cap faces")
-    (is (= (:nm (topo nocap)) (:nm (topo full))) "tappa-1: separate caps gone → full == no-sep-caps")
-    (is (zero? (:oe (topo full))) "do-build caps close the ends (oe=0)")
-    (is (pos? (:nm (topo full))) "residual corner-bridge component (b) remains (tappa-2)")))
+    (is (zero? (:oe (topo full))) "ends are closed (oe=0)")
+    (is (zero? (:nm (topo full))) "tappa-2: corner-bridge seam (b) closed → manifold (nm=0)")))
 
 (deftest part2-revolve-corner
   (println "\n==== PART 2: revolve of a profile WITH hard corners ====")

@@ -884,15 +884,16 @@
                              new-taper-acc (+ taper-acc effective-seg-dist)]
 
                          (if has-corner
-                           ;; Corner: flush accumulated rings as a mesh, generate corner bridge
-                           (let [;; First section caps its START (the loft's true
-                                 ;; beginning); later sections sit between corner
-                                 ;; seams and stay open there.
-                                 section-caps (if (empty? finished-meshes) :start false)
-                                 section-mesh (when (>= (count new-acc-rings) 2)
-                                                (do-build (vec new-acc-rings) creation-pose section-caps))
-
-                                 ;; Next segment starts at corner + R_n along new heading
+                           ;; Corner. For the plain loft (and its tapered/twisted/
+                           ;; two-shape variants) we SPLICE the bridge rings into the
+                           ;; single accumulated ring sequence so the final
+                           ;; build-sweep-mesh emits ONE continuous mesh — like
+                           ;; extrude: adjacent bands share ring vertex indices
+                           ;; (manifold, no T-junction) and only the two TRUE ends are
+                           ;; capped (no interior seam caps). Shell/embroid (dual-ring)
+                           ;; and holed loft keep the per-segment build (their
+                           ;; seam-aware builders already handle the corner).
+                           (let [;; Next segment starts at corner + R_n along new heading
                                  next-start-pos (v+ corner-base (v* (:heading s-rotated) r-n))
                                  s-next (assoc s-rotated :position next-start-pos)
 
@@ -934,30 +935,48 @@
                                  fallback-mid (when (and (not= joint-mode :flat)
                                                          end-ring next-start-ring (nil? mid-rings))
                                                 [(midpoint-ring end-ring next-start-ring)])
-                                 c-rings (cond
-                                           ;; Has mid-rings (round/tapered with rings)
-                                           mid-rings (concat [end-ring] mid-rings [next-start-ring])
-                                           ;; Flat mode: direct connection (no mid-rings)
-                                           (= joint-mode :flat) (when (and end-ring next-start-ring)
-                                                                  [end-ring next-start-ring])
-                                           ;; Other modes with fallback
-                                           fallback-mid (concat [end-ring] fallback-mid [next-start-ring])
-                                           :else nil)
-                                 ;; Corner mesh without caps (caps would create internal surfaces)
-                                 corner-mesh (when c-rings
-                                               (assoc (do-build (vec c-rings) creation-pose false)
-                                                      :creation-pose creation-pose))]
+                                 ;; Bridge rings to place BETWEEN end-ring and
+                                 ;; next-start-ring (the joint geometry).
+                                 bridge-rings (cond mid-rings mid-rings
+                                                    (= joint-mode :flat) []
+                                                    fallback-mid fallback-mid
+                                                    :else [])
+                                 ;; Continuous build for the plain loft (closes (b));
+                                 ;; per-segment flush for dual-ring / holed loft.
+                                 continuous? (and (not dual-ring?) (not has-holes?))]
 
-                             (recur (inc seg-idx)
-                                    s-next
-                                    new-taper-acc
-                                    r-n
-                                    [next-start-ring]
-                                    (cond-> finished-meshes
-                                      section-mesh (conj section-mesh)
-                                      corner-mesh (conj corner-mesh))
-                                    new-first-ring
-                                    new-second-ring))
+                             (if continuous?
+                               ;; Splice the bridge into the single ring sequence and
+                               ;; keep accumulating (no flush): one continuous mesh.
+                               (recur (inc seg-idx)
+                                      s-next
+                                      new-taper-acc
+                                      r-n
+                                      (-> (vec new-acc-rings)
+                                          (into bridge-rings)
+                                          (conj next-start-ring))
+                                      finished-meshes
+                                      new-first-ring
+                                      new-second-ring)
+                               ;; Per-segment: flush section + corner bridge as
+                               ;; separate sub-meshes (seam-aware builders).
+                               (let [section-caps (if (empty? finished-meshes) :start false)
+                                     section-mesh (when (>= (count new-acc-rings) 2)
+                                                    (do-build (vec new-acc-rings) creation-pose section-caps))
+                                     c-rings (concat [end-ring] bridge-rings [next-start-ring])
+                                     corner-mesh (when (>= (count c-rings) 2)
+                                                   (assoc (do-build (vec c-rings) creation-pose false)
+                                                          :creation-pose creation-pose))]
+                                 (recur (inc seg-idx)
+                                        s-next
+                                        new-taper-acc
+                                        r-n
+                                        [next-start-ring]
+                                        (cond-> finished-meshes
+                                          section-mesh (conj section-mesh)
+                                          corner-mesh (conj corner-mesh))
+                                        new-first-ring
+                                        new-second-ring))))
 
                            ;; No corner: smooth junction — use inner-pivot transition rings
                            ;; to prevent ring overlap on the inner side of tight curves
