@@ -510,12 +510,6 @@
                      (frame-flipped? h3 u3) flip-planar-cmds))
          out)))))
 
-(defn- nodes->path
-  "A path value from the current nodes — returned by request! so the downstream
-   (path-to-shape …) runs even before the first edit."
-  ([nodes] (nodes->path nodes false))
-  ([nodes closed?] {:type :path :commands (nodes->commands nodes closed?) :closed? closed?}))
-
 (declare cmd->code-2d)
 
 (defn- bez-local->2d
@@ -2504,9 +2498,19 @@
                                                        (boolean (:closed? seed-path))
                                                        (vec (shape/ensure-path-2d seed-path)))
                                           {:nodes (seed->nodes-3d seed-path) :dropped []})
+        ;; The value returned to the SCRIPT (consumed by a surrounding
+        ;; path-to-shape / embroid / loft) must be a fully-traceable path so the
+        ;; script proceeds with the SAME result as confirming. In 2D the node
+        ;; reconstruction (nodes->commands) carries HIGH-LEVEL :bezier-to commands in
+        ;; the path-2d frame — only the path-2d macro can re-tessellate those, so
+        ;; the waypoint tracers (ensure-path-2d) would drop them (→ "< 2 waypoints"
+        ;; in any 2D consumer). The seed IS that tessellated path-2d, so return it
+        ;; directly. (Interactive edits don't flow through here: live-reeval splices
+        ;; current-code = a (path-2d …) rewrite, so this only feeds the initial,
+        ;; unedited eval where nodes == seed.)
         live (fn [] (if (= mode :3d)
                       {:type :path :commands (nodes->commands-3d nodes)}
-                      (nodes->path nodes closed?)))]
+                      seed-path))]
     (cond
       (modal/consume-skip!)
       (live)
