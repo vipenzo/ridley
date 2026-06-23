@@ -1507,7 +1507,11 @@
         start-cap (or (:start-cap opts) (:start-cap wall) :flat)
         end-cap   (or (:end-cap opts) (:end-cap wall) :flat)
         cap-steps (or (:cap-steps opts) (:cap-steps wall) 8)
-        wps0 (shape/path-to-2d-waypoints path)
+        ;; ensure-path-2d (not path-to-2d-waypoints) so a path-2d centerline is
+        ;; projected onto its frame plane like every other planar consumer — and
+        ;; like embroid's OWN base (stroke-shape uses ensure-path-2d). For a plain
+        ;; :3d path ensure-path-2d delegates to path-to-2d-waypoints (unchanged).
+        wps0 (shape/ensure-path-2d path)
         _ (assert (and wps0 (>= (count wps0) 2))
                   "embroid: first argument must be a path with at least two waypoints")
         ;; Resolution of the field ALONG THE PATH (u). This governs how jagged
