@@ -261,6 +261,119 @@
                          (assoc :up (normalize up)))))
     state))
 
+(def ^:private rail-start-frame-tol-deg
+  "How far (degrees) a rail's initial frame may differ from the start frame
+   before it counts as a violation. ~1° absorbs bezier-tessellation residue
+   (a tangent-drawn bezier reads ~0.2°) while catching every real rotation."
+  1.0)
+
+(defn validate-rail-start-frame!
+  "Enforce the sweep invariant: a rail consumed by extrude/loft must BEGIN in the
+   turtle's starting frame — both heading (direction) AND up (roll). The first
+   swept section is stamped in that frame, so a rail that starts rotated or rolled
+   lands the profile off where `stamp` shows it (a rigid disalignment the suite
+   could not see until the shape-fidelity net). Throws a readable error in the
+   user's terms, distinguishing a DIRECTION violation (rotate the turtle) from a
+   ROLL violation (roll the turtle).
+
+   `initial-rotations` is the leading rotation window (everything before the first
+   :f). An arc's trailing :arc-cap :lead half-step is a tessellation artifact (the
+   start cap is kept perpendicular to the incoming heading — see the carve-out in
+   extrude-from-path / loft-from-path), so it is excluded and never trips this.
+
+   Scope is deliberately narrow: this is a property of a path USED AS A SWEEP RAIL,
+   so it is called only at the extrude/loft rail-consumption point — NOT at path
+   construction, and NOT from non-sweep consumers like text-on-path, which
+   legitimately take paths whose initial tangent differs from the heading."
+  [state initial-rotations]
+  (let [eff (if (and (seq initial-rotations)
+                     (= :lead (:arc-cap (last initial-rotations))))
+              (butlast initial-rotations)
+              initial-rotations)]
+    (when (seq eff)
+      (let [s' (reduce apply-rotation-to-state state eff)
+            ang (fn [a b] (* (/ 180 Math/PI)
+                             (Math/acos (max -1.0 (min 1.0 (dot (normalize a) (normalize b)))))))
+            dir-off (ang (:heading state) (:heading s'))
+            roll-off (ang (:up state) (:up s'))]
+        (cond
+          ;; Direction first: if the tangent diverges that is the primary fault
+          ;; (covers bezier-storto and th/tv), whatever up does as a side effect.
+          (> dir-off rail-start-frame-tol-deg)
+          (throw (js/Error.
+                  (str "extrude/loft: a swept rail can't begin with a turn. This path turns "
+                       "at its very first step, but a rail has to set off the way the turtle is "
+                       "already facing — it inherits the turtle's pose, with nothing before it to "
+                       "turn from. Either aim the turtle before starting the path (e.g. (th …) / "
+                       "(tv …)), or redraw the start of the curve so it sets off straight instead of "
+                       "already bending. (Starting with a curve is fine when the curve leaves "
+                       "tangent, like (arc-h …) — it just can't veer at the very first step.)")))
+          ;; Direction is fine but the section is rolled around it (covers tr).
+          (> roll-off rail-start-frame-tol-deg)
+          (throw (js/Error.
+                  (str "extrude/loft: a swept rail can't begin with a twist. This path rolls "
+                       "about its own direction at its very first step — the direction is right, but "
+                       "the cross-section is turned around it. Apply the roll to the turtle before "
+                       "starting the path (e.g. (tr …)) instead."))))))))
+
+(def ^:private corner-realizability-tol
+  "Slack on the effective-dist sign check. A corner is rejected when
+   effective-dist < -tol, i.e. the miter FRANKLY exceeds the segment. The small
+   negative slack lets a numerically-flush corner (miter ≈ segment, effective-dist
+   ≈ 0) build instead of tripping on rounding."
+  -1e-4)
+
+(defn validate-corner-realizability!
+  "Geometric realizability guard for the corners of a swept rail (the THIRD
+   guarantee family — geometric non-self-intersection — alongside the rail-start
+   frame invariant above and mesh-diagnose's topological checks). `segments` is
+   the output of `analyze-open-path` (each carries :dist, :shorten-start,
+   :shorten-end, all sized off `shape-radius`).
+
+   Each segment's effective-dist = dist − shorten-start − shorten-end is the run
+   that survives after both ends are mitred back to meet the adjacent sections.
+   When it goes negative the section is placed BEHIND its own start: the tube
+   folds back and the surface passes through itself. That self-intersection is
+   topologically INVISIBLE — the mesh stays watertight with nm=0, so no
+   mesh-diagnose net can see it (accertamento 2026-06-25;
+   corner-self-intersection-net-test). We reject at the SIGN of effective-dist
+   (the conservative threshold: any negative value is already a reversed segment,
+   the user-chosen policy — the grey zone where the segment is inverted but the
+   triangles do not yet FRANKLY cross is rejected too).
+
+   CAVEAT — the shape-radius proxy. The miter is sized by `shape-radius`, the
+   profile's MAX extent from its centroid. The EXACT governing quantity is the
+   profile's extent on the INNER side of the bend, perpendicular to the corner
+   direction. For a circle they coincide; for an asymmetric profile (e.g. a
+   ribbon to one side — the very case the defect surfaced on) they can diverge,
+   so this guard is APPROXIMATE there. It is honest protection only paired with
+   the downstream tri-tri net (corner-self-intersection-net-test), which sees the
+   actual geometry and catches what this proxy misses. Refining the proxy
+   (project the profile onto the corner's inner normal) is a later improvement,
+   not a precondition.
+
+   Same scope as the rail-start invariant: a property of a path USED AS A SWEEP
+   RAIL, so it is called only at the extrude/loft consumption point."
+  [segments]
+  (doseq [seg segments]
+    (let [dist (:dist seg)
+          need (+ (:shorten-start seg) (:shorten-end seg))
+          eff  (- dist need)]
+      (when (< eff corner-realizability-tol)
+        (throw (js/Error.
+                (str "extrude/loft: this corner is too sharp for how wide the profile is. "
+                     "The turn here needs about " (.toFixed need 2) " of straight run on its "
+                     "ends to fold cleanly, but the segment is only " (.toFixed dist 2) " long — "
+                     "so the section after the corner is placed BEHIND where it starts and the "
+                     "tube folds back through itself. (The result would still look watertight: this "
+                     "is a geometric self-intersection the mesh checks can't see.) Three ways out: "
+                     "(1) ROUND the corner — replace the hard turn with an arc (e.g. (arc-h r deg)), "
+                     "which spreads the bend over a length and usually removes the fold; "
+                     "(2) make the PROFILE narrower; "
+                     "(3) make the adjacent straight SEGMENT longer. "
+                     "(Note: the turn is sized by the profile's max radius, so on a strongly "
+                     "off-centre profile this guard is approximate — the geometry is the final word.)")))))))
+
 ;; --- Triangulation (earcut) ---
 
 (defn earcut-triangulate
@@ -1309,6 +1422,11 @@
       state
       (let [initial-rotations (take-while #(not= :f (:cmd %)) commands)
             state-with-initial-heading (reduce apply-rotation-to-state state initial-rotations)
+            ;; Sweep invariant (frame-whole): the rail must begin in the turtle's frame.
+            _ (validate-rail-start-frame! state initial-rotations)
+            ;; Realizability: reject a corner whose miter folds the section back
+            ;; through the tube (effective-dist < 0). See validate-corner-realizability!.
+            _ (validate-corner-realizability! segments)
             ;; Keep an arc-started section's start cap perpendicular to the
             ;; incoming heading (see extrude-from-path for the full rationale).
             arc-lead-rot (when (and (seq initial-rotations)
@@ -1446,6 +1564,11 @@
           state
           (let [initial-rotations (take-while #(not= :f (:cmd %)) commands)
                 state-with-initial-heading (reduce apply-rotation-to-state state initial-rotations)
+                ;; Sweep invariant (frame-whole): the rail must begin in the turtle's frame.
+                _ (validate-rail-start-frame! state initial-rotations)
+                ;; Realizability: reject a corner whose miter folds the section back
+                ;; through the tube (effective-dist < 0). See validate-corner-realizability!.
+                _ (validate-corner-realizability! segments)
                 ;; arc-h/arc-v decompose into a leading half-step rotation,
                 ;; straight segments, and a trailing half-step (midpoint
                 ;; integration). When an arc is the FIRST movement of the path,

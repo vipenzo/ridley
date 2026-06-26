@@ -133,19 +133,29 @@
                                                         (shape/circle-shape 6 24)
                                                         (rail "(path (f 20) (th 90) (f 20))") 64))))
 
-(deftest mech-7-variant-sharp-corner
-  ;; Explicit verification (tappa-2): a VARIANT section (scale/twist that changes
-  ;; WHILE turning the corner) at a SHARP angle — the part of the loft domain that
-  ;; extrude (constant profile) cannot model, so the continuous build must be
-  ;; checked here directly, not assumed healed by corollary from the constant case.
-  (testing "tapered shape-fn along a sharp th150 corner"
-    (assert-target-watertight "loft (tapered circle :to 0.4) / (f 20)(th 150)(f 20)"
-                              (ops/pure-loft-shape-fn (sfn/tapered (shape/circle-shape 10 32) :to 0.4)
-                                                      (rail "(path (f 20) (th 150) (f 20))") 64)))
-  (testing "twisted shape-fn along a sharp th150 corner"
-    (assert-target-watertight "loft (twisted circle :angle 90) / (f 20)(th 150)(f 20)"
-                              (ops/pure-loft-shape-fn (sfn/twisted (shape/circle-shape 10 32) :angle 90)
-                                                      (rail "(path (f 20) (th 150) (f 20))") 64))))
+(deftest mech-7-variant-sharp-corner-is-refused
+  ;; Originally asserted watertight for a VARIANT section through a SHARP th150
+  ;; corner. SUPERSEDED by the corner-realizability guard (2026-06-25): (circle 10)
+  ;; through (f 20)(th 150)(f 20) is unrealizable — the th150 miter (10·tan75 ≈ 37)
+  ;; exceeds the 20-unit legs, so effective-dist < 0 and the section folds back
+  ;; through the tube (an invisible self-intersection; corner-self-intersection-net).
+  ;; The guard now refuses the corner for loft just as for extrude, so the variant
+  ;; continuous-build can no longer be exercised AT THIS UNREALIZABLE CORNER. The
+  ;; realizable-corner assembly (th90/th45/tv90) stays covered by mech-1..6 above;
+  ;; variant-at-realizable-sharp coverage (e.g. th120) is a follow-up.
+  ;; NB: a local helper, NOT cljs.test's special `thrown?` form (which `is` would
+  ;; intercept) — here we inspect the message to confirm it is the realizability error.
+  (let [refused? (fn [thunk] (try (thunk) false
+                                  (catch :default e
+                                    (boolean (re-find #"too sharp for how wide" (.-message e))))))]
+    (testing "tapered shape-fn along an unrealizable sharp th150 corner is refused"
+      (is (refused? #(ops/pure-loft-shape-fn (sfn/tapered (shape/circle-shape 10 32) :to 0.4)
+                                             (rail "(path (f 20) (th 150) (f 20))") 64))
+          "loft must refuse the unrealizable th150 corner (tapered variant)"))
+    (testing "twisted shape-fn along an unrealizable sharp th150 corner is refused"
+      (is (refused? #(ops/pure-loft-shape-fn (sfn/twisted (shape/circle-shape 10 32) :angle 90)
+                                             (rail "(path (f 20) (th 150) (f 20))") 64))
+          "loft must refuse the unrealizable th150 corner (twisted variant)"))))
 
 ;; ── PART 2 — isolate the two contributors (staged-fix criterion) ──
 
@@ -226,7 +236,11 @@
   (doseq [[label mesh]
           [["circle 1 th-corner" (lp (shape/circle-shape 10 32) "(path (f 20) (th 90) (f 20))")]
            ["circle tv-corner"   (lp (shape/circle-shape 10 32) "(path (f 20) (tv 90) (f 20))")]
-           ["circle sharp th150"  (lp (shape/circle-shape 10 32) "(path (f 20) (th 150) (f 20))")]
+           ;; th150 with 20-unit legs is now REFUSED by the corner-realizability
+           ;; guard (miter 37 > leg 20). Guarded so the survey still runs; it reports
+           ;; as an err row instead of building the (self-intersecting) corner.
+           ["circle sharp th150 (now refused)"
+            (try (lp (shape/circle-shape 10 32) "(path (f 20) (th 150) (f 20))") (catch :default _ nil))]
            ["star 1 th-corner"   (lp (shape/star-shape 5 12 5) "(path (f 20) (th 90) (f 20))")]
            ["circle 3 corners"   (lp (shape/circle-shape 10 32) "(path (f 15) (th 45) (f 15) (th 45) (f 15))")]
            ;; controls: does EXTRUDE share the sharp-corner open-edge? if extrude
@@ -246,17 +260,19 @@
   ;; the same corner stays oe=0. The visible case is captured below.
   (is true))
 
-(deftest visible-manifestation-sharp-corner-hole
-  ;; HIGHEST-VALUE GUARDRAIL — the one VISIBLE manifestation. Pre-fix, a SHARP
-  ;; corner (th 150) left oe=5 OPEN EDGES (a real hole, visible at render) while
-  ;; extrude closed the same corner. TAPPA-1 RESULT: removing the double-capping
-  ;; CLOSED the hole (oe 5→0) — the redundant separate cap was mis-stitching at
-  ;; the sharp angle. So the `oe=0` assertion below now PASSES (the visible bug is
-  ;; fixed). The `watertight` assertion still depends on nm=0, so it stays RED
-  ;; until tappa-2 closes the residual corner-bridge seam (b) (th150 nm: 154→93).
-  (testing "loft along a sharp (th 150) corner: hole closed (oe=0); watertight pending tappa-2"
-    (let [r (d (lp (shape/circle-shape 10 32) "(path (f 20) (th 150) (f 20))"))]
-      (is (nil? (:err r)) (str "mesh must build: " (:err r)))
-      (is (zero? (:oe r))
-          (str "TARGET oe=0 (no hole) — tappa-1 closed it; CURRENT oe=" (:oe r)))
-      (is (true? (:wt r)) (str "TARGET watertight (pending tappa-2 / b); CURRENT wt=" (:wt r))))))
+(deftest visible-manifestation-sharp-corner-now-refused
+  ;; HISTORY: this th150 corner was the one VISIBLE manifestation — pre-fix it left
+  ;; oe=5 OPEN EDGES (a real hole); tappa-1 closed the hole (oe→0) and tappa-2
+  ;; chased the residual corner-bridge seam (nm). SUPERSEDED (2026-06-25): the
+  ;; corner is unrealizable in the first place — (circle 10) through
+  ;; (f 20)(th 150)(f 20) has miter 10·tan75 ≈ 37 ≫ leg 20, so effective-dist < 0
+  ;; and the tube folds back through itself (an invisible self-intersection;
+  ;; corner-self-intersection-net-test). The realizability guard now REFUSES it, so
+  ;; there is no mesh to make watertight: the disease (build a broken corner) is cut
+  ;; off upstream rather than patched downstream. The hole/seam work on REALIZABLE
+  ;; corners (mech-1..6, th90/th45/tv90) stands; only this unrealizable fixture is
+  ;; retired into a refusal assertion.
+  (testing "loft refuses the unrealizable sharp (th 150) corner"
+    (let [err (:error (h/eval-dsl "(loft (circle 10 32) (fn [s t] s) (f 20) (th 150) (f 20))"))]
+      (is (and err (re-find #"too sharp for how wide" err))
+          (str "loft must refuse the unrealizable th150 corner; got error=" err)))))

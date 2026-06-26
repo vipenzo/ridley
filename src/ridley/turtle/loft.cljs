@@ -30,7 +30,6 @@
 (def is-corner-rotation? extrusion/is-corner-rotation?)
 (def corner-rotation? extrusion/corner-rotation?)
 (def calc-shorten-for-angle extrusion/calc-shorten-for-angle)
-(def ring-centroid extrusion/ring-centroid)
 (def triangulate-cap extrusion/triangulate-cap)
 (def triangulate-cap-with-holes extrusion/triangulate-cap-with-holes)
 (def generate-round-corner-rings extrusion/generate-round-corner-rings)
@@ -582,6 +581,25 @@
            ;; (bezier paths often start with th/tv to orient toward the first chord)
            initial-rotations (take-while #(not= :f (:cmd %)) commands)
            state-with-initial-heading (reduce apply-rotation-to-state state initial-rotations)
+           ;; Sweep invariant (frame-whole): the rail must begin in the turtle's frame.
+           _ (extrusion/validate-rail-start-frame! state initial-rotations)
+           ;; Realizability: reject a corner whose miter folds the section back
+           ;; through the tube. Fed by the SAME magnitude extrude uses
+           ;; (analyze-open-path / shape-radius) so both operators reject
+           ;; identically. See extrusion/validate-corner-realizability!.
+           _ (extrusion/validate-corner-realizability!
+              (extrusion/analyze-open-path commands (shape-radius shape)))
+           ;; Arc carve-out (mirrors extrude-from-path, extrusion.cljs:1458-1463):
+           ;; when the last leading rotation is an arc's :lead half-step, stamp the
+           ;; FIRST ring with the pre-arc frame so the start cap stays perpendicular
+           ;; to the INCOMING heading. The half-step is a tessellation artifact
+           ;; (midpoint integration), not a real cusp, so the cap must not tilt by
+           ;; it; the spine still advances along the full initial heading. Non-arc
+           ;; rails: start-cap-state == state-with-initial-heading (no-op).
+           start-cap-state (if (and (seq initial-rotations)
+                                    (= :lead (:arc-cap (last initial-rotations))))
+                             (reduce apply-rotation-to-state state (butlast initial-rotations))
+                             state-with-initial-heading)
            segments (analyze-loft-path commands)
            n-segments (count segments)
            initial-radius (shape-radius shape)
@@ -642,7 +660,6 @@
                           {:outer outer :inner inner :values vals}))
                       has-holes? stamp-shape-with-holes
                       :else stamp-shape)
-           get-outer (if (or dual-ring? has-holes?) :outer identity)
            do-build (cond
                       embroid-mode?
                       (fn [rings cp caps?]
@@ -857,7 +874,13 @@
                                                   0)
                                       pos (v+ (:position s) (v* (:heading s) dist-in-seg))
                                       transformed-shape (transform-fn shape clamped-t)
-                                      temp-state (assoc s :position pos)]
+                                      ;; The VERY FIRST ring of the loft uses the
+                                      ;; arc carve-out frame (start-cap-state); all
+                                      ;; others use the running frame s. For non-arc
+                                      ;; rails the two are identical.
+                                      temp-state (if (and (zero? seg-idx) (zero? i))
+                                                   (assoc start-cap-state :position pos)
+                                                   (assoc s :position pos))]
                                   (do-stamp temp-state transformed-shape))))
 
                              ;; Merge into accumulated rings
@@ -978,34 +1001,33 @@
                                         new-first-ring
                                         new-second-ring))))
 
-                           ;; No corner: smooth junction — use inner-pivot transition rings
-                           ;; to prevent ring overlap on the inner side of tight curves
-                           (let [end-ring (last new-acc-rings)
-                                 ;; Current radius at this taper position
-                                 current-t (if (pos? total-effective-dist)
-                                             (min 1 (/ new-taper-acc total-effective-dist))
-                                             0)
-                                 current-shape (transform-fn shape current-t)
-                                 current-radius (shape-radius current-shape)
-                                 ;; Generate inner-pivot transition rings if heading changed
-                                 smooth-rings
-                                 (if (and heading-angle end-ring (seq rotations))
-                                   (let [n-smooth (max 1 (int (Math/ceil (/ heading-angle (/ Math/PI 12)))))]
-                                     (do-round-corners
-                                      end-ring corner-base old-heading new-heading
-                                      n-smooth current-radius))
-                                   [])
-                                 ;; Continue from last transition ring's centroid for continuity
-                                 next-start-pos (if (seq smooth-rings)
-                                                  (ring-centroid (get-outer (last smooth-rings)))
-                                                  corner-base)
-                                 s-next (assoc s-rotated :position next-start-pos)
-                                 updated-acc (into new-acc-rings smooth-rings)]
+                           ;; No corner: smooth junction. The per-step sections of
+                           ;; a bezier rail are each stamped perpendicular to the
+                           ;; interpolated heading, so they ALREADY form the smooth
+                           ;; sweep of the curve — just continue the spine from the
+                           ;; rail point (corner-base) along the new heading and keep
+                           ;; accumulating into the single ring sequence.
+                           ;;
+                           ;; (Removed: the inner-pivot transition rings. They
+                           ;; advanced the spine to the centroid of a ring rotated
+                           ;; about a pivot shape-radius off the rail, so the spine
+                           ;; drifted 2R·sin(α/2) per step — linear in the profile
+                           ;; radius, accumulated along the curve: the sole source
+                           ;; of the smooth-branch drift. They were added to guard
+                           ;; inner-side ring overlap on tight curves but never did
+                           ;; — the spine folded anyway — and this branch is already
+                           ;; a continuous build, so removing them just lets the
+                           ;; spine follow the rail like extrude. See accertamento
+                           ;; 2026-06-23 + loft_smooth_spine_drift_net_test.cljs.
+                           ;; NB: on a dormant rail (every step below the heading
+                           ;; threshold) the old code already used corner-base with
+                           ;; no rings, so that path stays byte-identical.)
+                           (let [s-next (assoc s-rotated :position corner-base)]
                              (recur (inc seg-idx)
                                     s-next
                                     new-taper-acc
                                     0
-                                    updated-acc
+                                    new-acc-rings
                                     finished-meshes
                                     new-first-ring
                                     new-second-ring))))))

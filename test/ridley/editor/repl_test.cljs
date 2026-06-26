@@ -152,9 +152,15 @@
 
 (deftest extrude-bezier-rail-is-watertight
   (testing "asymmetric profile swept along a bezier rail is watertight + manifold"
+    ;; The rail's first control (c1 = [0 0 15], pure heading) makes the bezier
+    ;; start tangent to the turtle heading — the sweep invariant rejects a rail
+    ;; whose initial tangent diverges (the original [5 0 15] started ~17° off, an
+    ;; off-tangent start that was invisible here only because the test does not
+    ;; check shape fidelity; that rejection is covered by shape-fidelity-net).
+    ;; The curve still bends via c2/endpoint, so the watertight/manifold guard holds.
     (let [{:keys [error diag]}
           (sweep-diag (str "(extrude " tri-profile
-                           " (path (bezier-to [0 0 90] [5 0 15] [0 0 60] :local) (f 20)))"))]
+                           " (path (bezier-to [15 0 90] [0 0 15] [10 0 60] :local) (f 20)))"))]
       (is (nil? error) (str "should not error: " error))
       (is (some? diag) "should produce a mesh")
       (is (zero? (:non-manifold-edges diag))

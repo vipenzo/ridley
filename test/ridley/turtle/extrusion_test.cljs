@@ -232,19 +232,21 @@
 ;; ═══════════════════════════════════════════════════════════
 
 (deftest extrude-very-short-segments
-  (testing "Extrusion with short segments doesn't crash"
+  ;; UPDATED for the corner-realizability guard (extrusion/validate-corner-realizability!,
+  ;; 2026-06-25). This rail is the over-mitre case itself: a circle r=5 turns th90 (miter
+  ;; = 5·tan45 = 5) between two 3-long legs (segment 3 < miter 5 ⇒ effective-dist < 0). The
+  ;; section after the corner would be placed BEHIND its start and the tube would fold back
+  ;; through itself — the invisible self-intersection (corner-self-intersection-net-test).
+  ;; The old contract was "doesn't crash"; the new, stronger contract is that the over-mitre
+  ;; is REFUSED with a readable message instead of silently building broken geometry.
+  (testing "Extrusion of segments shorter than the miter is refused with a clear message"
     (let [circ (shape/circle-shape 5 8)
-          ;; Segments shorter than shape radius
           path (t/make-path [{:cmd :f :args [3]}
                              {:cmd :th :args [90]}
-                             {:cmd :f :args [3]}])
-          result (try
-                   (-> (t/make-turtle)
-                       (t/extrude-from-path circ path))
-                   :ok
-                   (catch :default e :error))]
-      ;; The key test is that it doesn't throw
-      (is (= result :ok) "Should not crash on short segments"))))
+                             {:cmd :f :args [3]}])]
+      (is (thrown-with-msg? js/Error #"too sharp for how wide"
+                            (-> (t/make-turtle) (t/extrude-from-path circ path)))
+          "an over-mitred short-segment corner must be refused, not silently folded"))))
 
 (deftest extrude-acute-angle
   (testing "Extrusion with acute angle (> 90 degrees) doesn't crash"
@@ -290,9 +292,13 @@
     ;; in the XZ plane and the tube's max Y equals the spine end Y.
     (let [n 36
           step-angle (/ 90.0 n)
-          arc-cmds (vec (mapcat (fn [_] [{:cmd :th :args [step-angle]}
-                                         {:cmd :f :args [1.0]}])
-                                (range n)))
+          ;; Lead in with one straight step so the rail starts tangent to the
+          ;; turtle heading (the sweep invariant rejects a leading rotation); the
+          ;; 36 smooth-transition steps that this test exercises are unchanged.
+          arc-cmds (into [{:cmd :f :args [1.0]}]
+                         (mapcat (fn [_] [{:cmd :th :args [step-angle]}
+                                          {:cmd :f :args [1.0]}])
+                                 (range n)))
           path (t/make-path arc-cmds)
           path-end-y (second (:position (t/run-path (t/make-turtle) path)))
           circ (shape/circle-shape 5 12)

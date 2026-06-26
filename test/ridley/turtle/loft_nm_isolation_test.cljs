@@ -36,15 +36,18 @@
       (is (zero? (:nm r)) (str "straight loft must be manifold; nm=" (:nm r)))
       (is (true? (:wt r)) "straight loft must be watertight"))))
 
-(deftest extrude-sharp-corner-is-watertight
-  ;; Pairs with visible-manifestation-sharp-corner-hole in the net: extrude CLOSES
-  ;; the same sharp (th 150) corner that opens a 5-edge HOLE in loft (oe=0 here),
-  ;; proving the visible hole is loft-assembly-specific, not a generic sharp-angle
-  ;; limitation. Stays GREEN. (extrude leaves a few sliver/degenerate faces at the
-  ;; sharp inner fold, but no hole — watertight.)
-  (testing "extrude closes a sharp corner (no hole) — the loft target"
-    (let [r (diag "(extrude (circle 10 32) (f 20) (th 150) (f 20))")]
-      (is (nil? (:err r)) (str "should build: " (:err r)))
-      (is (zero? (:oe r)) (str "extrude sharp corner must have no open edges; oe=" (:oe r)))
-      (is (zero? (:nm r)) (str "extrude sharp corner must be manifold; nm=" (:nm r)))
-      (is (true? (:wt r)) "extrude sharp corner must be watertight"))))
+(deftest extrude-sharp-corner-is-refused
+  ;; SUPERSEDED by the corner-realizability guard (2026-06-25). This fixture —
+  ;; (circle 10) through (f 20)(th 150)(f 20) — is itself unrealizable: the th150
+  ;; miter is 10·tan75 ≈ 37.3, far longer than the 20-unit legs, so effective-dist
+  ;; is deeply negative and the tube folds back through itself (an invisible
+  ;; self-intersection; corner-self-intersection-net-test). The old contract here
+  ;; was "extrude CLOSES this corner watertight, where loft opened a hole" — but
+  ;; that was patching geometry that should never have been built. The guard now
+  ;; refuses the corner outright for BOTH operators, so the extrude-vs-loft
+  ;; contrast at this corner is moot. (Realizable sharp corners — e.g. th90, or
+  ;; th150 with legs > the miter — are covered by the loft-corner-assembly net.)
+  (testing "an over-mitred sharp (th 150) corner is refused, not silently folded"
+    (let [err (:error (h/eval-dsl "(extrude (circle 10 32) (f 20) (th 150) (f 20))"))]
+      (is (and err (re-find #"too sharp for how wide" err))
+          (str "extrude must refuse the unrealizable th150 corner; got error=" err)))))
