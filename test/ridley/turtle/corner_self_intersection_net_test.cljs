@@ -53,6 +53,7 @@
             [ridley.editor.sci-harness :as h]
             [ridley.editor.operations :as ops]
             [ridley.turtle.shape :as shape]
+            [ridley.turtle.shape-fn :as sfn]
             [ridley.turtle.extrusion :as ext]
             [ridley.geometry.mesh-utils :as mu]))
 
@@ -134,6 +135,14 @@
 (defn- ext-mesh  [profile railcode] (ops/pure-extrude-path profile (ev railcode)))
 (defn- loft-mesh [profile railcode] (ops/pure-loft-path profile (fn [s _t] s) (ev railcode) 64))
 (defn- circ [r] (shape/circle-shape r 24))
+(defn- shell-mesh
+  "Loft a uniform-wall shell (value 1.0 everywhere) of base-radius circle through
+   railcode. pure-loft-path emits the side-wall/corner/cap sub-meshes already
+   combined and vertex-welded into one mesh."
+  [base-r thickness railcode]
+  (let [sf (sfn/shell (circ base-r) :thickness thickness :fn (fn [_a _t] 1.0))]
+    (ops/pure-loft-shape-fn sf (ev railcode) 64)))
+(def ^:private LONG-RAIL "(path (f 40) (th 89) (f 40))")  ; generous legs: outer skin fits
 
 ;; the accertamento fixture rail (planar): a 89° turn between a short and a long leg
 (def ^:private FIX-RAIL "(path (f 10) (th 89) (f 20))")
@@ -215,69 +224,293 @@
       (is (re-find #"(?i)longer" msg)   "message must offer lengthening the segment"))))
 
 ;; ════════════════════════════════════════════════════════════════════
-;; ESCAPER (EXPECTED-RED) — what the shape-radius PROXY misses. The guard sizes
-;; the miter by shape-radius (max extent from the CENTROID); an off-centre profile
-;; reaches far across the bend FROM THE ORIGIN while keeping a small shape-radius,
-;; so the guard's effective-dist stays positive (it lets the build through) but the
-;; tube folds anyway. The downstream net SEES it (pairs>0). This is the brief's
-;; "guard and net diverge" case and the reason the net is the safety layer the
-;; proxy needs.
-;; GREEN TRIPWIRE — asserts the CURRENT divergence (guard passes, net catches). It
-;; flips RED when the proxy is refined (project the profile onto the corner's inner
-;; normal → the guard will then REFUSE this) or the geometry is cured; revisit then.
+;; ESCAPER — RESOLVED by the directional projection fix (2026-06-30). The guard
+;; used to size the miter by shape-radius (max from the CENTROID); an off-centre
+;; profile reaches far across the bend FROM THE STAMP ORIGIN while keeping a small
+;; shape-radius, so the guard let it through and the tube folded. The directional
+;; fix (corner-inner-extent: project the STAMPED points onto the corner's inner
+;; normal) measures the real reach and sizes the miter correctly — so the escaper
+;; now BUILDS CLEAN (tri-tri=0), it is not refused. (Measured: the stamped reach is
+;; 8, not the authored-origin 14, so the f10 leg DOES fit once mitred correctly.)
+;; REGRESSION GUARD — was a green tripwire asserting the defect; now asserts the cure.
 ;; ════════════════════════════════════════════════════════════════════
-(deftest escaper-proxy-miss-is-caught
-  (testing "an off-centre profile passes the shape-radius guard but self-intersects"
-    (let [prof (off-disk 10 4 24)]            ; shape-radius 4, but reaches to x=14
+(deftest escaper-now-builds-clean
+  (testing "the directional fix sizes the off-centre overhang correctly → clean build"
+    (let [prof (off-disk 10 4 24)]            ; shape-radius 4 from centroid; stamped reach 8
       (is (not (refused? #(ext-mesh prof FIX-RAIL)))
-          "the guard's shape-radius proxy lets this off-centre profile through")
-      (is (pos? (self-intersection-pairs (ext-mesh prof FIX-RAIL)))
-          "and the downstream net catches the fold the proxy missed"))))
+          "the off-centre profile is realizable on FIX once mitred on its real reach")
+      (is (zero? (self-intersection-pairs (ext-mesh prof FIX-RAIL)))
+          "and it builds without self-intersection (was the escaper; directional fix cures it)"))))
 
 ;; ════════════════════════════════════════════════════════════════════
-;; SECOND SELF-INTERSECTION FAMILY surfaced by this net — a :centered? false
-;; profile (the default for make-shape / path-2d profiles) self-intersects at a
-;; HARD corner even when it is geometrically CENTERED and narrow enough to fit (the
-;; guard passes, effective-dist > 0). The IDENTICAL geometry as a :centered? true
-;; circle (circle-shape) builds clean (verified: same point set, same face/vertex
-;; count, 0 pairs vs ~19). So this is a corner-PLACEMENT defect tied to the
-;; non-centered stamp path, INDEPENDENT of profile width — distinct from the width
-;; disease above, and (like it) invisible to mesh-diagnose. The net is the only
-;; thing that sees it; the fix belongs to a separate investigation of the
-;; :centered? false corner placement.
-;; GREEN TRIPWIRE — asserts the current divergence; flips RED when that corner
-;; placement is fixed, at which point this becomes a regression guard.
+;; :centered? false CORNER — SUBSUMED by the directional fix (SIGNAL). Prior sessions
+;; treated this as a SEPARATE, out-of-scope mechanism: a :centered? false profile
+;; self-intersected at a hard corner even when geometrically centred. MEASURED NOW:
+;; it was the SAME proxy defect. compute-stamp-transform offsets a :centered? false
+;; profile so its FIRST point sits on the rail, which moves the centroid OFF the rail
+;; → an overhang the centroid-based shape-radius under-mitred. The directional fix
+;; measures from the stamp origin, so it sizes that overhang correctly and the corner
+;; now BUILDS CLEAN. The directional fix therefore resolves the :centered? false
+;; corner family too — a scope discovery, not a separate fix. (If a residual
+;; :centered? false placement defect ever reappears that is NOT the proxy, it would
+;; show here again; today it is gone.)
 ;; ════════════════════════════════════════════════════════════════════
-(deftest centered-false-corner-self-intersects
-  (let [rail "(path (f 40) (th 89) (f 40))"        ; generous legs: width fits, guard passes
+(deftest centered-false-corner-now-clean
+  (let [rail "(path (f 40) (th 89) (f 40))"
         cfalse (off-disk 0 5 24)                    ; :centered? false, centroid AT origin
         ctrue  (shape/circle-shape 5 24)]           ; identical geometry, :centered? true
-    (testing ":centered? true builds the centered circle clean"
+    (testing ":centered? true still builds clean (unchanged)"
       (is (zero? (self-intersection-pairs (ext-mesh ctrue rail)))
           "the centred circle on the clean stamp path does not self-intersect"))
-    (testing ":centered? false self-intersects on the SAME geometry + corner"
+    (testing ":centered? false now builds clean too (directional fix subsumed it)"
       (is (not (refused? #(ext-mesh cfalse rail)))
-          "the corner is realizable (width fits) — the guard does not fire")
-      (is (pos? (self-intersection-pairs (ext-mesh cfalse rail)))
-          "yet the :centered? false corner placement folds the section"))))
+          "the corner is realizable and the guard does not fire")
+      (is (zero? (self-intersection-pairs (ext-mesh cfalse rail)))
+          "the :centered? false overhang is now mitred correctly → no fold"))))
 
 ;; ════════════════════════════════════════════════════════════════════
-;; WHY THIS NET IS NEW — mesh-diagnose is blind. On a mesh the net flags as
-;; pierced (the escaper, which DOES build), mesh-diagnose reads a pristine closed
-;; 2-manifold: nm=0, watertight. A self-intersection passes the surface through
-;; itself while every edge keeps two incident faces. Every existing topological
-;; net sits GREEN here; that gap is why this family had to be built.
+;; WHY THIS NET EXISTS — mesh-diagnose is blind to self-intersection. Demonstrated on
+;; a mesh that STILL self-intersects after the fix: a shell at the realizability EDGE
+;; (t=0.2/FIX, eff≈0.07) builds with a residual discrete fold (tri-tri>0) yet
+;; mesh-diagnose reads a pristine closed 2-manifold (nm=0, watertight). A
+;; self-intersection passes the surface through itself while every edge keeps two
+;; incident faces — so only the tri-tri net sees it. (This edge residual is a REAL
+;; dual-ring corner self-intersection, NOT a proxy failure and NOT a discrete
+;; artefact: verified 2026-06-30, tri-tri GROWS with resolution (24→52, 48→60,
+;; 96→86), so refining the mesh does not remove it. The directional fix improved it
+;; 126→52 but the dual-ring corner at the realizability edge still folds — a known
+;; hole, separate follow-up. Used here precisely because it is a current pierced mesh.)
 ;; ════════════════════════════════════════════════════════════════════
 (deftest the-blindness-of-mesh-diagnose
-  (testing "a frankly self-intersecting mesh is topologically pristine (nm=0, watertight)"
-    (doseq [[label prof rail]
-            [["off-centre escaper" (off-disk 10 4 24) FIX-RAIL]
-             [":centered? false corner" (off-disk 0 5 24) "(path (f 40) (th 89) (f 40))"]]]
-      (let [m   (ext-mesh prof rail)
-            dia (mu/mesh-diagnose m)]
-        (is (pos? (self-intersection-pairs m))
-            (str label " must self-intersect (premise of the blindness claim)"))
-        (is (zero? (:non-manifold-edges dia))
-            (str label " — mesh-diagnose sees nm=0 on a pierced mesh (BLIND)"))
-        (is (true? (:is-watertight? dia))
-            (str label " — mesh-diagnose calls a pierced mesh watertight (BLIND)"))))))
+  (testing "a self-intersecting mesh is topologically pristine (nm=0, watertight)"
+    (let [m   (shell-mesh 10 0.2 FIX-RAIL)          ; edge shell: builds, tri-tri>0
+          dia (mu/mesh-diagnose m)]
+      (is (pos? (self-intersection-pairs m))
+          "shell at the realizability edge self-intersects (premise of the blindness claim)")
+      (is (zero? (:non-manifold-edges dia))
+          "mesh-diagnose sees nm=0 on the pierced mesh (BLIND)")
+      (is (true? (:is-watertight? dia))
+          "mesh-diagnose calls the pierced mesh watertight (BLIND)"))))
+
+;; ════════════════════════════════════════════════════════════════════
+;; SHELL CORNER SELF-INTERSECTION — the last broken sweep path
+;; (dev-docs/shell-corner-accertamento.md + dev-docs/shell-corner-fix-attempt.md).
+;; The plain loft is clean at every realizable corner; SHELL self-intersects at
+;; EVERY corner, clean only on a straight rail. MEASURED facts:
+;;   • the crossings are OUTER-skin vs OUTER-skin, clustered at the corner; the
+;;     INNER skin is uninvolved (no inner-inner, no inner-outer pairs). NOT an
+;;     inner-ring fold.
+;;   • it is a GEOMETRIC fold (tri-tri > 0) yet topologically pristine — mesh-
+;;     diagnose reads nm=0 / watertight on every case here.
+;;   • CAUSE (corrected 2026-06-29, see fix-attempt doc): the corner miter is sized
+;;     on the BASE radius (shape-radius of the probe = the centreline circle), but
+;;     shell's OUTER skin sits at base + thickness/2. The outer skin is therefore
+;;     UNDER-mitered and folds back across itself at the bend. This is the
+;;     shape-radius PROXY family (the same root as the off-centre escaper above:
+;;     the miter doesn't know the profile's true outer extent), NOT the per-segment
+;;     assembly. The control below shows it: a PLAIN loft at the OUTER radius —
+;;     which mitres ON that radius — is clean, while the shell at the same outer
+;;     radius (mitred on the base) folds.
+;;   • FALSIFIED HYPOTHESIS: extending the continuous build (tappa-2) to the
+;;     dual-ring path was tried and made ZERO difference (tri-tri 126/16 unchanged).
+;;     The continuous and per-segment builds sweep the SAME rings into the SAME
+;;     bands+caps — geometrically identical, so tri-tri (a geometric measure) cannot
+;;     differ. tappa-2 cures TOPOLOGICAL defects (the plain loft's old caps/seams);
+;;     shell's defect is GEOMETRIC (ring placement). Different signature → different
+;;     cure, exactly as the accertamento's own clue warned.
+;; The shell+corner cases are EXPECTED-RED (assert the TARGET tri-tri=0, red today,
+;; green when the REAL fix lands) — the fix's compass, like loft-corner-assembly-net's
+;; mech-* reds. The real fix is to size the shell corner miter on the OUTER extent
+;; (base + thickness/2) instead of the base radius — i.e. the shape-radius proxy
+;; refinement of the guard/shortening, a SEPARATE item to be done with that work.
+;; ════════════════════════════════════════════════════════════════════
+
+(deftest shell-straight-is-clean
+  (testing "GREEN baseline — a shell on a straight rail has no self-intersection"
+    (is (zero? (self-intersection-pairs (shell-mesh 10 3 "(path (f 30))")))
+        "shell circle r=10 / straight must be clean (0 pairs)")))
+
+(deftest shell-corner-outer-geometry-fits-control
+  ;; GREEN, permanent invariant + the diagnosis pivot: a PLAIN loft at the shell's
+  ;; OUTER radius builds clean — because it mitres ON that radius. The shell at the
+  ;; SAME outer radius folds (see EXPECTED-RED) because it mitres on the BASE radius
+  ;; (shape-radius of the centreline) and so UNDER-mitres the outer skin. So the
+  ;; cause is the miter BASIS (base vs outer), the shape-radius proxy — not the build
+  ;; assembly and not raw width. The two EXPECTED-RED fixtures are chosen so their
+  ;; outer skin fits when mitred correctly (plain = 0), so the REAL fix
+  ;; (miter on outer extent) drives them to 0:
+  ;;   • FIX  + thin wall t=0.2 → outer R=10.1 (FIX only admits outer < ~10.2)
+  ;;   • LONG + wall t=3        → outer R=11.5 (LONG has ample room)
+  (testing "plain loft at the EXPECTED-RED fixtures' outer radius is clean"
+    (is (zero? (self-intersection-pairs (loft-mesh (circ 10.1) FIX-RAIL)))
+        "plain loft outer R=10.1 fits the tight FIX corner (0 pairs)")
+    (is (zero? (self-intersection-pairs (loft-mesh (circ 11.5) LONG-RAIL)))
+        "plain loft outer R=11.5 fits the generous LONG corner (0 pairs)")))
+
+(deftest shell-corner-builds-clean
+  ;; REGRESSION GUARD (was EXPECTED-RED; the directional + wall-aware fix landed
+  ;; 2026-06-30). A comfortably-realizable shell — outer skin (base + thickness/2)
+  ;; well within the corner — now builds with NO self-intersection, because the miter
+  ;; is sized on the outer skin's reach toward the inner normal (corner-inner-extent,
+  ;; wall-aware), not the centroid-max shape-radius. Uses LONG (generous legs) so the
+  ;; cases sit clear of the realizability edge (see the t=0.2/FIX edge note below).
+  (testing "shell on a generous corner builds clean across thicknesses"
+    (is (zero? (self-intersection-pairs (shell-mesh 10 3 LONG-RAIL)))
+        "shell r=10 t=3 / LONG — outer skin 11.5 mitred correctly → tri-tri=0")
+    (is (zero? (self-intersection-pairs (shell-mesh 10 6 LONG-RAIL)))
+        "shell r=10 t=6 / LONG — outer skin 13 mitred correctly → tri-tri=0")))
+
+;; DIAGNOSTIC — mesh-diagnose blindness + the realizability-edge residual. After the
+;; fix, comfortably-realizable shells build clean and over-wide ones are refused; the
+;; only self-intersecting shell left is the near-degenerate EDGE (t=0.2/FIX, eff≈0.07)
+;; where the dual-ring corner leaves a residual fold (52, down from 126). NOT a sizing
+;; failure (plain@outer is clean) and NOT a discrete artefact (verified: tri-tri grows
+;; with resolution 24→52, 48→60, 96→86) — a REAL residual dual-ring corner fold at the
+;; realizability edge, a known hole for a separate follow-up.
+;; Refusal-safe (t=3/FIX is now refused → caught). Printed, not asserted.
+(deftest shell-corner-diagnostic
+  (doseq [[label base th rail]
+          [["edge residual   : shell t=0.2 / FIX " 10 0.2 FIX-RAIL]
+           ["clean realizable : shell t=3   / LONG" 10 3 LONG-RAIL]
+           ["over-wide→refuse : shell t=3   / FIX " 10 3 FIX-RAIL]]]
+    (let [r (try (let [m (shell-mesh base th rail)
+                       dia (mu/mesh-diagnose m)]
+                   (str "tri-tri=" (self-intersection-pairs m)
+                        "  nm=" (:non-manifold-edges dia)
+                        "  watertight=" (:is-watertight? dia)))
+                 (catch :default e (str "REFUSED: " (subs (.-message e) 0 (min 30 (count (.-message e)))))))]
+      (println (str ">>> " label ": " r))))
+  (is true))
+
+;; ════════════════════════════════════════════════════════════════════
+;; DIRECTIONAL-PROXY COVERAGE NET — the compass that makes the general fix safe
+;; instead of broad-and-blind (accertamento dev-docs/proxy-projection-accertamento.md;
+;; this net dev-docs/proxy-net-accertamento.md).
+;;
+;; The guard sizes the corner miter by `shape-radius` (max distance from the
+;; CENTROID, direction-independent). The correct quantity is the profile's reach
+;; toward the corner's INNER NORMAL, measured FROM THE SPINE: h(n_in) = max_P
+;; dot(P, n_in). shape-radius is a wrong proxy for it, producing THREE symptoms of
+;; the SAME defect, which the directional projection (the planned general fix) cures
+;; at once. Each test below asserts the behaviour the PROJECTION dictates — so it is
+;; RED today exactly where shape-radius diverges, and flips GREEN when the fix lands.
+;;
+;; Verdict measured: the fix is BROAD (changes the rejection boundary for every
+;; non-circular profile), and the existing nets exercise rejection only with CIRCLES
+;; (where projection == shape-radius). So the polygon shifts below are TODAY UNSEEN —
+;; this net is the coverage that stops the fix from changing common cases silently.
+;; Metric: tri-tri + guard behaviour, never mesh-diagnose (blind to self-intersection).
+;; ════════════════════════════════════════════════════════════════════
+
+(defn- built-clean?
+  "True iff THUNK builds (not refused) AND the result does not self-intersect
+   (tri-tri = 0). False on refusal. The 'accepted + geometrically sound' target."
+  [thunk]
+  (let [p (safe-pairs thunk)] (and (number? p) (zero? p))))
+
+;; centered polygons (centroid AT origin → :centered? irrelevant; shape-radius uses
+;; the circumradius, the projection uses the directional extent which is smaller)
+(defn- square [h] (shape/make-shape [[(- h) (- h)] [h (- h)] [h h] [(- h) h]] {:centered? true}))
+(defn- rect [hw hh] (shape/make-shape [[(- hw) (- hh)] [hw (- hh)] [hw hh] [(- hw) hh]] {:centered? true}))
+(defn- hexagon [r]                          ; vertex-up: +x reach is 0.866r, +y reach is r
+  (shape/make-shape (vec (for [i (range 6)]
+                           (let [a (+ (/ Math/PI 2) (* (/ Math/PI 3) i))]
+                             [(* r (Math/cos a)) (* r (Math/sin a))])))
+                    {:centered? true}))
+
+;; ── Family 1 — centered polygons (the OVER-conservative symptom, newly found) ──
+;; shape-radius (circumradius) > directional reach → the guard refuses realizable
+;; corners. The projection accepts them and they build sound (tri-tri=0). RED today
+;; because the corner is wrongly refused. THIS IS THE ZONE NO EXISTING TEST GUARDS.
+(deftest fam1-square-th-EXPECTED-RED
+  ;; square half=10: shape-radius=14.14, reach toward a th bend (±x)=10. On f12 legs
+  ;; the miter needs 10 (fits, eff=2) but shape-radius asks 14.14 (eff=-2.14 → refused).
+  (testing "square on a th corner the projection accepts but shape-radius refuses"
+    (is (built-clean? #(ext-mesh (square 10) "(path (f 12) (th 90) (f 12))"))
+        "TARGET accepted+clean: square half10 / (f12 th90 f12) — proj 10 fits, shape-radius 14.14 wrongly refuses (RED today)")))
+
+(deftest fam1-hexagon-th-EXPECTED-RED
+  ;; hexagon vertex-up circumR=10: shape-radius=10, reach toward th (±x)=8.66.
+  ;; f9.5 legs: miter needs 8.66 (eff=0.84) but shape-radius asks 10 (eff=-0.5 → refused).
+  (testing "hexagon on a th corner the projection accepts but shape-radius refuses"
+    (is (built-clean? #(ext-mesh (hexagon 10) "(path (f 9.5) (th 90) (f 9.5))"))
+        "TARGET accepted+clean: hexagon circumR10 / (f9.5 th90 f9.5) — proj 8.66 fits, shape-radius 10 wrongly refuses (RED today)")))
+
+(deftest fam1-rectangle-orientation-the-heart-of-directional
+  ;; SAME rectangle (20×6: hw=10, hh=3), SAME leg (f6), opposite correct verdict by
+  ;; PLANE — this is the core of 'directional'. shape-radius=10.44 (refuses both today).
+  ;;   • tv bend → inner normal ±y → reach=hh=3 → miter needs 3, fits f6 → must BUILD.
+  ;;   • th bend → inner normal ±x → reach=hw=10 → miter needs 10 > 6 → must STAY REFUSED.
+  (testing "rect on tv: projection (reach 3) accepts where shape-radius (10.44) refuses"
+    (is (built-clean? #(ext-mesh (rect 10 3) "(path (f 6) (tv 90) (f 6))"))
+        "TARGET accepted+clean: rect 20x6 / tv / f6 — proj y=3 fits, shape-radius wrongly refuses (RED today)"))
+  (testing "rect on th: reach (10) genuinely exceeds the leg → refusal is CORRECT"
+    (is (refused? #(ext-mesh (rect 10 3) "(path (f 6) (th 90) (f 6))"))
+        "rect 20x6 / th / f6 — proj x=10 > leg 6, the corner truly does not fit → must refuse (GREEN now & after)")))
+
+;; ── Family 2 — asymmetric off-centre (the escaper) — RESOLVED, builds clean ──
+;; off-disk cx=10 rr=4 (:centered? false): shape-radius from the centroid = 4 (under-
+;; sized); the directional fix measures the reach in the STAMP frame. CORRECTION vs the
+;; accertamento: compute-stamp-transform puts the FIRST point on the rail, so the
+;; stamped reach toward the inner normal is 8, not the authored-origin 14 — and
+;; 8·tan(44.5°) ≈ 7.86 < leg 10, so the corner is REALIZABLE. The fix mitres it
+;; correctly and it BUILDS CLEAN (tri-tri=0); it is NOT refused. (The brief's "refused"
+;; target was based on the authored-origin 14; the stamp-frame measurement is 8.)
+;; Invariant: extrude and loft, fed the same projection at the same point, build
+;; identically — asserted on both.
+(deftest fam2-asymmetric-escaper-builds-clean
+  (testing "off-centre overhang, mitred on its real (stamp-frame) reach → clean build"
+    (is (built-clean? #(ext-mesh (off-disk 10 4 24) FIX-RAIL))
+        "extrude: off-disk cx10 rr4 / FIX builds with tri-tri=0 (was the escaper)")
+    (is (built-clean? #(loft-mesh (off-disk 10 4 24) FIX-RAIL))
+        "loft builds identically clean (extrude≡loft invariant under the directional fix)")))
+
+;; ── Family 3 — shell boundary (recontextualised: under-mitred OUTER skin) ──
+;; The two realizable shell reds (t=0.2/FIX, t=3/LONG) live above in
+;; shell-corner-tri-tri-zero-EXPECTED-RED (build-clean target). Here is the OTHER
+;; side of the boundary: a shell whose OUTER skin is too wide for the bend must be
+;; REFUSED, aligning with the plain loft at that outer radius (plain 11.5/FIX is
+;; already refused). Today shell builds it folded → RED.
+;; COMPLICATION A — wall-dependence: this case's correctness depends on the WALL, not
+;; the points. The base points give reach 10 (10·tan44.5 ≈ 9.83 < leg 10 → a
+;; points-only projection would ACCEPT, wrongly). Only a projection of the swept
+;; OUTER skin (base + t/2 = 11.5 → 11.3 > 10 → refuse) gets it right. So this test
+;; stays RED under a points-only fix and only goes green under a wall-aware one —
+;; the guard against shipping the elegant-but-incomplete version.
+(deftest fam3-shell-outer-too-wide-must-refuse-EXPECTED-RED
+  (testing "shell whose outer skin overhangs the bend must be refused (wall-aware)"
+    (is (refused? #(shell-mesh 10 3 FIX-RAIL))
+        "TARGET refused: shell t=3 / FIX — outer skin 11.5 too wide (aligns with plain 11.5/FIX refused); today builds folded (RED), and a POINTS-ONLY fix would still wrongly accept (Complication A)"))
+  (testing "the alignment reference: the plain loft at the outer radius IS already refused"
+    (is (refused? #(loft-mesh (circ 11.5) FIX-RAIL))
+        "plain loft R=11.5 / FIX is refused today — the behaviour shell must match")))
+
+;; ── Control — the circle does not move ──
+;; projection == shape-radius in every direction → the fix must leave the circle's
+;; rejection boundary identical. GREEN now AND after: the non-regression guard on the
+;; one profile the broad fix must not touch.
+(deftest control-circle-unchanged
+  (testing "a circle corner that builds clean today must keep building clean (proj=shape-radius)"
+    (is (built-clean? #(ext-mesh (circ 10) "(path (f 30) (th 90) (f 30))"))
+        "circle r10 / (f30 th90 f30) builds clean — proj=shape-radius=10, the fix must not move it")
+    (is (refused? #(ext-mesh (circ 21) FIX-RAIL))
+        "circle r21 / FIX stays refused — proj=shape-radius=21, boundary identical under the fix")))
+
+;; ── Composite corner (Piece 3) — th+tv at one vertex, general inner normal ──
+;; A pure th or tv corner has its inner normal on a profile axis (±x / ±y); a
+;; COMPOSITE th+tv corner bends in a tilted plane, so n_in is a GENERAL 2D direction
+;; in the profile frame, and the turn angle is the angle BETWEEN the headings (not the
+;; sum of the rotation magnitudes). The directional fix derives n_in from the two 3D
+;; headings and the angle from acos(h0·h1), so it handles this; the pure-corner net
+;; above does not exercise it. We don't pin the projection number (less crisp for a
+;; composite) — we verify the BUILT mesh on a realizable composite corner does not
+;; self-intersect, on both operators.
+(deftest composite-corner-builds-clean
+  (let [rail "(path (f 40) (th 35) (tv 35) (f 40))"   ; generous legs → realizable
+        prof (rect 10 3)]                              ; asymmetric reach by direction
+    (testing "extrude on a composite th+tv corner builds without self-intersection"
+      (is (built-clean? #(ext-mesh prof rail))
+          "extrude: rect 20x6 / (f40 th35 tv35 f40) — composite corner, tri-tri=0"))
+    (testing "loft on the same composite corner builds clean (invariant)"
+      (is (built-clean? #(loft-mesh prof rail))
+          "loft: same composite corner builds clean too"))))

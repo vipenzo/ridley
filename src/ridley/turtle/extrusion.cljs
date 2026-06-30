@@ -1324,6 +1324,118 @@
            :closing-angle closing-angle}))
       forwards))))
 
+(defn- shell-outer-points-2d
+  "Offset each profile point outward (away from the centroid) by half-thickness —
+   the 2D trace of a shell's OUTER skin. Used so the miter is sized on the wall the
+   sweep actually produces, not the centreline points (Complication A)."
+  [pts half-t]
+  (let [n (count pts)
+        cx (/ (reduce + (map first pts)) n)
+        cy (/ (reduce + (map second pts)) n)]
+    (mapv (fn [[x y]]
+            (let [dx (- x cx) dy (- y cy) mag (Math/sqrt (+ (* dx dx) (* dy dy)))]
+              (if (< mag 1e-9) [x y]
+                  [(+ x (* (/ dx mag) half-t)) (+ y (* (/ dy mag) half-t))])))
+          pts)))
+
+(defn corner-inner-extent
+  "Direction-correct replacement for `shape-radius` in the corner miter sizing
+   (proxy-projection-accertamento.md). Returns how far the profile reaches toward
+   the corner's INNER NORMAL, measured FROM THE STAMP ORIGIN, in the section frame
+   (right = heading×up, up). The miter shortening is then this·tan(θ/2).
+
+   - n_in (inner normal) = the direction the bend closes, from the two headings
+     (the same `center-dir` generate-round-corner-rings uses).
+   - measured in the STAMP frame: for a :centered? false profile the points are
+     offset so the FIRST point sits on the rail (compute-stamp-transform), and that
+     offset is applied here too — so the asymmetric overhang is measured where the
+     sweep actually places it (not vs the geometric centroid).
+   - wall-aware: a shell profile (:shell-thickness) is projected on its OUTER skin
+     (base + thickness/2), since the overhang lives in the wall, not the points.
+   - clamped at 0: a profile entirely on the OUTER side of the bend needs no miter.
+   Returns 0 when there is no turn. Well-defined for non-convex profiles (the max
+   projection is always a real boundary point)."
+  [shape old-heading new-heading up]
+  (let [ax (cross old-heading new-heading)
+        am (magnitude ax)]
+    (if (< am 1e-9)
+      0
+      (let [n-in  (normalize (cross (normalize ax) old-heading))
+            right (normalize (cross old-heading up))
+            nr (dot n-in right)
+            nu (dot n-in up)
+            pts (:points shape)
+            [ox oy] (if (:centered? shape)
+                      [0 0]
+                      (let [[fx fy] (first pts)] [(- fx) (- fy)]))
+            half-t (* 0.5 (or (:shell-thickness shape) 0))
+            pts2 (if (pos? half-t) (shell-outer-points-2d pts half-t) pts)]
+        (reduce max 0
+                (map (fn [[x y]] (+ (* (+ x ox) nr) (* (+ y oy) nu))) pts2))))))
+
+(defn- corner-rot-angle
+  "Sum of |angle| over the HARD corner rotations (corner-rotation? excludes :smooth)."
+  [rots]
+  (reduce + 0 (map (fn [r] (if (corner-rotation? r) (Math/abs (first (:args r))) 0)) rots)))
+
+(defn analyze-open-path-dir
+  "Directional variant of analyze-open-path: sizes each corner's miter by the
+   profile's reach toward that corner's inner normal (corner-inner-extent) instead
+   of the scalar shape-radius. `state` is the pose BEFORE the path's leading
+   rotations (the frame is folded from there). Both extrude and loft consume this at
+   the same point, so they reject identically (the extrude≡loft invariant holds).
+   Output shape matches analyze-open-path so validate-corner-realizability! and the
+   ring loops are unchanged."
+  [commands shape state]
+  (let [cmds (vec commands)
+        n (count cmds)
+        ;; fold the frame: record heading/up ENTERING each forward
+        forwards (loop [i 0 st state acc []]
+                   (if (>= i n) acc
+                       (let [c (nth cmds i)]
+                         (if (= :f (:cmd c))
+                           (recur (inc i) st (conj acc {:idx i :cmd c :h0 (:heading st) :up0 (:up st)}))
+                           (recur (inc i) (if (is-rotation? (:cmd c)) (apply-rotation-to-state st c) st) acc)))))
+        nf (count forwards)
+        ;; per forward: the corner AFTER it (rotations, angle, directional extent)
+        per (mapv (fn [{:keys [idx h0 up0]}]
+                    (let [rots-after (loop [i (inc idx) rs []]
+                                       (if (>= i n) rs
+                                           (let [c (nth cmds i)]
+                                             (cond
+                                               (is-rotation? (:cmd c))   (recur (inc i) (conj rs c))
+                                               (is-annotation? (:cmd c)) (recur (inc i) rs)
+                                               :else                     rs))))
+                          h1 (:heading (reduce apply-rotation-to-state
+                                               {:heading h0 :up up0}
+                                               (filter corner-rotation? rots-after)))
+                          ;; Real turn angle = angle between the headings, NOT the sum
+                          ;; of the rotation magnitudes. For a pure th or tv corner the
+                          ;; two coincide; for a COMPOSITE th+tv corner they diverge —
+                          ;; the angle between h0 and h1 is what the miter needs (and
+                          ;; what n_in is derived from). corner-rot-angle is kept only
+                          ;; as a guard: if there is no HARD corner rotation, angle = 0.
+                          ang (if (zero? (corner-rot-angle rots-after))
+                                0
+                                (* (Math/acos (max -1.0 (min 1.0 (dot h0 h1))))
+                                   (/ 180 Math/PI)))
+                          extent (corner-inner-extent shape h0 h1 up0)]
+                      {:rots-after rots-after :angle ang :extent extent}))
+                  forwards)]
+    (vec (map-indexed
+          (fn [fwd-idx {:keys [cmd]}]
+            (let [dist (first (:args cmd))
+                  is-first (zero? fwd-idx)
+                  is-last (= fwd-idx (dec nf))
+                  after (nth per fwd-idx)
+                  before (when-not is-first (nth per (dec fwd-idx)))]
+              {:cmd :f
+               :dist dist
+               :shorten-start (if is-first 0 (calc-shorten-for-angle (:angle before) (:extent before)))
+               :shorten-end   (if is-last 0 (calc-shorten-for-angle (:angle after) (:extent after)))
+               :rotations-after (:rots-after after)}))
+          forwards))))
+
 (defn analyze-open-path
   "Analyze a path for open extrusion.
    Returns a vector of segments with their adjustments."
@@ -1558,7 +1670,11 @@
                            :up (:up state)}
             radius (shape-radius shape)
             commands (:commands path)
-            segments (analyze-open-path commands radius)
+            ;; Directional miter sizing: each corner is shortened by the profile's
+            ;; reach toward THAT corner's inner normal (corner-inner-extent), not the
+            ;; centroid-max shape-radius. `radius` is still used below for the round-
+            ;; corner fillet rings (a visual radius, not the realizability sizing).
+            segments (analyze-open-path-dir commands shape state)
             n-segments (count segments)]
         (if (< n-segments 1)
           state

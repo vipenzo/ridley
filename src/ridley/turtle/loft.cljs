@@ -584,11 +584,12 @@
            ;; Sweep invariant (frame-whole): the rail must begin in the turtle's frame.
            _ (extrusion/validate-rail-start-frame! state initial-rotations)
            ;; Realizability: reject a corner whose miter folds the section back
-           ;; through the tube. Fed by the SAME magnitude extrude uses
-           ;; (analyze-open-path / shape-radius) so both operators reject
-           ;; identically. See extrusion/validate-corner-realizability!.
+           ;; through the tube. Fed by the SAME directional projection extrude uses
+           ;; (analyze-open-path-dir: corner-inner-extent in the stamp frame, wall-
+           ;; aware for shell via :shell-thickness on `shape`) so both operators
+           ;; reject identically. See extrusion/validate-corner-realizability!.
            _ (extrusion/validate-corner-realizability!
-              (extrusion/analyze-open-path commands (shape-radius shape)))
+              (extrusion/analyze-open-path-dir commands shape state))
            ;; Arc carve-out (mirrors extrude-from-path, extrusion.cljs:1458-1463):
            ;; when the last leading rotation is an arc's :lead half-step, stamp the
            ;; FIRST ring with the pre-arc frame so the start cap stays perpendicular
@@ -602,7 +603,6 @@
                              state-with-initial-heading)
            segments (analyze-loft-path commands)
            n-segments (count segments)
-           initial-radius (shape-radius shape)
 
            ;; Detect shell mode from the first transformed shape
            ;; (shell shape-fn attaches :shell-mode to the shape)
@@ -734,12 +734,18 @@
                                         (Math/acos (min 1 (max -1 cos-angle)))
                                         0)
 
-                           ;; R_p/R_n: use simple miter formula for all joint modes
-                           ;; shorten = radius * tan(angle/2) - same as extrude
+                           ;; R_p/R_n: directional miter — shorten = extent·tan(angle/2),
+                           ;; where extent is the profile's reach toward THIS corner's
+                           ;; inner normal in the stamp frame (corner-inner-extent),
+                           ;; wall-aware for shell. Same magnitude extrude uses, so the
+                           ;; two reject/build identically. (Was initial-radius =
+                           ;; shape-radius, the centroid-max proxy.)
                            {:keys [r-p r-n]}
                            (if (and has-corner (> turn-angle 0.01))
                              (let [turn-angle-deg (* turn-angle (/ 180 Math/PI))
-                                   shorten (calc-shorten-for-angle turn-angle-deg initial-radius)]
+                                   extent (extrusion/corner-inner-extent
+                                           shape old-heading new-heading (:up s))
+                                   shorten (calc-shorten-for-angle turn-angle-deg extent)]
                                {:r-p shorten :r-n shorten})
                              {:r-p 0 :r-n 0})
 
