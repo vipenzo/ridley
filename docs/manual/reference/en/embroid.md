@@ -39,9 +39,9 @@ is watertight, manifold, and oriented outward. Used with `loft` (or
 | `:start-cap` / `:end-cap` | `:flat` | Shape the wall's two free ends, like `stroke-shape`: `:flat` (square butt), `:round` (half-cylinder of radius `width/2`), or `:square` (extend by `width/2`, then flat). The cap stays solid (no perforation). |
 | `:cap-steps` | `8` | Arc segments per `:round` cap. |
 | `:resolution` | ≈ `2·path-length` | Samples **along the path** (`u`). Controls how crisp the opening edges read in the path direction; the loft step count only refines the **sweep** (`t`). Raise for smoother openings (mesh grows with `resolution × loft-steps`). |
-| `:wall` | — | Map of the pattern options below (or pass them as top-level kwargs). |
+| `:wall` | — | Map of the pattern options below. **Either** pass everything (style *and* the options in both tables) inside `:wall`, **or** pass everything as top-level kwargs — do not mix. If `:wall` is given, top-level pattern kwargs (including `:softness`) are ignored. |
 
-**Wall pattern (`:style` inside `:wall`):**
+**Wall pattern (`:style`, inside `:wall`):** options specific to each style —
 
 | Style | Options |
 |---|---|
@@ -49,7 +49,8 @@ is watertight, manifold, and oriented outward. Used with `loft` (or
 | `:voronoi` | `:cells` (8), `:rows` (12), `:seed` (42), `:wall-width` (0.3) |
 | `:pattern` | `:pattern` (a 2D shape used as the opening motif), `:spacing` (15; number or `[sx sy]`), `:grid` (`:square` / `:hex`), `:inset` (0; shrink the motif to fatten struts), `:invert?` (false; swap motif↔gaps) |
 
-**Shared options:**
+**Options common to every style (also inside `:wall`):** these apply the same
+way to `:honeycomb`, `:voronoi`, and `:pattern` —
 
 | Option | Default | Description |
 |---|---|---|

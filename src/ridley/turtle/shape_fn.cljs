@@ -1461,7 +1461,9 @@
                     refines the sweep (t). Default ≈ 2·path-length; raise for
                     smoother hexagons (mesh grows with resolution × loft steps).
 
-   :wall options (or pass them as top-level kwargs):
+   :wall options — put ALL of these (including :softness/:margin/:border)
+   INSIDE the :wall map, OR pass everything as top-level kwargs with no :wall
+   at all. Do NOT mix: if :wall is given, top-level pattern kwargs are ignored.
      :style      :honeycomb (default, regular hexagons) | :voronoi (organic)
                  | :pattern (tile an arbitrary motif shape)
      :cells      openings across the wall length (default 8)
