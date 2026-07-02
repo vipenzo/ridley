@@ -1528,6 +1528,19 @@
                        :up (:up state)}
         radius (shape-radius shape)
         commands (:commands path)
+        ;; NOTE (2026-07-01, extrude-holed accertamento): this is the LAST open-path
+        ;; sweep still on the SCALAR shape-radius proxy. The directional swap
+        ;; (analyze-open-path-dir commands shape state) — verbatim from extrude-from-path
+        ;; — is CORRECT for sizing but NOT a clean transplant: it exposes a pre-masked
+        ;; fold in the tapered hole-corner builder (generate-tapered-corner-ring-data).
+        ;; A hole far from the rail pivot (off-centre profile) folds at a sharp corner
+        ;; when the correct miter is ~0, because the single scaled bridge ring overshoots
+        ;; (:round / :flat joints stay clean; the scalar over-shortening was accidentally
+        ;; masking it). So the holed path needs a BUILDER adattamento, not just the sizing
+        ;; swap — its own mini-accertamento. Kept on the scalar proxy until then; see
+        ;; dev-docs/extrude-holed-accertamento.md and corner_self_intersection_net_test
+        ;; (fam4 diagnostic). The scalar guard fires on gross off-centre cases; the
+        ;; residual is the off-centre holed corner (inner-side folds under-mitred).
         segments (analyze-open-path commands radius)
         n-segments (count segments)]
     (if (< n-segments 1)

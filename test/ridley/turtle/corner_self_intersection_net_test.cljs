@@ -158,6 +158,23 @@
                              [(+ cx (* rr (Math/cos a))) (* rr (Math/sin a))])))
                     {:centered? false}))
 
+;; the off-disk's TWIN on the HOLED path: the same off-centre disk, plus a central
+;; square hole. The hole routes the build through extrude-with-holes-from-path (a
+;; SEPARATE constructor from the plain path). The hole is interior, so it does NOT
+;; change the OUTER reach toward the corner's inner normal — the realizability is
+;; identical to off-disk. Any divergence between off-disk (plain) and holed-off-disk
+;; is therefore purely the constructor's miter proxy, which is the point of Family 4.
+(defn- holed-off-disk [cx rr n]
+  (shape/make-shape (vec (for [i (range n)]
+                           (let [a (* 2 Math/PI (/ i n))]
+                             [(+ cx (* rr (Math/cos a))) (* rr (Math/sin a))])))
+                    {:centered? false
+                     :holes [[[(- cx 1) -1] [(- cx 1) 1] [(+ cx 1) 1] [(+ cx 1) -1]]]}))
+
+(defn- ext-holed-mesh [profile railcode] (ops/pure-extrude-path profile (ev railcode)))
+(defn- loft-holed-mesh [profile railcode]
+  (ops/pure-loft-path profile (fn [s _t] s) (ev railcode) 64))
+
 (defn- refusal
   "Return the guard's error message if building THUNK is refused, else nil."
   [thunk]
@@ -514,3 +531,87 @@
     (testing "loft on the same composite corner builds clean (invariant)"
       (is (built-clean? #(loft-mesh prof rail))
           "loft: same composite corner builds clean too"))))
+
+;; ════════════════════════════════════════════════════════════════════
+;; FAMILY 4 — the HOLED path (extrude-with-holes-from-path). The plain extrude and
+;; every loft path size the corner miter DIRECTIONALLY (analyze-open-path-dir: reach
+;; toward the corner's inner normal, from the stamp origin). The HOLED extrude
+;; constructor is a SEPARATE branch (holes vs no-holes, project_extrude_dual_branch)
+;; and STILL sizes the miter by the SCALAR shape-radius (max from the CENTROID). For an
+;; off-centre :centered? false profile — the DEFAULT of make-shape / path-2d — the stamp
+;; puts the first point on the rail, so the centroid leaves the rail and the real reach
+;; toward the INNER side of a bend is far larger than shape-radius; the scalar proxy
+;; UNDER-mitres and the tube folds, and the scalar guard (same too-small radius) misses it.
+;;
+;; ACCERTAMENTO 2026-07-01 (dev-docs/extrude-holed-accertamento.md): the directional
+;; sizing swap that fixed every other path (analyze-open-path-dir, verbatim from
+;; extrude-from-path) is NOT a clean transplant here — it is an ADATTAMENTO. It cures the
+;; inner-side fold and refuses the non-realizable case, BUT it REGRESSES the OUTER-side
+;; off-centre holed corner: there the correct directional miter is ~0, and the tapered
+;; hole-corner builder (generate-tapered-corner-ring-data) FOLDS a hole that sits far
+;; from the rail pivot — the single scaled bridge ring overshoots (:round / :flat joints
+;; stay clean; measured below). The scalar over-shortening was accidentally masking it.
+;; So the real cure is a BUILDER fix on the tapered hole-corner, not just the sizing —
+;; a follow-up with its own net. The scalar proxy is kept until then; these fixtures are
+;; a DIAGNOSTIC of the territory (printed, not asserted) plus the GREEN targets the eventual
+;; fix must hit. Metric: tri-tri + guard, never mesh-diagnose (blind to self-intersection).
+;; ════════════════════════════════════════════════════════════════════
+
+(def ^:private HOLED-SHORT-RAIL "(path (f 6) (th 89) (f 20))")  ; reach 7.86 > leg 6 → not realizable
+
+(defn- centered-holed-frame []
+  (shape/make-shape [[-4 -4] [4 -4] [4 4] [-4 4]]
+                    {:centered? true :holes [[[-1.5 -1.5] [-1.5 1.5] [1.5 1.5] [1.5 -1.5]]]}))
+
+(deftest fam4-holed-control-stays-clean
+  ;; GREEN now AND after: a CENTRED holed profile (centroid on the rail → scalar radius
+  ;; == directional reach) builds clean. The hole is near the pivot, so the tapered
+  ;; hole-corner does not overshoot. The eventual fix must not disturb this.
+  (testing "centred holed frame on FIX builds clean (scalar == directional here)"
+    (is (built-clean? #(ext-holed-mesh (centered-holed-frame) FIX-RAIL))
+        "centred holed frame / FIX — proxy basis irrelevant on-rail, clean now & after")))
+
+(deftest fam4-territory-boundary-references
+  ;; GREEN, and STABLE — the references that bound the territory and encode the TARGET
+  ;; the holed-path fix must eventually match. These hold today (loft-holed is already
+  ;; directional; the plain twin is the same outer geometry). They document the two
+  ;; verdicts extrude-holed diverges from while it stays on the scalar proxy.
+  (testing "the plain twin is REALIZABLE on FIX and REFUSED on the short leg"
+    (is (zero? (self-intersection-pairs (ext-mesh (off-disk 10 4 24) FIX-RAIL)))
+        "plain off-disk cx10 rr4 / FIX builds clean — the corner IS realizable (reach 7.86 < leg 10)")
+    (is (refused? #(ext-mesh (off-disk 10 4 24) HOLED-SHORT-RAIL))
+        "plain off-disk cx10 rr4 / (f6 th89 f20) refused — reach 7.86 > leg 6"))
+  (testing "loft-holed (already directional) gives the target verdicts extrude-holed must match"
+    (is (refused? #(loft-holed-mesh (holed-off-disk 10 4 24) HOLED-SHORT-RAIL))
+        "loft-holed refuses the non-realizable holed corner — extrude-holed on the scalar proxy does NOT (folds)")
+    (is (built-clean? #(loft-holed-mesh (holed-off-disk 10 4 24) FIX-RAIL))
+        "loft-holed builds the realizable holed corner clean — extrude-holed on the scalar proxy folds it")))
+
+;; DIAGNOSTIC — the extrude-holed defect map (printed, not asserted). Documents BOTH
+;; the current scalar disease AND why the sizing-only swap is insufficient (the tapered
+;; hole-corner regression). This is the compass for the follow-up builder accertamento.
+(deftest fam4-holed-territory-diagnostic
+  (println "\n==== EXTRUDE-HOLED territory — off-disk cx10 rr4, holed vs plain ====")
+  (println "  (SCALAR proxy in place; the plain twin is the directional reference.)")
+  (doseq [[label rail] [["INNER-side realizable (FIX  f10 th89)" FIX-RAIL]
+                        ["INNER-side non-realiz  (f6  th89)     " HOLED-SHORT-RAIL]]]
+    (println (str ">>> " label
+                  "  holed=" (safe-pairs #(ext-holed-mesh (holed-off-disk 10 4 24) rail))
+                  "  plain=" (safe-pairs #(ext-mesh (off-disk 10 4 24) rail))
+                  "  loft-holed=" (safe-pairs #(loft-holed-mesh (holed-off-disk 10 4 24) rail)))))
+  (println "  → INNER-side: scalar UNDER-mitres → holed folds where plain/loft are clean/refused.")
+  (println "\n==== OUTER-side (miter≈0): loft-holed is ALREADY directional — does it fold too? ====")
+  (doseq [th [89 -89]]
+    (let [rail (str "(path (f 10) (th " th ") (f 20))")]
+      (println (str ">>> off-disk th=" th
+                    "  plain=" (safe-pairs #(ext-mesh (off-disk 10 4 24) rail))
+                    "  loft-holed=" (safe-pairs #(loft-holed-mesh (holed-off-disk 10 4 24) rail))))))
+  (println "  → th-89 is off-disk's OUTER side (reach 0). If loft-holed folds here, the tapered")
+  (println "    hole-corner bug is SHARED — the directional swap makes extrude-holed MATCH it.")
+  (println "  Why sizing-only is insufficient (measured 2026-07-01 WITH the directional swap")
+  (println "  temporarily in place, node): the OUTER-side off-centre holed corner — where the")
+  (println "  correct directional miter is ≈0 — folds under :tapered (holed[tapered]=21/30,")
+  (println "  plain=0), while :round/:flat build clean. The single tapered bridge ring overshoots")
+  (println "  a hole far from the rail pivot. Cure = BUILDER fix on generate-tapered-corner-ring-data,")
+  (println "  its own follow-up net. See dev-docs/extrude-holed-accertamento.md.")
+  (is true))
