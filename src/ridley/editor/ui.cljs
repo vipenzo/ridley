@@ -22,15 +22,25 @@
         :else s))))
 
 (defn slider-range
-  "Default [min max step] for a slider given an initial value."
+  "Default [min max step] for a slider given an initial value.
+
+   Step is chosen from the *span* (a power of ten giving ~100–1000 stops), NOT
+   from `(integer? value)`: in ClojureScript there is no int/float distinction,
+   so `1.0` reads as the integral JS number `1` and `(integer? 1.0)` is `true` —
+   keying the step off that gave a coarse step of 1 for a value like `1.0`, and
+   with a fractional min (value*0.1) the reachable stops became 0.1/1.1/2.1
+   instead of round numbers. Min/max are snapped to the step grid so stops land
+   on round values."
   [value]
   (if (zero? value)
     [-50 50 1]
-    (let [lo (* value 0.1)
-          hi (* value 3)
-          mn (min lo hi)
-          mx (max lo hi)
-          step (if (integer? value) 1 0.1)]
+    (let [lo   (min (* value 0.1) (* value 3))
+          hi   (max (* value 0.1) (* value 3))
+          span (- hi lo)
+          ;; power-of-ten step giving ~100 stops across the range
+          step (Math/pow 10 (Math/floor (/ (Math/log (/ span 100)) (Math/log 10))))
+          mn   (* step (Math/floor (/ lo step)))
+          mx   (* step (Math/ceil (/ hi step)))]
       [mn mx step])))
 
 (defn create-slider-row
