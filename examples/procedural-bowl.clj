@@ -1,3 +1,4 @@
+;; Ridley Workspace — Libraries: puppet, mount
 ; === Porta Pistacchi — Procedural ===
 ;
 ; A two-piece pistachio bowl with rounded organic profiles.
@@ -26,10 +27,10 @@
 
 (def default-proportions
   {:bottom-ratio 0.67 ; base radius / rim radius
-   :tray-ratio 0.683 ; tray height / bowl height
+   :tray-ratio 0.583 ; tray height / bowl height
    :funnel-ratio 0.55 ; funnel top radius / base radius
    :taper-ratio 0.535 ; funnel bottom / funnel top
-   :funnel-height-ratio 0.152 ;tray-height / funnel height
+   :funnel-height-ratio 0.392 ;tray-height / funnel height
    :funne-handle-ratio 0.127 ; funnel top / handle top
    })
 
