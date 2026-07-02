@@ -417,7 +417,7 @@ Lo stile controlla il pattern delle aperture nelle pareti.
 
 L'opzione `:softness` (per `:voronoi` e `:lattice`, default `0.6`) controlla come vengono tagliati i bordi delle aperture. Per default il taglio è *isocontour*: il bordo viene affettato nella posizione esatta in cui la parete incontra l'apertura, fra un vertice e l'altro, e le aperture risultano lisce — con un piccolo labbro rastremato — anche a risoluzione moderata. Con `:softness 0` il taglio torna *binario*: ogni triangolo della griglia è tenuto o scartato per intero, e i bordi restano scalettati lungo la griglia di anelli e segmenti (alzare la risoluzione rimpicciolisce i denti ma non li elimina). Un valore intorno a `0.5–0.8` è il punto ottimale. È l'equivalente, per gli shell, dell'`:edge-softness` del rilievo testuale (cap. 13). (`:lattice` con `:invert?` usa sempre il taglio binario.)
 
-Gli altri stili disponibili sono `:checkerboard` (scacchiera) e `:weave` (intreccio). Ognuno ha le sue opzioni specifiche; la Reference le documenta tutte. `:invert? true` funziona con tutti gli stili, comprese le thickness-fn custom passate con `:fn`.
+Un altro stile disponibile è `:checkerboard` (scacchiera). Ognuno ha le sue opzioni specifiche; la Reference le documenta tutte. Per una vera trama intrecciata (sopra/sotto) usa `woven-shell`, non uno stile di `shell`. `:invert? true` funziona con tutti gli stili, comprese le thickness-fn custom passate con `:fn`.
 
 ### Shell in composizione
 
@@ -625,7 +625,7 @@ Qui le due shape-fn da sole non avrebbero bisogno di risoluzione: ma `twisted` f
 
 ## Thickness-fn: controllare lo spessore delle pareti
 
-Nella sezione su `shell` abbiamo usato gli stili built-in (`:voronoi`, `:lattice`, `:weave`, `:checkerboard`). Ognuno di quegli stili è una thickness-fn preconfezionata: una funzione che dice al loft quanto deve essere spessa la parete in ogni punto.
+Nella sezione su `shell` abbiamo usato gli stili built-in (`:voronoi`, `:lattice`, `:checkerboard`, `:pattern`). Ognuno di quegli stili è una thickness-fn preconfezionata: una funzione che dice al loft quanto deve essere spessa la parete in ogni punto.
 
 La thickness-fn ha la firma `(fn [angle t] -> 0..1)`. I due argomenti sono le coordinate di un punto sulla superficie del guscio:
 
@@ -722,7 +722,7 @@ Due gusci con pattern diversi possono coesistere nello stesso oggetto. Sovrappon
 
 ### Rapporto con gli stili built-in
 
-Gli stili built-in di `shell` (`:voronoi`, `:lattice`, `:checkerboard`, `:weave`) non sono altro che thickness-fn preconfezionate. Quando scrivi `(shell shape :thickness 2 :style :lattice :openings 8 :rows 12)`, internamente `shell` costruisce una thickness-fn che produce un pattern a griglia con quelle dimensioni.
+Gli stili built-in di `shell` (`:voronoi`, `:lattice`, `:checkerboard`, `:pattern`) non sono altro che thickness-fn preconfezionate. Quando scrivi `(shell shape :thickness 2 :style :lattice :openings 8 :rows 12)`, internamente `shell` costruisce una thickness-fn che produce un pattern a griglia con quelle dimensioni.
 
 Passare `:fn` sovrascrive lo stile: le due opzioni sono mutuamente esclusive. Se specifichi entrambe, `:fn` vince.
 

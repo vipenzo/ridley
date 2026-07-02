@@ -369,7 +369,8 @@ Shell wraps a shape into a hollow wall with variable thickness. Where the thickn
 ;; Built-in styles
 (register checkerboard (loft-n 64 (shell (circle 20 64) :thickness 2 :style :checkerboard :cols 8 :rows 8) (f 60)))
 (register lattice2 (loft-n 64 (shell (circle 20 64) :thickness 2 :style :lattice :openings 8 :rows 12) (f 60)))
-(register weave (loft-n 64 (shell (circle 20 64) :thickness 2 :style :weave :strands 6 :frequency 8) (f 60)))
+;; For a true over/under weave use woven-shell (not a shell style):
+(register weave (loft-n 128 (woven-shell (circle 20 128) :thickness 3 :strands 6) (f 60)))
 ;; Note: Voronoi needs high resolution (256+) for best results — may take a few seconds
 (register voronoi (loft-n 256 (shell (circle 20 256) :thickness 2 :style :voronoi :cells 8 :rows 8) (f 60)))
 

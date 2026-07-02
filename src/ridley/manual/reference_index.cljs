@@ -2079,7 +2079,7 @@
     :status "stable"
     :since ""
     :signature "(shell shape-or-fn & {:keys [thickness style threshold cap-top cap-bottom fn invert?] :as style-opts})"
-    :description "Shape-fn that produces a hollow extrusion with variable-thickness walls and optional openings. At each ring, the profile is annotated with a per-vertex thickness value (`0` = no wall, `1` = full thickness); the loft uses these to build an inner and outer wall around each point. The wall pattern is chosen via `:style` (one of `:solid`, `:lattice`, `:checkerboard`, `:weave`, `:voronoi`) or supplied as a custom function via `:fn`. Used with `loft` or `revolve`. Does not modify turtle state."
+    :description "Shape-fn that produces a hollow extrusion with variable-thickness walls and optional openings. At each ring, the profile is annotated with a per-vertex thickness value (`0` = no wall, `1` = full thickness); the loft uses these to build an inner and outer wall around each point. The wall pattern is chosen via `:style` (one of `:solid`, `:lattice`, `:checkerboard`, `:voronoi`, `:pattern`) or supplied as a custom function via `:fn`. Used with `loft` or `revolve`. Does not modify turtle state."
     :path "docs/manual/reference/en/shell.md"}
 
    "show"

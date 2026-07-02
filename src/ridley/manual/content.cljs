@@ -822,7 +822,7 @@ You can also override resolution per-command using the `:steps` argument:
 - `:fn` — thickness function (required)
 - `:threshold` — values below this snap to 0 (default 0.05)
 
-**Built-in styles:** Use `:style :lattice`, `:style :checkerboard`, `:style :voronoi`, or `:style :weave` for common patterns without writing a custom function.
+**Built-in styles:** Use `:style :lattice`, `:style :checkerboard`, `:style :voronoi`, or `:style :pattern` for common patterns without writing a custom function. For a true over/under woven surface use `woven-shell` (below), not a `shell` style.
 
 **`woven-shell`** adds radial offset so threads can pass in front of / behind each other. Two modes:
 - `:diagonal` (default) — threads at 45°, controlled by `:strands` and `:width`
@@ -2025,7 +2025,7 @@ Puoi anche sovrascrivere la risoluzione per singolo comando usando l'argomento `
 - `:fn` — funzione di spessore (obbligatoria)
 - `:threshold` — valori sotto questa soglia diventano 0 (default 0.05)
 
-**Stili predefiniti:** Usa `:style :lattice`, `:style :checkerboard`, `:style :voronoi` o `:style :weave` per pattern comuni senza scrivere una funzione custom.
+**Stili predefiniti:** Usa `:style :lattice`, `:style :checkerboard`, `:style :voronoi` o `:style :pattern` per pattern comuni senza scrivere una funzione custom. Per una vera trama intrecciata (sopra/sotto) usa `woven-shell` (sotto), non uno stile di `shell`.
 
 **`woven-shell`** aggiunge un offset radiale per far passare i fili davanti e dietro gli uni agli altri. Due modalità:
 - `:diagonal` (default) — fili a 45°, controllati da `:strands` e `:width`

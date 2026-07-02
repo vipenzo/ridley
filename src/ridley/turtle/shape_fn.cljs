@@ -933,23 +933,12 @@
           (if (zero? (mod (+ row col) 2)) 1.0 0.0))))
 
     :weave
-    (let [{:keys [strands frequency width]
-           :or {strands 6 frequency 8 width 0.3}} opts]
-      (fn [a t]
-        (let [u (* (/ (+ a Math/PI) (* 2 Math/PI)) strands)
-              v (* t frequency)
-              col (int (Math/floor u))
-              row (int (Math/floor v))
-              fu (- u (Math/floor u))
-              fv (- v (Math/floor v))
-              on-warp? (< (Math/abs (- fu 0.5)) width)
-              on-weft? (< (Math/abs (- fv 0.5)) width)
-              warp-over? (zero? (mod (+ row col) 2))]
-          (cond
-            (and on-warp? on-weft?) (if warp-over? 1.0 0.0)
-            on-warp? 1.0
-            on-weft? 1.0
-            :else 0.0))))
+    ;; Removed: a thickness-only shell can't express thread over/under, so the
+    ;; old :weave degenerated into a checkerboard of holes. Redirect to the tool
+    ;; that does the real thing (radial offset at crossings).
+    (throw (js/Error. (str "shell: :style :weave was removed — a thickness-only "
+                           "shell can't do thread over/under (it degenerated into "
+                           "a checkerboard). Use woven-shell for a real weave.")))
 
     :voronoi
     ;; Wall stripe along Voronoi cell edges. Returns 1 inside the wall and 0
@@ -1053,7 +1042,7 @@
 
     ;; Unknown style
     (throw (js/Error. (str "shell: unknown :style " style
-                           ". Valid styles: :solid :lattice :checkerboard :weave :voronoi :pattern")))))
+                           ". Valid styles: :solid :lattice :checkerboard :voronoi :pattern")))))
 
 ;; ============================================================
 ;; Panel field (for embroid) — perforation over a flat (u,t) grid
@@ -1228,7 +1217,6 @@
    (shell shape :thickness 2 :style :voronoi :cells 8 :rows 6)    ; Voronoi openings
    (shell shape :thickness 2 :style :lattice :openings 8 :rows 12); Grid openings
    (shell shape :thickness 2 :style :checkerboard :cols 8 :rows 8); Checkerboard
-   (shell shape :thickness 2 :style :weave :strands 6 :frequency 8); Woven pattern
    (shell shape :thickness 2 :style :pattern :pattern (circle 6))  ; Tiled motif holes
    (shell shape :thickness 2 :fn (fn [a t] ...))                   ; Custom function
 

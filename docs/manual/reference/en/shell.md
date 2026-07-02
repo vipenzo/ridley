@@ -18,9 +18,12 @@ and optional openings. At each ring, the profile is annotated with a
 per-vertex thickness value (`0` = no wall, `1` = full thickness); the
 loft uses these to build an inner and outer wall around each point. The
 wall pattern is chosen via `:style` (one of `:solid`, `:lattice`,
-`:checkerboard`, `:weave`, `:voronoi`) or supplied as a custom function
+`:checkerboard`, `:voronoi`, `:pattern`) or supplied as a custom function
 via `:fn`. Used with `loft` or `revolve`. Does not modify turtle
 state.
+
+For a true over/under woven surface, use `woven-shell` — a thickness-only
+shell can't shift threads radially, so it can't represent a real weave.
 
 `:pattern` tiles an arbitrary 2D motif shape around the wall (the
 shell analogue of `embroid`'s `:pattern`), instead of a procedural
@@ -38,7 +41,7 @@ loft begins): `:cap-top` closes the far end, `:cap-bottom` the near one.
 |---|---|---|
 | `shape-or-fn` | — | Base profile (shape or shape-fn). |
 | `:thickness` | `2` | Wall thickness. Outer ring offset outward by `thickness/2`, inner ring inward by the same amount. |
-| `:style` | `:solid` | Wall pattern: `:solid`, `:lattice`, `:checkerboard`, `:weave`, `:voronoi`, `:pattern`. Ignored when `:fn` is supplied. |
+| `:style` | `:solid` | Wall pattern: `:solid`, `:lattice`, `:checkerboard`, `:voronoi`, `:pattern`. Ignored when `:fn` is supplied. |
 | `:fn` | — | Custom thickness function `(fn [a t] -> 0..1)` overriding `:style`. `a` = angular position (radians), `t` = path progress. |
 | `:threshold` | `0.05` | Values below this snap to 0 (no wall). |
 | `:invert?` | `false` | Swap solid/empty (`v → 1 - v`): e.g. turn `:lattice` bricks into brick-shaped openings, or a `:voronoi` wireframe into solid cells. Works with every style and with custom `:fn`. |
@@ -51,7 +54,6 @@ loft begins): `:cap-top` closes the far end, `:cap-bottom` the near one.
 |---|---|
 | `:lattice` | `:openings` (8), `:rows` (12), `:shift` (0.5), `:softness` (0.6) |
 | `:checkerboard` | `:cols` (8), `:rows` (8) |
-| `:weave` | `:strands` (6), `:frequency` (8), `:width` (0.3) |
 | `:voronoi` | `:cells` (6), `:rows` (6), `:seed` (42), `:wall-width` (0.3), `:margin` (0.05), `:softness` (0.6) |
 | `:pattern` | `:pattern` (motif shape, ≥3 pts), `:cells` (8), `:rows` (6), `:grid` (`:square` / `:hex`), `:inset` (0), `:margin` (0.05), `:softness` (0.6) |
 
@@ -124,18 +126,6 @@ rounded corners).
 
 Lattice / grid openings. `:openings` columns, `:rows` rows; `:shift`
 offsets odd rows.
-
-{{example: shell-weave}}
-
-<!-- example-source: shell-weave -->
-```clojure
-(register weave-tube
-  (loft (shell (circle 20 64) :thickness 2 :style :weave :strands 6 :frequency 8)
-        (f 50)))
-```
-<!-- /example-source -->
-
-Woven-style pattern: interlocking strands modulate the wall thickness.
 
 {{example: shell-checkerboard}}
 

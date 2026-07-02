@@ -694,7 +694,7 @@ A shape-fn is a function `(fn [t] -> shape)` with metadata `{:type :shape-fn}`. 
 | `(woven shape :warp n :weft m)` | Interlocking over/under woven fabric pattern |
 | `(heightmap shape hm :amplitude a)` | Displacement from a rasterized heightmap |
 | `(profile shape path)` | Scale cross-section to match a path silhouette |
-| `(shell shape :thickness n :style s)` | Hollow extrusion with wall pattern (`:solid` `:voronoi` `:lattice` `:checkerboard` `:weave` `:pattern`) |
+| `(shell shape :thickness n :style s)` | Hollow extrusion with wall pattern (`:solid` `:voronoi` `:lattice` `:checkerboard` `:pattern`) |
 | `(shell shape :thickness n :fn f)` | Hollow extrusion with custom thickness function |
 | `(woven-shell shape :thickness n ...)` | Shell with radial offset for true over/under weave |
 
@@ -774,7 +774,6 @@ The path's X coordinates represent the radius at each point along the extrusion.
 (shell (circle 20 64) :thickness 2 :style :voronoi :cells 8 :rows 6)      ; Voronoi openings
 (shell (circle 20 64) :thickness 2 :style :lattice :openings 8 :rows 12)  ; Grid openings
 (shell (circle 20 64) :thickness 2 :style :checkerboard :cols 8 :rows 8)  ; Checkerboard
-(shell (circle 20 64) :thickness 2 :style :weave :strands 6 :frequency 8) ; Woven pattern
 (shell (circle 20 96) :thickness 3 :style :pattern :pattern (circle 24)   ; Tiled motif holes
        :cells 12 :rows 8)
 
@@ -799,7 +798,6 @@ Wall is symmetric: outer ring displaced outward by `thickness/2`, inner ring dis
 | `:solid` | (none) |
 | `:lattice` | `:openings` (8), `:rows` (12), `:shift` (0.5), `:softness` (0.6) |
 | `:checkerboard` | `:cols` (8), `:rows` (8) |
-| `:weave` | `:strands` (6), `:frequency` (8), `:width` (0.3) |
 | `:voronoi` | `:cells` (6), `:rows` (6), `:seed` (42), `:wall-width` (0.3), `:margin` (0.05), `:softness` (0.6) |
 | `:pattern` | `:pattern` (motif shape, ≥3 pts), `:cells` (8), `:rows` (6), `:grid` (`:square`/`:hex`), `:inset` (0), `:margin` (0.05), `:softness` (0.6) |
 

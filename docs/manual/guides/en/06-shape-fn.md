@@ -417,7 +417,7 @@ The style controls the pattern of the openings in the walls.
 
 The `:softness` option (for `:voronoi` and `:lattice`, default `0.6`) controls how the edges of the openings are cut. By default the cut is *isocontour*: the edge is sliced at the exact position where the wall meets the opening, between one vertex and the next, and the openings come out smooth (with a small tapered lip) even at moderate resolution. With `:softness 0` the cut goes back to *binary*: each triangle of the grid is kept or discarded as a whole, and the edges stay stepped along the grid of rings and segments (raising the resolution shrinks the teeth but does not eliminate them). A value around `0.5–0.8` is the sweet spot. It is the equivalent, for shells, of the `:edge-softness` of text relief (chapter 13). (`:lattice` with `:invert?` always uses the binary cut.)
 
-The other available styles are `:checkerboard` and `:weave`. Each has its own specific options; the Reference documents them all. `:invert? true` works with all styles, including custom thickness-fns passed with `:fn`.
+Another available style is `:checkerboard`. Each has its own specific options; the Reference documents them all. For a true over/under woven surface use `woven-shell`, not a `shell` style. `:invert? true` works with all styles, including custom thickness-fns passed with `:fn`.
 
 ### Shell in composition
 
@@ -625,7 +625,7 @@ Here the two shape-fns on their own would not need resolution: but `twisted` mak
 
 ## Thickness-fns: controlling wall thickness
 
-In the section on `shell` we used the built-in styles (`:voronoi`, `:lattice`, `:weave`, `:checkerboard`). Each of those styles is a prepackaged thickness-fn: a function that tells the loft how thick the wall must be at each point.
+In the section on `shell` we used the built-in styles (`:voronoi`, `:lattice`, `:checkerboard`, `:pattern`). Each of those styles is a prepackaged thickness-fn: a function that tells the loft how thick the wall must be at each point.
 
 The thickness-fn has the signature `(fn [angle t] -> 0..1)`. The two arguments are the coordinates of a point on the surface of the shell:
 
@@ -722,7 +722,7 @@ Two shells with different patterns can coexist in the same object. By overlaying
 
 ### Relationship with the built-in styles
 
-The built-in styles of `shell` (`:voronoi`, `:lattice`, `:checkerboard`, `:weave`) are nothing more than prepackaged thickness-fns. When you write `(shell shape :thickness 2 :style :lattice :openings 8 :rows 12)`, internally `shell` builds a thickness-fn that produces a grid pattern with those dimensions.
+The built-in styles of `shell` (`:voronoi`, `:lattice`, `:checkerboard`, `:pattern`) are nothing more than prepackaged thickness-fns. When you write `(shell shape :thickness 2 :style :lattice :openings 8 :rows 12)`, internally `shell` builds a thickness-fn that produces a grid pattern with those dimensions.
 
 Passing `:fn` overrides the style: the two options are mutually exclusive. If you specify both, `:fn` wins.
 
