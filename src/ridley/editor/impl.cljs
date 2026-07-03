@@ -194,6 +194,92 @@
           (swap! state/mark-anchors assoc mark face-pose))))
     result))
 
+(defn- loft+-reject-shell-embroid!
+  "loft+ can't chain a shell/embroid profile: the swept wall has no single 2D
+   end cross-section to feed the next segment. Probe the shape-fn at t=0 (with
+   the same *path-length* binding the loft uses) and reject if it carries
+   :shell-mode / :embroid-mode."
+  [first-arg path]
+  (when (sfn/shape-fn? first-arg)
+    (let [path-length (reduce + 0 (keep (fn [cmd]
+                                          (when (= :f (:cmd cmd)) (first (:args cmd))))
+                                        (:commands path)))
+          probe (binding [sfn/*path-length* path-length] (first-arg 0))]
+      (when (or (:shell-mode probe) (:embroid-mode probe))
+        (throw (js/Error. (str "loft+: shell/embroid profiles are not supported in chaining — "
+                               "the swept wall has no single end cross-section to continue from. "
+                               "Use plain loft, then chain a separate op.")))))))
+
+(defn ^:export loft+-impl
+  "Like loft-impl but returns {:mesh :start-face :end-face} for chaining.
+   Dispatch mirrors loft-impl (2-arg shape-fn; 3-arg shape-fn / two-shape /
+   transform-fn). The `& more` tail is [second-arg? path opts…] — the path is
+   the (path …) map, everything after it is :mark / :mark-cap options.
+
+   The end-face's :shape is the 2D section actually stamped on the loft's last
+   ring (threaded through pure-loft-path*), never a re-evaluation at t=1 — so a
+   chained op starts from the real end cross-section (see brief-loft-plus)."
+  [first-arg & more]
+  (let [v (vec more)
+        path-idx (first (keep-indexed
+                         (fn [i x] (when (and (map? x) (= :path (:type x))) i)) v))
+        _ (when (nil? path-idx)
+            (throw (js/Error. "loft+: missing path/movements")))
+        second-arg (when (pos? path-idx) (nth v 0))
+        path (nth v path-idx)
+        opts (apply hash-map (subvec v (inc path-idx)))
+        mark (:mark opts)
+        mark-cap (:mark-cap opts)]
+    (validate-extrude-path! "loft+" path)
+    (loft+-reject-shell-embroid! first-arg path)
+    (let [rich (cond
+                 (sfn/shape-fn? first-arg)
+                 (ops/pure-loft-shape-fn* first-arg path)
+
+                 (nil? second-arg)
+                 (throw (js/Error. (str "loft+: 2-arg form requires a shape-fn as first argument. "
+                                        "For a plain profile use (loft+ shape transform-fn movements…) "
+                                        "or (loft+ shape target-shape movements…).")))
+
+                 (shape/shape? second-arg)
+                 (ops/pure-loft-two-shapes* first-arg second-arg path)
+
+                 (sfn/shape-fn? second-arg)
+                 (throw (js/Error. (str "loft+: got a shape-fn as transform argument. Inside transform-> "
+                                        "the profile comes from the previous step; use the partial form, "
+                                        "e.g. (tapered :to 0.5), or a (fn [shape t] …).")))
+
+                 :else
+                 (ops/pure-loft-path* first-arg second-arg path))
+          pose (current-pose)
+          ref-up (or (:up pose) [0 0 1])
+          start-up (derive-end-up (:heading pose) ref-up)
+          ->result (fn [r]
+                     (let [es (:end-state r)
+                           end-heading (:heading es)
+                           end-up (derive-end-up end-heading ref-up)]
+                       {:mesh (assoc (:mesh r) :creation-pose pose)
+                        :start-face {:shape (:start-shape r)
+                                     :pose {:pos (:position pose)
+                                            :heading (:heading pose)
+                                            :up start-up}}
+                        :end-face {:shape (:end-shape r)
+                                   :pose {:pos (:position es)
+                                          :heading end-heading
+                                          :up end-up}}}))
+          result (cond
+                   (nil? rich)    nil
+                   (vector? rich) (mapv ->result rich)
+                   :else          (->result rich))]
+      (when (and mark mark-cap result)
+        (let [face-pose (case mark-cap
+                          :start-cap (:pose (:start-face result))
+                          :end-cap (:pose (:end-face result))
+                          nil)]
+          (when face-pose
+            (swap! state/mark-anchors assoc mark face-pose))))
+      result)))
+
 (defn- compute-pivot-offset [s pivot]
   (let [pts (:points s)
         xs (map first pts)
@@ -345,6 +431,9 @@
                    (case op
                      :extrude+ (extrude+-impl s (first args))
                      :revolve+ (apply revolve+-impl s args)
+                     ;; args = [dispatch-arg (path …)]; inject the incoming shape
+                     ;; as loft+'s first (profile) argument → (loft+-impl s dispatch path)
+                     :loft+    (apply loft+-impl s args)
                      (throw (js/Error. (str "transform->: unknown op " op))))
                    (finally
                      (reset! @state/turtle-state-var saved)))]

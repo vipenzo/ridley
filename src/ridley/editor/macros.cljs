@@ -864,6 +864,28 @@
      ([shape angle & opts]
       `(revolve+-impl ~shape ~angle ~@opts)))
 
+   ;; loft+: chainable loft. Same dispatch as `loft` (shape-fn / two-shape /
+   ;; transform-fn) but returns {:mesh :start-face :end-face} for transform->.
+   ;; (loft+ (tapered (circle 20) :to 0.5) (f 30))          - shape-fn
+   ;; (loft+ (rect 20 20) (circle 10) (f 40))               - two-shape
+   ;; (loft+ (circle 20) (fn [s t] (scale-shape s (- 1 t))) (f 30)) - transform-fn
+   (defmacro loft+ [first-arg & rest-args]
+     (let [mvmt? (fn [x] (and (list? x) (contains? #{'f 'th 'tv 'tr 'arc-h 'arc-v
+                                                       'bezier-to 'bezier-to-anchor
+                                                       'bezier-as} (first x))))]
+       (cond
+         (= 1 (count rest-args))
+         `(loft+-impl ~first-arg (path ~(first rest-args)))
+
+         (mvmt? (first rest-args))
+         `(loft+-impl ~first-arg (path ~@rest-args))
+
+         :else
+         (let [[dispatch-arg & movements] rest-args]
+           (if (seq movements)
+             `(loft+-impl ~first-arg ~dispatch-arg (path ~@movements))
+             `(loft+-impl ~first-arg (path ~dispatch-arg)))))))
+
    (defmacro transform-> [shape-or-end-face & steps]
      (let [step-forms
            (mapv (fn [form]
@@ -884,6 +906,13 @@
                          revolve+ (cond-> `{:op :revolve+ :args [~@main-args]}
                                     mark-name (assoc :mark mark-name)
                                     mark-cap (assoc :mark-cap mark-cap))
+                         ;; (loft+ <transform-fn|target-shape> movements…): the
+                         ;; incoming shape is injected as the profile by
+                         ;; transform->step, so args = [dispatch-arg (path …)].
+                         loft+ (cond-> `{:op :loft+
+                                         :args [~(first main-args) (path ~@(rest main-args))]}
+                                 mark-name (assoc :mark mark-name)
+                                 mark-cap (assoc :mark-cap mark-cap))
                          nil))
                      nil))
                  steps)]

@@ -790,7 +790,8 @@
                           acc-rings []        ;; accumulated rings for current smooth section
                           finished-meshes []  ;; completed meshes (split at corners)
                           loft-first-ring nil  ;; first ring of entire loft (for start cap)
-                          loft-second-ring nil] ;; second ring (for start cap normal)
+                          loft-second-ring nil ;; second ring (for start cap normal)
+                          last-shape nil]     ;; 2D shape stamped on the last ring (for loft+ end-face)
                      (if (>= seg-idx n-segments)
                        ;; Flush remaining accumulated rings as final mesh.
                        ;; do-build caps the TRUE ends inline so cap faces share
@@ -836,7 +837,8 @@
                                           solid-cap-top (conj solid-cap-top)
                                           solid-cap-bottom (conj solid-cap-bottom))]
                          {:meshes all-meshes
-                          :state s})
+                          :state s
+                          :end-shape last-shape})
                        (let [seg (nth segments seg-idx)
                              seg-dist (:dist seg)
                              has-corner (:has-corner-after seg)
@@ -910,7 +912,20 @@
                                              (Math/acos (min 1 (max -1 cos-a))))
 
                              ;; Taper distance advances by effective length
-                             new-taper-acc (+ taper-acc effective-seg-dist)]
+                             new-taper-acc (+ taper-acc effective-seg-dist)
+
+                             ;; 2D shape stamped on this segment's LAST ring. Its t is the
+                             ;; ACTUAL clamped-t of that ring (i=seg-steps → local-t=1 →
+                             ;; taper-at=new-taper-acc), NOT the nominal t=1: on corner+short
+                             ;; segments the clamp diverges below 1 (see brief-loft-plus).
+                             ;; transform-fn is pure, so recomputing at the same t reproduces
+                             ;; the stamped shape exactly. This value also equals shape-next
+                             ;; (the corner branch's next-start-ring shape, whose t-end shares
+                             ;; new-taper-acc), so it is the last-stamped shape in every branch.
+                             seg-last-shape (transform-fn shape
+                                                          (if (pos? total-effective-dist)
+                                                            (min 1 (/ new-taper-acc total-effective-dist))
+                                                            0))]
 
                          (if has-corner
                            ;; Corner. For the plain loft (and its tapered/twisted/
@@ -986,7 +1001,8 @@
                                           (conj next-start-ring))
                                       finished-meshes
                                       new-first-ring
-                                      new-second-ring)
+                                      new-second-ring
+                                      seg-last-shape)
                                ;; Per-segment: flush section + corner bridge as
                                ;; separate sub-meshes (seam-aware builders).
                                (let [section-caps (if (empty? finished-meshes) :start false)
@@ -1005,7 +1021,8 @@
                                           section-mesh (conj section-mesh)
                                           corner-mesh (conj corner-mesh))
                                         new-first-ring
-                                        new-second-ring))))
+                                        new-second-ring
+                                        seg-last-shape))))
 
                            ;; No corner: smooth junction. The per-step sections of
                            ;; a bezier rail are each stamped perpendicular to the
@@ -1036,10 +1053,12 @@
                                     new-acc-rings
                                     finished-meshes
                                     new-first-ring
-                                    new-second-ring))))))
+                                    new-second-ring
+                                    seg-last-shape))))))
 
                    segment-meshes (:meshes result)
-                   final-state (:state result)]
+                   final-state (:state result)
+                   end-shape (:end-shape result)]
 
                (if (empty? segment-meshes)
                  state
@@ -1065,4 +1084,9 @@
                                                      ;; MORPHED profile (taper/twist) — its
                                                      ;; :mark-refs ride the scaled points.
                                                      :profile-shape-fn (fn [t] (transform-fn shape t))))]
-                   (update final-state :meshes into meshes-with-anchors)))))))))))
+                   ;; :loft-end-shape is an ephemeral key consumed by pure-loft-path*
+                   ;; (for loft+'s end-face). Invisible to plain-loft callers, which
+                   ;; only read :meshes — mesh geometry is byte-identical.
+                   (-> final-state
+                       (update :meshes into meshes-with-anchors)
+                       (assoc :loft-end-shape end-shape))))))))))))

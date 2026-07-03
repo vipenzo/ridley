@@ -71,6 +71,30 @@
                       (count (:points base)))})))
 
 ;; ============================================================
+;; Partial form for profile combinators
+;; ============================================================
+
+(defn- profile-arg?
+  "True when `x` is a valid leading profile for a combinator's FULL form — a
+   shape or an already-built shape-fn to wrap. When false, the combinator was
+   called in PARTIAL form (no leading profile), so it returns the bare
+   transform-fn `(fn [shape t] -> shape)` — the same contract loft's legacy mode
+   and loft+'s `:else` branch already accept. The partial value carries NO
+   `:shape-fn` metadata, so `(shape-fn? …)` is false and it routes through the
+   legacy path with no dispatch change."
+  [x]
+  (or (shape/shape? x) (shape-fn? x)))
+
+(defn- combinator-kwargs
+  "Parse a kwargs combinator's trailing options into a map. In partial form the
+   head `shape-or-fn` is itself the first option keyword (the profile was
+   omitted), so fold it back in front of `args`."
+  [partial? shape-or-fn args]
+  (if partial?
+    (apply hash-map shape-or-fn args)
+    (apply hash-map args)))
+
+;; ============================================================
 ;; Helpers
 ;; ============================================================
 
@@ -100,20 +124,27 @@
 (defn ^:export tapered
   "Scale a shape from :from (default 1) to :to (default 0) along the path.
    (tapered (circle 20) :to 0)       ;; cone
-   (tapered (circle 20) :from 0.5 :to 1)  ;; expand"
-  [shape-or-fn & {:keys [to from] :or {to 0 from 1}}]
-  (shape-fn shape-or-fn
-            (fn [s t]
-              (xform/scale s (+ from (* t (- to from)))))))
+   (tapered (circle 20) :from 0.5 :to 1)  ;; expand
+   Partial form (no profile) returns the bare transform for loft's legacy /
+   transform-> use: (loft+ (tapered :to 1.3) (f 30))."
+  [shape-or-fn & args]
+  (let [partial? (not (profile-arg? shape-or-fn))
+        {:keys [to from] :or {to 0 from 1}} (combinator-kwargs partial? shape-or-fn args)
+        xf (fn [s t]
+             (xform/scale s (+ from (* t (- to from)))))]
+    (if partial? xf (shape-fn shape-or-fn xf))))
 
 (defn ^:export twisted
   "Rotate a shape progressively along the path.
    At t=0 rotation is 0, at t=1 rotation is :angle degrees.
-   (twisted (rect 20 10) :angle 90)"
-  [shape-or-fn & {:keys [angle] :or {angle 360}}]
-  (shape-fn shape-or-fn
-            (fn [s t]
-              (xform/rotate s (* t angle)))))
+   (twisted (rect 20 10) :angle 90)
+   Partial form (no profile): (twisted :angle 90)."
+  [shape-or-fn & args]
+  (let [partial? (not (profile-arg? shape-or-fn))
+        {:keys [angle] :or {angle 360}} (combinator-kwargs partial? shape-or-fn args)
+        xf (fn [s t]
+             (xform/rotate s (* t angle)))]
+    (if partial? xf (shape-fn shape-or-fn xf))))
 
 (defn ^:export rugged
   "Rocky/irregular displacement via layered sinusoids varying both around the
@@ -123,48 +154,60 @@
    value noise): `rugged` keeps the angular character of sin waves layered at
    multiple scales — useful for rocky, bark, or crystalline surfaces.
    (rugged (circle 15) :amplitude 2 :frequency 6 :octaves 3)
-   (rugged (circle 15) :amplitude 2 :octaves 4 :gain 0.6 :seed 7)"
-  [shape-or-fn & {:keys [amplitude frequency octaves gain seed]
-                  :or {amplitude 1 frequency 6 octaves 3 gain 0.5 seed 0}}]
-  (shape-fn shape-or-fn
-            (fn [s t]
-              (displace-radial s
-                               (fn [p]
-                                 (let [a (angle p)]
-                                   (loop [i 0
-                                          freq (double frequency)
-                                          amp 1.0
-                                          total 0.0
-                                          max-amp 0.0]
-                                     (if (>= i octaves)
-                                       (* amplitude (/ total (max max-amp 1e-9)))
-                                       (let [phase (+ seed (* i 2.3956))]
-                                         (recur (inc i)
-                                                (* freq 2.0)
-                                                (* amp gain)
-                                                (+ total
-                                                   (* amp 0.5
-                                                      (+ (Math/sin (+ (* a freq) phase))
-                                                         (Math/sin (+ (* t freq) phase 1.7)))))
-                                                (+ max-amp amp)))))))))))
+   (rugged (circle 15) :amplitude 2 :octaves 4 :gain 0.6 :seed 7)
+   Partial form (no profile): (rugged :amplitude 2 :octaves 4)."
+  [shape-or-fn & args]
+  (let [partial? (not (profile-arg? shape-or-fn))
+        {:keys [amplitude frequency octaves gain seed]
+         :or {amplitude 1 frequency 6 octaves 3 gain 0.5 seed 0}}
+        (combinator-kwargs partial? shape-or-fn args)
+        xf (fn [s t]
+             (displace-radial s
+                              (fn [p]
+                                (let [a (angle p)]
+                                  (loop [i 0
+                                         freq (double frequency)
+                                         amp 1.0
+                                         total 0.0
+                                         max-amp 0.0]
+                                    (if (>= i octaves)
+                                      (* amplitude (/ total (max max-amp 1e-9)))
+                                      (let [phase (+ seed (* i 2.3956))]
+                                        (recur (inc i)
+                                               (* freq 2.0)
+                                               (* amp gain)
+                                               (+ total
+                                                  (* amp 0.5
+                                                     (+ (Math/sin (+ (* a freq) phase))
+                                                        (Math/sin (+ (* t freq) phase 1.7)))))
+                                               (+ max-amp amp)))))))))]
+    (if partial? xf (shape-fn shape-or-fn xf))))
 
 (defn ^:export fluted
   "Longitudinal grooves using cos pattern (aligned with shape axes).
-   (fluted (circle 20) :flutes 12 :depth 2)"
-  [shape-or-fn & {:keys [flutes depth] :or {flutes 6 depth 1}}]
-  (shape-fn shape-or-fn
-            (fn [s _t]
-              (displace-radial s (fn [p]
-                                   (* depth (Math/cos (* (angle p) flutes))))))))
+   (fluted (circle 20) :flutes 12 :depth 2)
+   Partial form (no profile): (fluted :flutes 12 :depth 2)."
+  [shape-or-fn & args]
+  (let [partial? (not (profile-arg? shape-or-fn))
+        {:keys [flutes depth] :or {flutes 6 depth 1}} (combinator-kwargs partial? shape-or-fn args)
+        xf (fn [s _t]
+             (displace-radial s (fn [p]
+                                  (* depth (Math/cos (* (angle p) flutes))))))]
+    (if partial? xf (shape-fn shape-or-fn xf))))
+
+(defn- displaced-xf
+  "The shared transform for `displaced`: radial displacement by displace-fn."
+  [displace-fn]
+  (fn [s t]
+    (displace-radial s (fn [p] (displace-fn p t)))))
 
 (defn ^:export displaced
   "Custom per-vertex radial displacement.
    displace-fn: (fn [point t] -> number) returns radial offset.
-   (displaced (circle 15 64) (fn [p t] (* 2 (sin (+ (* (angle p) 6) (* t 20))))))"
-  [shape-or-fn displace-fn]
-  (shape-fn shape-or-fn
-            (fn [s t]
-              (displace-radial s (fn [p] (displace-fn p t))))))
+   (displaced (circle 15 64) (fn [p t] (* 2 (sin (+ (* (angle p) 6) (* t 20))))))
+   Partial (1-arity) form (displaced displace-fn) returns the bare transform."
+  ([displace-fn] (displaced-xf displace-fn))
+  ([shape-or-fn displace-fn] (shape-fn shape-or-fn (displaced-xf displace-fn))))
 
 (defn ^:export morphed
   "Interpolate between two shapes along the path.
@@ -241,19 +284,25 @@
   "Noise-based displacement shape-fn.
    (noisy (circle 15 64) :amplitude 1.5 :scale 3)
    (noisy (circle 15 64) :amplitude 2 :scale 3 :octaves 4)
-   (noisy (circle 15 64) :amplitude 1 :scale-x 8 :scale-y 3 :seed 42)"
-  [shape-or-fn & {:keys [amplitude scale scale-x scale-y octaves seed]
-                  :or {amplitude 1.0 scale 3.0 octaves 1 seed 0}}]
-  (let [sx (or scale-x scale)
-        sy (or scale-y scale)]
-    (displaced shape-or-fn
-               (fn [p t]
-                 (let [a (angle p)
-                       nx (+ (* a sx) seed)
-                       ny (+ (* t sy) seed)]
-                   (* amplitude (if (= octaves 1)
-                                  (noise nx ny)
-                                  (fbm nx ny octaves))))))))
+   (noisy (circle 15 64) :amplitude 1 :scale-x 8 :scale-y 3 :seed 42)
+   Partial form (no profile): (noisy :amplitude 1.5 :scale 3)."
+  [shape-or-fn & args]
+  (let [partial? (not (profile-arg? shape-or-fn))
+        {:keys [amplitude scale scale-x scale-y octaves seed]
+         :or {amplitude 1.0 scale 3.0 octaves 1 seed 0}}
+        (combinator-kwargs partial? shape-or-fn args)
+        sx (or scale-x scale)
+        sy (or scale-y scale)
+        disp (fn [p t]
+               (let [a (angle p)
+                     nx (+ (* a sx) seed)
+                     ny (+ (* t sy) seed)]
+                 (* amplitude (if (= octaves 1)
+                                (noise nx ny)
+                                (fbm nx ny octaves)))))]
+    ;; Delegate to displaced in BOTH forms (single source of `disp`): partial
+    ;; noisy → displaced's 1-arity (bare transform); full → its 2-arity.
+    (if partial? (displaced disp) (displaced shape-or-fn disp))))
 
 (defn ^:export woven
   "Woven fabric displacement — interlocking over/under thread pattern.
@@ -1717,11 +1766,19 @@
 
    Negative radius expands the shape at the caps (useful for reinforcement fillets).
    With shapes that have holes, :preserve-holes true (default) keeps holes unchanged
-   so only the outer boundary is affected."
-  [shape-or-fn radius & {:keys [mode start end fraction end-radius preserve-holes]
-                         :or {mode :fillet start true end true
-                              preserve-holes true}}]
-  (let [ease-fn (case mode
+   so only the outer boundary is affected.
+
+   Partial form (no profile) keeps the positional radius: (capped 3),
+   (capped 3 :mode :chamfer). Auto-fraction needs *path-length*, which the
+   loft binds in both the shape-fn and legacy paths."
+  [shape-or-fn & args]
+  (let [partial? (not (profile-arg? shape-or-fn))
+        radius (if partial? shape-or-fn (first args))
+        {:keys [mode start end fraction end-radius preserve-holes]
+         :or {mode :fillet start true end true
+              preserve-holes true}}
+        (apply hash-map (if partial? args (rest args)))
+        ease-fn (case mode
                   :fillet  (fn [u r]
                              (if (neg? r)
                                (Math/sin (* u (/ Math/PI 2)))
@@ -1729,45 +1786,45 @@
                   :chamfer (fn [u _r] u))
         start-radius radius
         end-radius (or end-radius radius)
-        explicit-fraction fraction]
-    (shape-fn shape-or-fn
-              (fn [s t]
+        explicit-fraction fraction
+        xf (fn [s t]
         ;; Auto-calculate fraction from path length when not explicitly set
-                (let [fraction (or explicit-fraction
-                                   (when *path-length*
-                                     (let [max-r (max (Math/abs start-radius) (Math/abs (or end-radius start-radius)))
-                                           ideal (/ max-r *path-length*)]
+             (let [fraction (or explicit-fraction
+                                (when *path-length*
+                                  (let [max-r (max (Math/abs start-radius) (Math/abs (or end-radius start-radius)))
+                                        ideal (/ max-r *path-length*)]
                                ;; Cap at 0.45 to leave room for the middle section
-                                       (min 0.45 ideal)))
-                                   0.08)
-                      [in-transition? u active-radius]
-                      (cond
-                        (and start (< t fraction))
-                        [true (ease-fn (/ t fraction) start-radius) start-radius]
+                                    (min 0.45 ideal)))
+                                0.08)
+                   [in-transition? u active-radius]
+                   (cond
+                     (and start (< t fraction))
+                     [true (ease-fn (/ t fraction) start-radius) start-radius]
 
-                        (and end (> t (- 1 fraction)))
-                        [true (ease-fn (/ (- 1 t) fraction) end-radius) end-radius]
+                     (and end (> t (- 1 fraction)))
+                     [true (ease-fn (/ (- 1 t) fraction) end-radius) end-radius]
 
-                        :else [false 1.0 0])]
-                  (if (or (not in-transition?) (>= u 0.999))
-                    s
+                     :else [false 1.0 0])]
+               (if (or (not in-transition?) (>= u 0.999))
+                 s
             ;; Scale shape toward centroid — preserves proportions (fillet radii etc.)
             ;; The radius parameter controls how much the nearest edge moves inward.
-                    (let [inset-amount (* active-radius (- 1 u))
-                          inradius (xform/shape-inradius s)
-                          scale (if (> inradius 0.001)
-                                  (max 0.001 (/ (- inradius inset-amount) inradius))
-                                  1.0)
-                          pts (:points s)
-                          n (count pts)
-                          cx (/ (reduce + (map first pts)) n)
-                          cy (/ (reduce + (map second pts)) n)
-                          scale-pt (fn [[x y]]
-                                     [(+ cx (* scale (- x cx)))
-                                      (+ cy (* scale (- y cy)))])
-                          scaled-points (mapv scale-pt pts)
-                          orig-holes (:holes s)]
-                      (cond-> (assoc s :points scaled-points)
-                        (and orig-holes (not preserve-holes))
-                        (assoc :holes (mapv (fn [hole] (mapv scale-pt hole))
-                                            orig-holes))))))))))
+                 (let [inset-amount (* active-radius (- 1 u))
+                       inradius (xform/shape-inradius s)
+                       scale (if (> inradius 0.001)
+                               (max 0.001 (/ (- inradius inset-amount) inradius))
+                               1.0)
+                       pts (:points s)
+                       n (count pts)
+                       cx (/ (reduce + (map first pts)) n)
+                       cy (/ (reduce + (map second pts)) n)
+                       scale-pt (fn [[x y]]
+                                  [(+ cx (* scale (- x cx)))
+                                   (+ cy (* scale (- y cy)))])
+                       scaled-points (mapv scale-pt pts)
+                       orig-holes (:holes s)]
+                   (cond-> (assoc s :points scaled-points)
+                     (and orig-holes (not preserve-holes))
+                     (assoc :holes (mapv (fn [hole] (mapv scale-pt hole))
+                                         orig-holes)))))))]
+    (if partial? xf (shape-fn shape-or-fn xf))))

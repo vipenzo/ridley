@@ -145,16 +145,22 @@
     1 (first results)
     (combine-meshes results)))
 
-(defn ^:export pure-loft-path
-  "Pure loft function - creates mesh without side effects.
-   Starts from current turtle position/orientation.
-   transform-fn: (fn [shape t]) where t goes from 0 to 1
-   steps: number of intermediate steps (defaults to (default-segments state 1))
+(defn ^:export pure-loft-path*
+  "Rich loft: like `pure-loft-path` but also threads out, per shape, the start
+   and end 2D cross-sections and the rail's end-state — the data `loft+` needs
+   to chain. Returns a single result map
+     {:mesh m :start-shape s0 :end-shape s1 :end-state {:position p :heading h}}
+   for a single shape, or a vector of such maps for a vector of shapes (parity
+   with `extrude+`). Returns nil if nothing was built.
 
-   At corners, generates separate segment meshes and combines them.
-   The resulting mesh may have overlapping/intersecting parts."
+   The :end-shape is the 2D shape actually stamped on the LAST ring (threaded
+   out of loft-from-path as :loft-end-shape), NOT (transform-fn shape 1): on
+   corner + short-segment paths the ring loop's clamp can leave the last ring
+   at t < 1, so re-evaluating at the nominal t=1 would mismatch the real end
+   face and crack the seam of the next chained op. The :start-shape is safely
+   (transform-fn shape 0) — the first ring is at t=0 exactly by construction."
   ([shape-or-shapes transform-fn path]
-   (pure-loft-path shape-or-shapes transform-fn path nil))
+   (pure-loft-path* shape-or-shapes transform-fn path nil))
   ([shape-or-shapes transform-fn path steps]
    (let [shapes (unwrap-shapes shape-or-shapes)
          current-turtle @@state/turtle-state-var
@@ -167,29 +173,66 @@
                              (assoc :resolution (:resolution current-turtle))
                              (assoc :material (:material current-turtle)))
                          (turtle/make-turtle))
+         pose (or current-turtle (turtle/make-turtle))
          steps (or steps (extrusion/default-segments initial-state 1))
-         results (reduce
-                  (fn [acc shape]
-                    (let [result-state (turtle/loft-from-path initial-state shape transform-fn path steps)
-                          ;; loft-from-path emits side-wall, corner and cap segments
-                          ;; as separate sub-meshes with independent vertex indices.
-                          ;; merge-vertices welds coincident positions so the seams
-                          ;; close into a watertight mesh.
-                          mesh (some-> (combine-meshes (:meshes result-state))
-                                       (mesh-utils/merge-vertices 1e-4))]
-                      (if mesh (conj acc mesh) acc)))
-                  []
-                  shapes)]
-     ;; a (mark :name) on the loft spine/rail becomes a mesh anchor too
-     (merge-rail-anchors (wrap-results results) path (or current-turtle (turtle/make-turtle))))))
+         ;; Bind *path-length* around the legacy path too (previously only
+         ;; pure-loft-shape-fn did), so a bare transform that reads it —
+         ;; a partial `capped`, or a user lambda — sees the real length
+         ;; instead of the default. A deliberate semantic upgrade for legacy
+         ;; transforms; before, that value was meaningless in legacy mode.
+         path-length (reduce + 0 (keep (fn [cmd]
+                                         (when (= :f (:cmd cmd)) (first (:args cmd))))
+                                       (:commands path)))
+         results (binding [sfn/*path-length* path-length]
+                   (reduce
+                    (fn [acc shape]
+                      (let [result-state (turtle/loft-from-path initial-state shape transform-fn path steps)
+                            ;; loft-from-path emits side-wall, corner and cap segments
+                            ;; as separate sub-meshes with independent vertex indices.
+                            ;; merge-vertices welds coincident positions so the seams
+                            ;; close into a watertight mesh.
+                            mesh (some-> (combine-meshes (:meshes result-state))
+                                         (mesh-utils/merge-vertices 1e-4))]
+                        (if mesh
+                          ;; a (mark :name) on the loft spine/rail becomes a mesh anchor too
+                          (conj acc {:mesh (merge-rail-anchors mesh path pose)
+                                     :start-shape (transform-fn shape 0)
+                                     :end-shape (:loft-end-shape result-state)
+                                     :end-state {:position (:position result-state)
+                                                 :heading (:heading result-state)}})
+                          acc)))
+                    []
+                    shapes))]
+     (case (count results)
+       0 nil
+       1 (first results)
+       results))))
 
-(defn ^:export pure-loft-two-shapes
-  "Pure loft between two shapes - creates mesh that transitions from shape1 to shape2.
-   If shapes have different point counts, they are automatically resampled to match.
-   Point arrays are aligned angularly for smooth morphing between different topologies.
+(defn ^:export pure-loft-path
+  "Pure loft function - creates mesh without side effects.
    Starts from current turtle position/orientation.
-   If shape1 is a vector of shapes, each is independently lofted to shape2."
-  ([shape1-or-shapes shape2 path] (pure-loft-two-shapes shape1-or-shapes shape2 path nil))
+   transform-fn: (fn [shape t]) where t goes from 0 to 1
+   steps: number of intermediate steps (defaults to (default-segments state 1))
+
+   At corners, generates separate segment meshes and combines them.
+   The resulting mesh may have overlapping/intersecting parts.
+
+   Thin wrapper over `pure-loft-path*`: keeps only the mesh(es)."
+  ([shape-or-shapes transform-fn path]
+   (pure-loft-path shape-or-shapes transform-fn path nil))
+  ([shape-or-shapes transform-fn path steps]
+   (let [rich (pure-loft-path* shape-or-shapes transform-fn path steps)]
+     (cond
+       (nil? rich)    nil
+       (vector? rich) (wrap-results (mapv :mesh rich))
+       :else          (:mesh rich)))))
+
+(defn ^:export pure-loft-two-shapes*
+  "Rich two-shape loft (see `pure-loft-path*`). The threaded :end-shape is the
+   actual last-ring lerp between the resampled/aligned shapes, so it already
+   reflects the resampling — no separate re-derivation needed. Returns a single
+   result map, or a vector of them for a vector of shape1s."
+  ([shape1-or-shapes shape2 path] (pure-loft-two-shapes* shape1-or-shapes shape2 path nil))
   ([shape1-or-shapes shape2 path steps]
    (let [shapes1 (unwrap-shapes shape1-or-shapes)
          results (reduce
@@ -203,20 +246,39 @@
                                          (xform/resample shape2 target-n)]))
                           s2-aligned (xform/align-to-shape rs1 rs2)
                           transform-fn (shape/make-lerp-fn rs1 s2-aligned)
-                          mesh (pure-loft-path rs1 transform-fn path steps)]
-                      (if mesh (conj acc mesh) acc)))
+                          rich (pure-loft-path* rs1 transform-fn path steps)]
+                      (if rich (conj acc rich) acc)))
                   []
                   shapes1)]
-     (wrap-results results))))
+     (case (count results)
+       0 nil
+       1 (first results)
+       results))))
+
+(defn ^:export pure-loft-two-shapes
+  "Pure loft between two shapes - creates mesh that transitions from shape1 to shape2.
+   If shapes have different point counts, they are automatically resampled to match.
+   Point arrays are aligned angularly for smooth morphing between different topologies.
+   Starts from current turtle position/orientation.
+   If shape1 is a vector of shapes, each is independently lofted to shape2.
+
+   Thin wrapper over `pure-loft-two-shapes*`: keeps only the mesh(es)."
+  ([shape1-or-shapes shape2 path] (pure-loft-two-shapes shape1-or-shapes shape2 path nil))
+  ([shape1-or-shapes shape2 path steps]
+   (let [rich (pure-loft-two-shapes* shape1-or-shapes shape2 path steps)]
+     (cond
+       (nil? rich)    nil
+       (vector? rich) (wrap-results (mapv :mesh rich))
+       :else          (:mesh rich)))))
 
 ;; ============================================================
 ;; Shape-fn adapters
 ;; ============================================================
 
-(defn ^:export pure-loft-shape-fn
-  "Pure loft with a shape-fn. Evaluates shape-fn at each step along the path.
-   Bridges shape-fn API to existing loft pipeline."
-  ([shape-fn-val path] (pure-loft-shape-fn shape-fn-val path nil))
+(defn ^:export pure-loft-shape-fn*
+  "Rich shape-fn loft (see `pure-loft-path*`). Preserves the `*path-length*`
+   binding the shape-fn reads."
+  ([shape-fn-val path] (pure-loft-shape-fn* shape-fn-val path nil))
   ([shape-fn-val path steps]
    (let [path-length (reduce + 0 (keep (fn [cmd]
                                          (when (= :f (:cmd cmd))
@@ -225,7 +287,20 @@
      (binding [sfn/*path-length* path-length]
        (let [base-shape (shape-fn-val 0)
              transform-fn (fn [_shape t] (shape-fn-val t))]
-         (pure-loft-path base-shape transform-fn path steps))))))
+         (pure-loft-path* base-shape transform-fn path steps))))))
+
+(defn ^:export pure-loft-shape-fn
+  "Pure loft with a shape-fn. Evaluates shape-fn at each step along the path.
+   Bridges shape-fn API to existing loft pipeline.
+
+   Thin wrapper over `pure-loft-shape-fn*`: keeps only the mesh(es)."
+  ([shape-fn-val path] (pure-loft-shape-fn shape-fn-val path nil))
+  ([shape-fn-val path steps]
+   (let [rich (pure-loft-shape-fn* shape-fn-val path steps)]
+     (cond
+       (nil? rich)    nil
+       (vector? rich) (wrap-results (mapv :mesh rich))
+       :else          (:mesh rich)))))
 
 (defn- clip-shape-for-revolve
   "Sanitise a shape for revolution. Shapes that cross the revolution axis

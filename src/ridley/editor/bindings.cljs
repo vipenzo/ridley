@@ -572,6 +572,7 @@
    'extrude+-impl       macro-impl/extrude+-impl
    'extrude-closed-impl macro-impl/extrude-closed-impl
    'loft-impl           macro-impl/loft-impl
+   'loft+-impl          macro-impl/loft+-impl
    'loft-n-impl         macro-impl/loft-n-impl
    'revolve-impl        macro-impl/revolve-impl
    'revolve+-impl       macro-impl/revolve+-impl

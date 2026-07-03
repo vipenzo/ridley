@@ -191,6 +191,11 @@
    'pure-revolve-shape-fn    gen-ops/pure-revolve-shape-fn
    ;; Shape-fn support
    'shape-fn?                sfn/shape-fn?
+   'shape-fn                 sfn/shape-fn
+   'tapered                  sfn/tapered
+   'twisted                  sfn/twisted
+   'displaced                sfn/displaced
+   'capped                   sfn/capped
    ;; Impl functions (used by slimmed macros)
    'extrude-impl        macro-impl/extrude-impl
    'extrude-closed-impl macro-impl/extrude-closed-impl
