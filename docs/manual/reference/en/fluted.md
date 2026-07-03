@@ -10,6 +10,7 @@ status: stable
 ## Signature
 
 `(fluted shape-or-fn & {:keys [flutes depth]})`
+`(fluted & {:keys [flutes depth]})` — partial form (no profile)
 
 ## Description
 
@@ -59,6 +60,8 @@ profile.
   with `n >= 4 * flutes`). Too few segments hides the cosine modulation
   between vertices.
 - Shape-fns compose with `->` threading.
+- **Partial form:** `(fluted :flutes 12 :depth 2)` (no profile) returns the bare
+  transform for loft's legacy mode and `transform->`.
 
 ## See also
 

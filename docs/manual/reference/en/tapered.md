@@ -10,6 +10,7 @@ status: stable
 ## Signature
 
 `(tapered shape-or-fn & {:keys [from to]})`
+`(tapered & {:keys [from to]})` — partial form (no profile)
 
 ## Description
 
@@ -61,6 +62,10 @@ producing a flared horn.
   first, then tapers the result.
 - For non-uniform tapering (e.g. only along Y), use a custom `shape-fn`
   with `scale-shape s sx sy` inside.
+- **Partial form:** called without a profile, `(tapered :to 0.5)` returns the
+  bare transform `(fn [shape t] -> shape)` — not a shape-fn — for loft's legacy
+  mode and `transform->`: `(loft+ (tapered :to 1.3) (f 30))`. It equals the
+  full form: `(loft (circle 20) (tapered :to 0.5) …)` == `(loft (tapered (circle 20) :to 0.5) …)`.
 
 ## See also
 

@@ -56,4 +56,4 @@ straight segment.
 
 ## See also
 
-- **Related:** `revolve`, `extrude+`, `transform->`, `mesh-union`
+- **Related:** `revolve`, `extrude+`, `loft+`, `transform->`, `mesh-union`

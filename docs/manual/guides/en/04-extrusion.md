@@ -10,13 +10,13 @@ Struttura del capitolo:
 4.5  Risoluzione e dettaglio (resolution)
 4.6  Oltre l'estrusione piena (sezione-ponte verso il cap. 6)
 4.7  Revolve (asse = up della tartaruga, verificato 2026-05-20)
-4.8  Chaining: extrude+, revolve+, transform->
+4.8  Chaining: extrude+, revolve+, loft+, transform->
 
 Decisioni:
 - revolve aggiunto al cap. 4 (non era nel piano originale)
 - chaining aggiunto al cap. 4
 - asse revolve = up (Spec corretta il 2026-05-20, era sbagliata)
-- loft+ non esiste ancora, segnato in Roadmap §1.5
+- loft+ implementato (2026-07-02, brief dev-docs/brief-loft-plus.md); §4.8 aggiornato con la sottosezione loft+ + forma parziale dei combinatori (brief dev-docs/brief-shapefn-partials.md, 2026-07-03)
 - embroid aggiunto al 4.6 come complemento di shell (2026-06-06); shell/woven-shell/capped/embroid spostati al cap. 6 il 2026-06-10 (brief dev-docs/brief-shapefn-move.md)
 =========================================================================
 -->
@@ -389,13 +389,13 @@ The rotation angle is silently clamped to 360 degrees if greater. Values greater
 
 An elbow can be made either with `revolve` or with `extrude` + `arc-h`. The difference: `extrude` + arc drags the profile along a curve, so the section stays perpendicular to the trajectory. `revolve` rotates the profile around an axis, so the section stays perpendicular to the plane of rotation. For small angles the results are almost identical; for large angles (90° and beyond) the geometry diverges. As a practical rule: `revolve` with `:pivot` for elbows and architectural corners, `extrude` + arc for tubes that follow a path.
 
-## Chaining: extrude+, revolve+, transform->
+## Chaining: extrude+, revolve+, loft+, transform->
 
 <!-- level: advanced -->
 
 Imagine building a frame: a straight stretch, a 30° curve, another straight stretch, a curve in the opposite direction, a final stretch. With ordinary `extrude` and `revolve` you would have to build each segment separately, position the turtle at the end of the previous segment, and then `mesh-union` all the pieces. It is doable, but verbose and fragile: if you change one angle, all the following segments have to be repositioned by hand.
 
-`extrude+` and `revolve+` solve the problem by returning, besides the mesh, also the shape and the pose of the end face. That data becomes the input of the next segment.
+`extrude+`, `revolve+` and `loft+` solve the problem by returning, besides the mesh, also the shape and the pose of the end face. That data becomes the input of the next segment.
 
 ### extrude+ and revolve+
 
@@ -452,10 +452,24 @@ Inside `transform->`, the operations do not take the shape as an argument (it is
 
 The first segment is built separately; `transform->` restarts from its end face and adds the following segments.
 
+### loft+: chaining a varying profile
+
+`extrude+` keeps the profile constant along its segment. When you want the profile to *change* along a segment — a taper, a twist — use `loft+`, the chaining variant of `loft`. It returns the same `{:mesh :end-face}` map, and its `:end-face` is the real cross-section stamped on the loft's last ring, so the next segment starts flush against it.
+
+Inside `transform->` the incoming shape becomes the loft's profile, so a `loft+` step is written with just its transform and the movements. The transform reads best as a **partial combinator** — `tapered`, `twisted`, … called without a profile:
+
+```clojure
+(register spout
+  (transform-> (circle 20)
+    (loft+ (tapered :to 0.6) (f 30))   ; tapered run
+    (revolve+ 45 :pivot :left)         ; corner bend
+    (extrude+ (f 20))))                ; straight tail
+```
+
+`(tapered :to 0.6)` with no shape is the bare transform `(fn [shape t] -> shape)`; `loft+` feeds it the current profile. You can also pass an explicit `(fn [s t] …)` or a target shape (`(loft+ (circle 10) (f 40))` morphs the incoming profile into a circle over the segment).
+
 ### When to use chaining
 
 Chaining is the right tool for geometries that develop as a sequence of connected segments: frames, bent tubes, moldings, rails. The profile stays constant (or varies in a controlled way) and each segment starts exactly where the previous one ends, with no gaps or overlaps.
 
 For assemblies where the pieces are not connected in sequence but arranged freely in space, `attach` and the skeleton system from chapter 8 are more appropriate.
-
-A note: at the moment `loft+` (the chaining variant of `loft`) is not yet implemented. To chain a segment with a varying profile you have to evaluate the shape-fn at `t=1` manually and reposition the turtle. The implementation of `loft+` is in the Roadmap (§1.5).

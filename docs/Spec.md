@@ -708,6 +708,19 @@ A shape-fn is a function `(fn [t] -> shape)` with metadata `{:type :shape-fn}`. 
 (-> (rect 30 10) (twisted :angle 180) (tapered :to 0.3))
 ```
 
+**Partial form (bare transform).** A profile-safe combinator called **without a leading shape** returns the bare transform `(fn [shape t] -> shape)` instead of a shape-fn — exactly the legacy transform `loft` already accepts. This reads far better than a hand-written lambda, and is the intended way to write a `loft+` step inside `transform->` (where the profile comes from the previous step):
+
+```clojure
+;; legacy loft with a partial transform (equivalent to the shape-fn form)
+(loft (circle 20) (tapered :to 0.5) (f 30))    ;; == (loft (tapered (circle 20) :to 0.5) (f 30))
+
+;; instead of a raw lambda
+(loft+ (fn [s t] (scale-shape s (+ 1 (* t 0.3)))) (f 30))
+(loft+ (tapered :to 1.3) (f 30))               ;; the same, readable
+```
+
+Available in partial form: `tapered`, `twisted`, `fluted`, `rugged`, `noisy`, `capped` (keeps its positional radius: `(capped 3)`), and `displaced` (its 1-arity `(displaced displace-fn)`). The partial value has no `:shape-fn` metadata (`(shape-fn? (tapered :to 0.5))` is `false`), so it routes through loft's legacy branch with no dispatch change. `capped`'s auto-fraction reads `*path-length*`, which the loft binds on the legacy path too.
+
 **Profile shape-fn:**
 
 ```clojure
@@ -1367,9 +1380,9 @@ The pivot direction is relative to the shape's 2D coordinate frame (X = right, Y
 (revolve (morphed (rect 20 20) (circle 15 4)) 180) ; Morph during half-revolution
 ```
 
-### Chaining (extrude+, revolve+, transform->)
+### Chaining (extrude+, revolve+, loft+, transform->)
 
-Variants of `extrude` and `revolve` that return `{:mesh :end-face}` for chaining multi-segment geometry. The `:end-face` contains the shape and pose of the final face, which can be used as input for the next operation.
+Variants of `extrude`, `revolve` and `loft` that return `{:mesh :end-face}` (and `:start-face`) for chaining multi-segment geometry. The `:end-face` contains the shape and pose of the final face, which can be used as input for the next operation.
 
 **extrude+ / revolve+**
 
@@ -1391,6 +1404,28 @@ Variants of `extrude` and `revolve` that return `{:mesh :end-face}` for chaining
 (register tutto (mesh-union (:mesh seg1) (:mesh corner) (:mesh seg2)))
 ```
 
+**loft+**
+
+Chainable `loft`: same dispatch as `loft` (shape-fn, two-shape, or transform-fn),
+returning `{:mesh :start-face :end-face}`. The `:end-face` `:shape` is the 2D
+cross-section actually stamped on the loft's **last ring** — never a re-evaluation
+of the shape-fn at nominal `t=1` — so a chained op continues from the real end
+face with no crack at the seam (on corner + short-segment paths the last ring's
+`t` can clamp below 1).
+
+```clojure
+;; shape-fn / two-shape / transform-fn — like loft, but returns a chaining map
+(def taper (loft+ (tapered (circle 20) :to 0.5) (f 30)))
+(:mesh taper)                      ; the mesh
+(:end-face taper)                  ; {:shape <end section> :pose {:pos :heading :up}}
+
+;; two-shape: the end section carries the resampled point count
+(loft+ (rect 20 20) (circle 10) (f 40))
+```
+
+Not supported in chaining: `shell` / `embroid` profiles (the swept wall has no
+single end cross-section) — `loft+` rejects them with an explanatory error.
+
 **transform->**
 
 Macro that automates the chaining pattern. Takes an initial shape (or an end-face map from a previous `extrude+`/`revolve+`) and a sequence of steps. Each step receives the shape and pose from the previous step's end-face. All meshes are combined via `mesh-union`.
@@ -1405,6 +1440,20 @@ Macro that automates the chaining pattern. Takes an initial shape (or an end-fac
     (extrude+ (f 20))))            ; Final segment
 ```
 
+`loft+` is available as a step too. Inside `transform->` the incoming shape is
+injected as the loft's profile, so the step is written with just the transform
+(a transform-fn or a target shape) and the movements:
+
+```clojure
+(register spout
+  (transform-> (circle 20)
+    (loft+ (tapered :to 0.6) (f 30))   ; tapered run (partial form — reads clean)
+    (revolve+ 45 :pivot :left)         ; corner bend
+    (extrude+ (f 20))))                ; straight tail
+```
+
+The loft+ transform can be a partial combinator like `(tapered :to 0.6)`, a `(fn [s t] …)`, or a target shape — see the partial-form note under Shape functions.
+
 The first argument can also be an end-face from a previous operation:
 
 ```clojure
@@ -1418,9 +1467,9 @@ The first argument can also be an end-face from a previous operation:
 ```
 
 Notes:
-- Inside `transform->`, operations do NOT take a shape argument: it is passed automatically.
+- Inside `transform->`, operations do NOT take a shape argument: it is passed automatically. For `loft+` the first argument is the transform-fn or target shape, not the profile.
 - `:pivot` on `revolve+` determines which edge of the shape sits on the revolution axis.
-- The standard `extrude`/`revolve` remain unchanged (return just the mesh).
+- The standard `extrude`/`revolve`/`loft` remain unchanged (return just the mesh).
 
 ---
 

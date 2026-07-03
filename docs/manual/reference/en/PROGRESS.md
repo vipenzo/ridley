@@ -87,6 +87,7 @@ Brief: `dev-docs/brief-reference-batch2-generative-operations.md`.
 
 - [x] [extrude+](extrude-plus.md)
 - [x] [revolve+](revolve-plus.md)
+- [x] [loft+](loft-plus.md)
 - [x] [transform->](transform-arrow.md)
 
 ### Shape-fn core

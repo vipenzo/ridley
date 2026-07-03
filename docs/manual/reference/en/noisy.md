@@ -10,6 +10,7 @@ status: stable
 ## Signature
 
 `(noisy shape-or-fn & {:keys [amplitude scale scale-x scale-y octaves seed]})`
+`(noisy & {:keys [amplitude scale scale-x scale-y octaves seed]})` — partial form (no profile)
 
 ## Description
 
@@ -79,6 +80,8 @@ increasing frequency — rougher, more rocky-looking surface.
 - Shape-fns compose with `->` threading.
 - For pure radial sine ripples, use `rugged`. For axis-aligned grooves,
   use `fluted`. For full custom displacement, use `displaced`.
+- **Partial form:** `(noisy :amplitude 1.5 :scale 3)` (no profile) returns the
+  bare transform for loft's legacy mode and `transform->`.
 
 ## See also
 

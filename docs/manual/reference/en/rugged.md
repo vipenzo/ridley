@@ -10,6 +10,7 @@ status: stable
 ## Signature
 
 `(rugged shape-or-fn & {:keys [amplitude frequency octaves gain seed]})`
+`(rugged & {:keys [amplitude frequency octaves gain seed]})` — partial form (no profile)
 
 ## Description
 
@@ -69,6 +70,8 @@ detail layered on top.
 - For organic, smooth random surfaces use `noisy`.
 - Composes with other shape-fns via `->` threading:
   `(-> (circle 15 256) (rugged :frequency 8) (tapered :to 0.3))`.
+- **Partial form:** `(rugged :amplitude 2 :octaves 4)` (no profile) returns the
+  bare transform for loft's legacy mode and `transform->`.
 
 ## See also
 

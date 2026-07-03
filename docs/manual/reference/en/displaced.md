@@ -10,6 +10,7 @@ status: stable
 ## Signature
 
 `(displaced shape-or-fn displace-fn)`
+`(displaced displace-fn)` — partial form (1-arity, no profile)
 
 ## Description
 
@@ -52,6 +53,8 @@ and a per-`t` phase shift that twists the ripple along the path.
   non-radial offsets (e.g. shears, normal-direction pushes), write a
   custom `shape-fn` instead.
 - Compose with other shape-fns via `->` threading.
+- **Partial form:** the 1-arity `(displaced displace-fn)` (no profile) returns
+  the bare transform for loft's legacy mode and `transform->`.
 
 ## See also
 

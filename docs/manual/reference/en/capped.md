@@ -10,6 +10,7 @@ status: stable
 ## Signature
 
 `(capped shape-or-fn radius & {:keys [mode start end fraction end-radius preserve-holes]})`
+`(capped radius & {:keys [...]})` — partial form (keeps the positional radius)
 
 ## Description
 
@@ -103,6 +104,10 @@ tapered profile + start-cap fillet produces a teardrop.
 - For 2D corner rounding (along extrusion direction), use `fillet-shape`
   or `chamfer-shape`. The two operations are orthogonal and compose.
 - Compose with all shape-fns via `->` threading.
+- **Partial form:** `(capped 3)` / `(capped 3 :mode :chamfer)` (no profile,
+  radius kept positional) returns the bare transform for loft's legacy mode and
+  `transform->`. Its auto-fraction reads `*path-length*`, which the loft binds on
+  the legacy path too, so the partial matches the full form.
 
 ## See also
 

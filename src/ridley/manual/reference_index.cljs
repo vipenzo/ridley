@@ -233,7 +233,7 @@
     :category "generative-operations"
     :status "stable"
     :since ""
-    :signature "(capped shape-or-fn radius & {:keys [mode start end fraction end-radius preserve-holes]})"
+    :signature "(capped shape-or-fn radius & {:keys [mode start end fraction end-radius preserve-holes]})\n(capped radius & {:keys [...]})"
     :description "Shape-fn that adds a fillet or chamfer transition at the start and/or end of an extrusion. Insets the 2D profile near the cap and transitions smoothly to the full shape using a quarter-circle (`:fillet`) or linear (`:chamfer`) easing. Used with `loft` (not `extrude`, which has a static profile). Does not modify turtle state."
     :path "docs/manual/reference/en/capped.md"}
 
@@ -413,7 +413,7 @@
     :category "generative-operations"
     :status "stable"
     :since ""
-    :signature "(displaced shape-or-fn displace-fn)"
+    :signature "(displaced shape-or-fn displace-fn)\n(displaced displace-fn)"
     :description "Shape-fn that applies a custom radial displacement to each vertex. The displacement function receives the vertex and the current path fraction `t`; the returned scalar moves the vertex radially from the shape's centroid. Used with `loft` or `revolve`. Does not modify turtle state."
     :path "docs/manual/reference/en/displaced.md"}
 
@@ -701,7 +701,7 @@
     :category "generative-operations"
     :status "stable"
     :since ""
-    :signature "(fluted shape-or-fn & {:keys [flutes depth]})"
+    :signature "(fluted shape-or-fn & {:keys [flutes depth]})\n(fluted & {:keys [flutes depth]})"
     :description "Shape-fn that adds longitudinal grooves to the profile by displacing points radially with a cosine pattern aligned to the shape's axes. The displacement is constant along the path, so each ring is identical — useful for fluted columns and ridged surfaces. Used with `loft` or `revolve`. Does not modify turtle state."
     :path "docs/manual/reference/en/fluted.md"}
 
@@ -884,6 +884,15 @@
     :signature "(loft shape-fn & path-commands)\n(loft shape transform-fn & path-commands)\n(loft start-shape end-shape & path-commands)\n(loft-n n shape-fn & path-commands)\n(loft-n n shape transform-fn & path-commands)"
     :description "Sweep a 2D profile along a path while letting the profile change shape from one end to the other. Returns a single mesh; does not modify turtle state."
     :path "docs/manual/reference/en/loft.md"}
+
+   "loft+"
+   {:name "loft+"
+    :category "generative-operations"
+    :status "stable"
+    :since ""
+    :signature "(loft+ shape-fn & path-commands)\n(loft+ shape transform-fn & path-commands)\n(loft+ shape target-shape & path-commands)"
+    :description "Chainable variant of `loft`. Same dispatch as `loft` (a shape-fn, a legacy transform-fn, or a two-shape morph), but instead of a bare mesh it returns a map `{:mesh <mesh> :start-face {…} :end-face {:shape <shape> :pose {…}}}`."
+    :path "docs/manual/reference/en/loft-plus.md"}
 
    "loft-between"
    {:name "loft-between"
@@ -1142,7 +1151,7 @@
     :category "generative-operations"
     :status "stable"
     :since ""
-    :signature "(noisy shape-or-fn & {:keys [amplitude scale scale-x scale-y octaves seed]})"
+    :signature "(noisy shape-or-fn & {:keys [amplitude scale scale-x scale-y octaves seed]})\n(noisy & {:keys [amplitude scale scale-x scale-y octaves seed]})"
     :description "Shape-fn that displaces vertices radially using procedural 2D noise. Compared with the sinusoid-based displacements, `noisy` produces smooth, organic, blobby surfaces (`fluted` gives single-frequency regular ridges; `rugged` gives angular crystalline asperities via layered sines). With `:octaves > 1` the noise is layered via fractal Brownian motion for richer detail. Used with `loft` or `revolve`. Does not modify turtle state."
     :path "docs/manual/reference/en/noisy.md"}
 
@@ -1556,7 +1565,7 @@
     :category "generative-operations"
     :status "stable"
     :since ""
-    :signature "(rugged shape-or-fn & {:keys [amplitude frequency octaves gain seed]})"
+    :signature "(rugged shape-or-fn & {:keys [amplitude frequency octaves gain seed]})\n(rugged & {:keys [amplitude frequency octaves gain seed]})"
     :description "Shape-fn that displaces vertices radially with **layered sinusoids** (fBm-style), varying both around the profile and along the extrusion path. Each octave doubles the frequency and scales amplitude by `:gain`, producing irregular crystalline asperities."
     :path "docs/manual/reference/en/rugged.md"}
 
@@ -2267,7 +2276,7 @@
     :category "generative-operations"
     :status "stable"
     :since ""
-    :signature "(tapered shape-or-fn & {:keys [from to]})"
+    :signature "(tapered shape-or-fn & {:keys [from to]})\n(tapered & {:keys [from to]})"
     :description "Shape-fn that scales the cross-section uniformly along the path. At `t = 0` the profile is scaled by `:from`; at `t = 1` it is scaled by `:to`; in between the factor is linearly interpolated. Used with `loft` or `revolve`. Does not modify turtle state."
     :path "docs/manual/reference/en/tapered.md"}
 
@@ -2349,7 +2358,7 @@
     :status "stable"
     :since ""
     :signature "(transform-> shape & steps)\n(transform-> end-face & steps)"
-    :description "Macro. Automates the chaining pattern of `extrude+` / `revolve+`: takes an initial shape (or an end-face map from a previous chainable operation) and a sequence of steps. Each step receives the shape and pose from the previous step's end-face. All produced meshes are combined via `mesh-union` into a single result. Does not modify turtle state."
+    :description "Macro. Automates the chaining pattern of `extrude+` / `revolve+` / `loft+`: takes an initial shape (or an end-face map from a previous chainable operation) and a sequence of steps. Each step receives the shape and pose from the previous step's end-face. All produced meshes are combined via `mesh-union` into a single result. Does not modify turtle state."
     :path "docs/manual/reference/en/transform-arrow.md"}
 
    "translate"
@@ -2411,7 +2420,7 @@
     :category "generative-operations"
     :status "stable"
     :since ""
-    :signature "(twisted shape-or-fn & {:keys [angle]})"
+    :signature "(twisted shape-or-fn & {:keys [angle]})\n(twisted & {:keys [angle]})"
     :description "Shape-fn that rotates the cross-section progressively along the path. At `t = 0` the rotation is `0°`; at `t = 1` it is `:angle` degrees, linearly interpolated in between. Used with `loft` or `revolve`. Does not modify turtle state."
     :path "docs/manual/reference/en/twisted.md"}
 

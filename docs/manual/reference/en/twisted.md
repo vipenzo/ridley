@@ -10,6 +10,7 @@ status: stable
 ## Signature
 
 `(twisted shape-or-fn & {:keys [angle]})`
+`(twisted & {:keys [angle]})` — partial form (no profile)
 
 ## Description
 
@@ -56,6 +57,8 @@ shape-fns and they apply in order.
 - The rotation is around the shape's centroid in 2D, not around the
   turtle's heading axis. The 3D twist comes from the rotated 2D ring
   being placed along the path.
+- **Partial form:** `(twisted :angle 90)` (no profile) returns the bare
+  transform for loft's legacy mode and `transform->`.
 
 ## See also
 

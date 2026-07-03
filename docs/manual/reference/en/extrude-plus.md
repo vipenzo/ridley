@@ -70,4 +70,4 @@ this same pattern when many segments are involved.
 
 ## See also
 
-- **Related:** `revolve+`, `transform->`, `extrude`, `mesh-union`
+- **Related:** `revolve+`, `loft+`, `transform->`, `extrude`, `mesh-union`
