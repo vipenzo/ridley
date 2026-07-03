@@ -797,6 +797,20 @@
         (vec (for [rl rail-locs sn shape-names]
                (compose-rail-pose mesh sn rl)))))))
 
+(defn- anchor-dest-pose
+  "Destination pose {:position :heading :up} for the :at/:on move-to forms
+   (named anchor / rail cross-section / embroid wall face). Throws if the anchor
+   is missing. Shared by move-to-anchor and the :from/:mate mating path."
+  [target anchor-name face on]
+  (let [mesh (resolve-mesh target)
+        anchor0 (when mesh
+                  (if on
+                    (compose-rail-pose mesh anchor-name on)
+                    (get-in mesh [:anchors anchor-name])))
+        anchor (if (and anchor0 face) (face-pose anchor0 face) anchor0)]
+    (or anchor
+        (throw (js/Error. (str "move-to: no anchor " anchor-name " on mesh " target))))))
+
 (defn- move-to-anchor
   "Move state to target mesh's named anchor, adopting its heading/up.
    Anchors come from attach-path or from profile marks. With :align? true, also
@@ -804,26 +818,19 @@
    :face :outer/:inner, steps an embroid wall anchor onto that wall face. With
    :on <rail-mark>, composes the profile anchor with a sweep-rail mark."
   [state target anchor-name & {:keys [align? face on]}]
-  (let [mesh (resolve-mesh target)
-        anchor0 (when mesh
-                  (if on
-                    (compose-rail-pose mesh anchor-name on)
-                    (get-in mesh [:anchors anchor-name])))
-        anchor (if (and anchor0 face) (face-pose anchor0 face) anchor0)]
-    (if anchor
-      (let [tgt-pos (:position anchor)
-            tgt-h   (:heading anchor)
-            tgt-u   (:up anchor)
-            translated (move-state-to-position state tgt-pos)
-            aligned (if (and align? (:attached translated))
-                      (align-attached-mesh translated
-                                           (:heading translated) (:up translated)
-                                           tgt-h tgt-u tgt-pos)
-                      translated)]
-        (-> aligned
-            (assoc :heading tgt-h)
-            (assoc :up tgt-u)))
-      (throw (js/Error. (str "move-to: no anchor " anchor-name " on mesh " target))))))
+  (let [anchor (anchor-dest-pose target anchor-name face on)
+        tgt-pos (:position anchor)
+        tgt-h   (:heading anchor)
+        tgt-u   (:up anchor)
+        translated (move-state-to-position state tgt-pos)
+        aligned (if (and align? (:attached translated))
+                  (align-attached-mesh translated
+                                       (:heading translated) (:up translated)
+                                       tgt-h tgt-u tgt-pos)
+                  translated)]
+    (-> aligned
+        (assoc :heading tgt-h)
+        (assoc :up tgt-u))))
 
 (defn- path-target?
   "True when target is an inline path value (as opposed to a mesh/SDF or a
@@ -832,7 +839,115 @@
   [target]
   (and (map? target) (= :path (:type target))))
 
-(defn- move-to-dispatch
+(defn- from-pose
+  "Resolve the :from mobile anchor to a world pose {:position :heading :up}.
+   Keyword → the attached mesh's world-space anchor of that name (anchors are
+   kept in sync with the mesh by transform-poses, so this reads the up-to-date
+   pose after prior attach-body commands). Pose map → used as-is (accepts
+   :position or :pos, mirroring the `turtle` pose macro), for future viewport
+   codegen that synthesizes frames from face centroid + normal without a mark."
+  [state from]
+  (cond
+    (map? from)
+    (let [pos (or (:position from) (:pos from))
+          h (:heading from) u (:up from)]
+      (when-not (and pos h u)
+        (throw (js/Error. "move-to :from: a pose map needs :position (or :pos), :heading and :up.")))
+      {:position pos :heading h :up u})
+
+    (keyword? from)
+    (let [mesh (get-in state [:attached :mesh])]
+      (when-not mesh
+        (throw (js/Error. "move-to :from requires a single attached mesh (not available outside attach, or inside a group attach where the mobile anchor is ambiguous).")))
+      (or (get-in mesh [:anchors from])
+          (throw (js/Error. (str "move-to :from: no anchor " from " on the attached mesh. Add (mark " from ") to its profile/path, or pass a pose map.")))))
+
+    :else
+    (throw (js/Error. (str "move-to :from expects an anchor keyword or a pose map, got " (pr-str from))))))
+
+(defn- mating-dest-pose
+  "Destination pose {:position :heading :up} for a :from/:mate move-to, using the
+   SAME resolution as the legacy forms (creation-pose / :at anchor / :on rail /
+   :face wall). :center is rejected upstream (a centroid has no frame)."
+  [target mode args]
+  (cond
+    (= mode :at)
+    (let [opts (drop 3 args)
+          face (second (drop-while #(not= :face %) opts))
+          on   (second (drop-while #(not= :on %) opts))]
+      (anchor-dest-pose target (nth args 2) face on))
+
+    (= mode :on)
+    (anchor-dest-pose target nil nil (nth args 2))
+
+    :else
+    (or (:creation-pose (resolve-mesh target))
+        (throw (js/Error. (str "move-to :from/:mate: target " target " has no creation-pose to mate to."))))))
+
+(defn- move-to-mating
+  "Handle move-to with :from and/or :mate (anchor-on-anchor mating).
+   - `from`/`from?` carry the elected mobile anchor (keyword → attached-mesh
+     anchor; pose map → literal). Without :from the mobile frame is the turtle's
+     current pose (= creation-pose at the start of attach), matching :align.
+   - `mate?` composes the destination frame with th 180 (heading negated, up
+     kept — a proper rotation about up: two `north` marks stay concordant).
+   Translation puts the MOBILE anchor position onto the destination position;
+   with :align/:mate the mesh is rotated about that point to bring the mobile
+   frame onto the (possibly mated) destination frame. The turtle then adopts the
+   mobile anchor's post-op world pose (dest position, mated frame)."
+  [state args from from? mate?]
+  (let [target (first args)
+        mode (second args)
+        anchor-tgt? (some? (anchor-pose-from-context target))]
+    (cond
+      (= mode :center)
+      (throw (js/Error. "move-to: :from/:mate are not supported with :center (a centroid has no frame)."))
+
+      anchor-tgt?
+      (throw (js/Error. (str "move-to: :from/:mate are not supported with anchor target " target
+                             " — an anchor is a single destination pose. Mate against a mesh, its :at anchor, or its :on rail.")))
+
+      :else
+      (let [dest (mating-dest-pose target mode args)
+            align? (or mate? (boolean (some #{:align} (rest args))))
+            mob (if from?
+                  (from-pose state from)
+                  {:position (:position state) :heading (:heading state) :up (:up state)})
+            dest-pos (:position dest)
+            tgt-h    (:heading dest)
+            tgt-u    (:up dest)
+            mated-h  (if mate? (math/v* tgt-h -1) tgt-h)
+            mated-u  tgt-u
+            ;; Translate uniformly so the mobile anchor lands on dest-pos.
+            delta      (math/v- dest-pos (:position mob))
+            translated (move-state-to-position state (math/v+ (:position state) delta))
+            aligned    (if (and align? (:attached translated))
+                         (align-attached-mesh translated
+                                              (:heading mob) (:up mob)
+                                              mated-h mated-u dest-pos)
+                         translated)]
+        (-> aligned
+            (assoc :position dest-pos)
+            (assoc :heading mated-h)
+            (assoc :up mated-u))))))
+
+(defn- extract-mating-opts
+  "Pull the new :from <val> and :mate flag out of a move-to arg list so the
+   remaining args dispatch positionally exactly as before. Returns
+   [remaining-args from-val from? mate?]. :from must be followed by its value."
+  [args]
+  (loop [in (seq args), out [], from nil, from? false, mate? false]
+    (if (empty? in)
+      [out from from? mate?]
+      (let [x (first in)]
+        (cond
+          (= x :from) (if (next in)
+                        (recur (nnext in) out (second in) true mate?)
+                        (throw (js/Error. "move-to: :from must be followed by an anchor keyword or a pose map.")))
+          (= x :mate) (recur (next in) out from from? true)
+          :else       (recur (next in) (conj out x) from from? mate?))))))
+
+(defn- move-to-dispatch*
   "Handle :move-to command during replay.
    Supports:
      (move-to :name)                       — snap to creation-pose (translate only)
@@ -882,6 +997,16 @@
       (= mode :center) (move-to-center state target)
       (= mode :align)  (move-to-pose state target :align? true)
       :else            (move-to-pose state target))))
+
+(defn- move-to-dispatch
+  "Entry point for :move-to replay. Extracts the :from/:mate mating options; when
+   present, routes to move-to-mating. Otherwise dispatches the legacy forms
+   bit-identically (no :from/:mate → args unchanged)."
+  [state args]
+  (let [[args from from? mate?] (extract-mating-opts args)]
+    (if (or from? mate?)
+      (move-to-mating state args from from? mate?)
+      (move-to-dispatch* state args))))
 
 ;; ============================================================
 ;; Creation-pose shift (@ commands)
@@ -1114,6 +1239,8 @@
 (defn- sdf-move-to
   "Handle :move-to inside an SDF attach. Returns [new-state new-sdf]."
   [state sdf args]
+  (when (some #{:from :mate} args)
+    (throw (js/Error. "move-to :from/:mate are not supported on SDF attach yet — mesh attach only (a separate follow-up).")))
   (let [target (first args)
         mode (second args)
         target-obj (resolve-anchor-source target)
