@@ -2093,7 +2093,7 @@ SDF attach is **incremental**: the path is walked one command at a time, and eac
 | `cp-f`, `cp-rt`, `cp-u` | Translate the SDF in the *opposite* direction (anchor stays, geometry slides) |
 | `cp-th`, `cp-tv`, `cp-tr` | Rotate the SDF around the anchor by the *opposite* angle (anchor orientation stays, geometry rotates under it) |
 | `mark :name` | Record the current turtle pose as a named anchor on the SDF |
-| `move-to … [:align]` | Snap turtle to target creation-pose / centroid / anchor; with `:align` (opt-in, valid with creation-pose and `:at :anchor` forms), also rotate the SDF to match the target's frame |
+| `move-to … [:align]` | Snap turtle to target creation-pose / centroid / anchor; with `:align` (opt-in, valid with creation-pose and `:at :anchor` forms), also rotate the SDF to match the target's frame. The mesh-only `:from`/`:mate` mating options are rejected with an explanatory error (a separate follow-up). |
 
 The anchors recorded by `mark` survive through subsequent transforms and through SDF booleans (the second argument's anchors are merged in, first-wins on name collision). They also cross the SDF→mesh boundary: when an SDF is materialized, its anchors carry over to the resulting mesh.
 
@@ -2182,6 +2182,9 @@ Move to another object's position and adopt its orientation (inside `attach`/`at
 (move-to :name :center)      ; move to centroid only, keep current heading
 (move-to :name :at :anchor)  ; move to a named anchor (from attach-path); turtle adopts heading/up
 (move-to :name :at :anchor :align)  ; move to anchor AND rotate mesh to match its frame
+(move-to :name :at :socket :from :plug)        ; mate the mobile mesh's :plug anchor onto :socket (translate only)
+(move-to :name :at :socket :from :plug :align) ; …and rotate :plug's frame onto :socket's frame
+(move-to :name :at :socket :from :plug :mate)  ; …rotate onto :socket composed with th 180 (faces opposed, up kept)
 ```
 
 `:name` is resolved in this order: (1) named anchor on the current turtle (set by `with-path` or top-level `mark`); (2) registered mesh in the registry. Anchor targets only support the default form and `:align` — `(move-to :anchor :center)` and `(move-to :anchor :at :sub)` throw, because a single anchor has no centroid and no sub-anchors.
@@ -2228,6 +2231,31 @@ The rotation is computed in two steps:
 2. then rotate around the new heading so the mesh's up aligns with the target's up.
 
 This is the natural primitive when the target's orientation is meaningful — e.g. a path mark whose heading was set by an `(th 180)` to flag a flipped slot, or a skeleton-driven assembly where each mark records "which way this part should face". The cerniera2_C example uses `:align` to snap symmetric brackets onto skeleton marks whose heading encodes the outward-facing side.
+
+#### `:from` and `:mate` — mating a named anchor of the mobile mesh
+
+By default the aligned frame on the **mobile** side is the turtle's current pose (which at the start of `attach` coincides with the mesh's creation-pose). `:from <anchor>` elects a *named anchor of the mobile mesh* as the mating frame instead — so both sides of the join are nameable, not just the target:
+
+```clojure
+(attach! :plug-part (move-to :socket-part :at :socket :from :plug :mate))
+```
+
+`:from` accepts either an anchor **keyword** (looked up in the mobile mesh's world-space anchors — kept in sync with prior attach-body commands) or an explicit **pose map** `{:position … :heading … :up …}` (`:pos` is also accepted for the position; this is the hook for future viewport code-generation that synthesizes a frame from a face centroid + normal without a mark).
+
+- **`:from` alone** (no `:align`/`:mate`) is a **pure translation**: the mobile anchor's *position* moves onto the destination position, the mesh is not rotated, and the turtle ends on the destination with the destination frame.
+- **`:from :align`** additionally rotates the mesh so the mobile anchor's *frame* snaps onto the destination frame (heading→heading, up→up).
+- **`:from :mate`** rotates the mobile anchor's frame onto the destination frame **composed with `th 180`** — heading and right negated, **up conserved**. Physically this is a proper rotation about the vertical (up) axis that turns the part face-to-face: two `north` marks drawn on the mating faces stay concordant. `:mate` implies alignment (writing `:mate :align` is redundant but harmless). The alternative `tv 180` convention (up→−up, "the closing book") is deliberately **not** offered — it is the rarer mechanical mating and is anyway obtainable by rotating the mark inside the path.
+
+After the operation the turtle adopts the **mobile anchor's** post-op world pose (position on the destination, the mated frame — decision consistent with "the turtle adopts the pose it moved onto"). This makes the chained refinement commands read from the mobile part's own frame:
+
+```clojure
+(attach! :plug (move-to :socket-part :at :socket :from :plug :mate) (f -0.15))  ; back off 0.15 along the plug's own normal → FDM clearance
+(attach! :plug (move-to :socket-part :at :socket :from :plug :mate) (tr 30))    ; residual spin about the shared mating normal
+```
+
+There is no `:spin` option: residual rotation about the mating normal is expressed with a chained `(tr α)` (per-assembly) or with a `(tr)` baked into the mark definition (a property of the anchor) — the post-op pose sits on the mating axis, so `tr` rotates about exactly that normal.
+
+`:from`/`:mate` compose with the `:at`, `:on`, and `:face` destination forms, and with the default (creation-pose) form. They are rejected — with an explanatory error — for: `:center` (a centroid has no frame); a pure anchor target (a single destination pose, not a mesh); SDF attach (mesh attach only, for now); and group attach `(attach [m1 m2 …])` (the mobile anchor is ambiguous across a group).
 
 #### Path targets
 
