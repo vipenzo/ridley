@@ -1133,7 +1133,7 @@
     :category "positioning-assembly"
     :status "stable"
     :since ""
-    :signature "(move-to target)\n(move-to target :align)\n(move-to target :center)\n(move-to target :at anchor)\n(move-to target :at anchor :align)\n(move-to target :at profile-mark :on rail-mark/t)\n(move-to target :at wall-mark :face :outer/:inner)\n(move-to target :on rail-mark/t)\nattach"
+    :signature "(move-to target)\n(move-to target :align)\n(move-to target :center)\n(move-to target :at anchor)\n(move-to target :at anchor :align)\n(move-to target :at profile-mark :on rail-mark/t)\n(move-to target :at wall-mark :face :outer/:inner)\n(move-to target :on rail-mark/t)\n(move-to target :at anchor :from mobile-anchor)\n(move-to target :at anchor :from mobile-anchor :align)\n(move-to target :at anchor :from mobile-anchor :mate)\nattach"
     :description "Inside an attach body, move the turtle to another object's pose and optionally re-align with one of that object's named anchors. `move-to` is the cleanest primitive for positioning one mesh relative to another: it translates the attached value and updates the turtle frame so subsequent commands operate in the target's coordinate system."
     :path "docs/manual/reference/en/move-to.md"}
 

@@ -17,6 +17,9 @@ status: stable
 `(move-to target :at profile-mark :on rail-mark/t)`
 `(move-to target :at wall-mark :face :outer/:inner)`
 `(move-to target :on rail-mark/t)`
+`(move-to target :at anchor :from mobile-anchor)`
+`(move-to target :at anchor :from mobile-anchor :align)`
+`(move-to target :at anchor :from mobile-anchor :mate)`
 
 Available inside `attach` / `attach!` bodies (and inside `path`,
 where it is recorded for later replay).
@@ -90,6 +93,32 @@ the wall centerline): it steps half the wall thickness onto that face, with
 `heading` = the outward face normal (opposite between the two faces). You do
 not rotate the mark in the path for this — just `(mark …)` and pick the face.
 
+### `:from` and `:mate` — naming the mobile side too
+
+Every form above aligns the target anchor with the **turtle's current pose**
+(which, at the start of `attach`, is the mesh's creation-pose). `:from <anchor>`
+elects a *named anchor of the mobile mesh* as the mating frame instead — so both
+sides of the joint are nameable, not only the target. `<anchor>` is a keyword
+(an anchor of the attached mesh) or an explicit pose map
+`{:position … :heading … :up …}`.
+
+| Add to any form  | Effect                                                            |
+|------------------|------------------------------------------------------------------|
+| `:from :m`       | translate only — the mobile anchor `:m`'s position → destination |
+| `:from :m :align`| …plus rotate `:m`'s frame onto the destination frame             |
+| `:from :m :mate` | …plus rotate onto the destination frame **∘ th 180**             |
+
+`:mate` composes the destination with `th 180` (heading and right negated, **up
+kept**): a proper rotation about the up axis that turns the part face-to-face,
+so two `north` marks on the mating faces stay concordant. `:mate` implies
+alignment. After the op the turtle adopts the **mobile anchor's** post-op world
+pose, so chained commands read from the plug's own frame — `(f -0.15)` backs off
+along its normal to open an FDM clearance gap, `(tr α)` spins about the shared
+mating normal (there is no `:spin` option — a chained `tr` covers it).
+
+`:from`/`:mate` are rejected — with an explanatory error — for `:center`, a pure
+anchor target, SDF attach, and group attach (`attach [m1 m2 …]`).
+
 ```clojure
 (register rim (path (mark :foot-1) (f 30) (th 60) (mark :foot-2) (f 30) (th 60)
                     (mark :foot-3) (f 30) (th 60) (mark :foot-4) (f 30) (th 60)
@@ -111,6 +140,11 @@ not rotate the mark in the path for this — just `(mark …)` and pick the face
 - `anchor` — the anchor's keyword name. Must exist on the target.
 - `:align` — flag enabling vertex-level rotation onto the target's
   frame.
+- `:from` — keyword introducing the mobile mesh's mating anchor. Its
+  value is an anchor keyword of the attached mesh, or a pose map
+  (`:position`/`:pos`, `:heading`, `:up`).
+- `:mate` — flag composing the destination frame with `th 180` (faces
+  opposed, up kept); implies `:align`.
 
 When `target` resolves to an anchor (case 1 above), only the default
 form and `:align` are valid — `:center` and `:at` throw, because an
@@ -188,6 +222,28 @@ rotated.
 `:align` is the natural primitive when the anchor's orientation is
 meaningful (e.g. an anchor placed with `(th 180)` to flag a flipped
 slot). The child's vertices rotate to face the anchor's heading/up.
+
+{{example: move-to-mate}}
+
+<!-- example-source: move-to-mate -->
+```clojure
+;; Both parts carry a named mating anchor; :mate presses them face-to-face.
+(register socket (extrude (rect 30 30) (f 8)))
+(attach-path :socket (path (f 8) (mark :mouth)))     ; :mouth on the +x face
+
+(register plug (extrude (rect 18 18) (f 10)))
+(attach-path :plug (path (th 180) (mark :key)))      ; :key = plug's mating normal
+
+;; Land :key onto :mouth (faces opposed, up kept), then open a 0.15 print gap.
+(attach! :plug
+  (move-to :socket :at :mouth :from :key :mate)
+  (f -0.15))
+```
+<!-- /example-source -->
+
+`:from :key` names the anchor on the *mobile* plug; `:mate` opposes the two
+faces while keeping up concordant. The trailing `(f -0.15)` reads from the
+plug's own post-mate frame, backing it off along its normal for clearance.
 
 ## Notes
 
