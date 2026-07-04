@@ -276,28 +276,32 @@
    Returns a clean mesh with only the outer surface, or the original
    mesh unchanged if Manifold conversion fails.
 
+   Accepts an SDF node too — materialized via sdf/ensure-mesh (auto-bounds
+   + budgeted resolution) before the self-union.
+
    Usage: (solidify (loft ...)) when a loft produces self-intersecting geometry."
   [ridley-mesh]
-  (when-let [Manifold (get-manifold-class)]
-    (if (and (:vertices ridley-mesh) (:faces ridley-mesh))
-      (try
-        (let [mesh-data (ridley-mesh->manifold-mesh ridley-mesh)
-              ^js m1 (new Manifold mesh-data)
-              ^js m2 (new Manifold mesh-data)
-              ;; Self-union: A ∪ A resolves self-intersections
-              ^js raw-result (.add m1 m2)
-              ^js clean (.asOriginal raw-result)
-              output (manifold->mesh clean)
-              output (carry-meta output ridley-mesh)]
-          (.delete m1)
-          (.delete m2)
-          (.delete raw-result)
-          (.delete clean)
-          (schema/assert-mesh! output))
-        (catch :default e
-          (js/console.warn "solidify failed:" e)
-          ridley-mesh))
-      ridley-mesh)))
+  (let [ridley-mesh (sdf/ensure-mesh ridley-mesh)]
+    (when-let [Manifold (get-manifold-class)]
+      (if (and (:vertices ridley-mesh) (:faces ridley-mesh))
+        (try
+          (let [mesh-data (ridley-mesh->manifold-mesh ridley-mesh)
+                ^js m1 (new Manifold mesh-data)
+                ^js m2 (new Manifold mesh-data)
+                ;; Self-union: A ∪ A resolves self-intersections
+                ^js raw-result (.add m1 m2)
+                ^js clean (.asOriginal raw-result)
+                output (manifold->mesh clean)
+                output (carry-meta output ridley-mesh)]
+            (.delete m1)
+            (.delete m2)
+            (.delete raw-result)
+            (.delete clean)
+            (schema/assert-mesh! output))
+          (catch :default e
+            (js/console.warn "solidify failed:" e)
+            ridley-mesh))
+        ridley-mesh))))
 
 ;; ============================================================
 ;; Boolean operations
@@ -317,12 +321,24 @@
     (map? a)         "a map without :vertices/:faces (not a valid mesh)"
     :else            (str (pr-str (type a)))))
 
+(def ^:private sdf-space-equivalent
+  "op-label → sdf-* equivalent, for ops that have one (the boolean ops).
+   hull and concat-meshes have no SDF-space equivalent, so they get no
+   suggestion in the all-SDF warning below."
+  {"mesh-union" "sdf-union"
+   "mesh-difference" "sdf-difference"
+   "mesh-intersection" "sdf-intersection"})
+
 (defn- coerce-to-meshes
   "Convert any SDF nodes in `args` to meshes via sdf/ensure-mesh, and reject
    any non-mesh, non-SDF input with an explicit error (rather than silently
    returning nil downstream).
 
-   Warns if every arg is an SDF (suggests using sdf-* for higher precision).
+   `op-label` is the full user-facing name used in error/warning text, e.g.
+   \"mesh-union\" or \"concat-meshes\" (matches the bound SCI symbol).
+
+   Warns if every arg is an SDF, suggesting the sdf-* equivalent — only for
+   ops that have one (see `sdf-space-equivalent`).
 
    Note: uses 1-arg ensure-mesh (auto-bounds + auto resolution from the
    SDF tree itself). When you need to override either, materialize the
@@ -333,7 +349,7 @@
        (e.g. force finer meshing on a small SDF that ends up coarse when
        fused with a much larger one via mesh-union)
      - (sdf-ensure-mesh sdf ref-mesh turtle-res) → both"
-  [op-name args]
+  [op-label args]
   (let [sdf-flags (mapv sdf/sdf-node? args)
         bad (keep-indexed
              (fn [i a]
@@ -344,11 +360,12 @@
     (when (seq bad)
       (let [{:keys [idx why]} (first bad)]
         (throw (js/Error.
-                (str "mesh-" op-name ": argument " (inc idx) " is " why ".")))))
+                (str op-label ": argument " (inc idx) " is " why ".")))))
     (when (every? identity sdf-flags)
       (js/console.warn
-       (str "mesh-" op-name ": all arguments are SDF nodes — "
-            "consider sdf-" op-name " to stay in SDF space (no meshing cost, exact precision).")))
+       (str op-label ": all arguments are SDF nodes."
+            (when-let [suggestion (get sdf-space-equivalent op-label)]
+              (str " Consider " suggestion " to stay in SDF space (no meshing cost, exact precision).")))))
     (mapv (fn [is-sdf? a] (if is-sdf? (sdf/ensure-mesh a) a))
           sdf-flags args)))
 
@@ -400,7 +417,7 @@
         meshes (if (and (empty? more) (sequential? first-arg))
                  (vec first-arg)
                  (into [first-arg] more))
-        meshes (coerce-to-meshes "union" meshes)]
+        meshes (coerce-to-meshes "mesh-union" meshes)]
     (case (count meshes)
       0 nil
       1 (first meshes)
@@ -443,7 +460,7 @@
         meshes (if (and (empty? more) (sequential? first-arg))
                  (vec first-arg)
                  (into [first-arg] more))
-        meshes (coerce-to-meshes "difference" meshes)]
+        meshes (coerce-to-meshes "mesh-difference" meshes)]
     (when (>= (count meshes) 2)
       (carry-indexed-anchors (reduce difference-two meshes) meshes))))
 
@@ -478,7 +495,7 @@
         meshes (if (and (empty? more) (sequential? first-arg))
                  (vec first-arg)
                  (into [first-arg] more))
-        meshes (coerce-to-meshes "intersection" meshes)]
+        meshes (coerce-to-meshes "mesh-intersection" meshes)]
     (when (>= (count meshes) 2)
       (carry-indexed-anchors (reduce intersection-two meshes) meshes))))
 
@@ -493,35 +510,36 @@
 
    Returns a new Ridley mesh."
   [& args]
-  (when-let [Manifold (get-manifold-class)]
-    (let [;; Normalize args: accept both (hull a b c) and (hull [a b c])
-          meshes (if (and (= 1 (count args))
-                          (vector? (first args)))
-                   (first args)
-                   args)
-          ;; Convert all meshes to Manifold objects
-          manifolds (keep mesh->manifold meshes)]
-      (when (seq manifolds)
-        (try
-          (let [;; Manifold.hull() is a static method that takes an array
-                manifold-array (clj->js (vec manifolds))
-                ^js raw-result (.call (.-hull ^js Manifold) Manifold manifold-array)
-                ^js result (.asOriginal raw-result)
-                output (manifold->mesh result)
-                first-mesh (first meshes)
-                output (carry-meta output first-mesh)]
-            ;; Clean up inputs
-            (doseq [m manifolds]
-              (.delete m))
-            (.delete raw-result)
-            (.delete result)
-            (schema/assert-mesh! output))
-          (catch :default e
-            (js/console.error "Hull operation failed:" e)
-            ;; Clean up on error
-            (doseq [m manifolds]
-              (.delete m))
-            nil))))))
+  (let [;; Normalize args: accept both (hull a b c) and (hull [a b c])
+        meshes (if (and (= 1 (count args))
+                        (vector? (first args)))
+                 (first args)
+                 args)
+        meshes (coerce-to-meshes "mesh-hull" meshes)]
+    (when-let [Manifold (get-manifold-class)]
+      (let [;; Convert all meshes to Manifold objects
+            manifolds (keep mesh->manifold meshes)]
+        (when (seq manifolds)
+          (try
+            (let [;; Manifold.hull() is a static method that takes an array
+                  manifold-array (clj->js (vec manifolds))
+                  ^js raw-result (.call (.-hull ^js Manifold) Manifold manifold-array)
+                  ^js result (.asOriginal raw-result)
+                  output (manifold->mesh result)
+                  first-mesh (first meshes)
+                  output (carry-meta output first-mesh)]
+              ;; Clean up inputs
+              (doseq [m manifolds]
+                (.delete m))
+              (.delete raw-result)
+              (.delete result)
+              (schema/assert-mesh! output))
+            (catch :default e
+              (js/console.error "Hull operation failed:" e)
+              ;; Clean up on error
+              (doseq [m manifolds]
+                (.delete m))
+              nil)))))))
 
 ;; ============================================================
 ;; Smoothing & refinement (Manifold tangent-based subdivision)
@@ -689,7 +707,8 @@
   [& args]
   (let [meshes (if (and (= 1 (count args)) (sequential? (first args)))
                  (first args)
-                 args)]
+                 args)
+        meshes (coerce-to-meshes "concat-meshes" meshes)]
     (when (seq meshes)
       (loop [remaining (seq meshes)
              all-verts []
