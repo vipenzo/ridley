@@ -379,7 +379,17 @@
    ;; Benchmarking helpers (used by the bench macro)
    'perf-now            (fn [] (.now js/performance))
    'print-bench         (fn [label ms] (state/capture-println (str label ": " (.toFixed ms 1) "ms")))
-   'transform           turtle/transform-mesh
+   'transform           (fn transform-coerced
+                          ;; Materialize any SDF node(s) before delegating —
+                          ;; turtle/transform-mesh's attach layer has no SDF
+                          ;; support (transform on SDF means "mesh it, then
+                          ;; transform the mesh").
+                          [mesh-or-meshes path]
+                          (turtle/transform-mesh
+                           (if (sequential? mesh-or-meshes)
+                             (mapv sdf/ensure-mesh mesh-or-meshes)
+                             (sdf/ensure-mesh mesh-or-meshes))
+                           path))
    'solidify-impl       manifold/solidify
    'slice-mesh          impl/implicit-slice-mesh
    'project-mesh        impl/implicit-project-mesh
@@ -460,6 +470,9 @@
 
                                             (sequential? target)
                                             [target "model"]
+
+                                            (sdf/sdf-node? target)
+                                            [(sdf/ensure-mesh target) "model"]
 
                                             :else
                                             (throw (js/Error. (str "export: expected keyword, mesh, or vector of meshes, got " (type target)))))]
@@ -603,7 +616,13 @@
    'set-source-form!    registry/set-source-form!
    'get-source-form     registry/get-source-form
    ;; Warp — spatial mesh deformation (*-impl for macro wrapper)
-   'warp-impl        warp/warp
+   'warp-impl        (fn warp-coerced
+                       ;; Materialize both mesh and volume from SDF before
+                       ;; delegating. Note: a materialized volume has no
+                       ;; :primitive, so compute-volume-bounds falls back to
+                       ;; its AABB box case — good enough for a deform zone.
+                       [mesh volume & args]
+                       (apply warp/warp (sdf/ensure-mesh mesh) (sdf/ensure-mesh volume) args))
    'inflate          warp/inflate
    'dent             warp/dent
    'attract          warp/attract
@@ -640,7 +659,16 @@
    ;; translate / rotate / scale (which dispatch to the SDF backend).
    'sdf-revolve      sdf/sdf-revolve
    'sdf-formula      impl/implicit-sdf-formula
-   'sdf->mesh        sdf/materialize
+   'sdf->mesh        (fn sdf->mesh-smart
+                       ;; 1-arg form goes through ensure-mesh's auto-bounds +
+                       ;; budgeted resolution — materialize's own 1-arg
+                       ;; default (15 vpu, no budget cap) can blow up to
+                       ;; billions of voxels on a large SDF. 2/3-arg forms
+                       ;; pass straight through: an explicit bounds/vpu means
+                       ;; the caller already knows what they're doing.
+                       ([node] (sdf/ensure-mesh node))
+                       ([node bounds] (sdf/materialize node bounds))
+                       ([node bounds resolution] (sdf/materialize node bounds resolution)))
    'sdf-ensure-mesh  sdf/ensure-mesh
    ;; SDF TPMS (Triply Periodic Minimal Surfaces)
    'sdf-gyroid       sdf/sdf-gyroid
