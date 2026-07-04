@@ -1501,6 +1501,8 @@ Resolve self-intersections (useful for loft/extrude that produce overlapping geo
 (solidify mesh)                  ; Pass through Manifold to clean self-intersections
 ```
 
+Also accepts an SDF node (auto-materialized via `sdf-ensure-mesh` first).
+
 Check mesh status:
 
 ```clojure
@@ -1515,7 +1517,7 @@ Concatenate meshes without boolean operations (no Manifold required):
 (concat-meshes [m1 m2 m3])      ; From a vector
 ```
 
-Simply merges vertices and faces. Not manifold-valid on its own, but useful for heightmap sampling, visualization, and as a fast way to combine the result of a `(for ...)` of `attach` calls into a single argument for a boolean operation. Manifold accepts the concatenated geometry as a tool, so you skip the cost of pairwise unions when the pieces are going to be subtracted (or unioned) wholesale anyway.
+Simply merges vertices and faces. Not manifold-valid on its own, but useful for heightmap sampling, visualization, and as a fast way to combine the result of a `(for ...)` of `attach` calls into a single argument for a boolean operation. Manifold accepts the concatenated geometry as a tool, so you skip the cost of pairwise unions when the pieces are going to be subtracted (or unioned) wholesale anyway. Any operand may be an SDF node — it is auto-materialized before merging.
 
 ```clojure
 ;; Drill a ring of N holes through a disk
@@ -1648,6 +1650,8 @@ Compute the convex hull of one or more meshes:
 ;; Can also pass a vector
 (mesh-hull [s1 s2 s3])
 ```
+
+Any operand may be an SDF node — it is auto-materialized before hulling.
 
 ### Mesh smoothing & refinement
 
@@ -2059,6 +2063,8 @@ Anchors store absolute world positions and are unaffected by this operation. `re
 
 The path is replayed on a virtual turtle starting at the mesh's `:creation-pose`; the resulting position/heading/up are baked into the mesh's vertices. With a sequence of meshes, the same rigid transform is applied to all of them so their relative arrangement is preserved (useful for transporting a sub-assembly around a scene).
 
+`transform` also accepts an SDF node (or a vector containing one) — it is auto-materialized to a mesh first. For an SDF you want to keep as SDF while moving it, use `attach` instead (below), which transforms the SDF tree directly and never meshes it.
+
 ### attach
 
 Transform a mesh, panel, or SDF, returning a new value (functional, original unchanged):
@@ -2444,6 +2450,8 @@ Deform mesh vertices inside a volume. The volume shape (sphere, box, cylinder, c
 **Options:**
 - `:subdivide n`: midpoint-subdivide triangles inside volume n times before deforming (each pass: 1 triangle becomes 4, edges split at midpoints). Useful for low-poly meshes that need smooth deformation. Note: drops `:face-groups` metadata.
 
+Both `mesh` and `volume` may be SDF nodes — each is auto-materialized before deforming. A materialized volume has no `:primitive`, so its deformation zone falls back to the AABB box case.
+
 ### Preset deformations
 
 | Function | Description |
@@ -2588,8 +2596,8 @@ Cardinal-axis rotations dispatch directly to libfive's `rotate_x/y/z`. Arbitrary
 ### Materialization
 
 ```clojure
-(sdf->mesh node)                            ; Convert SDF tree to triangle mesh
-(sdf->mesh node bounds resolution)          ; With custom bounds and resolution
+(sdf->mesh node)                            ; Auto bounds + budgeted resolution (same path as automatic materialization)
+(sdf->mesh node bounds resolution)          ; Explicit bounds and resolution
 ;; bounds: [[xmin xmax] [ymin ymax] [zmin zmax]]
 ;; resolution: voxels per unit
 ```
@@ -2598,7 +2606,7 @@ Materialization is normally automatic. Call `sdf->mesh` only when you need expli
 
 **Resolution**: a global meshing resolution governs auto-meshing of SDF nodes (default 15, "turtle-style" — same scale as `(resolution :n N)` for curves). Bump it with `(sdf-resolution! 60)` before `register` to get a finer mesh. Higher = finer but slower; total voxel count is also capped to keep meshes printable. When the tree contains thin features (`sdf-shell`, small `sdf-offset`), resolution is automatically boosted to guarantee at least 3 voxels across the thinnest part.
 
-For full control, call `sdf->mesh` directly with explicit `bounds` and `resolution` (voxels per unit) — bypasses the auto-resolution and auto-bounds entirely.
+For full control, call `sdf->mesh` with explicit `bounds` and `resolution` (voxels per unit) — this bypasses the auto-resolution voxel budget entirely, so an unbounded SDF (`sdf-gyroid`, `sdf-half-space`) or an overly fine resolution can generate a mesh large enough to stall the geometry server. The 1-arg form has no such risk: it goes through the same budgeted auto-bounds/auto-resolution path as automatic materialization.
 
 **Conditional materialization (`sdf-ensure-mesh`).** Coerce a value to a mesh: if it is already a mesh, return it unchanged; if it is an SDF node, materialize it. Useful inside polymorphic code that may receive either, and as the controlled-resolution form of auto-meshing:
 
@@ -3484,6 +3492,7 @@ Export meshes to STL files (triggers browser download):
 (export parts)                   ; Export all meshes in vector/map
 (export parts 2)                 ; Export specific element by index
 (export robot :hand)             ; Export specific element by key
+(export my-sdf)                  ; Bare SDF node — auto-materialized first
 ```
 
 Pass `:3mf` as a trailing argument to export in 3MF format instead of STL:
