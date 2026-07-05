@@ -56,7 +56,8 @@
             [ridley.editor.operations :as ops]
             [ridley.turtle.shape :as shape]
             [ridley.turtle.core :as turtle]
-            [ridley.turtle.extrusion :as ext]))
+            [ridley.turtle.extrusion :as ext]
+            [ridley.geometry.mesh-utils :as mu]))
 
 ;; ── off-centre asymmetric profile (the non-negotiable constraint) ────
 ;; An L: 10×3 horizontal arm + 3×8 vertical arm. Centroid ≈ (6.3, 3.7) (off
@@ -248,3 +249,60 @@
                     "  circle=" (.toFixed (shift c) 3) "  off-centre L=" (.toFixed (shift l) 3)))
       (is (< (shift c) 0.01) "circle centroid is BLIND to a roll about the heading (why circles can't be used)")
       (is (> (shift l) 1.0)  "off-centre L centroid EXPOSES the roll"))))
+
+;; ════════════════════════════════════════════════════════════════════
+;; FAMILY 4 — ANALYTIC BEZIER VEER (rail-start-tangent brief, 2026-07-04)
+;; validate-rail-start-frame! used to measure the FIRST TESSELLATED CHORD of a
+;; bezier head, not the analytic tangent. A bezier whose c1 sits exactly along
+;; the entry heading (:local right/up = 0) is tangent BY CONSTRUCTION, but on a
+;; sharply-curved start the first chord veers off it — a resolution artifact
+;; (shrinks as :steps grows) that used to trip the 1° tolerance. The fix tags
+;; the leading th/tv with the ANALYTIC veer (angle of c1−p0 vs entry heading,
+;; computed once at record time, pose- and resolution-independent) and the
+;; guard checks that instead of the tessellated chord.
+;; ════════════════════════════════════════════════════════════════════
+
+;; brief repro, first leg only (dev-docs/brief-rail-start-tangent.md:12):
+;; c1 = [0 0 24.63] :local — right/up components are 0, pure heading → exact
+;; analytic tangent — yet curved enough that the first chord reads ~3.8°/2.6°
+;; off at 16/24 steps (both over the 1° tolerance) before this fix.
+(defn- tangent-bez-storto [steps]
+  (str "(path (bezier-to [0 -8.24 73.42] [0 0 24.63] [0 -28.37 59.61] :local :steps " steps "))"))
+
+;; c1 at exactly 10° off the entry heading in the (right, heading) plane —
+;; sin(10°)=0.1736, cos(10°)=0.9848, scaled to length 10 — a REAL violation
+;; that analytic measurement must still catch regardless of :steps.
+(def BEZ-10DEG "(path (bezier-to [30 5 30] [1.736 0 9.848] [20 0 20] :local))")
+
+(deftest f4-tangent-bezier-resolution-independent
+  ;; THE regression test for the false positive: write this FIRST — it must
+  ;; FAIL against the pre-fix chord measurement (both extrude and loft raise
+  ;; "begin with a turn" at :steps 8, since the chord-veer only shrinks, never
+  ;; vanishes, with resolution) and PASS once the guard reads the analytic veer.
+  (testing "analytically-tangent bezier head coincides with stamp at low AND high resolution"
+    (doseq [steps [8 64]]
+      (let [rail (tangent-bez-storto steps)]
+        (assert-coincide (str "F4 extrude / tangent-bezier steps=" steps) OFFP (ext-mesh OFFP rail))
+        (assert-coincide (str "F4 loft / tangent-bezier steps=" steps) OFFP (loft-mesh OFFP rail))))))
+
+(deftest f4-bezier-10deg-off-axis-still-rejected
+  ;; The guard must not be weakened: a bezier head genuinely off-tangent by 10°
+  ;; (well over the 1° tolerance) is rejected at any resolution.
+  (testing "a bezier head 10° off the entry heading is a DIRECTION violation"
+    (is (thrown-with-msg? js/Error #"begin with a turn" (ext-mesh OFFP BEZ-10DEG)))
+    (is (thrown-with-msg? js/Error #"begin with a turn" (loft-mesh OFFP BEZ-10DEG)))))
+
+(deftest f4-tangent-bezier-low-res-watertight
+  ;; Trap (brief Verifica #3): the cap carve-out excludes the bezier's leading
+  ;; th/tv from the frame check, so the first ring stamps perpendicular to the
+  ;; incoming heading while the spine advances along the (slightly deviated)
+  ;; first chord — same accepted compromise as the arc carve-out. At very
+  ;; coarse resolution this must still produce a clean, watertight mesh with no
+  ;; fold at the first ring, not just "doesn't throw".
+  (testing ":steps 4 on a sharply-curved tangent bezier stays watertight, no fold at the first ring"
+    (doseq [[label mesh] [["extrude" (ext-mesh OFFP (tangent-bez-storto 4))]
+                          ["loft"    (loft-mesh OFFP (tangent-bez-storto 4))]]]
+      (let [diag (mu/mesh-diagnose mesh)]
+        (is (:is-watertight? diag) (str label " :steps 4 — mesh must stay watertight; diag=" diag))
+        (is (zero? (:non-manifold-edges diag)) (str label " :steps 4 — no non-manifold edges; diag=" diag))
+        (is (zero? (:degenerate-faces diag)) (str label " :steps 4 — no degenerate/folded faces; diag=" diag))))))

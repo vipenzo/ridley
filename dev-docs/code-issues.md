@@ -4,6 +4,18 @@ File interno per tracciare piccole incoerenze tra il codice sorgente di Ridley e
 
 ## Aperto
 
+### `edit-path` 3D: il valore `live` di un nodo bezier non è consumabile direttamente
+
+**Contesto**: `ridley.editor.edit-path/request!` (chiamato da `(edit-path …)`) restituisce SEMPRE un valore, in modo che lo script circostante proceda anche prima della conferma — per il modo 2D è testato che coincida col confermato (`edit_path2d_script_test.cljs`). In 3D, quando i nodi contengono un `:bez` (qualsiasi bezier), il valore `live` è `{:type :path :commands (nodes->commands-3d nodes)}`, e `nodes->commands-3d` emette per un segmento bezier un **singolo comando compatto** `{:cmd :bezier-to :args [end c1 c2 :local]}` — pensato per essere ri-emesso come SORGENTE (`nodes->code-3d`) e ri-valutato dalla macro `path`, che lo tessella via `rec-bezier-to*`. Nessun consumatore (`extrude-from-path`/`analyze-open-path-dir`, loft/`analyze-loft-path`) sa interpretare un comando `:bezier-to` grezzo dentro `:commands` — non è mai gestito, in nessun `case`/`cond` su `:cmd`. Il risultato: il segmento viene semplicemente ignorato, il path ha 0 segmenti reali, ed `extrude`/`loft` costruito su questo valore `live` produce mesh nil silenziosamente (nessun errore).
+
+**Riproduzione**: `(ep/request! (:result (h/eval-dsl "(path (bezier-to [30 10 0] [20 0 0] [28 5 0]))")))` seguito da `(ops/pure-extrude-path profilo risultato)` → `nil`, anche con un bezier perfettamente tangente (nessuna violazione dell'invariante rail-start). Scoperto scrivendo `test/ridley/editor/edit_path_3d_test.cljs` (dev-docs/brief-rail-start-tangent.md, Parte 2): i test hanno dovuto ri-valutare i comandi come sorgente DSL (mimando il percorso reale confirm→splice→ri-eval) invece di consumare `result` direttamente, per aggirare questo buco.
+
+**Impatto**: chiunque incorpori `(edit-path (bezier-to …))` **inline** dentro uno script (es. `(extrude prof (edit-path …))`) senza mai confermare l'edit vede una mesh vuota al primo Run, anche se il codice è geometricamente valido — comportamento silenziosamente diverso da 2D, dove `request!` è già testato per restituire un valore fedele.
+
+**Fix possibile** (non tentato, fuori scope): far tessellare `nodes->commands-3d` un bezier in linea (stessa matematica di `rec-bezier-to*`, riusando `bezier-frame-3d`) invece di emettere il comando compatto — oppure far riconoscere `:bezier-to` come comando valido a `analyze-open-path-dir`/`analyze-loft-path` espandendolo lì. Va scelto con attenzione: il comando compatto esiste apposta per il round-trip sorgente (`nodes->code-3d` + `:pure` tag per il re-editing), quindi tessellarlo qui non deve rompere quel percorso.
+
+**Scoperta**: Vincenzo/Claude, 2026-07-04, durante l'implementazione di dev-docs/brief-rail-start-tangent.md Parte 2.
+
 ### Ricostruire una shape enumera a mano gli attributi che sopravvivono
 
 **Contesto**: `lerp-shape` (e a monte `make-shape`) ricostruisce la shape elencando **esplicitamente** quali attributi ricopiare (`:centered?`, `:holes`, `:preserve-position?`, …). Ogni nuovo attributo shape che qualcuno aggiunge rischia di cadere silenziosamente in questa ricostruzione — esattamente come `:preserve-position?` veniva perso dal loft two-shape (fix `2fb18f6`): nessun errore, solo geometria spostata di nascosto.

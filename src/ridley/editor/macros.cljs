@@ -40,6 +40,23 @@
             (fn [s]
               (let [s2 (rec-tv s angle)]
                 (assoc-in s2 [:recording (dec (count (:recording s2))) :smooth] true)))))
+   ;; Like rec-th-smooth*/rec-tv-smooth* but ALSO tag :bez-cap :lead and :veer-deg
+   ;; — the analytic angle between the entry heading and the bezier's c1−p0 (not
+   ;; the tessellated chord). validate-rail-start-frame! reads :veer-deg instead of
+   ;; measuring these rotations' cumulative effect, so a curve that leaves exactly
+   ;; tangent (veer≈0) passes the rail-start guard at ANY tessellation resolution.
+   (defn- rec-th-smooth-cap* [angle veer]
+     (swap! path-recorder
+            (fn [s]
+              (let [s2 (rec-th s angle)]
+                (update-in s2 [:recording (dec (count (:recording s2)))]
+                           assoc :smooth true :bez-cap :lead :veer-deg veer)))))
+   (defn- rec-tv-smooth-cap* [angle veer]
+     (swap! path-recorder
+            (fn [s]
+              (let [s2 (rec-tv s angle)]
+                (update-in s2 [:recording (dec (count (:recording s2)))]
+                           assoc :smooth true :bez-cap :lead :veer-deg veer)))))
    (defn- rec-set-heading* [heading up & [flag]]
      (swap! path-recorder rec-set-heading heading up flag))
    (defn- rec-u* [dist]
@@ -372,6 +389,18 @@
                                                              (- (nth p0 1) (nth p3 1))
                                                              (- (nth p0 2) (nth p3 2))])]
                                 (mapv + p3 (mapv #(* % d) to-start))))]))
+               ;; Analytic veer: angle between the entry heading and c1−p0, computed
+               ;; ONCE from the resolved control point (pose-invariant — valid at
+               ;; whatever pose consumes this path later). 0 for the auto branch
+               ;; above by construction. Degenerate c1≈p0 reads as 0 (no direction
+               ;; to measure, and the overall curve is skipped below anyway when
+               ;; approx-length is tiny).
+               c1-p0 [(- (nth c1 0) (nth p0 0)) (- (nth c1 1) (nth p0 1)) (- (nth c1 2) (nth p0 2))]
+               c1-p0-len (sqrt (rec-dot c1-p0 c1-p0))
+               veer-deg (if (< c1-p0-len 1e-6)
+                          0
+                          (let [d (max -1.0 (min 1.0 (/ (rec-dot c1-p0 start-heading) c1-p0-len)))]
+                            (* (acos d) (/ 180 PI))))
                ;; Bezier point function
                cubic-point (fn [t]
                              (let [t2 (- 1 t)
@@ -400,7 +429,8 @@
            ;; smooth-rotation? in extrusion.cljs) — that corner treatment folds a
            ;; swept profile on a curved rail.
            (loop [remaining-segments segments
-                  current-up (:up state)]
+                  current-up (:up state)
+                  first? true]
              (when (seq remaining-segments)
                (let [{:keys [dir dist]} (first remaining-segments)]
                  (if (and dir (> dist 0.001))
@@ -419,18 +449,24 @@
                                     (if (> right-len 0.001)
                                       (rec-normalize (rec-cross right dir))
                                       current-up)))]
-                     ;; Rotate to segment direction using relative th/tv (tagged :smooth)
+                     ;; Rotate to segment direction using relative th/tv (tagged :smooth).
+                     ;; The very first segment's leading rotation is additionally tagged
+                     ;; :bez-cap :lead / :veer-deg — the chord it drives is a tessellation
+                     ;; artifact, not the curve's true (analytic) tangent.
                      (let [cur-heading (:heading @path-recorder)
                            cur-up (:up @path-recorder)
                            [th-angle tv-angle] (rec-compute-rotation-angles cur-heading cur-up dir)]
-                       (when (> (abs th-angle) 0.001) (rec-th-smooth* th-angle))
-                       (when (> (abs tv-angle) 0.001) (rec-tv-smooth* tv-angle)))
+                       (if first?
+                         (do (when (> (abs th-angle) 0.001) (rec-th-smooth-cap* th-angle veer-deg))
+                             (when (> (abs tv-angle) 0.001) (rec-tv-smooth-cap* tv-angle veer-deg)))
+                         (do (when (> (abs th-angle) 0.001) (rec-th-smooth* th-angle))
+                             (when (> (abs tv-angle) 0.001) (rec-tv-smooth* tv-angle)))))
                      ;; Move forward
                      (rec-f* dist)
                      ;; Continue with next segment, propagating the up vector
-                     (recur (rest remaining-segments) new-up))
+                     (recur (rest remaining-segments) new-up false))
                    ;; Skip zero-length segment, keep current up
-                   (recur (rest remaining-segments) current-up)))))
+                   (recur (rest remaining-segments) current-up false)))))
            ;; Leave the turtle facing the analytic END TANGENT (∝ p3 − c2), like
            ;; the runtime bezier-walk — not the last chord. So continuing the path
            ;; (f …) stays tangent, and a symmetric mirror reads the exact axis.

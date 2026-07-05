@@ -350,7 +350,16 @@
       ;; code). Because the dormant path already equals post-removal behaviour,
       ;; the fix brief should find these UNCHANGED — a change is a red flag that
       ;; removal reached beyond the firing branch.
-      (is (= [[-0.02 63.727] [-8.0 19.079] [-8.0 8.0]] bb)
+      ;;
+      ;; UPDATED 2026-07-04 (rail-start-tangent brief): x moved -0.02 → 0. This
+      ;; rail's leading bezier th is a sub-1° tessellated-chord veer around an
+      ;; analytically-exact-tangent c1 (dev-docs/brief-rail-start-tangent.md) —
+      ;; exactly the artifact that brief's Part 1 fix excludes from the start
+      ;; cap's frame, same carve-out arc heads already had. The cap now stamps
+      ;; perfectly flush with the incoming heading (x=0) instead of tilted by
+      ;; that leftover chord sliver. Unrelated to inner-pivot; face count (this
+      ;; net's actual subject) is unchanged.
+      (is (= [[0 63.727] [-8.0 19.079] [-8.0 8.0]] bb)
           (str "REFERENCE bbox (inner-pivot active); CURRENT " bb))
       (is (= 3116 nf)
           (str "REFERENCE face count (inner-pivot active); CURRENT " nf)))))

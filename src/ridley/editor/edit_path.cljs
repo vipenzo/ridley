@@ -62,6 +62,7 @@
 (def ^:private handle-len-color 0x2b8a99) ; length-only handle (direction locked by smoothness) — muted teal
 (def ^:private cusp-color   0xff44cc) ; freed (cusp) outgoing handle — magenta
 (def ^:private handle-radius   0.45)  ; bezier handle square half-size
+(def ^:private start-arrow-len 6)     ; 3D rail: affordance arrow length at node 0 (+X, the fixed start heading)
 (def ^:private node-radius     0.625) ; filled dot radius (plane units)
 (def ^:private node-radius-sel 1.0)   ; selected dot radius
 
@@ -761,15 +762,17 @@
   "3D analogue of reconstrain-handles: project each bezier segment's c1 onto the
    tangent the rail arrives at its start node with (from the shared frame walk), so
    smooth nodes stay tangent-continuous; cusp start nodes (`:smooth? false`) are left
-   free, as is the rail's first segment (node 0 is the anchor — no incoming tangent,
-   so the segment stays as drawn). Single forward pass — the arrival heading at a node
-   depends on the previous segment's c2/positions, not on the c1's being constrained."
+   free. Node 0 is the rail's anchor and is ALWAYS smooth (no cusp option — see
+   toggle-cusp!): its fixed heading is [1 0 0] (validate-rail-start-frame! in
+   extrusion.cljs enforces this on the baked rail), so segment 1's c1 is
+   constrained just like every other segment's, not left free. Single forward
+   pass — the arrival heading at a node depends on the previous segment's
+   c2/positions, not on the c1's being constrained."
   [nodes]
   (let [n (count nodes)]
     (reduce
      (fn [ns i]
        (if (and (:bez (nth ns i))
-                (pos? (dec i))                        ; i≥2: node 0 anchor has no tangent
                 (not (false? (:smooth? (nth ns (dec i))))))
          (let [A     (node-pos (nth ns (dec i)))
                B     (node-pos (nth ns i))
@@ -780,6 +783,46 @@
            (assoc-in ns [i :bez :c1] (m/v+ A (m/v* h len))))
          ns))
      nodes (range 1 n))))
+
+;; Mirrors extrusion.cljs's rail-start-frame-tol-deg: how far node 1's chord may
+;; sit off the anchor's fixed heading [1 0 0] before ensure-node1-tangent seeds a
+;; default tangent bezier for it.
+(def ^:private rail-axis-tol-deg 1.0)
+
+(defn- angle-deg-3d [u v]
+  (* (/ 180 js/Math.PI) (js/Math.acos (max -1.0 (min 1.0 (m/dot u v))))))
+
+(defn- ensure-node1-tangent
+  "Node 1 (the rail's first real node) must leave along the anchor's fixed
+   heading [1 0 0] (see reconstrain-handles-3d above / validate-rail-start-frame!
+   in extrusion.cljs). A node 1 placed or dragged off that ray with NO `:bez` yet
+   — from `insert-node!`, the non-bezier branch of `split-segment!`'s 3D split, or
+   a recovered seed whose source folded a manual th/tv into its waypoints — has
+   nothing for reconstrain-handles-3d to snap, since it only touches nodes that
+   already carry `:bez`. Seed a default tangent bezier here: c1 along +X at ⅓ the
+   chord (the same default `append-node!` gives any other node's incoming
+   handle), c2 at the usual ⅔-chord belly. A node already on-axis, or one that
+   already has a `:bez` (reconstrain-handles-3d will snap it), is left untouched
+   — idempotent, safe to call unconditionally."
+  [nodes]
+  (if (or (< (count nodes) 2) (:bez (nth nodes 1)))
+    nodes
+    (let [A (node-pos (first nodes)) B (node-pos (nth nodes 1))
+          chord (m/v- B A) clen (m/magnitude chord)]
+      (if (or (< clen 1e-9)
+              (< (angle-deg-3d [1 0 0] (m/v* chord (/ 1.0 clen))) rail-axis-tol-deg))
+        nodes
+        (assoc-in nodes [1 :bez] {:c1 (m/v+ A (m/v* [1 0 0] (/ clen 3)))
+                                  :c2 (lerp A B (/ 2.0 3))})))))
+
+(defn- conform-rail-start-3d
+  "Ensure the 3D nodes' first segment satisfies the rail-start invariant: seed a
+   default tangent bezier on node 1 when it needs one (`ensure-node1-tangent`),
+   then re-snap every bezier handle (`reconstrain-handles-3d`, which now locks
+   node 1's c1 too). Pure — safe to call on freshly-recovered seed nodes before
+   any session exists (`request!`), and from `reconstrain!` after every edit."
+  [nodes]
+  (reconstrain-handles-3d (ensure-node1-tangent nodes)))
 
 (defn- nodes->commands-3d
   "Commands tracing the 3D nodes as a TWIST-FREE rail. Per straight segment:
@@ -1118,7 +1161,7 @@
    constrained too); 3D rails are open."
   [s]
   (if (three-d? s)
-    (update s :nodes reconstrain-handles-3d)
+    (update s :nodes conform-rail-start-3d)
     (update s :nodes reconstrain-handles (boolean (closed? s)))))
 
 (defn- active-basis
@@ -1220,18 +1263,24 @@
                        (mapv (fn [p q] {:from p :to q :color line-color}) pts (rest pts))
                        [{:from a :to b :color line-color}]))
                    segs)
-        ;; bezier handle guide lines: start→c1, end→c2
+        ;; bezier handle guide lines: start→c1, end→c2. c1 (the incoming/direction
+        ;; handle) reads cusp (magenta) when its start node is a cusp, else
+        ;; length-only/locked (teal) — mirrors render!'s 2D convention. Node 0 can
+        ;; never be a cusp (toggle-cusp! guards it), so segment 1's c1 always
+        ;; reads locked, never the free/cyan color.
         handle-lines (mapcat
-                      (fn [{:keys [kind a b c1 c2]}]
+                      (fn [{:keys [kind i a b c1 c2]}]
                         (when (= kind :bez)
-                          [{:from a :to c1 :color handle-color}
-                           {:from b :to c2 :color handle-color}]))
+                          (let [c1col (if (false? (:smooth? (nth nodes (dec i)))) cusp-color handle-len-color)]
+                            [{:from a :to c1 :color c1col}
+                             {:from b :to c2 :color handle-color}])))
                       segs)
         handle-dots (mapcat
-                     (fn [{:keys [kind c1 c2]}]
+                     (fn [{:keys [kind i c1 c2]}]
                        (when (= kind :bez)
-                         [{:pos c1 :radius handle-radius :color handle-color :square true :normal normal}
-                          {:pos c2 :radius handle-radius :color handle-color :square true :normal normal}]))
+                         (let [c1col (if (false? (:smooth? (nth nodes (dec i)))) cusp-color handle-len-color)]
+                           [{:pos c1 :radius handle-radius :color c1col :square true :normal normal}
+                            {:pos c2 :radius handle-radius :color handle-color :square true :normal normal}])))
                      segs)
         node-dots (mapv (fn [i pw]
                           (let [marked? (seq (:tail (nth nodes i)))
@@ -1242,9 +1291,15 @@
                                           (or start? exit?) exit-color
                                           (= i selected)    sel-color
                                           :else             node-color)}))
-                        (range n) pts)]
+                        (range n) pts)
+        ;; affordance: the rail's start direction is FIXED at +X (the anchor's
+        ;; heading) — a short arrow at node 0 shows it before the user drags
+        ;; anything off-axis and hits the rail-start invariant.
+        start-arrow (when (seq pts)
+                      [{:from (first pts) :to (m/v+ (first pts) (m/v* [1 0 0] start-arrow-len))
+                        :color handle-len-color}])]
     (viewport/show-preview! [{:type :lines :data grid-lines}
-                             {:type :lines :data (vec (concat seg-lines handle-lines)) :on-top true}
+                             {:type :lines :data (vec (concat seg-lines handle-lines start-arrow)) :on-top true}
                              {:type :dots :data (vec (concat node-dots handle-dots))}])
     (update-mark-labels! nodes pts)))
 
@@ -1579,6 +1634,10 @@
   (swap! session update :nodes
          #(vec (concat (take idx %) [{:pos pos :tail []}] (drop idx %))))
   (swap! session assoc :selected idx)
+  ;; a plain node landing at index 1 in 3D (e.g. a split) has no :bez for
+  ;; reconstrain-handles-3d to snap — conform-rail-start-3d seeds one when it's
+  ;; off the anchor's fixed heading.
+  (swap! session reconstrain!)
   (refresh-preview!)
   (update-panel!))
 
@@ -1618,6 +1677,9 @@
                            (assoc-in [:nodes sel :bez] {:c1 m123 :c2 m23})
                            (update :nodes #(vec (concat (take sel %) [newn] (drop sel %))))
                            (assoc :selected sel))))
+              ;; splitting the first segment (sel=1) puts a new bezier at node 1
+              ;; whose c1 (m01) isn't necessarily on the anchor's fixed heading.
+              (swap! session reconstrain!)
               (refresh-preview!) (update-panel!))
             (insert-node! sel (midv pa pb)))))
 
@@ -1905,10 +1967,13 @@
 
 (defn- toggle-cusp!
   "Toggle the selected node between smooth and cusp. A cusp frees its OUTGOING
-   bezier handle (c1 of the next segment) so the curve can leave at any angle."
+   bezier handle (c1 of the next segment) so the curve can leave at any angle.
+   In 3D, node 0 (the rail's anchor) has no cusp option: it is always smooth, so
+   segment 1's c1 stays locked to the anchor's fixed heading (the rail-start
+   invariant) — see reconstrain-handles-3d."
   []
   (let [s @session i (:selected s)]
-    (when (< i (count (:nodes s)))
+    (when (and (< i (count (:nodes s))) (not (and (three-d? s) (zero? i))))
       (push-undo!)
       (swap! session update-in [:nodes i :smooth?] #(if (false? %) true false))
       (swap! session reconstrain!)
@@ -2497,7 +2562,11 @@
                                           (seed->nodes (project-2d-to-xy seed-path)
                                                        (boolean (:closed? seed-path))
                                                        (vec (shape/ensure-path-2d seed-path)))
-                                          {:nodes (seed->nodes-3d seed-path) :dropped []})
+                                          ;; conform-rail-start-3d: a recovered seed can fold a
+                                          ;; manual th/tv into its first waypoint (Fuori-scope
+                                          ;; case in dev-docs/brief-rail-start-tangent.md) — fix
+                                          ;; node 1 up before it's baked below (`live`) or stored.
+                                          {:nodes (conform-rail-start-3d (seed->nodes-3d seed-path)) :dropped []})
         ;; The value returned to the SCRIPT (consumed by a surrounding
         ;; path-to-shape / embroid / loft) must be a fully-traceable path so the
         ;; script proceeds with the SAME result as confirming. In 2D the node

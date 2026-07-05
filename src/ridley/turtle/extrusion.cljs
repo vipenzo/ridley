@@ -267,6 +267,44 @@
    (a tangent-drawn bezier reads ~0.2°) while catching every real rotation."
   1.0)
 
+(defn- leading-cap-window
+  "Trailing window of `rotations` (0, 1, or 2 items) that is a tessellation-lead-
+   cap artifact, to be excluded from the rail-start frame reduction: an arc's
+   single :arc-cap :lead half-step, or a bezier's up to two consecutive trailing
+   :bez-cap :lead rotations (a th and/or a tv — see rec-bezier-to* in
+   editor/macros.cljs). Returns [] when the rotations don't end in a cap tag."
+  [rotations]
+  (cond
+    (empty? rotations) []
+    (= :lead (:arc-cap (last rotations))) [(last rotations)]
+    (= :lead (:bez-cap (last rotations)))
+    (let [n (count rotations)]
+      (if (and (>= n 2) (= :lead (:bez-cap (nth rotations (- n 2)))))
+        (vec (take-last 2 rotations))
+        [(last rotations)]))
+    :else []))
+
+(defn split-leading-cap
+  "Given the turtle `state` and a path's `initial-rotations` (everything before
+   the first :f), split off the leading tessellation-cap window (see
+   `leading-cap-window`) and return {:cap-state :eff-rotations :cap-window}:
+   `:cap-state` is `state` reduced through the rotations BEFORE that window — the
+   frame to stamp the rail's start cap in, so it stays perpendicular to the
+   INCOMING heading despite the leading half-step (arc) or curve-entry rotation
+   (bezier) that follows it. `:eff-rotations` is `initial-rotations` with the
+   window removed, for the rail-start frame check. A path with no leading cap
+   returns the full reduction and the rotations unchanged.
+
+   Shared by extrude-from-path, extrude-with-holes-from-path, and loft-from-path
+   — the three rail-consumption sites that each used to duplicate this split."
+  [state initial-rotations]
+  (let [cap-window (leading-cap-window initial-rotations)
+        k (count cap-window)
+        eff (if (pos? k) (vec (drop-last k initial-rotations)) initial-rotations)]
+    {:cap-state (reduce apply-rotation-to-state state eff)
+     :eff-rotations eff
+     :cap-window cap-window}))
+
 (defn validate-rail-start-frame!
   "Enforce the sweep invariant: a rail consumed by extrude/loft must BEGIN in the
    turtle's starting frame — both heading (direction) AND up (roll). The first
@@ -277,21 +315,32 @@
    ROLL violation (roll the turtle).
 
    `initial-rotations` is the leading rotation window (everything before the first
-   :f). An arc's trailing :arc-cap :lead half-step is a tessellation artifact (the
-   start cap is kept perpendicular to the incoming heading — see the carve-out in
-   extrude-from-path / loft-from-path), so it is excluded and never trips this.
+   :f). The trailing tessellation-cap window (see `leading-cap-window`) is
+   excluded from the frame reduction below — for an arc it is a pure tessellation
+   artifact (the start cap is kept perpendicular to the incoming heading; the true
+   tangent IS the incoming heading, so no check is needed at all). For a bezier
+   it is checked separately against its ANALYTIC veer (the angle of c1−p0 vs the
+   entry heading, tagged at record time — see rec-bezier-to*), not the tessellated
+   chord these rotations actually describe, which veers by a resolution-dependent
+   amount even when the curve leaves perfectly tangent.
 
    Scope is deliberately narrow: this is a property of a path USED AS A SWEEP RAIL,
    so it is called only at the extrude/loft rail-consumption point — NOT at path
    construction, and NOT from non-sweep consumers like text-on-path, which
    legitimately take paths whose initial tangent differs from the heading."
   [state initial-rotations]
-  (let [eff (if (and (seq initial-rotations)
-                     (= :lead (:arc-cap (last initial-rotations))))
-              (butlast initial-rotations)
-              initial-rotations)]
-    (when (seq eff)
-      (let [s' (reduce apply-rotation-to-state state eff)
+  (let [{:keys [eff-rotations cap-window]} (split-leading-cap state initial-rotations)
+        turn-error
+        (js/Error.
+         (str "extrude/loft: a swept rail can't begin with a turn. This path turns "
+              "at its very first step, but a rail has to set off the way the turtle is "
+              "already facing — it inherits the turtle's pose, with nothing before it to "
+              "turn from. Either aim the turtle before starting the path (e.g. (th …) / "
+              "(tv …)), or redraw the start of the curve so it sets off straight instead of "
+              "already bending. (Starting with a curve is fine when the curve leaves "
+              "tangent, like (arc-h …) — it just can't veer at the very first step.)"))]
+    (when (seq eff-rotations)
+      (let [s' (reduce apply-rotation-to-state state eff-rotations)
             ang (fn [a b] (* (/ 180 Math/PI)
                              (Math/acos (max -1.0 (min 1.0 (dot (normalize a) (normalize b)))))))
             dir-off (ang (:heading state) (:heading s'))
@@ -299,22 +348,21 @@
         (cond
           ;; Direction first: if the tangent diverges that is the primary fault
           ;; (covers bezier-storto and th/tv), whatever up does as a side effect.
-          (> dir-off rail-start-frame-tol-deg)
-          (throw (js/Error.
-                  (str "extrude/loft: a swept rail can't begin with a turn. This path turns "
-                       "at its very first step, but a rail has to set off the way the turtle is "
-                       "already facing — it inherits the turtle's pose, with nothing before it to "
-                       "turn from. Either aim the turtle before starting the path (e.g. (th …) / "
-                       "(tv …)), or redraw the start of the curve so it sets off straight instead of "
-                       "already bending. (Starting with a curve is fine when the curve leaves "
-                       "tangent, like (arc-h …) — it just can't veer at the very first step.)")))
+          (> dir-off rail-start-frame-tol-deg) (throw turn-error)
           ;; Direction is fine but the section is rolled around it (covers tr).
           (> roll-off rail-start-frame-tol-deg)
           (throw (js/Error.
                   (str "extrude/loft: a swept rail can't begin with a twist. This path rolls "
                        "about its own direction at its very first step — the direction is right, but "
                        "the cross-section is turned around it. Apply the roll to the turtle before "
-                       "starting the path (e.g. (tr …)) instead."))))))))
+                       "starting the path (e.g. (tr …)) instead."))))))
+    ;; Bezier lead cap: the ANALYTIC veer, not the tessellated chord these
+    ;; rotations drive. An arc lead cap has no :veer-deg and is exempt (its true
+    ;; tangent IS the incoming heading, by construction).
+    (when (seq cap-window)
+      (let [veer (:veer-deg (first cap-window))]
+        (when (and veer (> veer rail-start-frame-tol-deg))
+          (throw turn-error))))))
 
 (def ^:private corner-realizability-tol
   "Slack on the effective-dist sign check. A corner is rejected when
@@ -1552,14 +1600,9 @@
             ;; Realizability: reject a corner whose miter folds the section back
             ;; through the tube (effective-dist < 0). See validate-corner-realizability!.
             _ (validate-corner-realizability! segments)
-            ;; Keep an arc-started section's start cap perpendicular to the
+            ;; Keep an arc/bezier-started section's start cap perpendicular to the
             ;; incoming heading (see extrude-from-path for the full rationale).
-            arc-lead-rot (when (and (seq initial-rotations)
-                                    (= :lead (:arc-cap (last initial-rotations))))
-                           (last initial-rotations))
-            start-cap-state (if arc-lead-rot
-                              (reduce apply-rotation-to-state state (butlast initial-rotations))
-                              state-with-initial-heading)
+            start-cap-state (:cap-state (split-leading-cap state initial-rotations))
             rings-result
             (loop [i 0
                    s state-with-initial-heading
@@ -1704,15 +1747,12 @@
                 ;; that leading half-step would tilt the start cap by half a step
                 ;; off the incoming heading, so the section no longer welds flush
                 ;; to whatever precedes it (e.g. the prior leg of a transform->
-                ;; chain). The half-steps are tagged :arc-cap by the recorder.
-                ;; Keep the start cap perpendicular to the pre-arc heading; the
-                ;; half-step still advances the spine along the first chord.
-                arc-lead-rot (when (and (seq initial-rotations)
-                                        (= :lead (:arc-cap (last initial-rotations))))
-                               (last initial-rotations))
-                start-cap-state (if arc-lead-rot
-                                  (reduce apply-rotation-to-state state (butlast initial-rotations))
-                                  state-with-initial-heading)
+                ;; chain). The half-steps are tagged :arc-cap by the recorder; a
+                ;; bezier's leading th/tv (:bez-cap) is the same kind of artifact.
+                ;; Keep the start cap perpendicular to the pre-arc/pre-curve
+                ;; heading; the leading rotation still advances the spine along
+                ;; the first chord. See split-leading-cap.
+                start-cap-state (:cap-state (split-leading-cap state initial-rotations))
                 ;; Profile marks → mesh anchors: resolve in the section plane,
                 ;; then stamp through the SAME frame the base ring is built with
                 ;; (state-with-initial-heading, not the pre-rotation creation-pose).

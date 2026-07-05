@@ -590,17 +590,16 @@
            ;; reject identically. See extrusion/validate-corner-realizability!.
            _ (extrusion/validate-corner-realizability!
               (extrusion/analyze-open-path-dir commands shape state))
-           ;; Arc carve-out (mirrors extrude-from-path, extrusion.cljs:1458-1463):
-           ;; when the last leading rotation is an arc's :lead half-step, stamp the
-           ;; FIRST ring with the pre-arc frame so the start cap stays perpendicular
-           ;; to the INCOMING heading. The half-step is a tessellation artifact
-           ;; (midpoint integration), not a real cusp, so the cap must not tilt by
-           ;; it; the spine still advances along the full initial heading. Non-arc
-           ;; rails: start-cap-state == state-with-initial-heading (no-op).
-           start-cap-state (if (and (seq initial-rotations)
-                                    (= :lead (:arc-cap (last initial-rotations))))
-                             (reduce apply-rotation-to-state state (butlast initial-rotations))
-                             state-with-initial-heading)
+           ;; Cap carve-out (mirrors extrude-from-path / extrude-with-holes-from-path,
+           ;; extrusion.cljs split-leading-cap): when the leading rotations end in an
+           ;; arc's :lead half-step or a bezier's :bez-cap :lead th/tv, stamp the
+           ;; FIRST ring with the pre-cap frame so the start cap stays perpendicular
+           ;; to the INCOMING heading. That leading rotation is a tessellation
+           ;; artifact (midpoint integration / analytic-vs-chord veer), not a real
+           ;; cusp, so the cap must not tilt by it; the spine still advances along
+           ;; the full initial heading. Rails with no leading cap: start-cap-state ==
+           ;; state-with-initial-heading (no-op).
+           start-cap-state (:cap-state (extrusion/split-leading-cap state initial-rotations))
            segments (analyze-loft-path commands)
            n-segments (count segments)
 
