@@ -358,6 +358,7 @@
    'subdivide-segment-impl turtle/subdivide-segment
    'compute-bezier-walk-impl turtle/compute-bezier-walk
    'compute-midpoint-walk-impl turtle/compute-midpoint-walk
+   'canonical-bezier-frame-impl turtle/canonical-bezier-frame
    'extrude-closed-path-impl gen-ops/implicit-extrude-closed-path
    'extrude-path-impl        gen-ops/implicit-extrude-path
    'pure-extrude-path        gen-ops/pure-extrude-path  ; Pure version (no side effects)

@@ -79,6 +79,10 @@
 ;; 3D nodes are grabbed in SCREEN space (so any visible node can be picked
 ;; regardless of the active plane): max click distance in pixels.
 (def ^:private node-px-snap 16)
+;; Cosmetic polyline density for a 3D bezier node's rendered/baked-frame-walk
+;; points (bezier-frame-3d) — the FRAME itself (bezier/canonical-bezier-frame)
+;; no longer depends on this; it only controls how many points draw the curve.
+(def ^:private bezier-render-steps 24)
 
 ;; ============================================================
 ;; Number formatting (shared style with edit-bezier)
@@ -475,7 +479,7 @@
                    (let [{:keys [c1 c2]} (:bez node)
                          end-tan (v2-norm [(- (first to) (first c2)) (- (second to) (second c2))])
                          {:keys [exit-h exit-u]} (bezier-frame-3d (e2->3 from) (e2->3 c1)
-                                                                  (e2->3 c2) (e2->3 to) u3 24)]
+                                                                  (e2->3 c2) (e2->3 to) u3 bezier-render-steps)]
                      (recur end-tan to exit-h exit-u (rest remaining)
                             (-> out
                                 (into (emit [{:cmd :bezier-to
@@ -705,28 +709,17 @@
 ;; arc->bez-handles), keeping the baked rail compact and twist-free.
 
 (defn- bezier-frame-3d
-  "Tessellate the cubic bezier A→c1→c2→B and propagate the up by projection-RMF from
-   the entry up, mirroring rec-bezier-to*. Returns {:pts :exit-h :exit-u}: exit-h = the
-   analytic end tangent (∝ B−c2), exit-u = the RMF up at the end. Keeps the editor's
-   frame walk in sync with how bezier-to bakes (so the next segment's :local coords are
-   expressed in the correct frame)."
-  [A c1 c2 B entry-u steps]
-  (let [pts (mapv #(bezier/cubic-bezier-point A c1 c2 B (/ % steps)) (range (inc steps)))
-        u-final (reduce (fn [u [p q]]
-                          (let [d (m/v- q p)]
-                            (if (> (m/magnitude d) 1e-9)
-                              (let [dir (m/normalize d)
-                                    proj (m/v- u (m/v* dir (m/dot u dir)))]
-                                (if (> (m/magnitude proj) 1e-9) (m/normalize proj) u))
-                              u)))
-                        entry-u (map vector pts (rest pts)))
-        end-dir (let [d (m/v- B c2)]
-                  (cond (> (m/magnitude d) 1e-9) (m/normalize d)
-                        (> (m/magnitude (m/v- B A)) 1e-9) (m/normalize (m/v- B A))
-                        :else [1 0 0]))
-        exit-u (let [proj (m/v- u-final (m/v* end-dir (m/dot u-final end-dir)))]
-                 (if (> (m/magnitude proj) 1e-9) (m/normalize proj) u-final))]
-    {:pts pts :exit-h end-dir :exit-u exit-u}))
+  "Tessellate the cubic bezier A→c1→c2→B into `render-steps` points (cosmetic
+   polyline density only) and read the exit frame off the canonical bezier
+   frame (bezier/canonical-bezier-frame) — a property of the curve's control
+   points and entry up alone, so it agrees with the recorder (rec-bezier-to*)
+   regardless of tessellation resolution on either side. Returns
+   {:pts :exit-h :exit-u}: exit-h = the analytic end tangent, exit-u = the
+   canonical up at the end."
+  [A c1 c2 B entry-u render-steps]
+  (let [pts (mapv #(bezier/cubic-bezier-point A c1 c2 B (/ % render-steps)) (range (inc render-steps)))
+        [{:keys [heading up]}] (bezier/canonical-bezier-frame A c1 c2 B entry-u [1.0])]
+    {:pts pts :exit-h heading :exit-u up}))
 
 (defn- walk-3d-segments
   "Walk the 3D nodes from the rail start (origin, heading [1 0 0], up [0 0 1]),
@@ -747,7 +740,7 @@
             bez (when-let [{:keys [c1 c2]} (:bez node)]
                   (when-not (straight-bez? a c1 c2 b) (:bez node)))]
         (if-let [{:keys [c1 c2]} bez]
-          (let [{:keys [pts exit-h exit-u]} (bezier-frame-3d a c1 c2 b u 24)]
+          (let [{:keys [pts exit-h exit-u]} (bezier-frame-3d a c1 c2 b u bezier-render-steps)]
             (recur (inc i) exit-h exit-u
                    (conj segs {:kind :bez :i i :a a :b b :h h :u u :c1 c1 :c2 c2 :pts pts})))
           (let [d (m/v- b a) dist (m/magnitude d)]

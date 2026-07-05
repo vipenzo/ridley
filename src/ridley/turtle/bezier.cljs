@@ -147,6 +147,84 @@
             angle (Math/acos cos-a)]
         (rotate-around-axis up axis-norm angle)))))
 
+;; ============================================================
+;; Canonical bezier frame — resolution-independent RMF
+;; ============================================================
+;; dev-docs/brief-bezier-canonical-frame.md: parallel-transport-up (above) is
+;; correct minimal-rotation transport PER STEP, but re-seeded chord-to-chord,
+;; so its accumulated result depends on how many chords the caller happens to
+;; use. canonical-bezier-frame instead builds a frame that is a property of
+;; the curve alone (its 4 control points + entry up) via the double-reflection
+;; RMF (Wang, Jüttler, Zheng, Liu — "Computation of Rotation Minimizing
+;; Frames", 2008): two Householder reflections per step, which cancel the
+;; spurious roll a single reflection would introduce. Evaluated once on a
+;; fixed fine grid, then read off at any t with one more reflection — so the
+;; result never depends on which/how-many t's a caller happens to sample.
+
+(def ^:private canonical-frame-grid-n 64)
+
+(defn- bezier-tangent-safe
+  "cubic-bezier-tangent, but falls back to the secant p3-p0 when the exact
+   derivative is ~0 (e.g. c2≈p3 at t=1), then to [1 0 0] if even that is
+   degenerate — mirrors the end-tangent fallback already used elsewhere
+   (bezier-frame-3d) for the same coincident-control-point case."
+  [p0 c1 c2 p3 t]
+  (let [tan (cubic-bezier-tangent p0 c1 c2 p3 t)]
+    (if (< (magnitude tan) 1e-9)
+      (let [secant (v- p3 p0)]
+        (if (> (magnitude secant) 1e-9) (normalize secant) [1 0 0]))
+      tan)))
+
+(defn- rmf-reflect-step
+  "One double-reflection step transporting frame vector `up0` (with tangent
+   `tangent0`) at `point0` to `point1`, where the curve's ANALYTIC tangent at
+   point1 is `tangent1`. Degenerate sub-steps (coincident points, or a
+   reflected tangent that already coincides with tangent1) skip the
+   corresponding reflection and carry the frame through unchanged, mirroring
+   parallel-transport-up's near-parallel-heading fallback."
+  [point0 point1 tangent0 up0 tangent1]
+  (let [v1 (v- point1 point0)]
+    (if (< (magnitude v1) 1e-9)
+      up0
+      (let [c1 (dot v1 v1)
+            r-up (v- up0 (v* v1 (/ (* 2 (dot v1 up0)) c1)))
+            r-t  (v- tangent0 (v* v1 (/ (* 2 (dot v1 tangent0)) c1)))
+            v2   (v- tangent1 r-t)]
+        (if (< (magnitude v2) 1e-9)
+          (normalize r-up)
+          (let [c2 (dot v2 v2)]
+            (normalize (v- r-up (v* v2 (/ (* 2 (dot v2 r-up)) c2))))))))))
+
+(defn canonical-bezier-frame
+  "THE canonical frame field for cubic bezier [p0 c1 c2 p3], anchored at
+   `entry-up` (t=0) — independent of tessellation. Returns a vector of
+   {:t :heading :up} parallel to `ts`: `:heading` is the exact analytic
+   tangent at t; `:up` is the canonical RMF up (always ⊥ heading).
+
+   `entry-up` is re-orthogonalized once via Gram-Schmidt against the entry
+   tangent (if entry-up is ~parallel to the tangent, there is no perpendicular
+   direction to recover, so it is used unchanged — same fallback as
+   parallel-transport-up)."
+  [p0 c1 c2 p3 entry-up ts]
+  (let [n canonical-frame-grid-n
+        h0 (bezier-tangent-safe p0 c1 c2 p3 0)
+        entry-proj (v- entry-up (v* h0 (dot entry-up h0)))
+        up0 (if (> (magnitude entry-proj) 1e-9) (normalize entry-proj) entry-up)
+        grid-pts (mapv #(cubic-bezier-point p0 c1 c2 p3 (/ % n)) (range (inc n)))
+        grid-tans (mapv #(bezier-tangent-safe p0 c1 c2 p3 (/ % n)) (range (inc n)))
+        grid-ups (reduce (fn [ups i]
+                           (conj ups (rmf-reflect-step (nth grid-pts i) (nth grid-pts (inc i))
+                                                       (nth grid-tans i) (peek ups) (nth grid-tans (inc i)))))
+                         [up0] (range n))]
+    (mapv (fn [t]
+            (let [t' (max 0.0 (min 1.0 t))
+                  i (min (dec n) (int (Math/floor (* t' n))))
+                  pt (cubic-bezier-point p0 c1 c2 p3 t')
+                  tan (bezier-tangent-safe p0 c1 c2 p3 t')]
+              {:t t :heading tan
+               :up (rmf-reflect-step (nth grid-pts i) pt (nth grid-tans i) (nth grid-ups i) tan)}))
+          ts)))
+
 (defn sample-bezier-segment
   "Pure function: sample a cubic bezier segment into walk steps.
 
@@ -160,19 +238,20 @@
    where chord-heading is the direction to move (for drawing)
    and final-heading is the tangent (for continuity).
 
-   Uses parallel transport to evolve the up vector smoothly,
-   preventing twist discontinuities at bends."
+   :final-up is read off the canonical bezier frame (see
+   canonical-bezier-frame above) — a property of the curve's control points
+   and start-up alone, so it does not depend on `steps`."
   [p0 c1 c2 p3 steps start-heading start-up]
-  (let [end-heading (normalize (cubic-bezier-tangent p0 c1 c2 p3 1))
-        last-i (dec steps)]
+  (let [last-i (dec steps)
+        ts (mapv #(/ (inc %) steps) (range steps))
+        frames (canonical-bezier-frame p0 c1 c2 p3 start-up ts)
+        end-heading (:heading (peek frames))]
     (loop [i 0
            current-pos p0
-           current-up start-up
-           prev-heading start-heading
            results []]
       (if (>= i steps)
         results
-        (let [t (/ (inc i) steps)
+        (let [t (nth ts i)
               new-pos (cubic-bezier-point p0 c1 c2 p3 t)
               move-dir (v- new-pos current-pos)
               dist (magnitude move-dir)]
@@ -182,13 +261,9 @@
                   final-heading (cond (zero? i) start-heading
                                       (= i last-i) end-heading
                                       :else chord-heading)
-                  ;; Parallel transport: rotate up by the same rotation
-                  ;; that takes prev-heading to final-heading
-                  final-up (parallel-transport-up current-up prev-heading final-heading)]
+                  final-up (:up (nth frames i))]
               (recur (inc i)
                      new-pos
-                     final-up
-                     final-heading
                      (conj results {:from current-pos
                                     :to new-pos
                                     :dist dist
@@ -196,4 +271,4 @@
                                     :final-heading final-heading
                                     :final-up final-up})))
             ;; Skip degenerate step
-            (recur (inc i) current-pos current-up prev-heading results)))))))
+            (recur (inc i) current-pos results)))))))

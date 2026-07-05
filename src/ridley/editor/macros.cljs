@@ -57,6 +57,27 @@
               (let [s2 (rec-tv s angle)]
                 (update-in s2 [:recording (dec (count (:recording s2)))]
                            assoc :smooth true :bez-cap :lead :veer-deg veer)))))
+   ;; Like rec-th-smooth*/rec-tv-smooth* but for :tr — the residual ROLL needed
+   ;; after th/tv to reach the canonical bezier frame's up (canonical-bezier-
+   ;; frame-impl), since th-then-tv is an Euler composition that does not by
+   ;; itself reproduce minimal-rotation transport of up for an oblique target.
+   (defn- rec-tr-smooth* [angle]
+     (swap! path-recorder
+            (fn [s]
+              (let [s2 (rec-tr s angle)]
+                (assoc-in s2 [:recording (dec (count (:recording s2))) :smooth] true)))))
+   ;; Like rec-tr-smooth* but tagged as the leading tessellation cap, like
+   ;; rec-th-smooth-cap*/rec-tv-smooth-cap* — no :veer-deg here: unlike the
+   ;; heading veer (generically non-zero for an off-tangent curve), the first
+   ;; chord's residual roll has continuum limit exactly 0 by construction (the
+   ;; canonical field is anchored at entry-up at t=0), so it is unconditionally
+   ;; a pure tessellation artifact, like the arc-cap's lead half-step.
+   (defn- rec-tr-smooth-cap* [angle]
+     (swap! path-recorder
+            (fn [s]
+              (let [s2 (rec-tr s angle)]
+                (update-in s2 [:recording (dec (count (:recording s2)))]
+                           assoc :smooth true :bez-cap :lead)))))
    (defn- rec-set-heading* [heading up & [flag]]
      (swap! path-recorder rec-set-heading heading up flag))
    (defn- rec-u* [dist]
@@ -229,6 +250,18 @@
                       [0])]
        [th-deg tv-deg]))
 
+   ;; th-then-tv (rec-compute-rotation-angles) is an Euler composition: it
+   ;; reaches the target HEADING exactly, but is not minimal-rotation transport,
+   ;; so the resulting byproduct up can differ from the canonical bezier
+   ;; frame's up at that point (canonical-bezier-frame-impl) by a roll about
+   ;; the now-current heading. This computes that residual angle (degrees):
+   ;; rotating byproduct-up by it about `axis` (the just-reached heading)
+   ;; lands exactly on target-up.
+   (defn- rec-residual-roll-deg [byproduct-up target-up axis]
+     (let [cos-t (max -1.0 (min 1.0 (rec-dot byproduct-up target-up)))
+           sin-t (rec-dot (rec-cross byproduct-up target-up) axis)]
+       (* (atan2 sin-t cos-t) (/ 180 PI))))
+
    ;; Recording version of bezier-as
    ;; Uses relative rotations (th/tv) instead of absolute set-heading
    ;; to produce orientation-independent paths.
@@ -279,7 +312,7 @@
            (let [seg-marks  (mapv (fn [seg] (vec (marks-of (:rotations seg)))) path-segs)
                  emit       (fn [ms] (doseq [m ms] (rec-mark* m)))
                  apply-step (fn [step]
-                              (let [{:keys [dist chord-heading final-heading]} step
+                              (let [{:keys [dist chord-heading final-heading final-up]} step
                                     ;; Convert absolute chord-heading to relative th/tv rotations
                                     ch (:heading @path-recorder)
                                     cu (:up @path-recorder)
@@ -292,7 +325,16 @@
                                       cu2 (:up @path-recorder)
                                       [th2 tv2] (rec-compute-rotation-angles ch2 cu2 final-heading)]
                                   (when (> (abs th2) 0.001) (rec-th* th2))
-                                  (when (> (abs tv2) 0.001) (rec-tv* tv2)))))]
+                                  (when (> (abs tv2) 0.001) (rec-tv* tv2)))
+                                ;; Residual roll onto final-up — already the canonical
+                                ;; bezier frame's up (sample-bezier-segment), since
+                                ;; th-then-tv alone is an Euler composition, not
+                                ;; minimal-rotation transport (see rec-bezier-to*).
+                                (when final-up
+                                  (let [byproduct-up (:up @path-recorder)
+                                        axis (:heading @path-recorder)
+                                        roll-deg (rec-residual-roll-deg byproduct-up final-up axis)]
+                                    (when (> (abs roll-deg) 0.001) (rec-tr* roll-deg))))))]
              (if control
                ;; :control — vertices are OFF-curve control points, so a vertex
                ;; has no boundary ON the curve. Snap each interior vertex's marks
@@ -419,40 +461,37 @@
                                      dz (- (nth next-pos 2) (nth curr-pos 2))
                                      dist (sqrt (+ (* dx dx) (* dy dy) (* dz dz)))]
                                  {:dir (if (> dist 0.001) (rec-normalize [dx dy dz]) nil)
-                                  :dist dist})))]
-           ;; Walk through segments using rotation-minimizing frame
-           ;; This propagates the up vector smoothly to avoid twist/concave faces.
-           ;; Each step is recorded as relative th/tv (NOT set-heading) so that the
-           ;; 2D projection (path-to-shape / ensure-path-2d) of a bezier in a
-           ;; path-2d is preserved. The steps are tagged :smooth so extrude/loft
-           ;; don't treat the tessellated curve as a chain of hard corners (see
-           ;; smooth-rotation? in extrusion.cljs) — that corner treatment folds a
-           ;; swept profile on a curved rail.
+                                  :dist dist})))
+               ;; Canonical up field, one entry per chord (t = 1/steps .. 1) — a
+               ;; property of [p0 c1 c2 p3 start-up] alone, never of actual-steps.
+               frame-ts (mapv #(/ % actual-steps) (range 1 (inc actual-steps)))
+               frames (canonical-bezier-frame-impl p0 c1 c2 p3 (:up state) frame-ts)]
+           ;; Walk through segments rotating to each chord direction via th/tv
+           ;; (as before), then a residual tr that corrects the byproduct up
+           ;; onto the canonical frame's up at that t — th-then-tv alone is an
+           ;; Euler composition, not minimal-rotation transport
+           ;; (rec-residual-roll-deg), so it can leave a roll error that grows
+           ;; with curvature/torsion and used to depend on actual-steps. Each
+           ;; step is recorded as relative th/tv/tr (NOT set-heading) so that
+           ;; the 2D projection (path-to-shape / ensure-path-2d) of a bezier in
+           ;; a path-2d is preserved — a planar curve has zero torsion, so the
+           ;; canonical up stays exactly the plane normal and the residual tr
+           ;; is exactly 0 (never emitted). The steps are tagged :smooth so
+           ;; extrude/loft don't treat the tessellated curve as a chain of hard
+           ;; corners (see smooth-rotation? in extrusion.cljs) — that corner
+           ;; treatment folds a swept profile on a curved rail.
            (loop [remaining-segments segments
-                  current-up (:up state)
+                  idx 0
                   first? true]
              (when (seq remaining-segments)
                (let [{:keys [dir dist]} (first remaining-segments)]
                  (if (and dir (> dist 0.001))
-                   (let [;; Rotation-minimizing frame: project current up onto plane perpendicular to new heading
-                         ;; new_up = normalize(current_up - (current_up · dir) * dir)
-                         dot-product (rec-dot current-up dir)
-                         projected [(- (nth current-up 0) (* dot-product (nth dir 0)))
-                                    (- (nth current-up 1) (* dot-product (nth dir 1)))
-                                    (- (nth current-up 2) (* dot-product (nth dir 2)))]
-                         proj-len (sqrt (rec-dot projected projected))
-                         new-up (if (> proj-len 0.001)
-                                  (rec-normalize projected)
-                                  ;; Fallback: compute perpendicular using cross product
-                                  (let [right (rec-cross dir current-up)
-                                        right-len (sqrt (rec-dot right right))]
-                                    (if (> right-len 0.001)
-                                      (rec-normalize (rec-cross right dir))
-                                      current-up)))]
-                     ;; Rotate to segment direction using relative th/tv (tagged :smooth).
-                     ;; The very first segment's leading rotation is additionally tagged
-                     ;; :bez-cap :lead / :veer-deg — the chord it drives is a tessellation
-                     ;; artifact, not the curve's true (analytic) tangent.
+                   (do
+                     ;; Rotate to segment direction using relative th/tv (tagged
+                     ;; :smooth). The very first segment's leading rotation is
+                     ;; additionally tagged :bez-cap :lead / :veer-deg — the
+                     ;; chord it drives is a tessellation artifact, not the
+                     ;; curve's true (analytic) tangent.
                      (let [cur-heading (:heading @path-recorder)
                            cur-up (:up @path-recorder)
                            [th-angle tv-angle] (rec-compute-rotation-angles cur-heading cur-up dir)]
@@ -461,12 +500,17 @@
                              (when (> (abs tv-angle) 0.001) (rec-tv-smooth-cap* tv-angle veer-deg)))
                          (do (when (> (abs th-angle) 0.001) (rec-th-smooth* th-angle))
                              (when (> (abs tv-angle) 0.001) (rec-tv-smooth* tv-angle)))))
+                     ;; Residual roll onto the canonical up at this chord's t.
+                     (let [target-up (:up (nth frames idx))
+                           byproduct-up (:up @path-recorder)
+                           roll-deg (rec-residual-roll-deg byproduct-up target-up dir)]
+                       (when (> (abs roll-deg) 0.001)
+                         (if first? (rec-tr-smooth-cap* roll-deg) (rec-tr-smooth* roll-deg))))
                      ;; Move forward
                      (rec-f* dist)
-                     ;; Continue with next segment, propagating the up vector
-                     (recur (rest remaining-segments) new-up false))
-                   ;; Skip zero-length segment, keep current up
-                   (recur (rest remaining-segments) current-up false)))))
+                     (recur (rest remaining-segments) (inc idx) false))
+                   ;; Skip zero-length segment
+                   (recur (rest remaining-segments) (inc idx) false)))))
            ;; Leave the turtle facing the analytic END TANGENT (∝ p3 − c2), like
            ;; the runtime bezier-walk — not the last chord. So continuing the path
            ;; (f …) stays tangent, and a symmetric mirror reads the exact axis.
@@ -480,6 +524,15 @@
                                   (:heading @path-recorder) (:up @path-recorder) end-dir)]
                  (when (> (abs th-a) 0.001) (rec-th-smooth* th-a))
                  (when (> (abs tv-a) 0.001) (rec-tv-smooth* tv-a)))))
+           ;; Final residual roll onto the canonical exit up (frames' last entry
+           ;; is already t=1): the end-tangent rotation above changes heading
+           ;; again, which can reintroduce a small Euler roll error relative to
+           ;; whatever the per-chord correction already achieved.
+           (let [target-up (:up (peek frames))
+                 byproduct-up (:up @path-recorder)
+                 axis (:heading @path-recorder)
+                 roll-deg (rec-residual-roll-deg byproduct-up target-up axis)]
+             (when (> (abs roll-deg) 0.001) (rec-tr-smooth* roll-deg)))
            ;; Tag the first emitted step with the resolved curve, so edit-path can
            ;; recover this bezier as one node on re-open (the tessellated steps carry
            ;; no curve info). Riders like this are ignored by every other consumer.
@@ -578,39 +631,36 @@
                                            dz (- (nth next-pos 2) (nth curr-pos 2))
                                            dist (sqrt (+ (* dx dx) (* dy dy) (* dz dz)))]
                                        {:dir (if (> dist 0.001) (rec-normalize [dx dy dz]) nil)
-                                        :dist dist})))]
-                 ;; Walk through segments using rotation-minimizing frame, emitting
-                 ;; relative th/tv (tagged :smooth) + f per step — see rec-bezier-to*.
-                 ;; First segment uses start-heading for a smooth connection.
+                                        :dist dist})))
+                     ;; Canonical up field, one entry per chord — see rec-bezier-to*.
+                     frame-ts (mapv #(/ % actual-steps) (range 1 (inc actual-steps)))
+                     frames (canonical-bezier-frame-impl p0 c1 c2 p3 (:up state) frame-ts)]
+                 ;; Walk through segments rotating to each chord direction via
+                 ;; th/tv, then a residual tr onto the canonical frame's up — see
+                 ;; rec-bezier-to* for why th-then-tv alone isn't enough. First
+                 ;; segment uses start-heading for a smooth connection.
                  (loop [remaining-segments segments
-                        current-up (:up state)
+                        idx 0
                         first-segment? true]
                    (when (seq remaining-segments)
                      (let [{:keys [dir dist]} (first remaining-segments)]
                        (if (and dir (> dist 0.001))
                          ;; Use start-heading for first segment to avoid discontinuity
-                         (let [effective-dir (if first-segment? start-heading dir)
-                               dot-product (rec-dot current-up effective-dir)
-                               projected [(- (nth current-up 0) (* dot-product (nth effective-dir 0)))
-                                          (- (nth current-up 1) (* dot-product (nth effective-dir 1)))
-                                          (- (nth current-up 2) (* dot-product (nth effective-dir 2)))]
-                               proj-len (sqrt (rec-dot projected projected))
-                               new-up (if (> proj-len 0.001)
-                                        (rec-normalize projected)
-                                        (let [right (rec-cross effective-dir current-up)
-                                              right-len (sqrt (rec-dot right right))]
-                                          (if (> right-len 0.001)
-                                            (rec-normalize (rec-cross right effective-dir))
-                                            current-up)))]
+                         (let [effective-dir (if first-segment? start-heading dir)]
                            ;; Rotate to segment direction using relative th/tv (tagged :smooth)
                            (let [cur-heading (:heading @path-recorder)
                                  cur-up (:up @path-recorder)
                                  [th-angle tv-angle] (rec-compute-rotation-angles cur-heading cur-up effective-dir)]
                              (when (> (abs th-angle) 0.001) (rec-th-smooth* th-angle))
                              (when (> (abs tv-angle) 0.001) (rec-tv-smooth* tv-angle)))
+                           ;; Residual roll onto the canonical up at this chord's t.
+                           (let [target-up (:up (nth frames idx))
+                                 byproduct-up (:up @path-recorder)
+                                 roll-deg (rec-residual-roll-deg byproduct-up target-up effective-dir)]
+                             (when (> (abs roll-deg) 0.001) (rec-tr-smooth* roll-deg)))
                            (rec-f* dist)
-                           (recur (rest remaining-segments) new-up false))
-                         (recur (rest remaining-segments) current-up false)))))
+                           (recur (rest remaining-segments) (inc idx) false))
+                         (recur (rest remaining-segments) (inc idx) false)))))
                  ;; End facing the analytic end tangent (∝ p3 − c2 = the anchor
                  ;; heading), like the runtime bezier-walk — not the last chord.
                  (let [edx (- (nth p3 0) (nth c2 0))
@@ -622,7 +672,14 @@
                            [th-a tv-a] (rec-compute-rotation-angles
                                         (:heading @path-recorder) (:up @path-recorder) end-dir)]
                        (when (> (abs th-a) 0.001) (rec-th-smooth* th-a))
-                       (when (> (abs tv-a) 0.001) (rec-tv-smooth* tv-a)))))))))))))
+                       (when (> (abs tv-a) 0.001) (rec-tv-smooth* tv-a)))))
+                 ;; Final residual roll onto the canonical exit up (frames' last
+                 ;; entry is already t=1) — see rec-bezier-to*.
+                 (let [target-up (:up (peek frames))
+                       byproduct-up (:up @path-recorder)
+                       axis (:heading @path-recorder)
+                       roll-deg (rec-residual-roll-deg byproduct-up target-up axis)]
+                   (when (> (abs roll-deg) 0.001) (rec-tr-smooth* roll-deg)))))))))))
 
    ;; path: record turtle movements for later replay
    ;; (def p (path (f 20) (th 90) (f 20))) - record a path

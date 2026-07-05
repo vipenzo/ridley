@@ -142,6 +142,7 @@
 (def ^:export auto-control-points-with-target-heading bezier/auto-control-points-with-target-heading)
 (def ^:export compute-bezier-control-points bezier/compute-bezier-control-points)
 (def ^:export sample-bezier-segment bezier/sample-bezier-segment)
+(def ^:export canonical-bezier-frame bezier/canonical-bezier-frame)
 
 ;; --- Pose reset ---
 
@@ -728,18 +729,22 @@
 ;; This file contains the higher-level commands that use turtle movement (f).
 
 (defn- bezier-walk
-  "Walk along a bezier curve, moving directly to each sample point.
-   Uses chord directions for drawing (position accuracy), then sets
+  "Walk along a cubic bezier curve p0→c1→c2→p3, moving directly to each sample
+   point. Uses chord directions for drawing (position accuracy), then sets
    the tangent heading for continuity. First step preserves the existing
    heading, last step uses exact end tangent.
-   Uses parallel transport for smooth, twist-free frame evolution."
-  [state steps point-fn tangent-fn]
+   Up is read off the canonical bezier frame (bezier/canonical-bezier-frame)
+   — a property of the curve's control points and entry up alone, so it does
+   not depend on `steps`."
+  [state steps p0 c1 c2 p3]
   (let [last-i (dec steps)
-        end-heading (tangent-fn 1)]
+        ts (mapv #(/ (inc %) steps) (range steps))
+        frames (canonical-bezier-frame p0 c1 c2 p3 (:up state) ts)
+        end-heading (:heading (peek frames))]
     (reduce
      (fn [s i]
-       (let [t (/ (inc i) steps)
-             new-pos (point-fn t)
+       (let [t (nth ts i)
+             new-pos (cubic-bezier-point p0 c1 c2 p3 t)
              current-pos (:position s)
              move-dir (v- new-pos current-pos)
              dist (magnitude move-dir)]
@@ -753,8 +758,7 @@
                  final-heading (cond (zero? i) prev-heading
                                      (= i last-i) end-heading
                                      :else chord-heading)
-                 ;; Parallel transport: rotate up with the heading change
-                 new-up (bezier/parallel-transport-up (:up s) prev-heading final-heading)]
+                 new-up (:up (nth frames i))]
              ;; Move using chord direction (for accurate position),
              ;; then set final heading for tangent continuity
              (-> s
@@ -831,16 +835,15 @@
         ;; 2 control points: cubic bezier
         (= n-controls 2)
         (let [[c1 c2] control-points]
-          (bezier-walk state actual-steps
-                       #(cubic-bezier-point p0 c1 c2 p3 %)
-                       #(cubic-bezier-tangent p0 c1 c2 p3 %)))
+          (bezier-walk state actual-steps p0 c1 c2 p3))
 
-        ;; 1 control point: quadratic bezier
+        ;; 1 control point: quadratic bezier — degree-elevate to cubic so the
+        ;; canonical-frame walk (which only knows cubics) can be reused.
         (= n-controls 1)
-        (let [c1 (first control-points)]
-          (bezier-walk state actual-steps
-                       #(quadratic-bezier-point p0 c1 p3 %)
-                       #(quadratic-bezier-tangent p0 c1 p3 %)))
+        (let [qc (first control-points)
+              c1 (v+ p0 (v* (v- qc p0) (/ 2.0 3.0)))
+              c2 (v+ p3 (v* (v- qc p3) (/ 2.0 3.0)))]
+          (bezier-walk state actual-steps p0 c1 c2 p3))
 
         ;; 0 control points: auto-generate cubic
         :else
@@ -850,9 +853,7 @@
                         (auto-control-points-with-target-heading
                          p0 (:heading state) p3 (:heading state) (or tension 0.33))
                         (auto-control-points p0 (:heading state) p3))]
-          (bezier-walk state actual-steps
-                       #(cubic-bezier-point p0 c1 c2 p3 %)
-                       #(cubic-bezier-tangent p0 c1 c2 p3 %)))))))
+          (bezier-walk state actual-steps p0 c1 c2 p3))))))
 
 ;; Defined later in this namespace; forward-declared for the path-first
 ;; bezier-to-anchor form below.
@@ -898,9 +899,7 @@
                          (or tension 0.33) (or tension-end tension 0.33))]
             (if (< approx-length 0.001)
               state
-              (bezier-walk state actual-steps
-                           #(cubic-bezier-point p0 c1 c2 p3 %)
-                           #(cubic-bezier-tangent p0 c1 c2 p3 %))))
+              (bezier-walk state actual-steps p0 c1 c2 p3)))
         ;; Explicit control points - delegate to bezier-to
           (apply bezier-to state (:position anchor) args)))
       state)))

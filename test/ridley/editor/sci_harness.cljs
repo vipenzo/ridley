@@ -181,6 +181,7 @@
    'subdivide-segment-impl turtle/subdivide-segment
    'compute-bezier-walk-impl turtle/compute-bezier-walk
    'compute-midpoint-walk-impl turtle/compute-midpoint-walk
+   'canonical-bezier-frame-impl turtle/canonical-bezier-frame
    ;; Extrude/loft/revolve (production pure functions)
    'pure-extrude-path        gen-ops/pure-extrude-path
    'extrude-closed-path-impl gen-ops/implicit-extrude-closed-path

@@ -268,20 +268,25 @@
   1.0)
 
 (defn- leading-cap-window
-  "Trailing window of `rotations` (0, 1, or 2 items) that is a tessellation-lead-
-   cap artifact, to be excluded from the rail-start frame reduction: an arc's
-   single :arc-cap :lead half-step, or a bezier's up to two consecutive trailing
-   :bez-cap :lead rotations (a th and/or a tv — see rec-bezier-to* in
-   editor/macros.cljs). Returns [] when the rotations don't end in a cap tag."
+  "Trailing window of `rotations` that is a tessellation-lead-cap artifact, to
+   be excluded from the rail-start frame reduction: an arc's single :arc-cap
+   :lead half-step, or a bezier's consecutive trailing :bez-cap :lead
+   rotations — up to three (th, tv, and/or a residual tr — see rec-bezier-to*
+   in editor/macros.cljs, which caps whichever of the three end up needed to
+   reach the first chord's direction/canonical up; any subset may be emitted,
+   in any combination, so the window is however many trailing items are
+   tagged, not a hardcoded count). Returns [] when the rotations don't end in
+   a cap tag."
   [rotations]
   (cond
     (empty? rotations) []
     (= :lead (:arc-cap (last rotations))) [(last rotations)]
     (= :lead (:bez-cap (last rotations)))
-    (let [n (count rotations)]
-      (if (and (>= n 2) (= :lead (:bez-cap (nth rotations (- n 2)))))
-        (vec (take-last 2 rotations))
-        [(last rotations)]))
+    (let [k (loop [k 0 rs (reverse rotations)]
+              (if (and (seq rs) (= :lead (:bez-cap (first rs))))
+                (recur (inc k) (rest rs))
+                k))]
+      (vec (take-last k rotations)))
     :else []))
 
 (defn split-leading-cap
