@@ -1616,7 +1616,8 @@
                      (conj results {:walk-steps []
                                     :target-pose wp1
                                     :degenerate true
-                                    :segment-index i}))
+                                    :segment-index i
+                                    :c1 nil}))
               ;; Normal segment - compute bezier walk
               (let [steps (if calc-steps-fn
                             (calc-steps-fn seg-length)
@@ -1638,7 +1639,8 @@
                        final-pose
                        (conj results {:walk-steps walk-steps
                                       :target-pose final-pose
-                                      :segment-index i}))))))))))
+                                      :segment-index i
+                                      :c1 c1}))))))))))
 
 (defn- apply-walk-step
   "Apply a single walk step to turtle state, drawing a line."
@@ -1687,7 +1689,8 @@
               (recur (inc k) final-pose
                      (conj results {:walk-steps walk-steps
                                     :target-pose final-pose
-                                    :segment-index (dec k)})))))))))
+                                    :segment-index (dec k)
+                                    :c1 c1})))))))))
 
 (defn bezier-as
   "Draw a bezier curve that smoothly approximates a turtle path.

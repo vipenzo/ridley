@@ -306,3 +306,71 @@
         (is (:is-watertight? diag) (str label " :steps 4 — mesh must stay watertight; diag=" diag))
         (is (zero? (:non-manifold-edges diag)) (str label " :steps 4 — no non-manifold edges; diag=" diag))
         (is (zero? (:degenerate-faces diag)) (str label " :steps 4 — no degenerate/folded faces; diag=" diag))))))
+
+;; ════════════════════════════════════════════════════════════════════
+;; FAMILY 5 — BEZIER-AS / BEZIER-TO-ANCHOR RAIL LEAD (brief-bezier-as-rail-lead.md)
+;; rec-bezier-as* emits its per-step rotations PLAIN (no :smooth, no :bez-cap
+;; :lead/:veer-deg), so validate-rail-start-frame! measured the first
+;; tessellated chord instead of the analytically-tangent fitted c1 — same class
+;; of false positive already fixed for bezier-to. Skeleton below: a leading
+;; (tv 85) genuinely rotates the WAYPOINT, not the fitted curve's start
+;; tangent (default mode's c1 is tangent to the entry heading by construction),
+;; so this must NOT be a rail-start violation. Same latent gap in
+;; rec-bezier-to-anchor*'s auto-control-points branch (Family 5d).
+;;
+;; :cubic mode note: catmull-rom-directions (core.cljs) substitutes the
+;; turtle's entry heading at waypoint 0 (an "endpoint", not a genuine
+;; Catmull-Rom direction) — so :cubic mode's segment-0 c1 is ALSO tangent by
+;; construction, identical to default. Only :control mode's segment-0 c1
+;; (chord to the first path VERTEX, i.e. the skeleton's post-rotation heading)
+;; genuinely veers — so :control must stay rejected (Family 5b) while default
+;; and :cubic both pass (Family 5a/5c).
+;; ════════════════════════════════════════════════════════════════════
+
+(defn- bezier-as-storto [steps]
+  (str "(path (bezier-as (path (tv 85) (f 60) (tv -50) (f 70) (mark :here)) :steps " steps "))"))
+
+(defn- bezier-as-storto-cubic [steps]
+  (str "(path (bezier-as (path (tv 85) (f 60) (tv -50) (f 70) (mark :here)) :cubic true :steps " steps "))"))
+
+(def BEZIER-AS-STORTO-CONTROL
+  "(path (bezier-as (path (tv 85) (f 60) (tv -50) (f 70) (mark :here)) :control true))")
+
+;; Non-planar (th + tv, real torsion) so the auto branch's residual tr — not
+;; just its (already-exempt-by-construction) direction — is genuinely exercised.
+(def ANCHOR-OFF-AXIS
+  "(path (bezier-to-anchor (path (th 40) (tv 80) (f 30) (mark :tip)) :tip :steps 4))")
+
+(deftest f5-bezier-as-default-passes-guard-any-skeleton-rotation
+  ;; THE regression test for the reported symptom: default mode's fitted c1 is
+  ;; tangent to the entry heading regardless of how the skeleton itself turns.
+  (testing "bezier-as (default mode) head coincides with stamp at low/mid/high resolution"
+    (doseq [steps [4 16 64]]
+      (let [rail (bezier-as-storto steps)]
+        (assert-coincide (str "F5 extrude / bezier-as steps=" steps) OFFP (ext-mesh OFFP rail))
+        (assert-coincide (str "F5 loft / bezier-as steps=" steps) OFFP (loft-mesh OFFP rail))))))
+
+(deftest f5-bezier-as-control-mode-still-rejected
+  ;; Non-regression pin: :control mode's segment-0 c1 genuinely veers (chord to
+  ;; the first path vertex, not the entry heading) — this must stay a real
+  ;; DIRECTION violation, not get exempted by a future change.
+  (testing ":control mode on the same skeleton is a genuine DIRECTION violation"
+    (is (thrown-with-msg? js/Error #"begin with a turn" (ext-mesh OFFP BEZIER-AS-STORTO-CONTROL)))
+    (is (thrown-with-msg? js/Error #"begin with a turn" (loft-mesh OFFP BEZIER-AS-STORTO-CONTROL)))))
+
+(deftest f5-bezier-as-cubic-mode-passes-like-default
+  ;; :cubic mode's segment-0 c1 is ALSO tangent by construction (see Family 5
+  ;; header comment) — a proof-carrying green regression, not a rejection case.
+  (testing "bezier-as :cubic mode head coincides with stamp at low and high resolution"
+    (doseq [steps [4 64]]
+      (let [rail (bezier-as-storto-cubic steps)]
+        (assert-coincide (str "F5 extrude / bezier-as :cubic steps=" steps) OFFP (ext-mesh OFFP rail))
+        (assert-coincide (str "F5 loft / bezier-as :cubic steps=" steps) OFFP (loft-mesh OFFP rail))))))
+
+(deftest f5-bezier-to-anchor-auto-branch-off-axis-passes-low-res
+  ;; The adjacent gap: rec-bezier-to-anchor*'s auto-control-points branch has
+  ;; zero cap-tagging today, so its first segment's residual tr (which sits
+  ;; BEFORE the first f, unlike bezier-as) is measured raw.
+  (testing "bezier-to-anchor (auto control points) to a far off-axis anchor coincides with stamp at :steps 4"
+    (assert-coincide "F5 extrude / bezier-to-anchor auto off-axis" OFFP (ext-mesh OFFP ANCHOR-OFF-AXIS))
+    (assert-coincide "F5 loft / bezier-to-anchor auto off-axis" OFFP (loft-mesh OFFP ANCHOR-OFF-AXIS))))

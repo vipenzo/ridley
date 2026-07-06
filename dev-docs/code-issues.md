@@ -4,6 +4,18 @@ File interno per tracciare piccole incoerenze tra il codice sorgente di Ridley e
 
 ## Aperto
 
+### `bezier-as` non è taggato `:smooth` — ogni step di tessellazione è un corner duro
+
+**Contesto**: `rec-bezier-as*` (`src/ridley/editor/macros.cljs`) emette le rotazioni per step con `rec-th*`/`rec-tv*`/`rec-tr*` **plain**, mai `rec-th-smooth*`/`rec-tv-smooth*`/`rec-tr-smooth*`. `corner-rotation?` (`src/ridley/turtle/extrusion.cljs`) esclude dal trattamento corner (accorciamento mesh, anello di giunzione per-step) solo le rotazioni taggate `:smooth`; `bezier-to` (`rec-bezier-to*`) lo fa già, `bezier-as` no.
+
+**Realtà**: ogni step della tessellazione di un `bezier-as` usato come rail per `extrude`/`loft` viene trattato come un corner vero e proprio, non come un pezzo continuo di curva — incoerenza strutturale con `bezier-to`.
+
+**Impatto**: probabile difetto latente sulla qualità della mesh per rail `bezier-as` con curvatura pronunciata (facce accorciate/piegate lungo la curva invece di una superficie continua); non misurato.
+
+**Fix possibile** (non tentato, fuori scope — vedi `dev-docs/brief-bezier-as-rail-lead.md`, punto 3 e "Fuori scope"): taggare `:smooth true` sulle emissioni di `rec-bezier-as*`, allineandole a `rec-bezier-to*`. Cambia l'output mesh di ogni modello esistente che estrude un `bezier-as` a metà percorso — va misurato prima di curarlo (un difetto, una cura).
+
+**Scoperta**: Vincenzo/Claude, 2026-07-06, durante `dev-docs/brief-bezier-as-rail-lead.md` (il fix del falso positivo rail-start di `bezier-as` ha richiesto di tracciare esattamente cosa `:smooth` esclude, esponendo questa incoerenza separata).
+
 ### `edit-path` 3D: il valore `live` di un nodo bezier non è consumabile direttamente
 
 **Contesto**: `ridley.editor.edit-path/request!` (chiamato da `(edit-path …)`) restituisce SEMPRE un valore, in modo che lo script circostante proceda anche prima della conferma — per il modo 2D è testato che coincida col confermato (`edit_path2d_script_test.cljs`). In 3D, quando i nodi contengono un `:bez` (qualsiasi bezier), il valore `live` è `{:type :path :commands (nodes->commands-3d nodes)}`, e `nodes->commands-3d` emette per un segmento bezier un **singolo comando compatto** `{:cmd :bezier-to :args [end c1 c2 :local]}` — pensato per essere ri-emesso come SORGENTE (`nodes->code-3d`) e ri-valutato dalla macro `path`, che lo tessella via `rec-bezier-to*`. Nessun consumatore (`extrude-from-path`/`analyze-open-path-dir`, loft/`analyze-loft-path`) sa interpretare un comando `:bezier-to` grezzo dentro `:commands` — non è mai gestito, in nessun `case`/`cond` su `:cmd`. Il risultato: il segmento viene semplicemente ignorato, il path ha 0 segmenti reali, ed `extrude`/`loft` costruito su questo valore `live` produce mesh nil silenziosamente (nessun errore).
