@@ -530,6 +530,28 @@ Il replay produce due effetti contestuali. Modifica la posa della turtle, come a
 
 Il pattern unificato (cattura, comandi, replay) significa che recorder e interprete sono gli stessi codici. Cio' che cambia da caso a caso e' chi consuma il vector di comandi e con quale turtle iniziale.
 
+#### 6.3.1 Il vocabolario dei tag sui comandi
+
+La mappa comando minimale è `{:cmd :f :args [10]}`. Col tempo i comandi hanno acquisito **tag**: chiavi opzionali sulla stessa mappa, che trasportano informazione che la pura sequenza th/tv/f non può esprimere — in primo luogo la distinzione tra ciò che l'utente ha chiesto e ciò che la tessellazione di una curva ha prodotto. Un `(th 15)` scritto a mano e un `th` di 15° emesso da `rec-bezier-to*` per seguire una corda sono lo stesso comando per l'interprete della turtle, ma per un consumer come l'estrusione significano cose opposte: un corner da mitrare contro una transizione liscia tra sezioni. I tag portano questa differenza.
+
+Ogni tag è un contratto a due parti — chi lo scrive (un recorder in `src/ridley/editor/macros.cljs`) e chi lo legge (un consumer, tipicamente in `src/ridley/turtle/extrusion.cljs` o nell'editor) — e va letto in coppia:
+
+| Tag | Chi lo scrive | Chi lo legge | Cosa garantisce |
+|---|---|---|---|
+| `:smooth true` | La tessellazione delle curve: `rec-th-smooth*`/`rec-tv-smooth*`/`rec-tr-smooth*`, usati da `rec-bezier-to*` e dal ramo auto di `rec-bezier-to-anchor*` | La corner machinery dell'estrusione: `corner-rotation?` = comando di rotazione **e** non `:smooth` | La rotazione è un passo di curva, non un corner dell'utente: niente miter, niente shortening, transizione liscia tra sezioni |
+| `:arc-cap :lead` / `:arc-cap :trail` | I mezzi passi di rotazione con cui `arc-h`/`arc-v` aprono e chiudono l'integrazione midpoint (`rec-th-cap*`/`rec-tv-cap*`) | I punti di consumo rail e il guard rail-start | Il cap iniziale/finale dell'estrusione resta perpendicolare all'heading di ingresso/uscita; il lead è esente dal guard (artefatto di tessellazione per costruzione, nessun `:veer-deg`) |
+| `:bez-cap :lead` | Le rotazioni prima del primo `f` di un run bezier (`rec-th-smooth-cap*`, `rec-tv-smooth-cap*`, `rec-tr-smooth-cap*`) | `split-leading-cap` + `validate-rail-start-frame!` | La finestra iniziale del run è esclusa dalla misura a corda del guard; il cap dell'estrusione parte perpendicolare all'heading pre-finestra |
+| `:veer-deg` | Insieme a `:bez-cap :lead` sui `th`/`tv` del lead (non sul `tr`, il cui limite continuo è zero per costruzione) | `validate-rail-start-frame!` | L'angolo analitico tra l'heading d'ingresso e c1−p0, pose-invariante, calcolato a record time: il guard giudica questo invece della prima corda tessellata, quindi il verdetto non dipende dalla risoluzione |
+| `:pure {:cmd :c1 :c2 :end :span}` | Il primo comando di un run bezier riceve la curva analitica risolta (control point e endpoint a record time) e lo span in comandi del run | `seed->nodes-3d` di edit-path | L'editor ricostruisce il run tessellato come un singolo nodo bezier editabile. Rider ignorato da ogni altro consumer |
+
+Il `tr` nella tessellazione merita una parola: esiste perché la composizione th-poi-tv è una decomposizione Euler che non riproduce da sola il trasporto a rotazione minimale dell'up, quindi il recorder chiude ogni passo con il roll residuo che porta l'up sul frame canonico della curva (`canonical-bezier-frame-impl` in `src/ridley/turtle/bezier.cljs` — la sorgente unica del frame lungo un bezier, campionata da recorder, turtle runtime ed editor; vedi `dev-docs/brief-bezier-canonical-frame.md`).
+
+**Le incoerenze note, dichiarate apposta.** Gli archi non taggano `:smooth` i loro passi ordinari (solo i cap): per la corner machinery un arco è oggi una sequenza di corner duri, ed è il motivo per cui il loft dual-ring spezza i rail ad arco (Roadmap, «qualità su rail curvo»). `bezier-as` non tagga né `:smooth` né i cap: l'estensione dei cap è in `dev-docs/brief-bezier-as-rail-lead.md`, l'allineamento `:smooth` è un accertamento tracciato in `dev-docs/code-issues.md`. Queste asimmetrie sono elencate qui deliberatamente: la trappola ricorrente del progetto è dedurre per analogia che due emettitori simili si comportino allo stesso modo, e questo capitolo è il posto dove l'analogia si verifica invece di presumersi.
+
+La regola per chi scrive un nuovo emettitore di curve: dichiarare i suoi tre momenti — lead (prima del primo `f`), passi intermedi, trail (dopo l'ultimo `f`) — rispetto a `:smooth` e ai tag di cap. Un momento non dichiarato viene letto dai consumer come intenzione dell'utente, con le conseguenze che i due brief citati documentano.
+
+Ultima distinzione, per evitare collisioni di nomi: i tag vivono sui singoli comandi. Non vanno confusi né con i flag a livello di path (`:bezier true` sul recorder, che segnala la presenza di run di curva), né con gli `:spans` del source tracking (sezione 5.4), che appartengono a un meccanismo diverso — lì si mappa il sorgente, qui si annota la geometria.
+
 ### 6.4 Mesh engine
 
 Il mesh engine e' fatto di tre strati:
