@@ -37,8 +37,18 @@
     :else (str a)))
 
 (defn- cmd->dsl [{:keys [cmd args] :as c}]
-  (if (= cmd :bezier-to)
+  (cond
+    (= cmd :bezier-to)
     (str "(bezier-to " (arg->dsl (:end c)) " " (arg->dsl (:c1 c)) " " (arg->dsl (:c2 c)) " :local)")
+
+    ;; side-trip's body is a sub-path; re-emit its HIGH-LEVEL commands (Fase
+    ;; 2a, punto 6), mirroring cmd->code — not path-micro-commands' tessellation,
+    ;; which would wall a curve into bare (tv …) calls and lose its :smooth tag
+    ;; on re-eval (rec-tv* records those as plain hard corners).
+    (= cmd :side-trip)
+    (str "(side-trip " (str/join " " (map cmd->dsl (:commands (first args)))) ")")
+
+    :else
     (str "(" (name cmd) (apply str (map #(str " " (arg->dsl %)) args)) ")")))
 
 (defn- commands->dsl
@@ -154,3 +164,39 @@
       (is (= :bezier-to (:cmd bez)))
       (is (approx-vec= ground-truth world-end 1e-2)
           (str "expected ~" ground-truth " got " world-end)))))
+
+(deftest side-trip-curve-confirms-compact-and-keeps-smoothness
+  ;; dev-docs/brief-recording-highlevel-fase2a.md, punto 6 (coda): cmd->code's
+  ;; :side-trip branch used to re-emit path-micro-commands' TESSELLATION of the
+  ;; sub-path instead of its high-level (:commands sub) — a side-trip with a
+  ;; curve inside confirmed to a wall of bare (tv …) calls, and re-parsing
+  ;; those as literal DSL recorded them as PLAIN hard-corner rotations (rec-tv*,
+  ;; not rec-tv-smooth*), degrading the curve to facets on re-eval — a real
+  ;; geometry defect, not just source-text aesthetics. Now it walks (:commands
+  ;; sub) directly, same as the top-level bake, so the curve stays one compact
+  ;; (bezier-to …) and keeps its :smooth tag through the round-trip.
+  ;;
+  ;; cmd->dsl above mirrors this fix (same pattern as request-and-consume for
+  ;; the top-level bake) rather than reaching into edit-path's private
+  ;; serializer/session internals.
+  (testing "confirmed source keeps the side-trip's curve compact"
+    (let [dsl "(path (f 20) (side-trip (bezier-to [10 0 5] :steps 4)) (f 5))"
+          seed (:result (h/eval-dsl dsl))
+          baked (:commands (ep/request! seed))
+          confirmed-src (commands->dsl baked)]
+      (is (re-find #"\(bezier-to " confirmed-src)
+          (str "confirmed source must keep the curve as one compact (bezier-to …): " confirmed-src))
+      (is (not (re-find #"\(tv " confirmed-src))
+          (str "confirmed source must NOT wall the curve into per-step (tv …) rotations: " confirmed-src))
+      (testing "and re-evaluating it preserves the curve's :smooth continuity (not degraded to hard corners)"
+        (let [reopened (:result (h/eval-dsl confirmed-src))
+              sub-of (fn [commands] (first (keep #(when (= :side-trip (:cmd %)) (first (:args %))) commands)))
+              orig-sub (sub-of (:commands seed))
+              reopened-sub (sub-of (:commands reopened))]
+          (is (= 1 (count (:commands reopened-sub)))
+              "the re-opened side-trip's sub-path must still be ONE high-level command")
+          (is (= :bezier-to (:cmd (first (:commands reopened-sub)))))
+          (is (every? :smooth (filter #(= :tv (:cmd %)) (turtle/path-micro-commands orig-sub)))
+              "sanity: the original (never round-tripped) curve is smooth")
+          (is (every? :smooth (filter #(= :tv (:cmd %)) (turtle/path-micro-commands reopened-sub)))
+              "the round-tripped curve must stay smooth — this is the geometry defect, not source aesthetics"))))))

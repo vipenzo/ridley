@@ -353,8 +353,11 @@
 (defn- cmd->code [{:keys [cmd args] :as c}]
   (cond
     (= cmd :side-trip)
-    ;; side-trip's body is a sub-path; re-emit its commands inline.
-    (str "(side-trip " (str/join " " (map cmd->code (turtle/path-micro-commands (first args)))) ")")
+    ;; side-trip's body is a sub-path; re-emit its HIGH-LEVEL commands inline
+    ;; (Fase 2a, punto 6 — not path-micro-commands' tessellation, which would
+    ;; wall a curve into micro th/tv/f and lose its :smooth continuity on
+    ;; re-eval; (:commands sub) is already the recorder's own schema).
+    (str "(side-trip " (str/join " " (map cmd->code (:commands (first args)))) ")")
 
     ;; map-shaped bezier-to (Fase 2a — the recorder's own schema, dev-docs/
     ;; brief-recording-highlevel-fase2a.md): :steps is a bake-time-only hint
@@ -547,7 +550,7 @@
                               (update :c2 bez-local->2d)
                               (update :end bez-local->2d)))
     :side-trip (str "(side-trip "
-                    (str/join " " (map cmd->code-2d (turtle/path-micro-commands (first args)))) ")")
+                    (str/join " " (map cmd->code-2d (:commands (first args)))) ")")
     (cmd->code c)))
 
 (defn- nodes->code
