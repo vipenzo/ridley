@@ -804,6 +804,15 @@
     :description "Build a rectangular **tracing board** carrying a reference photo, ready to trace over with `edit-path-2d`. It is a convenience wrapper over `set-image` on a `preserve-position?` rectangle: unlike a bare `(set-image (rect …) …)`, the board keeps the **turtle fixed at `[0 0]`**, so stamping it places the rect relative to the turtle by `[orx ory]` and leaves the turtle exactly on the point that will become the extruded mesh's **creation pose** — typically a point *off* the contour you trace."
     :path "docs/manual/reference/en/image-board.md"}
 
+   "import-stl"
+   {:name "import-stl"
+    :category "mesh-operations"
+    :status "stable"
+    :since ""
+    :signature "(import-stl path)\n(import-stl path :recenter true)"
+    :description "Read an STL file from disk and return a Ridley mesh. Both binary and ASCII STL are supported (auto-detected), and vertices are welded (deduplicated) on load. **Desktop only** — the read goes through the desktop file server; in the web build the call throws."
+    :path "docs/manual/reference/en/import-stl.md"}
+
    "inflate"
    {:name "inflate"
     :category "spatial-deformation"

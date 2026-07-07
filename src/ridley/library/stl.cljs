@@ -252,6 +252,73 @@
 (defn- format-coord [n]
   (.toFixed n 3))
 
+;; ============================================================
+;; Path-based import (desktop only, SCI binding)
+;; ============================================================
+
+(def ^:private geo-server-url "http://127.0.0.1:12321")
+
+(defn- read-file-bytes-sync
+  "Synchronously read a file from disk via the desktop geo_server, returning an
+   ArrayBuffer. Uses a synchronous XHR with the text/x-user-defined charset so
+   raw bytes survive (synchronous XHR cannot set responseType to 'arraybuffer').
+   Throws with a readable message when the server is unreachable or the read fails."
+  [path]
+  (let [xhr (js/XMLHttpRequest.)]
+    (try
+      (.open xhr "POST" (str geo-server-url "/read-file") false)
+      (.setRequestHeader xhr "X-File-Path" path)
+      (.overrideMimeType xhr "text/plain; charset=x-user-defined")
+      (.send xhr "")
+      (catch :default _
+        (throw (js/Error. (str "import-stl: desktop file server unavailable"
+                               " (this feature is desktop-only). Path: " path)))))
+    (if (= 200 (.-status xhr))
+      (let [text (.-responseText xhr)
+            len (.-length text)
+            bytes (js/Uint8Array. len)]
+        (dotimes [i len]
+          (aset bytes i (bit-and (.charCodeAt text i) 0xff)))
+        (.-buffer bytes))
+      (throw (js/Error. (str "import-stl: could not read " path
+                             " (HTTP " (.-status xhr) ")"))))))
+
+(defn- parsed->mesh
+  "Wrap a parsed {:vertices :faces} into a Ridley mesh whose creation-pose sits
+   at the bbox center of the geometry (so pose stays anchored when later moved).
+   When `recenter` is true, translate the geometry so its bbox center lands at
+   the origin (mirroring the menu import's automatic mesh-translate)."
+  [{:keys [vertices faces]} recenter]
+  (let [center (or (bbox-center vertices) [0 0 0])
+        offset (if recenter (mapv - center) [0 0 0])
+        verts (if recenter (mapv #(mapv + % offset) vertices) vertices)
+        pose-pos (if recenter [0 0 0] center)]
+    {:type :mesh
+     :vertices verts
+     :faces faces
+     :creation-pose {:position pose-pos :heading [1 0 0] :up [0 0 1]}}))
+
+(defn ^:export import-stl
+  "Read an STL file from disk and return a Ridley mesh (desktop only).
+
+   `path` is a filesystem path to a .stl file (binary or ASCII, auto-detected).
+   Options:
+     :recenter  when true, translate the mesh so its bounding-box center sits at
+                the origin (default false — keep the STL's own coordinates).
+
+   Unlike a base64-inlined `decode-mesh`, the geometry is NOT embedded in the
+   script: the .clj only references the path, so a model can be shared even when
+   the STL itself may not be redistributed — the recipient re-downloads it from
+   the original source. Requires the desktop geo_server (throws in the web build).
+
+   Returns {:type :mesh :vertices [[x y z]...] :faces [[i j k]...] :creation-pose ...}."
+  [path & {:keys [recenter] :or {recenter false}}]
+  (let [array-buffer (read-file-bytes-sync path)
+        mesh-data (if (binary-stl? array-buffer)
+                    (parse-binary-stl array-buffer)
+                    (parse-ascii-stl (.decode (js/TextDecoder.) array-buffer)))]
+    (parsed->mesh mesh-data recenter)))
+
 (defn generate-library-source
   "Generate library source code from an STL ArrayBuffer.
    The generated code uses decode-mesh to reconstruct the mesh at eval time.

@@ -698,6 +698,8 @@
    'svg-shapes      svg/svg-shapes
    ;; STL import (decode base64-encoded mesh data)
    'decode-mesh     stl-import/decode-mesh
+   ;; STL import from a file path (desktop only — geometry stays external)
+   'import-stl      stl-import/import-stl
    ;; Audio feedback settings (accessibility)
    'audio-feedback?      settings/audio-feedback?
    'set-audio-feedback!  settings/set-audio-feedback!
