@@ -324,7 +324,53 @@
      :eff-rotations eff
      :cap-window cap-window}))
 
-(defn validate-rail-start-frame!
+(defn analytic-veer-deg
+  "Angle (degrees) between a LOCAL [a b c] point (right/up/heading components,
+   the encoding every high-level curve command's control point uses since
+   Fase 1) and the heading axis — atan2(hypot(a,b), c). This is the same
+   quantity turtle/core.cljs's lower-bezier-to computes at record-time via
+   acos(dot(c1-p0,heading)/|c1-p0|): c1-p0 = a·right+b·up+c·heading against an
+   orthonormal basis reduces dot(c1-p0,heading) to `c` and |c1-p0| to
+   √(a²+b²+c²), so acos(c/√(a²+b²+c²)) ≡ atan2(√(a²+b²),c) exactly. atan2(0,0)
+   is 0 in JS, matching the old formula's explicit near-zero-length fallback."
+  [[a b c]]
+  (* (Math/atan2 (Math/sqrt (+ (* a a) (* b b))) c) (/ 180 Math/PI)))
+
+(defn- first-resolved-bezier-as-segment
+  "The first :bezier-as segment with non-empty :walk-steps. lower-bezier-as's
+   first? flag (turtle/core.cljs) persists true through empty (degenerate)
+   segments and only flips false after the first REAL step, so this — not
+   blindly (first segments) — is the segment whose :c1 the tessellation
+   actually judges for entry veer."
+  [segments]
+  (first (filter (comp seq :walk-steps) segments)))
+
+(defn curve-entry-veer-deg
+  "Analytic entry veer (degrees) of a high-level command, or nil when there is
+   none to check: :arc-h/:arc-v are tangent by construction (no veer exists);
+   :f/:u/:rt/:lt/nil have no curve at all; a degenerate :bezier-as (no segment
+   ever resolves a :c1, e.g. rec-bezier-to-anchor*'s auto branch — whose c1
+   is, by its own construction, exactly along the entry heading anyway) also
+   returns nil. nil is silently exempt, matching today's guard being exempt
+   whenever the tessellation never stamps a :veer-deg tag."
+  [cmd]
+  (case (:cmd cmd)
+    :bezier-to (analytic-veer-deg (:c1 cmd))
+    :bezier-as (when-let [c1 (:c1 (first-resolved-bezier-as-segment (:segments cmd)))]
+                 (analytic-veer-deg c1))
+    nil))
+
+(defn- rail-start-window
+  "The leading run of high-level `commands` that is pose-only (:th/:tv/:tr/
+   :set-heading) or pose-neutral (:mark/:side-trip), plus the first command
+   after it (nil at end-of-path). A movement (:f/:u/:rt/:lt) or a curve closes
+   the window; it is never itself part of it."
+  [commands]
+  (let [inert? #{:th :tv :tr :set-heading :mark :side-trip}
+        window (vec (take-while (comp inert? :cmd) commands))]
+    {:window window :next-cmd (nth commands (count window) nil)}))
+
+(defn validate-rail-start!
   "Enforce the sweep invariant: a rail consumed by extrude/loft must BEGIN in the
    turtle's starting frame — both heading (direction) AND up (roll). The first
    swept section is stamped in that frame, so a rail that starts rotated or rolled
@@ -333,22 +379,24 @@
    user's terms, distinguishing a DIRECTION violation (rotate the turtle) from a
    ROLL violation (roll the turtle).
 
-   `initial-rotations` is the leading rotation window (everything before the first
-   :f). The trailing tessellation-cap window (see `leading-cap-window`) is
-   excluded from the frame reduction below — for an arc it is a pure tessellation
-   artifact (the start cap is kept perpendicular to the incoming heading; the true
-   tangent IS the incoming heading, so no check is needed at all). For a bezier
-   it is checked separately against its ANALYTIC veer (the angle of c1−p0 vs the
-   entry heading, tagged at record time — see rec-bezier-to*), not the tessellated
-   chord these rotations actually describe, which veers by a resolution-dependent
-   amount even when the curve leaves perfectly tangent.
+   Operates on `path`'s OWN high-level commands directly — no lowering, so an
+   invalid rail never pays for tessellation (call this before the memoized
+   path-micro-commands is forced). `rail-start-window` finds the leading
+   pose-only/pose-neutral run and the first command after it: explicit
+   rotations in the window are reduced NET (cancelling rotations pass, exactly
+   like the retired micro-based check); a curve immediately after the window
+   is judged on its ANALYTIC entry veer (curve-entry-veer-deg) — the angle of
+   c1−p0 vs the entry heading, computed from the curve's own local control
+   point, not a tessellated chord that veers by a resolution-dependent amount
+   even when the curve leaves perfectly tangent. Arcs are exempt by
+   construction (their true tangent IS the incoming heading).
 
    Scope is deliberately narrow: this is a property of a path USED AS A SWEEP RAIL,
    so it is called only at the extrude/loft rail-consumption point — NOT at path
    construction, and NOT from non-sweep consumers like text-on-path, which
    legitimately take paths whose initial tangent differs from the heading."
-  [state initial-rotations]
-  (let [{:keys [eff-rotations cap-window]} (split-leading-cap state initial-rotations)
+  [state path]
+  (let [{:keys [window next-cmd]} (rail-start-window (:commands path))
         turn-error
         (js/Error.
          (str "extrude/loft: a swept rail can't begin with a turn. This path turns "
@@ -358,8 +406,8 @@
               "(tv …)), or redraw the start of the curve so it sets off straight instead of "
               "already bending. (Starting with a curve is fine when the curve leaves "
               "tangent, like (arc-h …) — it just can't veer at the very first step.)"))]
-    (when (seq eff-rotations)
-      (let [s' (reduce apply-rotation-to-state state eff-rotations)
+    (when (seq window)
+      (let [s' (reduce apply-rotation-to-state state window)
             ang (fn [a b] (* (/ 180 Math/PI)
                              (Math/acos (max -1.0 (min 1.0 (dot (normalize a) (normalize b)))))))
             dir-off (ang (:heading state) (:heading s'))
@@ -375,13 +423,9 @@
                        "about its own direction at its very first step — the direction is right, but "
                        "the cross-section is turned around it. Apply the roll to the turtle before "
                        "starting the path (e.g. (tr …)) instead."))))))
-    ;; Bezier lead cap: the ANALYTIC veer, not the tessellated chord these
-    ;; rotations drive. An arc lead cap has no :veer-deg and is exempt (its true
-    ;; tangent IS the incoming heading, by construction).
-    (when (seq cap-window)
-      (let [veer (:veer-deg (first cap-window))]
-        (when (and veer (> veer rail-start-frame-tol-deg))
-          (throw turn-error))))))
+    (when-let [veer (curve-entry-veer-deg next-cmd)]
+      (when (> veer rail-start-frame-tol-deg)
+        (throw turn-error)))))
 
 (def ^:private corner-realizability-tol
   "Slack on the effective-dist sign check. A corner is rejected when
@@ -1590,7 +1634,10 @@
   "Extrude a shape with holes along a complex open path.
    Uses ring-data accumulation to track both outer and hole rings."
   [state shape path]
-  (let [creation-pose {:position (:position state)
+  (let [;; Sweep invariant (frame-whole), on the path's OWN high-level commands —
+        ;; before lowering, so an invalid rail never forces the memoized tessellation.
+        _ (validate-rail-start! state path)
+        creation-pose {:position (:position state)
                        :heading (:heading state)
                        :up (:up state)}
         radius (shape-radius shape)
@@ -1614,8 +1661,6 @@
       state
       (let [initial-rotations (take-while #(not= :f (:cmd %)) commands)
             state-with-initial-heading (reduce apply-rotation-to-state state initial-rotations)
-            ;; Sweep invariant (frame-whole): the rail must begin in the turtle's frame.
-            _ (validate-rail-start-frame! state initial-rotations)
             ;; Realizability: reject a corner whose miter folds the section back
             ;; through the tube (effective-dist < 0). See validate-corner-realizability!.
             _ (validate-corner-realizability! segments)
@@ -1740,7 +1785,10 @@
       (if (is-simple-forward-path? path)
         (extrude-simple-with-holes state shape path)
         (extrude-with-holes-from-path state shape path))
-      (let [creation-pose {:position (:position state)
+      (let [;; Sweep invariant (frame-whole), on the path's OWN high-level commands —
+            ;; before lowering, so an invalid rail never forces the memoized tessellation.
+            _ (validate-rail-start! state path)
+            creation-pose {:position (:position state)
                            :heading (:heading state)
                            :up (:up state)}
             radius (shape-radius shape)
@@ -1755,8 +1803,6 @@
           state
           (let [initial-rotations (take-while #(not= :f (:cmd %)) commands)
                 state-with-initial-heading (reduce apply-rotation-to-state state initial-rotations)
-                ;; Sweep invariant (frame-whole): the rail must begin in the turtle's frame.
-                _ (validate-rail-start-frame! state initial-rotations)
                 ;; Realizability: reject a corner whose miter folds the section back
                 ;; through the tube (effective-dist < 0). See validate-corner-realizability!.
                 _ (validate-corner-realizability! segments)

@@ -573,7 +573,10 @@
   ([state shape transform-fn path steps]
    (if-not (and (shape? shape) (is-path? path))
      state
-     (let [creation-pose {:position (:position state)
+     (let [;; Sweep invariant (frame-whole), on the path's OWN high-level commands —
+           ;; before lowering, so an invalid rail never forces the memoized tessellation.
+           _ (extrusion/validate-rail-start! state path)
+           creation-pose {:position (:position state)
                           :heading (:heading state)
                           :up (:up state)}
            commands (@extrusion/path-micro-commands-ref path)
@@ -581,8 +584,6 @@
            ;; (bezier paths often start with th/tv to orient toward the first chord)
            initial-rotations (take-while #(not= :f (:cmd %)) commands)
            state-with-initial-heading (reduce apply-rotation-to-state state initial-rotations)
-           ;; Sweep invariant (frame-whole): the rail must begin in the turtle's frame.
-           _ (extrusion/validate-rail-start-frame! state initial-rotations)
            ;; Realizability: reject a corner whose miter folds the section back
            ;; through the tube. Fed by the SAME directional projection extrude uses
            ;; (analyze-open-path-dir: corner-inner-extent in the stamp frame, wall-

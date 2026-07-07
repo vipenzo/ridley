@@ -809,7 +809,7 @@
    tangent the rail arrives at its start node with (from the shared frame walk), so
    smooth nodes stay tangent-continuous; cusp start nodes (`:smooth? false`) are left
    free. Node 0 is the rail's anchor and is ALWAYS smooth (no cusp option — see
-   toggle-cusp!): its fixed heading is [1 0 0] (validate-rail-start-frame! in
+   toggle-cusp!): its fixed heading is [1 0 0] (validate-rail-start! in
    extrusion.cljs enforces this on the baked rail), so segment 1's c1 is
    constrained just like every other segment's, not left free. Single forward
    pass — the arrival heading at a node depends on the previous segment's
@@ -840,7 +840,7 @@
 
 (defn- ensure-node1-tangent
   "Node 1 (the rail's first real node) must leave along the anchor's fixed
-   heading [1 0 0] (see reconstrain-handles-3d above / validate-rail-start-frame!
+   heading [1 0 0] (see reconstrain-handles-3d above / validate-rail-start!
    in extrusion.cljs). A node 1 placed or dragged off that ray with NO `:bez` yet
    — from `insert-node!`, the non-bezier branch of `split-segment!`'s 3D split, or
    a recovered seed whose source folded a manual th/tv into its waypoints — has

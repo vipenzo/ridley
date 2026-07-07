@@ -34,7 +34,7 @@
    test here uses OFFP — an off-centre L (no rotational/reflection symmetry).
 
    STATUS: the fix has LANDED (Part 1: loft arc carve-out; Part 2: error at the
-   rail-consumption point — extrusion.cljs validate-rail-start-frame!). The whole
+   rail-consumption point — extrusion.cljs validate-rail-start!). The whole
    net is now GREEN. The two policy buckets the diagnosis split are realized:
      • LEGITIMATE-AND-CORRECTED — arc head (Family 3). The arc's true tangent IS
        the incoming heading (the half-step is a tessellation artifact), so it is
@@ -139,7 +139,7 @@
 ;; RAISES the readable error — for loft AND extrude. The message distinguishes a
 ;; DIRECTION violation (rotate the turtle) from a ROLL violation (roll it), so the
 ;; tests assert the RIGHT variant. The error lives at the rail-consumption point
-;; (validate-rail-start-frame!, extrusion.cljs); see the non-sweep-consumer guard
+;; (validate-rail-start!, extrusion.cljs); see the non-sweep-consumer guard
 ;; in `non-sweep-consumers-are-exempt`.
 ;; ════════════════════════════════════════════════════════════════════
 
@@ -374,3 +374,64 @@
   (testing "bezier-to-anchor (auto control points) to a far off-axis anchor coincides with stamp at :steps 4"
     (assert-coincide "F5 extrude / bezier-to-anchor auto off-axis" OFFP (ext-mesh OFFP ANCHOR-OFF-AXIS))
     (assert-coincide "F5 loft / bezier-to-anchor auto off-axis" OFFP (loft-mesh OFFP ANCHOR-OFF-AXIS))))
+
+;; ════════════════════════════════════════════════════════════════════
+;; FAMILY 6 — Fase 2b: guard reads (:commands path) directly, no lowering
+;; (dev-docs/brief-recording-highlevel-fase2b.md). Refactor to identical
+;; semantics: every family above stays green UNCHANGED (the real regression
+;; net); this family pins the fine-grained behaviors the brief calls out by
+;; name — NET rotation reduction, :mark/:side-trip inertness, and the
+;; negative-neutrality guarantee that extrude-closed never gained a check it
+;; never had — plus the property-test oracle that the new analytic formula
+;; agrees with the record-time :veer-deg tag it replaces.
+;; ════════════════════════════════════════════════════════════════════
+
+(deftest f6-explicit-net-reduction-cancels
+  (testing "(th 90)(th -90) in the window nets to zero — must NOT trip the guard"
+    (assert-coincide "F6 extrude / th-cancel" OFFP (ext-mesh OFFP "(path (th 90) (th -90) (f 30))"))
+    (assert-coincide "F6 loft / th-cancel" OFFP (loft-mesh OFFP "(path (th 90) (th -90) (f 30))"))))
+
+(deftest f6-mark-does-not-close-or-clear-the-window
+  (testing "a leading mark is pose-neutral — it neither closes the window nor cancels the divergence"
+    (is (thrown-with-msg? js/Error #"begin with a turn" (ext-mesh OFFP "(path (mark :x) (th 45) (f 30))")))
+    (is (thrown-with-msg? js/Error #"begin with a turn" (loft-mesh OFFP "(path (mark :x) (th 45) (f 30))")))))
+
+(deftest f6-side-trip-does-not-trip-a-false-positive
+  (testing "a leading side-trip is pose-neutral — a tangent bezier right after it must still pass"
+    (assert-coincide "F6 extrude / side-trip+tangent-bezier" OFFP
+                     (ext-mesh OFFP "(path (side-trip (f 5)) (bezier-to [30 10 0] [20 0 0] [28 5 0]))"))
+    (assert-coincide "F6 loft / side-trip+tangent-bezier" OFFP
+                     (loft-mesh OFFP "(path (side-trip (f 5)) (bezier-to [30 10 0] [20 0 0] [28 5 0]))"))))
+
+(deftest f6-closed-path-off-axis-head-is-not-validated
+  ;; Neutrality in the negative (brief item 4): extrude-closed-from-path never
+  ;; called the rail-start guard before this refactor and must not start now —
+  ;; a closed rail has no "beginning" to enforce.
+  (testing "an off-axis head on a CLOSED rail builds without error (extrude-closed never validated this)"
+    (let [{:keys [error]} (h/eval-dsl
+                           "(extrude-closed (rect 10 5) (th 45) (f 20) (th 90) (f 15) (th 90) (f 20) (th 90) (f 15))")]
+      (is (nil? error) (str "extrude-closed must not trip the rail-start guard; got: " error)))))
+
+(deftest f6-analytic-veer-matches-record-time-tag
+  ;; The refactor's oracle: for every curve-headed rail already exercised
+  ;; above, the NEW formula (extrusion/curve-entry-veer-deg, on c1's local
+  ;; components) must equal the :veer-deg the OLD tessellation used to tag —
+  ;; or both must be ~0/absent (bezier-to-anchor's auto branch, which the
+  ;; tessellation never tags at all — see Family 5's docstring). If they
+  ;; diverge, the new formula is not the record-time one.
+  (testing "curve-entry-veer-deg matches the tessellated :veer-deg tag (or both are ~0) for every curve-headed rail"
+    (doseq [[label rail] [["tangent bezier" TANGENT-BEZ]
+                          ["crooked bezier" BEZIER-STORTO]
+                          ["tangent bezier steps=8" (tangent-bez-storto 8)]
+                          ["tangent bezier steps=64" (tangent-bez-storto 64)]
+                          ["bezier 10deg off-axis" BEZ-10DEG]
+                          ["bezier-as default" (bezier-as-storto 16)]
+                          ["bezier-as :control" BEZIER-AS-STORTO-CONTROL]
+                          ["bezier-as :cubic" (bezier-as-storto-cubic 16)]
+                          ["bezier-to-anchor auto off-axis" ANCHOR-OFF-AXIS]]]
+      (let [path (ev rail)
+            veer-new (ext/curve-entry-veer-deg (first (:commands path)))
+            initial-micro (take-while #(not= :f (:cmd %)) (turtle/path-micro-commands path))
+            veer-old (some :veer-deg initial-micro)]
+        (is (< (Math/abs (- (or veer-new 0) (or veer-old 0))) 1e-9)
+            (str label ": new=" veer-new " old=" veer-old))))))

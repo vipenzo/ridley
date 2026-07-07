@@ -1,6 +1,6 @@
 (ns ridley.editor.edit-path-3d-test
   "The 3D rail editor (edit-path) must never produce a rail that
-   validate-rail-start-frame! (extrusion.cljs) rejects — see
+   validate-rail-start! (extrusion.cljs) rejects — see
    dev-docs/brief-rail-start-tangent.md Part 2. Node 0 is the rail's pinned
    anchor with a FIXED heading [1 0 0]; segment 1 must always leave along it,
    however node 1 got there: an explicit bezier drawn off-axis, a plain straight
@@ -62,7 +62,7 @@
 (defn- request-and-consume
   "Run a 3D seed path through request! (as (edit-path …) would), then re-eval
    the baked commands as DSL (mirrors confirm!) and feed the result into
-   extrude — the same check validate-rail-start-frame! makes at consumption
+   extrude — the same check validate-rail-start! makes at consumption
    time. Returns the mesh, or throws if the rail is invalid."
   [dsl]
   (let [seed (:result (h/eval-dsl dsl))
