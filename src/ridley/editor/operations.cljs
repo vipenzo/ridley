@@ -182,7 +182,7 @@
          ;; transforms; before, that value was meaningless in legacy mode.
          path-length (reduce + 0 (keep (fn [cmd]
                                          (when (= :f (:cmd cmd)) (first (:args cmd))))
-                                       (:commands path)))
+                                       (turtle/path-micro-commands path)))
          results (binding [sfn/*path-length* path-length]
                    (reduce
                     (fn [acc shape]
@@ -283,7 +283,7 @@
    (let [path-length (reduce + 0 (keep (fn [cmd]
                                          (when (= :f (:cmd cmd))
                                            (first (:args cmd))))
-                                       (:commands path)))]
+                                       (turtle/path-micro-commands path)))]
      (binding [sfn/*path-length* path-length]
        (let [base-shape (shape-fn-val 0)
              transform-fn (fn [_shape t] (shape-fn-val t))]

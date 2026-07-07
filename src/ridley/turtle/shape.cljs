@@ -17,6 +17,13 @@
 ;; 2D/3D tracers are defined later but referenced by earlier planar consumers.
 (declare ensure-path-2d path-to-2d-waypoints path-to-3d-waypoints)
 
+;; ridley.turtle.core injects its path-micro-commands here once loaded (this ns
+;; can't require core — that would close the core → loft → shape cycle). The
+;; tracers below call through this ref instead of reading (:commands path)
+;; directly, so a high-level curve command (dev-docs/brief-recording-highlevel-
+;; fase1.md) gets lowered to micro-commands before any tracer sees it.
+(defonce path-micro-commands-ref (atom nil))
+
 ;; ============================================================
 ;; Shape data structure
 ;; ============================================================
@@ -423,7 +430,7 @@
    the source path on a derived shape so its marks can become mesh anchors."
   [path]
   (boolean (and (map? path) (= :path (:type path))
-                (some #(= :mark (:cmd %)) (:commands path)))))
+                (some #(= :mark (:cmd %)) (@path-micro-commands-ref path)))))
 
 (defn- compute-mark-refs
   "Match a path's marks to vertices of the FINAL shape points, recording each as
@@ -564,7 +571,7 @@
    (so edit-path can round-trip a baked path back into editable nodes)."
   [path]
   (when (and (map? path) (= :path (:type path)))
-    (let [commands (:commands path)
+    (let [commands (@path-micro-commands-ref path)
           [sx sy] (leading-move-to-xy commands)]
       (:waypoints
        (reduce
@@ -917,10 +924,10 @@
                  hy (second h)
                  angle (Math/atan2 hy hx)]
              (assoc state :heading [(Math/cos angle) (Math/sin angle)]))
-           ;; Skip unknown commands
-           state)))
+           (throw (js/Error. (str "replay-path-to-recording: unknown command " cmd
+                                  " — missing lower-commands?"))))))
      rec-state
-     (:commands path))))
+     (@path-micro-commands-ref path))))
 
 (defn- points-close?
   "Check if two 2D points are very close (within epsilon)."
@@ -1173,7 +1180,7 @@
                  st)))
            (let [p0 {:pos [0 0 0] :heading [1 0 0] :up [0 0 1]}]
              (assoc p0 :waypoints [p0]))
-           (:commands path))
+           (@path-micro-commands-ref path))
           wps (:waypoints final)]
       ;; The trailing rotation a bezier emits sets the final frame but adds no
       ;; waypoint, so carry the final heading/up onto the last waypoint — that's
@@ -1206,7 +1213,7 @@
       ;; trace ignores move-to (path-to-3d-waypoints has no such case), so the
       ;; trace is relative to the origin; offset the projected points by (a,b).
       (let [mv (some (fn [{:keys [cmd args]}] (when (= :move-to cmd) (first args)))
-                     (:commands path))
+                     (@path-micro-commands-ref path))
             ox (if mv (first mv) 0)
             oy (if mv (second mv) 0)]
         (mapv (fn [{:keys [pos heading]}]
@@ -1526,7 +1533,7 @@
       (let [wps (path-to-2d-waypoints obj)
             real-pts (mapv :pos (rest wps))
             ;; Extract marks: scan commands, map each mark name to its waypoint index
-            marks (let [cmds (:commands obj)]
+            marks (let [cmds (@path-micro-commands-ref obj)]
                     (reduce (fn [{:keys [wp-idx result]} cmd]
                               (case (:cmd cmd)
                                 :f    {:wp-idx (inc wp-idx) :result result}

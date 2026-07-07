@@ -5,7 +5,8 @@
   (:require [cljs.test :refer [deftest testing is]]
             [ridley.editor.impl :as impl]
             [ridley.editor.sci-harness :as h]
-            [ridley.math :as math]))
+            [ridley.math :as math]
+            [ridley.turtle.core :as turtle]))
 
 ;; ── Helpers ──────────────────────────────────────────────────
 
@@ -149,7 +150,7 @@
   (testing "the path recorder threads :from/:mate through verbatim (no recorder change)"
     (let [{:keys [result error]} (h/eval-dsl "(path (move-to :sock :at :socket :from :plug :mate))")]
       (is (nil? error) (str "should record cleanly: " error))
-      (let [cmd (first (:commands result))]
+      (let [cmd (first (turtle/path-micro-commands result))]
         (is (= :move-to (:cmd cmd)))
         (is (= [:sock :at :socket :from :plug :mate] (:args cmd))
             "args reach the dispatch unchanged (extraction happens at replay, not record)")))))

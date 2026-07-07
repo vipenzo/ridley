@@ -108,6 +108,50 @@
      [c1 c2])))
 
 ;; ============================================================
+;; Rotation angle helpers — used by curve recording/lowering
+;; ============================================================
+;; Promoted from ridley.editor.macros (rec-compute-rotation-angles /
+;; rec-residual-roll-deg): pure vector math, no turtle-state dependency, so
+;; it belongs here rather than in the recorder or in lower-commands
+;; (turtle/core.cljs) — both of which now call these instead of duplicating
+;; the math (dev-docs/brief-recording-highlevel-fase1.md, Fase 1).
+
+(defn compute-rotation-angles
+  "[th-deg tv-deg] to rotate from-heading (with from-up) onto to-direction.
+   tv is pitch around the right axis (from-heading × from-up), applied
+   first; th is yaw around from-up, applied second — mirrors the turtle's
+   own th-then-tv convention (an Euler composition, not minimal-rotation
+   transport of up; see canonical-bezier-frame above for why a residual
+   roll is needed on top of this)."
+  [from-heading from-up to-direction]
+  (let [up-comp (dot to-direction from-up)
+        horiz-dir (v- to-direction (v* from-up up-comp))
+        horiz-len (magnitude horiz-dir)
+        tv-rad (Math/atan2 up-comp horiz-len)
+        tv-deg (* tv-rad (/ 180 Math/PI))
+        th-deg (if (> horiz-len 0.001)
+                 (let [horiz-norm (normalize horiz-dir)
+                       fwd-comp (dot horiz-norm from-heading)
+                       right (cross from-heading from-up)
+                       right-comp (dot horiz-norm right)
+                       th-rad (Math/atan2 right-comp fwd-comp)]
+                   (* (- th-rad) (/ 180 Math/PI)))
+                 0)]
+    [th-deg tv-deg]))
+
+(defn residual-roll-deg
+  "th-then-tv (compute-rotation-angles) reaches the target HEADING exactly,
+   but is not minimal-rotation transport, so the resulting byproduct up can
+   differ from a target up (e.g. the canonical bezier frame's up at that
+   point) by a roll about `axis` (the just-reached heading). Returns that
+   residual angle in degrees: rotating byproduct-up by it about axis lands
+   exactly on target-up."
+  [byproduct-up target-up axis]
+  (let [cos-t (max -1.0 (min 1.0 (dot byproduct-up target-up)))
+        sin-t (dot (cross byproduct-up target-up) axis)]
+    (* (Math/atan2 sin-t cos-t) (/ 180 Math/PI))))
+
+;; ============================================================
 ;; Pure computation functions for bezier-as
 ;; ============================================================
 

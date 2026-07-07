@@ -492,7 +492,7 @@
    control polygon, which UNDERESTIMATES the smooth length. For a closed 2D
    profile use `shape-perimeter` instead. Returns nil for non-paths."
   [path]
-  (when (and (map? path) (= :path (:type path)) (:commands path))
+  (when (and (map? path) (= :path (:type path)) (turtle/path-micro-commands path))
     (let [segments (turtle/path-segments path)
           wps (turtle/compute-path-waypoints
                segments {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})

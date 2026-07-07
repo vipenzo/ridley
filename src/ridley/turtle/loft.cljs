@@ -576,7 +576,7 @@
      (let [creation-pose {:position (:position state)
                           :heading (:heading state)
                           :up (:up state)}
-           commands (:commands path)
+           commands (@extrusion/path-micro-commands-ref path)
            ;; Apply initial rotations before the first forward command
            ;; (bezier paths often start with th/tv to orient toward the first chord)
            initial-rotations (take-while #(not= :f (:cmd %)) commands)

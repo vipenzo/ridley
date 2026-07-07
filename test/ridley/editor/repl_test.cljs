@@ -4,7 +4,8 @@
    works correctly through SCI evaluation."
   (:require [cljs.test :refer [deftest testing is]]
             [ridley.editor.sci-harness :as h]
-            [ridley.geometry.mesh-utils :as mu]))
+            [ridley.geometry.mesh-utils :as mu]
+            [ridley.turtle.core :as turtle]))
 
 ;; ── Helpers ──────────────────────────────────────────────────
 
@@ -46,22 +47,22 @@
     (let [{:keys [result error]} (h/eval-dsl "(path (f 10))")]
       (is (nil? error) (str "Should not error: " error))
       (is (= :path (:type result)))
-      (is (= 1 (count (:commands result))))
-      (is (= :f (:cmd (first (:commands result)))))
-      (is (= [10] (:args (first (:commands result))))))))
+      (is (= 1 (count (turtle/path-micro-commands result))))
+      (is (= :f (:cmd (first (turtle/path-micro-commands result)))))
+      (is (= [10] (:args (first (turtle/path-micro-commands result))))))))
 
 (deftest path-f-th-f
   (testing "Path with f/th/f records three commands"
     (let [{:keys [result error]} (h/eval-dsl "(path (f 5) (th 90) (f 10))")]
       (is (nil? error))
-      (is (= 3 (count (:commands result))))
-      (is (= [:f :th :f] (mapv :cmd (:commands result)))))))
+      (is (= 3 (count (turtle/path-micro-commands result))))
+      (is (= [:f :th :f] (mapv :cmd (turtle/path-micro-commands result)))))))
 
 (deftest path-tv-command
   (testing "Path records tv commands"
     (let [{:keys [result error]} (h/eval-dsl "(path (f 5) (tv 45) (f 5))")]
       (is (nil? error))
-      (is (= [:f :tv :f] (mapv :cmd (:commands result)))))))
+      (is (= [:f :tv :f] (mapv :cmd (turtle/path-micro-commands result)))))))
 
 ;; ── 2. Shape creation ────────────────────────────────────────
 
@@ -216,7 +217,7 @@
   (testing "a recorded bezier-to tags its first command with a :pure bezier rider spanning the whole run"
     (let [{:keys [result error]}
           (h/eval-dsl "(path (bezier-to [0 0 50] [5 0 15] [0 0 40] :local))")
-          cmds  (:commands result)
+          cmds  (turtle/path-micro-commands result)
           fc    (first cmds)
           pure  (:pure fc)]
       (is (nil? error) (str "should not error: " error))
@@ -290,7 +291,7 @@
           (h/eval-dsl "(path (arc-h 10 90 :steps 4))")]
       (is (nil? error))
       (is (= :path (:type result)))
-      (is (> (count (:commands result)) 1) "Arc should produce multiple commands"))))
+      (is (> (count (turtle/path-micro-commands result)) 1) "Arc should produce multiple commands"))))
 
 (deftest path-arc-v
   (testing "arc-v in path produces multiple commands"
@@ -298,7 +299,7 @@
           (h/eval-dsl "(path (arc-v 10 90 :steps 4))")]
       (is (nil? error))
       (is (= :path (:type result)))
-      (is (> (count (:commands result)) 1)))))
+      (is (> (count (turtle/path-micro-commands result)) 1)))))
 
 ;; ── 9. Extrude with arc path ────────────────────────────────
 
@@ -326,7 +327,7 @@
     (let [{:keys [result error]}
           (h/eval-dsl "(path (f 5) (mark :mid) (f 5))")]
       (is (nil? error))
-      (is (some #(= :mark (:cmd %)) (:commands result))
+      (is (some #(= :mark (:cmd %)) (turtle/path-micro-commands result))
           "Should contain a mark command"))))
 
 ;; ── 12. Multiple extrusions ─────────────────────────────────
@@ -559,9 +560,9 @@
 
       ;; The recorded path commands must be identical — this is the definitive
       ;; shape-invariance check. Same commands = same local curve.
-      (is (= (:commands (:result path-0)) (:commands (:result path-120)))
+      (is (= (turtle/path-micro-commands (:result path-0)) (turtle/path-micro-commands (:result path-120)))
           "Recorded path commands should be identical at tr 0° and tr 120°")
-      (is (= (:commands (:result path-0)) (:commands (:result path-240)))
+      (is (= (turtle/path-micro-commands (:result path-0)) (turtle/path-micro-commands (:result path-240)))
           "Recorded path commands should be identical at tr 0° and tr 240°")
 
       ;; All 3 branches should have approximately the same vertex/face count.
@@ -603,8 +604,8 @@
     (let [{:keys [result error]} (h/eval-dsl "(path (f 10) (inset 3) (f 5))")]
       (is (nil? error) (str "Should not error: " error))
       (is (= :path (:type result)))
-      (is (= [:f :inset :f] (mapv :cmd (:commands result))))
-      (is (= [3] (:args (second (:commands result))))))))
+      (is (= [:f :inset :f] (mapv :cmd (turtle/path-micro-commands result))))
+      (is (= [3] (:args (second (turtle/path-micro-commands result))))))))
 
 (deftest path-scale-throws
   (testing "scale inside path/attach is deliberately forbidden; users should use
@@ -618,40 +619,40 @@
   (testing "move-to inside path records :move-to command"
     (let [{:keys [result error]} (h/eval-dsl "(path (f 10) (move-to :target) (f 5))")]
       (is (nil? error) (str "Should not error: " error))
-      (is (= [:f :move-to :f] (mapv :cmd (:commands result))))
-      (is (= [:target] (:args (second (:commands result))))))))
+      (is (= [:f :move-to :f] (mapv :cmd (turtle/path-micro-commands result))))
+      (is (= [:target] (:args (second (turtle/path-micro-commands result))))))))
 
 (deftest path-move-to-with-mode-recording
   (testing "move-to with mode records both target and mode"
     (let [{:keys [result error]} (h/eval-dsl "(path (move-to :target :center))")]
       (is (nil? error) (str "Should not error: " error))
-      (is (= [:move-to] (mapv :cmd (:commands result))))
-      (is (= [:target :center] (:args (first (:commands result))))))))
+      (is (= [:move-to] (mapv :cmd (turtle/path-micro-commands result))))
+      (is (= [:target :center] (:args (first (turtle/path-micro-commands result))))))))
 
 (deftest path-move-to-at-anchor-recording
   (testing "move-to with :at anchor records target, :at, and anchor name"
     (let [{:keys [result error]} (h/eval-dsl "(path (move-to :target :at :tip))")]
       (is (nil? error) (str "Should not error: " error))
-      (is (= [:move-to] (mapv :cmd (:commands result))))
-      (is (= [:target :at :tip] (:args (first (:commands result))))))))
+      (is (= [:move-to] (mapv :cmd (turtle/path-micro-commands result))))
+      (is (= [:target :at :tip] (:args (first (turtle/path-micro-commands result))))))))
 
 (deftest path-move-to-at-anchor-align-recording
   (testing "move-to with :at anchor :align records the extra flag"
     (let [{:keys [result error]} (h/eval-dsl "(path (move-to :target :at :tip :align))")]
       (is (nil? error) (str "Should not error: " error))
-      (is (= [:move-to] (mapv :cmd (:commands result))))
-      (is (= [:target :at :tip :align] (:args (first (:commands result))))))))
+      (is (= [:move-to] (mapv :cmd (turtle/path-micro-commands result))))
+      (is (= [:target :at :tip :align] (:args (first (turtle/path-micro-commands result))))))))
 
 (deftest path-side-trip-recording
   (testing "side-trip wraps its body as a single :side-trip command holding a sub-path"
     (let [{:keys [result error]} (h/eval-dsl
                                   "(path (f 50) (side-trip (th 90) (f 10) (mark :B)) (f 30))")]
       (is (nil? error) (str "Should not error: " error))
-      (is (= [:f :side-trip :f] (mapv :cmd (:commands result))))
-      (let [side-trip-cmd (second (:commands result))
+      (is (= [:f :side-trip :f] (mapv :cmd (turtle/path-micro-commands result))))
+      (let [side-trip-cmd (second (turtle/path-micro-commands result))
             sub-path (first (:args side-trip-cmd))]
         (is (= :path (:type sub-path)))
-        (is (= [:th :f :mark] (mapv :cmd (:commands sub-path))))))))
+        (is (= [:th :f :mark] (mapv :cmd (turtle/path-micro-commands sub-path))))))))
 
 (deftest path-side-trip-anchors-resolve-without-moving-spine
   (testing "side-trip preserves marks but restores pose on replay"
@@ -680,9 +681,9 @@
                          (path p))")]
       (is (nil? error) (str "Should not error: " error))
       (is (= :path (:type result)))
-      (is (= 3 (count (:commands result)))
+      (is (= 3 (count (turtle/path-micro-commands result)))
           "Pass-through should return original path commands")
-      (is (= [:f :th :f] (mapv :cmd (:commands result)))))))
+      (is (= [:f :th :f] (mapv :cmd (turtle/path-micro-commands result)))))))
 
 (deftest path-pass-through-ignores-when-recording
   (testing "path records normally when body contains both path and movements"
@@ -690,8 +691,8 @@
           (h/eval-dsl "(let [p (path (f 10))]
                          (path (f 5) (th 30)))")]
       (is (nil? error))
-      (is (= 2 (count (:commands result))))
-      (is (= [:f :th] (mapv :cmd (:commands result)))))))
+      (is (= 2 (count (turtle/path-micro-commands result))))
+      (is (= [:f :th] (mapv :cmd (turtle/path-micro-commands result)))))))
 
 ;; ── 18. play-path splicing ─────────────────────────────────
 
@@ -702,12 +703,12 @@
                          (path (f 10) (play-path sub) (f 20)))")]
       (is (nil? error) (str "Should not error: " error))
       (is (= :path (:type result)))
-      (is (= [:f :f :th :f] (mapv :cmd (:commands result)))
+      (is (= [:f :f :th :f] (mapv :cmd (turtle/path-micro-commands result)))
           "Sub-path commands should be spliced inline")
-      (is (= [10] (:args (first (:commands result)))))
-      (is (= [5] (:args (second (:commands result)))))
-      (is (= [30] (:args (nth (:commands result) 2))))
-      (is (= [20] (:args (nth (:commands result) 3)))))))
+      (is (= [10] (:args (first (turtle/path-micro-commands result)))))
+      (is (= [5] (:args (second (turtle/path-micro-commands result)))))
+      (is (= [30] (:args (nth (turtle/path-micro-commands result) 2))))
+      (is (= [20] (:args (nth (turtle/path-micro-commands result) 3)))))))
 
 (deftest play-path-preserves-heading
   (testing "play-path keeps heading in sync after spliced turns"
@@ -718,7 +719,7 @@
                          (path (f 10) (play-path turn) (f 10)))")]
       (is (nil? error))
       ;; Should have: f(10), th(90), f(10) — same as if written inline
-      (is (= [:f :th :f] (mapv :cmd (:commands result))))
+      (is (= [:f :th :f] (mapv :cmd (turtle/path-micro-commands result))))
       ;; Verify arc-h after play-path respects the heading change
       ;; (arc-h reads recorder heading to compute curve)
       (let [{:keys [result error]}
@@ -726,7 +727,7 @@
                            (path (f 10) (play-path turn) (arc-h 10 90 :steps 2)))")]
         (is (nil? error) (str "arc-h after play-path error: " error))
         ;; Should have f, th from spliced sub-path, then arc-h commands
-        (is (> (count (:commands result)) 2))))))
+        (is (> (count (turtle/path-micro-commands result)) 2))))))
 
 ;; ── 19. Context validation ─────────────────────────────────
 

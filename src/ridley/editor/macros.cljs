@@ -14,89 +14,12 @@
      (swap! path-recorder rec-tv angle))
    (defn- rec-tr* [angle]
      (swap! path-recorder rec-tr angle))
-   ;; Like rec-th*/rec-tv* but tag the recorded command with :arc-cap so the
-   ;; extruder can recognize an arc's leading/trailing half-step (see rec-arc-h*).
-   (defn- rec-th-cap* [angle cap]
-     (swap! path-recorder
-            (fn [s]
-              (let [s2 (rec-th s angle)]
-                (assoc-in s2 [:recording (dec (count (:recording s2))) :arc-cap] cap)))))
-   (defn- rec-tv-cap* [angle cap]
-     (swap! path-recorder
-            (fn [s]
-              (let [s2 (rec-tv s angle)]
-                (assoc-in s2 [:recording (dec (count (:recording s2))) :arc-cap] cap)))))
-   ;; Like rec-th*/rec-tv* but tag the recorded command :smooth so the extruder
-   ;; treats it as a tessellated-curve step, NOT a hard corner (no per-step
-   ;; shortening / joint rings). Keeping it a th/tv (vs set-heading) preserves the
-   ;; 2D projection of a bezier used inside a path-2d (path-to-shape).
-   (defn- rec-th-smooth* [angle]
-     (swap! path-recorder
-            (fn [s]
-              (let [s2 (rec-th s angle)]
-                (assoc-in s2 [:recording (dec (count (:recording s2))) :smooth] true)))))
-   (defn- rec-tv-smooth* [angle]
-     (swap! path-recorder
-            (fn [s]
-              (let [s2 (rec-tv s angle)]
-                (assoc-in s2 [:recording (dec (count (:recording s2))) :smooth] true)))))
-   ;; Like rec-th-smooth*/rec-tv-smooth* but ALSO tag :bez-cap :lead and :veer-deg
-   ;; — the analytic angle between the entry heading and the bezier's c1−p0 (not
-   ;; the tessellated chord). validate-rail-start-frame! reads :veer-deg instead of
-   ;; measuring these rotations' cumulative effect, so a curve that leaves exactly
-   ;; tangent (veer≈0) passes the rail-start guard at ANY tessellation resolution.
-   (defn- rec-th-smooth-cap* [angle veer]
-     (swap! path-recorder
-            (fn [s]
-              (let [s2 (rec-th s angle)]
-                (update-in s2 [:recording (dec (count (:recording s2)))]
-                           assoc :smooth true :bez-cap :lead :veer-deg veer)))))
-   (defn- rec-tv-smooth-cap* [angle veer]
-     (swap! path-recorder
-            (fn [s]
-              (let [s2 (rec-tv s angle)]
-                (update-in s2 [:recording (dec (count (:recording s2)))]
-                           assoc :smooth true :bez-cap :lead :veer-deg veer)))))
-   ;; Like rec-th-smooth*/rec-tv-smooth* but for :tr — the residual ROLL needed
-   ;; after th/tv to reach the canonical bezier frame's up (canonical-bezier-
-   ;; frame-impl), since th-then-tv is an Euler composition that does not by
-   ;; itself reproduce minimal-rotation transport of up for an oblique target.
-   (defn- rec-tr-smooth* [angle]
-     (swap! path-recorder
-            (fn [s]
-              (let [s2 (rec-tr s angle)]
-                (assoc-in s2 [:recording (dec (count (:recording s2))) :smooth] true)))))
-   ;; Like rec-tr-smooth* but tagged as the leading tessellation cap, like
-   ;; rec-th-smooth-cap*/rec-tv-smooth-cap* — no :veer-deg here: unlike the
-   ;; heading veer (generically non-zero for an off-tangent curve), the first
-   ;; chord's residual roll has continuum limit exactly 0 by construction (the
-   ;; canonical field is anchored at entry-up at t=0), so it is unconditionally
-   ;; a pure tessellation artifact, like the arc-cap's lead half-step.
-   (defn- rec-tr-smooth-cap* [angle]
-     (swap! path-recorder
-            (fn [s]
-              (let [s2 (rec-tr s angle)]
-                (update-in s2 [:recording (dec (count (:recording s2)))]
-                           assoc :smooth true :bez-cap :lead)))))
-   ;; bezier-as analogue of rec-th-smooth-cap*/rec-tv-smooth-cap*, WITHOUT
-   ;; :smooth — bezier-as's tessellation is intentionally plain/hard-corner
-   ;; today (see dev-docs/code-issues.md; unlike bezier-to, aligning it to
-   ;; :smooth is a distinct, unmeasured change), so these tag ONLY :bez-cap
-   ;; :lead + :veer-deg — visible to validate-rail-start-frame! (which keys
-   ;; purely on :bez-cap, never :smooth) but invisible to corner-rotation?
-   ;; (which keys purely on :smooth), so corner treatment is unaffected.
-   (defn- rec-th-bez-cap* [angle veer]
-     (swap! path-recorder
-            (fn [s]
-              (let [s2 (rec-th s angle)]
-                (update-in s2 [:recording (dec (count (:recording s2)))]
-                           assoc :bez-cap :lead :veer-deg veer)))))
-   (defn- rec-tv-bez-cap* [angle veer]
-     (swap! path-recorder
-            (fn [s]
-              (let [s2 (rec-tv s angle)]
-                (update-in s2 [:recording (dec (count (:recording s2)))]
-                           assoc :bez-cap :lead :veer-deg veer)))))
+   ;; The :arc-cap/:smooth/:bez-cap/:veer-deg tag-wrapper variants (rec-th-cap*,
+   ;; rec-th-smooth*, rec-th-smooth-cap*, rec-tr-smooth*, rec-tr-smooth-cap*,
+   ;; rec-th-bez-cap*, and their tv counterparts) used to live here — Fase 1
+   ;; moved curve tessellation (and its tagging) to lower-commands-impl
+   ;; (turtle/core), so the recorder itself no longer emits tagged micro-
+   ;; commands directly (dev-docs/brief-recording-highlevel-fase1.md).
    (defn- rec-set-heading* [heading up & [flag]]
      (swap! path-recorder rec-set-heading heading up flag))
    (defn- rec-u* [dist]
@@ -110,11 +33,24 @@
    (defn- rec-mark* [name]
      (swap! path-recorder update :recording conj {:cmd :mark :args [name]}))
 
-   ;; Recording version of follow - splices another path's commands into current recording
+   ;; Recording version of follow - splices another path's HIGH-LEVEL commands
+   ;; (not path-micro-commands' lowered/tessellated form) into current
+   ;; recording, then advances the local pose by lowering just what was
+   ;; spliced — same pattern as rec-append-curve!, generalized to a whole
+   ;; command list. A curve's c1/c2/end are local-frame (Fase 1), so splicing
+   ;; the high-level form composes correctly under whatever pose `path` is
+   ;; followed from: the :pure rider a bezier's lowering stamps gets computed
+   ;; fresh against the OUTER path's real entry pose here, instead of staying
+   ;; frozen at the sub-path's own recording-time frame (dev-docs/code-issues.md,
+   ;; \"il rider :pure di un bezier è congelato nel frame del sotto-path\").
    (defn- rec-follow* [path]
      (when (and (map? path) (= :path (:type path)))
-       (doseq [cmd (:commands path)]
-         (swap! path-recorder update :recording conj cmd))))
+       (let [cmds (:commands path)]
+         (swap! path-recorder
+                (fn [s]
+                  (let [s+cmds (update s :recording into cmds)
+                        st (:state (lower-commands-impl cmds s+cmds))]
+                    (assoc s+cmds :position (:position st) :heading (:heading st) :up (:up st))))))))
 
    ;; Recording version of side-trip - records a sub-path that, on replay,
    ;; runs in a saved-then-restored pose scope (marks are kept, spine is not moved)
@@ -157,7 +93,28 @@
    (defn- rec-cp-tr* [angle-deg]
      (swap! path-recorder rec-cp-tr angle-deg))
 
-   ;; Recording version of arc-h that decomposes into rec-f* and rec-th*
+   ;; Fase 1 (dev-docs/brief-recording-highlevel-fase1.md): append a single
+   ;; high-level curve command to :recording, then advance the recorder's
+   ;; OWN local pose by asking lower-commands-impl (turtle/core, shared with
+   ;; every other consumer via path-micro-commands) to tessellate just this
+   ;; one command from the CURRENT pose — the recorder no longer tessellates
+   ;; curves itself. :recording only ever gains the one high-level command;
+   ;; the tagged micro-commands lower-commands-impl computes are thrown away
+   ;; here (byte-identical to today's only at the ACCESSOR, not at record
+   ;; time) — only :position/:heading/:up are kept, to stay correct for
+   ;; whatever the path records next.
+   (defn- rec-append-curve! [cmd]
+     (swap! path-recorder
+            (fn [s]
+              (let [s+cmd (update s :recording conj cmd)
+                    lowered (lower-commands-impl [cmd] s+cmd)
+                    st (:state lowered)]
+                (assoc s+cmd :position (:position st) :heading (:heading st) :up (:up st))))))
+
+   ;; Recording version of arc-h — resolves :steps at record time (the exact
+   ;; formulas rec-arc-h* always used), then records the high-level command;
+   ;; tessellation (:arc-cap tags included) now lives in lower-arc*
+   ;; (turtle/core), shared with every other consumer.
    (defn- rec-arc-h* [radius angle & {:keys [steps]}]
      (when (neg? radius)
        (throw (js/Error. (str \"arc-h: radius must be non-negative (got \" radius
@@ -165,33 +122,16 @@
      (when-not (or (zero? radius) (zero? angle))
        (let [angle-rad (* (abs angle) (/ PI 180))
              arc-length (* radius angle-rad)
-             ;; Use resolution from path-recorder state
              res-mode (get-in @path-recorder [:resolution :mode] :n)
              res-value (get-in @path-recorder [:resolution :value] 16)
              actual-steps (or steps
                               (case res-mode
                                 :n res-value
                                 :a (max 1 (int (ceil (/ (abs angle) res-value))))
-                                :s (max 1 (int (ceil (/ arc-length res-value))))))
-             step-angle-deg (/ angle actual-steps)
-             step-angle-rad (/ angle-rad actual-steps)
-             step-dist (* 2 radius (sin (/ step-angle-rad 2)))
-             half-angle (/ step-angle-deg 2)]
-         ;; First: rotate half and move. Tag the leading/trailing half-steps
-         ;; with :arc-cap so extrude-from-path can keep the section's start/end
-         ;; caps perpendicular to the incoming/outgoing heading when the arc is
-         ;; the first/last movement of a path (otherwise they tilt by half a
-         ;; step and the section no longer welds flush — see extrude-from-path).
-         (rec-th-cap* half-angle :lead)
-         (rec-f* step-dist)
-         ;; Middle steps
-         (dotimes [_ (dec actual-steps)]
-           (rec-th* step-angle-deg)
-           (rec-f* step-dist))
-         ;; Final half rotation
-         (rec-th-cap* half-angle :trail))))
+                                :s (max 1 (int (ceil (/ arc-length res-value))))))]
+         (rec-append-curve! {:cmd :arc-h :args [radius angle] :steps actual-steps}))))
 
-   ;; Recording version of arc-v that decomposes into rec-f* and rec-tv*
+   ;; Recording version of arc-v — see rec-arc-h*.
    (defn- rec-arc-v* [radius angle & {:keys [steps]}]
      (when (neg? radius)
        (throw (js/Error. (str \"arc-v: radius must be non-negative (got \" radius
@@ -205,21 +145,8 @@
                               (case res-mode
                                 :n res-value
                                 :a (max 1 (int (ceil (/ (abs angle) res-value))))
-                                :s (max 1 (int (ceil (/ arc-length res-value))))))
-             step-angle-deg (/ angle actual-steps)
-             step-angle-rad (/ angle-rad actual-steps)
-             step-dist (* 2 radius (sin (/ step-angle-rad 2)))
-             half-angle (/ step-angle-deg 2)]
-         ;; First: rotate half and move. See rec-arc-h* for why the leading and
-         ;; trailing half-steps are tagged with :arc-cap.
-         (rec-tv-cap* half-angle :lead)
-         (rec-f* step-dist)
-         ;; Middle steps
-         (dotimes [_ (dec actual-steps)]
-           (rec-tv* step-angle-deg)
-           (rec-f* step-dist))
-         ;; Final half rotation
-         (rec-tv-cap* half-angle :trail))))
+                                :s (max 1 (int (ceil (/ arc-length res-value))))))]
+         (rec-append-curve! {:cmd :arc-v :args [radius angle] :steps actual-steps}))))
 
    ;; Helper: normalize a 3D vector
    (defn- rec-normalize [v]
@@ -230,82 +157,50 @@
          [(/ (nth v 0) len) (/ (nth v 1) len) (/ (nth v 2) len)]
          [1 0 0])))
 
-   ;; Helper: dot product
-   (defn- rec-dot [a b]
-     (+ (* (nth a 0) (nth b 0))
-        (* (nth a 1) (nth b 1))
-        (* (nth a 2) (nth b 2))))
-
    ;; Helper: cross product
    (defn- rec-cross [a b]
      [(- (* (nth a 1) (nth b 2)) (* (nth a 2) (nth b 1)))
       (- (* (nth a 2) (nth b 0)) (* (nth a 0) (nth b 2)))
       (- (* (nth a 0) (nth b 1)) (* (nth a 1) (nth b 0)))])
 
-   ;; Helper: compute th and tv angles to rotate from one heading to another
-   ;; Returns [th-angle tv-angle] in degrees
-   ;; Rotation order: first apply tv (pitch around right), then th (yaw around up)
-   (defn- rec-compute-rotation-angles [from-heading from-up to-direction]
-     (let [;; Vertical angle (tv): pitch around right axis
-           ;; First, find the vertical component
-           up-comp (rec-dot to-direction from-up)
-           ;; Project to horizontal plane to find horizontal direction
-           horiz-dir [(- (nth to-direction 0) (* up-comp (nth from-up 0)))
-                      (- (nth to-direction 1) (* up-comp (nth from-up 1)))
-                      (- (nth to-direction 2) (* up-comp (nth from-up 2)))]
-           horiz-len (sqrt (rec-dot horiz-dir horiz-dir))
-           ;; Vertical angle: angle between horizontal and actual direction
-           tv-rad (atan2 up-comp horiz-len)
-           tv-deg (* tv-rad (/ 180 PI))
-           ;; Horizontal angle (th): yaw around up axis
-           ;; Only calculate if there's horizontal component
-           [th-deg] (if (> horiz-len 0.001)
-                      (let [horiz-norm (rec-normalize horiz-dir)
-                            fwd-comp (rec-dot horiz-norm from-heading)
-                            right (rec-cross from-heading from-up)
-                            right-comp (rec-dot horiz-norm right)
-                            th-rad (atan2 right-comp fwd-comp)]
-                        [(* (- th-rad) (/ 180 PI))])
-                      [0])]
-       [th-deg tv-deg]))
-
-   ;; th-then-tv (rec-compute-rotation-angles) is an Euler composition: it
-   ;; reaches the target HEADING exactly, but is not minimal-rotation transport,
-   ;; so the resulting byproduct up can differ from the canonical bezier
-   ;; frame's up at that point (canonical-bezier-frame-impl) by a roll about
-   ;; the now-current heading. This computes that residual angle (degrees):
-   ;; rotating byproduct-up by it about `axis` (the just-reached heading)
-   ;; lands exactly on target-up.
-   (defn- rec-residual-roll-deg [byproduct-up target-up axis]
-     (let [cos-t (max -1.0 (min 1.0 (rec-dot byproduct-up target-up)))
-           sin-t (rec-dot (rec-cross byproduct-up target-up) axis)]
-       (* (atan2 sin-t cos-t) (/ 180 PI))))
+   ;; rec-compute-rotation-angles/rec-residual-roll-deg used to live here —
+   ;; Fase 1 moved them to turtle/bezier as compute-rotation-angles/
+   ;; residual-roll-deg (pure, no turtle state), now called from
+   ;; lower-commands-impl instead of duplicated here (dev-docs/brief-
+   ;; recording-highlevel-fase1.md).
 
    ;; Recording version of bezier-as
    ;; Uses relative rotations (th/tv) instead of absolute set-heading
    ;; to produce orientation-independent paths.
+   ;; The fitting (path-segs splitting, compute-bezier-walk-impl/compute-
+   ;; midpoint-walk-impl, mode dispatch) stays at record time exactly as
+   ;; before. ONLY the per-step tessellation+emission (what apply-step used
+   ;; to do directly against @path-recorder) has moved, to lower-bezier-as
+   ;; (turtle/core, invoked via rec-append-curve! -> lower-commands-impl).
+   ;; Each fitted segment's chord-heading/final-heading/final-up (and its
+   ;; c1, for the veer check) are encoded into the LOCAL frame of the pose
+   ;; they'll actually be decoded against — a scratch pose threaded through
+   ;; the walk the same way apply-step's own pose advanced: final-up is
+   ;; always present for a real bezier walk (sample-bezier-segment always
+   ;; supplies it), so after a step the scratch pose is simply
+   ;; {:position (+pos dist*chord) :heading final-heading :up final-up} —
+   ;; no need to re-derive the th/tv/tr angles here at all; that's lower-
+   ;; bezier-as-step's job, at decode time, against whatever pose actually
+   ;; consumes the path.
    (defn- rec-bezier-as* [p & {:keys [tension steps max-segment-length cubic control]}]
      (let [path-segs (path-segments-impl p)
            path-segs (if max-segment-length
                        (vec (mapcat #(subdivide-segment-impl % max-segment-length) path-segs))
                        path-segs)
-           ;; Marks in the source path sit at segment boundaries. path-segments
-           ;; stashes each in the :rotations of the segment it precedes; a mark
-           ;; trailing the last movement has no segment to land in, so capture it
-           ;; separately. We re-emit them as :mark commands so they ride the
-           ;; realized curve — on the curve, with its tangent heading (see the
-           ;; per-mode emission below; :control needs a snap since its vertices
-           ;; are off-curve).
            marks-of (fn [rots]
                       (keep (fn [c] (when (= :mark (:cmd c)) (first (:args c)))) rots))
-           cmds (vec (:commands p))
+           cmds (vec (path-micro-commands p))
            last-f (last (keep-indexed (fn [i c] (when (= :f (:cmd c)) i)) cmds))
            trailing-marks (marks-of (if last-f (subvec cmds (inc last-f)) cmds))]
        (when (seq path-segs)
          (swap! path-recorder assoc :bezier true)
          (let [init-state @path-recorder
                init-pose (select-keys init-state [:position :heading :up])
-               ;; Calculate steps based on resolution settings
                res-mode (get-in init-state [:resolution :mode] :n)
                res-value (get-in init-state [:resolution :value] 16)
                scaled-res (max 3 (round (/ res-value 3)))
@@ -315,109 +210,82 @@
                                      :n scaled-res
                                      :a scaled-res
                                      :s (max 1 (int (ceil (/ seg-length res-value)))))))
-               ;; Use pure function to compute walk data. :control switches to the
-               ;; control-polygon (midpoint) spline — vertices become controls.
                walk-data (if control
                            (compute-midpoint-walk-impl path-segs init-pose calc-steps-fn)
                            (compute-bezier-walk-impl
                             path-segs init-pose
                             {:tension (or tension 0.33)
                              :cubic cubic
-                             :calc-steps-fn calc-steps-fn}))]
-           ;; Apply each walk step as relative rotations, re-emitting marks so
-           ;; they ride the realized curve (on-curve position, curve tangent
-           ;; heading). seg-marks[i] holds the marks the source path stashed at
-           ;; the boundary preceding segment i.
-           (let [seg-marks  (mapv (fn [seg] (vec (marks-of (:rotations seg)))) path-segs)
-                 emit       (fn [ms] (doseq [m ms] (rec-mark* m)))
-                 ;; Shared across BOTH downstream doseq sites below (only one
-                 ;; runs per call, but the flag must exist once, outside the
-                 ;; `if control` split) — consumed on the first apply-step call
-                 ;; regardless of what it does, so only ONE step in the whole
-                 ;; function ever gets cap-tagged.
-                 first-step? (volatile! true)
-                 apply-step (fn [step c1]
-                              (let [{:keys [dist chord-heading final-heading final-up]} step
-                                    ;; Convert absolute chord-heading to relative th/tv rotations
-                                    ch (:heading @path-recorder)
-                                    cu (:up @path-recorder)
-                                    cur-pos (:position @path-recorder)
-                                    is-first? @first-step?
-                                    [tha tva] (rec-compute-rotation-angles ch cu chord-heading)
-                                    ;; Analytic veer: angle between the entry heading and the
-                                    ;; ACTUALLY FITTED c1 for this segment (mode-agnostic — see
-                                    ;; brief-bezier-as-rail-lead.md: default/:cubic modes fit c1
-                                    ;; tangent to the entry heading by construction (veer≈0);
-                                    ;; :control mode's c1 is the chord to the first path vertex
-                                    ;; and CAN genuinely veer). nil when c1 is degenerate (:control
-                                    ;; mode's n<3 fallback forces c1=p0 exactly — no fitted tangent
-                                    ;; info at all, NOT the same as bezier-to's curve-is-trivial
-                                    ;; degenerate case, so this deliberately does NOT cap-tag: the
-                                    ;; guard keeps measuring the raw chord for that narrow edge,
-                                    ;; same as today, rather than wrongly exempting a genuinely
-                                    ;; off-axis single-segment :control rail).
-                                    veer (when (and is-first? c1)
-                                           (let [c1-p0 [(- (nth c1 0) (nth cur-pos 0))
-                                                        (- (nth c1 1) (nth cur-pos 1))
-                                                        (- (nth c1 2) (nth cur-pos 2))]
-                                                 len (sqrt (rec-dot c1-p0 c1-p0))]
-                                             (when (>= len 1e-6)
-                                               (let [d (max -1.0 (min 1.0 (/ (rec-dot c1-p0 ch) len)))]
-                                                 (* (acos d) (/ 180 PI))))))]
-                                (vreset! first-step? false)
-                                (if veer
-                                  (do (when (> (abs tha) 0.001) (rec-th-bez-cap* tha veer))
-                                      (when (> (abs tva) 0.001) (rec-tv-bez-cap* tva veer)))
-                                  (do (when (> (abs tha) 0.001) (rec-th* tha))
-                                      (when (> (abs tva) 0.001) (rec-tv* tva))))
-                                (rec-f* dist)
-                                ;; Rotate to final-heading for tangent continuity
-                                (let [ch2 (:heading @path-recorder)
-                                      cu2 (:up @path-recorder)
-                                      [th2 tv2] (rec-compute-rotation-angles ch2 cu2 final-heading)]
-                                  (when (> (abs th2) 0.001) (rec-th* th2))
-                                  (when (> (abs tv2) 0.001) (rec-tv* tv2)))
-                                ;; Residual roll onto final-up — already the canonical
-                                ;; bezier frame's up (sample-bezier-segment), since
-                                ;; th-then-tv alone is an Euler composition, not
-                                ;; minimal-rotation transport (see rec-bezier-to*).
-                                (when final-up
-                                  (let [byproduct-up (:up @path-recorder)
-                                        axis (:heading @path-recorder)
-                                        roll-deg (rec-residual-roll-deg byproduct-up final-up axis)]
-                                    (when (> (abs roll-deg) 0.001) (rec-tr* roll-deg))))))]
-             (if control
-               ;; :control — vertices are OFF-curve control points, so a vertex
-               ;; has no boundary ON the curve. Snap each interior vertex's marks
-               ;; to the apex (mid step) of the piece that bows around it; the
-               ;; clamped endpoints carry the vertex-0 (lead) and trailing marks.
-               ;; (Without this the midpoint walk's segment indexing skips them
-               ;; and the marks vanish silently.)
-               (do
-                 (emit (get seg-marks 0))
-                 (doseq [segment-data walk-data]
-                   (let [ms    (get seg-marks (inc (:segment-index segment-data)))
-                         stepv (vec (:walk-steps segment-data))
-                         midi  (quot (count stepv) 2)]
-                     (if (seq stepv)
-                       (doseq [i (range (count stepv))]
-                         (when (and (seq ms) (= i midi)) (emit ms))
-                         (apply-step (nth stepv i) (:c1 segment-data)))
-                       (emit ms)))))
-               ;; default / :cubic — vertices lie ON the curve, so emit each
-               ;; vertex's marks at its exact boundary, before leaving it.
-               (doseq [segment-data walk-data]
-                 (emit (get seg-marks (:segment-index segment-data)))
-                 (when-not (:degenerate segment-data)
-                   (doseq [step (:walk-steps segment-data)] (apply-step step (:c1 segment-data))))))
-             ;; Marks trailing the final movement land at the end pose.
-             (emit trailing-marks))))))
+                             :calc-steps-fn calc-steps-fn}))
+               seg-marks  (mapv (fn [seg] (vec (marks-of (:rotations seg)))) path-segs)
+               ;; :control's seg-marks[0] precedes the whole spline (no output
+               ;; segment to land in, since :control's segments are offset by
+               ;; one from the source path's) — emitted once, up front.
+               leading-marks (if control (get seg-marks 0) [])
+               encode-step (fn [scratch step]
+                             (let [{:keys [dist chord-heading final-heading final-up]} step
+                                   local-ch (world-dir->local-impl scratch chord-heading)
+                                   local-fh (world-dir->local-impl scratch final-heading)
+                                   local-fu (when final-up (world-dir->local-impl scratch final-up))
+                                   new-pos (mapv + (:position scratch) (map #(* % dist) chord-heading))]
+                               [{:dist dist :chord-heading local-ch :final-heading local-fh :final-up local-fu}
+                                (assoc scratch :position new-pos :heading final-heading
+                                       :up (or final-up (:up scratch)))]))
+               encode-segment (fn [scratch walk-steps c1]
+                                 (let [local-c1 (when c1 (world->local-impl scratch c1))
+                                       [steps-local scratch']
+                                       (reduce (fn [[acc st] step]
+                                                 (let [[s' st'] (encode-step st step)]
+                                                   [(conj acc s') st']))
+                                               [[] scratch] walk-steps)]
+                                   [local-c1 steps-local scratch']))]
+           (if control
+             ;; :control — vertices are OFF-curve control points, so a vertex
+             ;; has no boundary ON the curve. Snap each interior vertex's marks
+             ;; to the apex (mid step) of the piece that bows around it —
+             ;; marks-by-step {midi ms}, decoded by lower-bezier-as the same
+             ;; way whether stepv is empty (midi = 0, the empty-walk-steps
+             ;; fallback) or not.
+             (let [[segments _] (reduce
+                                 (fn [[segs scratch] segment-data]
+                                   (let [ms    (get seg-marks (inc (:segment-index segment-data)))
+                                         stepv (vec (:walk-steps segment-data))
+                                         midi  (quot (count stepv) 2)
+                                         marks-by-step (if (seq ms) {midi ms} {})
+                                         [local-c1 steps-local scratch']
+                                         (encode-segment scratch stepv (:c1 segment-data))]
+                                     [(conj segs {:c1 local-c1 :walk-steps steps-local
+                                                  :marks-by-step marks-by-step})
+                                      scratch']))
+                                 [[] init-pose] walk-data)]
+               (rec-append-curve! {:cmd :bezier-as :segments segments
+                                    :leading-marks leading-marks :trailing-marks trailing-marks}))
+             ;; default / :cubic — vertices lie ON the curve: marks-by-step
+             ;; {0 ms} covers each vertex's exact boundary.
+             (let [[segments _] (reduce
+                                 (fn [[segs scratch] segment-data]
+                                   (let [ms (get seg-marks (:segment-index segment-data))
+                                         marks-by-step (if (seq ms) {0 ms} {})
+                                         stepv (if (:degenerate segment-data) [] (:walk-steps segment-data))
+                                         [local-c1 steps-local scratch']
+                                         (encode-segment scratch stepv (:c1 segment-data))]
+                                     [(conj segs {:c1 local-c1 :walk-steps steps-local
+                                                  :marks-by-step marks-by-step})
+                                      scratch']))
+                                 [[] init-pose] walk-data)]
+               (rec-append-curve! {:cmd :bezier-as :segments segments
+                                    :leading-marks leading-marks :trailing-marks trailing-marks})))))))
 
 
 
 
-   ;; Recording version of bezier-to
-   ;; Decomposes bezier into f movements with th/tv rotations
+   ;; Recording version of bezier-to. Control-point resolution (explicit 2,
+   ;; quadratic 1, or auto from headings/tension) stays at record time
+   ;; exactly as before; tessellation (:smooth/:bez-cap/:veer-deg tags, the
+   ;; end-tangent exit correction, the :pure/:span rider) now lives in
+   ;; lower-bezier-to (turtle/core), invoked via rec-append-curve! — the
+   ;; resolved c1/c2/end are encoded LOCAL (world->local-impl) so the
+   ;; command replays correctly from any consumption pose.
    (defn- rec-bezier-to* [target & args]
      (let [grouped (group-by vector? args)
            control-points (get grouped true)
@@ -451,8 +319,7 @@
            approx-length (sqrt (+ (* dx0 dx0) (* dy0 dy0) (* dz0 dz0)))]
        (when (> approx-length 0.001)
          (swap! path-recorder assoc :bezier true)
-         (let [start-idx (count (:recording @path-recorder))   ; for :pure tag (re-edit)
-               res-mode (get-in state [:resolution :mode] :n)
+         (let [res-mode (get-in state [:resolution :mode] :n)
                res-value (get-in state [:resolution :value] 16)
                actual-steps (or steps
                                 (case res-mode
@@ -481,123 +348,25 @@
                               (let [to-start (rec-normalize [(- (nth p0 0) (nth p3 0))
                                                              (- (nth p0 1) (nth p3 1))
                                                              (- (nth p0 2) (nth p3 2))])]
-                                (mapv + p3 (mapv #(* % d) to-start))))]))
-               ;; Analytic veer: angle between the entry heading and c1−p0, computed
-               ;; ONCE from the resolved control point (pose-invariant — valid at
-               ;; whatever pose consumes this path later). 0 for the auto branch
-               ;; above by construction. Degenerate c1≈p0 reads as 0 (no direction
-               ;; to measure, and the overall curve is skipped below anyway when
-               ;; approx-length is tiny).
-               c1-p0 [(- (nth c1 0) (nth p0 0)) (- (nth c1 1) (nth p0 1)) (- (nth c1 2) (nth p0 2))]
-               c1-p0-len (sqrt (rec-dot c1-p0 c1-p0))
-               veer-deg (if (< c1-p0-len 1e-6)
-                          0
-                          (let [d (max -1.0 (min 1.0 (/ (rec-dot c1-p0 start-heading) c1-p0-len)))]
-                            (* (acos d) (/ 180 PI))))
-               ;; Bezier point function
-               cubic-point (fn [t]
-                             (let [t2 (- 1 t)
-                                   a (* t2 t2 t2) b (* 3 t2 t2 t) c (* 3 t2 t t) d (* t t t)]
-                               [(+ (* a (nth p0 0)) (* b (nth c1 0)) (* c (nth c2 0)) (* d (nth p3 0)))
-                                (+ (* a (nth p0 1)) (* b (nth c1 1)) (* c (nth c2 1)) (* d (nth p3 1)))
-                                (+ (* a (nth p0 2)) (* b (nth c1 2)) (* c (nth c2 2)) (* d (nth p3 2)))]))
-               ;; Precompute all bezier points
-               points (mapv #(cubic-point (/ % actual-steps)) (range (inc actual-steps)))
-               ;; Precompute all segment directions and distances
-               segments (vec (for [i (range actual-steps)]
-                               (let [curr-pos (nth points i)
-                                     next-pos (nth points (inc i))
-                                     dx (- (nth next-pos 0) (nth curr-pos 0))
-                                     dy (- (nth next-pos 1) (nth curr-pos 1))
-                                     dz (- (nth next-pos 2) (nth curr-pos 2))
-                                     dist (sqrt (+ (* dx dx) (* dy dy) (* dz dz)))]
-                                 {:dir (if (> dist 0.001) (rec-normalize [dx dy dz]) nil)
-                                  :dist dist})))
-               ;; Canonical up field, one entry per chord (t = 1/steps .. 1) — a
-               ;; property of [p0 c1 c2 p3 start-up] alone, never of actual-steps.
-               frame-ts (mapv #(/ % actual-steps) (range 1 (inc actual-steps)))
-               frames (canonical-bezier-frame-impl p0 c1 c2 p3 (:up state) frame-ts)]
-           ;; Walk through segments rotating to each chord direction via th/tv
-           ;; (as before), then a residual tr that corrects the byproduct up
-           ;; onto the canonical frame's up at that t — th-then-tv alone is an
-           ;; Euler composition, not minimal-rotation transport
-           ;; (rec-residual-roll-deg), so it can leave a roll error that grows
-           ;; with curvature/torsion and used to depend on actual-steps. Each
-           ;; step is recorded as relative th/tv/tr (NOT set-heading) so that
-           ;; the 2D projection (path-to-shape / ensure-path-2d) of a bezier in
-           ;; a path-2d is preserved — a planar curve has zero torsion, so the
-           ;; canonical up stays exactly the plane normal and the residual tr
-           ;; is exactly 0 (never emitted). The steps are tagged :smooth so
-           ;; extrude/loft don't treat the tessellated curve as a chain of hard
-           ;; corners (see smooth-rotation? in extrusion.cljs) — that corner
-           ;; treatment folds a swept profile on a curved rail.
-           (loop [remaining-segments segments
-                  idx 0
-                  first? true]
-             (when (seq remaining-segments)
-               (let [{:keys [dir dist]} (first remaining-segments)]
-                 (if (and dir (> dist 0.001))
-                   (do
-                     ;; Rotate to segment direction using relative th/tv (tagged
-                     ;; :smooth). The very first segment's leading rotation is
-                     ;; additionally tagged :bez-cap :lead / :veer-deg — the
-                     ;; chord it drives is a tessellation artifact, not the
-                     ;; curve's true (analytic) tangent.
-                     (let [cur-heading (:heading @path-recorder)
-                           cur-up (:up @path-recorder)
-                           [th-angle tv-angle] (rec-compute-rotation-angles cur-heading cur-up dir)]
-                       (if first?
-                         (do (when (> (abs th-angle) 0.001) (rec-th-smooth-cap* th-angle veer-deg))
-                             (when (> (abs tv-angle) 0.001) (rec-tv-smooth-cap* tv-angle veer-deg)))
-                         (do (when (> (abs th-angle) 0.001) (rec-th-smooth* th-angle))
-                             (when (> (abs tv-angle) 0.001) (rec-tv-smooth* tv-angle)))))
-                     ;; Residual roll onto the canonical up at this chord's t.
-                     (let [target-up (:up (nth frames idx))
-                           byproduct-up (:up @path-recorder)
-                           roll-deg (rec-residual-roll-deg byproduct-up target-up dir)]
-                       (when (> (abs roll-deg) 0.001)
-                         (if first? (rec-tr-smooth-cap* roll-deg) (rec-tr-smooth* roll-deg))))
-                     ;; Move forward
-                     (rec-f* dist)
-                     (recur (rest remaining-segments) (inc idx) false))
-                   ;; Skip zero-length segment
-                   (recur (rest remaining-segments) (inc idx) false)))))
-           ;; Leave the turtle facing the analytic END TANGENT (∝ p3 − c2), like
-           ;; the runtime bezier-walk — not the last chord. So continuing the path
-           ;; (f …) stays tangent, and a symmetric mirror reads the exact axis.
-           (let [edx (- (nth p3 0) (nth c2 0))
-                 edy (- (nth p3 1) (nth c2 1))
-                 edz (- (nth p3 2) (nth c2 2))
-                 elen (sqrt (+ (* edx edx) (* edy edy) (* edz edz)))]
-             (when (> elen 0.001)
-               (let [end-dir (rec-normalize [edx edy edz])
-                     [th-a tv-a] (rec-compute-rotation-angles
-                                  (:heading @path-recorder) (:up @path-recorder) end-dir)]
-                 (when (> (abs th-a) 0.001) (rec-th-smooth* th-a))
-                 (when (> (abs tv-a) 0.001) (rec-tv-smooth* tv-a)))))
-           ;; Final residual roll onto the canonical exit up (frames' last entry
-           ;; is already t=1): the end-tangent rotation above changes heading
-           ;; again, which can reintroduce a small Euler roll error relative to
-           ;; whatever the per-chord correction already achieved.
-           (let [target-up (:up (peek frames))
-                 byproduct-up (:up @path-recorder)
-                 axis (:heading @path-recorder)
-                 roll-deg (rec-residual-roll-deg byproduct-up target-up axis)]
-             (when (> (abs roll-deg) 0.001) (rec-tr-smooth* roll-deg)))
-           ;; Tag the first emitted step with the resolved curve, so edit-path can
-           ;; recover this bezier as one node on re-open (the tessellated steps carry
-           ;; no curve info). Riders like this are ignored by every other consumer.
-           (let [end-idx (count (:recording @path-recorder))]
-             (when (> end-idx start-idx)
-               (swap! path-recorder assoc-in [:recording start-idx :pure]
-                      {:cmd :bezier-to :c1 c1 :c2 c2 :end p3
-                       :span (- end-idx start-idx)})))))))
+                                (mapv + p3 (mapv #(* % d) to-start))))]))]
+           (rec-append-curve! {:cmd :bezier-to
+                                :c1 (world->local-impl state c1)
+                                :c2 (world->local-impl state c2)
+                                :end (world->local-impl state p3)
+                                :steps actual-steps})))))
 
    ;; Recording version of bezier-to-anchor
    ;; Like rec-bezier-to* but gets target from anchor and uses both headings
    ;; IMPORTANT: Anchor positions are in world coordinates, but the path-recorder
    ;; works in local coordinates starting at [0,0,0]. We must compute the
    ;; relative position from the turtle's current world position to the anchor.
+   ;; Auto-branch tessellation (no explicit control points): resolved c1/c2
+   ;; using BOTH headings, encoded local and passed to lower-bezier-to with
+   ;; :anchor-auto? true — the flag that gets it the 'smooth connection'
+   ;; first-segment behavior (rotation target = entry heading, not the
+   ;; first chord) and suppresses the :pure rider, matching this branch's
+   ;; pre-existing asymmetry with plain bezier-to (see lower-bezier-to,
+   ;; turtle/core).
    (defn- rec-bezier-to-anchor* [target & raw-args]
      (let [;; Path-first form: (bezier-to-anchor path [:at] :mark & opts) — sugar
            ;; for (with-path path (bezier-to-anchor :mark ...)). Resolve the path's
@@ -663,94 +432,13 @@
                      ;; equal values give symmetric handles.
                      c1 (mapv + p0 (mapv #(* % (* approx-length tension)) start-heading))
                      ;; c2 extends from target in opposite direction of target heading
-                     c2 (mapv + p3 (mapv #(* % (* approx-length (- tension-end))) target-heading))
-                     ;; Analytic veer: angle between the entry heading and c1−p0. Here
-                     ;; c1−p0 = start-heading * (approx-length * tension), so it's
-                     ;; exactly parallel to start-heading whenever tension≠0 — veer≈0
-                     ;; by construction, but computed anyway (not hardcoded), same
-                     ;; convention as rec-bezier-to*.
-                     c1-p0 [(- (nth c1 0) (nth p0 0)) (- (nth c1 1) (nth p0 1)) (- (nth c1 2) (nth p0 2))]
-                     c1-p0-len (sqrt (rec-dot c1-p0 c1-p0))
-                     veer-deg (if (< c1-p0-len 1e-6)
-                                0
-                                (let [d (max -1.0 (min 1.0 (/ (rec-dot c1-p0 start-heading) c1-p0-len)))]
-                                  (* (acos d) (/ 180 PI))))
-                     ;; Bezier point function
-                     cubic-point (fn [t]
-                                   (let [t2 (- 1 t)
-                                         a (* t2 t2 t2) b (* 3 t2 t2 t) c (* 3 t2 t t) d (* t t t)]
-                                     [(+ (* a (nth p0 0)) (* b (nth c1 0)) (* c (nth c2 0)) (* d (nth p3 0)))
-                                      (+ (* a (nth p0 1)) (* b (nth c1 1)) (* c (nth c2 1)) (* d (nth p3 1)))
-                                      (+ (* a (nth p0 2)) (* b (nth c1 2)) (* c (nth c2 2)) (* d (nth p3 2)))]))
-                     ;; Precompute all bezier points
-                     points (mapv #(cubic-point (/ % actual-steps)) (range (inc actual-steps)))
-                     ;; Precompute all segment directions and distances
-                     segments (vec (for [i (range actual-steps)]
-                                     (let [curr-pos (nth points i)
-                                           next-pos (nth points (inc i))
-                                           dx (- (nth next-pos 0) (nth curr-pos 0))
-                                           dy (- (nth next-pos 1) (nth curr-pos 1))
-                                           dz (- (nth next-pos 2) (nth curr-pos 2))
-                                           dist (sqrt (+ (* dx dx) (* dy dy) (* dz dz)))]
-                                       {:dir (if (> dist 0.001) (rec-normalize [dx dy dz]) nil)
-                                        :dist dist})))
-                     ;; Canonical up field, one entry per chord — see rec-bezier-to*.
-                     frame-ts (mapv #(/ % actual-steps) (range 1 (inc actual-steps)))
-                     frames (canonical-bezier-frame-impl p0 c1 c2 p3 (:up state) frame-ts)]
-                 ;; Walk through segments rotating to each chord direction via
-                 ;; th/tv, then a residual tr onto the canonical frame's up — see
-                 ;; rec-bezier-to* for why th-then-tv alone isn't enough. First
-                 ;; segment uses start-heading for a smooth connection.
-                 (loop [remaining-segments segments
-                        idx 0
-                        first-segment? true]
-                   (when (seq remaining-segments)
-                     (let [{:keys [dir dist]} (first remaining-segments)]
-                       (if (and dir (> dist 0.001))
-                         ;; Use start-heading for first segment to avoid discontinuity
-                         (let [effective-dir (if first-segment? start-heading dir)]
-                           ;; Rotate to segment direction using relative th/tv (tagged
-                           ;; :smooth). The first segment's leading rotations are
-                           ;; additionally tagged :bez-cap :lead / :veer-deg — this
-                           ;; branch's residual tr (below) lands BEFORE rec-f*, unlike
-                           ;; rec-bezier-as*, so it's inside validate-rail-start-frame!'s
-                           ;; window too and needs the cap tag just as much as th/tv.
-                           (let [cur-heading (:heading @path-recorder)
-                                 cur-up (:up @path-recorder)
-                                 [th-angle tv-angle] (rec-compute-rotation-angles cur-heading cur-up effective-dir)]
-                             (if first-segment?
-                               (do (when (> (abs th-angle) 0.001) (rec-th-smooth-cap* th-angle veer-deg))
-                                   (when (> (abs tv-angle) 0.001) (rec-tv-smooth-cap* tv-angle veer-deg)))
-                               (do (when (> (abs th-angle) 0.001) (rec-th-smooth* th-angle))
-                                   (when (> (abs tv-angle) 0.001) (rec-tv-smooth* tv-angle)))))
-                           ;; Residual roll onto the canonical up at this chord's t.
-                           (let [target-up (:up (nth frames idx))
-                                 byproduct-up (:up @path-recorder)
-                                 roll-deg (rec-residual-roll-deg byproduct-up target-up effective-dir)]
-                             (when (> (abs roll-deg) 0.001)
-                               (if first-segment? (rec-tr-smooth-cap* roll-deg) (rec-tr-smooth* roll-deg))))
-                           (rec-f* dist)
-                           (recur (rest remaining-segments) (inc idx) false))
-                         (recur (rest remaining-segments) (inc idx) false)))))
-                 ;; End facing the analytic end tangent (∝ p3 − c2 = the anchor
-                 ;; heading), like the runtime bezier-walk — not the last chord.
-                 (let [edx (- (nth p3 0) (nth c2 0))
-                       edy (- (nth p3 1) (nth c2 1))
-                       edz (- (nth p3 2) (nth c2 2))
-                       elen (sqrt (+ (* edx edx) (* edy edy) (* edz edz)))]
-                   (when (> elen 0.001)
-                     (let [end-dir (rec-normalize [edx edy edz])
-                           [th-a tv-a] (rec-compute-rotation-angles
-                                        (:heading @path-recorder) (:up @path-recorder) end-dir)]
-                       (when (> (abs th-a) 0.001) (rec-th-smooth* th-a))
-                       (when (> (abs tv-a) 0.001) (rec-tv-smooth* tv-a)))))
-                 ;; Final residual roll onto the canonical exit up (frames' last
-                 ;; entry is already t=1) — see rec-bezier-to*.
-                 (let [target-up (:up (peek frames))
-                       byproduct-up (:up @path-recorder)
-                       axis (:heading @path-recorder)
-                       roll-deg (rec-residual-roll-deg byproduct-up target-up axis)]
-                   (when (> (abs roll-deg) 0.001) (rec-tr-smooth* roll-deg)))))))))))
+                     c2 (mapv + p3 (mapv #(* % (* approx-length (- tension-end))) target-heading))]
+                 (rec-append-curve! {:cmd :bezier-to
+                                      :c1 (world->local-impl state c1)
+                                      :c2 (world->local-impl state c2)
+                                      :end (world->local-impl state p3)
+                                      :steps actual-steps
+                                      :anchor-auto? true})))))))))
 
    ;; path: record turtle movements for later replay
    ;; (def p (path (f 20) (th 90) (f 20))) - record a path
@@ -883,13 +571,13 @@
    ;; run-path: execute a path's movements on the implicit turtle
    ;; Used internally by extrude/loft when given a path
    (defn run-path [p]
-     (doseq [{:keys [cmd args]} (:commands p)]
+     (doseq [{:keys [cmd args]} (path-micro-commands p)]
        (case cmd
          :f  (f (first args))
          :th (th (first args))
          :tv (tv (first args))
          :tr (tr (first args))
-         nil)))
+         (throw (js/Error. (str \"run-path: unknown command \" cmd \" — missing lower-commands?\"))))))
 
    ;; extrude: create mesh by extruding shape along a path
    ;; PURE: returns mesh without side effects (use register to make visible)

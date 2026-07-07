@@ -176,12 +176,16 @@
    ;; Path utilities
    'run-path-impl       turtle/run-path
    'path?               turtle/path?
+   'path-micro-commands turtle/path-micro-commands
    'quick-path          turtle/quick-path
    'path-segments-impl  turtle/path-segments
    'subdivide-segment-impl turtle/subdivide-segment
    'compute-bezier-walk-impl turtle/compute-bezier-walk
    'compute-midpoint-walk-impl turtle/compute-midpoint-walk
    'canonical-bezier-frame-impl turtle/canonical-bezier-frame
+   'lower-commands-impl turtle/lower-commands
+   'world->local-impl     turtle/world->local
+   'world-dir->local-impl turtle/world-dir->local
    ;; Extrude/loft/revolve (production pure functions)
    'pure-extrude-path        gen-ops/pure-extrude-path
    'extrude-closed-path-impl gen-ops/implicit-extrude-closed-path
@@ -225,13 +229,13 @@
    ;; Anchor support (mark only meaningful inside path; no-op outside)
    'mark   (fn [_name] nil)
    ;; Needed for macro-defs follow-path reference
-   'run-path (fn [p] (doseq [{:keys [cmd args]} (:commands p)]
+   'run-path (fn [p] (doseq [{:keys [cmd args]} (turtle/path-micro-commands p)]
                        (case cmd
                          :f  (implicit-f (first args))
                          :th (implicit-th (first args))
                          :tv (implicit-tv (first args))
                          :tr (implicit-tr (first args))
-                         nil)))
+                         (throw (js/Error. (str "run-path: unknown command " cmd " — missing lower-commands?"))))))
    ;; Source tracking (used by macro-defs wrappers)
    'add-source      (fn [mesh op-info]
                       (if (and (map? mesh) (:vertices mesh))

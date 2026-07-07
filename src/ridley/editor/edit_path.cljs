@@ -24,13 +24,14 @@
             [ridley.editor.modal-evaluator :as modal]
             [ridley.math :as m]
             [ridley.turtle.bezier :as bezier]
+            [ridley.turtle.core :as turtle]
             [ridley.turtle.shape :as shape]
             [ridley.viewport.core :as viewport]
             [clojure.string :as str]))
 
 (declare confirm! cancel! render! update-panel! refresh-preview!
          set-seg-len! set-seg-angle! seg-len seg-angle-deg set-plane!
-         group-arc-runs-3d arc->bez-handles set-node-mark! node-mark-name
+         arc->bez-handles set-node-mark! node-mark-name
          toggle-closed! bezier-frame-3d)
 
 ;; ============================================================
@@ -145,17 +146,17 @@
 
 (defn- flip-planar-cmds
   "Sign-correct a segment's baked commands for a flipped in-plane frame: th/arc-h
-   reverse direction, and a bezier-to :local's right-component (the editor's `a`,
-   the first slot of each [a 0 c]) negates."
+   reverse direction, and a bezier-to's right-component (the editor's `a`, the
+   first slot of each [a 0 c]) negates."
   [cmds]
-  (mapv (fn [{:keys [cmd args] :as c}]
-          (case cmd
-            :th    (assoc c :args [(- (first args))])
-            :arc-h (assoc c :args [(first args) (- (second args))])
-            :bezier-to (assoc c :args (conj (mapv (fn [[a b cc]] [(- a) b cc]) (butlast args))
-                                            :local))
-            c))
-        cmds))
+  (let [flip-pt (fn [[a b cc]] [(- a) b cc])]
+    (mapv (fn [{:keys [cmd args] :as c}]
+            (case cmd
+              :th    (assoc c :args [(- (first args))])
+              :arc-h (assoc c :args [(first args) (- (second args))])
+              :bezier-to (-> c (update :c1 flip-pt) (update :c2 flip-pt) (update :end flip-pt))
+              c))
+          cmds)))
 (defn- v2-dot [[ax ay] [bx by]] (+ (* ax bx) (* ay by)))
 (defn- right-of [[hx hy]] [hy (- hx)])     ; turtle 'right' in the 2D trace frame
 (defn- left-of  [[hx hy]] [(- hy) hx])
@@ -349,10 +350,19 @@
     (vector? a) (str "[" (str/join " " (map arg->code a)) "]")
     :else       (pr-str a)))
 
-(defn- cmd->code [{:keys [cmd args]}]
-  (if (= cmd :side-trip)
+(defn- cmd->code [{:keys [cmd args] :as c}]
+  (cond
+    (= cmd :side-trip)
     ;; side-trip's body is a sub-path; re-emit its commands inline.
-    (str "(side-trip " (str/join " " (map cmd->code (:commands (first args)))) ")")
+    (str "(side-trip " (str/join " " (map cmd->code (turtle/path-micro-commands (first args)))) ")")
+
+    ;; map-shaped bezier-to (Fase 2a — the recorder's own schema, dev-docs/
+    ;; brief-recording-highlevel-fase2a.md): :steps is a bake-time-only hint
+    ;; consumed by lowering, not part of the re-emitted source.
+    (= cmd :bezier-to)
+    (str "(bezier-to " (arg->code (:end c)) " " (arg->code (:c1 c)) " " (arg->code (:c2 c)) " :local)")
+
+    :else
     (str "(" (name cmd) (apply str (map #(str " " (arg->code %)) args)) ")")))
 
 ;; -- nodes → path commands / code ----------------------------------------
@@ -416,10 +426,8 @@
       (first (segment-cmds ch from to nil))
       (:bez n0)
       (let [{:keys [c1 c2]} (:bez n0)]
-        [{:cmd :bezier-to :args [(pt->local from ch to)
-                                 (pt->local from ch c1)
-                                 (pt->local from ch c2)
-                                 :local]}])
+        [{:cmd :bezier-to :c1 (pt->local from ch c1) :c2 (pt->local from ch c2)
+          :end (pt->local from ch to)}])
       (:arc n0)
       (if-let [{:keys [r sweep-deg]} (tangent-arc-2d from ch to)]
         [{:cmd :arc-h :args [r sweep-deg]}]
@@ -483,10 +491,9 @@
                      (recur end-tan to exit-h exit-u (rest remaining)
                             (-> out
                                 (into (emit [{:cmd :bezier-to
-                                              :args [(pt->local from ch to)
-                                                     (pt->local from ch c1)
-                                                     (pt->local from ch c2)
-                                                     :local]}]))
+                                              :c1 (pt->local from ch c1)
+                                              :c2 (pt->local from ch c2)
+                                              :end (pt->local from ch to)}]))
                                 (into (:tail node)))))
 
                    ;; Tangent "raccordo" arc: leaves the start node along the current
@@ -536,11 +543,11 @@
   (case cmd
     :th    (cmd->code (assoc c :cmd :tv))
     :arc-h (cmd->code (assoc c :cmd :arc-v))
-    :bezier-to (if (= :local (last args))
-                 (cmd->code (assoc c :args (conj (mapv bez-local->2d (butlast args)) :local)))
-                 (cmd->code c))
+    :bezier-to (cmd->code (-> c (update :c1 bez-local->2d)
+                              (update :c2 bez-local->2d)
+                              (update :end bez-local->2d)))
     :side-trip (str "(side-trip "
-                    (str/join " " (map cmd->code-2d (:commands (first args)))) ")")
+                    (str/join " " (map cmd->code-2d (turtle/path-micro-commands (first args)))) ")")
     (cmd->code c)))
 
 (defn- nodes->code
@@ -565,72 +572,115 @@
 
 (def ^:private move-cmd? #{:f :b :u :rt :lt})
 
-(defn- arc-run->bez
-  "Approximate a baked arc run (waypoints A … B) with a cubic bezier: c1/c2 from the
-   end tangents + the arc's L=(4/3)tan(θ/4)r handle length, θ = the tangent turn. Used
-   on input to convert a hand-written arc-h into an editable, twist-free bezier node
-   (the editor itself no longer bakes arcs in 3D)."
-  [run-wps]
-  (let [A (:pos (first run-wps)) B (:pos (last run-wps))
-        n (count run-wps)
-        entry (m/normalize (m/v- (:pos (nth run-wps 1)) A))
-        exit  (m/normalize (m/v- B (:pos (nth run-wps (- n 2)))))
-        chord (m/magnitude (m/v- B A))
-        theta (js/Math.acos (max -1.0 (min 1.0 (m/dot entry exit))))
-        r (if (> (js/Math.sin (/ theta 2)) 1e-6) (/ chord (* 2 (js/Math.sin (/ theta 2)))) chord)]
-    (arc->bez-handles A B entry exit (* theta (/ 180 js/Math.PI)) r)))
+(defn- arc-h-endpoint
+  "Closed-form endpoint of a hand-written 3D arc-h (rotation axis = up), given
+   entry position/heading/up, radius r, and signed sweep angle θ (radians).
+   Empirically verified against a 100000-step tessellation (REPL, Fase 2a) —
+   the runtime arc-h/arc-v themselves tessellate via chords (turtle/core.cljs),
+   so there's no existing closed form to call into; this one is exact."
+  [pos heading up r theta]
+  (let [right (m/normalize (m/cross heading up))]
+    {:end (m/v+ pos (m/v- (m/v* heading (* r (js/Math.sin theta)))
+                          (m/v* right (* r (- 1 (js/Math.cos theta))))))
+     :exit-h (m/v- (m/v* heading (js/Math.cos theta)) (m/v* right (js/Math.sin theta)))
+     :exit-u up}))
+
+(defn- arc-v-endpoint
+  "Closed-form endpoint of a hand-written 3D arc-v (rotation axis = right).
+   See arc-h-endpoint — verified the same way; the sign pattern genuinely
+   differs from arc-h's (rotation axis right vs up), not a copy-paste slip."
+  [pos heading up r theta]
+  {:end (m/v- pos (m/v+ (m/v* heading (* r (js/Math.sin theta)))
+                        (m/v* up (* r (- 1 (js/Math.cos theta))))))
+   :exit-h (m/v+ (m/v* heading (js/Math.cos theta)) (m/v* up (js/Math.sin theta)))
+   :exit-u (m/v- (m/v* up (js/Math.cos theta)) (m/v* heading (js/Math.sin theta)))})
 
 (defn- seed->nodes-3d
-  "Recover 3D editor nodes from a :3d path. A move command (f / b / u / rt / lt) is one
-   straight node at its traced waypoint. A baked bezier run (:pure tag) collapses to ONE
-   bezier node (c1/c2/end from the tag — exact round-trip for the editor's own output).
-   A baked arc run (:arc-cap, from a HAND-WRITTEN arc-h) is converted to an equivalent
-   bezier node (see arc-run->bez). Rotations / set-heading add no node. Node 0 is the
-   pinned anchor at the origin."
+  "Recover 3D editor nodes straight from the recorder's own high-level commands
+   (dev-docs/brief-recording-highlevel-fase2a.md, Parte 2) — no more path-
+   micro-commands / :pure / :span round-trip: a :bezier-to command IS one
+   bezier node (c1/c2/end decoded from its local frame via the entry pose we
+   track ourselves), a move command is one straight node, a hand-written
+   arc-h/arc-v (the bake never emits these in 3D) becomes an equivalent
+   bezier node via the closed-form endpoint + arc->bez-handles. Rotations /
+   set-heading add no node. Node 0 is the pinned anchor at the origin."
   [seed-path]
-  (let [wps (shape/path-to-3d-waypoints seed-path)
-        cmds (when (and (map? seed-path) (= :path (:type seed-path))) (:commands seed-path))]
-    (if (and wps (>= (count wps) 2) (seq cmds))
-      (let [n (count wps)
-            anchor {:pos (:pos (first wps)) :heading nil :up nil :tail []}]
-        (loop [gs (group-arc-runs-3d cmds) mi 0 nodes [anchor]]
-          (if (empty? gs)
-            nodes
-            (let [g (first gs)]
-              (cond
-                (= :bezier-node (:cmd g))
-                (let [{:keys [c1 c2 end]} (:pure g)
-                      end-i (min (dec n) (+ mi (:moves g)))]
-                  (recur (rest gs) end-i
-                         (conj nodes {:pos (vec end) :heading nil :up nil :tail []
-                                      :bez {:c1 (vec c1) :c2 (vec c2)}})))
-
-                (= :arc-run (:cmd g))
-                (let [k (count (filter #(move-cmd? (:cmd %)) (:sub g)))
-                      end-i (min (dec n) (+ mi k))
-                      run-wps (subvec wps mi (inc end-i))]
-                  (recur (rest gs) end-i
-                         (conj nodes (cond-> {:pos (:pos (nth wps end-i))
-                                              :heading nil :up nil :tail []}
-                                       (>= (count run-wps) 3) (assoc :bez (arc-run->bez run-wps))))))
-
-                (move-cmd? (:cmd g))
-                (let [mi' (min (dec n) (inc mi))]
-                  (recur (rest gs) mi'
-                         (conj nodes {:pos (:pos (nth wps mi')) :heading nil :up nil :tail []})))
-
-                ;; a mark / side-trip attaches to the current (last) node's :tail —
-                ;; record-only, it rides through edits and re-emits in the bake
-                (#{:mark :side-trip} (:cmd g))
-                (recur (rest gs) mi
-                       (update-in nodes [(dec (count nodes)) :tail] (fnil conj []) g))
-
-                ;; rotations / set-heading: no new node
-                :else (recur (rest gs) mi nodes))))))
+  (let [cmds (when (and (map? seed-path) (= :path (:type seed-path))) (:commands seed-path))]
+    (if (empty? cmds)
       ;; empty → just the anchor node at the origin (already present, not inserted
       ;; by the user and not movable); the user clicks to add the rail from there.
       ;; A 0-segment path extrudes to an empty mesh (no error) until the 2nd node.
-      [{:pos [0 0 0] :heading nil :up nil :tail []}])))
+      [{:pos [0 0 0] :heading nil :up nil :tail []}]
+      (:nodes
+       (reduce
+        (fn [{:keys [pos heading up nodes] :as st} {:keys [cmd args] :as c}]
+          (cond
+            ;; hard error: a residual tessellated curve fragment must never
+            ;; reach a seed after Parte 1 (follow) + Parte 2 (bake) — same
+            ;; philosophy as Fase 1's run-path/replay-path-to-recording.
+            (or (:smooth c) (:bez-cap c) (:arc-cap c) (:veer-deg c))
+            (throw (js/Error. (str "seed->nodes-3d: unexpected tessellated curve fragment "
+                                   cmd " in seed — missing a Fase 2a migration?")))
+
+            (= :move-to cmd) st        ; leading anchor only; already at the origin
+
+            (= :bezier-to cmd)
+            (let [entry {:position pos :heading heading :up up}
+                  c1-w (turtle/local->world entry (:c1 c))
+                  c2-w (turtle/local->world entry (:c2 c))
+                  end-w (turtle/local->world entry (:end c))
+                  [{exit-h :heading exit-u :up}] (bezier/canonical-bezier-frame pos c1-w c2-w end-w up [1.0])]
+              (-> st
+                  (assoc :pos end-w :heading exit-h :up exit-u)
+                  (update :nodes conj {:pos end-w :heading nil :up nil :tail []
+                                       :bez {:c1 c1-w :c2 c2-w}})))
+
+            (#{:arc-h :arc-v} cmd)
+            (let [[r angle-deg] args
+                  theta (* angle-deg (/ js/Math.PI 180))
+                  {:keys [end exit-h exit-u]} ((if (= :arc-h cmd) arc-h-endpoint arc-v-endpoint)
+                                               pos heading up r theta)
+                  {:keys [c1 c2]} (arc->bez-handles pos end heading exit-h angle-deg r)]
+              (-> st
+                  (assoc :pos end :heading exit-h :up exit-u)
+                  (update :nodes conj {:pos end :heading nil :up nil :tail []
+                                       :bez {:c1 c1 :c2 c2}})))
+
+            (= :set-heading cmd)
+            (let [new-frame (turtle/apply-set-heading {:heading heading :up up} args)]
+              (assoc st :heading (:heading new-frame) :up (:up new-frame)))
+
+            (#{:th :tv :tr} cmd)
+            ;; bare rotation (a hand-written seed, not the bake — which always
+            ;; emits set-heading) — apply via the real turtle primitives so
+            ;; this stays byte-identical to how the rest of the app rotates.
+            (let [rotate (case cmd :th turtle/th :tv turtle/tv :tr turtle/tr)
+                  new-frame (rotate {:heading heading :up up} (first args))]
+              (assoc st :heading (:heading new-frame) :up (:up new-frame)))
+
+            (move-cmd? cmd)
+            (let [d (first args)
+                  right (m/normalize (m/cross heading up))
+                  np (case cmd
+                       :f (m/v+ pos (m/v* heading d))
+                       :b (m/v+ pos (m/v* heading (- d)))
+                       :u (m/v+ pos (m/v* up d))
+                       :rt (m/v+ pos (m/v* right d))
+                       :lt (m/v- pos (m/v* right d)))]
+              (-> st (assoc :pos np)
+                  (update :nodes conj {:pos np :heading nil :up nil :tail []})))
+
+            ;; a mark / side-trip attaches to the current (last) node's :tail —
+            ;; record-only, it rides through edits and re-emits in the bake
+            (#{:mark :side-trip} cmd)
+            (update-in st [:nodes (dec (count nodes)) :tail] (fnil conj []) c)
+
+            ;; other rotations (already handled above) or unknown record-only
+            ;; commands: no new node
+            :else st))
+        {:pos [0 0 0] :heading [1 0 0] :up [0 0 1]
+         :nodes [{:pos [0 0 0] :heading nil :up nil :tail []}]}
+        cmds)))))
 
 (defn- rot-axis
   "Rotate vector v around unit axis by ang radians (Rodrigues)."
@@ -817,13 +867,30 @@
   [nodes]
   (reconstrain-handles-3d (ensure-node1-tangent nodes)))
 
+(defn- bezier-steps-at-bake
+  "Resolve :steps for a baked bezier segment A→B exactly like rec-bezier-to*
+   (macros.cljs, Fase 1) does at record time — same {:mode :value} read, same
+   :s-mode formula off the chord length — so the pre-confirm `live` value's
+   tessellation matches what re-evaluating the confirmed source would
+   produce (dev-docs/brief-recording-highlevel-fase2a.md, punto 4)."
+  [a b]
+  (let [{:keys [mode value]} (or (state/get-turtle-resolution) {:mode :n :value 16})
+        approx-length (m/magnitude (m/v- b a))]
+    (case mode
+      :n value
+      :a value
+      :s (max 1 (js/Math.ceil (/ approx-length value))))))
+
 (defn- nodes->commands-3d
   "Commands tracing the 3D nodes as a TWIST-FREE rail. Per straight segment:
    (set-heading [dir][up] :local)(f dist) with the rotation-minimizing up. Per bezier
-   segment: ONE (bezier-to [end][c1][c2] :local) — compact in the source, and
-   bezier-to frames itself with a rotation-minimizing sweep at eval-time, so the up is
-   continuous across the seam (no pinch) and the run carries a :pure tag for re-edit.
-   `:local` makes the whole rail compose under the consumption pose. Node 0 is the
+   segment: ONE high-level {:cmd :bezier-to :c1 :c2 :end :steps} (Fase 2a — the
+   recorder's own schema, dev-docs/brief-recording-highlevel-fase2a.md) — compact
+   in the source (cmd->code re-renders it as (bezier-to [end][c1][c2] :local)), and
+   lower-commands frames it with a rotation-minimizing sweep at lowering time, so the
+   up is continuous across the seam (no pinch) and the tessellation carries a :pure
+   tag for re-edit. c1/c2/end are LOCAL to the segment's entry frame, composing under
+   the consumption pose like every other Fase 1 high-level command. Node 0 is the
    pinned anchor at the origin. With no curves this delegates to the proven
    positions->rmf-commands (byte-identical to ensure-untwisted)."
   [nodes]
@@ -843,7 +910,8 @@
                    w->l (fn [v] [(m/dot v right) (m/dot v u) (m/dot v h)])
                    to-local (fn [p] (w->l (m/v- p a)))
                    geom (if (= kind :bez)
-                          [{:cmd :bezier-to :args [(to-local b) (to-local c1) (to-local c2) :local]}]
+                          [{:cmd :bezier-to :c1 (to-local c1) :c2 (to-local c2) :end (to-local b)
+                            :steps (bezier-steps-at-bake a b)}]
                           [{:cmd :set-heading :args [(w->l dir) (w->l up*) :local]}
                            {:cmd :f :args [dist]}])]
                (into geom (:tail (nth nodes i)))))
@@ -898,37 +966,6 @@
 
           :else (recur (rest cs) (conj out c)))))))
 
-(defn- group-arc-runs-3d
-  "Collapse a 3D rail's tessellated curve runs so seed->nodes-3d can rebuild each as
-   one node:
-   - a bezier carries a :pure {:cmd :bezier-to :c1 :c2 :end :span n} tag on its first
-     command → {:cmd :bezier-node :pure … :moves <#move cmds in the run>};
-   - an arc is an :arc-cap :lead…:trail run → {:cmd :arc-run :sub […]}.
-   Every other command passes through individually (seed->nodes-3d counts move
-   commands to index the traced waypoints, so it must see them all)."
-  [cmds]
-  (loop [cs cmds out []]
-    (if (empty? cs)
-      out
-      (let [c (first cs)]
-        (cond
-          (and (:pure c) (= :bezier-to (:cmd (:pure c))))
-          (let [span (:span (:pure c))
-                run (take span cs)]
-            (recur (drop span cs)
-                   (conj out {:cmd :bezier-node :pure (:pure c)
-                              :moves (count (filter #(move-cmd? (:cmd %)) run))})))
-
-          (= :lead (:arc-cap c))
-          (let [[run more] (split-with #(not= :trail (:arc-cap %)) cs)
-                run (vec (concat run (take 1 more)))   ; include the :trail command
-                more (rest more)]
-            (if (>= (count run) 2)
-              (recur more (conj out {:cmd :arc-run :sub run}))
-              (recur more (into out run))))
-
-          :else (recur (rest cs) (conj out c)))))))
-
 (defn- walk-arc-sub
   "Walk an arc run's in-plane sub-commands from [pos heading], collecting the f-step
    points (inclusive of the start). Returns {:pts [...] :heading exit-heading}. The
@@ -964,7 +1001,7 @@
   ([seed-path closed?] (seed->nodes seed-path closed? nil))
   ([seed-path closed? wps]
    (let [cmds (when (and (map? seed-path) (= :path (:type seed-path)))
-                (:commands seed-path))
+                (turtle/path-micro-commands seed-path))
          ;; True planar node positions, indexed by move-command count: the flat
          ;; th/f replay is unfaithful where a bezier flipped the in-plane frame, so
          ;; when the caller supplies the real trace (ensure-path-2d of the :2d seed)
@@ -1061,7 +1098,7 @@
   [path]
   (if-not (= :2d (:species path))
     path
-    (let [cmds (:commands path)
+    (let [cmds (turtle/path-micro-commands path)
           ;; drop the leading seed the path-2d macro prepends ((th -90))
           cmds (if (and (= :th (:cmd (first cmds)))
                         (= -90 (first (:args (first cmds)))))
@@ -1081,7 +1118,9 @@
                    :tv          (assoc c :cmd :th)
                    :arc-v       (assoc c :cmd :arc-h)
                    :set-heading (assoc c :args [(proj-pt (first args))])
-                   :side-trip   (assoc c :args [(update (first args) :commands #(mapv conv %))])
+                   :side-trip   (assoc c :args [(turtle/with-micro-commands
+                                                  (assoc (first args) :commands
+                                                         (mapv conv (turtle/path-micro-commands (first args)))))])
                    c))
           proj-rider (fn [c]
                        (if-let [pure (:pure c)]
@@ -1090,7 +1129,8 @@
                                             (update :c2 proj-pt+off)
                                             (update :end proj-pt+off)))
                          c))]
-      {:type :path :commands (mapv (comp proj-rider conv) cmds)})))
+      (turtle/with-micro-commands
+        {:type :path :commands (mapv (comp proj-rider conv) cmds)}))))
 
 ;; ============================================================
 ;; Working plane (the turtle's stamp plane at the call site)
@@ -2571,7 +2611,7 @@
         ;; current-code = a (path-2d …) rewrite, so this only feeds the initial,
         ;; unedited eval where nodes == seed.)
         live (fn [] (if (= mode :3d)
-                      {:type :path :commands (nodes->commands-3d nodes)}
+                      (turtle/with-micro-commands {:type :path :commands (nodes->commands-3d nodes)})
                       seed-path))]
     (cond
       (modal/consume-skip!)

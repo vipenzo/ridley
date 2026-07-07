@@ -25,6 +25,7 @@
             [ridley.editor.edit-path :as ep]
             [ridley.editor.sci-harness :as h]
             [ridley.editor.operations :as ops]
+            [ridley.turtle.core :as turtle]
             [ridley.turtle.shape :as shape]))
 
 (def ^:private profile (shape/circle-shape 3 12))
@@ -35,8 +36,10 @@
     (vector? a) (str "[" (str/join " " (map arg->dsl a)) "]")
     :else (str a)))
 
-(defn- cmd->dsl [{:keys [cmd args]}]
-  (str "(" (name cmd) (apply str (map #(str " " (arg->dsl %)) args)) ")"))
+(defn- cmd->dsl [{:keys [cmd args] :as c}]
+  (if (= cmd :bezier-to)
+    (str "(bezier-to " (arg->dsl (:end c)) " " (arg->dsl (:c1 c)) " " (arg->dsl (:c2 c)) " :local)")
+    (str "(" (name cmd) (apply str (map #(str " " (arg->dsl %)) args)) ")")))
 
 (defn- commands->dsl
   "Re-render a baked :commands vector as (path …) DSL source — the same shape
@@ -89,3 +92,65 @@
   ;; must keep coinciding with stamp — conform-rail-start-3d must not perturb it.
   (testing "already-tangent bezier head is left alone"
     (is (map? (request-and-consume "(path (bezier-to [30 10 0] [20 0 0] [28 5 0]))")))))
+
+(defn- approx-vec= [a b tol]
+  (and (= (count a) (count b)) (every? true? (map #(< (abs (- %1 %2)) tol) a b))))
+
+(defn- mesh= [a b]
+  (and (= (:faces a) (:faces b))
+       (= (count (:vertices a)) (count (:vertices b)))
+       (every? true? (map #(approx-vec= %1 %2 1e-6) (:vertices a) (:vertices b)))))
+
+(deftest pre-confirm-value-directly-consumable
+  ;; Closes dev-docs/code-issues.md, "il valore live di un nodo bezier non è
+  ;; consumabile direttamente" (dev-docs/brief-recording-highlevel-fase2a.md,
+  ;; punti 4/7) — request!'s pre-confirm `live` value is now a real
+  ;; {:type :path :commands [{:cmd :bezier-to :c1 :c2 :end :steps}]} that any
+  ;; consumer understands via path-micro-commands directly, no source re-eval
+  ;; needed. Must produce the SAME mesh as the confirm→splice-source→re-eval
+  ;; path (request-and-consume) — the two routes must not silently diverge.
+  (testing "extrude(request! seed) == extrude(re-eval'd confirmed source)"
+    (let [dsl "(path (bezier-to [30 10 0] [20 0 0] [28 5 0]))"
+          seed (:result (h/eval-dsl dsl))
+          direct-mesh (ops/pure-extrude-path profile (ep/request! seed))
+          confirmed-mesh (request-and-consume dsl)]
+      (is (map? direct-mesh) "the pre-confirm value must extrude to a real mesh, not nil")
+      (is (mesh= direct-mesh confirmed-mesh)
+          "direct consumption of request!'s live value must match the confirm path"))))
+
+(deftest round-trip-preserves-compact-bezier-node
+  ;; The recorder's own schema (Fase 2a) means confirm's baked source is ONE
+  ;; compact (bezier-to …), not a wall of tessellated micro-th/tv — and
+  ;; re-opening that source must recover the same node (c1/c2/end), not drift
+  ;; through an extra tessellate/re-fit round-trip.
+  (testing "baked commands stay compact and round-trip through re-open"
+    (let [dsl "(path (bezier-to [30 10 0] [20 0 0] [28 5 0]))"
+          seed (:result (h/eval-dsl dsl))
+          baked (:commands (ep/request! seed))
+          reopened-seed (:result (h/eval-dsl (commands->dsl baked)))
+          reopened-baked (:commands (ep/request! reopened-seed))]
+      (is (= 1 (count baked)) "baked commands must be ONE compact bezier-to, not tessellated micro")
+      (is (= :bezier-to (:cmd (first baked))))
+      (is (= 1 (count reopened-baked)))
+      (is (approx-vec= (:end (first baked)) (:end (first reopened-baked)) 1e-6))
+      (is (approx-vec= (:c1 (first baked)) (:c1 (first reopened-baked)) 1e-6))
+      (is (approx-vec= (:c2 (first baked)) (:c2 (first reopened-baked)) 1e-6)))))
+
+(deftest hand-written-arc-h-seed-becomes-equivalent-bezier-node
+  ;; seed->nodes-3d's arc-h/arc-v branch (dev-docs/brief-recording-highlevel-
+  ;; fase2a.md, punto 5): a hand-written arc-h (the bake never emits these in
+  ;; 3D) must recover as ONE bezier node whose endpoint matches the arc's own
+  ;; closed-form geometry — checked here against a high-step tessellation of
+  ;; the real production turtle/arc-h, not against the closed form itself.
+  (testing "arc-h 20 90 recovers as a bezier node landing where the real arc lands"
+    (let [dsl "(path (arc-h 20 90))"
+          seed (:result (h/eval-dsl dsl))
+          baked (:commands (ep/request! seed))
+          bez (first baked)
+          identity-pose {:position [0 0 0] :heading [1 0 0] :up [0 0 1]}
+          world-end (turtle/local->world identity-pose (:end bez))
+          ground-truth (:position (turtle/arc-h identity-pose 20 90 :steps 10000))]
+      (is (= 1 (count baked)))
+      (is (= :bezier-to (:cmd bez)))
+      (is (approx-vec= ground-truth world-end 1e-2)
+          (str "expected ~" ground-truth " got " world-end)))))

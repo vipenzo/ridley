@@ -16,17 +16,17 @@ File interno per tracciare piccole incoerenze tra il codice sorgente di Ridley e
 
 **Scoperta**: Vincenzo/Claude, 2026-07-06, durante `dev-docs/brief-bezier-as-rail-lead.md` (il fix del falso positivo rail-start di `bezier-as` ha richiesto di tracciare esattamente cosa `:smooth` esclude, esponendo questa incoerenza separata).
 
-### `edit-path` 3D: il valore `live` di un nodo bezier non è consumabile direttamente
+### `anim-parse-cmd` non riconosce `(path ...)` come argomento di `span` — silenziosamente ignorato da `preprocess.cljs`
 
-**Contesto**: `ridley.editor.edit-path/request!` (chiamato da `(edit-path …)`) restituisce SEMPRE un valore, in modo che lo script circostante proceda anche prima della conferma — per il modo 2D è testato che coincida col confermato (`edit_path2d_script_test.cljs`). In 3D, quando i nodi contengono un `:bez` (qualsiasi bezier), il valore `live` è `{:type :path :commands (nodes->commands-3d nodes)}`, e `nodes->commands-3d` emette per un segmento bezier un **singolo comando compatto** `{:cmd :bezier-to :args [end c1 c2 :local]}` — pensato per essere ri-emesso come SORGENTE (`nodes->code-3d`) e ri-valutato dalla macro `path`, che lo tessella via `rec-bezier-to*`. Nessun consumatore (`extrude-from-path`/`analyze-open-path-dir`, loft/`analyze-loft-path`) sa interpretare un comando `:bezier-to` grezzo dentro `:commands` — non è mai gestito, in nessun `case`/`cond` su `:cmd`. Il risultato: il segmento viene semplicemente ignorato, il path ha 0 segmenti reali, ed `extrude`/`loft` costruito su questo valore `live` produce mesh nil silenziosamente (nessun errore).
+**Contesto**: `anim-parse-cmd` (`src/ridley/editor/macros.cljs` ~1534) riconosce solo `f/u/d/rt/lt/th/tv/tr/parallel` dentro il corpo di `span`; il ramo `:else` lascia passare la forma non riconosciuta così com'è, che SCI valuta a runtime e il cui risultato finisce splice-ato in `anim-make-span`. Poiché `path` è una macro disponibile nello stesso scope SCI, `(span 1 :linear (path (f 10) (th 90)))` produce un vero path (`{:type :path :commands [...] ...}`) come elemento del vettore `:commands` dello span. `anim/preprocess.cljs` (`command-effective-distance`, `apply-command-to-turtle`, le loro varianti orbitali) fa `case` su `(:type cmd)`, che per un path è `:path` — non combacia con nessun ramo, default silenzioso (distanza 0 / turtle invariata), esattamente il pattern che `lower-commands` (`turtle/core.cljs`) ora rifiuta con un `throw` per i micro-comandi del path.
 
-**Riproduzione**: `(ep/request! (:result (h/eval-dsl "(path (bezier-to [30 10 0] [20 0 0] [28 5 0]))")))` seguito da `(ops/pure-extrude-path profilo risultato)` → `nil`, anche con un bezier perfettamente tangente (nessuna violazione dell'invariante rail-start). Scoperto scrivendo `test/ridley/editor/edit_path_3d_test.cljs` (dev-docs/brief-rail-start-tangent.md, Parte 2): i test hanno dovuto ri-valutare i comandi come sorgente DSL (mimando il percorso reale confirm→splice→ri-eval) invece di consumare `result` direttamente, per aggirare questo buco.
+**Realtà**: verificato per tracciamento statico (nessuna riproduzione runtime eseguita) da un agente Explore, 2026-07-06: nessun esempio/libreria nel repo combina oggi `span` con `path` al suo interno, quindi il buco non risulta ancora innescato in contenuto spedito — ma nessun codice in `anim-parse-cmd`/`make-span`/`preprocess-animation` lo impedisce o lo rileva.
 
-**Impatto**: chiunque incorpori `(edit-path (bezier-to …))` **inline** dentro uno script (es. `(extrude prof (edit-path …))`) senza mai confermare l'edit vede una mesh vuota al primo Run, anche se il codice è geometricamente valido — comportamento silenziosamente diverso da 2D, dove `request!` è già testato per restituire un valore fedele.
+**Non è toccato dalla Fase 1** (dev-docs/brief-recording-highlevel-fase1.md): il buco riguarda il VALORE path intero visto come UN comando dello span (il suo `:type`, sempre stato `:path`, mai riconosciuto da `preprocess.cljs`) — non la rappresentazione interna del path stesso, che è quanto la Fase 1 ha cambiato. Identico prima e dopo.
 
-**Fix possibile** (non tentato, fuori scope): far tessellare `nodes->commands-3d` un bezier in linea (stessa matematica di `rec-bezier-to*`, riusando `bezier-frame-3d`) invece di emettere il comando compatto — oppure far riconoscere `:bezier-to` come comando valido a `analyze-open-path-dir`/`analyze-loft-path` espandendolo lì. Va scelto con attenzione: il comando compatto esiste apposta per il round-trip sorgente (`nodes->code-3d` + `:pure` tag per il re-editing), quindi tessellarlo qui non deve rompere quel percorso.
+**Fix possibile** (non tentato, fuori scope — sistema di animazione, non di recording): o `anim-parse-cmd` rifiuta/segnala una forma non riconosciuta invece di lasciarla passare muta, o i `case` di `preprocess.cljs` lanciano su un `:type` sconosciuto invece di azzerare in silenzio.
 
-**Scoperta**: Vincenzo/Claude, 2026-07-04, durante l'implementazione di dev-docs/brief-rail-start-tangent.md Parte 2.
+**Scoperta**: agente Explore, 2026-07-06, rispondendo a un'obiezione di Vincenzo sulla rigorosità della whitelist del grep-guard della Fase 1 (verifica se `anim`/`pilot_mode` possano mai ricevere un path turtle). `pilot_mode.cljs` risulta invece strutturalmente isolato: `request!` rifiuta qualunque valore che non sia mesh (`:vertices`) o nodo SDF (`:op` stringa) prima ancora di creare lo stato pilot.
 
 ### Ricostruire una shape enumera a mano gli attributi che sopravvivono
 
@@ -128,7 +128,27 @@ File interno per tracciare piccole incoerenze tra il codice sorgente di Ridley e
 
 **Fix possibile**: applicare lo stesso wrapper anche nelle versioni `turtle-X`, oppure chiarire in docstring che le versioni `turtle-X` sono "primitive low-level senza riorientamento". Decisione fuori scope per ora — annotato per quando si tornerà a quel codice.
 
+### STL importati: si sviluppano lungo Z, quindi `th` su oggetti a simmetria radiale sembra un no-op
+
+**Contesto**: un STL appena importato in libreria ha l'asse di sviluppo lungo Z. In `attach`, `th` ruota attorno all'up: per un oggetto a simmetria radiale attorno a Z la rotazione è reale ma visivamente nulla; `tv`/`tr` mostrano invece effetto. Segnalato 2026-07-07 su un mount STL; inizialmente sospettato come regressione del lavoro sul recording, **scagionato** verificando che il comportamento è identico sulla versione di produzione (pre-Fase-1).
+
+**Realtà**: non è un difetto della pipeline path/attach. È una questione di convenzione d'orientamento all'import: l'oggetto arriva "in piedi" (sviluppo lungo Z) mentre la turtle ragiona con heading lungo X, quindi l'intuizione dell'utente su cosa faccia `th` non combacia con la geometria.
+
+**Fix possibile** (non tentato, da accertare): decidere una convenzione di `creation-pose` all'import degli STL (es. heading allineato all'asse di sviluppo rilevato o a Z per convenzione dichiarata), così `th`/`tv`/`tr` in attach hanno il significato che l'utente si aspetta; in alternativa, documentare la convenzione attuale nel manuale (capitolo import). Minor, ma da riprendere.
+
 ## Chiuso
+
+### Il rider `:pure` di un bezier è congelato nel frame del sotto-path, non del path che lo `follow`a — RISOLTO 2026-07-07
+
+**Stato originale**: `rec-follow*` (`src/ridley/editor/macros.cljs`) spliceva `(path-micro-commands sub-path)` — i micro-comandi GIÀ tessellati del sotto-path — dentro il `:recording` del path esterno. I micro th/tv/tr/f sono relativi e compongono correttamente sotto qualunque posa esterna; il rider `:pure` no — restava congelato ai valori calcolati quando `sub-path` era stato tessellato isolatamente (sempre dall'identità), indipendentemente dalla posa del path esterno nel punto del `follow`.
+
+**Risoluzione** (dev-docs/brief-recording-highlevel-fase2a.md, Parte 1): `rec-follow*` ora splice-a i comandi ALTO LIVELLO di `sub-path` (`(:commands path)`, non la loro tessellazione) nel `:recording` esterno, poi avanza la posa locale del recorder lowerando solo ciò che è stato splice-ato — stesso pattern di `rec-append-curve!`. Il rider `:pure` di un bezier dentro `sub` viene quindi (ri)calcolato da `lower-commands` quando lowera il path ESTERNO, contro la posa d'ingresso reale di quel comando in `outer` — corretto per costruzione, non un fix ad-hoc sul rider. Golden di regressione: `c8c` in `test/ridley/turtle/lower_commands_golden_test.cljs` (follow con bezier dentro `sub`, precedeuto da una rotazione nel path esterno).
+
+### `edit-path` 3D: il valore `live` di un nodo bezier non è consumabile direttamente — RISOLTO 2026-07-07
+
+**Stato originale**: in 3D, quando i nodi contenevano un `:bez`, il valore `live` di `request!` era `{:type :path :commands (nodes->commands-3d nodes)}` con `nodes->commands-3d` che emetteva per un segmento bezier un comando compatto ARGS-BASED (`{:cmd :bezier-to :args [end c1 c2 :local]}`), che nessun consumatore (`extrude-from-path`, loft) sapeva interpretare — mesh nil silenziosa.
+
+**Risoluzione** (dev-docs/brief-recording-highlevel-fase2a.md, Parte 2, punti 4 e 7): `nodes->commands-3d` emette ora la forma MAPPA dello schema del recorder (`{:cmd :bezier-to :c1 :c2 :end :steps}`, `:steps` risolto a bake-time con la stessa formula di `rec-bezier-to*`) — la stessa forma che `lower-commands`/`path-micro-commands` già sanno tessellare per ogni altro path, quindi ogni consumatore la capisce senza bisogno di un caso speciale. Il valore `live` è avvolto in `turtle/with-micro-commands` per coerenza/memoization col resto del sistema. `seed->nodes-3d` è stato riscritto in parallelo come interprete diretto sui comandi alto livello (elimina `path-micro-commands`/`:pure`/`:span` dal lato 3D).
 
 ### Spec.md descrive `box` come `[w d l]` senza ancoraggio direzionale — RISOLTO 2026-05-17
 

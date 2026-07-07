@@ -353,12 +353,16 @@
    'run-path-impl       turtle/run-path
    'follow-path         impl/implicit-run-path
    'path?               turtle/path?
+   'path-micro-commands turtle/path-micro-commands
    'quick-path          turtle/quick-path
    'path-segments-impl  turtle/path-segments
    'subdivide-segment-impl turtle/subdivide-segment
    'compute-bezier-walk-impl turtle/compute-bezier-walk
    'compute-midpoint-walk-impl turtle/compute-midpoint-walk
    'canonical-bezier-frame-impl turtle/canonical-bezier-frame
+   'lower-commands-impl turtle/lower-commands
+   'world->local-impl     turtle/world->local
+   'world-dir->local-impl turtle/world-dir->local
    'extrude-closed-path-impl gen-ops/implicit-extrude-closed-path
    'extrude-path-impl        gen-ops/implicit-extrude-path
    'pure-extrude-path        gen-ops/pure-extrude-path  ; Pure version (no side effects)

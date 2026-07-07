@@ -26,6 +26,19 @@
 ;; extrude/loft then stamp into 3D mesh anchors.
 (defonce resolve-marks-ref (atom nil))
 
+;; `with-micro-commands` (also turtle/core) re-attaches a fresh :micro-commands
+;; lowering delay after a path's :commands are rewritten — needed here because
+;; resolve-2d-source-anchors below strips a leading :move-to and must keep the
+;; rewritten path's lowering in sync (a stale delay would answer with the
+;; ORIGINAL, un-stripped commands once anything calls path-micro-commands on
+;; it downstream, e.g. inside the injected resolve-marks/run-path).
+(defonce with-micro-commands-ref (atom nil))
+
+;; `path-micro-commands` (also turtle/core) — the accessor every consumer of
+;; a path's tessellated micro-commands must go through instead of reading
+;; :commands directly (dev-docs/brief-recording-highlevel-fase1.md).
+(defonce path-micro-commands-ref (atom nil))
+
 (def ^:private section-identity-pose
   {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})
 
@@ -65,10 +78,11 @@
    ensure-path-2d does for the trace."
   [rf sp]
   (let [mv (some (fn [{:keys [cmd args]}] (when (= :move-to cmd) (first args)))
-                 (:commands sp))
+                 (@path-micro-commands-ref sp))
         ox (if mv (first mv) 0)
         oy (if mv (second mv) 0)
-        sp* (update sp :commands (fn [cs] (filterv #(not= :move-to (:cmd %)) cs)))]
+        sp* (cond-> (update sp :commands (fn [cs] (filterv #(not= :move-to (:cmd %)) cs)))
+              @with-micro-commands-ref (@with-micro-commands-ref))]
     (into {}
           (map (fn [[nm {:keys [position heading]}]]
                  (let [[_ py pz] position
@@ -1541,7 +1555,7 @@
 (defn is-simple-forward-path?
   "Check if path is a simple straight extrusion (single forward command, no corners)."
   [path]
-  (let [commands (:commands path)]
+  (let [commands (@path-micro-commands-ref path)]
     (and (= 1 (count commands))
          (= :f (:cmd (first commands))))))
 
@@ -1555,7 +1569,7 @@
   (let [creation-pose {:position (:position state)
                        :heading (:heading state)
                        :up (:up state)}
-        dist (-> path :commands first :args first)
+        dist (-> (@path-micro-commands-ref path) first :args first)
         start-data (stamp-shape-with-holes state shape)
         end-pos (v+ (:position state) (v* (:heading state) dist))
         end-state (assoc state :position end-pos)
@@ -1580,7 +1594,7 @@
                        :heading (:heading state)
                        :up (:up state)}
         radius (shape-radius shape)
-        commands (:commands path)
+        commands (@path-micro-commands-ref path)
         ;; NOTE (2026-07-01, extrude-holed accertamento): this is the LAST open-path
         ;; sweep still on the SCALAR shape-radius proxy. The directional swap
         ;; (analyze-open-path-dir commands shape state) — verbatim from extrude-from-path
@@ -1730,7 +1744,7 @@
                            :heading (:heading state)
                            :up (:up state)}
             radius (shape-radius shape)
-            commands (:commands path)
+            commands (@path-micro-commands-ref path)
             ;; Directional miter sizing: each corner is shortened by the profile's
             ;; reach toward THAT corner's inner normal (corner-inner-extent), not the
             ;; centroid-max shape-radius. `radius` is still used below for the round-
@@ -1979,7 +1993,7 @@
                          :heading (:heading state)
                          :up (:up state)}
           radius (shape-radius shape)
-          commands (:commands path)
+          commands (@path-micro-commands-ref path)
           segments (analyze-closed-path commands radius)
           n-segments (count segments)]
       (if (< n-segments 1)

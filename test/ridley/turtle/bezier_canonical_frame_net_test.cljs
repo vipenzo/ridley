@@ -121,8 +121,10 @@
     (keyword? a) (str a)
     (vector? a) (str "[" (str/join " " (map arg->dsl a)) "]")
     :else (str a)))
-(defn- cmd->dsl [{:keys [cmd args]}]
-  (str "(" (name cmd) (apply str (map #(str " " (arg->dsl %)) args)) ")"))
+(defn- cmd->dsl [{:keys [cmd args] :as c}]
+  (if (= cmd :bezier-to)
+    (str "(bezier-to " (arg->dsl (:end c)) " " (arg->dsl (:c1 c)) " " (arg->dsl (:c2 c)) " :local)")
+    (str "(" (name cmd) (apply str (map #(str " " (arg->dsl %)) args)) ")")))
 (defn- commands->dsl [commands]
   (str "(path " (str/join " " (map cmd->dsl commands)) ")"))
 (defn- request-and-consume [dsl]

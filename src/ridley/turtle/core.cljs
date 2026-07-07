@@ -21,7 +21,8 @@
             [ridley.turtle.extrusion :as extrusion]
             [ridley.turtle.loft :as loft]
             [ridley.turtle.attachment :as attachment]
-            [ridley.turtle.bezier :as bezier]))
+            [ridley.turtle.bezier :as bezier]
+            [ridley.turtle.shape :as shape]))
 
 (defn make-turtle
   "Create initial turtle state at origin, facing +X, up +Z.
@@ -770,7 +771,7 @@
      state
      (range steps))))
 
-(defn- local->world
+(defn local->world
   "Convert a vector expressed in the turtle's local [right up heading] frame
    (origin at the turtle position) to world coordinates:
    world = p0 + a·right + b·up + c·heading. The basis is orthonormal, so this is
@@ -1234,10 +1235,44 @@
 ;; Path - recorded turtle movements
 ;; ============================================================
 
+(declare lower-commands)
+
 (defn ^:export path?
   "Check if x is a path."
   [x]
   (and (map? x) (= :path (:type x))))
+
+;; The pose every path's :commands are relative to — the recorder's own
+;; local turtle always starts here, so lowering a curve command's local
+;; c1/c2/end (or bezier-as's local chord/tangent directions) must decode
+;; against the SAME identity frame, regardless of what pose a consumer
+;; later replays the path from.
+(def ^:private path-entry-pose {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})
+
+(defn with-micro-commands
+  "Attach a memoized lowering of `commands` (a path map's :commands, or the
+   vector before it's wrapped in one) to `path-map` under :micro-commands —
+   the ONE place lower-commands actually runs for a given path. Every path
+   constructor calls this; any site that rewrites a path's :commands after
+   construction must call it again (the old delay would otherwise answer
+   for stale commands) — see path-micro-commands below."
+  [path-map]
+  (assoc path-map :micro-commands
+         (delay (lower-commands (:commands path-map) path-entry-pose))))
+
+(defn ^:export path-micro-commands
+  "The tessellated micro-command vector for `path` — the single accessor
+   that replaces direct (:commands path) reads across every consumer.
+   Lowering (curve commands → micro-commands, tags included) is computed
+   once per path via the :micro-commands delay `with-micro-commands`
+   stashes at construction; a path built without one (should not happen
+   once every constructor uses with-micro-commands) falls back to lowering
+   on demand, uncached."
+  [path]
+  (:commands
+   (if-let [d (:micro-commands path)]
+     @d
+     (lower-commands (:commands path) path-entry-pose))))
 
 (defn make-path
   "Create a path from a vector of recorded commands. Each command is
@@ -1248,10 +1283,8 @@
    the pose directly. Structural keys (:type, :commands, :bezier) win
    in case of a name collision."
   [commands]
-  (let [base {:type :path :commands (vec commands)}
-        anchors (resolve-marks
-                 {:position [0 0 0] :heading [1 0 0] :up [0 0 1]}
-                 base)]
+  (let [base (with-micro-commands {:type :path :commands (vec commands)})
+        anchors (resolve-marks path-entry-pose base)]
     (merge anchors base)))
 
 (defn quick-path
@@ -1264,16 +1297,17 @@
    (let [nums (if (and (nil? y) (sequential? x))
                 x
                 (cons x (cons y more)))]
-     {:type :path
-      :commands
-      (->> nums
-           (partition-all 2)
-           (mapcat (fn [[a b]]
-                     (if (some? b)
-                       [{:cmd :f :args [a]}
-                        {:cmd :th :args [b]}]
-                       [{:cmd :f :args [a]}])))
-           vec)})))
+     (with-micro-commands
+       {:type :path
+        :commands
+        (->> nums
+             (partition-all 2)
+             (mapcat (fn [[a b]]
+                       (if (some? b)
+                         [{:cmd :f :args [a]}
+                          {:cmd :th :args [b]}]
+                         [{:cmd :f :args [a]}])))
+             vec)}))))
 
 (defn make-recorder
   "Create a recorder turtle that captures commands.
@@ -1402,13 +1436,290 @@
                 ;; record-only: just append
                 (update s :recording conj command)))
             state
-            (:commands sub-path))
+            (path-micro-commands sub-path))
     state))
 
 (defn path-from-recorder
   "Extract a path from a recorder turtle."
   [recorder]
   (make-path (:recording recorder)))
+
+;; ============================================================
+;; Frame-relative encode/decode — pose-free curve control points
+;; ============================================================
+;; A high-level curve command's control points/endpoint (and, for
+;; bezier-as, its fitted chord/tangent directions) are stored in the LOCAL
+;; [right up heading] frame of the segment's entry pose — like the
+;; micro-commands they replace: relative, so replay composes correctly
+;; from any consumption pose (dev-docs/brief-recording-highlevel-fase1.md,
+;; residual point 2 — world coords, like :pure today, would only be valid
+;; replayed from the exact recording pose).
+;;
+;; POINTS (bezier-to/bezier-as's c1/c2/end) reuse the existing local->world
+;; (773, above — already used by the runtime bezier-to's own :local flag);
+;; world->local is its inverse (both include `state`'s position). DIRECTIONS
+;; (bezier-as's chord-heading/final-heading/final-up, unit vectors with no
+;; position component) use the *-dir variants instead — adding position to
+;; a direction would be wrong.
+
+(defn ^:export world->local
+  "Inverse of local->world (773): world-frame ABSOLUTE point → local
+   [right up heading] triple relative to `state`'s position/frame."
+  [state w]
+  (let [heading (:heading state) up (:up state)
+        right (normalize (cross heading up))
+        v (v- w (:position state))]
+    [(dot v right) (dot v up) (dot v heading)]))
+
+(defn- local-dir->world
+  "Like local->world (773) but for a DIRECTION (no position offset)."
+  [state [a b c]]
+  (let [heading (:heading state) up (:up state)
+        right (normalize (cross heading up))]
+    (v+ (v* right a) (v+ (v* up b) (v* heading c)))))
+
+(defn ^:export world-dir->local
+  "Inverse of local-dir->world: world-frame direction → local
+   [right up heading] triple, using `state`'s current frame."
+  [state v]
+  (let [heading (:heading state) up (:up state)
+        right (normalize (cross heading up))]
+    [(dot v right) (dot v up) (dot v heading)]))
+
+;; ============================================================
+;; lower-commands — pure lowering of high-level curve commands
+;; ============================================================
+;; dev-docs/brief-recording-highlevel-fase1.md (Fase 1): a path's recording
+;; now carries curves at the level the user wrote them — one
+;; {:cmd :bezier-to :c1 :c2 :end :steps}, {:cmd :arc-h/:arc-v :args [...]
+;; :steps}, or {:cmd :bezier-as ...} per curve, with :steps already
+;; resolved at record time (never recomputed here — that is what makes
+;; replay byte-identical when resolution changes between def and
+;; consumption) and any coordinates in the LOCAL frame of the entry pose
+;; (local->world above). lower-commands expands these into the exact
+;; tessellated micro-command vector (tags included: :smooth, :arc-cap,
+;; :bez-cap, :veer-deg, :pure/:span) the recorder used to emit directly —
+;; ported verbatim from ridley.editor.macros'
+;; rec-bezier-to*/rec-arc-h*/rec-arc-v*/rec-bezier-as*, not reinvented.
+;; Atomic commands pass through unchanged, threading state the same way
+;; record-cmd's execute-fn already does for each. Returns
+;; {:commands [...] :state final-state}. Throws on an unrecognized :cmd —
+;; this is the pure engine; an unknown command here is a real bug, never
+;; something to skip silently.
+
+(defn- lower-rot-if
+  "Emit {:cmd cmd :args [angle]} (merged with tags) and apply rotate-fn to
+   state — but only if |angle| exceeds the 0.001° noise floor the recorder
+   already used to skip a rotation too small to matter."
+  [acc cmd rotate-fn angle tags]
+  (if (> (abs angle) 0.001)
+    (-> acc
+        (update :commands conj (merge {:cmd cmd :args [angle]} tags))
+        (update :state rotate-fn angle))
+    acc))
+
+(defn- lower-arc*
+  "Shared tessellation for :arc-h/:arc-v — ported verbatim from
+   ridley.editor.macros rec-arc-h*/rec-arc-v*. rotate-cmd/rotate-fn is
+   :th/th or :tv/tv."
+  [acc rotate-cmd rotate-fn radius angle steps]
+  (if (or (zero? radius) (zero? angle))
+    acc
+    (let [angle-rad (* (abs angle) (/ Math/PI 180))
+          step-angle-deg (/ angle steps)
+          step-angle-rad (/ angle-rad steps)
+          step-dist (* 2 radius (Math/sin (/ step-angle-rad 2)))
+          half-angle (/ step-angle-deg 2)
+          emit-f (fn [acc d]
+                   (-> acc (update :commands conj {:cmd :f :args [d]}) (update :state f d)))
+          acc (-> acc
+                  (update :commands conj {:cmd rotate-cmd :args [half-angle] :arc-cap :lead})
+                  (update :state rotate-fn half-angle)
+                  (emit-f step-dist))
+          acc (reduce (fn [acc _]
+                        (-> acc
+                            (update :commands conj {:cmd rotate-cmd :args [step-angle-deg]})
+                            (update :state rotate-fn step-angle-deg)
+                            (emit-f step-dist)))
+                      acc (range (dec steps)))]
+      (-> acc
+          (update :commands conj {:cmd rotate-cmd :args [half-angle] :arc-cap :trail})
+          (update :state rotate-fn half-angle)))))
+
+(defn- lower-bezier-to
+  "Tessellate one high-level {:cmd :bezier-to :c1 :c2 :end :steps} command —
+   ported verbatim from rec-bezier-to* (the post-control-point-resolution
+   half: precompute points/segments/canonical-frame, the per-chord loop,
+   the end-tangent exit correction, and the :pure/:span rider).
+
+   `anchor-auto?` (rec-bezier-to-anchor*'s auto branch, no explicit control
+   points): the FIRST segment's rotation target — and residual-roll axis —
+   is the entry heading itself rather than its own chord direction ('smooth
+   connection' to the anchor), and no :pure rider is stamped (this branch
+   never has one today — see brief-recording-highlevel-fase1.md's note on
+   the pre-existing bezier-to/bezier-to-anchor asymmetry)."
+  [acc0 {:keys [c1 c2 end steps anchor-auto?]}]
+  (let [state0 (:state acc0)
+        p0 (:position state0)
+        start-heading (:heading state0)
+        start-up (:up state0)
+        c1 (local->world state0 c1)
+        c2 (local->world state0 c2)
+        p3 (local->world state0 end)
+        c1-p0 (v- c1 p0)
+        c1-p0-len (magnitude c1-p0)
+        veer-deg (if (< c1-p0-len 1e-6)
+                   0
+                   (let [d (max -1.0 (min 1.0 (/ (dot c1-p0 start-heading) c1-p0-len)))]
+                     (* (Math/acos d) (/ 180 Math/PI))))
+        cubic-point (fn [t] (bezier/cubic-bezier-point p0 c1 c2 p3 t))
+        points (mapv #(cubic-point (/ % steps)) (range (inc steps)))
+        segments (vec (for [i (range steps)]
+                        (let [curr (nth points i) nxt (nth points (inc i))
+                              d (v- nxt curr) dist (magnitude d)]
+                          {:dir (if (> dist 0.001) (normalize d) nil) :dist dist})))
+        frame-ts (mapv #(/ % steps) (range 1 (inc steps)))
+        frames (bezier/canonical-bezier-frame p0 c1 c2 p3 start-up frame-ts)
+        start-idx (count (:commands acc0))
+        acc1 (loop [remaining segments idx 0 acc acc0]
+               (if (empty? remaining)
+                 acc
+                 (let [{:keys [dir dist]} (first remaining)
+                       first? (zero? idx)
+                       effective-dir (if (and first? anchor-auto?) start-heading dir)]
+                   (if (and dir (> dist 0.001))
+                     (let [cur-heading (:heading (:state acc))
+                           cur-up (:up (:state acc))
+                           [th-angle tv-angle] (bezier/compute-rotation-angles cur-heading cur-up effective-dir)
+                           th-tv-tags (if first? {:smooth true :bez-cap :lead :veer-deg veer-deg} {:smooth true})
+                           tr-tags    (if first? {:smooth true :bez-cap :lead} {:smooth true})
+                           acc (lower-rot-if acc :th th th-angle th-tv-tags)
+                           acc (lower-rot-if acc :tv tv tv-angle th-tv-tags)
+                           target-up (:up (nth frames idx))
+                           byproduct-up (:up (:state acc))
+                           roll-deg (bezier/residual-roll-deg byproduct-up target-up effective-dir)
+                           acc (lower-rot-if acc :tr tr roll-deg tr-tags)
+                           acc (-> acc (update :commands conj {:cmd :f :args [dist]}) (update :state f dist))]
+                       (recur (rest remaining) (inc idx) acc))
+                     (recur (rest remaining) (inc idx) acc)))))
+        ;; End-tangent exit correction: face the analytic end tangent
+        ;; (∝ p3 − c2), not the last chord — like the runtime bezier-walk.
+        edge (v- p3 c2)
+        elen (magnitude edge)
+        acc2 (if (> elen 0.001)
+               (let [end-dir (normalize edge)
+                     [th-a tv-a] (bezier/compute-rotation-angles
+                                  (:heading (:state acc1)) (:up (:state acc1)) end-dir)]
+                 (-> acc1
+                     (lower-rot-if :th th th-a {:smooth true})
+                     (lower-rot-if :tv tv tv-a {:smooth true})))
+               acc1)
+        ;; Final residual roll onto the canonical exit up (frames' last
+        ;; entry is already t=1).
+        target-up (:up (peek frames))
+        byproduct-up (:up (:state acc2))
+        axis (:heading (:state acc2))
+        roll-deg (bezier/residual-roll-deg byproduct-up target-up axis)
+        acc3 (lower-rot-if acc2 :tr tr roll-deg {:smooth true})
+        end-idx (count (:commands acc3))]
+    ;; Tag the first emitted step with the resolved curve, so edit-path can
+    ;; recover this bezier as one node on re-open (the tessellated steps
+    ;; carry no curve info). Riders like this are ignored by every other
+    ;; consumer. anchor-auto? never stamps one — pre-existing asymmetry with
+    ;; plain bezier-to, not something Phase 1 changes.
+    (if (and (not anchor-auto?) (> end-idx start-idx))
+      (update acc3 :commands update start-idx assoc :pure
+              {:cmd :bezier-to :c1 c1 :c2 c2 :end p3 :span (- end-idx start-idx)})
+      acc3)))
+
+(defn- lower-bezier-as-step
+  "One walk-step of a bezier-as segment (rec-bezier-as*'s apply-step,
+   ported verbatim): rotate onto chord-heading (tagged :bez-cap/:veer-deg
+   ONLY on the very first step of the whole bezier-as call, when c1 gives a
+   genuine veer — otherwise plain, and NEVER :smooth — bezier-as's
+   tessellation is intentionally untagged, see dev-docs/code-issues.md),
+   move, rotate onto final-heading for tangent continuity (always plain),
+   then a residual roll onto final-up (always plain)."
+  [acc {:keys [dist chord-heading final-heading final-up]} c1 first?]
+  (let [state (:state acc)
+        cur-heading (:heading state) cur-up (:up state) cur-pos (:position state)
+        chord-heading (local-dir->world state chord-heading)
+        final-heading (local-dir->world state final-heading)
+        final-up (when final-up (local-dir->world state final-up))
+        [tha tva] (bezier/compute-rotation-angles cur-heading cur-up chord-heading)
+        veer (when (and first? c1)
+               (let [c1-world (local->world state c1)
+                     c1-p0 (v- c1-world cur-pos)
+                     len (magnitude c1-p0)]
+                 (when (>= len 1e-6)
+                   (let [d (max -1.0 (min 1.0 (/ (dot c1-p0 cur-heading) len)))]
+                     (* (Math/acos d) (/ 180 Math/PI))))))
+        tags (if veer {:bez-cap :lead :veer-deg veer} {})
+        acc (lower-rot-if acc :th th tha tags)
+        acc (lower-rot-if acc :tv tv tva tags)
+        acc (-> acc (update :commands conj {:cmd :f :args [dist]}) (update :state f dist))
+        state2 (:state acc)
+        [th2 tv2] (bezier/compute-rotation-angles (:heading state2) (:up state2) final-heading)
+        acc (lower-rot-if acc :th th th2 {})
+        acc (lower-rot-if acc :tv tv tv2 {})]
+    (if final-up
+      (let [byproduct-up (:up (:state acc))
+            axis (:heading (:state acc))
+            roll-deg (bezier/residual-roll-deg byproduct-up final-up axis)]
+        (lower-rot-if acc :tr tr roll-deg {}))
+      acc)))
+
+(defn- lower-bezier-as
+  "A whole bezier-as call — ported verbatim from rec-bezier-as*'s mode
+   dispatch/mark emission (289-414), which is now identical between
+   default/:cubic and :control since the recorder resolves both into the
+   same {:segments :leading-marks :trailing-marks} shape (a segment's
+   marks-by-step {0 [...]} covers default/:cubic's segment-boundary marks;
+   {apex-idx [...]} covers :control's snap-to-apex marks; an empty
+   walk-steps segment with marks-by-step {0 [...]} covers either mode's
+   degenerate-segment-still-carries-a-mark edge case)."
+  [acc {:keys [segments leading-marks trailing-marks]}]
+  (let [emit-marks (fn [acc names] (reduce (fn [a nm] (update a :commands conj {:cmd :mark :args [nm]})) acc names))
+        acc (emit-marks acc leading-marks)
+        [acc _first?]
+        (reduce
+         (fn [[acc first?] {:keys [c1 walk-steps marks-by-step]}]
+           (if (empty? walk-steps)
+             [(emit-marks acc (get marks-by-step 0)) first?]
+             (reduce
+              (fn [[acc first?] [i step]]
+                (let [acc (emit-marks acc (get marks-by-step i))
+                      acc (lower-bezier-as-step acc step c1 first?)]
+                  [acc false]))
+              [acc first?]
+              (map-indexed vector walk-steps))))
+         [acc true]
+         segments)]
+    (emit-marks acc trailing-marks)))
+
+(defn ^:export lower-commands
+  [high-level-cmds state]
+  (reduce
+   (fn [acc {:keys [cmd args] :as c}]
+     (case cmd
+       :bezier-to (lower-bezier-to acc c)
+       :bezier-as (lower-bezier-as acc c)
+       :arc-h (lower-arc* acc :th th (first args) (second args) (:steps c))
+       :arc-v (lower-arc* acc :tv tv (first args) (second args) (:steps c))
+       :f  (-> acc (update :commands conj c) (update :state f (first args)))
+       :th (-> acc (update :commands conj c) (update :state th (first args)))
+       :tv (-> acc (update :commands conj c) (update :state tv (first args)))
+       :tr (-> acc (update :commands conj c) (update :state tr (first args)))
+       :u  (-> acc (update :commands conj c) (update :state move-up (first args)))
+       :rt (-> acc (update :commands conj c) (update :state move-right (first args)))
+       :lt (-> acc (update :commands conj c) (update :state move-left (first args)))
+       :set-heading (-> acc (update :commands conj c) (update :state apply-set-heading args))
+       (:mark :move-to :inset :scale :side-trip :cp-f :cp-rt :cp-u :cp-th :cp-tv :cp-tr
+              :stretch-f :stretch-rt :stretch-u)
+       (update acc :commands conj c)
+       (throw (js/Error. (str "lower-commands: unknown command " cmd " — missing a case in lower-commands?")))))
+   {:commands [] :state state}
+   high-level-cmds))
 
 (declare run-path)
 
@@ -1460,7 +1771,7 @@
                              s))
                 s))
             state
-            (:commands path))
+            (path-micro-commands path))
     state))
 
 (defn resolve-marks
@@ -1485,13 +1796,20 @@
 ;; profile shape's carried marks into mesh anchors (extrusion can't require this
 ;; namespace — the dependency runs the other way).
 (reset! extrusion/resolve-marks-ref resolve-marks)
+(reset! extrusion/with-micro-commands-ref with-micro-commands)
+(reset! extrusion/path-micro-commands-ref path-micro-commands)
+
+;; Inject path-micro-commands into shape's tracers (path-to-3d-waypoints etc.)
+;; so a high-level curve command gets lowered before any tracer sees it —
+;; shape.cljs can't require this namespace (core → loft → shape cycle).
+(reset! shape/path-micro-commands-ref path-micro-commands)
 
 (defn path-segments
   "Split a path's commands into segments, one per :f command.
    Each segment is a group of rotation commands followed by one :f.
    Returns a vector of {:rotations [...] :distance d}."
   [path]
-  (loop [cmds (:commands path)
+  (loop [cmds (path-micro-commands path)
          current-rotations []
          segments []]
     (if (empty? cmds)
@@ -1756,7 +2074,7 @@
   "Calculate total arc length of a path by summing absolute distances of all movement commands."
   [path]
   (if (path? path)
-    (->> (:commands path)
+    (->> (path-micro-commands path)
          (filter #(#{:f :u :rt :lt} (:cmd %)))
          (map #(Math/abs (first (:args %))))
          (reduce + 0))
@@ -1782,7 +2100,7 @@
           move? (fn [c] (contains? #{:f :u :rt :lt} (:cmd c)))
           eps 1.0e-9
           mark-cmd {:cmd :mark :args [mark-name]}]
-      (loop [cmds (:commands path)
+      (loop [cmds (path-micro-commands path)
              acc 0.0
              out []]
         (if (empty? cmds)
@@ -1832,7 +2150,7 @@
                  distance)
           ref-up (or reference-up start-up)]
       (when (and (>= dist 0) (<= dist total))
-        (loop [cmds (:commands path)
+        (loop [cmds (path-micro-commands path)
                pos start-pos
                heading start-heading
                up start-up
@@ -1929,7 +2247,7 @@
       (if (number? rail-loc)
         (max 0.0 (min 1.0 rail-loc))
         (let [total (path-total-length rail-path)
-              d (loop [cmds (:commands rail-path) acc 0]
+              d (loop [cmds (path-micro-commands rail-path) acc 0]
                   (cond
                     (empty? cmds) nil
                     (and (= :mark (:cmd (first cmds)))

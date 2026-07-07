@@ -27,7 +27,7 @@
 (defn- validate-extrude-path!
   "Throw if path contains commands that only make sense in attach context."
   [op-name path]
-  (when-let [bad (first (filter #(attach-only-cmds (:cmd %)) (:commands path)))]
+  (when-let [bad (first (filter #(attach-only-cmds (:cmd %)) (turtle/path-micro-commands path)))]
     (throw (js/Error. (str op-name ": '" (name (:cmd bad))
                            "' only works inside attach/attach-face, not " op-name)))))
 
@@ -203,7 +203,7 @@
   (when (sfn/shape-fn? first-arg)
     (let [path-length (reduce + 0 (keep (fn [cmd]
                                           (when (= :f (:cmd cmd)) (first (:args cmd))))
-                                        (:commands path)))
+                                        (turtle/path-micro-commands path)))
           probe (binding [sfn/*path-length* path-length] (first-arg 0))]
       (when (or (:shell-mode probe) (:embroid-mode probe))
         (throw (js/Error. (str "loft+: shell/embroid profiles are not supported in chaining — "
@@ -1124,7 +1124,7 @@
               :cp-tr (rotate-creation-pose s :tr (first args))
               s))
           state
-          (:commands path)))
+          (turtle/path-micro-commands path)))
 
 ;; ============================================================
 ;; Attach impl functions
@@ -1147,7 +1147,7 @@
   {:inset "inset is mesh-face-specific, not applicable to SDFs"})
 
 (defn- validate-sdf-attach-path! [path]
-  (when-let [bad (first (filter #(contains? sdf-attach-rejected (:cmd %)) (:commands path)))]
+  (when-let [bad (first (filter #(contains? sdf-attach-rejected (:cmd %)) (turtle/path-micro-commands path)))]
     (throw (js/Error. (str "attach on SDF: '" (name (:cmd bad)) "' — "
                            (sdf-attach-rejected (:cmd bad)))))))
 
@@ -1329,7 +1329,7 @@
   (validate-sdf-attach-path! path)
   (loop [state (turtle/make-turtle)
          sdf sdf-node
-         remaining (:commands path)]
+         remaining (turtle/path-micro-commands path)]
     (if (empty? remaining)
       sdf
       (let [{:keys [cmd args]} (first remaining)
