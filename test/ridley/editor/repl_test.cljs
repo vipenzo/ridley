@@ -207,28 +207,27 @@
       (is (:is-watertight? diag) "anchor-rail sweep must be watertight"))))
 
 ;; ── 4c. Bezier re-edit rider survives ────────────────────────
-;; edit-path / edit-path-2d recover a baked bezier as ONE node by reading the
-;; :pure {:cmd :bezier-to :c1 :c2 :end :span n} rider on the run's FIRST command
-;; and skipping :span commands (group-arc-runs / -3d). The switch to :set-heading
-;; must keep that rider intact, or re-opening a curve (e.g. one emitted by
-;; edit-bezier) would tessellate into many straight nodes.
+;; edit-path / edit-path-2d used to recover a baked bezier as ONE node by
+;; reading a :pure {:cmd :bezier-to :c1 :c2 :end :span n} rider on the run's
+;; FIRST command and skipping :span commands (group-arc-runs / -3d). Fase 3
+;; (dev-docs/brief-recording-highlevel-fase3.md) dropped the rider: both
+;; readers now interpret the high-level :bezier-to command directly
+;; (dev-docs/brief-recording-highlevel-lettura-2d.md), so there is nothing
+;; left to keep intact here — only the tessellation's own :smooth tagging
+;; still matters, asserted below.
 
-(deftest bezier-records-pure-rider-for-reedit
-  (testing "a recorded bezier-to tags its first command with a :pure bezier rider spanning the whole run"
+(deftest bezier-tessellation-stays-smooth-tagged
+  ;; Renamed from bezier-records-pure-rider-for-reedit: the :pure/:span
+  ;; assertions this test used to pin are gone with the rider itself; the
+  ;; tessellation behavior they were interleaved with survives unchanged.
+  (testing "a recorded bezier-to tessellates into :smooth-tagged rotations"
     (let [{:keys [result error]}
           (h/eval-dsl "(path (bezier-to [0 0 50] [5 0 15] [0 0 40] :local))")
-          cmds  (turtle/path-micro-commands result)
-          fc    (first cmds)
-          pure  (:pure fc)]
+          cmds  (turtle/path-micro-commands result)]
       (is (nil? error) (str "should not error: " error))
-      (is (some? pure) "first command carries a :pure rider")
-      (is (= :bezier-to (:cmd pure)) ":pure rider marks a bezier")
-      (is (= (count cmds) (:span pure))
-          (str ":span (" (:span pure) ") must cover all " (count cmds) " emitted commands"))
-      (is (and (:c1 pure) (:c2 pure) (:end pure)) ":pure preserves the curve control points + end")
       ;; the tessellated curve is recorded as relative th/tv (preserves the 2D
       ;; projection of a bezier in a path-2d), each tagged :smooth so extrude
-      ;; skips corner treatment. seed->nodes indexes waypoints by :f count.
+      ;; skips corner treatment.
       (is (every? #(= :th (:cmd %))
                   (filter #(#{:th :tv} (:cmd %)) cmds))
           "planar bezier tessellates into :th rotations (no :tv)")

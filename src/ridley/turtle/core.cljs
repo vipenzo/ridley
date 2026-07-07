@@ -1452,8 +1452,8 @@
 ;; [right up heading] frame of the segment's entry pose — like the
 ;; micro-commands they replace: relative, so replay composes correctly
 ;; from any consumption pose (dev-docs/brief-recording-highlevel-fase1.md,
-;; residual point 2 — world coords, like :pure today, would only be valid
-;; replayed from the exact recording pose).
+;; residual point 2 — world coords, like the now-removed :pure rider used to
+;; be, would only be valid replayed from the exact recording pose).
 ;;
 ;; POINTS (bezier-to/bezier-as's c1/c2/end) reuse the existing local->world
 ;; (773, above — already used by the runtime bezier-to's own :local flag);
@@ -1498,7 +1498,10 @@
 ;; consumption) and any coordinates in the LOCAL frame of the entry pose
 ;; (local->world above). lower-commands expands these into the exact
 ;; tessellated micro-command vector (tags included: :smooth, :arc-cap,
-;; :bez-cap, :veer-deg, :pure/:span) the recorder used to emit directly —
+;; :bez-cap — the lowering->extrusion protocol; :veer-deg and the :pure/:span
+;; rider were reconstruction aids for readers that now interpret the
+;; high-level commands directly and were dropped in Fase 3, dev-docs/
+;; brief-recording-highlevel-fase3.md) the recorder used to emit directly —
 ;; ported verbatim from ridley.editor.macros'
 ;; rec-bezier-to*/rec-arc-h*/rec-arc-v*/rec-bezier-as*, not reinvented.
 ;; Atomic commands pass through unchanged, threading state the same way
@@ -1550,14 +1553,12 @@
   "Tessellate one high-level {:cmd :bezier-to :c1 :c2 :end :steps} command —
    ported verbatim from rec-bezier-to* (the post-control-point-resolution
    half: precompute points/segments/canonical-frame, the per-chord loop,
-   the end-tangent exit correction, and the :pure/:span rider).
+   the end-tangent exit correction).
 
    `anchor-auto?` (rec-bezier-to-anchor*'s auto branch, no explicit control
    points): the FIRST segment's rotation target — and residual-roll axis —
    is the entry heading itself rather than its own chord direction ('smooth
-   connection' to the anchor), and no :pure rider is stamped (this branch
-   never has one today — see brief-recording-highlevel-fase1.md's note on
-   the pre-existing bezier-to/bezier-to-anchor asymmetry)."
+   connection' to the anchor)."
   [acc0 {:keys [c1 c2 end steps anchor-auto?]}]
   (let [state0 (:state acc0)
         p0 (:position state0)
@@ -1566,12 +1567,6 @@
         c1 (local->world state0 c1)
         c2 (local->world state0 c2)
         p3 (local->world state0 end)
-        c1-p0 (v- c1 p0)
-        c1-p0-len (magnitude c1-p0)
-        veer-deg (if (< c1-p0-len 1e-6)
-                   0
-                   (let [d (max -1.0 (min 1.0 (/ (dot c1-p0 start-heading) c1-p0-len)))]
-                     (* (Math/acos d) (/ 180 Math/PI))))
         cubic-point (fn [t] (bezier/cubic-bezier-point p0 c1 c2 p3 t))
         points (mapv #(cubic-point (/ % steps)) (range (inc steps)))
         segments (vec (for [i (range steps)]
@@ -1580,7 +1575,6 @@
                           {:dir (if (> dist 0.001) (normalize d) nil) :dist dist})))
         frame-ts (mapv #(/ % steps) (range 1 (inc steps)))
         frames (bezier/canonical-bezier-frame p0 c1 c2 p3 start-up frame-ts)
-        start-idx (count (:commands acc0))
         acc1 (loop [remaining segments idx 0 acc acc0]
                (if (empty? remaining)
                  acc
@@ -1591,7 +1585,7 @@
                      (let [cur-heading (:heading (:state acc))
                            cur-up (:up (:state acc))
                            [th-angle tv-angle] (bezier/compute-rotation-angles cur-heading cur-up effective-dir)
-                           th-tv-tags (if first? {:smooth true :bez-cap :lead :veer-deg veer-deg} {:smooth true})
+                           th-tv-tags (if first? {:smooth true :bez-cap :lead} {:smooth true})
                            tr-tags    (if first? {:smooth true :bez-cap :lead} {:smooth true})
                            acc (lower-rot-if acc :th th th-angle th-tv-tags)
                            acc (lower-rot-if acc :tv tv tv-angle th-tv-tags)
@@ -1620,26 +1614,17 @@
         byproduct-up (:up (:state acc2))
         axis (:heading (:state acc2))
         roll-deg (bezier/residual-roll-deg byproduct-up target-up axis)
-        acc3 (lower-rot-if acc2 :tr tr roll-deg {:smooth true})
-        end-idx (count (:commands acc3))]
-    ;; Tag the first emitted step with the resolved curve, so edit-path can
-    ;; recover this bezier as one node on re-open (the tessellated steps
-    ;; carry no curve info). Riders like this are ignored by every other
-    ;; consumer. anchor-auto? never stamps one — pre-existing asymmetry with
-    ;; plain bezier-to, not something Phase 1 changes.
-    (if (and (not anchor-auto?) (> end-idx start-idx))
-      (update acc3 :commands update start-idx assoc :pure
-              {:cmd :bezier-to :c1 c1 :c2 c2 :end p3 :span (- end-idx start-idx)})
-      acc3)))
+        acc3 (lower-rot-if acc2 :tr tr roll-deg {:smooth true})]
+    acc3))
 
 (defn- lower-bezier-as-step
   "One walk-step of a bezier-as segment (rec-bezier-as*'s apply-step,
-   ported verbatim): rotate onto chord-heading (tagged :bez-cap/:veer-deg
-   ONLY on the very first step of the whole bezier-as call, when c1 gives a
-   genuine veer — otherwise plain, and NEVER :smooth — bezier-as's
-   tessellation is intentionally untagged, see dev-docs/code-issues.md),
-   move, rotate onto final-heading for tangent continuity (always plain),
-   then a residual roll onto final-up (always plain)."
+   ported verbatim): rotate onto chord-heading (tagged :bez-cap :lead ONLY on
+   the very first step of the whole bezier-as call, when c1 gives a genuine
+   veer — otherwise plain, and NEVER :smooth — bezier-as's tessellation is
+   intentionally untagged, see dev-docs/code-issues.md), move, rotate onto
+   final-heading for tangent continuity (always plain), then a residual roll
+   onto final-up (always plain)."
   [acc {:keys [dist chord-heading final-heading final-up]} c1 first?]
   (let [state (:state acc)
         cur-heading (:heading state) cur-up (:up state) cur-pos (:position state)
@@ -1647,6 +1632,9 @@
         final-heading (local-dir->world state final-heading)
         final-up (when final-up (local-dir->world state final-up))
         [tha tva] (bezier/compute-rotation-angles cur-heading cur-up chord-heading)
+        ;; `veer`'s value (the analytic angle) is no longer carried on the
+        ;; command — only whether a GENUINE (non-degenerate) veer occurred
+        ;; still gates whether this first step counts as a cap at all.
         veer (when (and first? c1)
                (let [c1-world (local->world state c1)
                      c1-p0 (v- c1-world cur-pos)
@@ -1654,7 +1642,7 @@
                  (when (>= len 1e-6)
                    (let [d (max -1.0 (min 1.0 (/ (dot c1-p0 cur-heading) len)))]
                      (* (Math/acos d) (/ 180 Math/PI))))))
-        tags (if veer {:bez-cap :lead :veer-deg veer} {})
+        tags (if veer {:bez-cap :lead} {})
         acc (lower-rot-if acc :th th tha tags)
         acc (lower-rot-if acc :tv tv tva tags)
         acc (-> acc (update :commands conj {:cmd :f :args [dist]}) (update :state f dist))

@@ -153,7 +153,31 @@ Atterrato l'ultimo brief della Fase 2 (`dev-docs/brief-recording-highlevel-lettu
 
 **Difetto preesistente scoperto e corretto (non enumerato nel brief, ma necessario per completare correttamente il punto 2 — "side-trip convertiti mappando su `(:commands sub)`"):** la vecchia `project-2d-to-xy` applicava la rinomina tv→th/arc-v→arc-h anche al sotto-path di un `side-trip`, ma il corpo di un `side-trip` è una registrazione `(path ...)` indipendente — mai soggetta al rebinding di `path-2d` (verificato via nREPL: `(path-2d (side-trip (tv 10) ...))` registra un `:tv` genuino nel sotto-path, non un `:th` rinominato). Un side-trip con una vera rotazione 3D fuori piano tornava quindi come una svolta in piano dopo un ciclo confirm→riapertura. La nuova `project-2d-to-xy` lascia il sotto-path intatto, mirroring il fix già atterrato lato serializzazione (commit `842f7d8`).
 
-**Gate chiuso:** `:pure`/`:span`/`:veer-deg` non hanno più lettori in tutto `src/` (grep di uscita: solo emettitori/commenti/il guard difensivo — stesso stile del lato 3D, che già non li leggeva dalla Fase 2a). `:arc-cap` mantiene il suo lettore in `extrusion.cljs` (lo stamping del cap in estrusione, non più la lettura editor). **Fase 3 sbloccata**: la rimozione dell'emissione dei tag e l'aggiornamento dei golden possono procedere.
+**Gate chiuso:** `:pure`/`:span`/`:veer-deg` non hanno più lettori in tutto `src/` (grep di uscita: solo emettitori/commenti/il guard difensivo — stesso stile del lato 3D, che già non li leggeva dalla Fase 2a). `:arc-cap` mantiene il suo lettore in `extrusion.cljs` (lo stamping del cap in estrusione, non più la lettura editor). **Fase 3 sbloccata**: la rimozione dell'emissione dei tag e l'aggiornamento dei golden possono procedere. Commit: `4cf5e46`.
+
+## Esito Fase 3 (2026-07-07) — falciatura dei tag orfani, chiusa
+
+Atterrato `dev-docs/brief-recording-highlevel-fase3.md`, coi due prerequisiti formali citati (grep di uscita della lettura 2D + commit `4cf5e46`). Rimossa l'emissione dei tag di **ricostruzione** — quelli che esistevano per riportare a valle l'informazione analitica che la tessellazione a record time distruggeva, e che dopo le Fasi 1–2b e la lettura 2D non aveva più lettori:
+
+- `:pure`/`:span` (`lower-bezier-to`, turtle/core.cljs): rimossi il rider e la sua stampatura di fine funzione, con le variabili diventate morte (`c1-p0`, `c1-p0-len`, `veer-deg` in `lower-bezier-to`; `start-idx`/`end-idx` del blocco di stampatura);
+- `:veer-deg` dalle tag map di `lower-bezier-to` (il `th-tv-tags` del lead) e `lower-bezier-as-step` (il `tags` condizionato su `veer` — il gate `(if veer …)` resta, solo la chiave `:veer-deg veer` nella mappa sparisce).
+
+Restano i tag di **protocollo del lowering** (`:smooth`, `:arc-cap :lead/:trail`, `:bez-cap :lead`): letti ancora da `corner-rotation?`/`split-leading-cap` nell'estrusione, non toccati.
+
+**Effetto collaterale nel guard hard-error dell'editor** (non enumerato nel brief, sollevato in revisione): `seed->nodes-3d`/`seed->nodes` (edit_path.cljs) rilevavano un residuo di tessellazione controllando anche `:veer-deg`/`:pure`/`:span` — chiavi che non vengono più emesse. Lasciarle nel controllo sarebbe stato un rilevatore che smette di rilevare senza dirlo (silenzioso, non un errore leggibile). Ri-chiavato il rilevamento su `:smooth`/`:bez-cap`/`:arc-cap` — tag di protocollo, ancora emessi su ogni tessellazione di curva reale — verificato che non perde copertura: `:veer-deg` co-occorreva sempre con `:bez-cap :lead` sullo stesso comando, mai da solo.
+
+**Grep di uscita:** zero occorrenze di `:pure`/`:span`/`:veer-deg` come codice in `src/`; i residui sono tutti citazioni storiche in docstring/commenti (aggiornate per non descrivere in presente un meccanismo rimosso). L'unica eccezione di `:span` è `anim/core.cljs`/`anim/preprocess.cljs`'s `:span-ranges`/`:span-idx`, chiave non correlata (Architecture §6.3.1 lo nota già).
+
+**Diff dei golden** (`test/ridley/turtle/lower_commands_golden_test.cljs`): esclusivamente scomparsa delle chiavi `:pure`/`:span`/`:veer-deg` da 11 entry (`c4a`-`c4e`, `c5b`-`c5d`, `c8c`, `golden-c9a`/`golden-c9b`); zero variazioni numeriche o di struttura sulle chiavi restanti. `c4e` è il caso degenere notevole: il PRIMO comando emesso da un bezier era un `:f` altrimenti senza tag (nessuna rotazione superava la soglia di rumore), quindi portava `:pure` da solo — dopo la rimozione è un `:f` indistinguibile da un `:f` a mano, esattamente come gli altri tre `:f` dell'array.
+
+**Test aggiornati** (non comportamenti, solo pin dei tag rimossi — commento di congedo su ciascuno):
+- `bezier-records-pure-rider-for-reedit` → rinominato `bezier-tessellation-stays-smooth-tagged` (repl_test.cljs): tolte le asserzioni su `:pure`/`:span`, restano quelle sulla tessellazione/`:smooth`;
+- `follow-splices-high-level-so-bezier-pure-rider-tracks-outer-pose` → rinominato `follow-splices-high-level-bezier-verbatim` (lower_commands_golden_test.cljs): non ispeziona più il rider (sparito), verifica direttamente che il comando alto livello splice-ato sia byte-identico a quello del sotto-path (nessuna ricomputazione necessaria, essendo già locale) — il resto della garanzia (tessellazione corretta contro la posa reale) resta coperto da `c8c` nel golden;
+- `f6-analytic-veer-matches-record-time-tag` (shape_fidelity_net_test.cljs) rimosso: era l'oracolo del cutover di Fase 2b (la nuova formula analitica doveva concordare col vecchio tag), e senza il tag non c'è più nulla con cui confrontare — la formula (`curve-entry-veer-deg`) è ora l'unica fonte di verità, esercitata da ogni altro test delle Family 1-6 che lancia davvero il guard su un rail con testa curva.
+
+Suite completa: 439 test, 1331 assert, 0 failures (erano 440/1345 prima della potatura dei tre test/asserzioni sopra). Pinned mesh intatte (i tag non hanno mai toccato una mesh).
+
+**Fase 3 chiusa.** Resta un solo item nel piano: **2c** (resolution di consumo) — discussione semantica a sé, non ancora avviata.
 
 ## Cosa NON è in discussione
 

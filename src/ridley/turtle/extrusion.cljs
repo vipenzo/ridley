@@ -351,8 +351,11 @@
    :f/:u/:rt/:lt/nil have no curve at all; a degenerate :bezier-as (no segment
    ever resolves a :c1, e.g. rec-bezier-to-anchor*'s auto branch — whose c1
    is, by its own construction, exactly along the entry heading anyway) also
-   returns nil. nil is silently exempt, matching today's guard being exempt
-   whenever the tessellation never stamps a :veer-deg tag."
+   returns nil. nil is silently exempt here, matching the OLD micro-based
+   guard's own exemption (pre-Fase-2b): it was exempt whenever the
+   tessellation never stamped a :veer-deg tag (that tag, and the tessellation
+   step that used to stamp it, are both gone since Fase 3 — this is the only
+   formula now, no tag to fall back on)."
   [cmd]
   (case (:cmd cmd)
     :bezier-to (analytic-veer-deg (:c1 cmd))

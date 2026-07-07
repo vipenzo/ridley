@@ -39,10 +39,12 @@
    ;; spliced — same pattern as rec-append-curve!, generalized to a whole
    ;; command list. A curve's c1/c2/end are local-frame (Fase 1), so splicing
    ;; the high-level form composes correctly under whatever pose `path` is
-   ;; followed from: the :pure rider a bezier's lowering stamps gets computed
-   ;; fresh against the OUTER path's real entry pose here, instead of staying
-   ;; frozen at the sub-path's own recording-time frame (dev-docs/code-issues.md,
-   ;; \"il rider :pure di un bezier è congelato nel frame del sotto-path\").
+   ;; followed from: a bezier's tessellation gets computed fresh against the
+   ;; OUTER path's real entry pose here, instead of staying frozen at the
+   ;; sub-path's own recording-time frame — closed dev-docs/code-issues.md,
+   ;; \"il rider :pure di un bezier è congelato nel frame del sotto-path\"
+   ;; (the :pure rider that issue named is gone since Fase 3, but the
+   ;; composition guarantee this fixed still holds and is what matters).
    (defn- rec-follow* [path]
      (when (and (map? path) (= :path (:type path)))
        (let [cmds (:commands path)]
@@ -281,11 +283,11 @@
 
    ;; Recording version of bezier-to. Control-point resolution (explicit 2,
    ;; quadratic 1, or auto from headings/tension) stays at record time
-   ;; exactly as before; tessellation (:smooth/:bez-cap/:veer-deg tags, the
-   ;; end-tangent exit correction, the :pure/:span rider) now lives in
-   ;; lower-bezier-to (turtle/core), invoked via rec-append-curve! — the
-   ;; resolved c1/c2/end are encoded LOCAL (world->local-impl) so the
-   ;; command replays correctly from any consumption pose.
+   ;; exactly as before; tessellation (:smooth/:bez-cap tags, the end-tangent
+   ;; exit correction) now lives in lower-bezier-to (turtle/core), invoked via
+   ;; rec-append-curve! — the resolved c1/c2/end are encoded LOCAL
+   ;; (world->local-impl) so the command replays correctly from any
+   ;; consumption pose.
    (defn- rec-bezier-to* [target & args]
      (let [grouped (group-by vector? args)
            control-points (get grouped true)
@@ -364,9 +366,7 @@
    ;; using BOTH headings, encoded local and passed to lower-bezier-to with
    ;; :anchor-auto? true — the flag that gets it the 'smooth connection'
    ;; first-segment behavior (rotation target = entry heading, not the
-   ;; first chord) and suppresses the :pure rider, matching this branch's
-   ;; pre-existing asymmetry with plain bezier-to (see lower-bezier-to,
-   ;; turtle/core).
+   ;; first chord; see lower-bezier-to, turtle/core).
    (defn- rec-bezier-to-anchor* [target & raw-args]
      (let [;; Path-first form: (bezier-to-anchor path [:at] :mark & opts) — sugar
            ;; for (with-path path (bezier-to-anchor :mark ...)). Resolve the path's

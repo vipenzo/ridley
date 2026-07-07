@@ -619,7 +619,14 @@
             ;; hard error: a residual tessellated curve fragment must never
             ;; reach a seed after Parte 1 (follow) + Parte 2 (bake) — same
             ;; philosophy as Fase 1's run-path/replay-path-to-recording.
-            (or (:smooth c) (:bez-cap c) (:arc-cap c) (:veer-deg c))
+            ;; Detection keys on :smooth/:bez-cap/:arc-cap — the lowering->
+            ;; extrusion PROTOCOL tags, still emitted on every real curve
+            ;; tessellation after Fase 3 (dev-docs/brief-recording-highlevel-
+            ;; fase3.md) removed :veer-deg/:pure/:span (reconstruction aids
+            ;; this guard never actually needed: they always co-occurred with
+            ;; :bez-cap/:smooth on the very same command, so dropping them
+            ;; from the check loses no real coverage).
+            (or (:smooth c) (:bez-cap c) (:arc-cap c))
             (throw (js/Error. (str "seed->nodes-3d: unexpected tessellated curve fragment "
                                    cmd " in seed — missing a Fase 2a migration?")))
 
@@ -754,8 +761,9 @@
 ;; The 3D editor's curve primitive is the cubic bezier (node carries :bez {:c1 :c2},
 ;; world handles). It bakes to ONE compact (bezier-to [end][c1][c2] :local) command —
 ;; bezier-to tessellates at eval-time with its OWN rotation-minimizing frame (the up
-;; is parallel-transported, continuous across the seam → no pinch), and tags the run
-;; with :pure so re-edit recovers it as a single node. Arcs are NOT baked in 3D: the
+;; is parallel-transported, continuous across the seam → no pinch); re-edit recovers
+;; it as a single node by reading this same high-level command directly
+;; (seed->nodes-3d), no tessellation or tag involved. Arcs are NOT baked in 3D: the
 ;; `a` key and a hand-written arc-h are converted to an equivalent bezier (see
 ;; arc->bez-handles), keeping the baked rail compact and twist-free.
 
@@ -889,11 +897,12 @@
    recorder's own schema, dev-docs/brief-recording-highlevel-fase2a.md) — compact
    in the source (cmd->code re-renders it as (bezier-to [end][c1][c2] :local)), and
    lower-commands frames it with a rotation-minimizing sweep at lowering time, so the
-   up is continuous across the seam (no pinch) and the tessellation carries a :pure
-   tag for re-edit. c1/c2/end are LOCAL to the segment's entry frame, composing under
-   the consumption pose like every other Fase 1 high-level command. Node 0 is the
-   pinned anchor at the origin. With no curves this delegates to the proven
-   positions->rmf-commands (byte-identical to ensure-untwisted)."
+   up is continuous across the seam (no pinch); re-edit reads the high-level command
+   itself (seed->nodes-3d), no tessellation tag needed. c1/c2/end are LOCAL to the
+   segment's entry frame, composing under the consumption pose like every other
+   Fase 1 high-level command. Node 0 is the pinned anchor at the origin. With no
+   curves this delegates to the proven positions->rmf-commands (byte-identical to
+   ensure-untwisted)."
   [nodes]
   (cond
     (< (count nodes) 2) (vec (:tail (first nodes)))   ; lone anchor: just its marks
@@ -962,7 +971,8 @@
    the pose (embedded at [0 -a b]) instead of offsetting bezier riders by hand;
    mark/side-trip attach to the current node's :tail. The last node keeps its
    final (exit) heading. Throws on a non-leading move-to, or on a residual
-   tessellated curve fragment (:pure/:span/:smooth/:bez-cap/:arc-cap/:veer-deg) —
+   tessellated curve fragment (:smooth/:bez-cap/:arc-cap — the lowering->
+   extrusion protocol tags, dev-docs/brief-recording-highlevel-fase3.md) —
    after Fase 1 a 2D seed never carries those (same hard-error philosophy as
    seed->nodes-3d). Unsupported commands are dropped (unchanged from before).
 
@@ -991,9 +1001,18 @@
              res (reduce
                   (fn [{:keys [pos heading up nodes] :as st} {:keys [cmd args] :as c}]
                     (cond
-                      (or (:smooth c) (:bez-cap c) (:arc-cap c) (:veer-deg c) (:pure c) (:span c))
+                      ;; Detection keys on :smooth/:bez-cap/:arc-cap — the
+                      ;; lowering->extrusion PROTOCOL tags, still emitted on
+                      ;; every real curve tessellation after Fase 3 (dev-docs/
+                      ;; brief-recording-highlevel-fase3.md) removed
+                      ;; :veer-deg/:pure/:span (reconstruction aids this guard
+                      ;; never actually needed for detection: they always
+                      ;; co-occurred with :bez-cap/:smooth on the same
+                      ;; command, so dropping them loses no real coverage).
+                      (or (:smooth c) (:bez-cap c) (:arc-cap c))
                       (throw (js/Error. (str "seed->nodes: unexpected tessellated curve fragment "
-                                             cmd " in 2D seed — missing a Fase 3 migration?")))
+                                             cmd " in 2D seed — a raw curve tessellation must never "
+                                             "reach a high-level command reader.")))
 
                       (= :move-to cmd)
                       (let [[a b] (first args)]

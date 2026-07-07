@@ -382,8 +382,7 @@
 ;; net); this family pins the fine-grained behaviors the brief calls out by
 ;; name — NET rotation reduction, :mark/:side-trip inertness, and the
 ;; negative-neutrality guarantee that extrude-closed never gained a check it
-;; never had — plus the property-test oracle that the new analytic formula
-;; agrees with the record-time :veer-deg tag it replaces.
+;; never had.
 ;; ════════════════════════════════════════════════════════════════════
 
 (deftest f6-explicit-net-reduction-cancels
@@ -412,26 +411,12 @@
                            "(extrude-closed (rect 10 5) (th 45) (f 20) (th 90) (f 15) (th 90) (f 20) (th 90) (f 15))")]
       (is (nil? error) (str "extrude-closed must not trip the rail-start guard; got: " error)))))
 
-(deftest f6-analytic-veer-matches-record-time-tag
-  ;; The refactor's oracle: for every curve-headed rail already exercised
-  ;; above, the NEW formula (extrusion/curve-entry-veer-deg, on c1's local
-  ;; components) must equal the :veer-deg the OLD tessellation used to tag —
-  ;; or both must be ~0/absent (bezier-to-anchor's auto branch, which the
-  ;; tessellation never tags at all — see Family 5's docstring). If they
-  ;; diverge, the new formula is not the record-time one.
-  (testing "curve-entry-veer-deg matches the tessellated :veer-deg tag (or both are ~0) for every curve-headed rail"
-    (doseq [[label rail] [["tangent bezier" TANGENT-BEZ]
-                          ["crooked bezier" BEZIER-STORTO]
-                          ["tangent bezier steps=8" (tangent-bez-storto 8)]
-                          ["tangent bezier steps=64" (tangent-bez-storto 64)]
-                          ["bezier 10deg off-axis" BEZ-10DEG]
-                          ["bezier-as default" (bezier-as-storto 16)]
-                          ["bezier-as :control" BEZIER-AS-STORTO-CONTROL]
-                          ["bezier-as :cubic" (bezier-as-storto-cubic 16)]
-                          ["bezier-to-anchor auto off-axis" ANCHOR-OFF-AXIS]]]
-      (let [path (ev rail)
-            veer-new (ext/curve-entry-veer-deg (first (:commands path)))
-            initial-micro (take-while #(not= :f (:cmd %)) (turtle/path-micro-commands path))
-            veer-old (some :veer-deg initial-micro)]
-        (is (< (Math/abs (- (or veer-new 0) (or veer-old 0))) 1e-9)
-            (str label ": new=" veer-new " old=" veer-old))))))
+;; f6-analytic-veer-matches-record-time-tag retired (dev-docs/brief-recording-
+;; highlevel-fase3.md): it was the Fase 2b cutover's oracle, proving the new
+;; analytic curve-entry-veer-deg formula agreed with the OLD tessellation's
+;; :veer-deg tag before that tag's last reader (the old micro-based guard) was
+;; replaced. Fase 3 removed :veer-deg's emission entirely — there is no longer
+;; an "old" value to compare against, so the comparison is retired along with
+;; the tag. curve-entry-veer-deg is now the only formula and needs no oracle;
+;; its correctness is exercised by every other Family 1-6 test that actually
+;; runs the guard against a curve-headed rail.

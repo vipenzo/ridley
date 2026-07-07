@@ -21,13 +21,22 @@
    (c9a is captured again after the global resolution changes).
 
    Fase 2a exception (dev-docs/brief-recording-highlevel-fase2a.md, Parte 1):
-   `follow` now splices HIGH-LEVEL commands instead of already-lowered ones,
-   so a bezier's :pure rider gets recomputed against the actual outer path
-   instead of staying frozen in the sub-path's own frame. c8c's golden was
-   captured POST-fix (deliberately, per the brief) — its movement/rotation
-   micro-commands are pose-invariant and match what pre-fix would also
-   produce (verified by hand before landing); only the :pure rider's c1/c2/
-   end differ from what a naive pre-fix capture would show."
+   `follow` now splices HIGH-LEVEL commands instead of already-lowered ones.
+   c8c's golden was captured POST-fix (deliberately, per the brief) — its
+   movement/rotation micro-commands are pose-invariant and match what
+   pre-fix would also produce (verified by hand before landing).
+
+   Fase 3 exception (dev-docs/brief-recording-highlevel-fase3.md): the
+   golden literals below have had their `:pure`/`:span`/`:veer-deg` keys
+   removed — those tags are no longer emitted at all (no reader needed them
+   after the 2D/3D editors switched to interpreting high-level `:commands`
+   directly, dev-docs/brief-recording-highlevel-lettura-2d.md). This is the
+   ONE admitted diff against the original pre-fix capture: every remaining
+   key/number is untouched. c8c's comment used to describe the :pure rider
+   tracking the outer path's real entry pose instead of the sub-path's own —
+   that rider is gone, but the underlying guarantee (a spliced high-level
+   command decodes against the actual splice-point pose) is still exercised
+   by c8c's own tessellated numbers, which would drift if it broke."
   (:require [cljs.test :refer [deftest testing is]]
             [clojure.walk :as walk]
             [ridley.editor.sci-harness :as h]
@@ -61,11 +70,12 @@
              (path (f 10) (follow sub) (f 10)))"
    ;; Fase 2a: follow splices HIGH-LEVEL commands now (dev-docs/brief-
    ;; recording-highlevel-fase2a.md, Parte 1) — a bezier inside `sub`,
-   ;; preceded by a rotation in the outer path, is the trap test: movement
-   ;; micro-commands must stay pose-invariant (identical), only the :pure
-   ;; rider's c1/c2/end change (now correctly re-expressed against outer's
-   ;; real entry pose, instead of staying frozen in sub's own frame — see
-   ;; dev-docs/code-issues.md, \"il rider :pure ... è congelato\").
+   ;; preceded by a rotation in the outer path, is the trap test: its
+   ;; tessellated micro-commands must be decoded against the OUTER path's
+   ;; real entry pose, not the sub-path's own identity pose (the bug this
+   ;; closed, dev-docs/code-issues.md, \"il rider :pure ... è congelato\") —
+   ;; a wrong entry pose would shift every angle/distance below, so this
+   ;; golden entry is itself the regression check.
    :c8c "(do (def sub2 (path (bezier-to [10 0 5] :steps 4)))
               (path (th 90) (follow sub2) (f 3)))"})
 
@@ -93,8 +103,7 @@
          {:cmd :tv, :args [20]} {:cmd :f, :args [2.7783708426708853]}
          {:cmd :tv, :args [20]} {:cmd :f, :args [2.7783708426708853]}
          {:cmd :tv, :args [10], :arc-cap :trail}]
-   :c4a [{:cmd :th, :args [33.23171106797936], :smooth true, :bez-cap :lead, :veer-deg 45.00000000000001,
-          :pure {:cmd :bezier-to, :c1 [5 5 0], :c2 [15 5 0], :end [20 10 0], :span 8}}
+   :c4a [{:cmd :th, :args [33.23171106797936], :smooth true, :bez-cap :lead}
          {:cmd :f, :args [5.417167444799912]}
          {:cmd :th, :args [-12.855275854142974], :smooth true}
          {:cmd :f, :args [5.833798344560772]}
@@ -102,8 +111,7 @@
          {:cmd :th, :args [12.855275854142969], :smooth true}
          {:cmd :f, :args [5.417167444799912]}
          {:cmd :th, :args [11.768288932020644], :smooth true}]
-   :c4b [{:cmd :th, :args [43.45184230102203], :smooth true, :bez-cap :lead, :veer-deg 45.00000000000001,
-          :pure {:cmd :bezier-to, :c1 [10 10 0], :c2 [10 10 0], :end [20 0 0], :span 9}}
+   :c4b [{:cmd :th, :args [43.45184230102203], :smooth true, :bez-cap :lead}
          {:cmd :f, :args [8.178907705189001]}
          {:cmd :th, :args [-18.67670173219011], :smooth true}
          {:cmd :f, :args [4.47431908227386]}
@@ -112,8 +120,7 @@
          {:cmd :th, :args [-18.676701732190118], :smooth true}
          {:cmd :f, :args [8.178907705189001]}
          {:cmd :th, :args [-1.5481576989779626], :smooth true}]
-   :c4c [{:cmd :th, :args [11.687685807512748], :smooth true, :bez-cap :lead, :veer-deg 0,
-          :pure {:cmd :bezier-to, :c1 [7.379024325749307 0 0], :c2 [13.399999999999999 6.699999999999999 0], :end [20 10 0], :span 9}}
+   :c4c [{:cmd :th, :args [11.687685807512748], :smooth true, :bez-cap :lead}
          {:cmd :f, :args [5.422325366084945]}
          {:cmd :th, :args [16.446287986314555], :smooth true}
          {:cmd :f, :args [5.649767872148324]}
@@ -122,15 +129,14 @@
          {:cmd :th, :args [-2.932020929500846], :smooth true}
          {:cmd :f, :args [5.6976869193099615]}
          {:cmd :th, :args [-4.671774389003893], :smooth true}]
-   :c4d [{:cmd :th, :args [-35.889969533501734], :smooth true, :bez-cap :lead, :veer-deg 0,
-          :pure {:cmd :bezier-to, :c1 [3.6895121628746534 0 0], :c2 [3.3499999999999996 -6.699999999999999 0], :end [5 -10 0], :span 7}}
+   :c4d [{:cmd :th, :args [-35.889969533501734], :smooth true, :bez-cap :lead}
          {:cmd :f, :args [3.171549652364789]}
          {:cmd :th, :args [-37.4571008519544], :smooth true}
          {:cmd :f, :args [4.26016005899636]}
          {:cmd :th, :args [-0.057851784261887904], :smooth true}
          {:cmd :f, :args [4.235687884414417]}
          {:cmd :th, :args [9.969973346796014], :smooth true}]
-   :c4e [{:cmd :f, :args [5.9375], :pure {:cmd :bezier-to, :c1 [10 0 0], :c2 [10 0 0], :end [20 0 0], :span 4}}
+   :c4e [{:cmd :f, :args [5.9375]}
          {:cmd :f, :args [4.0625]} {:cmd :f, :args [4.0625]} {:cmd :f, :args [5.9375]}]
    :c5a [{:cmd :f, :args [3.325925925925926]} {:cmd :f, :args [3.348148148148148]} {:cmd :f, :args [3.325925925925926]}
          {:cmd :th, :args [16.811589758127038]} {:cmd :f, :args [3.2142042519245124]}
@@ -141,7 +147,7 @@
          {:cmd :th, :args [11.192362284686746]} {:cmd :th, :args [-24.22846367322487]}
          {:cmd :f, :args [3.4016329045652562]} {:cmd :th, :args [-0.027779665075541183]}
          {:cmd :f, :args [3.379471569103428]} {:cmd :th, :args [4.256243338300386]}]
-   :c5b [{:cmd :th, :args [-3.241852521589766], :bez-cap :lead, :veer-deg 0}
+   :c5b [{:cmd :th, :args [-3.241852521589766], :bez-cap :lead}
          {:cmd :f, :args [3.3562846411294633]} {:cmd :th, :args [3.2418525215897662]}
          {:cmd :th, :args [-3.220540299383579]} {:cmd :f, :args [3.378471535346253]}
          {:cmd :th, :args [9.83021993634037]} {:cmd :f, :args [3.2978703144135557]}
@@ -154,7 +160,7 @@
          {:cmd :th, :args [-12.1708959591736]} {:cmd :f, :args [3.3617018663524103]}
          {:cmd :th, :args [-0.01444247736513865]} {:cmd :f, :args [3.339495699401179]}
          {:cmd :th, :args [2.185338436538741]}]
-   :c5c [{:cmd :th, :args [2.634606018523227], :bez-cap :lead, :veer-deg 0}
+   :c5c [{:cmd :th, :args [2.634606018523227], :bez-cap :lead}
          {:cmd :f, :args [6.043068370621227]} {:cmd :th, :args [-2.6346060185232276]}
          {:cmd :th, :args [9.896090638982898]} {:cmd :f, :args [4.848854851960684]}
          {:cmd :th, :args [11.654795998838784]} {:cmd :f, :args [3.781065076110234]}
@@ -163,7 +169,7 @@
          {:cmd :th, :args [-13.363727411622994]} {:cmd :f, :args [4.932536670794481]}
          {:cmd :th, :args [-4.84555228587903]} {:cmd :f, :args [6.080576554852279]}
          {:cmd :th, :args [-1.790720302497968]}]
-   :c5d [{:cmd :th, :args [1.92634506333143], :bez-cap :lead, :veer-deg 0}
+   :c5d [{:cmd :th, :args [1.92634506333143], :bez-cap :lead}
          {:cmd :f, :args [4.648259831751349]} {:cmd :th, :args [-1.92634506333143]}
          {:cmd :th, :args [6.790001605990572]} {:cmd :f, :args [3.9647066537512523]}
          {:cmd :mark, :args [:mid]}
@@ -183,11 +189,7 @@
          {:cmd :f, :args [10]}]
    :c8b [{:cmd :f, :args [10]} {:cmd :f, :args [5]} {:cmd :th, :args [10]} {:cmd :f, :args [5]} {:cmd :f, :args [10]}]
    :c8c [{:cmd :th, :args [90]}
-         {:cmd :tv, :args [11.687685807512748], :smooth true, :bez-cap :lead, :veer-deg 0,
-          :pure {:cmd :bezier-to,
-                 :c1 [2.2591746303398364E-16 3.6895121628746534 0],
-                 :c2 [4.102566777143633E-16 6.699999999999999 3.3499999999999996],
-                 :end [6.123233995736766E-16 10 5], :span 9}}
+         {:cmd :tv, :args [11.687685807512748], :smooth true, :bez-cap :lead}
          {:cmd :f, :args [2.7111626830424727]}
          {:cmd :tv, :args [16.44628798631455], :smooth true}
          {:cmd :f, :args [2.824883936074162]}
@@ -199,8 +201,7 @@
          {:cmd :f, :args [3]}]})
 
 (def ^:private golden-c9a
-  [{:cmd :th, :args [11.687685807512748], :smooth true, :bez-cap :lead, :veer-deg 0,
-    :pure {:cmd :bezier-to, :c1 [7.379024325749307 0 0], :c2 [13.399999999999999 6.699999999999999 0], :end [20 10 0], :span 9}}
+  [{:cmd :th, :args [11.687685807512748], :smooth true, :bez-cap :lead}
    {:cmd :f, :args [5.422325366084945]}
    {:cmd :th, :args [16.446287986314555], :smooth true}
    {:cmd :f, :args [5.649767872148324]}
@@ -211,8 +212,7 @@
    {:cmd :th, :args [-4.671774389003893], :smooth true}])
 
 (def ^:private golden-c9b
-  [{:cmd :th, :args [4.208257652937551], :smooth true, :bez-cap :lead, :veer-deg 0,
-    :pure {:cmd :bezier-to, :c1 [7.379024325749307 0 0], :c2 [13.399999999999999 6.699999999999999 0], :end [20 10 0], :span 25}}
+  [{:cmd :th, :args [4.208257652937551], :smooth true, :bez-cap :lead}
    {:cmd :f, :args [1.8224980083510274]} {:cmd :th, :args [7.856667093033361], :smooth true}
    {:cmd :f, :args [1.8076535568083243]} {:cmd :th, :args [6.7280660739980185], :smooth true}
    {:cmd :f, :args [1.8217092453249586]} {:cmd :th, :args [5.466892332133611], :smooth true}
@@ -242,9 +242,8 @@
    points and directions through world->local/local->world first, which is
    mathematically an identity but not bit-identical (floating-point
    non-associativity) — a ~1e-12 relative difference in the last couple of
-   significant digits is expected there, not a regression. :span (an exact
-   integer count) still has to match exactly, same as everything non-numeric
-   (tags, keywords, structure)."
+   significant digits is expected there, not a regression. Everything
+   non-numeric (tags, keywords, structure) still has to match exactly."
   [a b]
   (cond
     (and (number? a) (number? b)) (< (abs (- a b)) 1e-6)
@@ -268,31 +267,30 @@
       (is (approx= [golden-c9a golden-c9b]
                    (strip-micro-commands [(turtle/path-micro-commands c9a) (turtle/path-micro-commands c9b)]))))))
 
-(deftest follow-splices-high-level-so-bezier-pure-rider-tracks-outer-pose
+(deftest follow-splices-high-level-bezier-verbatim
   ;; Regression for dev-docs/code-issues.md, "Il rider :pure di un bezier è
   ;; congelato nel frame del sotto-path, non del path che lo `follow`a" — closed
   ;; by dev-docs/brief-recording-highlevel-fase2a.md Parte 1 (rec-follow* now
-  ;; splices sub's HIGH-LEVEL commands, so :pure is recomputed against the
-  ;; outer path's real entry pose when lower-commands tessellates it). c8c in
-  ;; the golden corpus above covers the same fix at the :commands level; this
-  ;; test asserts the rider's WORLD c1/c2/end are actually correct, not just
-  ;; different from sub's own frame.
-  (testing "outer :pure rider matches sub's local c1/c2/end transformed through outer's real entry pose"
+  ;; splices sub's HIGH-LEVEL commands instead of already-lowered/tessellated
+  ;; ones). Fase 3 (dev-docs/brief-recording-highlevel-fase3.md) removed the
+  ;; :pure rider this test used to inspect after tessellation — but the
+  ;; behavior it was protecting is broader than the rider ever was: a
+  ;; high-level bezier-to's c1/c2/end are LOCAL to its entry pose, so splicing
+  ;; must NOT transform them at all (unlike the old micro-command splice,
+  ;; which had to re-tessellate against a new absolute frame). This asserts
+  ;; that directly on (:commands outer) — no lowering involved — and c8c in
+  ;; the golden corpus above covers the other half: that tessellating the
+  ;; spliced command against the outer path's real entry pose (post `th 90`)
+  ;; still produces the correct world geometry.
+  (testing "outer path's spliced bezier-to is byte-identical to sub's own, not recomputed"
     (let [{:keys [result error]}
           (h/eval-dsl "(do (def sub (path (bezier-to [10 0 5] :steps 4)))
                             [sub (path (th 90) (follow sub))])")
           [sub outer] result
           sub-cmd (first (:commands sub))
-          outer-pure (:pure (first (filter :pure (turtle/path-micro-commands outer))))
-          entry (turtle/th {:heading [1 0 0] :up [0 0 1]} 90)
-          expect (fn [local] (turtle/local->world {:position [0 0 0]
-                                                   :heading (:heading entry) :up (:up entry)}
-                                                  local))]
+          outer-cmd (last (:commands outer))]
       (is (nil? error) (str "raised: " error))
-      (is (some? outer-pure) "outer path's spliced bezier must carry a :pure rider")
-      (is (approx= (expect (:c1 sub-cmd)) (:c1 outer-pure))
-          "rider c1 must be computed against the outer path's real entry pose (post th 90), not sub's identity pose")
-      (is (approx= (expect (:c2 sub-cmd)) (:c2 outer-pure)))
-      (is (approx= (expect (:end sub-cmd)) (:end outer-pure)))
-      (is (not (approx= (:c1 sub-cmd) (:c1 outer-pure)))
-          "rider must differ from sub's own frozen local encoding — proves it is not stale"))))
+      (is (= :bezier-to (:cmd outer-cmd)) "the spliced high-level command rides along unchanged")
+      (is (= (:c1 sub-cmd) (:c1 outer-cmd)))
+      (is (= (:c2 sub-cmd) (:c2 outer-cmd)))
+      (is (= (:end sub-cmd) (:end outer-cmd))))))
