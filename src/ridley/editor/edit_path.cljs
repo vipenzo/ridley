@@ -158,8 +158,6 @@
               c))
           cmds)))
 (defn- v2-dot [[ax ay] [bx by]] (+ (* ax bx) (* ay by)))
-(defn- right-of [[hx hy]] [hy (- hx)])     ; turtle 'right' in the 2D trace frame
-(defn- left-of  [[hx hy]] [(- hy) hx])
 (defn- dir-eq? [a b] (> (v2-dot a b) 0.99995))
 
 (defn- signed-angle
@@ -928,89 +926,53 @@
        (apply str (map #(str " " (cmd->code %)) (nodes->commands-3d nodes)))
        ")"))
 
-;; -- arc-run recovery (re-editing a baked arc) ---------------------------
-;; rec-arc-h* tessellates an arc into f/th steps, tagging the leading and trailing
-;; half-rotations with :arc-cap :lead / :trail. Those tags ride along in the path
-;; value's :commands, so we can find an arc run and collapse it back into ONE arc
-;; node (belly = a point sampled on the run, which fits the exact circle).
-
-(defn- in-plane-cmd?
-  "A command that keeps the trace in the working plane (recoverable as an arc node)."
-  [c]
-  (contains? #{:f :th :rt :lt} (:cmd c)))
-
-(defn- group-curve-runs
-  "Collapse each tessellated curve run back into a single group so seed->nodes can
-   rebuild it as one node:
-   - a bezier carries a :pure {:cmd :bezier-to :c1 :c2 :end :span n} tag on its first
-     command (added by rec-bezier-to*) → {:cmd :bezier-node :pure …}, skipping :span;
-   - an arc is a :arc-cap :lead … :arc-cap :trail run of in-plane commands →
-     {:cmd :arc-run :sub […]}.
-   Out-of-plane curves are left as-is (they fall through to the normal drop)."
-  [cmds]
-  (loop [cs cmds out []]
-    (if (empty? cs)
-      out
-      (let [c (first cs)]
-        (cond
-          (and (:pure c) (= :bezier-to (:cmd (:pure c))))
-          (let [span (:span (:pure c)) run (take span cs)]
-            (recur (drop span cs)
-                   (conj out {:cmd :bezier-node :pure (:pure c)
-                              :moves (count (filter #(move-cmd? (:cmd %)) run))})))
-
-          (= :lead (:arc-cap c))
-          (let [[run more] (split-with #(not= :trail (:arc-cap %)) cs)
-                run (vec (concat run (take 1 more)))   ; include the :trail command
-                more (rest more)]
-            (if (and (>= (count run) 2) (every? in-plane-cmd? run))
-              (recur more (conj out {:cmd :arc-run :sub run}))
-              (recur more (into out run))))
-
-          :else (recur (rest cs) (conj out c)))))))
-
-(defn- walk-arc-sub
-  "Walk an arc run's in-plane sub-commands from [pos heading], collecting the f-step
-   points (inclusive of the start). Returns {:pts [...] :heading exit-heading}. The
-   points lie on the arc's circle, so any of them fits the exact arc (3-point)."
-  [pos heading sub]
-  (let [step (fn [{:keys [pos heading pts]} dir d]
-               (let [np [(+ (first pos) (* (first dir) d))
-                         (+ (second pos) (* (second dir) d))]]
-                 {:pos np :heading heading :pts (conj pts np)}))]
-    (reduce (fn [{:keys [heading] :as s} c]
-              (case (:cmd c)
-                :f  (step s heading (first (:args c)))
-                :rt (step s (right-of heading) (first (:args c)))
-                :lt (step s (left-of heading) (first (:args c)))
-                :th (assoc s :heading (rotate-dir heading (first (:args c))))
-                s))
-            {:pos pos :heading heading :pts [pos]}
-            sub)))
+;; -- 2D arc segments -----------------------------------------------------------
+;; The DSL's in-plane arc-h/arc-v alias (see path-2d's local rebinding, macros.cljs)
+;; always records as a genuine :arc-v — rotation axis = right, the fixed plane
+;; normal (never touched by an in-plane turn, see the :th case below) — regardless
+;; of which name the user wrote. project-2d-to-xy renames the tag to :arc-h purely
+;; so this reads uniformly with a native 3D command stream; the physics stays
+;; axis=right. Verified against turtle/arc-v directly over nREPL (both from the
+;; path-2d seed pose and from the 3D-standard [1 0 0]/[0 0 1] pose) — NOT the same
+;; formula as edit-path's own arc-v-endpoint (3D, seed->nodes-3d), whose :end
+;; disagrees with turtle/arc-v by a sign (pre-existing, out of scope here; this is
+;; an independent, checked closed form).
+(defn- arc-2d-endpoint
+  [pos heading up r theta]
+  (let [s (js/Math.sin theta) c (js/Math.cos theta)]
+    {:end    (m/v+ pos (m/v+ (m/v* heading (* r s)) (m/v* up (* r (- 1 c)))))
+     :exit-h (m/v+ (m/v* heading c) (m/v* up s))
+     :exit-u (m/v- (m/v* up c) (m/v* heading s))}))
 
 (defn- seed->nodes
-  "Parse the seed path body into {:nodes [{:pos :heading :tail} …] :closed? bool :dropped […]}.
-   f/th/set-heading drive positions and heading; rt/lt are in-plane strafes
-   (heading kept); a baked arc run (:arc-cap-tagged f/th) is recovered as one arc
-   node; mark/side-trip attach to the current node's :tail; a leading move-to
-   anchors the start. The last node keeps its final (exit) heading. Throws on a
-   non-leading move-to. Unsupported commands (beziers, u/tv/tr, …) are dropped.
+  "Recover 2D editor nodes straight from the recorder's own high-level commands
+   (project-2d-to-xy's species-normalized stream) — the 2D twin of seed->nodes-3d,
+   dev-docs/brief-recording-highlevel-lettura-2d.md: the SAME pose walk (reduce
+   threading {pos heading up} in full 3D, decoding :bezier-to's c1/c2/end with
+   turtle/local->world against the entry pose and advancing the exit frame with
+   canonical-bezier-frame), followed by a projection onto the shape's (a,b) plane
+   (a,b) = (-y,z). A :bezier-to IS one bezier node; an :arc-h IS one arc node with
+   radius/sweep read straight from its args (arc-2d-endpoint, exact) — no
+   reconstruction from tessellation, and no separate 'frame flip' tracking either
+   ([[project-edit-path-2d]]'s wps-indexing hack): the projection always reads off
+   whichever way the (genuinely-3D) frame is actually facing, so a bezier that
+   turns the in-plane normal around just falls out correct.
 
-   `closed?` (the path's :closed? flag): the bake always emits a closing segment back
-   to node 0, so the LAST recovered node is that segment's endpoint (≈ node 0, modulo
-   bake rounding). Fold it away — a curved seam's :bez moves onto node 0 (whose :bez
-   slot holds the closing segment)."
-  ([seed-path] (seed->nodes seed-path false nil))
-  ([seed-path closed?] (seed->nodes seed-path closed? nil))
-  ([seed-path closed? wps]
-   (let [cmds (when (and (map? seed-path) (= :path (:type seed-path)))
-                (turtle/path-micro-commands seed-path))
-         ;; True planar node positions, indexed by move-command count: the flat
-         ;; th/f replay is unfaithful where a bezier flipped the in-plane frame, so
-         ;; when the caller supplies the real trace (ensure-path-2d of the :2d seed)
-         ;; we OVERRIDE each node's position from it. wpos falls back to the flat
-         ;; position when no trace is given (or it runs short). [[project-edit-path-2d]]
-         wpos (fn [mi flat] (if (and wps (< mi (count wps))) (:pos (nth wps mi)) flat))]
+   f/th/set-heading drive position/heading/up; a leading move-to is threaded into
+   the pose (embedded at [0 -a b]) instead of offsetting bezier riders by hand;
+   mark/side-trip attach to the current node's :tail. The last node keeps its
+   final (exit) heading. Throws on a non-leading move-to, or on a residual
+   tessellated curve fragment (:pure/:span/:smooth/:bez-cap/:arc-cap/:veer-deg) —
+   after Fase 1 a 2D seed never carries those (same hard-error philosophy as
+   seed->nodes-3d). Unsupported commands are dropped (unchanged from before).
+
+   `closed?` (the path's :closed? flag): the bake always emits a closing segment
+   back to node 0, so the LAST recovered node is that segment's endpoint (≈ node 0,
+   modulo bake rounding). Fold it away — a curved seam's :bez moves onto node 0
+   (whose :bez slot holds the closing segment)."
+  ([seed-path] (seed->nodes seed-path false))
+  ([seed-path closed?]
+   (let [cmds (when (and (map? seed-path) (= :path (:type seed-path))) (:commands seed-path))]
      (cond
        (empty? cmds)
        {:nodes (mapv (fn [p] {:pos p :heading nil :tail []}) default-nodes) :closed? false :dropped []}
@@ -1020,60 +982,69 @@
        (throw (js/Error. "edit-path: (move-to …) is only supported as the first command."))
 
        :else
-       (let [[sx sy] (let [c0 (first cmds)]
-                       (if (= :move-to (:cmd c0))
-                         (let [t (first (:args c0))] [(first t) (second t)])
-                         [0 0]))
-             move (fn [st delta-dir d]
-                    (let [pos (:pos st) heading (:heading st)
-                          flat [(+ (first pos) (* (first delta-dir) d))
-                                (+ (second pos) (* (second delta-dir) d))]
-                          mi' (inc (:mi st))
-                          np (wpos mi' flat)]
-                      (-> st (assoc :pos np :mi mi')
-                          (update :nodes conj {:pos np :heading heading :tail []}))))
+       (let [proj-pt (fn [[_ y z]] [(- y) z])
+             proj-dir (fn [[_ y z]] (v2-norm [(- y) z]))
+             move (fn [st dir d]
+                    (let [np (m/v+ (:pos st) (m/v* dir d))]
+                      (-> st (assoc :pos np)
+                          (update :nodes conj {:pos (proj-pt np) :heading (proj-dir (:heading st)) :tail []}))))
              res (reduce
-                  (fn [{:keys [heading nodes mi] :as st} cmd]
-                    (case (:cmd cmd)
-                      :move-to st                       ; leading one already used
-                      :f  (move st heading (first (:args cmd)))
-                      :rt (move st (right-of heading) (first (:args cmd)))
-                      :lt (move st (left-of heading) (first (:args cmd)))
-                      :th (assoc st :heading (rotate-dir heading (first (:args cmd))))
-                      :set-heading (let [[h _] (:args cmd)]
-                                     (assoc st :heading (v2-norm [(first h) (second h)])))
-                      ;; a baked bezier → one bezier node (c1/c2 from the :pure tag,
-                      ;; already in shape coords; the END position comes from the real
-                      ;; trace via the move-index). Exit heading ∝ end−c2.
-                      :bezier-node
-                      (let [{:keys [c1 c2 end]} (:pure cmd)
-                            xy (fn [p] [(nth p 0) (nth p 1)])
-                            ehead (v2-norm [(- (nth end 0) (nth c2 0))
-                                            (- (nth end 1) (nth c2 1))])
-                            mi' (+ mi (:moves cmd 1))
-                            np (wpos mi' (xy end))]
+                  (fn [{:keys [pos heading up nodes] :as st} {:keys [cmd args] :as c}]
+                    (cond
+                      (or (:smooth c) (:bez-cap c) (:arc-cap c) (:veer-deg c) (:pure c) (:span c))
+                      (throw (js/Error. (str "seed->nodes: unexpected tessellated curve fragment "
+                                             cmd " in 2D seed — missing a Fase 3 migration?")))
+
+                      (= :move-to cmd)
+                      (let [[a b] (first args)]
+                        (-> st (assoc :pos [0 (- a) b])
+                            (assoc-in [:nodes 0 :pos] [a b])))
+
+                      (= :f cmd) (move st heading (first args))
+                      (= :b cmd) (move st heading (- (first args)))
+
+                      ;; the DSL's in-plane turn — recorded as a genuine :tv
+                      ;; (rotate heading & up together around the fixed right
+                      ;; axis), renamed :th by project-2d-to-xy.
+                      (= :th cmd)
+                      (let [right (m/normalize (m/cross heading up))
+                            rad (* (first args) (/ js/Math.PI 180))]
+                        (assoc st :heading (rot-axis right heading rad)
+                               :up (rot-axis right up rad)))
+
+                      (= :set-heading cmd)
+                      (let [new-frame (turtle/apply-set-heading {:heading heading :up up} args)]
+                        (assoc st :heading (:heading new-frame) :up (:up new-frame)))
+
+                      (= :bezier-to cmd)
+                      (let [entry {:position pos :heading heading :up up}
+                            c1-w (turtle/local->world entry (:c1 c))
+                            c2-w (turtle/local->world entry (:c2 c))
+                            end-w (turtle/local->world entry (:end c))
+                            [{exit-h :heading exit-u :up}]
+                            (bezier/canonical-bezier-frame pos c1-w c2-w end-w up [1.0])]
                         (-> st
-                            (assoc :pos np :heading ehead :mi mi')
-                            (update :nodes conj {:pos np :heading nil :tail []
-                                                 :bez {:c1 (xy c1) :c2 (xy c2)}})))
-                      ;; a baked arc run → one tangent-arc node (no belly: re-baking
-                      ;; from the incoming heading + node positions reproduces it)
-                      :arc-run
-                      (let [w (walk-arc-sub (:pos st) heading (:sub cmd))
-                            pts (:pts w)
-                            mi' (+ mi (count (filter #(move-cmd? (:cmd %)) (:sub cmd))))
-                            np (wpos mi' (last pts))]
+                            (assoc :pos end-w :heading exit-h :up exit-u)
+                            (update :nodes conj {:pos (proj-pt end-w) :heading nil :tail []
+                                                 :bez {:c1 (proj-pt c1-w) :c2 (proj-pt c2-w)}})))
+
+                      ;; the DSL's in-plane arc — recorded as a genuine :arc-v,
+                      ;; renamed :arc-h by project-2d-to-xy (see arc-2d-endpoint).
+                      (= :arc-h cmd)
+                      (let [[r angle-deg] args
+                            theta (* angle-deg (/ js/Math.PI 180))
+                            {:keys [end exit-h exit-u]} (arc-2d-endpoint pos heading up r theta)]
                         (-> st
-                            (assoc :pos np :heading (:heading w) :mi mi')
-                            (update :nodes conj
-                                    (cond-> {:pos np :heading nil :tail []}
-                                      (>= (count pts) 3) (assoc :arc {})))))
-                      (:mark :side-trip)
-                      (update-in st [:nodes (dec (count nodes)) :tail] conj cmd)
-                      (update st :dropped conj (:cmd cmd))))
-                  {:pos (wpos 0 [sx sy]) :heading [1 0] :mi 0
-                   :nodes [{:pos (wpos 0 [sx sy]) :heading nil :tail []}] :dropped []}
-                  (group-curve-runs cmds))
+                            (assoc :pos end :heading exit-h :up exit-u)
+                            (update :nodes conj {:pos (proj-pt end) :heading nil :tail [] :arc {}})))
+
+                      (#{:mark :side-trip} cmd)
+                      (update-in st [:nodes (dec (count nodes)) :tail] conj c)
+
+                      :else (update st :dropped conj cmd)))
+                  {:pos [0 0 0] :heading [0 -1 0] :up [0 0 1]
+                   :nodes [{:pos [0 0] :heading nil :tail []}] :dropped []}
+                  cmds)
              ns (:nodes res)
              n (count ns)
              ;; Closed (flag-driven): the bake always appends a closing segment back
@@ -1086,54 +1057,41 @@
                            base (vec (butlast ns))]
                        (cond-> base (:bez closing) (assoc-in [0 :bez] (:bez closing))))
                      ;; open: the last node keeps the final (exit) heading
-                     (assoc-in ns [(dec n) :heading] (:heading res)))]
+                     (assoc-in ns [(dec n) :heading] (proj-dir (:heading res))))]
          {:nodes nodes :closed? cl? :dropped (vec (distinct (:dropped res)))})))))
 
 (defn- project-2d-to-xy
-  "Normalize a :2d path value (its commands trace the (right,up) plane) into an
-   (a,b)-plane path that seed->nodes can read — the inverse of the path-2d macro +
-   nodes->code bake. Drops the leading (th -90) seed, maps tv→th / arc-v→arc-h, and
-   projects every 3D coordinate (set-heading directions and the :pure bezier rider's
-   c1/c2/end) onto shape coords (a,b) = (-y, z). The :arc-cap / :pure rider tags ride
-   along so arc and bezier recovery keep working on a re-opened :2d path.
+  "Normalize a :2d path's RAW high-level commands (dev-docs/brief-recording-
+   highlevel-lettura-2d.md) into the canonical stream seed->nodes reads: drop the
+   leading (th -90) seed the path-2d macro prepends (seed->nodes' own starting
+   pose already reflects it — heading [0 -1 0], up [0 0 1]) and rename tv→th /
+   arc-v→arc-h (path-2d's own DSL aliasing, inverted, so the command names read
+   uniformly whether they came from path-2d or a native 3D path).
 
-   A :3d path is returned unchanged (its commands are already in (a,b) = (x,y))."
+   A side-trip's sub-path is left untouched: its body is its own independently-
+   scoped (path …) recording (verified over nREPL — a (side-trip (tv …)) written
+   inside path-2d records a genuine :tv, NOT a renamed :th, because the nested
+   `path` macro re-binds th/tv/tr/rt/lt/arc-h/arc-v fresh for its own body,
+   shadowing path-2d's aliasing), so applying this rename to it would mislabel a
+   real 3D command. seed->nodes carries a side-trip's sub-path opaquely into the
+   node's :tail regardless (never interprets it for node-building), and
+   cmd->code-2d's bake already walks (:commands sub) verbatim — this mirrors that.
+
+   A :3d path is returned unchanged (its commands are already native)."
   [path]
   (if-not (= :2d (:species path))
     path
-    (let [cmds (turtle/path-micro-commands path)
-          ;; drop the leading seed the path-2d macro prepends ((th -90))
+    (let [cmds (:commands path)
           cmds (if (and (= :th (:cmd (first cmds)))
                         (= -90 (first (:args (first cmds)))))
                  (rest cmds)
                  cmds)
-          ;; A leading (move-to [a b]) anchors the start; seed->nodes traces the
-          ;; straight/arc nodes from there, but a bezier's :pure rider carries
-          ;; origin-frame coords (the recorder doesn't apply move-to while
-          ;; recording), so offset those by the anchor to land in the same frame.
-          mv (some (fn [{:keys [cmd args]}] (when (= :move-to cmd) (first args))) cmds)
-          ox (if mv (first mv) 0)
-          oy (if mv (second mv) 0)
-          proj-pt (fn [p] [(- (nth p 1)) (nth p 2)])              ; [x y z] → [-y z]
-          proj-pt+off (fn [p] (let [[a b] (proj-pt p)] [(+ a ox) (+ b oy)]))
-          conv (fn conv [{:keys [cmd args] :as c}]
+          conv (fn [{:keys [cmd] :as c}]
                  (case cmd
-                   :tv          (assoc c :cmd :th)
-                   :arc-v       (assoc c :cmd :arc-h)
-                   :set-heading (assoc c :args [(proj-pt (first args))])
-                   :side-trip   (assoc c :args [(turtle/with-micro-commands
-                                                  (assoc (first args) :commands
-                                                         (mapv conv (turtle/path-micro-commands (first args)))))])
-                   c))
-          proj-rider (fn [c]
-                       (if-let [pure (:pure c)]
-                         (assoc c :pure (-> pure
-                                            (update :c1 proj-pt+off)
-                                            (update :c2 proj-pt+off)
-                                            (update :end proj-pt+off)))
-                         c))]
-      (turtle/with-micro-commands
-        {:type :path :commands (mapv (comp proj-rider conv) cmds)}))))
+                   :tv    (assoc c :cmd :th)
+                   :arc-v (assoc c :cmd :arc-h)
+                   c))]
+      {:type :path :commands (mapv conv cmds)})))
 
 ;; ============================================================
 ;; Working plane (the turtle's stamp plane at the call site)
@@ -2592,12 +2550,13 @@
         ;; seed->nodes (2D) returns {:nodes :dropped}; seed->nodes-3d returns a
         ;; plain node vector — wrap it so the destructuring works in both modes.
         {:keys [nodes dropped closed?]} (if (= mode :2d)
-                                          ;; ensure-path-2d gives the FAITHFUL planar
-                                          ;; trace (handles the bezier frame flip); the
-                                          ;; recovery indexes node positions into it.
+                                          ;; seed->nodes' own pose walk (dev-docs/brief-
+                                          ;; recording-highlevel-lettura-2d.md) tracks the
+                                          ;; real 3D frame, so it recovers correct node
+                                          ;; positions on its own — no need to cross-
+                                          ;; reference ensure-path-2d's trace anymore.
                                           (seed->nodes (project-2d-to-xy seed-path)
-                                                       (boolean (:closed? seed-path))
-                                                       (vec (shape/ensure-path-2d seed-path)))
+                                                       (boolean (:closed? seed-path)))
                                           ;; conform-rail-start-3d: a recovered seed can fold a
                                           ;; manual th/tv into its first waypoint (Fuori-scope
                                           ;; case in dev-docs/brief-rail-start-tangent.md) — fix

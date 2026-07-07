@@ -136,6 +136,14 @@ File interno per tracciare piccole incoerenze tra il codice sorgente di Ridley e
 
 **Fix possibile** (non tentato, da accertare): decidere una convenzione di `creation-pose` all'import degli STL (es. heading allineato all'asse di sviluppo rilevato o a Z per convenzione dichiarata), così `th`/`tv`/`tr` in attach hanno il significato che l'utente si aspetta; in alternativa, documentare la convenzione attuale nel manuale (capitolo import). Minor, ma da riprendere.
 
+### `arc-v-endpoint` 3D: la formula dell'`:end` diverge da `turtle/arc-v` per un segno
+
+**Contesto**: emerso durante la verifica nREPL del brief lettura-2D (2026-07-07), confrontando la nuova closed form 2D (`arc-2d-endpoint`, verificata indipendentemente contro la tessellazione reale) con l'omologa 3D preesistente: `arc-v-endpoint` calcola l'`:end` con un segno in disaccordo con ciò che `turtle/arc-v` traccia davvero.
+
+**Realtà**: difetto preesistente, non introdotto dal filone recording. Colpisce solo i seed 3D con `arc-v` scritto a mano aperti nell'editor 3D (il nodo ricostruito atterra specchiato rispetto alla geometria reale). Gli `arc-h` e tutto il percorso 2D non sono toccati.
+
+**Fix possibile** (non tentato): allineare la formula a `turtle/arc-v` e aggiungere il test che `arc-2d-endpoint` ha già ricevuto — confronto della closed form contro una tessellazione fine — per entrambe le varianti 3D, così il segno non può più divergere in silenzio.
+
 ## Chiuso
 
 ### Il rider `:pure` di un bezier è congelato nel frame del sotto-path, non del path che lo `follow`a — RISOLTO 2026-07-07
