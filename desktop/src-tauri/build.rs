@@ -64,5 +64,15 @@ fn build_libfive(libfive_src: &PathBuf) {
         println!("cargo:rustc-link-arg=-Wl,-rpath,{}", stdlib_dir.display());
     }
 
+    // Linux: link the GNU C++ runtime (not libc++) and point the loader at the
+    // build dirs via absolute rpath. This is enough to *run* from target/ during
+    // the local spike; the packaged $ORIGIN rpath is a later (bundling) concern.
+    #[cfg(target_os = "linux")]
+    {
+        println!("cargo:rustc-link-lib=dylib=stdc++");
+        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir.display());
+        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", stdlib_dir.display());
+    }
+
     println!("cargo:rerun-if-changed=vendor/libfive");
 }
