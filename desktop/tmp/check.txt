@@ -1,0 +1,38 @@
+Confermato: vendor/libfive è git-ignored (desktop/src-tauri/.gitignore:1), non tracciata né submodule. Dopo il clone non ci sarà — va clonata a mano. Il mio step 3 di prima era quindi necessario, non opzionale.
+
+Ecco la sequenza from-scratch. La struttura in modo che il gate su libfive lo chiudi con il minimo setup — solo Rust, niente Node/frontend — prima di investire in tutto il toolchain.
+
+Fase A — Toolchain (una volta per macchina)
+
+# System deps: libfive (cmake/boost/eigen/png) + webview Tauri v2
+sudo apt update && sudo apt install -y \
+  git cmake build-essential \
+  libboost-all-dev libeigen3-dev libpng-dev \
+  libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libssl-dev
+
+# Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+. "$HOME/.cargo/env"
+Fase B — Il gate libfive (niente Node, niente frontend)
+
+git clone git@github.com:vipenzo/ridley.git
+cd ridley
+git checkout move-to-mate
+
+# vendor/libfive è gitignored → clonala a mano
+git clone --depth 1 https://github.com/libfive/libfive.git desktop/src-tauri/vendor/libfive
+
+# Il gate: compila + linka. NON serve tauri-cli né il frontend per questo.
+cd desktop/src-tauri && cargo build --release
+Questo cargo build --release è la risposta secca alla domanda del brief: libfive compila e linka su Linux? Non ha bisogno di Node, del frontend CLJS, né di tauri-cli — isola completamente la questione nativa. Riportami l'output di questo: se passa, il rischio della fase è sparito.
+
+Fase C — Solo se la Fase B passa: run completo per testare l'SDF
+
+# Node (nvm o apt), poi dalla root del repo:
+npm install
+npm run release          # builda il frontend CLJS in public/ (Tauri non lo fa da solo)
+cargo install tauri-cli --version "^2"
+cd desktop/src-tauri && cargo tauri build
+Poi lanci l'app bundlata e verifichi l'SDF end-to-end (punto 4 del brief).
+
+Il senso dello staging: la Fase B ti dà il sì/no su libfive con Rust e basta. Solo se è verde monti tutto lo stack Node per il run vero. Parti dalla Fase A+B e mandami l'output del cargo build --release.
