@@ -1439,9 +1439,7 @@ Il debito tecnico specifico di ridley-desktop, da raccogliere in capitolo 15, co
 
 **Pulizia di codice morto e residui**:
 
-- `bundle-dylibs.sh` cerca dylib di Manifold inesistenti dopo la rimozione del backend nativo.
 - CSP `connect-src` permette `http://127.0.0.1:12322`, porta del JVM sidecar non più presente.
-- `desktop/dev.sh` e `desktop/build.sh` orfani: non più richiamati da `tauri.conf.json`.
 - Endpoint `/sdf-mesh-bin` implementato ma senza chiamanti CLJS.
 - Variante `Revolve` dell'enum `SdfNode` Rust mai costruita dal frontend.
 - `withGlobalTauri: true` inietterà `window.__TAURI__.core.invoke` ma non c'è più nessun Tauri command da invocare (dopo il commit del rimozione del `ping` handler, in arrivo).
