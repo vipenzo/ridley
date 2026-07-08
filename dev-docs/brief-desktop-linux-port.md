@@ -57,3 +57,17 @@ La **CI Linux e il packaging** (job `ubuntu-latest`, AppImage/deb, rimpiazzo di 
 - **CI matrix e packaging finale** (AppImage/deb, bundling `.so`) — brief seguito, dopo spike verde.
 - **Data-portability dei path assoluti** embeddati nei `.clj` (un image board autorizzato su macOS con `/Users/...` non risolve altrove) — sfumatura di dati, non blocco di build.
 - **Il dead code di `bundle-dylibs.sh`** che copia dylib Manifold da un percorso `manifold3d-sys` non più esistente — va rimosso, ma nella fase packaging.
+
+## Esito (2026-07-08)
+
+**Gate chiuso, verde.** Su Ubuntu (enzo-XPS-15-9550): `cargo build --release` in `desktop/src-tauri` compila e linka libfive col nuovo ramo `#[cfg(target_os = "linux")]` di `build.rs` (commit `c430b9f`). Il binario a runtime produce mesh SDF corrette — verificato colpendo direttamente il geo server, senza frontend né Java:
+
+```
+POST http://127.0.0.1:12321/sdf-mesh
+{"tree":{"op":"sphere","r":10},"bounds":[[-15,15],[-15,15],[-15,15]],"resolution":20}
+→ {"vertices":[[3.766,3.766,8.463], …]}   # √(x²+y²+z²) ≈ 10 su tutti i punti: giacciono sulla sfera
+```
+
+Non solo *linka*: **mesha**. L'unico punto a rischio della fase (libfive nativo fuori da macOS) è provato. Conferme di setup incontrate: `vendor/libfive` è git-ignored → va ri-clonata dopo il checkout; il JDK che `npm run release` reclama è solo shadow-cljs a build-time (l'app resta JVM-free); il gate NON ha richiesto Node/frontend/Java (il binario Fase B + curl bastano).
+
+**Resta aperto:** Fase C completa per la UI reale (JDK + `npm run release` + `cargo tauri build`) e il brief seguito di CI/packaging (job `ubuntu-latest`, AppImage/deb, rpath `$ORIGIN` per l'app bundlata, rimpiazzo `bundle-dylibs.sh`). Windows resta fase a sé.
