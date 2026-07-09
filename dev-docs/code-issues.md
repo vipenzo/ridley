@@ -4,6 +4,54 @@ File interno per tracciare piccole incoerenze tra il codice sorgente di Ridley e
 
 ## Aperto
 
+### `auto-bounds` sovra-inflaziona in modo ordine-dipendente → mesh SDF degenere per storie `attach` con stretch dopo cp-rotazioni — RISOLTO 2026-07-09
+
+**Contesto**: `sdf/auto-bounds` (`src/ridley/sdf/core.cljs:671`) sul ramo `rotate` sostituisce i bounds del figlio con la sua **sfera-bounding** (`r = sqrt(maxX²+maxY²+maxZ²)`, poi `[[-r r][-r r][-r r]]`): un box diventa il cubo che ne contiene la diagonale. Quando più `rotate` si annidano, ogni passo re-inflaziona di ~√3 il precedente (già inflazionato), quindi l'inflazione è ~(√3)^N con N = numero di `rotate` nell'albero. Dentro `attach` sul backend SDF, sia `sdf-stretch-along-axis` (sandwich move→rotate→scale→rotate→move) sia le cp-rotazioni (`cp-th`/`cp-tv`/`cp-tr`) aggiungono `rotate`; **quanti** ne aggiungono, e in che annidamento, dipende dall'ordine dei comandi. Due storie che descrivono la stessa geometria finiscono con conteggi di `rotate` diversi e quindi bounds enormemente diversi.
+
+**Riproduzione** (REPL CLJS, server geo attivo, 2026-07-09):
+```clojure
+(def base (sdf/sdf-box 4 2 3))
+(def A (impl/attach-impl base {:type :path :commands [{:cmd :stretch-f :args [1.6]} {:cmd :cp-th :args [37]}]}))
+(def B (impl/attach-impl base {:type :path :commands [{:cmd :cp-th :args [37]} {:cmd :stretch-f :args [1.6]}]}))
+(sdf/auto-bounds A) ; => ±11.8   (3 rotate nell'albero)
+(sdf/auto-bounds B) ; => ±322.7  (9 rotate — 6 in più → (√3)^6 ≈ 27× ; 322.67/11.81 = 27.3×)
+(count (:vertices (sdf/ensure-mesh A))) ; => 333  (mesh sana)
+(count (:vertices (sdf/ensure-mesh B))) ; => 9    (degenere: auto-resolution affamata dai bounds giganti)
+```
+La geometria è la **stessa** in entrambi i casi: i bounding box dei vertici prodotti coincidono a 6 decimali (`[[-3.12 3.12][-3.04 3.04][-1 1]]`), e rimeshando B con i bounds sani di A (`(sdf/materialize B (sdf/auto-bounds A) 15)`) si ottiene una mesh sana (5829 vs 5969 vertici, stesso bbox). Il 9-vertici è solo sotto-campionamento: `ensure-mesh` sceglie la risoluzione sui bounds, e su una regione ~27× troppo larga per l'oggetto la griglia manca quasi tutto.
+
+**Impatto**: medio, latente. Un `attach` su SDF con stretch **dopo** una cp-rotazione (o storie con molte rotazioni) può produrre una mesh degenere/vuota in silenzio (nessun errore, solo pochi vertici). È la stessa famiglia già nota (memoria `project_sdf_auto_bounds_overinflate`: gli override di risoluzione servono ~3× per gli SDF con rotazioni impilate). Sul backend mesh non esiste (le trasformazioni sono applicate ai vertici, i bounds sono quelli reali).
+
+**Non è un difetto del fix stretch-material-frame** (`dev-docs/brief-stretch-material-frame.md`): l'invariante di commutazione è verde a livello dati (`:material-heading`/`:material-up` **identici** fra i due ordinamenti — riconfermato in REPL: heading `[0.7986 -0.6018 0]`, up `[0 0 1]` per entrambi) e a livello geometria quando i bounds sono sani (rimeshando con bounds uguali le due superfici coincidono). Il 9-vs-533 segnalato nel report d'implementazione era il confronto geometrico fatto con `ensure-mesh`/auto-bounds, che era **compromesso** dai bounds gonfiati di un ordinamento: quel particolare confronto non provava né smentiva niente. La verifica dell'invariante SDF, rifatta su mesh sane (bounds espliciti condivisi), regge.
+
+**Risoluzione** (dev-docs/brief-auto-bounds.md, 2026-07-09): riscritto il ramo `(= op "rotate")` di `auto-bounds` (`src/ridley/sdf/core.cljs`). Invece della sfera→cubo, ruota gli 8 corner dei bounds del figlio con la rotazione cardinale esatta del nodo (`:axis` + `:angle`) e ne prende l'AABB per asse — via `math/rotate-point-around-axis`, la stessa funzione di `pose-rotate`, così la convenzione coincide con quella che il backend applica al campo. Trappola di segno: l'angolo memorizzato è in convenzione libfive (negato per `:y` alla costruzione), recuperato prima di ruotare i corner; la convenzione è **fissata dal test** `rotate-decentred-about-y` (non dedotta dal sorgente, come raccomanda il brief). La stima è strettamente più stretta della sfera e mai più larga (proprietà "mai peggiore" resa test `rotate-aabb-contained-in-old-cube`), esatta per un singolo `rotate` su box axis-aligned, e preserva la posizione dei figli decentrati; in catena resta solo una perdita limitata da ri-boxing (AABB di AABB), senza il fattore √3 per nodo.
+
+Test: `test/ridley/sdf/auto_bounds_test.cljs` (5 test, scritti prima del cambio: 90°=identità, 45°=√2 non √3, decentrato su z/y col segno giusto, contenimento nel cubo vecchio). Suite `npm test` verde (470 test, 0 fallimenti). Accettazione E2E su desktop con geo-server (stessa riproduzione sopra): A bounds ±11.8→~3.7 e mesh 333→709 (più densa, bounds più stretti); B bounds ±322.7→~7.7 e mesh 9→**89** (recuperata dal degenere); bbox mesh identico a 2 decimali `[[-3.12 3.12][-3.04 3.04][-1 1]]` per entrambi; a risoluzione condivisa i due ordinamenti concordano (3233 vs 3829). Il residuo 2× di B è la perdita di ri-boxing in catena, limitata e attesa.
+
+**Evoluzione futura** (fuori scope, non urgente con l'AABB in mezzo): far collassare le catene affini consecutive (`rotate`/`move`/`scale`) in un'unica trasformazione prima del meshing — i sandwich di `sdf-stretch-along-axis`/cp introducono catene lunghe e ridondanti, e collassarle azzererebbe anche il residuo di ri-boxing. È un refactor del pipeline di meshing (superficie ampia), rimandato; vedi anche la memoria `project_sdf_auto_bounds_overinflate`.
+
+**Scoperta**: report d'implementazione di `brief-stretch-material-frame.md` (2026-07-09) come "sospetto artefatto SDF"; root-causato come limite noto di `auto-bounds` (addendum-brief-stretch-material-frame.md, punto 1) e risolto col ramo AABB, 2026-07-09, con evidenza REPL sopra.
+
+### `set-image` ha la stessa esposizione al silent-nil che `image-board` aveva
+
+**Contesto**: `set-image` (`src/ridley/turtle/shape.cljs`) ha arità fissa `[shape path width offset-x offset-y]`, nessun default, nessuna validazione. Esattamente il pattern che `dev-docs/brief-image-board-defaults.md` ha appena chiuso per `image-board`: un'arità incompleta o argomenti malformati non lanciano, destrutturano/calcolano su nil e producono una shape con `:image` apparentemente valido ma rotto (coordinate nil/NaN), che emerge a valle.
+
+**Realtà**: non misurato — nessuna riproduzione tentata, solo la stessa forma strutturale del difetto già confermato su `image-board` (stessa famiglia del bug di mesh-hull citato nel brief).
+
+**Fix possibile** (non tentato, esplicitamente fuori scope dal brief-image-board-defaults.md): applicare lo stesso pattern — una funzione di risoluzione condivisa con default sensati (se esistono) e validazione con throw sui quattro argomenti, riusando l'approccio di `image-board-params` come riferimento.
+
+**Scoperta**: brief-image-board-defaults.md, sezione "Fuori scope", punto esplicito da loggare durante l'implementazione. Claude, 2026-07-08.
+
+### Manuale: `pilot-request!` documenta un binding SCI che non esiste più
+
+**Contesto**: `docs/manual/reference/en/pilot-request-bang.md` (e la voce generata in `src/ridley/manual/reference_index.cljs`) descrivono `pilot-request!` come il low-level entry point di pilot mode, con output `(attach! ...)`. Il brief `dev-docs/brief-edit-attach.md` (2026-07-08) ha rinominato il modulo `pilot_mode.cljs` → `edit_attach.cljs` e il binding SCI `pilot-request!` → `edit-attach-request!` (`pilot` resta come alias macro, ma non espone più un binding proprio); l'output canonico alla conferma è ora `(attach ...)` flat, non `(attach! ...)`.
+
+**Realtà**: la pagina manuale è stale su due fronti indipendenti dal lavoro di rename — cita un binding non più risolvibile e un output mai stato quello vero (`attach!` è per mesh registrate per keyword, `pilot`/`edit-attach` producono `attach`). Non è un difetto funzionale (il manuale è generato da markdown, non eseguito), ma un link/riferimento morto per chi lo consulta.
+
+**Fix possibile** (non tentato, fuori scope per il brief edit-attach — che esclude esplicitamente l'aggiornamento della documentazione a valle dell'implementazione): riscrivere `pilot-request-bang.md` come `edit-attach-request-bang.md` (o rinominarlo), documentando `edit-attach-request!` a 5 argomenti (quoted-mesh, mesh-value, quoted-body, attached-value, marker-kind), l'alias `pilot`, e l'output flat `(attach mesh cmd...)`; poi rigenerare l'indice con `bb scripts/build_reference_index.bb` (vedi [[project_manual_reference_index_generated]] in memoria).
+
+**Scoperta**: Claude, 2026-07-08, durante l'implementazione di `dev-docs/brief-edit-attach.md`.
+
 ### `bezier-as` non è taggato `:smooth` — ogni step di tessellazione è un corner duro
 
 **Contesto**: `rec-bezier-as*` (`src/ridley/editor/macros.cljs`) emette le rotazioni per step con `rec-th*`/`rec-tv*`/`rec-tr*` **plain**, mai `rec-th-smooth*`/`rec-tv-smooth*`/`rec-tr-smooth*`. `corner-rotation?` (`src/ridley/turtle/extrusion.cljs`) esclude dal trattamento corner (accorciamento mesh, anello di giunzione per-step) solo le rotazioni taggate `:smooth`; `bezier-to` (`rec-bezier-to*`) lo fa già, `bezier-as` no.
@@ -143,6 +191,18 @@ File interno per tracciare piccole incoerenze tra il codice sorgente di Ridley e
 **Realtà**: difetto preesistente, non introdotto dal filone recording. Colpisce solo i seed 3D con `arc-v` scritto a mano aperti nell'editor 3D (il nodo ricostruito atterra specchiato rispetto alla geometria reale). Gli `arc-h` e tutto il percorso 2D non sono toccati.
 
 **Fix possibile** (non tentato): allineare la formula a `turtle/arc-v` e aggiungere il test che `arc-2d-endpoint` ha già ricevuto — confronto della closed form contro una tessellazione fine — per entrambe le varianti 3D, così il segno non può più divergere in silenzio.
+
+### edit-attach: il primo rientro dopo un OK non apre la sessione
+
+**Contesto**: confermando (OK) una sessione `edit-attach` e reinvocandola subito dopo (stesso mesh o un altro), il primo tentativo di riapertura non fa nulla — nessun pannello, nessun indicatore turtle, la sessione non si apre affatto — nessun errore in console del browser. Il secondo tentativo funziona normalmente.
+
+**Realtà**: scoperto 2026-07-08 testando `dev-docs/brief-edit-attach-handles.md` (gizmo handles), ma **non è colpa del gizmo**: pannello e indicatore turtle non hanno nulla a che fare con `gizmo.cljs` e falliscono ad apparire anch'essi sul tentativo fallito — la sessione non si apre proprio, quindi il codice del gizmo non viene mai eseguito. Non ancora isolata la causa radice.
+
+**Sospetto principale** (non verificato): una race fra `confirm!`'s `modal/release!` + `reset! session nil` e il successivo `modal/run-definitions!` (re-eval completo) che innesca — se la `request!` del successivo `edit-attach` (in particolare `clear-orphan-state!` o `modal/claim!`) gira prima che quel re-eval abbia sistemato `state/interactive-mode`, il claim potrebbe fallire in silenzio.
+
+**Fix possibile** (non tentato): riprodurre con logging attorno a `modal/claim!`/`clear-orphan-state!`/`interactive-mode` in `src/ridley/editor/modal_evaluator.cljs` e `src/ridley/editor/edit_attach.cljs`'s `clear-orphan-state!`/`request!`. Workaround banale nel frattempo: riaprire due volte.
+
+**Scoperta**: Vincenzo/Claude, 2026-07-08, durante il testing interattivo di `dev-docs/brief-edit-attach-handles.md`.
 
 ## Chiuso
 

@@ -703,12 +703,31 @@ need the Rust backend — make sure the desktop app's geometry server is running
            [(* (get-in b [1 0]) sy) (* (get-in b [1 1]) sy)]
            [(* (get-in b [2 0]) sz) (* (get-in b [2 1]) sz)]])
 
+        ;; Rotate the child's 8 bounds corners by the node's exact cardinal
+        ;; rotation and take their per-axis AABB. Strictly tighter than the old
+        ;; sphere→cube (no √3-per-node inflation, no compounding in chains) and
+        ;; exact for a single rotate on an axis-aligned box; it also preserves
+        ;; an off-centre child's position, which the origin-centred cube lost.
         (= op "rotate")
         (let [b (auto-bounds (:a node))
-              r (js/Math.sqrt (+ (js/Math.pow (apply max (map js/Math.abs (b 0))) 2)
-                                 (js/Math.pow (apply max (map js/Math.abs (b 1))) 2)
-                                 (js/Math.pow (apply max (map js/Math.abs (b 2))) 2)))]
-          [[(- r) r] [(- r) r] [(- r) r]])
+              axis-vec (case (name (:axis node))
+                         "x" [1 0 0] "y" [0 1 0] "z" [0 0 1])
+              ;; :angle is stored in libfive convention (negated for :y at
+              ;; construction — see sdf-rotate). Recover the geometric
+              ;; right-hand angle so we rotate the corners the way the backend
+              ;; rotates the field, then reuse the same rotation math pose-rotate
+              ;; uses. (Convention pinned by rotate-decentred-about-y in
+              ;; auto_bounds_test — do not derive the sign from the source.)
+              geo-deg (if (= (name (:axis node)) "y") (- (:angle node)) (:angle node))
+              rad (* geo-deg (/ Math/PI 180))
+              corners (for [x (b 0) y (b 1) z (b 2)]
+                        (math/rotate-point-around-axis [x y z] axis-vec rad))
+              xs (map #(nth % 0) corners)
+              ys (map #(nth % 1) corners)
+              zs (map #(nth % 2) corners)]
+          [[(apply min xs) (apply max xs)]
+           [(apply min ys) (apply max ys)]
+           [(apply min zs) (apply max zs)]])
 
         ;; Smooth union inflates the surface outward in the bridge region:
         ;; the iso-zero contour can extend roughly k beyond the union of the
