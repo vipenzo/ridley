@@ -131,8 +131,9 @@
 ;; Interactive Mode Guard
 ;; ============================================================
 
-;; Tracks which interactive mode is active (nil, :pilot, or :tweak).
-;; Lives in state.cljs so both pilot-mode and tweak-mode can check
+;; Tracks which interactive mode is active (nil, :edit-attach, :edit-path,
+;; :edit-image-board, :edit-bezier, or :tweak).
+;; Lives in state.cljs so each concrete module and tweak-mode can check
 ;; without importing each other (which would create circular deps).
 (defonce interactive-mode (atom nil))
 

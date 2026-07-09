@@ -218,7 +218,7 @@
       (do
         (show-error error)
         (audio/play-feedback! false)
-        ;; A deferred modal session (edit-path / edit-bezier / pilot) claims the
+        ;; A deferred modal session (edit-path / edit-bezier / edit-attach) claims the
         ;; mutex (editor read-only) during eval and is only entered by the success
         ;; branch below. If the eval errored, that never happens — tear the pending
         ;; session down so the editor isn't left read-only with no panel/keys to
@@ -267,7 +267,7 @@
         (sync-voice-state)
         ;; Audio feedback
         (audio/play-feedback! true)
-        ;; Check if a deferred modal session (pilot, edit-bezier, …) was
+        ;; Check if a deferred modal session (edit-attach, edit-bezier, …) was
         ;; requested during evaluation; enter it now that the eval is complete.
         (when (modal/requested?)
           (modal/enter!))))
@@ -302,7 +302,7 @@
 
 (defn- evaluate-definitions-user!
   "User-initiated definitions run (Run button / Cmd+Enter). Cancels any active
-   modal session first, then evaluates — so re-running while a tweak/pilot/
+   modal session first, then evaluates — so re-running while a tweak/edit-attach/
    edit-bezier session is open is clean and predictable instead of throwing a
    mutex error or leaving a half-open session. The programmatic run-definitions
    path (run-definitions-fn = evaluate-definitions, used by a session's own
@@ -2842,6 +2842,36 @@
 (register tube
   (extrude (circle 10) (f 30) (th 45) (f 20)))")
 
+;; Table, not a blind "edit-" prefix: the head-rename grammar isn't uniform
+;; (a future bezier-to → edit-bezier candidate already breaks the pattern), so
+;; the table is the extension point — a new editor enters with one row.
+(def ^:private edit-menu-table
+  {"path"        "edit-path"
+   "path-2d"     "edit-path-2d"
+   "image-board" "edit-image-board"
+   "attach"      "edit-attach"})
+
+(defn- edit-menu-candidate
+  "At the cursor, the {:from :head :new-head} needed to rewrite the
+   containing form's head symbol into its edit-* counterpart, or nil if the
+   cursor isn't inside a form whose head is a table key (an already-edit-*
+   form isn't a key, so it's correctly excluded)."
+  []
+  (when-let [{:keys [from text]} (cm/get-form-at-cursor)]
+    (when-let [head (first (cm/parse-form-elements text))]
+      (when-let [new-head (get edit-menu-table head)]
+        {:from (inc from) :head head :new-head new-head}))))
+
+(defn- edit-selection!
+  "Rewrite the form at the cursor's head symbol to its edit-* counterpart
+   (only the head characters, not the whole form) and re-run definitions —
+   the existing two-phase modal flow opens the session on that run, same as
+   if the user had typed the edit- prefix by hand."
+  []
+  (when-let [{:keys [from head new-head]} (edit-menu-candidate)]
+    (cm/replace-range from (+ from (count head)) new-head)
+    (evaluate-definitions-user!)))
+
 (defn- editor-context-menu-items
   "The right-click menu model, recomputed each time the menu opens so that
    selection-dependent items reflect the current state. Each item is either
@@ -2861,7 +2891,9 @@
      {:label "← Barf"             :enabled? true :run #(cm/barf-form)}
      {:label "Go to matching )"   :enabled? true :run #(cm/goto-matching-bracket!)}
      {:separator true}
-     {:label "Tweak"      :enabled? sel? :run #(tweak-mode/tweak-selection!)}]))
+     {:label "Tweak"      :enabled? sel? :run #(tweak-mode/tweak-selection!)}
+     {:label "Edit"       :enabled? (and (some? (edit-menu-candidate)) (not (modal/active?)))
+      :run #(edit-selection!)}]))
 
 (defn- install-editor-context-menu!
   "Attach a right-click menu to the editor with standard editing commands

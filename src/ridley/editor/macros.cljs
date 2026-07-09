@@ -2080,11 +2080,23 @@
           `(tweak-start-registered! ~name '~expr ~filt)))))
 
    ;; ============================================================
-   ;; Pilot — interactive mesh positioning
+   ;; edit-attach — interactive mesh/SDF positioning (attach round-trip)
    ;; ============================================================
 
+   ;; (edit-attach mesh & body) — completes the family's edit-X ↔ X grammar
+   ;; for attach. body is the pre-existing command list (empty on first use);
+   ;; the current eval must produce the attach result WITHOUT running body
+   ;; twice, so it's applied once here and handed to request! as the preview/
+   ;; passthrough value — the session then starts from that already-attached
+   ;; state and appends new gestures to the same list.
+   (defmacro edit-attach [mesh & body]
+     `(edit-attach-request! '~mesh ~mesh '~body (attach ~mesh ~@body) :edit-attach))
+
+   ;; pilot — legacy alias, always an empty pre-existing body. Kept for
+   ;; existing sources and affection; the round-trip grammar's primary name
+   ;; is edit-attach.
    (defmacro pilot [arg]
-     `(pilot-request! '~arg ~arg))
+     `(edit-attach-request! '~arg ~arg '() (attach ~arg) :pilot))
 
    ;; ============================================================
    ;; edit-bezier — interactive cubic Bezier authoring

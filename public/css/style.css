@@ -390,6 +390,22 @@ html, body {
   background: #2d6634;
 }
 
+/* edit-attach: object/origin gizmo mode toggle — origin changes what the same
+   drag gestures mean (cp-*), so it must read as visibly "on", not a plain button */
+.modal-panel .pilot-btn-mode {
+  margin-left: auto;
+}
+
+.modal-panel .pilot-btn-mode.pilot-mode-origin {
+  background: #4f3d26;
+  border-color: #a67c3d;
+  color: #dfb87d;
+}
+
+.modal-panel .pilot-btn-mode.pilot-mode-origin:hover {
+  background: #5e4a2e;
+}
+
 /* Editor right-click "Tweak" menu */
 .tweak-context-menu {
   position: fixed;

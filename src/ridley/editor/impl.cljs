@@ -1009,6 +1009,80 @@
       (move-to-dispatch* state args))))
 
 ;; ============================================================
+;; Material frame tracking (brief-stretch-material-frame.md)
+;; ============================================================
+;; stretch-f/rt/u must act along the mesh's MATERIAL axes, not the pose's current
+;; axes — after a cp-th/cp-tv/cp-tr (which rotates geometry relative to a
+;; deliberately-fixed pose), the two diverge and a plain pose-axis stretch would
+;; blend more than one physical dimension.
+;;
+;; The material offset is tracked as two 3-vectors on the replay state,
+;; :material-h-local / :material-u-local — the material heading/up directions
+;; expressed as COEFFICIENTS in a fixed local basis anchored to the pose's own axes:
+;; index 0 = pose-heading, index 1 = pose-up, index 2 = pose-right. This ordering is
+;; the right-handed (heading, up, right) triple (right = heading × up), matching
+;; gizmo.cljs's own local X/Y/Z convention — the wrong ordering silently flips every
+;; sign (verified by hand against the direct vertex-rotation formula while designing
+;; this). Identity at attach entry: [1 0 0] / [0 1 0] (material aligned with pose).
+;;
+;; Rigid ops (f/th/tv/tr/u/rt) never touch these fields: expressed in the pose's own
+;; local coordinates, the material offset is invariant under a rotation that carries
+;; pose and geometry together. Only cp-th/cp-tv/cp-tr (which explicitly rotate
+;; geometry WITHOUT rotating the pose) update them, by the same rad already applied
+;; to the vertices.
+
+(def ^:private cp-local-axis
+  "cp-rotation kind -> the axis it turns around, expressed in the local
+   (heading, up, right) basis used by :material-h-local/:material-u-local."
+  {:th [0 1 0]   ; around up
+   :tv [0 0 1]   ; around right
+   :tr [1 0 0]}) ; around heading
+
+(defn- local->world
+  "Resolve local-basis coefficients [h-comp u-comp r-comp] to a world vector,
+   against the CURRENT pose basis (h, u, r)."
+  [local pose-h pose-u pose-r]
+  (let [[a b c] local]
+    (math/v+ (math/v+ (math/v* pose-h a) (math/v* pose-u b)) (math/v* pose-r c))))
+
+(defn- material-axis
+  "World-space material heading/right/up for `axis-key` (:f :rt :u), composing the
+   CURRENT pose basis (read from `state`'s :heading/:up) with the accumulated
+   cp-rotation offset. Falls back to the bare pose axis when the offset fields are
+   absent (group-attach-impl's state, which doesn't initialize them and doesn't
+   meaningfully support stretch today either — this preserves that pre-existing,
+   unrelated non-support rather than introducing a new failure mode)."
+  [state axis-key]
+  (let [h (math/normalize (:heading state))
+        u (math/normalize (:up state))
+        r (math/normalize (math/cross h u))
+        h-local (:material-h-local state)
+        u-local (:material-u-local state)]
+    (if (and h-local u-local)
+      (let [mat-h (math/normalize (local->world h-local h u r))
+            mat-u (math/normalize (local->world u-local h u r))
+            mat-r (math/normalize (math/cross mat-h mat-u))]
+        (case axis-key :f mat-h :rt mat-r :u mat-u))
+      (case axis-key :f h :rt r :u u))))
+
+(defn- expose-material-frame
+  "Stash the final resolved material-heading/material-up (world vectors) onto
+   `value`'s :creation-pose, read by edit-attach/gizmo to draw stretch handles on
+   the material axes while arrows/rings stay on the pose axes. No-op when `value`
+   has no :creation-pose (nothing to attach the new keys to)."
+  [value state]
+  (if-let [cp (:creation-pose value)]
+    (let [h (math/normalize (:heading cp))
+          u (math/normalize (:up cp))
+          r (math/normalize (math/cross h u))
+          h-local (or (:material-h-local state) [1 0 0])
+          u-local (or (:material-u-local state) [0 1 0])
+          mat-h (math/normalize (local->world h-local h u r))
+          mat-u (math/normalize (local->world u-local h u r))]
+      (assoc value :creation-pose (assoc cp :material-heading mat-h :material-up mat-u)))
+    value))
+
+;; ============================================================
 ;; Creation-pose shift (@ commands)
 ;; ============================================================
 
@@ -1052,10 +1126,15 @@
           pivot (:position pose)
           rad (* (- angle-deg) (/ Math/PI 180))
           new-mesh (attachment/rotate-vertices-keeping-creation-pose
-                    mesh rot-axis rad pivot)]
+                    mesh rot-axis rad pivot)
+          local-ax (cp-local-axis axis)
+          h-local (or (:material-h-local state) [1 0 0])
+          u-local (or (:material-u-local state) [0 1 0])]
       (-> state
           (turtle/replace-mesh-in-state mesh new-mesh)
-          (assoc-in [:attached :mesh] new-mesh)))
+          (assoc-in [:attached :mesh] new-mesh)
+          (assoc :material-h-local (math/rotate-point-around-axis h-local local-ax rad))
+          (assoc :material-u-local (math/rotate-point-around-axis u-local local-ax rad))))
     state))
 
 ;; ============================================================
@@ -1083,16 +1162,15 @@
                                 attached (:attached s)
                                 mesh (:mesh attached)
                                 new-mesh (attachment/stretch-mesh-along-axis
-                                          mesh (:heading s) factor (:position s))]
+                                          mesh (material-axis s :f) factor (:position s))]
                             (-> s
                                 (turtle/replace-mesh-in-state mesh new-mesh)
                                 (assoc-in [:attached :mesh] new-mesh)))
               :stretch-rt (let [factor (first args)
                                 attached (:attached s)
                                 mesh (:mesh attached)
-                                right (math/cross (:heading s) (:up s))
                                 new-mesh (attachment/stretch-mesh-along-axis
-                                          mesh right factor (:position s))]
+                                          mesh (material-axis s :rt) factor (:position s))]
                             (-> s
                                 (turtle/replace-mesh-in-state mesh new-mesh)
                                 (assoc-in [:attached :mesh] new-mesh)))
@@ -1100,7 +1178,7 @@
                                 attached (:attached s)
                                 mesh (:mesh attached)
                                 new-mesh (attachment/stretch-mesh-along-axis
-                                          mesh (:up s) factor (:position s))]
+                                          mesh (material-axis s :u) factor (:position s))]
                             (-> s
                                 (turtle/replace-mesh-in-state mesh new-mesh)
                                 (assoc-in [:attached :mesh] new-mesh)))
@@ -1134,9 +1212,11 @@
   "Attach to a single mesh and replay path. Returns transformed mesh."
   [mesh path]
   (let [state (-> (turtle/make-turtle)
-                  (turtle/attach-move mesh))
-        state (replay-path-commands state path)]
-    (or (get-in state [:attached :mesh]) mesh)))
+                  (turtle/attach-move mesh)
+                  (assoc :material-h-local [1 0 0] :material-u-local [0 1 0]))
+        state (replay-path-commands state path)
+        result (or (get-in state [:attached :mesh]) mesh)]
+    (expose-material-frame result state)))
 
 ;; ============================================================
 ;; SDF attach
@@ -1327,11 +1407,12 @@
    - inset / scale (legacy turtle form): rejected with explanatory error."
   [sdf-node path]
   (validate-sdf-attach-path! path)
-  (loop [state (turtle/make-turtle)
+  (loop [state (-> (turtle/make-turtle)
+                   (assoc :material-h-local [1 0 0] :material-u-local [0 1 0]))
          sdf sdf-node
          remaining (turtle/path-micro-commands path)]
     (if (empty? remaining)
-      sdf
+      (expose-material-frame sdf state)
       (let [{:keys [cmd args]} (first remaining)
             rest-cmds (rest remaining)
             apply-translation
@@ -1379,16 +1460,15 @@
                 (recur state' sdf' rest-cmds))
 
           :stretch-f (let [factor (first args)
-                           sdf' (sdf-stretch-along-axis sdf (:heading state) factor (:position state))]
+                           sdf' (sdf-stretch-along-axis sdf (material-axis state :f) factor (:position state))]
                        (recur state sdf' rest-cmds))
 
           :stretch-rt (let [factor (first args)
-                            right (math/cross (:heading state) (:up state))
-                            sdf' (sdf-stretch-along-axis sdf right factor (:position state))]
+                            sdf' (sdf-stretch-along-axis sdf (material-axis state :rt) factor (:position state))]
                         (recur state sdf' rest-cmds))
 
           :stretch-u (let [factor (first args)
-                           sdf' (sdf-stretch-along-axis sdf (:up state) factor (:position state))]
+                           sdf' (sdf-stretch-along-axis sdf (material-axis state :u) factor (:position state))]
                        (recur state sdf' rest-cmds))
 
           :set-heading (recur (-> state
@@ -1421,8 +1501,16 @@
 
           :cp-th (let [α (first args)
                        axis (math/normalize (:up state))
-                       sdf' (sdf/sdf-rotate-keeping-creation-pose sdf axis (- α))]
-                   (recur state sdf' rest-cmds))
+                       sdf' (sdf/sdf-rotate-keeping-creation-pose sdf axis (- α))
+                       rad (* (- α) (/ Math/PI 180))
+                       h-local (or (:material-h-local state) [1 0 0])
+                       u-local (or (:material-u-local state) [0 1 0])
+                       state' (assoc state
+                                     :material-h-local (math/rotate-point-around-axis
+                                                        h-local (cp-local-axis :th) rad)
+                                     :material-u-local (math/rotate-point-around-axis
+                                                        u-local (cp-local-axis :th) rad))]
+                   (recur state' sdf' rest-cmds))
 
           :cp-tv (let [α (first args)
                        [hx hy hz] (:heading state)
@@ -1432,13 +1520,29 @@
                              [(- (* hy uz) (* hz uy))
                               (- (* hz ux) (* hx uz))
                               (- (* hx uy) (* hy ux))])
-                       sdf' (sdf/sdf-rotate-keeping-creation-pose sdf axis (- α))]
-                   (recur state sdf' rest-cmds))
+                       sdf' (sdf/sdf-rotate-keeping-creation-pose sdf axis (- α))
+                       rad (* (- α) (/ Math/PI 180))
+                       h-local (or (:material-h-local state) [1 0 0])
+                       u-local (or (:material-u-local state) [0 1 0])
+                       state' (assoc state
+                                     :material-h-local (math/rotate-point-around-axis
+                                                        h-local (cp-local-axis :tv) rad)
+                                     :material-u-local (math/rotate-point-around-axis
+                                                        u-local (cp-local-axis :tv) rad))]
+                   (recur state' sdf' rest-cmds))
 
           :cp-tr (let [α (first args)
                        axis (math/normalize (:heading state))
-                       sdf' (sdf/sdf-rotate-keeping-creation-pose sdf axis (- α))]
-                   (recur state sdf' rest-cmds))
+                       sdf' (sdf/sdf-rotate-keeping-creation-pose sdf axis (- α))
+                       rad (* (- α) (/ Math/PI 180))
+                       h-local (or (:material-h-local state) [1 0 0])
+                       u-local (or (:material-u-local state) [0 1 0])
+                       state' (assoc state
+                                     :material-h-local (math/rotate-point-around-axis
+                                                        h-local (cp-local-axis :tr) rad)
+                                     :material-u-local (math/rotate-point-around-axis
+                                                        u-local (cp-local-axis :tr) rad))]
+                   (recur state' sdf' rest-cmds))
 
           :mark (let [nm (first args)
                       pose {:position (:position state)

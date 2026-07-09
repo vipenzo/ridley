@@ -68,6 +68,35 @@
                        :width width
                        :offset [offset-x offset-y]}))
 
+(defn- finite? [x] (and (number? x) (js/isFinite x)))
+
+(defn ^:export image-board-params
+  "Resolve image-board's optional args into the full parameter map, applying
+   defaults in the same dependency chain the editor session used to
+   duplicate (dev-docs/brief-image-board-defaults.md): scale → 100; imxy →
+   [0 0]; wh → [scale scale]; orxy → turtle-centered on the RESOLVED wh.
+   This is the single point of truth for the defaults AND for validation —
+   image-board's own reduced arities and edit-image-board's request! both
+   call through here, so no combination of inputs can produce a shape with
+   nil/NaN coordinates. Throws js/Error naming the first invalid argument
+   and the value it received."
+  [path scale-factor imxy orxy wh]
+  (when-not (and (string? path) (seq path))
+    (throw (js/Error. (str "image-board: path must be a non-empty string, got " (pr-str path)))))
+  (let [scale (or scale-factor 100)]
+    (when-not (and (finite? scale) (pos? scale))
+      (throw (js/Error. (str "image-board: scale must be a positive finite number, got " (pr-str scale-factor)))))
+    (let [[imx imy] (or imxy [0 0])]
+      (when-not (and (finite? imx) (finite? imy))
+        (throw (js/Error. (str "image-board: imxy must be a vector of two finite numbers, got " (pr-str imxy)))))
+      (let [[w h] (or wh [scale scale])]
+        (when-not (and (finite? w) (finite? h) (pos? w) (pos? h))
+          (throw (js/Error. (str "image-board: wh must be a vector of two positive finite numbers, got " (pr-str wh)))))
+        (let [[orx ory] (or orxy [(- (/ w 2)) (- (/ h 2))])]
+          (when-not (and (finite? orx) (finite? ory))
+            (throw (js/Error. (str "image-board: orxy must be a vector of two finite numbers, got " (pr-str orxy)))))
+          {:path path :scale scale :imx imx :imy imy :orx orx :ory ory :w w :h h})))))
+
 (defn ^:export image-board
   "Build a rectangular tracing board carrying a reference image, ready for
    edit-path-2d. Unlike a bare (set-image (rect …) …), the board is
@@ -78,22 +107,33 @@
 
    - path:         absolute image file path (desktop only — read via Rust server).
    - scale-factor: image width in Ridley units (calibrates scale — verify with ruler).
+                   Default 100.
    - [imx imy]:    image lower-left corner RELATIVE to the rect's lower-left corner
                    (frames which part of the photo shows in the window). Because it
                    is relative to the rect, sliding [orx ory] carries the image along
-                   — once framed, you don't re-correct [imx imy].
+                   — once framed, you don't re-correct [imx imy]. Default [0 0].
    - [orx ory]:    rect lower-left corner relative to the turtle (moves rect + image
-                   together). Turtle-centered → [(- (/ w 2)) (- (/ h 2))].
-   - [w h]:        rect dimensions.
+                   together). Turtle-centered → [(- (/ w 2)) (- (/ h 2))] (the default).
+   - [w h]:        rect dimensions. Default [scale scale].
+
+   Trailing arguments may be omitted (arities from [path] up to the full five);
+   omitted ones take the defaults above, resolved by image-board-params, which
+   also validates — a malformed or missing-in-the-wrong-way argument throws
+   instead of silently producing nil/NaN coordinates.
 
    Tweak scale-factor / [imx imy] / [orx ory] until the object sits where you want
    and the turtle [0 0] is on your chosen creation-pose point. Then trace with
    edit-path-2d and extrude with the matching :preserve-position flag:
      (extrude (path-to-shape outline :preserve-position true) (f depth))"
-  [path scale-factor [imx imy] [orx ory] [w h]]
-  (-> (make-shape [[orx ory] [(+ orx w) ory] [(+ orx w) (+ ory h)] [orx (+ ory h)]]
-                  {:preserve-position? true})
-      (set-image path scale-factor (+ orx imx) (+ ory imy))))
+  ([path] (image-board path nil nil nil nil))
+  ([path scale-factor] (image-board path scale-factor nil nil nil))
+  ([path scale-factor imxy] (image-board path scale-factor imxy nil nil))
+  ([path scale-factor imxy orxy] (image-board path scale-factor imxy orxy nil))
+  ([path scale-factor imxy orxy wh]
+   (let [{:keys [scale imx imy orx ory w h]} (image-board-params path scale-factor imxy orxy wh)]
+     (-> (make-shape [[orx ory] [(+ orx w) ory] [(+ orx w) (+ ory h)] [orx (+ ory h)]]
+                     {:preserve-position? true})
+         (set-image path scale (+ orx imx) (+ ory imy))))))
 
 ;; ============================================================
 ;; Built-in shapes (centered at origin)

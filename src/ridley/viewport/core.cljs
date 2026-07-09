@@ -6,6 +6,7 @@
             [ridley.anim.playback :as anim-playback]
             [ridley.manifold.core :as manifold]
             [ridley.export.stl :as stl]
+            [ridley.math :as m]
             [clojure.string :as str]))
 
 (defonce ^:private state (atom nil))
@@ -63,6 +64,20 @@
 
 ;; Preview objects for test mode (temporary visualization, outside registry)
 (defonce ^:private preview-objects (atom []))
+
+;; Per-frame callbacks registered by external overlay owners (e.g. the edit-attach
+;; gizmo, for its constant-apparent-size rescale). key -> (fn [camera]).
+(defonce ^:private frame-callbacks (atom {}))
+
+(defn register-frame-callback!
+  "Register `f` (a fn of one arg, the THREE.Camera) to run once per render frame,
+   keyed by `key` so it can be cleanly unregistered later."
+  [key f]
+  (swap! frame-callbacks assoc key f))
+
+(defn unregister-frame-callback!
+  [key]
+  (swap! frame-callbacks dissoc key))
 
 ;; Ephemeral billboard text labels (e.g. edit-path mark names) — [{:mesh :texture :text}]
 (defonce ^:private label-objects (atom []))
@@ -1197,6 +1212,9 @@
       ;; Update turtle indicator scale for screen-relative sizing
       (when-let [^js indicator @turtle-indicator]
         (update-turtle-indicator-scale indicator camera))
+      ;; Run externally-registered per-frame overlay callbacks (e.g. gizmo rescale)
+      (doseq [f (vals @frame-callbacks)]
+        (f camera))
       ;; Adaptive grid: update level and minor opacity
       (when-let [{:keys [^js grid]} @state]
         (when (.-visible grid)
@@ -2342,6 +2360,71 @@
         (.add world-group obj)
         (swap! preview-objects conj obj)))))
 
+(defn- delta->matrix
+  "Build a THREE.Matrix4 for a translate/rotate/scale delta spec (world-group-local
+   vectors/points). Translate and rotate-about-a-pivot both decompose into ordinary
+   position+quaternion, but a single-axis anisotropic scale about an arbitrary pivot
+   does not (Object3D.scale only scales along the object's own local axes post-
+   rotation, and the target's baked vertex data isn't pre-oriented into the scale
+   axis) — so all three are built as an explicit matrix for one uniform code path."
+  [delta]
+  (let [mat (THREE/Matrix4.)]
+    (cond
+      (:translate delta)
+      (let [[dx dy dz] (:translate delta)]
+        (.makeTranslation mat dx dy dz))
+
+      (:rotate delta)
+      (let [{:keys [pivot axis deg]} (:rotate delta)
+            [px py pz] pivot
+            [ax ay az] (m/normalize axis)
+            rad (* deg (/ Math/PI 180))
+            q (.setFromAxisAngle (THREE/Quaternion.) (THREE/Vector3. ax ay az) rad)
+            rm (.makeRotationFromQuaternion (THREE/Matrix4.) q)
+            pv (.applyMatrix4 (THREE/Vector3. px py pz) rm)]
+        (.copy mat rm)
+        (.setPosition mat (- px (.-x pv)) (- py (.-y pv)) (- pz (.-z pv))))
+
+      (:scale delta)
+      (let [{:keys [pivot axis factor]} (:scale delta)
+            [px py pz] pivot
+            [ax ay az] (m/normalize axis)
+            k (- factor 1.0)
+            m11 (+ 1 (* k ax ax)) m12 (* k ax ay) m13 (* k ax az)
+            m21 (* k ay ax) m22 (+ 1 (* k ay ay)) m23 (* k ay az)
+            m31 (* k az ax) m32 (* k az ay) m33 (+ 1 (* k az az))
+            tx (- px (+ (* m11 px) (* m12 py) (* m13 pz)))
+            ty (- py (+ (* m21 px) (* m22 py) (* m23 pz)))
+            tz (- pz (+ (* m31 px) (* m32 py) (* m33 pz)))]
+        (.set mat
+              m11 m12 m13 tx
+              m21 m22 m23 ty
+              m31 m32 m33 tz
+              0 0 0 1)))
+    mat))
+
+(defn nudge-preview!
+  "Apply a cheap transform to the current preview objects (whatever show-preview!/
+   show-wireframe-preview! last put up) without rebuilding geometry — used by the
+   edit-attach gizmo during a drag so the preview follows the cursor at zero re-eval
+   cost. `delta` is nil (reset to identity) or one of:
+     {:translate [dx dy dz]}
+     {:rotate {:pivot [x y z] :axis [x y z] :deg d}}
+     {:scale  {:pivot [x y z] :axis [x y z] :factor f}}
+   All vectors/points are world-group-local. The next real show-preview!/
+   show-wireframe-preview! call replaces the object outright, which implicitly
+   resets this (fresh objects default to matrixAutoUpdate true, identity transform)."
+  [delta]
+  (doseq [^js obj @preview-objects]
+    (if (nil? delta)
+      (do (set! (.-matrixAutoUpdate obj) true)
+          (.set (.-position obj) 0 0 0)
+          (.set (.-quaternion obj) 0 0 0 1)
+          (.set (.-scale obj) 1 1 1))
+      (do (set! (.-matrixAutoUpdate obj) false)
+          (.copy (.-matrix obj) (delta->matrix delta))
+          (set! (.-matrixWorldNeedsUpdate obj) true)))))
+
 (defn clear-labels!
   "Remove all ephemeral billboard labels."
   []
@@ -2420,6 +2503,98 @@
         [(+ (.-left rect) (* (/ (+ (.-x v) 1) 2) (.-width rect)))
          (+ (.-top rect) (* (/ (- 1 (.-y v)) 2) (.-height rect)))]))))
 
+(defn raycast-line-point
+  "World-group-local [x y z] point on the infinite 3D line through `line-origin`
+   (local) with direction `line-dir` (local) that is closest to the pointer ray, or
+   nil if the ray and line are parallel. Used by the edit-attach gizmo to drag its
+   translate arrows / stretch handles along a single axis (closest point on the axis
+   line to the ray, not a plane intersection)."
+  [^js event line-origin line-dir]
+  (when-let [{:keys [^js camera ^js world-group ^js canvas]} @state]
+    (let [rect (.getBoundingClientRect canvas)
+          nx (- (* (/ (- (.-clientX event) (.-left rect)) (.-width rect)) 2) 1)
+          ny (- 1 (* (/ (- (.-clientY event) (.-top rect)) (.-height rect)) 2))
+          raycaster (THREE/Raycaster.)]
+      (.setFromCamera raycaster (THREE/Vector2. nx ny) camera)
+      ;; Bring the ray into world-group-local space, where line-origin/line-dir and
+      ;; the returned point live (mirrors raycast-plane-point), then hand off to the
+      ;; plain-vector skew-line math (kept in ridley.math so it's unit-testable
+      ;; without mocking THREE/DOM).
+      (let [inv (.invert (.clone (.-matrixWorld world-group)))
+            ray (.applyMatrix4 (.clone (.-ray raycaster)) inv)
+            ro (.-origin ray)
+            rdv (.-direction ray)
+            ray-origin [(.-x ro) (.-y ro) (.-z ro)]
+            ray-dir [(.-x rdv) (.-y rdv) (.-z rdv)]]
+        (m/closest-point-on-line ray-origin ray-dir line-origin line-dir)))))
+
+(defn raycast-objects
+  "Raycast the pointer ray against `objs` (a seq of THREE.Object3D, e.g. a gizmo's
+   own hit-zone meshes — NOT the whole scene). Returns hit records
+   {:object <THREE.Object3D> :point [x y z] :distance d}, nearest first, world-group-
+   local points. Empty if nothing hit."
+  [^js event objs]
+  (when-let [{:keys [^js camera ^js world-group ^js canvas]} @state]
+    (let [rect (.getBoundingClientRect canvas)
+          nx (- (* (/ (- (.-clientX event) (.-left rect)) (.-width rect)) 2) 1)
+          ny (- 1 (* (/ (- (.-clientY event) (.-top rect)) (.-height rect)) 2))
+          raycaster (THREE/Raycaster.)]
+      (.setFromCamera raycaster (THREE/Vector2. nx ny) camera)
+      (let [hits (.intersectObjects raycaster (clj->js (vec objs)) false)]
+        (mapv (fn [^js h]
+                (let [pt (.clone (.-point h))]
+                  (.worldToLocal world-group pt)
+                  {:object (.-object h)
+                   :point [(.-x pt) (.-y pt) (.-z pt)]
+                   :distance (.-distance h)}))
+              hits)))))
+
+(defn raycast-mesh-face
+  "Raycast the pointer ray against the scene meshes (world-group children that carry
+   a registryName — the gizmo's own hit-zones and overlays have none, so they're
+   skipped). Returns, for the nearest hit face, {:point [x y z] :vertices [v0 v1 v2]
+   :center [x y z]} in world-group-local coords (the frame creation-poses live in),
+   or nil if no mesh was hit. Used by the edit-attach gizmo's origin-mode
+   vertex/face-center snap: the three candidates are exactly the hit face's own
+   vertices (O(1), no global vertex-buffer search — brief-gizmo-polish.md §2)."
+  [^js event]
+  (when-let [{:keys [^js camera ^js world-group ^js canvas]} @state]
+    (let [rect (.getBoundingClientRect canvas)
+          nx (- (* (/ (- (.-clientX event) (.-left rect)) (.-width rect)) 2) 1)
+          ny (- 1 (* (/ (- (.-clientY event) (.-top rect)) (.-height rect)) 2))
+          raycaster (THREE/Raycaster.)]
+      (.setFromCamera raycaster (THREE/Vector2. nx ny) camera)
+      (let [hits (.intersectObjects raycaster (.-children world-group) true)
+            hit (some (fn [^js h]
+                        (let [^js obj (.-object h)]
+                          (when (and (instance? THREE/Mesh obj)
+                                     (.. obj -userData -registryName)
+                                     (.-face h))
+                            h)))
+                      hits)]
+        (when hit
+          (let [^js obj (.-object hit)
+                ^js geom (.-geometry obj)
+                ^js pos (.getAttribute geom "position")
+                ^js face (.-face hit)
+                ;; position idx (already resolved through the index buffer by THREE)
+                ;; → world-group-local point: mesh-local → world → world-group-local
+                vtx (fn [idx]
+                      (let [v (THREE/Vector3.)]
+                        (.fromBufferAttribute v pos idx)
+                        (.applyMatrix4 v (.-matrixWorld obj))
+                        (.worldToLocal world-group v)
+                        [(.-x v) (.-y v) (.-z v)]))
+                v0 (vtx (.-a face)) v1 (vtx (.-b face)) v2 (vtx (.-c face))
+                p (let [pt (.clone (.-point hit))]
+                    (.worldToLocal world-group pt)
+                    [(.-x pt) (.-y pt) (.-z pt)])]
+            {:point p
+             :vertices [v0 v1 v2]
+             :center [(/ (+ (v0 0) (v1 0) (v2 0)) 3)
+                      (/ (+ (v0 1) (v1 1) (v2 1)) 3)
+                      (/ (+ (v0 2) (v1 2) (v2 2)) 3)]}))))))
+
 (defn set-controls-enabled!
   "Enable/disable the orbit controls (edit-path disables them while dragging a node
    so the drag doesn't also rotate the view)."
@@ -2431,6 +2606,13 @@
   "The viewport canvas element (for editors that install their own listeners)."
   []
   (:canvas @state))
+
+(defn get-world-group
+  "The THREE.Group all scene/overlay geometry lives under (for editors — e.g. the
+   edit-attach gizmo — that own and position a persistent THREE.Group of their own,
+   the same way the turtle indicator is a permanent child of this group)."
+  []
+  (:world-group @state))
 
 (defn highlight-mesh-by-name!
   "Highlight a mesh by its registry name (orange outline + emissive tint).

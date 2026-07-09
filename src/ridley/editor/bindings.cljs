@@ -25,7 +25,7 @@
             [ridley.anim.preprocess :as anim-preprocess]
             [ridley.turtle.shape-fn :as sfn]
             [ridley.editor.tweak-mode :as tweak-mode]
-            [ridley.editor.pilot-mode :as pilot-mode]
+            [ridley.editor.edit-attach :as edit-attach]
             [ridley.editor.edit-bezier :as edit-bezier]
             [ridley.editor.edit-path :as edit-path]
             [ridley.editor.edit-image-board :as edit-image-board]
@@ -604,8 +604,9 @@
    ;; Tweak mode
    'tweak-start!             tweak-mode/start!
    'tweak-start-registered!  tweak-mode/start-registered!
-   ;; Pilot mode (interactive mesh positioning)
-   'pilot-request!           pilot-mode/request!
+   ;; edit-attach (interactive mesh/SDF positioning) — the `edit-attach` macro
+   ;; and its `pilot` alias (in macros.cljs) both expand to a call here.
+   'edit-attach-request!     edit-attach/request!
    ;; edit-bezier (interactive cubic Bezier authoring) — the `edit-bezier` macro
    ;; (in macros.cljs) expands to a bezier-to call and calls this to open the session
    'edit-bezier-request!     edit-bezier/request!

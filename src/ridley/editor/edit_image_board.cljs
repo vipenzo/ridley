@@ -144,12 +144,17 @@
 ;; Source code (bake) + live re-eval
 ;; ============================================================
 
-(defn- current-code []
-  (let [{:keys [path scale imx imy orx ory w h]} @session]
-    (str "(image-board " (pr-str path) " " (fmt-num scale)
-         " [" (fmt-num imx) " " (fmt-num imy) "]"
-         " [" (fmt-num orx) " " (fmt-num ory) "]"
-         " [" (fmt-num w) " " (fmt-num h) "])")))
+(defn- code-for
+  "Full canonical (image-board path scale [imx imy] [orx ory] [w h]) for the
+   given (possibly session-edited) values — used by confirm!/live-reeval! to
+   bake exactly what the user calibrated."
+  [{:keys [path scale imx imy orx ory w h]}]
+  (str "(image-board " (pr-str path) " " (fmt-num scale)
+       " [" (fmt-num imx) " " (fmt-num imy) "]"
+       " [" (fmt-num orx) " " (fmt-num ory) "]"
+       " [" (fmt-num w) " " (fmt-num h) "])"))
+
+(defn- current-code [] (code-for @session))
 
 (defn- find-marker []
   (modal/find-form-bounds (cm/get-value) marker-prefix))
@@ -428,12 +433,24 @@
       (reset! session nil)
       (modal/run-definitions!))))
 
-(defn cancel! []
-  (cleanup!)
-  (modal/release!)
-  (reset! session nil)
-  (modal/arm-skip!)
-  (modal/run-definitions!))
+(defn cancel!
+  "Cancel: rewrite the marker's head only — (edit-image-board …) → (image-board
+   …) — leaving the body exactly as typed, same as the rest of the family.
+   image-board now resolves its own defaults and validates them
+   (dev-docs/brief-image-board-defaults.md), so a bare (edit-image-board path)
+   strips to an (image-board path) that's valid on its own — the full-args
+   fallback this used to need (A3, brief-edit-attach.md) is no longer
+   necessary. No skip flag: the rewritten source has no edit-* head left to
+   reopen on the next run."
+  []
+  (let [[from to] (find-marker)]
+    (when from
+      (modal/replace-source! from to
+                             (modal/strip-head (cm/get-value) from to marker-prefix "(image-board")))
+    (cleanup!)
+    (modal/release!)
+    (reset! session nil)
+    (modal/run-definitions!)))
 
 ;; ============================================================
 ;; Entry (two-phase, mirrors edit-path)
@@ -454,11 +471,11 @@
    a surrounding (stamp …) renders the image during the eval) and, in script mode,
    opens the editor session."
   [path & more]
-  (let [[scale imxy orxy wh] more
-        scale (or scale 100)
-        [imx imy] (or imxy [0 0])
-        [w h] (or wh [scale scale])
-        [orx ory] (or orxy [(- (/ w 2)) (- (/ h 2))])
+  (let [[scale-arg imxy orxy wh] more
+        ;; image-board-params is the single source of the defaults (and their
+        ;; validation) — request! no longer duplicates that chain, it just
+        ;; asks for the resolved values (dev-docs/brief-image-board-defaults.md).
+        {:keys [scale imx imy orx ory w h]} (shape/image-board-params path scale-arg imxy orxy wh)
         board (shape/image-board path scale [imx imy] [orx ory] [w h])]
     (cond
       (modal/consume-skip!)

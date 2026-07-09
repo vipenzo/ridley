@@ -1,7 +1,7 @@
 (ns ridley.editor.modal-evaluator
   "Shared skeleton for modal evaluators — interactive DSL sessions that open
    during/after an eval, preview live in the viewport, and rewrite the source on
-   confirm. Concrete sessions (tweak, pilot, edit-bezier) provide only their
+   confirm. Concrete sessions (tweak, edit-attach, edit-bezier) provide only their
    specific logic; this layer owns the mechanics they all share:
 
    - the central mutex (one modal session at a time), re-exported from state
@@ -13,7 +13,7 @@
    - the two-phase entry driver (request! during eval, enter! after eval).
 
    Two-phase entry (Architecture §11.2.4, §15.2.1). In Ridley the eval owns the
-   flow and the session waits for it. A deferred session (pilot, edit-bezier)
+   flow and the session waits for it. A deferred session (edit-attach, edit-bezier)
    returns a value to the in-flight eval from request! WITHOUT installing its
    handler, and the post-eval driver in core.cljs — (requested?) then (enter!) —
    installs it once the eval completes. Tweak is the degenerate synchronous case:
@@ -29,7 +29,7 @@
 ;; Skip flag — shared across all modal evaluators
 ;; ============================================================
 
-;; When armed, the next modal macro invocation (tweak-start!, pilot-request!, …)
+;; When armed, the next modal macro invocation (tweak-start!, edit-attach-request!, …)
 ;; passes through silently instead of opening a session. Armed by a session's own
 ;; re-eval / cancel so the macro it re-runs doesn't recursively re-enter. Only one
 ;; session is ever active (mutex), so a single shared flag is sufficient.
@@ -214,6 +214,16 @@
             ";" (let [nl (.indexOf text "\n" i)]
                   (if (neg? nl) -1 (recur (inc nl) depth)))
             (recur (inc i) depth)))))))
+
+(defn strip-head
+  "Replace the literal head token at the very start of text[from,to) — the
+   exact string `old-head`, e.g. \"(edit-path\" — with `new-head`, e.g.
+   \"(path\", leaving everything else in the range (the body) byte-identical.
+   Shared by every editor whose cancel! follows the family's edit-X ↔ X
+   head-rename grammar: since the session never writes to the buffer before
+   confirm/cancel, the range still holds exactly the body the user typed."
+  [text from to old-head new-head]
+  (str new-head (subs text (+ from (count old-head)) to)))
 
 (defn find-form-bounds
   "Find the [from to) character bounds of the first form in `text` whose opening

@@ -60,3 +60,35 @@
    Result is normalized - use for direction vectors."
   [v axis angle]
   (normalize (rotate-point-around-axis v axis angle)))
+
+(defn closest-point-on-line
+  "Point on the infinite line through `line-origin` with direction `line-dir`
+   closest to the infinite line through `ray-origin` with direction `ray-dir`
+   (the standard skew-line closest-point problem — e.g. a pointer ray vs a gizmo
+   axis). Returns nil if the two lines are parallel (within eps)."
+  [ray-origin ray-dir line-origin line-dir]
+  (let [rd (normalize ray-dir)
+        ld (normalize line-dir)
+        w0 (v- ray-origin line-origin)
+        a (dot rd rd)
+        b (dot rd ld)
+        c (dot ld ld)
+        d (dot rd w0)
+        e (dot ld w0)
+        denom (- (* a c) (* b b))]
+    (when (> (Math/abs denom) 1e-9)
+      (let [t-line (/ (- (* a e) (* b d)) denom)]
+        (v+ line-origin (v* ld t-line))))))
+
+(defn signed-angle-around-axis
+  "Signed angle (radians) from `v-from` to `v-to`, measured around `axis` using the
+   same right-hand-rule convention as rotate-around-axis/rotate-point-around-axis
+   (rotating v-from by +this-angle around axis reproduces v-to's direction).
+   v-from/v-to need not be unit length or already perpendicular to axis — both are
+   projected onto the plane perpendicular to axis first."
+  [v-from v-to axis]
+  (let [k (normalize axis)
+        proj (fn [v] (v- v (v* k (dot v k))))
+        a (proj v-from)
+        b (proj v-to)]
+    (Math/atan2 (dot (cross a b) k) (dot a b))))

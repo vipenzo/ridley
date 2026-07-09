@@ -2538,12 +2538,24 @@
       (reset! session nil)
       (modal/run-definitions!))))
 
-(defn cancel! []
-  (cleanup!)
-  (modal/release!)
-  (reset! session nil)
-  (modal/arm-skip!)
-  (modal/run-definitions!))
+(defn cancel!
+  "Cancel: rewrite the marker's head only — (edit-path …) → (path …), or
+   (edit-path-2d …) → (path-2d …) — leaving the body exactly as the user
+   typed it (the buffer is never touched before confirm/cancel, so the range
+   still holds the original text). No skip flag: the rewritten source no
+   longer has an edit-* head, so the next run has no session to reopen."
+  []
+  (let [{:keys [mode]} @session
+        [from to] (find-marker)]
+    (when from
+      (let [old-head (if (= mode :2d) "(edit-path-2d" "(edit-path")
+            new-head (if (= mode :2d) "(path-2d" "(path")]
+        (modal/replace-source! from to
+                               (modal/strip-head (cm/get-value) from to old-head new-head))))
+    (cleanup!)
+    (modal/release!)
+    (reset! session nil)
+    (modal/run-definitions!)))
 
 ;; ============================================================
 ;; Entry points (two-phase)
