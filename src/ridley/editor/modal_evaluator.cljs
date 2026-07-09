@@ -282,30 +282,34 @@
    success, nil on error (logged with `err-prefix`). Callers do their own
    session-specific follow-up (turtle indicator, wireframe preview) on :ok.
 
-   `arm-skip?` (default true) arms the skip flag before the eval, so that — if the
-   marker survives in the modified script (e.g. stale offsets) — its own macro
-   passes through instead of re-entering. Callers whose modified script reliably
-   has the marker replaced by literals (edit-bezier's live preview) pass false, to
-   avoid leaving the flag armed for the next modal macro."
-  ([build-script-fn err-prefix] (reeval-script! build-script-fn err-prefix true))
-  ([build-script-fn err-prefix arm-skip?]
-   (try
-     (let [script (build-script-fn)]
-       (registry/clear-all!)
-       (state/reset-turtle!)
-       (state/reset-scene-accumulator!)
-       (state/reset-print-buffer!)
-       (let [ctx @state/sci-ctx-ref]
-         (when arm-skip? (arm-skip!))
-         (sci/eval-string script ctx))
-       (let [{:keys [lines stamps]} @state/scene-accumulator]
-         (registry/set-lines! (vec (or lines [])))
-         (registry/set-stamps! (vec (or stamps []))))
-       (registry/refresh-viewport! false)
-       :ok)
-     (catch :default e
-       (js/console.warn err-prefix (.-message e))
-       nil))))
+   `arm-skip?` is REQUIRED (no default) — it decides whether the skip flag is
+   armed before the eval, so that — if the marker survives in the modified script
+   (e.g. stale offsets) — its own macro passes through instead of re-entering.
+   In practice every live-preview caller replaces the marker with literals, so
+   they all pass false; a stray true leaks the flag into the next modal macro,
+   which then silently passes through instead of opening (the edit-attach reentry
+   glitch — see code-issues.md). The arg is mandatory precisely so a caller can't
+   omit it and inherit that footgun by accident; there is no safe default to pick
+   for them. Legitimate arming of the flag is done explicitly via `arm-skip!` in
+   the leave-the-marker cancel! paths (edit-bezier, permanent tweak), not here."
+  [build-script-fn err-prefix arm-skip?]
+  (try
+    (let [script (build-script-fn)]
+      (registry/clear-all!)
+      (state/reset-turtle!)
+      (state/reset-scene-accumulator!)
+      (state/reset-print-buffer!)
+      (let [ctx @state/sci-ctx-ref]
+        (when arm-skip? (arm-skip!))
+        (sci/eval-string script ctx))
+      (let [{:keys [lines stamps]} @state/scene-accumulator]
+        (registry/set-lines! (vec (or lines [])))
+        (registry/set-stamps! (vec (or stamps []))))
+      (registry/refresh-viewport! false)
+      :ok)
+    (catch :default e
+      (js/console.warn err-prefix (.-message e))
+      nil)))
 
 ;; ============================================================
 ;; Two-phase entry driver — generic dispatch over registered kinds
