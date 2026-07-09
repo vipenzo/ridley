@@ -185,20 +185,24 @@ Quando passi una keyword, `tweak` opera sulla mesh registrata: nasconde l'origin
 
 `(tweak :A)` funziona perché `register` salva automaticamente il source form. Se la form contiene chiamate a funzioni definite dall'utente (`(register A (make-a 1))`), quelle funzioni devono essere già definite al momento del tweak.
 
-### Pilot: posizionamento interattivo via tastiera
+### Edit-attach: posizionamento interattivo con gizmo e tastiera
 
-`pilot` apre una sessione modale in cui la tastiera muove la tartaruga a partire dalla posa di una mesh esistente. I comandi accumulati appaiono in un pannello laterale e il loro effetto si vede nel viewport in tempo reale. Quando confermi, `pilot` sostituisce la sua chiamata nel sorgente con un `attach` contenente la sequenza di comandi.
+`edit-attach` apre una sessione modale in cui riposizioni e deformi una mesh esistente. Sulla creation-pose della mesh appare un gizmo: tre frecce di traslazione e tre anelli di rotazione orientati sugli assi della tartaruga, più tre maniglie di stretch. Ogni drag diventa un comando turtle (`f`, `rt`, `u`, `th`, `tv`, `tr`, `stretch-*`) che appare nel pannello laterale, con l'effetto visibile nel viewport in tempo reale. Quando confermi, `edit-attach` si riscrive nel sorgente come `attach` con la sequenza di comandi accumulata; con Esc annulli e resta la sola espressione di partenza.
 
-<!-- example-source: pilot :no-run
+<!-- example-source: edit-attach :no-run
 (register part (box 20))
-(pilot :part)
+(edit-attach part)
 -->
 
-Pilot ha tre modi (stile vim): movimento (`f`/`b`/`rt`/`lt`/`u`/`d`), rotazione (`th`/`tv`/`tr`), scala (`stretch-f`/`stretch-rt`/`stretch-u`). I tasti per cambiare modo e i dettagli operativi sono nella Reference.
+La tastiera resta come strumento di precisione, con i tre modi storici (stile vim): movimento (`f`/`b`/`rt`/`lt`/`u`/`d`), rotazione (`th`/`tv`/`tr`), scala (`stretch-f`/`stretch-rt`/`stretch-u`). I drag scattano sulla stessa griglia dei passi tastiera (i parametri step/angle/scale del pannello); tenendo Shift il movimento è libero.
+
+Il toggle oggetto/origin nel pannello cambia il significato dei gesti: in modalità origin muovi la creation-pose relativamente alla geometria (la famiglia `cp-*` del cap. 8), e un click su un vertice della mesh aggancia la pose esattamente lì. È il modo rapido per mettere l'ancora, e quindi il pivot di rotazioni e stretch, su un punto significativo del pezzo.
+
+Un `attach` già scritto è ri-editabile: voce "Edit" del menu contestuale sulla form (o prefisso `edit-` aggiunto a mano), i comandi esistenti entrano nel pannello intatti e i nuovi gesti si accodano. `pilot`, il vecchio nome di questa sessione, funziona ancora come alias. I tasti e i dettagli operativi sono nella Reference.
 
 ### Una terza sessione: edit-bezier
 
-`edit-bezier` usa lo stesso meccanismo modale di `tweak` e `pilot` per disegnare da tastiera una curva di Bezier cubica, e alla conferma la riscrive a sorgente come `bezier-to`. Siccome è prima di tutto uno strumento per le curve, è trattata nel § 11.2.
+`edit-bezier` usa lo stesso meccanismo modale di `tweak` ed `edit-attach` per disegnare da tastiera una curva di Bezier cubica, e alla conferma la riscrive a sorgente come `bezier-to`. Siccome è prima di tutto uno strumento per le curve, è trattata nel § 11.2.
 
 ## 15.4 Dove trovare gli strumenti
 

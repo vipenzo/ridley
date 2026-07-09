@@ -344,9 +344,9 @@ If you have a computed path — maybe returned by a function — and you want to
 
 `play-path` solves a technical problem: the functions that return paths capture the global bindings of `f`/`th`/`tv`, not the ones redefined inside `attach`. Without `play-path` the path would be ignored.
 
-### Stretch: scaling along local axes
+### Stretch: scaling along the part's axes
 
-Inside `attach` (and only there) `stretch-f`, `stretch-rt`, `stretch-u` are available to scale the piece along the turtle's local axes:
+Inside `attach` (and only there) `stretch-f`, `stretch-rt`, `stretch-u` are available to scale the piece along its material axes, with the pivot on the creation-pose:
 
 <!-- example-source: attach-stretch
 (register b (box 20))
@@ -354,9 +354,11 @@ Inside `attach` (and only there) `stretch-f`, `stretch-rt`, `stretch-u` are avai
 ;; Double along the heading
 (register b2 (attach b (stretch-f 2)))
 
-;; Rotate the turtle, then scale along the new heading
+;; Rotate the turtle, then scale: heading and part axis turn together
 (register b3 (attach b (th 90) (stretch-f 2)))
 -->
+
+The stretch axes are the part's, not the anchor's. As long as you only use ordinary movements and rotations (`f`, `th`, ...) the distinction is invisible: turtle and part turn together and the two frames coincide. They diverge only with the `cp-th`/`cp-tv`/`cp-tr` rotations seen above, which turn the anchor relative to the geometry: even after those, `stretch-f` keeps elongating the part along its original axis, and `(stretch-f k)` before or after a `cp-th` produces the same result. The pivot, instead, follows the anchor: if you moved it with the translational `cp` commands (or with the vertex snap of `edit-attach`, ch. 15), the stretch scales around the point you chose.
 
 `stretch-*` is the local complement of `scale` (which works on world axes). Outside `attach` they are not available. If you write `(scale ...)` inside an `attach`, Ridley reports the error and points you to `stretch-*`.
 

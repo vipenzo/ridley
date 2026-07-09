@@ -435,6 +435,15 @@
     :description "Apply an easing function to a normalized fraction `t ∈ [0, 1]` and return the eased value, also in `[0, 1]`. The standalone form of the easings used by `span` inside `anim!`. Useful for previewing a curve numerically, for custom interpolations inside `anim-proc!` `gen-fn`s, or for tweak-style math that needs the same shaping the timeline applies."
     :path "docs/manual/reference/en/ease.md"}
 
+   "edit-attach-request!"
+   {:name "edit-attach-request!"
+    :category "live-interactive"
+    :status "experimental"
+    :since ""
+    :signature "(edit-attach-request! quoted-mesh mesh-value quoted-body attached-value marker-kind)"
+    :description "Low-level entry point of the **edit-attach** session: an interactive mode in which a viewport gizmo (translation arrows, rotation rings, stretch handles on the mesh's creation-pose) and the keyboard drive turtle commands to position, orient and deform a mesh or SDF node. On confirmation, the editor source is rewritten: the `(edit-attach ...)` form is replaced by a flat `(attach mesh cmd1 cmd2 ...)` form carrying the accumulated commands. On cancel (Esc) the prefix is stripped instead: the form reverts to the plain `(attach ...)` with its original body, or to the bare mesh expression if there was no body."
+    :path "docs/manual/reference/en/edit-attach-request-bang.md"}
+
    "edit-bezier"
    {:name "edit-bezier"
     :category "live-interactive"
@@ -800,7 +809,7 @@
     :category "2d-shapes"
     :status "stable"
     :since ""
-    :signature "(image-board path scale-factor [imx imy] [orx ory] [w h])"
+    :signature "(image-board path)\n(image-board path scale-factor)\n(image-board path scale-factor [imx imy])\n(image-board path scale-factor [imx imy] [orx ory])\n(image-board path scale-factor [imx imy] [orx ory] [w h])\npath"
     :description "Build a rectangular **tracing board** carrying a reference photo, ready to trace over with `edit-path-2d`. It is a convenience wrapper over `set-image` on a `preserve-position?` rectangle: unlike a bare `(set-image (rect …) …)`, the board keeps the **turtle fixed at `[0 0]`**, so stamping it places the rect relative to the turtle by `[orx ory]` and leaves the turtle exactly on the point that will become the extruded mesh's **creation pose** — typically a point *off* the contour you trace."
     :path "docs/manual/reference/en/image-board.md"}
 
@@ -1298,15 +1307,6 @@
     :signature "(pen :off)\n(pen :on)\n(pen-up)\n(pen-down)"
     :description "Toggle the turtle's pen state. With the pen \"on\" every movement command (`f`, `arc-h`, `arc-v`, `bezier-to`, …) draws a construction line between the previous and the new position. With the pen \"off\", the turtle moves silently without drawing."
     :path "docs/manual/reference/en/pen.md"}
-
-   "pilot-request!"
-   {:name "pilot-request!"
-    :category "live-interactive"
-    :status "experimental"
-    :since ""
-    :signature "(pilot-request! quoted-arg value)"
-    :description "Low-level entry point of **pilot mode**: an interactive session in which the keyboard drives turtle commands to position or orient a mesh or SDF node directly in the viewport. On confirmation, the editor source text is rewritten — the `(pilot ...)` form is replaced by an `(attach! ...)` form carrying the commands you typed during the session."
-    :path "docs/manual/reference/en/pilot-request-bang.md"}
 
    "pin-path"
    {:name "pin-path"
@@ -2250,7 +2250,7 @@
     :status "stable"
     :since ""
     :signature "(stretch-f factor)\n(stretch-rt factor)\n(stretch-u factor)\nattach"
-    :description "Scale the attached mesh or SDF along the **current turtle's local frame**, pivoted at the turtle's current position. The three commands are symmetric — they differ only in which local axis they scale along — and all three obey the same conventions: the pivot is wherever the turtle is at the moment of the call, and a negative factor reverses winding (mesh) or reflects (SDF) along that axis."
+    :description "Scale the attached mesh or SDF along its **material axes** (the part's own axes), pivoted at the turtle's current position. The three commands are symmetric — they differ only in which axis they scale along — and all three obey the same conventions: the pivot is wherever the turtle is at the moment of the call, and a negative factor reverses winding (mesh) or reflects (SDF) along that axis."
     :path "docs/manual/reference/en/stretch.md"}
 
    "stroke-shape"

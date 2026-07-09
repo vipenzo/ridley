@@ -185,20 +185,24 @@ When you pass a keyword, `tweak` operates on the registered mesh: it hides the o
 
 `(tweak :A)` works because `register` automatically saves the source form. If the form contains calls to user-defined functions (`(register A (make-a 1))`), those functions must already be defined at the moment of the tweak.
 
-### Pilot: interactive positioning via keyboard
+### Edit-attach: interactive positioning with gizmo and keyboard
 
-`pilot` opens a modal session in which the keyboard moves the turtle starting from the pose of an existing mesh. The accumulated commands appear in a side panel and their effect is seen in the viewport in real time. When you confirm, `pilot` replaces its call in the source with an `attach` containing the sequence of commands.
+`edit-attach` opens a modal session in which you reposition and deform an existing mesh. A gizmo appears on the mesh's creation-pose: three translation arrows and three rotation rings oriented along the turtle's axes, plus three stretch handles. Every drag becomes a turtle command (`f`, `rt`, `u`, `th`, `tv`, `tr`, `stretch-*`) that appears in the side panel, with the effect visible in the viewport in real time. When you confirm, `edit-attach` rewrites itself in the source as an `attach` containing the accumulated sequence of commands; Esc cancels and leaves just the starting expression.
 
-<!-- example-source: pilot :no-run
+<!-- example-source: edit-attach :no-run
 (register part (box 20))
-(pilot :part)
+(edit-attach part)
 -->
 
-Pilot has three modes (vim-style): movement (`f`/`b`/`rt`/`lt`/`u`/`d`), rotation (`th`/`tv`/`tr`), scale (`stretch-f`/`stretch-rt`/`stretch-u`). The keys to change mode and the operational details are in the Reference.
+The keyboard remains as the precision layer, with the three historical modes (vim-style): movement (`f`/`b`/`rt`/`lt`/`u`/`d`), rotation (`th`/`tv`/`tr`), scale (`stretch-f`/`stretch-rt`/`stretch-u`). Drags snap to the same grid as the keyboard steps (the step/angle/scale parameters in the panel); holding Shift the movement is free.
+
+The object/origin toggle in the panel changes the meaning of the gestures: in origin mode you move the creation-pose relative to the geometry (the `cp-*` family from ch. 8), and a click on a mesh vertex snaps the pose exactly there. It is the quick way to place the anchor, and therefore the pivot of rotations and stretches, on a meaningful point of the part.
+
+An already-written `attach` is re-editable: the "Edit" entry of the context menu on the form (or the `edit-` prefix added by hand), the existing commands enter the panel untouched and the new gestures append. `pilot`, the old name of this session, still works as an alias. The keys and operational details are in the Reference.
 
 ### A third session: edit-bezier
 
-`edit-bezier` uses the same modal mechanism as `tweak` and `pilot` to draw a cubic Bezier curve from the keyboard, and on confirm it rewrites it to source as `bezier-to`. Since it is first of all a tool for curves, it is covered in § 11.2.
+`edit-bezier` uses the same modal mechanism as `tweak` and `edit-attach` to draw a cubic Bezier curve from the keyboard, and on confirm it rewrites it to source as `bezier-to`. Since it is first of all a tool for curves, it is covered in § 11.2.
 
 ## 15.4 Where the tools live
 

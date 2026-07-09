@@ -9,7 +9,13 @@ status: stable
 
 ## Signature
 
+`(image-board path)`
+`(image-board path scale-factor)`
+`(image-board path scale-factor [imx imy])`
+`(image-board path scale-factor [imx imy] [orx ory])`
 `(image-board path scale-factor [imx imy] [orx ory] [w h])`
+
+All arguments after `path` are optional, with defaults resolved by a single chain (see Parameters).
 
 ## Description
 
@@ -30,13 +36,18 @@ bytes are read through the Rust server; the web build shows nothing).
 - `path` — absolute image file path (PNG / JPG / …).
 - `scale-factor` — image width in Ridley units (calibrates scale — verify with
   `ruler`, or set it interactively with `edit-image-board`). Height follows the
-  image aspect ratio.
+  image aspect ratio. **Default: 100.**
 - `[imx imy]` — image lower-left corner **relative to the rect's lower-left**.
   Frames which part of the photo shows; because it is relative to the rect, moving
-  `[orx ory]` carries the image along, so the framing is preserved.
-- `[orx ory]` — rect lower-left corner **relative to the turtle**. Turtle-centred →
-  `[(- (/ w 2)) (- (/ h 2))]`.
-- `[w h]` — rect (crop window) dimensions.
+  `[orx ory]` carries the image along, so the framing is preserved. **Default: `[0 0]`.**
+- `[orx ory]` — rect lower-left corner **relative to the turtle**. **Default:
+  turtle-centred, `[(- (/ w 2)) (- (/ h 2))]` on the resolved `[w h]`.**
+- `[w h]` — rect (crop window) dimensions. **Default: `[scale scale]`.**
+
+Malformed arguments (a non-positive scale, a vector of the wrong shape, non-numeric
+values) throw an error naming the offending argument — an incomplete call can never
+produce a silently broken shape. `edit-image-board` uses the same resolver, so its
+defaults and these are one and the same.
 
 ## Example
 

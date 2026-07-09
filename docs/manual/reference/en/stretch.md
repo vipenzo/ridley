@@ -17,13 +17,15 @@ Body-only inside `attach` / `attach!`.
 
 ## Description
 
-Scale the attached mesh or SDF along the **current turtle's local frame**, pivoted at the turtle's current position. The three commands are symmetric — they differ only in which local axis they scale along — and all three obey the same conventions: the pivot is wherever the turtle is at the moment of the call, and a negative factor reverses winding (mesh) or reflects (SDF) along that axis.
+Scale the attached mesh or SDF along its **material axes** (the part's own axes), pivoted at the turtle's current position. The three commands are symmetric — they differ only in which axis they scale along — and all three obey the same conventions: the pivot is wherever the turtle is at the moment of the call, and a negative factor reverses winding (mesh) or reflects (SDF) along that axis.
 
-| Command           | Axis            | Pivot            |
-|-------------------|-----------------|------------------|
-| `(stretch-f n)`   | turtle heading  | turtle position  |
-| `(stretch-rt n)`  | turtle right    | turtle position  |
-| `(stretch-u n)`   | turtle up       | turtle position  |
+| Command           | Axis              | Pivot            |
+|-------------------|-------------------|------------------|
+| `(stretch-f n)`   | material heading  | turtle position  |
+| `(stretch-rt n)`  | material right    | turtle position  |
+| `(stretch-u n)`   | material up       | turtle position  |
+
+The material axes coincide with the turtle's local frame on entering attach, and they turn with it under ordinary movements and rotations (`f`, `th`, ...): part and turtle rotate together, so in most bodies the distinction is invisible. They diverge only after `cp-th` / `cp-tv` / `cp-tr`, which rotate the anchor relative to the geometry — after those, `stretch-*` keeps acting along the part's original axes.
 
 `stretch-*` is the **local-axis counterpart** to top-level `scale`. Outside an `attach` / `attach!` body the symbols are unbound, and writing `(scale …)` *inside* an attach throws an instructive error that points to `stretch-*`. The design intent is clean separation: at top level, `scale` works in world axes from the creation-pose; inside attach, `stretch-*` works in the turtle's local axes from the turtle position.
 
@@ -83,7 +85,7 @@ A 20-cube becomes a 40×20×20 brick along its local heading direction. Because 
 - **Body-only.** `stretch-*` are bound only inside `attach` / `attach!` (and inside `path` for recording — replayed by `play-path`). Calling them at top level raises an error.
 - **`scale` is rejected inside attach.** The top-level `scale` symbol throws when used inside an attach body and directs you to `stretch-*`. The error is intentional: world-axis scaling combined with mid-body turtle rotations would produce confusing results.
 - **Negative factors reflect.** A factor `< 0` mirrors along the axis. For meshes, face winding is reversed so the result stays manifold and usable in subsequent booleans. For SDFs, the reflected solid behaves identically.
-- **Pivot follows the turtle, not the geometry.** A `f` / `rt` / `u` between the body entry and the `stretch-*` shifts the pivot; a `th` / `tv` / `tr` rotates the axes that `stretch-*` will use. The three `stretch-*` always read the turtle pose at the moment of the call.
+- **Pivot follows the turtle; directions follow the part.** A `f` / `rt` / `u` between the body entry and the `stretch-*` shifts the pivot, and ordinary `th` / `tv` / `tr` rotate part and frame together, so the stretch axis turns with them. After a `cp-th` / `cp-tv` / `cp-tr`, though, the anchor is rotated relative to the geometry and `stretch-*` keeps acting along the part's original axes: `(stretch-f k)` before or after a `cp-th` produces the same mesh. In `edit-attach`, the gizmo draws the stretch handles on these material axes, making the divergence visible.
 - **`scale-shape` still works.** For 2D-shape scaling outside attach, `scale-shape` remains the right tool. `stretch-*` is exclusively for the 3D mesh / SDF case inside an attach body.
 
 ## See also

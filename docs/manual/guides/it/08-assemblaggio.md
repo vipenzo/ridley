@@ -344,9 +344,9 @@ Se hai un percorso calcolato — magari restituito da una funzione — e vuoi us
 
 `play-path` risolve un problema tecnico: le funzioni che restituiscono path catturano i binding globali di `f`/`th`/`tv`, non quelli ridefiniti dentro `attach`. Senza `play-path` il path verrebbe ignorato.
 
-### Stretch: scala lungo assi locali
+### Stretch: scala lungo gli assi del pezzo
 
-Dentro `attach` (e solo lì) sono disponibili `stretch-f`, `stretch-rt`, `stretch-u` per scalare il pezzo lungo gli assi locali della tartaruga:
+Dentro `attach` (e solo lì) sono disponibili `stretch-f`, `stretch-rt`, `stretch-u` per scalare il pezzo lungo i suoi assi materiali, con pivot sulla creation-pose:
 
 <!-- example-source: attach-stretch
 (register b (box 20))
@@ -354,9 +354,11 @@ Dentro `attach` (e solo lì) sono disponibili `stretch-f`, `stretch-rt`, `stretc
 ;; Raddoppia lungo l'heading
 (register b2 (attach b (stretch-f 2)))
 
-;; Ruota la tartaruga, poi scala lungo il nuovo heading
+;; Ruota la tartaruga, poi scala: heading e asse del pezzo girano insieme
 (register b3 (attach b (th 90) (stretch-f 2)))
 -->
+
+Gli assi di stretch sono quelli del pezzo, non quelli dell'ancora. Finché usi solo movimenti e rotazioni normali (`f`, `th`, ...) la distinzione è invisibile: tartaruga e pezzo girano insieme e i due frame coincidono. Divergono solo con le rotazioni `cp-th`/`cp-tv`/`cp-tr` viste sopra, che girano l'ancora rispetto alla geometria: anche dopo, `stretch-f` continua ad allungare il pezzo lungo il suo asse originale, e `(stretch-f k)` prima o dopo una `cp-th` produce lo stesso risultato. Il pivot invece segue l'ancora: se l'hai spostata con le `cp` traslazionali (o con lo snap su vertice di `edit-attach`, cap. 15), lo stretch stira attorno al punto che hai scelto.
 
 `stretch-*` è il complemento locale di `scale` (che lavora su assi mondo). Fuori da `attach` non sono disponibili. Se scrivi `(scale ...)` dentro un `attach`, Ridley segnala l'errore e ti indica `stretch-*`.
 
