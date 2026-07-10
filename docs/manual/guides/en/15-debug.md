@@ -190,9 +190,10 @@ When you pass a keyword, `tweak` operates on the registered mesh: it hides the o
 `edit-attach` opens a modal session in which you reposition and deform an existing mesh. A gizmo appears on the mesh's creation-pose: three translation arrows and three rotation rings oriented along the turtle's axes, plus three stretch handles. Every drag becomes a turtle command (`f`, `rt`, `u`, `th`, `tv`, `tr`, `stretch-*`) that appears in the side panel, with the effect visible in the viewport in real time. When you confirm, `edit-attach` rewrites itself in the source as an `attach` containing the accumulated sequence of commands; Esc cancels and leaves just the starting expression.
 
 <!-- example-source: edit-attach :no-run
-(register part (box 20))
-(edit-attach part)
+(register part (edit-attach (box 20)))
 -->
+
+The call goes where its value is used, here inside `register`: on confirm the `edit-attach` rewrites itself into an `attach` in place, and the form becomes `(register part (attach (box 20) ...))`. A bare `(edit-attach ...)` at top level edits a copy whose result is never consumed, and the work is lost.
 
 The keyboard remains as the precision layer, with the three historical modes (vim-style): movement (`f`/`b`/`rt`/`lt`/`u`/`d`), rotation (`th`/`tv`/`tr`), scale (`stretch-f`/`stretch-rt`/`stretch-u`). Drags snap to the same grid as the keyboard steps (the step/angle/scale parameters in the panel); holding Shift the movement is free.
 

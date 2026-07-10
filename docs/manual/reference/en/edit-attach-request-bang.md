@@ -39,18 +39,17 @@ The macro evaluates the body once (the session opens on the scene as it already 
 
 <!-- example-source: edit-attach-basic -->
 ```clojure
-;; Register a mesh, then enter edit-attach to position it interactively
-(register cubo (box 20))
-
-;; Use the edit-attach macro — drag the gizmo, or use the keyboard
-(edit-attach cubo)
+;; Enter edit-attach with the session's result registered:
+;; the call sits where its value is consumed
+(register cubo (edit-attach (box 20)))
 ;; → gizmo on the creation-pose: arrows translate, rings rotate,
 ;;   handles stretch; arrow keys nudge on the snap grid;
-;;   OK rewrites the source as (attach cubo ...), Esc cancels
+;;   OK rewrites the form to (register cubo (attach (box 20) ...)),
+;;   Esc cancels back to (register cubo (box 20))
 ```
 <!-- /example-source -->
 
-After confirmation, the editor text containing `(edit-attach cubo)` is replaced with an `(attach cubo (f 10) (th 30) ...)` form that captures the session's commands, consecutive compatible commands compacted. A future re-evaluation of the file reproduces the result exactly, and the `attach` can be reopened with the "Edit" context-menu entry (or by re-adding the `edit-` prefix).
+After confirmation, the `(edit-attach (box 20))` form is replaced in place with an `(attach (box 20) (f 10) (th 30) ...)` form that captures the session's commands, consecutive compatible commands compacted; the surrounding `register` is untouched. A bare `(edit-attach ...)` at top level would edit a value that nothing consumes, and the result would be lost on confirm. A future re-evaluation of the file reproduces the result exactly, and the `attach` can be reopened with the "Edit" context-menu entry (or by re-adding the `edit-` prefix).
 
 ## Notes
 
