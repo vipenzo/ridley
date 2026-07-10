@@ -42,16 +42,6 @@ Test: `test/ridley/sdf/auto_bounds_test.cljs` (5 test, scritti prima del cambio:
 
 **Scoperta**: brief-image-board-defaults.md, sezione "Fuori scope", punto esplicito da loggare durante l'implementazione. Claude, 2026-07-08.
 
-### Manuale: `pilot-request!` documenta un binding SCI che non esiste più
-
-**Contesto**: `docs/manual/reference/en/pilot-request-bang.md` (e la voce generata in `src/ridley/manual/reference_index.cljs`) descrivono `pilot-request!` come il low-level entry point di pilot mode, con output `(attach! ...)`. Il brief `dev-docs/brief-edit-attach.md` (2026-07-08) ha rinominato il modulo `pilot_mode.cljs` → `edit_attach.cljs` e il binding SCI `pilot-request!` → `edit-attach-request!` (`pilot` resta come alias macro, ma non espone più un binding proprio); l'output canonico alla conferma è ora `(attach ...)` flat, non `(attach! ...)`.
-
-**Realtà**: la pagina manuale è stale su due fronti indipendenti dal lavoro di rename — cita un binding non più risolvibile e un output mai stato quello vero (`attach!` è per mesh registrate per keyword, `pilot`/`edit-attach` producono `attach`). Non è un difetto funzionale (il manuale è generato da markdown, non eseguito), ma un link/riferimento morto per chi lo consulta.
-
-**Fix possibile** (non tentato, fuori scope per il brief edit-attach — che esclude esplicitamente l'aggiornamento della documentazione a valle dell'implementazione): riscrivere `pilot-request-bang.md` come `edit-attach-request-bang.md` (o rinominarlo), documentando `edit-attach-request!` a 5 argomenti (quoted-mesh, mesh-value, quoted-body, attached-value, marker-kind), l'alias `pilot`, e l'output flat `(attach mesh cmd...)`; poi rigenerare l'indice con `bb scripts/build_reference_index.bb` (vedi [[project_manual_reference_index_generated]] in memoria).
-
-**Scoperta**: Claude, 2026-07-08, durante l'implementazione di `dev-docs/brief-edit-attach.md`.
-
 ### `bezier-as` non è taggato `:smooth` — ogni step di tessellazione è un corner duro
 
 **Contesto**: `rec-bezier-as*` (`src/ridley/editor/macros.cljs`) emette le rotazioni per step con `rec-th*`/`rec-tv*`/`rec-tr*` **plain**, mai `rec-th-smooth*`/`rec-tv-smooth*`/`rec-tr-smooth*`. `corner-rotation?` (`src/ridley/turtle/extrusion.cljs`) esclude dal trattamento corner (accorciamento mesh, anello di giunzione per-step) solo le rotazioni taggate `:smooth`; `bezier-to` (`rec-bezier-to*`) lo fa già, `bezier-as` no.
@@ -207,6 +197,14 @@ Test: `test/ridley/sdf/auto_bounds_test.cljs` (5 test, scritti prima del cambio:
 **Scoperta**: Vincenzo/Claude, 2026-07-08, durante il testing interattivo di `dev-docs/brief-edit-attach-handles.md`; root-causato e risolto 2026-07-09.
 
 ## Chiuso
+
+### Manuale: `pilot-request!` documenta un binding SCI che non esiste più — RISOLTO 2026-07-10
+
+**Stato originale**: `docs/manual/reference/en/pilot-request-bang.md` (e la voce generata in `src/ridley/manual/reference_index.cljs`) descrivevano `pilot-request!` come il low-level entry point di pilot mode, con output `(attach! ...)`. Il brief `dev-docs/brief-edit-attach.md` (2026-07-08) aveva rinominato il modulo `pilot_mode.cljs` → `edit_attach.cljs` e il binding SCI `pilot-request!` → `edit-attach-request!` (`pilot` resta come alias macro, senza binding proprio); l'output canonico alla conferma è `(attach ...)` flat, non `(attach! ...)` (che è per mesh registrate per keyword — output mai stato quello vero).
+
+**Risoluzione**: la card `pilot-request-bang.md` è stata rimossa e sostituita da `docs/manual/reference/en/edit-attach-request-bang.md` (commit `2fe3318`, 2026-07-09, "docs: update manual for edit-attach/gizmo/stretch, drop pilot-request card", più rifiniture committate a seguire il 2026-07-10). La nuova card documenta la signature a 5 argomenti (`quoted-mesh`, `mesh-value`, `quoted-body`, `attached-value`, `marker-kind`), l'alias legacy `pilot`, l'output flat `(attach mesh cmd...)` con cancel che ripristina la form originale, gizmo/tastiera come doppio layer di input, il toggle object/origin e le direzioni material dello stretch. Lo stesso giro di documentazione ha aggiunto la sezione edit-attach alla guida debug (cap. 15, IT+EN). Indice rigenerato con `bb scripts/build_reference_index.bb` nello stesso commit di chiusura.
+
+**Scoperta**: Claude, 2026-07-08, durante l'implementazione di `dev-docs/brief-edit-attach.md`.
 
 ### Il rider `:pure` di un bezier è congelato nel frame del sotto-path, non del path che lo `follow`a — RISOLTO 2026-07-07
 
