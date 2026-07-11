@@ -812,6 +812,31 @@
         [pos heading up right] (turtle-plane-basis)]
     (mirror-shapes-x (manifold/project-at-plane mesh heading pos right up))))
 
+(defn ^:export implicit-mesh-split
+  "Split a mesh at the plane defined by the turtle's current position and
+   heading — point = position, normal = heading, offset = heading·position.
+   Works inside turtle/with-path scope like sdf-half-space/slice-mesh.
+
+   Returns {:behind <mesh> :ahead <mesh>}. :behind is the half BEHIND the
+   heading — the material side, same convention as sdf-half-space/extrude:
+   after extrude the turtle sits on the far face with the material behind
+   it. :ahead is the opposite half. This is the SAME convention as
+   sdf-half-space, on purpose — one truth about which side is which across
+   the whole system.
+
+   Either half may be an empty mesh when the plane misses (or only grazes)
+   the piece — a legitimate result, not an error.
+
+   Accepts a mesh map, a keyword (registered mesh name), or an SDF node
+   (auto-materialized)."
+  [mesh-or-name-or-sdf]
+  (let [mesh (resolve-to-mesh mesh-or-name-or-sdf)
+        state @(turtle-ref)
+        [px py pz] (:position state)
+        [hx hy hz :as heading] (:heading state)
+        offset (+ (* hx px) (* hy py) (* hz pz))]
+    (manifold/split-by-plane mesh heading offset)))
+
 (defn ^:export implicit-sdf-half-space
   "Returns an SDF representing a half-space defined by the turtle's current
    pose. The cut plane passes through the turtle's position with normal equal

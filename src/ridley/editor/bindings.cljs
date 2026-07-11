@@ -373,6 +373,7 @@
    'add-mesh-impl       impl/implicit-add-mesh
    ;; Manifold operations — *-impl for macro wrappers (source tracking)
    'manifold?           manifold/manifold?
+   'convex?             manifold/convex?
    'mesh-status         manifold/get-mesh-status
    'mesh-union-impl          manifold/union
    'mesh-difference-impl     manifold/difference
@@ -399,6 +400,7 @@
    'slice-mesh          impl/implicit-slice-mesh
    'project-mesh        impl/implicit-project-mesh
    'slice-at-plane      impl/implicit-slice-at-plane
+   'mesh-split          impl/implicit-mesh-split
    ;; Scene registry
    'add-mesh!           registry/add-mesh!
    'register-mesh!      registry/register-mesh!

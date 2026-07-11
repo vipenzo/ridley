@@ -545,6 +545,103 @@
               nil)))))))
 
 ;; ============================================================
+;; Plane split (guillotine cut)
+;; ============================================================
+
+(defn split-by-plane
+  "Split a mesh by the plane {p : normal·p = offset} into two halves:
+   {:ahead <mesh> :behind <mesh>}.
+
+   :ahead  = splitByPlane's FIRST result — the half in the normal's direction.
+   :behind = splitByPlane's SECOND result — the opposite half.
+   This is the one place the :ahead/:behind mapping is decided; callers
+   (e.g. implicit-mesh-split) consume it as-is, never re-deriving it.
+
+   Either half may come back as an empty mesh ({:vertices [] :faces []})
+   when the plane misses the mesh entirely, or only grazes it — this is a
+   legitimate result, not an error.
+
+   Both halves inherit the source mesh's creation-pose/material/anchors via
+   carry-meta — same single-source policy as hull/solidify (this is a
+   single-input op, so there is no second operand to index-tag anchors
+   against)."
+  [ridley-mesh normal offset]
+  (when (get-manifold-class)
+    (when-let [^js m (mesh->manifold ridley-mesh)]
+      (try
+        (let [[nx ny nz] normal
+              ^js pair (.splitByPlane m #js [nx ny nz] offset)
+              ^js ahead-raw (aget pair 0)
+              ^js behind-raw (aget pair 1)
+              extract (fn [^js half]
+                        (if (.isEmpty half)
+                          {:type :mesh :vertices [] :faces []}
+                          (let [^js clean (.asOriginal half)
+                                out (manifold->mesh clean)]
+                            (.delete clean)
+                            out)))
+              ahead (carry-meta (extract ahead-raw) ridley-mesh)
+              behind (carry-meta (extract behind-raw) ridley-mesh)]
+          (.delete m)
+          (.delete ahead-raw)
+          (.delete behind-raw)
+          {:ahead (schema/assert-mesh! ahead)
+           :behind (schema/assert-mesh! behind)})
+        (catch :default e
+          (js/console.error "split-by-plane failed:" e)
+          (.delete m)
+          nil)))))
+
+;; ============================================================
+;; Convexity predicate
+;; ============================================================
+
+(def ^:private default-convexity-epsilon
+  "convex? default epsilon: convex iff vol(mesh)/vol(hull(mesh)) >= 1-epsilon.
+   Calibrated from live-measured ratios (REPL, real shapes, real Manifold):
+     true cases  — box 1.0, sphere 0.99999999 (even at 8x6 coarse tessellation),
+                   hex prism 1.0, cylinder 1.0 (fine 64-seg and coarse 6-seg alike)
+     false cases — frame (box-minus-box) 0.875, L-shaped prism 0.857, torus 0.655
+   A tessellated smooth-convex shape's vertices all lie ON its own hull by
+   construction, so its ratio never meaningfully drifts below 1 regardless of
+   tessellation coarseness — the true/false clusters are ~0.12 apart at the
+   closest point (0.875 vs 0.99999999). 0.01 sits with a wide margin on both
+   sides."
+  0.01)
+
+(defn convex?
+  "Convexity test via hull-ratio: true iff
+     volume(mesh) / volume(hull(mesh)) >= 1 - epsilon.
+   Optional second arg overrides the default epsilon (mirrors
+   auto-face-groups' optional-positional-threshold style).
+
+   An empty mesh (no faces) is convex by definition (the empty set is
+   convex) — returns true without touching Manifold.
+
+   Accepts a mesh or an SDF node (auto-materialized).
+
+   (convex? mesh)          ; default epsilon
+   (convex? mesh 0.01)     ; custom epsilon"
+  ([ridley-mesh] (convex? ridley-mesh default-convexity-epsilon))
+  ([ridley-mesh epsilon]
+   (let [ridley-mesh (sdf/ensure-mesh ridley-mesh)]
+     (if (empty? (:faces ridley-mesh))
+       true
+       (when-let [^js Manifold (get-manifold-class)]
+         (when-let [^js m (mesh->manifold ridley-mesh)]
+           (try
+             (let [vol-mesh (.volume m)
+                   ^js hull-raw (.call (.-hull Manifold) Manifold (clj->js [m]))
+                   vol-hull (.volume hull-raw)]
+               (.delete hull-raw)
+               (.delete m)
+               (>= (/ vol-mesh vol-hull) (- 1 epsilon)))
+             (catch :default e
+               (js/console.error "convex? failed:" e)
+               (.delete m)
+               false))))))))
+
+;; ============================================================
 ;; Smoothing & refinement (Manifold tangent-based subdivision)
 ;; ============================================================
 
