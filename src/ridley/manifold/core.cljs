@@ -173,18 +173,37 @@
     (let [^js mesh (.getMesh manifold)]
       (manifold-mesh->ridley-mesh mesh))))
 
+(defn- status->keyword
+  "Map Manifold's .status() return value to a Ridley keyword.
+   manifold-3d 3.3.2's ErrorStatus is a plain string ('NoError', 'NotManifold',
+   …) — NOT the {value: N} enum object earlier versions (3.0.0, loaded from
+   the CDN before this was fixed) returned. Reading `.-value` off a string is
+   `undefined`, which silently made every mesh look non-manifold; this landed
+   as part of the 3.0.0→3.3.2 CDN/lockfile alignment (dev-docs/brief-mesh-split.md
+   Part 0) rather than as a version-drift regression left in place."
+  [status-str]
+  (case status-str
+    "NoError"                      :ok
+    "NonFiniteVertex"              :non-finite-vertex
+    "NotManifold"                  :not-manifold
+    "VertexOutOfBounds"            :vertex-index-out-of-bounds
+    "PropertiesWrongLength"        :properties-wrong-length
+    "MissingPositionProperties"    :missing-position-properties
+    "MergeVectorsDifferentLengths" :merge-vectors-different-lengths
+    "MergeIndexOutOfBounds"        :merge-index-out-of-bounds
+    "TransformWrongLength"         :transform-wrong-length
+    "RunIndexWrongLength"          :run-index-wrong-length
+    "FaceIDWrongLength"            :face-id-wrong-length
+    "InvalidConstruction"          :invalid-construction
+    (keyword (str "unknown-" status-str))))
+
 (defn manifold?
   "Check if a Ridley mesh is manifold (watertight, valid solid).
    Returns true if the mesh can be converted to a valid Manifold
    with non-zero volume."
   [ridley-mesh]
   (when-let [manifold (mesh->manifold ridley-mesh)]
-    (let [status-obj (.status manifold)
-          ;; In v3.0+, status() returns enum object with .value property
-          status-code (.-value status-obj)
-          ;; Status 0 = OK, non-zero = error
-          is-ok (zero? status-code)
-          ;; Also check it's not empty - use volume() method (v3.0+ API)
+    (let [is-ok (= :ok (status->keyword (.status manifold)))
           volume (.volume manifold)
           has-volume (> volume 0)]
       (.delete manifold)
@@ -195,27 +214,11 @@
    Returns {:manifold? bool :volume number :surface-area number :status keyword}"
   [ridley-mesh]
   (if-let [manifold (mesh->manifold ridley-mesh)]
-    (let [status-obj (.status manifold)
-          ;; In manifold-3d v3.0+, status() returns an enum object with .value property
-          status-code (.-value status-obj)
+    (let [status-kw (status->keyword (.status manifold))
           ;; In manifold-3d v3.0+, getProperties() was replaced with volume() and surfaceArea()
           volume (.volume manifold)
           surface-area (.surfaceArea manifold)
-          ;; Manifold status: NoError=0, NonFiniteVertex=1, NotManifold=2, VertexOutOfBounds=3, etc.
-          status-kw (case status-code
-                      0 :ok
-                      1 :non-finite-vertex
-                      2 :not-manifold
-                      3 :vertex-index-out-of-bounds
-                      4 :properties-wrong-length
-                      5 :missing-position-properties
-                      6 :merge-vectors-different-lengths
-                      7 :merge-index-out-of-bounds
-                      8 :transform-wrong-length
-                      9 :run-index-wrong-length
-                      10 :face-id-wrong-length
-                      (keyword (str "unknown-" status-code)))
-          result {:manifold? (and (zero? status-code) (> volume 0))
+          result {:manifold? (and (= status-kw :ok) (> volume 0))
                   :status status-kw
                   :volume volume
                   :surface-area surface-area}]
@@ -431,11 +434,11 @@
     (let [ma (mesh->manifold mesh-a)
           mb (mesh->manifold mesh-b)]
       (when (and ma mb)
-        (let [status-a (.-value (.status ma))
-              status-b (.-value (.status mb))]
-          (when (not (zero? status-a))
+        (let [status-a (status->keyword (.status ma))
+              status-b (status->keyword (.status mb))]
+          (when (not= status-a :ok)
             (js/console.warn "mesh-difference: mesh-a is not manifold, status:" status-a))
-          (when (not (zero? status-b))
+          (when (not= status-b :ok)
             (js/console.warn "mesh-difference: mesh-b is not manifold, status:" status-b)))
         (let [^js raw-result (.subtract ma mb)
               ^js result (.asOriginal raw-result)
