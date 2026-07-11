@@ -261,6 +261,7 @@ Brief: `dev-docs/brief-reference-batch4-path-mesh.md`.
 - [x] [mesh-difference](mesh-difference.md)
 - [x] [mesh-intersection](mesh-intersection.md)
 - [x] [mesh-hull](mesh-hull.md)
+- [x] [mesh-split](mesh-split.md)
 - [x] [concat-meshes](concat-meshes.md)
 
 #### Smoothing & diagnostics
@@ -269,6 +270,7 @@ Brief: `dev-docs/brief-reference-batch4-path-mesh.md`.
 - [x] [mesh-refine](mesh-refine.md)
 - [x] [find-sharp-edges](find-sharp-edges.md)
 - [x] [mesh-diagnose](mesh-diagnose.md)
+- [x] [convex?](convex-p.md)
 
 #### 3D Chamfer & Fillet
 

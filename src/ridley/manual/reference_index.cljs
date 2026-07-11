@@ -345,6 +345,15 @@
     :description "Create a frustum (truncated cone) mesh centered on the current turtle position. The frustum axis runs along the turtle's **heading**, with the turtle at the center: the two circular faces sit `height/2` to either side along the heading, so the turtle is equidistant from both. `r1` is the radius at the **near/start** end (the face behind, on the −heading side); `r2` is the radius at the **far** end (the face forward, along heading). This matches the reading order of `loft`/`extrude`: `(cone r1 r2 h)` ≈ `(loft (circle r1) (circle r2) (f h))`. Set `r2 = 0` for a proper cone (apex at the far end). Returns a mesh; **does not modify turtle state**."
     :path "docs/manual/reference/en/cone.md"}
 
+   "convex?"
+   {:name "convex?"
+    :category "mesh-operations"
+    :status "stable"
+    :since ""
+    :signature "(convex? mesh)\n(convex? mesh epsilon)"
+    :description "Test whether a mesh is convex, via the hull-ratio test:"
+    :path "docs/manual/reference/en/convex-p.md"}
+
    "cp-f"
    {:name "cp-f"
     :category "positioning-assembly"
@@ -1082,6 +1091,15 @@
     :signature "(mesh-smooth m & {:keys [sharp-angle smoothness refine]})"
     :description "Tangent-based mesh smoothing built on Manifold's `smoothOut` + `refine`. Detects every interior edge whose dihedral angle is shallower than `:sharp-angle`, marks it as a soft crease, and subdivides every triangle into a denser tessellation whose new vertices lie on a C1-continuous Bezier surface. Edges sharper than the threshold are preserved as design corners; everything else gets filleted automatically."
     :path "docs/manual/reference/en/mesh-smooth.md"}
+
+   "mesh-split"
+   {:name "mesh-split"
+    :category "mesh-operations"
+    :status "stable"
+    :since ""
+    :signature "(mesh-split mesh)"
+    :description "Split a mesh with the plane defined by the turtle's current pose — point = position, normal = heading — into two halves. Returns `{:behind <mesh> :ahead <mesh>}`."
+    :path "docs/manual/reference/en/mesh-split.md"}
 
    "mesh-to-heightmap"
    {:name "mesh-to-heightmap"

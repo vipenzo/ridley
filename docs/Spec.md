@@ -1653,6 +1653,52 @@ Compute the convex hull of one or more meshes:
 
 Any operand may be an SDF node — it is auto-materialized before hulling.
 
+### Mesh split (plane cut)
+
+Split a mesh with the plane defined by the turtle's current pose — point =
+position, normal = heading — into two halves:
+
+```clojure
+(register block (extrude (rect 20 20) (f 20)))
+(f 10)
+(def halves (mesh-split (get-mesh :block)))   ; {:behind <mesh> :ahead <mesh>}
+```
+
+`mesh-split` returns `{:behind <mesh> :ahead <mesh>}`. `:behind` is the half
+*behind* the heading — the side the turtle came from — and `:ahead` is the
+opposite half. This is the same convention `sdf-half-space` uses (see
+above): after `extrude` the turtle ends on the far face of the new solid
+with the material behind it, so `mesh-split` at that pose puts the material
+in `:behind`.
+
+Either half may come back as an empty mesh (`:vertices []`, `:faces []`)
+when the cut plane misses the mesh entirely, or only grazes it — that is a
+normal result, not an error. Both halves inherit the source mesh's
+creation-pose, material and anchors, the same single-source policy
+`mesh-hull`/`solidify` already use.
+
+### Convexity test
+
+`(convex? mesh)` tests whether a mesh is convex via the hull-ratio test:
+`volume(mesh) / volume(mesh-hull(mesh)) >= 1 - epsilon`. A convex mesh
+coincides with its own hull, so the ratio sits at ~1; any concavity pulls it
+down without shrinking the hull.
+
+```clojure
+(convex? (box 10))              ; true  — epsilon defaults to 0.01
+(convex? mesh 0.001)            ; stricter tolerance
+```
+
+The default epsilon (`0.01`) was calibrated by measuring real ratios: box,
+tessellated sphere, hex prism and cylinder (fine or coarse tessellation)
+all land at 0.99999999+ regardless of mesh resolution — a tessellated
+convex shape's vertices lie on its own hull by construction — while a
+box-with-cavity frame, an L-shaped prism and a torus land at 0.875 or
+below. `0.01` sits with a wide margin on both sides.
+
+An empty mesh (no faces) is convex by definition and returns `true`
+immediately, without invoking Manifold.
+
 ### Mesh smoothing & refinement
 
 Round off non-sharp edges of a 3D mesh using Manifold's tangent-based subdivision. Useful when you want to fillet every crease softer than a chosen dihedral angle while keeping intentionally sharp design edges (typically applied after a CSG pipeline, since boolean operations produce mostly right-angle corners that look synthetic).
