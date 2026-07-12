@@ -60,8 +60,10 @@
 ;;  :behind-finished? :ahead-finished?   ; live per-component finiteness (Parte 2)
 ;;  :behind-count :ahead-count           ; live component counts (badge when >1)
 ;;  :plane-state    :no-op | :terminal | :active
+;;  :reveal-all?    ; addendum: view-only focus/reveal toggle (r)
+;;  :labeled-tree   ; the :tree identity the scene labels were last built for
 ;;  :edit-mesh-split-from/-to  ; char offsets of the marker in the editor
-;;  :panel-el :key-handler :click-handler :entered? :from-repl}
+;;  :panel-el :key-handler :entered? :from-repl}
 
 (defn- resolve-to-mesh
   "Accept a mesh map, a keyword (registered mesh name), or an SDF node
@@ -291,20 +293,19 @@
   "A FINISHED leaf (every component convex — done). Wireframe, not a low-alpha
    solid fill (live feedback 2026-07-12: a low-alpha grey solid read as blue-ish
    under the scene's lighting and blurred into the plane quad — a wireframe is
-   unmistakably NOT a live solid). Still `:pick-id`-tagged so it can be re-selected
-   (to over-decompose or separate)."
-  [mesh pick-id]
+   unmistakably NOT a live solid)."
+  [mesh]
   {:type :wireframe
-   :pick-id pick-id
    :data (assoc mesh :material {:color color-ghost})})
 
 (defn- open-piece-item
-  "A non-current OPEN leaf (a component still concave): a solid, clickable body so
-   you can see the whole tree at once and click any piece to make it current."
-  [mesh pick-id]
+  "A non-current OPEN leaf: context, not focus (addendum Parte B). Neutral (no
+   convexity tint — the semaphore belongs to the current piece alone) and faint
+   (`alpha` ~0.12), so it's present for spatial orientation without competing with
+   the current piece; the reveal toggle raises `alpha` to bring it fully back."
+  [mesh alpha]
   {:type :mesh
-   :pick-id pick-id
-   :data (assoc mesh :material {:color color-open-piece :opacity 0.55 :double-sided true})})
+   :data (assoc mesh :material {:color color-open-piece :opacity alpha :double-sided true})})
 
 (defn- plane-items
   "The quad + orientation cone at `pose` — always render!'s items 0 and 1, in this
@@ -318,20 +319,39 @@
     [{:type :stamp :data (quad-stamp pose (current-mesh) plane-color)}
      {:type :mesh :data (orientation-cone pose plane-color)}]))
 
+(def ^:private open-piece-alpha-focus 0.12)   ; faint context
+(def ^:private open-piece-alpha-reveal 0.6)    ; brought fully back by the reveal toggle
+
 (defn- other-piece-items
-  "Every leaf EXCEPT the current one: finished leaves as ghosts, still-open leaves
-   as solid clickable bodies. The current piece isn't drawn here — its live split
-   halves stand in for it."
+  "Every leaf EXCEPT the current one: finished leaves as ghosts (wireframe, always
+   legible), still-open leaves as faint neutral bodies — full only while the reveal
+   toggle is held (addendum Parte B). The current piece isn't drawn here; its live
+   split halves stand in for it."
   [s]
   (let [tree (:tree s)
-        cur (:current tree)]
+        cur (:current tree)
+        alpha (if (:reveal-all? s) open-piece-alpha-reveal open-piece-alpha-focus)]
     (for [id (mtree/leaf-ids tree)
           :when (not= id cur)
           :let [mesh (piece-mesh id)]
           :when (and mesh (seq (:faces mesh)))]
       (if (:finished? (get-in tree [:pieces id]))
-        (ghost-item mesh id)
-        (open-piece-item mesh id)))))
+        (ghost-item mesh)
+        (open-piece-item mesh alpha)))))
+
+(defn- scene-labels
+  "One billboard label per leaf at its centre, showing the SAME name the emission
+   uses (addendum Parte C: one identity across scene, panel, code). The current
+   piece's label is brightened."
+  [s]
+  (let [tree (:tree s)
+        cur (:current tree)]
+    (for [id (mtree/leaf-ids tree)
+          :let [mesh (piece-mesh id)]
+          :when (and mesh (seq (:faces mesh)))]
+      {:text (mtree/piece-name tree id)
+       :position (bbox-center mesh)
+       :color (if (= id cur) 0xffffff 0x8899aa)})))
 
 (defn- render!
   []
@@ -344,6 +364,11 @@
                                (half-preview-item current-ahead ahead-finished? :ahead)])
                  (other-piece-items s))]
       (viewport/show-preview! (vec items))
+      ;; Labels only change with the tree (pieces don't move on a plane nudge), so
+      ;; rebuild them only when the tree identity changes — not every tick.
+      (when-not (identical? (:tree s) (:labeled-tree s))
+        (viewport/set-labels! (vec (scene-labels s)))
+        (swap! session assoc :labeled-tree (:tree s)))
       (viewport/set-turtle-source! {:custom pose})
       (viewport/update-turtle-pose pose)
       (gizmo/update-pose! pose))))
@@ -482,27 +507,26 @@
         (state/capture-println (str "edit-mesh-split: separated into " (count comp-meshes) " pieces"))
         (recompute!)))))
 
-(defn- select-piece!
-  "Make leaf `id` current (a selection — not a structural gesture). Repositions the
-   plane onto it. No-op if it is already current or is not a leaf."
-  [id]
+(defn- cycle-current-piece!
+  "Explicit, deterministic navigation over the OPEN pieces only (addendum Parte
+   A): `dir` :next (n) or :prev (p), round-robin in DFS order, repositioning the
+   plane onto the new current. The mouse never selects — it only moves the plane."
+  [dir]
   (let [old (current-id)
-        tree (mtree/select (:tree @session) id)]
+        tree (mtree/cycle-current (:tree @session) dir)]
     (when (not= (:current tree) old)
       (swap! session assoc :tree tree)
       (reposition-plane-for! (:current tree))
       (recompute!))))
 
-(defn- cycle-current-piece!
-  "Advance current to the next non-finished leaf (round-robin), repositioning the
-   plane onto it — the keyboard counterpart of clicking a piece."
+(defn- toggle-reveal!
+  "Reveal toggle (addendum Parte B): temporarily brings every piece back to full
+   visibility to re-orient, then back to focus. A view-only flag — never touches
+   session structure or the undo log."
   []
-  (let [old (current-id)
-        tree (mtree/cycle-current (:tree @session))]
-    (when (not= (:current tree) old)
-      (swap! session assoc :tree tree)
-      (reposition-plane-for! (:current tree))
-      (recompute!))))
+  (swap! session update :reveal-all? not)
+  (render!)
+  (update-panel-display!))
 
 (def ^:private marker-prefix "(edit-mesh-split")
 
@@ -515,10 +539,9 @@
   (free-all-manifolds!)   ; the single no-leak point — every session exit runs cleanup!
   (modal/unmount-panel! (:panel-el @session))
   (modal/remove-keydown! (:key-handler @session))
-  (when-let [h (:click-handler @session)]
-    (some-> (viewport/get-canvas) (.removeEventListener "click" h)))
   (gizmo/close!)
   (viewport/set-turtle-source! :global)
+  (viewport/clear-labels!)
   (viewport/clear-preview!))
 
 (defn- commit-session!
@@ -545,7 +568,7 @@
   (cond
     (= :active (:plane-state @session)) (accept-cut!)
     (mtree/all-finished? (:tree @session)) (commit-session!)
-    :else (cycle-current-piece!)))
+    :else (cycle-current-piece! :next)))
 
 (defn- force-commit!
   "Ctrl/Cmd+Enter: close now and emit whatever the tree currently is, even with
@@ -691,9 +714,16 @@
         (and (= key "s") (not mod?))
         (do (.preventDefault e) (.stopPropagation e) (flush-digit-buffer!) (separate!))
 
-        ;; n: cycle the current piece to the next non-finished leaf
+        ;; n / p: deterministic next / previous open piece (addendum Parte A)
         (and (= key "n") (not mod?))
-        (do (.preventDefault e) (.stopPropagation e) (flush-digit-buffer!) (cycle-current-piece!))
+        (do (.preventDefault e) (.stopPropagation e) (flush-digit-buffer!) (cycle-current-piece! :next))
+
+        (and (= key "p") (not mod?))
+        (do (.preventDefault e) (.stopPropagation e) (flush-digit-buffer!) (cycle-current-piece! :prev))
+
+        ;; r: reveal toggle — all pieces to full visibility, then back (Parte B)
+        (and (= key "r") (not mod?))
+        (do (.preventDefault e) (.stopPropagation e) (toggle-reveal!))
 
         :else nil))))
 
@@ -765,11 +795,19 @@
           (set! (.-textContent status-el) (str base badge))))
       (when-let [vol-el (.querySelector panel ".ems-volumes")]
         (set! (.-textContent vol-el) (volume-status-text s)))
+      ;; Position line (addendum Parte C): where am I, by the SAME name the
+      ;; emission uses — one identity across scene, panel, code.
+      (when-let [pos-el (.querySelector panel ".ems-position")]
+        (let [{:keys [name index total open? count]} (mtree/position-info tree)]
+          (set! (.-textContent pos-el)
+                (str "piece " name " (" index "/" total ") · "
+                     (if open? "open" "finished") " · "
+                     count (if (= 1 count) " component" " components")
+                     (when (:reveal-all? s) " · [reveal]")))))
       (when-let [cmd-el (.querySelector panel ".pilot-cmd-list")]
         (set! (.-textContent cmd-el)
-              (str "current: " (mtree/piece-name tree cur)
-                   " · pieces: " (count leaves)
-                   " (" (count open) " open, " (- (count leaves) (count open)) " done)"))))))
+              (str (count leaves) " pieces · " (count open) " open, "
+                   (- (count leaves) (count open)) " done"))))))
 
 (defn- create-panel!
   [mesh-name]
@@ -783,31 +821,39 @@
                "</div>"
                "<div class='pilot-commands ems-status'>Enter accepts this cut and continues</div>"
                "<div class='pilot-commands ems-volumes'>behind — · ahead —</div>"
-               "<div class='pilot-commands pilot-cmd-list'>(no cuts accepted yet)</div>"
+               ;; Position line + explicit next/prev navigation (addendum Parte A/C)
+               "<div class='pilot-commands ems-nav'>"
+               "<button class='pilot-btn ems-prev'>◀ prev</button>"
+               "<span class='ems-position'>piece —</span>"
+               "<button class='pilot-btn ems-next'>next ▶</button>"
+               "</div>"
+               "<div class='pilot-commands pilot-cmd-list'>(no cuts yet)</div>"
                "<div class='pilot-commands modal-help'>"
                "Tab: cycle step/angle · digits: set active value · "
                "←→↑↓: move (step, f/rt) / rotate (angle, th/tv) · "
-               "Shift+↑↓: u / tr · Gizmo: drag arrows/rings in the viewport. "
+               "Shift+↑↓: u / tr · Gizmo: drag arrows/rings — the mouse only ever "
+               "moves the cut plane, never selects a piece. "
                "TREE: cut the current piece; both halves become pieces of the tree. "
                "s: separate the current piece into its connected components (no plane). "
-               "n: cycle to the next open piece · click a piece to select it · "
+               "n / p: next / previous open piece (buttons above) · "
+               "r: reveal all pieces (re-orient), press again for focus · "
                "Enter: cut the current piece (or, when every piece is finished, commit) · "
                "Ctrl/Cmd+Enter: commit now (emit even with open pieces) · "
                "Backspace: undo the last cut/separation (chronological, any branch) · "
                "Esc: cancel, emit nothing. "
                "Plane color: grey = no-op, gold = plane past the piece, blue = active cut. "
-               "Pieces: green halves/wireframe = finished (every component convex; a "
-               "'N pieces' badge flags a multi-component piece — separate, don't cut), "
-               "red = a component is concave; the current piece shows its live behind "
-               "(solid) / ahead (washed) split, other open pieces are blue solids, "
-               "finished pieces are grey wireframes. Cone points ahead (heading); Enter "
-               "takes what's behind it, like extrude (material trails behind)."
+               "Focus: the CURRENT piece is full (green/red halves + component badge); "
+               "other open pieces are faint context (no convexity tint); finished pieces "
+               "are grey wireframes. Cone points ahead (heading); Enter takes what's "
+               "behind it, like extrude (material trails behind)."
                "</div>"
                "<div class='pilot-buttons'>"
                "<button class='pilot-btn pilot-btn-undo'>Undo</button>"
                "<button class='pilot-btn pilot-btn-ok'>Accept/Commit</button>"
                "<button class='pilot-btn pilot-btn-cancel'>Cancel</button>"
                "</div>"))
+    (.addEventListener (.querySelector panel ".ems-prev") "click" (fn [_] (cycle-current-piece! :prev)))
+    (.addEventListener (.querySelector panel ".ems-next") "click" (fn [_] (cycle-current-piece! :next)))
     (.addEventListener (.querySelector panel ".pilot-btn-undo") "click" (fn [_] (undo!)))
     (.addEventListener (.querySelector panel ".pilot-btn-ok") "click" (fn [_] (accept-or-commit!)))
     (.addEventListener (.querySelector panel ".pilot-btn-cancel") "click" (fn [_] (cancel!)))
@@ -959,22 +1005,15 @@
                    :on-drag-start on-gizmo-drag-start!
                    :on-drag on-gizmo-drag!
                    :on-drag-end on-gizmo-drag-end!})
-    ;; Click a piece to make it current (Parte 3 selector, the mouse counterpart of
-    ;; the n key). A click that lands on a tree piece resolves to its id via the
-    ;; :pick-id tags render! stamps on the preview objects; clicks on the gizmo
-    ;; handles or empty space carry no pick-id and are ignored.
-    (let [click-handler (fn [e]
-                          (when (:entered? @session)
-                            (when-let [pid (viewport/raycast-preview-pick e)]
-                              (select-piece! pid))))]
-      (swap! session assoc :click-handler click-handler)
-      (some-> (viewport/get-canvas) (.addEventListener "click" click-handler)))
+    ;; The mouse has ONE job in the viewport: manipulate the cut plane (the gizmo
+    ;; above). Piece selection is keyboard/panel only (n/p) — no click-to-select,
+    ;; so a viewport click never carries two meanings (addendum Parte A).
     (recompute!)
     (state/capture-println
      (str "edit-mesh-split: interactive tree mode for " (:source-expr @session)
-          " — move/rotate the cut plane (arrows or gizmo), Enter cuts the current "
-          "piece, s separates it into components, n / click selects a piece, "
-          "Backspace undoes, Ctrl/Cmd+Enter commits, Esc cancels"))))
+          " — move/rotate the cut plane (arrows or gizmo, the mouse never selects), "
+          "Enter cuts the current piece, s separates it, n/p navigate open pieces, "
+          "r reveals all, Backspace undoes, Ctrl/Cmd+Enter commits, Esc cancels"))))
 
 (defn- force-close!
   []

@@ -191,15 +191,20 @@
   (if (leaf? tree pid) (assoc tree :current pid) tree))
 
 (defn cycle-current
-  "Advance current to the next non-finished leaf, round-robin from the current
-   one. No-op if there are no non-finished leaves."
-  [tree]
-  (let [nfl (non-finished-leaves tree)]
-    (if (empty? nfl)
-      tree
-      (let [i (.indexOf nfl (:current tree))
-            nxt (nth nfl (mod (inc (if (neg? i) -1 i)) (count nfl)))]
-        (assoc tree :current nxt)))))
+  "Advance current to the next (`dir` :next, the default) or previous (:prev)
+   non-finished leaf, round-robin in DFS order — the deterministic n/p navigation
+   (addendum Parte A). No-op if there are no non-finished leaves."
+  ([tree] (cycle-current tree :next))
+  ([tree dir]
+   (let [nfl (non-finished-leaves tree)]
+     (if (empty? nfl)
+       tree
+       (let [i (.indexOf nfl (:current tree))
+             step (if (= dir :prev) -1 1)
+             nxt (if (neg? i)
+                   (if (= dir :prev) (peek nfl) (first nfl))
+                   (nth nfl (mod (+ i step) (count nfl))))]
+         (assoc tree :current nxt))))))
 
 ;; ============================================================
 ;; Emission — a let-chain of self-contained linear composites
@@ -337,3 +342,17 @@
    binding name the emitted let uses; the root shows its source-expr."
   [tree pid]
   (name-of tree (name-map tree) pid))
+
+(defn position-info
+  "The panel's position anchor for the current piece (addendum Parte C):
+   {:name :index :total :open? :count} — `index` is 1-based in the leaf DFS
+   order, `name` the same name the emission uses."
+  [tree]
+  (let [leaves (leaf-ids tree)
+        cur (:current tree)
+        p (get-in tree [:pieces cur])]
+    {:name (piece-name tree cur)
+     :index (inc (.indexOf leaves cur))
+     :total (count leaves)
+     :open? (not (:finished? p))
+     :count (:count p)}))

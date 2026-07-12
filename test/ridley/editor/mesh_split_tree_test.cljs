@@ -155,6 +155,32 @@
   (let [t (tree/make-tree "block" (pose 0) fin)]
     (is (= (:current t) (:current (tree/cycle-current t))))))
 
+(deftest cycle-prev-goes-backward-round-robin
+  (let [t0 (tree/make-tree "block" (pose 0) conc)
+        r1 (tree/cut t0 0 (pose 10) conc conc)       ; b1, a1 both open (2 leaves)
+        r2 (tree/cut (:tree r1) (:ahead r1) (pose 20) conc conc)  ; cut a1 → b2, a2 (3 open)
+        tree (:tree r2)
+        nfl (tree/non-finished-leaves tree)]
+    (is (= 3 (count nfl)))
+    ;; next then prev returns to the same current
+    (let [nx (tree/cycle-current tree :next)]
+      (is (= (:current tree) (:current (tree/cycle-current nx :prev)))))
+    ;; prev from the first wraps to the last
+    (let [at-first (assoc tree :current (first nfl))]
+      (is (= (peek nfl) (:current (tree/cycle-current at-first :prev)))))))
+
+(deftest position-info-reports-name-index-status-count
+  (let [t0 (tree/make-tree "block" (pose 0) conc)
+        {:keys [tree ahead]} (tree/cut t0 0 (pose 10) fin conc)]
+    ;; current is the ahead (open, concave); leaves DFS = [behind ahead]
+    (is (= ahead (:current tree)))
+    (let [{:keys [name index total open? count]} (tree/position-info tree)]
+      (is (= "piece-2" name) "same name the emission uses")
+      (is (= 2 index) "ahead is 2nd in the leaf DFS order")
+      (is (= 2 total))
+      (is (true? open?))
+      (is (= 1 count)))))
+
 ;; ── all-finished? drives the close condition ────────────────
 
 (deftest all-finished-true-only-when-every-leaf-finished

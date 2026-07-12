@@ -32,11 +32,17 @@ drag the plane with the same handle gizmo `edit-attach` uses (translate
 arrows + rotation rings). The plane tracks the pointer every frame; the
 pieces never rigidly move with it.
 
-**The current piece** is the one the plane is cutting — its live
-`:behind`/`:ahead` split is shown solid/washed. Every OTHER piece is on
-screen too: still-open pieces as solid blue bodies, finished pieces as
-grey wireframes. **Click any piece** — or press **n** — to make it
-current (the plane jumps to its middle).
+**The current piece** is the one the plane is cutting — full and lit,
+its live `:behind`/`:ahead` split shown solid/washed. Every other open
+piece recedes to faint context (present for spatial orientation, no
+convexity tint — the semaphore belongs to the current piece alone);
+finished pieces are grey wireframes. **The mouse only ever moves the cut
+plane** — navigate between open pieces explicitly with **n**/**p** (next
+/ previous, deterministic in tree order over the open pieces only) or the
+panel's ◀/▶ buttons; the plane jumps to the new current's middle. **r**
+reveals every piece at full visibility to re-orient, then press again for
+focus. A panel line always says where you are — `piece <name> (2/5) ·
+open · 1 component` — by the same name the emission uses.
 
 **Live semaphore (per-component).** A piece is **finished** (green)
 when *every* connected component is convex — so a piece that is one
@@ -57,7 +63,8 @@ e.g. `behind 42% (convex) — ahead 58% (2 pieces)`.
   plane can't cut here and work remains elsewhere, it moves on to the
   next open piece.
 - **s** — separate the current piece into its connected components.
-- **n** / click — select the next / a specific piece as current.
+- **n** / **p** — make the next / previous open piece current (panel
+  ◀/▶ buttons do the same). **r** — toggle reveal-all vs. focus.
 - **Backspace** — undo the last structural gesture (cut *or*
   separation), whatever branch it touched — a single chronological
   history, freeing that piece's live Manifold as it goes.
