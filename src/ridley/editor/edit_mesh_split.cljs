@@ -50,7 +50,9 @@
 ;;                                        mutated via real th/tv/tr/f/move-*
 ;;  :step 5 :angle-step 15 :digit-buffer "" :digit-target :step  ; :step|:angle
 ;;  :current-behind <mesh or nil> :current-ahead <mesh or nil>   ; live split()
-;;  :behind-convex? :ahead-convex?                                ; live convex?()
+;;  :behind-finished? :ahead-finished?   ; live per-component finiteness (Parte 2)
+;;  :behind-count :ahead-count           ; live component counts (badge when >1)
+;;  :remaining-finished? :remaining-count ; current-piece finiteness/count
 ;;  :plane-state    :no-op | :terminal | :active
 ;;  :edit-mesh-split-from/-to  ; char offsets of the marker in the editor
 ;;  :panel-el :key-handler :entered? :from-repl}
@@ -180,11 +182,32 @@
           behind-vol (if behind-empty? 0 (:volume (manifold/get-mesh-status behind)))
           ahead-vol (if ahead-empty? 0 (:volume (manifold/get-mesh-status ahead)))
           total-vol (+ behind-vol ahead-vol)
+          ;; Per-component finiteness (Parte 2): green = every connected
+          ;; component is convex, not just the whole half. A half that
+          ;; decomposes into several convex pieces (a U cut at its base) is
+          ;; already finished — the badge shows its count. component-report
+          ;; decomposes once and returns {:count :finished?}; <1ms + ~2.6ms/comp
+          ;; (accertamento A1/A4), so it stays in the live per-tick budget.
+          behind-report (when-not behind-empty? (manifold/component-report behind))
+          ahead-report  (when-not ahead-empty?  (manifold/component-report ahead))
+          ;; The current piece (remaining) changes only on accept/undo, never on
+          ;; a plane move — so re-decompose it only when its identity actually
+          ;; changed, not on every tick (a decompose pays an ~8ms mesh→manifold
+          ;; conversion; keep-alive in the tree session removes it entirely).
+          remaining-changed? (not (identical? remaining (:remaining-reported-for s)))
+          remaining-report (if remaining-changed?
+                             (manifold/component-report remaining)
+                             {:count (:remaining-count s) :finished? (:remaining-finished? s)})
           cost-ms (- (js/performance.now) t0)]
       (swap! session assoc
              :current-behind behind :current-ahead ahead
-             :behind-convex? (when-not behind-empty? (manifold/convex? behind))
-             :ahead-convex? (when-not ahead-empty? (manifold/convex? ahead))
+             :behind-finished? (:finished? behind-report)
+             :behind-count     (:count behind-report)
+             :ahead-finished?  (:finished? ahead-report)
+             :ahead-count      (:count ahead-report)
+             :remaining-count     (:count remaining-report)
+             :remaining-finished? (:finished? remaining-report)
+             :remaining-reported-for remaining
              :plane-state plane-state
              :behind-pct (if (pos? total-vol) (* 100.0 (/ behind-vol total-vol)) 0.0)
              :ahead-pct (if (pos? total-vol) (* 100.0 (/ ahead-vol total-vol)) 0.0)
@@ -200,12 +223,13 @@
 (defn- half-preview-item
   "role = :behind (what Enter accepts — rendered solid/opaque, the 'figure') or :ahead
    (rendered washed/near-ghost, the 'ground') — solidity carries the behind/ahead
-   distinction, hue stays reserved for convexity (one visual variable per semantic
-   dimension, dev-docs/addendum-brief-edit-mesh-split.md)."
-  [mesh convex? role]
+   distinction, hue stays reserved for the finiteness verdict (green = every
+   connected component convex, red = a component is concave — Parte 2; one visual
+   variable per semantic dimension, dev-docs/addendum-brief-edit-mesh-split.md)."
+  [mesh finished? role]
   (when (and mesh (seq (:faces mesh)))
     {:type :mesh
-     :data (assoc mesh :material {:color (if convex? color-convex color-concave)
+     :data (assoc mesh :material {:color (if finished? color-convex color-concave)
                                   :opacity (if (= role :behind) 0.88 0.18)
                                   :double-sided true})}))
 
@@ -238,12 +262,12 @@
 (defn- render!
   []
   (when-let [{:keys [accepted current-behind current-ahead
-                     behind-convex? ahead-convex?] :as s} @session]
+                     behind-finished? ahead-finished?] :as s} @session]
     (let [pose (working-pose s)
           items (concat
                  (plane-items pose)
-                 (remove nil? [(half-preview-item current-behind behind-convex? :behind)
-                               (half-preview-item current-ahead ahead-convex? :ahead)])
+                 (remove nil? [(half-preview-item current-behind behind-finished? :behind)
+                               (half-preview-item current-ahead ahead-finished? :ahead)])
                  (map (comp ghost-item :behind) accepted))]
       (viewport/show-preview! (vec items))
       (viewport/set-turtle-source! {:custom pose})
@@ -352,7 +376,7 @@
 (defn- accept-cut!
   "plane-state = :active: push the current cut, continue the session."
   []
-  (let [{:keys [live-pose current-behind current-ahead ahead-convex? accepted]} @session
+  (let [{:keys [live-pose current-behind current-ahead ahead-finished? accepted]} @session
         pose (select-keys live-pose [:position :heading :up])
         used-names (set (map :name accepted))
         name (next-cut-name used-names)]
@@ -362,10 +386,10 @@
                          (update :accepted conj {:pose pose :behind current-behind
                                                  :remaining current-ahead :name name})
                          (assoc :remaining current-ahead))
-               ;; if the new remaining is already convex, propose the
-               ;; terminal placement instead of staying put — "tutto verde"
-               ;; becomes closable with one further Enter
-               ahead-convex?
+               ;; if the new remaining is already finished (every component
+               ;; convex — Parte 2), propose the terminal placement instead of
+               ;; staying put — "tutto verde" becomes closable with one Enter
+               ahead-finished?
                (assoc-in [:live-pose :position]
                          (terminal-position current-ahead (:position pose) (:heading pose))))))
     (recompute!)))
@@ -612,16 +636,30 @@
   [v]
   (str (Math/round v) "%"))
 
+(defn- side-verdict-text
+  "Per-side finiteness word for the status line (Parte 2). Green criterion =
+   every connected component convex, so a half decomposing into several convex
+   pieces reads as its component count (the badge), not 'concave':
+     count 1, finished → 'convex'   · count 1, not finished → 'concave'
+     count>1, finished → 'N pieces'  · count>1, not finished → 'concave, N pieces'"
+  [finished? count]
+  (cond
+    (and finished? (> count 1)) (str count " pieces")
+    finished?                   "convex"
+    (> count 1)                 (str "concave, " count " pieces")
+    :else                       "concave"))
+
 (defn- volume-status-text
   "The Part B status line — sides named and quantified, e.g. 'behind 42% (convex) —
-   ahead 58% (concave)'. Symmetric on purpose (both sides get a convexity word): the
-   brief's own example only labels one side, read as shorthand rather than a spec,
-   since either side can independently be convex or concave."
-  [{:keys [plane-state behind-pct ahead-pct behind-convex? ahead-convex?]}]
+   ahead 58% (2 pieces)'. Symmetric on purpose (both sides get a verdict word):
+   the brief's own example only labels one side, read as shorthand rather than a
+   spec, since either side can independently be finished/concave/multi-component."
+  [{:keys [plane-state behind-pct ahead-pct behind-finished? behind-count
+           ahead-finished? ahead-count]}]
   (str "behind " (fmt-pct behind-pct)
-       (if (= plane-state :no-op) "" (str " (" (if behind-convex? "convex" "concave") ")"))
+       (if (= plane-state :no-op) "" (str " (" (side-verdict-text behind-finished? behind-count) ")"))
        " — ahead " (fmt-pct ahead-pct)
-       (if (= plane-state :terminal) "" (str " (" (if ahead-convex? "convex" "concave") ")"))))
+       (if (= plane-state :terminal) "" (str " (" (side-verdict-text ahead-finished? ahead-count) ")"))))
 
 (defn update-panel-display!
   []
@@ -642,11 +680,15 @@
       (update-param! ".ems-step-value" (str step "mm") :step)
       (update-param! ".ems-angle-value" (str angle-step "°") :angle)
       (when-let [status-el (.querySelector panel ".ems-status")]
-        (set! (.-textContent status-el)
-              (case plane-state
-                :no-op "cut is a no-op (plane misses the piece) — Enter disabled"
-                :terminal "Enter closes the session — remaining accepted as final piece"
-                "Enter accepts this cut and continues")))
+        (let [base (case plane-state
+                     :no-op "cut is a no-op (plane misses the piece) — Enter disabled"
+                     :terminal "Enter closes the session — remaining accepted as final piece"
+                     "Enter accepts this cut and continues")
+              ;; Current-piece badge (Parte 2): flag when the piece being cut is
+              ;; itself multi-component (needs separation, not a plane).
+              rc (:remaining-count s)
+              badge (when (and rc (> rc 1)) (str " · piece: " rc " components"))]
+          (set! (.-textContent status-el) (str base badge))))
       (when-let [vol-el (.querySelector panel ".ems-volumes")]
         (set! (.-textContent vol-el) (volume-status-text s)))
       (when-let [cmd-el (.querySelector panel ".pilot-cmd-list")]
@@ -680,7 +722,9 @@
                "terminal placement) · Ctrl/Cmd+Enter: teleport to terminal + accept · "
                "Backspace: undo last accepted cut · Esc: cancel everything, emit nothing. "
                "Plane color: grey = no-op cut, gold = terminal (Enter closes), blue = active. "
-               "Halves: green = convex, red = concave; behind is solid (what Enter "
+               "Halves: green = every component convex (a 'N pieces' badge flags a "
+               "multi-component half — separate, don't cut), red = a component is "
+               "concave; behind is solid (what Enter "
                "takes), ahead is washed. Cone points ahead (heading), same direction "
                "as the turtle's own nose — Enter takes what's behind it, same "
                "convention as extrude (material trails behind). Accepted pieces are "

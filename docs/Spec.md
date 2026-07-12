@@ -1703,6 +1703,25 @@ unchanged.
 order — `[piece-1 piece-2 … remaining]` for the chain above. A bare mesh
 (no cuts) returns `[mesh]`.
 
+### Connected components
+
+`(mesh-components mesh)` decomposes a mesh into its connected components —
+the disjoint solids it is made of — via Manifold's topological
+`Decompose()`. No boolean, no plane: exact and cheap (sub-millisecond even
+on thousands of triangles). It returns a **vector of meshes in a
+deterministic order**: decreasing volume, tie-broken by the lexicographic
+(x,y,z) vertex-mean centroid. That order is a contract — you can
+destructure it positionally (`(let [[a b] (mesh-components m)] …)`) and
+trust `a`/`b` to name the same pieces every run, whatever the construction
+order (both sort keys are order-independent). A single-component mesh
+returns `[mesh]`; an empty mesh returns `[]`. Each component inherits the
+source's creation-pose/material/anchors.
+
+```clojure
+;; two disjoint prongs merged into one mesh -> two components, no plane needed
+(count (mesh-components two-prongs))   ; => 2
+```
+
 ### Convexity test
 
 `(convex? mesh)` tests whether a mesh is convex via the hull-ratio test:
@@ -1724,6 +1743,16 @@ below. `0.01` sits with a wide margin on both sides.
 
 An empty mesh (no faces) is convex by definition and returns `true`
 immediately, without invoking Manifold.
+
+`(finished? mesh)` is the per-component finiteness criterion used by
+`edit-mesh-split`'s semaphore: `true` iff **every** connected component is
+convex (`(every? convex? (mesh-components mesh))`). It is the right "done"
+test for a convex decomposition — a piece whose parts are all convex is
+finished even when the piece as a whole reads concave (a U with two convex
+prongs: hull-ratio ~0.5, yet nothing needs cutting, only separating). The
+convexity epsilon is unchanged (`finished?` is about *how many* concavities,
+not *how strict* the threshold). An empty mesh and any single convex mesh are
+finished.
 
 ### Mesh smoothing & refinement
 

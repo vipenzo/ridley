@@ -403,6 +403,8 @@
    'slice-at-plane      impl/implicit-slice-at-plane
    'mesh-split          impl/implicit-mesh-split
    'split-parts         manifold/split-parts
+   'mesh-components     manifold/mesh-components
+   'finished?           manifold/finished?
    ;; Scene registry
    'add-mesh!           registry/add-mesh!
    'register-mesh!      registry/register-mesh!

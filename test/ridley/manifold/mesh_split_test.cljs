@@ -378,3 +378,129 @@
           tree {:behind {:behind leaf-a :ahead leaf-b}
                 :ahead  {:behind leaf-c :ahead leaf-d}}]
       (is (= [leaf-a leaf-b leaf-c leaf-d] (manifold/split-parts tree))))))
+
+;; ── mesh-components (decompose wrapper) ─────────────────────────
+;; A two-box mesh built by concat-meshes (linear merge, no boolean) is the
+;; accertamento's minimal control case (A1): a single Ridley-valid mesh that is
+;; topologically two components, hull-ratio ≈ 0.5. Its separation is topological
+;; — no plane, no mark. concat-meshes is pure CLJS, so the fixture builds in
+;; node; the decompose() itself needs Manifold WASM (skipped in node/CI).
+
+(def ^:private two-boxes
+  "cube-2 (centroid [0 0 0]) merged with a copy shifted +10 in X (centroid
+   [10 0 0]) into ONE mesh — two disjoint connected components, vol 8 each."
+  (manifold/concat-meshes cube-2 (shift-x cube-2 10)))
+
+(deftest mesh-components-empty-mesh-yields-empty-vector
+  (testing "empty mesh (no faces) → [] without touching Manifold (pure/node)"
+    (is (= [] (manifold/mesh-components {:type :mesh :vertices [] :faces []})))))
+
+(deftest mesh-centroid-is-vertex-mean-order-independent
+  (testing "vertex-mean centroid, invariant to vertex order (pure/node)"
+    (let [c0 (#'manifold/mesh-centroid cube-2)
+          c10 (#'manifold/mesh-centroid (shift-x cube-2 10))
+          ;; same vertex SET, permuted order → identical centroid
+          shuffled (update cube-2 :vertices (comp vec reverse))
+          cshuf (#'manifold/mesh-centroid shuffled)]
+      (is (h/vec-approx= [0.0 0.0 0.0] c0 1e-9))
+      (is (h/vec-approx= [10.0 0.0 0.0] c10 1e-9))
+      (is (h/vec-approx= c0 cshuf 1e-12) "permuting vertices does not move the centroid")
+      (is (= [0.0 0.0 0.0] (#'manifold/mesh-centroid {:vertices []})) "empty → origin"))))
+
+(deftest order-components-contract-volume-desc-then-centroid-lex
+  (testing "order-components: decreasing volume, then lexicographic centroid
+            (x,y,z) tie-break — pure, WASM-independent contract lock"
+    (let [big     {:mesh :big     :volume 10.0 :centroid [5.0 5.0 5.0]}
+          small-a {:mesh :small-a :volume 2.0  :centroid [0.0 1.0 0.0]}
+          small-b {:mesh :small-b :volume 2.0  :centroid [0.0 0.0 9.0]}  ; ties vol with small-a, lower y
+          small-c {:mesh :small-c :volume 2.0  :centroid [-3.0 0.0 0.0]} ; ties vol, lowest x → first among the 2.0s
+          entries [small-a big small-b small-c]]
+      (is (= [:big :small-c :small-b :small-a]
+             (#'manifold/order-components entries))
+          "biggest first; the three vol-2 pieces ordered by centroid x then y then z"))))
+
+(deftest mesh-components-two-boxes-two-ordered-components
+  (if-not (manifold-available?)
+    (is true "Skipped: Manifold WASM not available in node")
+    (testing "A1 control case: a two-box single mesh decomposes into 2 valid
+              components, ordered deterministically (equal volume → centroid x)"
+      (let [comps (manifold/mesh-components two-boxes)]
+        (is (= 2 (count comps)))
+        (is (every? #(h/approx= 8.0 (:volume (manifold/get-mesh-status %)) 1e-6) comps)
+            "both components are valid vol-8 boxes")
+        (is (h/vec-approx= [0.0 0.0 0.0] (#'manifold/mesh-centroid (first comps)) 1e-6)
+            "centroid-0 sorts first (lower x)")
+        (is (h/vec-approx= [10.0 0.0 0.0] (#'manifold/mesh-centroid (second comps)) 1e-6))))))
+
+(deftest mesh-components-order-is-construction-order-invariant
+  (if-not (manifold-available?)
+    (is true "Skipped: Manifold WASM not available in node")
+    (testing "same geometry, permuted construction order → identical vector
+              (measured on volumes + centroids, per the A2 comparison trap:
+              never = on the whole map)"
+      (let [a (manifold/mesh-components (manifold/concat-meshes cube-2 (shift-x cube-2 10)))
+            b (manifold/mesh-components (manifold/concat-meshes (shift-x cube-2 10) cube-2))
+            key-of (fn [comps]
+                     (mapv (fn [m] [(js/Math.round (h/signed-volume m))
+                                    (mapv #(js/Math.round %) (#'manifold/mesh-centroid m))])
+                           comps))]
+        (is (= (key-of a) (key-of b))
+            "the DSL ordering absorbs decompose()'s implementation-defined order")))))
+
+(deftest mesh-components-single-component-yields-singleton
+  (if-not (manifold-available?)
+    (is true "Skipped: Manifold WASM not available in node")
+    (testing "a one-component mesh → [mesh] (the whole thing)"
+      (let [comps (manifold/mesh-components cube-2)]
+        (is (= 1 (count comps)))
+        (is (h/approx= 8.0 (h/signed-volume (first comps)) 1e-6))))))
+
+(deftest mesh-components-inherit-carry-meta
+  (if-not (manifold-available?)
+    (is true "Skipped: Manifold WASM not available in node")
+    (testing "every component inherits the source's pose/material/anchors"
+      (let [src (assoc two-boxes
+                       :creation-pose {:position [9 9 9] :heading [0 1 0] :up [0 0 1]}
+                       :material {:color 123}
+                       :anchors {:foo {:position [1 2 3]}})
+            comps (manifold/mesh-components src)]
+        (is (= 2 (count comps)))
+        (is (every? #(= (:creation-pose src) (:creation-pose %)) comps))
+        (is (every? #(= (:material src) (:material %)) comps))
+        (is (every? #(= (:anchors src) (:anchors %)) comps))))))
+
+;; ── Per-component finiteness criterion (Parte 2) ────────────────
+;; green = every connected component is convex. Welds the criterion to the
+;; A1/A4-measured cases: two convex boxes in one mesh (hull-ratio ~0.5, plain
+;; convex? = false) are ALREADY finished; a genuinely concave single mesh is not.
+
+(deftest finished-two-convex-components-in-one-mesh-true
+  (if-not (manifold-available?)
+    (is true "Skipped: Manifold WASM not available in node")
+    (testing "the U-with-two-convex-prongs case (A4): concave by hull-ratio but
+              finished by the per-component criterion"
+      (is (false? (manifold/convex? two-boxes))
+          "sanity: hull-ratio reads the two-box mesh as concave")
+      (is (true? (manifold/finished? two-boxes))
+          "but every component is convex → finished")
+      (let [rpt (manifold/component-report two-boxes)]
+        (is (= 2 (:count rpt)) "badge shows 2 components")
+        (is (true? (:finished? rpt)))))))
+
+(deftest finished-genuinely-concave-single-component-false
+  (if-not (manifold-available?)
+    (is true "Skipped: Manifold WASM not available in node")
+    (testing "a single genuinely-concave component (torus, A4-style) → not finished"
+      (let [torus (torus-mesh 12 4 24 12)
+            rpt (manifold/component-report torus)]
+        (is (false? (manifold/finished? torus)))
+        (is (= 1 (:count rpt)))
+        (is (false? (:finished? rpt)))))))
+
+(deftest finished-single-convex-and-empty-true
+  (if-not (manifold-available?)
+    (is true "Skipped: Manifold WASM not available in node")
+    (testing "single convex mesh and empty mesh are both finished"
+      (is (true? (manifold/finished? (prim/box-mesh 10 10 10))))
+      (is (true? (manifold/finished? {:type :mesh :vertices [] :faces []}))
+          "empty → finished (every? over [] is true)"))))

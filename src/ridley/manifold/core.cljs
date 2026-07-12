@@ -655,6 +655,116 @@
     (into (split-parts (:behind result)) (split-parts (:ahead result)))))
 
 ;; ============================================================
+;; Connected-component decomposition
+;; ============================================================
+
+(defn- mesh-centroid
+  "Vertex-mean centroid [cx cy cz] of a Ridley mesh. It is a sum over the
+   vertex set divided by its count, so it is INVARIANT to vertex order and
+   thus to any construction-order permutation of the source mesh — which is
+   what lets it serve as a deterministic tie-break for mesh-components. Empty
+   mesh → [0 0 0]."
+  [ridley-mesh]
+  (let [vs (:vertices ridley-mesh)
+        n (count vs)]
+    (if (zero? n)
+      [0.0 0.0 0.0]
+      (let [sums (reduce (fn [acc v]
+                           (aset acc 0 (+ (aget acc 0) (v 0)))
+                           (aset acc 1 (+ (aget acc 1) (v 1)))
+                           (aset acc 2 (+ (aget acc 2) (v 2)))
+                           acc)
+                         (js/Array. 0.0 0.0 0.0) vs)]
+        [(/ (aget sums 0) n) (/ (aget sums 1) n) (/ (aget sums 2) n)]))))
+
+(defn- order-components
+  "Sort component entries {:mesh :volume :centroid} into the mesh-components
+   contract order: decreasing volume, then lexicographic (x,y,z) on the
+   centroid. Both keys are order-independent (volume and vertex-mean centroid),
+   so the resulting vector is invariant to construction/vertex-order
+   permutation of the source mesh. Pure — unit-testable without Manifold."
+  [entries]
+  (mapv :mesh
+        (sort-by (fn [{:keys [volume centroid]}]
+                   (into [(- volume)] centroid))
+                 entries)))
+
+(defn mesh-components
+  "Decompose a mesh into its connected components via Manifold's Decompose()
+   (topological union-find on connected components — exact, no boolean, and
+   cheap: <1 ms up to ~12800 tris, ~linear in vertex count).
+
+   Returns a VECTOR of meshes in a DETERMINISTIC contract order: decreasing
+   volume, tie-broken by lexicographic comparison of the vertex-mean centroid
+   (x, then y, then z). The order is a contract, not an incidental detail:
+   tree emission destructures positionally ((let [[a b] (mesh-components x)] …)),
+   and Manifold's Decompose() order is implementation-defined — so the ordering
+   lives HERE in the DSL, and the docstring declares it. Without this a re-entry
+   could silently swap the pieces.
+
+   Cases: a single-component mesh → a one-element vector [mesh] (the whole
+   thing); an empty mesh (no faces) → [] (documented degenerate case). Each
+   component inherits the source mesh's creation-pose/material/anchors via the
+   same single-source carry-meta policy as split-by-plane/hull.
+
+   Accepts a mesh or an SDF node (auto-materialized). On a Manifold failure it
+   degrades to [mesh] (treat the source as one whole component) rather than nil,
+   so callers can always destructure the result."
+  [ridley-mesh]
+  (let [ridley-mesh (sdf/ensure-mesh ridley-mesh)]
+    (if (empty? (:faces ridley-mesh))
+      []
+      (if-let [^js m (mesh->manifold ridley-mesh)]
+        (try
+          (let [^js parts (.decompose m)
+                n (.-length parts)
+                entries (loop [i 0, acc (transient [])]
+                          (if (< i n)
+                            (let [^js part (aget parts i)
+                                  vol (.volume part)
+                                  mesh (carry-meta (manifold->mesh part) ridley-mesh)
+                                  entry {:mesh (schema/assert-mesh! mesh)
+                                         :volume vol
+                                         :centroid (mesh-centroid mesh)}]
+                              (.delete part)
+                              (recur (inc i) (conj! acc entry)))
+                            (persistent! acc)))]
+            (.delete m)
+            (order-components entries))
+          (catch :default e
+            (js/console.error "mesh-components failed:" e)
+            (.delete m)
+            [ridley-mesh]))
+        [ridley-mesh]))))
+
+(defn component-report
+  "One-pass report for the mesh-split semaphore/badge: decompose once, then
+   test each component's convexity. Returns
+     {:count N :finished? bool :components [mesh …]}
+   where finished? = EVERY connected component is convex (the tree-session
+   'green' criterion — accertamento A4: the perennial red was multi-component
+   pieces and genuine concavities, never an epsilon problem, so the threshold
+   is unchanged). Empty mesh → {:count 0 :finished? true :components []}.
+
+   Budget (A1/A4, live per-keystroke): decompose <1 ms + ~2.6 ms/component."
+  ([ridley-mesh] (component-report ridley-mesh default-convexity-epsilon))
+  ([ridley-mesh epsilon]
+   (let [components (mesh-components ridley-mesh)]
+     {:count (count components)
+      :finished? (every? #(convex? % epsilon) components)
+      :components components})))
+
+(defn finished?
+  "The tree-decomposition 'finished' predicate (green light): true iff EVERY
+   connected component of the mesh is convex. Replaces the plain convex? test
+   for the mesh-split semaphore — a piece that decomposes into several convex
+   components (a U cut at its base → two convex prongs in one mesh) is already
+   finished; its separation is a matter of emission, not geometry. Empty mesh
+   and single convex mesh → true. Uses convex?'s own epsilon."
+  ([ridley-mesh] (:finished? (component-report ridley-mesh)))
+  ([ridley-mesh epsilon] (:finished? (component-report ridley-mesh epsilon))))
+
+;; ============================================================
 ;; Smoothing & refinement (Manifold tangent-based subdivision)
 ;; ============================================================
 

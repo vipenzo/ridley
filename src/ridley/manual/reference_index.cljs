@@ -1029,6 +1029,15 @@
     :description "Return the raw mesh value associated with a registered name. When given a mesh value already, returns it unchanged (identity-like behaviour). Useful inside boolean / transform pipelines that need the underlying geometry rather than the registry key. Does not modify turtle state."
     :path "docs/manual/reference/en/mesh.md"}
 
+   "mesh-components"
+   {:name "mesh-components"
+    :category "mesh-operations"
+    :status "stable"
+    :since ""
+    :signature "(mesh-components mesh)"
+    :description "Decompose a mesh into its **connected components** — the disjoint solids that make it up — via Manifold's `Decompose()`. This is a purely topological split (union-find on connected components): it is exact, involves no boolean operation, and is cheap (well under a millisecond even on meshes with thousands of triangles)."
+    :path "docs/manual/reference/en/mesh-components.md"}
+
    "mesh-diagnose"
    {:name "mesh-diagnose"
     :category "mesh-operations"
