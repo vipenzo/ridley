@@ -25,6 +25,7 @@
             [ridley.editor.modal-evaluator :as modal]
             [ridley.editor.implicit :as impl]
             [ridley.editor.gizmo :as gizmo]
+            [ridley.editor.mesh-split-tree :as mtree]
             [ridley.manifold.core :as manifold]
             [ridley.turtle.core :as turtle]
             [ridley.sdf.core :as sdf]
@@ -39,23 +40,28 @@
 
 (defonce session (atom nil))
 
+;; TREE session (dev-docs/brief-mesh-components-tree.md, Parti 3–4). The single
+;; :remaining/:accepted-stack of the guillotine became a forest of pieces:
 ;; {:source-expr   "block"           ; source text of the mesh argument
-;;  :initial-mesh  <mesh>             ; resolved, uncut — undo-to-start target
-;;  :remaining     <mesh>             ; current live head
-;;  :accepted      [{:pose {:position :heading :up} :behind <mesh>
-;;                   :remaining <mesh> :name "cut-1"} ...]   ; undo stack
-;;  :entry-pose    {:position :heading :up}  ; pose when the session opened —
-;;                                             the "from" for the first delta
-;;  :live-pose     <full turtle state>  ; the cut plane == the turtle;
-;;                                        mutated via real th/tv/tr/f/move-*
+;;  :initial-mesh  <mesh>             ; resolved, uncut — the root piece's mesh
+;;  :tree          <mtree tree>       ; PURE structural tree (pieces/log/current);
+;;                                      owns ids, origins, gesture-log, naming,
+;;                                      emission — see ridley.editor.mesh-split-tree
+;;  :piece-meshes  {id {:mesh <mesh> :manifold <js or nil>}}  ; WASM side-table,
+;;                                      keyed by tree piece id; :manifold is the
+;;                                      kept-alive object (created lazily when a
+;;                                      piece becomes current, .delete'd on undo/
+;;                                      cancel/commit — no per-tick re-conversion)
+;;  :entry-pose    {:position :heading :up}  ; every emitted path resolves here (A2)
+;;  :live-pose     <full turtle state>  ; the cut plane == the turtle
 ;;  :step 5 :angle-step 15 :digit-buffer "" :digit-target :step  ; :step|:angle
-;;  :current-behind <mesh or nil> :current-ahead <mesh or nil>   ; live split()
+;;  :current-behind <mesh or nil> :current-ahead <mesh or nil>   ; live split of
+;;                                      the CURRENT piece at :live-pose
 ;;  :behind-finished? :ahead-finished?   ; live per-component finiteness (Parte 2)
 ;;  :behind-count :ahead-count           ; live component counts (badge when >1)
-;;  :remaining-finished? :remaining-count ; current-piece finiteness/count
 ;;  :plane-state    :no-op | :terminal | :active
 ;;  :edit-mesh-split-from/-to  ; char offsets of the marker in the editor
-;;  :panel-el :key-handler :entered? :from-repl}
+;;  :panel-el :key-handler :click-handler :entered? :from-repl}
 
 (defn- resolve-to-mesh
   "Accept a mesh map, a keyword (registered mesh name), or an SDF node
@@ -78,6 +84,57 @@
 (def ^:private color-convex 0x33cc55)
 (def ^:private color-concave 0xcc3333)
 (def ^:private color-ghost 0x999999)
+(def ^:private color-open-piece 0x4477aa)   ; a non-current open piece (clickable)
+
+;; ============================================================
+;; Pieces & Manifold keep-alive
+;; ============================================================
+;; The tree owns the STRUCTURE (ids/origins/log/current); this side-table owns
+;; the meshes and their kept-alive Manifold objects. A piece's Manifold is
+;; created once, the first time it is needed for a split, and reused every plane
+;; tick (manifold/split-live) so a keystroke no longer pays the ~8ms mesh→
+;; manifold conversion (accertamento B2). Every create is matched by a .delete on
+;; undo-removal / cancel / commit — the leak-free discipline Parte 3 requires.
+
+(defn- current-id [] (:current (:tree @session)))
+(defn- piece-mesh [id] (get-in @session [:piece-meshes id :mesh]))
+(defn- current-mesh [] (piece-mesh (current-id)))
+
+(defn- store-piece!
+  "Record a piece's mesh in the side-table (its Manifold is created lazily)."
+  [id mesh]
+  (swap! session assoc-in [:piece-meshes id] {:mesh mesh}))
+
+(defn- ensure-manifold!
+  "The kept-alive Manifold for piece `id`, created from its mesh on first use and
+   cached in the side-table. Returns nil if the mesh can't be converted (caller
+   falls back to the mesh-based split path)."
+  [id]
+  (or (get-in @session [:piece-meshes id :manifold])
+      (when-let [mesh (piece-mesh id)]
+        (when-let [mf (manifold/mesh->manifold mesh)]
+          (swap! session assoc-in [:piece-meshes id :manifold] mf)
+          mf))))
+
+(defn- free-piece!
+  "Delete piece `id`'s kept-alive Manifold (if any) and drop it from the
+   side-table — called on undo-removal and, en masse, on session end."
+  [id]
+  (when-let [^js mf (get-in @session [:piece-meshes id :manifold])]
+    (.delete mf))
+  (swap! session update :piece-meshes dissoc id))
+
+(defn- free-all-manifolds!
+  "Delete every kept-alive Manifold — the no-leak guarantee on cancel/commit/
+   force-close (the report must confirm nothing survives the cancel path)."
+  []
+  (doseq [[_ {:keys [^js manifold]}] (:piece-meshes @session)]
+    (when manifold (.delete manifold))))
+
+(defn- piece-report
+  "The cached {:finished? :count} report of a tree piece (Parte 2)."
+  [id]
+  (select-keys (get-in @session [:tree :pieces id]) [:finished? :count]))
 
 ;; ============================================================
 ;; Geometry helpers — plane quad, orientation cone, terminal placement
@@ -87,15 +144,20 @@
   [[[xmin xmax] [ymin ymax] [zmin zmax]]]
   (for [x [xmin xmax] y [ymin ymax] z [zmin zmax]] [x y z]))
 
-(defn- terminal-position
-  "A position along heading, from `position`, that clears ALL of mesh's
-   bounding box — the plane there has the whole mesh :behind it, :ahead
-   empty. Used both for the post-accept auto-placement and the Ctrl+Enter
-   accelerator."
-  [mesh position heading]
-  (let [corners (bbox-corners (sdf/mesh-bounds mesh))
-        max-proj (apply max (map #(turtle/dot (turtle/v- % position) heading) corners))]
-    (turtle/v+ position (turtle/v* heading (+ max-proj 1.0)))))
+(defn- bbox-center
+  [mesh]
+  (let [[[xmin xmax] [ymin ymax] [zmin zmax]] (sdf/mesh-bounds mesh)]
+    [(* 0.5 (+ xmin xmax)) (* 0.5 (+ ymin ymax)) (* 0.5 (+ zmin zmax))]))
+
+(defn- reposition-plane-for!
+  "Move the live plane through the middle of piece `id` (its bbox centre), keeping
+   the current heading/up — used whenever the current piece switches to a piece
+   OTHER than the one the guillotine was cutting (an explicit select/cycle, or a
+   cut/undo that lands on a different branch), so the plane always sits on the
+   piece you are about to cut."
+  [id]
+  (when-let [mesh (piece-mesh id)]
+    (swap! session assoc-in [:live-pose :position] (bbox-center mesh))))
 
 (defn- quad-stamp
   "4-corner quad at `pose`, sized (with margin) to `mesh`'s bbox projected
@@ -162,42 +224,37 @@
   (or preview-pose live-pose))
 
 (defn- recompute!
-  "Keyboard steps, gizmo-commit, and (since live feedback 2026-07-12) throttled
-   gizmo-drag ticks all land here — the only place split/convex?/volume are
-   (re)computed, against `working-pose`. Measures its own cost and stores it in
-   session (:drag-recompute-cost-ms) so on-gizmo-drag!'s throttle can adapt: a
-   simple mesh recomputes on nearly every tick, a complex one backs off instead of
-   blocking the main thread back-to-back (measured live: ~12ms on a ~4600-tri box,
-   ~50-200ms on a dense 8000-tri mesh depending on the cut — see dev-docs/addendum-
-   brief-edit-mesh-split.md)."
+  "Keyboard steps, gizmo-commit, and throttled gizmo-drag ticks all land here —
+   the only place the CURRENT piece is (re)split against `working-pose`. Uses the
+   current piece's kept-alive Manifold (manifold/split-live) so a plane nudge no
+   longer pays the ~8ms mesh→manifold conversion (Parte 3 keep-alive / accertamento
+   B2); the split also returns both halves' volumes, so no get-mesh-status re-
+   conversion either. Measures its own cost into :drag-recompute-cost-ms so
+   on-gizmo-drag!'s throttle adapts (a cheap mesh updates nearly every frame, a
+   dense one backs off — dev-docs/addendum-brief-edit-mesh-split.md)."
   []
-  (when-let [{:keys [remaining] :as s} @session]
+  (when-let [{:as s} @session]
     (let [t0 (js/performance.now)
+          cur (current-id)
+          cur-mesh (piece-mesh cur)
+          mf (ensure-manifold! cur)
           {:keys [position heading]} (working-pose s)
           offset (turtle/dot heading position)
-          {:keys [ahead behind]} (manifold/split-by-plane remaining heading offset)
+          {:keys [ahead behind ahead-volume behind-volume]}
+          (if mf
+            (manifold/split-live mf heading offset cur-mesh)
+            (manifold/split-by-plane cur-mesh heading offset))
           behind-empty? (empty? (:faces behind))
           ahead-empty? (empty? (:faces ahead))
           plane-state (cond behind-empty? :no-op ahead-empty? :terminal :else :active)
-          behind-vol (if behind-empty? 0 (:volume (manifold/get-mesh-status behind)))
-          ahead-vol (if ahead-empty? 0 (:volume (manifold/get-mesh-status ahead)))
+          behind-vol (if behind-empty? 0 (or behind-volume 0))
+          ahead-vol (if ahead-empty? 0 (or ahead-volume 0))
           total-vol (+ behind-vol ahead-vol)
-          ;; Per-component finiteness (Parte 2): green = every connected
-          ;; component is convex, not just the whole half. A half that
-          ;; decomposes into several convex pieces (a U cut at its base) is
-          ;; already finished — the badge shows its count. component-report
-          ;; decomposes once and returns {:count :finished?}; <1ms + ~2.6ms/comp
-          ;; (accertamento A1/A4), so it stays in the live per-tick budget.
+          ;; Per-component finiteness (Parte 2): green = every connected component
+          ;; convex. Only the two live halves are recomputed per tick — the current
+          ;; piece's own report is cached on the tree (computed when it was created).
           behind-report (when-not behind-empty? (manifold/component-report behind))
           ahead-report  (when-not ahead-empty?  (manifold/component-report ahead))
-          ;; The current piece (remaining) changes only on accept/undo, never on
-          ;; a plane move — so re-decompose it only when its identity actually
-          ;; changed, not on every tick (a decompose pays an ~8ms mesh→manifold
-          ;; conversion; keep-alive in the tree session removes it entirely).
-          remaining-changed? (not (identical? remaining (:remaining-reported-for s)))
-          remaining-report (if remaining-changed?
-                             (manifold/component-report remaining)
-                             {:count (:remaining-count s) :finished? (:remaining-finished? s)})
           cost-ms (- (js/performance.now) t0)]
       (swap! session assoc
              :current-behind behind :current-ahead ahead
@@ -205,9 +262,6 @@
              :behind-count     (:count behind-report)
              :ahead-finished?  (:finished? ahead-report)
              :ahead-count      (:count ahead-report)
-             :remaining-count     (:count remaining-report)
-             :remaining-finished? (:finished? remaining-report)
-             :remaining-reported-for remaining
              :plane-state plane-state
              :behind-pct (if (pos? total-vol) (* 100.0 (/ behind-vol total-vol)) 0.0)
              :ahead-pct (if (pos? total-vol) (* 100.0 (/ ahead-vol total-vol)) 0.0)
@@ -234,41 +288,61 @@
                                   :double-sided true})}))
 
 (defn- ghost-item
-  "Consumed pieces carry no convexity tint at all — that hue is reserved for the two
-   live halves of the current cut; a consumed piece is dead information, already
-   accepted. Wireframe, not a low-alpha solid fill (live feedback 2026-07-12: a
-   low-alpha grey solid read as blue-ish under the scene's lighting and blurred into
-   both the plane quad and the current :behind piece — a wireframe is unmistakably
-   NOT the solid current cut regardless of lighting/hue, the addendum's own
-   documented fallback)."
-  [mesh]
+  "A FINISHED leaf (every component convex — done). Wireframe, not a low-alpha
+   solid fill (live feedback 2026-07-12: a low-alpha grey solid read as blue-ish
+   under the scene's lighting and blurred into the plane quad — a wireframe is
+   unmistakably NOT a live solid). Still `:pick-id`-tagged so it can be re-selected
+   (to over-decompose or separate)."
+  [mesh pick-id]
   {:type :wireframe
+   :pick-id pick-id
    :data (assoc mesh :material {:color color-ghost})})
+
+(defn- open-piece-item
+  "A non-current OPEN leaf (a component still concave): a solid, clickable body so
+   you can see the whole tree at once and click any piece to make it current."
+  [mesh pick-id]
+  {:type :mesh
+   :pick-id pick-id
+   :data (assoc mesh :material {:color color-open-piece :opacity 0.55 :double-sided true})})
 
 (defn- plane-items
   "The quad + orientation cone at `pose` — always render!'s items 0 and 1, in this
    order, a contract on-gizmo-drag!'s cheap per-tick update relies on. Colored by
-   the session's current :plane-state, whether that's fresh (just recomputed) or a
-   few ms old (mid-drag, between throttled recomputes — see recompute!)."
+   the session's current :plane-state."
   [pose]
-  (let [{:keys [remaining plane-state]} @session
-        plane-color (case plane-state
+  (let [plane-color (case (:plane-state @session)
                       :no-op color-no-op
                       :terminal color-terminal
                       color-active)]
-    [{:type :stamp :data (quad-stamp pose remaining plane-color)}
+    [{:type :stamp :data (quad-stamp pose (current-mesh) plane-color)}
      {:type :mesh :data (orientation-cone pose plane-color)}]))
+
+(defn- other-piece-items
+  "Every leaf EXCEPT the current one: finished leaves as ghosts, still-open leaves
+   as solid clickable bodies. The current piece isn't drawn here — its live split
+   halves stand in for it."
+  [s]
+  (let [tree (:tree s)
+        cur (:current tree)]
+    (for [id (mtree/leaf-ids tree)
+          :when (not= id cur)
+          :let [mesh (piece-mesh id)]
+          :when (and mesh (seq (:faces mesh)))]
+      (if (:finished? (get-in tree [:pieces id]))
+        (ghost-item mesh id)
+        (open-piece-item mesh id)))))
 
 (defn- render!
   []
-  (when-let [{:keys [accepted current-behind current-ahead
+  (when-let [{:keys [current-behind current-ahead
                      behind-finished? ahead-finished?] :as s} @session]
     (let [pose (working-pose s)
           items (concat
                  (plane-items pose)
                  (remove nil? [(half-preview-item current-behind behind-finished? :behind)
                                (half-preview-item current-ahead ahead-finished? :ahead)])
-                 (map (comp ghost-item :behind) accepted))]
+                 (other-piece-items s))]
       (viewport/show-preview! (vec items))
       (viewport/set-turtle-source! {:custom pose})
       (viewport/update-turtle-pose pose)
@@ -365,89 +439,95 @@
 ;; Accept / commit / undo / cancel
 ;; ============================================================
 
-(defn- next-cut-name
-  [used-names]
-  (loop [n 1]
-    (let [candidate (str "cut-" n)]
-      (if (contains? used-names candidate)
-        (recur (inc n))
-        candidate))))
-
 (defn- accept-cut!
-  "plane-state = :active: push the current cut, continue the session."
+  "plane-state = :active: cut the current piece into a behind + ahead node
+   (mtree/cut), store their meshes, and let the tree advance current (stays on the
+   ahead if it is still open — guillotine continuity — else the next open leaf).
+   If current jumped to a DIFFERENT piece, the plane repositions onto it."
   []
-  (let [{:keys [live-pose current-behind current-ahead ahead-finished? accepted]} @session
+  (let [{:keys [live-pose current-behind current-ahead
+                behind-finished? behind-count ahead-finished? ahead-count] :as s} @session
+        cur (current-id)
         pose (select-keys live-pose [:position :heading :up])
-        used-names (set (map :name accepted))
-        name (next-cut-name used-names)]
-    (swap! session
-           (fn [s]
-             (cond-> (-> s
-                         (update :accepted conj {:pose pose :behind current-behind
-                                                 :remaining current-ahead :name name})
-                         (assoc :remaining current-ahead))
-               ;; if the new remaining is already finished (every component
-               ;; convex — Parte 2), propose the terminal placement instead of
-               ;; staying put — "tutto verde" becomes closable with one Enter
-               ahead-finished?
-               (assoc-in [:live-pose :position]
-                         (terminal-position current-ahead (:position pose) (:heading pose))))))
+        {:keys [tree behind ahead]}
+        (mtree/cut (:tree s) cur pose
+                   {:finished? behind-finished? :count behind-count}
+                   {:finished? ahead-finished? :count ahead-count})]
+    (store-piece! behind current-behind)
+    (store-piece! ahead current-ahead)
+    (swap! session assoc :tree tree)
+    (when (not= (:current tree) ahead)
+      (reposition-plane-for! (:current tree)))
     (recompute!)))
 
-(defn- fmt-num
-  "Same rounding convention as edit-bezier's fmt-num: nearest integer
-   within 1e-9, else 2 decimals with trailing zeros trimmed. 'Numeri
-   liberi non arrotondati' is about never snapping the synthesized VALUE
-   to a grid during editing — display precision is a separate concern."
-  [v]
-  (let [r (js/Math.round v)]
-    (if (< (js/Math.abs (- v r)) 1e-9)
-      (str r)
-      (let [s (.toFixed v 2)]
-        (cond
-          (str/ends-with? s "00") (subs s 0 (- (count s) 3))
-          (str/ends-with? s "0") (subs s 0 (dec (count s)))
-          :else s)))))
+(defn- separate!
+  "The 'separa componenti' gesture (Parte 3): decompose the current piece into its
+   connected components (mtree/separate — Part 1's contract order), materializing
+   each as a distinct tree piece. A structural gesture (logged, undoable). A no-op
+   with a note when the piece is a single component (nothing to separate — it needs
+   a plane, not a separation)."
+  []
+  (let [s @session
+        cur (current-id)
+        comp-meshes (manifold/mesh-components (piece-mesh cur))]
+    (if (< (count comp-meshes) 2)
+      (state/capture-println
+       "edit-mesh-split: current piece is a single component — nothing to separate")
+      (let [reports (mapv (fn [c] {:finished? (manifold/convex? c) :count 1}) comp-meshes)
+            {:keys [tree components]} (mtree/separate (:tree s) cur reports)]
+        (doseq [[cid cmesh] (map vector components comp-meshes)]
+          (store-piece! cid cmesh))
+        (swap! session assoc :tree tree)
+        (reposition-plane-for! (:current tree))
+        (state/capture-println (str "edit-mesh-split: separated into " (count comp-meshes) " pieces"))
+        (recompute!)))))
 
-(defn- delta->cmds-str
-  [delta]
-  (->> [:th :tv :tr :f :rt :u]
-       (keep (fn [k] (when-let [v (k delta)] (str "(" (name k) " " (fmt-num v) ")"))))
-       (str/join " ")))
+(defn- select-piece!
+  "Make leaf `id` current (a selection — not a structural gesture). Repositions the
+   plane onto it. No-op if it is already current or is not a leaf."
+  [id]
+  (let [old (current-id)
+        tree (mtree/select (:tree @session) id)]
+    (when (not= (:current tree) old)
+      (swap! session assoc :tree tree)
+      (reposition-plane-for! (:current tree))
+      (recompute!))))
 
-(defn- build-nested-destructure
-  [piece-names final-name]
-  (if (empty? piece-names)
-    final-name
-    (str "{" (first piece-names) " :behind "
-         (build-nested-destructure (rest piece-names) final-name) " :ahead}")))
+(defn- cycle-current-piece!
+  "Advance current to the next non-finished leaf (round-robin), repositioning the
+   plane onto it — the keyboard counterpart of clicking a piece."
+  []
+  (let [old (current-id)
+        tree (mtree/cycle-current (:tree @session))]
+    (when (not= (:current tree) old)
+      (swap! session assoc :tree tree)
+      (reposition-plane-for! (:current tree))
+      (recompute!))))
 
-(defn- build-emitted-code
-  [{:keys [source-expr accepted entry-pose]}]
-  (if (empty? accepted)
-    source-expr
-    (let [poses (into [entry-pose] (map :pose accepted))
-          deltas (mapv (fn [[a b]] (turtle/synthesize-delta a b))
-                       (partition 2 1 poses))
-          names (mapv :name accepted)
-          path-forms (str/join " "
-                               (map (fn [delta nm] (str (delta->cmds-str delta) " (mark :" nm ")"))
-                                    deltas names))
-          marks-vec (str "[" (str/join " " (map #(str ":" %) names)) "]")
-          piece-names (mapv #(str "piece-" (inc %)) (range (count accepted)))
-          destructure-str (build-nested-destructure piece-names "remaining")
-          body-str (str "[" (str/join " " (conj piece-names "remaining")) "]")]
-      (str "(let [" destructure-str "\n      (mesh-split " source-expr "\n"
-           "                  (path " path-forms ")\n"
-           "                  " marks-vec ")]\n"
-           "  " body-str ")"))))
+(def ^:private marker-prefix "(edit-mesh-split")
+
+(defn- find-marker
+  [text]
+  (modal/find-form-bounds text marker-prefix))
+
+(defn- cleanup!
+  []
+  (free-all-manifolds!)   ; the single no-leak point — every session exit runs cleanup!
+  (modal/unmount-panel! (:panel-el @session))
+  (modal/remove-keydown! (:key-handler @session))
+  (when-let [h (:click-handler @session)]
+    (some-> (viewport/get-canvas) (.removeEventListener "click" h)))
+  (gizmo/close!)
+  (viewport/set-turtle-source! :global)
+  (viewport/clear-preview!))
 
 (defn- commit-session!
-  "plane-state = :terminal: no new mark — closing is stopping, not cutting.
-   The current :remaining is already the final piece."
+  "Close the session and emit the tree as a let-chain of self-contained linear
+   composites (mtree/emit). Enter on a terminal/all-finished plane, or Ctrl+Enter
+   (force). cleanup! frees every kept-alive Manifold."
   []
   (let [{:keys [edit-mesh-split-from edit-mesh-split-to from-repl] :as s} @session
-        code (build-emitted-code s)]
+        code (mtree/emit (:tree s))]
     (if from-repl
       (state/capture-println code)
       (do (modal/replace-source! edit-mesh-split-from edit-mesh-split-to code)
@@ -458,54 +538,35 @@
     (when-not from-repl (modal/run-definitions!))))
 
 (defn- accept-or-commit!
+  "Enter: cut if the plane is actively bisecting the current piece; else commit if
+   every tree piece is finished ('tutto verde'); else move on to the next open
+   piece (the plane isn't cutting here and there is work left elsewhere)."
   []
-  (case (:plane-state @session)
-    :active (accept-cut!)
-    :terminal (commit-session!)
-    nil))
+  (cond
+    (= :active (:plane-state @session)) (accept-cut!)
+    (mtree/all-finished? (:tree @session)) (commit-session!)
+    :else (cycle-current-piece!)))
 
-(defn- teleport-and-commit!
-  "Ctrl/Cmd+Enter accelerator: teleport to terminal placement, then run
-   the SAME accept-or-commit! — sugar on two already-defined primitives,
-   no separate emission path."
+(defn- force-commit!
+  "Ctrl/Cmd+Enter: close now and emit whatever the tree currently is, even with
+   concave leaves still open (the user's decomposition, their call)."
   []
-  (let [{:keys [remaining live-pose]} @session
-        pose (select-keys live-pose [:position :heading :up])
-        term-pos (terminal-position remaining (:position pose) (:heading pose))]
-    (swap! session assoc-in [:live-pose :position] term-pos)
-    (recompute!)
-    (accept-or-commit!)))
+  (commit-session!))
 
 (defn- undo!
+  "Pop the last structural gesture (chronological, cross-branch — mtree/undo),
+   freeing the removed pieces' kept-alive Manifolds and restoring the plane to a
+   popped cut's pose (or onto the re-opened piece for a popped separation)."
   []
-  (let [{:keys [accepted initial-mesh]} @session]
-    (if (empty? accepted)
-      (state/capture-println "edit-mesh-split: nothing to undo")
-      (let [popped (peek accepted)
-            rest-stack (pop accepted)
-            new-remaining (if (seq rest-stack) (:remaining (peek rest-stack)) initial-mesh)]
-        (swap! session
-               (fn [s]
-                 (-> s
-                     (assoc :accepted rest-stack :remaining new-remaining)
-                     (assoc-in [:live-pose :position] (:position (:pose popped)))
-                     (assoc-in [:live-pose :heading] (:heading (:pose popped)))
-                     (assoc-in [:live-pose :up] (:up (:pose popped))))))
-        (recompute!)))))
-
-(def ^:private marker-prefix "(edit-mesh-split")
-
-(defn- find-marker
-  [text]
-  (modal/find-form-bounds text marker-prefix))
-
-(defn- cleanup!
-  []
-  (modal/unmount-panel! (:panel-el @session))
-  (modal/remove-keydown! (:key-handler @session))
-  (gizmo/close!)
-  (viewport/set-turtle-source! :global)
-  (viewport/clear-preview!))
+  (if-let [{:keys [tree removed pose]} (mtree/undo (:tree @session))]
+    (do
+      (doseq [id removed] (free-piece! id))
+      (swap! session assoc :tree tree)
+      (if pose
+        (swap! session update :live-pose merge pose)
+        (reposition-plane-for! (:current tree)))
+      (recompute!))
+    (state/capture-println "edit-mesh-split: nothing to undo")))
 
 (defn cancel!
   "Esc: cancel everything unconditionally, emit nothing. No verbatim body
@@ -585,7 +646,7 @@
             (update-panel-display!))
 
         (and (= key "Enter") mod?)
-        (do (.preventDefault e) (.stopPropagation e) (flush-digit-buffer!) (teleport-and-commit!))
+        (do (.preventDefault e) (.stopPropagation e) (flush-digit-buffer!) (force-commit!))
 
         (= key "Enter")
         (do (.preventDefault e) (.stopPropagation e) (flush-digit-buffer!) (accept-or-commit!))
@@ -626,6 +687,14 @@
                   (update-panel-display!))
               (undo!)))
 
+        ;; s: separate the current piece into its connected components (Parte 3)
+        (and (= key "s") (not mod?))
+        (do (.preventDefault e) (.stopPropagation e) (flush-digit-buffer!) (separate!))
+
+        ;; n: cycle the current piece to the next non-finished leaf
+        (and (= key "n") (not mod?))
+        (do (.preventDefault e) (.stopPropagation e) (flush-digit-buffer!) (cycle-current-piece!))
+
         :else nil))))
 
 ;; ============================================================
@@ -664,9 +733,13 @@
 (defn update-panel-display!
   []
   (when-let [panel (:panel-el @session)]
-    (let [{:keys [digit-buffer digit-target step angle-step plane-state accepted]
+    (let [{:keys [digit-buffer digit-target step angle-step plane-state tree]
            :as s} @session
           editing? (seq digit-buffer)
+          cur (:current tree)
+          cur-count (get-in tree [:pieces cur :count])
+          leaves (mtree/leaf-ids tree)
+          open (mtree/non-finished-leaves tree)
           update-param! (fn [selector value-str param-key]
                           (when-let [el (.querySelector panel selector)]
                             (set! (.-textContent el)
@@ -680,22 +753,23 @@
       (update-param! ".ems-step-value" (str step "mm") :step)
       (update-param! ".ems-angle-value" (str angle-step "°") :angle)
       (when-let [status-el (.querySelector panel ".ems-status")]
-        (let [base (case plane-state
-                     :no-op "cut is a no-op (plane misses the piece) — Enter disabled"
-                     :terminal "Enter closes the session — remaining accepted as final piece"
-                     "Enter accepts this cut and continues")
-              ;; Current-piece badge (Parte 2): flag when the piece being cut is
-              ;; itself multi-component (needs separation, not a plane).
-              rc (:remaining-count s)
-              badge (when (and rc (> rc 1)) (str " · piece: " rc " components"))]
+        (let [base (cond
+                     (mtree/all-finished? tree) "all pieces finished — Enter commits"
+                     (= plane-state :active)   "Enter cuts the current piece"
+                     (= plane-state :no-op)    "cut is a no-op (plane misses the piece)"
+                     :else                     "plane past the piece — Enter jumps to the next open piece")
+              ;; Current-piece badge (Parte 2/3): flag a multi-component current
+              ;; piece — press s to separate (no plane needed).
+              badge (when (and cur-count (> cur-count 1))
+                      (str " · this piece: " cur-count " components — press s to separate"))]
           (set! (.-textContent status-el) (str base badge))))
       (when-let [vol-el (.querySelector panel ".ems-volumes")]
         (set! (.-textContent vol-el) (volume-status-text s)))
       (when-let [cmd-el (.querySelector panel ".pilot-cmd-list")]
         (set! (.-textContent cmd-el)
-              (if (empty? accepted)
-                "(no cuts accepted yet)"
-                (str/join ", " (map :name accepted))))))))
+              (str "current: " (mtree/piece-name tree cur)
+                   " · pieces: " (count leaves)
+                   " (" (count open) " open, " (- (count leaves) (count open)) " done)"))))))
 
 (defn- create-panel!
   [mesh-name]
@@ -713,22 +787,21 @@
                "<div class='pilot-commands modal-help'>"
                "Tab: cycle step/angle · digits: set active value · "
                "←→↑↓: move (step, f/rt) / rotate (angle, th/tv) · "
-               "Shift+↑↓: u / tr · "
-               "Gizmo: drag arrows (translate) / rings (rotate) in the viewport — only "
-               "the plane itself moves with the drag, the pieces don't · "
-               "Shift+drag: free (bypass grid) · colors update live during the drag, "
-               "throttled to what the mesh can afford. "
-               "Enter: accept :behind (closes the session when the plane is in "
-               "terminal placement) · Ctrl/Cmd+Enter: teleport to terminal + accept · "
-               "Backspace: undo last accepted cut · Esc: cancel everything, emit nothing. "
-               "Plane color: grey = no-op cut, gold = terminal (Enter closes), blue = active. "
-               "Halves: green = every component convex (a 'N pieces' badge flags a "
-               "multi-component half — separate, don't cut), red = a component is "
-               "concave; behind is solid (what Enter "
-               "takes), ahead is washed. Cone points ahead (heading), same direction "
-               "as the turtle's own nose — Enter takes what's behind it, same "
-               "convention as extrude (material trails behind). Accepted pieces are "
-               "shown as a grey wireframe."
+               "Shift+↑↓: u / tr · Gizmo: drag arrows/rings in the viewport. "
+               "TREE: cut the current piece; both halves become pieces of the tree. "
+               "s: separate the current piece into its connected components (no plane). "
+               "n: cycle to the next open piece · click a piece to select it · "
+               "Enter: cut the current piece (or, when every piece is finished, commit) · "
+               "Ctrl/Cmd+Enter: commit now (emit even with open pieces) · "
+               "Backspace: undo the last cut/separation (chronological, any branch) · "
+               "Esc: cancel, emit nothing. "
+               "Plane color: grey = no-op, gold = plane past the piece, blue = active cut. "
+               "Pieces: green halves/wireframe = finished (every component convex; a "
+               "'N pieces' badge flags a multi-component piece — separate, don't cut), "
+               "red = a component is concave; the current piece shows its live behind "
+               "(solid) / ahead (washed) split, other open pieces are blue solids, "
+               "finished pieces are grey wireframes. Cone points ahead (heading); Enter "
+               "takes what's behind it, like extrude (material trails behind)."
                "</div>"
                "<div class='pilot-buttons'>"
                "<button class='pilot-btn pilot-btn-undo'>Undo</button>"
@@ -742,22 +815,36 @@
     panel))
 
 ;; ============================================================
-;; Re-entry — walk the ALREADY-COMPUTED composite (Part 1's own return
-;; value) instead of replaying source text, since mesh-split's composite
-;; already has exactly the shape a session needs.
+;; Re-entry — rebuild a session tree from the ALREADY-COMPUTED composite
+;; (Part 1's own return value). A re-entered mesh-split call is a LINEAR
+;; chain (one run), so re-entry needs no new mechanism (accertamento A3#6
+;; dissolved): the root is the initial mesh, then one cut per chain level at
+;; the resolved marks. Any tree structure the user builds AFTER re-opening is
+;; a fresh forest that re-emits as its own let-chain in place of the call.
 ;; ============================================================
 
-(defn- composite->accepted
-  [composite poses names]
-  (if (or (empty? poses) (not (map? composite)) (= :mesh (:type composite)))
-    []
-    (let [{:keys [behind ahead]} composite]
-      ;; names come from the caller's marks-vector, so they're keywords
-      ;; (:cut-1) here — normalize to the bare string every OTHER :name
-      ;; (next-cut-name's own output) already uses, so emission's "(mark :"
-      ;; + name interpolation never double-colons a re-entered mark.
-      (cons {:pose (first poses) :behind behind :remaining ahead :name (name (first names))}
-            (composite->accepted ahead (rest poses) (rest names))))))
+(defn- report-of
+  "The {:finished? :count} report of a mesh (Parte 2), for seeding tree pieces."
+  [mesh]
+  (select-keys (manifold/component-report mesh) [:finished? :count]))
+
+(defn- build-reentry-tree
+  "Walk a re-entered composite (linear {:behind :ahead} chain) into a session
+   tree + piece-meshes side-table: root = initial mesh, then mtree/cut per level
+   at `poses`. Returns {:tree tree :piece-meshes {id {:mesh …}}}."
+  [source-expr entry-pose initial-mesh composite poses]
+  (loop [tree (mtree/make-tree source-expr entry-pose (report-of initial-mesh))
+         pm {0 {:mesh initial-mesh}}
+         node composite
+         ps (seq poses)
+         cur 0]
+    (if (or (nil? ps) (not (map? node)) (= :mesh (:type node)))
+      {:tree tree :piece-meshes pm}
+      (let [{:keys [behind ahead]} node
+            {tree' :tree bid :behind aid :ahead}
+            (mtree/cut tree cur (first ps) (report-of behind) (report-of ahead))]
+        (recur tree' (assoc pm bid {:mesh behind} aid {:mesh ahead})
+               ahead (next ps) aid)))))
 
 ;; ============================================================
 ;; Entry points (two-phase, same shape as edit-attach/edit-bezier)
@@ -811,24 +898,27 @@
             poses (when path-value
                     (let [anchors (turtle/resolve-marks entry-pose path-value)]
                       (mapv anchors names)))
-            accepted (if (and composite-value (map? composite-value) (not= :mesh (:type composite-value)))
-                       (vec (composite->accepted composite-value poses names))
-                       [])
-            remaining (if (seq accepted) (:remaining (peek accepted)) initial-mesh)
-            live-pose-thin (if (seq accepted) (:pose (peek accepted)) entry-pose)]
+            {:keys [tree piece-meshes]}
+            (if (and composite-value (map? composite-value) (not= :mesh (:type composite-value)))
+              (build-reentry-tree source-expr entry-pose initial-mesh composite-value poses)
+              {:tree (mtree/make-tree source-expr entry-pose (report-of initial-mesh))
+               :piece-meshes {0 {:mesh initial-mesh}}})
+            cur (:current tree)
+            cur-mesh (:mesh (get piece-meshes cur))]
         (modal/claim! :edit-mesh-split)
         (reset! session
                 {:source-expr source-expr
                  :orig-path-text orig-path-text
                  :orig-marks-text orig-marks-text
                  :initial-mesh initial-mesh
-                 :remaining remaining
-                 :accepted accepted
+                 :tree tree
+                 :piece-meshes piece-meshes
                  :entry-pose entry-pose
+                 ;; the plane starts through the middle of the current piece
                  :live-pose (-> (turtle/make-turtle)
-                                (assoc :position (:position live-pose-thin)
-                                       :heading (:heading live-pose-thin)
-                                       :up (:up live-pose-thin)))
+                                (assoc :position (bbox-center cur-mesh)
+                                       :heading (:heading entry-pose)
+                                       :up (:up entry-pose)))
                  :step 5
                  :angle-step 15
                  :digit-buffer ""
@@ -869,13 +959,22 @@
                    :on-drag-start on-gizmo-drag-start!
                    :on-drag on-gizmo-drag!
                    :on-drag-end on-gizmo-drag-end!})
+    ;; Click a piece to make it current (Parte 3 selector, the mouse counterpart of
+    ;; the n key). A click that lands on a tree piece resolves to its id via the
+    ;; :pick-id tags render! stamps on the preview objects; clicks on the gizmo
+    ;; handles or empty space carry no pick-id and are ignored.
+    (let [click-handler (fn [e]
+                          (when (:entered? @session)
+                            (when-let [pid (viewport/raycast-preview-pick e)]
+                              (select-piece! pid))))]
+      (swap! session assoc :click-handler click-handler)
+      (some-> (viewport/get-canvas) (.addEventListener "click" click-handler)))
     (recompute!)
     (state/capture-println
-     (str "edit-mesh-split: interactive mode for " (:source-expr @session)
-          " — arrows to move/rotate the cut plane, or drag the gizmo arrows/rings in "
-          "the viewport, Enter to accept :behind "
-          "(closes the session in terminal placement), Ctrl/Cmd+Enter to "
-          "teleport+accept, Backspace to undo the last accepted cut, Esc to cancel"))))
+     (str "edit-mesh-split: interactive tree mode for " (:source-expr @session)
+          " — move/rotate the cut plane (arrows or gizmo), Enter cuts the current "
+          "piece, s separates it into components, n / click selects a piece, "
+          "Backspace undoes, Ctrl/Cmd+Enter commits, Esc cancels"))))
 
 (defn- force-close!
   []

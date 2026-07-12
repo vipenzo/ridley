@@ -3364,33 +3364,29 @@ On confirm it bakes a `(path …)` of **relative** `set-heading`/`f` segments (r
 
 ### Edit Mesh Split
 
-`edit-mesh-split` is an interactive session for decomposing a mesh into pieces with a sequence of plane cuts — a guillotine, not a general BSP: each cut detaches a piece and the remainder feeds the next cut. **The turtle IS the cut plane** — there is no separate drag-handle gizmo (unlike `edit-attach`): arrows move/rotate the live pose the same way `pilot` does, and a semi-transparent quad (with a small cone showing which side is `:behind`) renders the plane at that pose.
+`edit-mesh-split` is an interactive **tree session** for decomposing a mesh into pieces. Both halves of every cut become pieces of a growing tree — you can go back to any piece and keep cutting it, or separate a piece into its connected components with no plane at all. The goal is a decomposition where *every* piece is finished (each connected component convex). **The turtle IS the cut plane** — `position` + `heading` define it; arrows move/rotate the live pose (the shared `edit-attach` gizmo drags it too), and a semi-transparent quad with a cone along `+heading` renders the plane.
 
 ```clojure
 (register block (extrude (rect 20 20) (f 30)))
 (edit-mesh-split (get-mesh :block))
 ```
 
-**Live semaphore.** Every keystroke re-splits the remaining piece at the live pose and checks `convex?` on both halves — well within a frame (~7ms split + 2×2.6ms convex? on a typical mesh). The plane itself is colored by what the cut would do: **grey** when `:behind` is empty (a no-op cut — `Enter` is disabled), a **dedicated color** when `:ahead` is empty (*terminal placement* — the plane has cleared the whole remaining piece), otherwise a neutral active tint. The two live halves are colored independently by their own convexity — **green** convex, **red** concave; accepting a concave `behind` is allowed (the guillotine model has known limits) but never silent, since red already is the warning.
+**The current piece** is the one being cut (its live `:behind`/`:ahead` shown solid/washed). Other open pieces render as blue solids, finished pieces as grey wireframes; **click a piece** or press **n** to make it current.
 
-**Single-action confirm.** There is no separate "commit" key — `Enter` always means *accept `:behind` as the definitive piece*, and what that does depends on the plane's state, not the key:
-- grey (no-op) → disabled.
-- active (both halves non-empty) → the cut is pushed onto the session's undo stack, the remainder becomes the new live piece, and the plane stays put — unless the new remainder is already convex, in which case the plane auto-jumps to terminal placement so a single further `Enter` closes cleanly.
-- terminal placement (`:ahead` empty) → closes the session and emits, using the current remainder as the final piece. This does **not** add another cut — closing is stopping, not cutting.
+**Live semaphore (per-component).** A piece is **finished** (green) iff every connected component is convex — so both a single convex solid and several convex solids in one mesh (a U cut at its base → two convex prongs) are finished. A multi-component finished piece needs *separating, not cutting*: a `N pieces` badge flags it. A piece with a genuinely concave component is **red**. The current cut's two live halves are tinted the same way (`:behind` solid, `:ahead` washed) and the status line quantifies both by volume percentage, e.g. `behind 42% (convex) — ahead 58% (2 pieces)`.
 
-`Ctrl`/`Cmd`+`Enter` is sugar for "teleport the plane to terminal placement, then accept" — useful to close out early with a still-concave remainder (revisit it later by re-entering `edit-mesh-split` on that piece). `Backspace` undoes the last accepted cut (pops the stack — cutting invalidates re-editing an earlier cut in place; fix one by editing the emitted form and re-entering). `Esc` cancels the whole session unconditionally, emitting nothing. Accepted pieces stay visible, ghosted/desaturated, so spatial context isn't lost.
+**Gestures.** `Enter` cuts the current piece (both halves join the tree); when *every* piece is finished it commits instead; when the plane can't cut here and work remains, it moves to the next open piece. `s` separates the current piece into its connected components (`mesh-components`, no plane). `n`/click selects a piece. `Backspace` undoes the last structural gesture (cut *or* separation) — chronological, any branch, freeing that piece's kept-alive Manifold. `Ctrl`/`Cmd`+`Enter` commits now (even with concave pieces open). `Esc` cancels, emitting nothing. Each open piece keeps its Manifold alive, so a keystroke re-split pays the split alone, not a fresh mesh→manifold conversion.
 
-**Emission.** The keystroke transcript is never the emitted program — on close, the tool synthesizes the minimal canonical `(th …)(tv …)(tr …)(f …)(rt …)(u …)` delta between each consecutive cut pose (only the non-negligible components are written; a straight cut emits just `(f …)`), and rewrites its marker to the composite `mesh-split` call:
+**Emission.** On close the marker is rewritten to a `let`-chain of self-contained linear `mesh-split` composites (one per branch, each with its own path and its own path-scoped marks) plus a `mesh-components` destructure per separation. The tree shape lives in which binding feeds which call; each cut's delta is the minimal canonical `(th …)(tv …)(tr …)(f …)(rt …)(u …)` from the session's entry pose:
 
 ```clojure
-(let [{piece-1 :behind {piece-2 :behind remaining :ahead} :ahead}
-      (mesh-split block
-                  (path (f 10) (mark :cut-1) (th 25) (f 7.25) (rt 3.38) (mark :cut-2))
-                  [:cut-1 :cut-2])]
-  [piece-1 piece-2 remaining])
+(let [{piece-1 :behind piece-2 :ahead}
+      (mesh-split (get-mesh :block) (path (f 10) (mark :cut-1)) [:cut-1])
+      [piece-3 piece-4] (mesh-components piece-2)]
+  [piece-1 piece-3 piece-4])
 ```
 
-Numbers are never snapped to a grid — free values are the norm for a perceptual tool, editable by hand afterward. `(edit-mesh-split m)` opens a fresh session; `(edit-mesh-split m path marks)` (or rename `mesh-split` → `edit-mesh-split`) re-enters an already-emitted form — the session's undo stack is rebuilt directly from the evaluated composite (no source-text replay), so re-entering and immediately closing reproduces byte-identical output.
+Numbers are never snapped to a grid. `(edit-mesh-split m)` opens a fresh session; `(edit-mesh-split m path marks)` (or renaming one emitted `mesh-split` → `edit-mesh-split`) re-enters that single call — since every emitted call is a self-contained linear composite, re-entry rebuilds the tree from the evaluated composite with no special machinery, and the rest of the `let` is untouched.
 
 ### Animation
 

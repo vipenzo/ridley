@@ -477,7 +477,7 @@
     :status "stable"
     :since ""
     :signature "(edit-mesh-split mesh)\n(edit-mesh-split mesh path)\n(edit-mesh-split mesh path marks-vector)"
-    :description "Decompose a mesh into pieces interactively, one plane cut at a time — a guillotine session for `mesh-split`. Run it from the **definitions panel** (Cmd+Enter)."
+    :description "Decompose a mesh into pieces interactively — a **tree session** for `mesh-split`. Run it from the **definitions panel** (Cmd+Enter). Unlike a straight guillotine, both halves of every cut become pieces of a growing tree: you can go back to any piece and keep cutting it, or separate a piece into its connected components without any plane at all. The goal is a decomposition where **every piece is finished** — each of its connected components convex."
     :path "docs/manual/reference/en/edit-mesh-split.md"}
 
    "edit-path"

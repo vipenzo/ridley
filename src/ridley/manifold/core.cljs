@@ -548,6 +548,35 @@
 ;; Plane split (guillotine cut)
 ;; ============================================================
 
+(defn- split-manifold*
+  "Core of both split-by-plane and split-live: split a LIVE Manifold `m` by the
+   plane {p : normal·p = offset} into {:ahead :behind :ahead-volume
+   :behind-volume}. Reads each raw half's .volume before converting it out (so
+   callers don't re-convert for volumes), carry-metas from `source-mesh`, and
+   deletes the raw halves — but NOT `m` (the caller owns its lifetime)."
+  [^js m normal offset source-mesh]
+  (let [[nx ny nz] normal
+        ^js pair (.splitByPlane m #js [nx ny nz] offset)
+        ^js ahead-raw (aget pair 0)
+        ^js behind-raw (aget pair 1)
+        extract (fn [^js half]
+                  (if (.isEmpty half)
+                    {:type :mesh :vertices [] :faces []}
+                    (let [^js clean (.asOriginal half)
+                          out (manifold->mesh clean)]
+                      (.delete clean)
+                      out)))
+        ahead-vol (.volume ahead-raw)
+        behind-vol (.volume behind-raw)
+        ahead (carry-meta (extract ahead-raw) source-mesh)
+        behind (carry-meta (extract behind-raw) source-mesh)]
+    (.delete ahead-raw)
+    (.delete behind-raw)
+    {:ahead (schema/assert-mesh! ahead)
+     :behind (schema/assert-mesh! behind)
+     :ahead-volume ahead-vol
+     :behind-volume behind-vol}))
+
 (defn split-by-plane
   "Split a mesh by the plane {p : normal·p = offset} into two halves:
    {:ahead <mesh> :behind <mesh>}.
@@ -569,28 +598,28 @@
   (when (get-manifold-class)
     (when-let [^js m (mesh->manifold ridley-mesh)]
       (try
-        (let [[nx ny nz] normal
-              ^js pair (.splitByPlane m #js [nx ny nz] offset)
-              ^js ahead-raw (aget pair 0)
-              ^js behind-raw (aget pair 1)
-              extract (fn [^js half]
-                        (if (.isEmpty half)
-                          {:type :mesh :vertices [] :faces []}
-                          (let [^js clean (.asOriginal half)
-                                out (manifold->mesh clean)]
-                            (.delete clean)
-                            out)))
-              ahead (carry-meta (extract ahead-raw) ridley-mesh)
-              behind (carry-meta (extract behind-raw) ridley-mesh)]
+        (let [r (split-manifold* m normal offset ridley-mesh)]
           (.delete m)
-          (.delete ahead-raw)
-          (.delete behind-raw)
-          {:ahead (schema/assert-mesh! ahead)
-           :behind (schema/assert-mesh! behind)})
+          r)
         (catch :default e
           (js/console.error "split-by-plane failed:" e)
           (.delete m)
           nil)))))
+
+(defn split-live
+  "Split a LIVE Manifold — kept alive by the caller, NOT deleted here — by the
+   same plane split-by-plane uses, returning the same
+   {:ahead :behind :ahead-volume :behind-volume} map. The keep-alive fast path
+   for edit-mesh-split's per-tick recompute (accertamento B2): the current
+   piece's Manifold is converted once (when it becomes current) and reused every
+   plane nudge, so a keystroke no longer pays the ~8ms mesh→manifold conversion.
+   `source-mesh` supplies carry-meta (creation-pose/material/anchors)."
+  [^js manifold normal offset source-mesh]
+  (try
+    (split-manifold* manifold normal offset source-mesh)
+    (catch :default e
+      (js/console.error "split-live failed:" e)
+      nil)))
 
 ;; ============================================================
 ;; Convexity predicate

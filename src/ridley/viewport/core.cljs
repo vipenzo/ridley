@@ -2353,7 +2353,7 @@
    the item has no geometry (e.g. an empty mesh). Factored out of show-preview! so
    replace-preview-at! (edit-mesh-split's per-tick plane update during a gizmo drag)
    can build a single fresh object without touching the rest of the preview."
-  [{:keys [type data on-top]}]
+  [{:keys [type data on-top pick-id]}]
   (when-let [^js obj
              (case type
                :mesh (when (and (seq (:vertices data)) (seq (:faces data)))
@@ -2363,6 +2363,10 @@
                :dots (when (seq data) (create-dot-meshes data))
                :wireframe (create-wireframe-mesh data)
                nil)]
+    ;; :pick-id tags the object so raycast-preview-pick can map a click back to a
+    ;; caller-defined id (edit-mesh-split's tree piece id — click-to-select).
+    (when (some? pick-id)
+      (set! (.. obj -userData -pickId) pick-id))
     ;; :on-top draws the item over everything (no depth test) — used by
     ;; edit-path so the trace overlay is never hidden by the image or the
     ;; live extruded result.
@@ -2602,6 +2606,28 @@
                    :point [(.-x pt) (.-y pt) (.-z pt)]
                    :distance (.-distance h)}))
               hits)))))
+
+(defn raycast-preview-pick
+  "Raycast the pointer ray against the current preview objects and return the
+   `:pick-id` of the nearest one that carries one (set via a preview item's
+   :pick-id), or nil. edit-mesh-split uses this for click-to-select-a-piece: each
+   rendered tree piece carries its own id, so a click resolves straight to the
+   piece under the cursor. Recurses into children (a piece mesh may be a group)."
+  [^js event]
+  (when-let [{:keys [^js camera ^js canvas]} @state]
+    (let [rect (.getBoundingClientRect canvas)
+          nx (- (* (/ (- (.-clientX event) (.-left rect)) (.-width rect)) 2) 1)
+          ny (- 1 (* (/ (- (.-clientY event) (.-top rect)) (.-height rect)) 2))
+          raycaster (THREE/Raycaster.)]
+      (.setFromCamera raycaster (THREE/Vector2. nx ny) camera)
+      (let [hits (.intersectObjects raycaster (clj->js (vec @preview-objects)) true)
+            pick-of (fn [^js o]
+                      (loop [^js x o]
+                        (cond
+                          (nil? x) nil
+                          (some? (.. x -userData -pickId)) (.. x -userData -pickId)
+                          :else (recur (.-parent x)))))]
+        (some (fn [^js h] (pick-of (.-object h))) hits)))))
 
 (defn raycast-mesh-face
   "Raycast the pointer ray against the scene meshes (world-group children that carry
