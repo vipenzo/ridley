@@ -32,7 +32,7 @@
             [ridley.scene.registry :as registry]
             [ridley.viewport.core :as viewport]))
 
-(declare cleanup! render! recompute! update-panel-display!)
+(declare cleanup! render! recompute! update-panel-display! schedule-mirror-check! clear-mirror-badge!)
 
 ;; ============================================================
 ;; State
@@ -63,6 +63,8 @@
 ;;  :reveal-all?    ; addendum: view-only focus/reveal toggle (r)
 ;;  :labels-shown?  ; whether world-anchored labels are currently up (reveal only)
 ;;  :labeled-tree   ; the :tree identity the scene labels were last built for
+;;  :symmetry-cache {piece-id {:planes […] :index i}}  ; Part 4: cached symmetry-planes
+;;  :symmetry-pending? :mirror-gate? :mirror-pending? :mirror-confirmed? :mirror-timer  ; Part 4 badges
 ;;  :edit-mesh-split-from/-to  ; char offsets of the marker in the editor
 ;;  :panel-el :key-handler :entered? :from-repl}
 
@@ -269,7 +271,9 @@
              :behind-pct (if (pos? total-vol) (* 100.0 (/ behind-vol total-vol)) 0.0)
              :ahead-pct (if (pos? total-vol) (* 100.0 (/ ahead-vol total-vol)) 0.0)
              :last-drag-recompute (js/Date.now)
-             :drag-recompute-cost-ms cost-ms)))
+             :drag-recompute-cost-ms cost-ms)
+      ;; Part 4 mirror badge: free gate now, debounced B6 confirm in the background.
+      (schedule-mirror-check! behind-vol ahead-vol)))
   (render!)
   (update-panel-display!))
 
@@ -479,14 +483,17 @@
    ahead if it is still open — guillotine continuity — else the next open leaf).
    If current jumped to a DIFFERENT piece, the plane repositions onto it."
   []
-  (let [{:keys [live-pose current-behind current-ahead
+  (let [{:keys [live-pose current-behind current-ahead mirror-confirmed?
                 behind-finished? behind-count ahead-finished? ahead-count] :as s} @session
         cur (current-id)
         pose (select-keys live-pose [:position :heading :up])
         {:keys [tree behind ahead]}
         (mtree/cut (:tree s) cur pose
                    {:finished? behind-finished? :count behind-count}
-                   {:finished? ahead-finished? :count ahead-count})]
+                   {:finished? ahead-finished? :count ahead-count}
+                   ;; a confirmed-mirror cut is tagged → emission comment + enables
+                   ;; the mirror-decompose gesture on its halves (Parts 4/5)
+                   (when mirror-confirmed? {:mirror? true}))]
     (store-piece! behind current-behind)
     (store-piece! ahead current-ahead)
     (swap! session assoc :tree tree)
@@ -515,6 +522,154 @@
         (reposition-plane-for! (:current tree))
         (state/capture-println (str "edit-mesh-split: separated into " (count comp-meshes) " pieces"))
         (recompute!)))))
+
+;; ============================================================
+;; Symmetry (dev-docs/brief-mesh-symmetry.md, Parts 4-5)
+;; ============================================================
+
+(def ^:private mirror-gate 0.02)          ; free volumetric gate (matches manifold's)
+(def ^:private mirror-debounce-ms 300)
+
+(defn- report-of-mesh [m] (select-keys (manifold/component-report m) [:finished? :count]))
+
+(defn- teleport-plane-to!
+  "Move the live plane onto a pose {:position :heading :up} (a symmetry candidate);
+   up only orients the quad."
+  [{:keys [position heading up]}]
+  (swap! session update :live-pose
+         #(assoc % :position position :heading heading :up (or up (:up %)))))
+
+(defn- propose-symmetry-plane!
+  "Part 4: teleport the plane to the current piece's first verified symmetry plane;
+   repeated presses cycle the candidates. symmetry-planes is cached per piece
+   (immutable) and computed the first time behind a visible 'computing' state (the
+   ~250-450 ms would otherwise freeze silently). No planes → a note, no move."
+  []
+  (let [cur (current-id)
+        cached (get-in @session [:symmetry-cache cur])]
+    (if cached
+      (let [planes (:planes cached)]
+        (if (empty? planes)
+          (state/capture-println "edit-mesh-split: no symmetry plane on this piece")
+          (let [idx (mod (inc (:index cached)) (count planes))]
+            (swap! session assoc-in [:symmetry-cache cur :index] idx)
+            (teleport-plane-to! (nth planes idx))
+            (recompute!))))
+      (do
+        (swap! session assoc :symmetry-pending? true)
+        (update-panel-display!)
+        (js/setTimeout
+         (fn []
+           (when (and @session (= cur (current-id)))
+             (let [planes (manifold/symmetry-planes (piece-mesh cur))]
+               (swap! session assoc-in [:symmetry-cache cur] {:planes planes :index 0})
+               (swap! session assoc :symmetry-pending? false)
+               (if (empty? planes)
+                 (do (update-panel-display!)
+                     (state/capture-println "edit-mesh-split: no symmetry plane on this piece"))
+                 (do (teleport-plane-to! (first planes)) (recompute!))))))
+         0)))))
+
+(defn- clear-mirror-badge!
+  []
+  (when-let [t (:mirror-timer @session)] (js/clearTimeout t))
+  (swap! session assoc :mirror-timer nil :mirror-confirmed? false :mirror-pending? false))
+
+(defn- schedule-mirror-check!
+  "Part 4 badge: the free volumetric gate runs per-tick; if it passes and the plane
+   then sits still for the debounce, the B6 confirmation runs in the background and,
+   on success, the panel shows behind/ahead are a mirror. Any plane move (a fresh
+   recompute!) clears the badge and restarts the timer — the colors never lie."
+  [behind-vol ahead-vol]
+  (clear-mirror-badge!)
+  (let [vtot (+ behind-vol ahead-vol)
+        gate? (and (pos? vtot) (< (/ (js/Math.abs (- behind-vol ahead-vol)) vtot) mirror-gate))]
+    (swap! session assoc :mirror-gate? gate?)
+    (when gate?
+      (let [cur (current-id)
+            pose (select-keys (working-pose @session) [:position :heading])
+            timer (js/setTimeout
+                   (fn []
+                     (swap! session assoc :mirror-pending? true :mirror-timer nil)
+                     (update-panel-display!)
+                     (js/setTimeout
+                      (fn []
+                        (when (and @session (= cur (current-id)))
+                          (let [ok? (boolean (manifold/symmetric-about-plane?
+                                              (piece-mesh cur) (:heading pose) (:position pose)))]
+                            (swap! session assoc :mirror-confirmed? ok? :mirror-pending? false)
+                            (update-panel-display!))))
+                      0))
+                   mirror-debounce-ms)]
+        (swap! session assoc :mirror-timer timer)))))
+
+(defn- mirror-plane-twin
+  "If the current piece is a half of a confirmed-mirror cut whose OTHER half has
+   been decomposed, returns {:twin id :normal [..] :point [..]} (the mirror plane),
+   else nil."
+  []
+  (let [tree (:tree @session)
+        cur (:current tree)
+        g (some (fn [g] (when (and (= :cut (:type g)) (:mirror? g)
+                                   (or (= cur (:behind g)) (= cur (:ahead g))))
+                          g))
+                (:log tree))]
+    (when g
+      (let [twin (if (= cur (:behind g)) (:ahead g) (:behind g))]
+        (when (seq (mtree/subtree-gestures tree twin))
+          {:twin twin :normal (:heading (:pose g)) :point (:position (:pose g))})))))
+
+(defn- free-up
+  "A unit vector perpendicular to heading — the free up for a reflected cut pose
+   (the reflected frame is left-handed; the turtle picks up freely, brief Part 5)."
+  [h]
+  (let [t (if (> (js/Math.abs (nth h 2)) 0.9) [1 0 0] [0 0 1])
+        c (turtle/cross h t)
+        m (js/Math.sqrt (turtle/dot c c))]
+    (if (< m 1e-9) [0 0 1] (mapv #(/ % m) c))))
+
+(defn- mirror-decompose!
+  "Part 5: replay the twin's decomposition subtree onto the current piece with poses
+   REFLECTED through the mirror-cut plane — the resulting pieces are REAL pieces of
+   the original (no mirror copies). Reflection preserves dot products, so a twin
+   piece's :behind/:ahead maps to the reflected cut's :behind/:ahead with no
+   remapping. One structural gesture (a shared :group): a single undo removes the
+   whole replay."
+  []
+  (if-let [{:keys [twin normal point]} (mirror-plane-twin)]
+    (let [gestures (mtree/subtree-gestures (:tree @session) twin)
+          group (keyword "mirror" (str (:next-id (:tree @session))))]
+      (loop [gs gestures, pmap {twin (current-id)}]
+        (if (empty? gs)
+          (do (reposition-plane-for! (current-id))
+              (state/capture-println (str "edit-mesh-split: mirror-decomposed (" (count gestures) " gestures)"))
+              (recompute!))
+          (let [g (first gs)
+                target (pmap (:input g))]
+            (case (:type g)
+              :cut
+              (let [{:keys [position heading]} (mtree/reflect-pose (:pose g) normal point)
+                    offset (turtle/dot heading position)
+                    {:keys [ahead behind]} (manifold/split-by-plane (piece-mesh target) heading offset)
+                    {tree' :tree bid :behind aid :ahead}
+                    (mtree/cut (:tree @session) target
+                               {:position position :heading heading :up (free-up heading)}
+                               (report-of-mesh behind) (report-of-mesh ahead)
+                               {:group group})]
+                (store-piece! bid behind)
+                (store-piece! aid ahead)
+                (swap! session assoc :tree tree')
+                (recur (rest gs) (assoc pmap (:behind g) bid (:ahead g) aid)))
+              :separate
+              (let [comps (manifold/mesh-components (piece-mesh target))
+                    {tree' :tree cids :components}
+                    (mtree/separate (:tree @session) target
+                                    (mapv #(hash-map :finished? (manifold/convex? %) :count 1) comps)
+                                    {:group group})]
+                (doseq [[cid cm] (map vector cids comps)] (store-piece! cid cm))
+                (swap! session assoc :tree tree')
+                (recur (rest gs) (merge pmap (zipmap (:components g) cids)))))))))
+    (state/capture-println "edit-mesh-split: no decomposed mirror twin for the current piece")))
 
 (defn- cycle-current-piece!
   "Explicit, deterministic navigation over the OPEN pieces only (addendum Parte
@@ -545,6 +700,7 @@
 
 (defn- cleanup!
   []
+  (when-let [t (:mirror-timer @session)] (js/clearTimeout t))  ; Part 4 debounce timer
   (free-all-manifolds!)   ; the single no-leak point — every session exit runs cleanup!
   (modal/unmount-panel! (:panel-el @session))
   (modal/remove-keydown! (:key-handler @session))
@@ -734,6 +890,14 @@
         (and (= key "r") (not mod?))
         (do (.preventDefault e) (.stopPropagation e) (toggle-reveal!))
 
+        ;; y: propose / cycle verified symmetry planes of the current piece (Part 4)
+        (and (= key "y") (not mod?))
+        (do (.preventDefault e) (.stopPropagation e) (flush-digit-buffer!) (propose-symmetry-plane!))
+
+        ;; d: mirror-decompose — replay the twin's decomposition, reflected (Part 5)
+        (and (= key "d") (not mod?))
+        (do (.preventDefault e) (.stopPropagation e) (flush-digit-buffer!) (mirror-decompose!))
+
         :else nil))))
 
 ;; ============================================================
@@ -800,8 +964,14 @@
               ;; Current-piece badge (Parte 2/3): flag a multi-component current
               ;; piece — press s to separate (no plane needed).
               badge (when (and cur-count (> cur-count 1))
-                      (str " · this piece: " cur-count " components — press s to separate"))]
-          (set! (.-textContent status-el) (str base badge))))
+                      (str " · this piece: " cur-count " components — press s to separate"))
+              ;; Symmetry indicators (Part 4): pending computes and the mirror badge.
+              sym (cond
+                    (:symmetry-pending? s) " · computing symmetry planes…"
+                    (:mirror-pending? s)   " · checking mirror…"
+                    (:mirror-confirmed? s) " · ⟷ mirror plane (behind = ahead reflected)"
+                    :else "")]
+          (set! (.-textContent status-el) (str base badge sym))))
       (when-let [vol-el (.querySelector panel ".ems-volumes")]
         (set! (.-textContent vol-el) (volume-status-text s)))
       ;; Position line (addendum Parte C): where am I, by the SAME name the
@@ -847,6 +1017,8 @@
                "n / p: next / previous open piece (buttons above) · "
                "r: reveal all pieces + world-anchored name labels (re-orient), "
                "press again for focus · "
+               "y: propose/cycle the current piece's symmetry planes · "
+               "d: mirror-decompose (replay a decomposed mirror-twin, reflected) · "
                "Enter: cut the current piece (or, when every piece is finished, commit) · "
                "Ctrl/Cmd+Enter: commit now (emit even with open pieces) · "
                "Backspace: undo the last cut/separation (chronological, any branch) · "

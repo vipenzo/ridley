@@ -126,25 +126,32 @@
    gesture; advances current to the ahead if it is not finished, else the next
    non-finished leaf (continuità con la ghigliottina). Returns
    {:tree tree' :behind bid :ahead aid}."
-  [tree pid pose behind-report ahead-report]
-  (let [bid (:next-id tree)
-        aid (inc bid)
-        pieces (-> (:pieces tree)
-                   (assoc bid {:id bid :origin {:kind :cut :from pid :side :behind}
-                               :finished? (:finished? behind-report) :count (:count behind-report)})
-                   (assoc aid {:id aid :origin {:kind :cut :from pid :side :ahead}
-                               :finished? (:finished? ahead-report) :count (:count ahead-report)}))
-        tree' (-> tree
-                  (assoc :pieces pieces :next-id (+ aid 1))
-                  (update :log conj {:type :cut :input pid :pose pose :behind bid :ahead aid}))
-        ;; stay local to the cut: ahead if still open (guillotine continuity),
-        ;; else the just-created behind if open, else the next open leaf.
-        nfl (set (non-finished-leaves tree'))
-        current (cond (contains? nfl aid) aid
-                      (contains? nfl bid) bid
-                      :else (pick-current tree' aid aid))]
-    {:tree (assoc tree' :current current)
-     :behind bid :ahead aid}))
+  ([tree pid pose behind-report ahead-report]
+   (cut tree pid pose behind-report ahead-report nil))
+  ([tree pid pose behind-report ahead-report opts]
+   ;; opts (optional): {:mirror? bool  ; a confirmed symmetry cut → emission comment
+   ;;                    :group id}     ; a mirror-decompose replay → atomic undo
+   (let [bid (:next-id tree)
+         aid (inc bid)
+         pieces (-> (:pieces tree)
+                    (assoc bid {:id bid :origin {:kind :cut :from pid :side :behind}
+                                :finished? (:finished? behind-report) :count (:count behind-report)})
+                    (assoc aid {:id aid :origin {:kind :cut :from pid :side :ahead}
+                                :finished? (:finished? ahead-report) :count (:count ahead-report)}))
+         gesture (cond-> {:type :cut :input pid :pose pose :behind bid :ahead aid}
+                   (:mirror? opts) (assoc :mirror? true)
+                   (:group opts)   (assoc :group (:group opts)))
+         tree' (-> tree
+                   (assoc :pieces pieces :next-id (+ aid 1))
+                   (update :log conj gesture))
+         ;; stay local to the cut: ahead if still open (guillotine continuity),
+         ;; else the just-created behind if open, else the next open leaf.
+         nfl (set (non-finished-leaves tree'))
+         current (cond (contains? nfl aid) aid
+                       (contains? nfl bid) bid
+                       :else (pick-current tree' aid aid))]
+     {:tree (assoc tree' :current current)
+      :behind bid :ahead aid})))
 
 (defn separate
   "Separate leaf `pid` into its connected components — one new piece per
@@ -152,37 +159,50 @@
    order). Appends a :separate gesture; advances current to the first
    non-finished component (else next non-finished leaf). Returns
    {:tree tree' :components [cid …]}."
-  [tree pid component-reports]
-  (let [start (:next-id tree)
-        cids (vec (range start (+ start (count component-reports))))
-        pieces (reduce (fn [acc [k cid rpt]]
-                         (assoc acc cid {:id cid
-                                         :origin {:kind :separate :from pid :index k}
-                                         :finished? (:finished? rpt) :count (:count rpt)}))
-                       (:pieces tree)
-                       (map vector (range) cids component-reports))
-        tree' (-> tree
-                  (assoc :pieces pieces :next-id (+ start (count cids)))
-                  (update :log conj {:type :separate :input pid :components cids}))
-        preferred (first (filter #(not (:finished? (get-in tree' [:pieces %]))) cids))]
-    {:tree (assoc tree' :current (pick-current tree' preferred (first cids)))
-     :components cids}))
+  ([tree pid component-reports] (separate tree pid component-reports nil))
+  ([tree pid component-reports opts]
+   (let [start (:next-id tree)
+         cids (vec (range start (+ start (count component-reports))))
+         pieces (reduce (fn [acc [k cid rpt]]
+                          (assoc acc cid {:id cid
+                                          :origin {:kind :separate :from pid :index k}
+                                          :finished? (:finished? rpt) :count (:count rpt)}))
+                        (:pieces tree)
+                        (map vector (range) cids component-reports))
+         gesture (cond-> {:type :separate :input pid :components cids}
+                   (:group opts) (assoc :group (:group opts)))
+         tree' (-> tree
+                   (assoc :pieces pieces :next-id (+ start (count cids)))
+                   (update :log conj gesture))
+         preferred (first (filter #(not (:finished? (get-in tree' [:pieces %]))) cids))]
+     {:tree (assoc tree' :current (pick-current tree' preferred (first cids)))
+      :components cids})))
+
+(defn- gesture-removed [g]
+  (case (:type g) :cut [(:behind g) (:ahead g)] :separate (:components g)))
 
 (defn undo
   "Pop the last structural gesture, whatever branch it touched (a single
-   chronological semantics, like the linear model). Removes the pieces it
-   produced, re-opens its input as the current leaf, and returns
-   {:tree tree' :removed [pid …] :pose <cut pose or nil>} — `removed` so the
-   caller can .delete those pieces' kept-alive Manifolds, `pose` so it can
-   restore the plane to a popped cut. Returns nil if the log is empty."
+   chronological semantics, like the linear model). A mirror-decompose replay is
+   ONE structural gesture: its cuts/separations share a `:group`, so undo pops the
+   whole trailing group atomically (brief Part 5). Removes the produced pieces,
+   re-opens the (group's first) input as the current leaf, and returns
+   {:tree tree' :removed [pid …] :pose <cut pose or nil>} — `removed` so the caller
+   can .delete those pieces' Manifolds, `pose` to restore the plane to a lone
+   popped cut. Returns nil if the log is empty."
   [tree]
   (when-let [g (peek (:log tree))]
-    (let [removed (case (:type g) :cut [(:behind g) (:ahead g)] :separate (:components g))
-          pieces (reduce dissoc (:pieces tree) removed)
-          tree' (-> tree
-                    (assoc :pieces pieces :current (:input g))
-                    (update :log pop))]
-      {:tree tree' :removed removed :pose (when (= :cut (:type g)) (:pose g))})))
+    (let [log (:log tree)
+          n (if (:group g)
+              (count (take-while #(= (:group g) (:group %)) (rseq log)))
+              1)
+          popped (subvec log (- (count log) n))
+          rest-log (subvec log 0 (- (count log) n))
+          removed (vec (mapcat gesture-removed popped))
+          pieces (reduce dissoc (:pieces tree) removed)]
+      {:tree (assoc tree :pieces pieces :current (:input (first popped)) :log rest-log)
+       :removed removed
+       :pose (when (and (= 1 n) (= :cut (:type g))) (:pose g))})))
 
 (defn select
   "Set current to leaf `pid` (a selection, NOT a structural gesture — never
@@ -205,6 +225,44 @@
                    (if (= dir :prev) (peek nfl) (first nfl))
                    (nth nfl (mod (+ i step) (count nfl))))]
          (assoc tree :current nxt))))))
+
+;; ============================================================
+;; Mirror-decompose support (brief Part 5)
+;; ============================================================
+
+(defn descendant-pieces
+  "The piece ids in the subtree rooted at `pid` (inclusive), pre-order — a piece's
+   own decomposition."
+  [tree pid]
+  (let [in? (input-ids tree)
+        by-input (group-by :input (:log tree))
+        children (fn [p] (when-let [g (first (by-input p))]
+                           (case (:type g)
+                             :cut [(:behind g) (:ahead g)]
+                             :separate (:components g))))
+        walk (fn walk [p] (cons p (when (contains? in? p) (mapcat walk (children p)))))]
+    (vec (walk pid))))
+
+(defn subtree-gestures
+  "The structural gestures operating on pieces within the subtree rooted at `pid`,
+   in chronological (log) order — the sequence a mirror-decompose replays onto the
+   twin. Excludes gestures on `pid` itself only if `pid` is a leaf (none)."
+  [tree pid]
+  (let [ids (set (descendant-pieces tree pid))]
+    (filterv #(contains? ids (:input %)) (:log tree))))
+
+(defn reflect-pose
+  "Reflect a cut pose through the mirror plane (unit normal `n`, point `o`):
+   position P → P − 2((P−o)·n)n, heading H → H − 2(H·n)n. ONLY position and
+   heading — the reflected frame is left-handed and the turtle can't adopt it for
+   rotations, so `up` is left free for the delta synthesis (brief Part 5). Returns
+   {:position :heading}."
+  [{:keys [position heading]} n o]
+  (let [p (vec position) h (vec heading) n (vec n) o (vec o)
+        dot3 (fn [a b] (+ (* (a 0) (b 0)) (* (a 1) (b 1)) (* (a 2) (b 2))))
+        axpy (fn [v d] [(- (v 0) (* d (n 0))) (- (v 1) (* d (n 1))) (- (v 2) (* d (n 2)))])]
+    {:position (axpy p (* 2 (dot3 [(- (p 0) (o 0)) (- (p 1) (o 1)) (- (p 2) (o 2))] n)))
+     :heading  (axpy h (* 2 (dot3 h n)))}))
 
 ;; ============================================================
 ;; Emission — a let-chain of self-contained linear composites
@@ -303,10 +361,19 @@
         behind-names (mapv #(name-of tree nm (:behind %)) run)
         rem-name (name-of tree nm (:ahead (peek run)))
         input-name (name-of tree nm (:input (first run)))
-        destructure (nested-destructure behind-names rem-name)]
+        destructure (nested-destructure behind-names rem-name)
+        ;; a confirmed symmetry cut leaves a comment on its mark's line — the
+        ;; knowledge stays in the source for the future converter/mesh-board
+        ;; (brief Part 4). Comments never affect eval → round-trip invariant.
+        mirror-comments (->> run
+                             (map-indexed (fn [i c] (when (:mirror? c)
+                                                      (str "  ;; :cut-" (inc i) ": piano di simmetria"))))
+                             (remove nil?)
+                             (str/join "\n"))]
     (str destructure "\n      (mesh-split " input-name "\n"
          "                  (path " path-forms ")\n"
-         "                  " marks-vec ")")))
+         "                  " marks-vec ")"
+         (when (seq mirror-comments) (str "\n" mirror-comments)))))
 
 (defn- separation-binding
   [tree nm sep]

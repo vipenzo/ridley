@@ -4,7 +4,8 @@
    WASM caller would, so the whole model is exercised in node."
   (:require [cljs.test :refer [deftest testing is]]
             [clojure.string :as str]
-            [ridley.editor.mesh-split-tree :as tree]))
+            [ridley.editor.mesh-split-tree :as tree]
+            [ridley.test-helpers :as h]))
 
 (def ^:private fin  {:finished? true  :count 1})
 (def ^:private conc {:finished? false :count 1})
@@ -215,6 +216,60 @@
       (is (str/includes? code "(f 10) (mark :cut-1)"))
       (is (str/includes? code "mesh-split piece-1"))
       (is (str/includes? code "(f -5) (mark :cut-1)") "run 2 restarts :cut-1, delta from entry"))))
+
+;; ── mirror flag, group undo, reflection (symmetry brief Parts 4-5) ──
+
+(deftest mirror-cut-emits-a-symmetry-comment
+  (testing "a confirmed-mirror cut leaves a ;; comment on its mark's line"
+    (let [t0 (tree/make-tree "block" (pose 0) conc)
+          r1 (tree/cut t0 0 (pose 10) fin conc {:mirror? true})
+          code (tree/emit (:tree r1))]
+      (is (str/includes? code ";; :cut-1: piano di simmetria"))
+      ;; a non-mirror cut has no such comment
+      (let [r2 (tree/cut t0 0 (pose 10) fin conc)]
+        (is (not (str/includes? (tree/emit (:tree r2)) "piano di simmetria")))))))
+
+(deftest group-undo-pops-the-whole-replay-atomically
+  (testing "cuts sharing a :group are one structural gesture — one undo removes all"
+    (let [t0 (tree/make-tree "block" (pose 0) conc)
+          r1 (tree/cut t0 0 (pose 10) conc conc {:group :g1})
+          r2 (tree/cut (:tree r1) (:behind r1) (pose 5) fin fin {:group :g1})
+          u (tree/undo (:tree r2))]
+      (is (= #{(:behind r1) (:ahead r1) (:behind r2) (:ahead r2)} (set (:removed u)))
+          "all four pieces of the group removed at once")
+      (is (= 0 (:current (:tree u))) "re-opens the group's first input")
+      (is (empty? (:log (:tree u))))
+      (is (= "block" (tree/emit (:tree u)))))))
+
+(deftest lone-cut-still-pops-singly
+  (testing "a cut without a group pops just itself (unchanged behavior)"
+    (let [t0 (tree/make-tree "block" (pose 0) conc)
+          r1 (tree/cut t0 0 (pose 10) conc conc {:group :g1})
+          r2 (tree/cut (:tree r1) (:behind r1) (pose 5) fin fin)  ; NO group
+          u (tree/undo (:tree r2))]
+      (is (= #{(:behind r2) (:ahead r2)} (set (:removed u))) "only the lone cut popped"))))
+
+(deftest reflect-pose-mirrors-position-and-heading-only
+  (testing "position and heading reflect through the plane; up is not returned"
+    (let [p {:position [3 2 1] :heading [1 0 0] :up [0 0 1]}
+          r0 (tree/reflect-pose p [1 0 0] [0 0 0])
+          r5 (tree/reflect-pose p [1 0 0] [5 0 0])]
+      (is (h/vec-approx= [-3.0 2.0 1.0] (:position r0) 1e-9))
+      (is (h/vec-approx= [-1.0 0.0 0.0] (:heading r0) 1e-9))
+      (is (h/vec-approx= [7.0 2.0 1.0] (:position r5) 1e-9) "off-origin plane reflects position about the point")
+      (is (h/vec-approx= [-1.0 0.0 0.0] (:heading r5) 1e-9) "heading reflects about the normal, point-independent")
+      (is (nil? (:up r0)) "up is left free"))))
+
+(deftest subtree-walk-collects-descendant-pieces-and-gestures
+  (let [t0 (tree/make-tree "block" (pose 0) conc)
+        r1 (tree/cut t0 0 (pose 10) conc conc)          ; b1, a1
+        r2 (tree/cut (:tree r1) (:ahead r1) (pose 20) conc conc)  ; cut a1 → b2, a2
+        tree (:tree r2)]
+    (is (= #{(:ahead r1) (:behind r2) (:ahead r2)}
+           (set (tree/descendant-pieces tree (:ahead r1)))) "a1 subtree = a1,b2,a2")
+    (is (= 1 (count (tree/subtree-gestures tree (:ahead r1)))) "one gesture inside a1's subtree")
+    (is (= [(:behind r1)] (tree/descendant-pieces tree (:behind r1))) "a leaf's subtree is itself")
+    (is (= 0 (count (tree/subtree-gestures tree (:behind r1)))))))
 
 (deftest piece-name-matches-the-emitted-binding
   (let [t0 (tree/make-tree "block" (pose 0) conc)

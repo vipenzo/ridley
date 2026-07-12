@@ -67,6 +67,18 @@ e.g. `behind 42% (convex) — ahead 58% (2 pieces)`.
 - **s** — separate the current piece into its connected components.
 - **n** / **p** — make the next / previous open piece current (panel
   ◀/▶ buttons do the same). **r** — toggle reveal-all vs. focus.
+- **y** — propose the current piece's verified symmetry planes: the plane
+  teleports to the first, repeated presses cycle them (a brief "computing"
+  state while `symmetry-planes` runs). A **mirror badge** also lights in
+  the panel on its own when the plane sits on a symmetry plane — the free
+  volumetric gate runs live, and after a short debounce a background check
+  confirms behind = ahead reflected. An accepted mirror cut carries a
+  `;; :cut-N: piano di simmetria` comment into the emitted source.
+- **d** — mirror-decompose: when the current piece's mirror twin (the
+  other half of a confirmed mirror cut) has already been decomposed,
+  replay that decomposition onto this piece with the cut poses reflected
+  through the mirror plane. The pieces are real pieces of the original;
+  one undo removes the whole replay.
 - **Backspace** — undo the last structural gesture (cut *or*
   separation), whatever branch it touched — a single chronological
   history, freeing that piece's live Manifold as it goes.
