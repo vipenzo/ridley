@@ -1754,6 +1754,40 @@ convexity epsilon is unchanged (`finished?` is about *how many* concavities,
 not *how strict* the threshold). An empty mesh and any single convex mesh are
 finished.
 
+### Mirror & symmetry
+
+The plane is the turtle's pose, as everywhere in this family: point = position,
+normal = heading.
+
+`(mesh-mirror mesh)` reflects a mesh through that plane — Manifold's native
+`.mirror`, winding-correct (a genuine reflection, positive volume), composing
+`translate(−p) ∘ mirror ∘ translate(+p)` for a plane off the origin. Keep one
+half of a symmetric object and rebuild the whole with
+`(mesh-union half (mesh-mirror half))`.
+
+`(mirror? mesh)` / `(mirror? mesh epsilon)` tests whether a mesh is
+mirror-symmetric about that plane, via a two-step cascade: a free volumetric gate
+(the two halves of the split have equal volume within tolerance) then a
+symmetric-difference confirmation (reflect the near half through the plane;
+`vol(union) − vol(intersection)` over a half's volume ≈ 0 for a true mirror). It
+is deliberately volumetric, not a tessellation comparison — the two halves may
+triangulate differently even on a perfectly symmetric object. An empty mesh is
+symmetric (`true`). Cost is 77–148 ms — on-demand, never per-keystroke.
+
+```clojure
+(mirror? (box 10 20 30))     ; true about the centre plane
+```
+
+`(symmetry-planes mesh)` proposes *verified* symmetry planes as a vector of poses
+`{:position :heading :up}` (heading = plane normal, directly usable with
+`goto`/`mark`), ordered by quality (symmetric-difference ratio ascending). It is
+a pure function of the mesh: **area-weighted** PCA on the face centroids (weighting
+by triangle area is mandatory — raw-vertex PCA is defeated by uneven tessellation)
+gives up to three candidate planes through the centroid, a degenerate-eigenvalue
+case (a square/N-fold object) adds the bounding-box axes, and each candidate is
+confirmed by the `mirror?` cascade — only the promoted are returned. An
+asymmetric mesh returns `[]`. Cost ~250–450 ms — on-demand.
+
 ### Mesh smoothing & refinement
 
 Round off non-sharp edges of a 3D mesh using Manifold's tangent-based subdivision. Useful when you want to fillet every crease softer than a chosen dihedral angle while keeping intentionally sharp design edges (typically applied after a CSG pipeline, since boolean operations produce mostly right-angle corners that look synthetic).

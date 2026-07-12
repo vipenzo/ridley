@@ -1083,6 +1083,15 @@
     :description "Selective Taubin λ|μ smoothing. Identifies vertices that sit on creases shallower than `:feature-angle` and moves only those — large flat regions and intentionally sharp design edges are left untouched. Returns a new mesh with the same vertex count, face count, and topology; only the vertex positions change."
     :path "docs/manual/reference/en/mesh-laplacian.md"}
 
+   "mesh-mirror"
+   {:name "mesh-mirror"
+    :category "mesh-operations"
+    :status "stable"
+    :since ""
+    :signature "(mesh-mirror mesh)"
+    :description "Reflect a mesh through the plane at the turtle's current pose — point = `position`, normal = `heading`, the same plane convention as `mesh-split` and `sdf-half-space`. Uses Manifold's native `.mirror`, which is winding-correct: the result is a genuine reflection with positive volume, not an inside-out mesh, with no manual face flip. For a plane that does not pass through the origin the reflection is composed as `translate(−p) ∘ mirror ∘ translate(+p)`."
+    :path "docs/manual/reference/en/mesh-mirror.md"}
+
    "mesh-refine"
    {:name "mesh-refine"
     :category "mesh-operations"
@@ -1163,6 +1172,15 @@
     :signature "(mirror-path path)\n(mirror-path path normal)"
     :description "Return `path` reflected across the **plane through its end point**. The intended use is completing a curve that should be symmetric about that plane: author one half, mirror it, and reverse the mirror so the two pieces join head-to-tail into the whole."
     :path "docs/manual/reference/en/mirror-path.md"}
+
+   "mirror?"
+   {:name "mirror?"
+    :category "mesh-operations"
+    :status "stable"
+    :since ""
+    :signature "(mirror? mesh)\n(mirror? mesh epsilon)"
+    :description "Test whether a mesh is mirror-symmetric about the plane at the turtle's current pose (point = `position`, normal = `heading`). A two-step cascade:"
+    :path "docs/manual/reference/en/mirror-p.md"}
 
    "morph-shape"
    {:name "morph-shape"
@@ -2324,6 +2342,15 @@
     :signature "(svg-shapes svg-data)\n(svg-shapes svg-data & {:keys [segments scale center flip-y]})\n(svg-shape svg-data & {:keys [id index segments scale center flip-y]})"
     :description "Import 2D shapes from parsed SVG data. `svg-shapes` returns a vector with one Ridley shape per geometry element (path, rect, circle, polygon) in the SVG. `svg-shape` is the single-element variant: it returns one shape, selected by `:id` or `:index`. Both functions accept the result of `(svg \"<svg>...</svg>\")` and curve elements are discretised at construction time. Neither modifies turtle state."
     :path "docs/manual/reference/en/svg-shapes.md"}
+
+   "symmetry-planes"
+   {:name "symmetry-planes"
+    :category "mesh-operations"
+    :status "stable"
+    :since ""
+    :signature "(symmetry-planes mesh)\n(symmetry-planes mesh epsilon)"
+    :description "Propose the **verified** mirror-symmetry planes of a mesh, as a vector of poses `{:position :heading :up}` — `heading` is the plane normal, and the pose is directly usable to place the turtle (`goto`/`mark`). Planes are ordered by quality (symmetric-difference ratio ascending; best first)."
+    :path "docs/manual/reference/en/symmetry-planes.md"}
 
    "tapered"
    {:name "tapered"

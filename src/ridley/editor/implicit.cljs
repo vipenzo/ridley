@@ -892,6 +892,31 @@
                           marks-vector)]
      (guillotine-split mesh mark-poses))))
 
+(defn ^:export implicit-mesh-mirror
+  "Reflect a mesh through the plane at the turtle's current pose (point = position,
+   normal = heading) — same plane convention as mesh-split/sdf-half-space. Keeps
+   the geometry a genuine reflection (Manifold's native .mirror, winding-correct).
+   Use e.g. (mesh-union half (mesh-mirror half)) to rebuild a symmetric whole from
+   one kept half. Accepts a mesh map, a keyword (registered name), or an SDF node."
+  [mesh-or-name-or-sdf]
+  (let [mesh (resolve-to-mesh mesh-or-name-or-sdf)
+        state @(turtle-ref)]
+    (manifold/mirror-by-plane mesh (:heading state) (:position state))))
+
+(defn ^:export implicit-mirror?
+  "Is a mesh mirror-symmetric about the plane at the turtle's current pose (point =
+   position, normal = heading)? The B6 cascade (free volumetric gate + symmetric-
+   difference confirmation). Optional epsilon on the ratio, like convex?. Empty
+   mesh → true. On-demand (77–148 ms), never per-keystroke."
+  ([mesh-or-name-or-sdf]
+   (let [mesh (resolve-to-mesh mesh-or-name-or-sdf)
+         state @(turtle-ref)]
+     (manifold/symmetric-about-plane? mesh (:heading state) (:position state))))
+  ([mesh-or-name-or-sdf epsilon]
+   (let [mesh (resolve-to-mesh mesh-or-name-or-sdf)
+         state @(turtle-ref)]
+     (manifold/symmetric-about-plane? mesh (:heading state) (:position state) epsilon))))
+
 (defn ^:export implicit-sdf-half-space
   "Returns an SDF representing a half-space defined by the turtle's current
    pose. The cut plane passes through the turtle's position with normal equal

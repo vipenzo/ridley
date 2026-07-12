@@ -405,6 +405,9 @@
    'split-parts         manifold/split-parts
    'mesh-components     manifold/mesh-components
    'finished?           manifold/finished?
+   'mesh-mirror         impl/implicit-mesh-mirror
+   'mirror?             impl/implicit-mirror?
+   'symmetry-planes     manifold/symmetry-planes
    ;; Scene registry
    'add-mesh!           registry/add-mesh!
    'register-mesh!      registry/register-mesh!

@@ -12,7 +12,8 @@
 
    Uses manifold-3d v3.0 loaded from CDN as an ES module."
   (:require [ridley.schema :as schema]
-            [ridley.sdf.core :as sdf]))
+            [ridley.sdf.core :as sdf]
+            [ridley.geometry.symmetry :as symmetry]))
 
 ;; Manifold WASM module state
 (defonce ^:private manifold-state (atom nil))
@@ -792,6 +793,111 @@
    and single convex mesh → true. Uses convex?'s own epsilon."
   ([ridley-mesh] (:finished? (component-report ridley-mesh)))
   ([ridley-mesh epsilon] (:finished? (component-report ridley-mesh epsilon))))
+
+;; ============================================================
+;; Mirror & symmetry (dev-docs/brief-mesh-symmetry.md)
+;; ============================================================
+
+(defn mirror-by-plane
+  "Reflect a mesh through the plane {x : normal·(x−point) = 0} — native Manifold
+   .mirror(normal), which is winding-correct (accertamento B6: positive volume,
+   NoError, no manual flip). For a plane off the origin it composes
+   translate(−point) ∘ mirror(normal) ∘ translate(+point) (validated B7).
+   carry-meta from the source (single-input op). Accepts a mesh or an SDF node."
+  [ridley-mesh normal point]
+  (let [ridley-mesh (sdf/ensure-mesh ridley-mesh)]
+    (when (get-manifold-class)
+      (when-let [^js m (mesh->manifold ridley-mesh)]
+        (try
+          (let [[nx ny nz] normal
+                [px py pz] point
+                ^js m1 (.translate m #js [(- px) (- py) (- pz)])
+                ^js m2 (.mirror m1 #js [nx ny nz])
+                ^js m3 (.translate m2 #js [px py pz])
+                out (carry-meta (manifold->mesh m3) ridley-mesh)]
+            (.delete m) (.delete m1) (.delete m2) (.delete m3)
+            (schema/assert-mesh! out))
+          (catch :default e
+            (js/console.error "mirror-by-plane failed:" e)
+            (.delete m)
+            nil))))))
+
+(def ^:private mirror-volume-gate
+  "mirror?/symmetry-planes free pre-gate: the two halves of the split at the plane
+   must have volumes equal within this relative tolerance before paying the
+   symmetric-difference confirmation. The gate is already computed by the semaphore
+   (accertamento B6) and rejects the vast majority of non-mirrors for free."
+  0.02)
+
+(def ^:private default-mirror-epsilon
+  "mirror? default: symmetric iff the symmetric-difference ratio ≤ epsilon. B6
+   measured 0 (true) vs 0.87 (false) — a huge margin — so the threshold is set by
+   the NEAR-symmetric case (a symmetric object with a small off-axis feature): a
+   feature that removes a fraction f of a half's volume shows a symdiff ratio ≈ 2f,
+   so 0.02 rejects an asymmetry above ~1% of a half. CALIBRATION NOTE: measure on
+   2–3 near-symmetric shapes live before trusting this number (brief Part 2)."
+  0.02)
+
+(defn- mirror-ratio
+  "The symmetric-difference ratio of `ridley-mesh` about the plane (normal,point):
+   split at the plane, reflect the :behind half through it, and return
+   (vol(union) − vol(intersection)) / vol(ahead) — ≈ 0 for a true mirror. Returns
+   js/Infinity when the free volumetric gate fails (unequal halves), or nil on a
+   degenerate/failed computation."
+  [ridley-mesh normal point]
+  (when (get-manifold-class)
+    (try
+      (let [offset (+ (* (nth normal 0) (nth point 0))
+                      (* (nth normal 1) (nth point 1))
+                      (* (nth normal 2) (nth point 2)))
+            {:keys [behind ahead behind-volume ahead-volume]} (split-by-plane ridley-mesh normal offset)
+            vb (or behind-volume 0) va (or ahead-volume 0)
+            vtot (+ vb va)]
+        (cond
+          (<= vtot 1e-9) nil                                   ; plane misses the mesh
+          (> (/ (js/Math.abs (- vb va)) vtot) mirror-volume-gate) js/Infinity  ; gate
+          :else
+          (let [behind' (mirror-by-plane behind normal point)
+                u (union behind' ahead)
+                i (intersection behind' ahead)
+                vu (:volume (get-mesh-status u))
+                vi (:volume (get-mesh-status i))]
+            (/ (- vu vi) (max 1e-9 va)))))
+      (catch :default e
+        (js/console.error "mirror-ratio failed:" e)
+        nil))))
+
+(defn symmetric-about-plane?
+  "True iff `ridley-mesh` is mirror-symmetric about the plane {x : normal·(x−point)
+   = 0} — the B6 cascade: free volumetric gate (equal halves) then symmetric-
+   difference confirmation. Optional epsilon on the ratio (like convex?). An empty
+   mesh is symmetric by definition → true. Cost 77–148 ms: on-demand, never
+   per-keystroke."
+  ([ridley-mesh normal point] (symmetric-about-plane? ridley-mesh normal point default-mirror-epsilon))
+  ([ridley-mesh normal point epsilon]
+   (let [ridley-mesh (sdf/ensure-mesh ridley-mesh)]
+     (if (empty? (:faces ridley-mesh))
+       true
+       (when-let [r (mirror-ratio ridley-mesh normal point)]
+         (<= r epsilon))))))
+
+(defn symmetry-planes
+  "Verified mirror-symmetry planes of a mesh (brief Part 3), as a vector of poses
+   {:position :heading :up} (heading = plane normal, ready for goto/mark), ordered
+   by quality (symmetric-difference ratio ascending). A pure function of the mesh:
+   area-weighted-PCA candidates (ridley.geometry.symmetry, tessellation-invariant —
+   B7) with a degenerate-eigenvalue bbox fallback, each VERIFIED by the B6 cascade;
+   only the promoted are returned (contract: verified planes only). Empty/degenerate
+   mesh → []. Cost ~250–450 ms: on-demand."
+  ([ridley-mesh] (symmetry-planes ridley-mesh default-mirror-epsilon))
+  ([ridley-mesh epsilon]
+   (let [ridley-mesh (sdf/ensure-mesh ridley-mesh)]
+     (->> (symmetry/candidate-planes ridley-mesh)
+          (keep (fn [{:keys [heading position] :as pose}]
+                  (when-let [r (mirror-ratio ridley-mesh heading position)]
+                    (when (<= r epsilon) (assoc pose ::ratio r)))))
+          (sort-by ::ratio)
+          (mapv #(dissoc % ::ratio))))))
 
 ;; ============================================================
 ;; Smoothing & refinement (Manifold tangent-based subdivision)
