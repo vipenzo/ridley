@@ -28,6 +28,7 @@
             [ridley.editor.edit-attach :as edit-attach]
             [ridley.editor.edit-bezier :as edit-bezier]
             [ridley.editor.edit-path :as edit-path]
+            [ridley.editor.edit-mesh-split :as edit-mesh-split]
             [ridley.editor.edit-image-board :as edit-image-board]
             [ridley.editor.impl :as macro-impl]
             [ridley.geometry.warp :as warp]
@@ -401,6 +402,7 @@
    'project-mesh        impl/implicit-project-mesh
    'slice-at-plane      impl/implicit-slice-at-plane
    'mesh-split          impl/implicit-mesh-split
+   'split-parts         manifold/split-parts
    ;; Scene registry
    'add-mesh!           registry/add-mesh!
    'register-mesh!      registry/register-mesh!
@@ -616,6 +618,10 @@
    ;; edit-path (interactive polyline tracing) — the `edit-path` macro expands to
    ;; (edit-path-request! (path …)), which opens the session and returns a path
    'edit-path-request!       edit-path/request!
+   ;; edit-mesh-split (interactive plane-cut decomposition) — the
+   ;; `edit-mesh-split` macro expands to a call here, mirroring mesh-split's
+   ;; own arities.
+   'edit-mesh-split-request! edit-mesh-split/request!
    ;; edit-image-board (interactive reference-photo board) — the `edit-image-board`
    ;; macro expands to (edit-image-board-request! …); returns a live image-board
    ;; shape and opens the calibration session.

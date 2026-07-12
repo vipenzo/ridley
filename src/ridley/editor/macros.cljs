@@ -2099,6 +2099,22 @@
      `(edit-attach-request! '~arg ~arg '() (attach ~arg) :pilot))
 
    ;; ============================================================
+   ;; edit-mesh-split — interactive plane-cut decomposition
+   ;; ============================================================
+
+   ;; Arities mirror mesh-split's own: (edit-mesh-split m) is a fresh
+   ;; session (nothing cut yet — unlike edit-attach, no primitive call is
+   ;; made here, since (mesh-split m) alone WOULD perform an unwanted cut);
+   ;; (edit-mesh-split m path) / (edit-mesh-split m path marks) is re-entry
+   ;; — the composite is evaluated once and handed to request! both as the
+   ;; eval's preview value and as the source request! walks to recover the
+   ;; session's already-accepted cuts.
+   (defmacro edit-mesh-split
+     ([m] `(edit-mesh-split-request! '~m ~m nil nil ~m))
+     ([m path] `(edit-mesh-split-request! '~m ~m ~path nil (mesh-split ~m ~path)))
+     ([m path marks] `(edit-mesh-split-request! '~m ~m ~path ~marks (mesh-split ~m ~path ~marks))))
+
+   ;; ============================================================
    ;; edit-bezier — interactive cubic Bezier authoring
    ;; ============================================================
 

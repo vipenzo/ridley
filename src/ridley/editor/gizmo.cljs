@@ -383,32 +383,40 @@
     (set! (.-visible grp) false)
     grp))
 
+(def ^:private all-handle-kinds #{:translate :rotate :scale})
+
 (defn- build-gizmo-group!
-  "Build the full THREE.Group for `pose`. Returns {:group :hitzones :visible-parts
-   :origin-marker :snap-marker}."
-  [pose]
-  (let [group (THREE/Group.)]
-    (let [[px py pz] (:position pose)]
-      (.set (.-position group) px py pz))
-    (.copy (.-quaternion group) (pose-quaternion pose))
-    (let [f   (build-arrow! group :arrow-f  :h (axis-color :h))
-          rt  (build-arrow! group :arrow-rt :r (axis-color :r))
-          u   (build-arrow! group :arrow-u  :u (axis-color :u))
-          th  (build-ring!  group :ring-th  :u (axis-color :u))
-          tv  (build-ring!  group :ring-tv  :r (axis-color :r))
-          tr  (build-ring!  group :ring-tr  :h (axis-color :h))
-          sf  (build-stretch! group :stretch-f  :h (axis-color :h))
-          srt (build-stretch! group :stretch-rt :r (axis-color :r))
-          su  (build-stretch! group :stretch-u  :u (axis-color :u))
-          origin-marker (build-origin-marker! group)
-          parts {:arrow-f f :arrow-rt rt :arrow-u u
-                 :ring-th th :ring-tv tv :ring-tr tr
-                 :stretch-f sf :stretch-rt srt :stretch-u su}]
-      {:group group
-       :origin-marker origin-marker
-       :snap-marker (build-snap-marker!)
-       :hitzones (into {} (map (fn [[k v]] [k (:hit v)])) parts)
-       :visible-parts (into {} (map (fn [[k v]] [k (:visible v)])) parts)})))
+  "Build the full THREE.Group for `pose`, restricted to `handle-kinds` (a set of
+   #{:translate :rotate :scale}, default all three). edit-mesh-split passes
+   #{:translate :rotate} — a cut plane has no scale gesture, so no stretch cubes are
+   built at all (not just hidden — `reposition-stretch-handles!` et al already
+   `when-let`-guard on missing keys, so the omission is silently inert). Returns
+   {:group :hitzones :visible-parts :origin-marker :snap-marker}."
+  ([pose] (build-gizmo-group! pose all-handle-kinds))
+  ([pose handle-kinds]
+   (let [group (THREE/Group.)]
+     (let [[px py pz] (:position pose)]
+       (.set (.-position group) px py pz))
+     (.copy (.-quaternion group) (pose-quaternion pose))
+     (let [f   (when (handle-kinds :translate) (build-arrow! group :arrow-f  :h (axis-color :h)))
+           rt  (when (handle-kinds :translate) (build-arrow! group :arrow-rt :r (axis-color :r)))
+           u   (when (handle-kinds :translate) (build-arrow! group :arrow-u  :u (axis-color :u)))
+           th  (when (handle-kinds :rotate) (build-ring! group :ring-th :u (axis-color :u)))
+           tv  (when (handle-kinds :rotate) (build-ring! group :ring-tv :r (axis-color :r)))
+           tr  (when (handle-kinds :rotate) (build-ring! group :ring-tr :h (axis-color :h)))
+           sf  (when (handle-kinds :scale) (build-stretch! group :stretch-f  :h (axis-color :h)))
+           srt (when (handle-kinds :scale) (build-stretch! group :stretch-rt :r (axis-color :r)))
+           su  (when (handle-kinds :scale) (build-stretch! group :stretch-u  :u (axis-color :u)))
+           origin-marker (build-origin-marker! group)
+           parts (into {} (filter (fn [[_ v]] (some? v)))
+                       {:arrow-f f :arrow-rt rt :arrow-u u
+                        :ring-th th :ring-tv tv :ring-tr tr
+                        :stretch-f sf :stretch-rt srt :stretch-u su})]
+       {:group group
+        :origin-marker origin-marker
+        :snap-marker (build-snap-marker!)
+        :hitzones (into {} (map (fn [[k v]] [k (:hit v)])) parts)
+        :visible-parts (into {} (map (fn [[k v]] [k (:visible v)])) parts)}))))
 
 (defn- reposition-group!
   [group pose]
@@ -490,36 +498,53 @@
       (set-mesh-opacity! (visible-parts handle-kw) (:opacity-hover viz)))
     (swap! gstate assoc :hover handle-kw)))
 
+(defn- drag-cmd-type
+  "The (cmd-type value) pair on-commit itself would emit for the CURRENT drag, if
+   released right now — same mode-dependent selection (plain vs cp-*) on-pointer-up
+   already uses. Used both by on-commit (unchanged) and by :on-drag (fired live, on
+   every move, not just at release — dev-docs/addendum-brief-edit-mesh-split.md,
+   live feedback 2026-07-12)."
+  [mode]
+  (let [{:keys [cmd cp-cmd]} (handle-info (:handle (:drag @gstate)))]
+    (if (= mode :origin) cp-cmd cmd)))
+
 (defn- apply-translate-preview!
-  "Move the gizmo group by `value` along `axis` (world-group-local). In object mode
-   the mesh preview moves rigidly with it (plain f/rt/u are turtle-carries-mesh
-   translations — impl.cljs replay-path-commands); in origin mode only the pose
-   marker (this group) moves for the drag's 'intent view' — the mesh preview is left
-   untouched until the real re-eval snaps everything to the world-true state."
+  "Move the gizmo group by `value` along `axis` (world-group-local). In object mode,
+   with :nudge-mesh? true (the default — edit-attach never sets it), the mesh preview
+   moves rigidly with it (plain f/rt/u are turtle-carries-mesh translations —
+   impl.cljs replay-path-commands); in origin mode, or with :nudge-mesh? false, only
+   the pose marker (this group) moves for the drag's 'intent view' — the mesh preview
+   is left untouched until the real re-eval snaps everything to the world-true state.
+   :on-drag, when provided, fires on every move regardless of :nudge-mesh? with the
+   same {:cmd-type :value} shape on-commit uses — edit-mesh-split uses it to drive a
+   live (throttled) recompute, not just a rigid nudge of 'the whole mesh preview'."
   [axis value]
-  (let [{:keys [group pose mode]} @gstate
+  (let [{:keys [group pose mode nudge-mesh? on-drag] :or {nudge-mesh? true}} @gstate
         [px py pz] (:position pose)
         [ax ay az] axis
         d [(* ax value) (* ay value) (* az value)]]
     (.set (.-position group) (+ px (nth d 0)) (+ py (nth d 1)) (+ pz (nth d 2)))
-    (when (= mode :object)
-      (viewport/nudge-preview! {:translate d}))))
+    (when (and (= mode :object) nudge-mesh?)
+      (viewport/nudge-preview! {:translate d}))
+    (when on-drag (on-drag {:cmd-type (drag-cmd-type mode) :value value}))))
 
 (defn- apply-rotate-preview!
   "Rotate the gizmo group in place (about its own origin — the pivot for a plain
    th/tv/tr IS the pose position, which is where the group already sits) by
-   `angle-deg` around `axis`, and in object mode rotate the mesh preview by the same
-   amount around `pivot` (a rigid rotation, since plain th/tv/tr turn mesh+
-   creation-pose together — impl.cljs replay-path-commands). Origin mode (cp-th et
-   al) leaves the mesh preview untouched, same rationale as apply-translate-preview!."
+   `angle-deg` around `axis`, and — object mode, :nudge-mesh? true (default) — rotate
+   the mesh preview by the same amount around `pivot` (a rigid rotation, since plain
+   th/tv/tr turn mesh+creation-pose together — impl.cljs replay-path-commands).
+   Origin mode, or :nudge-mesh? false, leaves the mesh preview untouched, same
+   rationale as apply-translate-preview! — see its docstring for :on-drag."
   [pivot axis angle-deg]
-  (let [{:keys [pose mode group]} @gstate
+  (let [{:keys [pose mode group nudge-mesh? on-drag] :or {nudge-mesh? true}} @gstate
         delta-q (.setFromAxisAngle (THREE/Quaternion.) (vec3 (m/normalize axis))
                                    (* angle-deg (/ Math/PI 180)))
         base-q (pose-quaternion pose)]
     (.copy (.-quaternion group) (.multiply delta-q base-q))
-    (when (= mode :object)
-      (viewport/nudge-preview! {:rotate {:pivot pivot :axis axis :deg angle-deg}}))))
+    (when (and (= mode :object) nudge-mesh?)
+      (viewport/nudge-preview! {:rotate {:pivot pivot :axis axis :deg angle-deg}}))
+    (when on-drag (on-drag {:cmd-type (drag-cmd-type mode) :value angle-deg}))))
 
 (defn- apply-scale-preview!
   "Scale the mesh preview by `factor` along `axis`, pivoted at `pivot` (the pose
@@ -655,7 +680,7 @@
     hitzones))
 
 (defn- on-pointer-down [^js e]
-  (when-let [{:keys [hitzones pose mode]} @gstate]
+  (when-let [{:keys [hitzones pose mode on-drag-start]} @gstate]
     (let [origin? (= mode :origin)
           hits (viewport/raycast-objects e (vals (live-hitzones hitzones origin?)))]
       (if (seq hits)
@@ -664,32 +689,36 @@
           (let [handle-kw (hitzone-handle (first hits))
                 {:keys [kind]} (handle-info handle-kw)
                 axis (handle-axis pose handle-kw)
-                pivot (:position pose)]
-            (case kind
-              :translate
-              (when-let [grab-point (viewport/raycast-line-point e pivot axis)]
-                (viewport/set-controls-enabled! false)
-                (swap! gstate assoc :drag
-                       {:handle handle-kw :kind kind :axis axis :pivot pivot
-                        :grab-point grab-point :value 0}))
-              :rotate
-              (when-let [grab-point (viewport/raycast-plane-point e pivot axis)]
-                (viewport/set-controls-enabled! false)
-                (swap! gstate assoc :drag
-                       {:handle handle-kw :kind kind :axis axis :pivot pivot
-                        :grab-vec (m/v- grab-point pivot) :value 0}))
-              :scale
-              (when-not origin?
-                (when-let [grab-point (viewport/raycast-line-point e pivot axis)]
-                  (let [grab-dist (m/dot (m/v- grab-point pivot) axis)]
-                    ;; grab-dist should be sizable — the handle sits well beyond the
-                    ;; pivot — but guard the divide in on-pointer-move regardless.
-                    (when (> (js/Math.abs grab-dist) 0.01)
-                      (viewport/set-controls-enabled! false)
-                      (swap! gstate assoc :drag
-                             {:handle handle-kw :kind kind :axis axis :pivot pivot
-                              :grab-dist grab-dist :value 1})))))
-              nil)))
+                pivot (:position pose)
+                armed? (case kind
+                         :translate
+                         (when-let [grab-point (viewport/raycast-line-point e pivot axis)]
+                           (viewport/set-controls-enabled! false)
+                           (swap! gstate assoc :drag
+                                  {:handle handle-kw :kind kind :axis axis :pivot pivot
+                                   :grab-point grab-point :value 0})
+                           true)
+                         :rotate
+                         (when-let [grab-point (viewport/raycast-plane-point e pivot axis)]
+                           (viewport/set-controls-enabled! false)
+                           (swap! gstate assoc :drag
+                                  {:handle handle-kw :kind kind :axis axis :pivot pivot
+                                   :grab-vec (m/v- grab-point pivot) :value 0})
+                           true)
+                         :scale
+                         (when-not origin?
+                           (when-let [grab-point (viewport/raycast-line-point e pivot axis)]
+                             (let [grab-dist (m/dot (m/v- grab-point pivot) axis)]
+                               ;; grab-dist should be sizable — the handle sits well beyond the
+                               ;; pivot — but guard the divide in on-pointer-move regardless.
+                               (when (> (js/Math.abs grab-dist) 0.01)
+                                 (viewport/set-controls-enabled! false)
+                                 (swap! gstate assoc :drag
+                                        {:handle handle-kw :kind kind :axis axis :pivot pivot
+                                         :grab-dist grab-dist :value 1})
+                                 true))))
+                         nil)]
+            (when (and armed? on-drag-start) (on-drag-start))))
         ;; No gizmo handle under the pointer. In origin mode, arm a possible
         ;; click-snap: record the down position so on-pointer-up can tell a click
         ;; (snap) from a drag (orbit — controls stay enabled, we don't touch them).
@@ -737,11 +766,12 @@
           (if top (hide-snap-marker!) (update-snap-marker! e)))))))
 
 (defn- on-pointer-up [^js e]
-  (when-let [{:keys [drag mode on-commit maybe-snap]} @gstate]
+  (when-let [{:keys [drag mode on-commit on-drag-end maybe-snap]} @gstate]
     (cond
       ;; Completed handle drag → commit its gesture (same path as a keyboard press).
       drag
       (do
+        (when on-drag-end (on-drag-end))
         (let [{:keys [handle kind value]} drag
               {:keys [cmd cp-cmd axis-key]} (handle-info handle)]
           (if (= kind :scale)
@@ -796,11 +826,31 @@
 
 (defn enter!
   "Build and show the gizmo at `pose`, start listening for drags on the viewport
-   canvas. opts: {:mode :object|:origin :step :angle-step :scale-step}.
+   canvas. opts: {:mode :object|:origin :step :angle-step :scale-step
+   :handles #{:translate :rotate :scale} :nudge-mesh? true}. :handles restricts which
+   handle kinds are built at all (default all three; edit-mesh-split passes
+   #{:translate :rotate}, no stretch cubes, since a cut plane has no scale gesture).
+   :nudge-mesh? (default true — edit-attach never sets it, so it's unaffected) gates
+   whether object-mode drags rigidly nudge the current viewport/preview-objects; set
+   false when the caller wants to nudge something OTHER than 'the whole preview' via
+   :on-drag instead (edit-mesh-split: only its own plane quad+cone should visibly
+   track a drag, never the cut pieces).
    callbacks: {:on-commit (fn [cmd-type value])} — called once per completed gesture,
-   exactly like a keyboard arrow press (edit-attach's add-command!)."
+   exactly like a keyboard arrow press (edit-attach's add-command!).
+   :on-drag-start (fn []) / :on-drag-end (fn []) — optional, fired once each when a
+   translate/rotate/scale drag is armed and when it ends, regardless of whether the
+   drag actually moved (on-commit itself is skipped for a zero-value drag, but
+   on-drag-end still fires so a caller can clear any 'pending' state it set at
+   drag-start — see edit-mesh-split's use).
+   :on-drag (fn [{:keys [cmd-type value]}]) — optional, fired on every pointer-move
+   during an active drag with the exact (cmd-type, value) on-commit would emit if
+   released right now — lets a caller react live to an in-progress drag (edit-mesh-
+   split: a throttled recompute of the cut, not just a rigid preview nudge).
+   All four default to nil/no-op, so a caller that doesn't pass them (edit-attach) is
+   unaffected."
   [pose opts callbacks]
-  (let [{:keys [group hitzones visible-parts origin-marker snap-marker]} (build-gizmo-group! pose)
+  (let [{:keys [group hitzones visible-parts origin-marker snap-marker]}
+        (build-gizmo-group! pose (or (:handles opts) all-handle-kinds))
         mode (or (:mode opts) :object)
         wg (viewport/get-world-group)]
     (.add wg group)
@@ -810,6 +860,7 @@
                     :step (:step opts)
                     :angle-step (:angle-step opts)
                     :scale-step (:scale-step opts)
+                    :nudge-mesh? (if (contains? opts :nudge-mesh?) (:nudge-mesh? opts) true)
                     :group group
                     :hitzones hitzones
                     :visible-parts visible-parts
@@ -820,7 +871,10 @@
                     :maybe-snap nil
                     :snap-marker-last 0
                     :readout-el (build-readout-el!)
-                    :on-commit (:on-commit callbacks)})
+                    :on-commit (:on-commit callbacks)
+                    :on-drag-start (:on-drag-start callbacks)
+                    :on-drag-end (:on-drag-end callbacks)
+                    :on-drag (:on-drag callbacks)})
     (apply-mode-style! mode)
     (reposition-stretch-handles!)
     (viewport/lock-interaction! true)

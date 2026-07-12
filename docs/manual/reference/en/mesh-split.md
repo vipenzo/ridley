@@ -10,6 +10,8 @@ status: stable
 ## Signature
 
 `(mesh-split mesh)`
+`(mesh-split mesh path)`
+`(mesh-split mesh path marks-vector)`
 
 ## Description
 
@@ -36,11 +38,42 @@ already use for a single-input operation.
 `mesh-split` accepts a mesh map, a keyword (registered mesh name), or
 an SDF node (auto-materialized).
 
+**Composite form.** With a `path`, `mesh-split` cuts at every `(mark
+…)` in it — guillotine-style, one cut per mark, each result's
+`:ahead` right-nested into the next cut:
+
+```clojure
+(mesh-split block (path (f 10) (mark :cut-1) (f 10) (mark :cut-2)))
+;; => {:behind piece-1 :ahead {:behind piece-2 :ahead remaining}}
+```
+
+`(mesh-split m path)` cuts at every mark in appearance order;
+`(mesh-split m path marks-vector)` cuts only at the listed marks, in
+the vector's own order (letting you select a subset, or reorder). A
+single-mark composite call returns exactly the same `{:behind :ahead}`
+shape as the primitive — the composite and the primitive are the same
+operation, just with more marks to walk. The path is resolved from
+the turtle's *current* pose, same resolver every other path consumer
+(`with-path`, `attach`, …) uses — not from the path's own internal
+identity frame.
+
+A mark whose plane misses the remaining produces an empty `:behind`
+at its place in the chain — the chain continues from `:ahead`
+unchanged, without error.
+
+See `split-parts` to flatten a composite result into an ordered
+vector of leaves.
+
 ## Parameters
 
-- `mesh` — the mesh (or keyword name, or SDF node) to split. The cut
-  plane itself has no argument — it is always the turtle's current
-  pose.
+- `mesh` — the mesh (or keyword name, or SDF node) to split.
+- `path` (optional) — a path containing one or more `(mark …)`
+  commands; each mark is one cut. Omit both `path` and
+  `marks-vector` for a single cut at the turtle's current pose.
+- `marks-vector` (optional) — a vector of mark names selecting and
+  ordering which marks to cut at. Defaults to every mark in `path`,
+  in appearance order. A mark named here that doesn't exist in
+  `path` throws, naming it.
 
 ## Example
 
@@ -76,6 +109,22 @@ between the origin and the cut.
 A cut plane that doesn't touch the mesh is a normal outcome, not an
 error — one of the two halves comes back empty.
 
+{{example: mesh-split-composite}}
+
+<!-- example-source: mesh-split-composite -->
+```clojure
+(register block (extrude (rect 20 20) (f 30)))
+(def result
+  (mesh-split (get-mesh :block)
+              (path (f 10) (mark :cut-1) (f 10) (mark :cut-2))))
+(def parts (split-parts result))   ; [piece-1 piece-2 remaining]
+```
+<!-- /example-source -->
+
+Two marks cut the block into three convex slabs. `split-parts`
+flattens the nested result into an ordered vector — see its own
+reference card.
+
 ## Notes
 
 - The `:behind`/`:ahead` mapping is decided in exactly one place
@@ -90,4 +139,7 @@ error — one of the two halves comes back empty.
 
 ## See also
 
-- **Related:** `sdf-half-space`, `slice-mesh`, `mesh-diagnose`, `convex?`
+- **Related:** `sdf-half-space`, `slice-mesh`, `mesh-diagnose`, `convex?`,
+  `split-parts`
+- **Interactive:** `edit-mesh-split` — a modal session for decomposing
+  a mesh into pieces by eye instead of computing cut poses by hand

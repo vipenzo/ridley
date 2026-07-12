@@ -641,6 +641,19 @@
                (.delete m)
                false))))))))
 
+(defn split-parts
+  "Flatten a mesh-split composite result into its leaves, in order:
+   depth-first, :behind before :ahead at each node. A bare mesh (no
+   composite structure — the primitive's own single-cut return, or
+   whatever a caller passes that isn't a {:behind :ahead} node) returns
+   [mesh]. A hand-built tree (a :behind that is itself a node) is walked
+   the same way, so this generalizes for free if mesh-split ever stops
+   being a linear chain."
+  [result]
+  (if (= :mesh (:type result))
+    [result]
+    (into (split-parts (:behind result)) (split-parts (:ahead result)))))
+
 ;; ============================================================
 ;; Smoothing & refinement (Manifold tangent-based subdivision)
 ;; ============================================================

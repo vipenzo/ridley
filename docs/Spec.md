@@ -1677,6 +1677,32 @@ normal result, not an error. Both halves inherit the source mesh's
 creation-pose, material and anchors, the same single-source policy
 `mesh-hull`/`solidify` already use.
 
+**Composite form — cutting at every mark of a path.** `mesh-split` also
+accepts a path, guillotine-style: one cut per `(mark …)`, right-nesting each
+result's `:ahead` into the next cut:
+
+```clojure
+(register block (extrude (rect 20 20) (f 30)))
+(def result
+  (mesh-split (get-mesh :block)
+              (path (f 10) (mark :cut-1) (f 10) (mark :cut-2))))
+;; => {:behind piece-1 :ahead {:behind piece-2 :ahead remaining}}
+```
+
+`(mesh-split m path)` cuts at every mark in the path, in the order they
+appear; `(mesh-split m path marks-vector)` cuts only at the listed marks, in
+that vector's order. With a single mark the return is literally identical
+to the primitive's own `{:behind :ahead}` — the composite is the same
+function, just with more marks to walk. The path is resolved from the
+turtle's *current* pose, the same resolver every other path consumer uses.
+A mark whose plane misses the remaining produces an empty `:behind` at its
+place in the chain, without error — the chain continues from `:ahead`
+unchanged.
+
+`(split-parts result)` flattens a composite result into its leaves, in
+order — `[piece-1 piece-2 … remaining]` for the chain above. A bare mesh
+(no cuts) returns `[mesh]`.
+
 ### Convexity test
 
 `(convex? mesh)` tests whether a mesh is convex via the hull-ratio test:
@@ -3306,6 +3332,36 @@ Segments can be **straight**, **cubic bezier** (`c`), or tangent **circular arc*
 `edit-path` (no `-2d`) edits a **3D rail** — a `path` consumed in its own frame by `extrude`-along-path and `loft`, *not* a flat profile. It wraps a plain `(path …)` body (species `:3d`); a `(path-2d …)` body opens `edit-path-2d` instead. Node 0 (the anchor) is pinned at the origin, and nodes are placed in a **selectable working plane** of the turtle frame, named by its normal — `f` (⊥heading = `(right,up)`, the default), `r` (⊥right = `(heading,up)`), `u` (⊥up = `(heading,right)`) — chosen with the panel radios or the `f`/`r`/`u` keys. Drag a node (Shift = axis-lock), nudge with arrows or the per-plane **len/angle** fields, curve a segment with `c` (free bezier) or `t` (both-ends-tangent raccordo), split with `Ins`/`i`, mark with `m`.
 
 On confirm it bakes a `(path …)` of **relative** `set-heading`/`f` segments (rotation-minimizing, so the swept section stays twist-free) plus `(bezier-to … :local)` curves. Rename `path` → `edit-path` to re-edit. Because `extrude` of a **non-planar** rail can still pick up a section roll (holonomy), wrap a twisted result's rail in [`ensure-untwisted`](#orientation-utilities). See the `edit-path` reference card for the full key map.
+
+### Edit Mesh Split
+
+`edit-mesh-split` is an interactive session for decomposing a mesh into pieces with a sequence of plane cuts — a guillotine, not a general BSP: each cut detaches a piece and the remainder feeds the next cut. **The turtle IS the cut plane** — there is no separate drag-handle gizmo (unlike `edit-attach`): arrows move/rotate the live pose the same way `pilot` does, and a semi-transparent quad (with a small cone showing which side is `:behind`) renders the plane at that pose.
+
+```clojure
+(register block (extrude (rect 20 20) (f 30)))
+(edit-mesh-split (get-mesh :block))
+```
+
+**Live semaphore.** Every keystroke re-splits the remaining piece at the live pose and checks `convex?` on both halves — well within a frame (~7ms split + 2×2.6ms convex? on a typical mesh). The plane itself is colored by what the cut would do: **grey** when `:behind` is empty (a no-op cut — `Enter` is disabled), a **dedicated color** when `:ahead` is empty (*terminal placement* — the plane has cleared the whole remaining piece), otherwise a neutral active tint. The two live halves are colored independently by their own convexity — **green** convex, **red** concave; accepting a concave `behind` is allowed (the guillotine model has known limits) but never silent, since red already is the warning.
+
+**Single-action confirm.** There is no separate "commit" key — `Enter` always means *accept `:behind` as the definitive piece*, and what that does depends on the plane's state, not the key:
+- grey (no-op) → disabled.
+- active (both halves non-empty) → the cut is pushed onto the session's undo stack, the remainder becomes the new live piece, and the plane stays put — unless the new remainder is already convex, in which case the plane auto-jumps to terminal placement so a single further `Enter` closes cleanly.
+- terminal placement (`:ahead` empty) → closes the session and emits, using the current remainder as the final piece. This does **not** add another cut — closing is stopping, not cutting.
+
+`Ctrl`/`Cmd`+`Enter` is sugar for "teleport the plane to terminal placement, then accept" — useful to close out early with a still-concave remainder (revisit it later by re-entering `edit-mesh-split` on that piece). `Backspace` undoes the last accepted cut (pops the stack — cutting invalidates re-editing an earlier cut in place; fix one by editing the emitted form and re-entering). `Esc` cancels the whole session unconditionally, emitting nothing. Accepted pieces stay visible, ghosted/desaturated, so spatial context isn't lost.
+
+**Emission.** The keystroke transcript is never the emitted program — on close, the tool synthesizes the minimal canonical `(th …)(tv …)(tr …)(f …)(rt …)(u …)` delta between each consecutive cut pose (only the non-negligible components are written; a straight cut emits just `(f …)`), and rewrites its marker to the composite `mesh-split` call:
+
+```clojure
+(let [{piece-1 :behind {piece-2 :behind remaining :ahead} :ahead}
+      (mesh-split block
+                  (path (f 10) (mark :cut-1) (th 25) (f 7.25) (rt 3.38) (mark :cut-2))
+                  [:cut-1 :cut-2])]
+  [piece-1 piece-2 remaining])
+```
+
+Numbers are never snapped to a grid — free values are the norm for a perceptual tool, editable by hand afterward. `(edit-mesh-split m)` opens a fresh session; `(edit-mesh-split m path marks)` (or rename `mesh-split` → `edit-mesh-split`) re-enters an already-emitted form — the session's undo stack is rebuilt directly from the evaluated composite (no source-text replay), so re-entering and immediately closing reproduces byte-identical output.
 
 ### Animation
 

@@ -812,10 +812,43 @@
         [pos heading up right] (turtle-plane-basis)]
     (mirror-shapes-x (manifold/project-at-plane mesh heading pos right up))))
 
+(defn path-mark-names-in-order
+  "Names of every (mark …) in `path`, in the order they appear. Public —
+   edit-mesh-split reuses this to derive re-entry mark order without
+   duplicating the walk."
+  [path]
+  (->> (turtle/path-micro-commands path)
+       (filter #(= :mark (:cmd %)))
+       (mapv (comp first :args))))
+
+(defn- guillotine-split
+  "Cut `mesh` at each pose in `mark-poses` (in order), right-nesting each
+   result's :ahead into the next cut. Returns a bare mesh when mark-poses
+   is empty — the identity that makes a single-mark composite call return
+   literally the same shape as the primitive. An already-empty mesh (from
+   a prior cut) short-circuits without touching Manifold: both halves stay
+   the same empty mesh, preserving positional correspondence in the chain."
+  [mesh mark-poses]
+  (if (empty? mark-poses)
+    mesh
+    (let [{:keys [position heading]} (first mark-poses)
+          [px py pz] position
+          [hx hy hz] heading
+          offset (+ (* hx px) (* hy py) (* hz pz))
+          {:keys [ahead behind]}
+          (if (empty? (:faces mesh))
+            {:ahead mesh :behind mesh}
+            (manifold/split-by-plane mesh heading offset))]
+      {:behind behind :ahead (guillotine-split ahead (rest mark-poses))})))
+
 (defn ^:export implicit-mesh-split
   "Split a mesh at the plane defined by the turtle's current position and
    heading — point = position, normal = heading, offset = heading·position.
    Works inside turtle/with-path scope like sdf-half-space/slice-mesh.
+
+   (mesh-split m)                    single cut at the turtle's current pose
+   (mesh-split m path)               a cut at EVERY mark in path, in order
+   (mesh-split m path marks-vector)  cuts at only the listed marks, in that order
 
    Returns {:behind <mesh> :ahead <mesh>}. :behind is the half BEHIND the
    heading — the material side, same convention as sdf-half-space/extrude:
@@ -824,18 +857,40 @@
    sdf-half-space, on purpose — one truth about which side is which across
    the whole system.
 
+   With a path, each mark is one cut: :behind is the piece detached at that
+   mark, :ahead is either the next cut's node ({:behind :ahead}) or, at the
+   last mark, the final remaining mesh — so a single-mark call returns
+   exactly the same shape as (mesh-split m). The path is resolved from the
+   turtle's CURRENT pose (the same resolver every other path consumer uses),
+   not from the path's own internal identity frame.
+
    Either half may be an empty mesh when the plane misses (or only grazes)
    the piece — a legitimate result, not an error.
 
    Accepts a mesh map, a keyword (registered mesh name), or an SDF node
    (auto-materialized)."
-  [mesh-or-name-or-sdf]
-  (let [mesh (resolve-to-mesh mesh-or-name-or-sdf)
-        state @(turtle-ref)
-        [px py pz] (:position state)
-        [hx hy hz :as heading] (:heading state)
-        offset (+ (* hx px) (* hy py) (* hz pz))]
-    (manifold/split-by-plane mesh heading offset)))
+  ([mesh-or-name-or-sdf]
+   (let [mesh (resolve-to-mesh mesh-or-name-or-sdf)
+         state @(turtle-ref)
+         [px py pz] (:position state)
+         [hx hy hz :as heading] (:heading state)
+         offset (+ (* hx px) (* hy py) (* hz pz))]
+     (manifold/split-by-plane mesh heading offset)))
+  ([mesh-or-name-or-sdf path]
+   (let [names (path-mark-names-in-order path)]
+     (when (empty? names)
+       (throw (js/Error. "mesh-split: path has no marks — nothing to cut")))
+     (implicit-mesh-split mesh-or-name-or-sdf path names)))
+  ([mesh-or-name-or-sdf path marks-vector]
+   (let [mesh (resolve-to-mesh mesh-or-name-or-sdf)
+         anchors (turtle/resolve-marks @(turtle-ref) path)
+         mark-poses (mapv (fn [mark-name]
+                            (or (get anchors mark-name)
+                                (throw (js/Error.
+                                        (str "mesh-split: mark " mark-name
+                                             " not found in path")))))
+                          marks-vector)]
+     (guillotine-split mesh mark-poses))))
 
 (defn ^:export implicit-sdf-half-space
   "Returns an SDF representing a half-space defined by the turtle's current

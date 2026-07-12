@@ -471,6 +471,15 @@
     :description "Interactive editor for an `image-board` — place, scale and crop a reference photo with on-screen handles and a calibration ruler, then trace it with `edit-path-2d`. Open it from the **definitions panel** (Cmd+Enter), not the REPL, and wrap the form in `(stamp …)` to see the image. On **OK** the `(edit-image-board …)` marker is rewritten to `(image-board path scale [imx imy] [orx ory] [w h])` with the values you set; on **Esc** it is restored. Like `tweak` / `edit-path-2d`, one modal runs at a time and the editor is read-only while open."
     :path "docs/manual/reference/en/edit-image-board.md"}
 
+   "edit-mesh-split"
+   {:name "edit-mesh-split"
+    :category "live-interactive"
+    :status "stable"
+    :since ""
+    :signature "(edit-mesh-split mesh)\n(edit-mesh-split mesh path)\n(edit-mesh-split mesh path marks-vector)"
+    :description "Decompose a mesh into pieces interactively, one plane cut at a time — a guillotine session for `mesh-split`. Run it from the **definitions panel** (Cmd+Enter)."
+    :path "docs/manual/reference/en/edit-mesh-split.md"}
+
    "edit-path"
    {:name "edit-path"
     :category "live-interactive"
@@ -1097,7 +1106,7 @@
     :category "mesh-operations"
     :status "stable"
     :since ""
-    :signature "(mesh-split mesh)"
+    :signature "(mesh-split mesh)\n(mesh-split mesh path)\n(mesh-split mesh path marks-vector)"
     :description "Split a mesh with the plane defined by the turtle's current pose — point = position, normal = heading — into two halves. Returns `{:behind <mesh> :ahead <mesh>}`."
     :path "docs/manual/reference/en/mesh-split.md"}
 
@@ -2207,6 +2216,15 @@
     :signature "(sphere radius)\n(sphere radius segments rings)"
     :description "Create a sphere mesh centred at the current turtle position. With one argument, both circumferential segments and rings are derived from the current resolution setting. With three arguments, segments and rings are explicit. Returns a mesh; **does not modify turtle state**."
     :path "docs/manual/reference/en/sphere.md"}
+
+   "split-parts"
+   {:name "split-parts"
+    :category "mesh-operations"
+    :status "stable"
+    :since ""
+    :signature "(split-parts result)"
+    :description "Flatten a `mesh-split` composite result into an ordered vector of leaves — depth-first, `:behind` before `:ahead` at each node. For the linear chain a composite `mesh-split` call produces today, that's simply `[piece-1 piece-2 … remaining]`, in cut order."
+    :path "docs/manual/reference/en/split-parts.md"}
 
    "squash"
    {:name "squash"

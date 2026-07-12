@@ -1780,6 +1780,64 @@
       (:anchors result))
     {}))
 
+(defn synthesize-delta
+  "Minimal canonical (th tv tr f rt u) delta that turns turtle pose `from`
+   into pose `to`, exactly — not an approximation.
+
+   Rotation and translation are independent degrees of freedom: `to`'s
+   position is generally NOT straight ahead of `to`'s heading (it was
+   reached by whatever sequence of moves the session actually made, not by
+   one final straight hop) — so aiming th/tv at the position delta and
+   hoping the resulting heading matches to.heading is wrong in general (it
+   only works when to.position - from.position happens to be parallel to
+   to.heading). The correct decomposition is two independent steps:
+
+   1. Reach to's exact ORIENTATION first — th then tv rotate from-heading
+      onto to.heading directly (this is always achievable exactly,
+      regardless of position), then a residual tr fixes up. Same
+      th-then-tv + residual-roll decomposition lower-commands already uses
+      for bezier/arc lowering (bezier/compute-rotation-angles,
+      bezier/residual-roll-deg).
+   2. Reach to's exact POSITION from there — the position delta, projected
+      onto the NOW-FINAL frame's heading/right/up axes, gives f/rt/u:
+      three pure translations that don't touch heading/up, so they can
+      follow the rotation in any order and still land exactly on
+      to.position.
+
+   A component is nil when it's below the noise floor (0.001° / 0.0001mm,
+   same thresholds lower-commands' own lower-rot-if uses) — e.g. a pure
+   forward move returns {:th nil :tv nil :tr nil :f d :rt nil :u nil}, and
+   the common case the brief illustrates (position delta already parallel
+   to the target heading) naturally collapses rt/u away, leaving the
+   simple (th)(tv)(f) form.
+
+   `from`/`to` are {:position :heading :up} maps (a full turtle state works
+   too, extra keys are ignored)."
+  [{fp :position fh :heading fu :up} {tp :position th-target :heading tu :up}]
+  (let [[th-deg tv-deg] (bezier/compute-rotation-angles fh fu th-target)
+        scratch (-> (make-turtle)
+                    (assoc :position fp :heading fh :up fu)
+                    (th th-deg)
+                    (tv tv-deg))
+        roll-deg (bezier/residual-roll-deg (:up scratch) tu (:heading scratch))
+        ;; th-then-tv aims heading exactly at th-target by construction; tr
+        ;; only rotates up around that fixed heading, so the final frame is
+        ;; exactly (th-target, tu, right = th-target × tu) — no need to
+        ;; replay tr on the scratch turtle to know this.
+        final-right (cross th-target tu)
+        pos-delta (v- tp fp)
+        f-dist (dot pos-delta th-target)
+        rt-dist (dot pos-delta final-right)
+        u-dist (dot pos-delta tu)
+        negligible-angle? #(< (Math/abs %) 0.001)
+        negligible-dist? #(< (Math/abs %) 0.0001)]
+    {:th (when-not (negligible-angle? th-deg) th-deg)
+     :tv (when-not (negligible-angle? tv-deg) tv-deg)
+     :tr (when-not (negligible-angle? roll-deg) roll-deg)
+     :f  (when-not (negligible-dist? f-dist) f-dist)
+     :rt (when-not (negligible-dist? rt-dist) rt-dist)
+     :u  (when-not (negligible-dist? u-dist) u-dist)}))
+
 ;; Inject resolve-marks into the extrusion engine so extrude/loft can turn a
 ;; profile shape's carried marks into mesh anchors (extrusion can't require this
 ;; namespace — the dependency runs the other way).

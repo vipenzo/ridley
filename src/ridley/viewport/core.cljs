@@ -2327,38 +2327,92 @@
         (.add grp m)))
     grp))
 
+(defn- create-wireframe-mesh
+  "Edge-only wireframe of mesh-data (:vertices/:faces, plus an optional :material
+   :color — default grey) — same EdgesGeometry technique show-wireframe-preview!
+   uses, but composable as one show-preview! item among others (color configurable,
+   not hardcoded orange) instead of a standalone clear-and-replace call. Used by
+   edit-mesh-split's consumed/ghosted pieces: a wireframe is unmistakably NOT the
+   solid current cut, a stronger signal than a low-alpha solid fill (dev-docs/
+   addendum-brief-edit-mesh-split.md's own documented fallback, adopted after live
+   feedback 2026-07-12 that low-alpha grey read as 'blue-ish' and blurred into the
+   plane quad)."
+  [mesh-data]
+  (when (and (seq (:vertices mesh-data)) (seq (:faces mesh-data)))
+    (let [^js solid (create-three-mesh mesh-data)
+          edges (THREE/EdgesGeometry. (.-geometry solid) 30)
+          color (get-in mesh-data [:material :color] 0x999999)
+          mat (THREE/LineBasicMaterial. #js {:color color})
+          ^js outline (THREE/LineSegments. edges mat)]
+      (when-let [m (.-material solid)] (.dispose m))
+      (.dispose (.-geometry solid))
+      outline)))
+
+(defn- build-preview-object
+  "Turn one show-preview!/replace-preview-at! item into a THREE object, or nil if
+   the item has no geometry (e.g. an empty mesh). Factored out of show-preview! so
+   replace-preview-at! (edit-mesh-split's per-tick plane update during a gizmo drag)
+   can build a single fresh object without touching the rest of the preview."
+  [{:keys [type data on-top]}]
+  (when-let [^js obj
+             (case type
+               :mesh (when (and (seq (:vertices data)) (seq (:faces data)))
+                       (create-three-mesh data))
+               :stamp (create-stamp-mesh data)
+               :lines (when (seq data) (create-line-segments data))
+               :dots (when (seq data) (create-dot-meshes data))
+               :wireframe (create-wireframe-mesh data)
+               nil)]
+    ;; :on-top draws the item over everything (no depth test) — used by
+    ;; edit-path so the trace overlay is never hidden by the image or the
+    ;; live extruded result.
+    (when on-top
+      (set! (.-renderOrder obj) 1000)
+      (when-let [^js mat (.-material obj)]
+        (set! (.-depthTest mat) false)
+        ;; transparent → drawn in the transparent pass at this high renderOrder,
+        ;; so on-top lines sit OVER a transparent reference image (set-image,
+        ;; opacity 1) instead of being hidden behind it. Opacity unchanged.
+        (set! (.-transparent mat) true)))
+    obj))
+
 (defn show-preview!
   "Show temporary preview objects in the viewport (for test mode).
    Accepts a vector of items, each being one of:
      {:type :mesh :data mesh-data}     — standard mesh with vertices/faces
      {:type :stamp :data stamp-data}   — 2D shape stamp (semi-transparent)
      {:type :lines :data lines-data}   — line segments [{:from :to :color}...]
+     {:type :wireframe :data mesh-data} — edge-only outline of a mesh (vertices/
+                                          faces, optional :material :color)
    Clears any previous preview first."
   [items]
   (clear-preview!)
   (when-let [{:keys [world-group]} @state]
-    (doseq [{:keys [type data on-top]} items]
-      (when-let [^js obj
-                 (case type
-                   :mesh (when (and (seq (:vertices data)) (seq (:faces data)))
-                           (create-three-mesh data))
-                   :stamp (create-stamp-mesh data)
-                   :lines (when (seq data) (create-line-segments data))
-                   :dots (when (seq data) (create-dot-meshes data))
-                   nil)]
-        ;; :on-top draws the item over everything (no depth test) — used by
-        ;; edit-path so the trace overlay is never hidden by the image or the
-        ;; live extruded result.
-        (when on-top
-          (set! (.-renderOrder obj) 1000)
-          (when-let [^js mat (.-material obj)]
-            (set! (.-depthTest mat) false)
-            ;; transparent → drawn in the transparent pass at this high renderOrder,
-            ;; so on-top lines sit OVER a transparent reference image (set-image,
-            ;; opacity 1) instead of being hidden behind it. Opacity unchanged.
-            (set! (.-transparent mat) true)))
+    (doseq [item items]
+      (when-let [^js obj (build-preview-object item)]
         (.add world-group obj)
         (swap! preview-objects conj obj)))))
+
+(defn replace-preview-at!
+  "Rebuild ONLY specific positions of the current preview-objects (indices from
+   show-preview!'s own insertion order) with freshly built objects, disposing the
+   old ones at those positions — everything else untouched. `index->item` is a map
+   of {index item}, same item shape as show-preview!. Used by edit-mesh-split's
+   gizmo drag: the plane quad+cone (always items 0/1 in its own render!) are cheap
+   to rebuild (tiny fixed vertex counts) on every pointer-move, tracking the drag at
+   full rate, while the cut pieces themselves only refresh on a throttled recompute
+   (dev-docs/addendum-brief-edit-mesh-split.md, live feedback 2026-07-12)."
+  [index->item]
+  (when-let [{:keys [world-group]} @state]
+    (doseq [[i item] index->item]
+      (when-let [^js old (get @preview-objects i)]
+        (.remove world-group old)
+        (.traverse old (fn [^js c]
+                         (when-let [g (.-geometry c)] (.dispose g))
+                         (when-let [m (.-material c)] (.dispose m))))
+        (when-let [^js new-obj (build-preview-object item)]
+          (.add world-group new-obj)
+          (swap! preview-objects assoc i new-obj))))))
 
 (defn- delta->matrix
   "Build a THREE.Matrix4 for a translate/rotate/scale delta spec (world-group-local

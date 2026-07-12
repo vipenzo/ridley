@@ -1,5 +1,6 @@
 (ns ridley.manifold.mesh-split-test
-  "Tests for split-by-plane (mesh-split's primitive) and convex?.
+  "Tests for split-by-plane/mesh-split (primitive + composite), split-parts,
+   and convex?.
 
    NOTE: Actual Manifold WASM tests require a browser environment (the WASM
    module is loaded via a CDN <script type=\"module\"> tag, never in Node).
@@ -11,7 +12,15 @@
             [ridley.turtle.shape :as shape]
             [ridley.geometry.primitives :as prim]
             [ridley.geometry.mesh-utils :as mesh-utils]
+            [ridley.editor.implicit :as impl]
+            [ridley.editor.state :as state]
             [ridley.test-helpers :as h]))
+
+(defn- set-turtle-pose!
+  "Point the global turtle atom (that implicit-mesh-split reads) at `state`.
+   Same pattern used by loft_plus_test.cljs for testing impl/*-impl directly."
+  [turtle-state]
+  (reset! @state/turtle-state-var turtle-state))
 
 (defn- manifold-available? []
   (manifold/initialized?))
@@ -206,3 +215,166 @@
   (if-not (manifold-available?)
     (is true "Skipped: Manifold WASM not available in node")
     (is (false? (manifold/convex? (torus-mesh 12 4 24 12))))))
+
+;; ── Composite mesh-split (path + marks) ─────────────────────
+;; implicit-mesh-split reads the global turtle atom — set-turtle-pose! points
+;; it at a scratch state, same pattern loft_plus_test.cljs uses for impl/*-impl.
+
+(defn- mesh-without-raw-arrays
+  "manifold->mesh stamps ::raw-arrays (typed-array cache for zero-copy
+   rendering) onto every mesh it builds. Two independent WASM round-trips
+   produce numerically-identical geometry but DIFFERENT Float32Array/
+   Uint32Array object identities, so a bare `=` on two meshes that should be
+   structurally equal spuriously fails on that key alone (typed arrays have
+   no cljs value semantics). Strip it before comparing."
+  [mesh]
+  (dissoc mesh ::manifold/raw-arrays))
+
+(deftest mesh-split-composite-single-mark-identical-to-primitive
+  (if-not (manifold-available?)
+    (is true "Skipped: Manifold WASM not available in node")
+    (testing "(mesh-split m (path (mark :x))) == (mesh-split m) at the same pose"
+      (set-turtle-pose! (t/make-turtle))
+      (let [block (last (:meshes (-> (t/make-turtle)
+                                     (t/extrude-from-path (shape/rect-shape 20 20)
+                                                          (t/make-path [{:cmd :f :args [30]}])))))
+            primitive (impl/implicit-mesh-split block)
+            composite (impl/implicit-mesh-split block (t/make-path [{:cmd :mark :args [:only]}]))]
+        (is (= (mesh-without-raw-arrays (:behind primitive))
+               (mesh-without-raw-arrays (:behind composite))))
+        (is (= (mesh-without-raw-arrays (:ahead primitive))
+               (mesh-without-raw-arrays (:ahead composite))))))))
+
+(deftest mesh-split-composite-default-marks-in-path-order
+  (if-not (manifold-available?)
+    (is true "Skipped: Manifold WASM not available in node")
+    (testing "no marks-vector -> cuts at every mark, in appearance order"
+      (set-turtle-pose! (t/make-turtle))
+      (let [block (last (:meshes (-> (t/make-turtle)
+                                     (t/extrude-from-path (shape/rect-shape 20 20)
+                                                          (t/make-path [{:cmd :f :args [30]}])))))
+            p (t/make-path [{:cmd :f :args [10]} {:cmd :mark :args [:cut-1]}
+                            {:cmd :f :args [10]} {:cmd :mark :args [:cut-2]}])
+            result (impl/implicit-mesh-split block p)
+            piece-1 (:behind result)
+            piece-2 (get-in result [:ahead :behind])
+            remaining (get-in result [:ahead :ahead])]
+        (is (h/approx= 4000.0 (h/signed-volume piece-1) 1e-3))
+        (is (h/approx= 4000.0 (h/signed-volume piece-2) 1e-3))
+        (is (h/approx= 4000.0 (h/signed-volume remaining) 1e-3))))))
+
+(deftest mesh-split-composite-explicit-marks-vector-selection-and-order
+  (if-not (manifold-available?)
+    (is true "Skipped: Manifold WASM not available in node")
+    (testing "marks-vector selects a subset, in the vector's own order"
+      (set-turtle-pose! (t/make-turtle))
+      (let [block (last (:meshes (-> (t/make-turtle)
+                                     (t/extrude-from-path (shape/rect-shape 20 20)
+                                                          (t/make-path [{:cmd :f :args [30]}])))))
+            p (t/make-path [{:cmd :f :args [5]} {:cmd :mark :args [:cut-a]}
+                            {:cmd :f :args [5]} {:cmd :mark :args [:cut-b]}
+                            {:cmd :f :args [5]} {:cmd :mark :args [:cut-c]}])
+            ;; select only cut-c (f=15) and cut-a (f=5), in THAT order — the
+            ;; first cut is at x=15, not x=5, and the result must reflect it
+            result (impl/implicit-mesh-split block p [:cut-c :cut-a])]
+        (is (h/approx= 6000.0 (h/signed-volume (:behind result)) 1e-3)
+            "first cut (cut-c, x=15) detaches the 0..15 slab (vol 6000)")
+        (is (contains? (:ahead result) :behind) "still a composite node, not a leaf")))))
+
+(deftest mesh-split-composite-missing-mark-throws
+  (if-not (manifold-available?)
+    (is true "Skipped: Manifold WASM not available in node")
+    (testing "a marks-vector entry absent from the path throws, naming it"
+      (set-turtle-pose! (t/make-turtle))
+      (let [block (prim/box-mesh 20 20 20)
+            p (t/make-path [{:cmd :f :args [10]} {:cmd :mark :args [:cut-1]}])]
+        (try
+          (impl/implicit-mesh-split block p [:cut-1 :bogus])
+          (is false "should have thrown")
+          (catch :default e
+            (is (re-find #"bogus" (.-message e)))))))))
+
+(deftest mesh-split-composite-path-without-marks-throws
+  (if-not (manifold-available?)
+    (is true "Skipped: Manifold WASM not available in node")
+    (testing "(mesh-split m path) with zero marks in path throws"
+      (set-turtle-pose! (t/make-turtle))
+      (let [block (prim/box-mesh 20 20 20)
+            p (t/make-path [{:cmd :f :args [10]}])]
+        (try
+          (impl/implicit-mesh-split block p)
+          (is false "should have thrown")
+          (catch :default e
+            (is (re-find #"no marks" (.-message e)))))))))
+
+(deftest mesh-split-composite-empty-cut-mid-chain-preserves-position
+  (if-not (manifold-available?)
+    (is true "Skipped: Manifold WASM not available in node")
+    (testing ":behind empty at a mid-chain mark that misses the remaining —
+              chain continues, positional correspondence preserved"
+      (set-turtle-pose! (t/make-turtle))
+      (let [block (last (:meshes (-> (t/make-turtle)
+                                     (t/extrude-from-path (shape/rect-shape 20 20)
+                                                          (t/make-path [{:cmd :f :args [30]}])))))
+            ;; cut-1 at x=10 (normal cut); cut-2 backs up to x=-10 — entirely
+            ;; before the block, so :behind at cut-2 is empty, :ahead is the
+            ;; whole cut-1 remainder unchanged
+            p (t/make-path [{:cmd :f :args [10]} {:cmd :mark :args [:cut-1]}
+                            {:cmd :f :args [-20]} {:cmd :mark :args [:cut-2]}])
+            result (impl/implicit-mesh-split block p)]
+        (is (pos? (count (:faces (:behind result)))) "cut-1 detaches a real piece")
+        (is (empty? (:faces (get-in result [:ahead :behind])))
+            "cut-2's :behind is empty (its plane misses the remaining)")
+        (is (h/approx= 8000.0 (h/signed-volume (get-in result [:ahead :ahead])) 1e-3)
+            "chain continues: final remaining is untouched by the no-op cut")))))
+
+(deftest mesh-split-composite-plus-shape-three-convex-pieces
+  (if-not (manifold-available?)
+    (is true "Skipped: Manifold WASM not available in node")
+    (testing "the brief's own worked example: a plus/cross cut by two parallel
+              marks -> three convex pieces, volumes summing to the original"
+      (set-turtle-pose! (t/make-turtle))
+      (let [bar-h (prim/box-mesh 90 30 10)   ; long along X
+            bar-v (prim/box-mesh 30 90 10)   ; long along Y — same center
+            cross (manifold/union bar-h bar-v)
+            p (t/make-path [{:cmd :f :args [-15]} {:cmd :mark :args [:cut-1]}
+                            {:cmd :f :args [30]} {:cmd :mark :args [:cut-2]}])
+            result (impl/implicit-mesh-split cross p)
+            parts (manifold/split-parts result)]
+        (is (= 3 (count parts)))
+        (is (every? manifold/convex? parts))
+        (is (h/approx= 45000.0 (apply + (map #(:volume (manifold/get-mesh-status %)) parts))
+                       1e-1))))))
+
+;; ── split-parts ──────────────────────────────────────────────
+
+(deftest split-parts-chain-yields-n-plus-1-leaves-in-order
+  (if-not (manifold-available?)
+    (is true "Skipped: Manifold WASM not available in node")
+    (testing "N marks -> N+1 leaves, in chain order"
+      (set-turtle-pose! (t/make-turtle))
+      (let [block (last (:meshes (-> (t/make-turtle)
+                                     (t/extrude-from-path (shape/rect-shape 20 20)
+                                                          (t/make-path [{:cmd :f :args [30]}])))))
+            p (t/make-path [{:cmd :f :args [10]} {:cmd :mark :args [:cut-1]}
+                            {:cmd :f :args [10]} {:cmd :mark :args [:cut-2]}])
+            result (impl/implicit-mesh-split block p)
+            parts (manifold/split-parts result)]
+        (is (= 3 (count parts)))
+        (is (every? #(h/approx= 4000.0 (h/signed-volume %) 1e-3) parts))))))
+
+(deftest split-parts-bare-mesh-returns-singleton-vector
+  (let [mesh (prim/box-mesh 10 10 10)]
+    (is (= [mesh] (manifold/split-parts mesh)))))
+
+(deftest split-parts-hand-built-tree-depth-first-behind-first
+  (testing "a :behind that is itself a node is walked depth-first, behind before ahead
+            (future-proofing: the composite is a chain today, but the shape is a tree)"
+    (let [leaf-a {:type :mesh :vertices [] :faces [] :marker :a}
+          leaf-b {:type :mesh :vertices [] :faces [] :marker :b}
+          leaf-c {:type :mesh :vertices [] :faces [] :marker :c}
+          leaf-d {:type :mesh :vertices [] :faces [] :marker :d}
+          ;; :behind is itself a {:behind :ahead} node, not a leaf
+          tree {:behind {:behind leaf-a :ahead leaf-b}
+                :ahead  {:behind leaf-c :ahead leaf-d}}]
+      (is (= [leaf-a leaf-b leaf-c leaf-d] (manifold/split-parts tree))))))

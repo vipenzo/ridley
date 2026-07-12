@@ -4,6 +4,30 @@ File interno per tracciare piccole incoerenze tra il codice sorgente di Ridley e
 
 ## Aperto
 
+### `status->keyword` senza rete di regressione — il bug silenzioso della Parte 0 di brief-mesh-split può tornare senza segnale
+
+**Contesto**: il bump CDN 3.0.0→3.3.2 (brief-mesh-split, Parte 0) ha rivelato che `.status()` in 3.3.2 restituisce una stringa dove 3.0.0 restituiva `{value: N}`; il vecchio parsing leggeva `.-value` su una stringa → `undefined` → `manifold?` sempre `false`, in silenzio. Il fix (`status->keyword`, `src/ridley/manifold/core.cljs`) mappa tutte le stringhe note con fallback leggibile `unknown-*` e documenta la storia nel docstring. Ma nessun test asserisce oggi `(:status … ) = :ok` o `(manifold? mesh-valida) = true`: i test di split usano `get-mesh-status` asserendo solo `:volume`, che era corretto anche col parsing rotto. Il bug esatto che è già stato silenzioso una volta non ha la sua rete.
+
+**Realtà**: verificato leggendo `test/ridley/manifold/mesh_split_test.cljs` (2026-07-11): nessuna assertion su `:status`/`:manifold?` in tutta la suite. Il periodo in cui la suite girava su 3.3.2 col parsing per 3.0.0 senza che nessun test fallisse è la dimostrazione empirica del buco.
+
+**Fix possibile** (non tentato): una assertion `(is (true? (manifold/manifold? cube)))` o `(= :ok (:status (get-mesh-status cube)))` nei test WASM. Un rigo — ma vive nel contesto browser, quindi la sua efficacia dipende dall'entry successiva.
+
+**Nota cosmetica collegata**: il docstring del namespace `ridley.manifold.core` dice ancora "Uses manifold-3d v3.0 loaded from CDN".
+
+**Scoperta**: review del report di brief-mesh-split, Claude, 2026-07-11.
+
+### I test WASM Manifold skippano tutti in Node/CI — verde ma vacuo su quella superficie
+
+**Contesto**: il modulo manifold-3d si carica solo via CDN `<script type="module">` in browser, mai in Node; `mesh_split_test.cljs` e `boolean_test.cljs` usano l'idioma "skip graceful" (`(is true "Skipped: …")` quando `manifold/initialized?` è false). In Node/CI ogni assertion che tocca il WASM conta quindi come passata senza essere mai girata: booleane, split-by-plane, convex?, hull vivono dietro test che la suite automatica non esegue.
+
+**Realtà**: dichiarato esplicitamente nella NOTE in testa a `mesh_split_test.cljs`; idioma pre-esistente (`boolean_test.cljs`), non introdotto da brief-mesh-split. La compensazione per mesh-split è stata la verifica live end-to-end via SCI DSL contro l'app in esecuzione — solida ma one-off, non una rete permanente.
+
+**Impatto**: medio e crescente — la superficie di geometria coperta solo da test-che-skippano cresce a ogni brief che tocca Manifold.
+
+**Fix possibile** (non tentato): un runner browser/headless per il sottoinsieme WASM, oppure caricare il wasm da `node_modules` nel contesto di test invece che dal CDN — ora che lockfile e CDN sono allineati alla stessa versione, il modulo npm è lo stesso che gira in produzione (l'accertamento mesh-split lo ha già usato per le misure via Node standalone, quindi il caricamento in Node è dimostrato possibile). Candidato naturale ad agganciarsi al lavoro CI del port Linux (brief-desktop-linux-port.md).
+
+**Scoperta**: review del report di brief-mesh-split, Claude, 2026-07-11.
+
 ### `auto-bounds` sovra-inflaziona in modo ordine-dipendente → mesh SDF degenere per storie `attach` con stretch dopo cp-rotazioni — RISOLTO 2026-07-09
 
 **Contesto**: `sdf/auto-bounds` (`src/ridley/sdf/core.cljs:671`) sul ramo `rotate` sostituisce i bounds del figlio con la sua **sfera-bounding** (`r = sqrt(maxX²+maxY²+maxZ²)`, poi `[[-r r][-r r][-r r]]`): un box diventa il cubo che ne contiene la diagonale. Quando più `rotate` si annidano, ogni passo re-inflaziona di ~√3 il precedente (già inflazionato), quindi l'inflazione è ~(√3)^N con N = numero di `rotate` nell'albero. Dentro `attach` sul backend SDF, sia `sdf-stretch-along-axis` (sandwich move→rotate→scale→rotate→move) sia le cp-rotazioni (`cp-th`/`cp-tv`/`cp-tr`) aggiungono `rotate`; **quanti** ne aggiungono, e in che annidamento, dipende dall'ordine dei comandi. Due storie che descrivono la stessa geometria finiscono con conteggi di `rotate` diversi e quindi bounds enormemente diversi.
@@ -197,6 +221,14 @@ Test: `test/ridley/sdf/auto_bounds_test.cljs` (5 test, scritti prima del cambio:
 **Scoperta**: Vincenzo/Claude, 2026-07-08, durante il testing interattivo di `dev-docs/brief-edit-attach-handles.md`; root-causato e risolto 2026-07-09.
 
 ## Chiuso
+
+### `edit-mesh-split`: il cono di orientamento ignorava il colore del piano dalla prima consegna — RISOLTO 2026-07-12
+
+**Stato originale**: `orientation-cone` (`src/ridley/editor/edit_mesh_split.cljs`) restituiva `{:vertices :faces :color color :opacity 0.9}` — `:color`/`:opacity` in CIMA alla mappa. `create-three-mesh` (`src/ridley/viewport/core.cljs`) però legge solo `(:material mesh-data)`: un `:color` top-level viene ignorato in silenzio, e il materiale cade sul default di `create-mesh-material` (`0x00aaff`, opacity 1.0, opaco). Risultato: il cono ha sempre renderizzato con un blu fisso, mai col grigio/oro/blu del `plane-state` come il codice (e il suo stesso commento) affermava — dalla consegna originale di `edit-mesh-split` (2026-07-11), non introdotto dall'addendum. `half-preview-item`/`ghost-item`, nello stesso file, usavano già correttamente `:material {...}` — non era un pattern sbagliato per l'intero file, solo per questa funzione.
+
+**Scoperta**: verificando dal vivo la Parte B dell'addendum (dev-docs/addendum-brief-edit-mesh-split.md) via nREPL — lettura diretta di `(.getHex (.-color mat))` sugli oggetti THREE della preview ha mostrato `0x00aaff` (il default) invece del `plane-color` atteso.
+
+**Risoluzione**: `orientation-cone` ora restituisce `:material {:color color :opacity 0.9 :double-sided true}`, stesso schema delle altre due funzioni del file. Verificato di nuovo via nREPL dopo il fix: il cono legge esattamente `plane-color` (es. `66ccff` in stato `:active`, `888888` in `:no-op`).
 
 ### Manuale: `pilot-request!` documenta un binding SCI che non esiste più — RISOLTO 2026-07-10
 

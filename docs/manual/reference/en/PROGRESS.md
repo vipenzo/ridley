@@ -262,6 +262,7 @@ Brief: `dev-docs/brief-reference-batch4-path-mesh.md`.
 - [x] [mesh-intersection](mesh-intersection.md)
 - [x] [mesh-hull](mesh-hull.md)
 - [x] [mesh-split](mesh-split.md)
+- [x] [split-parts](split-parts.md)
 - [x] [concat-meshes](concat-meshes.md)
 
 #### Smoothing & diagnostics
@@ -491,6 +492,7 @@ In progress.
 - [x] [pilot-request!](pilot-request-bang.md)
 - [x] [edit-bezier](edit-bezier.md)
 - [x] [edit-path](edit-path.md)
+- [x] [edit-mesh-split](edit-mesh-split.md)
 - [x] [picking](picking.md) — `selected` / `selected-mesh` / `selected-face` /
   `selected-name` / `source-of` / `origin-of` / `last-op`
 
