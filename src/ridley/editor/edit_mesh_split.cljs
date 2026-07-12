@@ -61,6 +61,7 @@
 ;;  :behind-count :ahead-count           ; live component counts (badge when >1)
 ;;  :plane-state    :no-op | :terminal | :active
 ;;  :reveal-all?    ; addendum: view-only focus/reveal toggle (r)
+;;  :labels-shown?  ; whether world-anchored labels are currently up (reveal only)
 ;;  :labeled-tree   ; the :tree identity the scene labels were last built for
 ;;  :edit-mesh-split-from/-to  ; char offsets of the marker in the editor
 ;;  :panel-el :key-handler :entered? :from-repl}
@@ -340,8 +341,9 @@
         (open-piece-item mesh alpha)))))
 
 (defn- scene-labels
-  "One billboard label per leaf at its centre, showing the SAME name the emission
-   uses (addendum Parte C: one identity across scene, panel, code). The current
+  "One WORLD-ANCHORED label per leaf at its centre, showing the SAME name the
+   emission uses (one identity across scene, panel, code). Only ever shown under
+   the reveal toggle (addendum 2: no floating billboards by default). The current
    piece's label is brightened."
   [s]
   (let [tree (:tree s)
@@ -364,11 +366,18 @@
                                (half-preview-item current-ahead ahead-finished? :ahead)])
                  (other-piece-items s))]
       (viewport/show-preview! (vec items))
-      ;; Labels only change with the tree (pieces don't move on a plane nudge), so
-      ;; rebuild them only when the tree identity changes — not every tick.
-      (when-not (identical? (:tree s) (:labeled-tree s))
-        (viewport/set-labels! (vec (scene-labels s)))
-        (swap! session assoc :labeled-tree (:tree s)))
+      ;; Scene labels are on-demand: shown ONLY under the reveal toggle, world-
+      ;; anchored (addendum 2 — never billboard). Rebuild when reveal flips on, or
+      ;; when the tree changes while revealed; clear when it flips off.
+      (let [want (boolean (:reveal-all? s))
+            shown (boolean (:labels-shown? s))]
+        (cond
+          (and want (or (not shown) (not (identical? (:tree s) (:labeled-tree s)))))
+          (do (viewport/set-world-labels! (vec (scene-labels s)))
+              (swap! session assoc :labels-shown? true :labeled-tree (:tree s)))
+          (and shown (not want))
+          (do (viewport/clear-world-labels!)
+              (swap! session assoc :labels-shown? false))))
       (viewport/set-turtle-source! {:custom pose})
       (viewport/update-turtle-pose pose)
       (gizmo/update-pose! pose))))
@@ -541,7 +550,7 @@
   (modal/remove-keydown! (:key-handler @session))
   (gizmo/close!)
   (viewport/set-turtle-source! :global)
-  (viewport/clear-labels!)
+  (viewport/clear-world-labels!)
   (viewport/clear-preview!))
 
 (defn- commit-session!
@@ -836,7 +845,8 @@
                "TREE: cut the current piece; both halves become pieces of the tree. "
                "s: separate the current piece into its connected components (no plane). "
                "n / p: next / previous open piece (buttons above) · "
-               "r: reveal all pieces (re-orient), press again for focus · "
+               "r: reveal all pieces + world-anchored name labels (re-orient), "
+               "press again for focus · "
                "Enter: cut the current piece (or, when every piece is finished, commit) · "
                "Ctrl/Cmd+Enter: commit now (emit even with open pieces) · "
                "Backspace: undo the last cut/separation (chronological, any branch) · "

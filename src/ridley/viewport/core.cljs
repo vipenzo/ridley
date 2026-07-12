@@ -82,6 +82,11 @@
 ;; Ephemeral billboard text labels (e.g. edit-path mark names) — [{:mesh :texture :text}]
 (defonce ^:private label-objects (atom []))
 
+;; World-anchored (NON-billboard) text labels — a SEPARATE list update-panels-
+;; billboard never touches, so these keep a fixed world orientation (edit-mesh-
+;; split's on-demand piece names, addendum 2).
+(defonce ^:private world-label-objects (atom []))
+
 ;; Ruler measurement overlay objects [{:group THREE.Group} ...]
 (defonce ^:private ruler-objects (atom []))
 
@@ -2516,6 +2521,41 @@
         (when-let [^js mat (.-material mesh)] (set! (.-depthTest mat) false))
         (.add world-group mesh)
         (swap! label-objects conj (assoc obj :text t))))))
+
+(defn clear-world-labels!
+  "Remove all world-anchored (non-billboard) labels."
+  []
+  (when-let [{:keys [^js world-group]} @state]
+    (doseq [obj @world-label-objects]
+      (when-let [^js mesh (:mesh obj)]
+        (.remove world-group mesh)
+        (some-> (.-geometry mesh) .dispose)
+        (some-> (.-material mesh) .dispose)
+        (some-> ^js (:texture obj) .dispose))))
+  (reset! world-label-objects []))
+
+(defn set-world-labels!
+  "Show WORLD-ANCHORED text labels — cleared/replaced each call, and NEVER
+   billboarded (update-panels-billboard skips them), so they keep a fixed
+   orientation as the camera moves (addendum 2: labels must not follow the
+   camera). Each label is {:text str :position [x y z] (world-group-local)
+   :color hex}. They stand vertical (up +Z) facing −Y, small, at the given
+   position, occluded by geometry in front (depthTest) so they don't pile up
+   over the scene."
+  [labels]
+  (clear-world-labels!)
+  (when-let [{:keys [^js world-group]} @state]
+    (doseq [{:keys [text position color] :or {color 0x9affc0}} labels]
+      (let [t (str text)
+            fs 2.0
+            pd {:width (max 4 (+ 2.0 (* 0.6 fs (count t)))) :height (+ 1.4 fs)
+                :position position :heading [0 1 0] :up [0 0 1]  ; fixed: faces −Y, vertical
+                :content t :style {:font-size fs :bg 0x1c2433cc :fg color :padding 0.6}}
+            {:keys [^js mesh] :as obj} (create-panel-mesh pd)]
+        ;; depthTest stays true (create-panel-mesh's default) so geometry occludes
+        ;; the label — the opposite of the billboard labels' draw-on-top behavior.
+        (.add world-group mesh)
+        (swap! world-label-objects conj (assoc obj :text t))))))
 
 (defn raycast-world-point
   "Public: world-group-local [x y z] under a mouse/pointer event, or nil."

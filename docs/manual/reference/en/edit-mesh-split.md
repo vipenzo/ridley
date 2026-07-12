@@ -40,9 +40,11 @@ finished pieces are grey wireframes. **The mouse only ever moves the cut
 plane** — navigate between open pieces explicitly with **n**/**p** (next
 / previous, deterministic in tree order over the open pieces only) or the
 panel's ◀/▶ buttons; the plane jumps to the new current's middle. **r**
-reveals every piece at full visibility to re-orient, then press again for
-focus. A panel line always says where you are — `piece <name> (2/5) ·
-open · 1 component` — by the same name the emission uses.
+reveals every piece at full visibility — and, on demand, small
+**world-anchored** name labels at each piece (never camera-facing, so
+they don't occlude the work) — to re-orient, then press again for focus.
+A panel line always says where you are — `piece <name> (2/5) · open · 1
+component` — by the same name the emission (and the reveal labels) use.
 
 **Live semaphore (per-component).** A piece is **finished** (green)
 when *every* connected component is convex — so a piece that is one
