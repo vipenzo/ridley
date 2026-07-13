@@ -381,6 +381,38 @@ html, body {
   background: #3d3d54;
 }
 
+/* edit-mesh-split (addendum 3 Part A): a gesture whose precondition isn't met is
+   disabled and announces the reason via its title tooltip — it must READ as
+   inactive, not invite a press. */
+.modal-panel .pilot-btn:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+.modal-panel .pilot-btn:disabled:hover {
+  background: #2d2d44;
+}
+
+/* edit-mesh-split: the session-gesture button row (symmetry / mirror / separate /
+   reveal) wraps rather than overflowing the panel. */
+.modal-panel .ems-gestures {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* edit-mesh-split: transient "no silent no-op" reason line — amber, and it takes
+   no vertical space until it actually has a message. */
+.modal-panel .ems-message {
+  color: #dcb67a;
+  font-size: 11px;
+  word-wrap: break-word;
+}
+
+.modal-panel .ems-message:not(:empty) {
+  padding: 4px 0;
+}
+
 .modal-panel .pilot-btn-ok {
   background: #264f2e;
   border-color: #3a7d44;

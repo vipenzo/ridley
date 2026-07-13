@@ -32,7 +32,8 @@
             [ridley.scene.registry :as registry]
             [ridley.viewport.core :as viewport]))
 
-(declare cleanup! render! recompute! update-panel-display! schedule-mirror-check! clear-mirror-badge!)
+(declare cleanup! render! recompute! update-panel-display! schedule-mirror-check!
+         clear-mirror-badge! set-status-message! gesture-availability)
 
 ;; ============================================================
 ;; State
@@ -270,6 +271,9 @@
              :plane-state plane-state
              :behind-pct (if (pos? total-vol) (* 100.0 (/ behind-vol total-vol)) 0.0)
              :ahead-pct (if (pos? total-vol) (* 100.0 (/ ahead-vol total-vol)) 0.0)
+             ;; Any real action ends here → dismiss a transient no-op warning (Part A):
+             ;; only FAILED gestures (which never recompute) leave one standing.
+             :status-message nil
              :last-drag-recompute (js/Date.now)
              :drag-recompute-cost-ms cost-ms)
       ;; Part 4 mirror badge: free gate now, debounced B6 confirm in the background.
@@ -304,10 +308,10 @@
    :data (assoc mesh :material {:color color-ghost})})
 
 (defn- open-piece-item
-  "A non-current OPEN leaf: context, not focus (addendum Parte B). Neutral (no
-   convexity tint — the semaphore belongs to the current piece alone) and faint
-   (`alpha` ~0.12), so it's present for spatial orientation without competing with
-   the current piece; the reveal toggle raises `alpha` to bring it fully back."
+  "A non-current OPEN leaf, shown ONLY in the reveal state (addendum 3 Part B).
+   Neutral (no convexity tint — the semaphore belongs to the current piece alone)
+   and near-solid, so reveal reads as 'here is the whole decomposition' before you
+   drop back to focus on the current piece."
   [mesh alpha]
   {:type :mesh
    :data (assoc mesh :material {:color color-open-piece :opacity alpha :double-sided true})})
@@ -324,31 +328,33 @@
     [{:type :stamp :data (quad-stamp pose (current-mesh) plane-color)}
      {:type :mesh :data (orientation-cone pose plane-color)}]))
 
-(def ^:private open-piece-alpha-focus 0.12)   ; faint context
-(def ^:private open-piece-alpha-reveal 0.6)    ; brought fully back by the reveal toggle
+(def ^:private open-piece-alpha-reveal 0.62)   ; near-solid: reveal shows the piece, not a hint
 
 (defn- other-piece-items
-  "Every leaf EXCEPT the current one: finished leaves as ghosts (wireframe, always
-   legible), still-open leaves as faint neutral bodies — full only while the reveal
-   toggle is held (addendum Parte B). The current piece isn't drawn here; its live
-   split halves stand in for it."
+  "Addendum 3 Part B — two scene states, no middle ground. In the WORK state
+   (default) NOTHING but the current piece is drawn, so this returns nil: the plane
+   and the current piece's live halves are the whole scene, and n/p navigation is
+   felt as the current appearing while the previous vanishes. Only in the REVEAL
+   state is every OTHER leaf drawn — finished leaves as ghost wireframes, still-open
+   leaves as near-solid neutral bodies — to re-orient, then back to focus."
   [s]
-  (let [tree (:tree s)
-        cur (:current tree)
-        alpha (if (:reveal-all? s) open-piece-alpha-reveal open-piece-alpha-focus)]
-    (for [id (mtree/leaf-ids tree)
-          :when (not= id cur)
-          :let [mesh (piece-mesh id)]
-          :when (and mesh (seq (:faces mesh)))]
-      (if (:finished? (get-in tree [:pieces id]))
-        (ghost-item mesh)
-        (open-piece-item mesh alpha)))))
+  (when (:reveal-all? s)
+    (let [tree (:tree s)
+          cur (:current tree)]
+      (for [id (mtree/leaf-ids tree)
+            :when (not= id cur)
+            :let [mesh (piece-mesh id)]
+            :when (and mesh (seq (:faces mesh)))]
+        (if (:finished? (get-in tree [:pieces id]))
+          (ghost-item mesh)
+          (open-piece-item mesh open-piece-alpha-reveal))))))
 
 (defn- scene-labels
-  "One WORLD-ANCHORED label per leaf at its centre, showing the SAME name the
-   emission uses (one identity across scene, panel, code). Only ever shown under
-   the reveal toggle (addendum 2: no floating billboards by default). The current
-   piece's label is brightened."
+  "One BILLBOARD (camera-facing) label per leaf at its centre, showing the SAME name
+   the emission uses (one identity across scene, panel, code). Shown ONLY in the
+   reveal state (addendum 3 Part C): reveal is consultation, so legibility from any
+   camera angle beats the fixed-in-the-world anchoring addendum 2 tried and that use
+   falsified (occluded, illegible). The current piece's label is brightened."
   [s]
   (let [tree (:tree s)
         cur (:current tree)]
@@ -370,17 +376,19 @@
                                (half-preview-item current-ahead ahead-finished? :ahead)])
                  (other-piece-items s))]
       (viewport/show-preview! (vec items))
-      ;; Scene labels are on-demand: shown ONLY under the reveal toggle, world-
-      ;; anchored (addendum 2 — never billboard). Rebuild when reveal flips on, or
-      ;; when the tree changes while revealed; clear when it flips off.
+      ;; Scene labels are on-demand: shown ONLY in the reveal state, as billboard
+      ;; camera-facing labels (addendum 3 Part C — always legible; no labels at all
+      ;; in the work state, where the current piece's identity is the panel row).
+      ;; Rebuild when reveal flips on, or when the tree changes while revealed; clear
+      ;; when it flips off.
       (let [want (boolean (:reveal-all? s))
             shown (boolean (:labels-shown? s))]
         (cond
           (and want (or (not shown) (not (identical? (:tree s) (:labeled-tree s)))))
-          (do (viewport/set-world-labels! (vec (scene-labels s)))
+          (do (viewport/set-labels! (vec (scene-labels s)))
               (swap! session assoc :labels-shown? true :labeled-tree (:tree s)))
           (and shown (not want))
-          (do (viewport/clear-world-labels!)
+          (do (viewport/clear-labels!)
               (swap! session assoc :labels-shown? false))))
       (viewport/set-turtle-source! {:custom pose})
       (viewport/update-turtle-pose pose)
@@ -474,6 +482,29 @@
   (recompute!))
 
 ;; ============================================================
+;; Transient panel messages (addendum 3 Part A — no silent no-op)
+;; ============================================================
+
+(defn- set-status-message!
+  "Write a transient reason into the panel's message line. A key press whose gesture
+   can't act (a disabled button's keyboard twin) calls this so the reason is visible
+   where the user is actually looking — the panel — instead of the REPL console
+   (capture-println lands there and only after the eval finishes, i.e. never during a
+   live modal session). Auto-clears after a few seconds; the next real action clears
+   it early (recompute! drops :status-message)."
+  [msg]
+  (when-let [t (:status-msg-timer @session)] (js/clearTimeout t))
+  (swap! session assoc
+         :status-message msg
+         :status-msg-timer (js/setTimeout
+                            (fn []
+                              (when @session
+                                (swap! session assoc :status-message nil :status-msg-timer nil)
+                                (update-panel-display!)))
+                            4000))
+  (update-panel-display!))
+
+;; ============================================================
 ;; Accept / commit / undo / cancel
 ;; ============================================================
 
@@ -512,8 +543,7 @@
         cur (current-id)
         comp-meshes (manifold/mesh-components (piece-mesh cur))]
     (if (< (count comp-meshes) 2)
-      (state/capture-println
-       "edit-mesh-split: current piece is a single component — nothing to separate")
+      (set-status-message! (:reason (:separate (gesture-availability @session))))
       (let [reports (mapv (fn [c] {:finished? (manifold/convex? c) :count 1}) comp-meshes)
             {:keys [tree components]} (mtree/separate (:tree s) cur reports)]
         (doseq [[cid cmesh] (map vector components comp-meshes)]
@@ -528,6 +558,7 @@
 ;; ============================================================
 
 (def ^:private mirror-gate 0.02)          ; free volumetric gate (matches manifold's)
+(def ^:private mirror-confirm-epsilon 0.02) ; symdiff confirm (matches manifold's default-mirror-epsilon)
 (def ^:private mirror-debounce-ms 300)
 
 (defn- report-of-mesh [m] (select-keys (manifold/component-report m) [:finished? :count]))
@@ -539,22 +570,43 @@
   (swap! session update :live-pose
          #(assoc % :position position :heading heading :up (or up (:up %)))))
 
+(defn- symmetry-level-text
+  "Human phrasing of a symmetry plane's quality from its symmetric-difference ratio
+   (0 = exact mirror; the fraction of a half's volume that doesn't overlap its
+   reflection). A small non-zero ratio means the halves match EXCEPT a small feature
+   (a mounting hole, an internal thread…) — 'quasi simmetrico', which Vincenzo asked
+   be shown so the user isn't misled into thinking a near-symmetric part is exact."
+  [r]
+  (if (or (nil? r) (< r 0.002))
+    "simmetria esatta"
+    (str "quasi simmetrico (scarto ~" (.toFixed (* 100.0 r) 1) "%)")))
+
+(defn- announce-symmetry-plane!
+  "Transient status line when the plane teleports onto symmetry candidate `idx`/`n`,
+   naming the quality level so 'quasi' is visible. Called AFTER recompute! (which
+   clears :status-message), so it survives."
+  [pose idx n]
+  (set-status-message!
+   (str "piano di simmetria " (inc idx) "/" n " · " (symmetry-level-text (:symmetry-ratio pose)))))
+
 (defn- propose-symmetry-plane!
   "Part 4: teleport the plane to the current piece's first verified symmetry plane;
    repeated presses cycle the candidates. symmetry-planes is cached per piece
    (immutable) and computed the first time behind a visible 'computing' state (the
-   ~250-450 ms would otherwise freeze silently). No planes → a note, no move."
+   ~250-450 ms would otherwise freeze silently). Each teleport announces the plane's
+   symmetry level (exact vs 'quasi'). No planes → a note, no move."
   []
   (let [cur (current-id)
         cached (get-in @session [:symmetry-cache cur])]
     (if cached
       (let [planes (:planes cached)]
         (if (empty? planes)
-          (state/capture-println "edit-mesh-split: no symmetry plane on this piece")
+          (set-status-message! (:reason (:symmetry (gesture-availability @session))))
           (let [idx (mod (inc (:index cached)) (count planes))]
             (swap! session assoc-in [:symmetry-cache cur :index] idx)
             (teleport-plane-to! (nth planes idx))
-            (recompute!))))
+            (recompute!)
+            (announce-symmetry-plane! (nth planes idx) idx (count planes)))))
       (do
         (swap! session assoc :symmetry-pending? true)
         (update-panel-display!)
@@ -565,15 +617,15 @@
                (swap! session assoc-in [:symmetry-cache cur] {:planes planes :index 0})
                (swap! session assoc :symmetry-pending? false)
                (if (empty? planes)
-                 (do (update-panel-display!)
-                     (state/capture-println "edit-mesh-split: no symmetry plane on this piece"))
-                 (do (teleport-plane-to! (first planes)) (recompute!))))))
+                 (set-status-message! (:reason (:symmetry (gesture-availability @session))))
+                 (do (teleport-plane-to! (first planes)) (recompute!)
+                     (announce-symmetry-plane! (first planes) 0 (count planes)))))))
          0)))))
 
 (defn- clear-mirror-badge!
   []
   (when-let [t (:mirror-timer @session)] (js/clearTimeout t))
-  (swap! session assoc :mirror-timer nil :mirror-confirmed? false :mirror-pending? false))
+  (swap! session assoc :mirror-timer nil :mirror-confirmed? false :mirror-ratio nil :mirror-pending? false))
 
 (defn- schedule-mirror-check!
   "Part 4 badge: the free volumetric gate runs per-tick; if it passes and the plane
@@ -595,9 +647,13 @@
                      (js/setTimeout
                       (fn []
                         (when (and @session (= cur (current-id)))
-                          (let [ok? (boolean (manifold/symmetric-about-plane?
-                                              (piece-mesh cur) (:heading pose) (:position pose)))]
-                            (swap! session assoc :mirror-confirmed? ok? :mirror-pending? false)
+                          ;; capture the RATIO (not just a boolean) so the badge can
+                          ;; show HOW symmetric — exact vs 'quasi' (Vincenzo's ask).
+                          (let [r (manifold/mirror-difference-ratio
+                                   (piece-mesh cur) (:heading pose) (:position pose))
+                                ok? (and (number? r) (<= r mirror-confirm-epsilon))]
+                            (swap! session assoc :mirror-confirmed? ok?
+                                   :mirror-ratio (when ok? r) :mirror-pending? false)
                             (update-panel-display!))))
                       0))
                    mirror-debounce-ms)]
@@ -618,6 +674,53 @@
       (let [twin (if (= cur (:behind g)) (:ahead g) (:behind g))]
         (when (seq (mtree/subtree-gestures tree twin))
           {:twin twin :normal (:heading (:pose g)) :point (:position (:pose g))})))))
+
+(defn- gesture-availability
+  "Single source of truth (addendum 3 Part A) for whether each session gesture can
+   act right now, and — when it can't — WHY. One map drives three surfaces at once:
+   every panel button's enabled/disabled state + tooltip, and the transient status
+   message a key press writes when its gesture can't act (so the keyboard twin of a
+   disabled button is never a silent no-op). Keys → {:enabled? bool :reason str}:
+     :separate :symmetry :mirror :undo :nav :reveal."
+  [s]
+  (let [tree (:tree s)
+        cur (:current tree)
+        cur-count (get-in tree [:pieces cur :count])
+        open (mtree/non-finished-leaves tree)
+        sym-cache (get-in s [:symmetry-cache cur])
+        twin (mirror-plane-twin)]
+    {:separate
+     (if (and cur-count (> cur-count 1))
+       {:enabled? true  :reason (str "separa questo pezzo in " cur-count " componenti")}
+       {:enabled? false :reason "questo pezzo è un solo componente — niente da separare"})
+     :symmetry
+     (cond
+       (:symmetry-pending? s)
+       {:enabled? false :reason "calcolo dei piani di simmetria in corso…"}
+       (and sym-cache (empty? (:planes sym-cache)))
+       {:enabled? false :reason "nessun piano di simmetria verificato su questo pezzo"}
+       sym-cache
+       {:enabled? true  :reason (str (count (:planes sym-cache)) " piani di simmetria — premi per ciclarli")}
+       :else
+       {:enabled? true  :reason "proponi un piano di simmetria (lo calcola sul pezzo corrente)"})
+     :mirror
+     (if twin
+       {:enabled? true  :reason "decomponi a specchio: replica la decomposizione del gemello, riflessa"}
+       {:enabled? false :reason "il gemello a specchio non è ancora decomposto (taglia sul piano di simmetria e decomponi una metà)"})
+     :undo
+     (if (seq (:log tree))
+       {:enabled? true  :reason "annulla l'ultimo gesto (taglio o separazione)"}
+       {:enabled? false :reason "nessun gesto da annullare"})
+     :nav
+     (if (> (count open) 1)
+       {:enabled? true  :reason "vai al prossimo / precedente pezzo aperto"}
+       {:enabled? false :reason (if (zero? (count open))
+                                  "tutti i pezzi sono finiti — niente da navigare"
+                                  "nessun altro pezzo aperto")})
+     :reveal
+     {:enabled? true :reason (if (:reveal-all? s)
+                               "torna al focus sul solo pezzo corrente"
+                               "mostra tutti i pezzi + etichette")}}))
 
 (defn- free-up
   "A unit vector perpendicular to heading — the free up for a reflected cut pose
@@ -669,19 +772,22 @@
                 (doseq [[cid cm] (map vector cids comps)] (store-piece! cid cm))
                 (swap! session assoc :tree tree')
                 (recur (rest gs) (merge pmap (zipmap (:components g) cids)))))))))
-    (state/capture-println "edit-mesh-split: no decomposed mirror twin for the current piece")))
+    (set-status-message! (:reason (:mirror (gesture-availability @session))))))
 
 (defn- cycle-current-piece!
   "Explicit, deterministic navigation over the OPEN pieces only (addendum Parte
    A): `dir` :next (n) or :prev (p), round-robin in DFS order, repositioning the
    plane onto the new current. The mouse never selects — it only moves the plane."
   [dir]
-  (let [old (current-id)
-        tree (mtree/cycle-current (:tree @session) dir)]
-    (when (not= (:current tree) old)
-      (swap! session assoc :tree tree)
-      (reposition-plane-for! (:current tree))
-      (recompute!))))
+  (let [avail (:nav (gesture-availability @session))]
+    (if-not (:enabled? avail)
+      (set-status-message! (:reason avail))   ; only the current piece is open → no silent no-op
+      (let [old (current-id)
+            tree (mtree/cycle-current (:tree @session) dir)]
+        (when (not= (:current tree) old)
+          (swap! session assoc :tree tree)
+          (reposition-plane-for! (:current tree))
+          (recompute!))))))
 
 (defn- toggle-reveal!
   "Reveal toggle (addendum Parte B): temporarily brings every piece back to full
@@ -700,13 +806,16 @@
 
 (defn- cleanup!
   []
-  (when-let [t (:mirror-timer @session)] (js/clearTimeout t))  ; Part 4 debounce timer
+  (when-let [t (:mirror-timer @session)] (js/clearTimeout t))       ; Part 4 debounce timer
+  (when-let [t (:status-msg-timer @session)] (js/clearTimeout t))   ; Part A message timer
   (free-all-manifolds!)   ; the single no-leak point — every session exit runs cleanup!
   (modal/unmount-panel! (:panel-el @session))
   (modal/remove-keydown! (:key-handler @session))
   (gizmo/close!)
   (viewport/set-turtle-source! :global)
-  (viewport/clear-world-labels!)
+  (viewport/clear-labels!)        ; addendum 3: reveal labels are billboards now
+  (viewport/clear-world-labels!)  ; also drop any legacy world-anchored labels
+  (viewport/show-user-geometry!)  ; restore the base composite hidden on enter!
   (viewport/clear-preview!))
 
 (defn- commit-session!
@@ -754,7 +863,7 @@
         (swap! session update :live-pose merge pose)
         (reposition-plane-for! (:current tree)))
       (recompute!))
-    (state/capture-println "edit-mesh-split: nothing to undo")))
+    (set-status-message! (:reason (:undo (gesture-availability @session))))))
 
 (defn cancel!
   "Esc: cancel everything unconditionally, emit nothing. No verbatim body
@@ -969,7 +1078,8 @@
               sym (cond
                     (:symmetry-pending? s) " · computing symmetry planes…"
                     (:mirror-pending? s)   " · checking mirror…"
-                    (:mirror-confirmed? s) " · ⟷ mirror plane (behind = ahead reflected)"
+                    (:mirror-confirmed? s) (str " · ⟷ " (symmetry-level-text (:mirror-ratio s))
+                                                " — behind = ahead riflesso")
                     :else "")]
           (set! (.-textContent status-el) (str base badge sym))))
       (when-let [vol-el (.querySelector panel ".ems-volumes")]
@@ -986,7 +1096,27 @@
       (when-let [cmd-el (.querySelector panel ".pilot-cmd-list")]
         (set! (.-textContent cmd-el)
               (str (count leaves) " pieces · " (count open) " open, "
-                   (- (count leaves) (count open)) " done"))))))
+                   (- (count leaves) (count open)) " done")))
+      ;; Transient no-op message (Part A): the reason a just-pressed key couldn't act.
+      (when-let [msg-el (.querySelector panel ".ems-message")]
+        (set! (.-textContent msg-el) (or (:status-message s) "")))
+      ;; Explicit per-gesture button state (Part A): enabled/disabled + a tooltip
+      ;; reason, from the same gesture-availability the keyboard no-op path reads —
+      ;; a disabled button announces its precondition before you even press.
+      (let [avail (gesture-availability s)
+            set-btn! (fn [selector {:keys [enabled? reason]}]
+                       (when-let [btn (.querySelector panel selector)]
+                         (set! (.-disabled btn) (not enabled?))
+                         (set! (.-title btn) reason)))]
+        (set-btn! ".ems-btn-sym"      (:symmetry avail))
+        (set-btn! ".ems-btn-mirror"   (:mirror avail))
+        (set-btn! ".ems-btn-separate" (:separate avail))
+        (set-btn! ".ems-prev"         (:nav avail))
+        (set-btn! ".ems-next"         (:nav avail))
+        (set-btn! ".pilot-btn-undo"   (:undo avail))
+        (when-let [rb (.querySelector panel ".ems-btn-reveal")]
+          (set! (.-title rb) (:reason (:reveal avail)))
+          (set! (.-textContent rb) (if (:reveal-all? s) "focus" "reveal")))))))
 
 (defn- create-panel!
   [mesh-name]
@@ -1000,11 +1130,23 @@
                "</div>"
                "<div class='pilot-commands ems-status'>Enter accepts this cut and continues</div>"
                "<div class='pilot-commands ems-volumes'>behind — · ahead —</div>"
+               ;; Transient no-op reason line (addendum 3 Part A) — empty until a key
+               ;; that can't act writes why; collapses again when cleared.
+               "<div class='ems-message'></div>"
                ;; Position line + explicit next/prev navigation (addendum Parte A/C)
                "<div class='pilot-commands ems-nav'>"
                "<button class='pilot-btn ems-prev'>◀ prev</button>"
                "<span class='ems-position'>piece —</span>"
                "<button class='pilot-btn ems-next'>next ▶</button>"
+               "</div>"
+               ;; Session-gesture buttons (addendum 3 Part A): every gesture the
+               ;; keyboard offers also has a discoverable button whose disabled state
+               ;; + tooltip announces its precondition. Labels double as the keymap.
+               "<div class='pilot-commands ems-gestures'>"
+               "<button class='pilot-btn ems-btn-sym'>⟷ symmetry (y)</button>"
+               "<button class='pilot-btn ems-btn-mirror'>mirror-halve (d)</button>"
+               "<button class='pilot-btn ems-btn-separate'>separate (s)</button>"
+               "<button class='pilot-btn ems-btn-reveal'>reveal (r)</button>"
                "</div>"
                "<div class='pilot-commands pilot-cmd-list'>(no cuts yet)</div>"
                "<div class='pilot-commands modal-help'>"
@@ -1013,10 +1155,11 @@
                "Shift+↑↓: u / tr · Gizmo: drag arrows/rings — the mouse only ever "
                "moves the cut plane, never selects a piece. "
                "TREE: cut the current piece; both halves become pieces of the tree. "
+               "Every gesture below also has a button above (disabled = the reason "
+               "it can't act right now). "
                "s: separate the current piece into its connected components (no plane). "
-               "n / p: next / previous open piece (buttons above) · "
-               "r: reveal all pieces + world-anchored name labels (re-orient), "
-               "press again for focus · "
+               "n / p: next / previous open piece · "
+               "r: reveal — show every piece + billboard name labels, press again for focus · "
                "y: propose/cycle the current piece's symmetry planes · "
                "d: mirror-decompose (replay a decomposed mirror-twin, reflected) · "
                "Enter: cut the current piece (or, when every piece is finished, commit) · "
@@ -1024,10 +1167,12 @@
                "Backspace: undo the last cut/separation (chronological, any branch) · "
                "Esc: cancel, emit nothing. "
                "Plane color: grey = no-op, gold = plane past the piece, blue = active cut. "
-               "Focus: the CURRENT piece is full (green/red halves + component badge); "
-               "other open pieces are faint context (no convexity tint); finished pieces "
-               "are grey wireframes. Cone points ahead (heading); Enter takes what's "
-               "behind it, like extrude (material trails behind)."
+               "Work view: ONLY the current piece (green/red halves + component badge) "
+               "and the cut plane are shown — n/p swap which piece is on screen. "
+               "Press r (reveal) to see every piece at once: open ones near-solid, "
+               "finished ones as grey wireframes, each with a camera-facing name label. "
+               "Cone points ahead (heading); Enter takes what's behind it, like extrude "
+               "(material trails behind)."
                "</div>"
                "<div class='pilot-buttons'>"
                "<button class='pilot-btn pilot-btn-undo'>Undo</button>"
@@ -1036,6 +1181,10 @@
                "</div>"))
     (.addEventListener (.querySelector panel ".ems-prev") "click" (fn [_] (cycle-current-piece! :prev)))
     (.addEventListener (.querySelector panel ".ems-next") "click" (fn [_] (cycle-current-piece! :next)))
+    (.addEventListener (.querySelector panel ".ems-btn-sym") "click" (fn [_] (propose-symmetry-plane!)))
+    (.addEventListener (.querySelector panel ".ems-btn-mirror") "click" (fn [_] (mirror-decompose!)))
+    (.addEventListener (.querySelector panel ".ems-btn-separate") "click" (fn [_] (separate!)))
+    (.addEventListener (.querySelector panel ".ems-btn-reveal") "click" (fn [_] (toggle-reveal!)))
     (.addEventListener (.querySelector panel ".pilot-btn-undo") "click" (fn [_] (undo!)))
     (.addEventListener (.querySelector panel ".pilot-btn-ok") "click" (fn [_] (accept-or-commit!)))
     (.addEventListener (.querySelector panel ".pilot-btn-cancel") "click" (fn [_] (cancel!)))
@@ -1170,6 +1319,13 @@
       (modal/install-keydown! handler))
     (let [panel (create-panel! (:source-expr @session))]
       (swap! session assoc :panel-el panel))
+    ;; Hide the evaluated base composite (the whole decomposition refresh-viewport!
+    ;; rendered before we entered): the modal's own preview is now the SOLE truth of
+    ;; the scene, so the work/reveal states control EXACTLY what is visible (addendum
+    ;; 3 Part B — "tutto il resto nascosto del tutto"). Restored on cleanup!/commit
+    ;; re-eval. Must run BEFORE gizmo/enter! and recompute!, both of which add their
+    ;; own (gizmo handles / preview) objects to world-group that must stay visible.
+    (viewport/hide-user-geometry!)
     ;; Drag gizmo — translate+rotate only (no stretch, a cut plane has no scale
     ;; gesture); on-commit reuses the same apply-gesture! path a keyboard press
     ;; already uses. :nudge-mesh? false: the drag must NEVER visibly move the cut

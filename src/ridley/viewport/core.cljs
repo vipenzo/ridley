@@ -2930,6 +2930,37 @@
   []
   @turtle-source)
 
+(defonce ^:private hidden-user-geometry (atom []))
+
+(defn hide-user-geometry!
+  "Make every current user mesh/line in world-group invisible (remembering them) —
+   for a modal whose own preview is the SOLE truth of what should be on screen
+   (edit-mesh-split's focus view). Without this the evaluated base composite — the
+   whole decomposition rendered by refresh-viewport! before the modal was entered —
+   shows through underneath the plane + current-piece preview. Grid, axes, turtle
+   indicator (Groups with those names — the grid's GridHelper is nested inside,
+   never a bare child) and the highlight group are kept, as are the preview objects
+   (added afterwards, so not yet present). Restore with show-user-geometry!; a full
+   re-eval (run-definitions!) also rebuilds fresh visible geometry, so the two exit
+   paths agree."
+  []
+  (when-let [{:keys [^js world-group ^js highlight-group]} @state]
+    (reset! hidden-user-geometry [])
+    (doseq [^js obj (.-children world-group)]
+      (when (and (.-visible obj)
+                 (not (#{"grid" "axes" "turtle-indicator"} (.-name obj)))
+                 (not (identical? obj highlight-group)))
+        (set! (.-visible obj) false)
+        (swap! hidden-user-geometry conj obj)))))
+
+(defn show-user-geometry!
+  "Undo hide-user-geometry! — re-show whatever it hid that still exists (harmless on
+   objects a later re-eval already detached)."
+  []
+  (doseq [^js obj @hidden-user-geometry]
+    (set! (.-visible obj) true))
+  (reset! hidden-user-geometry []))
+
 ;; ============================================================
 ;; Face normals visibility
 ;; ============================================================
