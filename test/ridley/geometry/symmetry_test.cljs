@@ -33,6 +33,25 @@
       (is (parallel? (nth vectors 1) [1 1 0]))
       (is (parallel? (nth vectors 2) [1 -1 0])))))
 
+(deftest jacobi-distinct-diagonal-with-offdiagonal
+  (testing "off-diagonal AND distinct diagonal entries (app≠aqq) — the case the
+            earlier tests missed: a wrong rotation-angle sign left this un-diagonalized
+            and returned tilted-garbage axes on axis-aligned CAD parts"
+    ;; [[6 2 0][2 3 0][0 0 1]] → 2×2 block [[6 2][2 3]] has eigenvalues 7,2 (vectors
+    ;; (2,1) and (1,-2)); with the z-row → 7,2,1.
+    (let [{:keys [values vectors]} (sym/jacobi-eigen-3x3 [[6 2 0] [2 3 0] [0 0 1]])]
+      (is (h/vec-approx= [7.0 2.0 1.0] values 1e-6))
+      (is (parallel? (nth vectors 0) [2 1 0]))
+      (is (parallel? (nth vectors 1) [1 -2 0]))
+      (is (parallel? (nth vectors 2) [0 0 1]))))
+  (testing "a nearly-diagonal matrix (real covariance shape) barely rotates —
+            eigenvalues ≈ the diagonal, axes ≈ axis-aligned"
+    (let [{:keys [values vectors]} (sym/jacobi-eigen-3x3 [[50 0.1 0.2] [0.1 60 0.05] [0.2 0.05 13]])]
+      (is (h/vec-approx= [60.0 50.0 13.0] values 0.2))
+      (is (parallel? (nth vectors 0) [0 1 0]))
+      (is (parallel? (nth vectors 1) [1 0 0]))
+      (is (parallel? (nth vectors 2) [0 0 1])))))
+
 ;; ── area-weighted moments: triangulation invariance (B7) ────
 
 (def ^:private quad-2tri

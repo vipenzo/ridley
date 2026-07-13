@@ -401,6 +401,8 @@
    'slice-mesh          impl/implicit-slice-mesh
    'project-mesh        impl/implicit-project-mesh
    'slice-at-plane      impl/implicit-slice-at-plane
+   'section-area        impl/implicit-section-area
+   'cut-candidates      impl/implicit-cut-candidates
    'mesh-split          impl/implicit-mesh-split
    'split-parts         manifold/split-parts
    'mesh-components     manifold/mesh-components

@@ -13,7 +13,8 @@
    Uses manifold-3d v3.0 loaded from CDN as an ES module."
   (:require [ridley.schema :as schema]
             [ridley.sdf.core :as sdf]
-            [ridley.geometry.symmetry :as symmetry]))
+            [ridley.geometry.symmetry :as symmetry]
+            [ridley.geometry.cut-candidates :as cut-cand]))
 
 ;; Manifold WASM module state
 (defonce ^:private manifold-state (atom nil))
@@ -881,23 +882,36 @@
        (when-let [r (mirror-ratio ridley-mesh normal point)]
          (<= r epsilon))))))
 
+(defn mirror-difference-ratio
+  "The symmetric-difference ratio of `ridley-mesh` about the plane {x : normal·(x−point)=0}
+   — 0 for an exact mirror, ~2·(asymmetric fraction of a half) otherwise, js/Infinity when
+   the free volumetric gate rejects it (unequal halves), nil on a degenerate/failed
+   computation. The number that backs symmetric-about-plane?/symmetry-planes' verdict,
+   exposed so a caller can show HOW symmetric a plane is (exact vs 'quasi'), not just
+   whether. Same cost as symmetric-about-plane? — on-demand, never per-keystroke."
+  [ridley-mesh normal point]
+  (mirror-ratio (sdf/ensure-mesh ridley-mesh) normal point))
+
 (defn symmetry-planes
   "Verified mirror-symmetry planes of a mesh (brief Part 3), as a vector of poses
-   {:position :heading :up} (heading = plane normal, ready for goto/mark), ordered
-   by quality (symmetric-difference ratio ascending). A pure function of the mesh:
-   area-weighted-PCA candidates (ridley.geometry.symmetry, tessellation-invariant —
-   B7) with a degenerate-eigenvalue bbox fallback, each VERIFIED by the B6 cascade;
-   only the promoted are returned (contract: verified planes only). Empty/degenerate
-   mesh → []. Cost ~250–450 ms: on-demand."
+   {:position :heading :up :symmetry-ratio r} (heading = plane normal, ready for
+   goto/mark; the extra :symmetry-ratio is the symmetric-difference fraction — 0 for
+   an exact mirror, up to `epsilon` — so a caller can show HOW symmetric a plane is,
+   e.g. a part that's mirror EXCEPT a small internal feature registers with a small
+   non-zero ratio). Ordered by quality (ratio ascending). A pure function of the
+   mesh: bbox-axis + area-weighted-PCA candidates (ridley.geometry.symmetry,
+   tessellation-invariant — B7), each VERIFIED by the B6 cascade; only the promoted
+   are returned (contract: verified planes only). Empty/degenerate mesh → []. Cost
+   ~250–450 ms: on-demand."
   ([ridley-mesh] (symmetry-planes ridley-mesh default-mirror-epsilon))
   ([ridley-mesh epsilon]
    (let [ridley-mesh (sdf/ensure-mesh ridley-mesh)]
      (->> (symmetry/candidate-planes ridley-mesh)
           (keep (fn [{:keys [heading position] :as pose}]
                   (when-let [r (mirror-ratio ridley-mesh heading position)]
-                    (when (<= r epsilon) (assoc pose ::ratio r)))))
-          (sort-by ::ratio)
-          (mapv #(dissoc % ::ratio))))))
+                    (when (<= r epsilon) (assoc pose :symmetry-ratio r)))))
+          (sort-by :symmetry-ratio)
+          vec))))
 
 ;; ============================================================
 ;; Smoothing & refinement (Manifold tangent-based subdivision)
@@ -1276,6 +1290,121 @@
          (catch :default e
            (js/console.error "slice-at-plane failed:" e)
            nil))))))
+
+;; ============================================================
+;; Cut candidates — section-area reader + translation generator
+;; (dev-docs/brief-cut-candidates.md Parts 1-2; accertamento fase 2 B1/B2/B3/B5).
+;; The pure, tessellation-exact parts (vertex offsets, coplanar-face steps, profile
+;; minima) live in ridley.geometry.cut-candidates; THIS is the WASM orchestration —
+;; native CrossSection .area() and the B2 keep-alive (convert once, slice many).
+;; ============================================================
+
+(defn- transformed-manifold
+  "A live Manifold with `ridley-mesh` moved into the plane frame (point→origin,
+   normal→+Z, right→+X, up→+Y), built ONCE so the caller can `.slice(z).area()` at
+   many z cheaply (B2: the ~8ms mesh→manifold conversion is the whole cost, so pay it
+   once). In this frame a plane at signed offset o along `normal` from `point` is
+   Z=o. Caller MUST `.delete` the result. nil if conversion fails."
+  [ridley-mesh [nx ny nz] [px py pz] [rx ry rz] [ux uy uz]]
+  (let [xform (fn [[vx vy vz]]
+                (let [dx (- vx px) dy (- vy py) dz (- vz pz)]
+                  [(+ (* rx dx) (* ry dy) (* rz dz))
+                   (+ (* ux dx) (* uy dy) (* uz dz))
+                   (+ (* nx dx) (* ny dy) (* nz dz))]))]
+    (mesh->manifold (-> ridley-mesh
+                        (assoc :vertices (mapv xform (:vertices ridley-mesh)))
+                        (dissoc ::manifold-cache ::raw-arrays)))))
+
+(defn section-area
+  "Area of the cross-section of `ridley-mesh` with the plane {point, normal} — the
+   perceptual signal the cut-candidate profile is built from (brief Part 1), via
+   Manifold's native CrossSection `.area()` (B1). A plane that misses the mesh → 0
+   (documented). Reader of the bounds/area family; accepts a mesh or an SDF node."
+  [ridley-mesh normal point]
+  (or (when (get-manifold-class)
+        (let [mesh (sdf/ensure-mesh ridley-mesh)]
+          (when (and (:vertices mesh) (seq (:faces mesh)))
+            (let [[right up _] (compute-basis normal)]
+              (when-let [^js m (transformed-manifold mesh normal point right up)]
+                (try
+                  (let [^js cs (.slice m 0)
+                        a (.area cs)]
+                    (.delete cs) (.delete m)
+                    a)
+                  (catch :default e
+                    (js/console.error "section-area failed:" e)
+                    (.delete m)
+                    0)))))))
+      0))
+
+(defn translation-profile
+  "Sample the section area A(offset) as `ridley-mesh` is swept along `heading` from
+   `point`, over the vertex offset-range, at `samples` points (ascending). Converts
+   once, slices many (B2, ~0.04 ms/sample). Returns [{:offset o :area a} …], or []
+   for an empty mesh / failed conversion. Feeds the neck detector and the panel
+   strip (Part 4). The in-plane basis is compute-basis's own orthonormal right/up —
+   area is rotation-invariant in the plane, so the caller's `up` is irrelevant here
+   (and mixing it with compute-basis's `right` would skew the transform)."
+  [ridley-mesh heading point samples]
+  (or (when (get-manifold-class)
+        (let [mesh (sdf/ensure-mesh ridley-mesh)]
+          (when-let [[o-min o-max] (and (seq (:vertices mesh))
+                                        (cut-cand/offset-range (:vertices mesh) heading point))]
+            (let [[right up _] (compute-basis heading)]
+              (when-let [^js m (transformed-manifold mesh heading point right up)]
+                (try
+                  (let [span (- o-max o-min)
+                        n (max 2 samples)
+                        out (mapv (fn [i]
+                                    (let [o (+ o-min (* (/ i (dec n)) span))
+                                          ^js cs (.slice m o)
+                                          a (.area cs)]
+                                      (.delete cs)
+                                      {:offset o :area a}))
+                                  (range n))]
+                    (.delete m)
+                    out)
+                  (catch :default e
+                    (js/console.error "translation-profile failed:" e)
+                    (.delete m)
+                    [])))))))
+      []))
+
+(defn cut-candidates
+  "Cut-candidate poses for `ridley-mesh` at a pose (brief Part 2), a PURE function of
+   (mesh, pose, opts) — no session state (B5); the DSL wrapper reads the turtle to
+   fill the pose. opts:
+     :mode      :translation (default; rotation arrives next increment)
+     :heading :position :up   the current pose (required in :translation)
+     :tolerance 0.1   dedup for coplanar step offsets (mm)
+     :angle-tol 1.0   how ∥ to heading a face normal must be to count as a step (deg)
+     :samples   96    profile samples for neck detection
+     :min-neck-depth   valley-depth floor (default 1% of the profile's peak area)
+   Returns [{:pose {:position :heading :up} :kind :step|:neck :salience n} …] sorted
+   by salience DESCENDING (B3: off-axis meshes have hundreds of candidates; the caller
+   filters by salience). Translation: exact coplanar-face STEPs (|ΔA|) + sampled
+   local-minimum NECKs."
+  [ridley-mesh {:keys [mode heading position up tolerance angle-tol samples min-neck-depth]
+                :or {mode :translation tolerance 0.1 angle-tol 1.0 samples 96}}]
+  (case mode
+    :translation
+    (let [mesh (sdf/ensure-mesh ridley-mesh)
+          steps (cut-cand/step-candidates mesh heading position
+                                          {:tol tolerance :angle-tol angle-tol})
+          profile (translation-profile mesh heading position samples)
+          peak (reduce max 0.0 (map :area profile))
+          necks (cut-cand/profile-minima profile (or min-neck-depth (* 0.01 peak)))
+          ->cand (fn [kind {:keys [offset salience]}]
+                   {:pose (cut-cand/offset->pose offset heading up position)
+                    :kind kind :salience salience})]
+      (->> (concat (map (partial ->cand :step) steps)
+                   (map (partial ->cand :neck) necks))
+           (sort-by :salience >)
+           vec))
+    :rotation
+    (throw (js/Error. (str "cut-candidates: :rotation mode arriva nel prossimo "
+                           "incremento — per ora solo :translation")))
+    (throw (js/Error. (str "cut-candidates: :mode sconosciuto " (pr-str mode))))))
 
 (defn ^:export project-at-plane
   "Project a mesh onto an arbitrary plane, returning the silhouette outline.

@@ -801,6 +801,31 @@
    (let [mesh (resolve-to-mesh mesh-or-name-or-sdf)]
      (mirror-shapes-x (manifold/slice-at-plane mesh normal point right up)))))
 
+(defn ^:export implicit-section-area
+  "Area of the cross-section of a mesh at the plane through the turtle's current
+   position with the turtle's heading as the plane normal (brief-cut-candidates
+   Part 1). A plane that misses the mesh → 0. Accepts a mesh map, a keyword
+   (registered mesh name), or an SDF node (auto-materialized)."
+  [mesh-or-name-or-sdf]
+  (let [mesh (resolve-to-mesh mesh-or-name-or-sdf)
+        [pos heading _ _] (turtle-plane-basis)]
+    (manifold/section-area mesh heading pos)))
+
+(defn ^:export implicit-cut-candidates
+  "Cut-candidate poses for a mesh at the turtle's current pose (brief-cut-candidates
+   Part 2), for the interactive tool AND scripts. `(cut-candidates mesh)` → the
+   translation candidates along the heading; `(cut-candidates mesh {:mode :rotation
+   :axis :up})` → rotational (next increment). Returns [{:pose :kind :salience} …]
+   sorted by salience descending — the pose (heading/position/up) is read from the
+   turtle, opts override the rest (tolerance/angle-tol/samples). The generator itself
+   is pure (ridley.manifold.core/cut-candidates); this only fills the pose from the
+   turtle. Accepts a mesh, a keyword, or an SDF node."
+  ([mesh-or-name-or-sdf] (implicit-cut-candidates mesh-or-name-or-sdf {}))
+  ([mesh-or-name-or-sdf opts]
+   (let [mesh (resolve-to-mesh mesh-or-name-or-sdf)
+         [pos heading up _] (turtle-plane-basis)]
+     (manifold/cut-candidates mesh (merge {:heading heading :position pos :up up} opts)))))
+
 (defn ^:export implicit-project-mesh
   "Project a mesh onto the plane orthogonal to the turtle's heading,
    returning the silhouette outline as a vector of 2D shapes (X = turtle right,

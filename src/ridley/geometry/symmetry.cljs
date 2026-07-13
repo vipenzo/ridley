@@ -106,7 +106,15 @@
         (let [apq (at A p q)]
           (when (> (js/Math.abs apq) 1e-15)
             (let [app (at A p p) aqq (at A q q)
-                  theta (* 0.5 (js/Math.atan2 (* 2.0 apq) (- app aqq)))
+                  ;; θ that zeroes A_pq under JᵀAJ with J = [[c s][-s c]] (the
+                  ;; convention the column/row updates below implement) is
+                  ;; ½·atan2(2·a_pq, a_qq−a_pp). The second arg is a_qq−a_pp, NOT
+                  ;; a_pp−a_qq: with the sign flipped a near-diagonal matrix (tiny
+                  ;; a_pq, large a_pp−a_qq) rotated by ~90° — swapping axes and
+                  ;; NEGATING a_pq instead of zeroing it — so the sweep never
+                  ;; converged and the "principal axes" came out as tilted garbage
+                  ;; (symmetry-planes then found nothing on axis-aligned CAD parts).
+                  theta (* 0.5 (js/Math.atan2 (* 2.0 apq) (- aqq app)))
                   c (js/Math.cos theta) s (js/Math.sin theta)]
               ;; A ← A·J (rotate columns p,q)
               (dotimes [i 3]
@@ -155,36 +163,27 @@
   (let [h (normalize normal)]
     {:position (vec point) :heading h :up (perp h)}))
 
-(def ^:private degenerate-ratio
-  "Two principal eigenvalues counted as degenerate when their ratio exceeds this
-   (a square/N-fold object: the axes in that subspace are arbitrary)."
-  0.85)
-
 (defn candidate-planes
-  "Up to a handful of candidate mirror-plane poses for `mesh` (Part 3): one per
-   area-weighted principal axis (plane through the weighted centroid, normal =
-   axis). When two eigenvalues are near-degenerate (a square/N-fold object, whose
-   PCA axes in the tied subspace are arbitrary and would spuriously fail the
-   verification even though the planes exist), ALSO adds bounding-box-axis-aligned
-   candidates through the same centroid. Poses only — verification is the caller's
-   (B6). Returns [] for a degenerate (zero-area) mesh."
+  "A handful of candidate mirror-plane poses for `mesh` (Part 3), through the
+   area-weighted centroid, for the caller (B6) to verify. TWO families, bbox first:
+     • the three bounding-box axes (X/Y/Z) — real CAD parts are axis-aligned and
+       only APPROXIMATELY symmetric, so the exact axis plane verifies where a PCA
+       axis tilted even ~0.2° by minor asymmetric detail spuriously fails (its
+       symmetric-difference ratio can double). Always included.
+     • the three area-weighted principal axes — catches genuinely off-axis symmetry
+       a bbox axis would miss.
+   bbox is listed first so the dedup (drops a normal within |dot|>0.999 of one
+   already kept) prefers the EXACT axis over a near-parallel tilted PCA axis. Poses
+   only. Returns [] for a degenerate (zero-area) mesh."
   [mesh]
-  (if-let [{:keys [centroid axes values]} (principal-frame mesh)]
-    (let [[l0 l1 l2] values
-          ratio (fn [a b] (if (> (max (js/Math.abs a) (js/Math.abs b)) 1e-12)
-                            (/ (min (js/Math.abs a) (js/Math.abs b))
-                               (max (js/Math.abs a) (js/Math.abs b)))
-                            1.0))
-          degenerate? (or (> (ratio l0 l1) degenerate-ratio)
-                          (> (ratio l1 l2) degenerate-ratio))
-          pca (map #(plane-pose centroid %) axes)
-          bbox (when degenerate?
-                 (map #(plane-pose centroid %) [[1 0 0] [0 1 0] [0 0 1]]))
-          ;; dedup near-parallel normals (|dot| ~ 1)
+  (if-let [{:keys [centroid axes]} (principal-frame mesh)]
+    (let [bbox (map #(plane-pose centroid %) [[1 0 0] [0 1 0] [0 0 1]])
+          pca  (map #(plane-pose centroid %) axes)
+          ;; dedup near-parallel normals (|dot| ~ 1), keeping the first (bbox) seen
           dedup (fn [poses]
                   (reduce (fn [acc p]
                             (if (some #(> (js/Math.abs (dot (:heading %) (:heading p))) 0.999) acc)
                               acc (conj acc p)))
                           [] poses))]
-      (dedup (concat pca bbox)))
+      (dedup (concat bbox pca)))
     []))
