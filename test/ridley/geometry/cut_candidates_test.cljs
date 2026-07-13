@@ -93,3 +93,85 @@
       (is (h/approx= 400.0 (:salience (first steps)) 1e-6) "20×20 face area")))
   (testing "a centred box has no rotation step about an axis through its centre"
     (is (empty? (cc/rotation-step-candidates (prim/box-mesh 20 20 20) [0 0 1] [0 0 0] [0 1 0] {})))))
+
+;; ── reflex (dev-docs/brief-cut-candidates-reflex.md) ──
+;; Test meshes are built by hand (no WASM/CSG): an L-shaped prism has exactly one
+;; reflex edge — the vertical edge at the inner corner (1,1), interior angle 270° →
+;; excess π/2 — whose two walls' planes (x=1, y=1) are the two candidates.
+
+(defn- l-prism
+  "An L-cross-section prism (inner reflex corner at (1,1)) extruded z∈[0,h], the whole
+   thing offset by [dx dy dz]. Vertices 0-5 bottom (z=0), 6-11 top (z=h), CCW so every
+   outward normal points away from the solid. One reflex edge: the vertical (3,9) at
+   (1+dx, 1+dy)."
+  ([h] (l-prism h [0 0 0]))
+  ([h [dx dy dz]]
+   (let [xy [[0 0] [2 0] [2 1] [1 1] [1 2] [0 2]]
+         v (fn [[x y] z] [(+ x dx) (+ y dy) (+ z dz)])
+         bottom (mapv #(v % 0) xy)
+         top (mapv #(v % h) xy)
+         walls (mapcat (fn [i] (let [n (mod (inc i) 6)]
+                                 [[i n (+ n 6)] [i (+ n 6) (+ i 6)]]))
+                       (range 6))]
+     {:vertices (vec (concat bottom top))
+      :faces (vec (concat [[0 2 1] [0 3 2] [0 4 3] [0 5 4]]        ; bottom cap (−Z)
+                          [[6 7 8] [6 8 9] [6 9 10] [6 10 11]]     ; top cap (+Z)
+                          walls))})))
+
+(defn- merge-meshes
+  "Concatenate meshes into one face list, index-offsetting each so they stay disjoint."
+  [& meshes]
+  (reduce (fn [{va :vertices fa :faces} {vb :vertices fb :faces}]
+            (let [o (count va)]
+              {:vertices (vec (concat va vb))
+               :faces (vec (concat fa (mapv (fn [[i j k]] [(+ i o) (+ j o) (+ k o)]) fb)))}))
+          meshes))
+
+(deftest reflex-candidates-l-prism
+  (testing "an L-prism yields its two interior planes (x=1, y=1), each salience =
+            edge-length × angle-excess = h · π/2, ranked by that mass, kind :reflex"
+    (let [h 4.0
+          cands (cc/reflex-candidates (l-prism h))
+          headings (set (map (comp :heading :pose) cands))]
+      (is (= 2 (count cands)) "exactly two clusters — the two adjacent face-planes")
+      (is (every? #(= :reflex (:kind %)) cands))
+      (is (every? #(h/approx= (* h (/ js/Math.PI 2)) (:salience %) 1e-9) cands)
+          "salience = h·(π/2): length h × excess π/2 (interior 270°)")
+      (is (>= (:salience (first cands)) (:salience (last cands))) "sorted by salience desc")
+      ;; the two candidate normals are the two wall outward normals +X and +Y
+      (is (some #(h/vec-approx= [1 0 0] % 1e-9) headings) "the x=1 plane (normal +X)")
+      (is (some #(h/vec-approx= [0 1 0] % 1e-9) headings) "the y=1 plane (normal +Y)")
+      ;; position projects the concavity's midpoint onto each plane: (1,1,h/2)
+      (is (every? #(h/vec-approx= [1 1 (/ h 2)] (:position (:pose %)) 1e-9) cands)
+          "position lands on the plane, at the reflex edge's mid-height"))))
+
+(deftest reflex-candidates-convex-is-empty
+  (testing "a convex box has no reflex edges → []"
+    (is (= [] (cc/reflex-candidates (prim/box-mesh 30 20 10))))
+    (is (= [] (cc/reflex-candidates (prim/box-mesh 5))))))
+
+(deftest reflex-candidates-pure
+  (testing "identical input → identical output (B5)"
+    (let [m (l-prism 3.0)]
+      (is (= (cc/reflex-candidates m) (cc/reflex-candidates m))))))
+
+(deftest reflex-candidates-salience-ranks-by-mass
+  (testing "two L-prisms, one taller: its planes outrank the shorter's (length weight)"
+    ;; the shorter prism is offset in x AND y so its planes don't share an offset with
+    ;; the tall one (a shared y=1 plane would cluster the two together)
+    (let [tall (l-prism 6.0 [0 0 0])
+          short (l-prism 2.0 [10 5 0])
+          cands (cc/reflex-candidates (merge-meshes tall short))]
+      (is (= 4 (count cands)) "two planes from each prism, none shared")
+      (is (h/approx= (* 6.0 (/ js/Math.PI 2)) (:salience (nth cands 0)) 1e-9))
+      (is (h/approx= (* 6.0 (/ js/Math.PI 2)) (:salience (nth cands 1)) 1e-9))
+      (is (h/approx= (* 2.0 (/ js/Math.PI 2)) (:salience (nth cands 2)) 1e-9))
+      (is (h/approx= (* 2.0 (/ js/Math.PI 2)) (:salience (nth cands 3)) 1e-9))
+      (is (every? #(< (nth (:position (:pose %)) 0) 5) (take 2 cands))
+          "the top-two candidates sit at the tall prism (x≈1), not the short one (x≈11)"))))
+
+(deftest reflex-tol-gates-on-excess
+  (testing "raising :reflex-tol above the edge's angle-excess (π/2 = 90°) drops it"
+    (let [m (l-prism 4.0)]
+      (is (= 2 (count (cc/reflex-candidates m {:reflex-tol 89.0}))) "just under 90° — kept")
+      (is (= [] (cc/reflex-candidates m {:reflex-tol 91.0})) "just over 90° — filtered as near-flat"))))

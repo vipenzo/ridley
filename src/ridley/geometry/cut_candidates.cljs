@@ -5,8 +5,10 @@
    namespace owns the tessellation-exact, WASM-free parts — vertex-projection
    offsets, coplanar-face STEP detection (|ΔA| read DIRECTLY from the mesh, exact
    and free — B1/B3, not by sampling which would smooth thin steps away), and
-   local-minima NECK detection on an already-sampled profile. All pure,
-   node-testable.
+   local-minima NECK detection on an already-sampled profile. It also owns the
+   :reflex generator (dev-docs/brief-cut-candidates-reflex.md) — candidates from a
+   mesh's reflex (concave, dihedral > 180°) edges, clustered per candidate plane
+   (refinement-invariant, B4) and ranked by concavity mass. All pure, node-testable.
 
    Convention: the sweep is a translation along `heading`; a candidate's `:offset`
    is signed distance from `point` along `heading` ((v−point)·heading), so offset 0
@@ -21,6 +23,7 @@
 (defn- cross [[ax ay az] [bx by bz]]
   [(- (* ay bz) (* az by)) (- (* az bx) (* ax bz)) (- (* ax by) (* ay bx))])
 (defn- mag [v] (js/Math.sqrt (dot v v)))
+(defn- normalize [v] (let [m (mag v)] (if (> m 1e-12) (v* v (/ 1.0 m)) nil)))
 
 (defn- tri-normal-area
   "[unit-normal area] of triangle a,b,c — [nil 0] for a degenerate (zero-area) tri."
@@ -199,3 +202,138 @@
                          (conj out {:offset (:offset (nth v mid)) :salience depth})
                          out)))
               (recur (inc j) out))))))))
+
+;; ── reflex-edge candidates (dev-docs/brief-cut-candidates-reflex.md) ─────────
+;; The third generator: propose cuts where the CONCAVITY lives. A mesh's reflex
+;; edges (dihedral > 180°) are thousands on tessellated fillets, but clustering
+;; their two face-planes per candidate plane is refinement-invariant (B4) and
+;; collapses them to tens; ranking by concavity mass (Σ length × angle-excess)
+;; floats the cuts that resolve real concavity and sinks fillet-crumb clusters.
+;; Unlike step/neck this reads NO turtle pose — the candidates are complete poses
+;; sparse in space (orientation + position together), so the interaction is
+;; propose-and-cycle by salience, not next-event along a DOF.
+
+(defn- deg->rad [d] (* d (/ js/Math.PI 180.0)))
+
+(defn- face-normal [vertices [i j k]]
+  (first (tri-normal-area (nth vertices i) (nth vertices j) (nth vertices k))))
+
+(defn- edge-key [a b] (if (< a b) [a b] [b a]))
+
+(defn- build-edge-map
+  "edge-key {min max} → vector of {:n face-normal :opp opposite-vertex-index} for the
+   faces on that edge. A manifold edge has exactly two; degenerate (nil-normal) faces
+   are skipped so their edges may end up with fewer."
+  [vertices faces]
+  (reduce (fn [m [i j k :as f]]
+            (if-let [n (face-normal vertices f)]
+              (-> m
+                  (update (edge-key i j) (fnil conj []) {:n n :opp k})
+                  (update (edge-key j k) (fnil conj []) {:n n :opp i})
+                  (update (edge-key k i) (fnil conj []) {:n n :opp j}))
+              m))
+          {} faces))
+
+(defn- reflex-edge-candidates
+  "The two plane-candidates of edge {va,vb} shared by faces `fa`,`fb` — the planes of
+   the two adjacent faces — IF the edge is reflex (concave) by more than the reflex
+   tolerance (`reflex-cos` = cos(reflex-tol)). Concavity test: `fb`'s far vertex pokes
+   ABOVE `fa`'s outward plane (sign is winding-robust; a convex edge has it below).
+   The excess angle (θ−π, the concavity's sharpness) = acos(nA·nB) — near-flat
+   tessellation seams (excess < reflex-tol) are dropped. Each candidate carries the
+   edge weight w = length × excess and the edge midpoint. nil for a convex/flat edge."
+  [vertices va vb fa fb reflex-cos]
+  (let [pa (nth vertices va)
+        pb (nth vertices vb)
+        na (:n fa) nb (:n fb)
+        rb (nth vertices (:opp fb))
+        concave? (pos? (dot (v- rb pa) na))
+        cos-ab (max -1.0 (min 1.0 (dot na nb)))]
+    (when (and concave? (< cos-ab reflex-cos))
+      (let [excess (js/Math.acos cos-ab)
+            w (* (mag (v- pb pa)) excess)
+            mid (v* (v+ pa pb) 0.5)]
+        [{:n na :d (dot na pa) :w w :mid mid}
+         {:n nb :d (dot nb pa) :w w :mid mid}]))))
+
+(defn- accumulate-cluster
+  "Fold candidate `c` into a cluster's running accumulators (Σw, Σw·n, Σw·d, Σw·mid),
+   refreshing the cached representative plane (unit mean-normal, mean-offset)."
+  [cl {:keys [n d w mid]}]
+  (let [sw (+ (:sw cl) w)
+        swn (v+ (:swn cl) (v* n w))
+        swd (+ (:swd cl) (* d w))
+        swm (v+ (:swm cl) (v* mid w))]
+    {:sw sw :swn swn :swd swd :swm swm
+     :n (or (normalize swn) (:n cl)) :d (/ swd sw)}))
+
+(defn- cluster-planes
+  "Greedy plane-clustering of candidate planes (B4, refinement-invariant): each
+   candidate joins the existing cluster whose representative is nearest in normal
+   (dot > `cluster-cos`) AND within `offset-tol` in signed offset, else starts a new
+   one. O(n·k), n candidates × k clusters (k is tens even when n is thousands, which is
+   the whole point). Order-stable given deterministic face iteration."
+  [cands cluster-cos offset-tol]
+  (reduce
+   (fn [clusters c]
+     (let [best (reduce-kv
+                 (fn [b i cl]
+                   (let [s (dot (:n c) (:n cl))]
+                     (if (and (> s cluster-cos)
+                              (< (js/Math.abs (- (:d c) (:d cl))) offset-tol)
+                              (or (nil? b) (> s (:s b))))
+                       {:i i :s s} b)))
+                 nil clusters)]
+       (if best
+         (update clusters (:i best) accumulate-cluster c)
+         (conj clusters {:sw (:w c) :swn (v* (:n c) (:w c)) :swd (* (:d c) (:w c))
+                         :swm (v* (:mid c) (:w c)) :n (:n c) :d (:d c)}))))
+   [] cands))
+
+(defn- perp
+  "A deterministic unit vector ⊥ n — the free `up` of a reflex candidate pose (the
+   plane's orientation is fixed by its normal; up only spins the quad, brief 'up libero')."
+  [n]
+  (let [t (if (> (js/Math.abs (nth n 2)) 0.9) [1.0 0.0 0.0] [0.0 0.0 1.0])]
+    (or (normalize (cross n t)) [0.0 0.0 1.0])))
+
+(defn- cluster->candidate
+  "One cluster → a cut candidate. heading = the cluster's weighted mean outgoing face
+   normal; position = the weight-averaged edge midpoint projected onto the cluster
+   plane (lands the teleport ON the plane, next to the concavity, not at an arbitrary
+   far point); up free. salience = Σ length × angle-excess = the cluster's concavity mass."
+  [{:keys [sw swn swd swm]}]
+  (let [n (normalize swn)
+        d (/ swd sw)
+        ctr (v* swm (/ 1.0 sw))
+        pos (v- ctr (v* n (- (dot ctr n) d)))]
+    {:pose {:position pos :heading n :up (perp n)}
+     :kind :reflex
+     :salience sw}))
+
+(defn reflex-candidates
+  "Cut candidates from `mesh`'s reflex (concave) edges (brief-cut-candidates-reflex.md,
+   Part 1). PURE and pose-free: reads only the mesh (:vertices/:faces), never a turtle
+   pose. Each reflex edge (dihedral > 180° beyond `:reflex-tol`) offers two candidates —
+   its two adjacent face-planes; candidates are clustered per plane (normal within
+   `:cluster-angle-tol` deg, offset within `:tolerance` mm — refinement-invariant, B4)
+   and ranked by concavity mass. opts:
+     :reflex-tol        1.0  min reflex angle-excess (deg) — discards near-flat seams
+     :cluster-angle-tol 5.0  normals within this (deg) share a cluster
+     :tolerance         0.1  cluster offset tolerance (mm)
+   Returns [{:pose {:position :heading :up} :kind :reflex :salience Σlen·excess} …]
+   sorted by salience DESCENDING (the cuts that resolve the most concavity first, the
+   fillet-crumb clusters in the tail). A convex mesh has no reflex edges → []."
+  ([mesh] (reflex-candidates mesh {}))
+  ([{:keys [vertices faces]} {:keys [reflex-tol cluster-angle-tol tolerance]
+                              :or {reflex-tol 1.0 cluster-angle-tol 5.0 tolerance 0.1}}]
+   (let [reflex-cos (js/Math.cos (deg->rad reflex-tol))
+         cluster-cos (js/Math.cos (deg->rad cluster-angle-tol))
+         cands (->> (build-edge-map vertices faces)
+                    (mapcat (fn [[[va vb] fs]]
+                              (when (= 2 (count fs))
+                                (reflex-edge-candidates vertices va vb (first fs) (second fs) reflex-cos)))))]
+     (->> (cluster-planes cands cluster-cos tolerance)
+          (map cluster->candidate)
+          (sort-by :salience >)
+          vec))))

@@ -67,6 +67,8 @@
 ;;  :labeled-tree   ; the :tree identity the scene labels were last built for
 ;;  :symmetry-cache {piece-id {:planes […] :index i}}  ; Part 4: cached symmetry-planes
 ;;  :symmetry-pending? :mirror-gate? :mirror-pending? :mirror-confirmed? :mirror-timer  ; Part 4 badges
+;;  :reflex-cache {piece-id {:cands […] :index i}}     ; reflex brief: cached cut-candidates :reflex
+;;  :reflex-pending?  ; reflex brief: the piece's reflex-edge scan is running (propose-and-cycle, like symmetry)
 ;;  :edit-mesh-split-from/-to  ; char offsets of the marker in the editor
 ;;  :panel-el :key-handler :entered? :from-repl}
 
@@ -627,6 +629,53 @@
                      (announce-symmetry-plane! (first planes) 0 (count planes)))))))
          0)))))
 
+;; ── Reflex cut candidates (dev-docs/brief-cut-candidates-reflex.md) ──
+;; A third candidate species beside symmetry (y) and profile events ([ ]): cuts where
+;; the CONCAVITY lives. The candidates are complete poses sparse in space (orientation +
+;; position together), with no DOF to order them — so the interaction is propose-and-cycle
+;; by salience, IDENTICAL to y, not the next-event navigation of [ ].
+
+(defn- announce-reflex-cut!
+  "Transient status line when the plane teleports onto reflex candidate idx/n, naming
+   its concavity-mass salience so the cycle order (descending salience) is legible."
+  [cand idx n]
+  (set-status-message!
+   (str "taglio da concavità " (inc idx) "/" n " · salienza " (js/Math.round (:salience cand)))))
+
+(defn- propose-reflex-cut!
+  "Teleport the plane onto the current piece's most salient reflex-edge cut candidate;
+   repeated presses cycle by descending salience (reflex brief Part 2). The candidates
+   (manifold/cut-candidates :mode :reflex) are pose-free and pure, cached per piece
+   (immutable mesh) and computed the first time behind a visible pending state (a big
+   mesh's edge scan can stutter). A convex piece has no reflex edges → the disabled
+   reason, no move. Model identical to propose-symmetry-plane! (y)."
+  []
+  (let [cur (current-id)
+        cached (get-in @session [:reflex-cache cur])]
+    (if cached
+      (let [cands (:cands cached)]
+        (if (empty? cands)
+          (set-status-message! (:reason (:reflex (gesture-availability @session))))
+          (let [idx (mod (inc (:index cached)) (count cands))]
+            (swap! session assoc-in [:reflex-cache cur :index] idx)
+            (teleport-plane-to! (:pose (nth cands idx)))
+            (recompute!)
+            (announce-reflex-cut! (nth cands idx) idx (count cands)))))
+      (do
+        (swap! session assoc :reflex-pending? true)
+        (update-panel-display!)
+        (js/setTimeout
+         (fn []
+           (when (and @session (= cur (current-id)))
+             (let [cands (manifold/cut-candidates (piece-mesh cur) {:mode :reflex})]
+               (swap! session assoc-in [:reflex-cache cur] {:cands cands :index 0})
+               (swap! session assoc :reflex-pending? false)
+               (if (empty? cands)
+                 (set-status-message! (:reason (:reflex (gesture-availability @session))))
+                 (do (teleport-plane-to! (:pose (first cands))) (recompute!)
+                     (announce-reflex-cut! (first cands) 0 (count cands)))))))
+         0)))))
+
 (defn- clear-mirror-badge!
   []
   (when-let [t (:mirror-timer @session)] (js/clearTimeout t))
@@ -686,7 +735,7 @@
    every panel button's enabled/disabled state + tooltip, and the transient status
    message a key press writes when its gesture can't act (so the keyboard twin of a
    disabled button is never a silent no-op). Keys → {:enabled? bool :reason str}:
-     :separate :symmetry :mirror :undo :nav :reveal."
+     :separate :symmetry :reflex :mirror :undo :nav :reveal :cut-nav."
   [s]
   (let [tree (:tree s)
         cur (:current tree)
@@ -708,6 +757,17 @@
        {:enabled? true  :reason (str (count (:planes sym-cache)) " piani di simmetria — premi per ciclarli")}
        :else
        {:enabled? true  :reason "proponi un piano di simmetria (lo calcola sul pezzo corrente)"})
+     :reflex
+     (let [rc (get-in s [:reflex-cache cur])]
+       (cond
+         (:reflex-pending? s)
+         {:enabled? false :reason "calcolo dei candidati di concavità in corso…"}
+         (and rc (empty? (:cands rc)))
+         {:enabled? false :reason "nessuna concavità: il pezzo è convesso"}
+         rc
+         {:enabled? true  :reason (str (count (:cands rc)) " tagli dalla concavità — premi per ciclarli")}
+         :else
+         {:enabled? true  :reason "proponi un taglio dalla concavità (lo calcola sul pezzo corrente)"}))
      :mirror
      (if twin
        {:enabled? true  :reason "decomponi a specchio: replica la decomposizione del gemello, riflessa"}
@@ -1200,6 +1260,11 @@
         (and (= key "y") (not mod?))
         (do (.preventDefault e) (.stopPropagation e) (flush-digit-buffer!) (propose-symmetry-plane!))
 
+        ;; c: propose / cycle cut candidates from the piece's concavity — reflex edges
+        ;; (dev-docs/brief-cut-candidates-reflex.md); propose-and-cycle by salience, like y
+        (and (= key "c") (not mod?))
+        (do (.preventDefault e) (.stopPropagation e) (flush-digit-buffer!) (propose-reflex-cut!))
+
         ;; d: mirror-decompose — replay the twin's decomposition, reflected (Part 5)
         (and (= key "d") (not mod?))
         (do (.preventDefault e) (.stopPropagation e) (flush-digit-buffer!) (mirror-decompose!))
@@ -1314,6 +1379,7 @@
                          (set! (.-disabled btn) (not enabled?))
                          (set! (.-title btn) reason)))]
         (set-btn! ".ems-btn-sym"      (:symmetry avail))
+        (set-btn! ".ems-btn-reflex"   (:reflex avail))
         (set-btn! ".ems-btn-mirror"   (:mirror avail))
         (set-btn! ".ems-btn-separate" (:separate avail))
         (set-btn! ".ems-prev"         (:nav avail))
@@ -1353,6 +1419,7 @@
                ;; + tooltip announces its precondition. Labels double as the keymap.
                "<div class='pilot-commands ems-gestures'>"
                "<button class='pilot-btn ems-btn-sym'>⟷ symmetry (y)</button>"
+               "<button class='pilot-btn ems-btn-reflex'>⌐ concavity (c)</button>"
                "<button class='pilot-btn ems-btn-mirror'>mirror-halve (d)</button>"
                "<button class='pilot-btn ems-btn-separate'>separate (s)</button>"
                "<button class='pilot-btn ems-btn-reveal'>reveal (r)</button>"
@@ -1378,6 +1445,8 @@
                "n / p: next / previous open piece · "
                "r: reveal — show every piece + billboard name labels, press again for focus · "
                "y: propose/cycle the current piece's symmetry planes · "
+               "c: propose/cycle cut candidates from the piece's concavity (reflex "
+               "edges — disabled on a convex piece), ranked by concavity mass · "
                "d: mirror-decompose (replay a decomposed mirror-twin, reflected) · "
                "[ / ]: jump to the previous/next cut-candidate event of the section "
                "profile (step mode = translation, angle mode = rotation) — the strip "
@@ -1403,6 +1472,7 @@
     (.addEventListener (.querySelector panel ".ems-prev") "click" (fn [_] (cycle-current-piece! :prev)))
     (.addEventListener (.querySelector panel ".ems-next") "click" (fn [_] (cycle-current-piece! :next)))
     (.addEventListener (.querySelector panel ".ems-btn-sym") "click" (fn [_] (propose-symmetry-plane!)))
+    (.addEventListener (.querySelector panel ".ems-btn-reflex") "click" (fn [_] (propose-reflex-cut!)))
     (.addEventListener (.querySelector panel ".ems-btn-mirror") "click" (fn [_] (mirror-decompose!)))
     (.addEventListener (.querySelector panel ".ems-btn-separate") "click" (fn [_] (separate!)))
     (.addEventListener (.querySelector panel ".ems-btn-reveal") "click" (fn [_] (toggle-reveal!)))

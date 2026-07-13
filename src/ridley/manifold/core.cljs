@@ -1419,20 +1419,24 @@
   "Cut-candidate poses for `ridley-mesh` at a pose (brief Part 2), a PURE function of
    (mesh, pose, opts) — no session state (B5); the DSL wrapper reads the turtle to
    fill the pose. opts:
-     :mode      :translation (default) | :rotation
-     :heading :position :up   the current pose
+     :mode      :translation (default) | :rotation | :reflex
+     :heading :position :up   the current pose (ignored by :reflex — it reads only the mesh)
      :axis      :up (default) | :right   — rotation axis (:heading would not move the
                 plane → readable error)
-     :tolerance 0.1   dedup for coplanar step offsets (mm)
+     :tolerance 0.1   dedup for coplanar step offsets (mm); :reflex cluster offset tol
      :angle-tol 1.0   how ∥ to heading a face normal must be to count as a step (deg)
      :samples   96    profile samples
      :min-neck-depth   valley-depth floor (default 1% of the profile's peak area)
-   Returns [{:pose {:position :heading :up} :kind :step|:neck :salience n} …] sorted
-   by salience DESCENDING (B3: off-axis meshes have hundreds of candidates; the caller
-   filters by salience). Translation: exact coplanar-face STEPs (|ΔA|) + sampled
+     :reflex-tol :cluster-angle-tol   :reflex only (see cut-cand/reflex-candidates)
+   Returns [{:pose {:position :heading :up} :kind :step|:neck|:reflex :salience n} …]
+   sorted by salience DESCENDING (B3: off-axis meshes have hundreds of candidates; the
+   caller filters by salience). Translation: exact coplanar-face STEPs (|ΔA|) + sampled
    NECKs. Rotation: coplanar-through-axis STEPs (rare) + A(θ)-minimum NECKs (the
-   practical 'rotate to the thin section' signal)."
-  [ridley-mesh {:keys [mode heading position up axis tolerance angle-tol samples min-neck-depth]
+   practical 'rotate to the thin section' signal). Reflex: cuts where the concavity
+   lives — the clustered face-planes of the mesh's reflex edges, ranked by concavity
+   mass; a convex mesh → []."
+  [ridley-mesh {:keys [mode heading position up axis tolerance angle-tol samples min-neck-depth
+                       reflex-tol cluster-angle-tol]
                 :or {mode :translation axis :up tolerance 0.1 angle-tol 1.0 samples 96}}]
   (case mode
     :translation
@@ -1469,6 +1473,16 @@
                      (map (partial ->cand :neck) necks))
              (sort-by :salience >)
              vec)))
+    :reflex
+    ;; Pose-free (brief-cut-candidates-reflex.md): reads only the mesh. Pure CLJS, no
+    ;; WASM — the pure generator already returns complete {:pose :kind :salience}.
+    ;; cond-> so an absent opt falls through to reflex-candidates' own :or default
+    ;; (passing nil would defeat :or, which only fills ABSENT keys).
+    (cut-cand/reflex-candidates
+     (sdf/ensure-mesh ridley-mesh)
+     (cond-> {:tolerance tolerance}
+       reflex-tol        (assoc :reflex-tol reflex-tol)
+       cluster-angle-tol (assoc :cluster-angle-tol cluster-angle-tol)))
     (throw (js/Error. (str "cut-candidates: :mode sconosciuto " (pr-str mode))))))
 
 (defn ^:export project-at-plane

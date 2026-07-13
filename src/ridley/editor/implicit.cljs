@@ -815,11 +815,14 @@
   "Cut-candidate poses for a mesh at the turtle's current pose (brief-cut-candidates
    Part 2), for the interactive tool AND scripts. `(cut-candidates mesh)` → the
    translation candidates along the heading; `(cut-candidates mesh {:mode :rotation
-   :axis :up})` → rotational (next increment). Returns [{:pose :kind :salience} …]
-   sorted by salience descending — the pose (heading/position/up) is read from the
-   turtle, opts override the rest (tolerance/angle-tol/samples). The generator itself
-   is pure (ridley.manifold.core/cut-candidates); this only fills the pose from the
-   turtle. Accepts a mesh, a keyword, or an SDF node."
+   :axis :up})` → rotational; `(cut-candidates mesh {:mode :reflex})` → the cuts where
+   the concavity lives — the clustered face-planes of the mesh's reflex (concave) edges,
+   ranked by concavity mass (this mode reads ONLY the mesh, not the turtle pose; a
+   convex mesh → []). Returns [{:pose :kind :salience} …] sorted by salience descending
+   — for translation/rotation the pose (heading/position/up) is read from the turtle,
+   opts override the rest (tolerance/angle-tol/samples). The generator itself is pure
+   (ridley.manifold.core/cut-candidates); this only fills the pose from the turtle.
+   Accepts a mesh, a keyword, or an SDF node."
   ([mesh-or-name-or-sdf] (implicit-cut-candidates mesh-or-name-or-sdf {}))
   ([mesh-or-name-or-sdf opts]
    (let [mesh (resolve-to-mesh mesh-or-name-or-sdf)
