@@ -33,7 +33,8 @@
             [ridley.viewport.core :as viewport]))
 
 (declare cleanup! render! recompute! update-panel-display! schedule-mirror-check!
-         clear-mirror-badge! set-status-message! gesture-availability)
+         clear-mirror-badge! set-status-message! gesture-availability cut-frame-sig
+         cut-frame-ready ensure-cut-frame!)
 
 ;; ============================================================
 ;; State
@@ -277,7 +278,11 @@
              :last-drag-recompute (js/Date.now)
              :drag-recompute-cost-ms cost-ms)
       ;; Part 4 mirror badge: free gate now, debounced B6 confirm in the background.
-      (schedule-mirror-check! behind-vol ahead-vol)))
+      (schedule-mirror-check! behind-vol ahead-vol)
+      ;; Keep the cut-candidate strip current: recompute the frame only when its
+      ;; DEFINING axis changed (piece / heading in step mode / position in angle mode),
+      ;; a no-op while nudging the active DOF — so the common case pays nothing.
+      (ensure-cut-frame!)))
   (render!)
   (update-panel-display!))
 
@@ -720,7 +725,17 @@
      :reveal
      {:enabled? true :reason (if (:reveal-all? s)
                                "torna al focus sul solo pezzo corrente"
-                               "mostra tutti i pezzi + etichette")}}))
+                               "mostra tutti i pezzi + etichette")}
+     :cut-nav
+     (let [f (cut-frame-ready s)]
+       (cond
+         (:cut-pending? s) {:enabled? false :reason "calcolo dei candidati di rotazione…"}
+         (and f (empty? (:cands f)))
+         {:enabled? false :reason (str "nessun candidato di taglio in modo "
+                                       (if (= :angle (:digit-target s)) "rotazione" "traslazione"))}
+         :else
+         {:enabled? true :reason (str "salta al prossimo/precedente evento del profilo di sezione ("
+                                      (if (= :angle (:digit-target s)) "rotazione" "traslazione") ")")}))}))
 
 (defn- free-up
   "A unit vector perpendicular to heading — the free up for a reflected cut pose
@@ -774,6 +789,186 @@
                 (recur (rest gs) (merge pmap (zipmap (:components g) cids)))))))))
     (set-status-message! (:reason (:mirror (gesture-availability @session))))))
 
+;; ============================================================
+;; Cut candidates — "salta al prossimo evento" (dev-docs/brief-cut-candidates.md
+;; Part 3). Mode-sensitive: step mode (Tab→:step) → translation along the heading;
+;; angle mode → rotation about :up. Candidates + section-area profile are computed in
+;; a FIXED frame per (piece, mode, heading|position) and cached (:cut-frame) so
+;; navigation AND the panel strip (Part 4) share one computation; the live plane's DOF
+;; value is the marker. Translation is cheap (sync); rotation ~15x costlier (async,
+;; pending). :cut-frame holds only plain data (the WASM objects are freed inside the
+;; generator calls), so cleanup needs nothing.
+;; ============================================================
+
+(def ^:private cut-samples 96)
+
+(defn- cut-frame-sig
+  "Invalidation key for the cached cut-frame: piece + mode + the pose part that
+   DEFINES the frame (heading for translation, position for rotation — the OTHER part
+   is the DOF being explored). Rounded so float drift doesn't thrash the cache."
+  [s]
+  (let [{:keys [live-pose tree digit-target]} s
+        cur (:current tree)
+        r (fn [v] (mapv #(/ (js/Math.round (* 1000 %)) 1000.0) v))]
+    (if (= :angle digit-target)
+      [cur :rotation (r (:position live-pose)) :up]
+      [cur :translation (r (:heading live-pose))])))
+
+(def ^:private cut-rotation-debounce-ms 220)
+
+(defn- compute-cut-frame!
+  "Compute cut-candidates + profile for the current piece/mode in a fixed frame and
+   cache them (:cut-frame). Translation: through the bbox-centre along the live heading
+   (sync, cheap). Rotation: about :up through the live position, θ=0 at the live
+   heading — ~15x costlier, so DEBOUNCED behind :cut-pending? (the strip says
+   'computing'), never per drag-tick. Callers render; only the async completion
+   refreshes the panel itself."
+  [sig]
+  (let [{:keys [live-pose] :as s} @session
+        mesh (piece-mesh (:current (:tree s)))]
+    (if (= :rotation (second sig))
+      (do
+        (when-let [t (:cut-timer @session)] (js/clearTimeout t))
+        (swap! session assoc :cut-pending? true :cut-frame {:sig sig :mode :rotation :computing? true}
+               :cut-timer
+               (js/setTimeout
+                (fn []
+                  (when (and @session (= sig (cut-frame-sig @session)))
+                    (let [point (:position live-pose) ref-h (:heading live-pose) up (:up live-pose)]
+                      (swap! session assoc :cut-pending? false :cut-timer nil
+                             :cut-frame {:sig sig :mode :rotation :point point :ref-heading ref-h
+                                         :up up :axis-vec up
+                                         :cands (manifold/cut-candidates mesh {:mode :rotation :axis :up
+                                                                               :heading ref-h :position point
+                                                                               :up up :samples cut-samples})
+                                         :profile (manifold/rotation-profile mesh ref-h point up :up cut-samples)})
+                      (update-panel-display!))))
+                cut-rotation-debounce-ms)))
+      (let [point (bbox-center mesh) h (:heading live-pose) up (:up live-pose)]
+        (swap! session assoc :cut-pending? false
+               :cut-frame {:sig sig :mode :translation :point point :ref-heading h :up up :axis-vec h
+                           :cands (manifold/cut-candidates mesh {:mode :translation :heading h
+                                                                 :position point :up up :samples cut-samples})
+                           :profile (manifold/translation-profile mesh h point cut-samples)})))))
+
+(defn- ensure-cut-frame!
+  "Recompute the cached cut-frame if it no longer matches the current piece/mode/frame."
+  []
+  (let [sig (cut-frame-sig @session)]
+    (when (not= sig (:sig (:cut-frame @session)))
+      (compute-cut-frame! sig))
+    (:cut-frame @session)))
+
+(defn- current-dof
+  "Where the live plane sits on the active DOF, in `frame`'s coordinates — offset from
+   the frame point along heading (translation) or signed angle from ref-heading about
+   the axis (rotation). The strip marker."
+  [frame]
+  (let [{:keys [live-pose]} @session
+        {:keys [mode point ref-heading axis-vec]} frame]
+    (if (= mode :rotation)
+      (js/Math.atan2 (turtle/dot (:heading live-pose) (turtle/cross axis-vec ref-heading))
+                     (turtle/dot (:heading live-pose) ref-heading))
+      (turtle/dot (turtle/v- (:position live-pose) point) ref-heading))))
+
+(defn- cut-frame-ready
+  "The cached cut-frame IF it matches the current sig and finished computing, else nil
+   (button state without triggering a recompute)."
+  [s]
+  (let [f (:cut-frame s)]
+    (when (and f (= (:sig f) (cut-frame-sig s)) (not (:computing? f))) f)))
+
+(defn- jump-to-event!
+  "Part 3: teleport the plane to the next (:next) / previous (:prev) cut candidate
+   along the active DOF, ordered by POSITION (not salience — the ranking lives in the
+   strip and the filter). No candidate that way → status message (no silent no-op)."
+  [dir]
+  (let [frame (ensure-cut-frame!)]
+    (cond
+      (:computing? frame) (set-status-message! "calcolo dei candidati di rotazione…")
+      (empty? (:cands frame))
+      (set-status-message! (str "nessun candidato di taglio ("
+                                (if (= :rotation (:mode frame)) "rotazione" "traslazione") ")"))
+      :else
+      (let [cur (current-dof frame) eps 1e-4]
+        (if-let [nxt (if (= dir :next)
+                       (->> (:cands frame) (filter #(> (:at %) (+ cur eps))) (sort-by :at) first)
+                       (->> (:cands frame) (filter #(< (:at %) (- cur eps))) (sort-by :at >) first))]
+          (do (teleport-plane-to! (:pose nxt)) (recompute!)
+              (set-status-message! (str "→ " (name (:kind nxt)) " · salienza "
+                                        (js/Math.round (:salience nxt)))))
+          (set-status-message! (str "nessun " (if (= dir :next) "prossimo" "precedente")
+                                    " candidato in questa direzione")))))))
+
+;; ── Part 4: profile strip in the panel ──
+(def ^:private strip-w 280)
+(def ^:private strip-h 48)
+(def ^:private strip-step-color "#4fc3f7")   ; gradino
+(def ^:private strip-neck-color "#ffb74d")   ; collo
+
+(defn- strip-x-domain
+  "[xmin xmax] of the profile's DOF axis (offset or angle)."
+  [profile]
+  (let [xs (map :offset profile)] [(reduce min xs) (reduce max xs)]))
+
+(defn- render-cut-strip!
+  "Part 4: draw A along the active DOF (t or θ) as an SVG polyline, with kind-coloured
+   candidate ticks and a marker at the live plane's DOF value. Pending during a
+   rotation recompute; empty until a frame exists. Rebuilt each panel update (cheap);
+   the marker moves as the plane nudges."
+  [panel]
+  (when-let [svg (.querySelector panel ".ems-strip")]
+    (let [s @session
+          f (cut-frame-ready s)
+          label (.querySelector panel ".ems-evt-label")]
+      (cond
+        (:cut-pending? s)
+        (do (set! (.-innerHTML svg) "") (when label (set! (.-textContent label) "profilo rotazione: calcolo…")))
+        (or (nil? f) (empty? (:profile f)))
+        (do (set! (.-innerHTML svg) "") (when label (set! (.-textContent label) "profilo di sezione")))
+        :else
+        (let [profile (:profile f)
+              [xmin xmax] (strip-x-domain profile)
+              xspan (max 1e-9 (- xmax xmin))
+              peak (max 1e-9 (reduce max (map :area profile)))
+              px (fn [x] (* strip-w (/ (- x xmin) xspan)))
+              py (fn [a] (+ 2 (* (- strip-h 4) (- 1 (/ a peak)))))
+              poly (str/join " " (map (fn [{:keys [offset area]}]
+                                        (str (.toFixed (px offset) 1) "," (.toFixed (py area) 1))) profile))
+              ticks (str/join
+                     (for [c (:cands f)]
+                       (let [x (.toFixed (px (:at c)) 1)]
+                         (str "<line x1='" x "' y1='0' x2='" x "' y2='" strip-h "' stroke='"
+                              (if (= :step (:kind c)) strip-step-color strip-neck-color)
+                              "' stroke-width='1.5' opacity='0.8'/>"))))
+              mx (.toFixed (px (current-dof f)) 1)]
+          (set! (.-innerHTML svg)
+                (str "<polyline points='" poly "' fill='none' stroke='#9affc0' stroke-width='1'/>"
+                     ticks
+                     "<line x1='" mx "' y1='0' x2='" mx "' y2='" strip-h
+                     "' stroke='#ffffff' stroke-width='1.5'/>"))
+          (when label
+            (set! (.-textContent label)
+                  (str (if (= :rotation (:mode f)) "A(θ)" "A(t)") " · " (count (:cands f)) " eventi"
+                       " (" (count (filter #(= :step (:kind %)) (:cands f))) " gradini)"))))))))
+
+(defn- strip-click!
+  "Click on the strip → teleport to the nearest candidate (brief Part 4: 'si vede, ci
+   si salta sopra'). The panel is a legitimate click surface (only the viewport is
+   mouse-monofunction)."
+  [evt panel]
+  (when-let [f (cut-frame-ready @session)]
+    (when (seq (:cands f))
+      (let [svg (.querySelector panel ".ems-strip")
+            rect (.getBoundingClientRect svg)
+            frac (/ (- (.-clientX evt) (.-left rect)) (max 1 (.-width rect)))
+            [xmin xmax] (strip-x-domain (:profile f))
+            dof (+ xmin (* frac (- xmax xmin)))
+            nearest (apply min-key #(js/Math.abs (- (:at %) dof)) (:cands f))]
+        (teleport-plane-to! (:pose nearest)) (recompute!)
+        (set-status-message! (str "→ " (name (:kind nearest)) " · salienza "
+                                  (js/Math.round (:salience nearest))))))))
+
 (defn- cycle-current-piece!
   "Explicit, deterministic navigation over the OPEN pieces only (addendum Parte
    A): `dir` :next (n) or :prev (p), round-robin in DFS order, repositioning the
@@ -808,6 +1003,7 @@
   []
   (when-let [t (:mirror-timer @session)] (js/clearTimeout t))       ; Part 4 debounce timer
   (when-let [t (:status-msg-timer @session)] (js/clearTimeout t))   ; Part A message timer
+  (when-let [t (:cut-timer @session)] (js/clearTimeout t))          ; cut-candidates rotation debounce
   (free-all-manifolds!)   ; the single no-leak point — every session exit runs cleanup!
   (modal/unmount-panel! (:panel-el @session))
   (modal/remove-keydown! (:key-handler @session))
@@ -929,6 +1125,7 @@
         (do (.preventDefault e) (.stopPropagation e)
             (flush-digit-buffer!)
             (swap! session update :digit-target {:step :angle :angle :step})
+            (ensure-cut-frame!)   ; mode changed → the cut-strip's DOF changed
             (update-panel-display!))
 
         digit
@@ -1006,6 +1203,14 @@
         ;; d: mirror-decompose — replay the twin's decomposition, reflected (Part 5)
         (and (= key "d") (not mod?))
         (do (.preventDefault e) (.stopPropagation e) (flush-digit-buffer!) (mirror-decompose!))
+
+        ;; ] / [ : jump to next / previous cut-candidate event, mode-sensitive
+        ;; (step→translation, angle→rotation) — brief-cut-candidates Part 3
+        (and (= key "]") (not mod?))
+        (do (.preventDefault e) (.stopPropagation e) (flush-digit-buffer!) (jump-to-event! :next))
+
+        (and (= key "[") (not mod?))
+        (do (.preventDefault e) (.stopPropagation e) (flush-digit-buffer!) (jump-to-event! :prev))
 
         :else nil))))
 
@@ -1113,10 +1318,14 @@
         (set-btn! ".ems-btn-separate" (:separate avail))
         (set-btn! ".ems-prev"         (:nav avail))
         (set-btn! ".ems-next"         (:nav avail))
+        (set-btn! ".ems-evt-prev"     (:cut-nav avail))
+        (set-btn! ".ems-evt-next"     (:cut-nav avail))
         (set-btn! ".pilot-btn-undo"   (:undo avail))
         (when-let [rb (.querySelector panel ".ems-btn-reveal")]
           (set! (.-title rb) (:reason (:reveal avail)))
-          (set! (.-textContent rb) (if (:reveal-all? s) "focus" "reveal")))))))
+          (set! (.-textContent rb) (if (:reveal-all? s) "focus" "reveal"))))
+      ;; Part 4: the section-area profile strip (A along the active DOF).
+      (render-cut-strip! panel))))
 
 (defn- create-panel!
   [mesh-name]
@@ -1148,6 +1357,14 @@
                "<button class='pilot-btn ems-btn-separate'>separate (s)</button>"
                "<button class='pilot-btn ems-btn-reveal'>reveal (r)</button>"
                "</div>"
+               ;; Cut-candidate events: profile strip + jump-to-event nav (brief-cut-
+               ;; candidates Part 3/4). Mode-sensitive (step→translation, angle→rotation).
+               "<div class='pilot-commands ems-events'>"
+               "<button class='pilot-btn ems-evt-prev'>◀ [</button>"
+               "<span class='ems-evt-label'>profilo di sezione</span>"
+               "<button class='pilot-btn ems-evt-next'>] ▶</button>"
+               "</div>"
+               "<svg class='ems-strip' viewBox='0 0 280 48' preserveAspectRatio='none'></svg>"
                "<div class='pilot-commands pilot-cmd-list'>(no cuts yet)</div>"
                "<div class='pilot-commands modal-help'>"
                "Tab: cycle step/angle · digits: set active value · "
@@ -1162,6 +1379,10 @@
                "r: reveal — show every piece + billboard name labels, press again for focus · "
                "y: propose/cycle the current piece's symmetry planes · "
                "d: mirror-decompose (replay a decomposed mirror-twin, reflected) · "
+               "[ / ]: jump to the previous/next cut-candidate event of the section "
+               "profile (step mode = translation, angle mode = rotation) — the strip "
+               "shows A along the active DOF with the plane marker and event ticks "
+               "(blue = step / flush face, orange = neck / waist); click a tick to jump · "
                "Enter: cut the current piece (or, when every piece is finished, commit) · "
                "Ctrl/Cmd+Enter: commit now (emit even with open pieces) · "
                "Backspace: undo the last cut/separation (chronological, any branch) · "
@@ -1185,6 +1406,9 @@
     (.addEventListener (.querySelector panel ".ems-btn-mirror") "click" (fn [_] (mirror-decompose!)))
     (.addEventListener (.querySelector panel ".ems-btn-separate") "click" (fn [_] (separate!)))
     (.addEventListener (.querySelector panel ".ems-btn-reveal") "click" (fn [_] (toggle-reveal!)))
+    (.addEventListener (.querySelector panel ".ems-evt-prev") "click" (fn [_] (jump-to-event! :prev)))
+    (.addEventListener (.querySelector panel ".ems-evt-next") "click" (fn [_] (jump-to-event! :next)))
+    (.addEventListener (.querySelector panel ".ems-strip") "click" (fn [e] (strip-click! e panel)))
     (.addEventListener (.querySelector panel ".pilot-btn-undo") "click" (fn [_] (undo!)))
     (.addEventListener (.querySelector panel ".pilot-btn-ok") "click" (fn [_] (accept-or-commit!)))
     (.addEventListener (.querySelector panel ".pilot-btn-cancel") "click" (fn [_] (cancel!)))

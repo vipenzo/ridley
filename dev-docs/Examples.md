@@ -1259,6 +1259,26 @@ Keep only the overlapping region:
     (sphere (* sz 0.72))))
 ```
 
+### Section area & cut candidates
+
+`section-area` reads the cross-section area at the turtle plane; `cut-candidates`
+proposes cut poses (steps = flush faces, necks = waists), sorted by salience. Both
+also drive `edit-mesh-split`'s `[`/`]` "jump to next event" gesture and its profile
+strip, but they are plain functions you can script:
+
+```clojure
+(register block (mesh-union (box 40) (attach (box 20) (u 20))))  ; a stepped block
+
+(section-area :block)          ; area of the cross-section at the turtle plane
+
+;; translation candidates along the heading — {:pose :kind :salience :at} sorted
+;; by salience (the internal shelf shows up as the biggest |ΔA| step):
+(cut-candidates :block)
+
+;; rotation candidates — the plane pivots about the up axis through the position:
+(cut-candidates :block {:mode :rotation :axis :up})
+```
+
 ---
 
 ## Scene Registry

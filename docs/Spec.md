@@ -1779,14 +1779,51 @@ symmetric (`true`). Cost is 77–148 ms — on-demand, never per-keystroke.
 ```
 
 `(symmetry-planes mesh)` proposes *verified* symmetry planes as a vector of poses
-`{:position :heading :up}` (heading = plane normal, directly usable with
-`goto`/`mark`), ordered by quality (symmetric-difference ratio ascending). It is
-a pure function of the mesh: **area-weighted** PCA on the face centroids (weighting
-by triangle area is mandatory — raw-vertex PCA is defeated by uneven tessellation)
-gives up to three candidate planes through the centroid, a degenerate-eigenvalue
-case (a square/N-fold object) adds the bounding-box axes, and each candidate is
-confirmed by the `mirror?` cascade — only the promoted are returned. An
-asymmetric mesh returns `[]`. Cost ~250–450 ms — on-demand.
+`{:position :heading :up :symmetry-ratio r}` (heading = plane normal, directly usable
+with `goto`/`mark`; `:symmetry-ratio` is the symmetric-difference fraction — 0 for an
+exact mirror, up to the tolerance — so you can tell an exact plane from a "quasi"
+one, e.g. a part that's mirror *except* a small internal feature), ordered by quality
+(ratio ascending). It is a pure function of the mesh: candidate planes through the
+area-weighted centroid from both the **bounding-box axes** (always tried — real CAD
+parts are axis-aligned and only approximately symmetric, so an exact axis plane
+verifies where a PCA axis tilted a fraction of a degree by minor asymmetric detail
+spuriously fails) and the **area-weighted** principal axes (weighting by triangle
+area is mandatory — raw-vertex PCA is defeated by uneven tessellation, and the 3×3
+Jacobi eigensolve must zero the off-diagonals correctly or the axes come out as
+tilted garbage), each confirmed by the `mirror?` cascade — only the promoted are
+returned. An asymmetric mesh returns `[]`. Cost ~250–450 ms — on-demand.
+
+### Section area & cut candidates
+
+`(section-area mesh)` returns the area of the mesh's cross-section at the turtle
+plane (point = position, normal = heading), via Manifold's native cross-section
+`.area()`. A plane that misses the mesh returns `0`. A reader in the `bounds`/`area`
+family; accepts a mesh, a registered keyword, or an SDF node.
+
+`(cut-candidates mesh)` / `(cut-candidates mesh opts)` proposes cut poses for
+`mesh` at the turtle's pose — the interactive `edit-mesh-split` "jump to the next
+event" gesture also calls it, but it is a plain function you can script. It returns
+a vector of `{:pose {:position :heading :up} :kind :step|:neck :salience n :at x}`
+**sorted by salience descending** (off-axis meshes have hundreds of raw candidates;
+the salience ranking is what makes them usable — filter by it). The perceptual signal
+is the section area `A` along the active degree of freedom:
+
+- **Translation** (default), along the heading: `:step` candidates are faces flush
+  with the sweep plane (a discontinuity in `A`), with salience `= |ΔA|` read *exactly*
+  from the coplanar faces (no sampling); `:neck` candidates are local minima of the
+  sampled `A(t)` profile (a waist), with salience `=` the valley depth. `:at` is the
+  signed offset from the turtle position along the heading.
+- **Rotation** (`{:mode :rotation :axis :up}`, axis `:up` or `:right`): the plane
+  pivots about the axis through the position; `:step` candidates are faces coplanar
+  with *and passing through* the axis (rare), `:neck` candidates are minima of
+  `A(θ)`. `:at` is the angle in radians. `:axis :heading` does not move the plane —
+  it raises a readable error.
+
+Options: `:tolerance` (offset/position dedup, mm), `:angle-tol` (how ∥ to the sweep a
+face normal must be to count as a step, degrees), `:samples` (profile samples, default
+96), `:min-neck-depth` (valley-depth floor, default 1 % of the profile's peak area).
+Pure in `(mesh, pose, opts)`; the translational profile is ~12 ms (convert once, slice
+many), rotation ~15× that.
 
 ### Mesh smoothing & refinement
 
@@ -3409,7 +3446,7 @@ On confirm it bakes a `(path …)` of **relative** `set-heading`/`f` segments (r
 
 **Live semaphore (per-component).** A piece is **finished** (green) iff every connected component is convex — so both a single convex solid and several convex solids in one mesh (a U cut at its base → two convex prongs) are finished. A multi-component finished piece needs *separating, not cutting*: a `N pieces` badge flags it. A piece with a genuinely concave component is **red**. The current cut's two live halves are tinted the same way (`:behind` solid, `:ahead` washed) and the status line quantifies both by volume percentage, e.g. `behind 42% (convex) — ahead 58% (2 pieces)`.
 
-**Gestures.** `Enter` cuts the current piece (both halves join the tree); when *every* piece is finished it commits instead; when the plane can't cut here and work remains, it moves to the next open piece. `s` separates the current piece into its connected components (`mesh-components`, no plane). `n`/`p` (or panel ◀/▶) navigate the open pieces deterministically; `r` toggles reveal-all. `y` proposes/cycles the current piece's verified `symmetry-planes` (teleporting the plane), and a mirror badge lights on its own when the plane is a symmetry plane (free gate live + debounced background confirmation; an accepted mirror cut leaves a `;; :cut-N: piano di simmetria` comment). `d` mirror-decomposes — replays a decomposed mirror twin's cuts, reflected through the mirror plane, as one undoable gesture. `Backspace` undoes the last structural gesture (cut *or* separation) — chronological, any branch, freeing that piece's kept-alive Manifold. `Ctrl`/`Cmd`+`Enter` commits now (even with concave pieces open). `Esc` cancels, emitting nothing. Each open piece keeps its Manifold alive, so a keystroke re-split pays the split alone, not a fresh mesh→manifold conversion.
+**Gestures.** `Enter` cuts the current piece (both halves join the tree); when *every* piece is finished it commits instead; when the plane can't cut here and work remains, it moves to the next open piece. `s` separates the current piece into its connected components (`mesh-components`, no plane). `n`/`p` (or panel ◀/▶) navigate the open pieces deterministically; `r` toggles reveal-all. `y` proposes/cycles the current piece's verified `symmetry-planes` (teleporting the plane), and a mirror badge lights on its own when the plane is a symmetry plane (free gate live + debounced background confirmation; an accepted mirror cut leaves a `;; :cut-N: piano di simmetria` comment). `d` mirror-decomposes — replays a decomposed mirror twin's cuts, reflected through the mirror plane, as one undoable gesture. `[`/`]` (or panel ◀/▶) jump the plane to the previous/next **cut-candidate event** of the section-area profile — mode-sensitive (step mode = translation along the heading, angle mode = rotation about the up axis), ordered by position; the panel shows a profile strip of `A` along the active degree of freedom with the plane marker and event ticks (blue = step / face flush, orange = neck / waist — the `cut-candidates` kinds), and clicking a tick jumps onto it. `Backspace` undoes the last structural gesture (cut *or* separation) — chronological, any branch, freeing that piece's kept-alive Manifold. `Ctrl`/`Cmd`+`Enter` commits now (even with concave pieces open). `Esc` cancels, emitting nothing. Each open piece keeps its Manifold alive, so a keystroke re-split pays the split alone, not a fresh mesh→manifold conversion.
 
 **Emission.** On close the marker is rewritten to a `let`-chain of self-contained linear `mesh-split` composites (one per branch, each with its own path and its own path-scoped marks) plus a `mesh-components` destructure per separation. The tree shape lives in which binding feeds which call; each cut's delta is the minimal canonical `(th …)(tv …)(tr …)(f …)(rt …)(u …)` from the session's entry pose:
 

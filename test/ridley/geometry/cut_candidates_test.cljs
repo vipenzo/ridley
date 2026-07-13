@@ -70,3 +70,26 @@
     (let [shallow (map-indexed (fn [i a] {:offset (* i 1.0) :area a})
                                [100 99.5 100])]
       (is (empty? (cc/profile-minima shallow 1.0))))))
+
+;; ── rotation ──
+(deftest rotate-about-and-angle-pose
+  (testing "Rodrigues: +X about +Z by 90° → +Y"
+    (is (h/vec-approx= [0 1 0] (cc/rotate-about [1 0 0] [0 0 1] (/ js/Math.PI 2)) 1e-9)))
+  (testing "angle->pose rotates heading and up about the axis, position fixed"
+    (let [p (cc/angle->pose (/ js/Math.PI 2) [0 0 1] [0 1 0] [1 2 3] [1 0 0])]
+      (is (h/vec-approx= [0 -1 0] (:heading p) 1e-9) "heading +Z about +X 90° → −Y")
+      (is (h/vec-approx= [0 0 1] (:up p) 1e-9) "up +Y about +X 90° → +Z")
+      (is (= [1 2 3] (:position p))))))
+
+(deftest rotation-step-a-face-through-the-axis
+  (testing "a box face lying ON the axis plane is a rotation step (salience = its
+            area); the offset faces are not — why a centred box yields none"
+    (let [box (-> (prim/box-mesh 20 20 20)                          ; centred x ∈ [-10,10]
+                  (update :vertices (partial mapv (fn [[x y z]] [(+ x 10) y z]))))  ; x ∈ [0,20]
+          ;; pivot about +Y through the origin; the −X face sits on the plane x=0
+          steps (cc/rotation-step-candidates box [0 0 1] [0 0 0] [0 1 0] {})]
+      (is (= 1 (count steps)) "only the face through the origin")
+      (is (h/approx= (/ js/Math.PI 2) (js/Math.abs (:offset (first steps))) 1e-6))
+      (is (h/approx= 400.0 (:salience (first steps)) 1e-6) "20×20 face area")))
+  (testing "a centred box has no rotation step about an axis through its centre"
+    (is (empty? (cc/rotation-step-candidates (prim/box-mesh 20 20 20) [0 0 1] [0 0 0] [0 1 0] {})))))

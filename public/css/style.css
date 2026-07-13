@@ -413,6 +413,32 @@ html, body {
   padding: 4px 0;
 }
 
+/* edit-mesh-split (brief-cut-candidates Part 3/4): the jump-to-event nav row and the
+   section-area profile strip. */
+.modal-panel .ems-events {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.modal-panel .ems-evt-label {
+  color: #7a8aa0;
+  font-size: 10px;
+  flex: 1;
+  text-align: center;
+}
+
+.modal-panel .ems-strip {
+  display: block;
+  width: 100%;
+  height: 48px;
+  background: #12161f;
+  border: 1px solid #2a3550;
+  border-radius: 3px;
+  cursor: crosshair;    /* click a tick to jump onto it */
+}
+
 .modal-panel .pilot-btn-ok {
   background: #264f2e;
   border-color: #3a7d44;

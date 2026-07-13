@@ -93,6 +93,78 @@
                       :salience salience}))))
          vec)))
 
+;; ── rotation (brief Part 2, rotazione) ──────────────────────
+;; A pencil of planes about an axis (:up or :right) through `point`, the normal
+;; starting at `heading`. `:offset` here carries the rotation ANGLE (radians) so the
+;; profile/neck machinery is shared with translation.
+
+(defn rotate-about
+  "Rodrigues rotation of `v` about unit axis `a` by `theta` radians."
+  [v a theta]
+  (let [c (js/Math.cos theta) s (js/Math.sin theta) d (dot a v)]
+    (v+ (v+ (v* v c) (v* (cross a v) s)) (v* a (* d (- 1.0 c))))))
+
+(defn angle->pose
+  "The candidate plane pose at rotation `theta` (rad) of the current heading/up about
+   unit axis `axis` through `point`: heading and up both rotate, position fixed."
+  [theta heading up point axis]
+  {:position point :heading (rotate-about heading axis theta) :up (rotate-about up axis theta)})
+
+(defn- normal-at
+  "The plane normal at rotation angle `theta` in the pencil {heading, perp}."
+  [heading perp theta]
+  (let [c (js/Math.cos theta) s (js/Math.sin theta)]
+    [(+ (* (heading 0) c) (* (perp 0) s))
+     (+ (* (heading 1) c) (* (perp 1) s))
+     (+ (* (heading 2) c) (* (perp 2) s))]))
+
+(defn rotation-step-candidates
+  "STEP candidates for a rotation of the plane about unit axis `axis` through `point`
+   (brief Part 2, rotazione). A face is coplanar with the pencil's plane at some angle
+   ONLY if (a) its normal lies in the pencil plane span{heading, axis×heading} — n·axis
+   ≈ 0 within `angle-tol` deg — AND (b) it actually lies ON a plane through `point`,
+   i.e. |(centroid−point)·n| ≈ 0 within `pos-tol` mm (a face parallel to the plane but
+   offset from the axis never becomes the cutting plane — which is why a centred box
+   correctly yields no rotation steps). Coplanar angle θ = atan2(n·(axis×heading),
+   n·heading), reduced to (−π/2, π/2]. Salience = |ΔA| = |Σ area·sign(n·normal(θ))|.
+   Returns [{:offset θ :salience s}] (θ radians)."
+  [{:keys [vertices faces]} heading point axis {:keys [angle-tol pos-tol min-salience]
+                                                :or {angle-tol 1.0 pos-tol 0.1 min-salience 1e-6}}]
+  (let [perp (cross axis heading)
+        sin-a (js/Math.sin (* angle-tol (/ js/Math.PI 180.0)))
+        tol-rad (* angle-tol (/ js/Math.PI 180.0))
+        half-pi (/ js/Math.PI 2.0)
+        norm-pi (fn [a] (cond (> a half-pi) (- a js/Math.PI)
+                              (<= a (- half-pi)) (+ a js/Math.PI)
+                              :else a))
+        entries (->> faces
+                     (keep (fn [[i j k]]
+                             (let [va (nth vertices i) vb (nth vertices j) vc (nth vertices k)
+                                   [n area] (tri-normal-area va vb vc)
+                                   ctr (when n (v* (v+ (v+ va vb) vc) (/ 1.0 3.0)))]
+                               (when (and n
+                                          (< (js/Math.abs (dot n axis)) sin-a)
+                                          (< (js/Math.abs (dot (v- ctr point) n)) pos-tol))
+                                 (let [theta (norm-pi (js/Math.atan2 (dot n perp) (dot n heading)))
+                                       nt (normal-at heading perp theta)]
+                                   {:o theta :sa (* area (if (pos? (dot n nt)) 1.0 -1.0))})))))
+                     (sort-by :o))
+        groups (reduce (fn [acc {:keys [o sa]}]
+                         (if-let [g (peek acc)]
+                           (if (<= (- o (:o0 g)) tol-rad)
+                             (conj (pop acc) (-> g (update :sum + sa)
+                                                 (update :wsum + (* o (js/Math.abs sa)))
+                                                 (update :asum + (js/Math.abs sa))))
+                             (conj acc {:o0 o :sum sa :wsum (* o (js/Math.abs sa)) :asum (js/Math.abs sa)}))
+                           [{:o0 o :sum sa :wsum (* o (js/Math.abs sa)) :asum (js/Math.abs sa)}]))
+                       [] entries)]
+    (->> groups
+         (keep (fn [{:keys [o0 sum wsum asum]}]
+                 (let [salience (js/Math.abs sum)]
+                   (when (> salience min-salience)
+                     {:offset (if (pos? asum) (/ wsum asum) o0) :salience salience}))))
+         vec)))
+
 (defn profile-minima
   "NECK candidates (brief Part 2, colli): strict local minima of a sampled profile
    `samples` = [{:offset o :area a} …] ordered by offset, with plateau handling (a

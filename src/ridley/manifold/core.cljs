@@ -1370,22 +1370,70 @@
                     [])))))))
       []))
 
+(defn- v-normalize [[x y z]]
+  (let [m (js/Math.sqrt (+ (* x x) (* y y) (* z z)))]
+    (if (> m 1e-12) [(/ x m) (/ y m) (/ z m)] [0 0 0])))
+(defn- v-cross [[ax ay az] [bx by bz]]
+  [(- (* ay bz) (* az by)) (- (* az bx) (* ax bz)) (- (* ax by) (* ay bx))])
+
+(defn rotation-profile
+  "Sample the section area A(θ) as the plane pivots about `axis-kw` (∈ {:up :right})
+   through `point`, the normal starting at `heading`, over θ ∈ [−π/2, π/2) at `samples`
+   points (ascending). Converts to the θ=0 frame ONCE (heading→Z, up→Y, right→X) then
+   `.rotate(−θ)`+`.slice(0).area()` per angle (B2, ~0.6 ms/sample — ~15× the
+   translational profile, so on-demand/debounced, not per-tick). Returns
+   [{:offset θ :area a} …] (θ radians in :offset, sharing profile-minima's shape)."
+  [ridley-mesh heading point up axis-kw samples]
+  (or (when (get-manifold-class)
+        (let [mesh (sdf/ensure-mesh ridley-mesh)]
+          (when (seq (:faces mesh))
+            ;; right = up × heading so [right, up, heading] is RIGHT-handed — heading×up
+            ;; would make the transform a reflection (inside-out manifold → empty slices)
+            (let [right (v-normalize (v-cross up heading))]
+              (when-let [^js base (transformed-manifold mesh heading point right up)]
+                (try
+                  (let [n (max 2 samples)
+                        deg (/ 180.0 js/Math.PI)
+                        out (mapv (fn [i]
+                                    (let [theta (+ (- (/ js/Math.PI 2.0)) (* (/ i n) js/Math.PI))
+                                          td (* theta deg)
+                                          ;; rotate the mesh by −θ about the axis so the
+                                          ;; θ-plane maps to the fixed Z=0 slice
+                                          ^js rot (case axis-kw
+                                                    :up (.rotate base 0 (- td) 0)
+                                                    :right (.rotate base (- td) 0 0))
+                                          ^js cs (.slice rot 0)
+                                          a (.area cs)]
+                                      (.delete cs) (.delete rot)
+                                      {:offset theta :area a}))
+                                  (range n))]
+                    (.delete base)
+                    out)
+                  (catch :default e
+                    (js/console.error "rotation-profile failed:" e)
+                    (.delete base)
+                    [])))))))
+      []))
+
 (defn cut-candidates
   "Cut-candidate poses for `ridley-mesh` at a pose (brief Part 2), a PURE function of
    (mesh, pose, opts) — no session state (B5); the DSL wrapper reads the turtle to
    fill the pose. opts:
-     :mode      :translation (default; rotation arrives next increment)
-     :heading :position :up   the current pose (required in :translation)
+     :mode      :translation (default) | :rotation
+     :heading :position :up   the current pose
+     :axis      :up (default) | :right   — rotation axis (:heading would not move the
+                plane → readable error)
      :tolerance 0.1   dedup for coplanar step offsets (mm)
      :angle-tol 1.0   how ∥ to heading a face normal must be to count as a step (deg)
-     :samples   96    profile samples for neck detection
+     :samples   96    profile samples
      :min-neck-depth   valley-depth floor (default 1% of the profile's peak area)
    Returns [{:pose {:position :heading :up} :kind :step|:neck :salience n} …] sorted
    by salience DESCENDING (B3: off-axis meshes have hundreds of candidates; the caller
    filters by salience). Translation: exact coplanar-face STEPs (|ΔA|) + sampled
-   local-minimum NECKs."
-  [ridley-mesh {:keys [mode heading position up tolerance angle-tol samples min-neck-depth]
-                :or {mode :translation tolerance 0.1 angle-tol 1.0 samples 96}}]
+   NECKs. Rotation: coplanar-through-axis STEPs (rare) + A(θ)-minimum NECKs (the
+   practical 'rotate to the thin section' signal)."
+  [ridley-mesh {:keys [mode heading position up axis tolerance angle-tol samples min-neck-depth]
+                :or {mode :translation axis :up tolerance 0.1 angle-tol 1.0 samples 96}}]
   (case mode
     :translation
     (let [mesh (sdf/ensure-mesh ridley-mesh)
@@ -1396,14 +1444,31 @@
           necks (cut-cand/profile-minima profile (or min-neck-depth (* 0.01 peak)))
           ->cand (fn [kind {:keys [offset salience]}]
                    {:pose (cut-cand/offset->pose offset heading up position)
-                    :kind kind :salience salience})]
+                    :kind kind :salience salience :at offset})]
       (->> (concat (map (partial ->cand :step) steps)
                    (map (partial ->cand :neck) necks))
            (sort-by :salience >)
            vec))
     :rotation
-    (throw (js/Error. (str "cut-candidates: :rotation mode arriva nel prossimo "
-                           "incremento — per ora solo :translation")))
+    (do
+      (when (= axis :heading)
+        (throw (js/Error. "cut-candidates: :axis :heading non ruota il piano di taglio — usa :up o :right")))
+      (when-not (#{:up :right} axis)
+        (throw (js/Error. (str "cut-candidates: :axis sconosciuto " (pr-str axis) " — usa :up o :right"))))
+      (let [mesh (sdf/ensure-mesh ridley-mesh)
+            axis-vec (case axis :up up :right (v-normalize (v-cross heading up)))
+            steps (cut-cand/rotation-step-candidates mesh heading position axis-vec
+                                                     {:angle-tol angle-tol :pos-tol tolerance})
+            profile (rotation-profile mesh heading position up axis samples)
+            peak (reduce max 0.0 (map :area profile))
+            necks (cut-cand/profile-minima profile (or min-neck-depth (* 0.01 peak)))
+            ->cand (fn [kind {:keys [offset salience]}]
+                     {:pose (cut-cand/angle->pose offset heading up position axis-vec)
+                      :kind kind :salience salience :at offset})]
+        (->> (concat (map (partial ->cand :step) steps)
+                     (map (partial ->cand :neck) necks))
+             (sort-by :salience >)
+             vec)))
     (throw (js/Error. (str "cut-candidates: :mode sconosciuto " (pr-str mode))))))
 
 (defn ^:export project-at-plane
