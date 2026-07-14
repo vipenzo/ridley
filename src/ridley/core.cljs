@@ -239,6 +239,7 @@
             ;; Store lines, stamps, and definition meshes
             (registry/set-lines! (:lines render-data))
             (registry/set-stamps! (or (:stamps render-data) []))
+            (registry/set-scaffolds! (or (:scaffolds render-data) []))
             (registry/set-definition-meshes! (:meshes render-data)))
           ;; Refresh viewport, optionally resetting camera
           (registry/refresh-viewport! reset-camera?)
@@ -518,6 +519,7 @@
                       (when-let [render-data (repl/extract-render-data result)]
                         (registry/add-lines! (:lines render-data))
                         (registry/add-stamps! (or (:stamps render-data) []))
+                        (registry/add-scaffolds! (or (:scaffolds render-data) []))
                         (registry/set-definition-meshes! (:meshes render-data)))
                       (registry/refresh-viewport! false))
                     (update-turtle-indicator)
@@ -873,6 +875,7 @@
         toggle-lines-btn (.getElementById js/document "btn-toggle-lines")
         toggle-normals-btn (.getElementById js/document "btn-toggle-normals")
         toggle-stamps-btn (.getElementById js/document "btn-toggle-stamps")
+        toggle-boards-btn (.getElementById js/document "btn-toggle-boards")
         reset-view-btn (.getElementById js/document "btn-reset-view")
         file-input (.getElementById js/document "file-input")]
     ;; Run button - evaluate definitions
@@ -980,6 +983,16 @@
                              (if visible
                                (.add (.-classList toggle-stamps-btn) "active")
                                (.remove (.-classList toggle-stamps-btn) "active"))))))
+    ;; Toggle mesh-board scaffolds button (brief-mesh-board.md Part 2)
+    (when toggle-boards-btn
+      ;; Boards visible by default
+      (.add (.-classList toggle-boards-btn) "active")
+      (.addEventListener toggle-boards-btn "click"
+                         (fn [_]
+                           (let [visible (viewport/toggle-scaffolds)]
+                             (if visible
+                               (.add (.-classList toggle-boards-btn) "active")
+                               (.remove (.-classList toggle-boards-btn) "active"))))))
     ;; Reset view button
     (when reset-view-btn
       (.addEventListener reset-view-btn "click"
@@ -1198,6 +1211,7 @@
           (when-let [render-data (repl/extract-render-data result)]
             (registry/add-lines! (:lines render-data))
             (registry/add-stamps! (or (:stamps render-data) []))
+            (registry/add-scaffolds! (or (:scaffolds render-data) []))
             (registry/set-definition-meshes! (:meshes render-data)))
           (registry/refresh-viewport! false))))))
 
@@ -2044,6 +2058,7 @@
         (when-let [render-data (repl/extract-render-data result)]
           (registry/set-lines! (:lines render-data))
           (registry/set-stamps! (or (:stamps render-data) []))
+          (registry/set-scaffolds! (or (:scaffolds render-data) []))
           (registry/set-definition-meshes! (:meshes render-data)))
         (registry/refresh-viewport! true)  ; Reset camera to show result
         (update-turtle-indicator)

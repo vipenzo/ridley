@@ -43,6 +43,14 @@
 ;; Opacity applied to reference-image stamps (set-image). Dimmed by edit-path so
 ;; the traced overlay reads clearly over a light image; persists across re-evals.
 (defonce ^:private image-stamp-opacity (atom 1.0))
+
+;; mesh-board scaffold visualization (brief-mesh-board.md Part 2) — ghost-wireframe
+;; display meshes, mirror of the stamps atoms above. Under world-group with no
+;; registryName: measurable via shift+click, excluded from structural pick/export
+;; for free (raycast filters on registryName; export reads current-meshes only).
+(defonce ^:private scaffolds-visible (atom true))
+(defonce ^:private scaffolds-object (atom nil))
+(defonce ^:private current-scaffolds (atom []))
 ;; When true, the viewport's own click interactions (shift+click measure, alt+click
 ;; pick) are suppressed — set by edit-path so a stray click can't open a ruler /
 ;; change selection mid-trace.
@@ -1062,16 +1070,23 @@
         (.add world-group group)))))
 
 (declare restore-selection-after-rebuild!)
+(declare update-scaffolds-display)
 
 (defn update-scene
   "Update viewport with lines, meshes, and panels.
    Options:
      :reset-camera? - if true (default), fit camera to geometry
-     :panels - vector of panel data to render"
-  [{:keys [lines meshes stamps panels reset-camera?] :or {reset-camera? true panels [] stamps []}}]
-  ;; Store meshes and stamps for export/toggle
+     :panels - vector of panel data to render
+     :scaffolds - vector of mesh-board scaffold mesh-data (display-only, never
+                  exported — brief-mesh-board.md Part 2/4)"
+  [{:keys [lines meshes stamps scaffolds panels reset-camera?]
+    :or {reset-camera? true panels [] stamps [] scaffolds []}}]
+  ;; Store meshes and stamps for export/toggle. scaffolds are NOT current-meshes —
+  ;; that's the whole citizenship guarantee (Part 4): export reads current-meshes
+  ;; only, so scaffold geometry structurally cannot reach it.
   (reset! current-meshes (vec meshes))
   (reset! current-stamps (vec stamps))
+  (reset! current-scaffolds (vec scaffolds))
   (when-let [{:keys [world-group highlight-group camera controls]} @state]
     (clear-geometry world-group highlight-group)
     ;; Add line segments to world-group
@@ -1127,9 +1142,12 @@
     (update-normals-display world-group meshes)
     ;; Update stamp outlines visualization
     (update-stamps-display world-group stamps)
+    ;; Update mesh-board scaffold visualization (brief-mesh-board.md Part 2)
+    (update-scaffolds-display world-group scaffolds)
     ;; Compute bounding box for camera fit and axes scaling
     (let [stamp-points (mapcat :vertices stamps)
-          all-points (concat (collect-all-points lines meshes) stamp-points)]
+          scaffold-points (mapcat :vertices scaffolds)
+          all-points (concat (collect-all-points lines meshes) stamp-points scaffold-points)]
       (when (seq all-points)
         (let [xs (map first all-points)
               ys (map second all-points)
@@ -2352,6 +2370,94 @@
       (when-let [m (.-material solid)] (.dispose m))
       (.dispose (.-geometry solid))
       outline)))
+
+;; ============================================================
+;; mesh-board scaffold visualization (brief-mesh-board.md Part 2) — ghost-
+;; wireframe display meshes, mirror of the stamp trittico above (registry
+;; push in ridley.scene.registry, this display layer, the toggle below).
+;; ============================================================
+
+(defn- dispose-scaffold-child!
+  "Dispose a scaffold-group child: wireframe LineSegments' geometry + material."
+  [^js child]
+  (when-let [geom (.-geometry child)] (.dispose geom))
+  (when-let [mat (.-material child)] (.dispose mat)))
+
+(defn- create-scaffold-collision-mesh
+  "An invisible solid mesh paired with the scaffold's wireframe outline, for
+   shift+click measure only. LineSegments raycasting (Raycaster's Line.threshold
+   path) only registers a hit within a small distance of an actual edge line —
+   clicking the middle of a face on a pure wireframe misses entirely, which
+   would silently fail the 'measurable via shift+click' guarantee. Opacity 0 +
+   transparent means it never renders (pure wireframe stays the only visible
+   thing) but THREE still face-raycasts it normally (opacity doesn't gate
+   raycasting) — so raycast-world-point hits it anywhere on the silhouette. No
+   registryName, so raycast-mesh-face's structural-pick filter (Mesh + named)
+   still excludes it, same as the wireframe."
+  [mesh-data]
+  (when-let [^js solid (create-three-mesh mesh-data)]
+    (let [^js mat (.-material solid)]
+      (set! (.-opacity mat) 0)
+      (set! (.-transparent mat) true)
+      (set! (.-depthWrite mat) false))
+    solid))
+
+(defn- update-scaffolds-display
+  "Update or create the mesh-board scaffold visualization objects: a visible
+   ghost-wireframe outline plus an invisible collision mesh per scaffold (see
+   create-scaffold-collision-mesh). Same remove+dispose-then-rebuild pattern as
+   update-stamps-display (a THREE.Group isn't caught by the generic
+   clear-geometry sweep)."
+  [world-group scaffolds]
+  (when-let [^js old-obj @scaffolds-object]
+    (.remove world-group old-obj)
+    (.traverse old-obj dispose-scaffold-child!)
+    (reset! scaffolds-object nil))
+  (when (and @scaffolds-visible (seq scaffolds))
+    (let [group (THREE/Group.)]
+      (doseq [scaffold-data scaffolds]
+        (when-let [wf (create-wireframe-mesh scaffold-data)]
+          (.add group wf))
+        (when-let [cm (create-scaffold-collision-mesh scaffold-data)]
+          (.add group cm)))
+      (when (pos? (.-length (.-children group)))
+        (set! (.-name group) "mesh-board-scaffolds")
+        (reset! scaffolds-object group)
+        (.add world-group group)))))
+
+(defn- dispose-scaffolds-object!
+  "Remove and dispose the scaffolds group from the scene."
+  [world-group]
+  (when-let [^js obj @scaffolds-object]
+    (.remove world-group obj)
+    (.traverse obj dispose-scaffold-child!)
+    (reset! scaffolds-object nil)))
+
+(defn toggle-scaffolds
+  "Toggle mesh-board scaffold visibility (the 'boards' toolbar toggle — view
+   state, not part of the language; mirrors toggle-stamps). Returns new
+   visibility state."
+  []
+  (let [new-visible (swap! scaffolds-visible not)]
+    (when-let [{:keys [world-group]} @state]
+      (if new-visible
+        (update-scaffolds-display world-group @current-scaffolds)
+        (dispose-scaffolds-object! world-group)))
+    new-visible))
+
+(defn scaffolds-visible?
+  "Return current scaffolds visibility state."
+  []
+  @scaffolds-visible)
+
+(defn set-scaffolds-visible
+  "Set scaffolds visibility explicitly."
+  [visible?]
+  (reset! scaffolds-visible visible?)
+  (when-let [{:keys [world-group]} @state]
+    (if visible?
+      (update-scaffolds-display world-group @current-scaffolds)
+      (dispose-scaffolds-object! world-group))))
 
 (defn- build-preview-object
   "Turn one show-preview!/replace-preview-at! item into a THREE object, or nil if

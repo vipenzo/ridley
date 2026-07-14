@@ -1,6 +1,7 @@
 (ns ridley.scene.registry-test
   (:require [cljs.test :refer [deftest testing is]]
-            [ridley.scene.registry :as reg]))
+            [ridley.scene.registry :as reg]
+            [ridley.viewport.core :as viewport]))
 
 (def mesh-a {:type :mesh
              :vertices [[0 0 0] [1 0 0] [0 1 0]]
@@ -29,3 +30,28 @@
     (let [p (reg/register-path! :p sample-path)]
       (is p)
       (is (= sample-path (reg/get-path :p))))))
+
+;; ── mesh-board scaffold citizenship (brief-mesh-board.md Part 4) ──
+;; The export path (core.cljs's export-mesh → viewport/get-current-meshes) reads
+;; ONLY current-meshes, populated from :meshes — never :scaffolds. This is the
+;; structural guarantee, not a convention: a permanent regression test.
+
+(deftest scaffolds-never-reach-current-meshes
+  (testing "set-scaffolds!/add-scaffolds! never contaminate the exportable mesh set"
+    (reg/clear-all!)
+    (reg/add-mesh! mesh-a :a)
+    (reg/set-scaffolds! [mesh-b])
+    (reg/refresh-viewport!)
+    (let [exportable (viewport/get-current-meshes)]
+      (is (= 1 (count exportable)) "only the registered mesh reaches current-meshes")
+      (is (= :a (:registry-name (first exportable))))
+      (is (not-any? #(= (:vertices mesh-b) (:vertices %)) exportable)
+          "the scaffold mesh's geometry never appears among exportable meshes"))))
+
+(deftest scaffolds-survive-incremental-add-still-excluded
+  (testing "add-scaffolds! (incremental REPL push) is excluded from export just like set-scaffolds!"
+    (reg/clear-all!)
+    (reg/add-mesh! mesh-a :a)
+    (reg/add-scaffolds! [mesh-b])
+    (reg/refresh-viewport!)
+    (is (= 1 (count (viewport/get-current-meshes))))))

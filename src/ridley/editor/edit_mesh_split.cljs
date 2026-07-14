@@ -746,7 +746,7 @@
    every panel button's enabled/disabled state + tooltip, and the transient status
    message a key press writes when its gesture can't act (so the keyboard twin of a
    disabled button is never a silent no-op). Keys → {:enabled? bool :reason str}:
-     :separate :symmetry :reflex :mirror :undo :nav :reveal :cut-nav."
+     :separate :symmetry :reflex :mirror :accept :undo :nav :reveal :cut-nav."
   [s]
   (let [tree (:tree s)
         cur (:current tree)
@@ -783,6 +783,14 @@
      (if twin
        {:enabled? true  :reason "decomponi a specchio: replica la decomposizione del gemello, riflessa"}
        {:enabled? false :reason "il gemello a specchio non è ancora decomposto (taglia sul piano di simmetria e decomponi una metà)"})
+     :accept
+     (if (:finished? (get-in tree [:pieces cur]))
+       {:enabled? true :reason "il pezzo è già finito — passa al prossimo aperto"}
+       {:enabled? true :reason (str "accetta il pezzo corrente così com'è ("
+                                    (if (and cur-count (> cur-count 1))
+                                      (str cur-count " componenti concave")
+                                      "concavo")
+                                    ") — chiede conferma, mai un gate geometrico")})
      :undo
      (if (seq (:log tree))
        {:enabled? true  :reason "annulla l'ultimo gesto (taglio o separazione)"}
@@ -1142,6 +1150,56 @@
   (viewport/clear-preview!)
   (inset/unmount!))               ; Vista contesto (acquisition-views Parte 1)
 
+;; ============================================================
+;; Modal confirm (WKWebView blocks js/confirm — HTML overlay instead, the
+;; same "lib-modal-*" CSS the library/workspace panels already use).
+;; ============================================================
+
+(defn- show-modal!
+  [content-fn]
+  (let [overlay (.createElement js/document "div")
+        dialog (.createElement js/document "div")]
+    (set! (.-className overlay) "lib-modal-overlay")
+    (set! (.-className dialog) "lib-modal-dialog")
+    (.appendChild overlay dialog)
+    (content-fn dialog overlay)
+    (.appendChild js/document.body overlay)
+    overlay))
+
+(defn- modal-confirm!
+  "An informed, never-silent confirmation (addendum 4): `message` names the
+   fact plainly, `on-result` is called with true/false. Never a native
+   js/confirm — WKWebView (Tauri) silently swallows it."
+  [message on-result]
+  (show-modal!
+   (fn [dialog overlay]
+     (let [label (.createElement js/document "div")
+           btn-row (.createElement js/document "div")
+           ok-btn (.createElement js/document "button")
+           cancel-btn (.createElement js/document "button")]
+       (set! (.-className label) "lib-modal-label")
+       (set! (.-textContent label) message)
+       (set! (.-className btn-row) "lib-modal-buttons")
+       (set! (.-className ok-btn) "lib-modal-btn lib-modal-ok")
+       (set! (.-textContent ok-btn) "OK")
+       (set! (.-className cancel-btn) "lib-modal-btn lib-modal-cancel")
+       (set! (.-textContent cancel-btn) "Cancel")
+       (.addEventListener ok-btn "click" (fn [_] (.remove overlay) (on-result true)))
+       (.addEventListener cancel-btn "click" (fn [_] (.remove overlay) (on-result false)))
+       (.appendChild btn-row ok-btn)
+       (.appendChild btn-row cancel-btn)
+       (.appendChild dialog label)
+       (.appendChild dialog btn-row)))))
+
+(defn- open-piece-descr
+  "'piece-3 (rosso)' / 'piece-5 (2 componenti)' — the addendum 4 Parte B listing
+   format for an open leaf at commit time."
+  [tree pid]
+  (let [n (get-in tree [:pieces pid :count])]
+    (str (mtree/piece-name tree pid) " ("
+         (if (and n (> n 1)) (str n " componenti") "rosso")
+         ")")))
+
 (defn- commit-session!
   "Close the session and emit the tree as a let-chain of self-contained linear
    composites (mtree/emit). Enter on a terminal/all-finished plane, or Ctrl+Enter
@@ -1158,6 +1216,24 @@
     (reset! session nil)
     (when-not from-repl (modal/run-definitions!))))
 
+(defn- request-commit!
+  "The single path to commit (addendum 4 Parte B): commit has NO geometric
+   precondition — it is available in every moment, whether reached via Enter's
+   all-finished shortcut or Ctrl+Enter's force. Closing with every leaf
+   finished commits straight away (nothing to warn about — 'tutto verde' is a
+   suggestion, not a gate); closing with leaves still open gets an informed,
+   named confirmation listing them, never a silent close."
+  []
+  (let [tree (:tree @session)
+        open (mtree/non-finished-leaves tree)]
+    (if (empty? open)
+      (commit-session!)
+      (modal-confirm!
+       (str "chiudi con " (count open) " pezzi ancora aperti che diventano foglie così come sono: "
+            (str/join ", " (map #(open-piece-descr tree %) open))
+            "?")
+       (fn [ok?] (when ok? (commit-session!)))))))
+
 (defn- accept-or-commit!
   "Enter: cut if the plane is actively bisecting the current piece; else commit if
    every tree piece is finished ('tutto verde'); else move on to the next open
@@ -1165,14 +1241,42 @@
   []
   (cond
     (= :active (:plane-state @session)) (accept-cut!)
-    (mtree/all-finished? (:tree @session)) (commit-session!)
+    (mtree/all-finished? (:tree @session)) (request-commit!)
     :else (cycle-current-piece! :next)))
 
 (defn- force-commit!
   "Ctrl/Cmd+Enter: close now and emit whatever the tree currently is, even with
-   concave leaves still open (the user's decomposition, their call)."
+   concave leaves still open (the user's decomposition, their call) — via
+   request-commit!, so open leaves get named in an informed confirmation
+   first (addendum 4 Parte B), never a silent close."
   []
-  (commit-session!))
+  (request-commit!))
+
+(defn- accept-as-is!
+  "Addendum 4 Parte A: declare the CURRENT piece finished BY DECISION, whatever
+   its color — 'finito' is a decision, not a geometric fact. A green piece has
+   nothing to decide (already finished): the gesture is equivalent to the
+   natural close, so it just advances like n/next (informatively, never
+   silently, if there is nowhere to advance to). A red piece gets an explicit,
+   named confirmation before the decision is logged — never blocking, never
+   silent — then joins the ghosted/finished pool exactly like a green leaf."
+  []
+  (let [tree (:tree @session)
+        cur (:current tree)
+        piece (get-in tree [:pieces cur])]
+    (if (:finished? piece)
+      (cycle-current-piece! :next)
+      (let [n (:count piece)
+            msg (str "il pezzo è "
+                     (if (and n (> n 1)) (str "concavo, ha " n " componenti concave") "concavo")
+                     " — accettarlo così com'è?")]
+        (modal-confirm!
+         msg
+         (fn [ok?]
+           (when ok?
+             (swap! session update :tree mtree/accept-current)
+             (reposition-plane-for! (current-id))
+             (recompute!))))))))
 
 (defn- undo!
   "Pop the last structural gesture (chronological, cross-branch — mtree/undo),
@@ -1313,6 +1417,11 @@
         (and (= key "s") (not mod?))
         (do (.preventDefault e) (.stopPropagation e) (flush-digit-buffer!) (separate!))
 
+        ;; a: accept the current piece as finished BY DECISION, whatever its
+        ;; color — confirms first on a red piece (addendum 4 Parte A)
+        (and (= key "a") (not mod?))
+        (do (.preventDefault e) (.stopPropagation e) (flush-digit-buffer!) (accept-as-is!))
+
         ;; n / p: deterministic next / previous open piece (addendum Parte A)
         (and (= key "n") (not mod?))
         (do (.preventDefault e) (.stopPropagation e) (flush-digit-buffer!) (cycle-current-piece! :next))
@@ -1450,6 +1559,7 @@
         (set-btn! ".ems-btn-reflex"   (:reflex avail))
         (set-btn! ".ems-btn-mirror"   (:mirror avail))
         (set-btn! ".ems-btn-separate" (:separate avail))
+        (set-btn! ".ems-btn-accept"   (:accept avail))
         (set-btn! ".ems-prev"         (:nav avail))
         (set-btn! ".ems-next"         (:nav avail))
         (set-btn! ".ems-evt-prev"     (:cut-nav avail))
@@ -1498,6 +1608,7 @@
                "<button class='pilot-btn ems-btn-reflex'>⌐ concavity (c)</button>"
                "<button class='pilot-btn ems-btn-mirror'>mirror-halve (d)</button>"
                "<button class='pilot-btn ems-btn-separate'>separate (s)</button>"
+               "<button class='pilot-btn ems-btn-accept'>accept as-is (a)</button>"
                "<button class='pilot-btn ems-btn-reveal'>reveal (r)</button>"
                "</div>"
                ;; Cut-candidate events: profile strip + jump-to-event nav (brief-cut-
@@ -1518,6 +1629,9 @@
                "Every gesture below also has a button above (disabled = the reason "
                "it can't act right now). "
                "s: separate the current piece into its connected components (no plane). "
+               "a: accept the current piece as finished BY DECISION, whatever its color — "
+               "'finished' is a decision, not a geometric fact; confirms first on a red "
+               "piece, naming it, never a silent or blocked close (addendum 4) · "
                "n / p: next / previous open piece · "
                "r: reveal — show every piece + billboard name labels, press again for focus · "
                "y: propose/cycle the current piece's symmetry planes · "
@@ -1529,7 +1643,8 @@
                "shows A along the active DOF with the plane marker and event ticks "
                "(blue = step / flush face, orange = neck / waist); click a tick to jump · "
                "Enter: cut the current piece (or, when every piece is finished, commit) · "
-               "Ctrl/Cmd+Enter: commit now (emit even with open pieces) · "
+               "Ctrl/Cmd+Enter: commit now — no precondition, ever; if pieces are still "
+               "open it asks first, naming them, then emits them as leaves as-is · "
                "Backspace: undo the last cut/separation (chronological, any branch) · "
                "Esc: cancel, emit nothing. "
                "Plane color: grey = no-op, gold = plane past the piece, blue = active cut. "
@@ -1551,6 +1666,7 @@
     (.addEventListener (.querySelector panel ".ems-btn-reflex") "click" (fn [_] (propose-reflex-cut!)))
     (.addEventListener (.querySelector panel ".ems-btn-mirror") "click" (fn [_] (mirror-decompose!)))
     (.addEventListener (.querySelector panel ".ems-btn-separate") "click" (fn [_] (separate!)))
+    (.addEventListener (.querySelector panel ".ems-btn-accept") "click" (fn [_] (accept-as-is!)))
     (.addEventListener (.querySelector panel ".ems-btn-reveal") "click" (fn [_] (toggle-reveal!)))
     (.addEventListener (.querySelector panel ".ems-evt-prev") "click" (fn [_] (jump-to-event! :prev)))
     (.addEventListener (.querySelector panel ".ems-evt-next") "click" (fn [_] (jump-to-event! :next)))

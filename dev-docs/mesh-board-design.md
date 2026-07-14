@@ -1,86 +1,79 @@
-# Mesh-board — documento di design
+# Mesh-board — documento di design (v2)
 
-Stato: architettura concordata (Vincenzo + Claude, 2026-07), pre-accertamento. Questo documento fissa la visione e le decisioni; le incognite in fondo vanno misurate prima dei brief.
+Stato: architettura rivista (Vincenzo + Claude, 2026-07) dopo la messa a fuoco "direttiva, non strumento". Sostituisce integralmente la v1; le scelte della v1 superate sono nelle alternative scartate. Incognite residue in fondo.
 
 ## Visione
 
-Il mesh-board è il Livello B della famiglia acquisizione: un STL importato viene **convertito progressivamente da dati a codice**. L'endpoint: un programma Ridley che compone pezzi nativi, con zero geometria originale nel file. La conversione è per-pezzo e interrompibile: fermarsi a metà (tre foglie native, due ancora mesh) produce comunque un ibrido funzionante e più leggero.
+Il mesh-board è il Livello B della famiglia acquisizione: un STL importato viene **convertito progressivamente da dati a codice**. L'endpoint: un programma Ridley che compone pezzi nativi, con zero geometria originale nel file. La conversione è per-pezzo e interrompibile: fermarsi a metà produce un ibrido funzionante.
 
-Il principio che regge tutto, emerso dall'esperienza dello split: **non si ricostruisce l'oggetto, si ricostruiscono i pezzi**. `mesh-split` non produce il risultato — produce *i problemi piccoli*; il mesh-board li risolve uno alla volta. La simmetria dimezza il lavoro, `decompose` separa il separabile, e il pezzo singolo (convesso o quasi) è alla portata di "prendo due misure e scrivo `(extrude (hexagon 8) 12)`".
+Principio portante, dall'esperienza dello split: **non si ricostruisce l'oggetto, si ricostruiscono i pezzi**. `mesh-split` produce i problemi piccoli; il board li fa risolvere uno alla volta.
 
-## Architettura: due strumenti sequenziali, un dato condiviso
+## Architettura: il board è una direttiva di visualizzazione, non uno strumento
 
-Decisione primaria (proposta Vincenzo): `edit-mesh-split` e `edit-mesh-board` restano **due strumenti distinti e sequenziali**, e il tramite tra loro è **un dato: l'albero della decomposizione** — che coincide con la forma emessa. Il palleggio è tra due editor dello stesso sorgente:
+Decisione (Vincenzo): `mesh-board` governa la visualizzazione di mesh **scaffold** — come `stamp`, ma tridimensionale e alimentato dall'albero della decomposizione. Non è una sessione modale: è una famiglia di forme nel linguaggio, e il flusso di lavoro è scrivere codice normale accanto a esse.
 
-- **mesh-split scompone**: crea le caselle. Emette il let a catena che produce i pezzi nominati.
-- **mesh-board riempie**: prende in rassegna i pezzi e, uno (o più) alla volta, li confronta con mesh costruite da un mini-script; all'accettazione la casella si riempie: il binding del pezzo diventa codice costruttivo.
+- `(mesh-board albero)` — mostra tutto l'albero come scaffold, in place.
+- `(mesh-board albero {:only [:piece-2 :piece-3]})` — solo alcuni rami/foglie.
+- `(mesh-board foglia candidato {:mode :overlay|:intersection|:diff})` — la foglia scaffold **combinata** con la mesh destinata a sostituirla, per il confronto; alla valutazione viene stampata la **fedeltà** (differenza simmetrica %, il macchinario di `mirror?`), e in `:diff` la deviazione è *renderizzata come geometria* — si vede dove lo script devia, non solo quanto.
 
-Meno UI, più codice: ogni strumento resta piccolo, lo stato intermedio vive nel sorgente (ispezionabile, versionabile, riapribile domani), e nessuna sessione deve sapere tutto. Costo accettato: scoprire durante il board che serve un taglio in più significa uscire e rientrare nello split su quel pezzo — il re-entry è economico, è il prezzo della semplicità dei tool.
+Il "mini-script del pezzo sostitutivo" è **codice normale nel programma**, valutato come tutto il resto: nessun buffer speciale, nessuna sessione-editor. Lo stato del board vive nel sorgente — riapri il file, rivedi gli stessi scaffold e gli stessi confronti. Riproducibilità per costruzione.
 
-### La reificazione dell'albero (decisione da completare in accertamento)
+### Primitiva generale di scaffolding, non solo acquisizione
 
-La forma emessa dallo split ha sempre avuto il body del let non specificato (`…`). La proposta: **il body restituisce la decomposizione come valore** — i pezzi nominati in una struttura (mappa nome→mesh, con o senza la topologia dell'albero). Quel valore è ciò che `edit-mesh-board` riceve e prende in rassegna. Da definire in accertamento: forma esatta (mappa piatta di foglie basta? serve la struttura dei rami per le viste?), e come il board localizza nel sorgente il binding da sostituire.
+Niente lega l'argomento di `mesh-board` a `mesh-split`: qualunque mesh può fare da scaffold, e più direttive coesistono (accumulatore per-valutazione, come `stamp`). L'acquisizione è il consumatore fondatore, non il confine. Usi generali già identificati: **sagome di controllo** (volume di stampa, ingombri, envelope di tolleranza — geometria di servizio che non deve mai finire nell'output); **controparti di accoppiamento** (progettare il mount col tile multiboard come scaffold: la geometria contro cui combaciare, visibile e misurabile, mai esportata); **regressione visiva dei refactoring** (`(mesh-board versione-vecchia versione-nuova {:mode :diff})` — fedeltà 100% = refactoring pulito, altrimenti il diff mostra dove il pezzo è cambiato: il trap-test geometrico per qualunque programma Ridley).
 
-## Le tre viste (infrastruttura condivisa, non proprietà di un tool)
+### Cittadinanza degli scaffold: leggibili, non incorporabili — fondata sull'inerzia referenziale
 
-Diagnosi (Vincenzo): i meccanismi sono sofisticati ma si perde il filo — manca la visione del processo nel suo insieme. Due viste mancanti, più quella esistente:
+Gli scaffold appaiono nel viewport ma non sono nel registry: non nominati, non pickabili, esclusi dallo snap strutturale. Restano però **misurabili**: raycast/picking di misura, `face-at`, `distance` — è lettura, non incorporazione (e il mini-accertamento ha verificato che questa parte è gratis: il raycast di misura è scena-based, quello strutturale filtra su registryName).
 
-1. **Vista contesto — "dove sono nell'oggetto"**: l'originale ghosted con il pezzo corrente acceso al suo posto. Il contesto spaziale che l'addendum 3 ha correttamente tolto dalla vista di lavoro vive qui, in una vista dedicata.
-2. **Vista processo — "quanto manca"**: l'albero come diagramma nel pannello — rami, foglie chiuse/aperte/native, conteggi. È anche **navigazione**: click su una foglia nel pannello = accesso diretto (legittimo: la monofunzione del click riguarda la viewport). Supera il limite della navigazione cieca per adiacenza di `n`/`p`.
-3. **Vista focus — "cosa sto facendo"**: quella esistente (solo pezzo corrente + piano nello split; pezzo + script nel board).
+La garanzia "il riferimento non entra mai nell'output" è fondata sull'**inerzia referenziale del board**, non su un divieto di CSG sui dati (registry e ammissibilità CSG sono ortogonali — scoperta del mini-accertamento — e i pezzi dell'albero DEVONO restare CSG-abili: l'ibrido li usa, `mesh-union` dei pezzi è legittima). Concretamente: (1) `mesh-board` è pass-through — ritorna il suo argomento identico, non altera il flusso dei valori del programma; (2) la pipeline scaffold porta solo dati di display che non rientrano mai in userland; (3) l'export non include la geometria scaffold (da verificare e testare nel brief). L'output dipende solo da ciò che il sorgente calcola, e il board non lo tocca.
 
-Le viste sono **del dato** (l'albero), non di uno strumento: le stesse tre servono split e board. Le prime due, da sole, sono un brief piccolo e utile subito.
+### Ciclo di vita: per-valutazione, come stamp
 
-## Il workplace (l'operazione nuova del board)
+Il board appare perché il sorgente lo dice e scompare quando il sorgente smette di dirlo (call rimossa o commentata + rivalutazione). **Nessun `:off` nel linguaggio**: sarebbe equivalente a cancellare la riga lasciando codice morto — pensiero imperativo in un medium dichiarativo. Il bisogno "zittiscilo senza editare" è **view state**: un toggle di viewport "boards on/off", parente del reveal, che non tocca il sorgente. Due interruttori, due nature: il sorgente decide cosa esiste, la UI decide cosa si guarda.
 
-Per la foglia corrente:
+### Posizionamento: in place di default, si sposta il dato, non il display
 
-- La foglia fa da **riferimento ghosted**.
-- Un **mini-script** — Ridley vero, tutto il linguaggio, non un sotto-linguaggio da tool — viene scritto in un buffer di sessione e valutato; il risultato si mostra **in confronto** col pezzo: sovrapposizione, intersezione, differenza (tre modi di vista sulle stesse booleane).
-- La **metrica di fedeltà** riusa la differenza simmetrica di `mirror?`: "lo script copre il 99.2% del pezzo" — e la differenza *renderizzata come geometria* mostra **dove** lo script devia, non solo quanto.
-- **Accettazione = sostituzione**: il binding della foglia diventa lo script (con la fedeltà a commento). Il pezzo-dato resta disponibile finché gli split girano — è il riferimento per i confronti futuri.
+Default: **in place** — i pezzi hanno coordinate mondo, lo scaffold sta dove sta l'oggetto, ed è lì che i confronti di fedeltà hanno senso. Ri-posizionamento: **si trasforma l'albero, non il board** — `(mesh-board (attach t (f 10)))`. La posa appartiene al dato (le foglie portano la creation-pose condivisa, che qui trova il suo terzo ruolo: maniglia del gruppo), quindi il movimento appartiene al dato: `attach` su un albero è la trasformazione rigida di gruppo che `transform` già fa sui vettori di mesh (disposizioni relative preservate, replay dalla creation-pose), col vestito funzionale di `attach`. `mesh-board` resta una direttiva di display **pura**: mostra l'albero che riceve, dove giace. L'albero spostato è un valore ordinario, riusabile anche fuori dal display (misura, `split-parts`, confronti). Nota per il brief: `mesh-board` ritorna il suo argomento (pass-through), così si compone nei threading — `(-> t (attach (f 10)) (mesh-board))`.
 
-Strumenti di misura al servizio dello script: picking, `face-at`, `distance`, `bounds`, `section-area` sul riferimento — l'equivalente 3D del righello di calibrazione di `edit-image-board`.
+### Accettazione = riscrittura del sorgente
 
-## Ciclo di vita e caduta dell'impalcatura
+Confermato da Q1+Q6 dell'accertamento: le foglie non hanno un RHS (nascono per destructuring da una `mesh-split`), quindi "riempire la casella" è una riscrittura — sollevare la foglia nativa in un binding, sostituirne l'uso a valle, e (a ramo completo) far cadere gli split. **Prima manuale, poi assistita**: all'inizio la riscrittura la fa l'utente nell'editor (il confronto resta finché serve, poi si toglie la call); il gesto assistito — con il localizzatore preciso che il tracker già richiede — è una comodità successiva, non un prerequisito.
 
-- Le foglie si convertono una alla volta; l'albero traccia lo stato (mesh / nativa, con fedeltà).
-- Quando **tutte** le foglie di un ramo sono native, gli split di quel ramo non servono più: l'impalcatura può **cadere** — la forma si riscrive componendo i pezzi nativi (le pose dei tagli non servono più a tagliare, al più restano come frame di assemblaggio). Quando cade l'ultimo split, cade anche il `decode-mesh`/`import-stl`: acquisizione completa.
-- La meccanica della caduta (chi riscrive la forma, quando, con che conferma) è materia d'accertamento.
+## Le tre viste (invariate)
+
+1. **Vista contesto** — l'originale ghosted col pezzo corrente acceso al suo posto (inset, brief-acquisition-views).
+2. **Vista processo** — l'albero nel pannello, cliccabile, con stati e conteggi (idem). Con l'architettura a direttive, la vista processo deve poter vivere **anche fuori dalla sessione split**, quando un board è attivo nel programma: legge lo stesso dato.
+3. **Vista focus** — la vista di lavoro esistente.
+
+## Ciclo di vita dell'acquisizione e caduta dell'impalcatura
+
+Le foglie si convertono una alla volta (l'albero traccia mesh/nativa con fedeltà); quando tutte le foglie di un ramo sono native gli split del ramo cadono; quando cade l'ultimo, cade l'import. La meccanica assistita della caduta richiede il localizzatore preciso (entry nel tracker); la versione manuale è possibile da subito.
 
 ## Canali d'ingresso e profili di qualità
 
-Il meccanismo di acquisizione è agnostico rispetto alla provenienza: il medium è la mesh. I canali previsti — STL da CAD, scansioni 3D, mesh da fotogrammetria — entrano nella stessa pipeline con profili di qualità diversi, e gli strumenti si dividono di conseguenza:
-
-- **Sopravvivono al rumore gli strumenti volumetrici/integrali**: profilo di sezione A(t) (integrale, media il rumore), simmetria (differenza simmetrica volumetrica, tollerante per costruzione), `convex?` (hull-ratio), `decompose`, `mesh-split`.
-- **Muoiono sul rumore gli strumenti face-based**: candidati da spigoli riflessi (ogni spigolo di uno scan è pseudo-riflesso per rumore), dedup dei complanari, converter esatto facce→piani. Assumono la verità CAD ("le facce piatte esistono").
-- **Il workplace è il caso d'uso nativo dello scan**: sulla scansione la deviazione dello script non è errore — è il rumore che si butta via. "Fedeltà 97%" su uno scan è successo, non fallimento. La semantica della metrica cambia col canale, il meccanismo no.
-
-Requisiti nuovi del canale scan: **condizionamento all'ingresso** (Manifold esige watertight/manifold; gli scan spesso no — serve una storia di repair, o un rifiuto con errore leggibile); **calibrazione di scala** (la fotogrammetria è scale-free: è il righello di `edit-image-board` portato in 3D — "questo spigolo è 50 mm"); **formati** (PLY/OBJ oltre a STL); **provenienza come hint** (`:cad`/`:scan` sulla mesh importata: i gesti face-based si disabilitano con la ragione scritta, stile addendum 3).
-
-Confine dichiarato: **Ridley inizia alla mesh**. Foto→mesh (fotogrammetria, app di scansione) resta a monte in strumenti esterni; si documenta il percorso, non lo si implementa — lo stesso confine di `edit-image-board`, che prende l'immagine e non la fotocamera.
+(Invariato dalla v1.) Il medium è la mesh; i canali (CAD, scan, fotogrammetria) entrano con profili di qualità diversi. Sopravvivono al rumore gli strumenti volumetrici (profilo A(t), simmetria, `convex?`, `decompose`, `mesh-split`); muoiono i face-based (spigoli riflessi, dedup complanari, converter esatto). Il confronto del board è il caso d'uso nativo dello scan: la deviazione è il rumore che si butta via — fedeltà 97% su uno scan è successo. Requisiti del canale: repair (i buchi sono il gate, non il rumore — Q7), formati PLY/OBJ (loader three.js già in bundle — Q8), calibrazione di scala (erede del righello 2D, componibile — Q9), provenienza come hint. Confine: Ridley inizia alla mesh.
 
 ## Alternative considerate e scartate
 
-- **Workplace dentro la sessione split** (un solo mega-tool con l'operazione "sostituisci"): scartato — sessione monstre, due attività mentalmente diverse (scomporre vs modellare) forzate in uno stato solo, e il medium diventa lo stato di sessione invece del sorgente. La versione a due strumenti è più Ridley: meno UI, più codice.
-- **Mesh-board come scaffold libero sull'oggetto intero** (l'idea originale del Livello B, pre-split): superata — ricostruire l'intero è il problema grande; la decomposizione lo riduce a problemi piccoli. Resta possibile *anche* sull'oggetto intero (un albero a foglia sola).
-- **L'albero come struttura dati runtime separata dal sorgente** (slot da riempire con API dedicate): scartato — introdurrebbe una seconda verità; il sorgente emesso È la struttura, i tool ne sono editor.
+- **`edit-mesh-board` come sessione modale con workplace** (v1 di questo documento): scartata — sessione-editor con buffer dedicato quando il linguaggio già fa tutto; le direttive stile stamp danno riproducibilità (lo stato è il sorgente), dissolvono il grosso della superficie nuova di Q2, e rendono la garanzia "il riferimento non entra nell'output" strutturale invece che convenzionale.
+- **Workplace dentro la sessione split** (v0): scartata prima ancora — sessione monstre, due attività mentali in uno stato solo.
+- **`(attach (mesh-board t) …)` — il board come quarto cittadino di attach** (v2 di questo documento): scartato — la posa appartiene al dato, non al display; dare una posa alla direttiva costringeva alla semantica "display eager + ri-posa funzionale" per non mostrare due volte. Trasformare l'albero prima del display (`(mesh-board (attach t …))`) dissolve la sottigliezza e riusa il precedente di `transform` su vettori di mesh.
+- **`(mesh-board t :off)` nel linguaggio**: scartato — la presenza nel sorgente È l'interruttore; il muting senza editing è view state (toggle di viewport), non una forma del linguaggio.
+- **Posizionamento turtle-relative di default** (board mostrato alla posa corrente, stile stamp puro): scartato — i pezzi hanno coordinate mondo e i confronti sono in place; la posa entra solo quando si ri-posa esplicitamente via attach.
+- **Scaffold totalmente inerti** ("non usabili in nessun modo" alla lettera): ammorbidito in "leggibili, non incorporabili" — senza misura sul riferimento il caso fondativo muore.
+- **L'albero come struttura dati runtime con slot e API di riempimento**: scartato (v1) — il sorgente è la struttura; confermato a maggior ragione ora.
 
-## Incognite per l'accertamento
+## Incognite residue (delta rispetto all'accertamento fatto)
 
-1. **Reificazione**: forma esatta del valore-decomposizione restituito dal body (mappa piatta vs topologia); come il board localizza il binding da sostituire nel sorgente; compatibilità col re-entry per-call esistente.
-2. **Workplace**: substrato per un buffer di script con valutazione live dentro una sessione (quanto del substrato modale esistente è riusabile? il REPL/editor esistente può fare da buffer con contesto?).
-3. **Vista processo**: substrato UI disponibile per un diagramma-albero cliccabile nel pannello; costo di tenerlo sincronizzato col dato.
-4. **Posa d'ingresso dello script**: il pezzo giace in coordinate mondo — da dove parte la turtle del mini-script? Le pose dei tagli che delimitano la foglia sono frame naturali già noti; la creation-pose condivisa è un'altra candidata. Serve una convenzione, misurata sull'ergonomia reale.
-5. **Costo del confronto**: booleane per la differenza renderizzata — a ogni valutazione dello script (accettabile) o live durante la digitazione (da misurare/throttlare)?
-6. **Caduta dell'impalcatura**: riscrittura della forma quando un ramo è tutto nativo — meccanica, conferme, cosa resta delle pose.
-7. **Repair**: cosa espone il binding per riparare mesh non-watertight/non-manifold (o cosa costa costruirlo); comportamento attuale di `import-stl`+CSG su una scansione vera; criteri di rifiuto leggibile.
-8. **Formati scan**: costo di import PLY (lingua franca degli scanner) e OBJ accanto a STL.
-9. **Calibrazione di scala 3D**: gesto e convenzione (misura su spigolo/coppia di punti del riferimento → fattore); riuso dell'ergonomia del righello di `edit-image-board`.
+1. **`attach` su un valore-albero**: costo di estendere `attach` alle collezioni di mesh (mappa/vettore) con trasformazione rigida di gruppo — il macchinario è quello di `transform` su vettori; verificare il dispatch e la sorte delle pose. Piccola.
+2. **Layer scaffold nel renderer**: dove vivono le mesh display-only (fuori dal registry, dentro il viewport) e come si agganciano picking/misura senza aprirle alla CSG. Probabile parentela col ghosting esistente.
+3. **Q2 ridimensionata**: del vecchio workplace resta solo l'aggancio del confronto (calcolo fedeltà + mesh differenza alla valutazione — costi già misurati in Q5) e la stampa della fedeltà.
+4. Il resto degli esiti dell'accertamento (Q1, Q4, Q5, Q6, Q7–9) resta valido e già acquisito.
 
-## Ordine proposto
+## Ordine
 
-1. Brief "viste": vista contesto + vista processo (utili subito, anche solo per lo split).
-2. Accertamento sulle incognite 1–6.
-3. Brief `edit-mesh-board` (workplace + sostituzione).
-4. Brief "caduta dell'impalcatura" (chiusura del ciclo di acquisizione).
+1. **Brief viste** (`brief-acquisition-views.md`, già scritto): invariato — l'albero nel pannello serve lo split oggi e le direttive domani; aggiungere in corso d'opera solo la predisposizione a vivere fuori dalla sessione.
+2. **Mini-accertamento** sulle incognite 1–2 (valore-board e layer scaffold).
+3. **Brief `mesh-board`**: le direttive (board, only, confronto con fedeltà), la cittadinanza, il toggle di viewport.
+4. **Brief caduta dell'impalcatura** (riscrittura assistita; prerequisito: localizzatore preciso dal tracker).

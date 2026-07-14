@@ -116,7 +116,7 @@
     :category "positioning-assembly"
     :status "stable"
     :since ""
-    :signature "(attach mesh-or-sdf & body)"
+    :signature "(attach mesh-or-sdf & body)\n(attach meshes & body)"
     :description "Apply a sequence of turtle commands to a mesh, panel, or SDF and return the transformed value. The original is unchanged."
     :path "docs/manual/reference/en/attach.md"}
 
@@ -1028,6 +1028,15 @@
     :signature "(mesh name-or-ref)"
     :description "Return the raw mesh value associated with a registered name. When given a mesh value already, returns it unchanged (identity-like behaviour). Useful inside boolean / transform pipelines that need the underlying geometry rather than the registry key. Does not modify turtle state."
     :path "docs/manual/reference/en/mesh.md"}
+
+   "mesh-board"
+   {:name "mesh-board"
+    :category "mesh-operations"
+    :status "stable"
+    :since ""
+    :signature "(mesh-board t)\n(mesh-board t {:only [:piece-2 :piece-3]})\n(mesh-board reference candidate)\n(mesh-board reference candidate {:mode :overlay|:intersection|:diff :label \"…\"})"
+    :description "Display mesh scaffold(s) in the viewport — ghost-wireframe, in place, never part of the scene registry. `mesh-board` is a display DIRECTIVE, not a transformation: it always returns its **first argument unchanged**, so it composes cleanly in a threading pipeline (`(-> t (attach (f 10)) (mesh-board))`) without altering what the rest of the program computes with. Scaffold geometry is never named, never pickable, and never included in export — it exists purely for the viewport."
+    :path "docs/manual/reference/en/mesh-board.md"}
 
    "mesh-components"
    {:name "mesh-components"

@@ -10,11 +10,24 @@ status: stable
 ## Signature
 
 `(attach mesh-or-sdf & body)`
+`(attach meshes & body)` — a vector or map of meshes, moved as one rigid group
 
 ## Description
 
 Apply a sequence of turtle commands to a mesh, panel, or SDF and
 return the transformed value. The original is unchanged.
+
+`attach` also accepts a **collection of meshes** — a vector, or a map (name
+→ mesh, e.g. a `mesh-board` tree value): the whole collection moves as one
+rigid group, replaying `body` once against the first mesh's shared
+creation-pose and applying the resulting transform to every mesh's vertices
+and creation-pose alike. Relative disposition within the group is preserved.
+The container shape is preserved too — a map goes in, a map with the same
+keys comes out; a vector goes in, a vector comes out (never unwrapped, even
+for a single element). An empty collection returns empty, unchanged. Any
+other unsupported argument — a map that isn't a mesh collection, or a
+foreign type — is a readable error naming what was received, never a silent
+no-op.
 
 `attach` wraps `body` in a `(path ...)` and replays it on a virtual
 turtle attached to the value. Movement commands translate the
@@ -49,7 +62,8 @@ meshes.
 
 ## Parameters
 
-- `mesh-or-sdf` — a mesh, an SDF node, or a panel.
+- `mesh-or-sdf` — a mesh, an SDF node, a panel, or a vector/map of meshes
+  (moved together as a rigid group — see above).
 - `body` — one or more turtle / attach commands, exactly the same
   forms accepted inside a `path` body, plus the attach-specific
   commands listed in the table above.
@@ -127,6 +141,24 @@ attach-time tool for re-anchoring a feature. See
 another: it both translates and re-orients the turtle frame so
 subsequent commands operate in the target's coordinate system.
 
+{{example: attach-group}}
+
+<!-- example-source: attach-group -->
+```clojure
+;; A map of meshes (e.g. a mesh-board decomposition tree) moves as one
+;; rigid group — relative disposition preserved, container shape preserved
+(def piece-1 (box 10 10 10))
+(def piece-2 (attach piece-1 (f 20)))
+(def t {:piece-1 piece-1 :piece-2 piece-2})
+(def moved (attach t (f 10) (th 90)))
+(mesh-board moved)
+```
+<!-- /example-source -->
+
+Re-positioning a whole `mesh-board` tree at once: transform the data, not
+the display — `(mesh-board (attach t (f 10)))` shows the scaffold where the
+moved tree now lives.
+
 ## Notes
 
 - `attach` is functional: it returns a new value without touching
@@ -149,4 +181,4 @@ subsequent commands operate in the target's coordinate system.
 
 - **Related:** `attach!`, `move-to`, `play-path`, `stretch-f`,
   `stretch-rt`, `stretch-u`, `cp-position`, `cp-rotation`,
-  `transform`, `path`
+  `transform`, `path`, `mesh-board`

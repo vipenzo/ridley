@@ -108,13 +108,15 @@
 ;; Scene Accumulator
 ;; ============================================================
 
-;; Visual output (pen traces, stamps) shared across all turtle scopes.
-;; Cleared at the start of each evaluation cycle.
-(defonce scene-accumulator (atom {:lines [] :stamps []}))
+;; Visual output (pen traces, stamps, mesh-board scaffolds) shared across all
+;; turtle scopes. Cleared at the start of each evaluation cycle. :scaffolds is
+;; the mesh-board directive's contribution (brief-mesh-board.md Part 3) — every
+;; (mesh-board …) call in the eval conj's onto it, mirroring :stamps.
+(defonce scene-accumulator (atom {:lines [] :stamps [] :scaffolds []}))
 (defonce mark-anchors (atom {}))
 
 (defn reset-scene-accumulator! []
-  (reset! scene-accumulator {:lines [] :stamps []})
+  (reset! scene-accumulator {:lines [] :stamps [] :scaffolds []})
   (reset! mark-anchors {}))
 
 ;; ============================================================

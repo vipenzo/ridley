@@ -702,25 +702,26 @@ La scena è il nodo centrale dell'applicazione. È dove vivono le mesh, i pannel
 
 Il contenuto della scena vive in `src/ridley/scene/registry.cljs`. Questo capitolo descrive solo il lato "catalogo": come le entità sono registrate, indicizzate, lette. Il rendering Three.js vero e proprio (gestione della camera, picking, ruler interattivi, axis- constrained rotation, render loop, WebXR) è appena toccato qui in quanto consumatore della scena, e sarà approfondito nei capitoli sui sottosistemi ausiliari. Il modo in cui la macro `register` costruisce le entry è stato già coperto in 5.5.
 
-### 7.1 Sette atom paralleli
+### 7.1 Otto atom paralleli
 
-La scena è implementata come sette atom privati distinti, uno per ogni tipo di entità che il DSL può produrre:
+La scena è implementata come otto atom privati distinti, uno per ogni tipo di entità che il DSL può produrre:
 
 - `scene-meshes`, vector di entry `{:mesh ... :name kw|nil :visible bool :source-form ...?}`
 - `scene-lines`, vector di segmenti `{:from [...] :to [...] :color ...?}`
 - `scene-stamps`, vector di outline triangolati di profili
+- `scene-scaffolds`, vector di mesh-data ghost-wireframe della direttiva `mesh-board` (dev-docs/brief-mesh-board.md Parte 2) — mai fuso in `scene-meshes`: è così che l'export e il pick strutturale la escludono per costruzione, non per convenzione
 - `scene-paths`, vector di entry `{:path ... :name kw}`
 - `scene-panels`, vector di entry `{:panel ... :name kw :visible bool}`
 - `scene-shapes`, vector di entry `{:shape ... :name kw}`
 - `scene-values`, mappa `{kw any}` per il lookup raw via `($ :nome)`
 
-Accanto a questi sette vivono due strutture di servizio: `mesh-id-counter`, un contatore intero monotono che genera identificatori unici, e `claimed-meshes`, un `js/Set` nativo JavaScript che marca le mesh già registrate dalla macro `register` durante un'eval (la sua ragion d'essere è descritta in 7.4).
+Accanto a questi otto vivono due strutture di servizio: `mesh-id-counter`, un contatore intero monotono che genera identificatori unici, e `claimed-meshes`, un `js/Set` nativo JavaScript che marca le mesh già registrate dalla macro `register` durante un'eval (la sua ragion d'essere è descritta in 7.4).
 
-La scelta di sette atom paralleli è la trascrizione naturale del fatto che ognuno di questi tipi ha un ciclo di vita e un consumatore diverso: le mesh interessano viewport e export, i path solo il DSL che li riusa, i pannelli sono testo billboardato, gli shape sono profili 2D, i valori raw sono semplici lookup. Tenerli separati rende ognuno introspettabile, e mantiene le funzioni di lettura specializzate per tipo. Il prezzo che si paga, in cambio, è duplicazione strutturale: la stessa logica di "trova entry per nome" è ripetuta quattro volte, una per ogni tipo registrato per nome. La sezione 14 ci tornerà.
+La scelta di otto atom paralleli è la trascrizione naturale del fatto che ognuno di questi tipi ha un ciclo di vita e un consumatore diverso: le mesh interessano viewport e export, i path solo il DSL che li riusa, i pannelli sono testo billboardato, gli shape sono profili 2D, i valori raw sono semplici lookup. Tenerli separati rende ognuno introspettabile, e mantiene le funzioni di lettura specializzate per tipo. Il prezzo che si paga, in cambio, è duplicazione strutturale: la stessa logica di "trova entry per nome" è ripetuta quattro volte, una per ogni tipo registrato per nome. La sezione 14 ci tornerà.
 
 ### 7.2 Renderable e abstract
 
-I sette atom si dividono in due categorie concettuali. Le entità **renderable** hanno un flag `:visible` e finiscono nel viewport quando il flag è `true`: sono mesh, lines, stamps e panels. Le entità **abstract** sono pura informazione, non hanno una loro proiezione visiva, e non passano mai per il viewport: sono paths, shapes e values.
+Gli otto atom si dividono in due categorie concettuali. Le entità **renderable** hanno un flag `:visible` e finiscono nel viewport quando il flag è `true`: sono mesh, lines, stamps e panels — gli scaffold di `scene-scaffolds` sono renderable per costruzione (via `scaffolds-visible`) ma restano fuori dal concetto di "citizenship" della scena: non hanno nome, non sono pickabili, e la loro visibilità è un toggle di viewport, non un flag per-entry come `:visible`. Le entità **abstract** sono pura informazione, non hanno una loro proiezione visiva, e non passano mai per il viewport: sono paths, shapes e values.
 
 Un path registrato non si vede da nessuna parte fino a che il codice utente non chiede esplicitamente `(follow-path :nome)` per disegnarlo come tracciato della tartaruga, oppure lo passa a `extrude` perché generi una mesh. Lo stesso vale per uno shape: è un profilo 2D che esiste come dato, e diventa visibile solo quando viene estruso, ruotato o lofted in una mesh che entra in `scene-meshes`. I valori in `scene-values` sono ancora più silenti: servono solo come contenitore per il lookup `$`, e non hanno proiezione di alcun tipo se non quella che il codice utente costruisce a mano leggendoli.
 
@@ -736,13 +737,13 @@ C'è poi un terzo campo, `:registry-name`, che vive solo temporaneamente: non st
 
 ### 7.4 Il rapporto con lo scene-accumulator
 
-Le linee della tartaruga in pen-mode e gli stamp dei profili 2D sono prodotti durante l'eval del codice utente, ad altissima frequenza, da decine di chiamate a `f` e a `stamp`. Vivono però in un atom dedicato, `scene-accumulator` (capitolo 6.7), che sta in `editor/state.cljs` accanto al `*turtle-state*`, non nella scena. La separazione è deliberata.
+Le linee della tartaruga in pen-mode, gli stamp dei profili 2D, e gli scaffold di `mesh-board` sono prodotti durante l'eval del codice utente — `mesh-board`, a differenza di `stamp`, non tocca il turtle-state (opera su valori già calcolati), ma condivide lo stesso innesto: ogni chiamata fa `swap!` su `(:scaffolds @scene-accumulator)`, drenato con lo stesso ciclo di vita di `:stamps`. Vivono però in un atom dedicato, `scene-accumulator` (capitolo 6.7), che sta in `editor/state.cljs` accanto al `*turtle-state*`, non nella scena. La separazione è deliberata.
 
 La prima ragione è di layering. Le funzioni implicite del turtle non devono conoscere la scena: il modulo turtle è deliberatamente registry-agnostic, in modo che possa essere ragionato e testato isolatamente. Se ogni `f` con pen-on dovesse fare uno `swap!` su `scene-lines`, il turtle dipenderebbe dalla scena, e il grafo dei moduli si appesantirebbe.
 
 La seconda ragione è di lifecycle. Le linee e gli stamp sono trace di esecuzione del run corrente: il loro orizzonte temporale è una singola eval. Le entità nominate della scena, invece, devono sopravvivere ai comandi REPL successivi, perché l'utente continua a interagire con loro per nome. Tenere le due cose in atom diversi permette di avere reset rule diverse: lo scene-accumulator viene azzerato a ogni eval (anche di un singolo comando REPL), mentre i sette atom della scena vengono azzerati solo quando si rivaluta l'intero buffer delle definitions.
 
-La terza ragione è che il driver dell'editor sceglie esplicitamente quando consolidare. Al termine dell'eval, il driver legge lo scene-accumulator, decide se sostituire (per le definitions) o accumulare (per i comandi REPL), e scrive in `scene-lines` / `scene-stamps`. Mantenere accumulator e scena distinti rende questa policy esplicita.
+La terza ragione è che il driver dell'editor sceglie esplicitamente quando consolidare. Al termine dell'eval, il driver legge lo scene-accumulator, decide se sostituire (per le definitions) o accumulare (per i comandi REPL), e scrive in `scene-lines` / `scene-stamps` / `scene-scaffolds`. Mantenere accumulator e scena distinti rende questa policy esplicita.
 
 Le mesh, va notato, seguono un percorso diverso. Quando il codice utente scrive `(register foo (extrude ...))`, la macro `register` agisce direttamente sui sette atom della scena durante l'eval: la mesh named è nella scena prima ancora che il driver concluda la valutazione. Le mesh anonime prodotte dal turtle (quelle dove l'utente ha scritto `(extrude ...)` senza un nome) sono invece nel turtle-state, e vengono trasferite alla scena dal driver alla fine dell'eval, attraverso `set-definition-meshes!`. È qui che entra in gioco `claimed-meshes`: la macro `register`, quando registra un vector di mesh sotto un nome composto (per esempio `(register parts (for [...] (extrude ...)))` produce `:parts/0`, `:parts/1`, eccetera), marca ogni sotto-mesh nel set `claimed-meshes`. Il driver, prima di trasferire le mesh anonime del turtle, controlla questo set e salta le mesh già registrate. Senza questo meccanismo, una stessa mesh finirebbe nella scena due volte: una con il nome composto, una come anonima.
 
@@ -927,13 +928,14 @@ Le ultime due, in senso stretto, sono *stato lessicale di scope* (8.1) e non rie
 
 ### 8.4 Stato della scena
 
-La scena, trattata in dettaglio nel capitolo 7, è la più densa concentrazione di stato persistente in Ridley. Sette atom paralleli più due ausiliari, tutti privati al modulo `scene/registry.cljs`:
+La scena, trattata in dettaglio nel capitolo 7, è la più densa concentrazione di stato persistente in Ridley. Otto atom paralleli più due ausiliari, tutti privati al modulo `scene/registry.cljs`:
 
 | Atom | Contenuto |
 |---|---|
 | `scene-meshes` | vec di `{:mesh :name :visible :source-form? ...}` |
 | `scene-lines` | vec di line data (segmenti pen-on) |
 | `scene-stamps` | vec di stamp shape per debug |
+| `scene-scaffolds` | vec di mesh-data ghost-wireframe della direttiva `mesh-board` |
 | `scene-paths` | vec di `{:path :name :visible}` |
 | `scene-panels` | vec di `{:panel :name :visible}` |
 | `scene-shapes` | vec di `{:shape :name}` |
@@ -943,7 +945,7 @@ La scena, trattata in dettaglio nel capitolo 7, è la più densa concentrazione 
 
 Sono tutti resettati da `clear-all!` all'inizio di ogni Run, con una eccezione rilevante: `mesh-id-counter` non viene mai azzerato. Il contatore monotono di registry-id sopravvive ai reset perché serve a garantire l'unicità degli id anche fra Run successive. Una mesh con id 17 nella Run precedente non condividerà l'id 17 con qualcosa nella Run successiva, anche se entrambe partissero da un registry vuoto.
 
-Il capitolo 15 raccoglie i nodi critici di questa organizzazione: lookup O(n) sui sette atom paralleli, codice duplicato fra `visible-meshes` e `visible-panels`, asimmetrie di flusso del campo `:registry-name`. Qui basta dire che la rete di stato della scena è vasta e che il fatto che sia distribuita in sette atom invece di un singolo grafo ha costi di manutenzione documentati altrove.
+Il capitolo 15 raccoglie i nodi critici di questa organizzazione: lookup O(n) sugli otto atom paralleli, codice duplicato fra `visible-meshes` e `visible-panels`, asimmetrie di flusso del campo `:registry-name`. Qui basta dire che la rete di stato della scena è vasta e che il fatto che sia distribuita in otto atom invece di un singolo grafo ha costi di manutenzione documentati altrove.
 
 ### 8.5 Stato del viewport
 
@@ -971,12 +973,12 @@ Accanto a `state` vive una nube di atom `defonce ^:private` che catturano stato 
 
 | Atom | Funzione |
 |---|---|
-| `current-meshes`, `current-stamps` | ultimi vec passati a `update-scene`, per export e toggle |
-| `grid-visible`, `axes-visible`, `lines-visible` | toggle UI |
+| `current-meshes`, `current-stamps`, `current-scaffolds` | ultimi vec passati a `update-scene`, per export e toggle — `current-scaffolds` non alimenta MAI l'export: è la garanzia strutturale di cittadinanza di `mesh-board` (dev-docs/brief-mesh-board.md Parte 4) |
+| `grid-visible`, `axes-visible`, `lines-visible`, `scaffolds-visible` | toggle UI |
 | `grid-level` | potenza di 10 corrente (griglia adattiva) |
 | `turtle-visible`, `turtle-pose`, `turtle-source` | indicator state e sorgente del posizionamento |
 | `turtle-indicator` | THREE.Group dell'indicatore turtle |
-| `lines-object`, `normals-object`, `stamps-object` | cache dei Three.Object visibili |
+| `lines-object`, `normals-object`, `stamps-object`, `scaffolds-object` | cache dei Three.Object visibili — ogni scaffold porta una `LineSegments` (ghost-wireframe, visibile) più una `Mesh` gemella invisibile (opacity 0, sola raycast) perché `raycast-world-point` è Mesh-only: un puro wireframe non sarebbe misurabile via shift+click |
 | `panel-objects` | `{name -> {:mesh :canvas :texture}}` per i pannelli di testo |
 | `axis-rotation-state` | drag gesture sugli assi |
 | `preview-objects` | oggetti temporanei del test-mode |
@@ -1693,6 +1695,8 @@ Il re-entry non replica il pattern di `edit-attach` (comandi verbatim preservati
 **Generatore di candidati di taglio (brief-cut-candidates.md, 2026-07-13).** Il segnale percettivo è l'area di sezione `A` lungo il grado di libertà attivo. Parte pura `ridley.geometry.cut-candidates` (offset dei vertici, gradini da facce complanari con salienza `|ΔA|` letta esatta dalla mesh, colli da minimi del profilo campionato, node-testata); orchestrazione WASM in `manifold/core` (`section-area` nativa; `translation-profile`/`rotation-profile` che convertono il Manifold una volta e affettano molte — B2: traslazione ~0.04 ms/campione, rotazione ~0.6 ms via `.rotate(−θ)`+`.slice(0)`; `cut-candidates` che dispatcha translation/rotation e ordina per salienza). Esposto come funzione DSL pura `(cut-candidates mesh opts)` (i wrapper `implicit-*` leggono la posa dalla turtle — B5). In `edit-mesh-split` (Parti 3-4): i tasti `[`/`]` **saltano al prossimo/precedente evento** sensibili al modo (step→translation, angle→rotation su `:up`), navigando per posizione; candidati+profilo sono in cache in un **frame FISSO** per (pezzo, modo, heading|posizione) — ricalcolato solo quando cambia l'asse-che-definisce-il-frame (no-op mentre si muove il DOF), traslazione sync, rotazione debounced con pending. Una **striscia di profilo** SVG nel pannello disegna `A(t)`/`A(θ)` con marcatore del piano e tacche colorate per kind; il click su una tacca teletrasporta. Trappola risolta: il frame di slice della rotazione richiede `right = up×heading` (heading×up è sinistrorso → manifold riflesso → slice a zero).
 
 **Modo `:reflex` — candidati dagli spigoli riflessi (brief-cut-candidates-reflex.md, 2026-07-13).** Terza specie di candidati, accanto a simmetria (`y`) ed eventi di profilo (`[`/`]`): propone tagli **dove vive la concavità**. `(cut-candidates mesh {:mode :reflex})` è PURO e **pose-free** — legge solo la mesh, non la turtle. Pipeline in `ridley.geometry.cut-candidates/reflex-candidates` (WASM-free, node-testata): per ogni spigolo manifold si misura il diedro dalle due normali di faccia; è **riflesso** (concavo) se il vertice opposto della seconda faccia sporge sopra il piano della prima (segno robusto rispetto al winding) e l'eccesso d'angolo `acos(nA·nB)` supera `:reflex-tol` (scarta i quasi-piatti da tessellazione). Ogni spigolo riflesso offre **due candidati** — i piani delle due facce adiacenti — che vengono **clusterizzati per piano** (normale entro `:cluster-angle-tol`, offset entro `:tolerance`; **refinement-invariante**, accertamento B4: migliaia di spigoli sui raccordi tassellati collassano a decine di cluster). **Salienza = massa di concavità** = Σ (lunghezza spigolo × eccesso d'angolo): i tagli che risolvono più concavità vengono prima, i cluster-briciola da fillet in coda. Posa del candidato: heading = normale media pesata del cluster (uscente dalla faccia generatrice), position = centroide pesato dei punti medi degli spigoli **proiettato sul piano** (atterra vicino alla concavità), up libero. Mesh convessa → `[]`. In `edit-mesh-split` il tasto/bottone `c` (⌐ concavity) è **proponi-e-cicla per salienza**, modello identico a `y`: teletrasporto sul più saliente, pressioni successive ciclano; cache per pezzo (mesh immutabile) con stato pending al primo calcolo; su pezzo convesso il bottone è disabilitato con ragione ("nessuna concavità: il pezzo è convesso") — semaforo verde ⇒ gesto spento. NON è un next-event: le pose riflesse sono sparse nello spazio senza un DOF che le ordini.
+
+**"Finito" è una decisione, non un fatto geometrico (addendum-4-session-done.md, 2026-07-14).** Uso reale: alcune mesh (tori tassellati, raccordi interni, gusci) non sono mai convessificabili per taglio — attendere il tutto-verde per chiudere la sessione è una condizione irraggiungibile, coincidenza del mondo Level A (dove la conversione convessa era lo scopo) sopravvissuta al refactor ad albero. Norma fissata: la convessità resta un *segnale* (il semaforo), la finitezza diventa una *decisione* dell'utente informata dal segnale — nessun gate geometrico sull'uscita, mai. **Parte A — gesto `a` (accept-as-is)**: `mtree/accept-current` dichiara finito-per-decisione il pezzo corrente qualunque sia il suo colore, un nuovo tipo di gesto `{:type :accept :pid pid}` che MUTA `:finished?`/`:decided?` del pezzo invece di consumarlo/produrne altri (resta foglia, non entra in `input-ids`) — undoable (`mtree/undo` lo riconosce e riapre il pezzo, nessun `:removed`, nessuna `:pose`), e conta/si ghosta esattamente come una foglia verde. Su un pezzo rosso il gesto chiede conferma nominando il fatto ("il pezzo è concavo — accettarlo così com'è?"); su un pezzo già verde equivale alla chiusura naturale (avanza al prossimo aperto, mai un no-op silenzioso — riusa `cycle-current-piece!`). **Parte B — commit senza precondizioni**: `request-commit!` è ora l'unico percorso verso `commit-session!`, raggiunto sia da Enter (scorciatoia tutto-verde) sia da Ctrl/Cmd+Enter (force) — un commit a tutto-verde parte diretto (niente da segnalare), un commit con pezzi ancora aperti mostra una conferma informata che li **elenca per nome** ("chiudi con N pezzi ancora aperti che diventano foglie così come sono: piece-3 (rosso)…?"); mai silenzioso, mai bloccante. Confermato non esistere un `js/confirm` nativo utilizzabile (WKWebView di Tauri lo blocca silenziosamente — nota già nota da `library/panel.cljs`/`workspace/panel.cljs`): stesso pattern HTML-overlay duplicato localmente (`show-modal!`/`modal-confirm!`, classi CSS `lib-modal-*` condivise). **Parte C** (verifica esplicita "chiuso ⇒ convesso"): nessun consumatore fuori da `mesh-split-tree.cljs`/`edit-mesh-split.cljs` legge `:finished?`/`all-finished?`/`tree-view` — l'unica assunzione trovata era in `mtree/emit` stesso, il cui fast-path `(empty? (:log tree))` presumeva "log non vuoto ⇒ qualcosa è stato tagliato": un tree con **solo** un gesto `:accept` (nessun cut/separate) ci cadeva dentro ed emetteva un `(let [] …)` vuoto invece del letterale sorgente — corretto controllando i *bindings* effettivi, non la lunghezza del log. La verifica dal vivo (sessione REPL, mesh concava genuina) ha inoltre scoperto un bug preesistente e indipendente nell'annotazione di simmetria (Part 4, non toccata da questo addendum): quando un taglio confermato-specchio è l'ULTIMA run emessa, la `]` di chiusura del `let` di `emit` finiva sulla stessa riga del commento `;; piano di simmetria` e ne veniva inghiottita (`Unmatched delimiter )` alla lettura) — fix minimo, una newline finale dopo il commento in `run-binding`.
 
 ### 11.3 Libreria utente
 

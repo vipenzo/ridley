@@ -4,6 +4,30 @@ File interno per tracciare piccole incoerenze tra il codice sorgente di Ridley e
 
 ## Aperto
 
+### Compile manuale concorrente al watcher → build `:app` corrotta — trappola operativa ricorrente
+
+**Contesto**: lanciare una compile shadow-cljs manuale mentre il watcher è attivo corrompe la build `:app`; il sintomo è un'app che si comporta in modo inspiegabile finché non si fa un restart pulito del watcher. È successo di nuovo durante brief-acquisition-views (2026-07): la trappola era "nota a memoria" ma la memoria non è stata consultata in tempo — ragione per cui ora vive qui, nel posto consultabile.
+
+**Regola operativa**: mai compile manuali con watcher attivo; se il dubbio di build corrotta emerge (comportamenti impossibili, codice che "non c'è"), il primo gesto è il restart pulito del watcher, non il debugging.
+
+**Scoperta**: incidente durante brief-acquisition-views, Code, 2026-07.
+
+### `mesh-split` fa no-op muto su mesh non costruibile — viola la regola degli errori leggibili
+
+**Contesto**: misurato nell'accertamento mesh-board (Q7, 2026-07): su una mesh bucata (non-watertight) Manifold non costruisce nemmeno l'oggetto, e `mesh-split` restituisce nil senza eccezione né messaggio — no-op muto. È esattamente la classe di comportamento che i brief della famiglia vietano ("errori leggibili, mai normalizzazione silenziosa"; addendum 3: "nessun no-op silenzioso"). Il canale scan renderà il caso comune, non esotico.
+
+**Fix possibile** (non tentato): guardia `mesh-diagnose` (o check `manifold?`) davanti alla conversione nelle op CSG, con throw parlante che nomini il difetto (boundary edges, non-manifold) — probabilmente da fare una volta nel wrapper, non per-operazione. Naturale da includere nel futuro brief repair/canale-scan, ma vale anche da solo.
+
+**Scoperta**: accertamento mesh-board Q7, Code + review Claude, 2026-07.
+
+### Re-entry: localizzazione della call per primo match testuale — fragile con più `mesh-split` nel sorgente
+
+**Contesto**: il write-back del commit di `edit-mesh-split` localizza la call da sostituire cercando il primo match testuale di `(edit-mesh-split` nel sorgente. Con le emissioni ad albero (più call auto-contenute nello stesso let, già la norma dal brief albero) e con la futura consolidazione del board (Q6), "prima occorrenza" può indicare la call sbagliata se l'utente ne apre una che non è la prima, o se due edit coesistono.
+
+**Fix possibile** (non tentato): localizzatore più preciso — match su firma completa (mesh + path + marks-vector) o marcatore univoco di sessione. Prerequisito dichiarato del brief caduta-impalcatura; da non rimandare oltre quello.
+
+**Scoperta**: accertamento mesh-board Q6 (gap), Code, 2026-07.
+
 ### `status->keyword` senza rete di regressione — il bug silenzioso della Parte 0 di brief-mesh-split può tornare senza segnale
 
 **Contesto**: il bump CDN 3.0.0→3.3.2 (brief-mesh-split, Parte 0) ha rivelato che `.status()` in 3.3.2 restituisce una stringa dove 3.0.0 restituiva `{value: N}`; il vecchio parsing leggeva `.-value` su una stringa → `undefined` → `manifold?` sempre `false`, in silenzio. Il fix (`status->keyword`, `src/ridley/manifold/core.cljs`) mappa tutte le stringhe note con fallback leggibile `unknown-*` e documenta la storia nel docstring. Ma nessun test asserisce oggi `(:status … ) = :ok` o `(manifold? mesh-valida) = true`: i test di split usano `get-mesh-status` asserendo solo `:volume`, che era corretto anche col parsing rotto. Il bug esatto che è già stato silenzioso una volta non ha la sua rete.
@@ -221,6 +245,12 @@ Test: `test/ridley/sdf/auto_bounds_test.cljs` (5 test, scritti prima del cambio:
 **Scoperta**: Vincenzo/Claude, 2026-07-08, durante il testing interattivo di `dev-docs/brief-edit-attach-handles.md`; root-causato e risolto 2026-07-09.
 
 ## Chiuso
+
+### `attach` su una mappa è un no-op silenzioso — terzo caso della famiglia "nessun errore, nessun effetto" — RISOLTO 2026-07-14
+
+**Stato originale**: falsificato dal vivo nel mini-accertamento mesh-board (Q1, 2026-07): `(attach {:piece-1 m1 :piece-2 m2} (f 10))` ritorna la mappa **identica**, senza errore — il codice cerca `:creation-pose` in cima alla mappa, non lo trova, e la turtle resta non-attaccata. Il percorso vettore invece funziona (group-transform condiviso con `transform`). Stessa classe del no-op muto di `mesh-split` su mesh non costruibile: viola "errori leggibili, mai normalizzazione silenziosa".
+
+**Risoluzione** (dev-docs/brief-mesh-board.md, Parte 1): nuovo ramo di dispatch in `attach-impl` (`src/ridley/editor/impl.cljs`) per le mappe di mesh — `(vals target)` attraverso il `group-attach-impl`/`group-transform` esistente (zero matematica nuova), poi `(zipmap (keys target) …)` per ricostruire il contenitore con le stesse chiavi. Il no-op muto è morto per davvero: qualunque argomento non riconosciuto (mappa che non è collezione di mesh, tipo estraneo) ora lancia un errore leggibile che nomina il tipo ricevuto, mai più il ritorno silenzioso dell'argomento. Verificato dal vivo (REPL browser, 2026-07-14): mappa a 2 foglie con `:creation-pose` condivisa → `(attach t (f 10))` avanza la pose condivisa coerentemente (`[10 0 0]` per entrambe), chiavi preservate, mappa vuota → mappa vuota, tipo non supportato → `"attach: unsupported argument — got a map that is neither a mesh..."`. Suite `npm test` verde (599 test, 0 fallimenti), 8 nuovi test dedicati in `test/ridley/editor/attach_collections_test.cljs`.
 
 ### `edit-mesh-split`: il cono di orientamento ignorava il colore del piano dalla prima consegna — RISOLTO 2026-07-12
 

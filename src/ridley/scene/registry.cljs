@@ -27,6 +27,11 @@
 ;; Stamps (debug shape outlines) from turtle
 (defonce ^:private scene-stamps (atom []))
 
+;; Scaffolds (mesh-board ghost-wireframe display meshes) — mirror of scene-stamps
+;; (brief-mesh-board.md Part 2): never merged into scene-meshes, so citizenship
+;; (not named/pickable/exported) is structural, not a convention to remember.
+(defonce ^:private scene-scaffolds (atom []))
+
 ;; Registered paths: [{:path data :name keyword :visible true/false} ...]
 (defonce ^:private scene-paths (atom []))
 
@@ -47,6 +52,7 @@
   (reset! scene-meshes [])
   (reset! scene-lines [])
   (reset! scene-stamps [])
+  (reset! scene-scaffolds [])
   (reset! scene-paths [])
   (reset! scene-panels [])
   (reset! scene-shapes [])
@@ -71,6 +77,18 @@
   "Add stamps to the current set."
   [stamps]
   (swap! scene-stamps into stamps))
+
+(defn set-scaffolds!
+  "Set the mesh-board scaffolds to display (full eval = replace-in-block, brief
+   Part 3 — every (mesh-board …) call this eval already contributed to the
+   accumulator before this push, so one call replaces the whole prior set)."
+  [scaffolds]
+  (reset! scene-scaffolds (vec scaffolds)))
+
+(defn add-scaffolds!
+  "Add scaffolds to the current set (incremental REPL eval = append)."
+  [scaffolds]
+  (swap! scene-scaffolds into scaffolds))
 
 ;; ============================================================
 ;; Path registration (abstract, no visibility)
@@ -501,6 +519,7 @@
                            @scene-meshes))]
      (viewport/update-scene {:lines (vec @scene-lines)
                              :stamps (vec @scene-stamps)
+                             :scaffolds (vec @scene-scaffolds)
                              :meshes meshes
                              :panels (visible-panels)
                              :reset-camera? reset-camera?}))))

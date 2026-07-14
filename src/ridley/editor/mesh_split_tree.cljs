@@ -16,7 +16,7 @@
    Data model
    ----------
    tree =
-     {:pieces      {id piece}       ; piece = {:id :origin :finished? :count}
+     {:pieces      {id piece}       ; piece = {:id :origin :finished? :count :decided?}
       :log         [gesture]        ; chronological structural gestures
       :current     id               ; the current open (leaf) piece
       :next-id     n
@@ -31,11 +31,16 @@
    gesture (structural, undoable — selection is NOT a gesture) =
      {:type :cut      :input pid :pose {...} :behind bid :ahead aid}
      {:type :separate :input pid :components [cid ...]}
+     {:type :accept   :pid pid}   ; 'accetta così com'è' (addendum 4 Parte A) —
+                                  ; MUTATES pid's own :finished?/:decided?, does
+                                  ; not consume/produce pieces (pid stays a leaf)
 
    A piece is a LEAF iff it is neither a cut's input nor a separation's input;
    leaves are the final decomposition (the emitted body vector). `:current` is
    always a leaf. `:finished?`/`:count` are the per-component report (Parte 2),
-   supplied by the WASM caller."
+   supplied by the WASM caller; `:decided?` (addendum 4) marks a `:finished?`
+   that was DECIDED rather than measured convex — no consumer requires it, it
+   exists only so a future one could distinguish the two without a tree walk."
   (:require [ridley.turtle.core :as turtle]
             [clojure.string :as str]))
 
@@ -65,9 +70,10 @@
 
 (defn- input-ids
   "Piece ids that have been consumed by SOME gesture (cut or separate) — i.e.
-   the non-leaf pieces."
+   the non-leaf pieces. `keep`, not `map`: an :accept gesture (addendum 4) has
+   no :input, and a bare `map` would pollute the set with a stray nil."
   [tree]
-  (into #{} (map :input) (:log tree)))
+  (into #{} (keep :input) (:log tree)))
 
 (defn leaf?
   "A piece is a leaf iff it was never cut and never separated."
@@ -189,20 +195,33 @@
    re-opens the (group's first) input as the current leaf, and returns
    {:tree tree' :removed [pid …] :pose <cut pose or nil>} — `removed` so the caller
    can .delete those pieces' Manifolds, `pose` to restore the plane to a lone
-   popped cut. Returns nil if the log is empty."
+   popped cut. An :accept gesture (addendum 4 Parte A — 'accetta così com'è') is
+   different in kind: it never consumes/produces pieces, only flips its piece's
+   own :finished?/:decided?, so undoing it MUTATES that piece back to open
+   rather than removing anything (`:removed []`, `:pose nil`); it never shares a
+   :group. Returns nil if the log is empty."
   [tree]
   (when-let [g (peek (:log tree))]
-    (let [log (:log tree)
-          n (if (:group g)
-              (count (take-while #(= (:group g) (:group %)) (rseq log)))
-              1)
-          popped (subvec log (- (count log) n))
-          rest-log (subvec log 0 (- (count log) n))
-          removed (vec (mapcat gesture-removed popped))
-          pieces (reduce dissoc (:pieces tree) removed)]
-      {:tree (assoc tree :pieces pieces :current (:input (first popped)) :log rest-log)
-       :removed removed
-       :pose (when (and (= 1 n) (= :cut (:type g))) (:pose g))})))
+    (if (= :accept (:type g))
+      (let [pid (:pid g)]
+        {:tree (-> tree
+                   (update :log pop)
+                   (assoc-in [:pieces pid :finished?] false)
+                   (update-in [:pieces pid] dissoc :decided?)
+                   (assoc :current pid))
+         :removed []
+         :pose nil})
+      (let [log (:log tree)
+            n (if (:group g)
+                (count (take-while #(= (:group g) (:group %)) (rseq log)))
+                1)
+            popped (subvec log (- (count log) n))
+            rest-log (subvec log 0 (- (count log) n))
+            removed (vec (mapcat gesture-removed popped))
+            pieces (reduce dissoc (:pieces tree) removed)]
+        {:tree (assoc tree :pieces pieces :current (:input (first popped)) :log rest-log)
+         :removed removed
+         :pose (when (and (= 1 n) (= :cut (:type g))) (:pose g))}))))
 
 (defn select
   "Set current to leaf `pid` (a selection, NOT a structural gesture — never
@@ -225,6 +244,28 @@
                    (if (= dir :prev) (peek nfl) (first nfl))
                    (nth nfl (mod (+ i step) (count nfl))))]
          (assoc tree :current nxt))))))
+
+(defn accept-current
+  "Declare the CURRENT leaf finished BY DECISION, whatever its color (addendum 4
+   Parte A — 'finito è una decisione, non un fatto geometrico', not a gate on
+   convexity). No-op if the piece is already finished: a green piece has
+   nothing to decide, so the caller treats this the same as the natural close
+   (no gesture is logged). Otherwise flips :finished? true, tags :decided? true
+   (predisposed for a future consumer — no existing :finished?-based logic
+   changes, same discipline as tree-view's :native?), appends an :accept
+   gesture (undoable — mtree/undo reopens the piece), and advances current to
+   the next non-finished leaf via cycle-current, which already handles current
+   not being in the non-finished set (round-robins to the first one, or is a
+   no-op if none remain)."
+  [tree]
+  (let [pid (:current tree)]
+    (if (:finished? (get-in tree [:pieces pid]))
+      tree
+      (-> tree
+          (assoc-in [:pieces pid :finished?] true)
+          (assoc-in [:pieces pid :decided?] true)
+          (update :log conj {:type :accept :pid pid})
+          (cycle-current :next)))))
 
 ;; ============================================================
 ;; Mirror-decompose support (brief Part 5)
@@ -373,7 +414,12 @@
     (str destructure "\n      (mesh-split " input-name "\n"
          "                  (path " path-forms ")\n"
          "                  " marks-vec ")"
-         (when (seq mirror-comments) (str "\n" mirror-comments)))))
+         ;; a trailing "\n" after the comment (not just before it) matters when
+         ;; this run is the LAST binding: emit's own closing "]" is appended
+         ;; directly onto this string, and without the trailing newline it would
+         ;; land on the comment's own line — swallowed by the `;;`, producing an
+         ;; unreadable form (caught live 2026-07-14: `Unmatched delimiter )`).
+         (when (seq mirror-comments) (str "\n" mirror-comments "\n")))))
 
 (defn- separation-binding
   [tree nm sep]
@@ -383,26 +429,35 @@
 
 (defn emit
   "The emitted source: a let-chain of self-contained linear composites plus the
-   `mesh-components` destructures for separations, closing over a body vector of
-   the leaf names in DFS order. With no structural gestures the whole thing is
-   just the input literal (nothing was cut)."
+   `mesh-components` destructures for separations, closing over a body MAP of
+   name→leaf-name pairs (keyword keys, e.g. `{:piece-1 piece-1 :piece-2 piece-2}`)
+   in DFS order — the mesh-board tree value (brief-mesh-board.md Part 0; older
+   emissions closing with a vector remain valid source and still evaluate, and
+   `mesh-board`/`attach` accept both shapes). With no CUT/SEPARATE gestures the
+   whole thing is just the input literal (nothing was cut) — an :accept-only
+   log (addendum 4 Parte A, 'accetta così com'è' on the root) does not by
+   itself earn a let-chain, since it produced no new binding to close over."
   [tree]
-  (if (empty? (:log tree))
-    (:source-expr tree)
-    (let [nm (name-map tree)
-          op-idx (into {} (map-indexed (fn [i g] [g i]) (:log tree)))
-          run-vec (runs tree)
-          run-entries (map (fn [run] {:order (apply min (map op-idx run))
-                                      :binding (run-binding tree nm run)}) run-vec)
-          sep-entries (map (fn [sep] {:order (op-idx sep)
-                                      :binding (separation-binding tree nm sep)})
-                           (separations tree))
-          bindings (->> (concat run-entries sep-entries)
-                        (sort-by :order)
-                        (map :binding))
-          body (str "[" (str/join " " (map #(name-of tree nm %) (leaf-ids tree))) "]")]
-      (str "(let [" (str/join "\n      " bindings) "]\n"
-           "  " body ")"))))
+  (let [nm (name-map tree)
+        op-idx (into {} (map-indexed (fn [i g] [g i]) (:log tree)))
+        run-vec (runs tree)
+        run-entries (map (fn [run] {:order (apply min (map op-idx run))
+                                    :binding (run-binding tree nm run)}) run-vec)
+        sep-entries (map (fn [sep] {:order (op-idx sep)
+                                    :binding (separation-binding tree nm sep)})
+                         (separations tree))
+        bindings (->> (concat run-entries sep-entries)
+                      (sort-by :order)
+                      (map :binding))]
+    (if (empty? bindings)
+      (:source-expr tree)
+      (let [body (str "{" (str/join " " (map (fn [pid]
+                                               (let [n (name-of tree nm pid)]
+                                                 (str ":" n " " n)))
+                                             (leaf-ids tree)))
+                      "}")]
+        (str "(let [" (str/join "\n      " bindings) "]\n"
+             "  " body ")")))))
 
 (defn piece-name
   "The emission name of a piece (for scene labels) — the leaf shows the same

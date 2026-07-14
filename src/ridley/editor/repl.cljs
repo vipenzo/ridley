@@ -161,15 +161,17 @@
 
 (defn extract-render-data
   "Extract render data from the scene accumulator.
-   Returns pen traces (lines) and debug stamps.
+   Returns pen traces (lines), debug stamps, and mesh-board scaffolds.
    Meshes must be explicitly registered with (register name mesh) to be visible.
    Does NOT include registry meshes - those are handled separately by refresh-viewport!."
   [_eval-result]
-  (let [{:keys [lines stamps]} @state/scene-accumulator]
-    ;; Only return lines (pen traces) and stamps (debug outlines)
-    ;; Meshes from extrude/loft/etc are NOT auto-displayed - use register
-    (when (or (seq lines) (seq stamps))
+  (let [{:keys [lines stamps scaffolds]} @state/scene-accumulator]
+    ;; Only return lines (pen traces), stamps (debug outlines), and scaffolds
+    ;; (mesh-board display meshes). Meshes from extrude/loft/etc are NOT
+    ;; auto-displayed - use register
+    (when (or (seq lines) (seq stamps) (seq scaffolds))
       {:lines (vec lines)
        :stamps (vec stamps)
+       :scaffolds (vec scaffolds)
        :meshes []})))
 

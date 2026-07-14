@@ -3,6 +3,7 @@
    reports ({:finished? :count}) are supplied as literals exactly as the live
    WASM caller would, so the whole model is exercised in node."
   (:require [cljs.test :refer [deftest testing is]]
+            [cljs.reader :as reader]
             [clojure.string :as str]
             [ridley.editor.mesh-split-tree :as tree]
             [ridley.test-helpers :as h]))
@@ -43,7 +44,7 @@
       (is (str/includes? code "mesh-split block"))
       (is (str/includes? code "[:cut-1]"))
       (is (str/includes? code "{piece-1 :behind piece-2 :ahead}"))
-      (is (str/includes? code "[piece-1 piece-2]")))))
+      (is (str/includes? code "{:piece-1 piece-1 :piece-2 piece-2}")))))
 
 (deftest cut-with-finished-ahead-moves-current-to-next-open
   (let [t0 (tree/make-tree "block" (pose 0) conc)
@@ -64,7 +65,7 @@
     (is (str/includes? code "[:cut-1 :cut-2]"))
     (is (str/includes? code "{piece-1 :behind {piece-2 :behind piece-3 :ahead} :ahead}"))
     (is (= 3 (count (tree/leaf-ids tree))))
-    (is (str/includes? code "[piece-1 piece-2 piece-3]"))))
+    (is (str/includes? code "{:piece-1 piece-1 :piece-2 piece-2 :piece-3 piece-3}"))))
 
 ;; ── branch (cut a behind → a second call in the let-chain) ──
 
@@ -250,6 +251,68 @@
     (let [r2 (tree/cut (:tree r1) (:ahead r1) (pose 20) fin fin)]
       (is (true? (tree/all-finished? (:tree r2))) "every leaf now finished"))))
 
+;; ── accept-current (addendum 4 Parte A: 'accetta così com'è') ──
+
+(deftest accept-current-flips-a-concave-piece-and-logs-a-gesture
+  (let [t0 (tree/make-tree "block" (pose 0) conc)   ; single-leaf tree, root open+concave
+        t1 (tree/accept-current t0)]
+    (is (true? (get-in t1 [:pieces 0 :finished?])))
+    (is (true? (get-in t1 [:pieces 0 :decided?])))
+    (is (= [{:type :accept :pid 0}] (:log t1)))
+    (is (true? (tree/all-finished? t1)))
+    (is (= "block" (tree/emit t1)) "emission unaffected by an accepted-by-decision leaf")))
+
+(deftest accept-current-on-a-finished-piece-is-a-noop
+  (let [t0 (tree/make-tree "block" (pose 0) fin)]
+    (is (= t0 (tree/accept-current t0)) "already finished — nothing to decide, no gesture logged")))
+
+(deftest accept-current-advances-to-the-next-open-leaf
+  (let [t0 (tree/make-tree "block" (pose 0) conc)
+        {:keys [tree behind ahead]} (tree/cut t0 0 (pose 10) conc conc)  ; both open
+        t1 (tree/accept-current tree)]
+    (is (= ahead (:current tree)) "cut leaves current on the ahead (both open — guillotine continuity)")
+    (is (true? (get-in t1 [:pieces ahead :finished?])) "the accepted piece (ahead, current) is now finished")
+    (is (= behind (:current t1)) "current advances to the only remaining open leaf")
+    (is (= [behind] (tree/non-finished-leaves t1)) "the accepted piece leaves the open pool")
+    (is (= {:open 1 :finished 1} (tree/leaf-counts t1)))))
+
+(deftest accept-current-of-a-multi-component-piece-preserves-count
+  (let [t0 (tree/make-tree "block" (pose 0) multi)   ; single leaf, 2 concave components
+        t1 (assoc t0 :pieces (assoc (:pieces t0) 0 (assoc (get-in t0 [:pieces 0]) :finished? false)))
+        t2 (tree/accept-current t1)]
+    (is (= 2 (get-in t2 [:pieces 0 :count])) "count is preserved, only :finished? flips")
+    (is (true? (get-in t2 [:pieces 0 :finished?])))))
+
+(deftest undo-accept-reopens-the-piece-no-removed-no-pose
+  (let [t0 (tree/make-tree "block" (pose 0) conc)
+        t1 (tree/accept-current t0)
+        u (tree/undo t1)]
+    (is (empty? (:removed u)) "accept never produced pieces")
+    (is (nil? (:pose u)) "accept has no plane")
+    (is (= 0 (:current (:tree u))))
+    (is (false? (get-in (:tree u) [:pieces 0 :finished?])))
+    (is (not (contains? (get-in (:tree u) [:pieces 0]) :decided?)))
+    (is (empty? (:log (:tree u))))
+    (is (= t0 (:tree u)) "undo of a lone accept exactly restores the pre-gesture tree")))
+
+(deftest undo-accept-does-not-disturb-a-preceding-cut
+  (let [t0 (tree/make-tree "block" (pose 0) conc)
+        {:keys [tree ahead]} (tree/cut t0 0 (pose 10) conc conc)  ; both open, current = ahead
+        t1 (tree/accept-current tree)                            ; accept the current (ahead)
+        u (tree/undo t1)]
+    (is (= ahead (:current (:tree u))) "undo reopens the accepted piece, not the cut's input")
+    (is (false? (get-in (:tree u) [:pieces ahead :finished?])))
+    (is (= 1 (count (:log (:tree u)))) "only the accept gesture popped — the cut remains logged")
+    (is (= tree (:tree u)) "back to exactly the post-cut, pre-accept tree")))
+
+(deftest tree-view-status-of-an-accepted-piece-reads-finished
+  (let [t0 (tree/make-tree "block" (pose 0) conc)
+        {:keys [tree ahead]} (tree/cut t0 0 (pose 10) conc conc)
+        t1 (tree/accept-current tree)
+        {:keys [children]} (tree/tree-view t1)
+        ahead-node (first (filter #(= ahead (:id %)) children))]
+    (is (= :finished (:status ahead-node)) "identical to a naturally-green leaf — no special visual state")))
+
 ;; ── piece names match emission (scene labels) ───────────────
 
 (deftest emission-deltas-are-canonical-from-entry-pose
@@ -287,6 +350,16 @@
       ;; a non-mirror cut has no such comment
       (let [r2 (tree/cut t0 0 (pose 10) fin conc)]
         (is (not (str/includes? (tree/emit (:tree r2)) "piano di simmetria")))))))
+
+(deftest mirror-comment-on-the-last-binding-does-not-swallow-the-closing-bracket
+  (testing "regression (found live 2026-07-14): when the mirror-commented cut is
+            the LAST (here, only) run, emit's own closing ']' used to land on the
+            comment's line and get swallowed by it — 'Unmatched delimiter )' on
+            read. The comment now ends with its own trailing newline."
+    (let [t0 (tree/make-tree "block" (pose 0) conc)
+          r1 (tree/cut t0 0 (pose 10) conc conc {:mirror? true})
+          code (tree/emit (:tree r1))]
+      (is (some? (reader/read-string code)) "must parse — a comment must never eat a structural character"))))
 
 (deftest group-undo-pops-the-whole-replay-atomically
   (testing "cuts sharing a :group are one structural gesture — one undo removes all"

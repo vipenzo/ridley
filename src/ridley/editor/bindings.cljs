@@ -30,6 +30,7 @@
             [ridley.editor.edit-path :as edit-path]
             [ridley.editor.edit-mesh-split :as edit-mesh-split]
             [ridley.editor.edit-image-board :as edit-image-board]
+            [ridley.editor.mesh-board :as mesh-board]
             [ridley.editor.impl :as macro-impl]
             [ridley.geometry.warp :as warp]
             [ridley.library.svg :as svg]
@@ -144,6 +145,8 @@
    'cone-impl    impl/cone-with-resolution
    ;; Debug shape visualization at current turtle pose
    'stamp        impl/implicit-stamp-debug
+   ;; mesh-board: scaffold display + comparison directive (brief-mesh-board.md)
+   'mesh-board   mesh-board/mesh-board
    ;; Shape constructors (return shape data, resolution-aware)
    'circle       impl/circle-with-resolution
    'rect         shape/rect-shape

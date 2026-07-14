@@ -1575,6 +1575,34 @@
                             (:heading state)
                             (:up state))))
 
+(defn- meshes-collection?
+  "True iff `target` is a mesh-shaped map's opposite: a map of mesh values
+   (name→mesh, e.g. a mesh-board tree) rather than a single mesh — no :vertices
+   at the top, and (empty, or) every value mesh-shaped. Same idiom as
+   resolve-anchor-source's (:vertices target) mesh check."
+  [target]
+  (and (map? target)
+       (not (:vertices target))
+       (or (empty? target) (every? #(and (map? %) (:vertices %)) (vals target)))))
+
+(defn- map-attach-impl
+  "Attach to a map of meshes (group transform). Returns a map with the same
+   keys, values rigidly transformed together — mirrors group-attach-impl for
+   vectors (brief-mesh-board.md Part 1): (vals target) through the existing
+   group machinery, (zipmap (keys target) …) to rebuild the container."
+  [target path]
+  (zipmap (keys target) (group-attach-impl (vals target) path)))
+
+(defn- describe-attach-type
+  "A short human description of an unsupported attach target, for the
+   readable-error fallback (brief-mesh-board.md Part 1 — the silent no-op
+   the mini-accertamento found dies here)."
+  [target]
+  (cond
+    (nil? target) "nil"
+    (map? target) "a map that is neither a mesh (no :vertices) nor a collection of meshes (its values aren't all meshes)"
+    :else (str (pr-str (type target)))))
+
 (defn- panel-attach-impl
   "Attach to a panel. Returns panel with updated position/heading/up."
   [p path]
@@ -1594,7 +1622,9 @@
     [mesh-or-sel face-id]))
 
 (defn ^:export attach-impl
-  "Dispatch attach by target type: sequential, panel, single mesh, SDF, or selection map."
+  "Dispatch attach by target type: sequential (vector group), panel, single
+   mesh, map of meshes (mesh-board tree — brief-mesh-board.md Part 1), SDF, or
+   selection map. Anything else is a readable error, never a silent no-op."
   [target path]
   (let [target (if (and (map? target) (:name target) (not (:vertices target))
                         (not (sdf/sdf-node? target)))
@@ -1605,7 +1635,10 @@
       (sdf/sdf-node? target) (sdf-attach-impl target path)
       (sequential? target) (group-attach-impl target path)
       (panel/panel? target) (panel-attach-impl target path)
-      :else (mesh-attach-impl target path))))
+      (and (map? target) (:vertices target)) (mesh-attach-impl target path)
+      (meshes-collection? target) (map-attach-impl target path)
+      :else (throw (js/Error. (str "attach: unsupported argument — got "
+                                   (describe-attach-type target)))))))
 
 (defn ^:export attach-face-impl
   "Attach to a face (move-only mode) and replay path. Returns modified mesh.
