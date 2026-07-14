@@ -990,6 +990,8 @@ Il pattern è uniforme: ogni feature di interazione viewport (misurazione, picki
 
 Il capitolo 15 segnala un debito specifico di questo sottosistema: `update-scene` ricostruisce il world-group totalmente, e questo annulla il fast-path che il sistema di animazione usa via `update-mesh-geometry!` per evitare rebuild costosi. La discussione vera vive lì.
 
+**Un secondo viewport** (`ridley.viewport.inset`, brief-acquisition-views.md Parte 1) rompe per la prima volta l'assunzione "un solo `WebGLRenderer`/`Scene`/`Camera`": è un piccolo overlay picture-in-picture, non interattivo, con un proprio canvas/renderer/scena/camera completamente indipendenti da `state` — nessuna condivisione di geometria (costruisce da sé la `BufferGeometry` dal mesh-data ricevuto) né di renderer. L'unico punto di contatto con `viewport/core` è l'API pubblica esistente: `register-frame-callback!`/`unregister-frame-callback!` (lo stesso aggancio per-frame che già usa il rescale del gizmo edit-attach) per sincronizzare l'orientazione della camera copiando il quaternion della camera principale ogni frame, senza toccarne posizione/target. Nato per `edit-mesh-split` ma deliberatamente tool-agnostico (mount!/unmount!/set-content!), pensato per essere riusato identico da `edit-mesh-board`.
+
 ### 8.6 Stato dell'animazione
 
 Tre atom in `anim/core.cljs`, tutti resettati a Run:

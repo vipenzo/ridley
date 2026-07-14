@@ -30,7 +30,8 @@
             [ridley.turtle.core :as turtle]
             [ridley.sdf.core :as sdf]
             [ridley.scene.registry :as registry]
-            [ridley.viewport.core :as viewport]))
+            [ridley.viewport.core :as viewport]
+            [ridley.viewport.inset :as inset]))
 
 (declare cleanup! render! recompute! update-panel-display! schedule-mirror-check!
          clear-mirror-badge! set-status-message! gesture-availability cut-frame-sig
@@ -65,6 +66,8 @@
 ;;  :reveal-all?    ; addendum: view-only focus/reveal toggle (r)
 ;;  :labels-shown?  ; whether world-anchored labels are currently up (reveal only)
 ;;  :labeled-tree   ; the :tree identity the scene labels were last built for
+;;  :inset-tree     ; the :tree identity the Vista contesto inset was last built for
+;;                    (acquisition-views Parte 1 — ridley.viewport.inset)
 ;;  :symmetry-cache {piece-id {:planes […] :index i}}  ; Part 4: cached symmetry-planes
 ;;  :symmetry-pending? :mirror-gate? :mirror-pending? :mirror-confirmed? :mirror-timer  ; Part 4 badges
 ;;  :reflex-cache {piece-id {:cands […] :index i}}     ; reflex brief: cached cut-candidates :reflex
@@ -399,7 +402,15 @@
               (swap! session assoc :labels-shown? false))))
       (viewport/set-turtle-source! {:custom pose})
       (viewport/update-turtle-pose pose)
-      (gizmo/update-pose! pose))))
+      (gizmo/update-pose! pose)
+      ;; Vista contesto (acquisition-views Parte 1): rebuild only when the
+      ;; piece/tree identity changes (cut/separate/undo/mirror/cycle/select),
+      ;; never on a plane-drag tick (which never touches :tree) — same guard
+      ;; shape as the labels rebuild above.
+      (when (not (identical? (:tree s) (:inset-tree s)))
+        (inset/set-content! {:ghost (:initial-mesh s)
+                             :highlight (piece-mesh (:current (:tree s)))})
+        (swap! session assoc :inset-tree (:tree s))))))
 
 ;; ============================================================
 ;; Live-pose gestures
@@ -1128,7 +1139,8 @@
   (viewport/clear-labels!)        ; addendum 3: reveal labels are billboards now
   (viewport/clear-world-labels!)  ; also drop any legacy world-anchored labels
   (viewport/show-user-geometry!)  ; restore the base composite hidden on enter!
-  (viewport/clear-preview!))
+  (viewport/clear-preview!)
+  (inset/unmount!))               ; Vista contesto (acquisition-views Parte 1)
 
 (defn- commit-session!
   "Close the session and emit the tree as a let-chain of self-contained linear
@@ -1678,6 +1690,7 @@
       (modal/install-keydown! handler))
     (let [panel (create-panel! (:source-expr @session))]
       (swap! session assoc :panel-el panel))
+    (inset/mount!)   ; Vista contesto (acquisition-views Parte 1) — content set by render! below
     ;; Hide the evaluated base composite (the whole decomposition refresh-viewport!
     ;; rendered before we entered): the modal's own preview is now the SOLE truth of
     ;; the scene, so the work/reveal states control EXACTLY what is visible (addendum
