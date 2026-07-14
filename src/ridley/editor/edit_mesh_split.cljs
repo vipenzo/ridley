@@ -1029,6 +1029,62 @@
         (set-status-message! (str "→ " (name (:kind nearest)) " · salienza "
                                   (js/Math.round (:salience nearest))))))))
 
+;; ── Vista processo: the process tree widget (brief acquisition-views.md
+;; Parte 2) ──
+;; Same idiom as render-cut-strip!/strip-click! above: HTML built as a string
+;; and pushed via innerHTML, one delegated click listener wired once in
+;; create-panel! — no DOM-builder helpers, no per-node listeners.
+
+(defn- tree-node-html
+  "One <li> per mtree/tree-view node, nested <ul> for children. Only OPEN
+   leaves carry data-piece-id (clickable — tree-click! resolves it); finished
+   leaves get a tooltip instead (inspection arrives with edit-mesh-board)."
+  [{:keys [id name leaf? current? status children]}]
+  (let [clickable? (and leaf? (= :open status))
+        classes (str "ems-tree-node ems-tree-" (clojure.core/name status)
+                     (when leaf? " ems-tree-leaf")
+                     (when current? " ems-tree-current")
+                     (when clickable? " ems-tree-clickable"))]
+    (str "<li class='" classes "'"
+         (when clickable? (str " data-piece-id='" id "'"))
+         (when (and leaf? (not clickable?))
+           " title='finito — l’ispezione arriva con edit-mesh-board'")
+         "><span class='ems-tree-label'>" name "</span>"
+         (when (seq children)
+           (str "<ul>" (str/join (map tree-node-html children)) "</ul>"))
+         "</li>")))
+
+(defn- render-tree!
+  "Rebuilt on every panel refresh (update-panel-display!, itself already
+   called after every structural gesture/navigation/undo/reveal-toggle) —
+   the tree is ~5-20 nodes, a full rebuild is cheap, no diffing needed."
+  [panel]
+  (let [tree (:tree @session)]
+    (when-let [counts-el (.querySelector panel ".ems-tree-counts")]
+      (let [{:keys [open finished]} (mtree/leaf-counts tree)]
+        (set! (.-textContent counts-el) (str open " aperte · " finished " finite"))))
+    (when-let [list-el (.querySelector panel ".ems-tree-list")]
+      (set! (.-innerHTML list-el) (str "<ul>" (tree-node-html (mtree/tree-view tree)) "</ul>")))))
+
+(defn- select-piece!
+  "Click on an open leaf in the panel's process tree = direct selection —
+   supersedes blind n/p adjacency navigation (the brief's motivating gap).
+   The panel is a legitimate click surface (only the viewport is
+   mouse-monofunction, addendum 3). Mirrors cycle-current-piece!'s tail,
+   mtree/select in place of mtree/cycle-current."
+  [pid]
+  (let [old (current-id)
+        tree (mtree/select (:tree @session) pid)]
+    (when (not= (:current tree) old)
+      (swap! session assoc :tree tree)
+      (reposition-plane-for! (:current tree))
+      (recompute!))))
+
+(defn- tree-click!
+  [evt]
+  (when-let [target (.closest (.-target evt) "[data-piece-id]")]
+    (select-piece! (js/parseInt (.getAttribute target "data-piece-id") 10))))
+
 (defn- cycle-current-piece!
   "Explicit, deterministic navigation over the OPEN pieces only (addendum Parte
    A): `dir` :next (n) or :prev (p), round-robin in DFS order, repositioning the
@@ -1391,7 +1447,9 @@
           (set! (.-title rb) (:reason (:reveal avail)))
           (set! (.-textContent rb) (if (:reveal-all? s) "focus" "reveal"))))
       ;; Part 4: the section-area profile strip (A along the active DOF).
-      (render-cut-strip! panel))))
+      (render-cut-strip! panel)
+      ;; Vista processo: the process tree (acquisition-views Parte 2).
+      (render-tree! panel))))
 
 (defn- create-panel!
   [mesh-name]
@@ -1413,6 +1471,12 @@
                "<button class='pilot-btn ems-prev'>◀ prev</button>"
                "<span class='ems-position'>piece —</span>"
                "<button class='pilot-btn ems-next'>next ▶</button>"
+               "</div>"
+               ;; Vista processo (acquisition-views Parte 2): counts + clickable
+               ;; nested tree, built by render-tree! from mtree/tree-view.
+               "<div class='ems-tree-section'>"
+               "<div class='ems-tree-counts'>— aperte · — finite</div>"
+               "<div class='ems-tree-list'></div>"
                "</div>"
                ;; Session-gesture buttons (addendum 3 Part A): every gesture the
                ;; keyboard offers also has a discoverable button whose disabled state
@@ -1479,6 +1543,7 @@
     (.addEventListener (.querySelector panel ".ems-evt-prev") "click" (fn [_] (jump-to-event! :prev)))
     (.addEventListener (.querySelector panel ".ems-evt-next") "click" (fn [_] (jump-to-event! :next)))
     (.addEventListener (.querySelector panel ".ems-strip") "click" (fn [e] (strip-click! e panel)))
+    (.addEventListener (.querySelector panel ".ems-tree-list") "click" tree-click!)
     (.addEventListener (.querySelector panel ".pilot-btn-undo") "click" (fn [_] (undo!)))
     (.addEventListener (.querySelector panel ".pilot-btn-ok") "click" (fn [_] (accept-or-commit!)))
     (.addEventListener (.querySelector panel ".pilot-btn-cancel") "click" (fn [_] (cancel!)))

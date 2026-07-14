@@ -182,6 +182,65 @@
       (is (true? open?))
       (is (= 1 count)))))
 
+;; ── panel views: tree-view / leaf-counts (acquisition-views Parte 2) ──
+
+(deftest tree-view-fresh-tree-is-a-single-open-root-leaf
+  (let [t (tree/make-tree "block" (pose 0) conc)]
+    (is (= {:id 0 :name "block" :leaf? true :current? true
+            :status :open :children nil}
+           (tree/tree-view t)))
+    (is (= {:open 1 :finished 0} (tree/leaf-counts t)))))
+
+(deftest tree-view-single-cut-two-named-leaf-children
+  (let [t0 (tree/make-tree "block" (pose 0) conc)
+        {:keys [tree behind ahead]} (tree/cut t0 0 (pose 10) fin conc)
+        {:keys [children] :as root} (tree/tree-view tree)]
+    (is (= "block" (:name root)))
+    (is (false? (:leaf? root)))
+    (is (= [{:id behind :name "piece-1" :leaf? true :current? false
+             :status :finished :children nil}
+            {:id ahead :name "piece-2" :leaf? true :current? true
+             :status :open :children nil}]
+           children))
+    (is (= {:open 1 :finished 1} (tree/leaf-counts tree)))))
+
+(deftest tree-view-skips-unnamed-intermediate-aheads
+  (testing "a linear chain's intermediate ahead has no emission name — its
+            named children are reparented as direct siblings under root, one
+            flat run just like the single mesh-split call it emits"
+    (let [t0 (tree/make-tree "block" (pose 0) conc)
+          r1 (tree/cut t0 0 (pose 10) fin conc)
+          r2 (tree/cut (:tree r1) (:ahead r1) (pose 20) fin conc)
+          {:keys [children]} (tree/tree-view (:tree r2))]
+      (is (= ["piece-1" "piece-2" "piece-3"] (map :name children))
+          "all 3 leaves are siblings — the intermediate ahead is invisible")
+      (is (every? :leaf? children))
+      (is (every? #(nil? (:children %)) children)))))
+
+(deftest tree-view-branch-nests-a-named-non-leaf
+  (let [t0 (tree/make-tree "block" (pose 0) conc)
+        r1 (tree/cut t0 0 (pose 10) conc conc)                   ; b1, a1 both open
+        r2 (tree/cut (:tree r1) (:behind r1) (pose 5) fin fin)   ; cut the BEHIND
+        {:keys [children]} (tree/tree-view (:tree r2))
+        [branch leaf] children]
+    (is (= "piece-1" (:name branch)) "the cut behind is a named, non-leaf node")
+    (is (false? (:leaf? branch)))
+    (is (= ["piece-2" "piece-3"] (map :name (:children branch))))
+    (is (= "piece-4" (:name leaf)) "the never-cut ahead is a named leaf sibling")
+    (is (true? (:leaf? leaf)))
+    (is (= {:open 1 :finished 2} (tree/leaf-counts (:tree r2)))
+        "piece-4 (a1) still concave — the only open leaf")))
+
+(deftest tree-view-native-status-is-predisposed-and-additive
+  (testing ":native? is read but never written yet — a native piece is by
+            construction also :finished?, so leaf-counts (which only reads
+            :finished?) is unaffected"
+    (let [t0 (tree/make-tree "block" (pose 0) conc)
+          {:keys [tree behind]} (tree/cut t0 0 (pose 10) fin conc)
+          native-tree (assoc-in tree [:pieces behind :native?] true)]
+      (is (= :native (:status (first (:children (tree/tree-view native-tree))))))
+      (is (= (tree/leaf-counts tree) (tree/leaf-counts native-tree))))))
+
 ;; ── all-finished? drives the close condition ────────────────
 
 (deftest all-finished-true-only-when-every-leaf-finished

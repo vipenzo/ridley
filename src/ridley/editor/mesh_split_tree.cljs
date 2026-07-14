@@ -410,6 +410,57 @@
   [tree pid]
   (name-of tree (name-map tree) pid))
 
+;; ============================================================
+;; Panel views (brief acquisition-views.md, Parte 2 — Vista processo)
+;; ============================================================
+
+(defn- children-of
+  "The ordered child piece ids of `pid` (cut: [behind ahead], separate:
+   components) — nil if pid is a leaf (never cut/separated). Standalone
+   (not shared with leaf-ids/descendant-pieces/name-map's own closures,
+   which already amortize a single group-by across their own whole-tree
+   walk) — fine at the tree sizes (~5-20 nodes) tree-view walks."
+  [tree pid]
+  (when-let [g (first (filter #(= pid (:input %)) (:log tree)))]
+    (case (:type g)
+      :cut [(:behind g) (:ahead g)]
+      :separate (:components g))))
+
+(defn tree-view
+  "A nested tree for the panel's Vista processo: {:id :name :leaf? :current?
+   :status :children}, rooted at the source expression (piece 0, named via
+   source-expr like emission does). Children of a node are its nearest NAMED
+   descendants — intermediate aheads (unnamed, inlined into the emission's
+   nested destructure — see name-map) are walked through transparently, so
+   every displayed node carries \"nome (quello dell'emissione)\" as the brief
+   asks. status is :open | :finished | :native — :native reads a :native? key
+   no writer sets yet (the enum predisposed for edit-mesh-board); a native
+   piece is by construction also :finished?, so no existing :finished?-based
+   logic (leaf?/non-finished-leaves/all-finished?/pick-current/cycle-current/
+   position-info) changes."
+  [tree]
+  (let [nm (name-map tree)
+        named? (fn [pid] (or (zero? pid) (contains? nm pid)))
+        named-children (fn named-children [pid]
+                         (mapcat (fn [cid] (if (named? cid) [cid] (named-children cid)))
+                                 (children-of tree pid)))
+        status (fn [pid]
+                 (let [p (get-in tree [:pieces pid])]
+                   (cond (:native? p) :native (:finished? p) :finished :else :open)))
+        node (fn node [pid]
+               (let [lf (leaf? tree pid)]
+                 {:id pid :name (name-of tree nm pid) :leaf? lf
+                  :current? (= pid (:current tree)) :status (status pid)
+                  :children (when-not lf (mapv node (named-children pid)))}))]
+    (node 0)))
+
+(defn leaf-counts
+  "{:open N :finished M} across all leaves — the panel's 'N aperte · M
+   finite' headline (Vista processo)."
+  [tree]
+  (let [open (count (non-finished-leaves tree))]
+    {:open open :finished (- (count (leaf-ids tree)) open)}))
+
 (defn position-info
   "The panel's position anchor for the current piece (addendum Parte C):
    {:name :index :total :open? :count} — `index` is 1-based in the leaf DFS

@@ -439,6 +439,67 @@ html, body {
   cursor: crosshair;    /* click a tick to jump onto it */
 }
 
+/* edit-mesh-split (brief-acquisition-views Parte 2): the process tree — counts
+   header + clickable nested list built by render-tree! from mtree/tree-view. */
+.modal-panel .ems-tree-section {
+  margin: 4px 0 8px;
+  padding: 6px 8px;
+  background: #12161f;
+  border: 1px solid #2a3550;
+  border-radius: 3px;
+}
+
+.modal-panel .ems-tree-counts {
+  color: #9cdcfe;
+  font-size: 11px;
+  font-weight: bold;
+  margin-bottom: 4px;
+}
+
+.modal-panel .ems-tree-list ul {
+  list-style: none;
+  margin: 0;
+  padding-left: 14px;
+}
+
+.modal-panel .ems-tree-list > ul {
+  padding-left: 0;
+}
+
+.modal-panel .ems-tree-node {
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.modal-panel .ems-tree-open .ems-tree-label { color: #66ccff; }
+.modal-panel .ems-tree-finished .ems-tree-label { color: #999999; }
+/* :nativo — enum predisposed for edit-mesh-board; unreachable today. */
+.modal-panel .ems-tree-native .ems-tree-label { color: #b388ff; }
+
+.modal-panel .ems-tree-node:not(.ems-tree-leaf) > .ems-tree-label {
+  color: #d4d4d4;
+}
+
+.modal-panel .ems-tree-current > .ems-tree-label {
+  font-weight: bold;
+  color: #ffffff;
+  text-decoration: underline;
+}
+
+.modal-panel .ems-tree-clickable {
+  cursor: pointer;
+}
+
+.modal-panel .ems-tree-clickable .ems-tree-label:hover {
+  text-decoration: underline;
+}
+
+.modal-panel .ems-tree-leaf.ems-tree-finished,
+.modal-panel .ems-tree-leaf.ems-tree-native {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .modal-panel .pilot-btn-ok {
   background: #264f2e;
   border-color: #3a7d44;
