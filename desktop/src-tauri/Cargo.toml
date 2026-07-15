@@ -1,6 +1,8 @@
 [package]
 name = "ridley-desktop"
-version = "0.1.0"
+# Baseline only. tauri.conf.json's `version` wins for the bundle, and CI stamps
+# that from the release tag — this is what a local dev build reports.
+version = "3.4.0"
 edition = "2021"
 
 [build-dependencies]
