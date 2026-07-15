@@ -49,6 +49,69 @@
           h (let [d (js/Math.sqrt 3)] [(/ 1 d) (/ 1 d) (/ 1 d)])]
       (is (empty? (cc/step-candidates box h [0 0 0] {:angle-tol 1.0}))))))
 
+(deftest step-candidates-snap-normal
+  (testing "an axis-aligned cap reports the sweep heading itself as its normal —
+            snapping is a no-op when the face is already ⊥ heading (regression guard
+            for aligned cuts)"
+    (let [box (prim/box-mesh 40 30 10)                 ; caps ⊥ Z at z = ±5
+          cands (cc/step-candidates box [0 0 1] [0 0 0] {})]
+      (is (every? #(h/vec-approx= [0 0 1] (:normal %) 1e-9) cands))))
+  (testing "a flat step face tilted ≤angle-tol from the sweep heading reports the
+            FACE's own normal (not the heading), so the candidate cut lands flush
+            instead of shaving an oblique wafer off the flat face — the wafer bug
+            (live-confirmed 2026-07-14). :point lies on that face plane."
+    (let [th (* 0.8 (/ js/Math.PI 180.0))            ; 0.8° < angle-tol 1° → still a step
+          s (js/Math.sin th) c (js/Math.cos th)
+          rotx (fn [[x y z]] [x (- (* c y) (* s z)) (+ (* s y) (* c z))])
+          verts (mapv rotx [[-20 -20 10] [20 -20 10] [20 20 10] [-20 20 10]])
+          mesh {:vertices verts :faces [[0 1 2] [0 2 3]]}
+          face-n [0 (- s) c]                          ; +Z rotated about +X by 0.8°
+          cands (cc/step-candidates mesh [0 0 1] [0 0 0] {:tol 0.1 :angle-tol 1.0})]
+      (is (pos? (count cands)))
+      (is (not-any? #(h/vec-approx= [0 0 1] (:normal %) 1e-4) cands)
+          "NOT the raw sweep heading")
+      (is (every? #(h/vec-approx= face-n (:normal %) 1e-6) cands)
+          "snapped to the tilted face's own normal")
+      (is (every? (fn [{p :point}]
+                    (h/approx= 0.0 (reduce + (map * (map - p (first verts)) face-n)) 1e-6))
+                  cands)
+          ":point lies on the face plane"))))
+
+(deftest step-candidates-plane-cluster-splits-blended
+  (testing "two distinct near-parallel faces at the SAME sweep offset but normals
+            >angle-tol apart stay SEPARATE candidates (plane-clustering), each snapped
+            to its OWN normal — not merged into one blended-normal group that a tilted
+            heading would shave a wafer off both of (STL-confirmed 2026-07-15). Two
+            quads tilted ±0.7° about X (1.4° apart), both centred at z=5."
+    (let [t (js/Math.tan (* 0.7 (/ js/Math.PI 180.0)))
+          quad (fn [y0 y1 zf] [[-5 y0 (zf y0)] [5 y0 (zf y0)] [5 y1 (zf y1)] [-5 y1 (zf y1)]])
+          A (quad -10 -2 (fn [y] (+ 5 (* t (+ y 6)))))       ; tilt +, centroid z=5
+          B (quad 2 10 (fn [y] (+ 5 (* t (- 6 y)))))         ; tilt −, centroid z=5
+          mesh {:vertices (vec (concat A B))
+                :faces [[0 1 2] [0 2 3] [4 5 6] [4 6 7]]}
+          cands (cc/step-candidates mesh [0 0 1] [0 0 0] {:tol 0.1 :angle-tol 1.0})]
+      (is (= 2 (count cands)) "two clusters, one per face — NOT one blended group")
+      (let [nys (sort (map #(nth (:normal %) 1) cands))]
+        (is (< (first nys) -0.005) "one candidate snapped to the −y-tilted face normal")
+        (is (> (last nys) 0.005) "the other to the +y-tilted face normal")))))
+
+(deftest step-pose-flush-and-centred
+  (testing "step-pose sets heading = the face normal, lands the plane ON the face
+            (through :point), and re-centres it laterally through ref"
+    (let [raw [0.0 -0.05 1.0]
+          m (js/Math.sqrt (reduce + (map * raw raw)))
+          n (mapv #(/ % m) raw)
+          point [3 4 10] ref [1 1 1] up [0 1 0]
+          {pos :position hd :heading u :up} (cc/step-pose n point ref up)
+          on-plane (reduce + (map * (map - pos point) n))     ; (pos−point)·n
+          in-plane (let [d (map - pos ref)                    ; (pos−ref) minus its n-part
+                         dn (reduce + (map * d n))]
+                     (map - d (map #(* dn %) n)))]
+      (is (h/vec-approx= n hd 1e-9) "heading snapped to the normal")
+      (is (= up u) "up carried through")
+      (is (h/approx= 0.0 on-plane 1e-9) "plane passes through the face")
+      (is (h/vec-approx= [0 0 0] (vec in-plane) 1e-9) "laterally at ref's projection"))))
+
 (deftest profile-minima-finds-the-waist
   (testing "a dumbbell profile (high–low–high) yields one neck at the waist, depth =
             bell − waist; a monotone step yields none"

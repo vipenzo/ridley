@@ -53,6 +53,20 @@
   [offset heading up point]
   {:position (v+ point (v* heading offset)) :heading heading :up up})
 
+(defn step-pose
+  "Flush-cut pose for a STEP candidate. The plane's heading is SNAPPED to the step
+   face's `normal` (step-candidates' area-weighted mean normal), NOT the sweep
+   `heading` — which step detection only requires to be within angle-tol (≤1°) of the
+   face, so cutting along it would slice the flat step OBLIQUELY and shave a thin,
+   irregular-contoured wafer (live-confirmed 2026-07-14; symmetry/reflex candidates
+   already snap, only steps didn't). The plane passes through the faces' centroid
+   `point` and is re-projected laterally through `ref` (the sweep point / bbox centre)
+   so the quad stays centred on the piece; `up` carries through (its ≤angle-tol
+   non-perpendicularity is imperceptible — up only spins the quad, never the cut)."
+  [normal point ref up]
+  (let [pos (v- ref (v* normal (- (dot ref normal) (dot point normal))))]
+    {:position pos :heading normal :up up}))
+
 (defn step-candidates
   "STEP candidates for a translation sweep along `heading` (brief Part 2). A face
    COPLANAR with the sweep plane (its normal ∥ heading) marks a discontinuity in the
@@ -60,40 +74,87 @@
      ΔA(o) = −Σ area·sign(n·heading)   (a +heading-facing face leaves the section as
    the plane passes it → −area; a −heading-facing face enters → +area), so
    salience = |ΔA| = |Σ area·sign(n·heading)| over the faces coplanar at that offset.
-   Faces are grouped by offset within `tol`; a face counts as coplanar when its
-   normal is within `angle-tol` degrees of ±heading. Returns
-   [{:offset o :salience |ΔA|} …] (unsorted), dropping sub-`min-salience` jumps."
+   A face counts as coplanar when its normal is within `angle-tol` degrees of ±heading;
+   coplanar faces are then clustered per PLANE — mean normal aligned within `angle-tol`
+   AND plane offset within `tol` — so two distinct near-parallel faces at the same
+   sweep offset stay separate candidates (each snaps to its own normal) instead of
+   merging into one blended-normal group. Returns
+   [{:offset o :salience |ΔA| :normal N :point P} …] (unsorted), dropping
+   sub-`min-salience` jumps."
   [{:keys [vertices faces]} heading point {:keys [tol angle-tol min-salience]
                                            :or {tol 0.1 angle-tol 1.0 min-salience 1e-6}}]
   (let [cos-min (js/Math.cos (* angle-tol (/ js/Math.PI 180.0)))
-        ;; coplanar faces → {:o offset :sa signed-area}
+        ;; coplanar faces → {:o along-heading-offset :pd plane-offset :sa signed-area
+        ;;                    :n oriented-normal :ctr :area}.
+        ;; :n is flipped into the +heading hemisphere (n·sign(n·heading)) so a cluster's
+        ;; area-weighted Σ :n points coherently along +heading regardless of each face's
+        ;; own winding — that mean is the flush-cut normal the candidate snaps to.
+        ;; :pd = ctr·n is the face's own plane offset (along its normal); clustering on it
+        ;; (not just :o) keeps two DISTINCT near-parallel faces apart.
         entries (->> faces
                      (keep (fn [[i j k]]
                              (let [a (nth vertices i) b (nth vertices j) c (nth vertices k)
                                    [n area] (tri-normal-area a b c)
                                    nh (when n (dot n heading))]
                                (when (and n (>= (js/Math.abs nh) cos-min))
-                                 (let [ctr (v* (v+ (v+ a b) c) (/ 1.0 3.0))]
+                                 (let [ctr (v* (v+ (v+ a b) c) (/ 1.0 3.0))
+                                       sgn (if (pos? nh) 1.0 -1.0)
+                                       on (v* n sgn)]
                                    {:o (dot (v- ctr point) heading)
-                                    :sa (* area (if (pos? nh) 1.0 -1.0))})))))
-                     (sort-by :o))
-        ;; greedy cluster by offset gap ≤ tol (coplanar step faces share an exact
-        ;; offset; tol only absorbs float noise)
-        groups (reduce (fn [acc {:keys [o sa]}]
-                         (if-let [g (peek acc)]
-                           (if (<= (- o (:o0 g)) tol)
-                             (conj (pop acc) (-> g (update :sum + sa)
-                                                 (update :wsum + (* o (js/Math.abs sa)))
-                                                 (update :asum + (js/Math.abs sa))))
-                             (conj acc {:o0 o :sum sa :wsum (* o (js/Math.abs sa)) :asum (js/Math.abs sa)}))
-                           [{:o0 o :sum sa :wsum (* o (js/Math.abs sa)) :asum (js/Math.abs sa)}]))
-                       [] entries)]
-    (->> groups
-         (keep (fn [{:keys [o0 sum wsum asum]}]
+                                    :pd (dot ctr on)
+                                    :sa (* area sgn)
+                                    :n on
+                                    :ctr ctr
+                                    :area area}))))))
+        ;; PLANE-clustering (reflex-style, cut-cand/cluster-planes): each coplanar face
+        ;; joins the nearest cluster whose mean normal ALIGNS (dot > cos-min) AND whose
+        ;; plane offset matches within `tol`, else opens a new cluster. Grouping by the
+        ;; along-heading offset alone (the earlier version) merged two distinct
+        ;; near-parallel faces sitting at the same sweep-offset into ONE blended-normal
+        ;; group whose mean shaved a wafer off both on a tilted heading — STL-confirmed
+        ;; 2026-07-15. O(n·k), n coplanar faces × k clusters (tens).
+        clusters (reduce
+                  (fn [cls {:keys [o pd sa n ctr area]}]
+                    (let [best (reduce-kv
+                                (fn [b i cl]
+                                  (let [s (dot n (:N cl))]
+                                    (if (and (> s cos-min)
+                                             (< (js/Math.abs (- pd (:d cl))) tol)
+                                             (or (nil? b) (> s (:s b))))
+                                      {:i i :s s} b)))
+                                nil cls)]
+                      (if best
+                        (update cls (:i best)
+                                (fn [cl]
+                                  (let [nsum (v+ (:nsum cl) (v* n area))
+                                        wt (+ (:wt cl) area)
+                                        dsum (+ (:dsum cl) (* pd area))]
+                                    (-> cl
+                                        (assoc :nsum nsum :wt wt :dsum dsum
+                                               :N (or (normalize nsum) (:N cl))
+                                               :d (/ dsum wt))
+                                        (update :sum + sa)
+                                        (update :wsum + (* o (js/Math.abs sa)))
+                                        (update :asum + (js/Math.abs sa))
+                                        (update :csum v+ (v* ctr area))))))
+                        (conj cls {:sum sa :wsum (* o (js/Math.abs sa)) :asum (js/Math.abs sa)
+                                   :nsum (v* n area) :csum (v* ctr area) :wt area
+                                   :dsum (* pd area) :d pd :N n}))))
+                  [] entries)]
+    (->> clusters
+         (keep (fn [{:keys [sum wsum asum nsum csum wt]}]
                  (let [salience (js/Math.abs sum)]
                    (when (> salience min-salience)
-                     {:offset (if (pos? asum) (/ wsum asum) o0)
-                      :salience salience}))))
+                     ;; :normal = the cluster's area-weighted mean normal (the flush-cut
+                     ;; orientation); :point = its area-weighted centroid (a point ON that
+                     ;; plane). The caller (cut-candidates) builds the pose from these so
+                     ;; the plane is PARALLEL to the flat step, not merely offset along
+                     ;; the ≤1°-misaligned sweep heading (which shaved a wafer). :offset
+                     ;; stays the sweep-axis position for the strip / next-event ordering.
+                     {:offset (/ wsum asum)
+                      :salience salience
+                      :normal (normalize nsum)
+                      :point (v* csum (/ 1.0 wt))}))))
          vec)))
 
 ;; ── rotation (brief Part 2, rotazione) ──────────────────────

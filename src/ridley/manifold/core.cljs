@@ -1445,12 +1445,22 @@
                                           {:tol tolerance :angle-tol angle-tol})
           profile (translation-profile mesh heading position samples)
           peak (reduce max 0.0 (map :area profile))
-          necks (cut-cand/profile-minima profile (or min-neck-depth (* 0.01 peak)))
-          ->cand (fn [kind {:keys [offset salience]}]
-                   {:pose (cut-cand/offset->pose offset heading up position)
-                    :kind kind :salience salience :at offset})]
-      (->> (concat (map (partial ->cand :step) steps)
-                   (map (partial ->cand :neck) necks))
+          necks (cut-cand/profile-minima profile (or min-neck-depth (* 0.01 peak)))]
+      ;; STEP pose snaps heading to the coplanar faces' mean normal (cut-cand/step-pose):
+      ;; a step is only within angle-tol of the sweep heading, so cutting along the raw
+      ;; heading shaved a wafer off the flat face (live 2026-07-14). NECK pose keeps the
+      ;; sweep heading — a neck is a section minimum, not a flat face, so there is no
+      ;; face normal to snap to.
+      (->> (concat (map (fn [{:keys [offset salience normal point]}]
+                          {:pose (if normal
+                                   (cut-cand/step-pose normal point position up)
+                                   (cut-cand/offset->pose offset heading up position))
+                           :kind :step :salience salience :at offset})
+                        steps)
+                   (map (fn [{:keys [offset salience]}]
+                          {:pose (cut-cand/offset->pose offset heading up position)
+                           :kind :neck :salience salience :at offset})
+                        necks))
            (sort-by :salience >)
            vec))
     :rotation
