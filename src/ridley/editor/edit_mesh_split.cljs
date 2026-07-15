@@ -1235,13 +1235,21 @@
        (fn [ok?] (when ok? (commit-session!)))))))
 
 (defn- accept-or-commit!
-  "Enter: cut if the plane is actively bisecting the current piece; else commit if
-   every tree piece is finished ('tutto verde'); else move on to the next open
-   piece (the plane isn't cutting here and there is work left elsewhere)."
+  "Enter / the Accept/Commit button. Commit takes precedence the MOMENT every piece
+   is finished — matching the panel's own 'all pieces finished — Enter commits' hint
+   (update-panel-display!, same precedence) and addendum 4 Parte B: commit is always
+   available, 'tutto verde' is the suggestion to close, never a gate and never a
+   trigger to RE-CUT an already-finished piece. This ordering is the fix for
+   'accept everything as-is, then Accept/Commit neither exits nor stops spawning
+   open leaves': after the last accept-as-is the plane sits re-centred (= :active)
+   on the now-finished piece, so the old cut-first order silently re-cut a finished
+   (often concave-accepted) piece into fresh OPEN halves instead of committing. Only
+   with work still open does an active plane cut the current piece (the workhorse);
+   otherwise move on to the next open piece."
   []
   (cond
-    (= :active (:plane-state @session)) (accept-cut!)
     (mtree/all-finished? (:tree @session)) (request-commit!)
+    (= :active (:plane-state @session))    (accept-cut!)
     :else (cycle-current-piece! :next)))
 
 (defn- force-commit!
