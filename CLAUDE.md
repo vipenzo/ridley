@@ -43,12 +43,33 @@ Update the **Current Sprint** section in `Roadmap.md` with progress and any new 
 
 When creating a new release:
 1. Create the GitHub release with `gh release create`
-2. GitHub Actions will automatically build and deploy to GitHub Pages on release publish
+2. GitHub Actions builds and deploys automatically on release publish (Pages + the macOS DMG)
+3. **Wait for "Desktop Build (macOS)" to finish, then run `scripts/bump-cask.sh` — it is NOT automatic.**
+
+Step 3 is the one that gets forgotten. Nothing tells Homebrew a new version exists:
+`brew upgrade ridley` only reads `version` in `Casks/ridley.rb` of the **separate**
+`vipenzo/homebrew-ridley` tap, and until that file is committed, users are told they
+already have the latest. It was skipped for v3.2.0, v3.3.0 and v3.4.0.
+
+```bash
+scripts/bump-cask.sh            # latest release tag
+scripts/bump-cask.sh v3.4.0     # a specific tag
+```
+
+It downloads the release's DMG, computes its sha256, and commits both to the tap — so it
+must run AFTER the Desktop Build workflow has attached the DMG, or it downloads the wrong
+file (or none). It runs on your local `gh` auth; wiring it into Actions would need a PAT
+with write access to the tap, since `GITHUB_TOKEN` cannot push cross-repo.
 
 The deploy workflow (`.github/workflows/deploy.yml`) handles:
 - Installing dependencies
 - Building production JS with shadow-cljs
 - Deploying `public/` to GitHub Pages
+
+The desktop workflow (`.github/workflows/desktop-build.yml`) stamps the bundle version from
+the release tag into `tauri.conf.json` before building, so `About Ridley` matches the tag.
+The versions checked into `tauri.conf.json` / `Cargo.toml` / `package.json` are only the
+baseline a local dev build reports — they do not need bumping per release.
 
 ## ClojureScript Gotchas
 
