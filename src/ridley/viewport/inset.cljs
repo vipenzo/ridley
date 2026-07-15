@@ -133,11 +133,15 @@
           headlight (THREE/DirectionalLight. 0xffffff 0.8)
           camera (THREE/PerspectiveCamera. fov-deg (/ canvas-w canvas-h) 0.1 10000)
           renderer (THREE/WebGLRenderer. #js {:canvas canvas :antialias true})]
-      (set! (.-className container) "viewport-inset")
+      ;; Start COLLAPSED (2026-07-15, Vincenzo): the inset sits bottom-right, where the
+      ;; OS mic-dictation ("Structure") overlay also lands and covers it — so it opens
+      ;; as just its header, out of the way, and the user expands it with the toggle
+      ;; when wanted. A view-only default; nothing else about the session changes.
+      (set! (.-className container) "viewport-inset collapsed")
       (set! (.-className header) "viewport-inset-header")
       (set! (.-textContent label) "contesto")
       (set! (.-className toggle) "viewport-inset-toggle")
-      (set! (.-textContent toggle) "–")
+      (set! (.-textContent toggle) "+")
       (set! (.-title toggle) "nascondi/mostra la vista contesto")
       (.addEventListener toggle "click"
                          (fn [_]
@@ -160,7 +164,7 @@
       (.setPixelRatio renderer (min 2 js/window.devicePixelRatio))
       (reset! state {:container container :canvas canvas :renderer renderer :scene scene
                      :camera camera :ghost-obj nil :highlight-obj nil :center nil :dist nil
-                     :visible? true})
+                     :visible? false})   ; collapsed by default (see header className above)
       (viewport/register-frame-callback! frame-callback-key sync-camera!))))
 
 (defn unmount!
