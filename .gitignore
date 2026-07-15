@@ -24,6 +24,13 @@ out/
 desktop/src-tauri/target/
 desktop/src-tauri/gen/
 
+# Local scratch imports. Third-party STLs land here while working on the STL
+# acquisition tools; import-stl references them BY PATH precisely so a model can
+# be shared when the mesh itself may not be redistributed — keep them out of a
+# public repo. check.txt predates this rule and stays tracked.
+desktop/tmp/
+!desktop/tmp/check.txt
+
 # OS
 .DS_Store
 Thumbs.db
