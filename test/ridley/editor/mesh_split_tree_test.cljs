@@ -339,6 +339,34 @@
       (is (str/includes? code "mesh-split piece-1"))
       (is (str/includes? code "(f -5) (mark :cut-1)") "run 2 restarts :cut-1, delta from entry"))))
 
+;; ── emitted numbers stand for the plane they came from ──────
+
+(deftest emission-never-moves-the-plane
+  (testing "the emitted path IS the cut, so a number may be shortened but not
+            moved. The mount STL's step face sits at -1.6250512734795155; a flat
+            2-decimal rounding emitted (f -1.63) — 4.9µm PAST the face, which
+            cuts through solid material and hands a 2.87mm³ sheet to the next
+            piece, rendering as the wafer the bug report described (measured
+            live 2026-07-15)."
+    (let [exact -1.6250512734795155
+          t0 (tree/make-tree "block" (pose 0) conc)
+          r (tree/cut t0 0 (pose exact) fin fin)
+          code (tree/emit (:tree r))
+          emitted (some-> (re-find #"\(f (-?[\d.]+)\)" code) second js/parseFloat)]
+      (is (not (str/includes? code "(f -1.63)")) "the exact rounding that stole the sheet")
+      (is (some? emitted) "an (f …) was emitted")
+      (is (< (js/Math.abs (- emitted exact)) 1e-6)
+          (str "emitted " emitted " must stand for " exact " to within 1e-6 mm — "
+               "the bound is the ~7nm float32 planarity band of an imported face: "
+               "-1nm still cuts the intended solid, -10nm transfers it")))))
+
+(deftest emission-keeps-exact-numbers-short
+  (testing "faithful precision must not make ordinary values ugly — a value that
+            IS an integer emits as one, no 16-digit tail"
+    (let [t0 (tree/make-tree "block" (pose 0) conc)
+          r (tree/cut t0 0 (pose 10) fin fin)]
+      (is (str/includes? (tree/emit (:tree r)) "(f 10) (mark :cut-1)")))))
+
 ;; ── mirror flag, group undo, reflection (symmetry brief Parts 4-5) ──
 
 (deftest mirror-cut-emits-a-symmetry-comment

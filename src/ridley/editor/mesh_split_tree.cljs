@@ -309,18 +309,40 @@
 ;; Emission — a let-chain of self-contained linear composites
 ;; ============================================================
 
+(def ^:private emit-tol
+  "How far an emitted number may sit from the value it stands for — mm for
+   f/rt/u, degrees for th/tv/tr.
+
+   NOT a taste setting: it is bounded from above by the planarity noise of an
+   IMPORTED face. A binary STL stores float32, so a nominally flat face's
+   vertices scatter (~7nm on the mount at ~12mm coordinates). Land inside that
+   band and the cut slices the face; land BELOW it and the plane cuts through
+   solid material, handing the face's whole slab to the next piece. Measured
+   2026-07-15: -1nm still cuts the intended solid, -10nm already transfers it.
+   1e-6 keeps the worst case an order of magnitude inside the band."
+  1e-6)
+
 (defn- fmt-num
-  "edit-bezier/edit-mesh-split rounding: nearest int within 1e-9, else 2
-   decimals trimmed."
+  "Shortest decimal string standing for `v` to within `emit-tol`.
+
+   The emitted path IS the cut — re-evaluating the source has to land on the
+   plane the user accepted, so this may SHORTEN a number but never MOVE it. A
+   flat 2-decimal rounding moved it: on the mount STL a step face at
+   -1.6250512734795155 emitted as (f -1.63), 4.9µm past the face, which hands a
+   2.87mm³ sheet to the next piece (measured 2026-07-15 — the sheet renders as
+   the wafer the bug report described). Precision therefore grows until the
+   string is faithful instead of stopping at 2.
+
+   The minimal p never leaves a trailing zero — p-1 would already have passed —
+   so no trimming is needed."
   [v]
-  (let [r (js/Math.round v)]
-    (if (< (js/Math.abs (- v r)) 1e-9)
-      (str r)
-      (let [s (.toFixed v 2)]
-        (cond
-          (str/ends-with? s "00") (subs s 0 (- (count s) 3))
-          (str/ends-with? s "0") (subs s 0 (dec (count s)))
-          :else s)))))
+  (loop [p 0]
+    (if (>= p 12)
+      (str v)
+      (let [s (.toFixed v p)]
+        (if (< (js/Math.abs (- (js/parseFloat s) v)) emit-tol)
+          (if (= s "-0") "0" s)
+          (recur (inc p)))))))
 
 (defn- delta->cmds-str
   [delta]
