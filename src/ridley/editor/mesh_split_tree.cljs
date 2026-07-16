@@ -4,14 +4,16 @@
    actual meshes and their kept-alive Manifold objects live in the session's
    side-table keyed by piece id; THIS module owns the ids, the parentage
    (origins), the chronological structural-gesture log (for undo), current-piece
-   selection, piece naming, and the let-chain emission. All pure — unit-testable
-   in node, no Manifold.
+   selection, piece naming, and the nude `mesh-split` emission. All pure —
+   unit-testable in node, no Manifold.
 
-   The tree is really a FOREST of linear mesh-split chains wired by let bindings
-   (accertamento A2/A3): each emitted `mesh-split` call is a self-contained
-   linear composite exactly like the guillotine's, so re-entry needs no new
-   mechanism. The tree shape lives in the let topology; component separations
-   appear as `mesh-components` destructures.
+   The tree is really a FOREST of linear mesh-split chains: a cut's :behind
+   either stays a leaf or starts its own chain, resolved from that cut's own
+   pose (dev-docs/brief-split-tree.md Part 1/Q4) — so the whole forest emits
+   as ONE nude `mesh-split` call, its branches expressed in the spec's tree
+   shape (a map instead of a flat marks-vector), never a let. Separation
+   (`mesh-components`) is not a session gesture: it is ordinary DSL the user
+   reaches for by hand on the emitted call's result.
 
    Data model
    ----------
@@ -26,21 +28,20 @@
    origin =
      {:kind :root}
      {:kind :cut :from pid :side :behind|:ahead}
-     {:kind :separate :from pid :index k}
 
    gesture (structural, undoable — selection is NOT a gesture) =
-     {:type :cut      :input pid :pose {...} :behind bid :ahead aid}
-     {:type :separate :input pid :components [cid ...]}
-     {:type :accept   :pid pid}   ; 'accetta così com'è' (addendum 4 Parte A) —
-                                  ; MUTATES pid's own :finished?/:decided?, does
-                                  ; not consume/produce pieces (pid stays a leaf)
+     {:type :cut    :input pid :pose {...} :behind bid :ahead aid}
+     {:type :accept :pid pid}   ; 'accetta così com'è' (addendum 4 Parte A) —
+                                ; MUTATES pid's own :finished?/:decided?, does
+                                ; not consume/produce pieces (pid stays a leaf)
 
-   A piece is a LEAF iff it is neither a cut's input nor a separation's input;
-   leaves are the final decomposition (the emitted body vector). `:current` is
-   always a leaf. `:finished?`/`:count` are the per-component report (Parte 2),
-   supplied by the WASM caller; `:decided?` (addendum 4) marks a `:finished?`
-   that was DECIDED rather than measured convex — no consumer requires it, it
-   exists only so a future one could distinguish the two without a tree walk."
+   A piece is a LEAF iff it is not a cut's input; leaves are the final
+   decomposition. `:current` is always a leaf. `:finished?`/`:count` are the
+   per-component report (Parte 2), supplied by the WASM caller (via
+   `mesh-components`/`convex?`, computed OUTSIDE the tree — the tree never
+   separates); `:decided?` (addendum 4) marks a `:finished?` that was DECIDED
+   rather than measured convex — no consumer requires it, it exists only so a
+   future one could distinguish the two without a tree walk."
   (:require [ridley.turtle.core :as turtle]
             [clojure.string :as str]))
 
@@ -66,34 +67,30 @@
 ;; ============================================================
 
 (defn- cut-gestures [tree] (filter #(= :cut (:type %)) (:log tree)))
-(defn- separations [tree] (filter #(= :separate (:type %)) (:log tree)))
 
 (defn- input-ids
-  "Piece ids that have been consumed by SOME gesture (cut or separate) — i.e.
-   the non-leaf pieces. `keep`, not `map`: an :accept gesture (addendum 4) has
-   no :input, and a bare `map` would pollute the set with a stray nil."
+  "Piece ids that have been consumed by a cut — i.e. the non-leaf pieces.
+   `keep`, not `map`: an :accept gesture (addendum 4) has no :input, and a
+   bare `map` would pollute the set with a stray nil."
   [tree]
   (into #{} (keep :input) (:log tree)))
 
 (defn leaf?
-  "A piece is a leaf iff it was never cut and never separated."
+  "A piece is a leaf iff it was never cut."
   [tree pid]
   (and (contains? (:pieces tree) pid)
        (not (contains? (input-ids tree) pid))))
 
 (defn leaf-ids
   "Leaf piece ids in DFS pre-order from the root (behind-before-ahead at each
-   cut, component-order at each separation) — the order the emitted body vector
-   and the scene labels use."
+   cut) — the order the scene labels use."
   [tree]
   (let [in? (input-ids tree)
         by-input (group-by :input (:log tree))
         children (fn [pid]
-                   ;; a piece is consumed by exactly one gesture (cut xor separate)
+                   ;; a piece is consumed by at most one cut
                    (when-let [g (first (by-input pid))]
-                     (case (:type g)
-                       :cut [(:behind g) (:ahead g)]
-                       :separate (:components g))))
+                     [(:behind g) (:ahead g)]))
         walk (fn walk [pid]
                (if (contains? in? pid)
                  (mapcat walk (children pid))
@@ -159,39 +156,13 @@
      {:tree (assoc tree' :current current)
       :behind bid :ahead aid})))
 
-(defn separate
-  "Separate leaf `pid` into its connected components — one new piece per
-   `component-reports` entry ({:finished? :count} in mesh-components' contract
-   order). Appends a :separate gesture; advances current to the first
-   non-finished component (else next non-finished leaf). Returns
-   {:tree tree' :components [cid …]}."
-  ([tree pid component-reports] (separate tree pid component-reports nil))
-  ([tree pid component-reports opts]
-   (let [start (:next-id tree)
-         cids (vec (range start (+ start (count component-reports))))
-         pieces (reduce (fn [acc [k cid rpt]]
-                          (assoc acc cid {:id cid
-                                          :origin {:kind :separate :from pid :index k}
-                                          :finished? (:finished? rpt) :count (:count rpt)}))
-                        (:pieces tree)
-                        (map vector (range) cids component-reports))
-         gesture (cond-> {:type :separate :input pid :components cids}
-                   (:group opts) (assoc :group (:group opts)))
-         tree' (-> tree
-                   (assoc :pieces pieces :next-id (+ start (count cids)))
-                   (update :log conj gesture))
-         preferred (first (filter #(not (:finished? (get-in tree' [:pieces %]))) cids))]
-     {:tree (assoc tree' :current (pick-current tree' preferred (first cids)))
-      :components cids})))
-
-(defn- gesture-removed [g]
-  (case (:type g) :cut [(:behind g) (:ahead g)] :separate (:components g)))
+(defn- gesture-removed [g] [(:behind g) (:ahead g)])
 
 (defn undo
   "Pop the last structural gesture, whatever branch it touched (a single
    chronological semantics, like the linear model). A mirror-decompose replay is
-   ONE structural gesture: its cuts/separations share a `:group`, so undo pops the
-   whole trailing group atomically (brief Part 5). Removes the produced pieces,
+   ONE structural gesture: its cuts share a `:group`, so undo pops the whole
+   trailing group atomically (brief Part 5). Removes the produced pieces,
    re-opens the (group's first) input as the current leaf, and returns
    {:tree tree' :removed [pid …] :pose <cut pose or nil>} — `removed` so the caller
    can .delete those pieces' Manifolds, `pose` to restore the plane to a lone
@@ -221,7 +192,7 @@
             pieces (reduce dissoc (:pieces tree) removed)]
         {:tree (assoc tree :pieces pieces :current (:input (first popped)) :log rest-log)
          :removed removed
-         :pose (when (and (= 1 n) (= :cut (:type g))) (:pose g))}))))
+         :pose (when (= 1 n) (:pose g))}))))
 
 (defn select
   "Set current to leaf `pid` (a selection, NOT a structural gesture — never
@@ -278,9 +249,7 @@
   (let [in? (input-ids tree)
         by-input (group-by :input (:log tree))
         children (fn [p] (when-let [g (first (by-input p))]
-                           (case (:type g)
-                             :cut [(:behind g) (:ahead g)]
-                             :separate (:components g))))
+                           [(:behind g) (:ahead g)]))
         walk (fn walk [p] (cons p (when (contains? in? p) (mapcat walk (children p)))))]
     (vec (walk pid))))
 
@@ -306,7 +275,7 @@
      :heading  (axpy h (* 2 (dot3 h n)))}))
 
 ;; ============================================================
-;; Emission — a let-chain of self-contained linear composites
+;; Emission — always one nude mesh-split call (dev-docs/brief-split-tree.md)
 ;; ============================================================
 
 (def ^:private emit-tol
@@ -372,8 +341,8 @@
          vec)))
 
 (defn- intermediate-aheads
-  "Ahead pieces that are themselves cut — inlined inside a run's nested
-   destructure, so they get no let-binding name."
+  "Ahead pieces that are themselves cut — inlined inside their run's own
+   emitted path chain, so they get no scene-label name."
   [tree]
   (let [cs (cut-gestures tree)
         inputs (into #{} (map :input) cs)]
@@ -389,9 +358,7 @@
         by-input (group-by :input (:log tree))
         children (fn [pid]
                    (when-let [g (first (by-input pid))]
-                     (case (:type g)
-                       :cut [(:behind g) (:ahead g)]
-                       :separate (:components g))))
+                     [(:behind g) (:ahead g)]))
         pre-order (fn pre [pid]
                     (cons pid (when (contains? in? pid) (mapcat pre (children pid)))))
         named (->> (pre-order 0)
@@ -402,84 +369,123 @@
 (defn- name-of [tree nm pid]
   (if (= 0 pid) (:source-expr tree) (nm pid)))
 
-(defn- nested-destructure
-  "{p1 :behind {p2 :behind … {pn :behind :ahead <rem>} :ahead} :ahead} for a
-   run's behind names [p1…pn] and its final remaining name."
-  [behind-names rem-name]
-  (if (empty? behind-names)
-    rem-name
-    (str "{" (first behind-names) " :behind "
-         (nested-destructure (rest behind-names) rem-name) " :ahead}")))
+(defn- run-comments
+  "The `;; :cut-N: piano di simmetria` lines of a run's confirmed-symmetry cuts,
+   or \"\" — knowledge that would otherwise die with the session, kept in the
+   source where the user reads it. Comments never affect eval, so they cost the
+   round-trip nothing.
 
-(defn- run-binding
-  [tree nm run]
-  (let [entry (:entry-pose tree)
-        poses (into [entry] (map :pose run))
+   Re-entry does NOT restore the :mirror? flag (build-reentry-tree rebuilds the
+   tree from the composite's geometry, which carries no such tag), so emit
+   writes these once and never regenerates them. In the nude form that is why
+   they sit OUTSIDE the call: a re-emission replaces the call only, so the lines
+   survive as the user's own text instead of being silently dropped.
+
+   The bargain (Vincenzo, 2026-07-15) is that they are the user's from then on,
+   with what that implies: a re-opened cut that gets MOVED leaves its comment
+   describing the old plane, and a re-opened cut that is re-made ON a symmetry
+   plane emits a second copy beside the surviving first. Both are cosmetic —
+   comments never reach eval — and the alternative costs more: inside the call
+   they would reach cm/parse-form-elements as arguments, and having commit eat
+   the lines after its own form would eat the user's own comments with them."
+  [run]
+  (->> run
+       (map-indexed (fn [i c] (when (:mirror? c)
+                                (str "  ;; :cut-" (inc i) ": piano di simmetria"))))
+       (remove nil?)
+       (str/join "\n")))
+
+(defn- comment-suffix
+  "Comment lines appended after a form. The LEADING newline gets them off the
+   form's last line; the TRAILING one keeps whatever follows off the comment's
+   line — emit's own closing \"]\", or an enclosing form's \")\" — which the `;;`
+   would otherwise swallow into an unreadable form (caught live 2026-07-14:
+   `Unmatched delimiter )`)."
+  [comments]
+  (when (seq comments) (str "\n" comments "\n")))
+
+(defn- sub-entry-str
+  "One `mark sub-form` line of a branching spec map — `sub` is nil (leaf, the
+   mark just cuts) or a nested level-text result. A non-branching sub-level
+   renders as a BARE `(path …)` (mesh-split's own default: cut every one of
+   its marks — brief Part 1's sub-spec grammar has no other no-branching
+   form); a branching one carries its own map too, `[(path …) {…}]`. The
+   sub-level's OWN trailing comments (its run's `;; :cut-N: piano di
+   simmetria` lines) are folded in right here, via comment-suffix's usual
+   leading+trailing newline — so the NEXT map entry can never be swallowed."
+  [mk sub]
+  (str mk " "
+       (if (nil? sub)
+         "nil"
+         (str (if (:branching? sub)
+                (str "[" (:path-str sub) " " (:spec-str sub) "]")
+                (:path-str sub))
+              (comment-suffix (:trailing sub))))))
+
+(defn- level-text
+  "The `(path …)` + spec text for the run starting at `pid`, entering from
+   `entry-pose` — the tree's own :entry-pose at the root, or (brief Part 1
+   Q4) a branching cut's own :pose one level down: a sub-path resolves from
+   ITS mark's cut-pose, never the live turtle. Returns {:path-str :spec-str
+   :branching? :trailing}; :trailing is this run's OWN mirror-comment block
+   (a descendant run's are already folded into :spec-str, see sub-entry-str)."
+  [runs-by-start entry-pose pid]
+  (let [run (get runs-by-start pid)
+        poses (into [entry-pose] (map :pose run))
         deltas (mapv (fn [[a b]] (turtle/synthesize-delta a b)) (partition 2 1 poses))
         path-forms (str/join " "
                              (map-indexed
                               (fn [i delta] (str (delta->cmds-str delta) " (mark :cut-" (inc i) ")"))
                               deltas))
-        marks-vec (str "[" (str/join " " (map #(str ":cut-" (inc %)) (range (count run)))) "]")
-        behind-names (mapv #(name-of tree nm (:behind %)) run)
-        rem-name (name-of tree nm (:ahead (peek run)))
-        input-name (name-of tree nm (:input (first run)))
-        destructure (nested-destructure behind-names rem-name)
-        ;; a confirmed symmetry cut leaves a comment on its mark's line — the
-        ;; knowledge stays in the source for the future converter/mesh-board
-        ;; (brief Part 4). Comments never affect eval → round-trip invariant.
-        mirror-comments (->> run
-                             (map-indexed (fn [i c] (when (:mirror? c)
-                                                      (str "  ;; :cut-" (inc i) ": piano di simmetria"))))
-                             (remove nil?)
-                             (str/join "\n"))]
-    (str destructure "\n      (mesh-split " input-name "\n"
-         "                  (path " path-forms ")\n"
-         "                  " marks-vec ")"
-         ;; a trailing "\n" after the comment (not just before it) matters when
-         ;; this run is the LAST binding: emit's own closing "]" is appended
-         ;; directly onto this string, and without the trailing newline it would
-         ;; land on the comment's own line — swallowed by the `;;`, producing an
-         ;; unreadable form (caught live 2026-07-14: `Unmatched delimiter )`).
-         (when (seq mirror-comments) (str "\n" mirror-comments "\n")))))
-
-(defn- separation-binding
-  [tree nm sep]
-  (let [comp-names (str/join " " (map #(name-of tree nm %) (:components sep)))
-        input-name (name-of tree nm (:input sep))]
-    (str "[" comp-names "] (mesh-components " input-name ")")))
+        path-str (str "(path " path-forms ")")
+        mark-names (mapv #(str ":cut-" (inc %)) (range (count run)))
+        subs (mapv (fn [c] (when (contains? runs-by-start (:behind c))
+                             (level-text runs-by-start (:pose c) (:behind c))))
+                   run)
+        branching? (boolean (some some? subs))
+        spec-str (if branching?
+                   (str "{" (str/join "\n " (map sub-entry-str mark-names subs)) "}")
+                   (str "[" (str/join " " mark-names) "]"))]
+    {:path-str path-str :spec-str spec-str :branching? branching?
+     :trailing (run-comments run)}))
 
 (defn emit
-  "The emitted source: a let-chain of self-contained linear composites plus the
-   `mesh-components` destructures for separations, closing over a body MAP of
-   name→leaf-name pairs (keyword keys, e.g. `{:piece-1 piece-1 :piece-2 piece-2}`)
-   in DFS order — the mesh-board tree value (brief-mesh-board.md Part 0; older
-   emissions closing with a vector remain valid source and still evaluate, and
-   `mesh-board`/`attach` accept both shapes). With no CUT/SEPARATE gestures the
-   whole thing is just the input literal (nothing was cut) — an :accept-only
-   log (addendum 4 Parte A, 'accetta così com'è' on the root) does not by
-   itself earn a let-chain, since it produced no new binding to close over."
+  "The emitted source (dev-docs/brief-split-tree.md): no cut → the input
+   literal, verbatim. An :accept-only log (addendum 4 Parte A, 'accetta così
+   com'è' on the root) earns nothing more, since it produced no new binding.
+
+   Otherwise ALWAYS one nude `mesh-split` call — no let, no destructuring,
+   ever, however deep the tree:
+
+     (mesh-split mount
+       (path (tv 90) (f -1.62) (mark :cut-1))
+       [:cut-1])
+
+   A level with no branching cut emits the familiar `[:cut-1 :cut-2 …]`
+   marks-vector (unchanged from before this brief). A level where some cut's
+   `:behind` is itself cut further emits a MAP instead —
+
+     (mesh-split mount
+       (path … (mark :cut-1) … (mark :cut-2))
+       {:cut-1 (path … (mark :cut-1-1))
+        :cut-2 nil})
+
+   — recursing into that piece's own run, resolved from THAT cut's own pose,
+   never the live turtle (brief Part 1 Q4). Put `edit-` back in front of
+   whatever this returns and it IS the macro's own re-entry arity — nothing
+   to unpick, for any tree shape. The user who wants names calls `split-tree`
+   on the result; `mesh-components` is plain DSL applied by hand afterward,
+   not a session gesture (brief Part 3)."
   [tree]
-  (let [nm (name-map tree)
-        op-idx (into {} (map-indexed (fn [i g] [g i]) (:log tree)))
-        run-vec (runs tree)
-        run-entries (map (fn [run] {:order (apply min (map op-idx run))
-                                    :binding (run-binding tree nm run)}) run-vec)
-        sep-entries (map (fn [sep] {:order (op-idx sep)
-                                    :binding (separation-binding tree nm sep)})
-                         (separations tree))
-        bindings (->> (concat run-entries sep-entries)
-                      (sort-by :order)
-                      (map :binding))]
-    (if (empty? bindings)
+  (let [run-vec (runs tree)]
+    (if (empty? run-vec)
       (:source-expr tree)
-      (let [body (str "{" (str/join " " (map (fn [pid]
-                                               (let [n (name-of tree nm pid)]
-                                                 (str ":" n " " n)))
-                                             (leaf-ids tree)))
-                      "}")]
-        (str "(let [" (str/join "\n      " bindings) "]\n"
-             "  " body ")")))))
+      (let [runs-by-start (into {} (map (fn [r] [(:input (first r)) r])) run-vec)
+            {:keys [path-str spec-str trailing]} (level-text runs-by-start (:entry-pose tree) 0)]
+        (str "(mesh-split " (:source-expr tree) "\n"
+             "  " path-str "\n"
+             "  " spec-str ")"
+             (comment-suffix trailing))))))
 
 (defn piece-name
   "The emission name of a piece (for scene labels) — the leaf shows the same
@@ -492,23 +498,21 @@
 ;; ============================================================
 
 (defn- children-of
-  "The ordered child piece ids of `pid` (cut: [behind ahead], separate:
-   components) — nil if pid is a leaf (never cut/separated). Standalone
-   (not shared with leaf-ids/descendant-pieces/name-map's own closures,
-   which already amortize a single group-by across their own whole-tree
-   walk) — fine at the tree sizes (~5-20 nodes) tree-view walks."
+  "The ordered child piece ids of `pid` ([behind ahead]) — nil if pid is a
+   leaf (never cut). Standalone (not shared with leaf-ids/descendant-pieces/
+   name-map's own closures, which already amortize a single group-by across
+   their own whole-tree walk) — fine at the tree sizes (~5-20 nodes)
+   tree-view walks."
   [tree pid]
   (when-let [g (first (filter #(= pid (:input %)) (:log tree)))]
-    (case (:type g)
-      :cut [(:behind g) (:ahead g)]
-      :separate (:components g))))
+    [(:behind g) (:ahead g)]))
 
 (defn tree-view
   "A nested tree for the panel's Vista processo: {:id :name :leaf? :current?
    :status :children}, rooted at the source expression (piece 0, named via
    source-expr like emission does). Children of a node are its nearest NAMED
-   descendants — intermediate aheads (unnamed, inlined into the emission's
-   nested destructure — see name-map) are walked through transparently, so
+   descendants — intermediate aheads (unnamed, inlined into the emitted
+   path's own chain — see name-map) are walked through transparently, so
    every displayed node carries \"nome (quello dell'emissione)\" as the brief
    asks. status is :open | :finished | :native — :native reads a :native? key
    no writer sets yet (the enum predisposed for edit-mesh-board); a native

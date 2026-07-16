@@ -1,5 +1,9 @@
 # Brief: cut-candidates — generatore di candidati di taglio (traslazione e rotazione) con profilo di sezione
 
+> Il bias ε sui candidati STEP (perché un piano flush-esatto trafila un
+> wafer di rumore fp32) e la rete di sicurezza `heal-slivers` su
+> `mesh-split` sono in `dev-docs/brief-step-bias.md`, non qui.
+
 ## Contesto
 
 Quinto brief della famiglia "acquisizione STL". Fondamenta misurate nell'accertamento fase 2:

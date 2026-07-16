@@ -29,6 +29,11 @@ other unsupported argument — a map that isn't a mesh collection, or a
 foreign type — is a readable error naming what was received, never a silent
 no-op.
 
+A raw `mesh-split` composite is refused too, with an error naming
+`split-tree`: `:behind`/`:ahead` are not piece names, and a one-cut
+composite would otherwise move happily as a two-piece "group" — teaching a
+shape that breaks at the second cut. `(attach (split-tree AA) (f 10))`.
+
 `attach` wraps `body` in a `(path ...)` and replays it on a virtual
 turtle attached to the value. Movement commands translate the
 geometry along the turtle's local frame; rotation commands rotate it

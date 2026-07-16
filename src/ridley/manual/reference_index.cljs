@@ -372,6 +372,15 @@
     :description "Rotate the geometry under a stationary anchor — the mesh (or SDF) rotates by `-angle` around the chosen local axis while the creation-pose's orientation stays fixed in world. The geometry spins beneath the anchor; the anchor still points where it pointed before."
     :path "docs/manual/reference/en/cp-rotation.md"}
 
+   "cut-candidates"
+   {:name "cut-candidates"
+    :category "mesh-operations"
+    :status "stable"
+    :since ""
+    :signature "(cut-candidates mesh)\n(cut-candidates mesh opts)"
+    :description "Propose cut-plane poses for a mesh — the candidates a \"next event\" gesture (step through, don't hunt by eye) jumps between, and what `edit-mesh-split`'s section-area strip marks as ticks. A pure function of `(mesh, turtle pose, opts)` in its underlying form (`ridley.manifold.core/cut-candidates`); this DSL wrapper fills the pose from the turtle's current position/heading/up, so only `opts` override anything."
+    :path "docs/manual/reference/en/cut-candidates.md"}
+
    "cyl"
    {:name "cyl"
     :category "3d-primitives"
@@ -476,8 +485,8 @@
     :category "live-interactive"
     :status "stable"
     :since ""
-    :signature "(edit-mesh-split mesh)\n(edit-mesh-split mesh path)\n(edit-mesh-split mesh path marks-vector)"
-    :description "Decompose a mesh into pieces interactively — a **tree session** for `mesh-split`. Run it from the **definitions panel** (Cmd+Enter). Unlike a straight guillotine, both halves of every cut become pieces of a growing tree: you can go back to any piece and keep cutting it, or separate a piece into its connected components without any plane at all. The goal is a decomposition where **every piece is finished** — each of its connected components convex."
+    :signature "(edit-mesh-split mesh)\n(edit-mesh-split mesh path)\n(edit-mesh-split mesh path marks-vector)\n(edit-mesh-split mesh path marks-map)"
+    :description "Decompose a mesh into pieces interactively — a **tree session** for `mesh-split`. Run it from the **definitions panel** (Cmd+Enter). Unlike a straight guillotine, both halves of every cut become pieces of a growing tree: you can go back to any piece and keep cutting it. The goal is a decomposition where **every piece is finished** — each of its connected components convex. Separating a multi-component piece into its parts is not a session gesture — it's ordinary DSL (`mesh-components`) you reach for by hand on the emitted result."
     :path "docs/manual/reference/en/edit-mesh-split.md"}
 
    "edit-path"
@@ -1133,7 +1142,7 @@
     :category "mesh-operations"
     :status "stable"
     :since ""
-    :signature "(mesh-split mesh)\n(mesh-split mesh path)\n(mesh-split mesh path marks-vector)"
+    :signature "(mesh-split mesh)\n(mesh-split mesh path)\n(mesh-split mesh path marks-vector)\n(mesh-split mesh path marks-map)\n(mesh-split mesh path marks-spec opts)"
     :description "Split a mesh with the plane defined by the turtle's current pose — point = position, normal = heading — into two halves. Returns `{:behind <mesh> :ahead <mesh>}`."
     :path "docs/manual/reference/en/mesh-split.md"}
 
@@ -2261,6 +2270,15 @@
     :signature "(split-parts result)"
     :description "Flatten a `mesh-split` composite result into an ordered vector of leaves — depth-first, `:behind` before `:ahead` at each node. For the linear chain a composite `mesh-split` call produces today, that's simply `[piece-1 piece-2 … remaining]`, in cut order."
     :path "docs/manual/reference/en/split-parts.md"}
+
+   "split-tree"
+   {:name "split-tree"
+    :category "mesh-operations"
+    :status "stable"
+    :since ""
+    :signature "(split-tree result)"
+    :description "Turn a `mesh-split` composite into a map of **named pieces** — `{:piece-1 … :piece-2 … :piece-3 …}` — numbered in cut order, so `:piece-N` is the Nth piece detached and the last key is the final remaining piece."
+    :path "docs/manual/reference/en/split-tree.md"}
 
    "squash"
    {:name "squash"

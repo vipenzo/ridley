@@ -408,6 +408,7 @@
    'cut-candidates      impl/implicit-cut-candidates
    'mesh-split          impl/implicit-mesh-split
    'split-parts         manifold/split-parts
+   'split-tree          manifold/split-tree
    'mesh-components     manifold/mesh-components
    'finished?           manifold/finished?
    'mesh-mirror         impl/implicit-mesh-mirror

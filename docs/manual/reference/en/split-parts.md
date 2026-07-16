@@ -55,7 +55,10 @@ function needs no change.
 - Useful whenever the number of pieces matters more than which mark
   produced which piece — printing/registering every piece, summing
   volumes, checking every piece is convex before accepting a
-  decomposition as final.
+  decomposition as final. When you *do* want to say which piece, reach
+  for `split-tree`: same order, same leaves, named `{:piece-1 …}`
+  instead of a vector — and that's the shape `mesh-board` and `attach`
+  take.
 - `(split-parts (mesh-split m))` (single-cut primitive) is
   `[(:behind r) (:ahead r)]` where `r` is that call's own result —
   the two-element case is exactly what you'd expect, not a special
@@ -63,4 +66,4 @@ function needs no change.
 
 ## See also
 
-- **Related:** `mesh-split`, `convex?`
+- **Related:** `split-tree`, `mesh-split`, `convex?`

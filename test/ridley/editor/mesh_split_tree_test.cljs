@@ -41,10 +41,10 @@
     (is (= [ahead] (tree/non-finished-leaves tree)) "behind is finished, only ahead open")
     (let [code (tree/emit tree)]
       (is (= 1 (n-calls code #"mesh-split")))
-      (is (str/includes? code "mesh-split block"))
+      (is (str/starts-with? code "(mesh-split block") "one linear run → the nude call, no let")
       (is (str/includes? code "[:cut-1]"))
-      (is (str/includes? code "{piece-1 :behind piece-2 :ahead}"))
-      (is (str/includes? code "{:piece-1 piece-1 :piece-2 piece-2}")))))
+      (is (not (str/includes? code "let")) "no binding form to re-open inside")
+      (is (not (str/includes? code ":behind")) "no destructuring — names are split-tree's job"))))
 
 (deftest cut-with-finished-ahead-moves-current-to-next-open
   (let [t0 (tree/make-tree "block" (pose 0) conc)
@@ -63,39 +63,100 @@
         code (tree/emit tree)]
     (is (= 1 (n-calls code #"mesh-split")) "consecutive ahead-cuts collapse into ONE call")
     (is (str/includes? code "[:cut-1 :cut-2]"))
-    (is (str/includes? code "{piece-1 :behind {piece-2 :behind piece-3 :ahead} :ahead}"))
-    (is (= 3 (count (tree/leaf-ids tree))))
-    (is (str/includes? code "{:piece-1 piece-1 :piece-2 piece-2 :piece-3 piece-3}"))))
+    (is (str/starts-with? code "(mesh-split block") "still one run → still nude")
+    (is (= 3 (count (tree/leaf-ids tree))))))
 
-;; ── branch (cut a behind → a second call in the let-chain) ──
+;; ── the nude form IS the macro's own re-entry arity ─────────
 
-(deftest branch-emits-a-second-mesh-split-fed-by-a-binding
+(deftest nude-emission-round-trips-through-edit-prefix
+  (testing "brief-split-tree.md's whole motivation: prefixing `edit-` to the
+            emitted call yields (edit-mesh-split m path marks) — the macro's
+            3-arity — so re-entry needs nothing new. It reads as three elements
+            (mesh, path, marks), which is what request! parses out of the marker."
+    (let [t0 (tree/make-tree "mount" (pose 0) conc)
+          r (tree/cut t0 0 (pose 10) fin conc)
+          code (tree/emit (:tree r))
+          reentry (reader/read-string (str "(edit-" (subs code 1)))]
+      (is (= 4 (count reentry)) "(edit-mesh-split mount (path …) [:cut-1])")
+      (is (= 'edit-mesh-split (first reentry)))
+      (is (= 'mount (second reentry)) "the mesh argument survives verbatim")
+      (is (= 'path (ffirst (drop 2 reentry))) "third element is the path form")
+      (is (= [:cut-1] (last reentry)) "fourth is the marks vector"))))
+
+(deftest nude-emission-is-readable-inside-an-enclosing-form
+  (testing "the emitted call replaces the marked form in place, so it may land
+            inside a (def …) — including its comment lines, whose trailing
+            newline keeps the enclosing ) off the ;; line"
+    (let [t0 (tree/make-tree "mount" (pose 0) conc)
+          r (tree/cut t0 0 (pose 10) fin conc {:mirror? true})
+          form (reader/read-string (str "(def AA " (tree/emit (:tree r)) ")"))]
+      (is (= 'def (first form)))
+      (is (= 'AA (second form)))
+      (is (= 'mesh-split (ffirst (drop 2 form))) "the composite is what AA gets bound to"))))
+
+;; ── branch (cut a behind → a branching spec, still ONE call) ──
+
+(deftest branch-emits-a-single-mesh-split-with-a-branching-spec
   (let [t0 (tree/make-tree "block" (pose 0) conc)
         r1 (tree/cut t0 0 (pose 10) conc conc)      ; both halves open
         r2 (tree/cut (:tree r1) (:behind r1) (pose 5) fin fin)  ; cut the BEHIND
         tree (:tree r2)
         code (tree/emit tree)]
-    (is (= 2 (n-calls code #"mesh-split")) "cutting a non-ahead piece starts a new call")
-    (is (str/includes? code "mesh-split block") "root run consumes the source literal")
-    (is (str/includes? code "mesh-split piece-1") "the branch run consumes the behind's binding")
-    ;; b1 (piece-1) is cut → not a leaf; leaves are b2, a2, a1
+    (is (= 1 (n-calls code #"mesh-split")) "branching stays ONE call — no let")
+    (is (str/starts-with? code "(mesh-split block") "the call consumes the source literal")
+    (is (str/includes? code "{:cut-1") "the branching mark's spec is a MAP, not a vector")
+    (is (str/includes? code "(f -5) (mark :cut-1)")
+        "the branch's own path, marks restarted from :cut-1's own cut-pose")
+    (is (some? (reader/read-string code)) "the branching call must parse")
+    ;; b1 (the branch's input) is cut → not a leaf; leaves are b2, a2, a1
     (is (= 3 (count (tree/leaf-ids tree))))
     (is (not (tree/leaf? tree (:behind r1))))))
 
-;; ── separation (mesh-components destructure) ────────────────
+(deftest branch-within-a-branch-nests-two-levels-deep
+  (testing "a branch's own behind can branch again — the spec map's value
+            becomes [(path …) {…}] instead of a bare path"
+    (let [t0 (tree/make-tree "block" (pose 0) conc)
+          r1 (tree/cut t0 0 (pose 10) conc conc)                 ; root cut
+          r2 (tree/cut (:tree r1) (:behind r1) (pose 5) conc conc)  ; branch on the behind
+          r3 (tree/cut (:tree r2) (:behind r2) (pose 2) fin fin)    ; branch on ITS behind
+          tree (:tree r3)
+          code (tree/emit tree)]
+      (is (= 1 (n-calls code #"mesh-split")) "still ONE call, however deep")
+      (is (str/includes? code "{:cut-1 [(path") "the once-branching sub-level now carries its own map too")
+      (is (str/includes? code "{:cut-1 (path") "the deepest level is a bare path (no further branching)")
+      (is (some? (reader/read-string code)) "the doubly-nested call must parse")
+      (is (= 4 (count (tree/leaf-ids tree)))))))
 
-(deftest separate-emits-a-mesh-components-destructure
-  (let [t0 (tree/make-tree "block" (pose 0) conc)
-        r1 (tree/cut t0 0 (pose 10) fin multi)       ; ahead is multi-component
-        r2 (tree/separate (:tree r1) (:ahead r1) [fin fin])
-        tree (:tree r2)
-        code (tree/emit tree)]
-    (is (= 2 (count (:components r2))))
-    (is (str/includes? code "mesh-components piece-2") "separates the run's remaining binding")
-    (is (str/includes? code "[piece-3 piece-4] (mesh-components"))
-    ;; the ahead (piece-2) is separated → not a leaf; leaves are b1 + the 2 comps
-    (is (= 3 (count (tree/leaf-ids tree))))
-    (is (true? (tree/all-finished? tree)) "b1 finished + both components finished")))
+(deftest branch-alongside-a-non-branching-mark-in-the-same-run
+  (testing "the brief's own worked example: one run, one branching mark and
+            one plain mark side by side in the same map spec"
+    (let [t0 (tree/make-tree "mount" (pose 0) conc)
+          r1 (tree/cut t0 0 (pose 10) conc conc)                    ; :cut-1, branches
+          r2 (tree/cut (:tree r1) (:ahead r1) (pose 20) fin conc)   ; :cut-2, plain
+          r3 (tree/cut (:tree r2) (:behind r1) (pose 5) fin fin)    ; :cut-1's own branch
+          tree (:tree r3)
+          code (tree/emit tree)]
+      (is (= 1 (n-calls code #"mesh-split")))
+      (is (str/includes? code "{:cut-1 (path") "cut-1 branches")
+      (is (str/includes? code ":cut-2 nil") "cut-2 is a plain leaf mark, spelled nil")
+      (is (some? (reader/read-string code)))
+      (is (= 4 (count (tree/leaf-ids tree)))))))
+
+(deftest branching-emission-round-trips-through-edit-prefix
+  (testing "same round-trip contract as the linear nude call: `edit-` in front
+            of a branching emission still reads as the macro's 3-arity, whose
+            third element is now a MAP, not a vector"
+    (let [t0 (tree/make-tree "block" (pose 0) conc)
+          r1 (tree/cut t0 0 (pose 10) conc conc)
+          r2 (tree/cut (:tree r1) (:behind r1) (pose 5) fin fin)
+          code (tree/emit (:tree r2))
+          reentry (reader/read-string (str "(edit-" (subs code 1)))]
+      (is (= 4 (count reentry)) "(edit-mesh-split block (path …) {…})")
+      (is (= 'edit-mesh-split (first reentry)))
+      (is (= 'block (second reentry)))
+      (is (= 'path (ffirst (drop 2 reentry))) "third element is the path form")
+      (is (map? (last reentry)) "fourth element is the branching spec map")
+      (is (= [:cut-1] (keys (last reentry)))))))
 
 ;; ── undo (chronological, cross-branch) ──────────────────────
 
@@ -108,15 +169,6 @@
     (is (= (pose 10) (:pose u)) "the popped cut's pose, for plane restoration")
     (is (empty? (:log (:tree u))))
     (is (= "block" (tree/emit (:tree u))) "back to the untouched input")))
-
-(deftest undo-separate-removes-components-no-pose
-  (let [t0 (tree/make-tree "block" (pose 0) conc)
-        r1 (tree/separate t0 0 [fin fin conc])
-        u (tree/undo (:tree r1))]
-    (is (= (set (:components r1)) (set (:removed u))))
-    (is (= 0 (:current (:tree u))))
-    (is (nil? (:pose u)) "a separation has no plane")
-    (is (= "block" (tree/emit (:tree u))))))
 
 (deftest undo-is-chronological-across-branches
   (let [t0 (tree/make-tree "block" (pose 0) conc)
@@ -326,18 +378,19 @@
       (is (str/includes? code "(f 30) (mark :cut-2)") "(-15)→(15) = (f 30)")
       (is (str/includes? code "[:cut-1 :cut-2]")))))
 
-(deftest emission-branch-restarts-marks-and-poses-per-run
-  (testing "a second run (cut a behind) restarts marks at :cut-1 and deltas from
-            the SAME entry pose, not chained across runs (A2)"
+(deftest emission-branch-restarts-marks-per-run-from-its-own-cut-pose
+  (testing "a branch's own run restarts marks at :cut-1, with deltas measured
+            from ITS OWN entry — the branching cut's own pose (brief Part 1
+            Q4), never the tree's global entry-pose or the live turtle"
     (let [t0 (tree/make-tree "block" (pose 0) conc)
           r1 (tree/cut t0 0 (pose 10) conc conc)
           r2 (tree/cut (:tree r1) (:behind r1) (pose -5) fin fin)
           code (tree/emit (:tree r2))]
-      ;; run 1 input=block cut at (f 10); run 2 input=piece-1 cut at (f -5)
-      (is (str/includes? code "mesh-split block"))
-      (is (str/includes? code "(f 10) (mark :cut-1)"))
-      (is (str/includes? code "mesh-split piece-1"))
-      (is (str/includes? code "(f -5) (mark :cut-1)") "run 2 restarts :cut-1, delta from entry"))))
+      (is (= 1 (n-calls code #"mesh-split")) "branching is still ONE call")
+      (is (str/starts-with? code "(mesh-split block"))
+      (is (str/includes? code "(f 10) (mark :cut-1)") "root run: entry(0) → cut-1's pose(10)")
+      (is (str/includes? code "(f -15) (mark :cut-1)")
+          "branch run restarts :cut-1; delta from ITS entry (cut-1's own pose, 10) to -5 is -15"))))
 
 ;; ── emitted numbers stand for the plane they came from ──────
 
@@ -370,7 +423,7 @@
 ;; ── mirror flag, group undo, reflection (symmetry brief Parts 4-5) ──
 
 (deftest mirror-cut-emits-a-symmetry-comment
-  (testing "a confirmed-mirror cut leaves a ;; comment on its mark's line"
+  (testing "a confirmed-mirror cut leaves a ;; comment naming its mark"
     (let [t0 (tree/make-tree "block" (pose 0) conc)
           r1 (tree/cut t0 0 (pose 10) fin conc {:mirror? true})
           code (tree/emit (:tree r1))]
@@ -379,15 +432,42 @@
       (let [r2 (tree/cut t0 0 (pose 10) fin conc)]
         (is (not (str/includes? (tree/emit (:tree r2)) "piano di simmetria")))))))
 
-(deftest mirror-comment-on-the-last-binding-does-not-swallow-the-closing-bracket
-  (testing "regression (found live 2026-07-14): when the mirror-commented cut is
-            the LAST (here, only) run, emit's own closing ']' used to land on the
-            comment's line and get swallowed by it — 'Unmatched delimiter )' on
-            read. The comment now ends with its own trailing newline."
+(deftest mirror-comment-sits-outside-the-nude-call
+  (testing "the call must stay re-openable: a comment INSIDE it would reach
+            cm/parse-form-elements as extra arguments. Outside, it also survives
+            the round-trip — re-entry can't rebuild :mirror? from geometry, so a
+            re-emission that owned the comment would silently drop it."
     (let [t0 (tree/make-tree "block" (pose 0) conc)
-          r1 (tree/cut t0 0 (pose 10) conc conc {:mirror? true})
+          r1 (tree/cut t0 0 (pose 10) fin conc {:mirror? true})
           code (tree/emit (:tree r1))]
-      (is (some? (reader/read-string code)) "must parse — a comment must never eat a structural character"))))
+      ;; the comment carries no parens, so the last ) in the whole string is the
+      ;; call's own closing one — the comment must come after it.
+      (is (> (.indexOf code ";;") (.lastIndexOf code ")"))
+          "the comment follows the closing paren, it is not an argument")
+      (let [elements (-> code
+                         (subs 1 (inc (.lastIndexOf code ")")))
+                         (str/split #"\n")
+                         first)]
+        (is (str/starts-with? elements "mesh-split block")
+            "the call's first line is still (mesh-split <input> — nothing wedged in")))))
+
+(deftest mirror-comment-does-not-swallow-a-following-structural-character
+  (testing "regression (found live 2026-07-14): a mirror comment used to run
+            straight into whatever emit appended next, which the ;; then ate
+            ('Unmatched delimiter )' on read). Guarded wherever a comment can
+            land: right after the whole call (a lone run) and INSIDE a
+            branching spec map, right before that map's own closing '}' and
+            the call's closing ')'."
+    (let [t0 (tree/make-tree "block" (pose 0) conc)
+          nude (tree/emit (:tree (tree/cut t0 0 (pose 10) conc conc {:mirror? true})))
+          r1 (tree/cut t0 0 (pose 10) conc conc)
+          r2 (tree/cut (:tree r1) (:behind r1) (pose 5) fin fin {:mirror? true})
+          branched (tree/emit (:tree r2))]
+      (is (str/includes? nude "piano di simmetria"))
+      (is (some? (reader/read-string nude)) "nude call must parse")
+      (is (str/includes? branched "piano di simmetria"))
+      (is (= 1 (n-calls branched #"mesh-split")) "branching is still ONE call")
+      (is (some? (reader/read-string branched)) "the branching call must parse"))))
 
 (deftest group-undo-pops-the-whole-replay-atomically
   (testing "cuts sharing a :group are one structural gesture — one undo removes all"

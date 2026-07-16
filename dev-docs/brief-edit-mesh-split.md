@@ -1,5 +1,11 @@
 # Brief: mesh-split composita + edit-mesh-split — decomposizione interattiva a ghigliottina
 
+> **Nota (2026-07-15).** Documento storico. Per la **forma emessa attuale** vedi
+> `dev-docs/brief-split-tree.md`: il caso lineare (una sola run, nessuna
+> separazione) emette la chiamata `mesh-split` **nuda**, senza let né
+> destructuring — è ciò che rende reale il round-trip `edit-`. La let-chain resta
+> solo per run multiple/separazioni. I nomi `:piece-N` vengono da `split-tree`.
+
 ## Contesto
 
 Secondo brief della famiglia "acquisizione STL". Il primo (`dev-docs/brief-mesh-split.md`, consegnato) ha fissato i mattoni: la primitiva `(mesh-split mesh)` che taglia sul piano della posa corrente (punto = position, normale = heading) e ritorna `{:behind :ahead}` con `:behind` = lato del materiale (convenzione saldata a `sdf-half-space`/`extrude` da test); il predicato `(convex? mesh)` via hull-ratio; la metà vuota come risultato legittimo; la policy metadati carry-meta su entrambe le metà. L'accertamento (`dev-docs/mesh-split-accertamento.md`) garantisce i budget: `mark` salva la posa completa e `goto` la ripristina (Q2), split ~7 ms e `convex?` ~2.6 ms su ~4600 tri (Q1/Q4) — il ricalcolo live a ogni tasto è affordabile.

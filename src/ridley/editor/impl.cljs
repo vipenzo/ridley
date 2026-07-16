@@ -1624,7 +1624,13 @@
 (defn ^:export attach-impl
   "Dispatch attach by target type: sequential (vector group), panel, single
    mesh, map of meshes (mesh-board tree — brief-mesh-board.md Part 1), SDF, or
-   selection map. Anything else is a readable error, never a silent no-op."
+   selection map. Anything else is a readable error, never a silent no-op.
+
+   A raw mesh-split composite is rejected before the mesh-collection branch can
+   mistake it for one (brief-split-tree.md Part 3): at one cut its {:behind
+   :ahead} values ARE both meshes, so it would group-transform into a two-piece
+   'tree' named :behind/:ahead, and from two cuts up the nested :ahead breaks
+   the same branch obscurely. `split-tree` converts it."
   [target path]
   (let [target (if (and (map? target) (:name target) (not (:vertices target))
                         (not (sdf/sdf-node? target)))
@@ -1636,6 +1642,9 @@
       (sequential? target) (group-attach-impl target path)
       (panel/panel? target) (panel-attach-impl target path)
       (and (map? target) (:vertices target)) (mesh-attach-impl target path)
+      (manifold/split-composite? target)
+      (throw (js/Error. (str "attach: got a raw mesh-split composite ({:behind … :ahead …}), not a "
+                             "tree of named pieces — wrap it in (split-tree …)")))
       (meshes-collection? target) (map-attach-impl target path)
       :else (throw (js/Error. (str "attach: unsupported argument — got "
                                    (describe-attach-type target)))))))

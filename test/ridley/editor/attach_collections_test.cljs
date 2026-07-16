@@ -8,6 +8,7 @@
   (:require [cljs.test :refer [deftest testing is]]
             [ridley.editor.impl :as impl]
             [ridley.geometry.primitives :as primitives]
+            [ridley.manifold.core :as manifold]
             [ridley.test-helpers :as th]))
 
 (defn- cmd [c & args] {:cmd c :args (vec args)})
@@ -64,6 +65,36 @@
   (let [out (impl/attach-impl [(mesh-at 0) (mesh-at 10)] (path (cmd :f 5)))]
     (is (vector? out))
     (is (= 2 (count out)))))
+
+;; ── raw mesh-split composite: named error, never obscure ────
+
+(deftest attach-on-raw-composite-names-split-tree
+  (testing "brief-split-tree.md Part 3 — the emitted call's value is a composite
+            now, so attaching it directly is the likely mistake"
+    (let [e (try (impl/attach-impl {:behind (mesh-at 0)
+                                    :ahead {:behind (mesh-at 5) :ahead (mesh-at 10)}}
+                                   (path (cmd :f 5)))
+                 (catch :default e e))]
+      (is (instance? js/Error e))
+      (is (re-find #"attach" (.-message e)))
+      (is (re-find #"split-tree" (.-message e)) "the error names the conversion"))))
+
+(deftest attach-on-one-cut-composite-is-rejected-too
+  (testing "at one cut both values ARE meshes, so meshes-collection? accepted it
+            and group-transformed a 'tree' named :behind/:ahead — a success that
+            teaches the wrong shape. One rule, whatever the cut count."
+    (let [e (try (impl/attach-impl {:behind (mesh-at 0) :ahead (mesh-at 10)} (path (cmd :f 5)))
+                 (catch :default e e))]
+      (is (instance? js/Error e))
+      (is (re-find #"split-tree" (.-message e))))))
+
+(deftest attach-on-split-tree-of-a-composite-moves-the-group
+  (testing "the cure the error names works: named pieces take the map branch"
+    (let [composite {:behind (mesh-at 0) :ahead {:behind (mesh-at 5) :ahead (mesh-at 10)}}
+          out (impl/attach-impl (manifold/split-tree composite) (path (cmd :f 5)))]
+      (is (= #{:piece-1 :piece-2 :piece-3} (set (keys out))))
+      (is (th/approx= (th/signed-volume (mesh-at 0)) (th/signed-volume (:piece-1 out)) 1e-6)
+          "rigid — volume invariant"))))
 
 ;; ── unsupported types: readable error, never a silent no-op ────
 

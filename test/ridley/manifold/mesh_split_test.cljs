@@ -346,6 +346,94 @@
         (is (h/approx= 45000.0 (apply + (map #(:volume (manifold/get-mesh-status %)) parts))
                        1e-1))))))
 
+;; ── mesh-split composite: branching map spec (brief-split-tree.md Part 1) ──
+
+(defn- block-20x20x30
+  "A box 20x20 cross-section, 20 units of x per stretch — extruded from a
+   rect, so x runs [0,30] and cross-section area is 400 (matches the
+   default-marks-in-path-order fixture)."
+  []
+  (last (:meshes (-> (t/make-turtle)
+                     (t/extrude-from-path (shape/rect-shape 20 20)
+                                          (t/make-path [{:cmd :f :args [30]}]))))))
+
+(deftest mesh-split-composite-map-spec-branches-a-detached-piece
+  (if-not (manifold-available?)
+    (is true "Skipped: Manifold WASM not available in node")
+    (testing "a map spec's :cut-1 branches the piece DETACHED at that mark —
+              its own sub-path resolves from :cut-1's own cut-pose (x=10),
+              not the live turtle (still at the origin) — Part 1 Q4"
+      (set-turtle-pose! (t/make-turtle))
+      (let [block (block-20x20x30)
+            p (t/make-path [{:cmd :f :args [10]} {:cmd :mark :args [:cut-1]}
+                            {:cmd :f :args [10]} {:cmd :mark :args [:cut-2]}])
+            sub (t/make-path [{:cmd :f :args [-5]} {:cmd :mark :args [:sub-1]}])
+            result (impl/implicit-mesh-split block p {:cut-1 sub :cut-2 nil})
+            parts (manifold/split-parts result)
+            vols (mapv #(:volume (manifold/get-mesh-status %)) parts)]
+        (is (manifold/split-composite? (:behind result))
+            "cut-1's :behind is itself a node, not a leaf mesh")
+        (is (= 4 (count parts)) "two marks, one branched once more -> 4 leaves")
+        ;; DFS behind-first: [0,5] [5,10] [10,20] [20,30]
+        (is (h/approx= 2000.0 (nth vols 0) 1e-3))
+        (is (h/approx= 2000.0 (nth vols 1) 1e-3))
+        (is (h/approx= 4000.0 (nth vols 2) 1e-3))
+        (is (h/approx= 4000.0 (nth vols 3) 1e-3))
+        (is (h/approx= 12000.0 (apply + vols) 1e-1) "volumes sum to the original")))))
+
+(deftest mesh-split-composite-map-spec-full-recursive-form-nests-twice
+  (if-not (manifold-available?)
+    (is true "Skipped: Manifold WASM not available in node")
+    (testing "[path spec] branches a branch's own detached piece again —
+              three levels deep, still one call"
+      (set-turtle-pose! (t/make-turtle))
+      (let [block (block-20x20x30)
+            p (t/make-path [{:cmd :f :args [10]} {:cmd :mark :args [:cut-1]}])
+            sub1 (t/make-path [{:cmd :f :args [-3]} {:cmd :mark :args [:sub-1]}])
+            sub2 (t/make-path [{:cmd :f :args [-2]} {:cmd :mark :args [:sub-2]}])
+            result (impl/implicit-mesh-split block p {:cut-1 [sub1 {:sub-1 sub2}]})
+            parts (manifold/split-parts result)
+            vols (mapv #(:volume (manifold/get-mesh-status %)) parts)]
+        ;; cut-1 @ x=10 -> behind=[0,10] (branches), ahead=[10,30] (leaf, vol 8000)
+        ;; sub-1 @ x=7 (10-3) within [0,10] -> behind=[0,7] (branches), ahead=[7,10] (vol1200)
+        ;; sub-2 @ x=5 (7-2) within [0,7] -> behind=[0,5] (vol2000), ahead=[5,7] (vol800)
+        (is (= 4 (count parts)))
+        (is (h/approx= 2000.0 (nth vols 0) 1e-3))
+        (is (h/approx= 800.0  (nth vols 1) 1e-3))
+        (is (h/approx= 1200.0 (nth vols 2) 1e-3))
+        (is (h/approx= 8000.0 (nth vols 3) 1e-3))
+        (is (h/approx= 12000.0 (apply + vols) 1e-1))))))
+
+(deftest mesh-split-composite-map-spec-unknown-mark-throws
+  (if-not (manifold-available?)
+    (is true "Skipped: Manifold WASM not available in node")
+    (testing "a map spec key absent from the path throws, naming it — same
+              contract as the vector form's missing-mark error"
+      (set-turtle-pose! (t/make-turtle))
+      (let [block (block-20x20x30)
+            p (t/make-path [{:cmd :f :args [10]} {:cmd :mark :args [:cut-1]}])]
+        (try
+          (impl/implicit-mesh-split block p {:bogus nil})
+          (is false "should have thrown")
+          (catch :default e
+            (is (re-find #"bogus" (.-message e)))))))))
+
+(deftest split-tree-names-a-branching-composite-in-dfs-order
+  (if-not (manifold-available?)
+    (is true "Skipped: Manifold WASM not available in node")
+    (testing "split-tree works unmodified on a branching composite — it
+              already recurses generically via split-parts"
+      (set-turtle-pose! (t/make-turtle))
+      (let [block (block-20x20x30)
+            p (t/make-path [{:cmd :f :args [10]} {:cmd :mark :args [:cut-1]}
+                            {:cmd :f :args [10]} {:cmd :mark :args [:cut-2]}])
+            sub (t/make-path [{:cmd :f :args [-5]} {:cmd :mark :args [:sub-1]}])
+            result (impl/implicit-mesh-split block p {:cut-1 sub :cut-2 nil})
+            named (manifold/split-tree result)]
+        (is (= [:piece-1 :piece-2 :piece-3 :piece-4] (sort (keys named))))
+        (is (h/approx= 2000.0 (:volume (manifold/get-mesh-status (:piece-1 named))) 1e-3))
+        (is (h/approx= 4000.0 (:volume (manifold/get-mesh-status (:piece-4 named))) 1e-3))))))
+
 ;; ── split-parts ──────────────────────────────────────────────
 
 (deftest split-parts-chain-yields-n-plus-1-leaves-in-order
@@ -378,6 +466,56 @@
           tree {:behind {:behind leaf-a :ahead leaf-b}
                 :ahead  {:behind leaf-c :ahead leaf-d}}]
       (is (= [leaf-a leaf-b leaf-c leaf-d] (manifold/split-parts tree))))))
+
+;; ── split-tree (brief-split-tree.md Part 2) ─────────────────────
+;; The bridge from the nude emitted call to every consumer that wants names.
+;; Pure structure — hand-built nodes, no WASM.
+
+(defn- leaf [k] {:type :mesh :vertices [] :faces [] :marker k})
+
+(deftest split-tree-names-pieces-in-cut-order
+  (testing "a 2-cut chain → :piece-1 :piece-2 :piece-3, the piece detached at
+            :cut-1 first and the final remaining last — the same names and the
+            same order edit-mesh-split's own scene labels show"
+    (let [a (leaf :a) b (leaf :b) c (leaf :c)
+          composite {:behind a :ahead {:behind b :ahead c}}]
+      (is (= {:piece-1 a :piece-2 b :piece-3 c} (manifold/split-tree composite)))
+      (is (= [:piece-1 :piece-2 :piece-3] (sort (keys (manifold/split-tree composite))))))))
+
+(deftest split-tree-single-cut-is-two-pieces
+  (let [a (leaf :a) b (leaf :b)]
+    (is (= {:piece-1 a :piece-2 b} (manifold/split-tree {:behind a :ahead b})))))
+
+(deftest split-tree-three-cuts-is-four-pieces
+  (let [a (leaf :a) b (leaf :b) c (leaf :c) d (leaf :d)]
+    (is (= {:piece-1 a :piece-2 b :piece-3 c :piece-4 d}
+           (manifold/split-tree {:behind a :ahead {:behind b :ahead {:behind c :ahead d}}})))))
+
+(deftest split-tree-bare-mesh-is-a-one-piece-tree
+  (testing "totality, exactly like split-parts' singleton — an uncut mesh is one piece"
+    (let [m (prim/box-mesh 10 10 10)]
+      (is (= {:piece-1 m} (manifold/split-tree m))))))
+
+(deftest split-tree-values-are-the-very-same-meshes
+  (testing "a pure renaming — no copy, no transform (mesh-board's pass-through
+            and attach's group replay both depend on the leaves being untouched)"
+    (let [a (leaf :a) b (leaf :b)
+          t (manifold/split-tree {:behind a :ahead b})]
+      (is (identical? a (:piece-1 t)))
+      (is (identical? b (:piece-2 t))))))
+
+;; ── split-composite? (the guard's predicate) ────────────────────
+
+(deftest split-composite-recognizes-nodes-and-nothing-else
+  (is (true? (manifold/split-composite? {:behind (leaf :a) :ahead (leaf :b)}))
+      "one cut — the case that would otherwise pass for a 2-piece named tree")
+  (is (true? (manifold/split-composite? {:behind (leaf :a) :ahead {:behind (leaf :b) :ahead (leaf :c)}}))
+      "two cuts — the case that breaks consumers obscurely")
+  (is (false? (manifold/split-composite? {:piece-1 (leaf :a) :piece-2 (leaf :b)}))
+      "a named tree is not a composite")
+  (is (false? (manifold/split-composite? (prim/box-mesh 2 2 2))) "a mesh is not a composite")
+  (is (false? (manifold/split-composite? [(leaf :a)])) "a vector is not a composite")
+  (is (false? (manifold/split-composite? nil))))
 
 ;; ── mesh-components (decompose wrapper) ─────────────────────────
 ;; A two-box mesh built by concat-meshes (linear merge, no boolean) is the
@@ -504,3 +642,138 @@
       (is (true? (manifold/finished? (prim/box-mesh 10 10 10))))
       (is (true? (manifold/finished? {:type :mesh :vertices [] :faces []}))
           "empty → finished (every? over [] is true)"))))
+
+;; ── heal-slivers (dev-docs/brief-step-bias.md Part 2) ────────────────────
+;; Hand-built {:ahead :behind} inputs (like two-boxes above) rather than
+;; provoking a REAL fp32-noise sliver via an actual split — deterministic and
+;; gives full control over which half a sliver lands in and its exact
+;; thickness. The real bug reproduction is left to live verification against
+;; the real mount.stl (dev-docs/brief-step-bias.md's own Verifica section).
+
+(defn- shift [mesh [dx dy dz]]
+  (update mesh :vertices (partial mapv (fn [[x y z]] [(+ x dx) (+ y dy) (+ z dz)]))))
+
+(deftest heal-slivers-moves-a-sliver-to-the-other-half
+  (if-not (manifold-available?)
+    (is true "Skipped: Manifold WASM not available in node")
+    (testing "a thin (sub-threshold along the cut normal) component sitting in
+              :ahead is removed from :ahead and fused into :behind via union —
+              the swap brief-step-bias.md Part 2 describes for the 'stolen
+              sheet' bug. sliver touches :behind's boundary (z=0) so union welds
+              them into ONE clean component; it is disjoint (gap to z=1) from
+              :ahead's own box, so concat-meshes' no-overlap input stays valid."
+      (let [normal [0 0 1]
+            behind-box (shift (prim/box-mesh 10 10 10) [0 0 -5])       ; z ∈ [-10, 0]
+            ahead-box  (shift (prim/box-mesh 10 10 10) [0 0 6])        ; z ∈ [1, 11]
+            sliver     (shift (prim/box-mesh 10 10 0.0005) [0 0 0.00025]) ; z ∈ [0, 0.0005]
+            ahead (manifold/concat-meshes ahead-box sliver)
+            healed (manifold/heal-slivers {:ahead ahead :behind behind-box}
+                                          normal ahead-box 0.01)
+            ahead-comps (manifold/mesh-components (:ahead healed))
+            behind-comps (manifold/mesh-components (:behind healed))]
+        (is (= 1 (count ahead-comps)) "sliver removed — ahead is one clean component")
+        (is (= 1 (count behind-comps)) "sliver fused in — behind welds to one component")
+        (is (h/approx= 1000.0 (:ahead-volume healed) 1e-2) "ahead volume unaffected by the swap")
+        (is (h/approx= 1000.05 (:behind-volume healed) 1e-2) "behind gained the sliver's volume")
+        (let [{:keys [ahead behind]} (:sliver-report healed)]
+          (is (= 2 (:components ahead)) "raw ahead had 2 components (box + sliver)")
+          (is (= 1 (:slivers ahead)) "one of them sub-threshold")
+          (is (= 1 (:components behind)))
+          (is (= 0 (:slivers behind))))))))
+
+(deftest heal-slivers-both-halves-one-pass-no-ping-pong
+  (if-not (manifold-available?)
+    (is true "Skipped: Manifold WASM not available in node")
+    (testing "a sliver in EACH half swaps to the other in a single pass — the
+              swapped-in sliver (now welded into a large healthy mass) is never
+              reclassified, so there's no ping-pong by construction (only the
+              ORIGINAL decomposition is ever classified)"
+      (let [normal [0 0 1]
+            behind-box (shift (prim/box-mesh 10 10 10) [0 0 -5])            ; z ∈ [-10, 0]
+            ahead-box  (shift (prim/box-mesh 10 10 10) [0 0 6])             ; z ∈ [1, 11]
+            sliver-a   (shift (prim/box-mesh 10 10 0.0005) [0 0 0.00025])   ; in :ahead input, touches behind (z=0)
+            sliver-b   (shift (prim/box-mesh 10 10 0.0005) [0 0 0.99975])   ; in :behind input, touches ahead (z=1)
+            ahead (manifold/concat-meshes ahead-box sliver-a)
+            behind (manifold/concat-meshes behind-box sliver-b)
+            healed (manifold/heal-slivers {:ahead ahead :behind behind} normal ahead-box 0.01)]
+        (is (= 1 (count (manifold/mesh-components (:ahead healed)))))
+        (is (= 1 (count (manifold/mesh-components (:behind healed)))))
+        (is (h/approx= 1000.05 (:ahead-volume healed) 1e-2))
+        (is (h/approx= 1000.05 (:behind-volume healed) 1e-2))))))
+
+(deftest heal-slivers-thin-but-wide-tab-untouched
+  (if-not (manifold-available?)
+    (is true "Skipped: Manifold WASM not available in node")
+    (testing "a component thin in X but with a large extension ALONG THE CUT
+              NORMAL survives — the thickness criterion is directional, not a
+              volume floor (brief: 'una linguetta staccata apposta' must not
+              be eaten). No sub-threshold component anywhere → fast path
+              returns the input untouched (plus the sliver-report)."
+      (let [normal [0 0 1]
+            main (prim/box-mesh 10 10 10)
+            tab  (shift (prim/box-mesh 0.2 10 5) [20 0 2.5])   ; thin in X, thickness 5 along Z ≥ threshold
+            ahead (manifold/concat-meshes main tab)
+            behind (prim/box-mesh 10 10 10)
+            healed (manifold/heal-slivers {:ahead ahead :behind behind :ahead-volume :orig-a :behind-volume :orig-b}
+                                          normal ahead 0.01)]
+        (is (= ahead (:ahead healed)) "untouched — no reassembly performed")
+        (is (= behind (:behind healed)))
+        (is (= :orig-a (:ahead-volume healed)) "fast path doesn't even recompute volumes")
+        (is (= 0 (:slivers (:ahead (:sliver-report healed)))))))))
+
+(deftest heal-slivers-emptied-half-is-legitimate
+  (if-not (manifold-available?)
+    (is true "Skipped: Manifold WASM not available in node")
+    (testing "a half whose ONLY component is a sliver, with nothing swapped in
+              from the other side, becomes a legitimate empty mesh — the same
+              'plane grazes' case split-by-plane already documents"
+      (let [normal [0 0 1]
+            sliver-only (shift (prim/box-mesh 10 10 0.0005) [0 0 0.00025]) ; z ∈ [0, 0.0005]
+            behind (shift (prim/box-mesh 10 10 10) [0 0 -5])               ; z ∈ [-10, 0] — touches, no overlap
+            healed (manifold/heal-slivers {:ahead sliver-only :behind behind} normal behind 0.01)]
+        (is (empty? (:faces (:ahead healed))) "ahead had only a sliver and got nothing back — empty")
+        (is (= 1 (count (manifold/mesh-components (:behind healed)))))
+        (is (h/approx= 1000.0005 (:behind-volume healed) 1e-2)
+            "the lone sliver still gets fused into behind")))))
+
+(deftest heal-slivers-default-threshold-from-source-mesh
+  (if-not (manifold-available?)
+    (is true "Skipped: Manifold WASM not available in node")
+    (testing "omitting `threshold` uses cut-cand/default-sliver-threshold of
+              `source-mesh` (the PRE-split mesh) — a big source mesh scales the
+              default threshold up with its bbox diagonal"
+      (let [normal [0 0 1]
+            big-source (prim/box-mesh 20000 20000 20000)     ; diag → big default threshold
+            behind-box (shift (prim/box-mesh 10 10 10) [0 0 -5])
+            ahead-box  (shift (prim/box-mesh 10 10 10) [0 0 6])
+            ;; 0.5mm-thick "sliver" — sub-threshold for the BIG source's default
+            ;; (order of metres) but would be healthy at the default 0.01 used above
+            sliver (shift (prim/box-mesh 10 10 0.5) [0 0 0.25])
+            ahead (manifold/concat-meshes ahead-box sliver)
+            healed (manifold/heal-slivers {:ahead ahead :behind behind-box} normal big-source)]
+        (is (= 1 (count (manifold/mesh-components (:ahead healed))))
+            "0.5mm classified as a sliver against the big source's scaled-up default")))))
+
+;; ── :heal-slivers opts wiring through split-by-plane/split-live ─────────
+;; Integration smoke test: confirms the opts plumbing itself, not fp32-noise
+;; bug reproduction (a clean synthetic cube has no real ambiguity to heal).
+
+(deftest split-by-plane-heal-slivers-opt-is-a-noop-on-a-clean-split
+  (if-not (manifold-available?)
+    (is true "Skipped: Manifold WASM not available in node")
+    (testing "opts threading works end-to-end and a clean split (nothing to
+              heal) still reports a sliver-report with zero slivers"
+      (let [{:keys [ahead behind sliver-report]}
+            (manifold/split-by-plane cube-2 [1 0 0] 0 {:heal-slivers true})]
+        (is (h/approx= 4.0 (h/signed-volume ahead) 1e-6))
+        (is (h/approx= 4.0 (h/signed-volume behind) 1e-6))
+        (is (= 0 (:slivers (:ahead sliver-report))))
+        (is (= 0 (:slivers (:behind sliver-report))))))))
+
+(deftest split-by-plane-without-opts-has-no-sliver-report
+  (if-not (manifold-available?)
+    (is true "Skipped: Manifold WASM not available in node")
+    (testing "backward compatibility: no opts arg → heal-slivers never runs, no
+              :sliver-report key at all (existing callers unaffected)"
+      (let [result (manifold/split-by-plane cube-2 [1 0 0] 0)]
+        (is (not (contains? result :sliver-report)))))))

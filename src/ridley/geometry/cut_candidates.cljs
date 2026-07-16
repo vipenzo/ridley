@@ -62,10 +62,55 @@
    already snap, only steps didn't). The plane passes through the faces' centroid
    `point` and is re-projected laterally through `ref` (the sweep point / bbox centre)
    so the quad stays centred on the piece; `up` carries through (its ≤angle-tol
-   non-perpendicularity is imperceptible — up only spins the quad, never the cut)."
-  [normal point ref up]
-  (let [pos (v- ref (v* normal (- (dot ref normal) (dot point normal))))]
-    {:position pos :heading normal :up up}))
+   non-perpendicularity is imperceptible — up only spins the quad, never the cut).
+
+   `bias` (brief-step-bias.md Part 1, default 0) shifts the flush position along
+   `normal` by that SIGNED amount — a flush plane sits exactly at the fp32-noisy
+   face, so a nm of tessellation jitter can throw a vertex to either side and shave
+   an irregular sliver; the caller (cut-candidates) resolves the sign from the
+   cluster's ΔA so the shift lands the plane in clean bulk material, not at 0 (see
+   default-bias-epsilon for the magnitude)."
+  ([normal point ref up] (step-pose normal point ref up 0.0))
+  ([normal point ref up bias]
+   (let [pos (v- ref (v* normal (- (dot ref normal) (dot point normal))))]
+     {:position (v+ pos (v* normal bias)) :heading normal :up up})))
+
+(defn bbox-diagonal
+  "Diagonal length of `vertices`' axis-aligned bounding box — 0.0 for an empty mesh."
+  [vertices]
+  (if (empty? vertices)
+    0.0
+    (let [span (fn [idx] (let [cs (map #(nth % idx) vertices)]
+                           (- (reduce max cs) (reduce min cs))))]
+      (mag [(span 0) (span 1) (span 2)]))))
+
+(defn default-bias-epsilon
+  "Scale-aware default ε for the STEP bias (brief-step-bias.md Part 1):
+   max(1e-3 mm, 1e-4 × bbox-diagonal) — comfortably above fp32 quantization noise
+   (~nm at real part scale: ulp32 at ~2mm ≈ 0.12nm) and comfortably below any real
+   feature, while staying scale-aware for large pieces."
+  [vertices]
+  (max 1e-3 (* 1e-4 (bbox-diagonal vertices))))
+
+(defn component-thickness
+  "Extension of `vertices` along `normal` — max minus min of (v·normal). The
+   thickness signature heal-slivers (brief-step-bias.md Part 2) classifies mesh-
+   split's post-split connected components by: a wafer sliver is thin in exactly
+   this direction (the CUT plane's normal), unlike a plain volume threshold, which
+   would also eat an intentionally thin-but-WIDE tab — that tab has a large
+   extension in the other two directions and a large area, but is just as thin
+   along the normal, so thickness alone tells them apart. 0.0 for an empty mesh."
+  [vertices normal]
+  (if-let [[mn mx] (offset-range vertices normal [0 0 0])]
+    (- mx mn)
+    0.0))
+
+(defn default-sliver-threshold
+  "Default heal-slivers thickness threshold (brief-step-bias.md Part 2): 2× the
+   Part-1 bias epsilon — headroom above it, since a biased flush cut can still
+   leave the robbed side up to ~ε thick before healing."
+  [vertices]
+  (* 2.0 (default-bias-epsilon vertices)))
 
 (defn step-candidates
   "STEP candidates for a translation sweep along `heading` (brief Part 2). A face
@@ -79,8 +124,12 @@
    AND plane offset within `tol` — so two distinct near-parallel faces at the same
    sweep offset stay separate candidates (each snaps to its own normal) instead of
    merging into one blended-normal group. Returns
-   [{:offset o :salience |ΔA| :normal N :point P} …] (unsorted), dropping
-   sub-`min-salience` jumps."
+   [{:offset o :salience |ΔA| :normal N :point P :sum ΔA'} …] (unsorted), dropping
+   sub-`min-salience` jumps. `:sum` is the SIGNED cluster sum (salience = |:sum|,
+   :sum = −ΔA per the formula above) — brief-step-bias.md Part 1 reads its sign to
+   tell which side of the cluster's snapped `:normal` the bulk continues on: sum>0
+   means `:normal` is the faces' own (unflipped) outward normal, so the solid — and
+   the bias shift — goes the OTHER way, along −:normal (see cut-candidates' use)."
   [{:keys [vertices faces]} heading point {:keys [tol angle-tol min-salience]
                                            :or {tol 0.1 angle-tol 1.0 min-salience 1e-6}}]
   (let [cos-min (js/Math.cos (* angle-tol (/ js/Math.PI 180.0)))
@@ -154,7 +203,8 @@
                      {:offset (/ wsum asum)
                       :salience salience
                       :normal (normalize nsum)
-                      :point (v* csum (/ 1.0 wt))}))))
+                      :point (v* csum (/ 1.0 wt))
+                      :sum sum}))))
          vec)))
 
 ;; ── rotation (brief Part 2, rotazione) ──────────────────────

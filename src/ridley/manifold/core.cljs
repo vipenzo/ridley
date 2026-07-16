@@ -550,13 +550,21 @@
 ;; Plane split (guillotine cut)
 ;; ============================================================
 
+;; heal-slivers is defined later (needs mesh-components/concat-meshes, both
+;; defined further down this file) but is invoked from split-manifold* here.
+(declare heal-slivers)
+
 (defn- split-manifold*
   "Core of both split-by-plane and split-live: split a LIVE Manifold `m` by the
    plane {p : normal·p = offset} into {:ahead :behind :ahead-volume
    :behind-volume}. Reads each raw half's .volume before converting it out (so
    callers don't re-convert for volumes), carry-metas from `source-mesh`, and
-   deletes the raw halves — but NOT `m` (the caller owns its lifetime)."
-  [^js m normal offset source-mesh]
+   deletes the raw halves — but NOT `m` (the caller owns its lifetime).
+
+   `opts` (brief-step-bias.md Part 2) — {:heal-slivers true|{:thickness t}} runs
+   the post-split sliver safety net on the result before returning it; absent/nil
+   (the default for every existing caller) leaves the raw split untouched."
+  [^js m normal offset source-mesh opts]
   (let [[nx ny nz] normal
         ^js pair (.splitByPlane m #js [nx ny nz] offset)
         ^js ahead-raw (aget pair 0)
@@ -574,10 +582,14 @@
         behind (carry-meta (extract behind-raw) source-mesh)]
     (.delete ahead-raw)
     (.delete behind-raw)
-    {:ahead (schema/assert-mesh! ahead)
-     :behind (schema/assert-mesh! behind)
-     :ahead-volume ahead-vol
-     :behind-volume behind-vol}))
+    (let [result {:ahead (schema/assert-mesh! ahead)
+                  :behind (schema/assert-mesh! behind)
+                  :ahead-volume ahead-vol
+                  :behind-volume behind-vol}
+          heal-opt (:heal-slivers opts)]
+      (if heal-opt
+        (heal-slivers result normal source-mesh (when (map? heal-opt) (:thickness heal-opt)))
+        result))))
 
 (defn split-by-plane
   "Split a mesh by the plane {p : normal·p = offset} into two halves:
@@ -595,12 +607,14 @@
    Both halves inherit the source mesh's creation-pose/material/anchors via
    carry-meta — same single-source policy as hull/solidify (this is a
    single-input op, so there is no second operand to index-tag anchors
-   against)."
-  [ridley-mesh normal offset]
+   against).
+
+   Optional trailing `opts` — see split-manifold*'s :heal-slivers."
+  [ridley-mesh normal offset & [opts]]
   (when (get-manifold-class)
     (when-let [^js m (mesh->manifold ridley-mesh)]
       (try
-        (let [r (split-manifold* m normal offset ridley-mesh)]
+        (let [r (split-manifold* m normal offset ridley-mesh opts)]
           (.delete m)
           r)
         (catch :default e
@@ -615,10 +629,11 @@
    for edit-mesh-split's per-tick recompute (accertamento B2): the current
    piece's Manifold is converted once (when it becomes current) and reused every
    plane nudge, so a keystroke no longer pays the ~8ms mesh→manifold conversion.
-   `source-mesh` supplies carry-meta (creation-pose/material/anchors)."
-  [^js manifold normal offset source-mesh]
+   `source-mesh` supplies carry-meta (creation-pose/material/anchors). Optional
+   trailing `opts` — see split-manifold*'s :heal-slivers."
+  [^js manifold normal offset source-mesh & [opts]]
   (try
-    (split-manifold* manifold normal offset source-mesh)
+    (split-manifold* manifold normal offset source-mesh opts)
     (catch :default e
       (js/console.error "split-live failed:" e)
       nil)))
@@ -672,6 +687,20 @@
                (.delete m)
                false))))))))
 
+(defn split-composite?
+  "True iff `v` is a RAW mesh-split composite node — the {:behind :ahead} shape
+   mesh-split returns — rather than a mesh or a map of named pieces. The two
+   keys ARE the test: every node has both, and no named-piece tree uses them as
+   piece names.
+
+   Consumers that want a tree of named pieces (mesh-board, attach) test with
+   this so they can name `split-tree` instead of failing obscurely. Without it
+   a one-cut composite passes for a perfectly good two-piece tree named
+   :behind/:ahead — it is only from two cuts up that the nested :ahead reaches
+   them as a \"mesh\" and the failure turns cryptic."
+  [v]
+  (and (map? v) (contains? v :behind) (contains? v :ahead)))
+
 (defn split-parts
   "Flatten a mesh-split composite result into its leaves, in order:
    depth-first, :behind before :ahead at each node. A bare mesh (no
@@ -684,6 +713,26 @@
   (if (= :mesh (:type result))
     [result]
     (into (split-parts (:behind result)) (split-parts (:ahead result)))))
+
+(defn split-tree
+  "A mesh-split composite → the map of NAMED pieces {:piece-1 m1 :piece-2 m2 …},
+   numbered in cut order (split-parts' own order, so :piece-N is the Nth piece
+   detached and the last key is the final remaining).
+
+   It is the bridge between edit-mesh-split's emitted call and every consumer
+   that wants named pieces: `(mesh-board (split-tree AA))` displays the leaves
+   and takes :only, `(attach (split-tree AA) …)` moves them as a group, and
+   destructuring by hand reads the same names the session's own scene labels
+   showed. The emitted call is deliberately nude — if you want names, this is
+   where they come from (dev-docs/brief-split-tree.md).
+
+   The names match edit-mesh-split's labels exactly for a single-cut chain,
+   which is the only shape the nude emission takes: a branched decomposition
+   emits a let-chain that names its own pieces."
+  [result]
+  (into {}
+        (map-indexed (fn [i m] [(keyword (str "piece-" (inc i))) m])
+                     (split-parts result))))
 
 ;; ============================================================
 ;; Connected-component decomposition
@@ -1127,6 +1176,84 @@
                    (+ offset (count verts)))))))))
 
 ;; ============================================================
+;; heal-slivers — post-split sliver safety net (brief-step-bias.md Part 2)
+;; ============================================================
+
+(defn- reassemble-half
+  "One healed half from its ORIGINAL components: `healthy` (survivors of the
+   thickness classification) plus `incoming` (slivers reassigned in FROM the
+   other half). `healthy` alone needs no boolean — components are, by
+   construction, disjoint (concat-meshes suffices); `incoming` slivers share the
+   cut-plane interface with their new half, so fusing them in is a real `union`.
+   `original` supplies carry-meta for the all-gone-to-the-other-side empty case."
+  [healthy incoming original]
+  (let [base (when (seq healthy) (apply concat-meshes healthy))]
+    (cond
+      (and (nil? base) (empty? incoming)) (carry-meta {:type :mesh :vertices [] :faces []} original)
+      (empty? incoming) base
+      (nil? base) (if (= 1 (count incoming)) (first incoming) (apply union incoming))
+      :else (apply union base incoming))))
+
+(defn heal-slivers
+  "Post-split sliver removal (brief-step-bias.md Part 2) — the safety net split-
+   manifold* runs (opt-in, :heal-slivers) after ANY plane split, including one
+   placed by hand: decomposes each of `split-result`'s :ahead/:behind into
+   connected components (mesh-components — exact, no boolean, <1ms) and
+   reclassifies any component whose extension along `normal` (the CUT plane's
+   normal, not necessarily either half's own geometry axis) is under `threshold`
+   as a SLIVER — fp32-noise debris from a near-flush cut, not real material
+   (thickness along the cut normal is the signature: a thin-but-WIDE intentional
+   tab has a large extension in the other two directions and survives).
+
+   Both halves' ORIGINAL decomposition is classified before any reassembly, so a
+   sliver present in BOTH halves resolves in one pass, never ping-pongs: each
+   half's healthy components are reassembled (concat-meshes — disjoint, no
+   boolean) and the OTHER half's slivers are fused in with `union` (real boolean
+   — a sliver shares the cut-plane interface with its new half). A half can
+   legitimately come back empty (the plane grazed, or every one of that half's
+   own components was reclassified away).
+
+   `threshold` (nil → cut-cand/default-sliver-threshold of `source-mesh`, the
+   PRE-split mesh) is the minimum along-normal thickness a component must have
+   to count as real material.
+
+   Always adds `:sliver-report {:ahead {:components n :slivers m} :behind {…}}`
+   — the RAW classification of the input halves, before any reassembly (brief-
+   step-bias.md Part 3.1's indicator reads this: 'is the CURRENT plane
+   ambiguous', independent of whether this same call already fixed it below).
+   Costs nothing extra: the classification is computed once either way.
+
+   Fast path: if neither half decomposes with anything under threshold, :ahead/
+   :behind/the volumes are returned untouched (no concat/union work, no volume
+   recompute) — the common case once a plane sits in clean bulk (brief Part 1's
+   bias)."
+  [{:keys [ahead behind] :as split-result} normal source-mesh & [threshold]]
+  (let [threshold (or threshold (cut-cand/default-sliver-threshold (:vertices source-mesh)))
+        classify (fn [mesh]
+                   (reduce (fn [{:keys [healthy slivers]} comp]
+                             (if (>= (cut-cand/component-thickness (:vertices comp) normal) threshold)
+                               {:healthy (conj healthy comp) :slivers slivers}
+                               {:healthy healthy :slivers (conj slivers comp)}))
+                           {:healthy [] :slivers []}
+                           (mesh-components mesh)))
+        {ahead-healthy :healthy ahead-slivers :slivers} (classify ahead)
+        {behind-healthy :healthy behind-slivers :slivers} (classify behind)
+        report {:ahead {:components (+ (count ahead-healthy) (count ahead-slivers))
+                        :slivers (count ahead-slivers)}
+                :behind {:components (+ (count behind-healthy) (count behind-slivers))
+                         :slivers (count behind-slivers)}}]
+    (if (and (empty? ahead-slivers) (empty? behind-slivers))
+      (assoc split-result :sliver-report report)
+      (let [final-ahead (reassemble-half ahead-healthy behind-slivers ahead)
+            final-behind (reassemble-half behind-healthy ahead-slivers behind)]
+        (assoc split-result
+               :ahead final-ahead
+               :behind final-behind
+               :ahead-volume (:volume (get-mesh-status final-ahead))
+               :behind-volume (:volume (get-mesh-status final-behind))
+               :sliver-report report)))))
+
+;; ============================================================
 ;; CrossSection extrusion (handles holes natively)
 ;; ============================================================
 
@@ -1427,6 +1554,16 @@
      :angle-tol 1.0   how ∥ to heading a face normal must be to count as a step (deg)
      :samples   96    profile samples
      :min-neck-depth   valley-depth floor (default 1% of the profile's peak area)
+     :bias      STEP-only (brief-step-bias.md Part 1): signed-into-the-bulk offset
+                applied to each STEP pose along its snapped normal, so the plane clears
+                the flush face's fp32 noise band instead of sitting exactly on top of it
+                (a zero-distance plane there shaves an irregular sliver — no tolerance
+                fixes that, only moving off it does). Default: scale-aware
+                cut-cand/default-bias-epsilon(mesh) — max(1e-3mm, 1e-4×bbox-diagonal).
+                `0` reproduces the old flush behaviour (regression/debug). The magnitude
+                is what you configure; the SIGN is resolved per-cluster from ΔA (its
+                :sum) so every step biases toward its own bulk side, never toward the
+                thinner side.
      :reflex-tol :cluster-angle-tol   :reflex only (see cut-cand/reflex-candidates)
    Returns [{:pose {:position :heading :up} :kind :step|:neck|:reflex :salience n} …]
    sorted by salience DESCENDING (B3: off-axis meshes have hundreds of candidates; the
@@ -1436,13 +1573,14 @@
    lives — the clustered face-planes of the mesh's reflex edges, ranked by concavity
    mass; a convex mesh → []."
   [ridley-mesh {:keys [mode heading position up axis tolerance angle-tol samples min-neck-depth
-                       reflex-tol cluster-angle-tol]
+                       reflex-tol cluster-angle-tol bias]
                 :or {mode :translation axis :up tolerance 0.1 angle-tol 1.0 samples 96}}]
   (case mode
     :translation
     (let [mesh (sdf/ensure-mesh ridley-mesh)
           steps (cut-cand/step-candidates mesh heading position
                                           {:tol tolerance :angle-tol angle-tol})
+          eps (or bias (cut-cand/default-bias-epsilon (:vertices mesh)))
           profile (translation-profile mesh heading position samples)
           peak (reduce max 0.0 (map :area profile))
           necks (cut-cand/profile-minima profile (or min-neck-depth (* 0.01 peak)))]
@@ -1451,9 +1589,10 @@
       ;; heading shaved a wafer off the flat face (live 2026-07-14). NECK pose keeps the
       ;; sweep heading — a neck is a section minimum, not a flat face, so there is no
       ;; face normal to snap to.
-      (->> (concat (map (fn [{:keys [offset salience normal point]}]
+      (->> (concat (map (fn [{:keys [offset salience normal point sum]}]
                           {:pose (if normal
-                                   (cut-cand/step-pose normal point position up)
+                                   (cut-cand/step-pose normal point position up
+                                                       (* eps (- (js/Math.sign sum))))
                                    (cut-cand/offset->pose offset heading up position))
                            :kind :step :salience salience :at offset})
                         steps)

@@ -12,6 +12,8 @@ status: stable
 `(mesh-split mesh)`
 `(mesh-split mesh path)`
 `(mesh-split mesh path marks-vector)`
+`(mesh-split mesh path marks-map)`
+`(mesh-split mesh path marks-spec opts)`
 
 ## Description
 
@@ -61,8 +63,75 @@ A mark whose plane misses the remaining produces an empty `:behind`
 at its place in the chain — the chain continues from `:ahead`
 unchanged, without error.
 
+**Branching form.** The third argument generalizes from a flat
+`marks-vector` to a **map**, `{mark sub-spec …}`, letting the piece
+*detached* at a mark (its `:behind`) be cut further instead of staying
+a leaf — the composite generalizes right along with it: a `:behind`
+becomes a node (`{:behind :ahead}`) instead of a mesh.
+
+```clojure
+(mesh-split mount
+  (path (tv 90) (f -10) (mark :cut-1) (f -20) (mark :cut-2))
+  {:cut-1 (path (f -3) (mark :cut-1-1))   ; the piece detached at :cut-1
+                                          ;   gets cut again, once
+   :cut-2 nil})                           ; :cut-2 just cuts, no more
+```
+
+Grammar (`spec` is the third argument):
+
+```
+spec     := [mark …]              ; flat selection (unchanged from above)
+          | {mark sub-spec, …}    ; branching
+sub-spec := nil                   ; the mark just cuts — a leaf
+          | path                  ; the detached piece is cut at every
+                                  ;   mark of this path (this path's own
+                                  ;   default: cut everything)
+          | [path spec]           ; full recursive form — spec here can
+                                  ;   itself branch (a branch within a
+                                  ;   branch), same two shapes as above
+```
+
+Two rules that don't generalize the way you might expect from the
+vector form:
+
+- **Cut order** comes from the `path`'s own mark order, never the
+  map's key order — Clojure doesn't guarantee one, and the plane
+  positions must be reproducible from the source alone.
+- **Sub-path frame.** A sub-spec's `path` resolves from the mark's own
+  *cut-pose* — where the turtle was when that cut happened — not from
+  the live turtle's current pose. It is the sub-piece's natural frame:
+  the piece being cut further no longer has anything to do with
+  wherever the turtle has since moved on to.
+
+A mark named in a `marks-vector` or as a `marks-map` key that doesn't
+exist in `path` throws, naming it — same error, both shapes.
+
+**Sliver healing.** A fourth, optional `opts` map turns on a post-split
+safety net: `{:heal-slivers true}` (or `{:heal-slivers {:thickness t}}`
+to override the default threshold). A cut placed exactly flush with a
+flat face can shave an irregular, near-degenerate sliver off the wrong
+side — Manifold's meshes are float32, so a "flat" face is rippled by a
+few nm of tessellation noise, and a plane sitting exactly on it splits
+that noise unpredictably. With `:heal-slivers` on, each half of the
+result is decomposed into its connected components; any component
+whose extension **along the cut plane's normal** is under the
+threshold (default on the order of a few µm, scale-aware like
+`cut-candidates`' `:bias`) is treated as sliver debris, not real
+material, and reassigned to the *other* half instead — the criterion
+is thickness along the cut normal specifically, not volume, so a
+small-but-intentional tab (thin in some other direction, but not along
+the cut normal) is left alone. Either half may legitimately end up
+empty. `(mesh-split m nil nil {:heal-slivers true})` applies it to a
+single cut at the turtle's current pose; with a `path`, it applies to
+every cut in the plan. See `edit-mesh-split`, whose own internal cuts
+heal by default — this DSL function stays opt-in so its existing
+contract doesn't change underfoot.
+
 See `split-parts` to flatten a composite result into an ordered
-vector of leaves.
+vector of leaves, or `split-tree` to get the same leaves named —
+`{:piece-1 … :piece-2 …}`, in cut order. `split-tree` is what
+`mesh-board` and `attach` want: both refuse a raw composite and say
+so, rather than mistake its `:behind`/`:ahead` keys for piece names.
 
 ## Parameters
 
@@ -70,10 +139,14 @@ vector of leaves.
 - `path` (optional) — a path containing one or more `(mark …)`
   commands; each mark is one cut. Omit both `path` and
   `marks-vector` for a single cut at the turtle's current pose.
-- `marks-vector` (optional) — a vector of mark names selecting and
-  ordering which marks to cut at. Defaults to every mark in `path`,
-  in appearance order. A mark named here that doesn't exist in
-  `path` throws, naming it.
+- `marks-vector`/`marks-map` (optional) — a vector of mark names
+  selecting and ordering which marks to cut at (defaults to every
+  mark in `path`, in appearance order), or a map for branching — see
+  Branching form above.
+- `opts` (optional, 4-arity only) — `{:heal-slivers true}` or
+  `{:heal-slivers {:thickness t}}` to turn on the sliver safety net;
+  see Sliver healing above. Pass `path`/`marks-spec` as `nil` for a
+  single cut at the current pose with `opts`.
 
 ## Example
 
@@ -118,12 +191,14 @@ error — one of the two halves comes back empty.
   (mesh-split (get-mesh :block)
               (path (f 10) (mark :cut-1) (f 10) (mark :cut-2))))
 (def parts (split-parts result))   ; [piece-1 piece-2 remaining]
+(def named (split-tree result))    ; {:piece-1 … :piece-2 … :piece-3 …}
 ```
 <!-- /example-source -->
 
 Two marks cut the block into three convex slabs. `split-parts`
-flattens the nested result into an ordered vector — see its own
-reference card.
+flattens the nested result into an ordered vector, `split-tree` into
+the same leaves under their `:piece-N` names — see their own
+reference cards.
 
 ## Notes
 
@@ -140,6 +215,6 @@ reference card.
 ## See also
 
 - **Related:** `sdf-half-space`, `slice-mesh`, `mesh-diagnose`, `convex?`,
-  `split-parts`
+  `split-parts`, `split-tree`
 - **Interactive:** `edit-mesh-split` — a modal session for decomposing
   a mesh into pieces by eye instead of computing cut poses by hand

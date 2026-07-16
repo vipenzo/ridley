@@ -110,7 +110,97 @@
       (is (h/vec-approx= n hd 1e-9) "heading snapped to the normal")
       (is (= up u) "up carried through")
       (is (h/approx= 0.0 on-plane 1e-9) "plane passes through the face")
-      (is (h/vec-approx= [0 0 0] (vec in-plane) 1e-9) "laterally at ref's projection"))))
+      (is (h/vec-approx= [0 0 0] (vec in-plane) 1e-9) "laterally at ref's projection")))
+  (testing "a 5th `bias` arg shifts :position along `normal` by that signed amount,
+            leaving heading/up untouched — the raw mechanism brief-step-bias.md's
+            cut-candidates layers a ΔA-derived sign onto (Part 1)"
+    (let [n [0 0 1] point [0 0 5] ref [1 1 1] up [0 1 0]
+          flush (cc/step-pose n point ref up)
+          biased-pos (cc/step-pose n point ref up 0.002)
+          biased-neg (cc/step-pose n point ref up -0.002)]
+      (is (h/vec-approx= (mapv + (:position flush) [0 0 0.002]) (:position biased-pos) 1e-9))
+      (is (h/vec-approx= (mapv + (:position flush) [0 0 -0.002]) (:position biased-neg) 1e-9))
+      (is (= (:heading biased-pos) (:heading flush)) "bias never touches heading")))
+  (testing "omitting bias == bias 0 (default arity)"
+    (is (= (cc/step-pose [0 0 1] [0 0 5] [1 1 1] [0 1 0])
+           (cc/step-pose [0 0 1] [0 0 5] [1 1 1] [0 1 0] 0.0)))))
+
+;; ── bias ε sign (dev-docs/brief-step-bias.md Part 1) ────────────────────
+;; bbox-diagonal/default-bias-epsilon are pure/node-testable; the SIGN convention
+;; (bias = −sign(:sum) · ε along the snapped normal) is exercised the way
+;; manifold/core.cljs's cut-candidates actually applies it, on a single flat quad
+;; whose winding fixes :sum's sign directly — the real question this brief asks
+;; ("segno... da verificare, non solo dedotto") is answered by the two cases below.
+
+(deftest bbox-diagonal-and-default-epsilon
+  (testing "bbox-diagonal is the AABB's diagonal length; empty → 0"
+    (is (h/approx= 0.0 (cc/bbox-diagonal []) 1e-12))
+    (is (h/approx= (js/Math.sqrt (+ (* 40 40) (* 30 30) (* 10 10)))
+                   (cc/bbox-diagonal (:vertices (prim/box-mesh 40 30 10))) 1e-6)))
+  (testing "default-bias-epsilon: floor at 1e-3mm for a tiny/empty mesh, scales
+            1e-4× diagonal for a large one"
+    (is (h/approx= 1e-3 (cc/default-bias-epsilon []) 1e-12))
+    (is (h/approx= 1e-3 (cc/default-bias-epsilon (:vertices (prim/box-mesh 1 1 1))) 1e-9)
+        "small box: floor dominates (diag √3 × 1e-4 ≈ 1.7e-4 < 1e-3)")
+    (let [big (:vertices (prim/box-mesh 10000 10000 10000))]
+      (is (h/approx= (* 1e-4 (cc/bbox-diagonal big)) (cc/default-bias-epsilon big) 1e-6)
+          "large box: the scale-aware term dominates the floor"))))
+
+(defn- flat-quad
+  "A single-normal flat quad (2 tris) at z=`z`, footprint `w`×`w` centred on the
+   origin, with `n` its outward normal (±[0 0 1] — winding chosen accordingly)."
+  [z w n]
+  (let [h (/ w 2.0)
+        verts [[(- h) (- h) z] [h (- h) z] [h h z] [(- h) h z]]
+        faces (if (pos? (nth n 2)) [[0 1 2] [0 2 3]] [[0 2 1] [0 3 2]])]
+    {:vertices verts :faces faces}))
+
+(defn- bias-of
+  "Reproduces cut-candidates' own bias computation from a single step-candidates
+   cluster: eps · (−sign :sum), the SIGNED shift step-pose applies along :normal."
+  [mesh heading point eps]
+  (let [[{:keys [sum]}] (cc/step-candidates mesh heading point {})]
+    (* eps (- (js/Math.sign sum)))))
+
+(deftest bias-sign-points-into-the-bulk
+  (testing "a +Z-outward-normal face (solid below, by the outward-normal convention)
+            → :sum > 0 → bias is NEGATIVE (into −Z, the bulk side)"
+    (let [q (flat-quad 5.0 10 [0 0 1])]
+      (is (neg? (bias-of q [0 0 1] [0 0 0] 0.002)))))
+  (testing "a −Z-outward-normal face (solid above) → :sum < 0 → bias is POSITIVE
+            (into +Z, the bulk side) — the mirror case, confirms the sign isn't a
+            coincidence of the first fixture's axis"
+    (let [q (flat-quad 5.0 10 [0 0 -1])]
+      (is (pos? (bias-of q [0 0 1] [0 0 0] 0.002)))))
+  (testing "bias magnitude is exactly eps regardless of direction"
+    (is (h/approx= 0.002 (js/Math.abs (bias-of (flat-quad 5.0 10 [0 0 1]) [0 0 1] [0 0 0] 0.002)) 1e-12))))
+
+;; ── heal-slivers classification (dev-docs/brief-step-bias.md Part 2) ────
+;; component-thickness/default-sliver-threshold are the pure half of heal-slivers;
+;; the WASM orchestration (decompose/concat/union) is manifold/core.cljs's job and
+;; lives in mesh-split-test.cljs behind the WASM-skip idiom.
+
+(deftest component-thickness-along-normal
+  (testing "extension along `normal`, not the mesh's own longest axis"
+    (let [box (prim/box-mesh 40 30 10)]           ; x∈[-20,20] y∈[-15,15] z∈[-5,5]
+      (is (h/approx= 10.0 (cc/component-thickness (:vertices box) [0 0 1]) 1e-9))
+      (is (h/approx= 30.0 (cc/component-thickness (:vertices box) [0 1 0]) 1e-9))
+      (is (h/approx= 40.0 (cc/component-thickness (:vertices box) [1 0 0]) 1e-9))))
+  (testing "a tilted normal reads the projected extension, not any axis-aligned one —
+            along the space diagonal a side-2 cube reads its full diagonal 2√3, not
+            the side length"
+    (let [box (prim/box-mesh 2 2 2)
+          diag (let [d (js/Math.sqrt 3)] [(/ 1 d) (/ 1 d) (/ 1 d)])]
+      (is (h/approx= (* 2.0 (js/Math.sqrt 3)) (cc/component-thickness (:vertices box) diag) 1e-6))))
+  (testing "empty vertex list → 0.0"
+    (is (h/approx= 0.0 (cc/component-thickness [] [0 0 1]) 1e-12))))
+
+(deftest default-sliver-threshold-is-2x-bias-epsilon
+  (is (h/approx= (* 2.0 (cc/default-bias-epsilon []))
+                 (cc/default-sliver-threshold []) 1e-15))
+  (let [big (:vertices (prim/box-mesh 5000 5000 5000))]
+    (is (h/approx= (* 2.0 (cc/default-bias-epsilon big))
+                   (cc/default-sliver-threshold big) 1e-9))))
 
 (deftest profile-minima-finds-the-waist
   (testing "a dumbbell profile (high–low–high) yields one neck at the waist, depth =

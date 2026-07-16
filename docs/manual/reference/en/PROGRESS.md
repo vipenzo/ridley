@@ -263,6 +263,7 @@ Brief: `dev-docs/brief-reference-batch4-path-mesh.md`.
 - [x] [mesh-hull](mesh-hull.md)
 - [x] [mesh-split](mesh-split.md)
 - [x] [split-parts](split-parts.md)
+- [x] [split-tree](split-tree.md)
 - [x] [concat-meshes](concat-meshes.md)
 
 #### Smoothing & diagnostics

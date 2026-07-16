@@ -849,25 +849,87 @@
        (filter #(= :mark (:cmd %)))
        (mapv (comp first :args))))
 
-(defn- guillotine-split
-  "Cut `mesh` at each pose in `mark-poses` (in order), right-nesting each
-   result's :ahead into the next cut. Returns a bare mesh when mark-poses
-   is empty — the identity that makes a single-mark composite call return
-   literally the same shape as the primitive. An already-empty mesh (from
-   a prior cut) short-circuits without touching Manifold: both halves stay
-   the same empty mesh, preserving positional correspondence in the chain."
-  [mesh mark-poses]
-  (if (empty? mark-poses)
-    mesh
-    (let [{:keys [position heading]} (first mark-poses)
-          [px py pz] position
-          [hx hy hz] heading
-          offset (+ (* hx px) (* hy py) (* hz pz))
-          {:keys [ahead behind]}
-          (if (empty? (:faces mesh))
-            {:ahead mesh :behind mesh}
-            (manifold/split-by-plane mesh heading offset))]
-      {:behind behind :ahead (guillotine-split ahead (rest mark-poses))})))
+(defn resolve-mesh-split-plan
+  "The recursive cut-plan behind mesh-split's tree spec (dev-docs/brief-split-
+   tree.md Part 1): `entry-pose` {:position :heading :up}, a `path`, and
+   `marks-spec` (nil | vector | map) → an ordered vector of
+   {:mark :pose :sub}, in CUT order, where :sub is nil (leaf — the mark just
+   cuts) or itself a nested plan for the piece detached (:behind) at that mark.
+
+   marks-spec forms:
+     nil    → every mark in path, in PATH order (mesh-split's own 2-arity
+              default: cut everything, no branching).
+     vector → exactly those marks, in the VECTOR's own order — selection can
+              reorder relative to the path (existing 3-arity, unchanged).
+     map    → {mark sub-spec …}: marks are cut in PATH order, filtered to the
+              map's keys (never the map's own key order, which Clojure does
+              not guarantee) — each mark's sub-spec becomes its :sub:
+                nil          → leaf, no further cut.
+                a bare path  → recurse on that path with a nil spec (cut
+                               every one of ITS marks), entry-pose = THIS
+                               mark's own cut-pose (not the live turtle —
+                               the sub-path's natural frame).
+                [path spec]  → recurse on that path and that spec, same
+                               cut-pose entry rule.
+
+   A mark named in `marks-spec` (vector entry or map key) that isn't in
+   `path` throws, naming it — same error for both spec shapes.
+
+   Shared by implicit-mesh-split's own cutting (split-plan) AND
+   edit-mesh-split's re-entry (which needs the identical recursive walk to
+   rebuild a branching session tree from an already-evaluated composite)."
+  [entry-pose path marks-spec]
+  (let [anchors (turtle/resolve-marks entry-pose path)
+        path-order (path-mark-names-in-order path)
+        mark->pose (fn [mk]
+                     (or (get anchors mk)
+                         (throw (js/Error. (str "mesh-split: mark " mk " not found in path")))))]
+    (if (map? marks-spec)
+      (let [path-order-set (set path-order)
+            unknown (remove path-order-set (keys marks-spec))
+            order (filterv path-order-set path-order)]
+        (when (seq unknown)
+          (throw (js/Error. (str "mesh-split: mark " (first unknown) " not found in path"))))
+        (mapv (fn [mk]
+                (let [sub (get marks-spec mk)
+                      pose (mark->pose mk)]
+                  {:mark mk :pose pose
+                   :sub (cond
+                          (nil? sub) nil
+                          (vector? sub) (resolve-mesh-split-plan pose (first sub) (second sub))
+                          :else (resolve-mesh-split-plan pose sub nil))}))
+              order))
+      (let [order (if (nil? marks-spec) path-order marks-spec)]
+        (mapv (fn [mk] {:mark mk :pose (mark->pose mk) :sub nil}) order)))))
+
+(defn- split-plan
+  "Actually cut `mesh` following `plan` (resolve-mesh-split-plan's output),
+   right-nesting each cut's :ahead into the next — the linear-chain shape
+   when no step has a :sub, generalized: a step WITH a :sub further splits
+   its own detached :behind before the spine continues. Returns a bare mesh
+   when plan is empty — the identity that makes a single-mark composite call
+   return literally the same shape as the primitive. An already-empty mesh
+   short-circuits without touching Manifold: both halves stay the same empty
+   mesh, preserving positional correspondence in the chain.
+
+   `opts` (brief-step-bias.md Part 2) passes through to EVERY split-by-plane
+   call in the plan unchanged — e.g. {:heal-slivers true} heals every cut, not
+   just the first."
+  ([mesh plan] (split-plan mesh plan nil))
+  ([mesh plan opts]
+   (if (empty? plan)
+     mesh
+     (let [{:keys [pose sub]} (first plan)
+           {:keys [position heading]} pose
+           [px py pz] position
+           [hx hy hz] heading
+           offset (+ (* hx px) (* hy py) (* hz pz))
+           {:keys [ahead behind]}
+           (if (empty? (:faces mesh))
+             {:ahead mesh :behind mesh}
+             (manifold/split-by-plane mesh heading offset opts))
+           behind' (if sub (split-plan behind sub opts) behind)]
+       {:behind behind' :ahead (split-plan ahead (rest plan) opts)}))))
 
 (defn ^:export implicit-mesh-split
   "Split a mesh at the plane defined by the turtle's current position and
@@ -877,6 +939,11 @@
    (mesh-split m)                    single cut at the turtle's current pose
    (mesh-split m path)               a cut at EVERY mark in path, in order
    (mesh-split m path marks-vector)  cuts at only the listed marks, in that order
+   (mesh-split m path marks-map)     branching — see resolve-mesh-split-plan
+   (mesh-split m path marks-spec opts) any of the above + opts (brief-step-
+                                     bias.md Part 2), e.g. {:heal-slivers true}
+                                     — pass path/marks-spec as nil for a single
+                                     cut at the current pose WITH opts
 
    Returns {:behind <mesh> :ahead <mesh>}. :behind is the half BEHIND the
    heading — the material side, same convention as sdf-half-space/extrude:
@@ -892,6 +959,12 @@
    turtle's CURRENT pose (the same resolver every other path consumer uses),
    not from the path's own internal identity frame.
 
+   The third argument generalizes to a MAP for branching (dev-docs/brief-
+   split-tree.md Part 1): {mark sub-spec …} lets the piece detached at a mark
+   be cut further, in that mark's own cut-pose frame — a `:behind` becomes a
+   NODE ({:behind :ahead}) instead of a leaf mesh. See
+   resolve-mesh-split-plan for the full grammar.
+
    Either half may be an empty mesh when the plane misses (or only grazes)
    the piece — a legitimate result, not an error.
 
@@ -905,20 +978,30 @@
          offset (+ (* hx px) (* hy py) (* hz pz))]
      (manifold/split-by-plane mesh heading offset)))
   ([mesh-or-name-or-sdf path]
-   (let [names (path-mark-names-in-order path)]
-     (when (empty? names)
-       (throw (js/Error. "mesh-split: path has no marks — nothing to cut")))
-     (implicit-mesh-split mesh-or-name-or-sdf path names)))
-  ([mesh-or-name-or-sdf path marks-vector]
+   (when (empty? (path-mark-names-in-order path))
+     (throw (js/Error. "mesh-split: path has no marks — nothing to cut")))
+   (implicit-mesh-split mesh-or-name-or-sdf path nil))
+  ([mesh-or-name-or-sdf path marks-spec]
    (let [mesh (resolve-to-mesh mesh-or-name-or-sdf)
-         anchors (turtle/resolve-marks @(turtle-ref) path)
-         mark-poses (mapv (fn [mark-name]
-                            (or (get anchors mark-name)
-                                (throw (js/Error.
-                                        (str "mesh-split: mark " mark-name
-                                             " not found in path")))))
-                          marks-vector)]
-     (guillotine-split mesh mark-poses))))
+         ;; the FULL turtle state, not just :position/:heading/:up — resolve-marks
+         ;; also reads :preserve-up/:reference-up off it, and this is the one call
+         ;; site that resolves from a genuinely live turtle (recursive sub-path
+         ;; entries resolve from a mark's own captured {:position :heading :up},
+         ;; which never carried those two keys to begin with).
+         plan (resolve-mesh-split-plan @(turtle-ref) path marks-spec)]
+     (split-plan mesh plan)))
+  ([mesh-or-name-or-sdf path marks-spec opts]
+   (if (nil? path)
+     ;; opts on a bare single cut — same math as the 1-arity form, opts threaded.
+     (let [mesh (resolve-to-mesh mesh-or-name-or-sdf)
+           state @(turtle-ref)
+           [px py pz] (:position state)
+           [hx hy hz :as heading] (:heading state)
+           offset (+ (* hx px) (* hy py) (* hz pz))]
+       (manifold/split-by-plane mesh heading offset opts))
+     (let [mesh (resolve-to-mesh mesh-or-name-or-sdf)
+           plan (resolve-mesh-split-plan @(turtle-ref) path marks-spec)]
+       (split-plan mesh plan opts)))))
 
 (defn ^:export implicit-mesh-mirror
   "Reflect a mesh through the plane at the turtle's current pose (point = position,

@@ -27,6 +27,7 @@
             [ridley.editor.gizmo :as gizmo]
             [ridley.editor.mesh-split-tree :as mtree]
             [ridley.manifold.core :as manifold]
+            [ridley.geometry.cut-candidates :as cut-cand]
             [ridley.turtle.core :as turtle]
             [ridley.sdf.core :as sdf]
             [ridley.scene.registry :as registry]
@@ -235,6 +236,17 @@
   [{:keys [preview-pose live-pose]}]
   (or preview-pose live-pose))
 
+(def ^:private heal-slivers-opts
+  "edit-mesh-split's default split opts (brief-step-bias.md Part 2): heal-slivers
+   ON for every internal split — this editor is the context the sliver bug
+   manifested in, so its own cuts are protected whether or not the DSL caller of
+   an emitted mesh-split opts in. The extra decompose is free here (component-
+   report already pays for one on the same halves right after); the union-cost
+   path only fires on the rare tick a dragged plane actually grazes a flush face
+   within the sliver threshold, and recompute!'s existing adaptive throttle
+   absorbs that like any other slow tick."
+  {:heal-slivers true})
+
 (defn- recompute!
   "Keyboard steps, gizmo-commit, and throttled gizmo-drag ticks all land here —
    the only place the CURRENT piece is (re)split against `working-pose`. Uses the
@@ -243,7 +255,9 @@
    B2); the split also returns both halves' volumes, so no get-mesh-status re-
    conversion either. Measures its own cost into :drag-recompute-cost-ms so
    on-gizmo-drag!'s throttle adapts (a cheap mesh updates nearly every frame, a
-   dense one backs off — dev-docs/addendum-brief-edit-mesh-split.md)."
+   dense one backs off — dev-docs/addendum-brief-edit-mesh-split.md). Heals
+   slivers by default (heal-slivers-opts) — accept-cut! stores whatever this last
+   computed, so the committed halves are protected too, not just the preview."
   []
   (when-let [{:as s} @session]
     (let [t0 (js/performance.now)
@@ -252,10 +266,10 @@
           mf (ensure-manifold! cur)
           {:keys [position heading]} (working-pose s)
           offset (turtle/dot heading position)
-          {:keys [ahead behind ahead-volume behind-volume]}
+          {:keys [ahead behind ahead-volume behind-volume sliver-report]}
           (if mf
-            (manifold/split-live mf heading offset cur-mesh)
-            (manifold/split-by-plane cur-mesh heading offset))
+            (manifold/split-live mf heading offset cur-mesh heal-slivers-opts)
+            (manifold/split-by-plane cur-mesh heading offset heal-slivers-opts))
           behind-empty? (empty? (:faces behind))
           ahead-empty? (empty? (:faces ahead))
           plane-state (cond behind-empty? :no-op ahead-empty? :terminal :else :active)
@@ -277,6 +291,10 @@
              :plane-state plane-state
              :behind-pct (if (pos? total-vol) (* 100.0 (/ behind-vol total-vol)) 0.0)
              :ahead-pct (if (pos? total-vol) (* 100.0 (/ ahead-vol total-vol)) 0.0)
+             ;; Part 3.1: the indicator's raw material — component counts + which half
+             ;; had a sub-threshold one, read straight off heal-slivers-opts' own
+             ;; classification pass (no extra decompose).
+             :sliver-report sliver-report
              ;; Any real action ends here → dismiss a transient no-op warning (Part A):
              ;; only FAILED gestures (which never recompute) leave one standing.
              :status-message nil
@@ -404,9 +422,9 @@
       (viewport/update-turtle-pose pose)
       (gizmo/update-pose! pose)
       ;; Vista contesto (acquisition-views Parte 1): rebuild only when the
-      ;; piece/tree identity changes (cut/separate/undo/mirror/cycle/select),
-      ;; never on a plane-drag tick (which never touches :tree) — same guard
-      ;; shape as the labels rebuild above.
+      ;; piece/tree identity changes (cut/undo/mirror/cycle/select), never on
+      ;; a plane-drag tick (which never touches :tree) — same guard shape as
+      ;; the labels rebuild above.
       (when (not (identical? (:tree s) (:inset-tree s)))
         (inset/set-content! {:ghost (:initial-mesh s)
                              :highlight (piece-mesh (:current (:tree s)))})
@@ -420,6 +438,22 @@
   [f]
   (swap! session update :live-pose f)
   (recompute!))
+
+(defn- plane-epsilon
+  "The current piece's own Part-1-scale ε (cut-cand/default-bias-epsilon of its
+   bbox diagonal) — the ±ε buttons' step size (Part 3.2), always freshly derived
+   from whichever piece is current so it stays correct across n/p navigation."
+  []
+  (cut-cand/default-bias-epsilon (:vertices (current-mesh))))
+
+(defn- nudge-plane-epsilon!
+  "±ε micro-nudge (brief-step-bias.md Part 3.2): moves :position along the
+   plane's own current heading by ±ε, the SAME scale ε Part 1's auto-bias uses.
+   Applies to ANY cut — candidate-snapped or hand-placed — via apply-gesture!,
+   the identical path the arrow-key nudges use, so the resulting offset
+   round-trips through emission like any other."
+  [sign]
+  (apply-gesture! #(turtle/f % (* sign (plane-epsilon)))))
 
 (defn- gesture-fn
   "Map a gizmo on-commit (cmd-type value) pair to the same turtle op the keyboard
@@ -549,27 +583,6 @@
     (when (not= (:current tree) ahead)
       (reposition-plane-for! (:current tree)))
     (recompute!)))
-
-(defn- separate!
-  "The 'separa componenti' gesture (Parte 3): decompose the current piece into its
-   connected components (mtree/separate — Part 1's contract order), materializing
-   each as a distinct tree piece. A structural gesture (logged, undoable). A no-op
-   with a note when the piece is a single component (nothing to separate — it needs
-   a plane, not a separation)."
-  []
-  (let [s @session
-        cur (current-id)
-        comp-meshes (manifold/mesh-components (piece-mesh cur))]
-    (if (< (count comp-meshes) 2)
-      (set-status-message! (:reason (:separate (gesture-availability @session))))
-      (let [reports (mapv (fn [c] {:finished? (manifold/convex? c) :count 1}) comp-meshes)
-            {:keys [tree components]} (mtree/separate (:tree s) cur reports)]
-        (doseq [[cid cmesh] (map vector components comp-meshes)]
-          (store-piece! cid cmesh))
-        (swap! session assoc :tree tree)
-        (reposition-plane-for! (:current tree))
-        (state/capture-println (str "edit-mesh-split: separated into " (count comp-meshes) " pieces"))
-        (recompute!)))))
 
 ;; ============================================================
 ;; Symmetry (dev-docs/brief-mesh-symmetry.md, Parts 4-5)
@@ -746,7 +759,7 @@
    every panel button's enabled/disabled state + tooltip, and the transient status
    message a key press writes when its gesture can't act (so the keyboard twin of a
    disabled button is never a silent no-op). Keys → {:enabled? bool :reason str}:
-     :separate :symmetry :reflex :mirror :accept :undo :nav :reveal :cut-nav."
+     :symmetry :reflex :mirror :accept :undo :nav :reveal :cut-nav."
   [s]
   (let [tree (:tree s)
         cur (:current tree)
@@ -754,11 +767,7 @@
         open (mtree/non-finished-leaves tree)
         sym-cache (get-in s [:symmetry-cache cur])
         twin (mirror-plane-twin)]
-    {:separate
-     (if (and cur-count (> cur-count 1))
-       {:enabled? true  :reason (str "separa questo pezzo in " cur-count " componenti")}
-       {:enabled? false :reason "questo pezzo è un solo componente — niente da separare"})
-     :symmetry
+    {:symmetry
      (cond
        (:symmetry-pending? s)
        {:enabled? false :reason "calcolo dei piani di simmetria in corso…"}
@@ -793,7 +802,7 @@
                                     ") — chiede conferma, mai un gate geometrico")})
      :undo
      (if (seq (:log tree))
-       {:enabled? true  :reason "annulla l'ultimo gesto (taglio o separazione)"}
+       {:enabled? true  :reason "annulla l'ultimo gesto (taglio o accettazione)"}
        {:enabled? false :reason "nessun gesto da annullare"})
      :nav
      (if (> (count open) 1)
@@ -842,30 +851,20 @@
               (state/capture-println (str "edit-mesh-split: mirror-decomposed (" (count gestures) " gestures)"))
               (recompute!))
           (let [g (first gs)
-                target (pmap (:input g))]
-            (case (:type g)
-              :cut
-              (let [{:keys [position heading]} (mtree/reflect-pose (:pose g) normal point)
-                    offset (turtle/dot heading position)
-                    {:keys [ahead behind]} (manifold/split-by-plane (piece-mesh target) heading offset)
-                    {tree' :tree bid :behind aid :ahead}
-                    (mtree/cut (:tree @session) target
-                               {:position position :heading heading :up (free-up heading)}
-                               (report-of-mesh behind) (report-of-mesh ahead)
-                               {:group group})]
-                (store-piece! bid behind)
-                (store-piece! aid ahead)
-                (swap! session assoc :tree tree')
-                (recur (rest gs) (assoc pmap (:behind g) bid (:ahead g) aid)))
-              :separate
-              (let [comps (manifold/mesh-components (piece-mesh target))
-                    {tree' :tree cids :components}
-                    (mtree/separate (:tree @session) target
-                                    (mapv #(hash-map :finished? (manifold/convex? %) :count 1) comps)
-                                    {:group group})]
-                (doseq [[cid cm] (map vector cids comps)] (store-piece! cid cm))
-                (swap! session assoc :tree tree')
-                (recur (rest gs) (merge pmap (zipmap (:components g) cids)))))))))
+                target (pmap (:input g))
+                {:keys [position heading]} (mtree/reflect-pose (:pose g) normal point)
+                offset (turtle/dot heading position)
+                {:keys [ahead behind]} (manifold/split-by-plane (piece-mesh target) heading offset
+                                                                heal-slivers-opts)
+                {tree' :tree bid :behind aid :ahead}
+                (mtree/cut (:tree @session) target
+                           {:position position :heading heading :up (free-up heading)}
+                           (report-of-mesh behind) (report-of-mesh ahead)
+                           {:group group})]
+            (store-piece! bid behind)
+            (store-piece! aid ahead)
+            (swap! session assoc :tree tree')
+            (recur (rest gs) (assoc pmap (:behind g) bid (:ahead g) aid))))))
     (set-status-message! (:reason (:mirror (gesture-availability @session))))))
 
 ;; ============================================================
@@ -1421,10 +1420,6 @@
                   (update-panel-display!))
               (undo!)))
 
-        ;; s: separate the current piece into its connected components (Parte 3)
-        (and (= key "s") (not mod?))
-        (do (.preventDefault e) (.stopPropagation e) (flush-digit-buffer!) (separate!))
-
         ;; a: accept the current piece as finished BY DECISION, whatever its
         ;; color — confirms first on a red piece (addendum 4 Parte A)
         (and (= key "a") (not mod?))
@@ -1497,6 +1492,22 @@
        " — ahead " (fmt-pct ahead-pct)
        (if (= plane-state :terminal) "" (str " (" (side-verdict-text ahead-finished? ahead-count) ")"))))
 
+(defn- sliver-status-text
+  "Part 3.1's indicator text: 'behind|ahead' component counts (same order as
+   volume-status-text), with a ⚠ naming WHICH half has a sub-threshold
+   component — e.g. '1|2 ⚠ ahead' — so the user knows which direction to
+   ±ε-correct. nil (renders as nothing) when there's no report yet (first
+   tick) — never a stale count."
+  [{:keys [sliver-report]}]
+  (when-let [{:keys [behind ahead]} sliver-report]
+    (let [b-warn? (pos? (:slivers behind))
+          a-warn? (pos? (:slivers ahead))]
+      (str (:components behind) "|" (:components ahead)
+           (cond (and b-warn? a-warn?) " ⚠ sliver in both"
+                 b-warn?               " ⚠ sliver in behind"
+                 a-warn?               " ⚠ sliver in ahead"
+                 :else                 "")))))
+
 (defn update-panel-display!
   []
   (when-let [panel (:panel-el @session)]
@@ -1525,10 +1536,12 @@
                      (= plane-state :active)   "Enter cuts the current piece"
                      (= plane-state :no-op)    "cut is a no-op (plane misses the piece)"
                      :else                     "plane past the piece — Enter jumps to the next open piece")
-              ;; Current-piece badge (Parte 2/3): flag a multi-component current
-              ;; piece — press s to separate (no plane needed).
+              ;; Current-piece badge (Parte 2): flag a multi-component current piece
+              ;; — informational only, since Parte 3 removed the session's own
+              ;; separate gesture: (mesh-components …) is plain DSL, applied by
+              ;; hand on the emitted call's result, not something this tool does.
               badge (when (and cur-count (> cur-count 1))
-                      (str " · this piece: " cur-count " components — press s to separate"))
+                      (str " · this piece: " cur-count " components"))
               ;; Symmetry indicators (Part 4): pending computes and the mirror badge.
               sym (cond
                     (:symmetry-pending? s) " · computing symmetry planes…"
@@ -1539,6 +1552,15 @@
           (set! (.-textContent status-el) (str base badge sym))))
       (when-let [vol-el (.querySelector panel ".ems-volumes")]
         (set! (.-textContent vol-el) (volume-status-text s)))
+      ;; Sliver indicator (brief-step-bias.md Part 3.1) + its ⚠ class toggle, so
+      ;; CSS can pick it out (colour) independent of the text content.
+      (when-let [sliver-el (.querySelector panel ".ems-sliver")]
+        (let [txt (sliver-status-text s)
+              warn? (and txt (str/includes? txt "⚠"))]
+          (set! (.-textContent sliver-el) (or txt ""))
+          (.toggle (.-classList sliver-el) "ems-sliver-warn" (boolean warn?))))
+      (when-let [eps-el (.querySelector panel ".ems-eps-value")]
+        (set! (.-textContent eps-el) (str "±" (.toFixed (plane-epsilon) 4) "mm")))
       ;; Position line (addendum Parte C): where am I, by the SAME name the
       ;; emission uses — one identity across scene, panel, code.
       (when-let [pos-el (.querySelector panel ".ems-position")]
@@ -1566,7 +1588,6 @@
         (set-btn! ".ems-btn-sym"      (:symmetry avail))
         (set-btn! ".ems-btn-reflex"   (:reflex avail))
         (set-btn! ".ems-btn-mirror"   (:mirror avail))
-        (set-btn! ".ems-btn-separate" (:separate avail))
         (set-btn! ".ems-btn-accept"   (:accept avail))
         (set-btn! ".ems-prev"         (:nav avail))
         (set-btn! ".ems-next"         (:nav avail))
@@ -1593,6 +1614,16 @@
                "</div>"
                "<div class='pilot-commands ems-status'>Enter accepts this cut and continues</div>"
                "<div class='pilot-commands ems-volumes'>behind — · ahead —</div>"
+               ;; Sliver indicator + ±ε micro-nudge (brief-step-bias.md Part 3): the
+               ;; indicator is the prerequisite the brief calls out — the wafer is
+               ;; invisible in the viewport preview, so this text + the ⚠ colour is the
+               ;; only signal a manual correction is even needed.
+               "<div class='pilot-commands ems-sliver-row'>"
+               "<span class='ems-sliver'></span>"
+               "<button class='pilot-btn ems-btn-eps-minus' title='nudge the plane −ε along its normal'>−ε</button>"
+               "<span class='ems-eps-value'>±—</span>"
+               "<button class='pilot-btn ems-btn-eps-plus' title='nudge the plane +ε along its normal'>+ε</button>"
+               "</div>"
                ;; Transient no-op reason line (addendum 3 Part A) — empty until a key
                ;; that can't act writes why; collapses again when cleared.
                "<div class='ems-message'></div>"
@@ -1615,7 +1646,6 @@
                "<button class='pilot-btn ems-btn-sym'>⟷ symmetry (y)</button>"
                "<button class='pilot-btn ems-btn-reflex'>⌐ concavity (c)</button>"
                "<button class='pilot-btn ems-btn-mirror'>mirror-halve (d)</button>"
-               "<button class='pilot-btn ems-btn-separate'>separate (s)</button>"
                "<button class='pilot-btn ems-btn-accept'>accept as-is (a)</button>"
                "<button class='pilot-btn ems-btn-reveal'>reveal (r)</button>"
                "</div>"
@@ -1636,7 +1666,6 @@
                "TREE: cut the current piece; both halves become pieces of the tree. "
                "Every gesture below also has a button above (disabled = the reason "
                "it can't act right now). "
-               "s: separate the current piece into its connected components (no plane). "
                "a: accept the current piece as finished BY DECISION, whatever its color — "
                "'finished' is a decision, not a geometric fact; confirms first on a red "
                "piece, naming it, never a silent or blocked close (addendum 4) · "
@@ -1653,7 +1682,7 @@
                "Enter: cut the current piece (or, when every piece is finished, commit) · "
                "Ctrl/Cmd+Enter: commit now — no precondition, ever; if pieces are still "
                "open it asks first, naming them, then emits them as leaves as-is · "
-               "Backspace: undo the last cut/separation (chronological, any branch) · "
+               "Backspace: undo the last cut (chronological, any branch) · "
                "Esc: cancel, emit nothing. "
                "Plane color: grey = no-op, gold = plane past the piece, blue = active cut. "
                "Work view: ONLY the current piece (green/red halves + component badge) "
@@ -1670,10 +1699,11 @@
                "</div>"))
     (.addEventListener (.querySelector panel ".ems-prev") "click" (fn [_] (cycle-current-piece! :prev)))
     (.addEventListener (.querySelector panel ".ems-next") "click" (fn [_] (cycle-current-piece! :next)))
+    (.addEventListener (.querySelector panel ".ems-btn-eps-minus") "click" (fn [_] (nudge-plane-epsilon! -1.0)))
+    (.addEventListener (.querySelector panel ".ems-btn-eps-plus") "click" (fn [_] (nudge-plane-epsilon! 1.0)))
     (.addEventListener (.querySelector panel ".ems-btn-sym") "click" (fn [_] (propose-symmetry-plane!)))
     (.addEventListener (.querySelector panel ".ems-btn-reflex") "click" (fn [_] (propose-reflex-cut!)))
     (.addEventListener (.querySelector panel ".ems-btn-mirror") "click" (fn [_] (mirror-decompose!)))
-    (.addEventListener (.querySelector panel ".ems-btn-separate") "click" (fn [_] (separate!)))
     (.addEventListener (.querySelector panel ".ems-btn-accept") "click" (fn [_] (accept-as-is!)))
     (.addEventListener (.querySelector panel ".ems-btn-reveal") "click" (fn [_] (toggle-reveal!)))
     (.addEventListener (.querySelector panel ".ems-evt-prev") "click" (fn [_] (jump-to-event! :prev)))
@@ -1688,11 +1718,12 @@
 
 ;; ============================================================
 ;; Re-entry — rebuild a session tree from the ALREADY-COMPUTED composite
-;; (Part 1's own return value). A re-entered mesh-split call is a LINEAR
-;; chain (one run), so re-entry needs no new mechanism (accertamento A3#6
-;; dissolved): the root is the initial mesh, then one cut per chain level at
-;; the resolved marks. Any tree structure the user builds AFTER re-opening is
-;; a fresh forest that re-emits as its own let-chain in place of the call.
+;; (Part 1's own return value), walking it alongside a cut-plan of the SAME
+;; shape (impl/resolve-mesh-split-plan — dev-docs/brief-split-tree.md), so a
+;; branching call re-enters exactly as it was: a plan step with a :sub
+;; recurses into the composite's own nested :behind before the spine
+;; continues. Any tree structure the user builds AFTER re-opening re-emits
+;; as its own nude call in place of the original.
 ;; ============================================================
 
 (defn- report-of
@@ -1700,23 +1731,35 @@
   [mesh]
   (select-keys (manifold/component-report mesh) [:finished? :count]))
 
+(defn- walk-reentry
+  "Walk `node` (a re-entered composite, or a sub-node of one) alongside
+   `plan` (impl/resolve-mesh-split-plan's output for the SAME path/spec),
+   growing `tree`/`pm` (the piece-meshes side-table) via mtree/cut at each
+   step — recursing into a step's own :sub for a branching :behind before
+   continuing the spine. `cur` is the piece id `node` already occupies.
+   Returns {:tree tree :piece-meshes pm}."
+  [tree pm cur node plan]
+  (if (or (empty? plan) (not (map? node)) (= :mesh (:type node)))
+    {:tree tree :piece-meshes pm}
+    (let [{:keys [pose sub]} (first plan)
+          {:keys [behind ahead]} node
+          {tree1 :tree bid :behind aid :ahead}
+          (mtree/cut tree cur pose (report-of behind) (report-of ahead))
+          pm1 (assoc pm bid {:mesh behind} aid {:mesh ahead})
+          {tree2 :tree pm2 :piece-meshes}
+          (if sub
+            (walk-reentry tree1 pm1 bid behind sub)
+            {:tree tree1 :piece-meshes pm1})]
+      (walk-reentry tree2 pm2 aid ahead (rest plan)))))
+
 (defn- build-reentry-tree
-  "Walk a re-entered composite (linear {:behind :ahead} chain) into a session
-   tree + piece-meshes side-table: root = initial mesh, then mtree/cut per level
-   at `poses`. Returns {:tree tree :piece-meshes {id {:mesh …}}}."
-  [source-expr entry-pose initial-mesh composite poses]
-  (loop [tree (mtree/make-tree source-expr entry-pose (report-of initial-mesh))
-         pm {0 {:mesh initial-mesh}}
-         node composite
-         ps (seq poses)
-         cur 0]
-    (if (or (nil? ps) (not (map? node)) (= :mesh (:type node)))
-      {:tree tree :piece-meshes pm}
-      (let [{:keys [behind ahead]} node
-            {tree' :tree bid :behind aid :ahead}
-            (mtree/cut tree cur (first ps) (report-of behind) (report-of ahead))]
-        (recur tree' (assoc pm bid {:mesh behind} aid {:mesh ahead})
-               ahead (next ps) aid)))))
+  "Walk a re-entered composite into a session tree + piece-meshes side-table:
+   root = initial mesh, then mtree/cut per step of `plan` — recursively, for
+   a branching spec. Returns {:tree tree :piece-meshes {id {:mesh …}}}."
+  [source-expr entry-pose initial-mesh composite plan]
+  (walk-reentry (mtree/make-tree source-expr entry-pose (report-of initial-mesh))
+                {0 {:mesh initial-mesh}}
+                0 composite plan))
 
 ;; ============================================================
 ;; Entry points (two-phase, same shape as edit-attach/edit-bezier)
@@ -1765,14 +1808,11 @@
                   [(second elements) (get elements 2) (get elements 3) from to])))
             entry-pose (or (state/get-turtle-pose)
                            {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})
-            names (when path-value
-                    (or marks-value (impl/path-mark-names-in-order path-value)))
-            poses (when path-value
-                    (let [anchors (turtle/resolve-marks entry-pose path-value)]
-                      (mapv anchors names)))
+            plan (when path-value
+                   (impl/resolve-mesh-split-plan entry-pose path-value marks-value))
             {:keys [tree piece-meshes]}
             (if (and composite-value (map? composite-value) (not= :mesh (:type composite-value)))
-              (build-reentry-tree source-expr entry-pose initial-mesh composite-value poses)
+              (build-reentry-tree source-expr entry-pose initial-mesh composite-value plan)
               {:tree (mtree/make-tree source-expr entry-pose (report-of initial-mesh))
                :piece-meshes {0 {:mesh initial-mesh}}})
             cur (:current tree)
@@ -1846,7 +1886,7 @@
     (state/capture-println
      (str "edit-mesh-split: interactive tree mode for " (:source-expr @session)
           " — move/rotate the cut plane (arrows or gizmo, the mouse never selects), "
-          "Enter cuts the current piece, s separates it, n/p navigate open pieces, "
+          "Enter cuts the current piece, n/p navigate open pieces, "
           "r reveals all, Backspace undoes, Ctrl/Cmd+Enter commits, Esc cancels"))))
 
 (defn- force-close!

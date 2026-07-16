@@ -1699,9 +1699,63 @@ A mark whose plane misses the remaining produces an empty `:behind` at its
 place in the chain, without error — the chain continues from `:ahead`
 unchanged.
 
+**Branching form.** The third argument generalizes to a **map**,
+`{mark sub-spec …}`, letting the piece *detached* at a mark (its `:behind`)
+be cut further instead of staying a leaf — the composite generalizes with
+it, a `:behind` becoming a node instead of a mesh:
+
+```clojure
+(mesh-split mount
+  (path (tv 90) (f -10) (mark :cut-1) (f -20) (mark :cut-2))
+  {:cut-1 (path (f -3) (mark :cut-1-1))   ; :cut-1's detached piece cut again
+   :cut-2 nil})                           ; :cut-2 just cuts
+```
+
+`sub-spec` is `nil` (a leaf), a bare `path` (cut every one of its own
+marks), or `[path spec]` (the full recursive form — `spec` here can itself
+be a vector or another branching map). Cut order always comes from the
+`path`'s own mark order, never the map's key order (Clojure doesn't
+guarantee one); a sub-spec's `path` resolves from the mark's own
+**cut-pose** — where the turtle was at that cut — never the live turtle,
+since the piece being cut further has nothing to do with wherever the
+turtle has since moved on to.
+
 `(split-parts result)` flattens a composite result into its leaves, in
 order — `[piece-1 piece-2 … remaining]` for the chain above. A bare mesh
 (no cuts) returns `[mesh]`.
+
+`(split-tree result)` gives the same leaves **named**, in the same order:
+`{:piece-1 … :piece-2 … :piece-3 …}`, where `:piece-N` is the Nth piece
+detached and the last key is the final remaining. It is the bridge from
+the bare `mesh-split` call `edit-mesh-split` emits (see below) to every
+consumer that wants names — `(mesh-board (split-tree AA))`,
+`(attach (split-tree AA) (f 10))`, or destructuring by hand. It renames
+only: the values are the very same meshes.
+
+`mesh-board` and `attach` **refuse** a raw composite, with an error naming
+`split-tree`. The keys are the reason: a one-cut composite's `:behind` and
+`:ahead` are both meshes, so without the check it would pass for a
+two-piece tree *named* `:behind`/`:ahead` — a success that teaches the
+wrong shape and then breaks at the second cut, where the nested `:ahead`
+node arrives where a mesh was expected. The conversion is `split-tree`'s
+job, visible in the user's source, never an implicit coercion.
+
+**Sliver healing.** A cut placed exactly flush with a flat face can shave an
+irregular, near-degenerate sliver off the wrong side — Manifold's meshes
+are float32, so a "flat" face is rippled by a few nanometres of
+tessellation noise, and a plane sitting at zero distance from it splits
+that noise unpredictably. A fourth, optional `opts` argument —
+`(mesh-split m path marks-spec opts)`, with `path`/`marks-spec` `nil` for a
+single cut — turns on a post-split safety net: `{:heal-slivers true}` (or
+`{:heal-slivers {:thickness t}}` for an explicit threshold) decomposes each
+half into its connected components and reassigns any component whose
+extension **along the cut plane's normal** falls under the threshold
+(default a few µm, scale-aware) to the *other* half — the criterion is
+thickness along the cut normal specifically, never volume, so an
+intentionally thin-but-wide tab is left alone. `edit-mesh-split` turns this
+on by default for its own internal splits; the DSL function stays opt-in so
+its existing contract doesn't change underfoot. See `cut-candidates`'
+`:bias` below for the companion fix at the *suggestion* stage.
 
 ### Connected components
 
@@ -1821,9 +1875,21 @@ is the section area `A` along the active degree of freedom:
 
 Options: `:tolerance` (offset/position dedup, mm), `:angle-tol` (how ∥ to the sweep a
 face normal must be to count as a step, degrees), `:samples` (profile samples, default
-96), `:min-neck-depth` (valley-depth floor, default 1 % of the profile's peak area).
-Pure in `(mesh, pose, opts)`; the translational profile is ~12 ms (convert once, slice
-many), rotation ~15× that.
+96), `:min-neck-depth` (valley-depth floor, default 1 % of the profile's peak area),
+`:bias` (STEP-only — see below). Pure in `(mesh, pose, opts)`; the translational
+profile is ~12 ms (convert once, slice many), rotation ~15× that.
+
+**STEP bias.** A `:step` candidate's suggested pose is not placed exactly flush with
+its coplanar face — Manifold's meshes are float32, so a "flat" face is rippled by a
+few nanometres of tessellation noise, and a plane at zero distance from it splits that
+noise unpredictably, shaving an irregular sliver off the wrong side. `:bias` shifts
+the pose by that amount into the **bulk** (the side the cross-section is larger on)
+along the snapped normal, so the whole rippled face lands cleanly on one side.
+Default: `max(1e-3mm, 1e-4 × bbox-diagonal)` — far above fp32 noise, far below any
+real feature; `:bias 0` reproduces the old exactly-flush pose. The sign is resolved
+per-candidate from its cluster's `ΔA`, not configurable — only the magnitude is. See
+`mesh-split`'s `:heal-slivers` for the companion fix *after* a cut, whether the plane
+came from a candidate or was placed by hand.
 
 ### Mesh smoothing & refinement
 
@@ -3435,7 +3501,7 @@ On confirm it bakes a `(path …)` of **relative** `set-heading`/`f` segments (r
 
 ### Edit Mesh Split
 
-`edit-mesh-split` is an interactive **tree session** for decomposing a mesh into pieces. Both halves of every cut become pieces of a growing tree — you can go back to any piece and keep cutting it, or separate a piece into its connected components with no plane at all. The goal is a decomposition where *every* piece is finished (each connected component convex). **The turtle IS the cut plane** — `position` + `heading` define it; arrows move/rotate the live pose (the shared `edit-attach` gizmo drags it too), and a semi-transparent quad with a cone along `+heading` renders the plane.
+`edit-mesh-split` is an interactive **tree session** for decomposing a mesh into pieces. Both halves of every cut become pieces of a growing tree — you can go back to any piece and keep cutting it. The goal is a decomposition where *every* piece is finished (each connected component convex); separating a multi-component piece into its parts is ordinary DSL (`mesh-components`) applied by hand on the emitted result, not a session gesture. **The turtle IS the cut plane** — `position` + `heading` define it; arrows move/rotate the live pose (the shared `edit-attach` gizmo drags it too), and a semi-transparent quad with a cone along `+heading` renders the plane.
 
 ```clojure
 (register block (extrude (rect 20 20) (f 30)))
@@ -3444,20 +3510,41 @@ On confirm it bakes a `(path …)` of **relative** `set-heading`/`f` segments (r
 
 **The current piece** is the one being cut — full, with its live `:behind`/`:ahead` split and the semaphore. Other open pieces recede to faint context (no convexity tint — the semaphore is the current piece's alone); finished pieces are grey wireframes. **The mouse only moves the plane**; navigate open pieces with **n**/**p** (or the panel ◀/▶ buttons), deterministic in tree order over the open pieces; **r** reveals all to re-orient. A panel line anchors position by the emission name: `piece <name> (2/5) · open · 1 component`.
 
-**Live semaphore (per-component).** A piece is **finished** (green) iff every connected component is convex — so both a single convex solid and several convex solids in one mesh (a U cut at its base → two convex prongs) are finished. A multi-component finished piece needs *separating, not cutting*: a `N pieces` badge flags it. A piece with a genuinely concave component is **red**. The current cut's two live halves are tinted the same way (`:behind` solid, `:ahead` washed) and the status line quantifies both by volume percentage, e.g. `behind 42% (convex) — ahead 58% (2 pieces)`.
+**Live semaphore (per-component).** A piece is **finished** (green) iff every connected component is convex — so both a single convex solid and several convex solids in one mesh (a U cut at its base → two convex prongs) are finished. A multi-component finished piece gets a `N components` badge — informational; separating it into parts is `mesh-components` on the emitted result, not a session gesture. A piece with a genuinely concave component is **red**. The current cut's two live halves are tinted the same way (`:behind` solid, `:ahead` washed) and the status line quantifies both by volume percentage, e.g. `behind 42% (convex) — ahead 58% (2 pieces)`.
 
-**Gestures.** `Enter` cuts the current piece (both halves join the tree); when *every* piece is finished it commits instead; when the plane can't cut here and work remains, it moves to the next open piece. `s` separates the current piece into its connected components (`mesh-components`, no plane). `n`/`p` (or panel ◀/▶) navigate the open pieces deterministically; `r` toggles reveal-all. `y` proposes/cycles the current piece's verified `symmetry-planes` (teleporting the plane), and a mirror badge lights on its own when the plane is a symmetry plane (free gate live + debounced background confirmation; an accepted mirror cut leaves a `;; :cut-N: piano di simmetria` comment). `d` mirror-decomposes — replays a decomposed mirror twin's cuts, reflected through the mirror plane, as one undoable gesture. `[`/`]` (or panel ◀/▶) jump the plane to the previous/next **cut-candidate event** of the section-area profile — mode-sensitive (step mode = translation along the heading, angle mode = rotation about the up axis), ordered by position; the panel shows a profile strip of `A` along the active degree of freedom with the plane marker and event ticks (blue = step / face flush, orange = neck / waist — the `cut-candidates` kinds), and clicking a tick jumps onto it. `Backspace` undoes the last structural gesture (cut *or* separation) — chronological, any branch, freeing that piece's kept-alive Manifold. `Ctrl`/`Cmd`+`Enter` commits now (even with concave pieces open). `Esc` cancels, emitting nothing. Each open piece keeps its Manifold alive, so a keystroke re-split pays the split alone, not a fresh mesh→manifold conversion.
+**Gestures.** `Enter` cuts the current piece (both halves join the tree); when *every* piece is finished it commits instead; when the plane can't cut here and work remains, it moves to the next open piece. `n`/`p` (or panel ◀/▶) navigate the open pieces deterministically; `r` toggles reveal-all. `y` proposes/cycles the current piece's verified `symmetry-planes` (teleporting the plane), and a mirror badge lights on its own when the plane is a symmetry plane (free gate live + debounced background confirmation; an accepted mirror cut leaves a `;; :cut-N: piano di simmetria` comment). `d` mirror-decomposes — replays a decomposed mirror twin's cuts, reflected through the mirror plane, as one undoable gesture. `[`/`]` (or panel ◀/▶) jump the plane to the previous/next **cut-candidate event** of the section-area profile — mode-sensitive (step mode = translation along the heading, angle mode = rotation about the up axis), ordered by position; the panel shows a profile strip of `A` along the active degree of freedom with the plane marker and event ticks (blue = step / face flush, orange = neck / waist — the `cut-candidates` kinds), and clicking a tick jumps onto it. `Backspace` undoes the last structural gesture (cut) — chronological, any branch, freeing that piece's kept-alive Manifold. `Ctrl`/`Cmd`+`Enter` commits now (even with concave pieces open). `Esc` cancels, emitting nothing. Each open piece keeps its Manifold alive, so a keystroke re-split pays the split alone, not a fresh mesh→manifold conversion.
 
-**Emission.** On close the marker is rewritten to a `let`-chain of self-contained linear `mesh-split` composites (one per branch, each with its own path and its own path-scoped marks) plus a `mesh-components` destructure per separation. The tree shape lives in which binding feeds which call; each cut's delta is the minimal canonical `(th …)(tv …)(tr …)(f …)(rt …)(u …)` from the session's entry pose:
+**Sliver indicator + ±ε nudge.** At every plane nudge the panel's component-count
+line (e.g. `1|2 ⚠ sliver in ahead`) flags a sub-threshold component in either live
+half — the same thickness-along-the-cut-normal criterion `mesh-split`'s
+`:heal-slivers` uses — naming which half so you know which way to correct. The
+**−ε**/**+ε** buttons next to it nudge the plane along its own current normal by the
+same scale-aware ε `cut-candidates`' `:bias` uses, for any cut, candidate-snapped or
+placed by eye; the resulting offset is an ordinary offset, folded into the emitted
+delta like any other nudge. The session also heals slivers by default on its own
+internal splits, so an accepted cut is protected even if the warning goes unnoticed.
+
+**Emission.** On close the marker is rewritten to **one bare `mesh-split` call, always** — never a `let`, however many cuts, however branched:
 
 ```clojure
-(let [{piece-1 :behind piece-2 :ahead}
-      (mesh-split (get-mesh :block) (path (f 10) (mark :cut-1)) [:cut-1])
-      [piece-3 piece-4] (mesh-components piece-2)]
-  [piece-1 piece-3 piece-4])
+(mesh-split (get-mesh :block)
+  (path (f 10) (mark :cut-1) (f 10) (mark :cut-2))
+  [:cut-1 :cut-2])
 ```
 
-Numbers are never snapped to a grid. `(edit-mesh-split m)` opens a fresh session; `(edit-mesh-split m path marks)` (or renaming one emitted `mesh-split` → `edit-mesh-split`) re-enters that single call — since every emitted call is a self-contained linear composite, re-entry rebuilds the tree from the evaluated composite with no special machinery, and the rest of the `let` is untouched.
+No `let`, no destructuring: the user who wants names writes them, or calls `split-tree`. Bare is what makes the **round-trip real** — putting `edit-` back in front is literally the macro's own 3-arity, re-opened. The `let` form was not: closing rewrites the *marked form only*, so re-emitting from inside a `let` binding nested a fresh `let` where a value belonged and broke the source. The value changes with the shape — the raw `{:behind :ahead}` composite, not a name→mesh map — which is why `mesh-board`/`attach` name `split-tree` when handed one.
+
+Going back and cutting a piece that an earlier cut *detached* (not the far side, the near one) is the tree's own branching — expressed with `mesh-split`'s own branching form (see above), still one call:
+
+```clojure
+(mesh-split (get-mesh :block)
+  (path (f 10) (mark :cut-1))
+  {:cut-1 (path (f -3) (mark :cut-1-1))})
+```
+
+Each cut's delta is the minimal canonical `(th …)(tv …)(tr …)(f …)(rt …)(u …)` — a branch's own path measured from *that cut's own pose*, not the session's live turtle (the piece being cut further has moved on from wherever the turtle now is). Numbers are never snapped to a grid: each carries just enough precision to stand for the accepted plane (a flat 2-decimal rounding once moved a cut 4.9µm past an imported face and handed a sheet of material to the wrong piece), so re-evaluating cuts where the user cut.
+
+`(edit-mesh-split m)` opens a fresh session; `(edit-mesh-split m path marks)` (or renaming one emitted `mesh-split` → `edit-mesh-split`) re-enters that single call — re-entry walks the evaluated composite alongside the same spec (recursing into a branch's own nested composite exactly as it was cut) with no special machinery beyond that. Re-entry rebuilds from *geometry*, so a `;; piano di simmetria` comment is written once and thereafter belongs to the source, not the tool.
 
 ### Animation
 
