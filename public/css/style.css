@@ -413,6 +413,30 @@ html, body {
   padding: 4px 0;
 }
 
+/* edit-mesh-split (brief-step-bias.md Part 3): sliver indicator + ±ε nudge row.
+   Neutral grey until a sub-threshold component appears — .ems-sliver-warn is
+   toggled in JS, never inferred from text content. */
+.modal-panel .ems-sliver-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.modal-panel .ems-sliver {
+  color: #999999;
+  font-size: 11px;
+}
+
+.modal-panel .ems-sliver.ems-sliver-warn {
+  color: #dcb67a;
+  font-weight: 600;
+}
+
+.modal-panel .ems-eps-value {
+  color: #999999;
+  font-size: 11px;
+}
+
 /* edit-mesh-split (brief-cut-candidates Part 3/4): the jump-to-event nav row and the
    section-area profile strip. */
 .modal-panel .ems-events {
@@ -728,24 +752,37 @@ html, body {
   color: #4ec9b0;
 }
 
-/* edit-mesh-split (brief-acquisition-views Parte 1): the Vista contesto
-   picture-in-picture inset — the ghosted original + current piece, camera-
-   synced to the main viewport. pointer-events:none on the box (it overlays
-   the main canvas but must never intercept its clicks — "non interattivo");
-   the header/toggle re-enable pointer-events so the collapse control still
-   works. */
-.viewport-inset {
+/* Picture-in-picture inset(s) — the Vista contesto singleton (edit-mesh-split,
+   brief-acquisition-views Parte 1: the ghosted original + current piece) and
+   mesh-board's comparison views (brief-mesh-board-views Parte 2: solid
+   intersection/missing/excess renders), sharing one manager
+   (ridley.viewport.inset). Instances stack in .viewport-inset-column,
+   anchored bottom-right, column-reverse so the first-mounted instance sits
+   nearest the corner — a single mounted instance is pixel-identical to the
+   old singleton's position. pointer-events:none on the column (gaps between
+   boxes still pass clicks through to the main canvas underneath), but the
+   box itself is now interactive (Parte 4.3/4.4: header-drag + wheel-zoom are
+   the inset's first gestures — dragged instances switch to position:fixed,
+   set inline by ridley.viewport.inset, overriding the column's flex flow). */
+.viewport-inset-column {
   position: absolute;
   right: 12px;
   bottom: 12px;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 8px;
+  z-index: 50;
+  pointer-events: none;
+}
+
+.viewport-inset {
   width: 220px;
   background: #1e1e2e;
   border: 1px solid #444;
   border-radius: 4px;
   box-shadow: 0 4px 8px rgba(0,0,0,0.4);
   overflow: hidden;
-  z-index: 50;
-  pointer-events: none;
+  pointer-events: auto;
 }
 
 .viewport-inset-header {
@@ -760,6 +797,11 @@ html, body {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   pointer-events: auto;
+  cursor: grab;
+}
+
+.viewport-inset-header.dragging {
+  cursor: grabbing;
 }
 
 .viewport-inset-toggle {

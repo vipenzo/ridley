@@ -1,5 +1,18 @@
 # Brief: mesh-board — direttive di visualizzazione scaffold con confronto e fedeltà
 
+> **Nota (2026-07-15).** Documento storico. La Parte 0 ("`emit` chiude con una
+> mappa") vale ora **solo per la let-chain**: il caso lineare emette la chiamata
+> nuda, il cui valore è il composito grezzo — l'albero di nomi che `mesh-board`
+> vuole si ottiene con `(split-tree AA)`. `mesh-board` e `attach` rifiutano il
+> composito grezzo con un errore che nomina `split-tree`. Vedi
+> `dev-docs/brief-split-tree.md`.
+
+> **Nota (2026-07-16).** Il modo confronto qui descritto (`:mode
+> :overlay|:intersection|:diff`, un secondo scaffold in-place accanto al
+> riferimento) è **sostituito** da `:views`/`:ghost` — finestrelle inset
+> picture-in-picture (intersection/missing/excess, solide, non in-place) più
+> un ghost-wireframe opzionale. Vedi `dev-docs/brief-mesh-board-views.md`.
+
 ## Contesto
 
 Il brief centrale della fase 3. Riferimenti vincolanti: `dev-docs/mesh-board-design.md` (v2, con la cittadinanza riformulata sull'inerzia referenziale) e i due accertamenti (`mesh-board-accertamento.md`, `mesh-board-mini-accertamento.md`). Fatti su cui il brief si appoggia:

@@ -426,8 +426,8 @@
       ;; a plane-drag tick (which never touches :tree) — same guard shape as
       ;; the labels rebuild above.
       (when (not (identical? (:tree s) (:inset-tree s)))
-        (inset/set-content! {:ghost (:initial-mesh s)
-                             :highlight (piece-mesh (:current (:tree s)))})
+        (inset/set-content! :context {:ghost (:initial-mesh s)
+                                      :highlight (piece-mesh (:current (:tree s)))})
         (swap! session assoc :inset-tree (:tree s))))))
 
 ;; ============================================================
@@ -1147,7 +1147,7 @@
   (viewport/clear-world-labels!)  ; also drop any legacy world-anchored labels
   (viewport/show-user-geometry!)  ; restore the base composite hidden on enter!
   (viewport/clear-preview!)
-  (inset/unmount!))               ; Vista contesto (acquisition-views Parte 1)
+  (inset/unmount! :context))      ; Vista contesto (acquisition-views Parte 1)
 
 ;; ============================================================
 ;; Modal confirm (WKWebView blocks js/confirm — HTML overlay instead, the
@@ -1854,7 +1854,7 @@
       (modal/install-keydown! handler))
     (let [panel (create-panel! (:source-expr @session))]
       (swap! session assoc :panel-el panel))
-    (inset/mount!)   ; Vista contesto (acquisition-views Parte 1) — content set by render! below
+    (inset/mount! :context {:label "contesto" :collapsed? true})   ; Vista contesto (acquisition-views Parte 1) — content set by render! below
     ;; Hide the evaluated base composite (the whole decomposition refresh-viewport!
     ;; rendered before we entered): the modal's own preview is now the SOLE truth of
     ;; the scene, so the work/reveal states control EXACTLY what is visible (addendum

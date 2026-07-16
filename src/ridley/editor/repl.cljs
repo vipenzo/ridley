@@ -17,6 +17,7 @@
             [ridley.editor.state :as state]
             [ridley.editor.bindings :refer [base-bindings]]
             [ridley.editor.macros :refer [macro-defs]]
+            [ridley.editor.mesh-board :as mesh-board]
             [ridley.library.core :as library]
             [ridley.library.svg :as svg]))
 
@@ -71,6 +72,9 @@
       (state/reset-turtle!)
       (state/reset-scene-accumulator!)
       (state/reset-print-buffer!)
+      ;; A full eval replaces mesh-board's comparison-view insets too — a call
+      ;; removed from the source simply doesn't re-mount its windows below.
+      (mesh-board/reset-compare-views!)
       ;; Evaluate explicit code (definitions, functions, explicit geometry)
       (let [explicit-result (when (and explicit-code (seq (str/trim explicit-code)))
                               (sci/binding [state/eval-source-var :definitions]
@@ -136,6 +140,7 @@
       (state/reset-turtle!)
       (state/reset-scene-accumulator!)
       (state/reset-print-buffer!)
+      (mesh-board/reset-compare-views!)
       ;; Phase 1: Evaluate explicit code (definitions, functions, explicit geometry)
       (let [explicit-result (when (and explicit-code (seq (str/trim explicit-code)))
                               (sci/binding [state/eval-source-var :definitions]
