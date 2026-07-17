@@ -240,6 +240,54 @@ need the Rust backend — make sure the desktop app's geometry server is running
              :feature-r r)
       with-default-pose))
 
+;; ── Argument validation ─────────────────────────────────────────
+;; Mirror image of manifold/coerce-to-meshes, which accepts SDF operands in
+;; mesh ops by materializing them. There is no conversion the other way, so
+;; here a mesh operand is an error rather than a coercion.
+
+(defn- mesh-arg? [a]
+  (and (map? a) (:vertices a) (:faces a)))
+
+(def ^:private mesh-space-equivalent
+  "op-label → mesh-* equivalent, for ops that have one (the booleans).
+   blend/shell/offset/morph/displace are SDF-only, so they get no suggestion."
+  {"sdf-union" "mesh-union"
+   "sdf-difference" "mesh-difference"
+   "sdf-intersection" "mesh-intersection"})
+
+(defn- describe-bad-sdf-arg
+  "Return a short human description of why `a` is not a valid SDF node."
+  [a]
+  (cond
+    (nil? a)        "nil"
+    (mesh-arg? a)   (str "a mesh, not an SDF node — note that `register` materializes "
+                         "an SDF into a mesh, so after (register x (sdf-…)) the name x "
+                         "holds a mesh; use `def` for values you feed back into SDF ops")
+    (sequential? a) (str "a vector/seq of " (count a) " element(s)")
+    (and (map? a)
+         (some? (:type a))) (str "a " (name (:type a)) " (expected an SDF node)")
+    (map? a)        "a map without :op (not a valid SDF node)"
+    :else           (str (pr-str (type a)))))
+
+(defn- check-sdf-nodes!
+  "Throw if any of `args` is not an SDF tree node. Without this the bad operand
+   is serialized into the request and only rejected by the Rust parser, as a
+   `missing field op` at a column buried in megabytes of embedded vertex data.
+
+   `op-label` is the user-facing name (matches the bound SCI symbol)."
+  [op-label args]
+  (when-let [{:keys [idx why]}
+             (first (keep-indexed
+                     (fn [i a]
+                       (when-not (sdf-node? a)
+                         {:idx i :why (describe-bad-sdf-arg a)}))
+                     args))]
+    (throw (js/Error.
+            (str op-label ": argument " (inc idx) " is " why "."
+                 (when-let [suggestion (and (mesh-arg? (nth args idx))
+                                            (mesh-space-equivalent op-label))]
+                   (str " To work in mesh space instead, use " suggestion ".")))))))
+
 ;; ── SDF boolean operations ──────────────────────────────────────
 
 (defn- variadic-args
@@ -255,6 +303,7 @@ need the Rust backend — make sure the desktop app's geometry server is running
    Anchors merged: first-wins on name collision."
   [first-arg & more]
   (let [nodes (variadic-args first-arg more)]
+    (check-sdf-nodes! "sdf-union" nodes)
     (case (count nodes)
       0 nil
       1 (first nodes)
@@ -267,6 +316,7 @@ need the Rust backend — make sure the desktop app's geometry server is running
    Anchors come from the minuend (first arg)."
   [first-arg & more]
   (let [nodes (variadic-args first-arg more)]
+    (check-sdf-nodes! "sdf-difference" nodes)
     (case (count nodes)
       0 nil
       1 (first nodes)
@@ -279,6 +329,7 @@ need the Rust backend — make sure the desktop app's geometry server is running
    Anchors merged: first-wins on name collision."
   [first-arg & more]
   (let [nodes (variadic-args first-arg more)]
+    (check-sdf-nodes! "sdf-intersection" nodes)
     (case (count nodes)
       0 nil
       1 (first nodes)
@@ -290,6 +341,7 @@ need the Rust backend — make sure the desktop app's geometry server is running
 ;; ── SDF-only operations ─────────────────────────────────────────
 
 (defn sdf-blend [a b k]
+  (check-sdf-nodes! "sdf-blend" [a b])
   (-> {:op "blend" :a a :b b :k k} (merge-meta a b)))
 
 (defn sdf-blend-difference
@@ -298,21 +350,26 @@ need the Rust backend — make sure the desktop app's geometry server is running
    typical Ridley scenes); higher k → wider, smoother concavity.
    Anchors come from the minuend (a)."
   [a b k]
+  (check-sdf-nodes! "sdf-blend-difference" [a b])
   (-> {:op "blend-difference" :a a :b b :k k} (inherit-meta a)))
 
 (defn sdf-shell [a thickness]
+  (check-sdf-nodes! "sdf-shell" [a])
   (-> {:op "shell" :a a :thickness thickness} (inherit-meta a)))
 
 (defn sdf-offset [a amount]
+  (check-sdf-nodes! "sdf-offset" [a])
   (-> {:op "offset" :a a :amount amount} (inherit-meta a)))
 
 (defn sdf-morph [a b t]
+  (check-sdf-nodes! "sdf-morph" [a b])
   (-> {:op "morph" :a a :b b :t t} (merge-meta a b)))
 
 (defn sdf-displace
   "Displace an SDF surface by a spatial formula.
    The formula is a quoted expression using x, y, z."
   [node formula-expr]
+  (check-sdf-nodes! "sdf-displace" [node])
   (-> {:op "binary" :fn_name "add" :a node :b (compile-expr formula-expr)}
       (inherit-meta node)))
 
