@@ -6,7 +6,9 @@ Pagina di orientamento, fuori numerazione (come about-ridley).
 Origine: manual-redesign-plan §3.0 (mappa per fasi di lavoro, mai
 pubblicata prima) + decisione 2026-06-10 sui percorsi di lettura.
 
-- La mappa riproduce §3.0 del piano, senza il cap. 18 (non esiste ancora).
+- La mappa riproduce §3.0 del piano. Il cap. 18 (Acquisire e sostituire) c'è
+  dal 2026-07-16, come fase "Acquisire" propria. Resta fuori il cap. 19
+  (Estendere Ridley), che non esiste ancora.
 - I cinque percorsi sono la risposta al problema "a chi è rivolto il
   manuale": invece di un lettore unico, cinque itinerari dichiarati.
   Il quinto (il primo nell'ordine della pagina) è il curioso che deve
@@ -56,9 +58,11 @@ Curare         13. Testo
                14. Colore e materiali
 
 Concludere     17. Esportare e stampare
+
+Acquisire      18. Acquisire e sostituire
 ```
 
-La mappa si legge così: i capitoli "Materia prima" descrivono i dati con cui Ridley lavora (forme 2D, percorsi, mesh), quelli "Costruire" le tecniche che trasformano quei dati in solidi, e via via fino all'export. I numeri non seguono le fasi perché la sequenza didattica è un'altra cosa: per esempio il cap. 2 (primitive) viene prima del 3 (forme 2D) perché è più gratificante costruire subito qualcosa di solido, anche se concettualmente le forme 2D sono materia prima.
+La mappa si legge così: i capitoli "Materia prima" descrivono i dati con cui Ridley lavora (forme 2D, percorsi, mesh), quelli "Costruire" le tecniche che trasformano quei dati in solidi, e via via fino all'export. "Acquisire" sta in fondo perché è l'unica fase che non parte da zero: è il flusso per chi ha già l'oggetto davanti e vuole rifarlo in Ridley, e presuppone quasi tutte le altre. I numeri non seguono le fasi perché la sequenza didattica è un'altra cosa: per esempio il cap. 2 (primitive) viene prima del 3 (forme 2D) perché è più gratificante costruire subito qualcosa di solido, anche se concettualmente le forme 2D sono materia prima.
 
 ## Cinque lettori, cinque percorsi
 

@@ -132,7 +132,7 @@ Nel modello attuale di `content.cljs` esiste già `:no-run true`. Resta: lo shor
 
 ## 3. Sommario delle Guide
 
-18 capitoli più una galleria con destino aperto.
+19 capitoli più una galleria con destino aperto.
 
 ### 3.0 Visione d'insieme
 
@@ -164,7 +164,9 @@ Curare         13. Testo
 
 Concludere     17. Esportare e stampare
 
-Estendere      18. Estendere Ridley
+Acquisire      18. Acquisire e sostituire
+
+Estendere      19. Estendere Ridley
 ```
 
 I numeri dei capitoli non rispecchiano l'ordine narrativo dello schema, perché la numerazione segue la *didattica progressiva* (es. cap. 2 viene prima di cap. 3 perché didatticamente è utile mostrare le primitive prima delle forme 2D). Lo schema concettuale e la sequenza didattica convivono.
@@ -333,13 +335,21 @@ Guide tematiche
     17.1 STL
     17.2 3MF multi-materiale
 
-18. Estendere Ridley                                (espansione differita)
-    18.1 Scrivere shape-fn personalizzate
-    18.2 Scrivere thickness-fn personalizzate
-    18.3 Funzioni geometriche di alto livello
-    18.4 Manipolazione programmatica di percorsi
-    18.5 Pattern Clojure avanzati per la modellazione
-    18.6 Il sistema librerie sotto il cofano (modello SCI, namespace, limiti,
+18. Acquisire e sostituire
+    18.1 La falsariga
+    18.2 Importare
+    18.3 Smontare: edit-mesh-split
+    18.4 Dai tagli ai pezzi
+    18.5 Costruire e confrontare: mesh-board
+    18.6 La caduta dell'impalcatura
+
+19. Estendere Ridley                                (espansione differita)
+    19.1 Scrivere shape-fn personalizzate
+    19.2 Scrivere thickness-fn personalizzate
+    19.3 Funzioni geometriche di alto livello
+    19.4 Manipolazione programmatica di percorsi
+    19.5 Pattern Clojure avanzati per la modellazione
+    19.6 Il sistema librerie sotto il cofano (modello SCI, namespace, limiti,
          differenze col Clojure "vero", scope globale)
 
 Galleria (decisione differita: probabilmente assorbita come case-study)
@@ -352,12 +362,13 @@ Galleria (decisione differita: probabilmente assorbita come case-study)
 - **Capitolo 3 "Lavorare con le forme 2D"** apre con una sezione motivazionale (3.1) che mostra il ciclo shape→extrude, così il lettore capisce a cosa servono le shape prima di imparare a costruirle. `stamp` è introdotto nella 3.2 come strumento di visualizzazione, non in una sezione dedicata. La 3.4 è la sezione concettuale ("una shape è un valore nel piano locale della tartaruga, non un'entità ancorata a un piano"). La 3.7 è la mappa completa dei consumatori, non un cenno. La guida `defining-2d-profiles.md` è assorbita nelle sezioni 3.3-3.4.
 - **Capitolo 4 "Estrusione"** include revolve (4.8) e chaining (4.9: extrude+, revolve+, transform->), non previsti nel piano originale. Revolve è stato spostato qui perché è concettualmente un'operazione generativa parallela a extrude. Chaining è la sua estensione naturale per geometrie multi-segmento. Nota: l'asse di revolve è up della tartaruga (Spec corretta il 2026-05-20, era sbagliata). `loft+` non è ancora implementata (Roadmap §1.5).
 - **Capitolo 5 "Path: registrare il movimento"** presenta i path come cittadino di prima classe, parallelo alle shape del cap. 3. Il lettore arriva dopo aver visto path inline in `extrude` (cap. 4) e scopre che quei comandi possono essere registrati come dato. La 5.8 include `with-path`/`goto`/`path-to` come consumatori di path (pattern path-driven assembly). Questa è anche la sede della dualità path↔shape (sezione 5.7).
-- **Capitolo 6 "Da funzioni matematiche a forme"** è il blocco shape-fn. Include `thickness-fn` come cenno con rimando agli Internals (18.2) per chi vuole scriverne di proprie. Vedi §6.
+- **Capitolo 6 "Da funzioni matematiche a forme"** è il blocco shape-fn. Include `thickness-fn` come cenno con rimando agli Internals (19.2) per chi vuole scriverne di proprie. Vedi §6.
 - **Capitolo 7 "Mesh"** sezione 7.4: `inset-face` e `scale-face` rimossi (non esistono come binding SCI). Restano `attach-face` e `clone-face`.
-- **Capitolo 9 "Workspaces e Librerie"** raccoglie due cose: i Workspace (i documenti su cui lavori, sezione 9.1) e il sistema librerie (9.2-9.6). La parte librerie copre l'uso pratico: attivazione, librerie built-in, creazione, condivisione. I Workspace ricordano l'elenco delle librerie attive: l'integrazione è documentata in 9.1 e 9.3. I dettagli tecnici (modello SCI, namespace, limiti, differenze col Clojure "vero") vanno nel cap. 18 "Estendere Ridley" (§18.6) o nelle Internals della Reference, non nel cap. 9.
+- **Capitolo 9 "Workspaces e Librerie"** raccoglie due cose: i Workspace (i documenti su cui lavori, sezione 9.1) e il sistema librerie (9.2-9.6). La parte librerie copre l'uso pratico: attivazione, librerie built-in, creazione, condivisione. I Workspace ricordano l'elenco delle librerie attive: l'integrazione è documentata in 9.1 e 9.3. I dettagli tecnici (modello SCI, namespace, limiti, differenze col Clojure "vero") vanno nel cap. 19 "Estendere Ridley" (§19.6) o nelle Internals della Reference, non nel cap. 9.
 - **Capitolo 10 "Analizzare e misurare"** (ex cap. 9) riconosce l'analisi come fase di lavoro autonoma, parallela a modellare/assemblare/esportare. Raccoglie misurazione (distance, bounds, ruler), identificazione di facce (find-faces come concetto autonomo, non solo helper di chamfer), diagnostica mesh, AI describe (cenno; AI tenuta sotto tono finché non maturerà), XR (cenno con rimando).
 - **Capitolo 15 "Mettere a fuoco e risolvere i problemi"** (ex cap. 14) è il vecchio "Debug" alleggerito: si occupa di debug attivo (pannelli, tweak, tecniche), e rimanda al cap. 10 per misurazione e ispezione (che hanno trovato casa propria).
-- **Capitolo 18 "Estendere Ridley"** (ex cap. 17) ha priorità più bassa: il primo giro di scrittura del manuale può lasciarlo come segnaposto e svilupparlo dopo. Aggiunta sezione 18.6 per i dettagli tecnici del sistema librerie.
+- **Capitolo 18 "Acquisire e sostituire"** (aggiunto 2026-07-16) copre il flusso che parte da un oggetto che esiste già: importare la mesh, smontarla con `edit-mesh-split`, ricostruire i pezzi come nativi confrontandoli con `mesh-board`, e infine togliere l'impalcatura. È l'unico capitolo che nasce da una famiglia di funzionalità costruita dopo la stesura del piano; ha preso il numero 18, che era riservato a "Estendere Ridley" (mai scritto), facendolo slittare a 19. Vedi §14.5.
+- **Capitolo 19 "Estendere Ridley"** (ex cap. 18, ex cap. 17) ha priorità più bassa: il primo giro di scrittura del manuale può lasciarlo come segnaposto e svilupparlo dopo. Aggiunta sezione 19.6 per i dettagli tecnici del sistema librerie.
 
 ### 3.3 Guide esistenti da integrare
 
@@ -769,7 +780,7 @@ I nove punti di §10 sono stati chiusi o rinviati. Sintesi:
 Decisioni di pianificazione ancora aperte, non bloccanti per il brief B:
 
 - **Sorte definitiva della galleria attuale**: decisione dopo la stesura delle Guide.
-- **Capitolo 16 "Estendere Ridley"**: espansione differita; primo giro di scrittura come segnaposto.
+- **Capitolo 19 "Estendere Ridley"**: espansione differita; primo giro di scrittura come segnaposto.
 - **Pagina "Idiomi di Ridley"**: pensiero futuro, da rivalutare quando il manuale è più maturo. Raccoglierebbe pattern trasversali (collection inputs, naming caveats, regolarità ricorrenti). Potrebbe vivere come pagina di sintesi nel cap. 14 o come capitolo a sé.
 
 ### 11.1 Note di disambiguazione editoriale
@@ -967,13 +978,13 @@ Task identificati ma non ancora pianificati. Da promuovere in "Da fare" quando c
 - Cap. 3-17 delle Guide narrative: **stesura completata** (2026-06-02), rivista dall'autore. Resta solo rifinitura.
 - Schede Reference: il grosso è stato scritto da Code a blocchi per categoria (vedi storico). `goto`, `look-at` e `turtle-state` esistono già. Resta da scrivere la scheda Internals panoramica "Naming patterns in scene mutation". Rifiniture rinviabili, fuori dalla v1.
 - Rifiniture draft (fuori dalla v1): pulizia nomi italiani negli esempi 2.1/2.2; placeholder `[→ cap. N]` per `cp-*` in 2.6.
-- Cap. 18 "Estendere Ridley" (guida): il lato narrativo dell'Internals. Copre come estendere Ridley: sistema librerie, modello SCI, limiti dei namespace, differenze da Clojure reale. Parcheggiato. Si accoppia alla sezione Internals della Reference (l'una insegna, l'altra cataloga). Da affrontare con il metodo interview-then-write, perché parte di quel codice ha avuto stesura vibe-coded con poca visibilità diretta.
+- Cap. 19 "Estendere Ridley" (guida): il lato narrativo dell'Internals. Copre come estendere Ridley: sistema librerie, modello SCI, limiti dei namespace, differenze da Clojure reale. Parcheggiato. Si accoppia alla sezione Internals della Reference (l'una insegna, l'altra cataloga). Da affrontare con il metodo interview-then-write, perché parte di quel codice ha avuto stesura vibe-coded con poca visibilità diretta.
 - Guide tematiche: "Superfici parallele" come prima. Parcheggiate fuori dalla v1.
 - Galleria di progetti: parcheggiata fuori dalla v1; il codice dei sei esempi è preservato in `docs/examples/gallery/` perché sopravviva allo switch. Decisione se unirla alle guide tematiche rimandata.
 - Traduzione: **priorità all'inglese completo** = guide IT→EN (le schede sono già in EN, quindi tradotte le guide il lato inglese è chiuso). La versione italiana delle schede (EN→IT, 259 schede) è a **bassissima priorità, forse non si fa affatto** (decisione 2026-06): il fallback bilingue mostra già le schede EN agli utenti IT. Glossario come primo passo, a prosa congelata. Metodo asimmetrico: le guide a mano capitolo per capitolo con revisione; le schede, se mai, un batch separato guidato dal glossario.
 - Brief C per Code (search contestuale CodeMirror): confluisce in T-009 (fast-follow), dopo lo switch della v1.
 - Auto-link dei simboli Clojure core (`map`, `let`, ecc.) nei backtick: l'auto-linker (T-010) opera solo sul `reference-index`. Aggiungere le chiavi di `clojure-core-index` al set li renderebbe cliccabili. Opzione, da valutare se utile.
-- **Sezione Internals della Reference ("capitolo internals")**: scrivere le schede dei ~62 simboli B classificati in T-001/T-008 e raccolti in Spec §18 (9 sotto-sezioni). Oggi la sezione Internals del browser è nascosta perché senza schede (residuo di T-007). Blocco di lavoro sostanzioso, da pianificare a batch come gli altri della Reference; la prima scheda è quella panoramica qui sotto. Si accoppia al cap. 18 delle guide ("Estendere Ridley"): stesso dominio, l'una cataloga i simboli, l'altra li insegna.
+- **Sezione Internals della Reference ("capitolo internals")**: scrivere le schede dei ~62 simboli B classificati in T-001/T-008 e raccolti in Spec §18 (9 sotto-sezioni). Oggi la sezione Internals del browser è nascosta perché senza schede (residuo di T-007). Blocco di lavoro sostanzioso, da pianificare a batch come gli altri della Reference; la prima scheda è quella panoramica qui sotto. Si accoppia al cap. 19 delle guide ("Estendere Ridley"): stesso dominio, l'una cataloga i simboli, l'altra li insegna.
 - **Scheda Internals "Naming patterns in scene mutation"**: scheda panoramica che documenta le regolarità emerse dall'audit T-001 (tutti i `register-X!` → Registry pattern, tutti i `get-X` di lookup → Registry/introspection, tutti i `show-X!`/`hide-X!` → Scene visibility, tutti gli `anim-*` → Animation API, tutti i `*-anchors*` → C/plumbing). Da scrivere come prima scheda della sezione Internals.
 
 ### 14.5 Quaderno delle decisioni emerse durante l'esecuzione
@@ -1087,6 +1098,8 @@ Annotazioni operative non previste nella pianificazione, prese durante la scritt
 - **2026-06-19 (cap. 5: sezione path-2d)** — *Chiuso il pendente del giorno: il rimando del ricalco (cap. 3) ora atterra su qualcosa di scritto.* Aggiunta la sottosezione `### path-2d` in coda a §5.7 «Path come embrioni di forma» (dopo `stroke-shape`; sottosezione `###` e non sezione `##`, per non rinumerare e non rompere il rimando a «5.8»): path planare `:species :2d` costruito con gli stessi comandi di `path` ma con `th`=`tv`=`tr` collassati, invariante `(follow-path P)` = `(stamp (path-to-shape P))`, flag `:closed`, non-breaking (i consumatori piani accettano entrambi, i rail tengono il 3D), ed `edit-path-2d` come pen tool con rimando al ricalco del cap. 3. Un esempio eseguibile (`path-2d-c-profile`, autosufficiente: path-2d → path-to-shape → extrude). Il limite di `path-to-shape` (ignora `tv`/`tr`), già spiegato nella stessa sezione, fa da gancio narrativo. IT+EN speculari; nota interna 5.7.1 aggiunta; `structure.cljs` e `manual_levels` invariati. Resta pendente solo il rimando all'indietro creation-pose ↔ `preserve-position?` (cap. 4 o 8) e, lato Code, il test di regressione del loft a due shape con la voce in `code-issues.md`.
 
 - **2026-06-19 (cap. 4: rimando all'indietro creation-pose ↔ preserve-position; thread ricalco chiuso)** — *Ultimo tassello del workflow di ricalco.* In §4.1 «Il concetto», dopo il paragrafo sul punto di ancoraggio della mesh estrusa, una frase collega quel punto alla presa su cui atterra `attach` e all'ancoraggio del profilo: di default sul primo vertice (la base), con `:preserve-position?` sul `[0 0]` inquadrato, rimando al cap. 3 «Dove atterra il profilo: l'ancoraggio». Tenuto in prosa ("punto di ancoraggio"/"presa"), senza introdurre il termine "creation-pose", che resta per la sua casa (attach/assemblaggio, cap. 8); il capitolo resta base, è un puntatore non un concetto nuovo. IT+EN speculari; nessun esempio o marker, `structure.cljs`/`manual_levels` invariati. **Con questo il thread del ricalco da foto è chiuso**: cap. 3 (ancoraggio + cenno ricalco), cap. 5 (`path-2d`), cap. 4 (rimando), convenzione rimandi a sezione registrata; verifica renderer dei due stamp dell'ancoraggio OK; lato Code fix loft a due shape, test di regressione e voce `code-issues.md` fatti. Resta aperta solo la bonifica dei rimandi a sezione negli altri capitoli, parcheggiata (da fare man mano che si toccano).
+
+- **2026-07-16 (cap. 18 "Acquisire e sostituire": il 18 cambia proprietario, "Estendere Ridley" slitta a 19)** — *Il primo capitolo che nasce da una famiglia di funzionalità costruita dopo la pianificazione, e la prima rinumerazione dovuta a un capitolo scritto anziché a uno spostato.* Il numero 18 era riservato dal piano a "Estendere Ridley", mai scritto e parcheggiato fuori dalla v1 fin dal 2026-06-02: il capitolo nuovo prende il 18, "Estendere Ridley" va al 19. Deciso con Vincenzo. Aggiornati: §3 (conteggio 18 → 19 capitoli), §3.0 (mappa: nuova fase **Acquisire** fra Concludere ed Estendere, scelta perché il capitolo è un flusso completo — importa, smonta, ricostruisci, togli l'impalcatura — e non un tipo di dato come gli altri di "Materia prima"), §3.1 (sommario: 18.1-18.6 nuove, 18.x di Estendere → 19.x), §3.2 (nota nuova per il 18, quella di Estendere rinumerata), §11 e §14.4 (rimandi forward-looking). **Non toccate le voci datate** di §13.1, §14.3 e dello Storico: dicono "cap. 18 = Estendere Ridley" perché era vero quando sono state scritte, e questa voce è la mappatura che le rende leggibili. Nota: §11 portava ancora "Capitolo 16 Estendere Ridley", residuo di due rinumerazioni fa (16 → 17 → 18) e già stale prima di oggi, allineato ora a 19. Lato codice: entry `:ch-18` in `structure.cljs` e rigenerazione di `manual_levels.cljs` (`bb scripts/build_manual_levels.bb` → `:ch-18 "advanced"`) — il badge di livello resta invisibile senza. Nessun intervento necessario per servire i .md: `npm run sync-manual` gira su `predev`/`prerelease`.
 
 ---
 

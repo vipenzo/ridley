@@ -824,3 +824,77 @@ Le booleane 3D (`mesh-union`, `mesh-difference`, `mesh-intersection`) producono 
 Non è una garanzia universale, ma è il primo tentativo che vale sempre la pena fare. Se la mesh ha problemi strutturali più seri (buchi veri, geometria sovrapposta), servono strategie diverse, da valutare caso per caso: intervenire a monte sulla costruzione, o ricostruire la geometria della zona problematica.
 
 `mesh-diagnose` resta lo strumento di triage. Se dopo `merge-vertices` la mesh è ancora non-manifold, guarda `:open-edges` e `:non-manifold-edges` nella diagnosi: ti dicono se il problema sono buchi (open) o giunzioni anomale (non-manifold), e da lì scegli la strada giusta.
+
+## 7.8 Decomporre una mesh: mesh-split
+
+Le sezioni del 7.5 tornano dal 3D al 2D. `mesh-split` resta invece nel 3D: taglia una mesh con uno o più piani e ti restituisce i pezzi, tutti solidi, tutti mesh a pieno titolo. Il caso d'uso tipico è una mesh monolitica che arriva da fuori (un STL scaricato, un pezzo esportato da un altro CAD) e che vuoi smontare nelle sue parti logiche per lavorarle una a una.
+
+### Un taglio, due pezzi
+
+Nella forma più semplice, il piano di taglio è la posa corrente della tartaruga: la posizione è un punto sul piano, l'heading è la normale.
+
+```clojure
+(def halves (mesh-split my-mesh))
+;; => {:behind <mesh> :ahead <mesh>}
+```
+
+`:behind` è la metà che sta dietro l'heading, dal lato del materiale, la stessa convenzione di `sdf-half-space` e di `extrude` (dopo un'estrusione la tartaruga è sulla faccia lontana, col materiale alle spalle). `:ahead` è l'altra metà. Una delle due può essere una mesh vuota se il piano manca il pezzo: è un risultato legittimo, non un errore.
+
+### Più tagli: un path con i mark
+
+Per tagliare più volte in una passata si usa un path con dei `mark`: ogni mark è un piano di taglio, nell'ordine in cui compare nel percorso.
+
+```clojure
+(def AA (mesh-split mount
+          (path (tv 90) (f -1.62) (mark :cut-1) (f -5) (mark :cut-2))
+          [:cut-1 :cut-2]))
+```
+
+Il path è risolto dalla posa corrente della tartaruga. Il terzo argomento seleziona quali mark tagliano (senza di esso tagliano tutti). Il risultato è un composito annidato: `:behind` è il pezzo staccato al primo taglio, `:ahead` contiene a sua volta `{:behind ... :ahead ...}` per i tagli successivi, fino al resto finale.
+
+### Dal composito ai pezzi: split-tree e split-parts
+
+Il composito annidato è scomodo da usare direttamente. Due funzioni lo appiattiscono:
+
+```clojure
+(def AAs (split-tree AA))
+;; => {:piece-1 <mesh> :piece-2 <mesh> :piece-3 <mesh>}
+
+(split-parts AA)
+;; => [<mesh> <mesh> <mesh>]
+```
+
+`split-tree` dà una mappa con nomi `:piece-N` in ordine di taglio, `split-parts` un vettore. Da lì i pezzi si usano come qualunque mesh:
+
+```clojure
+(register base  (AAs :piece-1))
+(register prong (attach (AAs :piece-2) (rt 30)))
+```
+
+### Ramificare: tagliare un pezzo staccato
+
+I tagli di un path formano una catena: ogni taglio lavora sul resto del precedente. Se invece vuoi ritagliare un pezzo già staccato, il terzo argomento diventa una mappa da mark a sotto-percorso:
+
+```clojure
+(mesh-split mount
+  (path (tv 90) (f -10) (mark :cut-1) (f -20) (mark :cut-2))
+  {:cut-1 (path (f 5) (mark :cut-1-1))   ; il pezzo staccato a :cut-1 viene ritagliato
+   :cut-2 nil})                           ; :cut-2 taglia e basta
+```
+
+I mark tagliano sempre nell'ordine del path (mai nell'ordine delle chiavi della mappa). Il sotto-percorso è risolto dalla posa del mark a cui è attaccato, non dalla tartaruga: il suo frame naturale è il piano di taglio che ha staccato il pezzo. Un sotto-spec può essere `nil` (il mark taglia e basta), un path (il pezzo staccato viene tagliato a tutti i suoi mark), o `[path spec]` per ramificare ancora. `split-tree` e `split-parts` attraversano anche i rami, in ordine depth-first.
+
+### Componenti sconnesse: mesh-components
+
+Un taglio può lasciare in una metà più parti sconnesse fra loro (pensa a una U tagliata alla base: restano i due rebbi). `mesh-split` non le separa, perché separarle non è un taglio: è `mesh-components`, che decompone una mesh nelle sue componenti connesse:
+
+```clojure
+(def prongs (mesh-components (AAs :piece-2)))
+;; => [<mesh> <mesh>]   in ordine deterministico: volume decrescente
+```
+
+### L'editor interattivo
+
+Trovare a mano gli offset giusti dei piani è il lavoro più tedioso di tutti. `edit-mesh-split` apre una sessione interattiva sul viewport: muovi il piano con tastiera o gizmo, il profilo di sezione ti mostra gradini e strozzature candidate, Enter accetta un pezzo e prosegue sul resto. Alla chiusura l'editor emette la chiamata `mesh-split` corrispondente nel sorgente, in una forma che puoi ri-editare riaggiungendo `edit-` davanti.
+
+Il flusso completo di acquisizione, dallo smontaggio di un STL al confronto con i pezzi sostitutivi via `mesh-board`, è il tema del capitolo 18.

@@ -824,3 +824,77 @@ Shells with openings (`:lattice`, `:voronoi`, `:checkerboard`, or thickness-fns 
 It is not a universal guarantee, but it is the first attempt always worth making. If the mesh has more serious structural problems (real holes, overlapping geometry), different strategies are needed, judged case by case: intervening upstream in the construction, or rebuilding the geometry of the problem area.
 
 `mesh-diagnose` remains the triage tool. If after `merge-vertices` the mesh is still non-manifold, look at `:open-edges` and `:non-manifold-edges` in the diagnosis: they tell you whether the problem is holes (open) or anomalous junctions (non-manifold), and from there you choose the right path.
+
+## 7.8 Decomposing a mesh: mesh-split
+
+The sections of 7.5 go from 3D back to 2D. `mesh-split` stays in 3D instead: it cuts a mesh with one or more planes and gives you the pieces, all solid, all full-fledged meshes. The typical use case is a monolithic mesh coming from outside (a downloaded STL, a part exported from another CAD) that you want to take apart into its logical parts to work on one at a time.
+
+### One cut, two pieces
+
+In the simplest form, the cut plane is the turtle's current pose: the position is a point on the plane, the heading is the normal.
+
+```clojure
+(def halves (mesh-split my-mesh))
+;; => {:behind <mesh> :ahead <mesh>}
+```
+
+`:behind` is the half behind the heading, on the material side, the same convention as `sdf-half-space` and `extrude` (after an extrusion the turtle sits on the far face with the material at its back). `:ahead` is the other half. Either one may be an empty mesh if the plane misses the piece: a legitimate result, not an error.
+
+### Multiple cuts: a path with marks
+
+To cut several times in one pass you use a path with `mark`s: each mark is a cut plane, in the order it appears along the path.
+
+```clojure
+(def AA (mesh-split mount
+          (path (tv 90) (f -1.62) (mark :cut-1) (f -5) (mark :cut-2))
+          [:cut-1 :cut-2]))
+```
+
+The path is resolved from the turtle's current pose. The third argument selects which marks cut (without it, all of them do). The result is a nested composite: `:behind` is the piece detached at the first cut, `:ahead` in turn contains `{:behind ... :ahead ...}` for the following cuts, down to the final remainder.
+
+### From the composite to the pieces: split-tree and split-parts
+
+The nested composite is awkward to use directly. Two functions flatten it:
+
+```clojure
+(def AAs (split-tree AA))
+;; => {:piece-1 <mesh> :piece-2 <mesh> :piece-3 <mesh>}
+
+(split-parts AA)
+;; => [<mesh> <mesh> <mesh>]
+```
+
+`split-tree` gives a map with `:piece-N` names in cut order, `split-parts` a vector. From there the pieces are used like any mesh:
+
+```clojure
+(register base  (AAs :piece-1))
+(register prong (attach (AAs :piece-2) (rt 30)))
+```
+
+### Branching: cutting a detached piece
+
+The cuts of a path form a chain: each cut works on the remainder of the previous one. If instead you want to further cut a piece that has already been detached, the third argument becomes a map from mark to sub-path:
+
+```clojure
+(mesh-split mount
+  (path (tv 90) (f -10) (mark :cut-1) (f -20) (mark :cut-2))
+  {:cut-1 (path (f 5) (mark :cut-1-1))   ; the piece detached at :cut-1 gets cut further
+   :cut-2 nil})                           ; :cut-2 just cuts
+```
+
+Marks always cut in path order (never in the map's key order). The sub-path is resolved from the pose of the mark it hangs on, not from the turtle: its natural frame is the cut plane that detached the piece. A sub-spec can be `nil` (the mark just cuts), a path (the detached piece is cut at all of its marks), or `[path spec]` to branch again. `split-tree` and `split-parts` walk the branches too, depth-first.
+
+### Disconnected components: mesh-components
+
+A cut can leave more than one disconnected part in a half (think of a U cut at its base: the two prongs remain). `mesh-split` does not separate them, because separating is not a cut: that is `mesh-components`, which decomposes a mesh into its connected components:
+
+```clojure
+(def prongs (mesh-components (AAs :piece-2)))
+;; => [<mesh> <mesh>]   in deterministic order: decreasing volume
+```
+
+### The interactive editor
+
+Finding the right plane offsets by hand is the most tedious part of the job. `edit-mesh-split` opens an interactive session on the viewport: you move the plane with keyboard or gizmo, the section profile shows you candidate steps and necks, Enter accepts a piece and moves on to the rest. On closing, the editor emits the corresponding `mesh-split` call into the source, in a form you can re-edit by putting `edit-` back in front.
+
+The complete acquisition workflow, from taking an STL apart to comparing replacement pieces via `mesh-board`, is the subject of chapter 18.

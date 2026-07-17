@@ -106,7 +106,10 @@
     :title {:it "16. Clojure per Ridley" :en "16. Clojure for Ridley"}}
    {:id :ch-17 :slug "esportare-e-stampare"         :order 17 :file "17-esportare-e-stampare.md"
     :langs #{:it :en}
-    :title {:it "17. Esportare e stampare" :en "17. Exporting and printing"}}])
+    :title {:it "17. Esportare e stampare" :en "17. Exporting and printing"}}
+   {:id :ch-18 :slug "acquisire-e-sostituire"       :order 18 :file "18-acquisire-e-sostituire.md"
+    :langs #{:it :en}
+    :title {:it "18. Acquisire e sostituire" :en "18. Acquiring and replacing"}}])
 
 ;; ── Reference taxonomy ────────────────────────────────────────
 ;;

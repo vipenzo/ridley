@@ -24,4 +24,5 @@
    :ch-14 "base"
    :ch-15 "intermediate"
    :ch-16 "base"
-   :ch-17 "base"})
+   :ch-17 "base"
+   :ch-18 "advanced"})
