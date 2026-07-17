@@ -928,7 +928,7 @@
    (let [ridley-mesh (sdf/ensure-mesh ridley-mesh)]
      (if (empty? (:faces ridley-mesh))
        true
-       (when-let [r (mirror-ratio ridley-mesh normal point)]
+       (when-let [^number r (mirror-ratio ridley-mesh normal point)]
          (<= r epsilon))))))
 
 (defn mirror-difference-ratio
@@ -957,7 +957,7 @@
    (let [ridley-mesh (sdf/ensure-mesh ridley-mesh)]
      (->> (symmetry/candidate-planes ridley-mesh)
           (keep (fn [{:keys [heading position] :as pose}]
-                  (when-let [r (mirror-ratio ridley-mesh heading position)]
+                  (when-let [^number r (mirror-ratio ridley-mesh heading position)]
                     (when (<= r epsilon) (assoc pose :symmetry-ratio r)))))
           (sort-by :symmetry-ratio)
           vec))))

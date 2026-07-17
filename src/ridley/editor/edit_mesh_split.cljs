@@ -727,11 +727,13 @@
                         (when (and @session (= cur (current-id)))
                           ;; capture the RATIO (not just a boolean) so the badge can
                           ;; show HOW symmetric — exact vs 'quasi' (Vincenzo's ask).
-                          (let [r (manifold/mirror-difference-ratio
-                                   (piece-mesh cur) (:heading pose) (:position pose))
-                                ok? (and (number? r) (<= r mirror-confirm-epsilon))]
-                            (swap! session assoc :mirror-confirmed? ok?
-                                   :mirror-ratio (when ok? r) :mirror-pending? false)
+                          (let [ratio (when-let [^number r (manifold/mirror-difference-ratio
+                                                            (piece-mesh cur) (:heading pose) (:position pose))]
+                                        ;; nil = degenerate/failed, js/Infinity = gate rejected;
+                                        ;; both fall out here as "not confirmed".
+                                        (when (<= r mirror-confirm-epsilon) r))]
+                            (swap! session assoc :mirror-confirmed? (some? ratio)
+                                   :mirror-ratio ratio :mirror-pending? false)
                             (update-panel-display!))))
                       0))
                    mirror-debounce-ms)]
