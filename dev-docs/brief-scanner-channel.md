@@ -1,5 +1,16 @@
 # Brief: canale scanner/fotogrammetria
 
+> **Revisione 2026-07-16 (sera)**: aggiunta la **Fase 4** (ricostruzione locale
+> via Object Capture di macOS; COLMAP come fallback cross-platform e per la
+> guida di copertura) e la visione companion app iOS. Fasi 0-3 invariate.
+>
+> **Riprioritizzazione 2026-07-16 (tarda sera)**: Vincenzo dà priorità
+> all'**acquisizione parametrica interattiva**
+> (`dev-docs/acquisizione-parametrica-design.md`) rispetto alle Fasi 3-4 di
+> questo brief. La Fase 1 (import OBJ) resta in coda a costo basso: serve al
+> canale denso già praticabile via KIRI/PhotoCatch. Remesh e ricostruzione
+> locale slittano dietro il nuovo design.
+
 ## Contesto
 
 Decisione di Vincenzo (2026-07-16): aprire il canale scanner previsto da
@@ -58,6 +69,22 @@ Oggetto: piccolo lettore di SD card appoggiato sullo schienale di una poltrona.
 
 ## Fase 1 — Loader OBJ (prima) e PLY (poi)
 
+> **FATTO per l'OBJ, 2026-07-18** (PLY resta "quando capita"). Implementato:
+> `ridley.library.obj/parse-obj` (parser puro) e `ridley.library.mesh-import`
+> con `import-obj` + `import-mesh` (dispatch sull'estensione), bindings SCI,
+> reference cards + Spec.md + guida 18 aggiornate, 9 test in
+> `test/ridley/library/obj_test.cljs`. Verificato end-to-end nel browser
+> (parser, import da path, `:recenter`, creation-pose, e la forma
+> `(import-mesh …)` attraverso SCI) su un OBJ con quad, indici `v/vt/vn`,
+> gruppi multipli e un `mtllib` **inesistente** — che infatti non è un errore.
+>
+> Non fatto, e deliberatamente: **la procedura di import della libreria**
+> (base64 inlining) non è stata estesa all'OBJ, perché è esattamente il punto
+> che il brief lascia aperto qui sotto — una scansione inlined produce
+> sorgenti da decine di MB. Serve la decisione sulla soglia prima di
+> cablarla. Oggi l'OBJ entra solo per path, che per le scansioni è comunque
+> la via giusta.
+
 **Riprioritizzata dalla Fase 0: l'OBJ è il formato che KIRI free consegna
 davvero — è il prerequisito di tutto il canale.**
 
@@ -113,13 +140,58 @@ La Fase 3 parte solo dopo la Fase 0: se le scansioni KIRI arrivassero
 sistematicamente watertight (improbabile ma possibile: alcune app chiudono via
 Poisson), il remesh scala di priorità.
 
+## Fase 4 — Ricostruzione locale (esplorativa, gated su Fase 0-3)
+
+Obiettivo: eliminare la dipendenza dall'app/server di terzi — foto in una
+cartella, mesh fuori, tutto locale. Direzione scelta (Vincenzo, 2026-07-16).
+
+### 4.1 — Motore: Object Capture di macOS
+
+Su Mac la via nativa batte la pipeline open source: l'API `PhotogrammetrySession`
+(RealityKit) usa GPU e Neural Engine di Apple Silicon, produce mesh di qualità
+commerciale in locale, esporta USDZ/OBJ, zero licenze (è il sistema operativo).
+
+- Integrazione: piccolo helper Swift a riga di comando (Apple pubblica
+  l'esempio `HelloPhotogrammetry`), invocato dal backend Tauri come sidecar —
+  stesso pattern del geo_server. Ridley orchestra: cartella foto → helper →
+  OBJ → import (Fase 1) → calibrazione (Fase 2).
+- Limite: macOS-only. Fallback cross-platform, se mai servirà: COLMAP
+  (BSD) + OpenMVS (AGPL, invocazione a processo separato) su CPU — lenta ma
+  funzionante. Non si costruisce finché non c'è domanda.
+- **Accertamento preliminare (Vincenzo, costo ~zero)**: stesse foto del
+  lettore SD dentro un'app Mac basata su Object Capture (o l'esempio Apple
+  compilato) → confronto qualità con la mesh KIRI. Se il nativo vince, la
+  fase si finanzia da sola.
+
+### 4.2 — Guida di copertura nel viewport
+
+Il valore aggiunto che nessuna app gratuita dà: dopo una pass di sparse
+reconstruction (veloce anche su CPU — COLMAP/glomap, o le pose intermedie di
+PhotogrammetrySession), Ridley mostra nel viewport nuvola sparsa + pose delle
+camere e colora le zone a bassa copertura: "servono foto qui, da questa
+angolazione". Loop: scatti col telefono → AirDrop nella cartella → ri-pass →
+mappa aggiornata. Il viewport è l'organo giusto ed esiste già; il lavoro è la
+metrica di copertura e il rendering delle pose camera.
+
+### 4.3 — Visione: companion app iOS (fuori scope, nel radar)
+
+`ObjectCaptureSession` su iPhone fa la cattura guidata con overlay AR
+(copertura in tempo reale, on-device) e consegnerebbe foto o mesh direttamente
+a Ridley. A Vincenzo l'idea piace molto. È un altro ordine di ambizione
+(app iOS, distribuzione, pairing col desktop): NON parte di questo brief, ma
+le scelte delle fasi 1-4 non devono precluderla — in particolare l'import
+(Fase 1) deve poter ricevere ciò che quella sessione produce (USDZ→OBJ, PLY).
+
 ## Fuori scope (esplicito)
 
 - Nuvole di punti (vedi Contesto).
 - Texture e colore per-vertice: il canale porta geometria; il colore delle
   scansioni è un tema separato (eventuale futuro brief, aggancio al sistema
   materiali del cap. 14).
-- Registrazione multi-scansione, LiDAR, repair chirurgico dei buchi.
+- Registrazione multi-scansione, repair chirurgico dei buchi.
+- LiDAR come sensore diretto (resta dentro solo dove lo usa Apple, sotto
+  Object Capture / ObjectCaptureSession).
+- La companion app iOS (visione 4.3: nel radar, non in questo brief).
 
 ## Documentazione da aggiornare
 
