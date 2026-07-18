@@ -14,7 +14,7 @@ There is a way of working that the previous chapters do not cover: starting from
 
 The workflow has four moments: importing the mesh, taking it apart into its logical pieces, building the replacements while comparing them against the reference, and finally letting the scaffolding fall. This chapter walks through them in order.
 
-Today the input channel is the mesh via STL; scanner acquisition (PLY, repair, scale calibration) is anticipated by the design but not yet implemented.
+Today the input channel is the mesh via STL or OBJ; the rest of scanner acquisition (PLY, hole repair, scale calibration) is anticipated by the design but not yet implemented.
 
 ## 18.2 Importing
 
@@ -35,6 +35,14 @@ The scriptable alternative is `import-stl`, which reads the file from disk (desk
 ```
 
 Unlike the library entry, the geometry is not embedded in the source: the program only references the path. Useful when the STL cannot be redistributed, or when it is large and you do not want to bloat the source.
+
+The format need not be STL. `import-obj` reads a Wavefront OBJ (the format photogrammetry apps export most often), and `import-mesh` picks the parser from the extension itself, so there is only one name to remember:
+
+```clojure
+(def scan (import-mesh "/path/to/scan.obj" :recenter true))
+```
+
+Only geometry is read from an OBJ: texture coordinates, normals and materials (`.mtl`) are ignored. This is deliberate, and it is why **an OBJ without its `.mtl` alongside imports without error**: the materials are never consulted. Faces with more than three vertices are fan-triangulated.
 
 Either way, from here `mount` is a mesh like any other: you can measure it (ch. 10), section it (ch. 7.5), diagnose it (ch. 7.7). But it is a monolithic block: thousands of triangles with no structure. The first step is giving it one.
 

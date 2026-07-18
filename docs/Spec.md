@@ -2048,6 +2048,19 @@ You normally do not call `decode-mesh` directly — it appears in the autogenera
 
 Unlike `decode-mesh`, `import-stl` does not embed the geometry in the script — it only references the path. This keeps a `.clj` model shareable even when the STL itself may not be redistributed (the recipient re-downloads it from the original source). For a fully self-contained model, import through the library panel, which emits a base64-inlined `decode-mesh` form instead.
 
+```clojure
+;; Read a Wavefront OBJ from disk by path (desktop only)
+(import-obj "/path/to/scan.obj")
+
+;; Read any supported mesh file, choosing the parser by extension
+(import-mesh "/path/to/scan.obj")
+(import-mesh "/path/to/model.stl" :recenter true)
+```
+
+`import-obj` reads a Wavefront OBJ and returns a mesh. Only geometry is read: `v` lines become vertices and `f` lines become faces, while texture coordinates (`vt`), normals (`vn`), materials (`mtllib` / `usemtl`), groups (`o` / `g`) and smoothing (`s`) are skipped. **An OBJ whose `.mtl` or texture files are missing therefore imports without error** — materials are never consulted. Faces with more than three vertices are fan-triangulated. Because OBJ is already an indexed format, no vertex welding pass is needed.
+
+`import-mesh` is the single entry point: it dispatches on the file extension (`.stl` or `.obj`) and takes the same options. An unsupported extension raises a readable error naming the formats that are supported. All three importers share the same `:recenter` semantics and the same desktop-only restriction.
+
 ---
 
 ## 8. Faces

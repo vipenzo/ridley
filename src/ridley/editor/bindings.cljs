@@ -35,6 +35,7 @@
             [ridley.geometry.warp :as warp]
             [ridley.library.svg :as svg]
             [ridley.library.stl :as stl-import]
+            [ridley.library.mesh-import :as mesh-import]
             [ridley.voronoi.core :as voronoi]
             [ridley.sdf.core :as sdf]
             [ridley.editor.transforms :as transforms]
@@ -718,8 +719,10 @@
    'svg-shapes      svg/svg-shapes
    ;; STL import (decode base64-encoded mesh data)
    'decode-mesh     stl-import/decode-mesh
-   ;; STL import from a file path (desktop only — geometry stays external)
+   ;; Mesh import from a file path (desktop only — geometry stays external)
    'import-stl      stl-import/import-stl
+   'import-obj      mesh-import/import-obj
+   'import-mesh     mesh-import/import-mesh
    ;; Audio feedback settings (accessibility)
    'audio-feedback?      settings/audio-feedback?
    'set-audio-feedback!  settings/set-audio-feedback!

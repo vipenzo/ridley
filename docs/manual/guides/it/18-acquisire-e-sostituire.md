@@ -6,8 +6,11 @@ Convenzioni accertate per il capitolo 18 (2026-07-16):
 - Il flusso documentato è quello reale del working tree: edit-mesh-split
   (senza gesto separa), emissione nuda con spec ad albero, split-tree/split-parts,
   mesh-components come DSL manuale, mesh-board con viste inset (brief-mesh-board-views).
-- Il canale scanner/PLY è previsto dal design (mesh-board-design.md, canali e profili
-  di qualità) ma NON implementato: la guida lo dice in una riga e non oltre.
+- Import mesh: STL e OBJ (import-obj / import-mesh, Fase 1 del canale scanner,
+  2026-07-18). Dell'OBJ si legge solo la geometria; .mtl mancante non è errore.
+- Il resto del canale scanner (PLY, riparazione buchi, calibrazione scala) è previsto
+  dal design (mesh-board-design.md, canali e profili di qualità) ma NON implementato:
+  la guida lo dice in una riga e non oltre.
 - Drag/zoom delle finestrelle (iterazione 2 del brief viste) non documentati finché
   non stabili.
 - Il numero 18 era riservato a "Estendere Ridley" (mai scritto): slittato a 19,
@@ -25,7 +28,7 @@ C'è un modo di lavorare che i capitoli precedenti non coprono: partire da un og
 
 Il flusso ha quattro momenti: importare la mesh, smontarla nei suoi pezzi logici, costruire i sostituti confrontandoli col riferimento, e infine far cadere l'impalcatura. Questo capitolo li percorre in ordine.
 
-Oggi il canale d'ingresso è la mesh via STL; l'acquisizione da scanner (PLY, riparazione, calibrazione di scala) è prevista dal design ma non ancora implementata.
+Oggi il canale d'ingresso è la mesh via STL o OBJ; il resto dell'acquisizione da scanner (PLY, riparazione dei buchi, calibrazione di scala) è previsto dal design ma non ancora implementato.
 
 ## 18.2 Importare
 
@@ -46,6 +49,14 @@ L'alternativa scriptabile è `import-stl`, che legge il file da disco (solo desk
 ```
 
 A differenza della entry di libreria, la geometria non è incorporata nel sorgente: il programma riferisce solo il path. Utile quando l'STL non è ridistribuibile, o quando è grande e non vuoi gonfiare il sorgente.
+
+Il formato non è per forza STL. `import-obj` legge un Wavefront OBJ — il formato che le app di fotogrammetria esportano più spesso — e `import-mesh` sceglie da sé il parser dall'estensione, così c'è un nome solo da ricordare:
+
+```clojure
+(def scan (import-mesh "/path/to/scan.obj" :recenter true))
+```
+
+Dell'OBJ si legge solo la geometria: coordinate texture, normali e materiali (`.mtl`) vengono ignorati. Questo è deliberato, ed è il motivo per cui **un OBJ senza il suo `.mtl` a fianco importa senza errori** — i materiali non vengono mai consultati. Le facce con più di tre vertici vengono triangolate a ventaglio.
 
 In entrambi i casi, da qui `mount` è una mesh come le altre: puoi misurarla (cap. 10), farne sezioni (cap. 7.5), diagnosticarla (cap. 7.7). Ma è un blocco monolitico: migliaia di triangoli senza struttura. Il primo passo è dargliela.
 

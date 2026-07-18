@@ -258,32 +258,36 @@
 
 (def ^:private geo-server-url "http://127.0.0.1:12321")
 
-(defn- read-file-bytes-sync
+(defn read-file-bytes-sync
   "Synchronously read a file from disk via the desktop geo_server, returning an
    ArrayBuffer. Uses a synchronous XHR with the text/x-user-defined charset so
    raw bytes survive (synchronous XHR cannot set responseType to 'arraybuffer').
-   Throws with a readable message when the server is unreachable or the read fails."
-  [path]
-  (let [xhr (js/XMLHttpRequest.)]
-    (try
-      (.open xhr "POST" (str geo-server-url "/read-file") false)
-      (.setRequestHeader xhr "X-File-Path" path)
-      (.overrideMimeType xhr "text/plain; charset=x-user-defined")
-      (.send xhr "")
-      (catch :default _
-        (throw (js/Error. (str "import-stl: desktop file server unavailable"
-                               " (this feature is desktop-only). Path: " path)))))
-    (if (= 200 (.-status xhr))
-      (let [text (.-responseText xhr)
-            len (.-length text)
-            bytes (js/Uint8Array. len)]
-        (dotimes [i len]
-          (aset bytes i (bit-and (.charCodeAt text i) 0xff)))
-        (.-buffer bytes))
-      (throw (js/Error. (str "import-stl: could not read " path
-                             " (HTTP " (.-status xhr) ")"))))))
+   Throws with a readable message when the server is unreachable or the read fails.
 
-(defn- parsed->mesh
+   `label` names the caller in error messages (import-stl, import-obj, ...) so
+   the user is told which function failed, not merely that a read failed."
+  ([path] (read-file-bytes-sync path "import-stl"))
+  ([path label]
+   (let [xhr (js/XMLHttpRequest.)]
+     (try
+       (.open xhr "POST" (str geo-server-url "/read-file") false)
+       (.setRequestHeader xhr "X-File-Path" path)
+       (.overrideMimeType xhr "text/plain; charset=x-user-defined")
+       (.send xhr "")
+       (catch :default _
+         (throw (js/Error. (str label ": desktop file server unavailable"
+                                " (this feature is desktop-only). Path: " path)))))
+     (if (= 200 (.-status xhr))
+       (let [text (.-responseText xhr)
+             len (.-length text)
+             bytes (js/Uint8Array. len)]
+         (dotimes [i len]
+           (aset bytes i (bit-and (.charCodeAt text i) 0xff)))
+         (.-buffer bytes))
+       (throw (js/Error. (str label ": could not read " path
+                              " (HTTP " (.-status xhr) ")")))))))
+
+(defn parsed->mesh
   "Wrap a parsed {:vertices :faces} into a Ridley mesh whose creation-pose sits
    at the bbox center of the geometry (so pose stays anchored when later moved).
    When `recenter` is true, translate the geometry so its bbox center lands at

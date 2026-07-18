@@ -840,6 +840,24 @@
     :description "Build a rectangular **tracing board** carrying a reference photo, ready to trace over with `edit-path-2d`. It is a convenience wrapper over `set-image` on a `preserve-position?` rectangle: unlike a bare `(set-image (rect …) …)`, the board keeps the **turtle fixed at `[0 0]`**, so stamping it places the rect relative to the turtle by `[orx ory]` and leaves the turtle exactly on the point that will become the extruded mesh's **creation pose** — typically a point *off* the contour you trace."
     :path "docs/manual/reference/en/image-board.md"}
 
+   "import-mesh"
+   {:name "import-mesh"
+    :category "mesh-operations"
+    :status "stable"
+    :since ""
+    :signature "(import-mesh path)\n(import-mesh path :recenter true)"
+    :description "Read a mesh file from disk, choosing the parser from the file extension. **Desktop only** — the read goes through the desktop file server; in the web build the call throws."
+    :path "docs/manual/reference/en/import-mesh.md"}
+
+   "import-obj"
+   {:name "import-obj"
+    :category "mesh-operations"
+    :status "stable"
+    :since ""
+    :signature "(import-obj path)\n(import-obj path :recenter true)"
+    :description "Read a Wavefront OBJ file from disk and return a Ridley mesh. **Desktop only** — the read goes through the desktop file server; in the web build the call throws."
+    :path "docs/manual/reference/en/import-obj.md"}
+
    "import-stl"
    {:name "import-stl"
     :category "mesh-operations"
