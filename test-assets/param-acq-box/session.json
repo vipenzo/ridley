@@ -1,0 +1,72 @@
+{
+ "dir": "test-assets/param-acq-box",
+ "photos": [
+  [
+   "IMG_8894.jpeg",
+   0
+  ],
+  [
+   "IMG_8895.jpeg",
+   -10
+  ],
+  [
+   "IMG_8896.jpeg",
+   -20
+  ],
+  [
+   "IMG_8897.jpeg",
+   -30
+  ],
+  [
+   "IMG_8898.jpeg",
+   -40
+  ],
+  [
+   "IMG_8899.jpeg",
+   -50
+  ],
+  [
+   "IMG_8900.jpeg",
+   -60
+  ],
+  [
+   "IMG_8901.jpeg",
+   -70
+  ],
+  [
+   "IMG_8902.jpeg",
+   -80
+  ],
+  [
+   "IMG_8903.jpeg",
+   -90
+  ],
+  [
+   "IMG_8904.jpeg",
+   -135
+  ],
+  [
+   "IMG_8905.jpeg",
+   180
+  ],
+  [
+   "IMG_8906.jpeg",
+   90
+  ],
+  [
+   "IMG_8907.jpeg",
+   45
+  ]
+ ],
+ "bootstrap": [
+  "IMG_8894.jpeg",
+  "IMG_8897.jpeg",
+  "IMG_8900.jpeg",
+  "IMG_8903.jpeg"
+ ],
+ "caliper": {
+  "x": 60,
+  "y": 20,
+  "z": 40
+ }
+}

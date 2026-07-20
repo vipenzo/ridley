@@ -1,0 +1,35 @@
+{
+ "dir": "test-assets/param-acq-box-tape",
+ "photos": [
+  [
+   "IMG_8908.jpeg",
+   0
+  ],
+  [
+   "IMG_8909.jpeg",
+   30
+  ],
+  [
+   "IMG_8910.jpeg",
+   60
+  ],
+  [
+   "IMG_8911.jpeg",
+   90
+  ],
+  [
+   "IMG_8912.jpeg",
+   180
+  ],
+  [
+   "IMG_8913.jpeg",
+   270
+  ]
+ ],
+ "bootstrap": [],
+ "caliper": {
+  "x": 60.2,
+  "y": 20.2,
+  "z": 40.1
+ }
+}

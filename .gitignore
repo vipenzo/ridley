@@ -38,3 +38,9 @@ manual-output/
 
 # Local-only announcement / release drafts
 announcements/
+
+# Parametric-acquisition photo sessions: the source jpegs are large (~74MB total)
+# and NOT needed by the test suite (it is synthetic). They only serve to re-run
+# the real-photo gates. Keep the text derivatives (NOTE.md, session.json,
+# picks.edn, predictions.json) tracked; keep the images local.
+test-assets/param-acq*/*.jpeg
