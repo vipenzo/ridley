@@ -161,13 +161,18 @@ MAI CLI in parallelo al watcher (corrompe `:app`). Esegui `node out/test.js`.
    schema di controllo camera + foto incollata allo schermo. TrackballControls
    attuale ruota solo attorno al target. Non ancora iniziato.
 
-## Stato git — TUTTO NON COMMITTATO
+## Stato git — COMMITTATO 2026-07-20 (4 commit per-feature su main)
 
-Working tree con molto lavoro non committato (7+ file nuovi, diversi
-modificati). Whenever Vincenzo vuole, si può raggruppare in commit costruibili
-per-feature (import-obj è già committato in `62c3691`; il resto no). NON è
-stato committato di proposito. `CLAUDE.md` risulta modificato ma NON da questo
-lavoro.
+Il canale è stato raggruppato in 4 commit costruibili (suite 710 verde):
 
-Import OBJ (canale scanner Fase 1) è già a posto e committato — separato da
-questo arco.
+- `d996f70` feat: match-flow solver + paq CLI (+ box_fit/synth/turntable_fit,
+  build `:paq`, 4 file di test)
+- `859fb6d` feat: tool di click (`scripts/param-acq-tool.html`) + example
+- `eae3309` docs: design accertamenti + questo handover
+- `ce66e31` chore: derivati testuali delle 3 sessioni foto; **i jpeg (~74MB) sono
+  gitignored** (`test-assets/param-acq*/*.jpeg`) — il suite è sintetico e non li
+  legge, servono solo a rieseguire i gate sulle foto vere, e restano sul disco
+  di Vincenzo.
+
+`CLAUDE.md` risulta modificato ma NON da questo lavoro — lasciato fuori dai
+commit. Import OBJ (canale scanner Fase 1) era già committato a parte (`62c3691`).
