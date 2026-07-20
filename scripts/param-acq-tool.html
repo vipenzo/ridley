@@ -1,0 +1,514 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Ridley — estrazione spigoli (acquisizione parametrica)</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+         background:#1b1b1f; color:#e8e8ea; display:flex; height:100vh; overflow:hidden; }
+  #side { width:320px; flex:none; padding:12px; overflow-y:auto; border-right:1px solid #33343a;
+          display:flex; flex-direction:column; gap:9px; }
+  #stage { flex:1; position:relative; overflow:hidden; background:#0e0e11; }
+  canvas#cv { position:absolute; inset:0; cursor:crosshair; }
+  #loupe { position:absolute; width:180px; height:180px; border:1px solid #55565e; border-radius:50%;
+           pointer-events:none; display:none; box-shadow:0 4px 18px #000a; z-index:5; }
+  h1 { font-size:13px; margin:0; letter-spacing:.02em; }
+  .muted { color:#9a9aa2; font-size:11.5px; }
+  .hint { background:#23242a; border-left:2px solid #4a7fd0; padding:6px 8px; border-radius:0 4px 4px 0;
+          font-size:11.5px; color:#c9c9d0; }
+  select, button, textarea { font:inherit; background:#26272d; color:#e8e8ea;
+      border:1px solid #3a3b42; border-radius:5px; padding:5px 7px; width:100%; }
+  button { cursor:pointer; }
+  button:hover { background:#31323a; }
+  button.primary { background:#2f5fa8; border-color:#3a6fbf; }
+  button.primary:hover { background:#3a6fbf; }
+  .row { display:flex; gap:6px; }
+  .grp { display:flex; gap:5px; }
+  .grp button { flex:1; }
+  .grp button.on { background:#2f5fa8; border-color:#3a6fbf; }
+  #list { border:1px solid #33343a; border-radius:5px; max-height:200px; overflow-y:auto; }
+  .it { padding:4px 7px; border-bottom:1px solid #2a2b31; display:flex; justify-content:space-between; }
+  .it .n { color:#9a9aa2; }
+  textarea { height:110px; font-family:ui-monospace,Menlo,monospace; font-size:11px; }
+  kbd { background:#2a2b31; border:1px solid #3a3b42; border-radius:3px; padding:0 4px; font-size:11px; }
+  .ok { color:#7fd18d; } .warn { color:#e8b45a; } .bad { color:#e87f7f; }
+</style>
+
+<div id="side">
+  <h1>Estrazione spigoli</h1>
+
+  <label class="muted">Foto</label>
+  <select id="img"></select>
+  <div class="muted" id="theta"></div>
+
+  <label class="muted">Gruppo da cliccare</label>
+  <div class="grp">
+    <button data-g="vertical" class="on">verticali</button>
+    <button data-g="top">alto</button>
+    <button data-g="bottom">basso</button>
+  </div>
+  <div class="hint" id="hint"></div>
+
+  <div id="list"></div>
+
+  <label class="muted">Punti di registrazione — clic singolo</label>
+  <div class="grp" id="markbtns"></div>
+  <div class="muted" id="markhint">stesso punto fisico in più foto (es. gli angoli
+    del piano superiore). Non entrano nel fit: misurano se le camere concordano.</div>
+
+  <div class="row">
+    <button id="undo">Annulla ultimo</button>
+    <button id="clearg">Svuota gruppo</button>
+  </div>
+  <div class="row">
+    <button id="snap">Snap gradienti (s)</button>
+    <button id="snapall">Snap tutti</button>
+  </div>
+
+  <label class="muted">Proposte del solver</label>
+  <div class="row">
+    <button id="loadpred">Carica predictions.json</button>
+    <button id="togglepred">Mostra/nascondi</button>
+  </div>
+  <button id="accept">Accetta proposte → click (questa foto)</button>
+  <div class="muted" id="predinfo">nessuna proposta caricata</div>
+
+  <button class="primary" id="export">Esporta EDN (tutte le foto)</button>
+  <textarea id="out" spellcheck="false" placeholder="l'EDN compare qui — salvalo in test-assets/param-acq/picks.edn"></textarea>
+
+  <div class="muted">
+    <kbd>rotella</kbd> zoom · <kbd>trascina destro</kbd> pan · <kbd>click</kbd> punto ·
+    <kbd>u</kbd> annulla · <kbd>s</kbd> snap · <kbd>1/2/3</kbd> gruppo
+  </div>
+  <div class="muted" id="status"></div>
+</div>
+
+<div id="stage">
+  <canvas id="cv"></canvas>
+  <canvas id="loupe" width="180" height="180"></canvas>
+</div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Session data — angles from test-assets/param-acq/NOTE.md
+
+// The session comes from <dir>/session.json (written by `paq --init-session`),
+// selected with ?s=<dir>. Falling back to the first session's hardcoded list
+// keeps the original data openable without a session.json beside it.
+const SESSION = new URLSearchParams(location.search).get("s") || "param-acq";
+const BASE = "/test-assets/" + SESSION + "/";
+let PHOTOS = [
+  ["IMG_8880.jpeg",    0], ["IMG_8881.jpeg",  -10], ["IMG_8882.jpeg",  -20],
+  ["IMG_8883.jpeg",  -30], ["IMG_8884.jpeg",  -40], ["IMG_8885.jpeg",  -50],
+  ["IMG_8886.jpeg",  -60], ["IMG_8887.jpeg",  -70], ["IMG_8888.jpeg",  -80],
+  ["IMG_8889.jpeg",  -90], ["IMG_8890.jpeg", -130], ["IMG_8891.jpeg",  180],
+  ["IMG_8892.jpeg",   90], ["IMG_8893.jpeg",   45],
+];
+let BOOTSTRAP = new Set(["IMG_8880.jpeg","IMG_8883.jpeg","IMG_8886.jpeg","IMG_8889.jpeg"]);
+
+// Fiducial pockets of examples/param-acq-target.clj. Each is at a different
+// place on its face, so seeing one identifies the face — and they are never
+// fed to the fit, which is what makes them an independent check.
+// Marks are ANY point you can recognise as the same physical point across
+// photos — a printed fiducial, a blemish, or simply a corner. They never
+// enter the fit. The registration number is how well the views AGREE about
+// where that point is once triangulated with the estimated cameras, so it
+// needs no ground truth and is untouched by whether the dimensions are right.
+// The four top corners are the easiest choice on a bare box.
+const MARK_IDS = ["m1","m2","m3","m4","m5","m6"];
+const MARK_HELP = {
+  "m1":"stesso punto fisico in tutte le foto in cui si vede",
+  "m2":"es. gli angoli della faccia superiore, in ordine fisso",
+  "m3":"", "m4":"", "m5":"", "m6":"",
+};
+
+// The ordering rule per group. Verticals sort left-to-right, which is stable.
+// Horizontal edges do NOT: the top face is a quadrilateral whose edge
+// midpoints swap x-order under a few degrees of yaw, so those are clicked
+// cyclically starting from the nearest edge. This mirrors
+// ridley.photogrammetry.bootstrap/predicted-order exactly.
+const HINTS = {
+  vertical: "I 4 spigoli lunghi (su/giù). Cliccali <b>da sinistra a destra</b>. Ne vedi 2 o 3.",
+  top: "Il contorno della faccia <b>superiore</b>. Parti dallo spigolo <b>più vicino a te</b> (il più in basso nell'immagine) e gira in <b>senso orario</b>.",
+  bottom: "Il contorno della faccia <b>inferiore</b>, dove tocca il piatto. Stessa regola: dal più vicino, in senso orario.",
+};
+const GROUPS = ["vertical","top","bottom"];
+
+const picks = {};   // picks[photo][group] = [{p1,p2}, ...] in click order
+const marks = {};   // marks[photo] = [{id, px:[x,y]}]
+function initPicks(){
+  PHOTOS.forEach(([f]) => { picks[f] = {vertical:[], top:[], bottom:[]}; marks[f] = []; });
+}
+initPicks();
+
+let curMark = null; // when set, a click drops a fiducial instead of an edge point
+let cur = PHOTOS[0][0], curG = "vertical", pending = null;
+let img = null, view = {s:1,x:0,y:0}, pix = null;
+let predictions = null, showPred = true;
+
+const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+const loupe = document.getElementById("loupe"), lctx = loupe.getContext("2d");
+const status = document.getElementById("status");
+
+// ---------------------------------------------------------------------------
+// Loading
+
+function fit() {
+  cv.width = cv.parentNode.clientWidth; cv.height = cv.parentNode.clientHeight;
+  if (!img) return;
+  const s = Math.min(cv.width/img.width, cv.height/img.height);
+  view = {s, x:(cv.width-img.width*s)/2, y:(cv.height-img.height*s)/2};
+}
+
+function load(name) {
+  cur = name; pending = null;
+  const im = new Image();
+  im.onload = () => {
+    img = im; fit();
+    const c = document.createElement("canvas");
+    c.width = im.width; c.height = im.height;
+    const cc = c.getContext("2d",{willReadFrequently:true});
+    cc.drawImage(im,0,0);
+    pix = cc.getImageData(0,0,im.width,im.height);
+    draw(); renderList();
+  };
+  im.onerror = () => status.textContent = "ERRORE nel caricare "+name;
+  im.src = BASE + name;
+  const th = PHOTOS.find(p=>p[0]===name)[1];
+  document.getElementById("theta").textContent =
+    `θ = ${th}°` + (BOOTSTRAP.has(name) ? "  ·  foto di bootstrap" : "");
+}
+
+// ---------------------------------------------------------------------------
+// Pixel access + gradient snapping
+
+function lum(x,y){
+  x=Math.round(x); y=Math.round(y);
+  if(!pix||x<0||y<0||x>=pix.width||y>=pix.height) return null;
+  const o=(y*pix.width+x)*4;
+  return 0.299*pix.data[o]+0.587*pix.data[o+1]+0.114*pix.data[o+2];
+}
+
+function crossPeak(cx,cy,nx,ny,H){
+  const g=[];
+  for(let t=-H;t<=H;t++){
+    const a=lum(cx+nx*(t-1),cy+ny*(t-1)), b=lum(cx+nx*(t+1),cy+ny*(t+1));
+    g.push(a===null||b===null?0:Math.abs(b-a));
+  }
+  let k=0; for(let i=1;i<g.length;i++) if(g[i]>g[k]) k=i;
+  if(k===0||k===g.length-1||g[k]<6) return null;
+  const d=(g[k-1]-g[k+1])/(2*(g[k-1]-2*g[k]+g[k+1])||1e-9);
+  return {t:(k-H)+d, strength:g[k]};
+}
+
+function snapLine(p1,p2,H=14,N=40){
+  const dx=p2[0]-p1[0], dy=p2[1]-p1[1], L=Math.hypot(dx,dy);
+  if(L<5) return null;
+  const ux=dx/L, uy=dy/L, nx=-uy, ny=ux, pts=[];
+  for(let i=0;i<N;i++){
+    const f=i/(N-1), cx=p1[0]+dx*f, cy=p1[1]+dy*f;
+    const pk=crossPeak(cx,cy,nx,ny,H);
+    if(pk) pts.push([cx+nx*pk.t, cy+ny*pk.t]);
+  }
+  if(pts.length < Math.max(8,N*0.3)) return null;
+  let sx=0,sy=0; pts.forEach(p=>{sx+=p[0];sy+=p[1];});
+  const mx=sx/pts.length, my=sy/pts.length;
+  let sxx=0,syy=0,sxy=0;
+  pts.forEach(p=>{const a=p[0]-mx,b=p[1]-my; sxx+=a*a; syy+=b*b; sxy+=a*b;});
+  const th=0.5*Math.atan2(2*sxy,sxx-syy), vx=Math.cos(th), vy=Math.sin(th);
+  let rr=0; pts.forEach(p=>{const r=(p[0]-mx)*(-vy)+(p[1]-my)*vx; rr+=r*r;});
+  const half=L/2;
+  return {p1:[mx-vx*half,my-vy*half], p2:[mx+vx*half,my+vy*half],
+          n:pts.length, rms:Math.sqrt(rr/pts.length)};
+}
+
+// ---------------------------------------------------------------------------
+// Drawing
+
+const GCOL = {vertical:"#ffd24a", top:"#4ad2a0", bottom:"#d28cff"};
+
+function toScreen(p){ return [p[0]*view.s+view.x, p[1]*view.s+view.y]; }
+function toImage(sx,sy){ return [(sx-view.x)/view.s, (sy-view.y)/view.s]; }
+
+function drawLine(a,b,col,width,alpha,label){
+  const A=toScreen(a), B=toScreen(b);
+  const dx=B[0]-A[0], dy=B[1]-A[1], L=Math.hypot(dx,dy)||1;
+  const ex=dx/L*4000, ey=dy/L*4000;
+  ctx.strokeStyle=col; ctx.lineWidth=width;
+  ctx.globalAlpha=alpha*0.5;
+  ctx.beginPath(); ctx.moveTo(A[0]-ex,A[1]-ey); ctx.lineTo(B[0]+ex,B[1]+ey); ctx.stroke();
+  ctx.globalAlpha=alpha;
+  ctx.beginPath(); ctx.moveTo(A[0],A[1]); ctx.lineTo(B[0],B[1]); ctx.stroke();
+  ctx.fillStyle=col;
+  [A,B].forEach(p=>{ctx.beginPath(); ctx.arc(p[0],p[1],3.2,0,7); ctx.fill();});
+  if(label){ ctx.font="12px sans-serif"; ctx.fillText(label, B[0]+6, B[1]-6); }
+  ctx.globalAlpha=1;
+}
+
+function draw(){
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.fillStyle="#0e0e11"; ctx.fillRect(0,0,cv.width,cv.height);
+  if(!img) return;
+  ctx.imageSmoothingEnabled = view.s<1;
+  ctx.drawImage(img, view.x, view.y, img.width*view.s, img.height*view.s);
+
+  // solver proposals underneath, dashed
+  if(predictions && showPred){
+    const v = predictions.views.find(v=>v.image===cur);
+    if(v){
+      ctx.setLineDash([7,5]);
+      v.edges.forEach(e=>drawLine(e.p1,e.p2,GCOL[e.group]||"#888",1.4,0.55,"#"+e.edge));
+      ctx.setLineDash([]);
+    }
+  }
+
+  // the operator's own clicks, solid
+  GROUPS.forEach(g=>{
+    (picks[cur][g]||[]).forEach((seg,i)=>{
+      drawLine(seg.p1, seg.p2, GCOL[g], g===curG?2.2:1.4, g===curG?1:0.6, String(i+1));
+    });
+  });
+
+  // fiducial marks
+  (marks[cur]||[]).forEach(m=>{
+    const a=toScreen(m.px);
+    ctx.strokeStyle="#5ad0ff"; ctx.lineWidth=1.6;
+    ctx.beginPath(); ctx.arc(a[0],a[1],7,0,7); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(a[0]-11,a[1]); ctx.lineTo(a[0]+11,a[1]);
+    ctx.moveTo(a[0],a[1]-11); ctx.lineTo(a[0],a[1]+11); ctx.stroke();
+    ctx.fillStyle="#5ad0ff"; ctx.font="12px sans-serif";
+    ctx.fillText(m.id, a[0]+13, a[1]-6);
+  });
+
+  if(pending){
+    const a=toScreen(pending);
+    ctx.strokeStyle="#ff6b6b"; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(a[0],a[1],5,0,7); ctx.stroke();
+  }
+}
+
+function drawLoupe(sx,sy){
+  if(!img) return;
+  const [ix,iy]=toImage(sx,sy), Z=8, R=180;
+  loupe.style.display="block";
+  loupe.style.left=(sx+22)+"px"; loupe.style.top=(sy-R-12)+"px";
+  lctx.setTransform(1,0,0,1,0,0);
+  lctx.fillStyle="#000"; lctx.fillRect(0,0,R,R);
+  lctx.imageSmoothingEnabled=false;
+  lctx.drawImage(img, ix-R/(2*Z), iy-R/(2*Z), R/Z, R/Z, 0,0,R,R);
+  lctx.strokeStyle="#ff6b6b"; lctx.lineWidth=1;
+  lctx.beginPath(); lctx.moveTo(R/2,0); lctx.lineTo(R/2,R);
+  lctx.moveTo(0,R/2); lctx.lineTo(R,R/2); lctx.stroke();
+}
+
+// ---------------------------------------------------------------------------
+// UI
+
+function renderMarkButtons(){
+  const el=document.getElementById("markbtns"); el.innerHTML="";
+  MARK_IDS.forEach(id=>{
+    const b=document.createElement("button");
+    const has=(marks[cur]||[]).some(m=>m.id===id);
+    b.textContent=(has?"● ":"○ ")+id;
+    b.className = (curMark===id ? "on" : "");
+    b.title = MARK_HELP[id];
+    b.onclick=()=>{ curMark = (curMark===id ? null : id); pending=null;
+                    document.getElementById("markhint").textContent =
+                      curMark ? ("clicca " + curMark + " — lo STESSO punto fisico"
+                                 + " che hai usato nelle altre foto")
+                              : "stesso punto fisico in più foto. Non entrano nel fit.";
+                    renderList(); draw(); };
+    el.appendChild(b);
+  });
+}
+
+function renderList(){
+  document.getElementById("hint").innerHTML = HINTS[curG];
+  renderMarkButtons();
+  const el=document.getElementById("list"); el.innerHTML="";
+  GROUPS.forEach(g=>{
+    const n=(picks[cur][g]||[]).length;
+    const d=document.createElement("div");
+    d.className="it";
+    d.innerHTML=`<span style="color:${GCOL[g]}">${g}</span><span class="n">${n} spigoli</span>`;
+    el.appendChild(d);
+  });
+  const tot=Object.values(picks).reduce((a,p)=>a+GROUPS.reduce((b,g)=>b+(p[g]||[]).length,0),0);
+  // Name exactly what is missing. "incompleto" on its own sends the operator
+  // hunting through fourteen photos for a gap the tool already knows about.
+  const gaps=[];
+  [...BOOTSTRAP].forEach(f=>{
+    const P=picks[f];
+    if(!P){ gaps.push(`${f}: nessun click`); return; }
+    const empty=GROUPS.filter(g=>(P[g]||[]).length===0);
+    if(empty.length) gaps.push(`${f.replace(/\.jpe?g$/i,"")}: manca ${empty.join(", ")}`);
+  });
+  status.innerHTML = `${tot} spigoli in totale · bootstrap ` +
+    (gaps.length
+      ? `<span class="warn">incompleto</span><br>` +
+        gaps.map(g=>`&nbsp;&nbsp;• ${g}`).join("<br>")
+      : `<span class="ok">pronto</span>`);
+}
+
+document.getElementById("img").onchange=(e)=>load(e.target.value);
+
+document.querySelectorAll(".grp button").forEach(b=>{
+  b.onclick=()=>{
+    curG=b.dataset.g; pending=null;
+    document.querySelectorAll(".grp button").forEach(x=>x.classList.toggle("on",x===b));
+    renderList(); draw();
+  };
+});
+
+cv.addEventListener("mousedown",ev=>{
+  if(ev.button!==0) return;
+  const r=cv.getBoundingClientRect();
+  const p=toImage(ev.clientX-r.left, ev.clientY-r.top);
+  if(curMark){
+    marks[cur]=marks[cur].filter(m=>m.id!==curMark);
+    marks[cur].push({id:curMark, px:p});
+    curMark=null; renderList(); draw(); return;
+  }
+  if(!pending) pending=p;
+  else { picks[cur][curG].push({p1:pending,p2:p}); pending=null; renderList(); }
+  draw();
+});
+cv.addEventListener("contextmenu",e=>e.preventDefault());
+cv.addEventListener("mousemove",ev=>{
+  const r=cv.getBoundingClientRect();
+  const sx=ev.clientX-r.left, sy=ev.clientY-r.top;
+  if(ev.buttons&2){ view.x+=ev.movementX; view.y+=ev.movementY; draw(); }
+  drawLoupe(sx,sy);
+});
+cv.addEventListener("mouseleave",()=>loupe.style.display="none");
+cv.addEventListener("wheel",ev=>{
+  ev.preventDefault();
+  const r=cv.getBoundingClientRect();
+  const sx=ev.clientX-r.left, sy=ev.clientY-r.top;
+  const [ix,iy]=toImage(sx,sy);
+  view.s=Math.max(0.05,Math.min(40,view.s*Math.exp(-ev.deltaY*0.0015)));
+  view.x=sx-ix*view.s; view.y=sy-iy*view.s;
+  draw();
+},{passive:false});
+
+function doSnap(all){
+  const list = all ? GROUPS.flatMap(g=>picks[cur][g]) : picks[cur][curG].slice(-1);
+  let ok=0, worst=0;
+  list.forEach(seg=>{
+    const s=snapLine(seg.p1,seg.p2);
+    if(s){ seg.p1=s.p1; seg.p2=s.p2; ok++; worst=Math.max(worst,s.rms); }
+  });
+  status.innerHTML = ok
+    ? `snap su ${ok}/${list.length}, residuo peggiore ${worst.toFixed(2)} px ` +
+      (worst<1?`<span class="ok">ottimo</span>`:worst<2.5?`<span class="warn">accettabile</span>`
+                                                        :`<span class="bad">rifai: tratto sbagliato</span>`)
+    : `<span class="bad">snap fallito: gradiente debole o incoerente</span>`;
+  draw();
+}
+
+document.getElementById("undo").onclick=()=>{
+  if(pending) pending=null; else picks[cur][curG].pop();
+  renderList(); draw();
+};
+document.getElementById("clearg").onclick=()=>{
+  picks[cur][curG]=[]; pending=null; renderList(); draw();
+};
+document.getElementById("snap").onclick=()=>doSnap(false);
+document.getElementById("snapall").onclick=()=>doSnap(true);
+document.getElementById("togglepred").onclick=()=>{ showPred=!showPred; draw(); };
+// Turn the solver's proposals for THIS photo into clicks, grouped, so a
+// predicted photo becomes editable picks in one action. The operator then
+// nudges only the edges that drifted and snaps, instead of clicking from
+// scratch. Correspondence is still re-decided by the matcher on the exported
+// clicks — accepting a proposal is a labour-saver, not a claim of truth.
+document.getElementById("accept").onclick=()=>{
+  if(!predictions){ status.textContent="carica prima predictions.json"; return; }
+  const v=predictions.views.find(v=>v.image===cur);
+  if(!v||!v.edges.length){ status.textContent="nessuna proposta per questa foto"; return; }
+  GROUPS.forEach(g=>picks[cur][g]=[]);
+  v.edges.forEach(e=>{
+    const g=e.group;
+    if(picks[cur][g]) picks[cur][g].push({p1:e.p1.slice(),p2:e.p2.slice()});
+  });
+  pending=null; renderList(); draw();
+  status.innerHTML=`proposte accettate: `+
+    GROUPS.map(g=>`${g}×${picks[cur][g].length}`).join(" ")+
+    ` — <span class="warn">ritocca dove serve</span>, poi <kbd>s</kbd> per lo snap`;
+};
+document.getElementById("loadpred").onclick=async()=>{
+  try{
+    const r=await fetch(BASE+"predictions.json?t="+Date.now());
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    predictions=await r.json();
+    document.getElementById("predinfo").innerHTML =
+      `<span class="ok">proposte caricate</span>: quote [` +
+      predictions.dims.map(d=>d.toFixed(2)).join(" ") + `] mm, reproiez. ` +
+      predictions.rmsPx.toFixed(2) + " px";
+    draw();
+  }catch(e){
+    document.getElementById("predinfo").innerHTML =
+      `<span class="bad">niente predictions.json</span> (${e.message})`;
+  }
+};
+
+addEventListener("keydown",ev=>{
+  if(ev.key==="u"){ if(pending) pending=null; else picks[cur][curG].pop(); renderList(); draw(); }
+  if(ev.key==="s") doSnap(false);
+  if(["1","2","3"].includes(ev.key)){
+    document.querySelectorAll(".grp button")[+ev.key-1].click();
+  }
+});
+
+function edn(){
+  const f=n=>Math.round(n*1000)/1000;
+  let s="{:photos\n [\n";
+  PHOTOS.forEach(([name,th])=>{
+    const P=picks[name];
+    if(GROUPS.every(g=>P[g].length===0)) return;
+    s+=`  {:image "${name}" :theta-deg ${th}\n   :picks {`;
+    s+=GROUPS.filter(g=>P[g].length).map(g=>
+      `:${g} [` + P[g].map(c=>`{:p1 [${f(c.p1[0])} ${f(c.p1[1])}] :p2 [${f(c.p2[0])} ${f(c.p2[1])}]}`).join("\n                ") + `]`
+    ).join("\n           ");
+    s+="}";
+    const M=marks[name]||[];
+    if(M.length) s+="\n   :marks [" +
+      M.map(m=>`{:id :${m.id} :px [${f(m.px[0])} ${f(m.px[1])}]}`).join("\n           ") + "]";
+    s+="}\n";
+  });
+  return s+" ]}\n";
+}
+document.getElementById("export").onclick=()=>{
+  const t=document.getElementById("out"); t.value=edn(); t.select();
+};
+
+window.__paq = { load, snapLine, lum, edn, get picks(){return picks;},
+                 get size(){return img?[img.width,img.height]:null;},
+                 profile(x0,y0,x1,y1,n=100){
+                   const o=[]; for(let i=0;i<n;i++){const f=i/(n-1);
+                     o.push(lum(x0+(x1-x0)*f, y0+(y1-y0)*f));} return o; } };
+
+function buildPhotoMenu(){
+  const s=document.getElementById("img"); s.innerHTML="";
+  PHOTOS.forEach(([f,t])=>{
+    const o=document.createElement("option");
+    o.value=f; o.textContent=`${f}  (θ=${t}°)`+(BOOTSTRAP.has(f)?"  ★":"");
+    s.appendChild(o);
+  });
+}
+
+async function boot(){
+  try{
+    const r=await fetch(BASE+"session.json?t="+Date.now());
+    if(r.ok){
+      const s=await r.json();
+      PHOTOS=s.photos; BOOTSTRAP=new Set(s.bootstrap||[]);
+      initPicks();
+      document.title = "Estrazione spigoli — " + SESSION;
+    }
+  }catch(e){ /* keep the built-in session-1 list */ }
+  buildPhotoMenu();
+  fit(); load(PHOTOS[0][0]); renderList();
+}
+boot();
+addEventListener("resize",()=>{fit();draw();});
+</script>
