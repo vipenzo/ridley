@@ -84,6 +84,57 @@ valutare se il backend Rust convenga per riuso futuro.
 profondità di questo spigolo è libera — serve una vista laterale, circa da
 qui" (freccia nel viewport). La guida non è euristica: è il rango del sistema.
 
+## Il prodotto, visto dall'utente (Vincenzo, 2026-07-19)
+
+La definizione più chiara del v1: **un ambiente che mostra le foto della
+sessione e, quando ne selezioni una, porta la camera del viewport nella posa
+di quella foto — così ricalcare le feature diventa quasi banale.** Tutto il
+resto (proxy, solver, priori, edge-snap) è il motore sotto questo bottone:
+senza registrazione le viste non concordano, i ricalchi non si intersecano
+in 3D e le quote sono da schizzo; col motore la stessa UX è uno strumento di
+misura. "Quasi banale" è il risultato, non il punto di partenza.
+
+## Il fit come registratore di camere (criterio sdoppiato, 2026-07-19)
+
+Lezione della prima sessione reale (lettore SD): il fit produce **due cose
+diverse** — le quote dell'oggetto e le pose delle camere — e hanno destini
+diversi. L'errore di modello (pezzo ≠ primitiva) si scarica soprattutto
+sulle quote; le pose restano inchiodate da osservazioni distribuite su tutta
+l'immagine. Da qui il **criterio di successo sdoppiato**:
+
+- **Pezzi modello-conformi** (es. blocco stampato a spigoli vivi): gate sulle
+  quote, 0.2 mm. Certifica il fit come *misuratore*.
+- **Pezzi qualunque** (es. il lettore, con bezel/spalle/USB): gate sulla
+  **registrazione** — reproiezione ai livelli del rumore di estrazione
+  (~1 px). Certifica il fit come *registratore di camere*: una volta
+  registrate, ogni foto è uno strumento calibrato e le misure del pezzo
+  arrivano dagli altri canali (ricalchi su viste in posa: due viste →
+  curva 3D; una vista + piano dichiarato → contorno in mm; righelli di
+  calibro sulle quote critiche). Le quote del proxy sono impalcatura.
+
+L'analogia esatta: i marker di tracking sul set VFX — nessuno è interessato
+alle palline, servono a ricostruire dov'era la macchina da presa; poi si
+buttano.
+
+**Come si raggiunge la registrazione: le ancore.** Registrare è sempre
+"rispetto a un frame rigido", e le ancore devono essere fisse *in quel
+frame*. Nel setup col piatto il frame utile è quello dell'oggetto (la camera
+è già ferma rispetto alla stanza — registrazione banale e inutile): le
+ancore devono **ruotare col piatto**, non stare fisse nella scena.
+
+- Oggi: l'oggetto stesso (i click sui suoi spigoli) — funziona, ma l'ancora
+  è ambigua quanto l'oggetto è lontano dal modello.
+- Strada maestra: la **corona di marker sul piatto** (livello 3 della
+  sezione giradischi, qui promossa da comodità a percorso di produzione):
+  solidale con la rotazione, geometria decisa da noi (Ridley genera il
+  piatto), scala metrica esatta → ogni foto che vede la corona si registra
+  da sola, **qualunque oggetto ci sia sopra**. La registrazione smette di
+  dipendere dalla somiglianza oggetto-primitiva; il proxy resta come
+  ipotesi di modellazione, non come prerequisito di registrazione.
+- Setup senza piatto (camera che gira, oggetto fermo): frame oggetto =
+  frame stanza → lì gli elementi fissi della scena aiutano davvero, ed è il
+  mondo dove ARKit (companion app) regala le pose.
+
 ## Flusso utente: registrazione per proxy (proposta principale)
 
 L'osservazione chiave (Vincenzo): allineare a occhio una primitiva 3D sulla
@@ -161,6 +212,28 @@ si auto-posa, e ogni meccanica calibrata oltre al piatto diventa superflua.
 Default pratico per pezzi prismatici: un solo anello con camera inclinata in
 giù di 20-30° (vede fianchi e sopra); secondo anello solo per sottosquadri.
 
+## Input opzionale: quote di calibro come vincoli (Vincenzo, 2026-07-19)
+
+Generalizzazione della singola quota-scala già prevista: **più misure di
+calibro, agganciate a entità specifiche del modello con righelli dedicati**,
+come terzo canale di informazione accanto a foto e angoli del piatto.
+
+La ragione è nei numeri del gate: il termine d'errore dominante è il
+raccordo, che sposta la *silhouette* fotografica di ~r — ma il calibro
+misura **faccia-contro-faccia** ed è immune al raccordo. Canali
+complementari: le foto vincolano pose, proporzioni e feature; il calibro
+inchioda le distanze assolute proprio dove la foto è polarizzata.
+
+- Nel solver: un residuo per misura, `(dim_modello − valore)/σ` con σ da
+  calibro (~0.02-0.05 mm — dove c'è una misura, comanda lei). Costo quasi
+  nullo.
+- UX: il righello di edit-image-board promosso a vincolo — si indicano due
+  facce/spigoli del proxy, si digita il valore. La **corrispondenza è il
+  rischio** (stessa famiglia dell'etichettatura spigoli): la UI deve
+  evidenziare le due entità agganciate mentre si inserisce il numero.
+- Disciplina del protocollo: **non tutte le misure entrano nel fit** — un
+  paio restano fuori come giudici, o si perde il metro di controllo.
+
 ## Rapporto con l'esistente
 
 - **Canale scanner (brief-scanner-channel.md)**: complementare, non
@@ -209,6 +282,16 @@ giù di 20-30° (vede fianchi e sopra); secondo anello solo per sottosquadri.
    poche viste deliberate, non migliaia di frame).
 4. **Vocabolario primitive del v1**: proposta minima — prisma/estrusione su
    faccia piana + solido di rivoluzione. Box come caso dell'estrusione.
+   **Aggiornamento 2026-07-19 (dal primo oggetto reale)**: il lettore SD è
+   di fatto un rounded-rect estruso — tracciare "spigoli di un box" su
+   contorni così curvi è al limite del sensato (osservazione di Vincenzo).
+   Il **rounded-prism** (profilo 2D con raggi d'angolo + estrusione +
+   fillet) si candida a seconda primitiva del v1, prima del revolve.
+   L'architettura è pronta: basta la silhouette forward della nuova
+   primitiva — la funzione unica generazione/residuo è il punto d'innesto,
+   il resto della macchina (bootstrap, ipotesi, priori, allarmi) non cambia.
+   In parallelo, su oggetti tutto-curve il canale calibro pesa di più
+   (faccia-contro-faccia, immune alle tangenti).
 5. **Edge-snap**: quanto è robusto il fit locale sui gradienti dell'immagine
    con l'inizializzazione manuale? (È il gemello del punto 2, sul lato
    immagine: da prototipare insieme.)
@@ -640,3 +723,224 @@ Fino ad allora la riga onesta è: **la matematica non è più un rischio; il
 rischio si è spostato tutto sul viewport (accertamento 6 — ma vedi la
 controproposta "manipolazione invertita", che se regge lo ridimensiona a
 lavoro ordinario) e sul modello di spigolo reale.**
+
+---
+
+# Esecuzione del protocollo — sessione foto (2026-07-19)
+
+Foto in `test-assets/param-acq/` (14 scatti, `NOTE.md` compilato). EXIF
+verificato in autonomia: iPhone 15 Pro Max, 6.765 mm / **48 mm eq. costante su
+tutte e 14**, 4032×3024, nessun `DigitalZoomRatio` → **f = 4032 × 48/36 =
+5376 px**. Calibro: 80 × 42.2 × 15 mm.
+
+> **Il gate NON è stato eseguito fino in fondo, e la ragione è un esito, non
+> un intoppo: il pezzo scelto è troppo arrotondato per la soglia che il
+> protocollo si dà.** Sotto, la misura del raccordo e la previsione
+> quantitativa di cosa il fit consegnerebbe. Il sospettato n.1 nominato dal
+> documento — i raccordi — è stato trovato colpevole *prima* di estrarre gli
+> spigoli, non dopo.
+
+## Il raccordo, misurato
+
+Il lettore SD ha spigoli verticali visibilmente raccordati. Misurato su
+`IMG_8880` con un profilo di luminanza orizzontale a y=1250:
+
+- silhouette sinistra a x≈2148, gradino pulito su ~4 px;
+- **banda chiara di ~48 px a x≈2306-2354**: è il raccordo verticale che
+  prende luce fra le due facce;
+- a destra una sfumata di ~58 px (superficie che si gira via) più un colpo
+  speculare sulla silhouette.
+
+A ~19.5 px/mm (scala dedotta dal piatto da 130 mm) e con un quarto di tondo
+che proietta ≈1.41·r, la banda da 48 px dà **r ≈ 1.7 mm**. L'incertezza è
+reale (±0.3 mm), ma la conclusione qui sotto non ne dipende.
+
+## Cosa consegnerebbe il fit — previsione calcolata, non temuta
+
+`synth/observations-rounded` genera le osservazioni dalla silhouette VERA di
+una scatola raccordata (la tangente al cilindro di raccordo, non lo spigolo
+vivo); il fit resta quello a spigoli vivi. Geometria di *questa* sessione,
+angoli di *questa* sessione, calibro che fissa Z (80 mm):
+
+| raccordo r | err X (42.2) | err Y (15) | reproiez. | vs 0.2 mm |
+|------------|--------------|------------|-----------|-----------|
+| 0.0 mm | +0.003 mm | +0.004 mm | 0.50 px | PASS |
+| 0.5 mm | +0.033 mm | −0.084 mm | 3.19 px | PASS |
+| 1.0 mm | +0.057 mm | −0.173 mm | 6.32 px | PASS |
+| 1.5 mm | +0.074 mm | −0.261 mm | 9.43 px | **FAIL** |
+| **1.7 mm** | **+0.078 mm** | **−0.297 mm** | **10.66 px** | **FAIL** |
+| 2.0 mm | +0.082 mm | −0.350 mm | 12.51 px | FAIL |
+| 2.5 mm | +0.081 mm | −0.439 mm | 15.56 px | FAIL |
+
+Con spigoli vivi la configurazione passa con margine enorme (0.003 mm): il
+solver e la geometria di ripresa non sono il problema. Con il raccordo
+misurato, **Y sfonda la soglia di 1.5×**.
+
+Tre cose che la tabella insegna e che non erano ovvie:
+
+1. **Il bias non è uniforme, e non è tutto negativo.** Y (15 mm) crolla
+   perché il raccordo toglie un ~r *assoluto* per lato: 1.7 mm su 15 mm è
+   quasi tutto il budget. X invece va leggermente *positivo*, perché il
+   raccordo accorcia anche Z, che il calibro tiene fisso — quindi il fit
+   riscala tutto verso l'alto per soddisfare il vincolo. **Quale quota si
+   sceglie di fissare col calibro decide dove finisce l'errore.**
+2. **Il rapporto raccordo/spessore è la vera figura di merito**, non il
+   raccordo in assoluto. Un raccordo da 1.7 mm su un pezzo da 50 mm di
+   spessore sarebbe innocuo.
+3. **Un modello di spigolo sbagliato si autodenuncia**: la reproiezione sale
+   da 0.5 px a 10.7 px. Il fit non riesce a chiudere e lo dice. È il segnale
+   da mostrare in UI — l'utente non deve sapere cosa sia un raccordo per
+   accorgersi che qualcosa non torna.
+
+Bisezione: **il raccordo tollerabile da questo gate è ~1.16 mm**; il pezzo sta
+a ~1.7 mm, cioè **~1.5× troppo tondo**.
+
+## L'edge-snap su foto vere funziona (accertamento 5, seconda metà)
+
+Finora l'edge-snap era modellato come "una σ in pixel". Sulle foto vere, con
+seed grossolani (±20 px) e raffinamento sui gradienti:
+
+- spigolo interno (la banda del raccordo): **0.345 px RMS su 40/40 stazioni**;
+- silhouette sinistra sul tratto pulito (y 700-1300): **0.795 px su 40/40**;
+- stessa silhouette su un tratto troppo lungo (y 900-1500): **3.4 px** — sotto
+  y≈1400 il rilevatore si aggancia agli **slot delle schede**, non allo spigolo.
+
+Due conseguenze. **Il rumore non è il problema**: 0.3-0.8 px valgono
+0.015-0.04 mm a questa focale, un ordine di grandezza sotto il bias del
+raccordo. E: **i seed vanno tenuti sui tratti puliti** — regola pratica per
+l'estrazione, umana o automatica.
+
+(Nota: lo spigolo interno snappa benissimo ma è il *riflesso sul raccordo*,
+quindi preciso e sistematicamente fuori posto. Precisione e correttezza sono
+cose diverse.)
+
+## Lo strumento
+
+`scripts/param-acq-tool.html` — il click-tool previsto dal NOTE. Immagine con
+zoom/pan e lente d'ingrandimento, click a coppie di punti, lista dei 12
+spigoli con indici **allineati a `box-fit/edges`**, export EDN, e lo snap ai
+gradienti descritto sopra (tasto `s`). Espone anche `window.__paq` per
+guidarlo da CDP.
+
+Si serve con `python3 -m http.server 8099` dalla radice del repo e si apre su
+`/scripts/param-acq-tool.html`.
+
+## Cosa manca, e perché non l'ho forzato
+
+L'estrazione vera non è stata fatta. Il seed grossolano + snap dà precisione
+migliore di un click umano, quindi *quello* non è l'ostacolo: l'ostacolo è la
+**corrispondenza** — dire quale delle 12 rette è quale spigolo, su 14 rotazioni
+diverse. Sbagliare un'etichetta corrompe il fit **in silenzio**, e farlo a
+occhio da viste ridotte su 14 pose è proprio il modo di introdurre un errore
+che poi si scambia per un esito.
+
+Data la previsione qui sopra, estrarre adesso col modello a spigoli vivi
+confermerebbe soltanto un bias già calcolato. L'ordine sensato è l'inverso:
+
+1. **Aggiungere il raggio di raccordo come parametro del fit.** Il modello
+   diretto esiste già (`synth/rounded-edge-line-points`, `bf/edge-geometry`):
+   va invertito, cioè usato nel residuo invece che nella generazione. Costa
+   1 parametro e attacca il termine dominante.
+2. Poi estrarre una volta sola, col modello giusto.
+3. In alternativa o in parallelo: **rifare il gate su un pezzo a spigoli
+   vivi** (un blocchetto rettificato, un parallelepipedo stampato senza
+   raccordi). Separerebbe una volta per tutte "il metodo funziona" da "questo
+   pezzo è tondo".
+
+Un pezzo tondo non è un caso patologico da evitare per sempre: è il caso
+normale, e prima o poi il modello dovrà gestirlo. Ma non è il pezzo con cui si
+valida un solver a spigoli vivi.
+
+---
+
+# Il raccordo come parametro del fit (2026-07-19)
+
+Fatto. `bf/edge-silhouette-points` è ora **una sola definizione della
+geometria del raccordo**, usata sia per generare le osservazioni sintetiche
+sia dentro il residuo del solver; con r = 0 restituisce esattamente gli
+spigoli vivi, quindi il raggio si ottimizza con continuità a partire da zero.
+Il parametro è opt-in (`:fillet-init`) su entrambi i fit, e può essere **un
+raggio unico o tre — uno per direzione di spigolo** (`bf/edge-axis`), che è
+il modo in cui i pezzi sono fatti davvero.
+
+**Perché il raggio è identificabile e non degenere con le quote**: il suo
+effetto dipende dall'*angolo di vista* — nullo guardando una faccia in
+squadra, massimo a 45°. Quella firma angolare è ciò che lo separa da "una
+scatola più piccola", ed è anche il motivo per cui **serve più di una vista**:
+da una vista sola un raccordo e una scatola più piccola sono la stessa cosa.
+
+## Su dati che corrispondono al modello
+
+| r vero | spigoli vivi: errX / errY | raccordo fittato: errX / errY | r stimato |
+|--------|---------------------------|-------------------------------|-----------|
+| 0.0 mm | −0.009 / +0.008 | −0.009 / +0.008 | −0.005 mm |
+| 1.0 mm | +0.044 / −0.169 | −0.009 / +0.008 | 0.995 mm |
+| 1.7 mm | +0.063 / **−0.294** | −0.009 / **+0.008** | 1.695 mm |
+| 2.5 mm | +0.064 / −0.437 | −0.009 / +0.008 | 2.495 mm |
+
+Il bias sparisce e il raggio si recupera al millesimo. La reproiezione torna
+da 10.66 px a **0.46 px**, cioè al rumore. Su un pezzo davvero a spigoli vivi
+il raggio **collassa da solo a −0.005 mm** e non peggiora nulla: il parametro
+in più non è una licenza di overfitting.
+
+⚠️ **Questi numeri sono un inverse crime**: la stessa funzione genera e fitta.
+Dicono che il solver inverte correttamente il proprio modello, non che il
+modello descriva un pezzo vero. Da qui i due test seguenti, che servono
+proprio a rompere quella circolarità.
+
+## Quando il pezzo non corrisponde al modello
+
+**Due raggi distinti** (1.7 sugli spigoli verticali, 0.8 sugli altri):
+
+| modello | errX | errY | reproiez. |
+|---------|------|------|-----------|
+| spigoli vivi | −0.491 | −0.307 | 7.05 px |
+| un raggio solo | **−0.531** | −0.133 | 3.09 px |
+| per-asse | −0.008 | +0.007 | 0.46 px |
+
+Per-asse recupera `[0.794 0.797 1.696]` contro un vero `(0.8, 0.8, 1.7)`.
+(Anche questo però è tornato a essere un inverse crime, perché lo split
+1.7/0.8 è esattamente rappresentabile per-asse — da cui il test successivo.)
+
+**Raggi diversi spigolo per spigolo** (12 valori fra 0.62 e 2.05 mm, media
+1.2 mm): nessuno dei due modelli può rappresentarlo.
+
+| modello | errX | errY | reproiez. |
+|---------|------|------|-----------|
+| spigoli vivi | −0.559 | −0.466 | 8.26 px |
+| un raggio solo | **−0.613** | −0.246 | 2.30 px |
+| per-asse | −0.259 | −0.159 | 1.04 px |
+
+Tre conclusioni, e la prima non è quella che speravo:
+
+1. **Un raggio unico non è affidabilmente un miglioramento.** Misurato due
+   volte: salva la quota sottile ma trascina più fuori quella lunga, e il
+   caso peggiore finisce *peggio* che non modellare nulla. È il motivo per
+   cui la granularità giusta è per-asse, non globale. (La mia asserzione
+   iniziale diceva il contrario ed è stata corretta sui dati.)
+2. **Per-asse dimezza abbondantemente l'errore** anche su un pezzo che non
+   rispetta il modello (0.559 → 0.259 sul caso peggiore) — ma **0.259 mm è
+   ancora sopra la soglia di 0.2**. Modellare i raccordi toglie la maggior
+   parte del bias, non tutto.
+3. **Il residuo continua a dire la verità**: 0.46 px quando il modello
+   combacia, 1.04 px quando il pezzo è irregolare, 8.26 px se si finge che
+   sia a spigoli vivi. Resta il segnale onesto da mostrare in UI.
+
+## Cosa significa per il gate
+
+Per il lettore SD la previsione si articola così: **se i suoi raccordi sono
+ragionevolmente uniformi per direzione, il fit per-asse dovrebbe riportarlo
+dentro 0.2 mm; se sono irregolari, resterà intorno a 0.25-0.3 mm.** Quale dei
+due sia il caso lo dicono solo le foto — ed è ora una domanda a cui
+l'estrazione può rispondere, invece di un ostacolo che la rende inutile.
+
+Resta il punto di prima: la corrispondenza (quale retta è quale spigolo su 14
+rotazioni) è il lavoro che manca, e sbagliarla corrompe il fit in silenzio.
+Ma il motivo per *rimandare* l'estrazione è caduto: adesso il modello è in
+grado di incassare il termine dominante, quindi l'estrazione misurerebbe
+qualcosa di nuovo invece di riconfermare un bias già calcolato.
+
+Il gate su un pezzo a spigoli vivi resta comunque l'esperimento più pulito, e
+adesso avrebbe anche un secondo scopo: con `:fillet-init` a zero e un pezzo
+vivo, **il raggio stimato è una misura di quanto il pezzo sia vivo davvero** —
+un controllo incrociato sul metodo.
