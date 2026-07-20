@@ -14,6 +14,11 @@
                 ;; independent of the dev default (brief §8).
                 :release {:compiler-options {:optimizations :simple
                                              :closure-defines {ridley.manual.config/new-manual? true}}}}
+          ;; Parametric-acquisition CLI: picks.edn -> fit -> predictions.json
+          ;; (see test-assets/param-acq/PROTOCOLLO-ETICHETTATURA.md)
+          :paq {:target :node-script
+                :output-to "out/paq.js"
+                :main ridley.photogrammetry.cli/main}
           ;; Test build for turtle core tests
           :test {:target :node-test
                  :output-to "out/test.js"

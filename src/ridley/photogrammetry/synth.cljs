@@ -90,6 +90,59 @@
           (range (count poses))))))
 
 ;; ---------------------------------------------------------------------------
+;; Rounded (filleted) edges — the systematic error the design doc predicts
+;;
+;; A real machined or moulded part has rounded edges. What the camera sees on
+;; such an edge is NOT the sharp corner: it is the line where the view ray is
+;; tangent to the fillet cylinder, which lies inside the sharp corner by an
+;; amount that depends on the viewing angle. That dependence is why the error
+;; is systematic and does not average away over more photographs.
+
+(defn rounded-edge-line-points
+  "The two 3D points whose projection is the visible silhouette line of edge
+   `k` when the box has fillet radius `r`.
+
+   Thin wrapper over `box-fit/edge-silhouette-points`, which is the single
+   definition of the fillet geometry: the SAME function generates the
+   synthetic observations here and evaluates the residual inside the solver.
+   That is deliberate — but it also means this pair cannot, on its own, prove
+   the geometry is right. Only the real photographs can do that."
+  [dims r pose k]
+  (bf/edge-silhouette-points dims r (cam/camera-center pose) k))
+
+(defn observations-rounded
+  "Like `observations`, but the box has fillet radius `r`, so every edge is
+   observed where the fillet's silhouette falls rather than at the sharp
+   corner. With r = 0 this reduces exactly to `observations`.
+
+   `r` may be a number, or a FUNCTION of the edge index. The per-edge form
+   exists to break the inverse crime: the solver fits one global radius, so
+   generating with edge-dependent radii tests whether it survives a part that
+   does not match its own model."
+  [true-dims r poses true-intrin sigma-px rng-fn]
+  (let [r-of (if (fn? r) r (constantly r))]
+    (vec (mapcat
+          (fn [view]
+            (let [pose (nth poses view)
+                  k (nth true-intrin view)]
+              (keep (fn [edge-idx]
+                      (let [[pa3 pb3] (rounded-edge-line-points
+                                       true-dims (r-of edge-idx) pose edge-idx)
+                            pa (cam/project k pose pa3)
+                            pb (cam/project k pose pb3)]
+                        (when (and pa pb)
+                          (when-let [base (bf/line-through pa pb)]
+                            (let [[nx ny _] base
+                                  da (* sigma-px (gauss rng-fn))
+                                  db (* sigma-px (gauss rng-fn))
+                                  pa' [(+ (first pa) (* nx da)) (+ (second pa) (* ny da))]
+                                  pb' [(+ (first pb) (* nx db)) (+ (second pb) (* ny db))]]
+                              (when-let [l (bf/line-through pa' pb')]
+                                {:view view :edge edge-idx :line l}))))))
+                    (bf/visible-edges true-dims pose))))
+          (range (count poses))))))
+
+;; ---------------------------------------------------------------------------
 ;; Initialisation perturbation (the 'hand alignment' the user provides)
 
 (defn perturb-pose
