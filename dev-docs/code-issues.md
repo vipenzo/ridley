@@ -4,6 +4,26 @@ File interno per tracciare piccole incoerenze tra il codice sorgente di Ridley e
 
 ## Aperto
 
+### `mesh-union` giustappone invece di fondere (24 vertici da 3 box) — sospetto fallback muto senza WASM
+
+**Contesto**: scoperto per caso durante il gate edit-acquire (2026-07-22,
+HANDOVER-edit-acquire-gate.md): `(mesh-union (box …) (translate (box 8) …) …)`
+su 3 box dentro un `let` produce esattamente 8+8+8=24 vertici — pezzi
+giustapposti, non un'unione booleana (che avrebbe un conteggio diverso).
+Bounding box corretto → posizioni giuste, booleana mai eseguita.
+
+**Ipotesi da verificare per prima**: Manifold WASM non inizializzato nel
+contesto di valutazione → fallback silenzioso a concatenazione (le op
+manifold degradano a nil/pass-through senza WASM, per convenzione). Se
+confermata, il bug vero è **doppio**: il contesto che non inizializza WASM, e
+il fallback muto — stessa famiglia del "mesh-split no-op muto" qui sopra:
+se l'unione non può girare, deve dirlo, non consegnare un concat che sembra
+un risultato.
+
+**Scoperta**: Vincenzo + Code, gate edit-acquire, 2026-07-22. Non
+investigato oltre (fuori scope del gate); da riprendere prima che qualcuno
+usi un CSG dentro un proxy e si fidi del risultato.
+
 ### Compile manuale concorrente al watcher → build `:app` corrotta — trappola operativa ricorrente
 
 **Contesto**: lanciare una compile shadow-cljs manuale mentre il watcher è attivo corrompe la build `:app`; il sintomo è un'app che si comporta in modo inspiegabile finché non si fa un restart pulito del watcher. È successo di nuovo durante brief-acquisition-views (2026-07): la trappola era "nota a memoria" ma la memoria non è stata consultata in tempo — ragione per cui ora vive qui, nel posto consultabile.

@@ -16,7 +16,8 @@
   (:require ["three" :as THREE]
             [ridley.export.stl :as stl]))
 
-(defonce ^:private bstate (atom nil)) ;; {:mesh :camera :depth :object-url :photo-aspect}
+(defonce ^:private bstate (atom nil)) ;; {:mesh :camera :depth :object-url :photo-aspect
+                                       ;;  :image-width :image-height :pixels (Uint8ClampedArray)}
 
 (def default-depth
   "World-unit distance from the camera the backdrop plane sits at. ~250
@@ -75,13 +76,29 @@
         (set-vfov! vfov-deg)
         (resize-for! mesh depth vfov-deg photo-aspect)))))
 
+(defn- cache-pixels!
+  "Draw the already-loaded image onto an offscreen 2D canvas and cache its
+   getImageData for luminance-at — the same blob: URL used for the THREE
+   texture is same-origin, so this doesn't taint the canvas."
+  [^js img iw ih]
+  (let [canvas (.createElement js/document "canvas")]
+    (set! (.-width canvas) iw)
+    (set! (.-height canvas) ih)
+    (let [ctx (.getContext canvas "2d" #js {:willReadFrequently true})]
+      (.drawImage ctx img 0 0)
+      (swap! bstate assoc
+             :image-width iw :image-height ih
+             :pixels (.-data (.getImageData ctx 0 0 iw ih))))))
+
 (defn set-photo!
   "Load the photo at `file-path` (absolute, read via the Rust geo_server) as
    the backdrop texture. `hfov-deg` is the session's horizontal FOV (from the
    user's manually-entered focal length — photogrammetry/focal-mm->fov-deg).
    Once the image's own pixel dimensions are known, stores its aspect ratio
    and delegates the FOV conversion + plane sizing to set-hfov! (also the live-
-   recalibration entry point, so the two never compute it differently).
+   recalibration entry point, so the two never compute it differently). Also
+   caches the raw pixel data (cache-pixels!) for luminance-at, the edge-snap's
+   read of the real photo.
    Returns a Promise that resolves once the texture is applied."
   [file-path hfov-deg set-vfov!]
   (when-let [{:keys [mesh]} @bstate]
@@ -97,6 +114,7 @@
                                       ih (.-height img)
                                       photo-aspect (if (pos? ih) (/ iw ih) 1)]
                                   (swap! bstate assoc :photo-aspect photo-aspect)
+                                  (cache-pixels! img iw ih)
                                   (set-hfov! hfov-deg set-vfov!)
                                   (when-let [^js old-map (.-map (.-material mesh))]
                                     (.dispose old-map))
@@ -105,3 +123,25 @@
                                   (when old-url (js/URL.revokeObjectURL old-url)))))))))
         (.catch (fn [err]
                   (js/console.warn "edit-acquire: failed to load" file-path err))))))
+
+(defn image-size
+  "[width height] of the currently loaded photo in pixels, or nil before the
+   first photo has loaded."
+  []
+  (when-let [{:keys [image-width image-height]} @bstate]
+    [image-width image-height]))
+
+(defn luminance-at
+  "Grayscale value (0-255ish) at pixel (x,y) of the currently loaded photo,
+   rounded to the nearest pixel — no bilinear interpolation, matching
+   scripts/param-acq-tool.html's lum() exactly (the sub-pixel precision comes
+   from edge-snap's parabolic peak fit, not from the pixel sampling). nil
+   off-image or before any photo has loaded."
+  [x y]
+  (when-let [{:keys [image-width image-height pixels]} @bstate]
+    (let [px (Math/round x) py (Math/round y)]
+      (when (and pixels (>= px 0) (>= py 0) (< px image-width) (< py image-height))
+        (let [o (* (+ (* py image-width) px) 4)]
+          (+ (* 0.299 (aget pixels o))
+             (* 0.587 (aget pixels (+ o 1)))
+             (* 0.114 (aget pixels (+ o 2)))))))))

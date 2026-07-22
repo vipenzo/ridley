@@ -413,6 +413,26 @@ html, body {
   padding: 4px 0;
 }
 
+/* edit-acquire: filmstrip badges (brief-param-acq-v1.md P2) — grey = never
+   snapped, green + residual-px = edge-snap succeeded, bordered = current. */
+.modal-panel .eaq-badge-none {
+  background: #2d2d44;
+  border: 1px solid #4a4a6a;
+  color: #9a9aa2;
+}
+
+.modal-panel .eaq-badge-ok {
+  background: #264f2e;
+  border: 1px solid #3a7d44;
+  color: #d4d4d4;
+}
+
+.modal-panel .eaq-badge-none.current,
+.modal-panel .eaq-badge-ok.current {
+  outline: 2px solid #6f9ce0;
+  outline-offset: -1px;
+}
+
 /* edit-mesh-split (brief-step-bias.md Part 3): sliver indicator + ±ε nudge row.
    Neutral grey until a sub-threshold component appears — .ems-sliver-warn is
    toggled in JS, never inferred from text content. */

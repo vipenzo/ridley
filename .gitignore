@@ -44,3 +44,10 @@ announcements/
 # the real-photo gates. Keep the text derivatives (NOTE.md, session.json,
 # picks.edn, predictions.json) tracked; keep the images local.
 test-assets/param-acq*/*.jpeg
+
+# edit-acquire's per-session state (poses/picks/residuals) — always regenerated
+# by the app next to a session's photos, never a source file.
+test-assets/param-acq*/acquire-state.json
+
+# Playwright MCP's own scratch (screenshots, page snapshots, console logs).
+.playwright-mcp/

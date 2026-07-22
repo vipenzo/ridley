@@ -75,6 +75,23 @@ sistema di animazione). Giudice: Vincenzo, criterio ergonomico. Se
 l'inversione non regge alla prova, si torna al design doc (controllo camera
 free-look, il costo grosso dell'accertamento 6) prima di costruire il resto.
 
+> **ESITO (2026-07-22): SUPERATO** — verdetto di Vincenzo dopo 6 giri di
+> bug-fixing dal vivo (`HANDOVER-edit-acquire-gate.md`): "quasi sufficienza",
+> il meccanismo regge; la fatica residua è attribuita alla **simmetria del
+> proxy** (Klein), non all'inversione. Conseguenze recepite nelle Parti:
+>
+> - **P2 si arricchisce delle mitigazioni di simmetria** (vedi P2).
+> - Il collaudo di P1/P2 si fa con un **oggetto asimmetrico**: il target con
+>   tacche (`examples/param-acq-target.clj`, da stampare) o il lettore SD
+>   nastrato — mai più il blocco liscio, che è l'oggetto più ambiguo
+>   possibile e confonde il giudizio ergonomico.
+> - Bug collaterale scoperto (fuori scope, tracciato in
+>   `dev-docs/code-issues.md`): `mesh-union` giustappone invece di fondere
+>   in certi contesti — sospetto fallback muto senza WASM.
+> - **P0 (commit) è ancora aperto e ora URGENTE**: gate + prototipo + fix
+>   vivono non committati sopra la settimana di accertamenti già non
+>   committata.
+
 ## Parti
 
 ### P0 — Consolidamento
@@ -92,6 +109,22 @@ frame (cartella; interfaccia per le sorgenti future); proxy + gizmo +
 manipolazione invertita; edge-snap (`s`); priori θ; badge/residui per foto;
 file di sessione (pose, picks, vincoli) accanto alle foto; le tre
 singletonicità di image-board da rompere sono mappate nell'accertamento 1.
+
+**Mitigazioni di simmetria (dal gate, 2026-07-22; diagnosi affinata da
+Vincenzo 2026-07-23)** — l'ambiguità sta nel PROXY, non nella scena: il
+pezzo fisico porta spesso indizi (disegni sul nastro, dettagli), le foto
+sono asimmetriche — ma il wireframe del proxy è identico da tutti i lati,
+quindi l'utente non sa quale faccia virtuale corrisponde a quale faccia
+fisica. Le cure, in ordine di priorità:
+
+- **l'ipotesi non balla mai**: scelto un ramo di simmetria sulla foto 0, le
+  proposte per le foto successive restano su quel ramo — mai rí-scegliere
+  il gemello di Klein per foto;
+- **il proxy dichiara il suo orientamento**: una faccia colorata (o un
+  vertice marcato) nel rendering del wireframe, per confrontare a colpo
+  d'occhio col pezzo fisico (che porta il puntino di pennarello);
+- il puntino centrale sempre-visibile del prototipo è il precedente:
+  promuoverlo a indizio di orientamento, non solo di posizione.
 
 ### P3 — Viste registrate
 Ricalco su piano dichiarato con riproiezione live sulle altre viste;

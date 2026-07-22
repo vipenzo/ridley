@@ -91,6 +91,18 @@
    :heading (rotate-around-axis heading axis angle)
    :up (rotate-around-axis up axis angle)})
 
+(defn orthogonalize-up
+  "Gram-Schmidt: the component of `up` perpendicular to (unit) `heading`,
+   normalized. Turtle poses elsewhere assume heading⊥up exactly (gizmo's
+   pose-basis, box_fit's box-basis, ...) — anything constructing a pose by
+   hand (a hardcoded vantage, a hand-picked 'up' hint) should run it through
+   this rather than assume it already holds. A pose built with heading and
+   up merely 'close to perpendicular' silently turns a downstream rigid
+   transform into a shear."
+  [heading up]
+  (let [h (normalize heading)]
+    (normalize (v- up (v* h (dot up h))))))
+
 (defn signed-angle-around-axis
   "Signed angle (radians) from `v-from` to `v-to`, measured around `axis` using the
    same right-hand-rule convention as rotate-around-axis/rotate-point-around-axis

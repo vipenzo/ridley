@@ -37,3 +37,20 @@
       (is (vec-approx= (:position pose) (:position result)))
       (is (vec-approx= (:heading pose) (:heading result)))
       (is (vec-approx= (:up pose) (:up result))))))
+
+(deftest orthogonalize-up-already-perpendicular-is-unchanged
+  (testing "when up is already exactly perpendicular to heading, Gram-Schmidt
+            is a no-op (up to normalization)"
+    (let [result (m/orthogonalize-up [1 0 0] [0 0 1])]
+      (is (vec-approx= [0 0 1] result)))))
+
+(deftest orthogonalize-up-corrects-a-non-perpendicular-hint
+  (testing "found live 2026-07-22 (edit-acquire's default-vantage-pose):
+            heading=(normalize [1 -1 1]), up=[0 0 1] have dot ~0.577, nowhere
+            near perpendicular — orthogonalize-up must return a UNIT vector
+            exactly perpendicular to heading, not merely a re-normalization
+            of the original (broken) up"
+    (let [heading (m/normalize [1 -1 1])
+          result (m/orthogonalize-up heading [0 0 1])]
+      (is (< (Math/abs (m/dot heading result)) 1e-9))
+      (is (< (Math/abs (- 1.0 (m/magnitude result))) 1e-9)))))
