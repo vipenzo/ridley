@@ -117,6 +117,14 @@
            (- (+ (* g ex) (* h ey) (* i ez)))]]
     {:rvec rvec :t t}))
 
+(defn focal-mm->fov-deg
+  "Horizontal field of view (degrees) from a 35mm-equivalent focal length —
+   the mirror of intrinsics-from-fov (this file, above): a 35mm-equivalent
+   focal length is defined against a 36mm sensor width by convention."
+  ([focal-mm] (focal-mm->fov-deg focal-mm 36.0))
+  ([focal-mm sensor-mm]
+   (* 2.0 (/ 180.0 Math/PI) (Math/atan (/ sensor-mm (* 2.0 focal-mm))))))
+
 (defn intrinsics-from-fov
   "Build intrinsics from a horizontal field of view (degrees) and image size.
    The EXIF path gives focal length in 35mm-equivalent terms, which reduces

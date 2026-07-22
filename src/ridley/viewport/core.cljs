@@ -2840,6 +2840,26 @@
   []
   (:world-group @state))
 
+(defn get-camera
+  "The raw THREE.PerspectiveCamera (for editors — e.g. an acquisition backdrop —
+   that need to parent an object directly onto the camera, or read its aspect)."
+  []
+  (:camera @state))
+
+(defn set-camera-fov!
+  "Set the camera's VERTICAL field of view in degrees — THREE's own native
+   PerspectiveCamera.fov convention. Callers deriving FOV from a horizontal
+   value (focal length, photogrammetry/focal-mm->fov-deg) must convert using
+   the SOURCE IMAGE's aspect ratio, not the viewport canvas's — the two
+   differ whenever the window isn't shaped like the photo, and only the
+   image's own aspect gives the lens's true vertical extent. No FOV setter
+   existed before this — .fov is otherwise only ever set once at construction
+   (create-camera, hardcoded to 60)."
+  [vfov-deg]
+  (when-let [^js camera (:camera @state)]
+    (set! (.-fov camera) vfov-deg)
+    (.updateProjectionMatrix camera)))
+
 (defn highlight-mesh-by-name!
   "Highlight a mesh by its registry name (orange outline + emissive tint).
    Pass nil to clear."

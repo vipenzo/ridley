@@ -30,6 +30,7 @@
             [ridley.editor.edit-path :as edit-path]
             [ridley.editor.edit-mesh-split :as edit-mesh-split]
             [ridley.editor.edit-image-board :as edit-image-board]
+            [ridley.editor.edit-acquire :as edit-acquire]
             [ridley.editor.mesh-board :as mesh-board]
             [ridley.editor.impl :as macro-impl]
             [ridley.geometry.warp :as warp]
@@ -638,6 +639,10 @@
    ;; macro expands to (edit-image-board-request! …); returns a live image-board
    ;; shape and opens the calibration session.
    'edit-image-board-request! edit-image-board/request!
+   ;; edit-acquire (gate ingegneristico: inverted-manipulation prototype for
+   ;; acquisizione parametrica, dev-docs/brief-param-acq-v1.md) — plain function,
+   ;; not a macro (no source marker/commit — see the namespace docstring).
+   'edit-acquire        edit-acquire/enter!
    ;; Source form storage
    'set-source-form!    registry/set-source-form!
    'get-source-form     registry/get-source-form

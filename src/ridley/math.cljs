@@ -80,6 +80,17 @@
       (let [t-line (/ (- (* a e) (* b d)) denom)]
         (v+ line-origin (v* ld t-line))))))
 
+(defn pose-around-axis
+  "Rotate a turtle-style pose {:position :heading :up} around `axis` by `angle`
+   (radians), orbiting `position` around `pivot` while heading/up rotate in
+   place. Unlike turtle/f, turtle/th, turtle/tv (which move/rotate a pose
+   in its own frame), this orbits around an external pivot — e.g. a camera
+   circling a fixed subject."
+  [{:keys [position heading up]} pivot axis angle]
+  {:position (v+ pivot (rotate-point-around-axis (v- position pivot) axis angle))
+   :heading (rotate-around-axis heading axis angle)
+   :up (rotate-around-axis up axis angle)})
+
 (defn signed-angle-around-axis
   "Signed angle (radians) from `v-from` to `v-to`, measured around `axis` using the
    same right-hand-rule convention as rotate-around-axis/rotate-point-around-axis
