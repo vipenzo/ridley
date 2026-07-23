@@ -106,6 +106,14 @@
         origin (m/v- (:position camera-pose) (la/mat*vec rot cam-center-l))]
     {:position origin :heading (m/normalize ez) :up (m/normalize ey)}))
 
+(defn local->world
+  "Object/solver-frame point [lx ly lz] (box-fit's frame, x=ex y=ey z=ez) lifted
+   to world at `proxy-pose`. The public inverse used by the retrace: points are
+   solved and stored in the object frame (stable as the proxy moves), then lifted
+   here for rendering."
+  [proxy-pose local-pt]
+  (from-local-point (box-basis proxy-pose) (:position proxy-pose) local-pt))
+
 (defn dims-from-mesh
   "Box extents [w h d] from `mesh`'s ACTUAL vertices (not from construction
    arguments — robust to however the box was parameterized), projected into
@@ -117,3 +125,45 @@
         axis-vals (fn [i] (map #(nth % i) locals))
         extent (fn [i] (let [xs (axis-vals i)] (- (apply max xs) (apply min xs))))]
     [(extent 0) (extent 1) (extent 2)]))
+
+(defn klein-images
+  "The four camera poses that reproject a box with three distinct sides to the
+   IDENTICAL silhouette: `camera-pose` plus its 180°-rotations about each of the
+   box's principal axes (ex/ey/ez of `proxy-pose`), orbited about the box centre.
+   These are the Klein four-group ambiguity the edge solver can't resolve — the
+   registration can legally land on any of them (see branch-by-marker)."
+  [camera-pose proxy-pose]
+  (let [pivot (:position proxy-pose)
+        {:keys [ex ey ez]} (box-basis proxy-pose)]
+    [camera-pose
+     (m/pose-around-axis camera-pose pivot ex Math/PI)
+     (m/pose-around-axis camera-pose pivot ey Math/PI)
+     (m/pose-around-axis camera-pose pivot ez Math/PI)]))
+
+(defn branch-by-marker
+  "Resolve the Klein branch of a registered camera by an OBSERVED asymmetric mark.
+   A box with three distinct sides has four camera poses that reproject to the
+   identical silhouette (klein-images) — the edge solver can't choose between
+   them, which is what lets a symmetric box register onto the 'wrong' twin (the
+   split in dev-docs/HANDOVER-edit-acquire-registration-stability.md). But a mark
+   on the object (a pen arrow on one corner) is NOT silhouette-symmetric: it
+   projects to a DIFFERENT pixel under each of the four poses. Given the pixel the
+   user clicked on that mark (`clicked-px [x y]`) and the mark's position in the
+   box-local/object frame (`marker-obj`, the frame box-fit/corners live in), this
+   returns whichever Klein image reprojects the mark nearest the click — the
+   physically-correct branch, decided by the observation itself rather than a
+   predicted seed (so it is independent of the turntable axis and robust even at
+   θ≈180, where a seed-based guess is worst; measured separation between images
+   ≥650px on a 4032px frame). Behind-camera projections cost +Inf so a valid
+   image always wins when one exists; returns `camera-pose` unchanged if none
+   projects (degenerate)."
+  [camera-pose proxy-pose marker-obj clicked-px intrinsics]
+  (let [[cx cy] clicked-px
+        cost (fn [cam]
+               (if-let [px (cam/project intrinsics
+                                        (editor->solver-pose cam proxy-pose)
+                                        marker-obj)]
+                 (let [dx (- (nth px 0) cx) dy (- (nth px 1) cy)]
+                   (+ (* dx dx) (* dy dy)))
+                 js/Infinity))]
+    (apply min-key cost (klein-images camera-pose proxy-pose))))

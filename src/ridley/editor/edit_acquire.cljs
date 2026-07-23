@@ -120,15 +120,25 @@
     (m/v+ (:position proxy-pose)
           (m/v+ (m/v* ex (* 0.5 w)) (m/v+ (m/v* ey (* 0.5 h)) (m/v* ez (* 0.5 d)))))))
 
+(declare trace-items)
+
 (defn- proxy-preview-items
   "The proxy mesh plus two always-on-top marker dots — the pivot (box
    center, reported 2026-07-21 as a missing reference point) and one
    distinctly-colored corner (reported 2026-07-22, for judging which
-   symmetry branch the box is in — see corner-marker-pos)."
+   symmetry branch the box is in — see corner-marker-pos). The SOLID proxy is
+   under the 'v' / 'Nascondi proxy' toggle (Vincenzo 2026-07-23): while
+   registering it covers the photo, so it can be dropped to read the photo
+   underneath. The markers stay — they locate the (hidden) box and are tiny.
+   Any retrace trace is appended (trace-items), so the bezel stays visible after
+   leaving :retrace, in the box/photo context (Vincenzo 2026-07-23)."
   []
-  [{:type :mesh :data (:proxy-mesh @session)}
-   {:type :dots :data [{:pos (pivot) :radius 2.0 :color 0xffffff}
-                       {:pos (corner-marker-pos) :radius 3.0 :color 0xff3333}]}])
+  (let [markers {:type :dots :data [{:pos (pivot) :radius 2.0 :color 0xffffff}
+                                    {:pos (corner-marker-pos) :radius 3.0 :color 0xff3333}]}]
+    (into (if (:hide-proxy? @session)
+            [markers]
+            [{:type :mesh :data (:proxy-mesh @session)} markers])
+          (trace-items))))
 
 (defn- photo-path [file]
   (let [base (:base-dir @session)]
@@ -219,6 +229,17 @@
 (defn- current-camera-pose []
   (get-in @session [:camera-poses (:current-idx @session)]))
 
+(defn- registered-result?
+  "True for an :acquire-results entry that came from ACTUAL registration work on
+   this photo — edge-snap ('s'), PnP ('p') or a manual inverted drag — all of
+   which put the camera at a pose the user vouched for. False for a bare
+   turntable seed or an 'f'-fit :predicted? guess. Only registered cameras earn
+   rigid transport when the proxy is re-aligned on photo 0 (on-photo0-commit!);
+   pure seeds/predictions are cheaper — and more correct — to just re-derive
+   from the corrected proxy."
+  [result]
+  (boolean (and result (or (:rms-px result) (:manual? result)))))
+
 (defn- snap-all-edges
   "Project every visible box edge at `seed-pose` into photo-pixel space and
    try to snap each against the real photo (edge-snap/snap-segment). Returns
@@ -238,6 +259,48 @@
        (reduce (fn [acc [g pick]] (update acc g (fnil conj []) pick)) {})))
 
 (declare save-acquire-state!)
+
+;; ============================================================
+;; Blindato branch lock ('m'): the Klein-twin fix (fix (1) of
+;; dev-docs/HANDOVER-edit-acquire-registration-stability.md). A box with three
+;; distinct sides has FOUR camera poses that reproject to the identical
+;; silhouette, so the edge solver can't tell which physical corner is which and
+;; a photo can register onto the mirror branch — the split that made a turntable
+;; session run in two opposite senses. The user marks ONE corner physically (a
+;; pen arrow) and, once, clicks it in each photo; bridge/branch-by-marker then
+;; pins that photo to the Klein image whose marked corner reprojects nearest the
+;; click. Decided by the observation, not a predicted seed — so it is robust
+;; even at θ≈180 (where a seed guess is worst; measured image separation ≥650px
+;; on a 4032px frame). marker-lock-camera is the single funnel snap/PnP/fit pass
+;; a fresh camera pose through, so the lock, set once, survives every later
+;; registration on that photo.
+;; ============================================================
+
+(defn- marked-corner-obj
+  "The marked corner in the object/solver frame — the +++ corner, matching
+   corner-marker-pos's +ex+ey+ez (the red dot). Once photo 0's proxy is aligned
+   so the red dot lands on the physical pen mark, THIS is the point the mark sits
+   on, and branch-by-marker reprojects it through each Klein image."
+  []
+  (let [[w h d] (bridge/dims-from-mesh (:proxy-mesh @session)
+                                       (get-in @session [:proxy-mesh :creation-pose]))]
+    [(* 0.5 w) (* 0.5 h) (* 0.5 d)]))
+
+(defn- marker-lock-camera
+  "If photo `idx` has a marker pick (the user clicked the physical mark), return
+   `camera-pose` pinned to the branch whose marked corner reprojects nearest that
+   click (bridge/branch-by-marker); otherwise return it unchanged. Every camera
+   registration (snap/PnP/fit) funnels its result through here, so a mark clicked
+   once locks the branch for good on that photo — no dependence on the turntable
+   seed/axis that a symmetric box defeats."
+  [camera-pose idx]
+  (if-let [click (get-in @session [:marker-picks idx])]
+    (if-let [[iw ih] (backdrop/image-size)]
+      (bridge/branch-by-marker camera-pose
+                               (get-in @session [:proxy-mesh :creation-pose])
+                               (marked-corner-obj) click (session-intrinsics iw ih))
+      camera-pose)
+    camera-pose))
 
 (defn- on-snap!
   "Photo 0: the gizmo just moved the PROXY, camera fixed — apply the refined
@@ -271,7 +334,8 @@
               (swap! session assoc :proxy-mesh new-mesh)
               (viewport/show-preview! (proxy-preview-items))
               (gizmo/update-pose! (:creation-pose new-mesh)))
-            (let [new-camera-pose (bridge/solver-pose->camera (:pose result) proxy-pose)]
+            (let [new-camera-pose (marker-lock-camera
+                                   (bridge/solver-pose->camera (:pose result) proxy-pose) idx)]
               (swap! session assoc-in [:camera-poses idx] new-camera-pose)
               (viewport/set-camera-pose! new-camera-pose)))
           (swap! session assoc-in [:acquire-results idx]
@@ -317,17 +381,31 @@
     (tt/pose-at-angle base axis (+ (:yaw hyp) (* (:sense hyp) theta)))))
 
 (defn- apply-turntable-fit! [tt-result proxy-pose]
-  (doseq [idx (range 1 (count (:photos @session)))]
-    (let [new-camera-pose (bridge/solver-pose->camera (turntable-pose-for tt-result idx) proxy-pose)]
-      (swap! session assoc-in [:camera-poses idx] new-camera-pose)
-      (when-not (get-in @session [:acquire-results idx])
-        (swap! session assoc-in [:acquire-results idx] {:predicted? true}))))
-  (when (pos? (:current-idx @session))
-    (viewport/set-camera-pose! (get-in @session [:camera-poses (:current-idx @session)])))
-  (set-status-message!
-   (str "Fit congiunto su " (:used tt-result) " foto, rms "
-        (.toFixed (:rms tt-result) 2) " px"))
-  (save-acquire-state!))
+  ;; PREDICT-ONLY: never overwrite a photo the user already registered (snapped
+  ;; with 's' or marked with 'm' — registered-result?). The turntable fit is a
+  ;; single-DOF global model (one base pose + axis + sense, axis forced through
+  ;; the box centre); on a real, slightly-imperfect turntable it is COARSER than
+  ;; an individual snap, so applying it to an already-good photo degrades it —
+  ;; and the marker lock can only fix the branch, not the geometry (reported
+  ;; 2026-07-23: 'f' scrambled every photo and threw the red dots around). Since
+  ;; the blindato ('m') already makes each photo individually branch-correct,
+  ;; 'f' no longer has a consistency job to do — it just fills photos that have
+  ;; no registration at all, branch-locked to their mark when they have one.
+  (let [predicted (atom 0)]
+    (doseq [idx (range 1 (count (:photos @session)))
+            :when (not (registered-result? (get-in @session [:acquire-results idx])))]
+      (let [new-camera-pose (marker-lock-camera
+                             (bridge/solver-pose->camera (turntable-pose-for tt-result idx) proxy-pose) idx)]
+        (swap! session assoc-in [:camera-poses idx] new-camera-pose)
+        (swap! session assoc-in [:acquire-results idx] {:predicted? true})
+        (swap! predicted inc)))
+    (when (pos? (:current-idx @session))
+      (viewport/set-camera-pose! (get-in @session [:camera-poses (:current-idx @session)])))
+    (set-status-message!
+     (if (zero? @predicted)
+       "Fit congiunto: tutte le foto sono già registrate (niente da predire)"
+       (str "Fit congiunto: predette " @predicted " foto non ancora registrate")))
+    (save-acquire-state!)))
 
 (defn- on-fit-turntable! []
   (when-let [[iw ih] (backdrop/image-size)]
@@ -381,9 +459,34 @@
      ;; non-rectangular shape).
      :up (m/orthogonalize-up view-dir [0 0 1])}))
 
+(defn- transport-registered-cameras!
+  "Rigidly carry every REGISTERED camera (idx>0 with an :acquire-results the
+   user vouched for — registered-result?) through the rigid transform that took
+   the proxy from `old-pose` to `new-pose`, keeping each one's :acquire-results
+   intact. Pure turntable seeds and 'f'-fit predictions (idx>0, not registered)
+   are DROPPED — camera-pose and :acquire-results both — so they re-derive from
+   the corrected proxy on next visit. camera-poses[0] and its result are left
+   untouched by construction (this only walks idx>0). This is what fix (2) of
+   HANDOVER-edit-acquire-registration-stability.md replaces the old
+   select-keys [0] wipe with: a re-alignment of the proxy on photo 0 no longer
+   throws away the registration work on every other photo — the object didn't
+   move relative to those cameras, only our world-space estimate of it did, so
+   the camera↔object geometry each registration solved is preserved by moving
+   the cameras with the proxy."
+  [old-pose new-pose]
+  (let [{op :position oh :heading ou :up} old-pose
+        {np :position nh :heading nu :up} new-pose]
+    (doseq [[idx pose] (:camera-poses @session)
+            :when (pos? idx)]
+      (if (registered-result? (get-in @session [:acquire-results idx]))
+        (swap! session assoc-in [:camera-poses idx]
+               (attachment/transform-pose-rigid pose op oh ou np nh nu))
+        (do (swap! session update :camera-poses dissoc idx)
+            (swap! session update :acquire-results dissoc idx))))))
+
 (defn- on-photo0-commit! [cmd-type value]
-  (let [old-pivot (pivot)
-        {:keys [h r u]} (pose-basis (get-in @session [:proxy-mesh :creation-pose]))]
+  (let [old-pose (get-in @session [:proxy-mesh :creation-pose])
+        {:keys [h r u]} (pose-basis old-pose)]
     (swap! session update :proxy-mesh
            (fn [mesh]
              (case cmd-type
@@ -403,27 +506,28 @@
     ;; po' spostata": recomputing AT ALL, on any timing, is what's unstable;
     ;; not recomputing is what's stable.
     ;;
-    ;; Only a TRANSLATE (:f/:rt/:u) moves the pivot — a pure rotation leaves
-    ;; :creation-pose's position untouched (rotate-mesh pivots around it), so
-    ;; every other photo's seed (seed-camera-pose orbits camera-poses[0]
-    ;; around THIS pivot) is still exactly as valid as before. Previously
-    ;; every commit — rotation included — dropped all of it, discarding
-    ;; refinement work on photos the user hadn't touched again (reported
-    ;; 2026-07-21: "tutte le altre si scombinano"). Only drop it when the
-    ;; pivot actually moved.
-    (when-not (= old-pivot (pivot))
-      (swap! session update :camera-poses select-keys [0])
-      ;; :acquire-results must drop in lockstep — otherwise a photo's badge
-      ;; keeps showing its old "agganciata, N px" after the pose it was
-      ;; computed against has just been discarded above, which reads as the
-      ;; photo being fine right up until the user actually looks at it and
-      ;; finds the pre-refinement seed again (reported 2026-07-22: nudging
-      ;; photo 1's own position "reverted" photo 2 to how it looked before
-      ;; ever fixing it — the pose really was reset here, only the badge
-      ;; hadn't caught up).
-      (swap! session update :acquire-results select-keys [0])))
+    ;; Registered cameras (1..N) follow the proxy RIGIDLY on every commit —
+    ;; translate AND rotate. The old code wiped them (select-keys [0]) on any
+    ;; pivot move and left them stale on a pure rotation; neither is right.
+    ;; A proxy re-alignment on photo 0 doesn't mean those photos' cameras moved
+    ;; relative to the object — only our world estimate of the object did — so
+    ;; the camera↔object geometry each 's'/'p'/manual registration solved must
+    ;; be preserved by transporting the camera with the proxy (fix (2), see
+    ;; transport-registered-cameras!). Pure seeds/predictions are dropped there
+    ;; to re-derive from the corrected proxy. Rotating the proxy also changes
+    ;; its up axis (the turntable vertical seed-camera-pose orbits about), so a
+    ;; stale cached seed would seed later photos wrong — dropping it is what
+    ;; keeps a photo-0 rotation propagating to the seeds (reported 2026-07-22
+    ;; the other way: refining photo 0 'didn't propagate').
+    (transport-registered-cameras! old-pose (get-in @session [:proxy-mesh :creation-pose])))
   (viewport/show-preview! (proxy-preview-items))
-  (gizmo/update-pose! (get-in @session [:proxy-mesh :creation-pose])))
+  (gizmo/update-pose! (get-in @session [:proxy-mesh :creation-pose]))
+  ;; Persist the hand-aligned proxy pose. Only the solver paths ('s'/'r'/'f')
+  ;; used to save, so a manual gizmo alignment was lost on re-entry — the root of
+  ;; "realign the proxy every test" (Vincenzo 2026-07-25). The proxy pose is the
+  ;; one thing acquire-state.json already round-trips, so this is the immediate,
+  ;; low-risk half of the fix; the source write-back (P4) is the durable half.
+  (save-acquire-state!))
 
 ;; ============================================================
 ;; Photos 1..N-1 — turntable pre-seed + inverted gizmo (moves the camera)
@@ -504,21 +608,31 @@
   ;; (reported 2026-07-21: "lo snap muove l'oggetto in posizioni che sembrano
   ;; casuali"). Applying the inverse ONCE here, after the drag has fully
   ;; resolved against an unmoving camera, breaks the loop.
-  (let [p (apply-inverted (camera-pose-for (:current-idx @session)) cmd-type value)]
-    (swap! session assoc-in [:camera-poses (:current-idx @session)] p)
+  (let [idx (:current-idx @session)
+        p (apply-inverted (camera-pose-for idx) cmd-type value)]
+    (swap! session assoc-in [:camera-poses idx] p)
+    ;; Mark the photo touched so save-acquire-state! (which only writes camera
+    ;; poses for photos with an acquire-result, to avoid persisting raw seeds)
+    ;; keeps this hand-set pose across re-entry — the photos-1..N half of the
+    ;; "realign every test" fix (Vincenzo 2026-07-25). :manual? shows no residual
+    ;; badge, unlike a snap/pnp result, so it doesn't claim a fit it didn't do.
+    (swap! session update-in [:acquire-results idx] merge {:manual? true})
     ;; Discard the live nudge (the proxy mesh itself was never touched) before
     ;; applying the equivalent camera move, so the two never fight visually.
     (viewport/show-preview! (proxy-preview-items))
     (viewport/set-camera-pose! p)
     ;; The widget's own live rotation/translation (also just a preview effect)
     ;; needs the same reset, back onto the frozen proxy pose.
-    (gizmo/update-pose! (get-in @session [:proxy-mesh :creation-pose]))))
+    (gizmo/update-pose! (get-in @session [:proxy-mesh :creation-pose]))
+    (save-acquire-state!)))
 
 ;; ============================================================
 ;; Filmstrip navigation
 ;; ============================================================
 
 (declare stop-pnp!)
+(declare stop-marker!)
+(declare redraw-retrace!)
 
 (defn- install-gizmo!
   "Open the gizmo for photo `idx`. Photo 0's gizmo commits move the PROXY
@@ -536,6 +650,7 @@
    gizmo/enter! time, there's no mutator for it."
   [idx]
   (stop-pnp!) ; leaving a photo cancels any half-collected PnP session on it
+  (stop-marker!) ; and any open marker-click mode (its listener is photo-specific)
   (gizmo/close!)
   (swap! session assoc :current-idx idx)
   (let [{:keys [file]} (nth (:photos @session) idx)]
@@ -552,7 +667,12 @@
       (let [pose (camera-pose-for idx)]
         (viewport/set-camera-pose! pose)
         (set-photo-for-current-focal! file)))
-    (install-gizmo! idx))
+    ;; In :retrace the filmstrip is the live-reprojection control: keep the mode,
+    ;; just move the camera onto this photo and re-show the (unchanged) world-space
+    ;; polyline from the new angle — never tear down the retrace to install a gizmo.
+    (if (= :retrace (:mode @session))
+      (redraw-retrace!)
+      (install-gizmo! idx)))
   (update-panel!))
 
 ;; ============================================================
@@ -621,20 +741,22 @@
         placed (pnp-picks)
         outliers (pnp-outliers)
         visible (visible-corner-set)]
-    [{:type :wireframe :data (:proxy-mesh @session)}
-     {:type :dots
-      :data (vec (keep-indexed
-                  (fn [i pos]
-                    (cond
-                      (contains? outliers i)
-                      {:pos pos :radius 5.5 :color 0xff2020 :opacity 0.7}
-                      (contains? visible i)
-                      {:pos pos
-                       :radius (if (= i armed) 4.4 2.4)
-                       :opacity 0.3
-                       :color (if (or (= i armed) (contains? placed i))
-                                (nth corner-colors i) 0x808080)}))
-                  (corner-world-positions)))}]))
+    (into
+     [{:type :wireframe :data (:proxy-mesh @session)}
+      {:type :dots
+       :data (vec (keep-indexed
+                   (fn [i pos]
+                     (cond
+                       (contains? outliers i)
+                       {:pos pos :radius 5.5 :color 0xff2020 :opacity 0.7}
+                       (contains? visible i)
+                       {:pos pos
+                        :radius (if (= i armed) 4.4 2.4)
+                        :opacity 0.3
+                        :color (if (or (= i armed) (contains? placed i))
+                                 (nth corner-colors i) 0x808080)}))
+                   (corner-world-positions)))}]
+     (trace-items))))
 
 (defn- redraw-pnp-preview! [] (viewport/show-preview! (pnp-preview-items)))
 
@@ -878,8 +1000,7 @@
          (str "PnP: servono almeno " pnp/min-correspondences " spigoli piazzati (ne hai "
               (count correspondences) ")"))
         (if-let [sol (pnp/solve-pnp correspondences (session-intrinsics iw ih) {})]
-          (let [old-pivot (pivot)
-                residuals (into {} (map (juxt :ci :residual-px) (:per-point sol)))
+          (let [residuals (into {} (map (juxt :ci :residual-px) (:per-point sol)))
                 outlier-cis (set (map :ci (:outliers sol)))]
             (if (zero? idx)
               (let [np (bridge/solver-pose->proxy (:pose sol) camera-pose)
@@ -888,16 +1009,14 @@
                                 (:position proxy-pose) (:heading proxy-pose) (:up proxy-pose)
                                 (:position np) (:heading np) (:up np))]
                 (swap! session assoc :proxy-mesh new-mesh)
-                ;; moving the proxy on photo 0 invalidates every camera pose
-                ;; seeded/solved against the old pivot (same rule as
-                ;; on-photo0-commit!) — but keep the raw photo clicks, which are
-                ;; pose-independent
-                (when-not (= old-pivot (get-in new-mesh [:creation-pose :position]))
-                  (swap! session update :camera-poses select-keys [0])
-                  (swap! session update :acquire-results select-keys [0])
-                  (swap! session update :pnp-residuals select-keys [0])
-                  (swap! session update :pnp-outliers select-keys [0])))
-              (let [ncp (bridge/solver-pose->camera (:pose sol) proxy-pose)]
+                ;; Re-aligning the proxy on photo 0 via PnP is the same rigid
+                ;; move as an on-photo0-commit! gizmo drag, so it earns the same
+                ;; treatment (fix (2)): registered cameras follow the proxy
+                ;; rigidly, pure seeds/predictions are dropped to re-derive.
+                ;; (:pnp-residuals/:pnp-outliers only ever exist for registered
+                ;; photos, which transport keeps, so they need no separate wipe.)
+                (transport-registered-cameras! proxy-pose (:creation-pose new-mesh)))
+              (let [ncp (marker-lock-camera (bridge/solver-pose->camera (:pose sol) proxy-pose) idx)]
                 (swap! session assoc-in [:camera-poses idx] ncp)))
             (swap! session assoc-in [:acquire-results idx]
                    {:pnp? true :matched (:n sol) :rms-px (:rms-px sol)
@@ -913,6 +1032,284 @@
             (save-acquire-state!))
           (set-status-message! "PnP: nessuna soluzione — spigoli su più facce e almeno 6?")))))
   (update-panel!))
+
+;; ============================================================
+;; Retrace ('d'): P3 thin slice — trace a planar feature ON a declared face of
+;; the proxy, over the photo in pose. A click is backprojected (camera/pixel-ray)
+;; from the registered camera and intersected (math/ray-plane-point) with the
+;; declared face, giving a 3D point in the box's OBJECT frame (stable as the
+;; proxy moves). The polyline is world geometry, so navigating the filmstrip
+;; ([ / ]) re-shows it from each photo's registered camera over that photo's
+;; backdrop — the "riproiezione live nelle altre viste" of the brief, for free.
+;; Points persist in acquire-state.json; closing emits a minimal (poly …) so the
+;; retrace isn't lost (the P4-anticipated emission). Bezier/arc richness (full
+;; edit-path-2d) waits for P4, when fase-2 becomes non-modal.
+;; ============================================================
+
+(def ^:private retrace-face-labels
+  "[axis sign] → human name. A name alone ('Fronte') doesn't say WHICH face, so
+   the same colour (retrace-face-colors) tints the active face in 3D and its
+   button (Vincenzo 2026-07-25: colour the current one)."
+  {[0 1] "Lato +X" [0 -1] "Lato −X"
+   [1 1] "Sopra"   [1 -1] "Sotto"
+   [2 1] "Fronte"  [2 -1] "Retro"})
+
+(def ^:private retrace-face-colors
+  "[axis sign] → colour, shared by the active-face highlight quad and its button
+   so which plane is declared is unmistakable at a glance."
+  {[0 1] 0x5fd35f [0 -1] 0xb06cf0
+   [1 1] 0x38c3d6 [1 -1] 0x5b8def
+   [2 1] 0xf4d03f [2 -1] 0xf06fb0})
+
+(def ^:private retrace-face-order [[1 1] [1 -1] [2 1] [2 -1] [0 1] [0 -1]])
+
+(defn- axis-unit [a] (assoc [0.0 0.0 0.0] a 1.0))
+
+(defn- retrace-dims []
+  (bridge/dims-from-mesh (:proxy-mesh @session)
+                         (get-in @session [:proxy-mesh :creation-pose])))
+
+(defn- retrace-plane
+  "The declared plane in the OBJECT frame, from the :retrace :plane spec + the
+   box dims: {:point :normal}. `offset` moves the plane OUTWARD along the face
+   normal (mm), so a positive value floats the trace above the box surface (a
+   feature sitting proud of the face) regardless of which face is chosen."
+  []
+  (let [{:keys [axis sign offset]} (get-in @session [:retrace :plane])
+        half (* 0.5 (nth (retrace-dims) axis))
+        coord (* sign (+ half offset))]
+    {:point (assoc [0.0 0.0 0.0] axis coord)
+     :normal (axis-unit axis)}))
+
+(defn- active-face-quad
+  "A translucent coloured quad ON the declared face — the plane indicator, so it's
+   obvious in 3D which face you're tracing (not just the panel text). Coloured by
+   retrace-face-colors, matching the pressed face button."
+  []
+  (let [{:keys [axis sign]} (get-in @session [:retrace :plane])
+        coord (nth (:point (retrace-plane)) axis)
+        [a1 a2] (vec (remove #{axis} [0 1 2]))
+        dims (retrace-dims)
+        h1 (* 0.5 (nth dims a1))
+        h2 (* 0.5 (nth dims a2))
+        mk (fn [s1 s2] (-> [0.0 0.0 0.0] (assoc axis coord) (assoc a1 (* s1 h1)) (assoc a2 (* s2 h2))))
+        proxy-pose (get-in @session [:proxy-mesh :creation-pose])
+        [w0 w1 w2 w3] (mapv #(bridge/local->world proxy-pose %)
+                            [(mk -1 -1) (mk 1 -1) (mk 1 1) (mk -1 1)])]
+    {:type :mesh
+     :data {:vertices [w0 w1 w2 w3]
+            :faces [[0 1 2] [0 2 3]]
+            :material {:color (retrace-face-colors [axis sign]) :opacity 0.3 :double-sided true}}}))
+
+(defn- retrace-solver-pose []
+  (bridge/editor->solver-pose (current-camera-pose)
+                              (get-in @session [:proxy-mesh :creation-pose])))
+
+(def ^:private retrace-dot-radius
+  "World-mm radius of a traced vertex marker — small (the connecting line carries
+   the shape; the dot just pins each click), and translucent, so the dots read as
+   precise marks over the photo rather than the solid balls of the first cut
+   (Vincenzo 2026-07-23: 'i pallini gialli sono enormi')."
+  0.9)
+
+(defn- trace-items
+  "The retrace polyline (world) as show-preview! items — the yellow line + its
+   vertex dots (on-top, so they read over the photo). Shared by EVERY mode's
+   preview (proxy-preview-items / pnp-preview-items / retrace-preview-items) so
+   the traced bezel is a persistent scene element, visible after leaving :retrace
+   and reprojecting as the camera moves between photos. Empty line/dot data is
+   skipped by build-preview-object, so an untraced session adds nothing."
+  []
+  (let [proxy-pose (get-in @session [:proxy-mesh :creation-pose])
+        wpts (mapv #(bridge/local->world proxy-pose %) (get-in @session [:retrace :points]))]
+    [{:type :lines :data (mapv (fn [a b] {:from a :to b :color 0xffcc33}) wpts (rest wpts))
+      :on-top true}
+     {:type :dots :data (mapv (fn [w] {:pos w :radius retrace-dot-radius
+                                       :color 0xffcc33 :opacity 0.75}) wpts)}]))
+
+(defn- retrace-preview-items
+  "In :retrace the box is never drawn — only the coloured active-face quad (the
+   plane indicator, so which face you're tracing is obvious) plus the trace on
+   top of it."
+  []
+  (into [(active-face-quad)] (trace-items)))
+
+(defn- toggle-proxy!
+  "Show/hide the SOLID proxy in the main (gizmo) view so the photo underneath is
+   readable while registering. A gizmo-mode control ('v' / panel button); :retrace
+   never draws the proxy anyway, so it isn't offered there. The state persists, so
+   leaving :retrace returns to whatever was chosen here."
+  []
+  (swap! session update :hide-proxy? not)
+  (viewport/show-preview! (proxy-preview-items))
+  (update-panel!))
+
+(defn- redraw-retrace! [] (viewport/show-preview! (retrace-preview-items)))
+
+;; loupe reuse (same magnifier as PnP — the camera is locked, so a crop under
+;; the cursor stays on its photo feature); the '-pnp-' state keys are shared
+(defn- retrace-on-pointermove [^js e]
+  (when (and @session (= :retrace (:mode @session)))
+    (update-loupe! e)))
+
+(defn- retrace-on-wheel [^js e]
+  (when (and @session (= :retrace (:mode @session)))
+    (.preventDefault e) (.stopPropagation e)
+    (let [dir (if (pos? (.-deltaY e)) -1.0 1.0)
+          z' (-> (* (loupe-zoom) (Math/pow 1.2 dir)) (max loupe-zoom-min) (min loupe-zoom-max))]
+      (swap! session assoc :pnp-loupe-zoom z')
+      (update-loupe! e))))
+
+(defn- retrace-on-pointerdown [^js e]
+  (when (and @session (= :retrace (:mode @session)) (zero? (.-button e)))
+    (when-let [[iw ih] (backdrop/image-size)]
+      (when-let [px (backdrop/pixel-under-pointer e (viewport/get-camera) (viewport/get-canvas))]
+        (.preventDefault e) (.stopPropagation e)
+        (let [ray (pcamera/pixel-ray (session-intrinsics iw ih) (retrace-solver-pose) px)
+              {:keys [point normal]} (retrace-plane)]
+          (if-let [hit (m/ray-plane-point ray point normal)]
+            (do (swap! session update-in [:retrace :points] (fnil conj []) hit)
+                (redraw-retrace!)
+                (save-acquire-state!)
+                (update-panel!))
+            (set-status-message! "Il click non incontra il piano dichiarato")))))))
+
+(defn- teardown-retrace-listeners! []
+  (let [^js canvas (viewport/get-canvas)]
+    (.removeEventListener canvas "pointerdown" retrace-on-pointerdown true)
+    (.removeEventListener canvas "pointermove" retrace-on-pointermove true)
+    (.removeEventListener canvas "pointerleave" hide-pnp-loupe! true)
+    (.removeEventListener canvas "wheel" retrace-on-wheel true))
+  (remove-pnp-loupe!))
+
+(defn- start-retrace! []
+  (when (and @session (not= :retrace (:mode @session)))
+    (gizmo/close!)
+    (swap! session assoc :mode :retrace)
+    (let [^js canvas (viewport/get-canvas)]
+      (.addEventListener canvas "pointerdown" retrace-on-pointerdown true)
+      (.addEventListener canvas "pointermove" retrace-on-pointermove true)
+      (.addEventListener canvas "pointerleave" hide-pnp-loupe! true)
+      (.addEventListener canvas "wheel" retrace-on-wheel #js {:capture true :passive false}))
+    (redraw-retrace!)
+    (update-panel!)))
+
+(defn- stop-retrace! []
+  (when (and @session (= :retrace (:mode @session)))
+    (teardown-retrace-listeners!)
+    (swap! session assoc :mode :gizmo)
+    (viewport/show-preview! (proxy-preview-items))
+    (install-gizmo! (:current-idx @session))
+    (update-panel!)))
+
+(defn- undo-retrace-point! []
+  (when (seq (get-in @session [:retrace :points]))
+    (swap! session update-in [:retrace :points] pop)
+    (redraw-retrace!)
+    (save-acquire-state!)
+    (update-panel!)))
+
+(defn- clear-retrace! []
+  (swap! session assoc-in [:retrace :points] [])
+  (redraw-retrace!)
+  (save-acquire-state!)
+  (update-panel!))
+
+;; ============================================================
+;; Blindato marker mode ('m'): click the physical mark to pin the branch. A tiny
+;; mode — one canvas click, no plane/loupe (the four Klein reprojections sit
+;; ≥650px apart on a 4032px frame, so a rough click disambiguates). See
+;; marker-lock-camera above for the lock itself.
+;; ============================================================
+
+(defn- on-marker-click!
+  "The user clicked the physical mark on the current photo. Store the pixel and
+   pin this photo's camera to the marked branch (marker-lock-camera). Camera
+   photos only — photo 0's branch is fixed by the proxy alignment, not a camera
+   lock. Flags :manual? so the marker-locked pose is persisted + rigidly
+   transported like any hand-set camera (transport-registered-cameras!)."
+  [px]
+  (let [idx (:current-idx @session)]
+    (when (pos? idx)
+      (swap! session assoc-in [:marker-picks idx] px)
+      (let [locked (marker-lock-camera (camera-pose-for idx) idx)]
+        (swap! session assoc-in [:camera-poses idx] locked)
+        (swap! session update-in [:acquire-results idx] merge {:manual? true})
+        (viewport/set-camera-pose! locked)
+        (save-acquire-state!)
+        (set-status-message! "Segno marcato — ramo bloccato su questa foto")
+        ;; one-shot: return to the gizmo (which re-shows the preview and re-arms
+        ;; the normal handles) so no marker pointer handler lingers to conflict
+        ;; with s/f/p, and a rough click is enough (≥650px margin).
+        (stop-marker!)))))
+
+(defn- marker-on-pointerdown [^js e]
+  (when (and @session (= :marker (:mode @session)) (zero? (.-button e)))
+    (when-let [px (backdrop/pixel-under-pointer e (viewport/get-camera) (viewport/get-canvas))]
+      (.preventDefault e) (.stopPropagation e)
+      (on-marker-click! px))))
+
+(defn- start-marker! []
+  (when (and @session (not= :marker (:mode @session)))
+    (if (zero? (:current-idx @session))
+      (set-status-message! "Il segno si marca su una foto diversa dalla prima (quella fissa il proxy)")
+      (do (gizmo/close!)
+          (swap! session assoc :mode :marker)
+          (.addEventListener (viewport/get-canvas) "pointerdown" marker-on-pointerdown true)
+          (set-status-message! "Clicca il segno/freccia sul pezzo in questa foto")
+          (update-panel!)))))
+
+(defn- stop-marker! []
+  (when (and @session (= :marker (:mode @session)))
+    (.removeEventListener (viewport/get-canvas) "pointerdown" marker-on-pointerdown true)
+    (swap! session assoc :mode :gizmo)
+    (viewport/show-preview! (proxy-preview-items))
+    (install-gizmo! (:current-idx @session))
+    (update-panel!)))
+
+(defn- set-retrace-face!
+  "Pick the declared face. A retrace belongs to ONE plane, so switching the face
+   clears the points placed on the previous one (they'd be meaningless there);
+   the offset carries over."
+  [axis sign]
+  (let [had (seq (get-in @session [:retrace :points]))]
+    (swap! session update :retrace
+           (fn [rt] (assoc rt :plane (assoc (:plane rt) :axis axis :sign sign) :points [])))
+    (redraw-retrace!)
+    (save-acquire-state!)
+    (when had (set-status-message! "Piano cambiato — ricalco azzerato"))
+    (update-panel!)))
+
+(defn- on-retrace-offset-change!
+  "Live offset of the declared plane along its normal (mm). Does NOT clear
+   already-placed points (they keep their 3D positions); it retargets future
+   clicks and moves the drawn face rectangle, so it's a set-first control."
+  [offset]
+  (swap! session assoc-in [:retrace :plane :offset] offset)
+  (redraw-retrace!))
+
+(defn- retrace-offset-range [_] [-15 15 0.5])
+
+(defn- emit-retrace!
+  "Minimal emission (P4 anticipated): print a (poly …) of the trace's in-plane
+   coordinates plus a comment recording the plane + the object-frame 3D points,
+   so nothing is lost on exit (acquire-state.json already round-trips it; this
+   is the source the user keeps). poly needs ≥3 points; below that, just the
+   comment."
+  []
+  (when-let [{:keys [plane points]} (:retrace @session)]
+    (when (seq points)
+      (let [{:keys [axis sign offset]} plane
+            [a1 a2] (vec (remove #{axis} [0 1 2]))
+            f3 (fn [x] (.toFixed x 3))
+            hdr (str ";; edit-acquire ricalco — piano axis=" axis " sign=" sign
+                     " offset=" (f3 offset) "mm, " (count points) " punti (frame oggetto)")
+            body (if (>= (count points) 3)
+                   (str "(poly "
+                        (str/join " " (mapcat (fn [p] [(f3 (nth p a1)) (f3 (nth p a2))]) points))
+                        ")")
+                   (str ";; (solo " (count points) " punti — servono ≥3 per una (poly …))"))]
+        (state/capture-println (str hdr "\n" body))))))
 
 ;; ============================================================
 ;; Panel (numbered filmstrip + focal-length field + Chiudi — no badges/
@@ -939,6 +1336,7 @@
         hint (.createElement js/document "div")
         filmstrip (.createElement js/document "div")
         pnp-box (.createElement js/document "div")
+        retrace-box (.createElement js/document "div")
         message (.createElement js/document "div")
         {:keys [row slider]} (ui/create-slider-row {:label "Focale (mm)"
                                                     :value (:focal-mm @session)
@@ -949,12 +1347,14 @@
     (set! (.-textContent header) "edit-acquire — gate ingegneristico")
     (.appendChild panel header)
     (set! (.-textContent hint)
-          "1) la Focale è letta da EXIF — ritoccala con lo slider (foto 1) solo se il box è della taglia sbagliata, SENZA spostarlo — 2) poi trascina per posizione/rotazione — 3) 's' per agganciare il box agli spigoli reali della foto — 4) con almeno 2 foto agganciate, 'f' per il fit congiunto sulle altre.")
+          "1) la Focale è letta da EXIF — ritoccala con lo slider (foto 1) solo se il box è della taglia sbagliata, SENZA spostarlo — 2) poi trascina per posizione/rotazione — 3) 's' per agganciare il box agli spigoli reali della foto — 4) con almeno 2 foto agganciate, 'f' per il fit congiunto sulle altre. 'v' nasconde/mostra il proxy per leggere la foto sotto.")
     (.appendChild panel hint)
     (.appendChild panel row)
     (.appendChild panel filmstrip)
     (set! (.-className pnp-box) "eaq-pnp-box")
     (.appendChild panel pnp-box)
+    (set! (.-className retrace-box) "eaq-retrace-box")
+    (.appendChild panel retrace-box)
     (set! (.-className message) "ems-message")
     (.appendChild panel message)
     (set! (.-type close-btn) "button")
@@ -962,7 +1362,7 @@
     (.addEventListener close-btn "click" close!)
     (.appendChild panel close-btn)
     (swap! session assoc :panel-el panel :filmstrip-el filmstrip :focal-slider-el slider
-           :message-el message :pnp-el pnp-box)
+           :message-el message :pnp-el pnp-box :retrace-el retrace-box)
     (modal/mount-panel! panel)
     (update-panel!)))
 
@@ -975,11 +1375,13 @@
   (when-let [box (:pnp-el @session)]
     (set! (.-innerHTML box) "")
     (if (not= :pnp (:mode @session))
-      (let [b (.createElement js/document "button")]
-        (set! (.-type b) "button")
-        (set! (.-textContent b) "Registra per punti (p)")
-        (.addEventListener b "click" (fn [_] (start-pnp!)))
-        (.appendChild box b))
+      ;; entry button only from :gizmo — never on top of :retrace (empty box there)
+      (when (= :gizmo (:mode @session))
+        (let [b (.createElement js/document "button")]
+          (set! (.-type b) "button")
+          (set! (.-textContent b) "Registra per punti (p)")
+          (.addEventListener b "click" (fn [_] (start-pnp!)))
+          (.appendChild box b)))
       (let [placed (pnp-picks)
             resid (pnp-residuals)
             outliers (pnp-outliers)
@@ -1051,12 +1453,115 @@
           (.appendChild actions exit))
         (.appendChild box actions)))))
 
+(defn- render-retrace-panel!
+  "Retrace controls in :retrace-el, rebuilt each update. Entry button only in
+   :gizmo mode (so a mode is never started on top of another — pnp/retrace are
+   both reached from the gizmo); in :retrace mode the six face buttons (current
+   highlighted), an offset slider, a point count + hint, and Annulla/Azzera/Esci."
+  []
+  (when-let [box (:retrace-el @session)]
+    (set! (.-innerHTML box) "")
+    (cond
+      (= :gizmo (:mode @session))
+      (let [actions (.createElement js/document "div")
+            pv (.createElement js/document "button")
+            b (.createElement js/document "button")]
+        (set! (.-className actions) "eaq-pnp-actions")
+        (set! (.-type pv) "button")
+        (set! (.-textContent pv) (if (:hide-proxy? @session) "Mostra proxy (v)" "Nascondi proxy (v)"))
+        (.addEventListener pv "click" (fn [_] (toggle-proxy!)))
+        (set! (.-type b) "button")
+        (set! (.-textContent b) "Ricalca su un piano (d)")
+        (.addEventListener b "click" (fn [_] (start-retrace!)))
+        (.appendChild actions pv)
+        (.appendChild actions b)
+        ;; Blindato: mark the physical sign to pin this photo's branch. Camera
+        ;; photos only (photo 0's branch is set by the proxy alignment). A green
+        ;; tick reminds the user this photo already has its mark.
+        (when (pos? (:current-idx @session))
+          (let [mk (.createElement js/document "button")
+                marked? (get-in @session [:marker-picks (:current-idx @session)])]
+            (set! (.-type mk) "button")
+            (set! (.-textContent mk) (if marked? "Segno marcato ✓ — rimarca (m)" "Marca il segno (m)"))
+            (.addEventListener mk "click" (fn [_] (start-marker!)))
+            (.appendChild actions mk)))
+        (.appendChild box actions))
+
+      (= :marker (:mode @session))
+      (let [info (.createElement js/document "div")
+            actions (.createElement js/document "div")
+            exit (.createElement js/document "button")]
+        (set! (.-className info) "eaq-pnp-info")
+        (set! (.-textContent info)
+              "Clicca sul segno/freccia disegnato sul pezzo, in questa foto. Serve a dire da che lato sta il pezzo (blocca il ramo).")
+        (.appendChild box info)
+        (set! (.-className actions) "eaq-pnp-actions")
+        (set! (.-type exit) "button")
+        (set! (.-textContent exit) "Esci (Esc)")
+        (.addEventListener exit "click" (fn [_] (stop-marker!)))
+        (.appendChild actions exit)
+        (.appendChild box actions))
+
+      (= :retrace (:mode @session))
+      (let [{:keys [axis sign offset]} (get-in @session [:retrace :plane])
+            npts (count (get-in @session [:retrace :points]))
+            info (.createElement js/document "div")
+            faces (.createElement js/document "div")
+            {:keys [row]} (ui/create-slider-row {:label "Offset piano (mm)"
+                                                 :value offset
+                                                 :range-fn retrace-offset-range
+                                                 :on-input on-retrace-offset-change!})
+            actions (.createElement js/document "div")]
+        (set! (.-className info) "eaq-pnp-info")
+        (set! (.-textContent info)
+              (str "Piano: " (retrace-face-labels [axis sign]) " — clicca il contorno sulla foto ("
+                   npts " punti). '[' / ']' per rivederlo dalle altre viste."))
+        (.appendChild box info)
+        (set! (.-className faces) "eaq-pnp-corners")
+        (doseq [[a s] retrace-face-order]
+          (let [b (.createElement js/document "button")
+                st (.-style b)
+                cur? (and (= a axis) (= s sign))]
+            (set! (.-type b) "button")
+            (set! (.-textContent b) (retrace-face-labels [a s]))
+            ;; each button carries its face colour; the active one is full-bright
+            ;; with a white ring, the others dimmed — so the panel matches the
+            ;; coloured face in 3D (Vincenzo 2026-07-25)
+            (set! (.-color st) "#111")
+            (set! (.-background st) (hex->css (retrace-face-colors [a s])))
+            (set! (.-opacity st) (if cur? "1" "0.5"))
+            (set! (.-border st) (if cur? "2px solid #fff" "1px solid #555"))
+            (.addEventListener b "click" (fn [_] (set-retrace-face! a s)))
+            (.appendChild faces b)))
+        (.appendChild box faces)
+        (.appendChild box row)
+        (set! (.-className actions) "eaq-pnp-actions")
+        (let [undo (.createElement js/document "button")
+              clr (.createElement js/document "button")
+              exit (.createElement js/document "button")]
+          (set! (.-type undo) "button")
+          (set! (.-textContent undo) "Annulla ultimo (⌫)")
+          (set! (.-disabled undo) (zero? npts))
+          (.addEventListener undo "click" (fn [_] (undo-retrace-point!)))
+          (set! (.-type clr) "button")
+          (set! (.-textContent clr) "Azzera")
+          (set! (.-disabled clr) (zero? npts))
+          (.addEventListener clr "click" (fn [_] (clear-retrace!)))
+          (set! (.-type exit) "button")
+          (set! (.-textContent exit) "Esci (d)")
+          (.addEventListener exit "click" (fn [_] (stop-retrace!)))
+          (.appendChild actions undo)
+          (.appendChild actions clr)
+          (.appendChild actions exit))
+        (.appendChild box actions)))))
+
 (defn- update-panel! []
   ;; Focale is a phase-0-only control (see build-panel!'s hint): the lens
   ;; doesn't change between photos, so re-tuning it later would silently
   ;; rescale a photo the user thinks is already locked in. Disabled, not
   ;; hidden, so it's clear it isn't gone, just not this photo's job.
   (render-pnp-panel!)
+  (render-retrace-panel!)
   (when-let [^js slider (:focal-slider-el @session)]
     (set! (.-disabled slider) (not (zero? (:current-idx @session)))))
   (when-let [^js message (:message-el @session)]
@@ -1082,8 +1587,10 @@
         (.appendChild strip btn)))))
 
 ;; ============================================================
-;; Keyboard: [ / ] to move through the filmstrip, 's' to edge-snap,
-;; 'f' for the joint turntable fit, Escape to close
+;; Keyboard: [ / ] to move through the filmstrip (works in every mode — in
+;; :retrace it IS the live-reprojection control), 's' edge-snap, 'f' joint
+;; turntable fit, 'p' PnP, 'd' plane-retrace, Backspace undo a retrace point,
+;; Escape backs out of the current mode (then closes).
 ;; ============================================================
 
 (defn- on-keydown [^js e]
@@ -1091,17 +1598,40 @@
     (let [key (.-key e)
           n (count (:photos @session))
           idx (:current-idx @session)
-          pnp? (= :pnp (:mode @session))]
+          pnp? (= :pnp (:mode @session))
+          retrace? (= :retrace (:mode @session))
+          marker? (= :marker (:mode @session))]
       (cond
-        ;; In PnP mode, Escape backs out of collection first (one step at a
-        ;; time), rather than tearing the whole session down mid-registration.
+        ;; Escape backs out of the active sub-mode first (one step at a time),
+        ;; rather than tearing the whole session down mid-registration/retrace.
         (= key "Escape")
         (do (.preventDefault e) (.stopPropagation e)
-            (if pnp? (stop-pnp!) (close!)))
+            (cond pnp? (stop-pnp!) retrace? (stop-retrace!) marker? (stop-marker!) :else (close!)))
 
-        (= key "p")
+        ;; 'p' toggles PnP from gizmo/pnp; inert during a retrace (exit it first)
+        (and (not retrace?) (= key "p"))
         (do (.preventDefault e) (.stopPropagation e)
             (if pnp? (stop-pnp!) (start-pnp!)))
+
+        ;; 'd' toggles the plane-retrace from gizmo/retrace; inert during pnp
+        (and (not pnp?) (= key "d"))
+        (do (.preventDefault e) (.stopPropagation e)
+            (if retrace? (stop-retrace!) (start-retrace!)))
+
+        (and retrace? (= key "Backspace"))
+        (do (.preventDefault e) (.stopPropagation e) (undo-retrace-point!))
+
+        ;; 'v' hides/shows the solid proxy in the main (gizmo) view so the photo
+        ;; is readable while registering — meaningless in :retrace (no proxy) and
+        ;; :pnp (already a see-through wireframe), so gizmo-only.
+        (and (= :gizmo (:mode @session)) (= key "v"))
+        (do (.preventDefault e) (.stopPropagation e) (toggle-proxy!))
+
+        ;; 'm' arms the blindato marker-click (pin the Klein branch by the
+        ;; physical mark). Toggles from gizmo/marker; inert during pnp/retrace.
+        (and (not pnp?) (not retrace?) (= key "m"))
+        (do (.preventDefault e) (.stopPropagation e)
+            (if marker? (stop-marker!) (start-marker!)))
 
         (and pnp? (= key "r"))
         (do (.preventDefault e) (.stopPropagation e) (on-solve-pnp!))
@@ -1114,10 +1644,12 @@
         (do (.preventDefault e) (.stopPropagation e)
             (enter-photo! (mod (dec idx) n)))
 
-        (= key "s")
+        ;; 's'/'f' act on the gizmo/camera registration — meaningless (and
+        ;; disruptive to the frozen pose) during a retrace, so gate them out.
+        (and (not retrace?) (= key "s"))
         (do (.preventDefault e) (.stopPropagation e) (on-snap!))
 
-        (= key "f")
+        (and (not retrace?) (= key "f"))
         (do (.preventDefault e) (.stopPropagation e) (on-fit-turntable!))
 
         (= key "]")
@@ -1148,12 +1680,40 @@
 (defn- save-acquire-state! []
   (let [proxy-pose (get-in @session [:proxy-mesh :creation-pose])
         photos (into {}
-                     (map (fn [[idx {:keys [matched rms-px]}]]
+                     (map (fn [[idx {:keys [matched rms-px manual?]}]]
                             [(str idx)
                              (cond-> {:matched matched :rms-px rms-px}
+                               ;; Persist :manual? so a hand-placed camera comes
+                               ;; back as REGISTERED (registered-result?) after a
+                               ;; reload — otherwise a later proxy nudge on photo
+                               ;; 0 would drop it as if it were a bare seed
+                               ;; (transport-registered-cameras!).
+                               manual? (assoc :manual? true)
                                (pos? idx) (assoc :camera-pose (get-in @session [:camera-poses idx])))])
                           (:acquire-results @session)))
-        body (js/JSON.stringify (clj->js {:proxy-pose proxy-pose :photos photos}))
+        body (js/JSON.stringify (clj->js {:proxy-pose proxy-pose :photos photos
+                                          ;; Photo 0's camera pose, saved explicitly:
+                                          ;; the per-photo `photos` map only carries
+                                          ;; camera poses for idx>0, and photo 0's is
+                                          ;; otherwise RECOMPUTED at re-entry from the
+                                          ;; (now-aligned) pivot via default-vantage-
+                                          ;; pose — a different vantage than the frozen
+                                          ;; one aligned against, so the proxy came back
+                                          ;; translated by however far the pivot moved
+                                          ;; (Vincenzo 2026-07-25: "la uno traslata di
+                                          ;; diversi mm"). Persisting it keeps the frozen
+                                          ;; vantage across sessions.
+                                          :camera-pose-0 (get-in @session [:camera-poses 0])
+                                          ;; P3 retrace: plane spec + object-frame
+                                          ;; points, so the ricalco survives exit/
+                                          ;; re-entry (object frame = stable under
+                                          ;; later proxy moves)
+                                          :retrace (:retrace @session)
+                                          ;; Blindato marker picks (pixel per photo)
+                                          ;; — the durable branch decision; re-applied
+                                          ;; to every future registration via
+                                          ;; marker-lock-camera.
+                                          :marker-picks (:marker-picks @session)}))
         path (acquire-state-path)]
     (swap! save-chain
            (fn [prev]
@@ -1165,7 +1725,22 @@
 
 (defn- apply-loaded-state! [text]
   (try
-    (let [{:keys [proxy-pose photos]} (js->clj (js/JSON.parse text) :keywordize-keys true)]
+    (let [{:keys [proxy-pose camera-pose-0 photos retrace marker-picks]} (js->clj (js/JSON.parse text) :keywordize-keys true)]
+      (when-let [pl (:plane retrace)]
+        (when (and (:axis pl) (:sign pl))
+          (swap! session assoc :retrace
+                 {:plane {:axis (:axis pl) :sign (:sign pl) :offset (or (:offset pl) 0.0)}
+                  :points (mapv vec (or (:points retrace) []))})))
+      ;; Blindato marker picks — JSON stringifies the integer photo keys, so
+      ;; keywordize-keys turns them into :1/:2/… ; back to ints for :current-idx
+      ;; lookups (marker-lock-camera / on-marker-click!).
+      (when marker-picks
+        (swap! session assoc :marker-picks
+               (into {} (map (fn [[k v]] [(js/parseInt (name k) 10) (vec v)]) marker-picks))))
+      ;; Restore photo 0's frozen vantage so enter-photo! 0 uses it instead of
+      ;; recomputing from the aligned pivot (which shifted the proxy on re-entry).
+      (when camera-pose-0
+        (swap! session assoc-in [:camera-poses 0] camera-pose-0))
       (when proxy-pose
         (let [old-pose (get-in @session [:proxy-mesh :creation-pose])
               ;; Defensive, not redundant: a file saved before the
@@ -1182,7 +1757,7 @@
                           (:position old-pose) (:heading old-pose) (:up old-pose)
                           (:position proxy-pose) safe-heading safe-up)]
           (swap! session assoc :proxy-mesh new-mesh)))
-      (doseq [[idx-kw {:keys [camera-pose matched rms-px]}] photos]
+      (doseq [[idx-kw {:keys [camera-pose matched rms-px manual?]}] photos]
         (let [idx (js/parseInt (name idx-kw))]
           (cond
             (zero? idx)
@@ -1190,7 +1765,9 @@
 
             camera-pose
             (do (swap! session assoc-in [:camera-poses idx] camera-pose)
-                (swap! session assoc-in [:acquire-results idx] {:matched matched :rms-px rms-px}))
+                (swap! session assoc-in [:acquire-results idx]
+                       (cond-> {:matched matched :rms-px rms-px}
+                         manual? (assoc :manual? true))))
 
             ;; idx > 0 with no camera-pose: this photo's entry is incomplete
             ;; (a save that raced with another and lost — see save-acquire-
@@ -1213,6 +1790,9 @@
 (defn- close! []
   (when @session
     (stop-pnp!) ; removes the canvas pointer handler + placed-marker overlay
+    (stop-marker!) ; removes the marker-click canvas pointer handler
+    (teardown-retrace-listeners!) ; removes retrace pointer/wheel handlers + loupe
+    (emit-retrace!) ; print the ricalco as source before the session is dropped
     (viewport/unregister-frame-callback! :edit-acquire)
     (gizmo/close!)
     (backdrop/clear!)
@@ -1262,6 +1842,12 @@
                                   :pnp-outliers {}
                                   :pnp-armed 0
                                   :pnp-loupe-zoom loupe-zoom-default
+                                  ;; P3 retrace: default declared plane = the box
+                                  ;; top face (axis 1 = box-basis up, sign +1),
+                                  ;; no offset; overwritten by acquire-state.json
+                                  ;; on re-entry (load-acquire-state!)
+                                  :retrace {:plane {:axis 1 :sign 1 :offset 0.0} :points []}
+                                  :hide-proxy? false ; 'v' toggle in :retrace
                                   :focal-mm default-focal-mm
                                   :focal-source :default
                                   :panel-el nil
@@ -1288,6 +1874,28 @@
       (.catch (fn [err]
                 (state/capture-println (str "edit-acquire: couldn't load session — " err))
                 (modal/release!)))))
+
+(defn ^:dev/after-load reinstall-after-hot-reload!
+  "Dev-only. A shadow-cljs hot code-swap re-runs redraws (so a preview tweak shows
+   at once) but NOT enter!, so a session opened before the swap keeps the OLD
+   keydown listener and the OLD panel DOM — a newly added key or panel button
+   never appears without a full page reload + re-run of `edit-acquire`. That gap
+   is what made a live `v`/'Nascondi proxy' change look broken during tuning
+   (2026-07-23) when only a hot-reload had happened. So: when a session is open,
+   re-arm the keydown with the current `on-keydown` and re-render the panel with
+   the current renderers. No-op with no session open (the usual case); stripped
+   entirely from release builds (^:dev/after-load)."
+  []
+  (when @session
+    (when-let [h (:key-handler @session)] (modal/remove-keydown! h))
+    (swap! session assoc :key-handler (modal/install-keydown! on-keydown))
+    ;; also re-render the current mode's preview, so a hot-swapped *-preview-items
+    ;; (e.g. a dot size or a hide-proxy rule) shows without needing a manual redraw
+    (case (:mode @session)
+      :retrace (redraw-retrace!)
+      :pnp (do (redraw-pnp-preview!) (redraw-overlay-dots!))
+      (viewport/show-preview! (proxy-preview-items)))
+    (update-panel!)))
 
 ;; Synchronous modal (tweak_mode.cljs's own precedent): opens inside its own
 ;; enter!, so requested? is always false and the generic post-eval driver in

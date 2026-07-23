@@ -747,3 +747,16 @@
   (let [h0 (normalize h0) u0 (normalize u0) r0 (normalize (cross h0 u0))
         h1 (normalize h1) u1 (normalize u1) r1 (normalize (cross h1 u1))]
     (mapv #(transform-mesh-rigid % p0 h0 u0 r0 p1 h1 u1 r1) meshes)))
+
+(defn transform-pose-rigid
+  "Rigidly carry a standalone turtle pose {:position :heading :up} through the
+   same rigid body transform group-transform applies to a mesh — the one that
+   maps basis (p0,h0,u0)→(p1,h1,u1). :position moves like a point, :heading/:up
+   like directions. Used when a pose (e.g. a registered camera) must follow a
+   moved/rotated proxy rigidly instead of being recomputed from scratch."
+  [pose p0 h0 u0 p1 h1 u1]
+  (let [h0 (normalize h0) u0 (normalize u0) r0 (normalize (cross h0 u0))
+        h1 (normalize h1) u1 (normalize u1) r1 (normalize (cross h1 u1))]
+    {:position (transform-point-rigid (:position pose) p0 h0 u0 r0 p1 h1 u1 r1)
+     :heading (transform-direction-rigid (:heading pose) h0 u0 r0 h1 u1 r1)
+     :up (transform-direction-rigid (:up pose) h0 u0 r0 h1 u1 r1)}))
