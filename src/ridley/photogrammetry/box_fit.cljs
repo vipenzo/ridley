@@ -178,6 +178,23 @@
               idx))
           edges))))
 
+(defn visible-corners
+  "Set of corner indices (into `corners`) visible from a camera pose, for a
+   convex box: a corner is visible when at least one of its three adjacent
+   faces is front-facing. The far vertex of a generic view — all three faces
+   turned away — is excluded, which is what lets a caller avoid asking the user
+   to point at a corner hidden behind the part."
+  [dims pose]
+  (let [c (cam/camera-center pose)
+        dims-v (vec dims)]
+    (set (keep-indexed
+          (fn [i signs]
+            (when (some (fn [[axis sign]]
+                          (> (* sign (- (nth c axis) (* sign 0.5 (nth dims-v axis)))) 1e-9))
+                        (map-indexed vector signs))
+              i))
+          corner-signs))))
+
 ;; ---------------------------------------------------------------------------
 ;; Observations
 

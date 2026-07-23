@@ -93,6 +93,25 @@
           n (count (bf/visible-edges [60.0 25.0 10.0] pose))]
       (is (= 9 n) (str "expected 9 visible edges when off-axis, got " n)))))
 
+(deftest visible-corners-hides-the-far-vertex
+  ;; edit-acquire's PnP only offers the user the corners actually visible on the
+  ;; part (never a vertex hidden behind it). A generic three-face view shows
+  ;; seven of the eight corners; a face-on view shows four.
+  (testing "a generic viewpoint sees 7 of the 8 corners (one far vertex hidden)"
+    (let [pose (synth/viewpoint 35.0 25.0 300.0)
+          vis (bf/visible-corners [60.0 25.0 10.0] pose)]
+      (is (= 7 (count vis)) (str "expected 7 visible corners, got " (sort vis)))))
+  (testing "a face-on viewpoint sees only the 4 corners of the one visible face"
+    (let [pose (synth/viewpoint 0.0 0.0 300.0)]
+      (is (= 4 (count (bf/visible-corners [60.0 25.0 10.0] pose))))))
+  (testing "every visible corner lies on at least one visible edge"
+    (let [dims [60.0 25.0 10.0]
+          pose (synth/viewpoint 42.0 18.0 300.0)
+          vis (bf/visible-corners dims pose)
+          edge-corners (set (mapcat #(nth bf/edges %) (bf/visible-edges dims pose)))]
+      (is (= vis edge-corners)
+          "the visible-corner set must equal the corners of the visible edges"))))
+
 ;; ---------------------------------------------------------------------------
 ;; The fit
 

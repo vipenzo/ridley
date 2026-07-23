@@ -37,8 +37,10 @@
             [ridley.viewport.core :as viewport]
             [ridley.turtle.attachment :as attachment]
             [ridley.photogrammetry.camera :as pcamera]
+            [ridley.photogrammetry.exif :as exif]
             [ridley.photogrammetry.bridge :as bridge]
             [ridley.photogrammetry.edge-snap :as edge-snap]
+            [ridley.photogrammetry.pnp :as pnp]
             [ridley.photogrammetry.match :as match]
             [ridley.photogrammetry.turntable-fit :as tt]
             [ridley.photogrammetry.box-fit :as bf]
@@ -58,10 +60,15 @@
 ;;                                     single source of truth for its pose
 ;;  :camera-poses {idx pose}         — memoized per-photo; idx 0 = the fixed
 ;;                                     default vantage set at entry
-;;  :focal-mm 48.0                   — user-entered, session-wide (one lens);
-;;                                     converted to horizontal FOV via
-;;                                     photogrammetry.camera/focal-mm->fov-deg
-;;                                     wherever it feeds the backdrop/camera
+;;  :focal-mm 48.0                   — 35mm-equiv focal, session-wide (one lens);
+;;                                     read from photo 0's EXIF at entry, else
+;;                                     the default; converted to horizontal FOV
+;;                                     via photogrammetry.camera/equiv-focal->
+;;                                     hfov-deg (diagonal convention + the
+;;                                     photo's aspect) wherever it feeds the
+;;                                     backdrop/camera/intrinsics
+;;  :focal-source :exif|:manual|:default — provenance of :focal-mm, for the
+;;                                     panel's honest label
 ;;  :acquire-results {idx {:picks :matched :rms-px}} — `s`'s edge-snap outcome
 ;;                                     per photo, feeding both the filmstrip's
 ;;                                     badges and acquire-state.json
@@ -129,13 +136,48 @@
 
 (defn- set-photo-for-current-focal! [file]
   (backdrop/set-photo! (photo-path file)
-                       (pcamera/focal-mm->fov-deg (:focal-mm @session))
+                       (:focal-mm @session)
                        viewport/set-camera-fov!))
+
+(defn- session-intrinsics
+  "Pinhole intrinsics for the session's lens at the current photo's pixel size.
+   Converts the 35mm-equivalent focal to a HORIZONTAL FOV against the photo's
+   own aspect ratio (pcamera/equiv-focal->hfov-deg — the diagonal convention,
+   not the 36mm-width one), so the projected box lands at the photo's true
+   scale. iw/ih come from the loaded photo (backdrop/image-size)."
+  [iw ih]
+  (pcamera/intrinsics-from-fov
+   (pcamera/equiv-focal->hfov-deg (:focal-mm @session) (/ iw ih)) iw ih))
 
 (defn- parse-session-json [text]
   (let [obj (js/JSON.parse text)]
     {:photos (mapv (fn [[file theta]] {:file file :theta theta})
                    (js->clj (.-photos obj)))}))
+
+(declare set-status-message!)
+
+(defn- load-exif-focal!
+  "Read the 35mm-equivalent focal length from photo 0's EXIF and adopt it as
+   the session focal (source :exif). The lens is the same for every photo in a
+   turntable session, so one read is enough. Silently keeps the default +
+   manual slider (source stays :default) when the tag is absent or unreadable
+   — a missing/odd EXIF must never block the session. Returns a Promise so the
+   caller can order the first photo load AFTER the focal is known."
+  [first-file]
+  (-> (stl/desktop-read-file-blob (photo-path (:file first-file)))
+      (.then (fn [^js blob] (.arrayBuffer blob)))
+      (.then (fn [ab]
+               (when-let [focal (exif/focal-35mm-from-arraybuffer ab)]
+                 (swap! session assoc :focal-mm focal :focal-source :exif))))
+      (.catch (fn [_] nil)))) ; unreadable file/blob — fall back to the default
+
+(defn- report-focal! []
+  (let [{:keys [focal-mm focal-source]} @session
+        mm (js/Math.round focal-mm)]
+    (set-status-message!
+     (if (= focal-source :exif)
+       (str "Focale da EXIF: " mm "mm")
+       (str "EXIF senza focale — uso " mm "mm (regola con lo slider)")))))
 
 ;; ============================================================
 ;; Transient panel messages (edit-mesh-split's own pattern: capture-println
@@ -211,8 +253,7 @@
     (let [proxy-pose (get-in @session [:proxy-mesh :creation-pose])
           camera-pose (current-camera-pose)
           dims (bridge/dims-from-mesh (:proxy-mesh @session) proxy-pose)
-          intrinsics (pcamera/intrinsics-from-fov
-                      (pcamera/focal-mm->fov-deg (:focal-mm @session)) iw ih)
+          intrinsics (session-intrinsics iw ih)
           seed-pose (bridge/editor->solver-pose camera-pose proxy-pose)
           picks (snap-all-edges dims intrinsics seed-pose)
           result (match/refine-from-pose dims intrinsics picks seed-pose {})]
@@ -292,8 +333,7 @@
   (when-let [[iw ih] (backdrop/image-size)]
     (let [proxy-pose (get-in @session [:proxy-mesh :creation-pose])
           dims (bridge/dims-from-mesh (:proxy-mesh @session) proxy-pose)
-          intrinsics (pcamera/intrinsics-from-fov
-                      (pcamera/focal-mm->fov-deg (:focal-mm @session)) iw ih)
+          intrinsics (session-intrinsics iw ih)
           photos-with-picks (vec (keep (fn [[idx result]]
                                          (when-let [picks (:picks result)]
                                            {:picks picks
@@ -478,11 +518,24 @@
 ;; Filmstrip navigation
 ;; ============================================================
 
+(declare stop-pnp!)
+
+(defn- install-gizmo!
+  "Open the gizmo for photo `idx`. Photo 0's gizmo commits move the PROXY
+   (on-photo0-commit!); photos 1..N-1's commits invert onto the CAMERA
+   (on-inv-commit!). Extracted so PnP mode can tear the gizmo down and put it
+   back without re-loading the photo."
+  [idx]
+  (gizmo/enter! (get-in @session [:proxy-mesh :creation-pose])
+                {:mode :object :handles #{:translate :rotate}}
+                {:on-commit (if (zero? idx) on-photo0-commit! on-inv-commit!)}))
+
 (defn- enter-photo!
   "Close/reopen the gizmo for photo `idx` — simpler to reason about than
    special-casing the 0↔1+ boundary, since :nudge-mesh? can only be set at
    gizmo/enter! time, there's no mutator for it."
   [idx]
+  (stop-pnp!) ; leaving a photo cancels any half-collected PnP session on it
   (gizmo/close!)
   (swap! session assoc :current-idx idx)
   (let [{:keys [file]} (nth (:photos @session) idx)]
@@ -495,20 +548,370 @@
                            (default-vantage-pose (pivot)))]
         (swap! session assoc-in [:camera-poses 0] start-pose)
         (viewport/set-camera-pose! start-pose)
-        (set-photo-for-current-focal! file)
-        (gizmo/enter! (get-in @session [:proxy-mesh :creation-pose])
-                      {:mode :object :handles #{:translate :rotate}}
-                      {:on-commit on-photo0-commit!}))
+        (set-photo-for-current-focal! file))
       (let [pose (camera-pose-for idx)]
         (viewport/set-camera-pose! pose)
-        (set-photo-for-current-focal! file)
-        ;; :nudge-mesh? stays default-true (unlike a first version — see
-        ;; on-inv-commit!'s docstring): the live drag nudges the PREVIEW only,
-        ;; same mechanism photo 0 uses, so it never touches the camera/
-        ;; raycasting mid-gesture.
-        (gizmo/enter! (get-in @session [:proxy-mesh :creation-pose])
-                      {:mode :object :handles #{:translate :rotate}}
-                      {:on-commit on-inv-commit!}))))
+        (set-photo-for-current-focal! file)))
+    (install-gizmo! idx))
+  (update-panel!))
+
+;; ============================================================
+;; PnP registration ('p'): the primary 'registrazione per corrispondenze'
+;; gesture (brief P2). The user arms a box corner — DECLARING its identity —
+;; and clicks where it sits in the photo; ≥6 declared correspondences recover
+;; the camera pose in closed form (photogrammetry.pnp), with NO pose search
+;; and NO Klein-symmetry ambiguity — the two things that made drag+snap
+;; fragile (see the four bugs in project_edit_acquire_p2_slice2). Snap stays a
+;; downstream sub-pixel refiner and the gizmo coarse placement / a fallback for
+;; featureless shapes; both are torn down while collecting so they can't grab
+;; the picking clicks, and rebuilt on exit.
+;; ============================================================
+
+(def ^:private corner-colors
+  "Eight distinct hues so a placed photo marker, its panel button, and its dot
+   on the proxy read as the same corner at a glance."
+  [0xff5555 0xff9f43 0xf4d03f 0x5fd35f 0x38c3d6 0x5b8def 0xb06cf0 0xf06fb0])
+
+(defn- box-object-corners
+  "The 8 box corners in the SOLVER/object frame (box-fit/corners), indexed 0-7
+   — the :world side of each PnP correspondence."
+  []
+  (bf/corners (bridge/dims-from-mesh (:proxy-mesh @session)
+                                     (get-in @session [:proxy-mesh :creation-pose]))))
+
+(defn- corner-world-positions
+  "World position of each of the 8 corners at the current proxy pose, indexed
+   the same as box-object-corners — only for drawing the pickable dots."
+  []
+  (let [proxy-pose (get-in @session [:proxy-mesh :creation-pose])
+        {:keys [ex ey ez]} (bridge/box-basis proxy-pose)
+        origin (:position proxy-pose)]
+    (mapv (fn [[lx ly lz]]
+            (m/v+ origin (m/v+ (m/v* ex lx) (m/v+ (m/v* ey ly) (m/v* ez lz)))))
+          (box-object-corners))))
+
+(defn- pnp-picks [] (get-in @session [:pnp-picks (:current-idx @session)] {}))
+(defn- pnp-residuals [] (get-in @session [:pnp-residuals (:current-idx @session)] {}))
+(defn- pnp-outliers
+  "Set of corner indices the robust solve REJECTED as mislabels on this photo."
+  []
+  (get-in @session [:pnp-outliers (:current-idx @session)] #{}))
+
+(defn- visible-corner-set
+  "Corner indices actually visible on the part at the current pose
+   (bf/visible-corners) — the only ones offered for picking, so the user is
+   never asked to point at a vertex hidden behind the box (Vincenzo,
+   2026-07-23). Recomputed from the live camera↔proxy relation, so it tracks
+   the part as the pose is refined."
+  []
+  (let [proxy-pose (get-in @session [:proxy-mesh :creation-pose])]
+    (bf/visible-corners (bridge/dims-from-mesh (:proxy-mesh @session) proxy-pose)
+                        (bridge/editor->solver-pose (current-camera-pose) proxy-pose))))
+
+(defn- pnp-preview-items
+  "Proxy as a WIREFRAME (not a solid — the real part must show through so the
+   user can click its actual corners in the photo) plus a translucent coloured
+   dot at each VISIBLE corner (occluded ones are never drawn — pointing at a
+   hidden vertex is a blind guess): the armed one enlarged, placed ones in
+   their colour, unplaced ones dimmed, and any corner the robust fit rejected
+   drawn as a big opaque RED dot so the mislabel is obvious (shown even if the
+   refined pose has since occluded it, so it can still be re-clicked)."
+  []
+  (let [armed (:pnp-armed @session)
+        placed (pnp-picks)
+        outliers (pnp-outliers)
+        visible (visible-corner-set)]
+    [{:type :wireframe :data (:proxy-mesh @session)}
+     {:type :dots
+      :data (vec (keep-indexed
+                  (fn [i pos]
+                    (cond
+                      (contains? outliers i)
+                      {:pos pos :radius 5.5 :color 0xff2020 :opacity 0.7}
+                      (contains? visible i)
+                      {:pos pos
+                       :radius (if (= i armed) 4.4 2.4)
+                       :opacity 0.3
+                       :color (if (or (= i armed) (contains? placed i))
+                                (nth corner-colors i) 0x808080)}))
+                  (corner-world-positions)))}]))
+
+(defn- redraw-pnp-preview! [] (viewport/show-preview! (pnp-preview-items)))
+
+(defn- next-unplaced-corner
+  "First VISIBLE, not-yet-placed corner at or after `from` (wrapping) — the
+   corners the user can actually point at. Falls back to the first visible
+   corner when they're all placed, or `from` if none are visible."
+  [from]
+  (let [placed (pnp-picks)
+        visible (visible-corner-set)
+        order (map #(mod (+ from %) 8) (range 8))]
+    (or (first (filter #(and (contains? visible %) (not (contains? placed %))) order))
+        (first (filter visible order))
+        from)))
+
+(defn- arm-corner!
+  "Arm a corner for the next photo click — but only a corner the user can point
+   at (visible, or a red outlier to be re-clicked); a click on a hidden vertex
+   would be a guess, so those are inert."
+  [i]
+  (when (or (contains? (visible-corner-set) i) (contains? (pnp-outliers) i))
+    (swap! session assoc :pnp-armed i)
+    (redraw-pnp-preview!)
+    (update-panel!)))
+
+;; --- placed-marker overlay (an HTML layer over the canvas; the camera is
+;; locked while collecting, so a marker drawn at the click's screen position
+;; stays on its photo feature — see pnp-on-pointerdown) ---
+
+(defn- canvas-rect [] (.getBoundingClientRect (viewport/get-canvas)))
+(defn- hex->css [c] (str "#" (.padStart (.toString c 16) 6 "0")))
+
+(defn- ensure-pnp-overlay! []
+  (or (:pnp-overlay-el @session)
+      (let [rect (canvas-rect)
+            ov (.createElement js/document "div")
+            st (.-style ov)]
+        (set! (.-className ov) "eaq-pnp-overlay")
+        (set! (.-position st) "fixed")
+        (set! (.-left st) (str (.-left rect) "px"))
+        (set! (.-top st) (str (.-top rect) "px"))
+        (set! (.-width st) (str (.-width rect) "px"))
+        (set! (.-height st) (str (.-height rect) "px"))
+        (set! (.-pointerEvents st) "none")
+        (set! (.-zIndex st) "40")
+        (.appendChild (.-body js/document) ov)
+        (swap! session assoc :pnp-overlay-el ov)
+        ov)))
+
+(defn- remove-pnp-overlay! []
+  (when-let [ov (:pnp-overlay-el @session)]
+    (.remove ov)
+    (swap! session dissoc :pnp-overlay-el)))
+
+(defn- redraw-overlay-dots! []
+  (let [ov (ensure-pnp-overlay!)
+        rect (canvas-rect)]
+    (set! (.-innerHTML ov) "")
+    (doseq [[ci {:keys [screen]}] (pnp-picks)]
+      (let [[cx cy] screen
+            dot (.createElement js/document "div")
+            st (.-style dot)]
+        (set! (.-position st) "absolute")
+        (set! (.-left st) (str (- cx (.-left rect) 7) "px"))
+        (set! (.-top st) (str (- cy (.-top rect) 7) "px"))
+        (set! (.-width st) "14px")
+        (set! (.-height st) "14px")
+        (set! (.-borderRadius st) "50%")
+        (set! (.-boxSizing st) "border-box")
+        (set! (.-border st) "2px solid rgba(255,255,255,0.85)")
+        (set! (.-background st) (hex->css (nth corner-colors ci)))
+        ;; translucent so photo detail under the marker stays readable while
+        ;; placing (Vincenzo, 2026-07-23 / more so 2026-07-25)
+        (set! (.-opacity st) "0.4")
+        (.appendChild ov dot)))))
+
+(defn- pnp-on-pointerdown [^js e]
+  (when (and @session (= :pnp (:mode @session)) (zero? (.-button e)))
+    (when-let [px (backdrop/pixel-under-pointer e (viewport/get-camera) (viewport/get-canvas))]
+      (.preventDefault e)
+      (.stopPropagation e)
+      (let [idx (:current-idx @session)
+            ci (:pnp-armed @session)]
+        (swap! session assoc-in [:pnp-picks idx ci]
+               {:px px :screen [(.-clientX e) (.-clientY e)]})
+        ;; a new click makes the last solve's residuals/outliers stale — drop
+        ;; them so the red flags clear until the user re-solves
+        (swap! session update :pnp-residuals dissoc idx)
+        (swap! session update :pnp-outliers dissoc idx)
+        (redraw-overlay-dots!)
+        (arm-corner! (next-unplaced-corner (mod (inc ci) 8)))))))
+
+;; --- loupe: a magnifier that expands the pixels under the cursor so a corner
+;; can be placed on the exact edge despite the translucent proxy over it
+;; (Vincenzo, 2026-07-25) — reproduces scripts/param-acq-tool.html's lens ---
+
+(def ^:private loupe-size 160)
+(def ^:private loupe-zoom-default 8.0)
+(def ^:private loupe-zoom-min 2.0)
+(def ^:private loupe-zoom-max 16.0)
+
+(defn- loupe-zoom [] (or (:pnp-loupe-zoom @session) loupe-zoom-default))
+
+(defn- ensure-pnp-loupe! []
+  (or (:pnp-loupe-el @session)
+      (let [cv (.createElement js/document "canvas")
+            st (.-style cv)]
+        (set! (.-width cv) loupe-size)
+        (set! (.-height cv) loupe-size)
+        (set! (.-className cv) "eaq-pnp-loupe")
+        (set! (.-position st) "fixed")
+        (set! (.-pointerEvents st) "none")
+        (set! (.-borderRadius st) "50%")
+        (set! (.-border st) "1px solid #55565e")
+        (set! (.-boxShadow st) "0 4px 18px #000a")
+        (set! (.-zIndex st) "60")
+        (set! (.-display st) "none")
+        (.appendChild (.-body js/document) cv)
+        (swap! session assoc :pnp-loupe-el cv)
+        cv)))
+
+(defn- remove-pnp-loupe! []
+  (when-let [cv (:pnp-loupe-el @session)]
+    (.remove cv)
+    (swap! session dissoc :pnp-loupe-el)))
+
+(defn- hide-pnp-loupe! []
+  (when-let [cv (:pnp-loupe-el @session)]
+    (set! (.-display (.-style cv)) "none")))
+
+(defn- update-loupe!
+  "Draw + position the loupe for the cursor at pointer event `e` (shared by
+   pointermove and wheel-zoom). Hides it when the cursor isn't over the photo."
+  [^js e]
+  (let [cv (ensure-pnp-loupe!)
+        st (.-style cv)]
+    (if-let [[ix iy] (backdrop/pixel-under-pointer e (viewport/get-camera) (viewport/get-canvas))]
+      (do
+        (backdrop/draw-loupe! cv ix iy (loupe-zoom))
+        ;; up-right of the cursor by default, clamped into the window so it
+        ;; never runs off-screen near an edge
+        (let [left (min (- (.-innerWidth js/window) loupe-size 4) (+ (.-clientX e) 24))
+              top (max 4 (- (.-clientY e) loupe-size 12))]
+          (set! (.-left st) (str left "px"))
+          (set! (.-top st) (str top "px"))
+          (set! (.-display st) "block")))
+      (set! (.-display st) "none"))))
+
+(defn- pnp-on-pointermove [^js e]
+  (when (and @session (= :pnp (:mode @session)))
+    (update-loupe! e)))
+
+(defn- pnp-on-wheel
+  "Wheel over the photo tunes the LOUPE zoom (the camera is locked, so the wheel
+   has no other job here) — wheel up magnifies, down widens, so the loupe can be
+   dropped to a level where the shape in the photo reads, not just single pixels
+   (Vincenzo, 2026-07-25). Consumes the event so it never reaches the viewport's
+   own dolly."
+  [^js e]
+  (when (and @session (= :pnp (:mode @session)))
+    (.preventDefault e)
+    (.stopPropagation e)
+    (let [dir (if (pos? (.-deltaY e)) -1.0 1.0)
+          z' (-> (* (loupe-zoom) (Math/pow 1.2 dir))
+                 (max loupe-zoom-min) (min loupe-zoom-max))]
+      (swap! session assoc :pnp-loupe-zoom z')
+      (update-loupe! e))))
+
+(defn- start-pnp! []
+  (when (and @session (not= :pnp (:mode @session)))
+    (gizmo/close!)
+    (swap! session assoc :mode :pnp)
+    (arm-corner! (next-unplaced-corner 0))
+    (let [^js canvas (viewport/get-canvas)]
+      (.addEventListener canvas "pointerdown" pnp-on-pointerdown true)
+      (.addEventListener canvas "pointermove" pnp-on-pointermove true)
+      (.addEventListener canvas "pointerleave" hide-pnp-loupe! true)
+      (.addEventListener canvas "wheel" pnp-on-wheel #js {:capture true :passive false}))
+    (redraw-overlay-dots!)
+    (redraw-pnp-preview!)
+    (update-panel!)))
+
+(defn- stop-pnp! []
+  (when (and @session (= :pnp (:mode @session)))
+    (let [^js canvas (viewport/get-canvas)]
+      (.removeEventListener canvas "pointerdown" pnp-on-pointerdown true)
+      (.removeEventListener canvas "pointermove" pnp-on-pointermove true)
+      (.removeEventListener canvas "pointerleave" hide-pnp-loupe! true)
+      (.removeEventListener canvas "wheel" pnp-on-wheel true))
+    (remove-pnp-overlay!)
+    (remove-pnp-loupe!)
+    (swap! session assoc :mode :gizmo)
+    (viewport/show-preview! (proxy-preview-items))
+    (install-gizmo! (:current-idx @session))
+    (update-panel!)))
+
+(defn- clear-pnp-picks! []
+  (swap! session update :pnp-picks dissoc (:current-idx @session))
+  (swap! session update :pnp-residuals dissoc (:current-idx @session))
+  (swap! session update :pnp-outliers dissoc (:current-idx @session))
+  (redraw-overlay-dots!)
+  (arm-corner! (next-unplaced-corner 0)))
+
+(defn- corner-labels [cis] (str/join ", " (map #(str "#" (inc %)) (sort cis))))
+
+(defn- pnp-diagnosis
+  "Plain-language verdict from a robust PnP solve — the answer to 'why won't the
+   rms drop': corner(s) rejected as mislabels (re-click them); a fit still dirty
+   with nothing left to drop (systematic — a wrong declared face or lens
+   distortion, not a single click); or a clean fit."
+  [sol]
+  (let [rms (:rms-px sol)
+        out (mapv :ci (:outliers sol))]
+    (cond
+      (seq out)
+      (str "scartat" (if (> (count out) 1) "i gli spigoli " "o lo spigolo ")
+           (corner-labels out) " (identità sbagliata) — riclicca"
+           (if (> (count out) 1) "li" "lo") " sul pezzo vero, poi 'r'. Fit sui restanti "
+           (.toFixed rms 1) "px")
+      (> rms pnp/accept-rms-px)
+      (str "rms alto (" (.toFixed rms 1) "px) senza un singolo colpevole: clicca più "
+           "preciso, o la faccia dichiarata è sbagliata; se resta, segnalamelo")
+      :else
+      (str "fit pulito, rms " (.toFixed rms 2) "px"))))
+
+(defn- on-solve-pnp!
+  "Solve the current photo's declared correspondences (robustly — a mislabeled
+   corner is auto-rejected) and APPLY the pose, then STAY in PnP mode: rejected
+   corners show as big red dots / red panel buttons and the first is re-armed,
+   so 'riclicca e premi r' is one gesture. Exit is explicit ('p' / Esci)."
+  []
+  (when-let [[iw ih] (backdrop/image-size)]
+    (let [idx (:current-idx @session)
+          proxy-pose (get-in @session [:proxy-mesh :creation-pose])
+          object-corners (box-object-corners)
+          correspondences (vec (for [[ci {:keys [px]}] (pnp-picks)]
+                                 {:ci ci :world (nth object-corners ci) :px px}))
+          camera-pose (current-camera-pose)]
+      (if (< (count correspondences) pnp/min-correspondences)
+        (set-status-message!
+         (str "PnP: servono almeno " pnp/min-correspondences " spigoli piazzati (ne hai "
+              (count correspondences) ")"))
+        (if-let [sol (pnp/solve-pnp correspondences (session-intrinsics iw ih) {})]
+          (let [old-pivot (pivot)
+                residuals (into {} (map (juxt :ci :residual-px) (:per-point sol)))
+                outlier-cis (set (map :ci (:outliers sol)))]
+            (if (zero? idx)
+              (let [np (bridge/solver-pose->proxy (:pose sol) camera-pose)
+                    [new-mesh] (attachment/group-transform
+                                [(:proxy-mesh @session)]
+                                (:position proxy-pose) (:heading proxy-pose) (:up proxy-pose)
+                                (:position np) (:heading np) (:up np))]
+                (swap! session assoc :proxy-mesh new-mesh)
+                ;; moving the proxy on photo 0 invalidates every camera pose
+                ;; seeded/solved against the old pivot (same rule as
+                ;; on-photo0-commit!) — but keep the raw photo clicks, which are
+                ;; pose-independent
+                (when-not (= old-pivot (get-in new-mesh [:creation-pose :position]))
+                  (swap! session update :camera-poses select-keys [0])
+                  (swap! session update :acquire-results select-keys [0])
+                  (swap! session update :pnp-residuals select-keys [0])
+                  (swap! session update :pnp-outliers select-keys [0])))
+              (let [ncp (bridge/solver-pose->camera (:pose sol) proxy-pose)]
+                (swap! session assoc-in [:camera-poses idx] ncp)))
+            (swap! session assoc-in [:acquire-results idx]
+                   {:pnp? true :matched (:n sol) :rms-px (:rms-px sol)
+                    :outliers (count outlier-cis)})
+            (swap! session assoc-in [:pnp-residuals idx] residuals)
+            (swap! session assoc-in [:pnp-outliers idx] outlier-cis)
+            ;; tee up the first rejected corner for an immediate re-click
+            (when (seq outlier-cis)
+              (swap! session assoc :pnp-armed (first (sort outlier-cis))))
+            (set-status-message! (str "PnP " (name (:method sol)) ": " (pnp-diagnosis sol)))
+            (redraw-pnp-preview!)
+            (redraw-overlay-dots!)
+            (save-acquire-state!))
+          (set-status-message! "PnP: nessuna soluzione — spigoli su più facce e almeno 6?")))))
   (update-panel!))
 
 ;; ============================================================
@@ -521,20 +924,21 @@
 (defn- focal-range [_] [20 135 1])
 
 (defn- on-focal-change!
-  "Live: reapplies to whichever photo is already showing (backdrop/set-hfov!
+  "Live: reapplies to whichever photo is already showing (backdrop/set-focal!
    is a no-op before the first photo has loaded), so dragging the slider
    re-scales the proxy against the CURRENT photo with position/rotation
    untouched — the size-then-pose split from Vincenzo's 2026-07-21 feedback:
    get the apparent scale right first, on photo 0, before touching the gizmo."
   [focal-mm]
-  (swap! session assoc :focal-mm focal-mm)
-  (backdrop/set-hfov! (pcamera/focal-mm->fov-deg focal-mm) viewport/set-camera-fov!))
+  (swap! session assoc :focal-mm focal-mm :focal-source :manual)
+  (backdrop/set-focal! focal-mm viewport/set-camera-fov!))
 
 (defn- build-panel! []
   (let [panel (.createElement js/document "div")
         header (.createElement js/document "div")
         hint (.createElement js/document "div")
         filmstrip (.createElement js/document "div")
+        pnp-box (.createElement js/document "div")
         message (.createElement js/document "div")
         {:keys [row slider]} (ui/create-slider-row {:label "Focale (mm)"
                                                     :value (:focal-mm @session)
@@ -545,10 +949,12 @@
     (set! (.-textContent header) "edit-acquire — gate ingegneristico")
     (.appendChild panel header)
     (set! (.-textContent hint)
-          "1) sulla foto 1, tara la Focale finché il box sembra della taglia giusta, SENZA spostarlo — 2) poi trascina per posizione/rotazione — 3) 's' per agganciare il box agli spigoli reali della foto — 4) con almeno 2 foto agganciate, 'f' per il fit congiunto sulle altre.")
+          "1) la Focale è letta da EXIF — ritoccala con lo slider (foto 1) solo se il box è della taglia sbagliata, SENZA spostarlo — 2) poi trascina per posizione/rotazione — 3) 's' per agganciare il box agli spigoli reali della foto — 4) con almeno 2 foto agganciate, 'f' per il fit congiunto sulle altre.")
     (.appendChild panel hint)
     (.appendChild panel row)
     (.appendChild panel filmstrip)
+    (set! (.-className pnp-box) "eaq-pnp-box")
+    (.appendChild panel pnp-box)
     (set! (.-className message) "ems-message")
     (.appendChild panel message)
     (set! (.-type close-btn) "button")
@@ -556,15 +962,101 @@
     (.addEventListener close-btn "click" close!)
     (.appendChild panel close-btn)
     (swap! session assoc :panel-el panel :filmstrip-el filmstrip :focal-slider-el slider
-           :message-el message)
+           :message-el message :pnp-el pnp-box)
     (modal/mount-panel! panel)
     (update-panel!)))
+
+(defn- render-pnp-panel!
+  "The PnP controls, rendered into :pnp-el and rebuilt each update: a single
+   'Registra per punti' button in gizmo mode; in PnP mode the armed-corner
+   prompt, eight corner buttons (colour = corner, filled = placed, white ring =
+   armed), and Risolvi/Azzera/Esci."
+  []
+  (when-let [box (:pnp-el @session)]
+    (set! (.-innerHTML box) "")
+    (if (not= :pnp (:mode @session))
+      (let [b (.createElement js/document "button")]
+        (set! (.-type b) "button")
+        (set! (.-textContent b) "Registra per punti (p)")
+        (.addEventListener b "click" (fn [_] (start-pnp!)))
+        (.appendChild box b))
+      (let [placed (pnp-picks)
+            resid (pnp-residuals)
+            outliers (pnp-outliers)
+            visible (visible-corner-set)
+            ;; buttons for corners the user can act on: visible (offerable),
+            ;; already-placed (status/re-do), or flagged outliers
+            shown (sort (into (into (set (keys placed)) outliers) visible))
+            armed (:pnp-armed @session)
+            n (count placed)
+            target (count visible)
+            rms (get-in @session [:acquire-results (:current-idx @session) :rms-px])
+            solved? (seq resid)
+            info (.createElement js/document "div")
+            corners (.createElement js/document "div")
+            actions (.createElement js/document "div")]
+        (set! (.-className info) "eaq-pnp-info")
+        (set! (.-textContent info)
+              (cond
+                (seq outliers)
+                (str "⚠ " (if (> (count outliers) 1) "spigoli " "spigolo ")
+                     (corner-labels outliers) " in rosso — riclicca dov'"
+                     (if (> (count outliers) 1) "sono" "è") " sul pezzo vero, poi 'r'")
+                (and rms (> rms pnp/accept-rms-px))
+                (str "⚠ rms alto (" (.toFixed rms 0) "px) senza un colpevole singolo — "
+                     "clicca più preciso o controlla la faccia dichiarata")
+                solved?
+                (str "✓ fit pulito, rms " (.toFixed rms 1) "px — 'p'/Esci, o ']' per un'altra foto")
+                :else
+                (str "Spigolo #" (inc armed) " evidenziato — clicca nella foto dov'è. "
+                     "Piazzati " n "/" target " visibili"
+                     (when (< n pnp/min-correspondences)
+                       (str " (ne servono ≥" pnp/min-correspondences ")")))))
+        (.appendChild box info)
+        (set! (.-className corners) "eaq-pnp-corners")
+        (doseq [i shown]
+          (let [b (.createElement js/document "button")
+                st (.-style b)
+                r (get resid i)
+                bad? (contains? outliers i)]
+            (set! (.-type b) "button")
+            (set! (.-textContent b) (cond bad? (str (inc i) " ✗")
+                                          r (str (inc i) "·" (.toFixed r 0))
+                                          :else (str (inc i))))
+            (set! (.-minWidth st) "26px")
+            (set! (.-color st) (cond bad? "#fff" (contains? placed i) "#111" :else "#ddd"))
+            (set! (.-background st) (cond bad? "#ff2020"
+                                          (contains? placed i) (hex->css (nth corner-colors i))
+                                          :else "#333"))
+            (set! (.-border st) (if (= i armed) "2px solid #fff" "1px solid #555"))
+            (.addEventListener b "click" (fn [_] (arm-corner! i)))
+            (.appendChild corners b)))
+        (.appendChild box corners)
+        (set! (.-className actions) "eaq-pnp-actions")
+        (let [solve (.createElement js/document "button")
+              clr (.createElement js/document "button")
+              exit (.createElement js/document "button")]
+          (set! (.-type solve) "button")
+          (set! (.-textContent solve) "Risolvi PnP (r)")
+          (set! (.-disabled solve) (< n pnp/min-correspondences))
+          (.addEventListener solve "click" (fn [_] (on-solve-pnp!)))
+          (set! (.-type clr) "button")
+          (set! (.-textContent clr) "Azzera")
+          (.addEventListener clr "click" (fn [_] (clear-pnp-picks!)))
+          (set! (.-type exit) "button")
+          (set! (.-textContent exit) "Esci (p)")
+          (.addEventListener exit "click" (fn [_] (stop-pnp!)))
+          (.appendChild actions solve)
+          (.appendChild actions clr)
+          (.appendChild actions exit))
+        (.appendChild box actions)))))
 
 (defn- update-panel! []
   ;; Focale is a phase-0-only control (see build-panel!'s hint): the lens
   ;; doesn't change between photos, so re-tuning it later would silently
   ;; rescale a photo the user thinks is already locked in. Disabled, not
   ;; hidden, so it's clear it isn't gone, just not this photo's job.
+  (render-pnp-panel!)
   (when-let [^js slider (:focal-slider-el @session)]
     (set! (.-disabled slider) (not (zero? (:current-idx @session)))))
   (when-let [^js message (:message-el @session)]
@@ -598,10 +1090,25 @@
   (when @session
     (let [key (.-key e)
           n (count (:photos @session))
-          idx (:current-idx @session)]
+          idx (:current-idx @session)
+          pnp? (= :pnp (:mode @session))]
       (cond
+        ;; In PnP mode, Escape backs out of collection first (one step at a
+        ;; time), rather than tearing the whole session down mid-registration.
         (= key "Escape")
-        (do (.preventDefault e) (.stopPropagation e) (close!))
+        (do (.preventDefault e) (.stopPropagation e)
+            (if pnp? (stop-pnp!) (close!)))
+
+        (= key "p")
+        (do (.preventDefault e) (.stopPropagation e)
+            (if pnp? (stop-pnp!) (start-pnp!)))
+
+        (and pnp? (= key "r"))
+        (do (.preventDefault e) (.stopPropagation e) (on-solve-pnp!))
+
+        (and pnp? (re-matches #"[1-8]" key))
+        (do (.preventDefault e) (.stopPropagation e)
+            (arm-corner! (dec (js/parseInt key 10))))
 
         (= key "[")
         (do (.preventDefault e) (.stopPropagation e)
@@ -705,6 +1212,7 @@
 
 (defn- close! []
   (when @session
+    (stop-pnp!) ; removes the canvas pointer handler + placed-marker overlay
     (viewport/unregister-frame-callback! :edit-acquire)
     (gizmo/close!)
     (backdrop/clear!)
@@ -748,23 +1256,35 @@
                                   :proxy-mesh proxy-mesh
                                   :camera-poses {}
                                   :acquire-results {}
+                                  :mode :gizmo
+                                  :pnp-picks {}
+                                  :pnp-residuals {}
+                                  :pnp-outliers {}
+                                  :pnp-armed 0
+                                  :pnp-loupe-zoom loupe-zoom-default
                                   :focal-mm default-focal-mm
+                                  :focal-source :default
                                   :panel-el nil
                                   :filmstrip-el nil
                                   :message-el nil
                                   :status-message nil
                                   :status-msg-timer nil
                                   :key-handler nil})
-                 ;; Restores a previously-snapped proxy pose/camera poses/
-                 ;; badges before anything renders, if acquire-state.json
-                 ;; exists — a no-op (resolves anyway) on a fresh session.
-                 (-> (load-acquire-state!)
+                 ;; Read the lens focal from photo 0's EXIF BEFORE the first
+                 ;; photo loads, so the backdrop and every projection start at
+                 ;; the photo's true scale (not the 48mm default). Then restore
+                 ;; a previously-snapped proxy pose/camera poses/badges, if
+                 ;; acquire-state.json exists — a no-op (resolves anyway) on a
+                 ;; fresh session.
+                 (-> (load-exif-focal! (first photos))
+                     (.then (fn [_] (load-acquire-state!)))
                      (.then (fn [_]
                               (viewport/show-preview! (proxy-preview-items))
                               (backdrop/create! (viewport/get-camera))
                               (build-panel!)
                               (swap! session assoc :key-handler (modal/install-keydown! on-keydown))
-                              (enter-photo! 0)))))))
+                              (enter-photo! 0)
+                              (report-focal!)))))))
       (.catch (fn [err]
                 (state/capture-println (str "edit-acquire: couldn't load session — " err))
                 (modal/release!)))))

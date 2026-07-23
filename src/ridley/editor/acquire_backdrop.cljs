@@ -14,6 +14,7 @@
    dev` in the background) even when the app itself is loaded in Chrome for
    REPL/hot-reload, since the two are independent local servers."
   (:require ["three" :as THREE]
+            [ridley.photogrammetry.camera :as cam]
             [ridley.export.stl :as stl]))
 
 (defonce ^:private bstate (atom nil)) ;; {:mesh :camera :depth :object-url :photo-aspect
@@ -58,19 +59,27 @@
         width (* height photo-aspect)]
     (.set (.-scale mesh) width height 1)))
 
-(defn set-hfov!
-  "Recompute the vertical FOV and resize the backdrop plane for a NEW
-   horizontal FOV, reusing the ALREADY-LOADED photo's aspect ratio (no
-   re-fetch) — for live recalibration (a focal-length slider) once a photo is
-   already showing, so the apparent size of the proxy against the backdrop
-   can be tuned with position/rotation untouched (Vincenzo, 2026-07-21: doing
-   size and pose at once is confusing — separate them). No-op if no photo has
-   loaded yet (photo-aspect unknown). See set-photo!'s docstring for why the
-   conversion uses the PHOTO's aspect ratio, not the canvas's."
-  [hfov-deg set-vfov!]
+(defn set-focal!
+  "Recompute the vertical FOV and resize the backdrop plane for a
+   35mm-equivalent focal length (mm), reusing the ALREADY-LOADED photo's
+   aspect ratio (no re-fetch) — for live recalibration (a focal-length slider)
+   once a photo is already showing, so the apparent size of the proxy against
+   the backdrop can be tuned with position/rotation untouched (Vincenzo,
+   2026-07-21: doing size and pose at once is confusing — separate them).
+   No-op if no photo has loaded yet (photo-aspect unknown).
+
+   Takes the focal length, not a horizontal FOV, precisely BECAUSE the
+   horizontal FOV of a 35mm-equivalent focal depends on the photo's own aspect
+   ratio (the equivalent focal is referred to the frame diagonal, not its
+   width — cam/equiv-focal->hfov-deg): only this namespace knows that aspect
+   for certain (the loaded image's pixels), so it is the right place to derive
+   the angle. See set-photo!'s docstring for why the conversion uses the
+   PHOTO's aspect ratio, not the canvas's."
+  [focal-mm set-vfov!]
   (when-let [{:keys [mesh depth photo-aspect]} @bstate]
     (when photo-aspect
-      (let [hfov-rad (* hfov-deg (/ Math/PI 180))
+      (let [hfov-deg (cam/equiv-focal->hfov-deg focal-mm photo-aspect)
+            hfov-rad (* hfov-deg (/ Math/PI 180))
             vfov-rad (* 2 (Math/atan (/ (Math/tan (/ hfov-rad 2)) photo-aspect)))
             vfov-deg (* vfov-rad (/ 180 Math/PI))]
         (set-vfov! vfov-deg)
@@ -88,19 +97,22 @@
       (.drawImage ctx img 0 0)
       (swap! bstate assoc
              :image-width iw :image-height ih
+             ;; keep the canvas too (not just its pixels) so the loupe can
+             ;; drawImage a magnified crop straight from it
+             :src-canvas canvas
              :pixels (.-data (.getImageData ctx 0 0 iw ih))))))
 
 (defn set-photo!
   "Load the photo at `file-path` (absolute, read via the Rust geo_server) as
-   the backdrop texture. `hfov-deg` is the session's horizontal FOV (from the
-   user's manually-entered focal length — photogrammetry/focal-mm->fov-deg).
-   Once the image's own pixel dimensions are known, stores its aspect ratio
-   and delegates the FOV conversion + plane sizing to set-hfov! (also the live-
+   the backdrop texture. `focal-mm` is the session's 35mm-equivalent focal
+   length (from EXIF or the manual slider). Once the image's own pixel
+   dimensions are known, stores its aspect ratio and delegates the
+   focal→FOV conversion + plane sizing to set-focal! (also the live-
    recalibration entry point, so the two never compute it differently). Also
    caches the raw pixel data (cache-pixels!) for luminance-at, the edge-snap's
    read of the real photo.
    Returns a Promise that resolves once the texture is applied."
-  [file-path hfov-deg set-vfov!]
+  [file-path focal-mm set-vfov!]
   (when-let [{:keys [mesh]} @bstate]
     (-> (stl/desktop-read-file-blob file-path)
         (.then (fn [blob]
@@ -115,7 +127,7 @@
                                       photo-aspect (if (pos? ih) (/ iw ih) 1)]
                                   (swap! bstate assoc :photo-aspect photo-aspect)
                                   (cache-pixels! img iw ih)
-                                  (set-hfov! hfov-deg set-vfov!)
+                                  (set-focal! focal-mm set-vfov!)
                                   (when-let [^js old-map (.-map (.-material mesh))]
                                     (.dispose old-map))
                                   (set! (.-map (.-material mesh)) tex)
@@ -130,6 +142,59 @@
   []
   (when-let [{:keys [image-width image-height]} @bstate]
     [image-width image-height]))
+
+(defn pixel-under-pointer
+  "Photo pixel [u v] (origin top-left, +v down — matching luminance-at and
+   cam/project) under a pointer event, by raycasting the camera ray against the
+   backdrop plane and reading the hit's UV. nil when the ray misses the plane
+   or no photo has loaded. The plane is a child of `camera`, so its world matrix
+   already carries the locked camera pose and the raycaster accounts for it for
+   free — this is why a click maps to a stable photo pixel regardless of where
+   the camera was orbited to."
+  [^js event ^js camera ^js canvas]
+  (when-let [{:keys [^js mesh image-width image-height]} @bstate]
+    (when (and mesh image-width)
+      (let [rect (.getBoundingClientRect canvas)
+            nx (- (* (/ (- (.-clientX event) (.-left rect)) (.-width rect)) 2) 1)
+            ny (- 1 (* (/ (- (.-clientY event) (.-top rect)) (.-height rect)) 2))
+            raycaster (THREE/Raycaster.)]
+        (.setFromCamera raycaster (THREE/Vector2. nx ny) camera)
+        (let [hits (.intersectObject raycaster mesh false)]
+          (when (pos? (.-length hits))
+            (let [^js uv (.-uv (aget hits 0))]
+              [(* (.-x uv) image-width)
+               (* (- 1 (.-y uv)) image-height)])))))))
+
+(defn draw-loupe!
+  "Draw a magnified, nearest-neighbour crop of the loaded photo centred on photo
+   pixel (ix,iy) into square `dst-canvas`, with a red crosshair — the same loupe
+   as scripts/param-acq-tool.html, so a corner can be placed on the exact pixel
+   despite the translucent proxy over it. `zoom` = loupe px per photo px. No-op
+   if no photo has loaded."
+  [^js dst-canvas ix iy zoom]
+  (when-let [{:keys [^js src-canvas]} @bstate]
+    (when src-canvas
+      (let [R (.-width dst-canvas)
+            half (/ R (* 2.0 zoom))
+            ctx (.getContext dst-canvas "2d")]
+        (.setTransform ctx 1 0 0 1 0 0)
+        (set! (.-fillStyle ctx) "#000")
+        (.fillRect ctx 0 0 R R)
+        (set! (.-imageSmoothingEnabled ctx) false)
+        (.drawImage ctx src-canvas (- ix half) (- iy half) (* 2.0 half) (* 2.0 half) 0 0 R R)
+        (set! (.-strokeStyle ctx) "#ff6b6b")
+        (set! (.-lineWidth ctx) 1)
+        (.beginPath ctx)
+        (.moveTo ctx (/ R 2) 0) (.lineTo ctx (/ R 2) R)
+        (.moveTo ctx 0 (/ R 2)) (.lineTo ctx R (/ R 2))
+        (.stroke ctx)
+        ;; current magnification, so wheel-zoom is legible
+        (set! (.-font ctx) "11px sans-serif")
+        (set! (.-textAlign ctx) "center")
+        (set! (.-fillStyle ctx) "rgba(0,0,0,0.55)")
+        (.fillRect ctx (- (/ R 2) 16) (- R 16) 32 13)
+        (set! (.-fillStyle ctx) "#ffd24d")
+        (.fillText ctx (str (.toFixed zoom 1) "×") (/ R 2) (- R 5))))))
 
 (defn luminance-at
   "Grayscale value (0-255ish) at pixel (x,y) of the currently loaded photo,

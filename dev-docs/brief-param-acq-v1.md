@@ -94,6 +94,19 @@ free-look, il costo grosso dell'accertamento 6) prima di costruire il resto.
 
 ## Parti
 
+> **Stato 2026-07-25**: P0 ✅ · Gate ✅ (poi scavalcato dal PnP) · P1 ✅ ·
+> **P2 ✅ nella sostanza** (registrazione per corrispondenze PnP collaudata
+> da Vincenzo: "abbastanza usabile, proxy allineato facilmente alle sei
+> foto"; le mitigazioni di simmetria sono assorbite dal PnP). Restano
+> rifiniture P2 (priori θ nel fit congiunto). **Prossimo: P3**, come fetta
+> verticale sottile: piano dichiarato su faccia del proxy (± offset) →
+> ricalco con edit-path-2d sulla foto in posa (raggio∩piano) → riproiezione
+> live nelle altre viste → persistenza in sessione → emissione minima come
+> shape (P4 anticipato di un pezzo: senza, i ricalchi si perdono all'uscita).
+> Punti liberi triangolati (stesso gesto PnP, su feature dell'oggetto) per
+> ciò che non giace su piani. Collaudo del giro completo: il lettore SD
+> nastrato (proxy box → piano top → ricalco del bezel).
+
 ### P0 — Consolidamento
 Commit di tutto il lavoro accertamenti (solver, matcher, tool, test,
 verdetti nei doc). Prerequisito di ogni cosa.
@@ -125,6 +138,22 @@ fisica. Le cure, in ordine di priorità:
   d'occhio col pezzo fisico (che porta il puntino di pennarello);
 - il puntino centrale sempre-visibile del prototipo è il precedente:
   promuoverlo a indizio di orientamento, non solo di posizione.
+
+**Registrazione per corrispondenze (proposta Vincenzo, 2026-07-24 —
+candidata a gesto primario)**: invece del trascinamento 6-DOF, l'utente
+seleziona un'entità sul modello virtuale (vertice/spigolo), la clicca nelle
+foto dove è visibile, e dichiara l'identità. Con quote note e 4-6
+corrispondenze per foto, la posa camera si calcola in forma chiusa (PnP):
+niente bacino di convergenza, niente inizializzazione, e il gemello di
+Klein muore per costruzione (l'identità è dichiarata). Le corrispondenze
+sono la stessa struttura dei punti di consistenza, promossa da metrica a
+input: un solo meccanismo registra, misura e rompe la simmetria. Dopo 2
+foto, riproiezione predittiva: le foto successive arrivano coi punti
+proposti da confermare. Lo snap resta il rifinitore sub-pixel a valle
+(il suo mestiere); il gizmo resta per il piazzamento grossolano e per
+oggetti senza punti identificabili (cilindri, forme lisce) — due modalità
+della stessa ancora. Flusso efficiente: entità-prima ("spigolo A → click
+nelle 6 foto"), non foto-prima.
 
 ### P3 — Viste registrate
 Ricalco su piano dichiarato con riproiezione live sulle altre viste;
@@ -161,9 +190,19 @@ frame, giro con θ annotati); guida (nuovo cap. o estensione del 18).
 
 ## Coda (dopo il v1, ordine indicativo)
 
-1. **Corona di marker sul piatto** — Ridley genera il piatto marcato
-   (dogfooding), rilevamento automatico → registrazione senza proxy per
-   oggetti qualunque; abilita anche il live.
+1. **Corona di marker sul piatto** — ruolo chiarito dal PnP (2026-07-25):
+   è il **bersaglio PnP universale**. Oggi le corrispondenze si cliccano
+   sui vertici del proxy, che funziona solo se l'oggetto ha quei vertici
+   fotografabili (il blocco sì; un pezzo organico ingabbiato in un
+   proxy-box no: gli angoli sono a mezz'aria). I marker sono punti
+   fotografabili con coordinate note per costruzione (Ridley genera il
+   piatto): registrazione indipendente dalla forma del pezzo, rilevamento
+   automatico (pattern codificato) → zero click in fase 1, θ letto dalla
+   corona (tabella NOTE obsoleta), scala metrica di stampa. Vincolo di
+   progetto: l'oggetto occlude il centro — corona ai bordi, con margine,
+   visibile in parte da ogni angolo. Prerequisito del live (webcam/
+   companion): "inquadro e il viewport si orienta" = auto-posa per frame
+   via corona. Momento giusto: appena la fetta P3 chiude sul lettore.
 2. **Rounded-prism + fillet-blend** — la leva di accuratezza, collaudata sul
    ritorno del lettore SD (nastrato!).
 3. **Sorgenti live** (webcam/companion ARKit) — sopra l'interfaccia di P2.

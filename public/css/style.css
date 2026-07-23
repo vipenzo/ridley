@@ -442,6 +442,41 @@ html, body {
   outline-offset: -1px;
 }
 
+/* edit-acquire: PnP 'registrazione per corrispondenze' controls (brief P2).
+   The primary registration gesture — arm a corner, click it in the photo,
+   solve the camera pose in closed form. */
+.modal-panel .eaq-pnp-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.modal-panel .eaq-pnp-info {
+  color: #dcb67a;
+  font-size: 11px;
+  word-wrap: break-word;
+}
+
+.modal-panel .eaq-pnp-corners {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.modal-panel .eaq-pnp-corners button {
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: 3px;
+  padding: 3px 0;
+}
+
+.modal-panel .eaq-pnp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 /* edit-mesh-split (brief-step-bias.md Part 3): sliver indicator + ±ε nudge row.
    Neutral grey until a sub-threshold component appears — .ems-sliver-warn is
    toggled in JS, never inferred from text content. */

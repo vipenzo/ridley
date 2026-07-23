@@ -2318,12 +2318,14 @@
 
 (defn- create-dot-meshes
   "A Group of small node markers drawn on top so they read over any background.
-   dots: [{:pos [x y z] :radius r :color hex :ring bool :square bool :normal […]} …].
+   dots: [{:pos [x y z] :radius r :color hex :ring bool :square bool :normal […]
+           :opacity 0-1} …].
    :ring renders a torus (a dot with a hole), :square a flat quad — both oriented in
-   the plane whose normal is :normal; otherwise a sphere."
+   the plane whose normal is :normal; otherwise a sphere. :opacity (default 1) makes
+   a marker translucent so detail underneath (e.g. a photo backdrop) stays readable."
   [dots]
   (let [grp (THREE/Group.)]
-    (doseq [{:keys [pos radius color ring square normal]} dots]
+    (doseq [{:keys [pos radius color ring square normal opacity]} dots]
       (let [r (or radius 1.5)
             geom (cond
                    ring   (THREE/TorusGeometry. r (* r 0.42) 8 18)
@@ -2331,12 +2333,12 @@
                    :else  (THREE/SphereGeometry. r 14 14))
             ;; transparent + depthWrite false puts dots in the transparent pass at
             ;; their high renderOrder, so they draw OVER a transparent reference image
-            ;; (set-image, opacity 1) instead of being hidden behind it. Opacity stays
-            ;; 1 → visually identical, only the draw pass/order changes.
+            ;; (set-image, opacity 1) instead of being hidden behind it.
             mat (THREE/MeshBasicMaterial. #js {:color (or color 0xffffff)
                                                :depthTest false
                                                :depthWrite false
                                                :transparent true
+                                               :opacity (if (some? opacity) opacity 1.0)
                                                :side THREE/DoubleSide})
             ^js m (THREE/Mesh. geom mat)]
         (.set (.-position m) (nth pos 0) (nth pos 1) (nth pos 2))
