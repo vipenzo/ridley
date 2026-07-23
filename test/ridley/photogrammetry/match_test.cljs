@@ -9,6 +9,7 @@
             [ridley.photogrammetry.camera :as cam]
             [ridley.photogrammetry.box-fit :as bf]
             [ridley.photogrammetry.match :as match]
+            [ridley.photogrammetry.turntable-fit :as tt]
             [ridley.photogrammetry.synth :as synth]))
 
 (def true-dims [60.0 20.0 40.0])
@@ -160,3 +161,38 @@
           (str "reprojection " (fmt (:rms-px sol) 2) " px"))
       (is (= (count (:obs sol)) (reduce + (map count (vals gapped))))
           "every clicked line should be matched"))))
+
+(deftest fit-turntable-seeded-recovers-a-consistent-multi-photo-pose
+  ;; Regression guard for edit-acquire's 'f' (2026-07-22): a version of this
+  ;; function that narrowed the yaw search around a 2-photo consistency
+  ;; estimate returned a NON-nil result at 217px / 167px reprojection — a
+  ;; real candidate, just not the right one — instead of failing loudly.
+  ;; Live-diagnosed: the naive 2-point estimate was off by ~34° while
+  ;; reporting an internal disagreement of only ~12°, nowhere near
+  ;; self-diagnosing. The default (full 360° yaw sweep, axis offset fixed
+  ;; at the origin, both rotation senses) must recover the true turntable
+  ;; pose from just a few photos, at reprojection error near the synthetic
+  ;; noise floor, not a spurious high-residual candidate.
+  (println "\n=== fit-turntable-seeded: recovers a consistent pose from few photos ===")
+  (let [kk (k*)
+        rng (synth/rng 42)
+        base (pose-at 10 25 260)
+        axis (tt/axis-from-params 0.0 0.0 0.0 0.0)
+        thetas-deg [0.0 30.0 65.0]
+        yaw (/ (* 40.0 Math/PI) 180.0)
+        sense 1.0
+        ground-truth-poses (mapv (fn [theta-deg]
+                                   (tt/pose-at-angle base axis
+                                                     (+ yaw (* sense (/ (* theta-deg Math/PI) 180.0)))))
+                                 thetas-deg)
+        photos (mapv (fn [pose theta-deg]
+                       {:picks (clicks-for pose 0.3 rng false)
+                        :theta-deg theta-deg})
+                     ground-truth-poses thetas-deg)
+        result (match/fit-turntable-seeded true-dims kk photos {:sigma-px 1.0})]
+    (is (some? result) "must find a turntable fit from 3 synthetic photos")
+    (when result
+      (println (str "  3 foto, rms " (fmt (:rms result) 2) " px, used=" (:used result)))
+      (is (< (:rms result) 5.0)
+          (str "joint fit reprojection " (fmt (:rms result) 2) " px — expected near the "
+               "synthetic noise floor, not a spurious high-residual candidate")))))

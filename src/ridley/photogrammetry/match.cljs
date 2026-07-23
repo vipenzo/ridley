@@ -283,45 +283,110 @@
     (cam/look-at-pose [(* dist (Math/cos elev)) 0.0 (* dist (Math/sin elev))]
                       [0.0 0.0 0.0] [0.0 0.0 1.0])))
 
+(defn- turntable-base-seed
+  "Camera geometry to seed the search from — the real standoff/elevation of
+   whichever photo solves independently, or a nominal fallback."
+  [dims intrinsics photos sigma-px]
+  (let [seed (some (fn [p] (solve-photo dims intrinsics (:picks p) 0 {:sigma-px sigma-px}))
+                   photos)]
+    (if seed (base-from-pose (:pose seed))
+        (cam/look-at-pose [280.0 0.0 160.0] [0.0 0.0 0.0] [0.0 0.0 1.0]))))
+
+(defn- eval-turntable-candidate
+  "One (yaw,sense,a,b) hypothesis: re-match every photo's picks under it and,
+   only if at least 2 photos corroborate (too little evidence otherwise),
+   run the full LM refinement with theta as a soft prior. Returns nil or
+   {:base :fit :hyp :used :rms} — shared by fit-turntable's blind grid scan
+   and fit-turntable-seeded's narrow one, so the two never compute a
+   candidate's cost differently."
+  [dims intrinsics picks thetas base sigma-px yaw sense a b]
+  (let [axis (tt/axis-from-params 0.0 0.0 a b)
+        poses (mapv #(tt/pose-at-angle base axis (+ yaw (* sense %))) thetas)
+        per (keep-indexed
+             (fn [i p] (match-photo dims (nth poses i) intrinsics p i))
+             picks)]
+    (when (>= (count per) 2)
+      (let [obs (vec (mapcat :obs per))
+            angles (mapv #(+ yaw (* sense %)) thetas)
+            res (tt/fit obs angles intrinsics dims base
+                        {:phi 0.0 :psi 0.0 :a a :b b}
+                        {:sigma-px sigma-px
+                         :scale-constraint {:axis 2 :value (nth dims 2) :sigma 0.02}
+                         :angle-prior-sigma-deg 1.0
+                         :lm {:max-iterations 80}})]
+        {:base (:pose res)
+         :fit res
+         :hyp {:yaw yaw :sense sense}
+         :used (count per)
+         :rms (bf/rms-reprojection-px res obs {:sigma-px sigma-px})}))))
+
 (defn fit-turntable
   "Recover a turntable (base pose, axis, yaw, sense) that explains every
    clicked photo, by scanning discrete yaw/sense/offset seeds and re-matching
    under each. Returns the best {:base :fit :hyp :rms :used} or nil.
 
    `photos` are the clicked photos ({:picks :theta-deg}). The dimensions are
-   held at the caliper values, so a good fit is a pure registration."
+   held at the caliper values, so a good fit is a pure registration.
+
+   Blind 24×2×5×5 = 1200-candidate scan — a CLI-grade batch operation (see
+   fit-turntable-seeded for the interactive case, which narrows this down
+   using an already-known yaw/sense estimate instead)."
   [dims intrinsics photos {:keys [sigma-px] :or {sigma-px 1.0}}]
   (let [picks (mapv :picks photos)
         thetas (mapv #(deg->rad (:theta-deg %)) photos)
-        seed (some (fn [p] (solve-photo dims intrinsics (:picks p) 0 {:sigma-px sigma-px}))
-                   photos)
-        base (if seed (base-from-pose (:pose seed))
-                 (cam/look-at-pose [280.0 0.0 160.0] [0.0 0.0 0.0] [0.0 0.0 1.0]))
+        base (turntable-base-seed dims intrinsics photos sigma-px)
         candidates
         (for [yi (range 24)
               sense [1.0 -1.0]
               a [-40.0 -20.0 0.0 20.0 40.0]
               b [-40.0 -20.0 0.0 20.0 40.0]]
-          (let [yaw (* 2.0 Math/PI (/ (double yi) 24))
-                axis (tt/axis-from-params 0.0 0.0 a b)
-                poses (mapv #(tt/pose-at-angle base axis (+ yaw (* sense %))) thetas)
-                per (keep-indexed
-                     (fn [i p] (match-photo dims (nth poses i) intrinsics p i))
-                     picks)]
-            (when (>= (count per) 2)
-              (let [obs (vec (mapcat :obs per))
-                    angles (mapv #(+ yaw (* sense %)) thetas)
-                    res (tt/fit obs angles intrinsics dims base
-                                {:phi 0.0 :psi 0.0 :a a :b b}
-                                {:sigma-px sigma-px
-                                 :scale-constraint {:axis 2 :value (nth dims 2) :sigma 0.02}
-                                 :angle-prior-sigma-deg 1.0
-                                 :lm {:max-iterations 80}})]
-                {:base (:pose res)
-                 :fit res
-                 :hyp {:yaw yaw :sense sense}
-                 :used (count per)
-                 :rms (bf/rms-reprojection-px res obs {:sigma-px sigma-px})}))))]
+          (eval-turntable-candidate dims intrinsics picks thetas base sigma-px
+                                    (* 2.0 Math/PI (/ (double yi) 24)) sense a b))]
+    (->> candidates
+         (keep identity)
+         (sort-by (juxt #(- (:used %)) :rms))
+         first)))
+
+(defn fit-turntable-seeded
+  "Like fit-turntable, but without the 5×5 axis-offset (a,b) grid — for
+   interactive use (edit-acquire's 'f'), where a global search over BOTH
+   yaw and axis offset is too slow (measured 2026-07-22: ~165s blind on
+   just 2 photos). Axis offset is fixed at a=b=0 (axis through the
+   origin/pivot) — the same approximation edit-acquire's own per-photo
+   seeding already makes — which alone cuts the candidate count 25-fold
+   (1200 -> 48 at the default resolution).
+
+   An earlier version of this function also narrowed the YAW range around
+   an estimate from turntable-consistency (run on the photos' own
+   independently-solved poses), reasoning that photos already solved
+   individually should already know roughly where they are. Measured false
+   2026-07-22: with only 2 confirming photos, that estimate was off by
+   ~34° while reporting an internal disagreement of only ~12° — nowhere
+   near self-diagnosing, and the narrowed search silently 'succeeded' at
+   167px (a real candidate, just not the right one) instead of failing
+   loudly. A full 360° yaw sweep is what actually stayed correct, so that
+   is the default here — narrowing is opt-in (`yaw0-deg`/`yaw-window-deg`)
+   for a caller with a better-trusted estimate, not the default path.
+
+   `sense` (the turntable's rotation sense) is far more reliable than yaw
+   from just 2 photos — it is a single either/or choice, not a continuous
+   value — but even so, when omitted, BOTH are tried and the better result
+   wins, exactly like fit-turntable's own grid."
+  [dims intrinsics photos
+   {:keys [sigma-px yaw0-deg sense yaw-window-deg yaw-steps]
+    :or {sigma-px 1.0 yaw0-deg 0.0 yaw-window-deg 360.0 yaw-steps 24}}]
+  (let [picks (mapv :picks photos)
+        thetas (mapv #(deg->rad (:theta-deg %)) photos)
+        base (turntable-base-seed dims intrinsics photos sigma-px)
+        half (/ (* yaw-window-deg Math/PI) (* 180.0 2.0))
+        yaw0 (deg->rad yaw0-deg)
+        offsets (if (> yaw-steps 1)
+                  (mapv #(+ (- half) (* % (/ (* 2.0 half) (dec yaw-steps)))) (range yaw-steps))
+                  [0.0])
+        senses (if sense [sense] [1.0 -1.0])
+        candidates (for [s senses off offsets]
+                     (eval-turntable-candidate dims intrinsics picks thetas base sigma-px
+                                               (+ yaw0 off) s 0.0 0.0))]
     (->> candidates
          (keep identity)
          (sort-by (juxt #(- (:used %)) :rms))

@@ -414,11 +414,19 @@ html, body {
 }
 
 /* edit-acquire: filmstrip badges (brief-param-acq-v1.md P2) — grey = never
-   snapped, green + residual-px = edge-snap succeeded, bordered = current. */
+   snapped, amber = predicted by the joint turntable fit ('f') but not
+   individually confirmed, green + residual-px = edge-snap ('s') confirmed
+   on THIS photo, bordered = current. */
 .modal-panel .eaq-badge-none {
   background: #2d2d44;
   border: 1px solid #4a4a6a;
   color: #9a9aa2;
+}
+
+.modal-panel .eaq-badge-predicted {
+  background: #4f3d26;
+  border: 1px solid #a67c3d;
+  color: #dfb87d;
 }
 
 .modal-panel .eaq-badge-ok {
@@ -428,6 +436,7 @@ html, body {
 }
 
 .modal-panel .eaq-badge-none.current,
+.modal-panel .eaq-badge-predicted.current,
 .modal-panel .eaq-badge-ok.current {
   outline: 2px solid #6f9ce0;
   outline-offset: -1px;

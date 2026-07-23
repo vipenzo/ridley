@@ -4,6 +4,18 @@ File interno per tracciare piccole incoerenze tra il codice sorgente di Ridley e
 
 ## Aperto
 
+### edit-acquire: invalidazione di una foto → reseed completo (salto sproporzionato)
+
+**Contesto**: quando una foto registrata viene invalidata (es. il pivot del
+proxy si sposta), la sua posa viene ri-seminata da zero invece di essere
+aggiustata incrementalmente — l'utente vede un salto sproporzionato rispetto
+alla modifica fatta. Segnalato da Code a fine sessione P2 (2026-07-23,
+commit `ac76a0a`) come "stesso limite di fondo del fit congiunto multi-foto
+già rimandato": la cura vera è il fit congiunto che redistribuisce le
+correzioni (P3 del brief-param-acq-v1), non una pezza sul reseed.
+
+**Scoperta**: sessione P2, Code + collaudo Vincenzo, 2026-07-23.
+
 ### `mesh-union` giustappone invece di fondere (24 vertici da 3 box) — sospetto fallback muto senza WASM
 
 **Contesto**: scoperto per caso durante il gate edit-acquire (2026-07-22,

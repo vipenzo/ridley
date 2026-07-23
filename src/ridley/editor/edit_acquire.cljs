@@ -40,6 +40,7 @@
             [ridley.photogrammetry.bridge :as bridge]
             [ridley.photogrammetry.edge-snap :as edge-snap]
             [ridley.photogrammetry.match :as match]
+            [ridley.photogrammetry.turntable-fit :as tt]
             [ridley.photogrammetry.box-fit :as bf]
             [ridley.photogrammetry.bootstrap :as boot]
             [ridley.math :as m]
@@ -238,6 +239,73 @@
            (str (:matched result) " spigoli agganciati, residuo "
                 (.toFixed (:rms-px result) 2) " px"))
           (save-acquire-state!)))))
+  (update-panel!))
+
+;; ============================================================
+;; Joint turntable fit ('f'): once at least 2 photos have their own `s`
+;; picks, recovers ONE shared camera pose + rotation axis that explains all
+;; of them together (photogrammetry.match/fit-turntable-seeded — the same
+;; model the CLI's own fit-turntable uses, treating each photo's turntable
+;; angle as a soft PRIOR rather than rigid truth per the 2026-07-18 design
+;; decision, but without the 5×5 axis-offset grid the CLI's blind scan
+;; pays for — see fit-turntable-seeded's docstring for why a NARROWED yaw
+;; range turned out unsafe here too, and why a full 360° sweep is the
+;; default instead) and applies the result to EVERY photo, snapped or not
+;; — replacing the from-scratch reseed that made an unrelated photo's pose
+;; jump by an amount with no relation to how small the triggering edit was
+;; (reported 2026-07-22). Deliberately NOT run automatically after every
+;; `s`: still a batch solve (dozens of LM refinements), so it's an
+;; explicit, occasional action, not a per-keystroke one.
+;; ============================================================
+
+(def min-photos-for-turntable-fit
+  "match/fit-turntable-seeded itself never attempts a candidate below 2
+   matched photos — mirrored here so the rejection message doesn't wait
+   for the (several-second) call to say so."
+  2)
+
+(defn- turntable-pose-for
+  "The solver pose ({:rvec :t}) for photo `idx` from a fit-turntable result
+   — same composition as match/reproject-turntable, only returning the pose
+   itself rather than projected edges (reproject-turntable's own concern)."
+  [tt-result idx]
+  (let [{:keys [base fit hyp]} tt-result
+        {:keys [phi psi a b]} (:axis-params fit)
+        axis (tt/axis-from-params phi psi a b)
+        theta (deg->rad (:theta (nth (:photos @session) idx)))]
+    (tt/pose-at-angle base axis (+ (:yaw hyp) (* (:sense hyp) theta)))))
+
+(defn- apply-turntable-fit! [tt-result proxy-pose]
+  (doseq [idx (range 1 (count (:photos @session)))]
+    (let [new-camera-pose (bridge/solver-pose->camera (turntable-pose-for tt-result idx) proxy-pose)]
+      (swap! session assoc-in [:camera-poses idx] new-camera-pose)
+      (when-not (get-in @session [:acquire-results idx])
+        (swap! session assoc-in [:acquire-results idx] {:predicted? true}))))
+  (when (pos? (:current-idx @session))
+    (viewport/set-camera-pose! (get-in @session [:camera-poses (:current-idx @session)])))
+  (set-status-message!
+   (str "Fit congiunto su " (:used tt-result) " foto, rms "
+        (.toFixed (:rms tt-result) 2) " px"))
+  (save-acquire-state!))
+
+(defn- on-fit-turntable! []
+  (when-let [[iw ih] (backdrop/image-size)]
+    (let [proxy-pose (get-in @session [:proxy-mesh :creation-pose])
+          dims (bridge/dims-from-mesh (:proxy-mesh @session) proxy-pose)
+          intrinsics (pcamera/intrinsics-from-fov
+                      (pcamera/focal-mm->fov-deg (:focal-mm @session)) iw ih)
+          photos-with-picks (vec (keep (fn [[idx result]]
+                                         (when-let [picks (:picks result)]
+                                           {:picks picks
+                                            :theta-deg (:theta (nth (:photos @session) idx))}))
+                                       (:acquire-results @session)))]
+      (if (< (count photos-with-picks) min-photos-for-turntable-fit)
+        (set-status-message!
+         (str "Fit congiunto: servono almeno " min-photos-for-turntable-fit
+              " foto agganciate con 's' (ce ne sono " (count photos-with-picks) ")"))
+        (if-let [tt-result (match/fit-turntable-seeded dims intrinsics photos-with-picks {:sigma-px 1.0})]
+          (apply-turntable-fit! tt-result proxy-pose)
+          (set-status-message! "Fit congiunto: nessuna soluzione trovata")))))
   (update-panel!))
 
 ;; ============================================================
@@ -477,7 +545,7 @@
     (set! (.-textContent header) "edit-acquire — gate ingegneristico")
     (.appendChild panel header)
     (set! (.-textContent hint)
-          "1) sulla foto 1, tara la Focale finché il box sembra della taglia giusta, SENZA spostarlo — 2) poi trascina per posizione/rotazione — 3) 's' per agganciare il box agli spigoli reali della foto.")
+          "1) sulla foto 1, tara la Focale finché il box sembra della taglia giusta, SENZA spostarlo — 2) poi trascina per posizione/rotazione — 3) 's' per agganciare il box agli spigoli reali della foto — 4) con almeno 2 foto agganciate, 'f' per il fit congiunto sulle altre.")
     (.appendChild panel hint)
     (.appendChild panel row)
     (.appendChild panel filmstrip)
@@ -505,13 +573,17 @@
     (set! (.-innerHTML strip) "")
     (doseq [[i {:keys [file]}] (map-indexed vector (:photos @session))]
       (let [btn (.createElement js/document "button")
-            snapped (get-in @session [:acquire-results i])]
+            result (get-in @session [:acquire-results i])
+            confirmed? (:rms-px result)
+            predicted? (and result (:predicted? result))]
         (set! (.-type btn) "button")
-        (set! (.-textContent btn) (if snapped
-                                    (str (inc i) " · " (.toFixed (:rms-px snapped) 1) "px")
+        (set! (.-textContent btn) (if confirmed?
+                                    (str (inc i) " · " (.toFixed (:rms-px result) 1) "px")
                                     (str (inc i))))
         (set! (.-title btn) file)
-        (.add (.-classList btn) (if snapped "eaq-badge-ok" "eaq-badge-none"))
+        (.add (.-classList btn) (cond confirmed? "eaq-badge-ok"
+                                      predicted? "eaq-badge-predicted"
+                                      :else "eaq-badge-none"))
         (when (= i (:current-idx @session))
           (.add (.-classList btn) "current"))
         (.addEventListener btn "click" (fn [_] (enter-photo! i)))
@@ -519,7 +591,7 @@
 
 ;; ============================================================
 ;; Keyboard: [ / ] to move through the filmstrip, 's' to edge-snap,
-;; Escape to close
+;; 'f' for the joint turntable fit, Escape to close
 ;; ============================================================
 
 (defn- on-keydown [^js e]
@@ -537,6 +609,9 @@
 
         (= key "s")
         (do (.preventDefault e) (.stopPropagation e) (on-snap!))
+
+        (= key "f")
+        (do (.preventDefault e) (.stopPropagation e) (on-fit-turntable!))
 
         (= key "]")
         (do (.preventDefault e) (.stopPropagation e)

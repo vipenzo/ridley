@@ -121,6 +121,11 @@ CSG dentro un `let` fuori da uno script/REPL normale.
 
 ## Limite ambientale di questa chat (per la prossima)
 
+> **SUPERATO (2026-07-23)**: dalla sessione P2 Code guida e ispeziona l'app
+> dal vivo via **Playwright MCP** — il lavoro alla cieca descritto sotto non
+> è più necessario. La sezione resta come storia; non seguire più il
+> consiglio "verifiche via REPL con Vincenzo" se Playwright è disponibile.
+
 `scripts/dev-browser.sh` (headless Chrome + CDP) non è mai riuscito a
 mantenere una connessione stabile al relay di shadow-cljs abbastanza a lungo
 da eseguire verifiche — il client si registra a intermittenza (a volte 0

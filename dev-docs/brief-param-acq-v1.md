@@ -136,6 +136,24 @@ del registratore visibile nel pannello, flip-aware).
 Sorgente canonico (primitiva + ricalchi + vincoli); file di sessione;
 re-entry. Il contratto è quello di ogni editor Ridley.
 
+**Design dell'emissione (Vincenzo, 2026-07-23 — la convenzione dei nomi come
+contratto)**: `edit-acquire` deve emettere una forma **`acquire`**, come ogni
+`edit-X` emette la sua `X`. La `acquire` è una **direttiva-palcoscenico**
+(famiglia image-board/mesh-board, cittadinanza da riferimento: mai
+nell'export, mai nella CSG): valutata, monta la pellicola di foto e le
+camere registrate — "clicco la miniatura, il viewport va in posa". I
+parametri fini (pose, residui, scala) vivono nel file di sessione; il
+sorgente porta la forma e il riferimento.
+
+Conseguenza architetturale: la **registrazione** (fase 1) è la sessione
+modale `edit-acquire`; il **ricalco** (fase 2) è vita normale dell'editor
+col palcoscenico attivo — edit-path-2d, misure, righelli, mesh-board sopra
+le viste in posa, senza sessione dedicata. Stesso argomento con cui
+mesh-board-design.md rifiutò il workplace modale: lo stato è il sorgente,
+la sessione serve solo dove serve il gesto interattivo. (Ricongiunge anche
+la decisione dell'handover "funzione ora, wrapper macro quando arriva
+l'emissione": il wrapper è la `acquire`.)
+
 ### P5 — Protocollo e documentazione
 Vincolo "superfici opache" (nastrare/opacizzare i traslucidi) nel manuale;
 protocollo di scatto (focale fissa, AE/AF lock, ~250 mm, non riempire il
