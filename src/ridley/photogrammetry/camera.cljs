@@ -118,12 +118,40 @@
     {:rvec rvec :t t}))
 
 (defn focal-mm->fov-deg
-  "Horizontal field of view (degrees) from a 35mm-equivalent focal length —
-   the mirror of intrinsics-from-fov (this file, above): a 35mm-equivalent
-   focal length is defined against a 36mm sensor width by convention."
+  "Field of view (degrees) subtended by a `sensor-mm`-wide frame at a
+   `focal-mm` focal length. A geometric primitive — the caller supplies the
+   dimension it wants the angle for. NOTE: a 35mm-EQUIVALENT focal length is
+   NOT defined against the 36mm width (that is only right for a 3:2 image);
+   for a 35mm-equivalent focal use equiv-focal->hfov-deg, which accounts for
+   the diagonal convention and the image's own aspect ratio."
   ([focal-mm] (focal-mm->fov-deg focal-mm 36.0))
   ([focal-mm sensor-mm]
    (* 2.0 (/ 180.0 Math/PI) (Math/atan (/ sensor-mm (* 2.0 focal-mm))))))
+
+(def frame-35mm-diagonal-mm
+  "Diagonal of a full 35mm frame (36×24 mm): sqrt(36²+24²). The
+   '35mm-equivalent' focal length reported by cameras (EXIF
+   FocalLengthIn35mmFilm) is defined against THIS diagonal — the crop factor
+   is the diagonal ratio (the CIPA/ISO convention) — NOT against the 36mm
+   width. Splitting by width silently assumes a 3:2 frame; a 4:3 phone photo
+   needs the diagonal split by its OWN aspect ratio (equiv-focal->hfov-deg)."
+  (Math/sqrt (+ (* 36.0 36.0) (* 24.0 24.0)))) ; ≈ 43.2666
+
+(defn equiv-focal->hfov-deg
+  "Horizontal field of view (degrees) from a 35mm-EQUIVALENT focal length and
+   the image's aspect ratio `aspect` = width/height. The equivalent focal maps
+   to the 43.27mm full-frame diagonal, so the horizontal half-angle is the
+   diagonal half-angle scaled by width/diagonal = aspect/sqrt(aspect²+1). For
+   a 3:2 image this reduces exactly to focal-mm->fov-deg with sensor-mm=36;
+   for the iPhone's 4:3 it gives ~39.7° at 48mm-eq, not the 41.1° the
+   width-based formula wrongly returns (a ~4% focal-scale error — nearly
+   invisible in a single-photo fit, where it is absorbed into camera distance,
+   but corrupting to the multi-photo turntable geometry and the initial per-
+   photo seeds; see dev-docs/HANDOVER-edit-acquire-gate.md)."
+  [focal-mm aspect]
+  (let [w-over-diag (/ aspect (Math/sqrt (+ (* aspect aspect) 1.0)))
+        eff-width (* frame-35mm-diagonal-mm w-over-diag)]
+    (* 2.0 (/ 180.0 Math/PI) (Math/atan (/ eff-width (* 2.0 focal-mm))))))
 
 (defn intrinsics-from-fov
   "Build intrinsics from a horizontal field of view (degrees) and image size.
