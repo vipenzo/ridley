@@ -477,6 +477,22 @@ html, body {
   gap: 6px;
 }
 
+/* P3 plane-retrace ('d'): same visual family as the PnP box (reuses
+   .eaq-pnp-info / .eaq-pnp-corners / .eaq-pnp-actions), set off with a rule so
+   the two mode boxes read as distinct. Face buttons carry wider labels than the
+   PnP corner numbers, so they get horizontal padding. */
+.modal-panel .eaq-retrace-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 0 4px;
+  border-top: 1px solid #3a3b42;
+}
+
+.modal-panel .eaq-retrace-box .eaq-pnp-corners button {
+  padding: 3px 8px;
+}
+
 /* edit-mesh-split (brief-step-bias.md Part 3): sliver indicator + ±ε nudge row.
    Neutral grey until a sub-threshold component appears — .ems-sliver-warn is
    toggled in JS, never inferred from text content. */

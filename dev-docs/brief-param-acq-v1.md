@@ -107,6 +107,23 @@ free-look, il costo grosso dell'accertamento 6) prima di costruire il resto.
 > ciò che non giace su piani. Collaudo del giro completo: il lettore SD
 > nastrato (proxy box → piano top → ricalco del bezel).
 
+> **Stato P3-slice 2026-07-23 (COSTRUITO, NON committato, in attesa del gate
+> umano)**: la fetta è dentro `edit-acquire` come nuovo modo `:retrace` (tasto
+> `d`), NON come edit-path-2d — quello è una sessione modale a sé e non può
+> convivere nella sessione modale di edit-acquire senza anticipare tutta
+> l'architettura non-modale del "palcoscenico" (P4). Scelta concordata con
+> Vincenzo (2026-07-25): **polilinea minimale** che dimostra tutta la spina;
+> la ricchezza di edit-path-2d (bezier/archi) torna in P4. Fatto: primitiva
+> `camera/pixel-ray` + `math/ray-plane-point` (inverse esatte di `project`,
+> test di regressione a 0 mm), piano dichiarato = faccia del box (axis/sign +
+> offset) nel frame OGGETTO, click→raggio→∩piano→punto oggetto, polilinea come
+> geometria 3D world (quindi la riproiezione nelle altre viste è gratis: `[`/`]`
+> muovono la camera, la polilinea resta ferma nel mondo), persistenza in
+> `acquire-state.json` (`:retrace`), emissione minima `(poly …)` alla chiusura.
+> Verificato: math + glue di frame (editor→solver→oggetto) a ~1e-14 mm via
+> REPL. Manca: il **gate umano** (Vincenzo traccia il bezel del lettore SD
+> nastrato e giudica). Handover `dev-docs/HANDOVER-edit-acquire-p3.md`.
+
 ### P0 — Consolidamento
 Commit di tutto il lavoro accertamenti (solver, matcher, tool, test,
 verdetti nei doc). Prerequisito di ogni cosa.

@@ -95,6 +95,32 @@
      (- (+ (* b tx) (* e ty) (* h tz)))
      (- (+ (* c tx) (* f ty) (* i tz)))]))
 
+(defn pixel-ray
+  "Backprojection — the exact inverse of `project` for a pinhole (k1=k2=0, this
+   session's intrinsics): the world-frame ray through pixel [u v]. Returns
+   {:origin C :dir d} with C the camera centre and d a UNIT direction into the
+   scene; a point C + s·d at any positive depth s projects back to [u v]. Used
+   to turn a photo click into a 3D ray, which the caller intersects with a
+   declared plane (ridley.math/ray-plane-point) to recover the traced point.
+
+   Derivation: with Xc = R·Xw + t, a camera-frame direction maps to world by
+   R^T; the camera looks down +z here, so the ray direction in camera coords
+   for a pixel is [xn yn 1] (xn=(u-cx)/fx, yn=(v-cy)/fy) and the world direction
+   is R^T·[xn yn 1]. Distortion is deliberately ignored — this session runs
+   k1=k2=0 (see intrinsics-from-fov); a distorted lens would undistort [u v]
+   first."
+  [{:keys [fx fy cx cy]} pose [u v]]
+  (let [xn (/ (- u cx) fx)
+        yn (/ (- v cy) fy)
+        [[a b c] [d e f] [g h i]] (rodrigues (:rvec pose))
+        ;; world dir = R^T · [xn yn 1]  (R^T's rows are R's columns)
+        dx (+ (* a xn) (* d yn) g)
+        dy (+ (* b xn) (* e yn) h)
+        dz (+ (* c xn) (* f yn) i)
+        len (Math/sqrt (+ (* dx dx) (* dy dy) (* dz dz)))]
+    {:origin (camera-center pose)
+     :dir [(/ dx len) (/ dy len) (/ dz len)]}))
+
 (defn look-at-pose
   "Build a pose from a camera centre looking at a target, with an up hint.
    Used to construct synthetic viewpoints and to seed a hand-aligned view."

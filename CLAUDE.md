@@ -1,6 +1,26 @@
 # Ridley Project Instructions
 
-## Clojure REPL Evaluation
+## Communicating with Vincenzo
+
+Vincenzo is the project owner. He is technical but NOT a developer working in
+this codebase daily: he does not live in the CLI, the test suite, or the
+internal module names.
+
+**Whenever your work ends with something Vincenzo must DO** (click a tool,
+run commands, take photos, measure something), end your reply with a section
+titled **"Prossimi passi per te"**, in Italian, following these rules:
+
+- Numbered steps, ONE action per step, in the order he performs them.
+- Name the EXACT button labels and the exact commands to copy-paste.
+- Define any term of art the first time it appears (one clause is enough:
+  "le predictions — il fil di ferro disegnato sopra la foto — ...").
+- No internal names (namespaces, vars, test counts) in this section; those
+  belong in the technical part above it.
+- If a step has a failure mode he can recognize, say what he'll see and what
+  it means ("se vedi X, è successo Y: fai Z").
+
+The technical write-up for the record stays as detailed as you like — this
+section is IN ADDITION, not instead.
 
 Use `/Users/vipenzo/.local/bin/clj-nrepl-eval` for evaluating ClojureScript code via nREPL.
 

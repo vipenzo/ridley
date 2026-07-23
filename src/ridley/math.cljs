@@ -35,6 +35,19 @@
   [[x y z]]
   (Math/sqrt (+ (* x x) (* y y) (* z z))))
 
+(defn ray-plane-point
+  "Point where the ray {:origin o :dir d} meets the plane through `point` with
+   `normal` (need not be unit). nil when the ray is parallel to the plane, or
+   when the hit is at/behind the origin (t ≤ 0) — a plane feature traced from a
+   photo is always in front of the camera, so a non-positive t means the click
+   missed the declared surface rather than a point worth keeping."
+  [{:keys [origin dir]} point normal]
+  (let [denom (dot normal dir)]
+    (when (> (Math/abs denom) 1e-9)
+      (let [t (/ (dot normal (v- point origin)) denom)]
+        (when (> t 1e-9)
+          (v+ origin (v* dir t)))))))
+
 (defn normalize
   "Return unit vector; zero vector unchanged."
   [v]
