@@ -1563,29 +1563,53 @@
 
 (defn- retrace-offset-range [_] [-15 15 0.5])
 
-(defn- ricalco-poly-string
-  "One ricalco's polyline as a (poly …) of its in-plane 2D coords, or nil below 3
-   points (poly needs ≥3). The in-plane axes are the two box axes other than the
-   declared plane's normal axis."
-  [{:keys [plane points]}]
+(declare fmt-vec)
+
+(defn- obj-dir->world
+  "Lift an OBJECT-frame direction to world through `pose`'s box-basis."
+  [pose [x y z]]
+  (let [{:keys [ex ey ez]} (bridge/box-basis pose)]
+    (m/normalize (m/v+ (m/v* ex x) (m/v+ (m/v* ey y) (m/v* ez z))))))
+
+(defn- ricalco-shape+mark
+  "One ricalco → \":id {:shape (poly …) :mark {:position :heading :up}}\", or nil
+   below 3 points. Per Vincenzo's design (2026-07-24): the ricalco is emitted with
+   an implicit mark so it carries BOTH the 2D outline and its face frame, and
+   `(let [q (:id (:shapes A))] (turtle (:mark q) (extrude (:shape q) (f d))))`
+   extrudes it ON the face, PERPENDICULAR — instead of a bare 2D poly that follows
+   the current turtle. The poly is re-expressed in an in-plane frame centred on the
+   ricalco's centroid: v = an in-plane box axis, u = normal × v, so it matches
+   Ridley's shape placement (shape-x → -right, shape-y → up, extrude → heading)
+   with the mark's heading = OUTWARD face normal and up = v; the extrusion then
+   lands un-mirrored and perpendicular. The mark is lifted through `pose` (the
+   emitted proxy's anchor pose), so shape and proxy stay coincident."
+  [{:keys [name plane points]} pose uniq]
   (when (>= (count points) 3)
-    (let [[a1 a2] (vec (remove #{(:axis plane)} [0 1 2]))
-          f3 (fn [x] (.toFixed x 3))]
-      (str "(poly "
-           (str/join " " (mapcat (fn [p] [(f3 (nth p a1)) (f3 (nth p a2))]) points))
-           ")"))))
+    (let [{:keys [axis sign]} plane
+          a2 (last (remove #{axis} [0 1 2]))
+          normal-obj (m/v* (axis-unit axis) (double sign))
+          v-obj (axis-unit a2)
+          u-obj (m/cross normal-obj v-obj)
+          n (count points)
+          centroid-obj (mapv #(/ % n) (reduce m/v+ [0.0 0.0 0.0] points))
+          f3 (fn [x] (.toFixed x 3))
+          coords (mapcat (fn [p] (let [d (m/v- p centroid-obj)]
+                                   [(f3 (m/dot d u-obj)) (f3 (m/dot d v-obj))]))
+                         points)]
+      (str ":" (uniq name)
+           " {:shape (poly " (str/join " " coords) ")"
+           " :mark {:position " (fmt-vec (bridge/local->world pose centroid-obj))
+           " :heading " (fmt-vec (obj-dir->world pose normal-obj))
+           " :up " (fmt-vec (obj-dir->world pose v-obj)) "}}"))))
 
 (defn- shapes-entries
-  "\":id (poly …)\" strings for every ricalco with ≥3 points, names keywordized and
-   uniquified (a map can't hold duplicate keys)."
-  []
+  "\":id {:shape (poly …) :mark {…}}\" strings for every ricalco with ≥3 points,
+   names keywordized and uniquified (a map can't hold duplicate keys)."
+  [pose]
   (let [seen (atom #{})
         uniq (fn [nm] (loop [n (if (seq nm) nm "ricalco")]
                         (if (contains? @seen n) (recur (str n "-2")) (do (swap! seen conj n) n))))]
-    (vec (keep (fn [{:keys [name] :as r}]
-                 (when-let [poly (ricalco-poly-string r)]
-                   (str ":" (uniq name) " " poly)))
-               (ricalchi)))))
+    (vec (keep #(ricalco-shape+mark % pose uniq) (ricalchi)))))
 
 ;; ============================================================
 ;; Panel (numbered filmstrip + focal-length field + Chiudi — no badges/
@@ -2466,7 +2490,7 @@
          i3 ":pose {:position " (fmt-vec (:position anchor-pose))
          " :heading " (fmt-vec (:heading anchor-pose))
          " :up " (fmt-vec (:up anchor-pose)) "}\n"
-         i3 ":shapes " (fmt-map-block ":shapes" (shapes-entries) i3) "\n"
+         i3 ":shapes " (fmt-map-block ":shapes" (shapes-entries anchor-pose) i3) "\n"
          i3 ":marks " (fmt-map-block ":marks" (marks-entries anchor-pose) i3) "})")))
 
 (defn- confirm!
