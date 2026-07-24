@@ -1575,18 +1575,17 @@
            (str/join " " (mapcat (fn [p] [(f3 (nth p a1)) (f3 (nth p a2))]) points))
            ")"))))
 
-(defn- shapes-emit-string
-  "All ricalchi with ≥3 points as a source map {:id (poly …) …}, names keywordized
-   and uniquified (a map can't hold duplicate keys). '{}' when none is drawable."
+(defn- shapes-entries
+  "\":id (poly …)\" strings for every ricalco with ≥3 points, names keywordized and
+   uniquified (a map can't hold duplicate keys)."
   []
   (let [seen (atom #{})
         uniq (fn [nm] (loop [n (if (seq nm) nm "ricalco")]
-                        (if (contains? @seen n) (recur (str n "-2")) (do (swap! seen conj n) n))))
-        entries (keep (fn [{:keys [name] :as r}]
-                        (when-let [poly (ricalco-poly-string r)]
-                          (str ":" (uniq name) " " poly)))
-                      (ricalchi))]
-    (if (seq entries) (str "{" (str/join " " entries) "}") "{}")))
+                        (if (contains? @seen n) (recur (str n "-2")) (do (swap! seen conj n) n))))]
+    (vec (keep (fn [{:keys [name] :as r}]
+                 (when-let [poly (ricalco-poly-string r)]
+                   (str ":" (uniq name) " " poly)))
+               (ricalchi)))))
 
 ;; ============================================================
 ;; Panel (numbered filmstrip + focal-length field + Chiudi — no badges/
@@ -2411,61 +2410,64 @@
   (let [a (or (some (fn [i] (when (> (js/Math.abs (nth normal i 0)) 0.5) i)) [0 1 2]) 0)]
     (assoc [0.0 0.0 0.0] (mod (inc a) 3) 1.0)))
 
-(defn- marks-emit-string
-  "The session's named marks as a source map {:id {:position [world] :heading
-   [world] :up [world]} …} lifted through `pose` (the emitted proxy's anchor pose)
-   — a POSE (not a bare point) so it plugs straight into `(turtle (:id (:marks A))
-   …)` and the anchor machinery (position + orientation). :heading = the face
-   normal (out of the surface), :up = an in-plane box axis. Object-frame
-   position/normal lifted to world through the SAME pose the box is emitted at, so
-   marks and proxy stay coincident wherever the object is anchored. Names are
-   keywordized and uniquified (a map can't hold duplicate keys, and a user may
-   rename two marks the same)."
+(defn- marks-entries
+  "\":id {:position [world] :heading [world] :up [world]}\" strings for the session's
+   named marks, lifted through `pose` (the emitted proxy's anchor pose) — a POSE
+   (not a bare point) so each plugs straight into `(turtle (:id (:marks A)) …)` and
+   the anchor machinery. :heading = the face normal, :up = an in-plane box axis;
+   object-frame position/normal lifted to world through the SAME pose the box is
+   emitted at, so marks and proxy stay coincident. Names keywordized + uniquified."
   [pose]
-  (if (empty? (marks))
+  (let [{:keys [ex ey ez]} (bridge/box-basis pose)
+        world-dir (fn [[nx ny nz]]
+                    (m/normalize (m/v+ (m/v* ex nx) (m/v+ (m/v* ey ny) (m/v* ez nz)))))
+        seen (atom #{})
+        uniq (fn [nm] (loop [n (if (seq nm) nm "mark")]
+                        (if (contains? @seen n) (recur (str n "-2")) (do (swap! seen conj n) n))))]
+    (mapv (fn [{:keys [name position normal]}]
+            (str ":" (uniq name)
+                 " {:position " (fmt-vec (bridge/local->world pose position))
+                 " :heading " (fmt-vec (world-dir normal))
+                 " :up " (fmt-vec (world-dir (normal-up-obj normal))) "}"))
+          (marks))))
+
+(defn- fmt-map-block
+  "Render a source map from its \"key value\" entry strings on their own lines: the
+   first right after `{`, the rest aligned under it (pretty-print, so the emitted
+   form is readable instead of one long line — Vincenzo 2026-07-24). `owner` is the
+   key this map is the value of (e.g. \":shapes\"), `key-indent` the indent string
+   where that key sits, so alignment = key-indent + width of \"<owner> {\". A single
+   entry stays on one line; empty → \"{}\"."
+  [owner entries key-indent]
+  (if (empty? entries)
     "{}"
-    (let [{:keys [ex ey ez]} (bridge/box-basis pose)
-          world-dir (fn [[nx ny nz]]
-                      (m/normalize (m/v+ (m/v* ex nx) (m/v+ (m/v* ey ny) (m/v* ez nz)))))
-          seen (atom #{})
-          uniq (fn [nm] (loop [n (if (seq nm) nm "mark")]
-                          (if (contains? @seen n)
-                            (recur (str n "-2"))
-                            (do (swap! seen conj n) n))))]
-      (str "{"
-           (str/join " "
-                     (map (fn [{:keys [name position normal]}]
-                            (str ":" (uniq name)
-                                 " {:position " (fmt-vec (bridge/local->world pose position))
-                                 " :heading " (fmt-vec (world-dir normal))
-                                 " :up " (fmt-vec (world-dir (normal-up-obj normal))) "}"))
-                          (marks)))
-           "}"))))
+    (let [align (str key-indent (apply str (repeat (+ (count owner) 2) " ")))]
+      (str "{" (str/join (str "\n" align) entries) "}"))))
 
 (defn- emit-acquire-code
-  "The (acquire \"dir\" {…}) source that replaces the marker on confirm. Proxy dims
-   come from the mesh's ACTUAL extents (bridge/dims-from-mesh, robust to how it was
-   parameterized). The emitted pose keeps the ACQUIRED orientation but re-anchors
-   the box CENTRE to the construction turtle's position at open time (:build-pose)
-   — so the object lands near the turtle/origin in the build world instead of the
-   arbitrary acquisition-frame offset (Vincenzo 2026-07-24), while re-entry still
-   overlays the photos (edit-acquire restores the acquired position from the
-   session file). :shapes carries the ricalco as a named (poly …), :marks the named
-   points as poses; both destructurable by name, both lifted through the SAME
-   anchor pose so they stay coincident with the proxy (P4a-3)."
-  []
+  "The (acquire \"dir\" {…}) source that replaces the marker on confirm, PRETTY-
+   PRINTED (multi-line, indented to the marker's column `col`). Proxy dims come from
+   the mesh's ACTUAL extents (bridge/dims-from-mesh). The emitted pose keeps the
+   ACQUIRED orientation but re-anchors the box CENTRE to the construction turtle's
+   position at open time (:build-pose) — object near the turtle/origin, re-entry
+   still overlays the photos (session file restores the acquired position). :shapes
+   = the ricalchi as named (poly …), :marks = named points as poses; both
+   destructurable by name, lifted through the SAME anchor pose (P4a-3)."
+  [col]
   (let [proxy (:proxy-mesh @session)
         pose (:creation-pose proxy)                 ; acquired pose (orientation kept)
         anchor-pose {:position (get-in @session [:build-pose :position] [0 0 0])
                      :heading (:heading pose) :up (:up pose)}
         [w h d] (bridge/dims-from-mesh proxy pose)
-        shapes-str (shapes-emit-string)]
-    (str "(acquire " (pr-str (:base-dir @session))
-         " {:proxy (box " (fmt-n w) " " (fmt-n h) " " (fmt-n d) ")"
-         " :pose {:position " (fmt-vec (:position anchor-pose))
+        ind (apply str (repeat col " "))
+        i3 (str ind "   ")]                          ; column of the map's keys (:pose …)
+    (str "(acquire " (pr-str (:base-dir @session)) "\n"
+         ind "  {:proxy (box " (fmt-n w) " " (fmt-n h) " " (fmt-n d) ")\n"
+         i3 ":pose {:position " (fmt-vec (:position anchor-pose))
          " :heading " (fmt-vec (:heading anchor-pose))
-         " :up " (fmt-vec (:up anchor-pose)) "}"
-         " :shapes " shapes-str " :marks " (marks-emit-string anchor-pose) "})")))
+         " :up " (fmt-vec (:up anchor-pose)) "}\n"
+         i3 ":shapes " (fmt-map-block ":shapes" (shapes-entries) i3) "\n"
+         i3 ":marks " (fmt-map-block ":marks" (marks-entries anchor-pose) i3) "})")))
 
 (defn- confirm!
   "OK: write the aligned proxy+pose back to source as (acquire \"dir\" {…}),
@@ -2477,7 +2479,14 @@
   (when @session
     (save-acquire-state!) ; keep acquire-state.json's proxy-pose in sync with :pose
     (let [[from to] (find-marker)
-          code (emit-acquire-code)]
+          ;; column of the marker's opening paren, so the pretty-printed
+          ;; continuation lines indent to align under it (0 when no marker).
+          col (if from
+                (let [buf (cm/get-value)
+                      nl (.lastIndexOf (.substring buf 0 from) "\n")]
+                  (- from (inc nl)))
+                0)
+          code (emit-acquire-code col)]
       (if from
         (do (modal/replace-source! from to code)
             (close!)
