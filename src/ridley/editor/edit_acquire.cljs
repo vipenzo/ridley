@@ -670,11 +670,15 @@
   "Open the gizmo for photo `idx`. Photo 0's gizmo commits move the PROXY
    (on-photo0-commit!); photos 1..N-1's commits invert onto the CAMERA
    (on-inv-commit!). Extracted so PnP mode can tear the gizmo down and put it
-   back without re-loading the photo."
+   back without re-loading the photo. Skipped while the proxy is HIDDEN ('v') —
+   the rings would otherwise float over the bare photo with nothing to grab
+   (Vincenzo 2026-07-24); the single guard here covers every install site
+   (enter-photo!, stop-pnp!/retrace!/mark!), so navigation keeps it hidden too."
   [idx]
-  (gizmo/enter! (get-in @session [:proxy-mesh :creation-pose])
-                {:mode :object :handles #{:translate :rotate}}
-                {:on-commit (if (zero? idx) on-photo0-commit! on-inv-commit!)}))
+  (when-not (:hide-proxy? @session)
+    (gizmo/enter! (get-in @session [:proxy-mesh :creation-pose])
+                  {:mode :object :handles #{:translate :rotate}}
+                  {:on-commit (if (zero? idx) on-photo0-commit! on-inv-commit!)})))
 
 (defn- enter-photo!
   "Close/reopen the gizmo for photo `idx` — simpler to reason about than
@@ -1116,7 +1120,45 @@
     {:point (assoc [0.0 0.0 0.0] axis coord)
      :normal (axis-unit axis)}))
 
-(defn- retrace-plane [] (plane-of (get-in @session [:retrace :plane])))
+;; ---- multiple named ricalchi (P4a-3 follow-up, Vincenzo 2026-07-24: "più di
+;; uno, ognuno con un id") ----
+;; :ricalchi = [{:name :plane :points} …]; :ricalco-idx = the ACTIVE one clicks
+;; add to. Each ricalco is one polyline on one declared face; the retrace gesture
+;; edits the active one, and "Nuovo ricalco" starts another. Emitted as
+;; :shapes {:id-1 (poly …) :id-2 (poly …) …}.
+(def ^:private default-plane-spec {:axis 1 :sign 1 :offset 0.0})
+
+(defn- ricalchi [] (get @session :ricalchi []))
+
+(defn- active-r-path
+  "assoc-in/get-in path into the ACTIVE ricalco (…:plane / …:points)."
+  [& ks]
+  (into [:ricalchi (:ricalco-idx @session)] ks))
+
+(defn- active-plane-spec []
+  (or (get-in @session (active-r-path :plane)) default-plane-spec))
+
+(defn- next-ricalco-name []
+  (let [nums (keep (fn [{:keys [name]}]
+                     (when-let [m (re-matches #"ricalco-(\d+)" (or name ""))]
+                       (js/parseInt (second m) 10)))
+                   (ricalchi))]
+    (str "ricalco-" (inc (reduce max 0 nums)))))
+
+(defn- ensure-active-ricalco!
+  "Guarantee an active ricalco to draw into (on entering retrace): create the
+   first one if the list is empty, else point idx at a valid entry (the last)."
+  []
+  (let [rs (ricalchi)]
+    (cond
+      (empty? rs)
+      (swap! session assoc
+             :ricalchi [{:name (next-ricalco-name) :plane default-plane-spec :points []}]
+             :ricalco-idx 0)
+      (not (get-in @session [:ricalchi (:ricalco-idx @session)]))
+      (swap! session assoc :ricalco-idx (dec (count rs))))))
+
+(defn- retrace-plane [] (plane-of (active-plane-spec)))
 
 (defn- face-quad
   "A translucent coloured quad ON the face declared by `spec` — the plane
@@ -1138,7 +1180,7 @@
             :faces [[0 1 2] [0 2 3]]
             :material {:color (retrace-face-colors [axis sign]) :opacity 0.3 :double-sided true}}}))
 
-(defn- active-face-quad [] (face-quad (get-in @session [:retrace :plane])))
+(defn- active-face-quad [] (face-quad (active-plane-spec)))
 
 (defn- retrace-solver-pose []
   (bridge/editor->solver-pose (current-camera-pose)
@@ -1152,19 +1194,24 @@
   0.9)
 
 (defn- trace-items
-  "The retrace polyline (world) as show-preview! items — the yellow line + its
-   vertex dots (on-top, so they read over the photo). Shared by EVERY mode's
-   preview (proxy-preview-items / pnp-preview-items / retrace-preview-items) so
-   the traced bezel is a persistent scene element, visible after leaving :retrace
-   and reprojecting as the camera moves between photos. Empty line/dot data is
-   skipped by build-preview-object, so an untraced session adds nothing."
+  "EVERY ricalco's polyline (world) as show-preview! items — yellow lines + vertex
+   dots (on-top, so they read over the photo). The ACTIVE ricalco is full-bright,
+   the others dimmer, so which one you're editing reads. Shared by every mode's
+   preview (proxy-preview-items / pnp-preview-items / retrace-preview-items) so the
+   traced bezels stay visible after leaving :retrace and reproject as the camera
+   moves between photos. Empty data is skipped, so an untraced session adds nothing."
   []
   (let [proxy-pose (get-in @session [:proxy-mesh :creation-pose])
-        wpts (mapv #(bridge/local->world proxy-pose %) (get-in @session [:retrace :points]))]
-    [{:type :lines :data (mapv (fn [a b] {:from a :to b :color 0xffcc33}) wpts (rest wpts))
-      :on-top true}
-     {:type :dots :data (mapv (fn [w] {:pos w :radius retrace-dot-radius
-                                       :color 0xffcc33 :opacity 0.75}) wpts)}]))
+        active-idx (:ricalco-idx @session)]
+    (vec (mapcat
+          (fn [i {:keys [points]}]
+            (let [wpts (mapv #(bridge/local->world proxy-pose %) points)
+                  color (if (= i active-idx) 0xffcc33 0xbb8f22)]
+              [{:type :lines :data (mapv (fn [a b] {:from a :to b :color color}) wpts (rest wpts))
+                :on-top true}
+               {:type :dots :data (mapv (fn [w] {:pos w :radius retrace-dot-radius
+                                                 :color color :opacity 0.75}) wpts)}]))
+          (range) (ricalchi)))))
 
 (defn- retrace-preview-items
   "In :retrace the box is never drawn — only the coloured active-face quad (the
@@ -1180,6 +1227,11 @@
    leaving :retrace returns to whatever was chosen here."
   []
   (swap! session update :hide-proxy? not)
+  ;; Hide the gizmo together with the solid proxy (install-gizmo! now no-ops while
+  ;; hidden); re-install it when the proxy comes back.
+  (if (:hide-proxy? @session)
+    (gizmo/close!)
+    (install-gizmo! (:current-idx @session)))
   (viewport/show-preview! (proxy-preview-items))
   (update-panel!))
 
@@ -1207,7 +1259,7 @@
         (let [ray (pcamera/pixel-ray (session-intrinsics iw ih) (retrace-solver-pose) px)
               {:keys [point normal]} (retrace-plane)]
           (if-let [hit (m/ray-plane-point ray point normal)]
-            (do (swap! session update-in [:retrace :points] (fnil conj []) hit)
+            (do (swap! session update-in (active-r-path :points) (fnil conj []) hit)
                 (redraw-retrace!)
                 (save-acquire-state!)
                 (update-panel!))
@@ -1225,6 +1277,7 @@
   (when (and @session (not= :retrace (:mode @session)))
     (gizmo/close!)
     (swap! session assoc :mode :retrace)
+    (ensure-active-ricalco!)
     (let [^js canvas (viewport/get-canvas)]
       (.addEventListener canvas "pointerdown" retrace-on-pointerdown true)
       (.addEventListener canvas "pointermove" retrace-on-pointermove true)
@@ -1242,17 +1295,52 @@
     (update-panel!)))
 
 (defn- undo-retrace-point! []
-  (when (seq (get-in @session [:retrace :points]))
-    (swap! session update-in [:retrace :points] pop)
+  (when (seq (get-in @session (active-r-path :points)))
+    (swap! session update-in (active-r-path :points) pop)
     (redraw-retrace!)
     (save-acquire-state!)
     (update-panel!)))
 
 (defn- clear-retrace! []
-  (swap! session assoc-in [:retrace :points] [])
+  (swap! session assoc-in (active-r-path :points) [])
   (redraw-retrace!)
   (save-acquire-state!)
   (update-panel!))
+
+(defn- new-ricalco!
+  "Start a fresh ricalco (keeping the current face), make it active. The gesture
+   then draws into the new one; the old ones stay put and keep rendering."
+  []
+  (let [plane (active-plane-spec)]
+    (swap! session update :ricalchi (fnil conj [])
+           {:name (next-ricalco-name) :plane plane :points []})
+    (swap! session assoc :ricalco-idx (dec (count (ricalchi))))
+    (redraw-retrace!)
+    (save-acquire-state!)
+    (update-panel!)))
+
+(defn- select-ricalco! [i]
+  (swap! session assoc :ricalco-idx i)
+  (redraw-retrace!)
+  (update-panel!))
+
+(defn- delete-ricalco! [i]
+  (swap! session update :ricalchi
+         (fn [rs] (vec (concat (subvec rs 0 i) (subvec rs (inc i))))))
+  ;; keep :ricalco-idx valid (clamp; the deleted one shifts the rest down)
+  (swap! session update :ricalco-idx
+         (fn [idx] (let [n (count (ricalchi))]
+                     (cond (zero? n) nil
+                           (>= idx n) (dec n)
+                           (> i idx) idx
+                           :else (max 0 (dec idx))))))
+  (redraw-retrace!)
+  (save-acquire-state!)
+  (update-panel!))
+
+(defn- rename-ricalco! [i new-name]
+  (swap! session assoc-in [:ricalchi i :name] new-name)
+  (save-acquire-state!))
 
 ;; ============================================================
 ;; Named marks ('k'): the acquisizione-parametrica MARK primitive (P4a-3) — a
@@ -1453,12 +1541,12 @@
     (update-panel!)))
 
 (defn- set-retrace-face!
-  "Pick the declared face. A retrace belongs to ONE plane, so switching the face
-   clears the points placed on the previous one (they'd be meaningless there);
-   the offset carries over."
+  "Pick the ACTIVE ricalco's declared face. A ricalco belongs to ONE plane, so
+   switching its face clears ITS points (they'd be meaningless there); the offset
+   carries over. Other ricalchi are untouched."
   [axis sign]
-  (let [had (seq (get-in @session [:retrace :points]))]
-    (swap! session update :retrace
+  (let [had (seq (get-in @session (active-r-path :points)))]
+    (swap! session update-in (active-r-path)
            (fn [rt] (assoc rt :plane (assoc (:plane rt) :axis axis :sign sign) :points [])))
     (redraw-retrace!)
     (save-acquire-state!)
@@ -1466,29 +1554,39 @@
     (update-panel!)))
 
 (defn- on-retrace-offset-change!
-  "Live offset of the declared plane along its normal (mm). Does NOT clear
+  "Live offset of the ACTIVE ricalco's plane along its normal (mm). Does NOT clear
    already-placed points (they keep their 3D positions); it retargets future
    clicks and moves the drawn face rectangle, so it's a set-first control."
   [offset]
-  (swap! session assoc-in [:retrace :plane :offset] offset)
+  (swap! session assoc-in (active-r-path :plane :offset) offset)
   (redraw-retrace!))
 
 (defn- retrace-offset-range [_] [-15 15 0.5])
 
-(defn- retrace-poly-string
-  "The retrace polyline as a (poly …) of its in-plane 2D coords, or nil below 3
+(defn- ricalco-poly-string
+  "One ricalco's polyline as a (poly …) of its in-plane 2D coords, or nil below 3
    points (poly needs ≥3). The in-plane axes are the two box axes other than the
-   declared plane's normal axis — the same flattening the P3 loose-emit used, now
-   folded into the acquire form's :shapes (P4a-3) instead of printed loose."
+   declared plane's normal axis."
+  [{:keys [plane points]}]
+  (when (>= (count points) 3)
+    (let [[a1 a2] (vec (remove #{(:axis plane)} [0 1 2]))
+          f3 (fn [x] (.toFixed x 3))]
+      (str "(poly "
+           (str/join " " (mapcat (fn [p] [(f3 (nth p a1)) (f3 (nth p a2))]) points))
+           ")"))))
+
+(defn- shapes-emit-string
+  "All ricalchi with ≥3 points as a source map {:id (poly …) …}, names keywordized
+   and uniquified (a map can't hold duplicate keys). '{}' when none is drawable."
   []
-  (let [{:keys [plane points]} (:retrace @session)
-        {:keys [axis]} plane]
-    (when (>= (count points) 3)
-      (let [[a1 a2] (vec (remove #{axis} [0 1 2]))
-            f3 (fn [x] (.toFixed x 3))]
-        (str "(poly "
-             (str/join " " (mapcat (fn [p] [(f3 (nth p a1)) (f3 (nth p a2))]) points))
-             ")")))))
+  (let [seen (atom #{})
+        uniq (fn [nm] (loop [n (if (seq nm) nm "ricalco")]
+                        (if (contains? @seen n) (recur (str n "-2")) (do (swap! seen conj n) n))))
+        entries (keep (fn [{:keys [name] :as r}]
+                        (when-let [poly (ricalco-poly-string r)]
+                          (str ":" (uniq name) " " poly)))
+                      (ricalchi))]
+    (if (seq entries) (str "{" (str/join " " entries) "}") "{}")))
 
 ;; ============================================================
 ;; Panel (numbered filmstrip + focal-length field + Chiudi — no badges/
@@ -1706,9 +1804,12 @@
         (.appendChild box actions))
 
       (= :retrace (:mode @session))
-      (let [{:keys [axis sign offset]} (get-in @session [:retrace :plane])
-            npts (count (get-in @session [:retrace :points]))
+      (let [{:keys [axis sign offset]} (active-plane-spec)
+            rs (ricalchi)
+            active-idx (:ricalco-idx @session)
+            npts (count (get-in @session (active-r-path :points)))
             info (.createElement js/document "div")
+            list-el (.createElement js/document "div")
             faces (.createElement js/document "div")
             {:keys [row]} (ui/create-slider-row {:label "Offset piano (mm)"
                                                  :value offset
@@ -1717,9 +1818,34 @@
             actions (.createElement js/document "div")]
         (set! (.-className info) "eaq-pnp-info")
         (set! (.-textContent info)
-              (str "Piano: " (retrace-face-labels [axis sign]) " — clicca il contorno sulla foto ("
-                   npts " punti). '[' / ']' per rivederlo dalle altre viste."))
+              (str "Ricalco attivo: " (or (:name (get rs active-idx)) "—") " — piano "
+                   (retrace-face-labels [axis sign]) ", clicca il contorno sulla foto ("
+                   npts " punti). '[' / ']' per rivederli dalle altre viste."))
         (.appendChild box info)
+        ;; one row per ricalco: ● active / ○ pick-active, editable id, ✕ delete
+        (set! (.-className list-el) "eaq-mark-list")
+        (doseq [[i {:keys [name]}] (map-indexed vector rs)]
+          (let [rrow (.createElement js/document "div")
+                sel (.createElement js/document "button")
+                inp (.createElement js/document "input")
+                del (.createElement js/document "button")]
+            (set! (.-className rrow) "eaq-mark-row")
+            (set! (.-type sel) "button")
+            (set! (.-textContent sel) (if (= i active-idx) "●" "○"))
+            (set! (.-title sel) "Rendi attivo")
+            (.addEventListener sel "click" (fn [_] (select-ricalco! i)))
+            (set! (.-type inp) "text")
+            (set! (.-value inp) name)
+            (set! (.. inp -style -width) "110px")
+            (.addEventListener inp "change" (fn [^js e] (rename-ricalco! i (.. e -target -value))))
+            (set! (.-type del) "button")
+            (set! (.-textContent del) "✕")
+            (.addEventListener del "click" (fn [_] (delete-ricalco! i)))
+            (.appendChild rrow sel)
+            (.appendChild rrow inp)
+            (.appendChild rrow del)
+            (.appendChild list-el rrow)))
+        (.appendChild box list-el)
         (set! (.-className faces) "eaq-pnp-corners")
         (doseq [[a s] retrace-face-order]
           (let [b (.createElement js/document "button")
@@ -1739,9 +1865,13 @@
         (.appendChild box faces)
         (.appendChild box row)
         (set! (.-className actions) "eaq-pnp-actions")
-        (let [undo (.createElement js/document "button")
+        (let [nw (.createElement js/document "button")
+              undo (.createElement js/document "button")
               clr (.createElement js/document "button")
               exit (.createElement js/document "button")]
+          (set! (.-type nw) "button")
+          (set! (.-textContent nw) "Nuovo ricalco (n)")
+          (.addEventListener nw "click" (fn [_] (new-ricalco!)))
           (set! (.-type undo) "button")
           (set! (.-textContent undo) "Annulla ultimo (⌫)")
           (set! (.-disabled undo) (zero? npts))
@@ -1753,6 +1883,7 @@
           (set! (.-type exit) "button")
           (set! (.-textContent exit) "Esci (d)")
           (.addEventListener exit "click" (fn [_] (stop-retrace!)))
+          (.appendChild actions nw)
           (.appendChild actions undo)
           (.appendChild actions clr)
           (.appendChild actions exit))
@@ -1914,6 +2045,10 @@
         (and retrace? (= key "Backspace"))
         (do (.preventDefault e) (.stopPropagation e) (undo-retrace-point!))
 
+        ;; 'n' starts a new ricalco (retrace mode only) — keeps the current face
+        (and retrace? (= key "n"))
+        (do (.preventDefault e) (.stopPropagation e) (new-ricalco!))
+
         (and mark? (= key "Backspace"))
         (do (.preventDefault e) (.stopPropagation e) (undo-mark!))
 
@@ -2016,11 +2151,13 @@
                                           ;; diversi mm"). Persisting it keeps the frozen
                                           ;; vantage across sessions.
                                           :camera-pose-0 (get-in @session [:camera-poses 0])
-                                          ;; P3 retrace: plane spec + object-frame
-                                          ;; points, so the ricalco survives exit/
+                                          ;; Ricalchi (P4a-3): every named polyline
+                                          ;; (plane spec + object-frame points) +
+                                          ;; the active index, so they survive exit/
                                           ;; re-entry (object frame = stable under
                                           ;; later proxy moves)
-                                          :retrace (:retrace @session)
+                                          :ricalchi (:ricalchi @session)
+                                          :ricalco-idx (:ricalco-idx @session)
                                           ;; Blindato marker picks (pixel per photo)
                                           ;; — the durable branch decision; re-applied
                                           ;; to every future registration via
@@ -2053,15 +2190,28 @@
 
 (defn- apply-loaded-state! [text]
   (try
-    (let [{:keys [proxy-pose camera-pose-0 photos retrace marker-picks pnp focal marks mark-plane]} (js->clj (js/JSON.parse text) :keywordize-keys true)
+    (let [{:keys [proxy-pose camera-pose-0 photos retrace ricalchi ricalco-idx marker-picks pnp focal marks mark-plane]} (js->clj (js/JSON.parse text) :keywordize-keys true)
           ;; JSON keys are strings → keywordize-keys turns the integer photo/corner
           ;; keys into :0/:1/… ; parse a whole level back to int keys.
-          int-keys (fn [m] (into {} (map (fn [[k v]] [(js/parseInt (name k) 10) v]) m)))]
-      (when-let [pl (:plane retrace)]
-        (when (and (:axis pl) (:sign pl))
-          (swap! session assoc :retrace
-                 {:plane {:axis (:axis pl) :sign (:sign pl) :offset (or (:offset pl) 0.0)}
-                  :points (mapv vec (or (:points retrace) []))})))
+          int-keys (fn [m] (into {} (map (fn [[k v]] [(js/parseInt (name k) 10) v]) m)))
+          norm-plane (fn [pl] {:axis (:axis pl) :sign (:sign pl) :offset (or (:offset pl) 0.0)})]
+      ;; Ricalchi (P4a-3). Back-compat: a file saved with the old single :retrace
+      ;; is migrated to a one-element list named ricalco-1.
+      (cond
+        (seq ricalchi)
+        (swap! session assoc
+               :ricalchi (mapv (fn [r] {:name (:name r)
+                                        :plane (norm-plane (:plane r))
+                                        :points (mapv vec (or (:points r) []))})
+                               ricalchi)
+               :ricalco-idx (or ricalco-idx (dec (count ricalchi))))
+
+        (and retrace (:plane retrace) (:axis (:plane retrace)))
+        (swap! session assoc
+               :ricalchi [{:name "ricalco-1"
+                           :plane (norm-plane (:plane retrace))
+                           :points (mapv vec (or (:points retrace) []))}]
+               :ricalco-idx 0))
       ;; Blindato marker picks — JSON stringifies the integer photo keys, so
       ;; keywordize-keys turns them into :1/:2/… ; back to ints for :current-idx
       ;; lookups (marker-lock-camera / on-marker-click!).
@@ -2309,9 +2459,7 @@
         anchor-pose {:position (get-in @session [:build-pose :position] [0 0 0])
                      :heading (:heading pose) :up (:up pose)}
         [w h d] (bridge/dims-from-mesh proxy pose)
-        shapes-str (if-let [poly (retrace-poly-string)]
-                     (str "{:ricalco-1 " poly "}")
-                     "{}")]
+        shapes-str (shapes-emit-string)]
     (str "(acquire " (pr-str (:base-dir @session))
          " {:proxy (box " (fmt-n w) " " (fmt-n h) " " (fmt-n d) ")"
          " :pose {:position " (fmt-vec (:position anchor-pose))
@@ -2416,11 +2564,12 @@
                                   :pnp-outliers {}
                                   :pnp-armed 0
                                   :pnp-loupe-zoom loupe-zoom-default
-                                  ;; P3 retrace: default declared plane = the box
-                                  ;; top face (axis 1 = box-basis up, sign +1),
-                                  ;; no offset; overwritten by acquire-state.json
-                                  ;; on re-entry (load-acquire-state!)
-                                  :retrace {:plane {:axis 1 :sign 1 :offset 0.0} :points []}
+                                  ;; Ricalchi (P4a-3): a named polyline per traced
+                                  ;; feature; the first is created on entering the
+                                  ;; retrace ('d') mode (ensure-active-ricalco!).
+                                  ;; Overwritten by acquire-state.json on re-entry.
+                                  :ricalchi []
+                                  :ricalco-idx nil
                                   ;; P4a-3 named marks: the placed points (object
                                   ;; frame + normal + id) and the face for the NEXT
                                   ;; mark (its own plane, so switching it never
