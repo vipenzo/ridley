@@ -290,6 +290,26 @@ P4a/P4b):**
     posizione assoluta (~520 mm dall'origine nel test) è un offset di gauge del
     frame d'acquisizione, non significativo (eventuale re-centstraggio = migliore
     ergonomia, da decidere). **P4b** = palcoscenico non-modale.
+  - **P4b FETTA 1 (camera libera + vai in posa) COSTRUITA + gate PASSATO 2026-07-24.**
+    La fase di lavoro esce dallo sfondo-a-camera-bloccata: bottone "Palcoscenico"
+    → la camera si **libera** (tolto il lock per-frame `:edit-acquire`) e orbita
+    l'oggetto; clic su una miniatura della pellicola = **vai in posa** (`go-in-pose!`,
+    la camera vola nella posa registrata, sfondo full-res, geometria sopra); Esc /
+    orbita = torna libero (`leave-pose!`). Invariante di frame rispettato: l'oggetto
+    non si muove. Rifiniture recepite dai gate live di Vincenzo: **niente salto**
+    uscendo dalla posa (`viewport/free-camera-at-pivot!` — perno orbita sull'asse di
+    vista, `lookAt` invariato); **oggetto ancorato alla turtle** (`reanchor-to-build-
+    pose!` — traslazione rigida proxy+camere all'apertura, così è WYSIWYG; la
+    registrazione è invariante per traslazione, fase-1 intatta); **pallini ripuliti**
+    (bianco pivot tolto, rosso di Klein solo in `m`, pallini gialli dei vertici solo
+    per la shape attiva-in-editing, linea del ricalco **chiusa** come la `poly`);
+    **back-face culling** dei ricalchi contro la foto corrente (non in orbita libera);
+    la **shape attiva-in-editing è sempre visibile** (mai cullata); **guardia sui
+    click lontani** (`plausible-hit?` — un raggio quasi parallelo al piano dava punti
+    a ~120 mm fuori dal box, ora rifiutati con messaggio). Verificato headless
+    (culling, colori, guardia, re-ancoraggio, no-salto) + gate live. **Ancora aperto
+    per P4b**: frustum-nel-mondo (strato opzionale, ergonomia da collaudare) e la
+    ricchezza di edit-path-2d in posa. Entry: `dev-docs/HANDOVER-p4b-stage.md`.
 
 ### P5 — Protocollo e documentazione
 Vincolo "superfici opache" (nastrare/opacizzare i traslucidi) nel manuale;

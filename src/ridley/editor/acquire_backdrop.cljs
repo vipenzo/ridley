@@ -38,6 +38,15 @@
     (when object-url (js/URL.revokeObjectURL object-url)))
   (reset! bstate nil))
 
+(defn set-visible!
+  "Show/hide the backdrop plane without destroying it (keeps the loaded texture
+   and cached pixels — no re-fetch on the way back). edit-acquire's P4b stage
+   hides it for free-orbit (so the acquired object reads in the round) and shows
+   it again when flying into a photo's pose. No-op when nothing is set up."
+  [visible?]
+  (when-let [{:keys [^js mesh]} @bstate]
+    (set! (.-visible mesh) (boolean visible?))))
+
 (defn create!
   "Build (or replace) the backdrop plane as a child of `camera`, at local
    [0 0 (- depth)] (THREE cameras look down their own -Z axis, so this is

@@ -1313,6 +1313,35 @@
       (set! (.-enabled controls) true)
       (.update controls))))
 
+(defn free-camera-at-pivot!
+  "Re-enable orbit controls to FREE the camera without reorienting it — the view
+   stays exactly as it was, so the scene doesn't jump. (edit-acquire's P4b stage
+   leaves a posed photo into free orbit: the proxy is centered at the origin but
+   the photo framed the object off-centre, so recentring the orbit on the proxy
+   would snap `lookAt` there and make the world visibly shift.) The orbit pivot is
+   placed on the camera's CURRENT forward axis — at the depth of `pivot-point`
+   projected onto it — so `lookAt(target)` reproduces the current view exactly
+   (no jump) while subsequent orbiting still feels centred on the object. Pass the
+   object's center as `pivot-point`. No-op with no viewport."
+  [[gx gy gz]]
+  (when-let [{:keys [^js camera ^js controls]} @state]
+    (let [pos (.-position camera)
+          fwd (THREE/Vector3.)]
+      (.getWorldDirection camera fwd) ; unit view direction (same idiom as get-camera-pose)
+      (let [dx (- gx (.-x pos)) dy (- gy (.-y pos)) dz (- gz (.-z pos))
+            ;; project the object center onto the view ray → orbit depth; never
+            ;; put the pivot behind/at the camera (a degenerate orbit).
+            depth (max 1.0 (+ (* dx (.-x fwd)) (* dy (.-y fwd)) (* dz (.-z fwd))))
+            tx (+ (.-x pos) (* (.-x fwd) depth))
+            ty (+ (.-y pos) (* (.-y fwd) depth))
+            tz (+ (.-z pos) (* (.-z fwd) depth))]
+        (.set (.-target controls) tx ty tz)
+        ;; drop any stale saved target so a later enable-orbit-controls! (teardown)
+        ;; doesn't reorient from it.
+        (reset! saved-orbit-target nil)
+        (set! (.-enabled controls) true)
+        (.update controls)))))
+
 (defn get-camera-pose
   "Get the current camera state as a turtle-compatible pose map.
    Returns {:position [x y z] :heading [x y z] :up [x y z]}."

@@ -393,6 +393,28 @@ html, body {
   background: #2d2d44;
 }
 
+/* edit-acquire P4b — the stage toggle: a full-width, prominent control so the
+   free-camera mode is discoverable from any Phase-1 state; the .active state (in
+   the stage) reads as pressed/lit so it's obvious the camera is freed. */
+.modal-panel .eaq-stage-btn {
+  display: block;
+  width: 100%;
+  margin: 6px 0;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.modal-panel .eaq-stage-btn.active {
+  background: #2f5d3a;
+  border-color: #4c9a63;
+  color: #eafff0;
+}
+
+.modal-panel .eaq-stage-btn.active:hover {
+  background: #366b44;
+}
+
 /* edit-mesh-split: the session-gesture button row (symmetry / mirror / separate /
    reveal) wraps rather than overflowing the panel. */
 .modal-panel .ems-gestures {

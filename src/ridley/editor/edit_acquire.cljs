@@ -153,22 +153,23 @@
                            (mark-world-positions))})
 
 (defn- proxy-preview-items
-  "The proxy mesh plus two always-on-top marker dots — the pivot (box
-   center, reported 2026-07-21 as a missing reference point) and one
-   distinctly-colored corner (reported 2026-07-22, for judging which
-   symmetry branch the box is in — see corner-marker-pos). The SOLID proxy is
-   under the 'v' / 'Nascondi proxy' toggle (Vincenzo 2026-07-23): while
-   registering it covers the photo, so it can be dropped to read the photo
-   underneath. The markers stay — they locate the (hidden) box and are tiny.
-   Any retrace trace + placed marks are appended, so the bezel and the named
-   points stay visible after leaving :retrace/:mark (Vincenzo 2026-07-23/-24)."
+  "The proxy mesh, plus the traced bezels and placed named marks (appended so they
+   stay visible after leaving :retrace/:mark and reproject as the camera moves).
+   The SOLID proxy is under the 'v' / 'Nascondi proxy' toggle (Vincenzo 2026-07-23):
+   while registering it covers the photo, so it can be dropped to read the photo
+   underneath. Marker dots pared back (Vincenzo 2026-07-24: 'ce ne sono troppi'):
+   the white pivot dot is gone (it never earned its keep), and the red Klein-branch
+   corner dot shows ONLY during the 'm' marker gesture — the one time it's needed to
+   compare the wireframe against the physical pen mark (start-marker! re-renders so
+   it appears; stop-marker! clears it)."
   []
-  (let [markers {:type :dots :data [{:pos (pivot) :radius 2.0 :color 0xffffff}
-                                    {:pos (corner-marker-pos) :radius 3.0 :color 0xff3333}]}]
-    (conj (into (if (:hide-proxy? @session)
-                  [markers]
-                  [{:type :mesh :data (:proxy-mesh @session)} markers])
-                (trace-items))
+  (let [red-corner (when (= :marker (:mode @session))
+                     {:type :dots :data [{:pos (corner-marker-pos) :radius 3.0 :color 0xff3333}]})
+        base (cond-> (if (:hide-proxy? @session)
+                       []
+                       [{:type :mesh :data (:proxy-mesh @session)}])
+               red-corner (conj red-corner))]
+    (conj (into base (trace-items))
           (mark-dots-item))))
 
 (defn- photo-path [file]
@@ -515,6 +516,31 @@
         (do (swap! session update :camera-poses dissoc idx)
             (swap! session update :acquire-results dissoc idx))))))
 
+(defn- reanchor-to-build-pose!
+  "Rigidly translate the whole acquired system so the proxy CENTRE sits at the
+   construction turtle's position (:build-pose) — where the emitted (acquire …)
+   anchors the object (emit-acquire-code keeps the acquired orientation and only
+   re-centres the box). Without this the object floats at the acquisition-frame
+   gauge origin (~520 mm off in the taped-block test), which is invisible while
+   the camera is locked to a photo but jarring once the P4b stage frees the camera
+   (Vincenzo 2026-07-24: 'il proxy dovrebbe essere alla posizione della turtle,
+   perché è lì che lo ritroveremo'). A PURE TRANSLATION, so every relative geometry
+   is preserved: the photos still project (each camera carried by the same Δ), and
+   the object-frame ricalchi / marks / planes follow the proxy for free (they're
+   lifted through its creation-pose at draw time). Runs once at open, after
+   acquire-state.json is restored; a no-op when already anchored (Δ≈0) or without a
+   proxy. Registration stays translation-invariant, so Phase-1 is unaffected."
+  []
+  (when-let [pose (get-in @session [:proxy-mesh :creation-pose])]
+    (let [target (get-in @session [:build-pose :position] [0 0 0])
+          delta (m/v- target (:position pose))]
+      (when (> (m/magnitude delta) 1e-6)
+        (swap! session update :proxy-mesh attachment/translate-mesh delta)
+        (swap! session update :camera-poses
+               (fn [cps]
+                 (into {} (map (fn [[idx p]] [idx (update p :position #(m/v+ % delta))]))
+                       cps)))))))
+
 (defn- on-photo0-commit! [cmd-type value]
   (let [old-pose (get-in @session [:proxy-mesh :creation-pose])
         {:keys [h r u]} (pose-basis old-pose)]
@@ -663,6 +689,8 @@
 
 (declare stop-pnp!)
 (declare stop-marker!)
+(declare stop-mark!)
+(declare teardown-retrace-listeners!)
 (declare redraw-retrace!)
 (declare redraw-marks!)
 
@@ -680,6 +708,20 @@
                   {:mode :object :handles #{:translate :rotate}}
                   {:on-commit (if (zero? idx) on-photo0-commit! on-inv-commit!)})))
 
+(defn- ensure-photo-pose
+  "Camera world-pose for photo `idx`. Photo 0's default vantage is computed ONCE,
+   on the very first entry, and frozen for the rest of the session from then on
+   (never recomputed on later re-entries or commits — see on-photo0-commit!'s
+   comment for why recomputing AT ALL is what made this unstable). Shared by
+   enter-photo! (Phase-1, locked) and go-in-pose! (P4b stage)."
+  [idx]
+  (if (zero? idx)
+    (let [start-pose (or (get-in @session [:camera-poses 0])
+                         (default-vantage-pose (pivot)))]
+      (swap! session assoc-in [:camera-poses 0] start-pose)
+      start-pose)
+    (camera-pose-for idx)))
+
 (defn- enter-photo!
   "Close/reopen the gizmo for photo `idx` — simpler to reason about than
    special-casing the 0↔1+ boundary, since :nudge-mesh? can only be set at
@@ -690,19 +732,8 @@
   (gizmo/close!)
   (swap! session assoc :current-idx idx)
   (let [{:keys [file]} (nth (:photos @session) idx)]
-    (if (zero? idx)
-      ;; Computed ONCE, on the very first entry, and frozen for the rest of
-      ;; the session from then on (never recomputed on later re-entries or
-      ;; commits — see on-photo0-commit!'s comment for why recomputing AT ALL
-      ;; is what made this unstable).
-      (let [start-pose (or (get-in @session [:camera-poses 0])
-                           (default-vantage-pose (pivot)))]
-        (swap! session assoc-in [:camera-poses 0] start-pose)
-        (viewport/set-camera-pose! start-pose)
-        (set-photo-for-current-focal! file))
-      (let [pose (camera-pose-for idx)]
-        (viewport/set-camera-pose! pose)
-        (set-photo-for-current-focal! file)))
+    (viewport/set-camera-pose! (ensure-photo-pose idx))
+    (set-photo-for-current-focal! file)
     ;; In :retrace the filmstrip is the live-reprojection control: keep the mode,
     ;; just move the camera onto this photo and re-show the (unchanged) world-space
     ;; polyline from the new angle — never tear down the retrace to install a gizmo.
@@ -714,6 +745,87 @@
       :mark (redraw-marks!)
       (install-gizmo! idx)))
   (update-panel!))
+
+;; ============================================================
+;; P4b — Il palcoscenico (fase non-modale, fetta 1: camera libera + vai in posa)
+;; ------------------------------------------------------------
+;; La fase di lavoro (ricalco/mark) esce dallo sfondo-a-camera-bloccata. Le foto
+;; registrate vivono in due stati collaudabili qui: (1) camera LIBERA che orbita
+;; l'oggetto (l'oggetto non si muove mai — invariante di frame del brief), (2)
+;; IN POSA: si clicca una foto e la camera vi vola dentro (sfondo full-res +
+;; geometria proiettata sopra), Esc / bottone torna a orbitare. I frustum-nel-
+;; mondo (dove sono le foto nello spazio) sono lo strato opzionale successivo,
+;; con ergonomia dichiaratamente da collaudare (brief §Le foto, in tre stati).
+;; ============================================================
+
+(defn- enter-stage!
+  "Enter the stage: free the camera to orbit the acquired object. Tears down the
+   Phase-1 registration tools (gizmo / PnP / marker / mark / retrace listeners),
+   drops the per-frame camera lock (the `:edit-acquire` frame callback), hides the
+   photo backdrop, shows the object (proxy + ricalchi + marks) as free-orbit
+   reference geometry, and frees the camera to orbit the object WITHOUT jumping
+   the view (free-camera-at-pivot! keeps the current framing). Clicking a
+   filmstrip photo then flies into pose (go-in-pose!)."
+  []
+  (stop-pnp!) (stop-marker!) (stop-mark!) (teardown-retrace-listeners!)
+  (gizmo/close!)
+  (swap! session assoc :stage? true :in-pose? false :mode :gizmo)
+  ;; Release the per-frame lock so OrbitControls can drive the camera again;
+  ;; there's no gizmo in the stage to re-enable controls behind our back, so
+  ;; leaving the callback off is enough (see open-session!'s lock comment).
+  (viewport/unregister-frame-callback! :edit-acquire)
+  (backdrop/set-visible! false)
+  (viewport/show-preview! (proxy-preview-items))
+  ;; Free the camera keeping the exact current framing (no recenter-on-proxy
+  ;; snap), pivoting orbit on the object's center along the view axis.
+  (viewport/free-camera-at-pivot! (pivot))
+  (update-panel!))
+
+(defn- leave-stage!
+  "Leave the stage back to Phase-1 registration on the current photo: restore the
+   per-frame camera lock and re-enter the photo (locked backdrop + gizmo)."
+  []
+  (swap! session assoc :stage? false :in-pose? false)
+  (viewport/register-frame-callback!
+   :edit-acquire (fn [_camera] (viewport/set-controls-enabled! false)))
+  (backdrop/set-visible! true)
+  (enter-photo! (:current-idx @session)))
+
+(defn- go-in-pose!
+  "Stage state 2 — 'vai in posa': fly the camera into photo `idx`'s registered
+   pose, show that photo full-screen as the backdrop, geometry projected over it.
+   The camera is LOCKED here (set-camera-pose! disables controls; the backdrop is
+   glued to the frustum, so it can't be orbited away from) — Esc / the panel
+   button returns to free orbit (leave-pose!)."
+  [idx]
+  (swap! session assoc :current-idx idx :in-pose? true)
+  (let [{:keys [file]} (nth (:photos @session) idx)]
+    (viewport/set-camera-pose! (ensure-photo-pose idx)) ; disables controls → locked
+    (set-photo-for-current-focal! file)
+    (backdrop/set-visible! true))
+  ;; re-show so trace-items re-culls against THIS photo's heading (a shape on the
+  ;; face now turned away from the camera is hidden instead of bleeding through).
+  (viewport/show-preview! (proxy-preview-items))
+  (update-panel!))
+
+(defn- leave-pose!
+  "Stage state 2 → 1: leave the posed photo and return to free orbit around the
+   object. The camera stays EXACTLY where/how the photo framed it — the backdrop
+   is hidden and orbit is re-enabled without reorienting, so the object doesn't
+   jump (Vincenzo 2026-07-24: recentring on the proxy, which sits at the origin
+   while the photo framed the object off-centre, made the world shift on Esc).
+   The orbit pivot lands on the object's center along the current view axis."
+  []
+  (swap! session assoc :in-pose? false)
+  (backdrop/set-visible! false)
+  (viewport/free-camera-at-pivot! (pivot))
+  ;; back in free orbit: re-show so every shape reappears (culling is off with no
+  ;; photo backdrop to bleed through).
+  (viewport/show-preview! (proxy-preview-items))
+  (update-panel!))
+
+(defn- toggle-stage! []
+  (if (:stage? @session) (leave-stage!) (enter-stage!)))
 
 ;; ============================================================
 ;; PnP registration ('p'): the primary 'registrazione per corrispondenze'
@@ -1109,6 +1221,17 @@
   (bridge/dims-from-mesh (:proxy-mesh @session)
                          (get-in @session [:proxy-mesh :creation-pose])))
 
+(defn- plausible-hit?
+  "True when a ray↔plane hit (object frame) lands within a sane distance of the
+   box. A ray nearly PARALLEL to the declared plane — a face seen edge-on, or the
+   wrong face declared for the current photo — intersects it far away, producing a
+   garbage vertex flung off the piece (Vincenzo 2026-07-24: a stray far point, a
+   whole ricalco thrown off-screen). Rejecting it gives feedback instead of a
+   silent outlier. Bound = the box's bounding-sphere radius + a generous in-plane/
+   offset margin."
+  [hit]
+  (<= (m/magnitude hit) (+ (* 0.5 (m/magnitude (retrace-dims))) 45.0)))
+
 (defn- plane-of
   "The plane in the OBJECT frame for a {:axis :sign :offset} spec + the box dims:
    {:point :normal}. `offset` moves the plane OUTWARD along the face normal (mm),
@@ -1193,24 +1316,58 @@
    (Vincenzo 2026-07-23: 'i pallini gialli sono enormi')."
   0.9)
 
+(def ^:private trace-color
+  "Single bright yellow for EVERY ricalco's outline. The old active/inactive dim
+   split hid finished shapes over the busy photo (Vincenzo 2026-07-24: 'si vede solo
+   la seconda'); now which one you're editing reads from its vertex dots, so the
+   lines can all stay equally visible."
+  0xffcc33)
+
 (defn- trace-items
-  "EVERY ricalco's polyline (world) as show-preview! items — yellow lines + vertex
-   dots (on-top, so they read over the photo). The ACTIVE ricalco is full-bright,
-   the others dimmer, so which one you're editing reads. Shared by every mode's
-   preview (proxy-preview-items / pnp-preview-items / retrace-preview-items) so the
-   traced bezels stay visible after leaving :retrace and reproject as the camera
-   moves between photos. Empty data is skipped, so an untraced session adds nothing."
+  "EVERY ricalco's CLOSED yellow outline (world) as show-preview! items (on-top, so
+   it reads over the photo). The ACTIVE ricalco is full-bright, the others dimmer,
+   so which one you're editing reads. The line is closed (last→first, ≥3 points) to
+   match the emitted (poly …), a closed contour (Vincenzo 2026-07-24: 'la linea
+   chiusa gialla'). Vertex DOTS are drawn only for the ACTIVE ricalco while EDITING
+   it (:retrace mode) — a finished shape shows just its line, not the clutter of its
+   handles (Vincenzo 2026-07-24: hide the yellow dots once editing is done). Shared
+   by every mode's preview (proxy-preview-items / pnp-preview-items / retrace-
+   preview-items) so the traced bezels stay visible after leaving :retrace and
+   reproject as the camera moves between photos. Empty data is skipped."
   []
   (let [proxy-pose (get-in @session [:proxy-mesh :creation-pose])
-        active-idx (:ricalco-idx @session)]
+        active-idx (:ricalco-idx @session)
+        editing? (= :retrace (:mode @session))
+        ;; Back-face culling: a ricalco whose declared face points AWAY from the
+        ;; current photo shouldn't bleed through it (Vincenzo 2026-07-24). The
+        ;; current photo's heading is the view direction; a face is front-facing
+        ;; when its outward normal points toward the camera (dot with heading < 0).
+        ;; Skipped in free orbit (no photo backdrop to bleed through — show all).
+        free-orbit? (and (:stage? @session) (not (:in-pose? @session)))
+        heading (:heading (current-camera-pose))
+        {:keys [ex ey ez]} (bridge/box-basis proxy-pose)
+        axis-world [ex ey ez]
+        front? (fn [{:keys [axis sign]}]
+                 (or free-orbit? (nil? heading)
+                     (neg? (m/dot (m/v* (nth axis-world axis) (double sign)) heading))))]
     (vec (mapcat
-          (fn [i {:keys [points]}]
-            (let [wpts (mapv #(bridge/local->world proxy-pose %) points)
-                  color (if (= i active-idx) 0xffcc33 0xbb8f22)]
-              [{:type :lines :data (mapv (fn [a b] {:from a :to b :color color}) wpts (rest wpts))
-                :on-top true}
-               {:type :dots :data (mapv (fn [w] {:pos w :radius retrace-dot-radius
-                                                 :color color :opacity 0.75}) wpts)}]))
+          (fn [i {:keys [points plane]}]
+            (let [active? (= i active-idx)]
+             ;; the ricalco you're editing is ALWAYS shown (never culled) — you
+             ;; must see what you're tracing, even on a face turned partly away
+             ;; (Vincenzo 2026-07-24: the active shape was invisible). Finished
+             ;; shapes still cull against the current photo.
+              (when (and (seq points) (or (and editing? active?) (front? plane)))
+                (let [wpts (mapv #(bridge/local->world proxy-pose %) points)
+                    ;; close the outline (last→first) so it reads as the closed poly
+                    ;; it will emit; degenerate below 3 points, so left open there.
+                      loop-pts (if (>= (count wpts) 3) (conj (vec wpts) (first wpts)) wpts)]
+                  (cond-> [{:type :lines
+                            :data (mapv (fn [a b] {:from a :to b :color trace-color}) loop-pts (rest loop-pts))
+                            :on-top true}]
+                    (and editing? active?)
+                    (conj {:type :dots :data (mapv (fn [w] {:pos w :radius retrace-dot-radius
+                                                            :color trace-color :opacity 0.75}) wpts)}))))))
           (range) (ricalchi)))))
 
 (defn- retrace-preview-items
@@ -1259,10 +1416,12 @@
         (let [ray (pcamera/pixel-ray (session-intrinsics iw ih) (retrace-solver-pose) px)
               {:keys [point normal]} (retrace-plane)]
           (if-let [hit (m/ray-plane-point ray point normal)]
-            (do (swap! session update-in (active-r-path :points) (fnil conj []) hit)
-                (redraw-retrace!)
-                (save-acquire-state!)
-                (update-panel!))
+            (if (plausible-hit? hit)
+              (do (swap! session update-in (active-r-path :points) (fnil conj []) hit)
+                  (redraw-retrace!)
+                  (save-acquire-state!)
+                  (update-panel!))
+              (set-status-message! "Il click cade troppo lontano dalla faccia — usa una foto che la mostra più di fronte"))
             (set-status-message! "Il click non incontra il piano dichiarato")))))))
 
 (defn- teardown-retrace-listeners! []
@@ -1414,11 +1573,13 @@
         (let [ray (pcamera/pixel-ray (session-intrinsics iw ih) (retrace-solver-pose) px)
               {:keys [point normal]} (plane-of (:mark-plane @session))]
           (if-let [hit (m/ray-plane-point ray point normal)]
-            (do (swap! session update :marks (fnil conj [])
-                       {:name (next-mark-name) :position hit :normal normal})
-                (redraw-marks!)
-                (save-acquire-state!)
-                (update-panel!))
+            (if (plausible-hit? hit)
+              (do (swap! session update :marks (fnil conj [])
+                         {:name (next-mark-name) :position hit :normal normal})
+                  (redraw-marks!)
+                  (save-acquire-state!)
+                  (update-panel!))
+              (set-status-message! "Il click cade troppo lontano dalla faccia — usa una foto che la mostra più di fronte"))
             (set-status-message! "Il click non incontra il piano dichiarato")))))))
 
 (defn- teardown-mark-listeners! []
@@ -1528,6 +1689,9 @@
       (set-status-message! "Il segno si marca su una foto diversa dalla prima (quella fissa il proxy)")
       (do (gizmo/close!)
           (swap! session assoc :mode :marker)
+          ;; re-render so the red Klein-branch corner dot appears (it's gated to
+          ;; :marker mode now — proxy-preview-items only emits it here).
+          (viewport/show-preview! (proxy-preview-items))
           (.addEventListener (viewport/get-canvas) "pointerdown" marker-on-pointerdown true)
           (set-status-message! "Clicca il segno/freccia sul pezzo in questa foto")
           (update-panel!)))))
@@ -1635,6 +1799,7 @@
         header (.createElement js/document "div")
         hint (.createElement js/document "div")
         filmstrip (.createElement js/document "div")
+        stage-btn (.createElement js/document "button")
         pnp-box (.createElement js/document "div")
         retrace-box (.createElement js/document "div")
         mark-box (.createElement js/document "div")
@@ -1654,6 +1819,13 @@
     (.appendChild panel hint)
     (.appendChild panel row)
     (.appendChild panel filmstrip)
+    ;; P4b stage toggle — always visible, so the free-camera mode is discoverable
+    ;; from any Phase-1 state. Label + pressed look are refreshed by update-panel!.
+    (set! (.-type stage-btn) "button")
+    (.add (.-classList stage-btn) "pilot-btn")
+    (.add (.-classList stage-btn) "eaq-stage-btn")
+    (.addEventListener stage-btn "click" (fn [_] (toggle-stage!)))
+    (.appendChild panel stage-btn)
     (set! (.-className pnp-box) "eaq-pnp-box")
     (.appendChild panel pnp-box)
     (set! (.-className retrace-box) "eaq-retrace-box")
@@ -1679,7 +1851,8 @@
     (.appendChild buttons close-btn)
     (.appendChild panel buttons)
     (swap! session assoc :panel-el panel :filmstrip-el filmstrip :focal-slider-el slider
-           :message-el message :pnp-el pnp-box :retrace-el retrace-box :mark-el mark-box)
+           :message-el message :pnp-el pnp-box :retrace-el retrace-box :mark-el mark-box
+           :stage-btn-el stage-btn)
     (modal/mount-panel! panel)
     (update-panel!)))
 
@@ -1990,36 +2163,59 @@
         (.appendChild box actions)))))
 
 (defn- update-panel! []
-  ;; Focale is a phase-0-only control (see build-panel!'s hint): the lens
-  ;; doesn't change between photos, so re-tuning it later would silently
-  ;; rescale a photo the user thinks is already locked in. Disabled, not
-  ;; hidden, so it's clear it isn't gone, just not this photo's job.
-  (render-pnp-panel!)
-  (render-retrace-panel!)
-  (render-mark-panel!)
-  (when-let [^js slider (:focal-slider-el @session)]
-    (set! (.-disabled slider) (not (zero? (:current-idx @session)))))
-  (when-let [^js message (:message-el @session)]
-    (set! (.-textContent message) (or (:status-message @session) "")))
-  (when-let [strip (:filmstrip-el @session)]
-    (set! (.-innerHTML strip) "")
-    (doseq [[i {:keys [file]}] (map-indexed vector (:photos @session))]
-      (let [btn (.createElement js/document "button")
-            result (get-in @session [:acquire-results i])
-            confirmed? (:rms-px result)
-            predicted? (and result (:predicted? result))]
-        (set! (.-type btn) "button")
-        (set! (.-textContent btn) (if confirmed?
-                                    (str (inc i) " · " (.toFixed (:rms-px result) 1) "px")
-                                    (str (inc i))))
-        (set! (.-title btn) file)
-        (.add (.-classList btn) (cond confirmed? "eaq-badge-ok"
-                                      predicted? "eaq-badge-predicted"
-                                      :else "eaq-badge-none"))
-        (when (= i (:current-idx @session))
-          (.add (.-classList btn) "current"))
-        (.addEventListener btn "click" (fn [_] (enter-photo! i)))
-        (.appendChild strip btn)))))
+  (let [stage? (:stage? @session)]
+    ;; In the stage the Phase-1 sub-panels don't apply — blank their boxes so
+    ;; no 'Registra…'/'Ricalca…' entry buttons linger over the free-orbit view.
+    (if stage?
+      (doseq [k [:pnp-el :retrace-el :mark-el]]
+        (when-let [^js b (k @session)] (set! (.-innerHTML b) "")))
+      (do (render-pnp-panel!)
+          (render-retrace-panel!)
+          (render-mark-panel!)))
+    ;; Focale is a phase-0-only control (see build-panel!'s hint): the lens
+    ;; doesn't change between photos, so re-tuning it later would silently
+    ;; rescale a photo the user thinks is already locked in. Disabled, not
+    ;; hidden, so it's clear it isn't gone, just not this photo's job — and off
+    ;; entirely in the stage.
+    (when-let [^js slider (:focal-slider-el @session)]
+      (set! (.-disabled slider) (or stage? (not (zero? (:current-idx @session))))))
+    (when-let [^js btn (:stage-btn-el @session)]
+      (set! (.-textContent btn) (if stage?
+                                  "◀ Esci dal palcoscenico"
+                                  "▶ Palcoscenico (camera libera)"))
+      (if stage? (.add (.-classList btn) "active") (.remove (.-classList btn) "active")))
+    (when-let [^js message (:message-el @session)]
+      (set! (.-textContent message)
+            (cond
+              (and stage? (:in-pose? @session))
+              "In posa. Esc = torna a orbitare · clicca un'altra foto per cambiare vista."
+              stage?
+              "Palcoscenico: orbita l'oggetto. Clicca una foto per andare in posa. Esc = esci."
+              :else (or (:status-message @session) ""))))
+    (when-let [strip (:filmstrip-el @session)]
+      (set! (.-innerHTML strip) "")
+      (doseq [[i {:keys [file]}] (map-indexed vector (:photos @session))]
+        (let [btn (.createElement js/document "button")
+              result (get-in @session [:acquire-results i])
+              confirmed? (:rms-px result)
+              predicted? (and result (:predicted? result))]
+          (set! (.-type btn) "button")
+          (set! (.-textContent btn) (if confirmed?
+                                      (str (inc i) " · " (.toFixed (:rms-px result) 1) "px")
+                                      (str (inc i))))
+          (set! (.-title btn) file)
+          (.add (.-classList btn) (cond confirmed? "eaq-badge-ok"
+                                        predicted? "eaq-badge-predicted"
+                                        :else "eaq-badge-none"))
+          ;; In the stage the current photo is the one you're posed into (or last
+          ;; were); highlight it the same way, and mark the strip so CSS can show
+          ;; it's a 'go into pose' control now.
+          (when (= i (:current-idx @session))
+            (.add (.-classList btn) "current"))
+          ;; Stage → 'vai in posa'; Phase-1 → the locked per-photo registration view.
+          (.addEventListener btn "click"
+                             (fn [_] (if (:stage? @session) (go-in-pose! i) (enter-photo! i))))
+          (.appendChild strip btn))))))
 
 ;; ============================================================
 ;; Keyboard: [ / ] to move through the filmstrip (works in every mode — in
@@ -2042,73 +2238,88 @@
           retrace? (= :retrace (:mode @session))
           marker? (= :marker (:mode @session))
           mark? (= :mark (:mode @session))]
-      (cond
+      (if (:stage? @session)
+        ;; --- P4b stage keys: Esc leaves the pose (or the stage), [ / ] fly
+        ;; between photos; every Phase-1 hotkey is inert here (the registration
+        ;; tools are torn down while orbiting).
+        (cond
+          (= key "Escape")
+          (do (.preventDefault e) (.stopPropagation e)
+              (if (:in-pose? @session) (leave-pose!) (leave-stage!)))
+
+          (= key "[")
+          (do (.preventDefault e) (.stopPropagation e) (go-in-pose! (mod (dec idx) n)))
+
+          (= key "]")
+          (do (.preventDefault e) (.stopPropagation e) (go-in-pose! (mod (inc idx) n))))
+
+        (cond
         ;; Escape backs out of the active sub-mode first (one step at a time),
         ;; rather than tearing the whole session down mid-registration/retrace.
-        (= key "Escape")
-        (do (.preventDefault e) (.stopPropagation e)
-            (cond pnp? (stop-pnp!) retrace? (stop-retrace!) marker? (stop-marker!)
-                  mark? (stop-mark!) :else (discard!)))
+          (= key "Escape")
+          (do (.preventDefault e) (.stopPropagation e)
+              (cond pnp? (stop-pnp!) retrace? (stop-retrace!) marker? (stop-marker!)
+                    mark? (stop-mark!) :else (discard!)))
 
         ;; 'p' toggles PnP from gizmo/pnp; inert during retrace/mark (exit first)
-        (and (not retrace?) (not mark?) (= key "p"))
-        (do (.preventDefault e) (.stopPropagation e)
-            (if pnp? (stop-pnp!) (start-pnp!)))
+          (and (not retrace?) (not mark?) (= key "p"))
+          (do (.preventDefault e) (.stopPropagation e)
+              (if pnp? (stop-pnp!) (start-pnp!)))
 
         ;; 'd' toggles the plane-retrace from gizmo/retrace; inert during pnp/mark
-        (and (not pnp?) (not mark?) (= key "d"))
-        (do (.preventDefault e) (.stopPropagation e)
-            (if retrace? (stop-retrace!) (start-retrace!)))
+          (and (not pnp?) (not mark?) (= key "d"))
+          (do (.preventDefault e) (.stopPropagation e)
+              (if retrace? (stop-retrace!) (start-retrace!)))
 
         ;; 'k' toggles the named-mark mode from gizmo/mark; inert during pnp/retrace
-        (and (not pnp?) (not retrace?) (not marker?) (= key "k"))
-        (do (.preventDefault e) (.stopPropagation e)
-            (if mark? (stop-mark!) (start-mark!)))
+          (and (not pnp?) (not retrace?) (not marker?) (= key "k"))
+          (do (.preventDefault e) (.stopPropagation e)
+              (if mark? (stop-mark!) (start-mark!)))
 
-        (and retrace? (= key "Backspace"))
-        (do (.preventDefault e) (.stopPropagation e) (undo-retrace-point!))
+          (and retrace? (= key "Backspace"))
+          (do (.preventDefault e) (.stopPropagation e) (undo-retrace-point!))
 
         ;; 'n' starts a new ricalco (retrace mode only) — keeps the current face
-        (and retrace? (= key "n"))
-        (do (.preventDefault e) (.stopPropagation e) (new-ricalco!))
+          (and retrace? (= key "n"))
+          (do (.preventDefault e) (.stopPropagation e) (new-ricalco!))
 
-        (and mark? (= key "Backspace"))
-        (do (.preventDefault e) (.stopPropagation e) (undo-mark!))
+          (and mark? (= key "Backspace"))
+          (do (.preventDefault e) (.stopPropagation e) (undo-mark!))
 
         ;; 'v' hides/shows the solid proxy in the main (gizmo) view so the photo
         ;; is readable while registering — meaningless in :retrace (no proxy) and
         ;; :pnp (already a see-through wireframe), so gizmo-only.
-        (and (= :gizmo (:mode @session)) (= key "v"))
-        (do (.preventDefault e) (.stopPropagation e) (toggle-proxy!))
+          (and (= :gizmo (:mode @session)) (= key "v"))
+          (do (.preventDefault e) (.stopPropagation e) (toggle-proxy!))
 
         ;; 'm' arms the blindato marker-click (pin the Klein branch by the
         ;; physical mark). Toggles from gizmo/marker; inert during pnp/retrace/mark.
-        (and (not pnp?) (not retrace?) (not mark?) (= key "m"))
-        (do (.preventDefault e) (.stopPropagation e)
-            (if marker? (stop-marker!) (start-marker!)))
+          (and (not pnp?) (not retrace?) (not mark?) (= key "m"))
+          (do (.preventDefault e) (.stopPropagation e)
+              (if marker? (stop-marker!) (start-marker!)))
 
-        (and pnp? (= key "r"))
-        (do (.preventDefault e) (.stopPropagation e) (on-solve-pnp!))
+          (and pnp? (= key "r"))
+          (do (.preventDefault e) (.stopPropagation e) (on-solve-pnp!))
 
-        (and pnp? (re-matches #"[1-8]" key))
-        (do (.preventDefault e) (.stopPropagation e)
-            (arm-corner! (dec (js/parseInt key 10))))
+          (and pnp? (re-matches #"[1-8]" key))
+          (do (.preventDefault e) (.stopPropagation e)
+              (arm-corner! (dec (js/parseInt key 10))))
 
-        (= key "[")
-        (do (.preventDefault e) (.stopPropagation e)
-            (enter-photo! (mod (dec idx) n)))
+          (= key "[")
+          (do (.preventDefault e) (.stopPropagation e)
+              (enter-photo! (mod (dec idx) n)))
 
         ;; 's'/'f' act on the gizmo/camera registration — meaningless (and
         ;; disruptive to the frozen pose) during a retrace/mark, so gate them out.
-        (and (not retrace?) (not mark?) (= key "s"))
-        (do (.preventDefault e) (.stopPropagation e) (on-snap!))
+          (and (not retrace?) (not mark?) (= key "s"))
+          (do (.preventDefault e) (.stopPropagation e) (on-snap!))
 
-        (and (not retrace?) (not mark?) (= key "f"))
-        (do (.preventDefault e) (.stopPropagation e) (on-fit-turntable!))
+          (and (not retrace?) (not mark?) (= key "f"))
+          (do (.preventDefault e) (.stopPropagation e) (on-fit-turntable!))
 
-        (= key "]")
-        (do (.preventDefault e) (.stopPropagation e)
-            (enter-photo! (mod (inc idx) n)))))))
+          (= key "]")
+          (do (.preventDefault e) (.stopPropagation e)
+              (enter-photo! (mod (inc idx) n))))))))
 
 ;; ============================================================
 ;; Session persistence — acquire-state.json, next to session.json but a
@@ -2592,6 +2803,11 @@
                                   :camera-poses {}
                                   :acquire-results {}
                                   :mode :gizmo
+                                  ;; P4b stage (fetta 1): :stage? = camera freed to
+                                  ;; orbit the object (Phase-1 registration off);
+                                  ;; :in-pose? = flown into a photo (locked backdrop).
+                                  :stage? false
+                                  :in-pose? false
                                   :pnp-picks {}
                                   :pnp-residuals {}
                                   :pnp-outliers {}
@@ -2628,6 +2844,12 @@
                  (-> (load-exif-focal! (first photos))
                      (.then (fn [_] (load-acquire-state!)))
                      (.then (fn [_]
+                              ;; Re-centre the whole system on the construction
+                              ;; turtle (where the emitted (acquire …) anchors it),
+                              ;; AFTER acquire-state.json set the acquisition-frame
+                              ;; poses — so the stage is WYSIWYG. Pure translation,
+                              ;; Phase-1 unaffected.
+                              (reanchor-to-build-pose!)
                               (viewport/show-preview! (proxy-preview-items))
                               (backdrop/create! (viewport/get-camera))
                               (build-panel!)

@@ -1,5 +1,20 @@
 # Handover — P4b: il palcoscenico non-modale (frustum / foto in posa / pellicola)
 
+> **STATO 2026-07-24 — FETTA 1 FATTA + GATE PASSATO (branch, da committare/committata).**
+> La fetta a basso rischio è viva e collaudata da Vincenzo: **camera libera + vai
+> in posa** (bottone "Palcoscenico" → orbita l'oggetto; clic miniatura → la camera
+> vola nella posa, sfondo full-res, geometria sopra; Esc/orbita → libero). Chiavi:
+> `enter-stage!`/`leave-stage!`/`go-in-pose!`/`leave-pose!`/`toggle-stage!` in
+> `edit_acquire.cljs`; helper `viewport/free-camera-at-pivot!` (no-salto) e
+> `backdrop/set-visible!`. Rifiniture dai gate live: **oggetto ancorato alla turtle**
+> (`reanchor-to-build-pose!`, WYSIWYG), **pallini ripuliti**, **back-face culling** dei
+> ricalchi (attiva-in-editing sempre visibile), **guardia `plausible-hit?`** sui click
+> lontani. Dettaglio riga-per-riga nel brief §P4b-FETTA-1 e in `memory/project_edit_acquire_p4b.md`.
+> **RESTA di P4b**: (2) **frustum-nel-mondo** — lo strato la cui ergonomia è
+> dichiaratamente DA COLLAUDARE (fallback: solo pellicola + toggle); (3) la
+> **ricchezza di edit-path-2d in posa** (bezier/archi, non solo la polilinea).
+> Il resto di questo handover (design, entry points, gotcha) resta valido.
+
 Aperto 2026-07-24 per **continuare in una chat nuova**. Prerequisito **P4a
 COMPLETO e committato** (sotto). P4b è l'ultimo blocco del design di
 `dev-docs/brief-param-acq-v1.md` → P4 → "**Design del palcoscenico**"
