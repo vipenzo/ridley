@@ -2186,6 +2186,19 @@
    (defmacro edit-image-board [& args]
      `(edit-image-board-request! ~@args))
 
+   ;; edit-acquire — marker for the acquisizione-parametrica session (P4a-1).
+   ;;   (edit-acquire dir)              — first open: a default proxy box
+   ;;   (edit-acquire dir opts-map)     — re-edit the emitted (acquire dir {…})
+   ;; Opened from the definitions panel (Cmd+Enter); on Conferma the marker is
+   ;; rewritten to (acquire dir {:proxy (box …) :pose {…} :shapes {} :marks {}}).
+   ;; Dispatch: a dir STRING first arg is the marker path (edit-acquire-request!);
+   ;; anything else (a proxy mesh form) is the legacy REPL entry with an explicit
+   ;; mesh (edit-acquire-open!), kept in parallel through the transition.
+   (defmacro edit-acquire [& args]
+     (if (string? (first args))
+       `(edit-acquire-request! ~@args)
+       `(edit-acquire-open! ~@args)))
+
    ;; set-creation-pose!: move the origin/grip of a registered mesh
    ;; without moving its geometry. The turtle commands define the new pose.
    ;; (set-creation-pose! :name (f 10) (th 45))

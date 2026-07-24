@@ -200,6 +200,75 @@ la sessione serve solo dove serve il gesto interattivo. (Ricongiunge anche
 la decisione dell'handover "funzione ora, wrapper macro quando arriva
 l'emissione": il wrapper è la `acquire`.)
 
+**Design del palcoscenico (Vincenzo/Claude, 2026-07-26 — perimetro per
+P4a/P4b):**
+
+- **Forma nel sorgente, minimale**: `(acquire "scans/lettore-sd/")`
+  (+ `{:label …}` se ne coesistono più d'una). Regola di demarcazione:
+  *nel sorgente ciò che descrive l'oggetto* (proxy con posa, ricalchi
+  emessi), *nel file di sessione ciò che descrive com'è stato fotografato*
+  (pose camere, intrinseche, picks, residui, piani dichiarati).
+- **Forma emessa autocontenuta (rivisto 2026-07-27, discussione
+  Vincenzo/Claude sulla bozza P4a)**: niente `(poly …)` sciolti dopo la
+  acquire (accoppiamento invisibile, vincoli non scritti per l'utente) e
+  niente ricalchi opachi nel solo file di sessione (violerebbe "lo stato è
+  il sorgente"). La sintesi: **tutto dentro la forma, nominato** —
+  `(acquire "dir" {:proxy … :pose … :shapes {:bezel (poly …)} :marks
+  {:vite-1 {…}}})`. La acquire **ritorna il valore**: accesso per nome via
+  destrutturazione (`(:bezel (:shapes A))` — pattern split-tree), nessuna
+  API nuova. Round-trip su una sola form.
+- **Principio dell'impalcatura, raffinato**: la caduta è un **gesto
+  deliberato di inline** (sostituire `(:bezel (:shapes A))` col letterale,
+  eventualmente con un aiuto dell'editor "estrai ricalco"), non una
+  cancellazione che regge per costruzione — coerente con la sostituzione
+  progressiva della guida 18. Resta il vincolo P4b: il palcoscenico non
+  entra mai nella catena CSG/export.
+- **I mark come primitivo dei punti acquisiti (Vincenzo, 2026-07-27)**:
+  "punto nominato dell'oggetto osservato in più foto" = il `mark` di
+  Ridley (posizione + direzione + id). Creato su una foto è un raggio
+  (profondità ignota, mostrato come tale); la seconda foto triangola; le
+  successive rifiniscono; la direzione dal piano dichiarato o da una
+  coppia di punti. Unifica retroattivamente corrispondenze PnP e punti di
+  consistenza (erano mark senza saperlo) e apre ai mark tutta la macchina
+  esistente: attach, path per mark, misure — senza codice nuovo a valle.
+- **Le foto, in tre stati**: (1) **frustum nel mondo** — camera libera:
+  le camere registrate come piramidi ghost con miniatura, alla loro posa
+  vera (si legge la copertura del giro; cittadinanza da riferimento, mai
+  export/pick); (2) **in posa** — click sul frustum/miniatura → la camera
+  vola dentro, foto a pieno schermo, geometria sopra; Esc/orbita → di
+  nuovo libero; (3) **pellicola come pannello** (precedente: la vista
+  processo di mesh-board, nata per vivere anche fuori dalla sessione).
+  ⚠️ L'ergonomia dei frustum (ingombro visivo, navigazione) è **da
+  collaudare, non decisa** — verdetto di Vincenzo dopo prova; fallback:
+  solo pellicola + toggle frustum.
+- **Memoria**: miniature per frustum e pellicola; full-res caricata solo
+  per la foto in posa (14 × 24 MP non stanno in RAM insieme).
+- **Invariante di frame (per il futuro live, 2026-07-26)**: il frame del
+  palcoscenico è l'OGGETTO — la geometria (proxy, ricalchi) non si muove
+  mai. Nel live, il piatto che gira = la camera che orbita: la camera live
+  è un **frustum in moto** attorno al mondo fermo; le foto scattate sono
+  frustum fermi (le fermate). Click su frustum fermo = vai a quella foto;
+  click sul live = segui la diretta (viewport in posa continua — lì sullo
+  schermo "il mondo gira", stessa scena dall'altra faccia della gauge).
+  "Scatta" = congela il frustum live in una nuova foto registrata.
+- **Spezzatura** (proposta Code, confermata): **P4a** round-trip
+  (emissione `acquire` + write-back proxy + re-entry; gate: commit →
+  riapri → stessa sessione con pose, marcature e ricalchi) → **P4b**
+  palcoscenico non-modale (la fase 2 esce dal modale `:retrace` e diventa
+  editor normale: lì torna la ricchezza di edit-path-2d).
+  - **P4a-1 (round-trip del proxy) COSTRUITO + verificato live 2026-07-24, non
+    committato** (branch `edit-acquire-registration-stability`). `acquire`
+    direttiva reference-citizen (ritorna `{:proxy :pose :shapes :marks :dir}`,
+    monta il proxy in posa) + `edit-acquire` marcatore (macro con dispatch
+    dir-string→`request!` / mesh-form→`edit-acquire-open!` legacy) + write-back
+    (`Conferma`→`(acquire "dir" {:proxy (box W H D) :pose {…} :shapes {} :marks
+    {}})`, `Chiudi`/`Esc`→strip-head). dims+posa round-trippano attraverso il
+    valutatore SCI reale (`repl/evaluate-definitions`). `:shapes`/`:marks` vuoti
+    (→ P4a-3). **Manca il gate umano** (geo-server + foto vere: apri → allinea →
+    Conferma → riapri stessa posa). Vedi `dev-docs/HANDOVER-p4a-acquire.md`.
+  - **P4a-2** = osservazioni-di-mark nel file di sessione. **P4a-3** =
+    shapes+marks dentro la form.
+
 ### P5 — Protocollo e documentazione
 Vincolo "superfici opache" (nastrare/opacizzare i traslucidi) nel manuale;
 protocollo di scatto (focale fissa, AE/AF lock, ~250 mm, non riempire il

@@ -639,10 +639,16 @@
    ;; macro expands to (edit-image-board-request! …); returns a live image-board
    ;; shape and opens the calibration session.
    'edit-image-board-request! edit-image-board/request!
-   ;; edit-acquire (gate ingegneristico: inverted-manipulation prototype for
-   ;; acquisizione parametrica, dev-docs/brief-param-acq-v1.md) — plain function,
-   ;; not a macro (no source marker/commit — see the namespace docstring).
-   'edit-acquire        edit-acquire/enter!
+   ;; acquire (P4a-1): the self-contained acquisizione-parametrica directive the
+   ;; edit-acquire marker emits — reference-citizen shape (image-board/mesh-board
+   ;; family), returns {:proxy :pose :shapes :marks :dir}, destructurable by name.
+   'acquire             edit-acquire/acquire
+   ;; edit-acquire (dev-docs/brief-param-acq-v1.md): now a MARKER in the edit-*
+   ;; family. The `edit-acquire` macro dispatches a dir-string first arg here
+   ;; (request!, opened from the definitions panel) and a proxy-mesh first arg to
+   ;; edit-acquire-open! (enter!, the legacy REPL entry kept in parallel).
+   'edit-acquire-request! edit-acquire/request!
+   'edit-acquire-open!    edit-acquire/enter!
    ;; Source form storage
    'set-source-form!    registry/set-source-form!
    'get-source-form     registry/get-source-form

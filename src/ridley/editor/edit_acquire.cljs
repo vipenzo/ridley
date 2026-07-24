@@ -19,9 +19,17 @@
      nudge is discarded and the equivalent INVERSE transform is applied to the
      camera pose instead, so what actually changed is the camera.
 
-   Deliberately NOT a macro: no source-buffer marker, no commit-to-source —
-   there's no canonical primitive to emit yet (later feature work). Closing
-   the session (Escape / the panel's Chiudi button) discards everything.
+   P4a-1 round-trip: `edit-acquire` is now also a buffer MARKER in the edit-*
+   family. `(edit-acquire \"dir\")` opened from the definitions panel (request!)
+   runs the same session; Conferma rewrites the marker to the self-contained
+   `(acquire \"dir\" {:proxy (box …) :pose {…} :shapes {} :marks {}})` directive
+   (confirm! → emit-acquire-code) and Chiudi/Esc strip-heads it to `(acquire …)`
+   (cancel!). Re-opening reads proxy+pose back from that form; the fotografia
+   (camera poses, observations, planes) stays in acquire-state.json. The legacy
+   REPL entry `(edit-acquire proxy-mesh \"dir\")` (enter!) is kept in parallel
+   through the transition — the macro dispatches on whether the first arg is the
+   dir string (marker) or a proxy form (open). :shapes/:marks are empty in
+   P4a-1 (retrace/marks land in P4a-3).
 
    session-dir must be an ABSOLUTE path to a folder holding session.json (see
    test-assets/param-acq-box-tape/) — read via the Rust geo_server
@@ -30,10 +38,12 @@
    REPL/hot-reload."
   (:require [clojure.string :as str]
             [ridley.editor.modal-evaluator :as modal]
+            [ridley.editor.codemirror :as cm]
             [ridley.editor.gizmo :as gizmo]
             [ridley.editor.acquire-backdrop :as backdrop]
             [ridley.editor.state :as state]
             [ridley.editor.ui :as ui]
+            [ridley.geometry.primitives :as prims]
             [ridley.viewport.core :as viewport]
             [ridley.turtle.attachment :as attachment]
             [ridley.photogrammetry.camera :as pcamera]
@@ -82,6 +92,16 @@
    value already established for this camera/lens in dev-docs/HANDOVER-
    acquisizione-parametrica.md). User-editable in the panel."
   48.0)
+
+(def ^:private marker-prefix
+  "Buffer head of the edit-acquire marker form — located via
+   modal/find-form-bounds for the confirm!/cancel! source rewrite (P4a-1)."
+  "(edit-acquire")
+
+(def ^:private default-proxy-dims
+  "Starting box [w h d] for a bare (acquire \"dir\") / (edit-acquire \"dir\") with
+   no explicit :proxy — distinct sides so its orientation reads while aligning."
+  [40 30 20])
 
 (defn- deg->rad [d] (/ (* d Math/PI) 180))
 
@@ -1316,7 +1336,7 @@
 ;; residuals, those need the solver integration, out of scope here)
 ;; ============================================================
 
-(declare close!)
+(declare close! confirm! discard!)
 
 (defn- focal-range [_] [20 135 1])
 
@@ -1342,6 +1362,8 @@
                                                     :value (:focal-mm @session)
                                                     :range-fn focal-range
                                                     :on-input on-focal-change!})
+        buttons (.createElement js/document "div")
+        ok-btn (.createElement js/document "button")
         close-btn (.createElement js/document "button")]
     (set! (.-className header) "pilot-header")
     (set! (.-textContent header) "edit-acquire — gate ingegneristico")
@@ -1357,10 +1379,22 @@
     (.appendChild panel retrace-box)
     (set! (.-className message) "ems-message")
     (.appendChild panel message)
+    ;; Conferma emits (acquire "dir" {…}) over the marker; Chiudi discards
+    ;; (strip-head → (acquire …) on the marker path, plain teardown otherwise).
+    (set! (.-className buttons) "pilot-buttons")
+    (set! (.-type ok-btn) "button")
+    (set! (.-textContent ok-btn) "Conferma (OK)")
+    (.add (.-classList ok-btn) "pilot-btn")
+    (.add (.-classList ok-btn) "pilot-btn-ok")
+    (.addEventListener ok-btn "click" (fn [_] (confirm!)))
     (set! (.-type close-btn) "button")
     (set! (.-textContent close-btn) "Chiudi")
-    (.addEventListener close-btn "click" close!)
-    (.appendChild panel close-btn)
+    (.add (.-classList close-btn) "pilot-btn")
+    (.add (.-classList close-btn) "pilot-btn-cancel")
+    (.addEventListener close-btn "click" (fn [_] (discard!)))
+    (.appendChild buttons ok-btn)
+    (.appendChild buttons close-btn)
+    (.appendChild panel buttons)
     (swap! session assoc :panel-el panel :filmstrip-el filmstrip :focal-slider-el slider
            :message-el message :pnp-el pnp-box :retrace-el retrace-box)
     (modal/mount-panel! panel)
@@ -1606,7 +1640,7 @@
         ;; rather than tearing the whole session down mid-registration/retrace.
         (= key "Escape")
         (do (.preventDefault e) (.stopPropagation e)
-            (cond pnp? (stop-pnp!) retrace? (stop-retrace!) marker? (stop-marker!) :else (close!)))
+            (cond pnp? (stop-pnp!) retrace? (stop-retrace!) marker? (stop-marker!) :else (discard!)))
 
         ;; 'p' toggles PnP from gizmo/pnp; inert during a retrace (exit it first)
         (and (not retrace?) (= key "p"))
@@ -1784,10 +1818,87 @@
       (.catch (fn [_] nil)))) ;; no file yet (first snap of a fresh session) — fine
 
 ;; ============================================================
+;; `acquire` — the emitted directive (P4a-1). Reference-citizen shape of the
+;; image-board/mesh-board family: mounts the posed proxy as scaffold (shown,
+;; never CSG/export) and RETURNS the acquired structure, destructurable by name
+;; like split-tree's output. The round-trip's downstream half: edit-acquire's
+;; confirm! rewrites its marker to one of these.
+;; ============================================================
+
+(defn- record-scaffolds!
+  "Push reference-citizen meshes into the per-eval scaffold accumulator (mirrors
+   mesh-board/record-scaffolds! — scaffolds are visualized, never exported or
+   fed to CSG through the language itself)."
+  [meshes]
+  (let [meshes (filterv identity meshes)]
+    (when (seq meshes)
+      (swap! state/scene-accumulator update :scaffolds into meshes))))
+
+(defn- apply-pose
+  "Rigidly move `proxy` from its creation-pose to `pose` (position+heading+up),
+   returning the mesh whose creation-pose IS `pose`. up is orthogonalized against
+   heading first, so a hand-written/edited pose that isn't exactly perpendicular
+   can't turn the rigid transform into a shear (same guard box-basis and
+   apply-loaded-state! already apply)."
+  [proxy pose]
+  (let [cp (:creation-pose proxy)
+        h (m/normalize (:heading pose))
+        u (m/orthogonalize-up h (:up pose))
+        [moved] (attachment/group-transform
+                 [proxy]
+                 (:position cp) (:heading cp) (:up cp)
+                 (:position pose) h u)]
+    moved))
+
+(defn- default-proxy
+  "A default box built the SAME way the emitted (box w h d) is — pure-box applies
+   the turtle transform (local x→right, y→up, z→heading) at the default pose, and
+   box-basis/dims-from-mesh read that convention. Building it from prims/box-mesh
+   alone (raw local-frame vertices) would permute the axes, so dims-from-mesh
+   would emit a permuted (box …). Applying the identity/default transform here
+   matches transform-mesh-to-turtle at the default pose, so a bare-open box
+   round-trips to its own dims."
+  []
+  (let [[w h d] default-proxy-dims
+        m (prims/box-mesh w h d)]
+    (assoc m :vertices (prims/apply-transform (:vertices m) [0 0 0] [1 0 0] [0 0 1]))))
+
+(defn- resolve-proxy
+  "The proxy mesh for an acquire/edit-acquire opts map: the given :proxy moved to
+   :pose, or a default box (kept at origin for the user to align) when none is
+   supplied."
+  [{:keys [proxy pose]}]
+  (let [m (or proxy (default-proxy))]
+    (if pose (apply-pose m pose) m)))
+
+(defn ^:export acquire
+  "(acquire \"dir\") / (acquire \"dir\" {:proxy (box …) :pose {…} :shapes {} :marks {}})
+   — the self-contained acquisizione-parametrica form (P4a). Mounts the posed
+   proxy as reference scaffold and returns {:proxy :pose :shapes :marks :dir},
+   accessed by name (`(:proxy A)`, `(:bezel (:shapes A))`) exactly like
+   split-tree's output — no new downstream API. In P4a-1 :shapes/:marks are the
+   caller's (usually empty) maps; only proxy+pose round-trip. dir is retained for
+   P4b (the in-pose film)."
+  ([dir] (acquire dir nil))
+  ([dir opts]
+   (let [posed (resolve-proxy opts)]
+     (record-scaffolds! [posed])
+     {:proxy posed
+      :pose (or (:pose opts) (:creation-pose posed))
+      :shapes (or (:shapes opts) {})
+      :marks (or (:marks opts) {})
+      :dir dir})))
+
+;; ============================================================
 ;; Entry / exit
 ;; ============================================================
 
-(defn- close! []
+(defn- close!
+  "Pure teardown: tears the session down and releases the modal slot WITHOUT
+   writing the source buffer. This is the lifecycle discard path — bound to
+   :cancel! (a fresh REPL eval) and :close! (before a Run) in register-kind!, and
+   used by the source-writing confirm!/cancel! once they've done their rewrite."
+  []
   (when @session
     (stop-pnp!) ; removes the canvas pointer handler + placed-marker overlay
     (stop-marker!) ; removes the marker-click canvas pointer handler
@@ -1804,11 +1915,88 @@
     (reset! session nil)
     (modal/release!)))
 
-(defn ^:export enter!
-  "SCI symbol `edit-acquire`. See namespace docstring for the interaction
-   design and session-dir's requirements."
-  [proxy-mesh session-dir]
-  (modal/claim! :edit-acquire)
+;; ------------------------------------------------------------
+;; Source write-back (P4a-1): the edit-acquire ↔ acquire round-trip
+;; ------------------------------------------------------------
+
+(defn- fmt-n
+  "Round to 4 decimals, drop trailing zeros, integers as ints — compact source."
+  [x]
+  (let [r (/ (js/Math.round (* (double x) 10000)) 10000)]
+    (if (= r (js/Math.floor r)) (str (long r)) (str r))))
+
+(defn- fmt-vec [[a b c]] (str "[" (fmt-n a) " " (fmt-n b) " " (fmt-n c) "]"))
+
+(defn- find-marker []
+  (modal/find-form-bounds (cm/get-value) marker-prefix))
+
+(defn- emit-acquire-code
+  "The (acquire \"dir\" {…}) source that replaces the marker on confirm. Proxy
+   dims come from the mesh's ACTUAL extents (bridge/dims-from-mesh, robust to how
+   it was parameterized) and pose from its current creation-pose — so a
+   round-trip (box W H D)+:pose reproduces the same posed proxy. :shapes/:marks
+   stay empty in P4a-1."
+  []
+  (let [dir (:base-dir @session)
+        proxy (:proxy-mesh @session)
+        pose (:creation-pose proxy)
+        [w h d] (bridge/dims-from-mesh proxy pose)]
+    (str "(acquire " (pr-str dir)
+         " {:proxy (box " (fmt-n w) " " (fmt-n h) " " (fmt-n d) ")"
+         " :pose {:position " (fmt-vec (:position pose))
+         " :heading " (fmt-vec (:heading pose))
+         " :up " (fmt-vec (:up pose)) "}"
+         " :shapes {} :marks {}})")))
+
+(defn- confirm!
+  "OK: write the aligned proxy+pose back to source as (acquire \"dir\" {…}),
+   replacing the (edit-acquire …) marker, then tear down and re-run the
+   definitions so the emitted form renders. With no marker in source (a legacy
+   REPL open, from-marker? false), there's nothing to rewrite — print the form so
+   the dev can copy it, then discard."
+  []
+  (when @session
+    (save-acquire-state!) ; keep acquire-state.json's proxy-pose in sync with :pose
+    (let [[from to] (find-marker)
+          code (emit-acquire-code)]
+      (if from
+        (do (modal/replace-source! from to code)
+            (close!)
+            (modal/run-definitions!))
+        (do (state/capture-println (str ";; acquire — nessun marcatore in sorgente, forma da copiare:\n" code))
+            (close!))))))
+
+(defn- cancel!
+  "Annulla (marker path): rewrite only the marker's head — (edit-acquire …) →
+   (acquire …) — leaving the body as typed (family head-rename grammar), then
+   re-run. On a bare first open the body is just the dir string, so it strips to
+   a valid (acquire \"dir\") that mounts a default box."
+  []
+  (when @session
+    (let [[from to] (find-marker)]
+      (if from
+        (do (modal/replace-source! from to
+                                   (modal/strip-head (cm/get-value) from to marker-prefix "(acquire"))
+            (close!)
+            (modal/run-definitions!))
+        (close!)))))
+
+(defn- discard!
+  "The panel's Chiudi button / Escape-in-gizmo dispatcher: strip-head the marker
+   (marker path) or plain teardown (legacy REPL open)."
+  []
+  (if (:from-marker? @session) (cancel!) (close!)))
+
+;; ------------------------------------------------------------
+;; Session mount + entry points
+;; ------------------------------------------------------------
+
+(defn- open-session!
+  "Shared async session mount: read session.json, install the frozen-camera frame
+   callback, seed the session atom (carrying `from-marker?` for the confirm/cancel
+   dispatch), restore acquire-state.json, build the panel, enter photo 0. The
+   modal slot must already be claimed by the caller (enter!/request!)."
+  [proxy-mesh session-dir from-marker?]
   (-> (stl/desktop-read-file (str session-dir "/session.json"))
       (.then (fn [text]
                (let [{:keys [photos]} (parse-session-json text)]
@@ -1832,6 +2020,11 @@
                   :edit-acquire (fn [_camera] (viewport/set-controls-enabled! false)))
                  (reset! session {:photos photos
                                   :base-dir session-dir
+                                  ;; from-marker? routes the panel's Chiudi/Esc
+                                  ;; to cancel! (strip-head the (edit-acquire …)
+                                  ;; marker) vs close! (plain discard for a
+                                  ;; legacy REPL open with no marker in source).
+                                  :from-marker? from-marker?
                                   :current-idx 0
                                   :proxy-mesh proxy-mesh
                                   :camera-poses {}
@@ -1874,6 +2067,47 @@
       (.catch (fn [err]
                 (state/capture-println (str "edit-acquire: couldn't load session — " err))
                 (modal/release!)))))
+
+(defn ^:export enter!
+  "Legacy REPL/programmatic entry: (edit-acquire proxy-mesh session-dir). Opens
+   the session directly with an explicit proxy mesh and NO source marker. Kept in
+   parallel with the marker path (request!) through the P4a transition — the
+   `edit-acquire` macro dispatches here when its first arg is a proxy form rather
+   than the dir string. See the namespace docstring for the interaction design."
+  [proxy-mesh session-dir]
+  (modal/claim! :edit-acquire)
+  (open-session! proxy-mesh session-dir false))
+
+(defn ^:export request!
+  "Marker entry for (edit-acquire \"dir\" [opts]). Opens the acquire session from
+   the definitions panel (Cmd+Enter) — like the rest of the edit-* family — and
+   returns the acquire structure for the eval's value. `opts` (nil on a bare
+   first open) is the {:proxy :pose :shapes :marks} map: the proxy is moved to
+   :pose (or a default box when absent). Refuses to open outside a definitions
+   run (the marker has no meaning in the REPL), and requires the marker to be
+   locatable so confirm!/cancel! can rewrite it."
+  [dir & more]
+  (let [opts (first more)]
+    (cond
+      (modal/consume-skip!)
+      (acquire dir opts)
+
+      (not= :definitions @state/eval-source-var)
+      (do (state/capture-println
+           "edit-acquire: aprilo dal pannello definizioni (Cmd+Enter), non dal REPL")
+          (acquire dir opts))
+
+      :else
+      (let [posed (resolve-proxy opts)]
+        (when (nil? (find-marker))
+          (throw (js/Error. (str "edit-acquire: non trovo '" marker-prefix " …)' nell'editor"))))
+        (modal/claim! :edit-acquire)
+        (open-session! posed dir true)
+        {:proxy posed
+         :pose (:creation-pose posed)
+         :shapes (or (:shapes opts) {})
+         :marks (or (:marks opts) {})
+         :dir dir}))))
 
 (defn ^:dev/after-load reinstall-after-hot-reload!
   "Dev-only. A shadow-cljs hot code-swap re-runs redraws (so a preview tweak shows
