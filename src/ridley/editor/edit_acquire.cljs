@@ -140,7 +140,17 @@
     (m/v+ (:position proxy-pose)
           (m/v+ (m/v* ex (* 0.5 w)) (m/v+ (m/v* ey (* 0.5 h)) (m/v* ez (* 0.5 d)))))))
 
-(declare trace-items)
+(declare trace-items mark-world-positions)
+
+(def ^:private mark-color 0xff33cc)  ; magenta — placed marks, distinct from the retrace yellow
+
+(defn- mark-dots-item
+  "Placed named marks as always-on-top magenta dots — shared by every mode's
+   preview so a mark stays visible after leaving :mark (gizmo/navigation view),
+   the way the retrace trace does. Empty when no marks are placed."
+  []
+  {:type :dots :data (mapv (fn [w] {:pos w :radius 1.3 :color mark-color :opacity 0.95})
+                           (mark-world-positions))})
 
 (defn- proxy-preview-items
   "The proxy mesh plus two always-on-top marker dots — the pivot (box
@@ -150,15 +160,16 @@
    under the 'v' / 'Nascondi proxy' toggle (Vincenzo 2026-07-23): while
    registering it covers the photo, so it can be dropped to read the photo
    underneath. The markers stay — they locate the (hidden) box and are tiny.
-   Any retrace trace is appended (trace-items), so the bezel stays visible after
-   leaving :retrace, in the box/photo context (Vincenzo 2026-07-23)."
+   Any retrace trace + placed marks are appended, so the bezel and the named
+   points stay visible after leaving :retrace/:mark (Vincenzo 2026-07-23/-24)."
   []
   (let [markers {:type :dots :data [{:pos (pivot) :radius 2.0 :color 0xffffff}
                                     {:pos (corner-marker-pos) :radius 3.0 :color 0xff3333}]}]
-    (into (if (:hide-proxy? @session)
-            [markers]
-            [{:type :mesh :data (:proxy-mesh @session)} markers])
-          (trace-items))))
+    (conj (into (if (:hide-proxy? @session)
+                  [markers]
+                  [{:type :mesh :data (:proxy-mesh @session)} markers])
+                (trace-items))
+          (mark-dots-item))))
 
 (defn- photo-path [file]
   (let [base (:base-dir @session)]
@@ -653,6 +664,7 @@
 (declare stop-pnp!)
 (declare stop-marker!)
 (declare redraw-retrace!)
+(declare redraw-marks!)
 
 (defn- install-gizmo!
   "Open the gizmo for photo `idx`. Photo 0's gizmo commits move the PROXY
@@ -690,8 +702,12 @@
     ;; In :retrace the filmstrip is the live-reprojection control: keep the mode,
     ;; just move the camera onto this photo and re-show the (unchanged) world-space
     ;; polyline from the new angle — never tear down the retrace to install a gizmo.
-    (if (= :retrace (:mode @session))
-      (redraw-retrace!)
+    (case (:mode @session)
+      :retrace (redraw-retrace!)
+      ;; :mark is a live-reprojection mode too — the named marks are world/object
+      ;; space, so navigating just re-shows them (and their labels) from this
+      ;; photo's camera; never tear it down to install a gizmo.
+      :mark (redraw-marks!)
       (install-gizmo! idx)))
   (update-panel!))
 
@@ -1089,25 +1105,26 @@
   (bridge/dims-from-mesh (:proxy-mesh @session)
                          (get-in @session [:proxy-mesh :creation-pose])))
 
-(defn- retrace-plane
-  "The declared plane in the OBJECT frame, from the :retrace :plane spec + the
-   box dims: {:point :normal}. `offset` moves the plane OUTWARD along the face
-   normal (mm), so a positive value floats the trace above the box surface (a
-   feature sitting proud of the face) regardless of which face is chosen."
-  []
-  (let [{:keys [axis sign offset]} (get-in @session [:retrace :plane])
-        half (* 0.5 (nth (retrace-dims) axis))
-        coord (* sign (+ half offset))]
+(defn- plane-of
+  "The plane in the OBJECT frame for a {:axis :sign :offset} spec + the box dims:
+   {:point :normal}. `offset` moves the plane OUTWARD along the face normal (mm),
+   so a positive value floats it above the box surface (a feature sitting proud of
+   the face). Shared by the retrace and the named-mark gesture."
+  [{:keys [axis sign offset]}]
+  (let [half (* 0.5 (nth (retrace-dims) axis))
+        coord (* sign (+ half (or offset 0.0)))]
     {:point (assoc [0.0 0.0 0.0] axis coord)
      :normal (axis-unit axis)}))
 
-(defn- active-face-quad
-  "A translucent coloured quad ON the declared face — the plane indicator, so it's
-   obvious in 3D which face you're tracing (not just the panel text). Coloured by
-   retrace-face-colors, matching the pressed face button."
-  []
-  (let [{:keys [axis sign]} (get-in @session [:retrace :plane])
-        coord (nth (:point (retrace-plane)) axis)
+(defn- retrace-plane [] (plane-of (get-in @session [:retrace :plane])))
+
+(defn- face-quad
+  "A translucent coloured quad ON the face declared by `spec` — the plane
+   indicator, so it's obvious in 3D which face you're tracing/marking (not just
+   the panel text). Coloured by retrace-face-colors, matching the pressed face
+   button."
+  [{:keys [axis sign] :as spec}]
+  (let [coord (nth (:point (plane-of spec)) axis)
         [a1 a2] (vec (remove #{axis} [0 1 2]))
         dims (retrace-dims)
         h1 (* 0.5 (nth dims a1))
@@ -1120,6 +1137,8 @@
      :data {:vertices [w0 w1 w2 w3]
             :faces [[0 1 2] [0 2 3]]
             :material {:color (retrace-face-colors [axis sign]) :opacity 0.3 :double-sided true}}}))
+
+(defn- active-face-quad [] (face-quad (get-in @session [:retrace :plane])))
 
 (defn- retrace-solver-pose []
   (bridge/editor->solver-pose (current-camera-pose)
@@ -1236,6 +1255,152 @@
   (update-panel!))
 
 ;; ============================================================
+;; Named marks ('k'): the acquisizione-parametrica MARK primitive (P4a-3) — a
+;; NAMED point of the observed object (position + direction + id) that lands in
+;; the emitted (acquire …) form's :marks and is recalled by name. NOT the blindato
+;; 'm' marker (that's :marker / marker-lock-camera, the Klein branch-lock). This
+;; first cut is plane-declared (Vincenzo's choice): a click is backprojected onto
+;; a declared box face — the exact same click→plane→object-point machinery as the
+;; retrace, so the position is exact with one click; the direction is the face
+;; normal. Each mark stores its own object-frame position + normal, so it survives
+;; a later face change (it doesn't reference the shared plane after placement).
+;; Its own :mark-plane (separate from :retrace :plane) so switching the mark face
+;; never clears the ricalco polyline.
+;; ============================================================
+
+;; mark-color + mark-dots-item are defined up by proxy-preview-items (shared so a
+;; mark stays visible in every mode, not just :mark).
+
+(defn- marks [] (get @session :marks []))
+
+(defn- next-mark-name
+  "Auto id `mark-N`, N one past the highest existing mark-N (so deleting then
+   re-adding never collides). User-renamable in the panel."
+  []
+  (let [nums (keep (fn [{:keys [name]}]
+                     (when-let [m (re-matches #"mark-(\d+)" (or name ""))]
+                       (js/parseInt (second m) 10)))
+                   (marks))]
+    (str "mark-" (inc (reduce max 0 nums)))))
+
+(defn- mark-world-positions
+  "World position of every mark at the current proxy pose — marks store OBJECT-
+   frame positions (stable as the proxy moves), lifted here for drawing/emit."
+  []
+  (let [pose (get-in @session [:proxy-mesh :creation-pose])]
+    (mapv (fn [{:keys [position]}] (bridge/local->world pose position)) (marks))))
+
+(defn- mark-preview-items
+  "Mark-mode preview: the :mark-plane face quad, the ricalco trace (context) and a
+   magenta dot per mark. The solid proxy is hidden (like :retrace) so the photo
+   under it stays readable."
+  []
+  (conj (into [(face-quad (:mark-plane @session))] (trace-items))
+        (mark-dots-item)))
+
+(defn- redraw-marks! []
+  (viewport/show-preview! (mark-preview-items))
+  ;; billboard the id at each mark (viewport/set-labels!, as image-board's ruler
+  ;; label) so which dot is which name reads in 3D, not just the panel list
+  (viewport/set-labels!
+   (mapv (fn [{:keys [name]} w] {:text name :position w :color mark-color})
+         (marks) (mark-world-positions))))
+
+(defn- mark-on-pointermove [^js e]
+  (when (and @session (= :mark (:mode @session)))
+    (update-loupe! e)))
+
+(defn- mark-on-wheel [^js e]
+  (when (and @session (= :mark (:mode @session)))
+    (.preventDefault e) (.stopPropagation e)
+    (let [dir (if (pos? (.-deltaY e)) -1.0 1.0)
+          z' (-> (* (loupe-zoom) (Math/pow 1.2 dir)) (max loupe-zoom-min) (min loupe-zoom-max))]
+      (swap! session assoc :pnp-loupe-zoom z')
+      (update-loupe! e))))
+
+(defn- mark-on-pointerdown [^js e]
+  (when (and @session (= :mark (:mode @session)) (zero? (.-button e)))
+    (when-let [[iw ih] (backdrop/image-size)]
+      (when-let [px (backdrop/pixel-under-pointer e (viewport/get-camera) (viewport/get-canvas))]
+        (.preventDefault e) (.stopPropagation e)
+        (let [ray (pcamera/pixel-ray (session-intrinsics iw ih) (retrace-solver-pose) px)
+              {:keys [point normal]} (plane-of (:mark-plane @session))]
+          (if-let [hit (m/ray-plane-point ray point normal)]
+            (do (swap! session update :marks (fnil conj [])
+                       {:name (next-mark-name) :position hit :normal normal})
+                (redraw-marks!)
+                (save-acquire-state!)
+                (update-panel!))
+            (set-status-message! "Il click non incontra il piano dichiarato")))))))
+
+(defn- teardown-mark-listeners! []
+  (let [^js canvas (viewport/get-canvas)]
+    (.removeEventListener canvas "pointerdown" mark-on-pointerdown true)
+    (.removeEventListener canvas "pointermove" mark-on-pointermove true)
+    (.removeEventListener canvas "pointerleave" hide-pnp-loupe! true)
+    (.removeEventListener canvas "wheel" mark-on-wheel true))
+  (remove-pnp-loupe!))
+
+(defn- start-mark! []
+  (when (and @session (not= :mark (:mode @session)))
+    (gizmo/close!)
+    (swap! session assoc :mode :mark)
+    (let [^js canvas (viewport/get-canvas)]
+      (.addEventListener canvas "pointerdown" mark-on-pointerdown true)
+      (.addEventListener canvas "pointermove" mark-on-pointermove true)
+      (.addEventListener canvas "pointerleave" hide-pnp-loupe! true)
+      (.addEventListener canvas "wheel" mark-on-wheel #js {:capture true :passive false}))
+    (redraw-marks!)
+    (update-panel!)))
+
+(defn- stop-mark! []
+  (when (and @session (= :mark (:mode @session)))
+    (teardown-mark-listeners!)
+    (viewport/clear-labels!)
+    (swap! session assoc :mode :gizmo)
+    (viewport/show-preview! (proxy-preview-items))
+    (install-gizmo! (:current-idx @session))
+    (update-panel!)))
+
+(defn- set-mark-face!
+  "Pick the face for the NEXT mark. Unlike set-retrace-face! this clears NOTHING —
+   each mark already carries its own object-frame position + normal, so existing
+   marks (possibly on other faces) are untouched."
+  [axis sign]
+  (swap! session update :mark-plane assoc :axis axis :sign sign)
+  (redraw-marks!)
+  (update-panel!))
+
+(defn- undo-mark! []
+  (when (seq (marks))
+    (swap! session update :marks pop)
+    (redraw-marks!)
+    (save-acquire-state!)
+    (update-panel!)))
+
+(defn- delete-mark! [idx]
+  (swap! session update :marks
+         (fn [ms] (vec (concat (subvec ms 0 idx) (subvec ms (inc idx))))))
+  (redraw-marks!)
+  (save-acquire-state!)
+  (update-panel!))
+
+(defn- clear-marks! []
+  (swap! session assoc :marks [])
+  (redraw-marks!)
+  (save-acquire-state!)
+  (update-panel!))
+
+(defn- rename-mark!
+  "Rename mark `idx`. No redraw-of-preview needed (dots unchanged) but the label
+   text changes, so refresh labels; skip a full save on every keystroke — the
+   caller (change listener) fires on blur/commit."
+  [idx new-name]
+  (swap! session assoc-in [:marks idx :name] new-name)
+  (redraw-marks!)
+  (save-acquire-state!))
+
+;; ============================================================
 ;; Blindato marker mode ('m'): click the physical mark to pin the branch. A tiny
 ;; mode — one canvas click, no plane/loupe (the four Klein reprojections sit
 ;; ≥650px apart on a 4032px frame, so a rough click disambiguates). See
@@ -1310,26 +1475,20 @@
 
 (defn- retrace-offset-range [_] [-15 15 0.5])
 
-(defn- emit-retrace!
-  "Minimal emission (P4 anticipated): print a (poly …) of the trace's in-plane
-   coordinates plus a comment recording the plane + the object-frame 3D points,
-   so nothing is lost on exit (acquire-state.json already round-trips it; this
-   is the source the user keeps). poly needs ≥3 points; below that, just the
-   comment."
+(defn- retrace-poly-string
+  "The retrace polyline as a (poly …) of its in-plane 2D coords, or nil below 3
+   points (poly needs ≥3). The in-plane axes are the two box axes other than the
+   declared plane's normal axis — the same flattening the P3 loose-emit used, now
+   folded into the acquire form's :shapes (P4a-3) instead of printed loose."
   []
-  (when-let [{:keys [plane points]} (:retrace @session)]
-    (when (seq points)
-      (let [{:keys [axis sign offset]} plane
-            [a1 a2] (vec (remove #{axis} [0 1 2]))
-            f3 (fn [x] (.toFixed x 3))
-            hdr (str ";; edit-acquire ricalco — piano axis=" axis " sign=" sign
-                     " offset=" (f3 offset) "mm, " (count points) " punti (frame oggetto)")
-            body (if (>= (count points) 3)
-                   (str "(poly "
-                        (str/join " " (mapcat (fn [p] [(f3 (nth p a1)) (f3 (nth p a2))]) points))
-                        ")")
-                   (str ";; (solo " (count points) " punti — servono ≥3 per una (poly …))"))]
-        (state/capture-println (str hdr "\n" body))))))
+  (let [{:keys [plane points]} (:retrace @session)
+        {:keys [axis]} plane]
+    (when (>= (count points) 3)
+      (let [[a1 a2] (vec (remove #{axis} [0 1 2]))
+            f3 (fn [x] (.toFixed x 3))]
+        (str "(poly "
+             (str/join " " (mapcat (fn [p] [(f3 (nth p a1)) (f3 (nth p a2))]) points))
+             ")")))))
 
 ;; ============================================================
 ;; Panel (numbered filmstrip + focal-length field + Chiudi — no badges/
@@ -1357,6 +1516,7 @@
         filmstrip (.createElement js/document "div")
         pnp-box (.createElement js/document "div")
         retrace-box (.createElement js/document "div")
+        mark-box (.createElement js/document "div")
         message (.createElement js/document "div")
         {:keys [row slider]} (ui/create-slider-row {:label "Focale (mm)"
                                                     :value (:focal-mm @session)
@@ -1377,6 +1537,8 @@
     (.appendChild panel pnp-box)
     (set! (.-className retrace-box) "eaq-retrace-box")
     (.appendChild panel retrace-box)
+    (set! (.-className mark-box) "eaq-mark-box")
+    (.appendChild panel mark-box)
     (set! (.-className message) "ems-message")
     (.appendChild panel message)
     ;; Conferma emits (acquire "dir" {…}) over the marker; Chiudi discards
@@ -1396,7 +1558,7 @@
     (.appendChild buttons close-btn)
     (.appendChild panel buttons)
     (swap! session assoc :panel-el panel :filmstrip-el filmstrip :focal-slider-el slider
-           :message-el message :pnp-el pnp-box :retrace-el retrace-box)
+           :message-el message :pnp-el pnp-box :retrace-el retrace-box :mark-el mark-box)
     (modal/mount-panel! panel)
     (update-panel!)))
 
@@ -1509,6 +1671,13 @@
         (.addEventListener b "click" (fn [_] (start-retrace!)))
         (.appendChild actions pv)
         (.appendChild actions b)
+        ;; P4a-3: place named points on a declared face (distinct from the
+        ;; blindato 'm' below — that pins the branch, this names object points).
+        (let [mkb (.createElement js/document "button")]
+          (set! (.-type mkb) "button")
+          (set! (.-textContent mkb) "Segna punti (k)")
+          (.addEventListener mkb "click" (fn [_] (start-mark!)))
+          (.appendChild actions mkb))
         ;; Blindato: mark the physical sign to pin this photo's branch. Camera
         ;; photos only (photo 0's branch is set by the proxy alignment). A green
         ;; tick reminds the user this photo already has its mark.
@@ -1589,6 +1758,83 @@
           (.appendChild actions exit))
         (.appendChild box actions)))))
 
+(defn- render-mark-panel!
+  "Named-mark controls in :mark-el, rebuilt each update. Empty unless in :mark
+   mode (entry is the 'Segna punti (k)' button in the gizmo panel); there: the six
+   face buttons (the plane for the NEXT mark — changing it clears nothing), a row
+   per placed mark with an editable id + delete, and Annulla/Azzera/Esci."
+  []
+  (when-let [box (:mark-el @session)]
+    (set! (.-innerHTML box) "")
+    (when (= :mark (:mode @session))
+      (let [{:keys [axis sign]} (:mark-plane @session)
+            ms (marks)
+            info (.createElement js/document "div")
+            faces (.createElement js/document "div")
+            list-el (.createElement js/document "div")
+            actions (.createElement js/document "div")]
+        (set! (.-className info) "eaq-pnp-info")
+        (set! (.-textContent info)
+              (str "Faccia: " (retrace-face-labels [axis sign])
+                   " — clicca sulla foto per segnare un punto (" (count ms) " segnati). "
+                   "'[' / ']' per rivederli dalle altre viste."))
+        (.appendChild box info)
+        (set! (.-className faces) "eaq-pnp-corners")
+        (doseq [[a s] retrace-face-order]
+          (let [b (.createElement js/document "button")
+                st (.-style b)
+                cur? (and (= a axis) (= s sign))]
+            (set! (.-type b) "button")
+            (set! (.-textContent b) (retrace-face-labels [a s]))
+            (set! (.-color st) "#111")
+            (set! (.-background st) (hex->css (retrace-face-colors [a s])))
+            (set! (.-opacity st) (if cur? "1" "0.5"))
+            (set! (.-border st) (if cur? "2px solid #fff" "1px solid #555"))
+            (.addEventListener b "click" (fn [_] (set-mark-face! a s)))
+            (.appendChild faces b)))
+        (.appendChild box faces)
+        ;; one row per mark: editable id (commit on blur/Enter → rename) + delete
+        (set! (.-className list-el) "eaq-mark-list")
+        (doseq [[i {:keys [name]}] (map-indexed vector ms)]
+          (let [row (.createElement js/document "div")
+                sw (.createElement js/document "span")
+                inp (.createElement js/document "input")
+                del (.createElement js/document "button")]
+            (set! (.-className row) "eaq-mark-row")
+            (set! (.-textContent sw) "•")
+            (set! (.. sw -style -color) (hex->css mark-color))
+            (set! (.-type inp) "text")
+            (set! (.-value inp) name)
+            (set! (.. inp -style -width) "110px")
+            (.addEventListener inp "change" (fn [^js e] (rename-mark! i (.. e -target -value))))
+            (set! (.-type del) "button")
+            (set! (.-textContent del) "✕")
+            (.addEventListener del "click" (fn [_] (delete-mark! i)))
+            (.appendChild row sw)
+            (.appendChild row inp)
+            (.appendChild row del)
+            (.appendChild list-el row)))
+        (.appendChild box list-el)
+        (set! (.-className actions) "eaq-pnp-actions")
+        (let [undo (.createElement js/document "button")
+              clr (.createElement js/document "button")
+              exit (.createElement js/document "button")]
+          (set! (.-type undo) "button")
+          (set! (.-textContent undo) "Annulla ultimo (⌫)")
+          (set! (.-disabled undo) (zero? (count ms)))
+          (.addEventListener undo "click" (fn [_] (undo-mark!)))
+          (set! (.-type clr) "button")
+          (set! (.-textContent clr) "Azzera")
+          (set! (.-disabled clr) (zero? (count ms)))
+          (.addEventListener clr "click" (fn [_] (clear-marks!)))
+          (set! (.-type exit) "button")
+          (set! (.-textContent exit) "Esci (k)")
+          (.addEventListener exit "click" (fn [_] (stop-mark!)))
+          (.appendChild actions undo)
+          (.appendChild actions clr)
+          (.appendChild actions exit))
+        (.appendChild box actions)))))
+
 (defn- update-panel! []
   ;; Focale is a phase-0-only control (see build-panel!'s hint): the lens
   ;; doesn't change between photos, so re-tuning it later would silently
@@ -1596,6 +1842,7 @@
   ;; hidden, so it's clear it isn't gone, just not this photo's job.
   (render-pnp-panel!)
   (render-retrace-panel!)
+  (render-mark-panel!)
   (when-let [^js slider (:focal-slider-el @session)]
     (set! (.-disabled slider) (not (zero? (:current-idx @session)))))
   (when-let [^js message (:message-el @session)]
@@ -1627,33 +1874,48 @@
 ;; Escape backs out of the current mode (then closes).
 ;; ============================================================
 
+(defn- input-el? [^js el]
+  (and el (boolean (#{"INPUT" "TEXTAREA"} (.-tagName el)))))
+
 (defn- on-keydown [^js e]
-  (when @session
+  ;; Bail while a text field is focused (the mark-id inputs) so typing a name —
+  ;; letters, digits, Backspace — edits the field instead of firing a hotkey.
+  (when (and @session (not (input-el? (.-activeElement js/document))))
     (let [key (.-key e)
           n (count (:photos @session))
           idx (:current-idx @session)
           pnp? (= :pnp (:mode @session))
           retrace? (= :retrace (:mode @session))
-          marker? (= :marker (:mode @session))]
+          marker? (= :marker (:mode @session))
+          mark? (= :mark (:mode @session))]
       (cond
         ;; Escape backs out of the active sub-mode first (one step at a time),
         ;; rather than tearing the whole session down mid-registration/retrace.
         (= key "Escape")
         (do (.preventDefault e) (.stopPropagation e)
-            (cond pnp? (stop-pnp!) retrace? (stop-retrace!) marker? (stop-marker!) :else (discard!)))
+            (cond pnp? (stop-pnp!) retrace? (stop-retrace!) marker? (stop-marker!)
+                  mark? (stop-mark!) :else (discard!)))
 
-        ;; 'p' toggles PnP from gizmo/pnp; inert during a retrace (exit it first)
-        (and (not retrace?) (= key "p"))
+        ;; 'p' toggles PnP from gizmo/pnp; inert during retrace/mark (exit first)
+        (and (not retrace?) (not mark?) (= key "p"))
         (do (.preventDefault e) (.stopPropagation e)
             (if pnp? (stop-pnp!) (start-pnp!)))
 
-        ;; 'd' toggles the plane-retrace from gizmo/retrace; inert during pnp
-        (and (not pnp?) (= key "d"))
+        ;; 'd' toggles the plane-retrace from gizmo/retrace; inert during pnp/mark
+        (and (not pnp?) (not mark?) (= key "d"))
         (do (.preventDefault e) (.stopPropagation e)
             (if retrace? (stop-retrace!) (start-retrace!)))
 
+        ;; 'k' toggles the named-mark mode from gizmo/mark; inert during pnp/retrace
+        (and (not pnp?) (not retrace?) (not marker?) (= key "k"))
+        (do (.preventDefault e) (.stopPropagation e)
+            (if mark? (stop-mark!) (start-mark!)))
+
         (and retrace? (= key "Backspace"))
         (do (.preventDefault e) (.stopPropagation e) (undo-retrace-point!))
+
+        (and mark? (= key "Backspace"))
+        (do (.preventDefault e) (.stopPropagation e) (undo-mark!))
 
         ;; 'v' hides/shows the solid proxy in the main (gizmo) view so the photo
         ;; is readable while registering — meaningless in :retrace (no proxy) and
@@ -1662,8 +1924,8 @@
         (do (.preventDefault e) (.stopPropagation e) (toggle-proxy!))
 
         ;; 'm' arms the blindato marker-click (pin the Klein branch by the
-        ;; physical mark). Toggles from gizmo/marker; inert during pnp/retrace.
-        (and (not pnp?) (not retrace?) (= key "m"))
+        ;; physical mark). Toggles from gizmo/marker; inert during pnp/retrace/mark.
+        (and (not pnp?) (not retrace?) (not mark?) (= key "m"))
         (do (.preventDefault e) (.stopPropagation e)
             (if marker? (stop-marker!) (start-marker!)))
 
@@ -1679,11 +1941,11 @@
             (enter-photo! (mod (dec idx) n)))
 
         ;; 's'/'f' act on the gizmo/camera registration — meaningless (and
-        ;; disruptive to the frozen pose) during a retrace, so gate them out.
-        (and (not retrace?) (= key "s"))
+        ;; disruptive to the frozen pose) during a retrace/mark, so gate them out.
+        (and (not retrace?) (not mark?) (= key "s"))
         (do (.preventDefault e) (.stopPropagation e) (on-snap!))
 
-        (and (not retrace?) (= key "f"))
+        (and (not retrace?) (not mark?) (= key "f"))
         (do (.preventDefault e) (.stopPropagation e) (on-fit-turntable!))
 
         (= key "]")
@@ -1773,7 +2035,13 @@
                                           ;; EXIF/default read (load-exif-focal!
                                           ;; runs before load-acquire-state!).
                                           :focal {:mm (:focal-mm @session)
-                                                  :source (:focal-source @session)}}))
+                                                  :source (:focal-source @session)}
+                                          ;; P4a-3 — named marks (object-frame
+                                          ;; position + normal + id) and the
+                                          ;; current mark face, so they survive
+                                          ;; exit/re-entry like the retrace does.
+                                          :marks (:marks @session)
+                                          :mark-plane (:mark-plane @session)}))
         path (acquire-state-path)]
     (swap! save-chain
            (fn [prev]
@@ -1785,7 +2053,7 @@
 
 (defn- apply-loaded-state! [text]
   (try
-    (let [{:keys [proxy-pose camera-pose-0 photos retrace marker-picks pnp focal]} (js->clj (js/JSON.parse text) :keywordize-keys true)
+    (let [{:keys [proxy-pose camera-pose-0 photos retrace marker-picks pnp focal marks mark-plane]} (js->clj (js/JSON.parse text) :keywordize-keys true)
           ;; JSON keys are strings → keywordize-keys turns the integer photo/corner
           ;; keys into :0/:1/… ; parse a whole level back to int keys.
           int-keys (fn [m] (into {} (map (fn [[k v]] [(js/parseInt (name k) 10) v]) m)))]
@@ -1813,6 +2081,18 @@
       ;; saved manual tweak wins; an unchanged EXIF/default value restores to itself.
       (when-let [mm (:mm focal)]
         (swap! session assoc :focal-mm mm :focal-source (keyword (:source focal))))
+      ;; P4a-3 — named marks + the current mark face. Marks are object-frame
+      ;; (position/normal vectors) + a string id; coerce the vectors back.
+      (when (seq marks)
+        (swap! session assoc :marks
+               (mapv (fn [m] {:name (:name m)
+                              :position (vec (:position m))
+                              :normal (vec (:normal m))})
+                     marks)))
+      (when mark-plane
+        (swap! session assoc :mark-plane
+               {:axis (:axis mark-plane) :sign (:sign mark-plane)
+                :offset (or (:offset mark-plane) 0.0)}))
       ;; Restore photo 0's frozen vantage so enter-photo! 0 uses it instead of
       ;; recomputing from the aligned pivot (which shifted the proxy on re-entry).
       (when camera-pose-0
@@ -1944,8 +2224,10 @@
   (when @session
     (stop-pnp!) ; removes the canvas pointer handler + placed-marker overlay
     (stop-marker!) ; removes the marker-click canvas pointer handler
+    (stop-mark!) ; removes the named-mark pointer/wheel handlers + labels
     (teardown-retrace-listeners!) ; removes retrace pointer/wheel handlers + loupe
-    (emit-retrace!) ; print the ricalco as source before the session is dropped
+    ;; The ricalco is no longer printed loose here (P4a-3): confirm! folds it into
+    ;; the acquire form's :shapes via emit-acquire-code; discard/cancel emit nothing.
     (viewport/unregister-frame-callback! :edit-acquire)
     (gizmo/close!)
     (backdrop/clear!)
@@ -1972,23 +2254,64 @@
 (defn- find-marker []
   (modal/find-form-bounds (cm/get-value) marker-prefix))
 
+(defn- normal-up-obj
+  "An in-plane object-frame `up` for a face `normal` (an axis unit): the next box
+   axis, so heading(=normal)⊥up. Gives the mark a full, deterministic frame."
+  [normal]
+  (let [a (or (some (fn [i] (when (> (js/Math.abs (nth normal i 0)) 0.5) i)) [0 1 2]) 0)]
+    (assoc [0.0 0.0 0.0] (mod (inc a) 3) 1.0)))
+
+(defn- marks-emit-string
+  "The session's named marks as a source map {:id {:position [world] :heading
+   [world] :up [world]} …} at the confirmed proxy pose — a POSE (not a bare point)
+   so it plugs straight into `(turtle (:id (:marks A)) …)` and the anchor machinery
+   (position + orientation). :heading = the face normal (out of the surface), :up =
+   an in-plane box axis. Object-frame position/normal lifted to world. Names are
+   keywordized and uniquified (a map can't hold duplicate keys, and a user may
+   rename two marks the same)."
+  []
+  (if (empty? (marks))
+    "{}"
+    (let [pose (get-in @session [:proxy-mesh :creation-pose])
+          {:keys [ex ey ez]} (bridge/box-basis pose)
+          world-dir (fn [[nx ny nz]]
+                      (m/normalize (m/v+ (m/v* ex nx) (m/v+ (m/v* ey ny) (m/v* ez nz)))))
+          seen (atom #{})
+          uniq (fn [nm] (loop [n (if (seq nm) nm "mark")]
+                          (if (contains? @seen n)
+                            (recur (str n "-2"))
+                            (do (swap! seen conj n) n))))]
+      (str "{"
+           (str/join " "
+                     (map (fn [{:keys [name position normal]}]
+                            (str ":" (uniq name)
+                                 " {:position " (fmt-vec (bridge/local->world pose position))
+                                 " :heading " (fmt-vec (world-dir normal))
+                                 " :up " (fmt-vec (world-dir (normal-up-obj normal))) "}"))
+                          (marks)))
+           "}"))))
+
 (defn- emit-acquire-code
   "The (acquire \"dir\" {…}) source that replaces the marker on confirm. Proxy
    dims come from the mesh's ACTUAL extents (bridge/dims-from-mesh, robust to how
    it was parameterized) and pose from its current creation-pose — so a
-   round-trip (box W H D)+:pose reproduces the same posed proxy. :shapes/:marks
-   stay empty in P4a-1."
+   round-trip (box W H D)+:pose reproduces the same posed proxy. :shapes carries
+   the ricalco as a named (poly …), :marks the named points (position+direction),
+   both destructurable by name (P4a-3)."
   []
   (let [dir (:base-dir @session)
         proxy (:proxy-mesh @session)
         pose (:creation-pose proxy)
-        [w h d] (bridge/dims-from-mesh proxy pose)]
+        [w h d] (bridge/dims-from-mesh proxy pose)
+        shapes-str (if-let [poly (retrace-poly-string)]
+                     (str "{:ricalco-1 " poly "}")
+                     "{}")]
     (str "(acquire " (pr-str dir)
          " {:proxy (box " (fmt-n w) " " (fmt-n h) " " (fmt-n d) ")"
          " :pose {:position " (fmt-vec (:position pose))
          " :heading " (fmt-vec (:heading pose))
          " :up " (fmt-vec (:up pose)) "}"
-         " :shapes {} :marks {}})")))
+         " :shapes " shapes-str " :marks " (marks-emit-string) "})")))
 
 (defn- confirm!
   "OK: write the aligned proxy+pose back to source as (acquire \"dir\" {…}),
@@ -2082,6 +2405,13 @@
                                   ;; no offset; overwritten by acquire-state.json
                                   ;; on re-entry (load-acquire-state!)
                                   :retrace {:plane {:axis 1 :sign 1 :offset 0.0} :points []}
+                                  ;; P4a-3 named marks: the placed points (object
+                                  ;; frame + normal + id) and the face for the NEXT
+                                  ;; mark (its own plane, so switching it never
+                                  ;; clears the ricalco). Overwritten on re-entry
+                                  ;; by acquire-state.json (load-acquire-state!).
+                                  :marks []
+                                  :mark-plane {:axis 1 :sign 1 :offset 0.0}
                                   :hide-proxy? false ; 'v' toggle in :retrace
                                   :focal-mm default-focal-mm
                                   :focal-source :default
@@ -2169,6 +2499,7 @@
     ;; (e.g. a dot size or a hide-proxy rule) shows without needing a manual redraw
     (case (:mode @session)
       :retrace (redraw-retrace!)
+      :mark (redraw-marks!)
       :pnp (do (redraw-pnp-preview!) (redraw-overlay-dots!))
       (viewport/show-preview! (proxy-preview-items)))
     (update-panel!)))

@@ -41,7 +41,13 @@
 >   `(.reload (.-location js/window))` via eval CLJS, aspetta ~7s, re-`(shadow/repl
 >   :app)`. **Ricarica la pagina prima di ogni test live.**
 >
-> **P4a-1 gate umano PASSATO + committato `ca0605f`.**
+> **P4a-1 gate umano PASSATO + committato `ca0605f`. P4a-3 (shapes+marks) gate
+> PASSATO 2026-07-24** — mark nominati (modalità `k`, sul piano dichiarato) →
+> `:marks {:id {:position :heading :up}}`, consumati con `(turtle (:id (:marks A))
+> …)`; ricalco → `:shapes {:ricalco-1 (poly …)}`. Klein 180° sui mark si raddrizza
+> con `m`. Scala = mm (fissata dal box calibro); posizione ~520 mm dall'origine =
+> offset di gauge (re-centraggio opzionale, da decidere con Vincenzo). Dettagli
+> pieni in `memory/project_edit_acquire_p4a.md`. Poi **P4b**.
 >
 > ## STATO 2026-07-24: **P4a-2 (osservazioni) COMMITTATO `b55d9b3` + gate PASSATO** (Vincenzo: pick PnP restano al rientro)
 >

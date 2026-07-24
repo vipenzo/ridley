@@ -493,6 +493,37 @@ html, body {
   padding: 3px 8px;
 }
 
+/* P4a-3 named marks ('k'): same visual family as the retrace box. Face buttons
+   pick the plane for the next mark; the list is one row per placed mark, with an
+   editable id and a delete. */
+.modal-panel .eaq-mark-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 0 4px;
+  border-top: 1px solid #3a3b42;
+}
+
+.modal-panel .eaq-mark-box .eaq-pnp-corners button {
+  padding: 3px 8px;
+}
+
+.modal-panel .eaq-mark-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.modal-panel .eaq-mark-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.modal-panel .eaq-mark-row input {
+  flex: 1;
+}
+
 /* edit-mesh-split (brief-step-bias.md Part 3): sliver indicator + ±ε nudge row.
    Neutral grey until a sub-threshold component appears — .ems-sliver-warn is
    toggled in JS, never inferred from text content. */

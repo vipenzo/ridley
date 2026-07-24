@@ -277,8 +277,19 @@ P4a/P4b):**
     set da vettore, focale dopo il read EXIF così una taratura manuale vince).
     Round-trip save→JSON→load verificato attraverso le funzioni reali. Effetto
     visibile: riapri una foto registrata con 'p', ripremi 'p' → i pallini colorati
-    e gli spigoli piazzati sono ancora lì (prima erano vuoti). **P4a-3** =
-    shapes+marks dentro la form.
+    e gli spigoli piazzati sono ancora lì (prima erano vuoti).
+  - **P4a-3 (shapes + marks nella form) COSTRUITO + gate PASSATO 2026-07-24.**
+    Ricalco → `:shapes {:ricalco-1 (poly …)}` (non più `(poly …)` sciolto). Mark
+    nominati: nuova modalità `k` (sul piano dichiarato, riusa la retroproiezione
+    del ricalco), id auto rinominabile, → `:marks {:id {:position :heading :up}}`.
+    Consumo: **POSA, non punto** → `(turtle (:id (:marks A)) …)` posiziona E orienta
+    (`move-to`/`:mate` NON posizionano un punto sciolto — verificato). Pallini
+    magenta visibili in tutte le viste. Ribaltamento 180° di un mark su certe foto
+    = ambiguità di Klein (foto sul ramo opposto), si raddrizza col marcatore `m`.
+    La scala emessa è in **mm** (fissata dalle dimensioni box del calibro); la
+    posizione assoluta (~520 mm dall'origine nel test) è un offset di gauge del
+    frame d'acquisizione, non significativo (eventuale re-centstraggio = migliore
+    ergonomia, da decidere). **P4b** = palcoscenico non-modale.
 
 ### P5 — Protocollo e documentazione
 Vincolo "superfici opache" (nastrare/opacizzare i traslucidi) nel manuale;
