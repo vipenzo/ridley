@@ -2263,17 +2263,18 @@
 
 (defn- marks-emit-string
   "The session's named marks as a source map {:id {:position [world] :heading
-   [world] :up [world]} …} at the confirmed proxy pose — a POSE (not a bare point)
-   so it plugs straight into `(turtle (:id (:marks A)) …)` and the anchor machinery
-   (position + orientation). :heading = the face normal (out of the surface), :up =
-   an in-plane box axis. Object-frame position/normal lifted to world. Names are
+   [world] :up [world]} …} lifted through `pose` (the emitted proxy's anchor pose)
+   — a POSE (not a bare point) so it plugs straight into `(turtle (:id (:marks A))
+   …)` and the anchor machinery (position + orientation). :heading = the face
+   normal (out of the surface), :up = an in-plane box axis. Object-frame
+   position/normal lifted to world through the SAME pose the box is emitted at, so
+   marks and proxy stay coincident wherever the object is anchored. Names are
    keywordized and uniquified (a map can't hold duplicate keys, and a user may
    rename two marks the same)."
-  []
+  [pose]
   (if (empty? (marks))
     "{}"
-    (let [pose (get-in @session [:proxy-mesh :creation-pose])
-          {:keys [ex ey ez]} (bridge/box-basis pose)
+    (let [{:keys [ex ey ez]} (bridge/box-basis pose)
           world-dir (fn [[nx ny nz]]
                       (m/normalize (m/v+ (m/v* ex nx) (m/v+ (m/v* ey ny) (m/v* ez nz)))))
           seen (atom #{})
@@ -2292,26 +2293,31 @@
            "}"))))
 
 (defn- emit-acquire-code
-  "The (acquire \"dir\" {…}) source that replaces the marker on confirm. Proxy
-   dims come from the mesh's ACTUAL extents (bridge/dims-from-mesh, robust to how
-   it was parameterized) and pose from its current creation-pose — so a
-   round-trip (box W H D)+:pose reproduces the same posed proxy. :shapes carries
-   the ricalco as a named (poly …), :marks the named points (position+direction),
-   both destructurable by name (P4a-3)."
+  "The (acquire \"dir\" {…}) source that replaces the marker on confirm. Proxy dims
+   come from the mesh's ACTUAL extents (bridge/dims-from-mesh, robust to how it was
+   parameterized). The emitted pose keeps the ACQUIRED orientation but re-anchors
+   the box CENTRE to the construction turtle's position at open time (:build-pose)
+   — so the object lands near the turtle/origin in the build world instead of the
+   arbitrary acquisition-frame offset (Vincenzo 2026-07-24), while re-entry still
+   overlays the photos (edit-acquire restores the acquired position from the
+   session file). :shapes carries the ricalco as a named (poly …), :marks the named
+   points as poses; both destructurable by name, both lifted through the SAME
+   anchor pose so they stay coincident with the proxy (P4a-3)."
   []
-  (let [dir (:base-dir @session)
-        proxy (:proxy-mesh @session)
-        pose (:creation-pose proxy)
+  (let [proxy (:proxy-mesh @session)
+        pose (:creation-pose proxy)                 ; acquired pose (orientation kept)
+        anchor-pose {:position (get-in @session [:build-pose :position] [0 0 0])
+                     :heading (:heading pose) :up (:up pose)}
         [w h d] (bridge/dims-from-mesh proxy pose)
         shapes-str (if-let [poly (retrace-poly-string)]
                      (str "{:ricalco-1 " poly "}")
                      "{}")]
-    (str "(acquire " (pr-str dir)
+    (str "(acquire " (pr-str (:base-dir @session))
          " {:proxy (box " (fmt-n w) " " (fmt-n h) " " (fmt-n d) ")"
-         " :pose {:position " (fmt-vec (:position pose))
-         " :heading " (fmt-vec (:heading pose))
-         " :up " (fmt-vec (:up pose)) "}"
-         " :shapes " shapes-str " :marks " (marks-emit-string) "})")))
+         " :pose {:position " (fmt-vec (:position anchor-pose))
+         " :heading " (fmt-vec (:heading anchor-pose))
+         " :up " (fmt-vec (:up anchor-pose)) "}"
+         " :shapes " shapes-str " :marks " (marks-emit-string anchor-pose) "})")))
 
 (defn- confirm!
   "OK: write the aligned proxy+pose back to source as (acquire \"dir\" {…}),
@@ -2359,9 +2365,11 @@
 (defn- open-session!
   "Shared async session mount: read session.json, install the frozen-camera frame
    callback, seed the session atom (carrying `from-marker?` for the confirm/cancel
-   dispatch), restore acquire-state.json, build the panel, enter photo 0. The
+   dispatch and `build-pose` — the construction-turtle pose at open time, so the
+   emitted object anchors near the turtle instead of at the arbitrary acquisition-
+   frame origin), restore acquire-state.json, build the panel, enter photo 0. The
    modal slot must already be claimed by the caller (enter!/request!)."
-  [proxy-mesh session-dir from-marker?]
+  [proxy-mesh session-dir from-marker? build-pose]
   (-> (stl/desktop-read-file (str session-dir "/session.json"))
       (.then (fn [text]
                (let [{:keys [photos]} (parse-session-json text)]
@@ -2385,6 +2393,14 @@
                   :edit-acquire (fn [_camera] (viewport/set-controls-enabled! false)))
                  (reset! session {:photos photos
                                   :base-dir session-dir
+                                  ;; build-pose = the construction turtle's pose
+                                  ;; when edit-acquire ran; emit-acquire-code
+                                  ;; anchors the emitted proxy's center here (its
+                                  ;; :position) instead of the arbitrary
+                                  ;; acquisition-frame origin (Vincenzo 2026-07-24:
+                                  ;; "il centro del proxy = posizione della turtle
+                                  ;; al momento di acquire").
+                                  :build-pose (or build-pose {:position [0 0 0]})
                                   ;; from-marker? routes the panel's Chiudi/Esc
                                   ;; to cancel! (strip-head the (edit-acquire …)
                                   ;; marker) vs close! (plain discard for a
@@ -2448,7 +2464,7 @@
    than the dir string. See the namespace docstring for the interaction design."
   [proxy-mesh session-dir]
   (modal/claim! :edit-acquire)
-  (open-session! proxy-mesh session-dir false))
+  (open-session! proxy-mesh session-dir false (state/get-turtle-pose)))
 
 (defn ^:export request!
   "Marker entry for (edit-acquire \"dir\" [opts]). Opens the acquire session from
@@ -2470,11 +2486,14 @@
           (acquire dir opts))
 
       :else
-      (let [posed (resolve-proxy opts)]
+      (let [posed (resolve-proxy opts)
+            ;; the construction turtle's pose right now — captured before the
+            ;; session hides geometry, so the emitted object anchors here.
+            build-pose (state/get-turtle-pose)]
         (when (nil? (find-marker))
           (throw (js/Error. (str "edit-acquire: non trovo '" marker-prefix " …)' nell'editor"))))
         (modal/claim! :edit-acquire)
-        (open-session! posed dir true)
+        (open-session! posed dir true build-pose)
         {:proxy posed
          :pose (:creation-pose posed)
          :shapes (or (:shapes opts) {})
