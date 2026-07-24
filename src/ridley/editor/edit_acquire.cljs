@@ -172,6 +172,61 @@
     (conj (into base (trace-items))
           (mark-dots-item))))
 
+;; ------------------------------------------------------------
+;; P4b — frustum nel mondo (brief "Le foto, in tre stati", stato 1)
+;; Le camere registrate come piramidi ghost alla loro posa vera, per leggere la
+;; copertura del giro a colpo d'occhio. Riferimento puro (mai pick/export). Solo in
+;; orbita libera, sotto un interruttore (:show-frustums?). ⚠ Ergonomia (ingombro)
+;; DA COLLAUDARE — fallback: la sola pellicola.
+;; ------------------------------------------------------------
+
+(def ^:private frustum-ghost-color 0x8899aa)   ; grigio-azzurro, legge come riferimento
+(def ^:private frustum-current-color 0x66ccff) ; la foto corrente, evidenziata
+
+(defn- frustum-edges
+  "8 world-space edge segments of a camera pyramid: apex at the camera `position`,
+   rectangular base `depth` in front (along heading), sized to the half-extents."
+  [{:keys [position heading up]} depth half-w half-h color]
+  (let [fwd (m/normalize heading)
+        u (m/normalize up)
+        r (m/normalize (m/cross fwd u))
+        base (m/v+ position (m/v* fwd depth))
+        c1 (m/v+ base (m/v+ (m/v* r half-w) (m/v* u half-h)))
+        c2 (m/v+ base (m/v+ (m/v* r (- half-w)) (m/v* u half-h)))
+        c3 (m/v+ base (m/v+ (m/v* r (- half-w)) (m/v* u (- half-h))))
+        c4 (m/v+ base (m/v+ (m/v* r half-w) (m/v* u (- half-h))))]
+    (mapv (fn [[a b]] {:from a :to b :color color})
+          [[position c1] [position c2] [position c3] [position c4]
+           [c1 c2] [c2 c3] [c3 c4] [c4 c1]])))
+
+(defn- frustum-items
+  "Every registered camera (:camera-poses) as a ghost pyramid at its world pose.
+   Empty when :show-frustums? is off. Depth scales with the box (~1.2× its bounding
+   radius) so the pyramids read as compact icons for any object size; FOV from the
+   session focal + the loaded photo's aspect, so a pyramid opens like its lens."
+  []
+  (when (:show-frustums? @session)
+    (let [dims (bridge/dims-from-mesh (:proxy-mesh @session)
+                                      (get-in @session [:proxy-mesh :creation-pose]))
+          depth (* 1.2 0.5 (m/magnitude dims))
+          aspect (if-let [[w h] (backdrop/image-size)] (/ w h) (/ 4.0 3.0))
+          hfov (pcamera/equiv-focal->hfov-deg (:focal-mm @session) aspect)
+          half-w (* depth (Math/tan (* 0.5 hfov (/ Math/PI 180.0))))
+          half-h (/ half-w aspect)
+          cur (:current-idx @session)]
+      (mapv (fn [[idx pose]]
+              {:type :lines
+               :data (frustum-edges pose depth half-w half-h
+                                    (if (= idx cur) frustum-current-color frustum-ghost-color))})
+            (:camera-poses @session)))))
+
+(defn- stage-free-preview-items
+  "Free-orbit stage preview: the object (proxy + ricalchi + marks) plus the ghost
+   camera frustums. Used ONLY in free orbit (enter-stage!/leave-pose!); the in-pose
+   and Phase-1 previews stay proxy-preview-items (no frustums)."
+  []
+  (into (proxy-preview-items) (frustum-items)))
+
 (defn- photo-path [file]
   (let [base (:base-dir @session)]
     (str base (if (str/ends-with? base "/") "" "/") file)))
@@ -541,6 +596,82 @@
                  (into {} (map (fn [[idx p]] [idx (update p :position #(m/v+ % delta))]))
                        cps)))))))
 
+(defn- variance [xs]
+  (let [n (count xs) mean (/ (reduce + xs) n)]
+    (/ (reduce + (map #(let [d (- % mean)] (* d d)) xs)) n)))
+
+(defn- canonicalize-orientation!
+  "Re-orient the whole acquired system to a STANDARD, intuitive pose: the turntable
+   axis (physical vertical) → world +Z (up), the object axis-aligned, the camera ring
+   horizontal, and the emitted box reads (box right up heading) with up = the VERTICAL
+   dimension (Vincenzo 2026-07-24: '(box 20 40 60)', asse Z del giradischi = asse Z del
+   modello). A rigid re-description (rotation M + axis relabel): relative geometry is
+   preserved (photos still project, cameras carried by M), and the object-frame ricalchi
+   / marks / planes are re-expressed so they stay on the same physical spot. Runs at open
+   (replacing the translate-only reanchor) ONLY when a clean turntable ring is registered
+   — the turntable axis is the box axis along which the cameras barely move (smallest
+   spread), and it must clearly dominate (a real ring, not a scatter). Falls back to
+   reanchor-to-build-pose! otherwise. Idempotent on an already-canonical session."
+  []
+  (let [pm (:proxy-mesh @session)
+        pose (:creation-pose pm)
+        center (:position pose)
+        build-pos (get-in @session [:build-pose :position] [0 0 0])
+        {:keys [ex ey ez]} (bridge/box-basis pose)
+        axes [ex ey ez]
+        dims (bridge/dims-from-mesh pm pose)
+        cams (vals (:camera-poses @session))
+        rels (mapv #(m/v- (:position %) center) cams)]
+    (if (< (count rels) 4)
+      (reanchor-to-build-pose!)                          ; too few cameras for a ring
+      (let [vars (mapv (fn [a] (variance (map #(m/dot % a) rels))) axes)
+            vidx (first (apply min-key second (map-indexed vector vars)))
+            [v-small v-mid _] (sort vars)]
+        (if-not (< v-small (* 0.15 v-mid))               ; not a clean planar ring
+          (reanchor-to-build-pose!)
+          (let [up-vec (nth axes vidx)
+                up-C (if (>= (m/dot up-vec [0 0 1]) 0) up-vec (m/v* up-vec -1.0))
+                ;; the two horizontals: right = SMALLER dim, heading = LARGER dim
+                [[r-vec] [h-vec]] (->> [[ex 0] [ey 1] [ez 2]]
+                                       (remove (fn [[_ i]] (= i vidx)))
+                                       (sort-by (fn [[_ i]] (nth dims i))))
+                heading-C (if (>= (m/dot (m/cross up-C h-vec) r-vec) 0) h-vec (m/v* h-vec -1.0))
+                right-C (m/cross up-C heading-C)          ; exact right-handed
+                ;; M·v = [-(right·v), heading·v, up·v] → maps right→-X, heading→+Y, up→+Z.
+                Mv (fn [v] [(- (m/dot right-C v)) (m/dot heading-C v) (m/dot up-C v)])
+                new-pose {:position build-pos :heading [0.0 1.0 0.0] :up [0.0 0.0 1.0]}
+                ;; object-frame (a,b,c) → new frame coords (project the old-frame direction
+                ;; onto the new axes); works for points AND directions (normals).
+                remap (fn [[a b c]]
+                        (let [dir (m/v+ (m/v* ex a) (m/v+ (m/v* ey b) (m/v* ez c)))]
+                          [(m/dot dir right-C) (m/dot dir up-C) (m/dot dir heading-C)]))
+                ;; {:axis :sign :offset} plane → remap its normal to the new frame axis.
+                remap-plane (fn [{:keys [axis sign offset]}]
+                              (let [nrm (remap (assoc [0.0 0.0 0.0] axis (double sign)))
+                                    a (apply max-key #(Math/abs ^double (nth nrm %)) [0 1 2])]
+                                {:axis a :sign (if (>= (nth nrm a) 0) 1 -1) :offset offset}))]
+            (swap! session update :proxy-mesh
+                   (fn [m]
+                     (-> m
+                         (dissoc :ridley.manifold.core/manifold-cache :ridley.manifold.core/raw-arrays)
+                         (update :vertices (fn [vs] (mapv (fn [v] (m/v+ build-pos (Mv (m/v- v center)))) vs)))
+                         (assoc :creation-pose new-pose))))
+            (swap! session update :camera-poses
+                   (fn [cps]
+                     (into {} (map (fn [[idx p]]
+                                     [idx {:position (m/v+ build-pos (Mv (m/v- (:position p) center)))
+                                           :heading (Mv (:heading p))
+                                           :up (Mv (:up p))}]))
+                           cps)))
+            (swap! session update :ricalchi
+                   (fn [rs] (mapv (fn [r] (-> r
+                                              (update :points #(mapv remap %))
+                                              (update :plane remap-plane))) rs)))
+            (swap! session update :marks
+                   (fn [ms] (mapv (fn [mk] (cond-> (update mk :position remap)
+                                             (:normal mk) (update :normal remap))) ms)))
+            (swap! session update :mark-plane remap-plane)))))))
+
 (defn- on-photo0-commit! [cmd-type value]
   (let [old-pose (get-in @session [:proxy-mesh :creation-pose])
         {:keys [h r u]} (pose-basis old-pose)]
@@ -763,9 +894,9 @@
    Phase-1 registration tools (gizmo / PnP / marker / mark / retrace listeners),
    drops the per-frame camera lock (the `:edit-acquire` frame callback), hides the
    photo backdrop, shows the object (proxy + ricalchi + marks) as free-orbit
-   reference geometry, and frees the camera to orbit the object WITHOUT jumping
-   the view (free-camera-at-pivot! keeps the current framing). Clicking a
-   filmstrip photo then flies into pose (go-in-pose!)."
+   reference geometry, and steps the camera BACK to frame the whole shoot — object
+   plus the ring of camera frustums — so the coverage reads at a glance. Clicking a
+   filmstrip photo (or, later, a frustum) then flies into pose (go-in-pose!)."
   []
   (stop-pnp!) (stop-marker!) (stop-mark!) (teardown-retrace-listeners!)
   (gizmo/close!)
@@ -775,10 +906,17 @@
   ;; leaving the callback off is enough (see open-session!'s lock comment).
   (viewport/unregister-frame-callback! :edit-acquire)
   (backdrop/set-visible! false)
-  (viewport/show-preview! (proxy-preview-items))
-  ;; Free the camera keeping the exact current framing (no recenter-on-proxy
-  ;; snap), pivoting orbit on the object's center along the view axis.
-  (viewport/free-camera-at-pivot! (pivot))
+  (viewport/show-preview! (stage-free-preview-items)) ; object + ghost frustums
+  ;; Step back (keeping the view direction) so object + every camera frustum fit —
+  ;; the cameras sit ~250 mm out around a ~60 mm object, so the close photo framing
+  ;; would leave the frustums off-screen. Radius = farthest camera from the object.
+  (let [piv (pivot)
+        obj-r (* 0.5 (m/magnitude (bridge/dims-from-mesh
+                                   (:proxy-mesh @session)
+                                   (get-in @session [:proxy-mesh :creation-pose]))))
+        cam-r (reduce max 0.0 (map #(m/magnitude (m/v- (:position %) piv))
+                                   (vals (:camera-poses @session))))]
+    (viewport/frame-camera! piv (* 1.15 (max obj-r cam-r))))
   (update-panel!))
 
 (defn- leave-stage!
@@ -819,13 +957,22 @@
   (swap! session assoc :in-pose? false)
   (backdrop/set-visible! false)
   (viewport/free-camera-at-pivot! (pivot))
-  ;; back in free orbit: re-show so every shape reappears (culling is off with no
-  ;; photo backdrop to bleed through).
-  (viewport/show-preview! (proxy-preview-items))
+  ;; back in free orbit: re-show so every shape reappears (culling off) and the
+  ;; ghost frustums come back.
+  (viewport/show-preview! (stage-free-preview-items))
   (update-panel!))
 
 (defn- toggle-stage! []
   (if (:stage? @session) (leave-stage!) (enter-stage!)))
+
+(defn- toggle-frustums!
+  "Show/hide the ghost camera frustums (P4b, free orbit only). Re-shows the stage
+   preview when it takes effect. A stage control (the button is offered only there)."
+  []
+  (swap! session update :show-frustums? not)
+  (when (and (:stage? @session) (not (:in-pose? @session)))
+    (viewport/show-preview! (stage-free-preview-items)))
+  (update-panel!))
 
 ;; ============================================================
 ;; PnP registration ('p'): the primary 'registrazione per corrispondenze'
@@ -1800,6 +1947,7 @@
         hint (.createElement js/document "div")
         filmstrip (.createElement js/document "div")
         stage-btn (.createElement js/document "button")
+        frustum-btn (.createElement js/document "button")
         pnp-box (.createElement js/document "div")
         retrace-box (.createElement js/document "div")
         mark-box (.createElement js/document "div")
@@ -1826,6 +1974,12 @@
     (.add (.-classList stage-btn) "eaq-stage-btn")
     (.addEventListener stage-btn "click" (fn [_] (toggle-stage!)))
     (.appendChild panel stage-btn)
+    ;; P4b frustum toggle — shown only in the stage (update-panel! toggles display).
+    (set! (.-type frustum-btn) "button")
+    (.add (.-classList frustum-btn) "pilot-btn")
+    (.add (.-classList frustum-btn) "eaq-stage-btn")
+    (.addEventListener frustum-btn "click" (fn [_] (toggle-frustums!)))
+    (.appendChild panel frustum-btn)
     (set! (.-className pnp-box) "eaq-pnp-box")
     (.appendChild panel pnp-box)
     (set! (.-className retrace-box) "eaq-retrace-box")
@@ -1852,7 +2006,7 @@
     (.appendChild panel buttons)
     (swap! session assoc :panel-el panel :filmstrip-el filmstrip :focal-slider-el slider
            :message-el message :pnp-el pnp-box :retrace-el retrace-box :mark-el mark-box
-           :stage-btn-el stage-btn)
+           :stage-btn-el stage-btn :frustum-btn-el frustum-btn)
     (modal/mount-panel! panel)
     (update-panel!)))
 
@@ -2184,6 +2338,13 @@
                                   "◀ Esci dal palcoscenico"
                                   "▶ Palcoscenico (camera libera)"))
       (if stage? (.add (.-classList btn) "active") (.remove (.-classList btn) "active")))
+    ;; Frustum toggle: only meaningful in the stage (in-pose or free), so shown there.
+    (when-let [^js fb (:frustum-btn-el @session)]
+      (set! (.. fb -style -display) (if stage? "block" "none"))
+      (set! (.-textContent fb) (if (:show-frustums? @session)
+                                 "Frustum foto: mostrati (nascondi)"
+                                 "Frustum foto: nascosti (mostra)"))
+      (if (:show-frustums? @session) (.add (.-classList fb) "active") (.remove (.-classList fb) "active")))
     (when-let [^js message (:message-el @session)]
       (set! (.-textContent message)
             (cond
@@ -2254,12 +2415,14 @@
           (do (.preventDefault e) (.stopPropagation e) (go-in-pose! (mod (inc idx) n))))
 
         (cond
-        ;; Escape backs out of the active sub-mode first (one step at a time),
-        ;; rather than tearing the whole session down mid-registration/retrace.
+        ;; Escape backs out of the active sub-mode ONLY (one step at a time). It
+        ;; never tears the session down — an extra Esc at the top level is a no-op,
+        ;; not an accidental exit (Vincenzo 2026-07-24: "è facile darne uno di più e
+        ;; uscire"). Exit is the explicit "Chiudi" button.
           (= key "Escape")
           (do (.preventDefault e) (.stopPropagation e)
               (cond pnp? (stop-pnp!) retrace? (stop-retrace!) marker? (stop-marker!)
-                    mark? (stop-mark!) :else (discard!)))
+                    mark? (stop-mark!) :else nil))
 
         ;; 'p' toggles PnP from gizmo/pnp; inert during retrace/mark (exit first)
           (and (not retrace?) (not mark?) (= key "p"))
@@ -2712,6 +2875,12 @@
    the dev can copy it, then discard."
   []
   (when @session
+    ;; Re-orient to the standard pose right before emitting, so the emitted
+    ;; (acquire …) is ALWAYS upright/axis-aligned regardless of what happened
+    ;; during the session (a snap/gizmo re-registration reverts the proxy to the
+    ;; acquisition frame; a fresh acquisition only builds its ring mid-session).
+    ;; Idempotent when open already canonicalized; a no-op without a clean ring.
+    (canonicalize-orientation!)
     (save-acquire-state!) ; keep acquire-state.json's proxy-pose in sync with :pose
     (let [[from to] (find-marker)
           ;; column of the marker's opening paren, so the pretty-printed
@@ -2808,6 +2977,11 @@
                                   ;; :in-pose? = flown into a photo (locked backdrop).
                                   :stage? false
                                   :in-pose? false
+                                  ;; P4b frustums (ghost camera pyramids) — shown in
+                                  ;; free orbit under this toggle. Default on so the
+                                  ;; coverage reads on entering the stage; the button
+                                  ;; hides them if they clutter (ergonomics to test).
+                                  :show-frustums? true
                                   :pnp-picks {}
                                   :pnp-residuals {}
                                   :pnp-outliers {}
@@ -2844,12 +3018,12 @@
                  (-> (load-exif-focal! (first photos))
                      (.then (fn [_] (load-acquire-state!)))
                      (.then (fn [_]
-                              ;; Re-centre the whole system on the construction
-                              ;; turtle (where the emitted (acquire …) anchors it),
-                              ;; AFTER acquire-state.json set the acquisition-frame
-                              ;; poses — so the stage is WYSIWYG. Pure translation,
-                              ;; Phase-1 unaffected.
-                              (reanchor-to-build-pose!)
+                              ;; Put the object in a standard, intuitive pose (upright,
+                              ;; turntable axis → world +Z, at the build turtle) AFTER
+                              ;; acquire-state.json set the acquisition-frame poses — a
+                              ;; rigid re-description, Phase-1 unaffected. Falls back to
+                              ;; a pure translate when there's no clean ring yet.
+                              (canonicalize-orientation!)
                               (viewport/show-preview! (proxy-preview-items))
                               (backdrop/create! (viewport/get-camera))
                               (build-panel!)
@@ -2924,7 +3098,10 @@
       :retrace (redraw-retrace!)
       :mark (redraw-marks!)
       :pnp (do (redraw-pnp-preview!) (redraw-overlay-dots!))
-      (viewport/show-preview! (proxy-preview-items)))
+      ;; gizmo/stage: in free orbit re-show the frustums too, else the plain object.
+      (viewport/show-preview! (if (and (:stage? @session) (not (:in-pose? @session)))
+                                (stage-free-preview-items)
+                                (proxy-preview-items))))
     (update-panel!)))
 
 ;; Synchronous modal (tweak_mode.cljs's own precedent): opens inside its own

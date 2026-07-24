@@ -12,6 +12,42 @@ Il riferimento di base per il debito tecnico già diagnosticato è il capitolo 1
 
 ---
 
+## Current Sprint — bussola per ogni nuova sessione
+
+*Questa sezione è la prima cosa da leggere per orientarsi: dice dove stiamo
+andando e quali documenti governano il lavoro in corso. È a maglia larga per
+scelta: il dettaglio vive nei brief. Si aggiorna a ogni cambio di fase
+(chiusura di una Parte di un brief, apertura di un fronte), come da
+istruzioni in CLAUDE.md.*
+
+**Fronte attivo (dal 2026-07): canale di acquisizione parametrica** — da
+foto su giradischi a geometria Ridley nativa, senza scanner. Registrazione
+camere via PnP su proxy (fatta e collaudata), ricalco su viste in posa
+(fatto), emissione e round-trip (in corso).
+
+- **Documento di governo**: `dev-docs/brief-param-acq-v1.md` — Parti P0-P5
+  con stato aggiornato in testa alla sezione "Parti". Oggi: **P4b in corso**
+  (palcoscenico non-modale). P4a fatto e committato; P4b fetta 1 — camera
+  libera + vai-in-posa, frustum-nel-mondo, raddrizzamento standard
+  dell'oggetto (up = asse giradischi) — fatta e collaudata. Handover
+  `dev-docs/HANDOVER-p4b-stage.md`. Resta di P4b: ergonomia frustum da
+  affinare + ricchezza di edit-path-2d in posa.
+- **Design di riferimento**: `dev-docs/acquisizione-parametrica-design.md`
+  (principi, accertamenti chiusi con verdetti misurati).
+- **Storia e handover**: `dev-docs/HANDOVER-edit-acquire-gate.md` e
+  precedenti — leggere solo se serve il *perché* di una decisione.
+- **Dopo il v1** (coda nel brief): corona di marker sul piatto (bersaglio
+  PnP universale), rounded-prism/fillet, sorgenti live (webcam/companion).
+
+**Fronti chiusi di recente** (2026-07): famiglia mesh-split/mesh-board —
+spec ad albero, `split-tree`, viste di confronto, heal-slivers (brief
+relativi in `dev-docs/`, capitolo 18 delle guide). **Fronti in pausa
+esplicita**: canale scanner denso (`dev-docs/brief-scanner-channel.md`,
+riprioritizzato dietro l'acquisizione parametrica — resta valido l'import
+OBJ, fatto).
+
+---
+
 ## Parte I — Breve termine
 
 Le voci di questa parte sono lavoro a settimane o mesi, con dipendenze risolte e design già preso. Sono pagamenti di debito conosciuto e completamenti puntuali.

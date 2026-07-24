@@ -1342,6 +1342,27 @@
         (set! (.-enabled controls) true)
         (.update controls)))))
 
+(defn frame-camera!
+  "Pull the camera along its CURRENT view direction (a zoom, no rotation) until a
+   bounding sphere (`center` + `radius`) fits the vertical FOV, set the orbit pivot
+   at `center`, and enable orbit. For a 'step back to see the whole scene' entry
+   (edit-acquire's P4b stage, so the ring of camera frustums around the object is
+   visible at once). Unlike free-camera-at-pivot! this DOES move the camera (to
+   reveal more), but keeps the direction so it isn't disorienting. No-op with no
+   viewport."
+  [[cx cy cz] radius]
+  (when-let [{:keys [^js camera ^js controls]} @state]
+    (let [fwd (THREE/Vector3.)]
+      (.getWorldDirection camera fwd)
+      (let [vfov (* (.-fov camera) (/ Math/PI 180.0))
+            dist (* 1.15 (/ radius (Math/max 0.05 (Math/sin (/ vfov 2.0)))))]
+        (.set (.-position camera)
+              (- cx (* (.-x fwd) dist)) (- cy (* (.-y fwd) dist)) (- cz (* (.-z fwd) dist)))
+        (.set (.-target controls) cx cy cz)
+        (reset! saved-orbit-target nil)
+        (set! (.-enabled controls) true)
+        (.update controls)))))
+
 (defn get-camera-pose
   "Get the current camera state as a turtle-compatible pose map.
    Returns {:position [x y z] :heading [x y z] :up [x y z]}."

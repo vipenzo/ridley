@@ -307,9 +307,32 @@ P4a/P4b):**
     la **shape attiva-in-editing è sempre visibile** (mai cullata); **guardia sui
     click lontani** (`plausible-hit?` — un raggio quasi parallelo al piano dava punti
     a ~120 mm fuori dal box, ora rifiutati con messaggio). Verificato headless
-    (culling, colori, guardia, re-ancoraggio, no-salto) + gate live. **Ancora aperto
-    per P4b**: frustum-nel-mondo (strato opzionale, ergonomia da collaudare) e la
-    ricchezza di edit-path-2d in posa. Entry: `dev-docs/HANDOVER-p4b-stage.md`.
+    (culling, colori, guardia, re-ancoraggio, no-salto) + gate live. Entry:
+    `dev-docs/HANDOVER-p4b-stage.md`.
+  - **P4b FRUSTUM + RADDRIZZAMENTO + Esc — COSTRUITI + gate PASSATO 2026-07-24.**
+    - **Frustum-nel-mondo** (brief §"Le foto, in tre stati", stato 1): le camere
+      registrate come piramidi-ghost alla loro posa (corrente in ciano), sotto
+      interruttore `:show-frustums?` (fallback: sola pellicola). All'ingresso nel
+      palcoscenico la camera **arretra** per inquadrare l'anello (`viewport/frame-
+      camera!`, tiene la direzione — le camere sono ~250mm fuori). Niente miniatura/
+      click ancora (fase B se convince). Vincenzo: "può andare".
+    - **Raddrizzamento standard** (`canonicalize-orientation!`): all'apertura E al
+      Conferma, se c'è un anello di camere pulito, ri-descrive rigidamente tutto in
+      un frame canonico — asse giradischi (verticale) → +Z, oggetto assi-allineato,
+      anello orizzontale, `up = la dimensione verticale`. Emette **`(box 20.2 40.1
+      60.2)`** (Vincenzo: "andava scritto (box 20 40 60)") con posa `[0 1 0]`/`[0 0 1]`;
+      shapes/mark/piani re-espressi (permutazione ciclica, nessuno specchio, det M=+1).
+      Guardia: solo con ≥4 camere e anello dominante (varianza), altrimenti sola
+      traslazione. Idempotente. Diagnosi che l'ha motivato: l'asse del giradischi
+      coincideva con l'**heading** del box (40.1), non con l'up (20.2) → oggetto
+      inclinato di ~50°. **Canonicalize anche in `confirm!`** così la forma emessa è
+      sempre dritta anche dopo snap/ri-registrazione o su acquisizioni nuove.
+      Verificato sui dati veri box-tape (posa assi-allineata, dims, M·prima=dopo
+      esatto, piani rimappati, round-trip `acquire` monta dritto) + gate live.
+    - **Esc sicuro**: al livello base non chiude più la sessione (un Esc di troppo
+      non butta fuori); esce solo dai sotto-modi. Uscita = bottone "Chiudi".
+    **Ancora aperto per P4b**: ergonomia frustum da affinare (miniatura/click,
+    o fallback pellicola) + ricchezza di edit-path-2d in posa.
 
 ### P5 — Protocollo e documentazione
 Vincolo "superfici opache" (nastrare/opacizzare i traslucidi) nel manuale;

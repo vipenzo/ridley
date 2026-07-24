@@ -14,6 +14,20 @@
 > dichiaratamente DA COLLAUDARE (fallback: solo pellicola + toggle); (3) la
 > **ricchezza di edit-path-2d in posa** (bezier/archi, non solo la polilinea).
 > Il resto di questo handover (design, entry points, gotcha) resta valido.
+>
+> **AGGIORNAMENTO stessa data — FRUSTUM + RADDRIZZAMENTO + Esc FATTI + GATE PASSATO:**
+> **(1) Frustum-nel-mondo** — camere registrate come piramidi-ghost (corrente ciano),
+> sotto toggle `:show-frustums?`; all'ingresso la camera arretra per inquadrare
+> l'anello (`viewport/frame-camera!`). Niente miniatura/click ancora (fase B se
+> convince — Vincenzo: "può andare"). **(2) Raddrizzamento standard**
+> (`canonicalize-orientation!`, all'apertura E in `confirm!`): se c'è un anello di
+> camere pulito, ri-descrive rigidamente tutto → asse giradischi verticale = +Z,
+> oggetto assi-allineato, `up = dimensione verticale`, emette `(box 20.2 40.1 60.2)`;
+> permutazione ciclica (nessuno specchio), shapes/mark/piani re-espressi, idempotente,
+> guardia (≥4 camere + anello dominante) con fallback traslazione. **(3) Esc sicuro**:
+> al livello base non chiude più (uscita = bottone "Chiudi"). Dettaglio nel brief e in
+> `memory/project_edit_acquire_p4b.md`. **RESTA**: ergonomia frustum (miniatura/click
+> o solo-pellicola) + edit-path-2d in posa.
 
 Aperto 2026-07-24 per **continuare in una chat nuova**. Prerequisito **P4a
 COMPLETO e committato** (sotto). P4b è l'ultimo blocco del design di
