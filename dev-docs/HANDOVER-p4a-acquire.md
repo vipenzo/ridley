@@ -43,7 +43,7 @@
 >
 > **P4a-1 gate umano PASSATO + committato `ca0605f`.**
 >
-> ## STATO 2026-07-24: **P4a-2 (osservazioni) COSTRUITO + verificato**
+> ## STATO 2026-07-24: **P4a-2 (osservazioni) COMMITTATO `b55d9b3` + gate PASSATO** (Vincenzo: pick PnP restano al rientro)
 >
 > Sorpresa: gran parte di P4a-2 l'aveva già fatta la stabilità-registrazione —
 > pose camere, badge, marcature blindate ('m' → `:marker-picks`), piani

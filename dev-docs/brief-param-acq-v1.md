@@ -266,7 +266,7 @@ P4a/P4b):**
     valutatore SCI reale (`repl/evaluate-definitions`). `:shapes`/`:marks` vuoti
     (→ P4a-3). **Manca il gate umano** (geo-server + foto vere: apri → allinea →
     Conferma → riapri stessa posa). Vedi `dev-docs/HANDOVER-p4a-acquire.md`.
-  - **P4a-2 (osservazioni nel file di sessione) COSTRUITO + verificato 2026-07-24.**
+  - **P4a-2 (osservazioni nel file di sessione) COMMITTATO `b55d9b3` + gate PASSATO 2026-07-24.**
     La stabilità-registrazione aveva già reso persistenti pose camere, badge,
     marcature blindate ('m' → `:marker-picks`) e piani (`:retrace`); mancavano
     **i pick PnP** (i click delle corrispondenze — a differenza dello snap 's',
