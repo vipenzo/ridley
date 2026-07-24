@@ -1725,6 +1725,22 @@
                                manual? (assoc :manual? true)
                                (pos? idx) (assoc :camera-pose (get-in @session [:camera-poses idx])))])
                           (:acquire-results @session)))
+        ;; P4a-2 — the PnP CORRESPONDENCES (the per-photo corners the user clicked)
+        ;; plus the solve's residuals/outliers, keyed by photo idx. Unlike 's'
+        ;; edge-snap (which re-derives its edges from the camera pose each time), a
+        ;; PnP registration IS its clicks: the camera pose already round-trips, but
+        ;; without the picks a reopened photo can't show or refine the
+        ;; correspondences — you'd re-click from scratch. These are the design's
+        ;; "osservazioni-di-mark" (the per-photo rays). clj->js stringifies the
+        ;; integer photo AND corner keys; apply-loaded-state! parses both back.
+        pnp (into {}
+                  (for [[idx picks] (:pnp-picks @session) :when (seq picks)]
+                    [(str idx)
+                     (cond-> {:picks picks}
+                       (seq (get-in @session [:pnp-residuals idx]))
+                       (assoc :residuals (get-in @session [:pnp-residuals idx]))
+                       (seq (get-in @session [:pnp-outliers idx]))
+                       (assoc :outliers (vec (get-in @session [:pnp-outliers idx]))))]))
         body (js/JSON.stringify (clj->js {:proxy-pose proxy-pose :photos photos
                                           ;; Photo 0's camera pose, saved explicitly:
                                           ;; the per-photo `photos` map only carries
@@ -1747,7 +1763,17 @@
                                           ;; — the durable branch decision; re-applied
                                           ;; to every future registration via
                                           ;; marker-lock-camera.
-                                          :marker-picks (:marker-picks @session)}))
+                                          :marker-picks (:marker-picks @session)
+                                          ;; P4a-2 — PnP correspondences per photo
+                                          ;; (see the `pnp` binding above).
+                                          :pnp pnp
+                                          ;; P4a-2 — lens focal (35mm-equiv) +
+                                          ;; provenance, so a manual tweak survives
+                                          ;; re-entry instead of reverting to the
+                                          ;; EXIF/default read (load-exif-focal!
+                                          ;; runs before load-acquire-state!).
+                                          :focal {:mm (:focal-mm @session)
+                                                  :source (:focal-source @session)}}))
         path (acquire-state-path)]
     (swap! save-chain
            (fn [prev]
@@ -1759,7 +1785,10 @@
 
 (defn- apply-loaded-state! [text]
   (try
-    (let [{:keys [proxy-pose camera-pose-0 photos retrace marker-picks]} (js->clj (js/JSON.parse text) :keywordize-keys true)]
+    (let [{:keys [proxy-pose camera-pose-0 photos retrace marker-picks pnp focal]} (js->clj (js/JSON.parse text) :keywordize-keys true)
+          ;; JSON keys are strings → keywordize-keys turns the integer photo/corner
+          ;; keys into :0/:1/… ; parse a whole level back to int keys.
+          int-keys (fn [m] (into {} (map (fn [[k v]] [(js/parseInt (name k) 10) v]) m)))]
       (when-let [pl (:plane retrace)]
         (when (and (:axis pl) (:sign pl))
           (swap! session assoc :retrace
@@ -1771,6 +1800,19 @@
       (when marker-picks
         (swap! session assoc :marker-picks
                (into {} (map (fn [[k v]] [(js/parseInt (name k) 10) (vec v)]) marker-picks))))
+      ;; P4a-2 — PnP correspondences per photo (picks/residuals/outliers). Both the
+      ;; photo idx and, inside :picks/:residuals, the corner idx were integer keys;
+      ;; parse both levels. Outliers persisted as a vector → back to a set.
+      (when pnp
+        (doseq [[idx-kw {:keys [picks residuals outliers]}] pnp]
+          (let [idx (js/parseInt (name idx-kw) 10)]
+            (when (seq picks)     (swap! session assoc-in [:pnp-picks idx] (int-keys picks)))
+            (when (seq residuals) (swap! session assoc-in [:pnp-residuals idx] (int-keys residuals)))
+            (when (seq outliers)  (swap! session assoc-in [:pnp-outliers idx] (set outliers))))))
+      ;; P4a-2 — lens focal. Restored AFTER load-exif-focal! (which ran first), so a
+      ;; saved manual tweak wins; an unchanged EXIF/default value restores to itself.
+      (when-let [mm (:mm focal)]
+        (swap! session assoc :focal-mm mm :focal-source (keyword (:source focal))))
       ;; Restore photo 0's frozen vantage so enter-photo! 0 uses it instead of
       ;; recomputing from the aligned pivot (which shifted the proxy on re-entry).
       (when camera-pose-0

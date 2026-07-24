@@ -266,7 +266,18 @@ P4a/P4b):**
     valutatore SCI reale (`repl/evaluate-definitions`). `:shapes`/`:marks` vuoti
     (→ P4a-3). **Manca il gate umano** (geo-server + foto vere: apri → allinea →
     Conferma → riapri stessa posa). Vedi `dev-docs/HANDOVER-p4a-acquire.md`.
-  - **P4a-2** = osservazioni-di-mark nel file di sessione. **P4a-3** =
+  - **P4a-2 (osservazioni nel file di sessione) COSTRUITO + verificato 2026-07-24.**
+    La stabilità-registrazione aveva già reso persistenti pose camere, badge,
+    marcature blindate ('m' → `:marker-picks`) e piani (`:retrace`); mancavano
+    **i pick PnP** (i click delle corrispondenze — a differenza dello snap 's',
+    che li ri-deriva dalla posa, una registrazione PnP *è* i suoi click) e la
+    **focale**. Aggiunti a `acquire-state.json`: sezione `:pnp` (per foto:
+    `:picks {ci {:px :screen}}` + `:residuals` + `:outliers`) e `:focal
+    {:mm :source}`; ripristinati in `apply-loaded-state!` (chiavi intere annidate,
+    set da vettore, focale dopo il read EXIF così una taratura manuale vince).
+    Round-trip save→JSON→load verificato attraverso le funzioni reali. Effetto
+    visibile: riapri una foto registrata con 'p', ripremi 'p' → i pallini colorati
+    e gli spigoli piazzati sono ancora lì (prima erano vuoti). **P4a-3** =
     shapes+marks dentro la form.
 
 ### P5 — Protocollo e documentazione

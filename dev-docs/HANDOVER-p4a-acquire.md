@@ -41,8 +41,36 @@
 >   `(.reload (.-location js/window))` via eval CLJS, aspetta ~7s, re-`(shadow/repl
 >   :app)`. **Ricarica la pagina prima di ogni test live.**
 >
-> **Prossimo:** gate umano (sotto), poi P4a-2 (osservazioni-di-mark nel file di
-> sessione) e P4a-3 (shapes+marks dentro la form).
+> **P4a-1 gate umano PASSATO + committato `ca0605f`.**
+>
+> ## STATO 2026-07-24: **P4a-2 (osservazioni) COSTRUITO + verificato**
+>
+> Sorpresa: gran parte di P4a-2 l'aveva già fatta la stabilità-registrazione —
+> pose camere, badge, marcature blindate ('m' → `:marker-picks`), piani
+> (`:retrace`) erano già persistiti. I buchi veri, ora chiusi in
+> `edit_acquire.cljs` (save/load):
+> - **Pick PnP**: a differenza dello snap 's' (che ri-deriva gli spigoli dalla
+>   posa persistita), una registrazione PnP *è* i suoi click — la posa
+>   round-trippava ma i pick no, quindi rientrando in 'p' i pallini erano spariti.
+>   Nuova sezione `:pnp` in `acquire-state.json` = `{"idx" {:picks {ci {:px
+>   :screen}} :residuals {ci r} :outliers [ci…]}}` (solo foto con pick).
+> - **Focale**: nuova sezione `:focal {:mm :source}`, ripristinata DOPO il read
+>   EXIF così una taratura manuale vince.
+> - `apply-loaded-state!` ripristina entrambe: helper `int-keys` per le chiavi
+>   intere annidate (foto + spigolo, che JSON stringa), outliers vettore→set,
+>   focale source stringa→keyword.
+> - Verificato: simmetria di serializzazione (int-keys annidate + set + keyword) e
+>   le funzioni REALI `apply-loaded-state!`/`save-acquire-state!` (shape JSON
+>   corretta, nessun throw). `start-pnp!` conserva e ridisegna i pick → al rientro
+>   si rivedono. **Gate umano**: registra una foto con 'p', OK, riapri, ripremi 'p'
+>   → pallini colorati + spigoli piazzati ancora lì.
+>
+> **Prossimo: P4a-3** — il gesto del mark NOMINATO con id (clicca un punto, dagli
+> un nome, triangola su più foto → `:marks {:nome {:position :direction}}`) + i
+> ricalchi retrace → `:shapes {:nome (poly …)}`, così `:shapes`/`:marks` nella
+> form si popolano e si destrutturano per nome. È ciò che Vincenzo ha chiesto
+> ("non dovrei potergli dare un id?"). Il tasto 'm' resta il *marcatore blindato*
+> (Klein branch-lock), NON questo — sono due cose diverse.
 
 Aperto 2026-07-24 per **continuare in una chat nuova**. Task: implementare
 **P4a-1** (round-trip del proxy) di `edit-acquire`, dentro il perimetro di design
