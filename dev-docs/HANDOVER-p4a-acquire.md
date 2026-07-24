@@ -1,5 +1,12 @@
 # Handover — P4a: `acquire` emissione + round-trip
 
+> **STORICO — P4a È COMPLETO E COMMITTATO (2026-07-24).** Tutte e tre le fette
+> (proxy / osservazioni / shapes+marks) più le rifiniture (build-anchor, ricalchi
+> multipli, pretty-print, shape-con-mark) sono a branch. **Per continuare (P4b, il
+> palcoscenico non-modale) usa `dev-docs/HANDOVER-p4b-stage.md`.** Questo file
+> resta come traccia del percorso P4a.
+
+
 > ## STATO 2026-07-24: **P4a-1 COSTRUITO + verificato live, NON committato**
 >
 > Fatto in questa sessione (branch `edit-acquire-registration-stability`, working tree):
