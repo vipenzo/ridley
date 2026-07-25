@@ -302,9 +302,14 @@
       (let [ctx @state/sci-ctx-ref]
         (when arm-skip? (arm-skip!))
         (sci/eval-string script ctx))
-      (let [{:keys [lines stamps]} @state/scene-accumulator]
+      (let [{:keys [lines stamps scaffolds]} @state/scene-accumulator]
         (registry/set-lines! (vec (or lines [])))
-        (registry/set-stamps! (vec (or stamps []))))
+        (registry/set-stamps! (vec (or stamps [])))
+        ;; Propagate scaffolds too (reference geometry like the acquire proxy):
+        ;; without this a modal editor's live re-eval drops every scaffold, so the
+        ;; proxy vanishes while editing (edit-path-2d over an (acquire …) scene —
+        ;; Vincenzo 2026-07-25) and only returns on the full run at confirm/cancel.
+        (registry/set-scaffolds! (vec (or scaffolds []))))
       (registry/refresh-viewport! false)
       :ok)
     (catch :default e
