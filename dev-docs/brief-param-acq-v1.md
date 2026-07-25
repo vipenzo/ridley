@@ -106,6 +106,27 @@ free-look, il costo grosso dell'accertamento 6) prima di costruire il resto.
 > Punti liberi triangolati (stesso gesto PnP, su feature dell'oggetto) per
 > ciò che non giace su piani. Collaudo del giro completo: il lettore SD
 > nastrato (proxy box → piano top → ricalco del bezel).
+>
+> **Agg. 2026-07-29**: P4a ✅ (forma autocontenuta, write-back, re-entry);
+> frustum cliccabili ✅ (primo mattone P4b). **P4 si chiude quando
+> `:retrace` muore** (conferma di Vincenzo): acquire valutata → frustum →
+> camera in posa come stato del viewport (non sessione) → edit-path-2d
+> NORMALE sopra la vista in posa. Nessun arricchimento del modale da qui
+> in poi — sarebbe lavoro da buttare.
+>
+> **Agg. 2026-07-30 — il verso dell'ospitalità (Vincenzo)**: edit-path-2d
+> NON si ospita dentro edit-acquire (né estraendone il motore né guidandone
+> apertura/chiusura): **si esce da edit-acquire**, e il ricalco è
+> l'edit-path-2d normale aperto dall'utente nel suo sorgente, col piano
+> dalla posa della turtle (che l'utente posa via mark/faccia della
+> acquire). Il palcoscenico (frustum, posa, sfondo) è fornito dalla
+> `(acquire …)` valutata a QUALUNQUE strumento. Conseguenze: niente
+> conflitto di slot modale (edit-acquire è chiusa), niente estrazione del
+> motore di edit_path, e il ricalco NON si piega in `:shapes` — è
+> `(path-2d …)` nel programma dell'utente, autonomo per nascita (`:shapes`
+> resta solo per ciò che nasce durante la registrazione). Lavoro residuo
+> di P4b: palcoscenico attivo fuori sessione, convivenza camera-in-posa +
+> sessione edit-path-2d, gesto per posare la turtle su faccia/mark.
 
 > **Stato P3-slice 2026-07-23 (COSTRUITO, NON committato, in attesa del gate
 > umano)**: la fetta è dentro `edit-acquire` come nuovo modo `:retrace` (tasto

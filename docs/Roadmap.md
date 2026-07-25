@@ -27,11 +27,14 @@ camere via PnP su proxy (fatta e collaudata), ricalco su viste in posa
 
 - **Documento di governo**: `dev-docs/brief-param-acq-v1.md` — Parti P0-P5
   con stato aggiornato in testa alla sezione "Parti". Oggi: **P4b in corso**
-  (palcoscenico non-modale). P4a fatto e committato; P4b fetta 1 — camera
-  libera + vai-in-posa, frustum-nel-mondo, raddrizzamento standard
-  dell'oggetto (up = asse giradischi) — fatta e collaudata. Handover
-  `dev-docs/HANDOVER-p4b-stage.md`. Resta di P4b: ergonomia frustum da
-  affinare + ricchezza di edit-path-2d in posa.
+  (palcoscenico non-modale). P4a fatto e committato. P4b: il palcoscenico è
+  **stato del viewport** guidato dalla `(acquire …)` valutata nel sorgente
+  normale — frustum cliccabili → posa con foto e proxy allineato → ricalco
+  con `edit-path-2d` NORMALE su una faccia (`:faces`), con zoom/pan sulla
+  foto e handle a dimensione fissa; tutto costruito e collaudato da Vincenzo.
+  Resta l'ultima fetta ricca: **toolbar del palcoscenico (Photo lock +
+  Prev/Next) e riproiezione live** — navigare le foto mentre si traccia.
+  Handover `dev-docs/HANDOVER-p4b-stage-toolbar.md`.
 - **Design di riferimento**: `dev-docs/acquisizione-parametrica-design.md`
   (principi, accertamenti chiusi con verdetti misurati).
 - **Storia e handover**: `dev-docs/HANDOVER-edit-acquire-gate.md` e

@@ -197,6 +197,23 @@ follow-up. Concordalo con Vincenzo se emerge.
 4. Verifica ogni passo con Playwright (screenshot + stato), committa a fette,
    collaudo umano di Vincenzo per l'ergonomia.
 
+## Review (Claude, pre-lancio) — quattro aggiunte
+
+1. **Esc: il conflitto va risolto così** — con edit-path-2d aperto, Esc
+   appartiene all'EDITOR (annulla), lo stage non lo tocca: il guard
+   `modal/active?` resta per Esc e si toglie SOLO per `[`/`]`. Esc esce dal
+   lock solo quando nessun modale è aperto.
+2. **`[`/`]` in capture su `document` rubano i tasti ai campi di testo**:
+   guard su `event.target` input/textarea (gemello del bug digit-buffer di
+   edit-mesh-split).
+3. **Toggle premuto senza una foto corrente** (palcoscenico mai lockato):
+   default = prima foto in ordine di θ (o toggle disabilitato finché non
+   esiste una corrente). Da definire, non lasciare al caso.
+4. **Avvertenza da collaudo, non da codice**: navigando durante il ricalco
+   si può arrivare a viste col piano di schizzo quasi di taglio → click sul
+   piano mal condizionati (piccoli errori di mira = grandi salti). Se in
+   collaudo i click "impazziscono" da certe angolazioni, è questo.
+
 ## Nota
 
 `dev-docs/brief-param-acq-v1.md` ha una modifica NON committata di Vincenzo (note
