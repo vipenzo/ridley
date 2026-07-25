@@ -153,10 +153,16 @@
 
 (defn image-size
   "[width height] of the currently loaded photo in pixels, or nil before the
-   first photo has loaded."
+   first photo has loaded. Returns nil (not [nil nil]) when the plane exists but
+   no photo has loaded yet — since create! (P4b stage) now builds the plane up
+   front, the bstate map is present with image dims still nil, and a naive
+   destructure would hand callers [nil nil]; that turned `(/ w h)` into NaN in
+   frustum-preview-items (NaN frustum geometry → invisible frustums, Vincenzo
+   2026-07-25). Guard on the dims, not just the map."
   []
   (when-let [{:keys [image-width image-height]} @bstate]
-    [image-width image-height]))
+    (when (and image-width image-height)
+      [image-width image-height])))
 
 (defn pixel-under-pointer
   "Photo pixel [u v] (origin top-left, +v down — matching luminance-at and
