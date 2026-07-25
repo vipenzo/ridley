@@ -47,6 +47,12 @@
   (when-let [{:keys [^js mesh]} @bstate]
     (set! (.-visible mesh) (boolean visible?))))
 
+(defn ready?
+  "True once the backdrop plane exists (create! has run). Lets a caller lazily
+   create it before set-photo!/set-visible!, which are silent no-ops otherwise."
+  []
+  (some? (:mesh @bstate)))
+
 (defn create!
   "Build (or replace) the backdrop plane as a child of `camera`, at local
    [0 0 (- depth)] (THREE cameras look down their own -Z axis, so this is

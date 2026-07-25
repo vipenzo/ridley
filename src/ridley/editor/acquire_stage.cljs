@@ -176,6 +176,13 @@
   (when-let [pose (get-in @stage [:camera-poses idx])]
     (swap! stage assoc :current-idx idx :in-pose? true)
     (viewport/set-camera-pose! pose) ; disables controls → locked
+    ;; Ensure the backdrop plane exists — after-eval! builds it on a fresh
+    ;; activation, but the stage atom is a defonce that persists, so a stage
+    ;; activated by pre-fix code (or otherwise already set for this dir) never got
+    ;; a backdrop and set-photo!/set-visible! would silently no-op (no photo, only
+    ;; the proxy). Lazily creating here makes the photo robust to how we got here.
+    (when-not (backdrop/ready?)
+      (backdrop/create! (viewport/get-camera)))
     (when-let [file (photo-file idx)]
       (backdrop/set-photo! (str (:dir @stage) "/" file) (:focal-mm @stage)
                            viewport/set-camera-fov!)
