@@ -2392,6 +2392,10 @@
                                                :side THREE/DoubleSide})
             ^js m (THREE/Mesh. geom mat)]
         (.set (.-position m) (nth pos 0) (nth pos 1) (nth pos 2))
+        ;; tag so a caller (edit-acquire's in-pose zoom) can scale the dot about
+        ;; its own centre to keep node handles a constant SCREEN size while the
+        ;; camera view offset magnifies everything else (scale-screen-dots!).
+        (set! (.. m -userData -screenScaleDot) true)
         ;; orient ring/quad to lie in the working plane (normal → local +Z) so they
         ;; read as a ring / square when viewed face-on (the usual tracing view)
         (when (and (or ring square) normal)
@@ -2832,6 +2836,17 @@
                           (some? (.. x -userData -pickId)) (.. x -userData -pickId)
                           :else (recur (.-parent x)))))]
         (some (fn [^js h] (pick-of (.-object h))) hits)))))
+
+(defn scale-screen-dots!
+  "Set the scale of every preview dot marker (tagged screenScaleDot by
+   create-dot-meshes) to `factor` about its own centre. edit-acquire's in-pose
+   zoom calls this with 1/zoom each frame so node handles keep a constant SCREEN
+   size while the camera view offset magnifies everything else."
+  [factor]
+  (doseq [^js obj @preview-objects]
+    (.traverse obj (fn [^js o]
+                     (when (.. o -userData -screenScaleDot)
+                       (.set (.-scale o) factor factor factor))))))
 
 (defn raycast-mesh-face
   "Raycast the pointer ray against the scene meshes (world-group children that carry

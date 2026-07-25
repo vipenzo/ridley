@@ -185,8 +185,16 @@
     ;; drifts (Vincenzo 2026-07-25: "grabbo un nodo e il wireframe si sposta").
     ;; Forcing controls off per-frame (edit-acquire's own stage does the same via
     ;; its :edit-acquire lock) keeps the pose glued no matter who re-enables them.
+    ;; …and, in the same per-frame callback, keep edit-path-2d's node handles a
+    ;; constant SCREEN size: the in-pose zoom is a camera view offset that magnifies
+    ;; the dots too, so counteract it by scaling them 1/zoom (Vincenzo 2026-07-25:
+    ;; "lo zoom ingrandisce anche gli handles… dovrebbero restare di dimensione
+    ;; fissa"). Re-applied every frame so it survives edit-path re-rendering its dots.
     (viewport/register-frame-callback! :acquire-stage
-                                       (fn [_camera] (viewport/set-controls-enabled! false)))
+                                       (fn [_camera]
+                                         (viewport/set-controls-enabled! false)
+                                         (viewport/scale-screen-dots!
+                                          (/ 1.0 (get-in @stage [:view :zoom] 1.0)))))
     ;; Ensure the backdrop plane exists — after-eval! builds it on a fresh
     ;; activation, but the stage atom is a defonce that persists, so a stage
     ;; activated by pre-fix code (or otherwise already set for this dir) never got
@@ -212,6 +220,8 @@
     ;; release the per-frame camera lock FIRST, else free-camera-at-pivot! re-enables
     ;; orbit and the lock callback immediately re-disables it.
     (viewport/unregister-frame-callback! :acquire-stage)
+    ;; the per-frame dot rescale is gone with the callback — restore handles to 1×
+    (viewport/scale-screen-dots! 1.0)
     ;; clear any in-pose zoom/pan so free orbit uses the full frame
     (reset-view!)
     (backdrop/set-visible! false)
