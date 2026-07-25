@@ -339,6 +339,12 @@
                               :loaded? false
                               :pending nil})
           (install-listeners!)
+          ;; Build the photo backdrop plane (child of the camera) ONCE per activation,
+          ;; hidden until go-in-pose! — without this set-photo!/set-visible! are silent
+          ;; no-ops (backdrop bstate nil) and clicking a frustum flew the camera into
+          ;; pose but showed NO photo, only the proxy (Vincenzo 2026-07-25).
+          (backdrop/create! (viewport/get-camera))
+          (backdrop/set-visible! false)
           (-> (load!) (.then (fn [_] (when-not (:in-pose? @stage) (show-frustums!))))))
 
       ;; same dir re-evaluated → keep camera/pose, just refresh geometry (dims/pose
