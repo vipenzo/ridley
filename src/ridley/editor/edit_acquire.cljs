@@ -2785,6 +2785,32 @@
   (let [m (or proxy (default-proxy))]
     (if pose (apply-pose m pose) m)))
 
+(declare normal-up-obj)
+
+(def ^:private box-face-specs
+  "Face name → [axis sign] in the box's object frame (Ridley box convention:
+   x=right, y=up, z=heading — so +y=top, +z=front). Mirrors retrace-face-labels."
+  {:right [0 1] :left [0 -1] :top [1 1] :bottom [1 -1] :front [2 1] :back [2 -1]})
+
+(defn- face-poses
+  "The 6 box faces of the posed proxy as turtle POSES {:position :heading :up} in
+   world — so `(turtle (:top (:faces A)) (edit-path-2d …))` drops the turtle onto a
+   face (P4b Pezzo iii: pose the turtle on a face of the acquire, then draw the
+   ricalco there with the stage's backdrop). heading = OUTWARD face normal, position
+   = face centre, up = an in-plane box axis (normal-up-obj, deterministic). Same
+   frame the emitted marks use, so faces and marks pose the turtle identically."
+  [proxy pose]
+  (let [dims (bridge/dims-from-mesh proxy pose)]
+    (into {}
+          (map (fn [[nm [axis sign]]]
+                 (let [half (* 0.5 (nth dims axis))
+                       center-obj (assoc [0.0 0.0 0.0] axis (* sign half))
+                       normal-obj (m/v* (axis-unit axis) (double sign))]
+                   [nm {:position (bridge/local->world pose center-obj)
+                        :heading (obj-dir->world pose normal-obj)
+                        :up (obj-dir->world pose (normal-up-obj normal-obj))}]))
+               box-face-specs))))
+
 (defn ^:export acquire
   "(acquire \"dir\") / (acquire \"dir\" {:proxy (box …) :pose {…} :shapes {} :marks {}})
    — the self-contained acquisizione-parametrica form (P4a). Mounts the posed
@@ -2806,6 +2832,10 @@
       :pose pose
       :shapes (or (:shapes opts) {})
       :marks (or (:marks opts) {})
+      ;; P4b Pezzo (iii): the 6 box faces as turtle poses, so the user can drop the
+      ;; turtle onto a face by name — `(turtle (:top (:faces A)) (edit-path-2d …))`
+      ;; — and draw the ricalco there over the stage backdrop. Computed, not stored.
+      :faces (face-poses posed pose)
       :dir dir})))
 
 ;; ============================================================

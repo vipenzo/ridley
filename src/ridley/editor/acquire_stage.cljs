@@ -19,6 +19,7 @@
    re-running canonicalize."
   (:require [ridley.math :as m]
             [ridley.viewport.core :as viewport]
+            [ridley.editor.modal-evaluator :as modal]
             [ridley.editor.acquire-backdrop :as backdrop]
             [ridley.turtle.attachment :as attachment]
             [ridley.photogrammetry.camera :as pcamera]
@@ -229,7 +230,10 @@
         (js/setTimeout (fn [] (go-in-pose! idx)) 0)))))
 
 (defn- on-keydown [^js e]
-  (when (and @stage (loaded?) (not (editable? (.-activeElement js/document))))
+  ;; Inert while a modal editor is open (edit-path-2d drawing a ricalco over the
+  ;; posed photo) — it owns the keys then; the stage's [ / ] / Esc must not fight it.
+  (when (and @stage (loaded?) (not (modal/active?))
+             (not (editable? (.-activeElement js/document))))
     (let [k (.-key e)
           n (count (:photos @stage))
           idx (:current-idx @stage 0)]
