@@ -169,6 +169,8 @@
 ;; over it. Leaving returns to free orbit WITHOUT a jump (free-camera-at-pivot!).
 ;; ------------------------------------------------------------
 
+(declare reset-view!)
+
 (defn go-in-pose!
   "Fly the camera into photo `idx`'s registered pose, show that photo full-screen
    as the backdrop; the user's geometry (already in the scene) projects over it."
@@ -196,6 +198,8 @@
       (backdrop/set-photo! (str (:dir @stage) "/" file) (:focal-mm @stage)
                            viewport/set-camera-fov!)
       (backdrop/set-visible! true))
+    ;; every photo starts un-zoomed (fresh view offset)
+    (reset-view!)
     ;; drop the frustums — we're in pose now
     (viewport/clear-preview!)))
 
@@ -208,6 +212,8 @@
     ;; release the per-frame camera lock FIRST, else free-camera-at-pivot! re-enables
     ;; orbit and the lock callback immediately re-disables it.
     (viewport/unregister-frame-callback! :acquire-stage)
+    ;; clear any in-pose zoom/pan so free orbit uses the full frame
+    (reset-view!)
     (backdrop/set-visible! false)
     (viewport/free-camera-at-pivot! (stage-pivot))
     (show-frustums!)))
@@ -264,19 +270,116 @@
         (and (:in-pose? @stage) (= k "]"))
         (do (.preventDefault e) (go-in-pose! (mod (inc idx) n)))))))
 
+;; ------------------------------------------------------------
+;; In-pose ZOOM + PAN on the still photo (Vincenzo 2026-07-25: trace fine details
+;; without changing the drawing plane). We zoom/pan the PROJECTION — camera view
+;; offset, NOT the position/orientation — so the drawing plane is untouched, photo
+;; and proxy scale/shift together (both projected by the same camera → stay
+;; aligned), and edit-path-2d's click→plane raycast keeps landing right (it
+;; unprojects through the camera, which now carries the offset). Zoom = wheel
+;; around the cursor; pan = right-button drag. State in :view {:zoom :pan-x :pan-y},
+;; where pan-x/y is the shown sub-rectangle's top-left in canvas-px of a virtual
+;; full frame; reset on every go-in-pose!/leave-pose!.
+;; ------------------------------------------------------------
+
+(def ^:private zoom-min 1.0)
+(def ^:private zoom-max 8.0)
+
+(defn- clampv [v lo hi] (max lo (min hi v)))
+
+(def ^:private default-view {:zoom 1.0 :pan-x 0.0 :pan-y 0.0})
+
+(defn- apply-view!
+  "Push :view onto the camera as a view offset (magnify + shift), or clear it at
+   zoom 1 (the whole frame)."
+  []
+  (when-let [^js cam (viewport/get-camera)]
+    (let [{:keys [zoom pan-x pan-y]} (:view @stage default-view)
+          rect (.getBoundingClientRect (viewport/get-canvas))
+          W (.-width rect) H (.-height rect)]
+      (if (<= zoom 1.0001)
+        (.clearViewOffset cam)
+        (.setViewOffset cam W H pan-x pan-y (/ W zoom) (/ H zoom)))
+      (.updateProjectionMatrix cam))))
+
+(defn- reset-view! []
+  (swap! stage assoc :view default-view)
+  (when-let [^js cam (viewport/get-camera)]
+    (.clearViewOffset cam)
+    (.updateProjectionMatrix cam)))
+
+(defn- on-wheel [^js e]
+  (when (:in-pose? @stage)
+    (.preventDefault e) (.stopPropagation e)
+    (let [rect (.getBoundingClientRect (viewport/get-canvas))
+          W (.-width rect) H (.-height rect)
+          mx (- (.-clientX e) (.-left rect))
+          my (- (.-clientY e) (.-top rect))
+          {:keys [zoom pan-x pan-y]} (:view @stage default-view)
+          w (/ W zoom) h (/ H zoom)
+          ;; virtual-frame point currently under the cursor — keep it there
+          fx (+ pan-x (* (/ mx W) w))
+          fy (+ pan-y (* (/ my H) h))
+          zoom' (clampv (* zoom (if (pos? (.-deltaY e)) (/ 1.0 1.1) 1.1)) zoom-min zoom-max)
+          w' (/ W zoom') h' (/ H zoom')]
+      (swap! stage assoc :view
+             {:zoom zoom'
+              :pan-x (clampv (- fx (* (/ mx W) w')) 0.0 (- W w'))
+              :pan-y (clampv (- fy (* (/ my H) h')) 0.0 (- H h'))})
+      (apply-view!))))
+
+(defn- on-pan-down [^js e]
+  (when (and (:in-pose? @stage) (= 2 (.-button e)))
+    (.preventDefault e)
+    (swap! stage assoc :pan-drag {:x (.-clientX e) :y (.-clientY e)
+                                  :pan-x (get-in @stage [:view :pan-x] 0.0)
+                                  :pan-y (get-in @stage [:view :pan-y] 0.0)})))
+
+(defn- on-pan-move [^js e]
+  (when-let [{:keys [x y pan-x pan-y]} (:pan-drag @stage)]
+    (.preventDefault e)
+    (let [rect (.getBoundingClientRect (viewport/get-canvas))
+          W (.-width rect) H (.-height rect)
+          zoom (:zoom (:view @stage default-view))
+          w (/ W zoom) h (/ H zoom)
+          ;; drag the content WITH the cursor → the sub-rectangle moves opposite
+          px' (clampv (- pan-x (* (/ (- (.-clientX e) x) W) w)) 0.0 (- W w))
+          py' (clampv (- pan-y (* (/ (- (.-clientY e) y) H) h)) 0.0 (- H h))]
+      (swap! stage update :view merge {:pan-x px' :pan-y py'})
+      (apply-view!))))
+
+(defn- on-pan-up [^js e]
+  (when (and (:pan-drag @stage) (= 2 (.-button e)))
+    (swap! stage dissoc :pan-drag)))
+
+(defn- on-contextmenu [^js e]
+  ;; suppress the menu so right-drag can pan the posed photo
+  (when (:in-pose? @stage) (.preventDefault e)))
+
 (defn- install-listeners! []
   (when-not (:listeners? @stage)
     (let [^js canvas (viewport/get-canvas)]
       (.addEventListener canvas "pointerdown" on-pointerdown true)
       (.addEventListener canvas "pointerup" on-pointerup true)
-      (.addEventListener js/document "keydown" on-keydown true))
+      (.addEventListener js/document "keydown" on-keydown true)
+      ;; in-pose zoom/pan (self-guarded on :in-pose?)
+      (.addEventListener canvas "wheel" on-wheel #js {:capture true :passive false})
+      (.addEventListener canvas "pointerdown" on-pan-down true)
+      (.addEventListener canvas "pointermove" on-pan-move true)
+      (.addEventListener canvas "pointerup" on-pan-up true)
+      (.addEventListener canvas "contextmenu" on-contextmenu true))
     (swap! stage assoc :listeners? true)))
 
 (defn- teardown-listeners! []
   (let [^js canvas (viewport/get-canvas)]
     (.removeEventListener canvas "pointerdown" on-pointerdown true)
     (.removeEventListener canvas "pointerup" on-pointerup true)
-    (.removeEventListener js/document "keydown" on-keydown true)))
+    (.removeEventListener js/document "keydown" on-keydown true)
+    (.removeEventListener canvas "wheel" on-wheel true)
+    (.removeEventListener canvas "pointerdown" on-pan-down true)
+    (.removeEventListener canvas "pointermove" on-pan-move true)
+    (.removeEventListener canvas "pointerup" on-pan-up true)
+    (.removeEventListener canvas "contextmenu" on-contextmenu true)))
 
 ;; ------------------------------------------------------------
 ;; Lifecycle: activation from an evaluated (acquire …), refresh across Runs, and
