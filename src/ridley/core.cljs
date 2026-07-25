@@ -39,6 +39,7 @@
             [ridley.anim.core :as anim]
             [ridley.anim.playback :as anim-playback]
             [ridley.editor.modal-evaluator :as modal]
+            [ridley.editor.acquire-stage :as acquire-stage]
             [ridley.editor.tweak-mode :as tweak-mode]
             [ridley.version :as version]
             [ridley.audio :as audio]))
@@ -243,6 +244,11 @@
             (registry/set-definition-meshes! (:meshes render-data)))
           ;; Refresh viewport, optionally resetting camera
           (registry/refresh-viewport! reset-camera?)
+          ;; P4b palcoscenico: if this eval contained an (acquire …), turn it into
+          ;; the interactive stage now that the scene is rebuilt (a Run clears the
+          ;; preview layer); if it contained none, tear any stage down. Mirrors the
+          ;; modal/requested?→enter! post-eval step below, but non-modal.
+          (acquire-stage/after-eval!)
           ;; Announce success for screen readers (via aria-live on repl-history)
           (let [mesh-count (count (or (:meshes render-data) []))
                 line-count (count (or (:lines render-data) []))

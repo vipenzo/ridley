@@ -41,6 +41,7 @@
             [ridley.editor.codemirror :as cm]
             [ridley.editor.gizmo :as gizmo]
             [ridley.editor.acquire-backdrop :as backdrop]
+            [ridley.editor.acquire-stage :as stage]
             [ridley.editor.state :as state]
             [ridley.editor.ui :as ui]
             [ridley.geometry.primitives :as prims]
@@ -180,49 +181,11 @@
 ;; DA COLLAUDARE — fallback: la sola pellicola.
 ;; ------------------------------------------------------------
 
-(def ^:private frustum-ghost-color 0x8899aa)   ; grigio-azzurro, legge come riferimento
-(def ^:private frustum-current-color 0x66ccff) ; la foto corrente, evidenziata
-
-(defn- frustum-corners
-  "Apex + 4 base corners of a camera pyramid: apex at the camera `position`,
-   rectangular base `depth` in front (along heading), sized to the half-extents.
-   Shared by frustum-edges (the 8 visible line segments) and frustum-pick-mesh
-   (the invisible solid twin used for click-to-go-in-pose)."
-  [{:keys [position heading up]} depth half-w half-h]
-  (let [fwd (m/normalize heading)
-        u (m/normalize up)
-        r (m/normalize (m/cross fwd u))
-        base (m/v+ position (m/v* fwd depth))
-        c1 (m/v+ base (m/v+ (m/v* r half-w) (m/v* u half-h)))
-        c2 (m/v+ base (m/v+ (m/v* r (- half-w)) (m/v* u half-h)))
-        c3 (m/v+ base (m/v+ (m/v* r (- half-w)) (m/v* u (- half-h))))
-        c4 (m/v+ base (m/v+ (m/v* r half-w) (m/v* u (- half-h))))]
-    [position c1 c2 c3 c4]))
-
-(defn- frustum-edges
-  "8 world-space edge segments of a camera pyramid (apex → 4 corners, + base loop)."
-  [pose depth half-w half-h color]
-  (let [[apex c1 c2 c3 c4] (frustum-corners pose depth half-w half-h)]
-    (mapv (fn [[a b]] {:from a :to b :color color})
-          [[apex c1] [apex c2] [apex c3] [apex c4]
-           [c1 c2] [c2 c3] [c3 c4] [c4 c1]])))
-
-(defn- frustum-pick-mesh
-  "Invisible solid twin of a frustum pyramid, tagged with the photo `idx` so a click
-   in free orbit resolves to that camera. The visible frustum is drawn as :lines,
-   which are NOT raycast-hittable (only a THREE.Mesh is — mesh-board note); this
-   mesh is never rendered (:pick-only) but is picked by viewport/raycast-preview-pick.
-   Faces: 4 side triangles from the apex + 2 for the base quad; double-sided so a
-   ray hits regardless of which side it enters."
-  [pose depth half-w half-h idx]
-  (let [corners (frustum-corners pose depth half-w half-h)]
-    {:type :mesh
-     :pick-only true
-     :pick-id idx
-     :data {:vertices corners
-            :faces [[0 1 2] [0 2 3] [0 3 4] [0 4 1]
-                    [1 2 3] [1 3 4]]
-            :material {:double-sided true}}}))
+;; Frustum geometry + colours now live in ridley.editor.acquire-stage (the shared,
+;; session-free stage module the eval-driven palcoscenico will own); edit-acquire's
+;; in-session stage still draws them here via frustum-items.
+(def ^:private frustum-ghost-color stage/frustum-ghost-color)
+(def ^:private frustum-current-color stage/frustum-current-color)
 
 (defn- frustum-items
   "Every registered camera (:camera-poses) as a ghost pyramid at its world pose.
@@ -244,9 +207,9 @@
       (into []
             (mapcat (fn [[idx pose]]
                       [{:type :lines
-                        :data (frustum-edges pose depth half-w half-h
-                                             (if (= idx cur) frustum-current-color frustum-ghost-color))}
-                       (frustum-pick-mesh pose depth half-w half-h idx)]))
+                        :data (stage/frustum-edges pose depth half-w half-h
+                                                   (if (= idx cur) frustum-current-color frustum-ghost-color))}
+                       (stage/frustum-pick-mesh pose depth half-w half-h idx)]))
             (:camera-poses @session)))))
 
 (defn- stage-free-preview-items
@@ -1036,7 +999,12 @@
       (when (and (some? idx) (some? x)
                  (< (js/Math.hypot (- (.-clientX e) x) (- (.-clientY e) y))
                     frustum-click-slop-px))
-        (go-in-pose! idx)))))
+        ;; Defer the pose (which disables the orbit controls) to a macrotask so
+        ;; TrackballControls ends THIS click cleanly first — else its ROTATE state
+        ;; is stranded (its pointerup early-returns while disabled) and re-activates
+        ;; on leave-pose! as a phantom drag (Vincenzo 2026-07-25). setTimeout not
+        ;; rAF: rAF is paused in a background tab and would swallow the click.
+        (js/setTimeout (fn [] (go-in-pose! idx)) 0)))))
 
 (defn- install-frustum-listeners! []
   (let [^js canvas (viewport/get-canvas)]
@@ -2827,10 +2795,15 @@
    P4b (the in-pose film)."
   ([dir] (acquire dir nil))
   ([dir opts]
-   (let [posed (resolve-proxy opts)]
+   (let [posed (resolve-proxy opts)
+         pose (or (:pose opts) (:creation-pose posed))]
      (record-scaffolds! [posed])
+     ;; P4b: note the stage so the post-eval hook (core/after refresh-viewport!)
+     ;; turns this evaluated directive into the interactive palcoscenico —
+     ;; clickable frustums + click→pose, viewport state, camera left where it is.
+     (stage/note-eval! {:proxy posed :pose pose :dir dir})
      {:proxy posed
-      :pose (or (:pose opts) (:creation-pose posed))
+      :pose pose
       :shapes (or (:shapes opts) {})
       :marks (or (:marks opts) {})
       :dir dir})))
