@@ -176,6 +176,15 @@
   (when-let [pose (get-in @stage [:camera-poses idx])]
     (swap! stage assoc :current-idx idx :in-pose? true)
     (viewport/set-camera-pose! pose) ; disables controls → locked
+    ;; HARD-lock the camera every frame while in pose. set-camera-pose! disables
+    ;; the orbit controls ONCE, but a modal editor opened over the photo (an
+    ;; edit-path-2d ricalco) re-enables them on every node grab/release — after
+    ;; that, dragging a node ALSO orbits the camera and the photo↔proxy alignment
+    ;; drifts (Vincenzo 2026-07-25: "grabbo un nodo e il wireframe si sposta").
+    ;; Forcing controls off per-frame (edit-acquire's own stage does the same via
+    ;; its :edit-acquire lock) keeps the pose glued no matter who re-enables them.
+    (viewport/register-frame-callback! :acquire-stage
+                                       (fn [_camera] (viewport/set-controls-enabled! false)))
     ;; Ensure the backdrop plane exists — after-eval! builds it on a fresh
     ;; activation, but the stage atom is a defonce that persists, so a stage
     ;; activated by pre-fix code (or otherwise already set for this dir) never got
@@ -196,6 +205,9 @@
   []
   (when (:in-pose? @stage)
     (swap! stage assoc :in-pose? false)
+    ;; release the per-frame camera lock FIRST, else free-camera-at-pivot! re-enables
+    ;; orbit and the lock callback immediately re-disables it.
+    (viewport/unregister-frame-callback! :acquire-stage)
     (backdrop/set-visible! false)
     (viewport/free-camera-at-pivot! (stage-pivot))
     (show-frustums!)))
@@ -276,6 +288,7 @@
   []
   (when @stage
     (teardown-listeners!)
+    (viewport/unregister-frame-callback! :acquire-stage)
     (when (:in-pose? @stage) (backdrop/set-visible! false))
     (backdrop/clear!)
     (viewport/clear-preview!)
