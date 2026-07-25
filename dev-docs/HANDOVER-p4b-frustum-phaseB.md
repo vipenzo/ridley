@@ -1,5 +1,34 @@
 # Handover — P4b frustum, FASE B (miniatura sul frustum + click-per-andare-in-posa)
 
+## STATO 2026-07-25 — Pezzo 1 (CLICK) COSTRUITO + verificato headless, ATTENDE il gate di Vincenzo
+
+**Pezzo 1 (click su frustum → go-in-pose) FATTO, non ancora committato** (branch
+`edit-acquire-registration-stability`). Meccanismo verificato end-to-end in Chrome
+via nREPL (NON in una sessione reale con foto — quello è il gate di Vincenzo):
+- `viewport/build-preview-object` ora onora `:pick-only` → mette `visible=false` ma
+  l'oggetto resta **raycast-hittable** (verificato in three.js r160: `intersectObject`
+  su una mesh `visible=false` → 2 hit).
+- `frustum-pick-mesh` (edit_acquire :210): gemella **solida invisibile** della
+  piramide (apice + 4 triangoli laterali + 2 base, double-sided), `:pick-id`=idx-foto.
+  `frustum-corners` (:186) condivisa con `frustum-edges`. `frustum-items` ora emette
+  DUE item per camera: `:lines` (visibile) + pick-mesh (verificato: 4 item per 2
+  camere, tipi `[:lines :mesh :lines :mesh]`, pick-id `[nil 0 nil 1]`).
+- Test reale del pick: mesh `:pick-only` davanti alla camera vera → proiettata sullo
+  schermo → `raycast-preview-pick` restituisce il pick-id giusto (anche se invisibile).
+- Handler `frustum-on-pointerdown`/`-pointerup` (:1025) installati in `enter-stage!`,
+  tolti in `leave-stage!`/`close!`. Solo in orbita libera del palcoscenico
+  (`stage-free-orbit?`). Click "pulito" (spostamento < 6px tra down e up) su un
+  frustum → `go-in-pose!`. **NON** fa preventDefault/stopPropagation → OrbitControls
+  vede sempre gli eventi (un click pulito non ruota) e `go-in-pose!` blocca la camera
+  da solo; così il click non ruba mai il drag dell'orbita.
+- Messaggio del palcoscenico aggiornato: "Clicca una foto o il suo frustum…" quando
+  i frustum sono mostrati.
+
+**PROSSIMO**: (a) Vincenzo collauda il click dal vivo → se convince, si decide se
+serve il **Pezzo 2** (miniatura) o basta la pellicola (fallback). (b) Se OK, committare.
+
+---
+
 Aperto 2026-07-25 per **continuare in una chat nuova**. Prerequisito: P4b fetta 1
 + frustum FASE A + raddrizzamento, tutti **fatti, collaudati e committati** (sotto).
 Il perimetro autorevole resta `dev-docs/brief-param-acq-v1.md` → P4 → "Design del

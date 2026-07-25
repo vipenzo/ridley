@@ -183,10 +183,12 @@
 (def ^:private frustum-ghost-color 0x8899aa)   ; grigio-azzurro, legge come riferimento
 (def ^:private frustum-current-color 0x66ccff) ; la foto corrente, evidenziata
 
-(defn- frustum-edges
-  "8 world-space edge segments of a camera pyramid: apex at the camera `position`,
-   rectangular base `depth` in front (along heading), sized to the half-extents."
-  [{:keys [position heading up]} depth half-w half-h color]
+(defn- frustum-corners
+  "Apex + 4 base corners of a camera pyramid: apex at the camera `position`,
+   rectangular base `depth` in front (along heading), sized to the half-extents.
+   Shared by frustum-edges (the 8 visible line segments) and frustum-pick-mesh
+   (the invisible solid twin used for click-to-go-in-pose)."
+  [{:keys [position heading up]} depth half-w half-h]
   (let [fwd (m/normalize heading)
         u (m/normalize up)
         r (m/normalize (m/cross fwd u))
@@ -195,15 +197,40 @@
         c2 (m/v+ base (m/v+ (m/v* r (- half-w)) (m/v* u half-h)))
         c3 (m/v+ base (m/v+ (m/v* r (- half-w)) (m/v* u (- half-h))))
         c4 (m/v+ base (m/v+ (m/v* r half-w) (m/v* u (- half-h))))]
+    [position c1 c2 c3 c4]))
+
+(defn- frustum-edges
+  "8 world-space edge segments of a camera pyramid (apex → 4 corners, + base loop)."
+  [pose depth half-w half-h color]
+  (let [[apex c1 c2 c3 c4] (frustum-corners pose depth half-w half-h)]
     (mapv (fn [[a b]] {:from a :to b :color color})
-          [[position c1] [position c2] [position c3] [position c4]
+          [[apex c1] [apex c2] [apex c3] [apex c4]
            [c1 c2] [c2 c3] [c3 c4] [c4 c1]])))
+
+(defn- frustum-pick-mesh
+  "Invisible solid twin of a frustum pyramid, tagged with the photo `idx` so a click
+   in free orbit resolves to that camera. The visible frustum is drawn as :lines,
+   which are NOT raycast-hittable (only a THREE.Mesh is — mesh-board note); this
+   mesh is never rendered (:pick-only) but is picked by viewport/raycast-preview-pick.
+   Faces: 4 side triangles from the apex + 2 for the base quad; double-sided so a
+   ray hits regardless of which side it enters."
+  [pose depth half-w half-h idx]
+  (let [corners (frustum-corners pose depth half-w half-h)]
+    {:type :mesh
+     :pick-only true
+     :pick-id idx
+     :data {:vertices corners
+            :faces [[0 1 2] [0 2 3] [0 3 4] [0 4 1]
+                    [1 2 3] [1 3 4]]
+            :material {:double-sided true}}}))
 
 (defn- frustum-items
   "Every registered camera (:camera-poses) as a ghost pyramid at its world pose.
    Empty when :show-frustums? is off. Depth scales with the box (~1.2× its bounding
    radius) so the pyramids read as compact icons for any object size; FOV from the
-   session focal + the loaded photo's aspect, so a pyramid opens like its lens."
+   session focal + the loaded photo's aspect, so a pyramid opens like its lens. Each
+   camera emits TWO items: the visible :lines pyramid, and an invisible solid twin
+   (frustum-pick-mesh) tagged with its idx so a click flies into that pose."
   []
   (when (:show-frustums? @session)
     (let [dims (bridge/dims-from-mesh (:proxy-mesh @session)
@@ -214,10 +241,12 @@
           half-w (* depth (Math/tan (* 0.5 hfov (/ Math/PI 180.0))))
           half-h (/ half-w aspect)
           cur (:current-idx @session)]
-      (mapv (fn [[idx pose]]
-              {:type :lines
-               :data (frustum-edges pose depth half-w half-h
-                                    (if (= idx cur) frustum-current-color frustum-ghost-color))})
+      (into []
+            (mapcat (fn [[idx pose]]
+                      [{:type :lines
+                        :data (frustum-edges pose depth half-w half-h
+                                             (if (= idx cur) frustum-current-color frustum-ghost-color))}
+                       (frustum-pick-mesh pose depth half-w half-h idx)]))
             (:camera-poses @session)))))
 
 (defn- stage-free-preview-items
@@ -889,6 +918,8 @@
 ;; con ergonomia dichiaratamente da collaudare (brief §Le foto, in tre stati).
 ;; ============================================================
 
+(declare install-frustum-listeners! teardown-frustum-listeners!)
+
 (defn- enter-stage!
   "Enter the stage: free the camera to orbit the acquired object. Tears down the
    Phase-1 registration tools (gizmo / PnP / marker / mark / retrace listeners),
@@ -917,12 +948,15 @@
         cam-r (reduce max 0.0 (map #(m/magnitude (m/v- (:position %) piv))
                                    (vals (:camera-poses @session))))]
     (viewport/frame-camera! piv (* 1.15 (max obj-r cam-r))))
+  ;; arm click-a-frustum → go-in-pose (free-orbit only; the handler self-guards)
+  (install-frustum-listeners!)
   (update-panel!))
 
 (defn- leave-stage!
   "Leave the stage back to Phase-1 registration on the current photo: restore the
    per-frame camera lock and re-enter the photo (locked backdrop + gizmo)."
   []
+  (teardown-frustum-listeners!)
   (swap! session assoc :stage? false :in-pose? false)
   (viewport/register-frame-callback!
    :edit-acquire (fn [_camera] (viewport/set-controls-enabled! false)))
@@ -973,6 +1007,47 @@
   (when (and (:stage? @session) (not (:in-pose? @session)))
     (viewport/show-preview! (stage-free-preview-items)))
   (update-panel!))
+
+;; ------------------------------------------------------------
+;; P4b frustum FASE B — click a frustum → go in pose. In free orbit only, a CLEAN
+;; click (little pointer travel, so it never steals an orbit drag) on a ghost
+;; frustum flies the camera into that photo's pose. The invisible solid twin
+;; (frustum-pick-mesh) resolves the click via viewport/raycast-preview-pick. We do
+;; NOT preventDefault/stopPropagation: OrbitControls must keep seeing the events (a
+;; clean click rotates nothing anyway), and go-in-pose! locks the camera itself.
+;; ------------------------------------------------------------
+
+(def ^:private frustum-click-slop-px 6) ; press→release travel under this = a click, not a drag
+
+(defn- stage-free-orbit? []
+  (and @session (:stage? @session) (not (:in-pose? @session))))
+
+(defn- frustum-on-pointerdown [^js e]
+  (when (and (stage-free-orbit?) (zero? (.-button e)))
+    ;; record the press + whatever frustum sits under it; let OrbitControls drag.
+    (swap! session assoc :frustum-press
+           {:x (.-clientX e) :y (.-clientY e)
+            :idx (viewport/raycast-preview-pick e)})))
+
+(defn- frustum-on-pointerup [^js e]
+  (when (and (stage-free-orbit?) (zero? (.-button e)))
+    (let [{:keys [x y idx]} (:frustum-press @session)]
+      (swap! session dissoc :frustum-press)
+      (when (and (some? idx) (some? x)
+                 (< (js/Math.hypot (- (.-clientX e) x) (- (.-clientY e) y))
+                    frustum-click-slop-px))
+        (go-in-pose! idx)))))
+
+(defn- install-frustum-listeners! []
+  (let [^js canvas (viewport/get-canvas)]
+    (.addEventListener canvas "pointerdown" frustum-on-pointerdown true)
+    (.addEventListener canvas "pointerup" frustum-on-pointerup true)))
+
+(defn- teardown-frustum-listeners! []
+  (let [^js canvas (viewport/get-canvas)]
+    (.removeEventListener canvas "pointerdown" frustum-on-pointerdown true)
+    (.removeEventListener canvas "pointerup" frustum-on-pointerup true))
+  (when @session (swap! session dissoc :frustum-press)))
 
 ;; ============================================================
 ;; PnP registration ('p'): the primary 'registrazione per corrispondenze'
@@ -2351,7 +2426,9 @@
               (and stage? (:in-pose? @session))
               "In posa. Esc = torna a orbitare · clicca un'altra foto per cambiare vista."
               stage?
-              "Palcoscenico: orbita l'oggetto. Clicca una foto per andare in posa. Esc = esci."
+              (if (:show-frustums? @session)
+                "Palcoscenico: orbita l'oggetto. Clicca una foto o il suo frustum per andare in posa. Esc = esci."
+                "Palcoscenico: orbita l'oggetto. Clicca una foto per andare in posa. Esc = esci.")
               :else (or (:status-message @session) ""))))
     (when-let [strip (:filmstrip-el @session)]
       (set! (.-innerHTML strip) "")
@@ -2773,6 +2850,7 @@
     (stop-marker!) ; removes the marker-click canvas pointer handler
     (stop-mark!) ; removes the named-mark pointer/wheel handlers + labels
     (teardown-retrace-listeners!) ; removes retrace pointer/wheel handlers + loupe
+    (teardown-frustum-listeners!) ; removes the stage click-a-frustum pointer handlers
     ;; The ricalco is no longer printed loose here (P4a-3): confirm! folds it into
     ;; the acquire form's :shapes via emit-acquire-code; discard/cancel emit nothing.
     (viewport/unregister-frame-callback! :edit-acquire)

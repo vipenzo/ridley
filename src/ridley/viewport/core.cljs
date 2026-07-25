@@ -2516,7 +2516,7 @@
    the item has no geometry (e.g. an empty mesh). Factored out of show-preview! so
    replace-preview-at! (edit-mesh-split's per-tick plane update during a gizmo drag)
    can build a single fresh object without touching the rest of the preview."
-  [{:keys [type data on-top pick-id]}]
+  [{:keys [type data on-top pick-id pick-only]}]
   (when-let [^js obj
              (case type
                :mesh (when (and (seq (:vertices data)) (seq (:faces data)))
@@ -2530,6 +2530,12 @@
     ;; caller-defined id (edit-mesh-split's tree piece id — click-to-select).
     (when (some? pick-id)
       (set! (.. obj -userData -pickId) pick-id))
+    ;; :pick-only hides the object from rendering while keeping it raycast-hittable
+    ;; (three.js still intersects invisible meshes) — an invisible twin used purely
+    ;; as a pick target, e.g. edit-acquire's solid frustum pyramid behind the ghost
+    ;; :lines (which aren't hittable). It must NOT occlude the visible geometry.
+    (when pick-only
+      (set! (.-visible obj) false))
     ;; :on-top draws the item over everything (no depth test) — used by
     ;; edit-path so the trace overlay is never hidden by the image or the
     ;; live extruded result.
