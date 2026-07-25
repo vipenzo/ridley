@@ -1,10 +1,11 @@
 # Handover — P4b frustum, FASE B (miniatura sul frustum + click-per-andare-in-posa)
 
-## STATO 2026-07-25 — Pezzo 1 (CLICK) COSTRUITO + verificato headless, ATTENDE il gate di Vincenzo
+## STATO 2026-07-25 — Pezzo 1 (CLICK) FATTO + gate PASSATO + COMMITTATO `c5c810e`
 
-**Pezzo 1 (click su frustum → go-in-pose) FATTO, non ancora committato** (branch
-`edit-acquire-registration-stability`). Meccanismo verificato end-to-end in Chrome
-via nREPL (NON in una sessione reale con foto — quello è il gate di Vincenzo):
+**Pezzo 1 (click su frustum → go-in-pose) FATTO, gate passato, committato** (branch
+`edit-acquire-registration-stability`, `c5c810e`). Vincenzo: "si individua facilmente
+il frustum e cliccando ci va". Meccanismo verificato end-to-end in Chrome via nREPL
+prima del gate live:
 - `viewport/build-preview-object` ora onora `:pick-only` → mette `visible=false` ma
   l'oggetto resta **raycast-hittable** (verificato in three.js r160: `intersectObject`
   su una mesh `visible=false` → 2 hit).
