@@ -2241,7 +2241,11 @@
        (not (.-shiftKey e)) (not (.-ctrlKey e)) (not (.-metaKey e))))
 
 (defn- on-pointer-down [^js e]
-  (when (and (:entered? @session) (or (plain-click? e) (shift-grab? e) (handle-only-grab? e)))
+  ;; Left button only — the right button is free for the host to pan (edit-acquire's
+  ;; in-pose zoom/pan over the photo), and a right-click should never add a node
+  ;; (Vincenzo 2026-07-25: right-drag pan was inserting nodes).
+  (when (and (:entered? @session) (zero? (.-button e))
+             (or (plain-click? e) (shift-grab? e) (handle-only-grab? e)))
     (let [s @session
           basis (active-basis s)
           w (click-plane-point e s)
@@ -2665,6 +2669,12 @@
     (let [panel (create-panel!)]
       (swap! session assoc :panel-el panel))
     (update-panel!)
+    ;; draw the editable overlay (nodes + path) immediately, so the seed/default
+    ;; path is visible on open, not only after the first pointer interaction
+    ;; (Vincenzo 2026-07-25: over the acquire photo the path only appeared on the
+    ;; first click — enter! ran live-reeval! for downstream geometry but never
+    ;; rendered the interactive overlay).
+    (render!)
     (live-reeval!)
     (state/capture-println
      (str "edit-path-2d: click to add nodes, drag a node to move it, Tab cycles, "
