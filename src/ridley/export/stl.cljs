@@ -326,6 +326,25 @@
                           (fn [_] (reject (js/Error. "write-file request failed"))))
                     (.send xhr (js/Uint8Array. ab)))))))))
 
+(defn desktop-list-dir
+  "List the directory at `dir` via Rust geo_server. Returns
+   Promise<#js [{name, is_dir, size}, …]>. NB: the Rust handler CREATES the
+   directory if it doesn't exist, so a nonexistent path resolves to []."
+  [dir]
+  (js/Promise.
+   (fn [resolve reject]
+     (let [xhr (js/XMLHttpRequest.)]
+       (.open xhr "POST" (str geo-server-url "/read-dir") true)
+       (.setRequestHeader xhr "Content-Type" "application/json")
+       (set! (.-onload xhr)
+             (fn [_]
+               (if (= 200 (.-status xhr))
+                 (resolve (js/JSON.parse (.-responseText xhr)))
+                 (reject (js/Error. (.-responseText xhr))))))
+       (set! (.-onerror xhr)
+             (fn [_] (reject (js/Error. "read-dir request failed"))))
+       (.send xhr (js/JSON.stringify #js {:path dir}))))))
+
 (defn- pick-and-write
   "Open native showSaveFilePicker offering both STL and 3MF, build the blob
    based on the picked filename, and write it. Falls back to anchor download.

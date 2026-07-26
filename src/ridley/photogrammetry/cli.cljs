@@ -17,6 +17,7 @@
             [ridley.photogrammetry.box-fit :as bf]
             [ridley.photogrammetry.turntable-fit :as tt]
             [ridley.photogrammetry.bootstrap :as boot]
+            [ridley.photogrammetry.note :as note]
             [ridley.photogrammetry.match :as match]))
 
 (def fs (js/require "fs"))
@@ -280,32 +281,13 @@
         :else (println "  → pronto per il fit.")))))
 
 (defn- parse-note
-  "Read the session's NOTE.md as the single source of truth: the photo/angle
-   table and the caliper dimensions.
-
-   Deriving these from the operator's own notes beats hardcoding them here or
-   inferring angles from filename order. The angle of a shot is a fact only
-   the notes record, and a wrong one is INVISIBLE to every check downstream —
-   the residual report cannot see it, because a consistent set of edges fitted
-   at the wrong angle just moves the camera."
+  "Read the session's NOTE.md and parse it (ridley.photogrammetry.note — shared
+   with the in-app editor, so both parse the table/caliper identically). nil
+   when there is no NOTE.md at all."
   [dir]
   (let [path (str dir "/NOTE.md")]
     (when (.existsSync fs path)
-      (let [txt (.readFileSync fs path "utf8")
-            rows (->> (.split txt "\n")
-                      (keep (fn [l]
-                              (when-let [m (re-find #"^\s*\|\s*([\w.\-]+\.(?:jpe?g|png))\s*\|\s*(-?\d+)\s*\|(.*)$" l)]
-                                {:image (nth m 1)
-                                 :theta-deg (js/parseInt (nth m 2) 10)
-                                 :star? (boolean (re-find #"★" (nth m 3)))})))
-                      vec)
-            dim (fn [k]
-                  (when-let [m (re-find (re-pattern (str "(?m)^\\s*-\\s*" k "\\s*:\\s*_*([0-9]+(?:\\.[0-9]+)?)"))
-                                        txt)]
-                    (js/parseFloat (nth m 1))))]
-        {:photos rows
-         :caliper (let [x (dim "X") y (dim "Y") z (dim "Z")]
-                    (when (and x y z) {:x x :y y :z z}))}))))
+      (note/parse-note-text (.readFileSync fs path "utf8")))))
 
 (defn- init-session
   "Build session.json from the directory's NOTE.md, falling back to filename
@@ -335,7 +317,12 @@
       (println (str "  calibro                 : X " (:x c) "  Y " (:y c) "  Z " (:z c) " mm"))
       (println "  ⚠️  calibro non letto dal NOTE.md — il fit userà i valori di default"))
     (doseq [p photos]
-      (println (str "    " (:image p) "  θ=" (:theta-deg p) "°" (when (:star? p) "  ★"))))
+      (println (str "    " (:image p) "  "
+                    (if (:free? p) "θ=libera (fuori anello)" (str "θ=" (:theta-deg p) "°"))
+                    (when (:star? p) "  ★"))))
+    (when-let [free (seq (filter :free? photos))]
+      (println (str "  " (count free) " foto fuori anello — registrabili solo via PnP ('p'),"
+                    " escluse dal fit del giradischi")))
     (let [payload (clj->js {:dir dir
                             :photos (mapv (fn [p] [(:image p) (:theta-deg p)]) photos)
                             :bootstrap (vec (keep #(when (:star? %) (:image %)) photos))

@@ -56,6 +56,7 @@
             [ridley.photogrammetry.turntable-fit :as tt]
             [ridley.photogrammetry.box-fit :as bf]
             [ridley.photogrammetry.bootstrap :as boot]
+            [ridley.photogrammetry.note :as note]
             [ridley.math :as m]
             [ridley.export.stl :as stl]))
 
@@ -448,6 +449,15 @@
    for the (several-second) call to say so."
   2)
 
+(defn- free-photo?
+  "True when photo `idx` is out-of-ring (θ `libera` in the NOTE): it has NO
+   turntable angle, so it registers ONLY via PnP ('p') and must never enter the
+   turntable model — not the joint fit ('f'), not its predictions, not the
+   per-photo θ-orbit seed. Guarding here keeps the NOTE's 'MAI inglobarle nel
+   modello giradischi' true even if such a photo were also edge-snapped."
+  [idx]
+  (nil? (:theta (nth (:photos @session) idx nil))))
+
 (defn- turntable-pose-for
   "The solver pose ({:rvec :t}) for photo `idx` from a fit-turntable result
    — same composition as match/reproject-turntable, only returning the pose
@@ -472,7 +482,8 @@
   ;; no registration at all, branch-locked to their mark when they have one.
   (let [predicted (atom 0)]
     (doseq [idx (range 1 (count (:photos @session)))
-            :when (not (registered-result? (get-in @session [:acquire-results idx])))]
+            :when (and (not (free-photo? idx)) ; never predict an out-of-ring photo's pose
+                       (not (registered-result? (get-in @session [:acquire-results idx]))))]
       (let [new-camera-pose (marker-lock-camera
                              (bridge/solver-pose->camera (turntable-pose-for tt-result idx) proxy-pose) idx)]
         (swap! session assoc-in [:camera-poses idx] new-camera-pose)
@@ -491,10 +502,14 @@
     (let [proxy-pose (get-in @session [:proxy-mesh :creation-pose])
           dims (bridge/dims-from-mesh (:proxy-mesh @session) proxy-pose)
           intrinsics (session-intrinsics iw ih)
+          ;; Only ring photos feed the turntable model: an out-of-ring photo
+          ;; (θ nil) has no angle to fit against, and folding it in would move
+          ;; the whole model (the NOTE's guard). when-let skips only nil — θ=0
+          ;; is a valid ring angle and stays.
           photos-with-picks (vec (keep (fn [[idx result]]
                                          (when-let [picks (:picks result)]
-                                           {:picks picks
-                                            :theta-deg (:theta (nth (:photos @session) idx))}))
+                                           (when-let [theta (:theta (nth (:photos @session) idx))]
+                                             {:picks picks :theta-deg theta})))
                                        (:acquire-results @session)))]
       (if (< (count photos-with-picks) min-photos-for-turntable-fit)
         (set-status-message!
@@ -743,7 +758,13 @@
   (let [base (get-in @session [:camera-poses 0])
         theta (:theta (nth (:photos @session) idx))
         axis (m/normalize (get-in @session [:proxy-mesh :creation-pose :up]))]
-    (m/pose-around-axis base (pivot) axis (- (deg->rad theta)))))
+    ;; Out-of-ring photo (θ libera): there is no turntable angle to orbit by
+    ;; (deg->rad nil would seed a NaN pose the moment you navigate to it). Use
+    ;; photo 0's vantage as a neutral placeholder — 'p' (PnP) then sets its real
+    ;; pose, which overwrites this cache.
+    (if (nil? theta)
+      base
+      (m/pose-around-axis base (pivot) axis (- (deg->rad theta))))))
 
 (defn- camera-pose-for
   "Memoized: first visit caches the turntable pre-seed, later visits return
@@ -3052,6 +3073,59 @@
 ;; Session mount + entry points
 ;; ------------------------------------------------------------
 
+(defn- build-session-json-from-note
+  "Build session.json's TEXT for `dir` from its NOTE.md + image files — the
+   same shape and rules cli.cljs's init-session writes, but IN-APP so a fresh
+   session (photos + NOTE.md, no session.json yet) opens without the manual
+   `node out/paq.js --init-session …` step. Parsing goes through the shared
+   ridley.photogrammetry.note, so the tool and the CLI agree on angles and on
+   which shots are out-of-ring (θ `libera`). Returns Promise<string>; rejects
+   when there is no NOTE.md with a photo table."
+  [dir]
+  (-> (js/Promise.all
+       #js [(-> (stl/desktop-read-file (str dir "/NOTE.md")) (.catch (fn [_] nil)))
+            (-> (stl/desktop-list-dir dir) (.catch (fn [_] #js [])))])
+      (.then (fn [^js results]
+               (let [note-txt (aget results 0)
+                     files (->> (array-seq (aget results 1))
+                                (map (fn [^js e] (.-name e)))
+                                (filter #(re-find #"(?i)\.(jpe?g|png)$" %))
+                                sort vec)]
+                 (when-not note-txt
+                   (throw (js/Error. (str "manca NOTE.md in " dir))))
+                 (let [{:keys [photos caliper]} (note/parse-note-text note-txt)]
+                   (when-not (seq photos)
+                     (throw (js/Error. (str "il NOTE.md di " dir " non ha una tabella foto"))))
+                   (let [missing (remove (set files) (map :image photos))]
+                     (when (seq missing)
+                       (state/capture-println
+                        (str "edit-acquire: foto citate nel NOTE ma assenti nella cartella: "
+                             (str/join ", " missing)))))
+                   (js/JSON.stringify
+                    (clj->js {:dir dir
+                              :photos (mapv (fn [p] [(:image p) (:theta-deg p)]) photos)
+                              :bootstrap (vec (keep #(when (:star? %) (:image %)) photos))
+                              :caliper caliper})
+                    nil 1)))))))
+
+(defn- ensure-session-json!
+  "Resolve to session.json's TEXT for `dir`: read it if present, otherwise BUILD
+   it from NOTE.md (+ the folder's images) and write it back — so a fresh session
+   opens with no manual CLI step (Vincenzo 2026-07-26: 'non possiamo lanciare
+   --init-session a mano per ogni sessione'). Persisting is best-effort: a build
+   that can't be written still opens the session."
+  [dir]
+  (-> (stl/desktop-read-file (str dir "/session.json"))
+      (.catch (fn [_]
+                (state/capture-println
+                 (str "edit-acquire: session.json assente in " dir
+                      " — la costruisco dal NOTE.md"))
+                (-> (build-session-json-from-note dir)
+                    (.then (fn [text]
+                             (-> (stl/desktop-write-file text (str dir "/session.json"))
+                                 (.then (fn [_] text))
+                                 (.catch (fn [_] text))))))))))
+
 (defn- open-session!
   "Shared async session mount: read session.json, install the frozen-camera frame
    callback, seed the session atom (carrying `from-marker?` for the confirm/cancel
@@ -3060,7 +3134,7 @@
    frame origin), restore acquire-state.json, build the panel, enter photo 0. The
    modal slot must already be claimed by the caller (enter!/request!)."
   [proxy-mesh session-dir from-marker? build-pose]
-  (-> (stl/desktop-read-file (str session-dir "/session.json"))
+  (-> (ensure-session-json! session-dir)
       (.then (fn [text]
                (let [{:keys [photos]} (parse-session-json text)]
                  (viewport/hide-user-geometry!)
