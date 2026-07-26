@@ -114,6 +114,21 @@ free-look, il costo grosso dell'accertamento 6) prima di costruire il resto.
 > NORMALE sopra la vista in posa. Nessun arricchimento del modale da qui
 > in poi — sarebbe lavoro da buttare.
 >
+> **Agg. 2026-08-02 — GATE FINALE eseguito (lettore SD, end-to-end)**:
+> il giro completo FUNZIONA (foto → registrazione → ricalco della faccia →
+> estrusione, Vincenzo da utente) → **gate funzionale del v1 passato**.
+> Gate di precisione NO: RMS mai sotto 14 px — causa diagnosticata: i
+> raccordi ~1.7 mm del lettore = ~33 px, "l'angolo" non esiste come punto,
+> il PnP lavora su landmark mal definiti. Non è un difetto di solver né di
+> UX: è il bersaglio. Conseguenza: il **gradino intermedio del piatto coi
+> mark è promosso a prossimo task**, con upgrade — piatto v2 GENERATO DA
+> RIDLEY con tacche/corona nella geometria (le tacche a pennarello attuali
+> sono a posizioni approssimative: posizioni note per costruzione, non a
+> mano). La proposta alternativa "pilotare una faccia del proxy alla
+> volta" è ergonomia, non accuratezza (stessi angoli stondati come
+> vincoli): non si fa. Auto-init sessione da NOTE ✅ (il tempo lungo
+> osservato era build+test, non l'init).
+>
 > **Agg. 2026-07-30 — il verso dell'ospitalità (Vincenzo)**: edit-path-2d
 > NON si ospita dentro edit-acquire (né estraendone il motore né guidandone
 > apertura/chiusura): **si esce da edit-acquire**, e il ricalco è
@@ -387,6 +402,37 @@ frame, giro con θ annotati); guida (nuovo cap. o estensione del 18).
    bersaglio per l'edge-snap.) NON è prerequisito del gate lettore: il
    lettore è quasi-box, i suoi angoli si cliccano (dimostrato nella
    sessione di luglio).
+
+   **Design del piatto v2 — PROMOSSO a prossimo task (Vincenzo, 2026-08-02).**
+   Il gate finale ha chiuso il funzionale ma non la precisione: sul lettore
+   i raccordi ~1.7 mm valgono ~33 px, "l'angolo" non è un punto, e il PnP
+   lavora su landmark mal definiti → RMS mai sotto ~14 px. Non è il solver,
+   è il bersaglio. Quindi il piatto coi mark diventa il prossimo passo, con
+   questi vincoli di design:
+   - **Unica fonte di verità (chiave).** Il piatto lo GENERA Ridley: un solo
+     sorgente `.clj` (`examples/param-acq-plate.clj` o simile) che produce
+     (a) la geometria da stampare e (b) la **mappa dei mark** (`id →
+     posizione 3D`) che il proxy-piatto passa a `p`. Le posizioni non si
+     scrivono due volte (stampa vs registrazione): un numero solo, mai da
+     riallineare a mano. Le tacche a pennarello attuali sono a posizioni
+     approssimate — qui sono note per costruzione.
+   - **Geometria v1.** Cilindro ⌀130 con tacche/corona nella geometria;
+     per il v1 bastano tacche ogni 15° con uno **zero asimmetrico
+     riconoscibile** (l'osservatore distingue lo zero e conta). La corona
+     CODIFICATA per l'auto-detect viene dopo, sulla STESSA architettura
+     (cambia il detector, non il flusso).
+   - **Mark PIATTI a due colori, non incisi.** Regioni di colore sulla
+     faccia superiore: il confine del colore è invariante alla vista e non
+     fa ombre — meglio di inciso/rilievo (che spostano il "punto" con
+     l'illuminazione e l'angolo). Corona di **8–12 dischetti ⌀2–3 mm** a
+     posizioni note, scuro-su-chiaro opaco. Il centro del dischetto è il
+     punto di click OGGI e il **centroide del blob** per il detector DOMANI
+     — stesso bersaglio, due modi di trovarlo.
+   - **Stampa.** Un solo sorgente: geometria base + parte-dischetti + mappa
+     mark; export **3MF multimateriale** (il canale esiste già).
+   - **NO all'alternativa "pilota una faccia del proxy alla volta"**: è
+     ergonomia, non accuratezza — resterebbero gli stessi angoli stondati
+     come vincoli. Non si fa.
 2. **Rounded-prism + fillet-blend** — la leva di accuratezza, collaudata sul
    ritorno del lettore SD (nastrato!).
 3. **Sorgenti live** (webcam/companion ARKit) — sopra l'interfaccia di P2.
