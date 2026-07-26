@@ -725,19 +725,30 @@
     (normalize (v+ (v* h1 x) (v+ (v* u1 y) (v* r1 z))))))
 
 (defn transform-mesh-rigid
-  "Apply a rigid body transformation to all vertices and creation-pose of a mesh."
+  "Apply a rigid body transformation to all vertices, creation-pose and anchors
+   of a mesh. :anchors (named marks — a mesh's registration points, `add-mark`
+   outputs, etc.) ride the geometry rigidly, exactly as the point/direction
+   transform already does for :creation-pose — and as translate-mesh/rotate-mesh
+   (via transform-poses) already do for their own paths. Without this a mesh's
+   marks stay behind when it's moved through group-transform (e.g. edit-acquire
+   posing/canonicalizing a proxy plate), silently desyncing them from the
+   geometry. :section-anchors is deliberately left untouched — it is frame-LOCAL
+   and re-derived from :creation-pose (same rule as transform-poses)."
   [mesh p0 h0 u0 r0 p1 h1 u1 r1]
   (let [xform-pt (fn [v] (transform-point-rigid v p0 h0 u0 r0 p1 h1 u1 r1))
-        xform-dir (fn [d] (transform-direction-rigid d h0 u0 r0 h1 u1 r1))]
+        xform-dir (fn [d] (transform-direction-rigid d h0 u0 r0 h1 u1 r1))
+        xform-pose (fn [pose]
+                     (cond-> pose
+                       (:position pose) (assoc :position (xform-pt (:position pose)))
+                       (:heading pose)  (assoc :heading (xform-dir (:heading pose)))
+                       (:up pose)       (assoc :up (xform-dir (:up pose)))))]
     (cond-> (-> mesh
                 (dissoc :ridley.manifold.core/manifold-cache :ridley.manifold.core/raw-arrays)
                 (update :vertices #(mapv xform-pt %)))
       (:creation-pose mesh)
-      (update :creation-pose
-              (fn [pose]
-                {:position (xform-pt (:position pose))
-                 :heading (xform-dir (:heading pose))
-                 :up (xform-dir (:up pose))})))))
+      (update :creation-pose xform-pose)
+      (seq (:anchors mesh))
+      (update :anchors (fn [as] (into {} (map (fn [[k a]] [k (xform-pose a)])) as))))))
 
 (defn group-transform
   "Apply a rigid body transformation to a vector of meshes.

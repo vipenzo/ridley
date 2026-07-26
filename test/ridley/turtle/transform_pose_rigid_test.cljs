@@ -95,3 +95,32 @@
       (is (vclose? (:position back) (:position camera)))
       (is (vclose? (:heading back) (m/normalize (:heading camera))))
       (is (vclose? (:up back) (m/normalize (:up camera)))))))
+
+;; group-transform must carry a mesh's :anchors rigidly, not leave them behind:
+;; edit-acquire poses/canonicalizes a proxy through group-transform, and a proxy
+;; PLATE's registration marks live on :anchors. If they don't ride the geometry,
+;; every mark desyncs from the disc it names the moment the session re-poses the
+;; plate — the point-source `p` would then click stale positions.
+(deftest group-transform-carries-anchors-rigidly
+  (testing "a mesh's :anchors move with its geometry under group-transform"
+    (let [{op :position oh :heading ou :up} proxy-old
+          proxy-new (ortho-pose [-40.0 25.0 -6.0] [0.2 -0.9 0.35] [0.6 0.1 0.79])
+          {np :position nh :heading nu :up} proxy-new
+          ;; a mark that COINCIDES with a mesh vertex, so "tracks the vertex" is
+          ;; a direct equality after the transform
+          mark {:position [58.0 0.0 1.5] :heading [0.0 0.0 1.0] :up [1.0 0.0 0.0]}
+          mesh {:type :mesh
+                :vertices [[58.0 0.0 1.5] [0.0 0.0 0.0]]
+                :faces []
+                :creation-pose {:position op :heading oh :up ou}
+                :anchors {:m00 mark}}
+          [out] (att/group-transform [mesh] op oh ou np nh nu)
+          moved-anchor (get-in out [:anchors :m00])]
+      (testing "anchor position tracks its coincident vertex"
+        (is (vclose? (:position moved-anchor) (first (:vertices out)))))
+      (testing "anchor pose is preserved in the mesh's own (proxy) local frame"
+        (is (local-close? (pose->local mark proxy-old)
+                          (pose->local moved-anchor proxy-new))))
+      (testing "a mesh with no :anchors is unaffected (no key introduced)"
+        (let [[bare] (att/group-transform [(dissoc mesh :anchors)] op oh ou np nh nu)]
+          (is (not (contains? bare :anchors))))))))
