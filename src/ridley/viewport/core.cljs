@@ -1300,6 +1300,45 @@
       ;; Disable orbit controls during camera animation
       (set! (.-enabled controls) false))))
 
+(defn fly-camera-to-pose!
+  "Animate the camera from its current pose to `pose` (turtle {:position :heading :up})
+   over `ms` milliseconds — LERP position, SLERP orientation (smoothstep ease) — then
+   snap exactly via set-camera-pose! and call `on-done`. Controls are held disabled
+   for the whole flight. Uses a dedicated :camera-flight per-frame callback: the render
+   loop runs continuously (setAnimationLoop) so the interpolation renders each frame
+   without a separate rAF. A second call re-registers the same key, superseding any
+   flight already in progress. Used by the acquire stage's Prev/Next photo navigation
+   (a ~200ms flight instead of an instant jump), including while an edit-path-2d
+   ricalco is open — the world-space overlay reprojects live from the moving camera."
+  [pose ms on-done]
+  (when-let [{:keys [^js camera ^js controls]} @state]
+    (set! (.-enabled controls) false)
+    (let [{:keys [position heading up]} pose
+          [px py pz] position
+          look (mapv + position (mapv #(* % 100) heading))
+          start-pos (.clone (.-position camera))
+          end-pos (THREE/Vector3. px py pz)
+          start-q (.clone (.-quaternion camera))
+          mtx (THREE/Matrix4.)
+          _ (.lookAt mtx end-pos
+                     (THREE/Vector3. (nth look 0) (nth look 1) (nth look 2))
+                     (THREE/Vector3. (nth up 0) (nth up 1) (nth up 2)))
+          end-q (.setFromRotationMatrix (THREE/Quaternion.) mtx)
+          t0 (js/performance.now)
+          dur (max 1.0 (double ms))]
+      (register-frame-callback! :camera-flight
+                                (fn [^js cam]
+                                  (let [raw (/ (- (js/performance.now) t0) dur)
+                                        t (min 1.0 raw)
+                                        e (* t t (- 3.0 (* 2.0 t)))] ; smoothstep
+                                    (.lerpVectors (.-position cam) start-pos end-pos e)
+                                    (.slerpQuaternions (.-quaternion cam) start-q end-q e)
+                                    (.updateProjectionMatrix cam)
+                                    (when (>= raw 1.0)
+                                      (unregister-frame-callback! :camera-flight)
+                                      (set-camera-pose! pose) ; exact snap at the end
+                                      (when on-done (on-done)))))))))
+
 (defn enable-orbit-controls!
   "Re-enable OrbitControls after camera animation stops.
    Restores the orbit target from before the animation started."
