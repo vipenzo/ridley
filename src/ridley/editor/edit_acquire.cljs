@@ -659,10 +659,26 @@
                                 {:axis a :sign (if (>= (nth nrm a) 0) 1 -1) :offset offset}))]
             (swap! session update :proxy-mesh
                    (fn [m]
-                     (-> m
-                         (dissoc :ridley.manifold.core/manifold-cache :ridley.manifold.core/raw-arrays)
-                         (update :vertices (fn [vs] (mapv (fn [v] (m/v+ build-pos (Mv (m/v- v center)))) vs)))
-                         (assoc :creation-pose new-pose))))
+                     (let [xform-pt (fn [v] (m/v+ build-pos (Mv (m/v- v center))))]
+                       (cond-> (-> m
+                                   (dissoc :ridley.manifold.core/manifold-cache :ridley.manifold.core/raw-arrays)
+                                   (update :vertices (fn [vs] (mapv xform-pt vs)))
+                                   (assoc :creation-pose new-pose))
+                         ;; a proxy PLATE's marks (:anchors) must be re-expressed by
+                         ;; the SAME rigid re-description as the geometry — position
+                         ;; like a point, heading/up like directions (Mv is the pure
+                         ;; rotation). Canonicalize does its own inline remap here,
+                         ;; not group-transform, so transform-mesh-rigid's anchor
+                         ;; carry doesn't reach it.
+                         (seq (:anchors m))
+                         (update :anchors
+                                 (fn [as]
+                                   (into {} (map (fn [[k a]]
+                                                   [k (cond-> a
+                                                        (:position a) (assoc :position (xform-pt (:position a)))
+                                                        (:heading a)  (assoc :heading (Mv (:heading a)))
+                                                        (:up a)       (assoc :up (Mv (:up a))))]))
+                                         as)))))))
             (swap! session update :camera-poses
                    (fn [cps]
                      (into {} (map (fn [[idx p]]
@@ -1050,28 +1066,42 @@
 ;; the picking clicks, and rebuilt on exit.
 ;; ============================================================
 
-(def ^:private corner-colors
-  "Eight distinct hues so a placed photo marker, its panel button, and its dot
-   on the proxy read as the same corner at a glance."
-  [0xff5555 0xff9f43 0xf4d03f 0x5fd35f 0x38c3d6 0x5b8def 0xb06cf0 0xf06fb0])
+(def ^:private target-colors
+  "Distinct hues so a placed photo marker, its panel button, and its dot on the
+   proxy read as the same target at a glance. The first EIGHT are the original
+   box-corner palette (box mode stays visually identical); the rest cover a
+   registration PLATE, which carries more marks than a box has corners."
+  [0xff5555 0xff9f43 0xf4d03f 0x5fd35f 0x38c3d6 0x5b8def 0xb06cf0 0xf06fb0
+   0xff77aa 0xffd24a 0x9be15d 0x4ad6b0 0x6ab7ff 0x9d7bff 0xff8c42 0xbfc7d0])
 
-(defn- box-object-corners
-  "The 8 box corners in the SOLVER/object frame (box-fit/corners), indexed 0-7
-   — the :world side of each PnP correspondence."
+(defn- target-color [i] (nth target-colors (mod i (count target-colors))))
+
+(defn- pnp-targets
+  "The indexed PnP targets for the current photo: bridge/pnp-target-points (the
+   8 box corners, OR a proxy plate's named marks when it carries :anchors)
+   enriched with the UI's :color and :label. Pick keys are the vector INDEX
+   0..N-1 whatever the source, so the whole picking gesture below is
+   source-agnostic. Each: {:obj :world :visible? :id :color :label}."
   []
-  (bf/corners (bridge/dims-from-mesh (:proxy-mesh @session)
-                                     (get-in @session [:proxy-mesh :creation-pose]))))
+  (vec (map-indexed
+        (fn [i t]
+          (assoc t :color (target-color i)
+                 :label (if (keyword? (:id t)) (name (:id t)) (str (inc i)))))
+        (bridge/pnp-target-points (:proxy-mesh @session) (current-camera-pose)))))
+
+(defn- pnp-count [] (count (pnp-targets)))
+
+(defn- pnp-noun
+  "What a pickable point is called in the prompts: a box has 'spigoli', a plate
+   'marker'."
+  []
+  (if (seq (:anchors (:proxy-mesh @session))) "marker" "spigolo"))
 
 (defn- corner-world-positions
-  "World position of each of the 8 corners at the current proxy pose, indexed
-   the same as box-object-corners — only for drawing the pickable dots."
+  "World position of each target at the current proxy pose, indexed the same as
+   pnp-targets — for drawing the pickable dots."
   []
-  (let [proxy-pose (get-in @session [:proxy-mesh :creation-pose])
-        {:keys [ex ey ez]} (bridge/box-basis proxy-pose)
-        origin (:position proxy-pose)]
-    (mapv (fn [[lx ly lz]]
-            (m/v+ origin (m/v+ (m/v* ex lx) (m/v+ (m/v* ey ly) (m/v* ez lz)))))
-          (box-object-corners))))
+  (mapv :world (pnp-targets)))
 
 (defn- pnp-picks [] (get-in @session [:pnp-picks (:current-idx @session)] {}))
 (defn- pnp-residuals [] (get-in @session [:pnp-residuals (:current-idx @session)] {}))
@@ -1081,15 +1111,13 @@
   (get-in @session [:pnp-outliers (:current-idx @session)] #{}))
 
 (defn- visible-corner-set
-  "Corner indices actually visible on the part at the current pose
-   (bf/visible-corners) — the only ones offered for picking, so the user is
-   never asked to point at a vertex hidden behind the box (Vincenzo,
-   2026-07-23). Recomputed from the live camera↔proxy relation, so it tracks
-   the part as the pose is refined."
+  "Indices of the targets actually visible at the current pose (pnp-targets'
+   :visible?) — the only ones offered for picking, so the user is never asked to
+   point at a box vertex hidden behind the part, or a plate mark turned away from
+   the camera (Vincenzo, 2026-07-23). Recomputed from the live camera↔proxy
+   relation, so it tracks as the pose is refined."
   []
-  (let [proxy-pose (get-in @session [:proxy-mesh :creation-pose])]
-    (bf/visible-corners (bridge/dims-from-mesh (:proxy-mesh @session) proxy-pose)
-                        (bridge/editor->solver-pose (current-camera-pose) proxy-pose))))
+  (into #{} (keep-indexed (fn [i t] (when (:visible? t) i)) (pnp-targets))))
 
 (defn- pnp-preview-items
   "Proxy as a WIREFRAME (not a solid — the real part must show through so the
@@ -1117,7 +1145,7 @@
                         :radius (if (= i armed) 4.4 2.4)
                         :opacity 0.3
                         :color (if (or (= i armed) (contains? placed i))
-                                 (nth corner-colors i) 0x808080)}))
+                                 (target-color i) 0x808080)}))
                    (corner-world-positions)))}]
      (trace-items))))
 
@@ -1130,7 +1158,8 @@
   [from]
   (let [placed (pnp-picks)
         visible (visible-corner-set)
-        order (map #(mod (+ from %) 8) (range 8))]
+        n (pnp-count)
+        order (map #(mod (+ from %) n) (range n))]
     (or (first (filter #(and (contains? visible %) (not (contains? placed %))) order))
         (first (filter visible order))
         from)))
@@ -1190,7 +1219,7 @@
         (set! (.-borderRadius st) "50%")
         (set! (.-boxSizing st) "border-box")
         (set! (.-border st) "2px solid rgba(255,255,255,0.85)")
-        (set! (.-background st) (hex->css (nth corner-colors ci)))
+        (set! (.-background st) (hex->css (target-color ci)))
         ;; translucent so photo detail under the marker stays readable while
         ;; placing (Vincenzo, 2026-07-23 / more so 2026-07-25)
         (set! (.-opacity st) "0.4")
@@ -1210,7 +1239,7 @@
         (swap! session update :pnp-residuals dissoc idx)
         (swap! session update :pnp-outliers dissoc idx)
         (redraw-overlay-dots!)
-        (arm-corner! (next-unplaced-corner (mod (inc ci) 8)))))))
+        (arm-corner! (next-unplaced-corner (mod (inc ci) (pnp-count))))))))
 
 ;; --- loupe: a magnifier that expands the pixels under the cursor so a corner
 ;; can be placed on the exact edge despite the translucent proxy over it
@@ -1323,7 +1352,9 @@
   (redraw-overlay-dots!)
   (arm-corner! (next-unplaced-corner 0)))
 
-(defn- corner-labels [cis] (str/join ", " (map #(str "#" (inc %)) (sort cis))))
+(defn- corner-labels [cis]
+  (let [targets (pnp-targets)]
+    (str/join ", " (map #(str "#" (:label (nth targets %))) (sort cis)))))
 
 (defn- pnp-diagnosis
   "Plain-language verdict from a robust PnP solve — the answer to 'why won't the
@@ -1354,13 +1385,13 @@
   (when-let [[iw ih] (backdrop/image-size)]
     (let [idx (:current-idx @session)
           proxy-pose (get-in @session [:proxy-mesh :creation-pose])
-          object-corners (box-object-corners)
+          targets (pnp-targets)
           correspondences (vec (for [[ci {:keys [px]}] (pnp-picks)]
-                                 {:ci ci :world (nth object-corners ci) :px px}))
+                                 {:ci ci :world (:obj (nth targets ci)) :px px}))
           camera-pose (current-camera-pose)]
       (if (< (count correspondences) pnp/min-correspondences)
         (set-status-message!
-         (str "PnP: servono almeno " pnp/min-correspondences " spigoli piazzati (ne hai "
+         (str "PnP: servono almeno " pnp/min-correspondences " punti piazzati (ne hai "
               (count correspondences) ")"))
         (if-let [sol (pnp/solve-pnp correspondences (session-intrinsics iw ih) {})]
           (let [residuals (into {} (map (juxt :ci :residual-px) (:per-point sol)))
@@ -2094,7 +2125,9 @@
             resid (pnp-residuals)
             outliers (pnp-outliers)
             visible (visible-corner-set)
-            ;; buttons for corners the user can act on: visible (offerable),
+            targets (pnp-targets)
+            lbl (fn [i] (:label (nth targets i)))
+            ;; buttons for the points the user can act on: visible (offerable),
             ;; already-placed (status/re-do), or flagged outliers
             shown (sort (into (into (set (keys placed)) outliers) visible))
             armed (:pnp-armed @session)
@@ -2109,7 +2142,7 @@
         (set! (.-textContent info)
               (cond
                 (seq outliers)
-                (str "⚠ " (if (> (count outliers) 1) "spigoli " "spigolo ")
+                (str "⚠ " (if (> (count outliers) 1) "punti " "punto ")
                      (corner-labels outliers) " in rosso — riclicca dov'"
                      (if (> (count outliers) 1) "sono" "è") " sul pezzo vero, poi 'r'")
                 (and rms (> rms pnp/accept-rms-px))
@@ -2118,7 +2151,7 @@
                 solved?
                 (str "✓ fit pulito, rms " (.toFixed rms 1) "px — 'p'/Esci, o ']' per un'altra foto")
                 :else
-                (str "Spigolo #" (inc armed) " evidenziato — clicca nella foto dov'è. "
+                (str (str/capitalize (pnp-noun)) " #" (lbl armed) " evidenziato — clicca nella foto dov'è. "
                      "Piazzati " n "/" target " visibili"
                      (when (< n pnp/min-correspondences)
                        (str " (ne servono ≥" pnp/min-correspondences ")")))))
@@ -2130,13 +2163,13 @@
                 r (get resid i)
                 bad? (contains? outliers i)]
             (set! (.-type b) "button")
-            (set! (.-textContent b) (cond bad? (str (inc i) " ✗")
-                                          r (str (inc i) "·" (.toFixed r 0))
-                                          :else (str (inc i))))
+            (set! (.-textContent b) (cond bad? (str (lbl i) " ✗")
+                                          r (str (lbl i) "·" (.toFixed r 0))
+                                          :else (lbl i)))
             (set! (.-minWidth st) "26px")
             (set! (.-color st) (cond bad? "#fff" (contains? placed i) "#111" :else "#ddd"))
             (set! (.-background st) (cond bad? "#ff2020"
-                                          (contains? placed i) (hex->css (nth corner-colors i))
+                                          (contains? placed i) (hex->css (target-color i))
                                           :else "#333"))
             (set! (.-border st) (if (= i armed) "2px solid #fff" "1px solid #555"))
             (.addEventListener b "click" (fn [_] (arm-corner! i)))

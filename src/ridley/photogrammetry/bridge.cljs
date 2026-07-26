@@ -19,6 +19,7 @@
    with the camera still)."
   (:require [ridley.math :as m]
             [ridley.photogrammetry.camera :as cam]
+            [ridley.photogrammetry.box-fit :as bf]
             [ridley.photogrammetry.linalg :as la]))
 
 (defn box-basis
@@ -114,6 +115,14 @@
   [proxy-pose local-pt]
   (from-local-point (box-basis proxy-pose) (:position proxy-pose) local-pt))
 
+(defn world->local
+  "Inverse of local->world: a WORLD point expressed in `proxy-pose`'s object/
+   solver frame (box-fit's frame, x=ex y=ey z=ez). Used to bring a proxy's named
+   marks (which ride the geometry in world) into the SAME object frame the box
+   corners live in, so both feed the PnP solver identically."
+  [proxy-pose world-pt]
+  (to-local-point (box-basis proxy-pose) (:position proxy-pose) world-pt))
+
 (defn dims-from-mesh
   "Box extents [w h d] from `mesh`'s ACTUAL vertices (not from construction
    arguments — robust to however the box was parameterized), projected into
@@ -125,6 +134,48 @@
         axis-vals (fn [i] (map #(nth % i) locals))
         extent (fn [i] (let [xs (axis-vals i)] (- (apply max xs) (apply min xs))))]
     [(extent 0) (extent 1) (extent 2)]))
+
+(defn- mark-front-facing?
+  "Whether a plate mark (world position + world normal) faces `cam-pos` enough to
+   be worth clicking — the plate-analog of box-fit/visible-corners (which reasons
+   about a box's three-faces-per-corner and can't apply to a flat mark). ~0.15 ≈
+   within ~81° of face-on."
+  [world normal cam-pos]
+  (> (m/dot (m/normalize normal) (m/normalize (m/v- cam-pos world))) 0.15))
+
+(defn pnp-target-points
+  "The indexed PnP correspondence targets for `proxy-mesh` seen from
+   `camera-pose` — source-agnostic so the whole picking gesture (pick indices,
+   cycle, correspondence build) is identical whatever the proxy is:
+
+   - a proxy carrying named marks (:anchors — a registration PLATE) yields one
+     target per mark, its :obj the mark's position in the object/solver frame
+     (world->local, the SAME frame box corners live in, so the solver is
+     unchanged), :world the mark at the current pose, :id the mark keyword;
+   - otherwise the 8 box corners (bf/corners), :id the 0-7 corner index.
+
+   Each: {:obj [x y z] :world [x y z] :visible? bool :id kw-or-int}. Colour and
+   label are the UI layer's concern (edit_acquire), deliberately not here. Pure."
+  [proxy-mesh camera-pose]
+  (let [proxy-pose (:creation-pose proxy-mesh)]
+    (if-let [marks (seq (sort-by key (:anchors proxy-mesh)))]
+      (let [cam-pos (:position camera-pose)]
+        (mapv (fn [[id pose]]
+                (let [world (:position pose)]
+                  {:id id
+                   :obj (world->local proxy-pose world)
+                   :world world
+                   :visible? (mark-front-facing? world (:heading pose) cam-pos)}))
+              marks))
+      (let [dims (dims-from-mesh proxy-mesh proxy-pose)
+            objs (bf/corners dims)
+            visible (bf/visible-corners dims (editor->solver-pose camera-pose proxy-pose))]
+        (mapv (fn [i obj]
+                {:id i
+                 :obj obj
+                 :world (local->world proxy-pose obj)
+                 :visible? (contains? visible i)})
+              (range) objs)))))
 
 (defn klein-images
   "The four camera poses that reproject a box with three distinct sides to the
