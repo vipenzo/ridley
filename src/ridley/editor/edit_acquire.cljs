@@ -2788,28 +2788,76 @@
 (declare normal-up-obj)
 
 (def ^:private box-face-specs
-  "Face name → [axis sign] in the box's object frame (Ridley box convention:
-   x=right, y=up, z=heading — so +y=top, +z=front). Mirrors retrace-face-labels."
+  "Fallback face name → [axis sign] in the box's object frame (Ridley box convention:
+   x=right, y=up, z=heading — so +y=top, +z=front), used only for a proxy WITHOUT
+   face-groups. When the mesh HAS face-groups (a box does), face-poses keys off those
+   instead, so a face name means the SAME face for `(:x (:faces A))` and
+   `(flash-face (:proxy A) :x)`."
   {:right [0 1] :left [0 -1] :top [1 1] :bottom [1 -1] :front [2 1] :back [2 -1]})
 
+(defn- box-axis-face-pose
+  "Turtle pose {:position :heading :up} in world for the box face at object-frame
+   [axis sign]: heading = OUTWARD normal, position = face centre, up = an in-plane
+   box axis (normal-up-obj, deterministic). Same frame the emitted marks use."
+  [proxy pose axis sign]
+  (let [half (* 0.5 (nth (bridge/dims-from-mesh proxy pose) axis))
+        center-obj (assoc [0.0 0.0 0.0] axis (* sign half))
+        normal-obj (m/v* (axis-unit axis) (double sign))]
+    {:position (bridge/local->world pose center-obj)
+     :heading (obj-dir->world pose normal-obj)
+     :up (obj-dir->world pose (normal-up-obj normal-obj))}))
+
+(defn- facegroup-outward-normal
+  "Average OUTWARD world normal of a mesh face-group's triangles, flipped to point
+   away from the mesh centre so triangle winding can't invert the sign."
+  [verts tris mesh-center]
+  (let [idxs (distinct (mapcat identity tris))
+        pts (mapv #(nth verts %) idxs)
+        n (max 1 (count pts))
+        centroid (mapv #(/ % n) (reduce m/v+ [0.0 0.0 0.0] pts))
+        nsum (reduce m/v+ [0.0 0.0 0.0]
+                     (map (fn [[a b c]]
+                            (m/normalize (m/cross (m/v- (nth verts b) (nth verts a))
+                                                  (m/v- (nth verts c) (nth verts a)))))
+                          tris))
+        nrm (m/normalize nsum)]
+    (if (neg? (m/dot nrm (m/v- centroid mesh-center))) (m/v* nrm -1.0) nrm)))
+
+(defn- world-normal->axis-sign
+  "Match an outward WORLD normal to the posed box's ±axis directions → [axis sign] in
+   the object frame, so a mesh face-group reuses the clean box-axis pose geometry."
+  [world-normal pose]
+  (apply max-key
+         (fn [[axis sign]]
+           (m/dot world-normal (obj-dir->world pose (m/v* (axis-unit axis) (double sign)))))
+         (for [axis [0 1 2] sign [1 -1]] [axis sign])))
+
 (defn- face-poses
-  "The 6 box faces of the posed proxy as turtle POSES {:position :heading :up} in
-   world — so `(turtle (:top (:faces A)) (edit-path-2d …))` drops the turtle onto a
-   face (P4b Pezzo iii: pose the turtle on a face of the acquire, then draw the
-   ricalco there with the stage's backdrop). heading = OUTWARD face normal, position
-   = face centre, up = an in-plane box axis (normal-up-obj, deterministic). Same
-   frame the emitted marks use, so faces and marks pose the turtle identically."
+  "The proxy's faces as turtle POSES {:position :heading :up} in world, keyed by the
+   mesh's OWN face-group names — so `(turtle (:top (:faces A)) (edit-path-2d …))` and
+   `(flash-face (:proxy A) :top)` name the SAME face (Vincenzo 2026-07-26: acquire
+   follows the existing box/flash-face convention, it doesn't invent its own). Each
+   face-group's outward world normal is matched to the posed box's ±axis so the clean
+   box-axis pose geometry (box-axis-face-pose) is reused — only the KEY changes, not
+   the pose's up convention. Falls back to box-face-specs for a proxy without
+   face-groups. Same world frame the emitted marks use, so faces and marks pose the
+   turtle identically."
   [proxy pose]
-  (let [dims (bridge/dims-from-mesh proxy pose)]
-    (into {}
-          (map (fn [[nm [axis sign]]]
-                 (let [half (* 0.5 (nth dims axis))
-                       center-obj (assoc [0.0 0.0 0.0] axis (* sign half))
-                       normal-obj (m/v* (axis-unit axis) (double sign))]
-                   [nm {:position (bridge/local->world pose center-obj)
-                        :heading (obj-dir->world pose normal-obj)
-                        :up (obj-dir->world pose (normal-up-obj normal-obj))}]))
-               box-face-specs))))
+  (let [verts (:vertices proxy)
+        groups (:face-groups proxy)]
+    (if (seq groups)
+      (let [nv (max 1 (count verts))
+            mesh-center (mapv #(/ % nv) (reduce m/v+ [0.0 0.0 0.0] verts))]
+        (into {}
+              (map (fn [[nm tris]]
+                     (let [[axis sign] (world-normal->axis-sign
+                                        (facegroup-outward-normal verts tris mesh-center)
+                                        pose)]
+                       [nm (box-axis-face-pose proxy pose axis sign)]))
+                   groups)))
+      (into {}
+            (map (fn [[nm [axis sign]]] [nm (box-axis-face-pose proxy pose axis sign)])
+                 box-face-specs)))))
 
 (defn ^:export acquire
   "(acquire \"dir\") / (acquire \"dir\" {:proxy (box …) :pose {…} :shapes {} :marks {}})
