@@ -66,7 +66,7 @@
 (defn frustum-pick-mesh
   "Invisible solid twin of a frustum pyramid, tagged with the photo `idx` so a click
    in free orbit resolves to that camera. Never rendered (:pick-only) but picked by
-   viewport/raycast-preview-pick. Faces: 4 side triangles from the apex + 2 for the
+   viewport/raycast-frustum-pick. Faces: 4 side triangles from the apex + 2 for the
    base quad; double-sided so a ray hits regardless of which side it enters."
   [pose depth half-w half-h idx]
   (let [corners (frustum-corners pose depth half-w half-h)]
@@ -143,7 +143,15 @@
 ;; Run clears the preview layer.
 ;; ------------------------------------------------------------
 
-(defn- frustum-preview-items []
+(defn- frustum-preview-items
+  "Ghost frustum items for the dedicated frustum layer, shown in FREE ORBIT (each: a
+   ghost pyramid outline + an invisible pick-mesh). Now on their OWN layer, so they
+   stay visible while an edit-path-2d ricalco is open (Vincenzo 2026-07-26: before,
+   they vanished the moment a ricalco opened — disorienting when you want to choose
+   the next angle). Not shown IN pose: there the camera is zoomed onto the object, so
+   the other cameras (a ~250mm ring around a ~60mm object) fall outside the frame
+   anyway; navigation in pose is via Prev/Next / [ / ] / the toggle."
+  []
   (when (free-orbit?)
     (let [{:keys [dims camera-poses focal-mm current-idx]} @stage
           depth (* 1.2 0.5 (m/magnitude dims))
@@ -160,7 +168,7 @@
                        (frustum-pick-mesh pose depth half-w half-h idx)]))
             camera-poses))))
 
-(defn- show-frustums! [] (viewport/show-preview! (frustum-preview-items)))
+(defn- show-frustums! [] (viewport/show-frustum-layer! (frustum-preview-items)))
 
 ;; ------------------------------------------------------------
 ;; In-pose / free-orbit transitions. In pose the camera is locked (set-camera-pose!
@@ -212,27 +220,27 @@
    `animate?` uses a ~200ms flight (Prev/Next navigation, incl. while an edit-path-2d
    ricalco is open → live reprojection); a frustum click enters instantly.
 
-   PREVIEW LAYER: while a modal editor is open (edit-path-2d tracing over the photo)
-   its overlay lives on the shared preview layer, so we must NOT clear it — the trace
-   is world-space and reprojects for free from the new camera; clearing it would wipe
-   the ricalco. Otherwise we drop the frustums (we're in pose)."
+   The frustums live on their own dedicated layer (viewport/show-frustum-layer!),
+   separate from the preview layer, so managing them never touches an open edit-path-2d
+   ricalco's overlay — the trace is left exactly where it is and reprojects for free
+   from the new camera. show-frustums! clears the frustum layer in pose (frustums show
+   in free orbit only)."
   ([idx] (go-in-pose! idx false))
   ([idx animate?]
    (when-let [pose (get-in @stage [:camera-poses idx])]
-     (let [modal-open? (modal/active?)]
-       (swap! stage assoc :current-idx idx :in-pose? true)
-       (install-pose-lock!)
-       (when-not modal-open? (viewport/clear-preview!))
-       (if animate?
-         (do ;; hide the OLD photo during the flight so the overlay sweeps over a
-             ;; neutral background; the destination photo appears on arrival.
-           (backdrop/set-visible! false)
-           (viewport/fly-camera-to-pose!
-            pose flight-ms
-            (fn [] (load-photo-backdrop! idx) (update-toolbar!))))
-         (do (viewport/set-camera-pose! pose) ; disables controls → locked
-             (load-photo-backdrop! idx)))
-       (update-toolbar!)))))
+     (swap! stage assoc :current-idx idx :in-pose? true)
+     (install-pose-lock!)
+     (show-frustums!) ; empties the frustum layer in pose; leaves the ricalco overlay alone
+     (if animate?
+       (do ;; hide the OLD photo during the flight so the overlay sweeps over a
+           ;; neutral background; the destination photo appears on arrival.
+         (backdrop/set-visible! false)
+         (viewport/fly-camera-to-pose!
+          pose flight-ms
+          (fn [] (load-photo-backdrop! idx) (update-toolbar!))))
+       (do (viewport/set-camera-pose! pose) ; disables controls → locked
+           (load-photo-backdrop! idx)))
+     (update-toolbar!))))
 
 (defn leave-pose!
   "Back to free orbit around the object; the camera stays exactly where the photo
@@ -241,10 +249,8 @@
    to orbit and inspect the trace from any angle). The per-frame pose-lock is needed
    only IN pose — there it stops a node-grab from orbiting away from the locked photo;
    in free orbit edit-path's own disable-controls-while-dragging is exactly right, so
-   there's no drift. The one thing we must NOT do with a modal open is show the
-   frustums: they go through show-preview!, which clears+rebuilds the whole preview
-   layer, wiping the ricalco overlay that shares it — so frustums return only when
-   nothing modal is up (navigate back with Prev/Next or the toggle instead)."
+   there's no drift. Frustums come back (now the full free-orbit set, clickable) on
+   their own dedicated layer, so they no longer disturb an open ricalco's overlay."
   []
   (when (:in-pose? @stage)
     (swap! stage assoc :in-pose? false)
@@ -258,10 +264,7 @@
     (reset-view!)
     (backdrop/set-visible! false)
     (viewport/free-camera-at-pivot! (stage-pivot))
-    ;; frustums would wipe an open ricalco's overlay (shared preview layer) → only
-    ;; when nothing modal is up. The overlay itself is left untouched so the trace
-    ;; reprojects live as the user orbits.
-    (when-not (modal/active?) (show-frustums!))
+    (show-frustums!) ; free-orbit set (all, clickable) — dedicated layer, safe w/ modal
     (update-toolbar!)))
 
 ;; ------------------------------------------------------------
@@ -312,7 +315,7 @@
 (defn- on-pointerdown [^js e]
   (when (and (free-orbit?) (zero? (.-button e)))
     (swap! stage assoc :press {:x (.-clientX e) :y (.-clientY e)
-                               :idx (viewport/raycast-preview-pick e)})))
+                               :idx (viewport/raycast-frustum-pick e)})))
 
 (defn- on-pointerup [^js e]
   (when (and (free-orbit?) (zero? (.-button e)))
@@ -551,6 +554,7 @@
     (viewport/unregister-frame-callback! :camera-flight)
     (when (:in-pose? @stage) (backdrop/set-visible! false))
     (backdrop/clear!)
+    (viewport/clear-frustum-layer!)
     (viewport/clear-preview!)
     (reset! stage nil)))
 
@@ -628,27 +632,22 @@
           (-> (load!) (.then (fn [_]
                                ;; toolbar earns its keep only with registered cameras
                                (when (seq (:camera-poses @stage)) (setup-toolbar!))
-                               ;; NOT while a modal editor is open: this .then is async
-                               ;; (fires after edit-path's enter!/render! has drawn its
-                               ;; overlay on the SHARED preview layer), so showing
-                               ;; frustums here would clear+rebuild that layer and wipe
-                               ;; the ricalco. The modal owns the preview layer; the
-                               ;; toolbar (Prev/Next/lock) drives navigation instead.
-                               (when (and (not (:in-pose? @stage)) (not (modal/active?)))
-                                 (show-frustums!))))))
+                               ;; frustums live on their OWN dedicated layer, so this
+                               ;; is safe even when edit-path-2d opened in the same eval
+                               ;; (its overlay owns the preview layer; the two coexist).
+                               (show-frustums!)))))
 
       ;; same dir re-evaluated → keep camera/pose, just refresh geometry (dims/pose
-      ;; may have changed) and re-show the layer the Run wiped
+      ;; may have changed) and re-show the layers the Run's clear-geometry wiped
       pending
       (do (swap! stage merge {:emit-pose (:emit-pose pending)
                               :dims (:dims pending)
                               :pending nil})
           (when (and (loaded?) (seq (:camera-poses @stage))) (setup-toolbar!))
-          (if (:in-pose? @stage)
-            (backdrop/set-visible! true)
-            ;; keep frustums off the shared preview layer while a modal owns it (see
-            ;; the fresh-branch note) — the overlay must survive the Run/re-eval.
-            (when (and (loaded?) (not (modal/active?))) (show-frustums!))))
+          (when (:in-pose? @stage) (backdrop/set-visible! true))
+          ;; re-show the frustums (in-pose or free-orbit set per state) on the
+          ;; dedicated layer — safe with an open ricalco.
+          (when (loaded?) (show-frustums!)))
 
       ;; no (acquire …) this eval → tear down
       @stage

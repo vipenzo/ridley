@@ -73,6 +73,12 @@
 ;; Preview objects for test mode (temporary visualization, outside registry)
 (defonce ^:private preview-objects (atom []))
 
+;; A SECOND overlay layer, independent of preview-objects: the acquire stage's ghost
+;; frustums live here so they survive an edit-path-2d ricalco's show-preview! (which
+;; owns preview-objects) — frustums stay visible while a ricalco is open. Wiped by a
+;; Run's clear-geometry like the preview layer, re-shown by the stage's after-eval!.
+(defonce ^:private frustum-objects (atom []))
+
 ;; Per-frame callbacks registered by external overlay owners (e.g. the edit-attach
 ;; gizmo, for its constant-apparent-size rescale). key -> (fn [camera]).
 (defonce ^:private frame-callbacks (atom {}))
@@ -2886,6 +2892,57 @@
     (.traverse obj (fn [^js o]
                      (when (.. o -userData -screenScaleDot)
                        (.set (.-scale o) factor factor factor))))))
+
+;; ------------------------------------------------------------
+;; Dedicated frustum overlay layer (frustum-objects), independent of the preview
+;; layer. The acquire stage renders its ghost camera frustums here so they COEXIST
+;; with an open edit-path-2d ricalco (whose overlay owns the preview layer) — before,
+;; showing frustums went through show-preview! and wiped the ricalco. Same item shape
+;; as show-preview! (build-preview-object); a Run's clear-geometry sweeps these like
+;; the preview layer, so the stage re-shows them from after-eval!.
+;; ------------------------------------------------------------
+
+(defn clear-frustum-layer!
+  "Remove all frustum-layer objects and dispose their resources."
+  []
+  (when-let [{:keys [world-group]} @state]
+    (doseq [^js obj @frustum-objects]
+      (.remove world-group obj)
+      (.traverse obj (fn [^js c]
+                       (when-let [geom (.-geometry c)] (.dispose geom))
+                       (when-let [mat (.-material c)] (.dispose mat)))))
+    (reset! frustum-objects [])))
+
+(defn show-frustum-layer!
+  "Render `items` (show-preview!-shaped) on the dedicated frustum layer, replacing
+   any previous frustum objects but leaving the preview layer (an edit-path overlay)
+   untouched."
+  [items]
+  (clear-frustum-layer!)
+  (when-let [{:keys [world-group]} @state]
+    (doseq [item items]
+      (when-let [^js obj (build-preview-object item)]
+        (.add world-group obj)
+        (swap! frustum-objects conj obj)))))
+
+(defn raycast-frustum-pick
+  "Like raycast-preview-pick, but against the dedicated frustum layer — returns the
+   :pick-id of the nearest frustum under the pointer, or nil."
+  [^js event]
+  (when-let [{:keys [^js camera ^js canvas]} @state]
+    (let [rect (.getBoundingClientRect canvas)
+          nx (- (* (/ (- (.-clientX event) (.-left rect)) (.-width rect)) 2) 1)
+          ny (- 1 (* (/ (- (.-clientY event) (.-top rect)) (.-height rect)) 2))
+          raycaster (THREE/Raycaster.)]
+      (.setFromCamera raycaster (THREE/Vector2. nx ny) camera)
+      (let [hits (.intersectObjects raycaster (clj->js (vec @frustum-objects)) true)
+            pick-of (fn [^js o]
+                      (loop [^js x o]
+                        (cond
+                          (nil? x) nil
+                          (some? (.. x -userData -pickId)) (.. x -userData -pickId)
+                          :else (recur (.-parent x)))))]
+        (some (fn [^js h] (pick-of (.-object h))) hits)))))
 
 (defn raycast-mesh-face
   "Raycast the pointer ray against the scene meshes (world-group children that carry
