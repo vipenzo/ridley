@@ -5,6 +5,67 @@ palcoscenico eval-driven (P4b) è **in piedi e collaudato**; questa è l'ultima
 fetta ricca: la **UX toolbar + navigazione foto mentre si traccia** (= controllo
 di riproiezione live). Branch: `edit-acquire-registration-stability`.
 
+---
+
+## ✅ STATO 2026-07-25 (fine sessione) — COSTRUITO + verificato Playwright, NON committato, in attesa del GATE UMANO
+
+Tutti i pezzi A/B/C fatti e verificati live su `localhost:9000` coi dati veri
+`test-assets/param-acq-box-tape/`. **Manca solo il collaudo ergonomico di
+Vincenzo** (nella SUA app). Non committato.
+
+- **(C) Toolbar** in `#viewport-toolbar`, montata solo con una `(acquire …)` in
+  scena CON camere registrate; tolta quando l'acquire esce. Tre bottoni
+  raggruppati `‹ · Foto · ›` (wrapper `#eaq-stage-tools`): **Prev**, **toggle
+  Photo-lock**, **Next**. Toggle: selezionato (giallo) in posa, etichetta
+  **"foto i/N · θ°"** (i = rango in ordine θ); premuto in posa → orbita libera
+  (solo se nessun ricalco è aperto); premuto da libero → blocca la corrente (o
+  la prima in θ se nessuna). Aggiornata a ogni cambio posa (anche via clic
+  frustum, non solo via toolbar).
+- **(B) Prev/Next + `[`/`]`** navigano in **ordine di θ** (non di indice) con
+  **volo camera ~200 ms** (LERP pos + SLERP orient, smoothstep) — nuovo helper
+  `viewport/fly-camera-to-pose!` (frame-callback `:camera-flight`; il render-loop
+  è continuo, niente rAF separato). Verificato progressivo (mid ≈ metà strada).
+- **(A) IL CUORE — navigazione MENTRE edit-path-2d è aperto = riproiezione live.**
+  `go-in-pose!` NON fa più `clear-preview!` se `modal/active?` → l'overlay del
+  ricalco (stesso layer preview condiviso) è **preservato** e si riproietta
+  gratis dalla nuova camera. **Provato**: gli UUID degli oggetti preview restano
+  IDENTICI prima/dopo il cambio foto, la camera si muove, il triangolo di
+  edit-path resta sulla faccia top e si vede dal nuovo angolo (screenshot).
+  `[`/`]` **promossi sopra il modale** (tolto il guard `modal/active?`, tenuto il
+  guard `editable?` così i campi di testo e il sorgente ricevono le parentesi).
+  Esc resta all'editor quando un modale è aperto; lo stage prende Esc solo senza
+  modale. `go-in-pose!` in flight nasconde la vecchia foto e mostra la nuova
+  all'arrivo (overlay sopra sfondo neutro durante il volo — **da giudicare**).
+- **Toggle → globale col modale APERTO ora FUNZIONA** (feedback Vincenzo
+  2026-07-25, corretto stessa sessione): premere "Foto" mentre edit-path-2d è
+  aperto libera l'orbita (puoi orbitare e ispezionare il tratto da ogni angolo),
+  il ricalco resta visibile e si riproietta. Il lock per-frame serviva SOLO in
+  posa (lì impedisce che il grab-nodo orbiti via dalla foto); in orbita libera il
+  comportamento normale di edit-path (disabilita i controlli solo durante il drag)
+  è quello giusto → nessuna deriva. `leave-pose!` non è più guardato su
+  `modal/active?`; salta solo `show-frustums!` col modale aperto (i frustum
+  passerebbero da `show-preview!` che ripulisce il layer condiviso e cancellerebbe
+  l'overlay). **Conseguenza**: mentre un ricalco è aperto i **frustum sono
+  nascosti**; si naviga con toolbar/`[`/`]`; riappaiono chiudendo il ricalco.
+- **Race dell'eval-fresco RISOLTA** (scoperta stessa sessione): `after-eval!`
+  lancia `load!` async e il suo `.then` mostrava i frustum DOPO che edit-path
+  aveva disegnato l'overlay → lo cancellava (eval fresco della form con
+  `edit-path-2d` dentro → 12 frustum, tratto sparito). Fix: `show-frustums!` nei
+  due rami di `after-eval!` è guardato su `(not (modal/active?))` — **regola
+  coerente: con un modale aperto lo stage non mette mai i frustum sul layer
+  preview condiviso; il modale lo possiede.** Verificato: eval fresco → overlay
+  presente (2 oggetti), non 12 frustum.
+- **Decisioni residue**: **(D) multi-acquire** ancora una sola acquire (l'ultima)
+  — da concordare con Vincenzo se serve.
+- **File**: `viewport/core.cljs` (+`fly-camera-to-pose!`), `acquire_stage.cljs`
+  (toolbar, `nav-order`/`nav-photo!` in θ, `go-in-pose!` animato+modal-aware,
+  `leave-pose!` modal-guard, on-keydown promosso, lifecycle setup/teardown
+  toolbar), `public/css/style.css` (`.eaq-stage-tools`).
+- **Avvertenza collaudo (Review 4)**: da certe angolazioni il piano di schizzo va
+  quasi di taglio → click mal condizionati; se i click "impazziscono" è quello.
+
+---
+
 ## Stato a monte — cosa FUNZIONA già (tutto committato)
 
 Il flusso completo è collaudato da Vincenzo ("va bene"): valuti nel sorgente

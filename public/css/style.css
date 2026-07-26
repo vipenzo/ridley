@@ -982,6 +982,20 @@ html, body {
   color: #ffcc00;
 }
 
+/* Acquire-stage photo tools (Prev / Photo-lock / Next) — grouped, only present
+   while an (acquire …) with registered cameras is in scene. */
+.eaq-stage-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-right: 6px;
+  padding-right: 6px;
+  border-right: 1px solid #3c3c3c;
+}
+#eaq-stage-lock {
+  min-width: 6.5em;
+}
+
 /* Turtle source dropdown */
 #turtle-source-select {
   background: #252526;

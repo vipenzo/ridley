@@ -169,54 +169,86 @@
 ;; over it. Leaving returns to free orbit WITHOUT a jump (free-camera-at-pivot!).
 ;; ------------------------------------------------------------
 
-(declare reset-view!)
+(declare reset-view! update-toolbar! nav-photo!)
+
+(def ^:private flight-ms 200) ; camera flight duration for Prev/Next navigation
+
+(defn- install-pose-lock!
+  "Register the per-frame :acquire-stage callback that HARD-locks the camera in pose.
+   set-camera-pose! disables the orbit controls ONCE, but a modal editor opened over
+   the photo (an edit-path-2d ricalco) re-enables them on every node grab/release —
+   after that, dragging a node ALSO orbits the camera and the photo↔proxy alignment
+   drifts (Vincenzo 2026-07-25: 'grabbo un nodo e il wireframe si sposta'). Forcing
+   controls off per-frame keeps the pose glued no matter who re-enables them. In the
+   same callback, keep edit-path-2d's node handles a constant SCREEN size: the in-pose
+   zoom is a camera view offset that magnifies the dots too, so counteract it by
+   scaling them 1/zoom. Re-applied every frame so it survives edit-path re-rendering
+   its dots and every photo change during navigation."
+  []
+  (viewport/register-frame-callback! :acquire-stage
+                                     (fn [_camera]
+                                       (viewport/set-controls-enabled! false)
+                                       (viewport/scale-screen-dots!
+                                        (/ 1.0 (get-in @stage [:view :zoom] 1.0))))))
+
+(defn- load-photo-backdrop!
+  "Ensure the backdrop plane exists, show photo `idx` full-screen (sets FOV), and
+   reset any in-pose zoom/pan. The backdrop plane is a defonce that persists, so a
+   stage activated by pre-fix code never got one and set-photo!/set-visible! would
+   silently no-op — lazily create it here so the photo is robust to how we got here."
+  [idx]
+  (when-not (backdrop/ready?)
+    (backdrop/create! (viewport/get-camera)))
+  (when-let [file (photo-file idx)]
+    (backdrop/set-photo! (str (:dir @stage) "/" file) (:focal-mm @stage)
+                         viewport/set-camera-fov!)
+    (backdrop/set-visible! true))
+  ;; every photo starts un-zoomed (fresh view offset)
+  (reset-view!))
 
 (defn go-in-pose!
-  "Fly the camera into photo `idx`'s registered pose, show that photo full-screen
-   as the backdrop; the user's geometry (already in the scene) projects over it."
-  [idx]
-  (when-let [pose (get-in @stage [:camera-poses idx])]
-    (swap! stage assoc :current-idx idx :in-pose? true)
-    (viewport/set-camera-pose! pose) ; disables controls → locked
-    ;; HARD-lock the camera every frame while in pose. set-camera-pose! disables
-    ;; the orbit controls ONCE, but a modal editor opened over the photo (an
-    ;; edit-path-2d ricalco) re-enables them on every node grab/release — after
-    ;; that, dragging a node ALSO orbits the camera and the photo↔proxy alignment
-    ;; drifts (Vincenzo 2026-07-25: "grabbo un nodo e il wireframe si sposta").
-    ;; Forcing controls off per-frame (edit-acquire's own stage does the same via
-    ;; its :edit-acquire lock) keeps the pose glued no matter who re-enables them.
-    ;; …and, in the same per-frame callback, keep edit-path-2d's node handles a
-    ;; constant SCREEN size: the in-pose zoom is a camera view offset that magnifies
-    ;; the dots too, so counteract it by scaling them 1/zoom (Vincenzo 2026-07-25:
-    ;; "lo zoom ingrandisce anche gli handles… dovrebbero restare di dimensione
-    ;; fissa"). Re-applied every frame so it survives edit-path re-rendering its dots.
-    (viewport/register-frame-callback! :acquire-stage
-                                       (fn [_camera]
-                                         (viewport/set-controls-enabled! false)
-                                         (viewport/scale-screen-dots!
-                                          (/ 1.0 (get-in @stage [:view :zoom] 1.0)))))
-    ;; Ensure the backdrop plane exists — after-eval! builds it on a fresh
-    ;; activation, but the stage atom is a defonce that persists, so a stage
-    ;; activated by pre-fix code (or otherwise already set for this dir) never got
-    ;; a backdrop and set-photo!/set-visible! would silently no-op (no photo, only
-    ;; the proxy). Lazily creating here makes the photo robust to how we got here.
-    (when-not (backdrop/ready?)
-      (backdrop/create! (viewport/get-camera)))
-    (when-let [file (photo-file idx)]
-      (backdrop/set-photo! (str (:dir @stage) "/" file) (:focal-mm @stage)
-                           viewport/set-camera-fov!)
-      (backdrop/set-visible! true))
-    ;; every photo starts un-zoomed (fresh view offset)
-    (reset-view!)
-    ;; drop the frustums — we're in pose now
-    (viewport/clear-preview!)))
+  "Move the camera into photo `idx`'s registered pose and show that photo full-screen
+   as the backdrop; the user's geometry (already in the scene) projects over it.
+   `animate?` uses a ~200ms flight (Prev/Next navigation, incl. while an edit-path-2d
+   ricalco is open → live reprojection); a frustum click enters instantly.
+
+   PREVIEW LAYER: while a modal editor is open (edit-path-2d tracing over the photo)
+   its overlay lives on the shared preview layer, so we must NOT clear it — the trace
+   is world-space and reprojects for free from the new camera; clearing it would wipe
+   the ricalco. Otherwise we drop the frustums (we're in pose)."
+  ([idx] (go-in-pose! idx false))
+  ([idx animate?]
+   (when-let [pose (get-in @stage [:camera-poses idx])]
+     (let [modal-open? (modal/active?)]
+       (swap! stage assoc :current-idx idx :in-pose? true)
+       (install-pose-lock!)
+       (when-not modal-open? (viewport/clear-preview!))
+       (if animate?
+         (do ;; hide the OLD photo during the flight so the overlay sweeps over a
+             ;; neutral background; the destination photo appears on arrival.
+           (backdrop/set-visible! false)
+           (viewport/fly-camera-to-pose!
+            pose flight-ms
+            (fn [] (load-photo-backdrop! idx) (update-toolbar!))))
+         (do (viewport/set-camera-pose! pose) ; disables controls → locked
+             (load-photo-backdrop! idx)))
+       (update-toolbar!)))))
 
 (defn leave-pose!
   "Back to free orbit around the object; the camera stays exactly where the photo
-   framed it (no jump), the backdrop hides and the frustums return."
+   framed it (no jump) and the backdrop hides. Works WHILE a modal editor is open
+   (Vincenzo 2026-07-25: the Photo toggle must return to global view even mid-ricalco,
+   to orbit and inspect the trace from any angle). The per-frame pose-lock is needed
+   only IN pose — there it stops a node-grab from orbiting away from the locked photo;
+   in free orbit edit-path's own disable-controls-while-dragging is exactly right, so
+   there's no drift. The one thing we must NOT do with a modal open is show the
+   frustums: they go through show-preview!, which clears+rebuilds the whole preview
+   layer, wiping the ricalco overlay that shares it — so frustums return only when
+   nothing modal is up (navigate back with Prev/Next or the toggle instead)."
   []
   (when (:in-pose? @stage)
     (swap! stage assoc :in-pose? false)
+    (viewport/unregister-frame-callback! :camera-flight) ; kill any in-flight tween
     ;; release the per-frame camera lock FIRST, else free-camera-at-pivot! re-enables
     ;; orbit and the lock callback immediately re-disables it.
     (viewport/unregister-frame-callback! :acquire-stage)
@@ -226,14 +258,49 @@
     (reset-view!)
     (backdrop/set-visible! false)
     (viewport/free-camera-at-pivot! (stage-pivot))
-    (show-frustums!)))
+    ;; frustums would wipe an open ricalco's overlay (shared preview layer) → only
+    ;; when nothing modal is up. The overlay itself is left untouched so the trace
+    ;; reprojects live as the user orbits.
+    (when-not (modal/active?) (show-frustums!))
+    (update-toolbar!)))
+
+;; ------------------------------------------------------------
+;; Photo navigation in θ (turntable-angle) order — NOT index order. Prev/Next and
+;; [ / ] step through the REGISTERED photos (those with a camera pose) sorted by θ,
+;; flying the camera between poses. This is the live-reprojection control: change
+;; view while an edit-path-2d ricalco is open → the trace is seen from the new angle.
+;; ------------------------------------------------------------
+
+(defn- nav-order
+  "Registered photo indices (those with a camera pose) sorted by turntable angle θ."
+  []
+  (let [{:keys [photos camera-poses]} @stage]
+    (vec (sort-by (fn [idx] (or (:theta (nth photos idx nil)) 0))
+                  (keys camera-poses)))))
+
+(defn- nav-rank
+  "1-based position of photo `idx` in θ order (0 if not registered)."
+  [idx]
+  (or (first (keep-indexed (fn [k i] (when (= i idx) (inc k))) (nav-order))) 0))
+
+(defn nav-photo!
+  "Step `dir` (+1 next / -1 prev) through the registered photos in θ order and fly
+   the camera there (~200ms). Works whether free-orbit or already in pose, and while
+   an edit-path-2d ricalco is open."
+  [dir]
+  (let [order (nav-order)
+        n (count order)]
+    (when (pos? n)
+      (let [cur (:current-idx @stage)
+            pos (or (first (keep-indexed (fn [k i] (when (= i cur) k)) order)) 0)]
+        (go-in-pose! (nth order (mod (+ pos dir) n)) true)))))
 
 ;; ------------------------------------------------------------
 ;; Pointer + keyboard. A CLEAN click (little travel, so it never steals an orbit
-;; drag) on a ghost frustum flies into pose. [ / ] navigate, Esc leaves pose —
-;; but only when focus is outside any editable (the user must be able to type
-;; brackets in their source), so keys act only when the viewport, not the editor,
-;; has focus.
+;; drag) on a ghost frustum flies into pose. [ / ] navigate photos (θ order), Esc
+;; leaves pose — but only when focus is outside any editable (the user must be able
+;; to type brackets in their source), so keys act only when the viewport, not the
+;; editor, has focus.
 ;; ------------------------------------------------------------
 
 (def ^:private click-slop-px 6)
@@ -265,20 +332,23 @@
         (js/setTimeout (fn [] (go-in-pose! idx)) 0)))))
 
 (defn- on-keydown [^js e]
-  ;; Inert while a modal editor is open (edit-path-2d drawing a ricalco over the
-  ;; posed photo) — it owns the keys then; the stage's [ / ] / Esc must not fight it.
-  (when (and @stage (loaded?) (not (modal/active?))
+  ;; Guard on editable focus (the user must be able to type brackets in their
+  ;; source) — but NOT on modal/active?: [ / ] are promoted ABOVE an open
+  ;; edit-path-2d so you can change photo while tracing (edit-path binds neither
+  ;; key, so there's no conflict; no stopPropagation, so it stays non-intrusive).
+  ;; Esc, by contrast, belongs to the editor when a modal is open (it cancels the
+  ;; current edit); the stage takes Esc only when nothing modal is up.
+  (when (and @stage (loaded?)
              (not (editable? (.-activeElement js/document))))
     (let [k (.-key e)
-          n (count (:photos @stage))
-          idx (:current-idx @stage 0)]
+          navigable? (or (:in-pose? @stage) (modal/active?))]
       (cond
-        (and (:in-pose? @stage) (= k "Escape"))
-        (do (.preventDefault e) (leave-pose!))
-        (and (:in-pose? @stage) (= k "["))
-        (do (.preventDefault e) (go-in-pose! (mod (dec idx) n)))
-        (and (:in-pose? @stage) (= k "]"))
-        (do (.preventDefault e) (go-in-pose! (mod (inc idx) n)))))))
+        (and navigable? (= k "["))
+        (do (.preventDefault e) (nav-photo! -1))
+        (and navigable? (= k "]"))
+        (do (.preventDefault e) (nav-photo! 1))
+        (and (:in-pose? @stage) (not (modal/active?)) (= k "Escape"))
+        (do (.preventDefault e) (leave-pose!))))))
 
 ;; ------------------------------------------------------------
 ;; In-pose ZOOM + PAN on the still photo (Vincenzo 2026-07-25: trace fine details
@@ -392,6 +462,81 @@
     (.removeEventListener canvas "contextmenu" on-contextmenu true)))
 
 ;; ------------------------------------------------------------
+;; Viewport toolbar (shown only while the stage is active WITH registered cameras):
+;; a Photo-lock toggle (in-pose ↔ free, label 'foto i/N · θ°') + Prev/Next photo
+;; (θ order, ~200ms flight). Mounted in #viewport-toolbar; torn down on deactivate!.
+;; ------------------------------------------------------------
+
+(defn- theta-label
+  "'foto i/N · θ°' for the current photo — i = its 1-based rank in θ order."
+  []
+  (let [cur (:current-idx @stage)
+        n (count (nav-order))
+        theta (:theta (nth (:photos @stage) cur nil))]
+    (str "foto " (nav-rank cur) "/" n
+         (when theta (str " · " (js/Math.round theta) "°")))))
+
+(defn- update-toolbar!
+  "Refresh the lock toggle's label + selected state. Called on every pose change so
+   a frustum click (not just a toolbar click) reflects in the toggle."
+  []
+  (when-let [^js lock (.getElementById js/document "eaq-stage-lock")]
+    (if (in-pose?)
+      (do (.add (.-classList lock) "active")
+          (set! (.-textContent lock) (theta-label)))
+      (do (.remove (.-classList lock) "active")
+          (set! (.-textContent lock) "Foto")))))
+
+(defn- toggle-lock! []
+  (cond
+    ;; locked → free orbit. Works even with a ricalco open: you orbit to inspect the
+    ;; trace from any angle (frustums stay hidden then — navigate back with Prev/Next
+    ;; or by re-pressing the toggle; the overlay reprojects live as you orbit).
+    (in-pose?) (leave-pose!)
+    ;; free → lock onto the current photo, or the first in θ if none is current yet.
+    :else (let [order (nav-order)]
+            (when (seq order)
+              (let [cur (:current-idx @stage)
+                    idx (if (get-in @stage [:camera-poses cur]) cur (first order))]
+                (go-in-pose! idx true))))))
+
+(defn- make-tool-btn [id label title on-click]
+  (let [^js b (.createElement js/document "button")]
+    (set! (.-id b) id)
+    (set! (.-className b) "action-btn view-btn")
+    (set! (.-textContent b) label)
+    (set! (.-title b) title)
+    (.addEventListener b "click" (fn [^js e]
+                                   (.preventDefault e) (.stopPropagation e)
+                                   (on-click)))
+    b))
+
+(defn- setup-toolbar!
+  "Mount the Prev / lock / Next buttons at the front of #viewport-toolbar (idempotent
+   — a wrapper #eaq-stage-tools guards against double-mount)."
+  []
+  (when-let [^js tb (.getElementById js/document "viewport-toolbar")]
+    (when-not (.getElementById js/document "eaq-stage-tools")
+      (let [^js wrap (.createElement js/document "span")]
+        (set! (.-id wrap) "eaq-stage-tools")
+        (set! (.-className wrap) "eaq-stage-tools")
+        (.appendChild wrap (make-tool-btn "eaq-stage-prev" "‹"
+                                          "Foto precedente (ordine giradischi) — tasto ["
+                                          #(nav-photo! -1)))
+        (.appendChild wrap (make-tool-btn "eaq-stage-lock" "Foto"
+                                          "Blocca/sblocca la vista sulla foto corrente"
+                                          toggle-lock!))
+        (.appendChild wrap (make-tool-btn "eaq-stage-next" "›"
+                                          "Foto successiva (ordine giradischi) — tasto ]"
+                                          #(nav-photo! 1)))
+        (.insertBefore tb wrap (.-firstChild tb))))
+    (update-toolbar!)))
+
+(defn- teardown-toolbar! []
+  (when-let [^js w (.getElementById js/document "eaq-stage-tools")]
+    (.remove w)))
+
+;; ------------------------------------------------------------
 ;; Lifecycle: activation from an evaluated (acquire …), refresh across Runs, and
 ;; deactivation when a Run no longer contains one.
 ;; ------------------------------------------------------------
@@ -401,7 +546,9 @@
   []
   (when @stage
     (teardown-listeners!)
+    (teardown-toolbar!)
     (viewport/unregister-frame-callback! :acquire-stage)
+    (viewport/unregister-frame-callback! :camera-flight)
     (when (:in-pose? @stage) (backdrop/set-visible! false))
     (backdrop/clear!)
     (viewport/clear-preview!)
@@ -478,7 +625,17 @@
           ;; pose but showed NO photo, only the proxy (Vincenzo 2026-07-25).
           (backdrop/create! (viewport/get-camera))
           (backdrop/set-visible! false)
-          (-> (load!) (.then (fn [_] (when-not (:in-pose? @stage) (show-frustums!))))))
+          (-> (load!) (.then (fn [_]
+                               ;; toolbar earns its keep only with registered cameras
+                               (when (seq (:camera-poses @stage)) (setup-toolbar!))
+                               ;; NOT while a modal editor is open: this .then is async
+                               ;; (fires after edit-path's enter!/render! has drawn its
+                               ;; overlay on the SHARED preview layer), so showing
+                               ;; frustums here would clear+rebuild that layer and wipe
+                               ;; the ricalco. The modal owns the preview layer; the
+                               ;; toolbar (Prev/Next/lock) drives navigation instead.
+                               (when (and (not (:in-pose? @stage)) (not (modal/active?)))
+                                 (show-frustums!))))))
 
       ;; same dir re-evaluated → keep camera/pose, just refresh geometry (dims/pose
       ;; may have changed) and re-show the layer the Run wiped
@@ -486,9 +643,12 @@
       (do (swap! stage merge {:emit-pose (:emit-pose pending)
                               :dims (:dims pending)
                               :pending nil})
+          (when (and (loaded?) (seq (:camera-poses @stage))) (setup-toolbar!))
           (if (:in-pose? @stage)
             (backdrop/set-visible! true)
-            (when (loaded?) (show-frustums!))))
+            ;; keep frustums off the shared preview layer while a modal owns it (see
+            ;; the fresh-branch note) — the overlay must survive the Run/re-eval.
+            (when (and (loaded?) (not (modal/active?))) (show-frustums!))))
 
       ;; no (acquire …) this eval → tear down
       @stage
