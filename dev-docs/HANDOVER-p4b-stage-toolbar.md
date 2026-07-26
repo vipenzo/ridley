@@ -57,6 +57,25 @@ Vincenzo** (nella SUA app). Non committato.
   presente (2 oggetti), non 12 frustum.
 - **Decisioni residue**: **(D) multi-acquire** ancora una sola acquire (l'ultima)
   — da concordare con Vincenzo se serve.
+
+### Agg. 2026-07-26 — GATE PASSATO + due follow-up COMMITTATI
+
+Vincenzo ha collaudato ("Tutto ok") toolbar + navigazione + toggle→global. Committati
+`da7f00b` (volo camera) e `dd3743b` (toolbar+nav). Poi due segnalazioni sue, entrambe
+**costruite + verificate Playwright + committate** (non ancora ri-collaudate live):
+
+- **`cf2dfc0` — nomi delle facce unificati.** `(:top (:faces A))` e
+  `(flash-face (:proxy A) :top)` cadevano su facce diverse (convenzione propria di
+  acquire vs `:face-groups` del box). Ora `face-poses` chiava sui `:face-groups`
+  reali della mesh → un nome = la stessa faccia. Scelta di Vincenzo: tenere la
+  convenzione di flash-face/box ("acquire deve seguire le regole preesistenti").
+  NB cambia quale faccia è `:top` (ora la +Y del box, laterale — voluto).
+- **`959f1ff` — frustum su livello dedicato.** Prima sparivano aprendo un ricalco
+  (layer preview condiviso). Ora `viewport/frustum-objects` +
+  `show-frustum-layer!`/`clear-frustum-layer!`/`raycast-frustum-pick`, indipendente
+  dal preview → coesistono con l'overlay del ricalco. Visibili in orbita libera
+  (con o senza modale), cliccabili; in posa azzerati (camera zoomata, l'anello di
+  camere ~250mm cade fuori campo → si naviga con Prev/Next/[/]/toggle).
 - **File**: `viewport/core.cljs` (+`fly-camera-to-pose!`), `acquire_stage.cljs`
   (toolbar, `nav-order`/`nav-photo!` in θ, `go-in-pose!` animato+modal-aware,
   `leave-pose!` modal-guard, on-keydown promosso, lifecycle setup/teardown
