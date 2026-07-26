@@ -375,6 +375,18 @@ frame, giro con θ annotati); guida (nuovo cap. o estensione del 18).
    visibile in parte da ogni angolo. Prerequisito del live (webcam/
    companion): "inquadro e il viewport si orienta" = auto-posa per frame
    via corona. Momento giusto: appena la fetta P3 chiude sul lettore.
+   **Gradino intermedio (Vincenzo, 2026-08-01)**: prima della corona
+   auto-rilevata, la sua versione MANUALE — proxy-piatto `(cylinder r h)` +
+   mark alle posizioni delle tacche (raggio misurato, angoli per
+   costruzione della scala), e il comando `p` esteso dai vertici del proxy
+   ai **mark del proxy** (i vertici del box diventano mark auto-generati).
+   Il solver PnP non cambia; sblocca la registrazione di pezzi cilindrici
+   e senza feature; il passaggio all'auto-detect sostituirà i click con un
+   detector, non l'architettura. (L'UI "sistema i due cerchi del cilindro"
+   resta come raffinamento possibile: l'ellisse del bordo piatto è un buon
+   bersaglio per l'edge-snap.) NON è prerequisito del gate lettore: il
+   lettore è quasi-box, i suoi angoli si cliccano (dimostrato nella
+   sessione di luglio).
 2. **Rounded-prism + fillet-blend** — la leva di accuratezza, collaudata sul
    ritorno del lettore SD (nastrato!).
 3. **Sorgenti live** (webcam/companion ARKit) — sopra l'interfaccia di P2.
