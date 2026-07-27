@@ -87,16 +87,113 @@
 (deftest rejects-too-few-and-coplanar
   (let [kk (k*)
         pose (cam/look-at-pose [220.0 -140.0 160.0] [0.0 0.0 0.0] [0.0 0.0 1.0])]
-    (testing "fewer than six correspondences → nil (no seed given)"
-      (let [corr (vec (take 4 (correspondences-for pose 0.0 (synth/rng 1))))]
+    (testing "fewer than four correspondences → nil (neither the DLT's six nor the homography's four)"
+      (let [corr (vec (take 3 (correspondences-for pose 0.0 (synth/rng 1))))]
         (is (nil? (pnp/estimate-dlt corr kk)))
+        (is (nil? (pnp/estimate-homography corr kk)))
         (is (nil? (pnp/solve-pnp corr kk {})))))
-    (testing "coplanar points → singular normal equations → nil"
+    (testing "coplanar points → DLT singular, but the homography registers them"
+      ;; The pivot behind the planar path: a set on ONE plane makes the DLT's
+      ;; normal equations singular (nil), yet is exactly what the homography
+      ;; solves — solve-pnp must route to it rather than fail.
       (let [coplanar (mapv (fn [[x y]] [x y 20.0]) [[-30 -10] [30 -10] [30 10] [-30 10] [0 -10] [0 10]])
-            corr (vec (keep (fn [w] (when-let [px (cam/project kk pose w)] {:world w :px px})) coplanar))]
+            corr (vec (keep (fn [w] (when-let [px (cam/project kk pose w)] {:world w :px px})) coplanar))
+            sol (pnp/solve-pnp corr kk {})]
         (is (nil? (pnp/estimate-dlt corr kk))
-            "a set of coplanar model points must not yield a confident pose")))
+            "a set of coplanar model points must not yield a confident DLT pose")
+        (is (= :planar (:method sol)) "solve-pnp routes coplanar points to the homography")
+        (is (< (:rms-px sol) 1.0) "and registers them cleanly")))
     (testing "too few but WITH a seed → refines from the seed"
       (let [corr (vec (take 3 (correspondences-for pose 0.0 (synth/rng 2))))
             sol (pnp/solve-pnp corr kk {:seed pose})]
         (is (= :seed (:method sol)) "falls back to the supplied coarse seed")))))
+
+;; ---------------------------------------------------------------------------
+;; Planar PnP — the registration PLATE (marks all on one face, coplanar)
+
+(defn- ring-marks
+  "N coplanar model points on a circle of `radius` in the z=`z` plane — the
+   registration plate's corona of marks in the object frame. Coplanar by
+   construction: the DLT is singular here; the homography is the right tool."
+  [n radius z]
+  (mapv (fn [i]
+          (let [a (* 2.0 Math/PI (/ (double i) n))]
+            [(* radius (Math/cos a)) (* radius (Math/sin a)) z]))
+        (range n)))
+
+(defn- coplanar-correspondences-for
+  "Project each plate mark at `pose`, with a little gaussian click noise."
+  [marks pose sigma rng]
+  (let [kk (k*)]
+    (vec (keep (fn [world]
+                 (when-let [[u v] (cam/project kk pose world)]
+                   {:world world
+                    :px [(+ u (* sigma (synth/gauss rng)))
+                         (+ v (* sigma (synth/gauss rng)))]}))
+               marks))))
+
+(deftest recovers-pose-from-coplanar-plate-marks
+  ;; The plate gate that triggered the planar-PnP work: 12 marks all on the
+  ;; plate's top face are exactly coplanar, so estimate-dlt is singular. The
+  ;; homography seed + refine must recover the camera pose at the noise floor,
+  ;; and :auto must ROUTE to :planar off the coplanarity test (not stumble into
+  ;; a garbage DLT that click noise made non-singular).
+  (println "\n=== PnP planare: recupero posa da mark complanari di un piatto ===")
+  (let [rng (synth/rng 23)
+        kk (k*)
+        marks (ring-marks 12 55.0 1.5)] ; ⌀110 corona, marks at z=1.5 in object frame
+    ;; oblique views (elevation 30–55°): the turntable ring, where the planar
+    ;; ambiguity twin is far and depth is well constrained. Near-vertical
+    ;; (fronto-parallel) is the weak case by geometry, not solver — excluded.
+    (doseq [[az el] [[0 40] [60 55] [130 30] [220 50]]]
+      (let [pose (synth/viewpoint az el 250.0)
+            corr (coplanar-correspondences-for marks pose 0.3 rng)
+            seed (pnp/estimate-homography corr kk)
+            sol (pnp/solve-pnp corr kk {})
+            eye (cam/camera-center pose)
+            eye-back (cam/camera-center (:pose sol))
+            eye-err (Math/sqrt (reduce + (map #(* (- %1 %2) (- %1 %2)) eye eye-back)))]
+        (println (str "  az=" az " el=" el " → metodo " (name (:method sol))
+                      ", " (:n sol) " punti, rms " (fmt (:rms-px sol) 2)
+                      "px, errore centro camera " (fmt eye-err 2) "mm"))
+        (testing (str "az " az " el " el)
+          (is (nil? (pnp/estimate-dlt corr kk)) "coplanar marks → DLT is singular")
+          (is (some? seed) "homography seed must be produced from coplanar marks")
+          (is (some? sol) "must solve")
+          (is (= :planar (:method sol)) "coplanar marks → planar homography path")
+          (is (< (:rms-px sol) 1.5) (str "reprojection " (fmt (:rms-px sol) 2) " px"))
+          (is (< eye-err 4.0) (str "camera centre off by " (fmt eye-err 2) " mm")))))))
+
+(deftest planar-homography-seed-alone-is-close
+  ;; The homography seed, before any LM, must already land in the right basin —
+  ;; that is what makes it a legitimate seedless start, the planar analogue of
+  ;; dlt-alone-is-already-close.
+  (testing "homography decomposition reprojects reasonably before refinement"
+    (let [kk (k*)
+          marks (ring-marks 12 55.0 1.5)
+          pose (synth/viewpoint 35 45 250.0)
+          corr (coplanar-correspondences-for marks pose 0.0 (synth/rng 7))
+          seed (pnp/estimate-homography corr kk)
+          eye (cam/camera-center pose)
+          eye-back (cam/camera-center seed)
+          eye-err (Math/sqrt (reduce + (map #(* (- %1 %2) (- %1 %2)) eye eye-back)))]
+      (is (some? seed) "homography must produce an estimate from clean coplanar marks")
+      (is (< eye-err 10.0)
+          (str "seedless homography camera centre close before LM, got " (fmt eye-err 2) " mm")))))
+
+(deftest method-flag-forces-the-estimator
+  ;; Vincenzo wants both engines alive with a flag: :planar on the plate, and
+  ;; the box's :dlt untouched. :auto routes correctly; the flag forces.
+  (let [kk (k*)
+        marks (ring-marks 12 55.0 1.5)
+        pose (synth/viewpoint 45 45 250.0)
+        corr (coplanar-correspondences-for marks pose 0.3 (synth/rng 11))]
+    (testing "coplanar plate: :auto and forced :planar both use the homography"
+      (is (= :planar (:method (pnp/solve-pnp corr kk {}))))
+      (let [forced (pnp/solve-pnp corr kk {:method :planar})]
+        (is (= :planar (:method forced)))
+        (is (< (:rms-px forced) 1.5))))
+    (testing "box corners: :auto stays on the DLT (planar routing does not fire)"
+      (let [box-pose (cam/look-at-pose [220.0 -140.0 160.0] [0.0 0.0 0.0] [0.0 0.0 1.0])
+            box-corr (correspondences-for box-pose 0.3 (synth/rng 12))]
+        (is (= :dlt (:method (pnp/solve-pnp box-corr kk {}))))))))

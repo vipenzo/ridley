@@ -2,9 +2,67 @@
 
 **Branch**: `edit-acquire-registration-stability`
 **Data**: 2026-07-27
-**Task della prossima chat**: aggiungere il **PnP planare** al solver, con un
-**flag** per tenere vivo anche il PnP non-complanare (box). Poi rifare il gate
-live sul piatto.
+
+---
+
+## ✅ FATTO (2026-07-27) — PnP planare implementato e verificato sui dati veri
+
+Il **PnP planare** è implementato in `src/ridley/photogrammetry/pnp.cljs`,
+il flag `:method` è vivo, la suite è **verde (754 test, 0 fail)**, e — la prova
+che conta — i **click reali** del gate fallito (`param-plate-one/acquire-state.json`,
+vecchio RMS DLT 125–136px) ripassati nel nuovo solver danno:
+
+| foto | RMS vecchio (DLT) | **RMS nuovo (planare)** |
+|------|-------------------|-------------------------|
+| 0    | 125.5px           | **4.10px** (10 inlier)  |
+| 1    | 126.1px           | **3.65px** (10 inlier)  |
+| 3    | 136.2px           | **4.72px** (1 click scartato) |
+
+Tutte e tre instradate su `:planar`, tutte ben sotto i 14px del lettore. La RMS
+di riproiezione è invariante al frame oggetto, quindi questi sono i numeri che
+vedrà Vincenzo. **Il gate è di fatto già passato**; resta la conferma live con
+la mano (ricliccare in-app) e la decisione di committare.
+
+### Cosa è cambiato
+
+- **`estimate-homography [corr intr]`** (nuova): fit del piano (normale dalla
+  struttura rango-2 della covarianza, senza autovettori), omografia piano→immagine
+  calibrata (h33=1 fissa scala **e** segno, l'origine è davanti alla camera →
+  niente SVD del null-space), decomposizione λ=2/(‖h1‖+‖h2‖), r1=λh1, r2=λh2,
+  r3=r1×r2, ortonormalizzazione ancorata su r1, composizione con la base
+  oggetto→piano. `refine` (LM, già lì) rifinisce a sub-pixel come per il DLT.
+- **`coplanar?`** + `solve-once` ristrutturato: `:auto` instrada sul **test di
+  complanarità dei punti :world**, NON sul nil del DLT — perché i mark del
+  piatto sono ~esattamente complanari e il rumore di click può far restituire
+  al DLT una posa spazzatura (il fallimento 125px) invece di nil. Il planare
+  scatta solo su set genuinamente complanari (o forzati), mai come fallback
+  cieco su un set non-complanare troppo piccolo per il DLT.
+- **Flag `:method`** su `solve-pnp`: `:auto` (default) | `:dlt` | `:planar` —
+  entrambi i motori vivi. Il box → `:dlt`, il piatto → `:planar`, automatico.
+- **`normal-equations`** ora prende il numero di incognite (11 per il DLT,
+  8 per l'omografia).
+- **`on-solve-pnp!` (edit_acquire) NON toccato**: chiama con `{}` → `:auto`, che
+  ora fa la cosa giusta da solo. Il flag resta in API per forzare/testare.
+- Test: `recovers-pose-from-coplanar-plate-marks` (corona 12 mark, viste oblique,
+  <1.5px, instrada su :planar), `planar-homography-seed-alone-is-close`,
+  `method-flag-forces-the-estimator`; aggiornato `rejects-too-few-and-coplanar`
+  (l'omografia registra 4 punti complanari — la vecchia assunzione "4→nil" era
+  del mondo solo-DLT).
+
+### LIMITE noto lasciato aperto (non sul percorso del piatto)
+
+Ambiguità planare a 2 pieghe: `estimate-homography` produce UNA decomposizione
+(least-squares con h33 fissato), non la coppia gemella (servirebbe l'SVD di H).
+Va bene per il piatto perché è fotografato **obliquamente** (mai fronto-parallelo,
+dove la gemella è lontana e LM non ci casca). Se mai servisse una vista quasi
+dall'alto stretta, aggiungere la twisted-pair di Faugeras/Zhang.
+
+---
+
+## Task originale (per contesto)
+
+Aggiungere il **PnP planare** al solver, con un **flag** per tenere vivo anche
+il PnP non-complanare (box). Poi rifare il gate live sul piatto. ← **FATTO sopra.**
 
 ---
 
