@@ -433,8 +433,28 @@ frame, giro con θ annotati); guida (nuovo cap. o estensione del 18).
    - **NO all'alternativa "pilota una faccia del proxy alla volta"**: è
      ergonomia, non accuratezza — resterebbero gli stessi angoli stondati
      come vincoli. Non si fa.
-2. **Rounded-prism + fillet-blend** — la leva di accuratezza, collaudata sul
-   ritorno del lettore SD (nastrato!).
+   - **Percorso a fette verso lo zero-click (2026-08-04, dal collaudo:
+     "12 click × 10 foto è noioso")**: (A) 4 click → PnP → gli altri
+     dischetti riproiettati come proposte + **blob-snap** (centroide del
+     disco scuro in finestrella locale — bersaglio noto, non edge-snap
+     generico) → conferma; (B) click **senza identità**: 4 dischetti
+     qualsiasi, assegnazione scelta tra le 12 rotazioni per consenso
+     (score = quante riproiezioni cadono su blob veri — il trucco delle
+     permutazioni, con l'immagine come giudice); (C) **detector
+     automatico** (blob scuri di taglia attesa + RANSAC contro la corona,
+     zero asimmetrico come àncora) → zero click, `p` resta come
+     correzione. Le fette si contengono: il blob-snap di A è il mattone
+     di C; C è la porta del live.
+1-bis. **Rig per foto radenti (Vincenzo, 2026-08-03)** — a 0° di elevazione
+   la corona del piatto è di taglio (informazione nulla): i mark vanno in
+   VERTICALE. Due forme, componibili: (a) **piatto a gradoni** (2-3 livelli,
+   dischetti anche sulle alzate) per radenti moderate, zero manipolazione;
+   (b) **pareti a quarti amovibili** sul piatto (mark sulle facce interne,
+   si toglie il quarto che guarda la camera) per la radente pura — le
+   pareti ruotano col piatto (frame giusto), innesti stampati per
+   riposizionamento ripetibile (~0.1 mm), mark opachi scuro-su-chiaro.
+   Tutto generato dallo stesso sorgente del piatto (geometria + mappa
+   mark). Dopo il collaudo del piatto v2 piano.
 3. **Sorgenti live** (webcam/companion ARKit) — sopra l'interfaccia di P2.
 
 ## Verifica
