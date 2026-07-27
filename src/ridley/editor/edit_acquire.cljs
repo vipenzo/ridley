@@ -382,6 +382,16 @@
       camera-pose)
     camera-pose))
 
+(defn- plate-proxy?
+  "True when the session's proxy is a registration PLATE (carries named marks
+   under :anchors) rather than a box. A plate registers PER-PHOTO via PnP ('p')
+   on its marks, so the box-only gestures — edge-snap ('s') and the turntable
+   joint fit ('f') — don't apply: 's' would snap the plate's meaningless
+   bounding-box edges (and on photo 0 shove the proxy off its mark-derived
+   pose), 'f' has no turntable angle to fit (plate photos are all out-of-ring)."
+  []
+  (boolean (seq (:anchors (:proxy-mesh @session)))))
+
 (defn- on-snap!
   "Photo 0: the gizmo just moved the PROXY, camera fixed — apply the refined
    pose to the proxy (bridge/solver-pose->proxy), a rigid transform via
@@ -510,11 +520,20 @@
                                          (when-let [picks (:picks result)]
                                            (when-let [theta (:theta (nth (:photos @session) idx))]
                                              {:picks picks :theta-deg theta})))
-                                       (:acquire-results @session)))]
+                                       (:acquire-results @session)))
+          ;; snaps that exist but are on out-of-ring (θ nil) photos — excluded
+          ;; above by design, but the plain count would then read '0 agganciate'
+          ;; and look like 's' failed. Distinguish the two so a plate session
+          ;; (every photo θ=libera) is told to use 'p', not that its snaps vanished.
+          snapped-total (count (keep (fn [[_ r]] (:picks r)) (:acquire-results @session)))]
       (if (< (count photos-with-picks) min-photos-for-turntable-fit)
         (set-status-message!
-         (str "Fit congiunto: servono almeno " min-photos-for-turntable-fit
-              " foto agganciate con 's' (ce ne sono " (count photos-with-picks) ")"))
+         (if (and (pos? snapped-total) (zero? (count photos-with-picks)))
+           (str "Fit congiunto non applicabile: le " snapped-total
+                " foto agganciate sono tutte fuori-anello (θ=libera). "
+                "Registra col PnP: premi 'p' e clicca i mark del piatto, non 's'/'f'.")
+           (str "Fit congiunto: servono almeno " min-photos-for-turntable-fit
+                " foto agganciate con 's' (ce ne sono " (count photos-with-picks) ")")))
         (if-let [tt-result (match/fit-turntable-seeded dims intrinsics photos-with-picks {:sigma-px 1.0})]
           (apply-turntable-fit! tt-result proxy-pose)
           (set-status-message! "Fit congiunto: nessuna soluzione trovata")))))
@@ -1095,7 +1114,7 @@
   "What a pickable point is called in the prompts: a box has 'spigoli', a plate
    'marker'."
   []
-  (if (seq (:anchors (:proxy-mesh @session))) "marker" "spigolo"))
+  (if (plate-proxy?) "marker" "spigolo"))
 
 (defn- corner-world-positions
   "World position of each target at the current proxy pose, indexed the same as
@@ -1411,7 +1430,14 @@
                 ;; photos, which transport keeps, so they need no separate wipe.)
                 (transport-registered-cameras! proxy-pose (:creation-pose new-mesh)))
               (let [ncp (marker-lock-camera (bridge/solver-pose->camera (:pose sol) proxy-pose) idx)]
-                (swap! session assoc-in [:camera-poses idx] ncp)))
+                (swap! session assoc-in [:camera-poses idx] ncp)
+                ;; move the viewport camera to the solved pose NOW (as on-snap!
+                ;; does) — the proxy is fixed on these photos, so without this the
+                ;; wireframe/dots stay rendered from the old vantage and the disc
+                ;; only snaps into place on the next enter-photo!. (Photo 0 moves
+                ;; the proxy instead, and redraw-pnp-preview! below already
+                ;; rebuilds the wireframe from the moved mesh.)
+                (viewport/set-camera-pose! ncp)))
             (swap! session assoc-in [:acquire-results idx]
                    {:pnp? true :matched (:n sol) :rms-px (:rms-px sol)
                     :outliers (count outlier-cis)})
@@ -2572,12 +2598,22 @@
               (enter-photo! (mod (dec idx) n)))
 
         ;; 's'/'f' act on the gizmo/camera registration — meaningless (and
-        ;; disruptive to the frozen pose) during a retrace/mark, so gate them out.
+        ;; disruptive to the frozen pose) during a retrace/mark, so gate them
+        ;; out; and meaningless on a registration plate (box-only gestures —
+        ;; see plate-proxy?), where they'd only mislead, so redirect to 'p'.
           (and (not retrace?) (not mark?) (= key "s"))
-          (do (.preventDefault e) (.stopPropagation e) (on-snap!))
+          (do (.preventDefault e) (.stopPropagation e)
+              (if (plate-proxy?)
+                (set-status-message!
+                 "Piatto di registrazione: usa 'p' (PnP sui mark del piatto), non 's'. Gli spigoli di un piatto non registrano.")
+                (on-snap!)))
 
           (and (not retrace?) (not mark?) (= key "f"))
-          (do (.preventDefault e) (.stopPropagation e) (on-fit-turntable!))
+          (do (.preventDefault e) (.stopPropagation e)
+              (if (plate-proxy?)
+                (set-status-message!
+                 "Piatto di registrazione: ogni foto si registra da sola con 'p' (PnP), non c'è fit giradischi ('f').")
+                (on-fit-turntable!)))
 
           (= key "]")
           (do (.preventDefault e) (.stopPropagation e)
