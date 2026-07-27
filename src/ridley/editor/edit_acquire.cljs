@@ -52,6 +52,7 @@
             [ridley.photogrammetry.bridge :as bridge]
             [ridley.photogrammetry.edge-snap :as edge-snap]
             [ridley.photogrammetry.pnp :as pnp]
+            [ridley.photogrammetry.blob :as blob]
             [ridley.photogrammetry.match :as match]
             [ridley.photogrammetry.turntable-fit :as tt]
             [ridley.photogrammetry.box-fit :as bf]
@@ -1129,6 +1130,14 @@
   []
   (get-in @session [:pnp-outliers (:current-idx @session)] #{}))
 
+(defn- pnp-occluded
+  "Set of marker indices the user marked HIDDEN-by-the-object on this photo ('o'):
+   front-facing (so visible-corner-set offers them) but covered by the part in
+   THIS view, so they can't be clicked and blob-snap must not chase them. Held
+   per-photo — the same object hides different marks from different angles."
+  []
+  (get-in @session [:pnp-occluded (:current-idx @session)] #{}))
+
 (defn- visible-corner-set
   "Indices of the targets actually visible at the current pose (pnp-targets'
    :visible?) — the only ones offered for picking, so the user is never asked to
@@ -1150,6 +1159,7 @@
   (let [armed (:pnp-armed @session)
         placed (pnp-picks)
         outliers (pnp-outliers)
+        occluded (pnp-occluded)
         visible (visible-corner-set)]
     (into
      [{:type :wireframe :data (:proxy-mesh @session)}
@@ -1159,6 +1169,10 @@
                      (cond
                        (contains? outliers i)
                        {:pos pos :radius 5.5 :color 0xff2020 :opacity 0.7}
+                       ;; marked hidden-by-the-part: a faint grey dot, so it reads
+                       ;; as "dismissed" and no longer solicits a click
+                       (contains? occluded i)
+                       {:pos pos :radius 1.6 :color 0x555555 :opacity 0.2}
                        (contains? visible i)
                        {:pos pos
                         :radius (if (= i armed) 4.4 2.4)
@@ -1183,12 +1197,40 @@
         (first (filter visible order))
         from)))
 
+(defn- world-dist [a b] (let [d (m/v- a b)] (Math/sqrt (m/dot d d))))
+
+(defn- next-seed-corner
+  "The next marker to arm while collecting seed clicks: the visible, not-placed,
+   not-occluded target FARTHEST (max-min world distance) from those already
+   placed — so a handful of clicks spread around the ring (a well-conditioned
+   planar seed) instead of clustering in one arc, which is what makes the 4-click
+   fetta-A seed usable. With nothing placed yet it is just the first candidate.
+   nil when none remain (all placed or occluded)."
+  []
+  (let [placed (pnp-picks)
+        occ (pnp-occluded)
+        targets (pnp-targets)
+        cand (filterv (fn [i] (and (:visible? (nth targets i))
+                                   (not (contains? placed i))
+                                   (not (contains? occ i))))
+                      (range (count targets)))
+        placed-pos (mapv #(:world (nth targets %)) (keys placed))]
+    (cond
+      (empty? cand) nil
+      (empty? placed-pos) (first cand)
+      :else (apply max-key
+                   (fn [i] (let [p (:world (nth targets i))]
+                             (reduce min js/Infinity (map #(world-dist p %) placed-pos))))
+                   cand))))
+
 (defn- arm-corner!
   "Arm a corner for the next photo click — but only a corner the user can point
    at (visible, or a red outlier to be re-clicked); a click on a hidden vertex
-   would be a guess, so those are inert."
+   would be a guess, so those are inert. Explicitly arming a marker also clears
+   any 'occluded' mark on it (the user is choosing to place it after all)."
   [i]
   (when (or (contains? (visible-corner-set) i) (contains? (pnp-outliers) i))
+    (swap! session update-in [:pnp-occluded (:current-idx @session)] (fnil disj #{}) i)
     (swap! session assoc :pnp-armed i)
     (redraw-pnp-preview!)
     (update-panel!)))
@@ -1224,11 +1266,18 @@
 
 (defn- redraw-overlay-dots! []
   (let [ov (ensure-pnp-overlay!)
-        rect (canvas-rect)]
+        rect (canvas-rect)
+        cam (viewport/get-camera)
+        cv (viewport/get-canvas)]
     (set! (.-innerHTML ov) "")
-    (doseq [[ci {:keys [screen]}] (pnp-picks)]
-      (let [[cx cy] screen
-            dot (.createElement js/document "div")
+    (doseq [[ci {:keys [px screen]}] (pnp-picks)
+            ;; position from the stable photo pixel through the LIVE camera, so
+            ;; the dot tracks the render exactly (a stored :screen goes stale the
+            ;; moment the pose is refined, and a blob-snapped proposal never had
+            ;; a click screen to begin with); fall back to :screen for old data.
+            :let [[cx cy] (or (and px (backdrop/screen-of-pixel cv cam px)) screen)]
+            :when (and cx cy)]
+      (let [dot (.createElement js/document "div")
             st (.-style dot)]
         (set! (.-position st) "absolute")
         (set! (.-left st) (str (- cx (.-left rect) 7) "px"))
@@ -1258,7 +1307,12 @@
         (swap! session update :pnp-residuals dissoc idx)
         (swap! session update :pnp-outliers dissoc idx)
         (redraw-overlay-dots!)
-        (arm-corner! (next-unplaced-corner (mod (inc ci) (pnp-count))))))))
+        ;; arm the next SPREAD marker (farthest from those placed) so a few seed
+        ;; clicks fan out around the ring instead of clustering; nil once every
+        ;; non-occluded marker is placed (panel then says "premi 'r'")
+        (if-let [nxt (next-seed-corner)]
+          (arm-corner! nxt)
+          (do (swap! session assoc :pnp-armed nil) (redraw-pnp-preview!) (update-panel!)))))))
 
 ;; --- loupe: a magnifier that expands the pixels under the cursor so a corner
 ;; can be placed on the exact edge despite the translucent proxy over it
@@ -1368,8 +1422,32 @@
   (swap! session update :pnp-picks dissoc (:current-idx @session))
   (swap! session update :pnp-residuals dissoc (:current-idx @session))
   (swap! session update :pnp-outliers dissoc (:current-idx @session))
+  (swap! session update :pnp-occluded dissoc (:current-idx @session))
   (redraw-overlay-dots!)
   (arm-corner! (next-unplaced-corner 0)))
+
+(defn- skip-armed-corner!
+  "'o': the armed marker is HIDDEN by the object in this view — the user can't
+   click it. Drop any pick for it (a blob-snap false-positive on the part, or a
+   flagged outlier that must be dropped rather than re-clicked), record it
+   occluded so auto-advance and blob-snap both skip it, clear its stale fit
+   flags, and arm the next spread marker. Then 'r' re-solves clean on the rest."
+  []
+  (when-let [i (:pnp-armed @session)]
+    (let [idx (:current-idx @session)
+          lbl (:label (nth (pnp-targets) i))]
+      (swap! session update-in [:pnp-occluded idx] (fnil conj #{}) i)
+      (swap! session update-in [:pnp-picks idx] dissoc i)
+      (swap! session update-in [:pnp-outliers idx] (fnil disj #{}) i)
+      (swap! session update-in [:pnp-residuals idx] dissoc i)
+      (swap! session assoc :pnp-armed (next-seed-corner)) ; nil once none remain
+      (redraw-pnp-preview!)
+      (redraw-overlay-dots!)
+      (update-panel!)
+      (save-acquire-state!)
+      (set-status-message!
+       (str (str/capitalize (pnp-noun)) " #" lbl " segnato nascosto (saltato) — "
+            "continua a piazzarne, poi 'r' per risolvere sui restanti")))))
 
 (defn- corner-labels [cis]
   (let [targets (pnp-targets)]
@@ -1385,9 +1463,10 @@
         out (mapv :ci (:outliers sol))]
     (cond
       (seq out)
-      (str "scartat" (if (> (count out) 1) "i gli spigoli " "o lo spigolo ")
-           (corner-labels out) " (identità sbagliata) — riclicca"
-           (if (> (count out) 1) "li" "lo") " sul pezzo vero, poi 'r'. Fit sui restanti "
+      (str (if (> (count out) 1) "scartati i punti " "scartato il punto ")
+           (corner-labels out) " — riclicca" (if (> (count out) 1) "li" "lo")
+           " dov'" (if (> (count out) 1) "sono" "è") " davvero, o 'o' se nascost"
+           (if (> (count out) 1) "i" "o") " dal pezzo, poi 'r'. Fit sui restanti "
            (.toFixed rms 1) "px")
       (> rms pnp/accept-rms-px)
       (str "rms alto (" (.toFixed rms 1) "px) senza un singolo colpevole: clicca più "
@@ -1395,62 +1474,129 @@
       :else
       (str "fit pulito, rms " (.toFixed rms 2) "px"))))
 
+(def min-plate-picks
+  "A plate registers by the planar homography, which is exactly determined by 4
+   coplanar marks — so 'p' can seed a pose from 4 clicks, the premise of fetta A
+   (click 4, blob-snap proposes the rest). A box still needs the DLT's
+   pnp/min-correspondences (6, on non-coplanar corners)."
+  4)
+
+(defn- min-pnp-picks [] (if (plate-proxy?) min-plate-picks pnp/min-correspondences))
+
+(defn- solve-and-apply!
+  "Solve the current photo's placed correspondences and APPLY the pose (move the
+   proxy on photo 0, the camera otherwise), updating results/residuals/outliers
+   and redrawing. Returns the solve map (with :pose/:method/:rms-px) or nil. The
+   shared core of on-solve-pnp!, called once for a plain solve and twice around
+   propose-and-snap! for fetta A. Does NOT set the status line or save — the
+   caller owns those, once, after the (possibly two-pass) solve settles."
+  [iw ih]
+  (let [idx (:current-idx @session)
+        proxy-pose (get-in @session [:proxy-mesh :creation-pose])
+        targets (pnp-targets)
+        correspondences (vec (for [[ci {:keys [px]}] (pnp-picks)]
+                               {:ci ci :world (:obj (nth targets ci)) :px px}))
+        camera-pose (current-camera-pose)]
+    (when-let [sol (pnp/solve-pnp correspondences (session-intrinsics iw ih) {})]
+      (let [residuals (into {} (map (juxt :ci :residual-px) (:per-point sol)))
+            outlier-cis (set (map :ci (:outliers sol)))]
+        (if (zero? idx)
+          (let [np (bridge/solver-pose->proxy (:pose sol) camera-pose)
+                [new-mesh] (attachment/group-transform
+                            [(:proxy-mesh @session)]
+                            (:position proxy-pose) (:heading proxy-pose) (:up proxy-pose)
+                            (:position np) (:heading np) (:up np))]
+            (swap! session assoc :proxy-mesh new-mesh)
+            ;; Re-aligning the proxy on photo 0 via PnP is the same rigid move as
+            ;; an on-photo0-commit! gizmo drag, so it earns the same treatment
+            ;; (fix (2)): registered cameras follow the proxy rigidly, pure
+            ;; seeds/predictions are dropped to re-derive.
+            (transport-registered-cameras! proxy-pose (:creation-pose new-mesh)))
+          (let [ncp (marker-lock-camera (bridge/solver-pose->camera (:pose sol) proxy-pose) idx)]
+            (swap! session assoc-in [:camera-poses idx] ncp)
+            ;; move the viewport camera to the solved pose NOW (as on-snap! does)
+            ;; — the proxy is fixed on these photos, so without this the
+            ;; wireframe/dots stay rendered from the old vantage and the disc
+            ;; only snaps into place on the next enter-photo!.
+            (viewport/set-camera-pose! ncp)))
+        (swap! session assoc-in [:acquire-results idx]
+               {:pnp? true :matched (:n sol) :rms-px (:rms-px sol)
+                :outliers (count outlier-cis)})
+        (swap! session assoc-in [:pnp-residuals idx] residuals)
+        (swap! session assoc-in [:pnp-outliers idx] outlier-cis)
+        ;; tee up the first rejected corner for an immediate re-click
+        (when (seq outlier-cis)
+          (swap! session assoc :pnp-armed (first (sort outlier-cis))))
+        (redraw-pnp-preview!)
+        (redraw-overlay-dots!)
+        sol))))
+
+(defn- propose-and-snap!
+  "Fetta A: with `pose` already solved from the placed picks, reproject every
+   still-unplaced VISIBLE mark and blob-snap each predicted pixel to its dark
+   disc centre in the photo (backdrop/luminance-at), placing the confident ones
+   as picks so the next solve refines on all of them. Returns the count placed.
+   Plate-only (a box corner is not a blob). The search window scales with the
+   local mark spacing — a fraction of the nearest predicted-neighbour gap — so
+   it comfortably holds one disc without reaching the plate rim or a neighbour."
+  [pose intrinsics]
+  (if-not (plate-proxy?)
+    0
+    (let [idx (:current-idx @session)
+          targets (pnp-targets)
+          placed (set (keys (pnp-picks)))
+          occ (pnp-occluded)
+          visible (visible-corner-set)
+          canvas (viewport/get-canvas)
+          predicted (into {} (keep (fn [i]
+                                     (when-let [px (pcamera/project intrinsics pose (:obj (nth targets i)))]
+                                       [i px]))
+                                   (range (count targets))))
+          gap-to-nearest (fn [i [ux uy]]
+                           (reduce min js/Infinity
+                                   (for [[j [qx qy]] predicted :when (not= j i)]
+                                     (Math/sqrt (+ (* (- ux qx) (- ux qx)) (* (- uy qy) (- uy qy)))))))
+          added (atom 0)]
+      (doseq [i (sort visible)
+              :when (and (not (contains? placed i)) (not (contains? occ i))
+                         (contains? predicted i))]
+        (let [px (get predicted i)
+              radius (max 15 (min 90 (* 0.12 (gap-to-nearest i px))))]
+          (when-let [snap (blob/snap-to-blob backdrop/luminance-at px radius)]
+            (let [c (:center snap)]
+              (swap! session assoc-in [:pnp-picks idx i]
+                     {:px c :screen (backdrop/screen-of-pixel canvas (viewport/get-camera) c)
+                      :proposed? true})
+              (swap! added inc)))))
+      @added)))
+
 (defn- on-solve-pnp!
   "Solve the current photo's declared correspondences (robustly — a mislabeled
    corner is auto-rejected) and APPLY the pose, then STAY in PnP mode: rejected
    corners show as big red dots / red panel buttons and the first is re-armed,
-   so 'riclicca e premi r' is one gesture. Exit is explicit ('p' / Esci)."
+   so 'riclicca e premi r' is one gesture. Exit is explicit ('p' / Esci).
+
+   Fetta A (plate): a first solve from as few as 4 marks seeds a pose, then
+   blob-snap auto-places the remaining visible marks and a second solve refines
+   on all of them — so the user clicks 4, not 12. An auto-placed mark that
+   snapped wrong simply shows up as a red outlier of the final fit, to re-click."
   []
   (when-let [[iw ih] (backdrop/image-size)]
-    (let [idx (:current-idx @session)
-          proxy-pose (get-in @session [:proxy-mesh :creation-pose])
-          targets (pnp-targets)
-          correspondences (vec (for [[ci {:keys [px]}] (pnp-picks)]
-                                 {:ci ci :world (:obj (nth targets ci)) :px px}))
-          camera-pose (current-camera-pose)]
-      (if (< (count correspondences) pnp/min-correspondences)
+    (let [n (count (pnp-picks))]
+      (if (< n (min-pnp-picks))
         (set-status-message!
-         (str "PnP: servono almeno " pnp/min-correspondences " punti piazzati (ne hai "
-              (count correspondences) ")"))
-        (if-let [sol (pnp/solve-pnp correspondences (session-intrinsics iw ih) {})]
-          (let [residuals (into {} (map (juxt :ci :residual-px) (:per-point sol)))
-                outlier-cis (set (map :ci (:outliers sol)))]
-            (if (zero? idx)
-              (let [np (bridge/solver-pose->proxy (:pose sol) camera-pose)
-                    [new-mesh] (attachment/group-transform
-                                [(:proxy-mesh @session)]
-                                (:position proxy-pose) (:heading proxy-pose) (:up proxy-pose)
-                                (:position np) (:heading np) (:up np))]
-                (swap! session assoc :proxy-mesh new-mesh)
-                ;; Re-aligning the proxy on photo 0 via PnP is the same rigid
-                ;; move as an on-photo0-commit! gizmo drag, so it earns the same
-                ;; treatment (fix (2)): registered cameras follow the proxy
-                ;; rigidly, pure seeds/predictions are dropped to re-derive.
-                ;; (:pnp-residuals/:pnp-outliers only ever exist for registered
-                ;; photos, which transport keeps, so they need no separate wipe.)
-                (transport-registered-cameras! proxy-pose (:creation-pose new-mesh)))
-              (let [ncp (marker-lock-camera (bridge/solver-pose->camera (:pose sol) proxy-pose) idx)]
-                (swap! session assoc-in [:camera-poses idx] ncp)
-                ;; move the viewport camera to the solved pose NOW (as on-snap!
-                ;; does) — the proxy is fixed on these photos, so without this the
-                ;; wireframe/dots stay rendered from the old vantage and the disc
-                ;; only snaps into place on the next enter-photo!. (Photo 0 moves
-                ;; the proxy instead, and redraw-pnp-preview! below already
-                ;; rebuilds the wireframe from the moved mesh.)
-                (viewport/set-camera-pose! ncp)))
-            (swap! session assoc-in [:acquire-results idx]
-                   {:pnp? true :matched (:n sol) :rms-px (:rms-px sol)
-                    :outliers (count outlier-cis)})
-            (swap! session assoc-in [:pnp-residuals idx] residuals)
-            (swap! session assoc-in [:pnp-outliers idx] outlier-cis)
-            ;; tee up the first rejected corner for an immediate re-click
-            (when (seq outlier-cis)
-              (swap! session assoc :pnp-armed (first (sort outlier-cis))))
-            (set-status-message! (str "PnP " (name (:method sol)) ": " (pnp-diagnosis sol)))
-            (redraw-pnp-preview!)
-            (redraw-overlay-dots!)
+         (str "PnP: servono almeno " (min-pnp-picks) " " (pnp-noun) " piazzati (ne hai " n ")"))
+        (if-let [sol (solve-and-apply! iw ih)]
+          (let [added (propose-and-snap! (:pose sol) (session-intrinsics iw ih))
+                final (if (pos? added) (or (solve-and-apply! iw ih) sol) sol)]
+            (set-status-message!
+             (str "PnP " (name (:method final)) ": " (pnp-diagnosis final)
+                  (when (pos? added)
+                    (str " · " added " " (pnp-noun) " agganciati in automatico"))))
             (save-acquire-state!))
-          (set-status-message! "PnP: nessuna soluzione — spigoli su più facce e almeno 6?")))))
+          (set-status-message!
+           (str "PnP: nessuna soluzione — " (pnp-noun) " su più facce e almeno "
+                (min-pnp-picks) "?"))))))
   (update-panel!))
 
 ;; ============================================================
@@ -2157,8 +2303,9 @@
             ;; already-placed (status/re-do), or flagged outliers
             shown (sort (into (into (set (keys placed)) outliers) visible))
             armed (:pnp-armed @session)
+            occluded (pnp-occluded)
             n (count placed)
-            target (count visible)
+            target (count (remove occluded visible))
             rms (get-in @session [:acquire-results (:current-idx @session) :rms-px])
             solved? (seq resid)
             info (.createElement js/document "div")
@@ -2170,17 +2317,19 @@
                 (seq outliers)
                 (str "⚠ " (if (> (count outliers) 1) "punti " "punto ")
                      (corner-labels outliers) " in rosso — riclicca dov'"
-                     (if (> (count outliers) 1) "sono" "è") " sul pezzo vero, poi 'r'")
+                     (if (> (count outliers) 1) "sono" "è") ", o 'o' se nascost"
+                     (if (> (count outliers) 1) "i" "o") ", poi 'r'")
                 (and rms (> rms pnp/accept-rms-px))
                 (str "⚠ rms alto (" (.toFixed rms 0) "px) senza un colpevole singolo — "
                      "clicca più preciso o controlla la faccia dichiarata")
                 solved?
                 (str "✓ fit pulito, rms " (.toFixed rms 1) "px — 'p'/Esci, o ']' per un'altra foto")
+                (nil? armed)
+                (str "Tutti i " (pnp-noun) " visibili piazzati o nascosti — premi 'r'")
                 :else
-                (str (str/capitalize (pnp-noun)) " #" (lbl armed) " evidenziato — clicca nella foto dov'è. "
-                     "Piazzati " n "/" target " visibili"
-                     (when (< n pnp/min-correspondences)
-                       (str " (ne servono ≥" pnp/min-correspondences ")")))))
+                (str (str/capitalize (pnp-noun)) " #" (lbl armed) " evidenziato — clicca dov'è, "
+                     "o 'o' se è nascosto dal pezzo. Piazzati " n "/" target
+                     (when (< n (min-pnp-picks)) (str " (ne servono ≥" (min-pnp-picks) ")")))))
         (.appendChild box info)
         (set! (.-className corners) "eaq-pnp-corners")
         (doseq [i shown]
@@ -2207,7 +2356,7 @@
               exit (.createElement js/document "button")]
           (set! (.-type solve) "button")
           (set! (.-textContent solve) "Risolvi PnP (r)")
-          (set! (.-disabled solve) (< n pnp/min-correspondences))
+          (set! (.-disabled solve) (< n (min-pnp-picks)))
           (.addEventListener solve "click" (fn [_] (on-solve-pnp!)))
           (set! (.-type clr) "button")
           (set! (.-textContent clr) "Azzera")
@@ -2589,6 +2738,11 @@
           (and pnp? (= key "r"))
           (do (.preventDefault e) (.stopPropagation e) (on-solve-pnp!))
 
+        ;; 'o' — the armed marker is occluded by the part in this view: skip it
+        ;; (drop any pick, mark it hidden so nothing re-places it), then 'r'.
+          (and pnp? (= key "o"))
+          (do (.preventDefault e) (.stopPropagation e) (skip-armed-corner!))
+
           (and pnp? (re-matches #"[1-8]" key))
           (do (.preventDefault e) (.stopPropagation e)
               (arm-corner! (dec (js/parseInt key 10))))
@@ -2669,7 +2823,9 @@
                        (seq (get-in @session [:pnp-residuals idx]))
                        (assoc :residuals (get-in @session [:pnp-residuals idx]))
                        (seq (get-in @session [:pnp-outliers idx]))
-                       (assoc :outliers (vec (get-in @session [:pnp-outliers idx]))))]))
+                       (assoc :outliers (vec (get-in @session [:pnp-outliers idx])))
+                       (seq (get-in @session [:pnp-occluded idx]))
+                       (assoc :occluded (vec (get-in @session [:pnp-occluded idx]))))]))
         body (js/JSON.stringify (clj->js {:proxy-pose proxy-pose :photos photos
                                           ;; Photo 0's camera pose, saved explicitly:
                                           ;; the per-photo `photos` map only carries
@@ -2754,11 +2910,12 @@
       ;; photo idx and, inside :picks/:residuals, the corner idx were integer keys;
       ;; parse both levels. Outliers persisted as a vector → back to a set.
       (when pnp
-        (doseq [[idx-kw {:keys [picks residuals outliers]}] pnp]
+        (doseq [[idx-kw {:keys [picks residuals outliers occluded]}] pnp]
           (let [idx (js/parseInt (name idx-kw) 10)]
             (when (seq picks)     (swap! session assoc-in [:pnp-picks idx] (int-keys picks)))
             (when (seq residuals) (swap! session assoc-in [:pnp-residuals idx] (int-keys residuals)))
-            (when (seq outliers)  (swap! session assoc-in [:pnp-outliers idx] (set outliers))))))
+            (when (seq outliers)  (swap! session assoc-in [:pnp-outliers idx] (set outliers)))
+            (when (seq occluded)  (swap! session assoc-in [:pnp-occluded idx] (set occluded))))))
       ;; P4a-2 — lens focal. Restored AFTER load-exif-focal! (which ran first), so a
       ;; saved manual tweak wins; an unchanged EXIF/default value restores to itself.
       (when-let [mm (:mm focal)]

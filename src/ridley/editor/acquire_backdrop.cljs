@@ -186,6 +186,31 @@
               [(* (.-x uv) image-width)
                (* (- 1 (.-y uv)) image-height)])))))))
 
+(defn screen-of-pixel
+  "Client [x y] where photo pixel [u v] currently shows — the exact inverse of
+   pixel-under-pointer, for positioning an HTML overlay dot on an auto-placed
+   (blob-snapped) mark that had no click event to read clientX/Y from. Projects
+   the corresponding point on the backdrop plane through the LIVE camera, so it
+   is correct even when the photo's aspect differs from the canvas's (a plain
+   u/iw→width map is only right when they match — otherwise the horizontal
+   placement drifts toward centre) and it tracks the camera as the pose is
+   refined. nil before a photo has loaded.
+
+   The plane is a PlaneGeometry(1,1): uv (u/iw, 1-v/ih) sits at local
+   (uv.x-0.5, uv.y-0.5, 0); localToWorld carries the locked camera pose, then
+   camera.project gives NDC, then NDC → client via the canvas rect."
+  [^js canvas ^js camera [u v]]
+  (when-let [{:keys [^js mesh image-width image-height]} @bstate]
+    (when (and mesh image-width camera)
+      (let [p (THREE/Vector3. (- (/ u image-width) 0.5)
+                              (- (- 1 (/ v image-height)) 0.5) 0)]
+        (.updateWorldMatrix mesh true false) ; fresh mesh world matrix (camera may have just moved)
+        (.localToWorld mesh p)
+        (.project p camera)
+        (let [rect (.getBoundingClientRect canvas)]
+          [(+ (.-left rect) (* (/ (+ (.-x p) 1) 2) (.-width rect)))
+           (+ (.-top rect) (* (/ (- 1 (.-y p)) 2) (.-height rect)))])))))
+
 (defn draw-loupe!
   "Draw a magnified, nearest-neighbour crop of the loaded photo centred on photo
    pixel (ix,iy) into square `dst-canvas`, with a red crosshair — the same loupe
