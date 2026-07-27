@@ -187,12 +187,19 @@
           (is (vec-approx= [0.0 58.0 1.5]
                            (:obj (first (bridge/pnp-target-points m2 tilted-camera-pose))) 1e-6)))))))
 
-(deftest pnp-targets-mark-visibility-is-front-facing
-  (testing "a mark whose world normal points toward the camera is visible; away is not"
+(deftest pnp-targets-plate-marks-are-always-offerable
+  ;; A registration plate's marks are all coplanar on one face, which the user
+  ;; always photographs — so every mark is offerable regardless of the normal's
+  ;; sign under the CURRENT (pre-PnP, possibly wrong) pose. Per-mark front-facing
+  ;; was a box notion that only mis-fired here: the fresh-session default vantage
+  ;; frames the plate's blank underside, which would hide every mark and leave
+  ;; nothing to click. Occlusion by the part is the user's 'o' key, not a normal
+  ;; test.
+  (testing "every plate mark is :visible? true whichever way its normal points"
     (let [cp {:position [0 0 0] :heading [1 0 0] :up [0 0 1]}
           cam {:position [0.0 0.0 100.0] :heading [0 0 -1] :up [0 1 0]}
           mesh-with (fn [nrm] {:creation-pose cp :vertices [[0 0 0]]
                                :anchors {:m {:position [0.0 0.0 0.0] :heading nrm :up [1 0 0]}}})
           vis? (fn [nrm] (:visible? (first (bridge/pnp-target-points (mesh-with nrm) cam))))]
       (is (true? (vis? [0.0 0.0 1.0])) "normal toward the camera")
-      (is (false? (vis? [0.0 0.0 -1.0])) "normal away from the camera"))))
+      (is (true? (vis? [0.0 0.0 -1.0])) "normal away — still offerable (user photographs the marked face)"))))

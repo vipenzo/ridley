@@ -135,14 +135,6 @@
         extent (fn [i] (let [xs (axis-vals i)] (- (apply max xs) (apply min xs))))]
     [(extent 0) (extent 1) (extent 2)]))
 
-(defn- mark-front-facing?
-  "Whether a plate mark (world position + world normal) faces `cam-pos` enough to
-   be worth clicking — the plate-analog of box-fit/visible-corners (which reasons
-   about a box's three-faces-per-corner and can't apply to a flat mark). ~0.15 ≈
-   within ~81° of face-on."
-  [world normal cam-pos]
-  (> (m/dot (m/normalize normal) (m/normalize (m/v- cam-pos world))) 0.15))
-
 (defn pnp-target-points
   "The indexed PnP correspondence targets for `proxy-mesh` seen from
    `camera-pose` — source-agnostic so the whole picking gesture (pick indices,
@@ -159,14 +151,22 @@
   [proxy-mesh camera-pose]
   (let [proxy-pose (:creation-pose proxy-mesh)]
     (if-let [marks (seq (sort-by key (:anchors proxy-mesh)))]
-      (let [cam-pos (:position camera-pose)]
-        (mapv (fn [[id pose]]
-                (let [world (:position pose)]
-                  {:id id
-                   :obj (world->local proxy-pose world)
-                   :world world
-                   :visible? (mark-front-facing? world (:heading pose) cam-pos)}))
-              marks))
+      (mapv (fn [[id pose]]
+              (let [world (:position pose)]
+                {:id id
+                 :obj (world->local proxy-pose world)
+                 :world world
+                 ;; A registration plate's marks are all coplanar on ONE face and
+                 ;; the user always photographs THAT face — so every mark is on
+                 ;; the visible side, always offerable. (Per-mark front-facing is
+                 ;; a BOX notion — hide corners on the back face — that here only
+                 ;; mis-fires: before PnP there is no pose to test against except
+                 ;; the default vantage, which frames the plate's blank underside,
+                 ;; so it would hide every mark and leave nothing to click on a
+                 ;; fresh session; and PnP is seedless, needing no rough pose.)
+                 ;; Occlusion of a mark BY THE PART is the user's 'o' key.
+                 :visible? true}))
+            marks)
       (let [dims (dims-from-mesh proxy-mesh proxy-pose)
             objs (bf/corners dims)
             visible (bf/visible-corners dims (editor->solver-pose camera-pose proxy-pose))]

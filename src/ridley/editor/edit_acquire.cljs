@@ -1293,26 +1293,43 @@
         (set! (.-opacity st) "0.4")
         (.appendChild ov dot)))))
 
+(def ^:private plate-click-snap-radius
+  "Window half-size (px) for snapping a SEED click to its disc centroid. A plate
+   mark images ~55px across at the session distance; this comfortably holds one
+   disc plus margin (mean-shift recentres if the click was off) without reaching
+   a neighbour."
+  50)
+
 (defn- pnp-on-pointerdown [^js e]
   (when (and @session (= :pnp (:mode @session)) (zero? (.-button e)))
-    (when-let [px (backdrop/pixel-under-pointer e (viewport/get-camera) (viewport/get-canvas))]
-      (.preventDefault e)
-      (.stopPropagation e)
-      (let [idx (:current-idx @session)
-            ci (:pnp-armed @session)]
-        (swap! session assoc-in [:pnp-picks idx ci]
-               {:px px :screen [(.-clientX e) (.-clientY e)]})
-        ;; a new click makes the last solve's residuals/outliers stale — drop
-        ;; them so the red flags clear until the user re-solves
-        (swap! session update :pnp-residuals dissoc idx)
-        (swap! session update :pnp-outliers dissoc idx)
-        (redraw-overlay-dots!)
-        ;; arm the next SPREAD marker (farthest from those placed) so a few seed
-        ;; clicks fan out around the ring instead of clustering; nil once every
-        ;; non-occluded marker is placed (panel then says "premi 'r'")
-        (if-let [nxt (next-seed-corner)]
-          (arm-corner! nxt)
-          (do (swap! session assoc :pnp-armed nil) (redraw-pnp-preview!) (update-panel!)))))))
+    (when-let [raw (backdrop/pixel-under-pointer e (viewport/get-camera) (viewport/get-canvas))]
+      (when-let [ci (:pnp-armed @session)]     ; ignore clicks when nothing is armed
+        (.preventDefault e)
+        (.stopPropagation e)
+        (let [idx (:current-idx @session)
+              ;; a plate mark IS a dark blob, so snap the click to its centroid —
+              ;; the seed clicks then match the auto-proposals' sub-pixel precision
+              ;; (manual clicks were what kept the plate's rms ~4px on crisp discs)
+              ;; and the user only has to click ROUGHLY on the dot. Raw click when
+              ;; no clean blob is under it (unclear disc, or a box corner).
+              px (or (when (plate-proxy?)
+                       (some-> (blob/snap-to-blob backdrop/luminance-at raw plate-click-snap-radius)
+                               :center))
+                     raw)]
+          (swap! session assoc-in [:pnp-picks idx ci]
+                 {:px px :screen (or (backdrop/screen-of-pixel (viewport/get-canvas) (viewport/get-camera) px)
+                                     [(.-clientX e) (.-clientY e)])})
+          ;; a new click makes the last solve's residuals/outliers stale — drop
+          ;; them so the red flags clear until the user re-solves
+          (swap! session update :pnp-residuals dissoc idx)
+          (swap! session update :pnp-outliers dissoc idx)
+          (redraw-overlay-dots!)
+          ;; arm the next SPREAD marker (farthest from those placed) so a few seed
+          ;; clicks fan out around the ring instead of clustering; nil once every
+          ;; non-occluded marker is placed (panel then says "premi 'r'")
+          (if-let [nxt (next-seed-corner)]
+            (arm-corner! nxt)
+            (do (swap! session assoc :pnp-armed nil) (redraw-pnp-preview!) (update-panel!))))))))
 
 ;; --- loupe: a magnifier that expands the pixels under the cursor so a corner
 ;; can be placed on the exact edge despite the translucent proxy over it
