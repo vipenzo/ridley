@@ -125,8 +125,14 @@
 ; Stampa (3MF a due materiali: base = slot 1 chiaro, dischetti = slot 2 scuro):
 ;   (save-3mf (into [piatto] discs) "param-acq-plate.3mf")
 ;
-; Orientamento di stampa: appoggiato sulla faccia inferiore (senza marker).
-; I dischetti sono a filo, sui layer superiori: nessun supporto, nessun'ombra.
+; Orientamento di stampa: LATO DISCHETTI VERSO IL PIANO DI STAMPA (faccia coi
+; marker in basso). La superficie contro il piatto di stampa è la più liscia e
+; netta in FDM: i confini dei dischetti restano definiti. Stampandolo al
+; contrario (dischetti in alto, sui layer superiori) i bordi vengono un po'
+; SFUMATI — collaudo del piatto v2 (2026-07-27): dischetti sfumati ⇒ centroidi
+; imprecisi ⇒ RMS del PnP che sale su alcune foto (il blob-snap è a posto: sulle
+; foto coi dischetti netti fa 1.8 px, meglio del click a mano). Nessun supporto
+; in nessuno dei due versi (i dischetti sono a filo).
 ;
 ; Uso in registrazione (fetta B): il piatto è il proxy della sessione; `p` legge
 ; le pose da (:anchors piatto) invece dei vertici del box. La corona gira col
