@@ -430,6 +430,23 @@ frame, giro con θ annotati); guida (nuovo cap. o estensione del 18).
      — stesso bersaglio, due modi di trovarlo.
    - **Stampa.** Un solo sorgente: geometria base + parte-dischetti + mappa
      mark; export **3MF multimateriale** (il canale esiste già).
+   - **Variante CARTA (Vincenzo, 2026-08-05 — standard del settore, nata
+     dai problemi di definizione della bicolore)**: lo stesso sorgente
+     emette anche **SVG/PDF a scala esatta** del disco marcato — ⚠ l'SVG
+     in Ridley è oggi SOLO import (library/svg.cljs): l'export va
+     costruito, o minimale nel generatore del piatto o come `export-svg`
+     generale per shape 2D (piccolo, e vale da solo: lasercutter/plotter;
+     unità fisiche mm in width/viewBox per la stampa a dimensione
+     effettiva). Il disco si stampa su carta opaca e si **incolla sul
+     piatto 3D**
+     — substrato plastico per rigidezza/planarità/innesti, carta per la
+     definizione (~0.03 mm laser vs 0.2-0.4 FDM), sostituibile quando si
+     consuma. Trappola nota: la **scala di stampa** (0.1-0.5%, anche
+     anisotropa; la carta respira con l'umidità) → **due barre di scala
+     ortogonali nel disegno**, misurate col calibro, valori in sessione a
+     scalare la mappa mark. Stampare a "dimensione effettiva", mai
+     adatta-alla-pagina. Su carta i marker CODIFICATI (fetta C) costano
+     zero.
    - **NO all'alternativa "pilota una faccia del proxy alla volta"**: è
      ergonomia, non accuratezza — resterebbero gli stessi angoli stondati
      come vincoli. Non si fa.
