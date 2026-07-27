@@ -440,3 +440,42 @@
    (download-mesh mesh-or-meshes "model.3mf" :3mf))
   ([mesh-or-meshes filename]
    (download-mesh mesh-or-meshes filename :3mf)))
+
+(defn download-text
+  "Write a text string (e.g. an SVG) to a file via the native save picker
+   (desktop path / File System Access), falling back to an anchor download —
+   the text analogue of pick-and-write, for the plate paper-variant sheet.
+   Returns a Promise<string> describing the result (or nil on cancel)."
+  ([text filename] (download-text text filename "text/plain"))
+  ([text filename mime]
+   (let [blob (js/Blob. #js [text] #js {:type mime})]
+     (cond
+       (env/desktop?)
+       (-> (desktop-pick-save-path filename)
+           (.then (fn [chosen]
+                    (when chosen
+                      (-> (desktop-write-file blob chosen)
+                          (.then (fn [_] (str "Salvato in " chosen)))))))
+           (.catch (fn [err] (js/console.warn "native save error:" err) nil)))
+
+       (exists? js/window.showSaveFilePicker)
+       (-> (js/window.showSaveFilePicker #js {:suggestedName filename})
+           (.then (fn [handle]
+                    (-> (.createWritable handle)
+                        (.then (fn [w]
+                                 (-> (.write w blob)
+                                     (.then #(.close w))
+                                     (.then (fn [_] (str "Salvato " (.-name handle))))))))))
+           (.catch (fn [err]
+                     (when-not (and err (= "AbortError" (.-name err)))
+                       (js/console.warn "save picker error:" err))
+                     nil)))
+
+       :else
+       (do (download-blob-fallback blob filename)
+           (js/Promise.resolve (str "Scaricato " filename)))))))
+
+(defn download-svg
+  "Save an SVG string to a .svg file (native picker / download)."
+  ([svg] (download-svg svg "plate.svg"))
+  ([svg filename] (download-text svg (swap-ext filename :svg) "image/svg+xml")))

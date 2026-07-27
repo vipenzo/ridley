@@ -19,6 +19,7 @@
             [ridley.scene.panel :as panel]
             [ridley.viewport.core :as viewport]
             [ridley.export.stl :as stl]
+            [ridley.export.plate-svg :as plate-svg]
             [ridley.export.gif :as gif-export]
             [ridley.anim.core :as anim]
             [ridley.anim.easing :as easing]
@@ -476,6 +477,9 @@
    'save-stl            stl/download-stl
    'save-3mf            stl/download-3mf
    'save-mesh           stl/download-mesh
+   ;; Registration-plate paper variant: printable mark sheet + its saver
+   'marks->svg          plate-svg/marks->svg
+   'save-svg            stl/download-svg
    'export              (fn export-smart
                           ([] (let [meshes (viewport/get-current-meshes)
                                     fname  (or (first (registry/registered-names)) "model")]
