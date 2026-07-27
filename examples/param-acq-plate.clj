@@ -120,6 +120,57 @@
 (println (str "Piatto ⌀" PLATE-D " mm, " N-MARKS " marker (corona R" CROWN-R
               ") + zero-indice. La mappa mark è (:anchors piatto)."))
 
+; --- Variante carta (definizione migliore della stampa 3D bicolore) -----
+;
+; Invece di affidare i marker alla faccia superiore di una stampa 3D bicolore
+; (bordi sfumati sui layer alti → centroide impreciso → RMS del PnP che sale), si
+; stampano su CARTA a dimensione effettiva e si incollano su un piatto plastico
+; liscio (substrato per rigidità e innesti). Le posizioni restano QUESTE (unica
+; fonte): la carta dà solo la definizione.
+;
+; La stampante sbaglia la scala dello 0.1-0.5%, spesso in modo ANISOTROPO: il
+; foglio porta due barre di scala ortogonali (100 mm nominali). Le misuri col
+; calibro e scrivi i valori qui sotto → la mappa dei mark si scala per-asse, così
+; il modello combacia coi marker DAVVERO stampati.
+
+(def SHEET-BAR 100.0)   ; lunghezza nominale delle barre di scala nel foglio (mm)
+(def MEASURED-X 100.0)  ; ← misura la barra ORIZZONTALE col calibro e scrivi qui
+(def MEASURED-Y 100.0)  ; ← misura la barra VERTICALE e scrivi qui
+(def sx (/ MEASURED-X SHEET-BAR))
+(def sy (/ MEASURED-Y SHEET-BAR))
+
+; La mappa mark scalata per-asse (solo le posizioni; heading/up sono direzioni).
+(def marks-carta
+  (into {}
+        (map-indexed
+         (fn [i deg]
+           (let [[x y] (nth mark-centers i)
+                 a (deg->rad deg)
+                 id (keyword (str "m" (when (< i 10) "0") i))]
+             [id {:position [(* x sx) (* y sy) TOP-Z]
+                  :heading [0 0 1]
+                  :up [(cos a) (sin a) 0]}]))
+         mark-angles)))
+
+; Il proxy per la variante carta: RIUSA la mesh di `piatto` (stesso frame di
+; costruzione, già collaudato) con la mappa mark scalata al posto della nominale.
+; NB: costruirlo da `plate-solid` grezzo gli darebbe un creation-pose diverso
+; (dal rotate del cilindro), che ribalta i mark lontano dalla camera → nessun
+; mark "visibile" da armare. Le tasche nel wireframe sono solo estetiche (il PnP
+; usa :anchors). Uso: (edit-acquire "dir" {:proxy piatto-carta}).
+(def piatto-carta (assoc piatto :anchors marks-carta))
+
+; Il foglio da stampare: dischi scuri a scala esatta + le due barre di scala +
+; il NUMERO di ogni marker (0..11) stampato radialmente FUORI dal dischetto, così
+; sai quale stai cliccando senza contare dallo zero-indice. Il numero sta lontano
+; dal centro (oltre la finestrella del blob-snap) per non spostare il centroide.
+; L'ultimo disco (lo zero-indice interno) non è numerato.
+(def sheet-labels (conj (mapv str (range N-MARKS)) nil))
+(def sheet-svg (marks->svg disc-centers {:disc-r DISC-R :plate-r PLATE-R
+                                         :bar-mm SHEET-BAR :labels sheet-labels}))
+; Salvalo e stampalo al 100% ("dimensione effettiva", NON "adatta alla pagina"):
+;   (save-svg sheet-svg "param-acq-plate-sheet.svg")
+
 ; --- Stampa e uso -------------------------------------------------------
 ;
 ; Stampa (3MF a due materiali: base = slot 1 chiaro, dischetti = slot 2 scuro):
