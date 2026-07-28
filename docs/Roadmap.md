@@ -40,7 +40,13 @@ camere via PnP su proxy (fatta e collaudata), ricalco su viste in posa
 - **Storia e handover**: `dev-docs/HANDOVER-edit-acquire-gate.md` e
   precedenti — leggere solo se serve il *perché* di una decisione.
 - **Dopo il v1** (coda nel brief): corona di marker sul piatto (bersaglio
-  PnP universale), rounded-prism/fillet, sorgenti live (webcam/companion).
+  PnP universale) — **FATTA e collaudata dal vivo**: `examples/param-acq-plate.clj`
+  (piatto ⌀130 + corona 12 dischetti + zero-indice, unica fonte geometria+mark),
+  PnP planare, fetta A (4 click → propose+blob-snap) e **fetta B identità-free**
+  (clicca 4 dischetti QUALSIASI, `b`+`r`, il software assegna le identità via
+  ricerca esaustiva + zero-indice; scorer a due passi coarse→refine).
+  Handover `dev-docs/HANDOVER-edit-acquire-fetta-B-live-gate.md`. Restano:
+  rounded-prism/fillet, sorgenti live (webcam/companion).
 
 **Fronti chiusi di recente** (2026-07): famiglia mesh-split/mesh-board —
 spec ad albero, `split-tree`, viste di confronto, heal-slivers (brief
