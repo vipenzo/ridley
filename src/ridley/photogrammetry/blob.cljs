@@ -109,3 +109,34 @@
                      (if (or (>= iter (dec max-iters)) (< moved 0.5))
                        {:center [ncu ncv] :contrast (- hi lo) :dark-frac dark-frac :iters (inc iter)}
                        (recur ncu ncv (inc iter))))))))))))))
+
+(def disc-at-defaults
+  {:min-contrast 40.0    ; the ring must be at least this much lighter than the centre
+   :min-ring-frac 0.6})  ; and this fraction of the sampled ring must clear that bar
+
+(defn disc-at?
+  "Cheap yes/no presence test for a dark disc of ~`r` px radius centred at pixel
+   `[u v]`: the CENTRE is dark and the surrounding RING (sampled on the 4 axes and
+   4 diagonals at radius `r`) is mostly LIGHTER than the centre by `:min-contrast`.
+   Adaptive — measured against the ring's own luminance rather than an absolute
+   cutoff — so it survives the uneven exposure across a real frame, and cheap (~9
+   `lum-at` samples) so the fetta-B search can run it per candidate × mark, unlike
+   snap-to-blob's windowed mean-shift. False off-image, on flat plate (ring not
+   lighter than the centre → no mark), or on the dark PART (centre dark but the
+   ring is dark too → the contrast bar isn't cleared). `r` should be a bit larger
+   than the disc's own radius so the ring lands on the plate, not the disc edge.
+
+   `lum-at` is (fn [x y] -> 0-255 luminance | nil off-image), as snap-to-blob's."
+  ([lum-at center r] (disc-at? lum-at center r nil))
+  ([lum-at [u v] r opts]
+   (let [{:keys [min-contrast min-ring-frac]} (merge disc-at-defaults opts)
+         r (max 1.0 r)
+         d (* 0.70710678 r)                       ; diagonal offset (r/√2)
+         c (lum-at u v)
+         ring (keep (fn [[x y]] (lum-at x y))
+                    [[(+ u r) v] [(- u r) v] [u (+ v r)] [u (- v r)]
+                     [(+ u d) (+ v d)] [(- u d) (+ v d)] [(+ u d) (- v d)] [(- u d) (- v d)]])]
+     (boolean
+      (when (and c (>= (count ring) 5))
+        (let [lighter (count (filter #(> % (+ c min-contrast)) ring))]
+          (>= (/ lighter (double (count ring))) min-ring-frac)))))))

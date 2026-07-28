@@ -83,6 +83,21 @@
                   :up [(cos a) (sin a) 0]}]))
          mark-angles)))
 
+; Lo ZERO-INDICE come 13ª voce di :anchors sotto la chiave riservata :zero — la
+; corona di 12 mark è simmetrica a 30°, e SENZA questo pallino asimmetrico
+; l'auto-detect (fetta B) non può distinguere le 12 rotazioni possibili (tutte
+; mettono i 12 mark riproiettati su dischi veri). Sta DENTRO m00 (raggio INDEX-R
+; < CROWN-R), sullo stesso piano. Vive in :anchors — così viaggia rigidamente
+; con la mesh (transform-mesh-rigid/canonicalize trasportano gli anchor) senza
+; codice nuovo — ma `bridge/pnp-target-points` lo ESCLUDE dalla corona pickabile
+; (la chiave :zero è filtrata): non è un mark da cliccare, è solo il rompi-
+; simmetria del detector. `:mark-disc-r` è il raggio fisico del dischetto (mm),
+; per dimensionare il test di presenza-disco del detector.
+(defn- zero-index-anchor [[ix iy]]
+  {:position [ix iy TOP-Z] :heading [0 0 1] :up [1 0 0]})
+
+(def anchors (assoc marks :zero (zero-index-anchor index-center)))
+
 ; --- Geometria ----------------------------------------------------------
 (def plate-solid (zc PLATE-R PLATE-H))
 
@@ -102,12 +117,13 @@
       (mesh-translate [x y (- TOP-Z (/ INLAY 2.0))])
       (color MARK-COLOR)))
 
-; La base: piatto meno tutte le tasche, colore chiaro, con la mappa mark
-; attaccata sotto :anchors (viaggia con la mesh → è il proxy per `p`).
+; La base: piatto meno tutte le tasche, colore chiaro, con la mappa mark (+ lo
+; zero-indice sotto :zero) attaccata sotto :anchors (viaggia con la mesh → è il
+; proxy per `p`) e il raggio-disco fisico sotto :mark-disc-r (per il detector).
 (def piatto
   (-> (mesh-difference-impl (into [plate-solid] (map pocket-at disc-centers)))
       (color PLATE-COLOR)
-      (assoc :anchors marks)))
+      (assoc :anchors anchors :mark-disc-r DISC-R)))
 
 (def discs (mapv disc-at disc-centers))
 
@@ -139,7 +155,8 @@
 (def sx (/ MEASURED-X SHEET-BAR))
 (def sy (/ MEASURED-Y SHEET-BAR))
 
-; La mappa mark scalata per-asse (solo le posizioni; heading/up sono direzioni).
+; La mappa mark scalata per-asse (solo le posizioni; heading/up sono direzioni),
+; con lo zero-indice (:zero) scalato dallo STESSO fattore per-asse.
 (def marks-carta
   (into {}
         (map-indexed
@@ -152,13 +169,19 @@
                   :up [(cos a) (sin a) 0]}]))
          mark-angles)))
 
+(def anchors-carta
+  (assoc marks-carta
+         :zero (zero-index-anchor [(* (first index-center) sx)
+                                   (* (second index-center) sy)])))
+
 ; Il proxy per la variante carta: RIUSA la mesh di `piatto` (stesso frame di
 ; costruzione, già collaudato) con la mappa mark scalata al posto della nominale.
 ; NB: costruirlo da `plate-solid` grezzo gli darebbe un creation-pose diverso
 ; (dal rotate del cilindro), che ribalta i mark lontano dalla camera → nessun
 ; mark "visibile" da armare. Le tasche nel wireframe sono solo estetiche (il PnP
-; usa :anchors). Uso: (edit-acquire "dir" {:proxy piatto-carta}).
-(def piatto-carta (assoc piatto :anchors marks-carta))
+; usa :anchors). :mark-disc-r è ereditato da `piatto`. Uso:
+; (edit-acquire "dir" {:proxy piatto-carta}).
+(def piatto-carta (assoc piatto :anchors anchors-carta))
 
 ; Il foglio da stampare: dischi scuri a scala esatta + le due barre di scala +
 ; il NUMERO di ogni marker (0..11) stampato radialmente FUORI dal dischetto, così

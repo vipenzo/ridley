@@ -123,6 +123,13 @@
   [proxy-pose world-pt]
   (to-local-point (box-basis proxy-pose) (:position proxy-pose) world-pt))
 
+(defn world->local-dir
+  "A WORLD direction expressed in `proxy-pose`'s object/solver frame — directions
+   only, no translation. The oriented companion of world->local (points), used to
+   carry a mark's face normal into the object frame."
+  [proxy-pose v]
+  (to-local-dir (box-basis proxy-pose) v))
+
 (defn dims-from-mesh
   "Box extents [w h d] from `mesh`'s ACTUAL vertices (not from construction
    arguments — robust to however the box was parameterized), projected into
@@ -150,7 +157,10 @@
    label are the UI layer's concern (edit_acquire), deliberately not here. Pure."
   [proxy-mesh camera-pose]
   (let [proxy-pose (:creation-pose proxy-mesh)]
-    (if-let [marks (seq (sort-by key (:anchors proxy-mesh)))]
+    ;; :zero is the plate's asymmetric ZERO-INDEX (see plate-detect) — it rides in
+    ;; :anchors so it transports rigidly for free, but it is NOT a crown mark to
+    ;; pick, so it never appears among the pickable targets.
+    (if-let [marks (seq (sort-by key (dissoc (:anchors proxy-mesh) :zero)))]
       (mapv (fn [[id pose]]
               (let [world (:position pose)]
                 {:id id
@@ -176,6 +186,25 @@
                  :world (local->world proxy-pose obj)
                  :visible? (contains? visible i)})
               (range) objs)))))
+
+(defn plate-detect
+  "The extras a registration PLATE carries for identity-free registration (fetta
+   B) beyond its 12 crown marks: the asymmetric ZERO-INDEX mark — a 13th disc
+   sitting radially INSIDE one crown mark (`:zero` in :anchors), whose object-
+   frame position (world->local, the SAME frame the crown :objs live in) is the
+   tiebreak that fixes the crown's 12-fold rotational symmetry — and the physical
+   disc radius in mm (`:mark-disc-r`), which sizes the disc-presence test. Returns
+   {:zero-obj [x y z] :disc-r mm} or nil for a box / a plate without a zero-index."
+  [proxy-mesh]
+  (when-let [zero (get-in proxy-mesh [:anchors :zero])]
+    (let [proxy-pose (:creation-pose proxy-mesh)]
+      {:zero-obj (world->local proxy-pose (:position zero))
+       :disc-r (:mark-disc-r proxy-mesh)
+       ;; the marked face's outward normal in the object frame, oriented toward
+       ;; the camera side — the non-mirror constraint match-plate needs to reject
+       ;; the reflection twin (the crown+zero is mirror-symmetric about the zero
+       ;; axis, so a reflected assignment reprojects onto discs and ties on score)
+       :face-normal (m/normalize (world->local-dir proxy-pose (:heading zero)))})))
 
 (defn klein-images
   "The four camera poses that reproject a box with three distinct sides to the

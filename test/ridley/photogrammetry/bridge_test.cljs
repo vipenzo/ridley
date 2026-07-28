@@ -203,3 +203,28 @@
           vis? (fn [nrm] (:visible? (first (bridge/pnp-target-points (mesh-with nrm) cam))))]
       (is (true? (vis? [0.0 0.0 1.0])) "normal toward the camera")
       (is (true? (vis? [0.0 0.0 -1.0])) "normal away — still offerable (user photographs the marked face)"))))
+
+(deftest plate-detect-and-zero-exclusion
+  ;; Fetta B plumbing: the zero-index rides in :anchors under :zero (so it
+  ;; transports rigidly for free) but must be EXCLUDED from the pickable crown,
+  ;; and its object-frame position + the marked-face normal must come back for
+  ;; the identity-free match. Deterministic on a known creation-pose.
+  (let [cp {:position [0 0 0] :heading [1 0 0] :up [0 0 1]}   ; box-basis ex=[0 1 0] ey=[0 0 1] ez=[1 0 0]
+        mesh {:creation-pose cp :vertices [[0 0 0]] :mark-disc-r 1.25
+              :anchors {:m00 {:position [58.0 0.0 1.5] :heading [0 0 1] :up [1 0 0]}
+                        :m01 {:position [0.0 58.0 1.5] :heading [0 0 1] :up [0 1 0]}
+                        :zero {:position [52.0 0.0 1.5] :heading [0 0 1] :up [1 0 0]}}}]
+    (testing "the :zero anchor is not among the pickable crown targets"
+      (let [targets (bridge/pnp-target-points mesh cp)]
+        (is (= 2 (count targets)) "only the two crown marks, never :zero")
+        (is (= [:m00 :m01] (mapv :id targets)))))
+    (testing "plate-detect returns the zero in the object frame, disc radius, and a unit face normal"
+      (let [det (bridge/plate-detect mesh)]
+        ;; world->local of [52 0 1.5] onto (ex=[0 1 0], ey=[0 0 1], ez=[1 0 0]) = [0 1.5 52]
+        (is (vec-approx= [0.0 1.5 52.0] (:zero-obj det) 1e-6))
+        (is (= 1.25 (:disc-r det)))
+        ;; heading [0 0 1] → object frame [0 1 0] (dot with ex,ey,ez), unit
+        (is (vec-approx= [0.0 1.0 0.0] (:face-normal det) 1e-6))
+        (is (< (Math/abs (- 1.0 (m/magnitude (:face-normal det)))) 1e-9) "unit normal")))
+    (testing "a mesh without a :zero anchor (a box, or a plate lacking one) → nil"
+      (is (nil? (bridge/plate-detect (update mesh :anchors dissoc :zero)))))))
