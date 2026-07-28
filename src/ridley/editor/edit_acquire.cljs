@@ -53,6 +53,7 @@
             [ridley.photogrammetry.edge-snap :as edge-snap]
             [ridley.photogrammetry.pnp :as pnp]
             [ridley.photogrammetry.blob :as blob]
+            [ridley.photogrammetry.match-plate :as match-plate]
             [ridley.photogrammetry.match :as match]
             [ridley.photogrammetry.turntable-fit :as tt]
             [ridley.photogrammetry.box-fit :as bf]
@@ -1138,6 +1139,22 @@
   []
   (get-in @session [:pnp-occluded (:current-idx @session)] #{}))
 
+(defn- batch-mode?
+  "Fetta B toggle ('b'): while on, PnP clicks accumulate as IDENTITY-FREE batch
+   picks (no armed target) that 'r' assigns in one shot (match-plate); while off,
+   the armed fetta-A flow runs. Session-wide (persists across photos); the batch
+   clicks themselves are per-photo. Plate-only — a box has no zero-index to break
+   the crown symmetry with, so there is nothing to auto-assign."
+  []
+  (boolean (:pnp-batch-mode? @session)))
+
+(defn- pnp-batch
+  "The identity-free batch clicks collected on this photo (fetta B): a vector of
+   {:px [u v] :screen [x y]} disc centroids the user clicked without saying which
+   mark each is. 'r' turns them into identified picks via match-plate/assign-marks."
+  []
+  (get-in @session [:pnp-batch (:current-idx @session)] []))
+
 (defn- visible-corner-set
   "Indices of the targets actually visible at the current pose (pnp-targets'
    :visible?) — the only ones offered for picking, so the user is never asked to
@@ -1264,6 +1281,34 @@
     (.remove ov)
     (swap! session dissoc :pnp-overlay-el)))
 
+(defn- append-overlay-dot!
+  "One translucent marker dot at screen [cx cy] on overlay `ov` (offsets are from
+   `rect`, the canvas' viewport rect). `bg` fills it; `label` (or nil) prints a
+   small numeral centred in it."
+  [ov rect cx cy bg label]
+  (let [dot (.createElement js/document "div")
+        st (.-style dot)]
+    (set! (.-position st) "absolute")
+    (set! (.-left st) (str (- cx (.-left rect) 7) "px"))
+    (set! (.-top st) (str (- cy (.-top rect) 7) "px"))
+    (set! (.-width st) "14px")
+    (set! (.-height st) "14px")
+    (set! (.-borderRadius st) "50%")
+    (set! (.-boxSizing st) "border-box")
+    (set! (.-border st) "2px solid rgba(255,255,255,0.85)")
+    (set! (.-background st) bg)
+    ;; translucent so photo detail under the marker stays readable while
+    ;; placing (Vincenzo, 2026-07-23 / more so 2026-07-25)
+    (set! (.-opacity st) "0.75")
+    (when label
+      (set! (.-fontSize st) "9px")
+      (set! (.-lineHeight st) "10px")
+      (set! (.-textAlign st) "center")
+      (set! (.-color st) "#fff")
+      (set! (.-textShadow st) "0 0 2px #000")
+      (set! (.-textContent dot) label))
+    (.appendChild ov dot)))
+
 (defn- redraw-overlay-dots! []
   (let [ov (ensure-pnp-overlay!)
         rect (canvas-rect)
@@ -1277,21 +1322,21 @@
             ;; a click screen to begin with); fall back to :screen for old data.
             :let [[cx cy] (or (and px (backdrop/screen-of-pixel cv cam px)) screen)]
             :when (and cx cy)]
-      (let [dot (.createElement js/document "div")
-            st (.-style dot)]
-        (set! (.-position st) "absolute")
-        (set! (.-left st) (str (- cx (.-left rect) 7) "px"))
-        (set! (.-top st) (str (- cy (.-top rect) 7) "px"))
-        (set! (.-width st) "14px")
-        (set! (.-height st) "14px")
-        (set! (.-borderRadius st) "50%")
-        (set! (.-boxSizing st) "border-box")
-        (set! (.-border st) "2px solid rgba(255,255,255,0.85)")
-        (set! (.-background st) (hex->css (target-color ci)))
-        ;; translucent so photo detail under the marker stays readable while
-        ;; placing (Vincenzo, 2026-07-23 / more so 2026-07-25)
-        (set! (.-opacity st) "0.4")
-        (.appendChild ov dot)))))
+      (append-overlay-dot! ov rect cx cy (hex->css (target-color ci)) nil))
+    ;; fetta B: the identity-free batch clicks, neutral white and numbered in
+    ;; click order (no colour — they carry no identity until 'r' assigns them)
+    (doseq [[i {:keys [px screen]}] (map-indexed vector (pnp-batch))
+            :let [[cx cy] (or (and px (backdrop/screen-of-pixel cv cam px)) screen)]
+            :when (and cx cy)]
+      (append-overlay-dot! ov rect cx cy "rgba(255,255,255,0.35)" (str (inc i))))))
+
+(def min-plate-picks
+  "A plate registers by the planar homography, which is exactly determined by 4
+   coplanar marks — so 'p' can seed a pose from 4 clicks, the premise of fetta A
+   (click 4, blob-snap proposes the rest) and the minimum for fetta B's batch
+   assignment. A box still needs the DLT's pnp/min-correspondences (6, on
+   non-coplanar corners)."
+  4)
 
 (def ^:private plate-click-snap-radius
   "Window half-size (px) for snapping a SEED click to its disc centroid. A plate
@@ -1300,36 +1345,53 @@
    a neighbour."
   50)
 
+(defn- snap-plate-click
+  "A plate mark IS a dark blob, so snap a raw click to its disc centroid — the
+   clicks then match the auto-proposals' sub-pixel precision (what keeps the
+   plate's rms ~4px) and the user only has to click ROUGHLY on the dot. Falls
+   back to the raw click when no clean blob is under it (unclear disc, box corner)."
+  [raw]
+  (or (when (plate-proxy?)
+        (some-> (blob/snap-to-blob backdrop/luminance-at raw plate-click-snap-radius) :center))
+      raw))
+
+(defn- screen-for [px client-fallback]
+  (or (backdrop/screen-of-pixel (viewport/get-canvas) (viewport/get-camera) px) client-fallback))
+
 (defn- pnp-on-pointerdown [^js e]
   (when (and @session (= :pnp (:mode @session)) (zero? (.-button e)))
     (when-let [raw (backdrop/pixel-under-pointer e (viewport/get-camera) (viewport/get-canvas))]
-      (when-let [ci (:pnp-armed @session)]     ; ignore clicks when nothing is armed
-        (.preventDefault e)
-        (.stopPropagation e)
-        (let [idx (:current-idx @session)
-              ;; a plate mark IS a dark blob, so snap the click to its centroid —
-              ;; the seed clicks then match the auto-proposals' sub-pixel precision
-              ;; (manual clicks were what kept the plate's rms ~4px on crisp discs)
-              ;; and the user only has to click ROUGHLY on the dot. Raw click when
-              ;; no clean blob is under it (unclear disc, or a box corner).
-              px (or (when (plate-proxy?)
-                       (some-> (blob/snap-to-blob backdrop/luminance-at raw plate-click-snap-radius)
-                               :center))
-                     raw)]
-          (swap! session assoc-in [:pnp-picks idx ci]
-                 {:px px :screen (or (backdrop/screen-of-pixel (viewport/get-canvas) (viewport/get-camera) px)
-                                     [(.-clientX e) (.-clientY e)])})
-          ;; a new click makes the last solve's residuals/outliers stale — drop
-          ;; them so the red flags clear until the user re-solves
-          (swap! session update :pnp-residuals dissoc idx)
-          (swap! session update :pnp-outliers dissoc idx)
-          (redraw-overlay-dots!)
-          ;; arm the next SPREAD marker (farthest from those placed) so a few seed
-          ;; clicks fan out around the ring instead of clustering; nil once every
-          ;; non-occluded marker is placed (panel then says "premi 'r'")
-          (if-let [nxt (next-seed-corner)]
-            (arm-corner! nxt)
-            (do (swap! session assoc :pnp-armed nil) (redraw-pnp-preview!) (update-panel!))))))))
+      (let [idx (:current-idx @session)]
+        (cond
+          ;; fetta B: identity-free batch — every click is just another disc
+          ;; centroid appended to the batch (no armed target); 'r' assigns them.
+          (batch-mode?)
+          (do
+            (.preventDefault e) (.stopPropagation e)
+            (let [px (snap-plate-click raw)]
+              (swap! session update-in [:pnp-batch idx] (fnil conj [])
+                     {:px px :screen (screen-for px [(.-clientX e) (.-clientY e)])})
+              (redraw-overlay-dots!)
+              (update-panel!)))
+
+          ;; fetta A / box: place the armed target; ignore clicks when unarmed
+          (:pnp-armed @session)
+          (let [ci (:pnp-armed @session)
+                px (snap-plate-click raw)]
+            (.preventDefault e) (.stopPropagation e)
+            (swap! session assoc-in [:pnp-picks idx ci]
+                   {:px px :screen (screen-for px [(.-clientX e) (.-clientY e)])})
+            ;; a new click makes the last solve's residuals/outliers stale — drop
+            ;; them so the red flags clear until the user re-solves
+            (swap! session update :pnp-residuals dissoc idx)
+            (swap! session update :pnp-outliers dissoc idx)
+            (redraw-overlay-dots!)
+            ;; arm the next SPREAD marker (farthest from those placed) so a few seed
+            ;; clicks fan out around the ring instead of clustering; nil once every
+            ;; non-occluded marker is placed (panel then says "premi 'r'")
+            (if-let [nxt (next-seed-corner)]
+              (arm-corner! nxt)
+              (do (swap! session assoc :pnp-armed nil) (redraw-pnp-preview!) (update-panel!)))))))))
 
 ;; --- loupe: a magnifier that expands the pixels under the cursor so a corner
 ;; can be placed on the exact edge despite the translucent proxy over it
@@ -1411,6 +1473,7 @@
   (when (and @session (not= :pnp (:mode @session)))
     (gizmo/close!)
     (swap! session assoc :mode :pnp)
+    (swap! session dissoc :pnp-batch-mode?)   ; always open in the armed flow
     (arm-corner! (next-unplaced-corner 0))
     (let [^js canvas (viewport/get-canvas)]
       (.addEventListener canvas "pointerdown" pnp-on-pointerdown true)
@@ -1430,18 +1493,52 @@
       (.removeEventListener canvas "wheel" pnp-on-wheel true))
     (remove-pnp-overlay!)
     (remove-pnp-loupe!)
+    ;; batch (fetta B) state is transient pre-assign scaffolding, not persisted —
+    ;; drop it on exit so re-entering PnP opens clean in the armed flow
+    (swap! session dissoc :pnp-batch :pnp-batch-mode?)
     (swap! session assoc :mode :gizmo)
     (viewport/show-preview! (proxy-preview-items))
     (install-gizmo! (:current-idx @session))
     (update-panel!)))
 
+(defn- undo-batch-click!
+  "Backspace in batch mode: drop the last identity-free click."
+  []
+  (let [idx (:current-idx @session)]
+    (when (seq (pnp-batch))
+      (swap! session update-in [:pnp-batch idx] pop)
+      (redraw-overlay-dots!)
+      (update-panel!))))
+
+(defn- toggle-batch-mode!
+  "'b' (plate only): flip between the identity-free batch flow (fetta B — click
+   any discs, 'r' assigns) and the armed flow (fetta A — a highlighted marker at
+   a time). Entering batch disarms; leaving it re-arms the next spread marker."
+  []
+  (let [on? (not (batch-mode?))]
+    (swap! session assoc :pnp-batch-mode? on?)
+    (if on?
+      (do (swap! session assoc :pnp-armed nil)
+          (set-status-message!
+           (str "Batch (senza identità): clicca almeno " min-plate-picks
+                " dischetti QUALSIASI, ben sparsi attorno al piatto, poi 'r'. "
+                "'b' per tornare alla modalità armata."))
+          (redraw-pnp-preview!))
+      (do (arm-corner! (next-unplaced-corner 0))
+          (set-status-message! "Modalità armata: evidenzia un marker, clicca dov'è, poi 'r'.")))
+    (redraw-overlay-dots!)
+    (update-panel!)))
+
 (defn- clear-pnp-picks! []
-  (swap! session update :pnp-picks dissoc (:current-idx @session))
-  (swap! session update :pnp-residuals dissoc (:current-idx @session))
-  (swap! session update :pnp-outliers dissoc (:current-idx @session))
-  (swap! session update :pnp-occluded dissoc (:current-idx @session))
+  (let [idx (:current-idx @session)]
+    (swap! session update :pnp-picks dissoc idx)
+    (swap! session update :pnp-residuals dissoc idx)
+    (swap! session update :pnp-outliers dissoc idx)
+    (swap! session update :pnp-occluded dissoc idx)
+    (swap! session update :pnp-batch dissoc idx))
   (redraw-overlay-dots!)
-  (arm-corner! (next-unplaced-corner 0)))
+  (when-not (batch-mode?) (arm-corner! (next-unplaced-corner 0)))
+  (update-panel!))
 
 (defn- skip-armed-corner!
   "'o': the armed marker is HIDDEN by the object in this view — the user can't
@@ -1490,13 +1587,6 @@
            "preciso, o la faccia dichiarata è sbagliata; se resta, segnalamelo")
       :else
       (str "fit pulito, rms " (.toFixed rms 2) "px"))))
-
-(def min-plate-picks
-  "A plate registers by the planar homography, which is exactly determined by 4
-   coplanar marks — so 'p' can seed a pose from 4 clicks, the premise of fetta A
-   (click 4, blob-snap proposes the rest). A box still needs the DLT's
-   pnp/min-correspondences (6, on non-coplanar corners)."
-  4)
 
 (defn- min-pnp-picks [] (if (plate-proxy?) min-plate-picks pnp/min-correspondences))
 
@@ -1614,6 +1704,71 @@
           (set-status-message!
            (str "PnP: nessuna soluzione — " (pnp-noun) " su più facce e almeno "
                 (min-pnp-picks) "?"))))))
+  (update-panel!))
+
+(def ^:private min-crown-assign
+  "A batch (fetta B) assignment is accepted only if at least this many of the 12
+   crown marks reproject onto real discs (on top of the zero-index, which fixes
+   the rotation). Below it the clicks were too clustered or an obstruction hid too
+   much — the armed flow ('b' to leave batch) is the fallback."
+  8)
+
+(defn- assign-batch!
+  "Fetta B trigger ('r' while in batch mode): recover which mark each identity-
+   free click is (match-plate/assign-marks — the photo is the judge, the zero-
+   index breaks the crown's 12-fold symmetry), write the identified picks, leave
+   batch mode, and hand off to on-solve-pnp! so the pose is refined and the rest
+   of the crown blob-snapped exactly as the armed fetta A does. A low-confidence
+   assignment is refused with a plain-language reason instead of a wrong pose."
+  []
+  (let [batch (pnp-batch)
+        idx (:current-idx @session)]
+    (cond
+      (not (plate-proxy?))
+      (set-status-message! "L'assegnazione automatica è solo per il piatto di registrazione.")
+
+      (< (count batch) min-plate-picks)
+      (set-status-message!
+       (str "Batch: servono almeno " min-plate-picks " dischetti cliccati (ne hai " (count batch) ")"))
+
+      (nil? (:zero-obj (bridge/plate-detect (:proxy-mesh @session))))
+      ;; the proxy has no zero-index (an OLD plate def, before it was exposed on
+      ;; :anchors) — the batch can't break the crown's rotational symmetry without
+      ;; it. Say exactly that, not the misleading "clicca più sparsi".
+      (set-status-message!
+       (str "Questo piatto non espone lo zero-indice: rivaluta il file aggiornato "
+            "examples/param-acq-plate.clj (il piatto ora ha lo zero sotto :anchors) e "
+            "riapri la sessione — oppure premi 'b' per la modalità armata."))
+
+      :else
+      (if-let [[iw ih] (backdrop/image-size)]
+        (let [targets (pnp-targets)
+              det (bridge/plate-detect (:proxy-mesh @session))
+              clicks (mapv :px batch)
+              judge (fn [px r] (blob/disc-at? backdrop/luminance-at px r))
+              res (match-plate/assign-marks clicks targets (:zero-obj det)
+                                            (session-intrinsics iw ih) judge
+                                            {:disc-r (:disc-r det)
+                                             :face-normal (:face-normal det)})]
+          (if (and res (:zero-hit? res) (>= (:crown-hits res) min-crown-assign))
+            (do
+              ;; identity recovered → write the 4 picks under their real mark
+              ;; indices, drop the batch, and leave batch mode so the standard
+              ;; solved view (residuals / arm-to-reclick) takes over
+              (doseq [[click-idx mark-idx] (:assignment res)]
+                (swap! session assoc-in [:pnp-picks idx mark-idx] (nth batch click-idx)))
+              (swap! session update :pnp-batch dissoc idx)
+              (swap! session assoc :pnp-batch-mode? false)
+              (redraw-overlay-dots!)
+              (on-solve-pnp!)) ; refines + auto-places the rest, sets its own status
+            (set-status-message!
+             (str "Non riesco ad assegnare le identità"
+                  (when res (str " (dischetti riconosciuti " (:crown-hits res) "/12"
+                                 (when-not (:zero-hit? res) ", zero-indice non trovato") ")"))
+                  ": clicca dischetti più SPARSI attorno al piatto e assicurati che lo "
+                  "zero-indice (il pallino interno accanto a un marker) sia visibile — "
+                  "oppure premi 'b' per la modalità armata."))))
+        (set-status-message! "Foto non ancora caricata."))))
   (update-panel!))
 
 ;; ============================================================
@@ -2294,15 +2449,59 @@
     (modal/mount-panel! panel)
     (update-panel!)))
 
+(defn- render-pnp-batch-panel!
+  "Fetta B (identity-free) controls in the PnP box: a prompt, the click count,
+   and Assegna/Annulla/Azzera/Modalità armata/Esci. The user clicks any discs
+   (no per-marker buttons — the whole point is not to name them) and 'Assegna'
+   recovers the identities in one shot."
+  [box]
+  (let [batch (pnp-batch)
+        c (count batch)
+        info (.createElement js/document "div")
+        actions (.createElement js/document "div")]
+    (set! (.-className info) "eaq-pnp-info")
+    (set! (.-textContent info)
+          (str "Batch (senza identità): clicca dischetti QUALSIASI ben sparsi "
+               "attorno al piatto, poi 'Assegna'. Cliccati " c "/" min-plate-picks
+               (when (< c min-plate-picks) (str " (ne servono ≥" min-plate-picks ")"))))
+    (.appendChild box info)
+    (set! (.-className actions) "eaq-pnp-actions")
+    (let [assign (.createElement js/document "button")
+          undo (.createElement js/document "button")
+          clr (.createElement js/document "button")
+          armedb (.createElement js/document "button")
+          exit (.createElement js/document "button")]
+      (set! (.-type assign) "button")
+      (set! (.-textContent assign) "Assegna (r)")
+      (set! (.-disabled assign) (< c min-plate-picks))
+      (.addEventListener assign "click" (fn [_] (assign-batch!)))
+      (set! (.-type undo) "button")
+      (set! (.-textContent undo) "Annulla ultimo")
+      (set! (.-disabled undo) (zero? c))
+      (.addEventListener undo "click" (fn [_] (undo-batch-click!)))
+      (set! (.-type clr) "button")
+      (set! (.-textContent clr) "Azzera")
+      (.addEventListener clr "click" (fn [_] (clear-pnp-picks!)))
+      (set! (.-type armedb) "button")
+      (set! (.-textContent armedb) "Modalità armata (b)")
+      (.addEventListener armedb "click" (fn [_] (toggle-batch-mode!)))
+      (set! (.-type exit) "button")
+      (set! (.-textContent exit) "Esci (p)")
+      (.addEventListener exit "click" (fn [_] (stop-pnp!)))
+      (doseq [b [assign undo clr armedb exit]] (.appendChild actions b)))
+    (.appendChild box actions)))
+
 (defn- render-pnp-panel!
   "The PnP controls, rendered into :pnp-el and rebuilt each update: a single
    'Registra per punti' button in gizmo mode; in PnP mode the armed-corner
-   prompt, eight corner buttons (colour = corner, filled = placed, white ring =
-   armed), and Risolvi/Azzera/Esci."
+   prompt, corner/marker buttons (colour = corner, filled = placed, white ring =
+   armed), and Risolvi/Azzera/Esci — or, on a plate in batch mode (fetta B), the
+   identity-free panel (render-pnp-batch-panel!)."
   []
   (when-let [box (:pnp-el @session)]
     (set! (.-innerHTML box) "")
-    (if (not= :pnp (:mode @session))
+    (cond
+      (not= :pnp (:mode @session))
       ;; entry button only from :gizmo — never on top of :retrace (empty box there)
       (when (= :gizmo (:mode @session))
         (let [b (.createElement js/document "button")]
@@ -2310,6 +2509,11 @@
           (set! (.-textContent b) "Registra per punti (p)")
           (.addEventListener b "click" (fn [_] (start-pnp!)))
           (.appendChild box b)))
+
+      (batch-mode?)
+      (render-pnp-batch-panel! box)
+
+      :else
       (let [placed (pnp-picks)
             resid (pnp-residuals)
             outliers (pnp-outliers)
@@ -2370,6 +2574,7 @@
         (set! (.-className actions) "eaq-pnp-actions")
         (let [solve (.createElement js/document "button")
               clr (.createElement js/document "button")
+              batchb (when (plate-proxy?) (.createElement js/document "button"))
               exit (.createElement js/document "button")]
           (set! (.-type solve) "button")
           (set! (.-textContent solve) "Risolvi PnP (r)")
@@ -2378,11 +2583,17 @@
           (set! (.-type clr) "button")
           (set! (.-textContent clr) "Azzera")
           (.addEventListener clr "click" (fn [_] (clear-pnp-picks!)))
+          ;; a plate can register identity-free (fetta B) — offer the toggle
+          (when batchb
+            (set! (.-type batchb) "button")
+            (set! (.-textContent batchb) "Senza identità (b)")
+            (.addEventListener batchb "click" (fn [_] (toggle-batch-mode!))))
           (set! (.-type exit) "button")
           (set! (.-textContent exit) "Esci (p)")
           (.addEventListener exit "click" (fn [_] (stop-pnp!)))
           (.appendChild actions solve)
           (.appendChild actions clr)
+          (when batchb (.appendChild actions batchb))
           (.appendChild actions exit))
         (.appendChild box actions)))))
 
@@ -2752,15 +2963,28 @@
           (do (.preventDefault e) (.stopPropagation e)
               (if marker? (stop-marker!) (start-marker!)))
 
+        ;; 'b' (plate only) toggles the identity-free batch flow (fetta B) vs the
+        ;; armed flow (fetta A) while in PnP.
+          (and pnp? (plate-proxy?) (= key "b"))
+          (do (.preventDefault e) (.stopPropagation e) (toggle-batch-mode!))
+
+        ;; 'r' registers: in batch mode it assigns the identity-free clicks first
+        ;; (match-plate) then solves; in the armed flow it solves directly.
           (and pnp? (= key "r"))
-          (do (.preventDefault e) (.stopPropagation e) (on-solve-pnp!))
+          (do (.preventDefault e) (.stopPropagation e)
+              (if (batch-mode?) (assign-batch!) (on-solve-pnp!)))
+
+        ;; Backspace in batch mode drops the last identity-free click.
+          (and pnp? (batch-mode?) (= key "Backspace"))
+          (do (.preventDefault e) (.stopPropagation e) (undo-batch-click!))
 
         ;; 'o' — the armed marker is occluded by the part in this view: skip it
         ;; (drop any pick, mark it hidden so nothing re-places it), then 'r'.
-          (and pnp? (= key "o"))
+        ;; Armed flow only (batch has no armed target).
+          (and pnp? (not (batch-mode?)) (= key "o"))
           (do (.preventDefault e) (.stopPropagation e) (skip-armed-corner!))
 
-          (and pnp? (re-matches #"[1-8]" key))
+          (and pnp? (not (batch-mode?)) (re-matches #"[1-8]" key))
           (do (.preventDefault e) (.stopPropagation e)
               (arm-corner! (dec (js/parseInt key 10))))
 
