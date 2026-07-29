@@ -242,6 +242,45 @@
         (set! (.-fillStyle ctx) "#ffd24d")
         (.fillText ctx (str (.toFixed zoom 1) "×") (/ R 2) (- R 5))))))
 
+(defn- load-image
+  "Promise of an HTMLImageElement decoded from `url`."
+  [url]
+  (js/Promise. (fn [resolve reject]
+                 (let [img (js/Image.)]
+                   (set! (.-onload img) (fn [] (resolve img)))
+                   (set! (.-onerror img) (fn [e] (reject e)))
+                   (set! (.-src img) url)))))
+
+(defn load-luminance-sampler
+  "Load the photo at `file-path` OFF-SCREEN — without disturbing the displayed
+   backdrop — and resolve to {:lum-at (fn [x y] -> 0-255|nil) :size [w h]}. Lets a
+   batch pass (plate 'f': register the whole ring at once) sample EACH photo's
+   pixels while the view stays on the current one. Same blob-URL / same-origin
+   offscreen canvas as cache-pixels!, so it never taints. lum-at matches
+   luminance-at's rounding + weights exactly."
+  [file-path]
+  (-> (stl/desktop-read-file-blob file-path)
+      (.then (fn [blob]
+               (let [url (js/URL.createObjectURL blob)]
+                 (-> (load-image url)
+                     (.then (fn [^js img]
+                              (let [iw (.-naturalWidth img) ih (.-naturalHeight img)
+                                    canvas (.createElement js/document "canvas")]
+                                (set! (.-width canvas) iw)
+                                (set! (.-height canvas) ih)
+                                (let [ctx (.getContext canvas "2d" #js {:willReadFrequently true})]
+                                  (.drawImage ctx img 0 0)
+                                  (let [data (.-data (.getImageData ctx 0 0 iw ih))]
+                                    (js/URL.revokeObjectURL url)
+                                    {:size [iw ih]
+                                     :lum-at (fn [x y]
+                                               (let [px (Math/round x) py (Math/round y)]
+                                                 (when (and (>= px 0) (>= py 0) (< px iw) (< py ih))
+                                                   (let [o (* (+ (* py iw) px) 4)]
+                                                     (+ (* 0.299 (aget data o))
+                                                        (* 0.587 (aget data (+ o 1)))
+                                                        (* 0.114 (aget data (+ o 2))))))))})))))))))))
+
 (defn luminance-at
   "Grayscale value (0-255ish) at pixel (x,y) of the currently loaded photo,
    rounded to the nearest pixel — no bilinear interpolation, matching

@@ -37,6 +37,7 @@
    the background) must be up even when the app itself is open in Chrome for
    REPL/hot-reload."
   (:require [clojure.string :as str]
+            [cljs.reader :as reader]
             [ridley.editor.modal-evaluator :as modal]
             [ridley.editor.codemirror :as cm]
             [ridley.editor.gizmo :as gizmo]
@@ -1773,6 +1774,123 @@
   (update-panel!))
 
 ;; ============================================================
+;; Turntable ring (plate 'f'): register the remaining photos from the ones the
+;; user already registered with 'p'. The camera poses (object frame) trace a ring
+;; about the plate's spin axis, so a registered photo, spun by the right plate
+;; angle, predicts another ring photo's marks — a 1-DOF search (match-plate/
+;; find-ring-pose) the zero-index disambiguates. Each pending photo is sampled
+;; OFF-SCREEN (backdrop/load-luminance-sampler), predicted from its NEAREST
+;; registered reference (best zero-hit score — a hand-held ring is not a perfect
+;; circle, so a far reference drifts), blob-snapped, and PnP-solved. Only a fit
+;; under the rms bar registers; the rest stay for manual 'p'. This is the plate's
+;; analogue of the box's on-fit-turntable! — dispatched by 'f' on plate-proxy?.
+;; ============================================================
+
+(def ^:private ring-snap-radius
+  "blob-snap window (px) for a ring-predicted mark. Predictions land within ~30px
+   of the real disc (see the real-data test), comfortably inside this."
+  60)
+
+(def ^:private min-ring-crown
+  "A ring candidate needs at least this many crown marks tightly on-disc (on top
+   of the zero-index, the real discriminator) before its angle is trusted."
+  4)
+
+(defn- register-one-ring-photo!
+  "Predict + register ONE unregistered ring photo `idx` from the registered
+   reference solver poses. Samples the photo off-screen, finds the best zero-hit
+   ring angle over all references, blob-snaps the predicted mark pixels, and
+   PnP-solves. Resolves to true when a fit under the rms bar registers, else
+   false (a load/blur/solve miss is just a skip, never a throw)."
+  [idx ref-solvers marks zero-obj intrinsics disc-r proxy-pose]
+  (-> (backdrop/load-luminance-sampler (photo-path (:file (nth (:photos @session) idx))))
+      (.then (fn [sampler]
+               (let [lum-at (:lum-at sampler)
+                     judge (fn [px r] (blob/disc-at? lum-at px r))
+                     best (->> ref-solvers
+                               (keep #(match-plate/find-ring-pose % marks zero-obj intrinsics judge
+                                                                  {:disc-r disc-r}))
+                               (filter #(and (:zero-hit? %) (>= (:crown-hits %) min-ring-crown)))
+                               (sort-by :score >)
+                               first)]
+                 (if-not best
+                   false
+                   (let [picks (into {} (keep (fn [[mi px]]
+                                                (some->> (blob/snap-to-blob lum-at px ring-snap-radius)
+                                                         :center (vector mi)))
+                                              (:pixels best)))
+                         corr (vec (for [[ci px] picks]
+                                     {:ci ci :world (:obj (nth marks ci)) :px px}))]
+                     (if (< (count corr) min-plate-picks)
+                       false
+                       (if-let [sol (pnp/solve-pnp corr intrinsics {})]
+                         (if (<= (:rms-px sol) pnp/accept-rms-px)
+                           (do
+                             (swap! session assoc-in [:camera-poses idx]
+                                    (bridge/solver-pose->camera (:pose sol) proxy-pose))
+                             (swap! session assoc-in [:acquire-results idx]
+                                    {:pnp? true :ring? true :matched (:n sol)
+                                     :rms-px (:rms-px sol) :outliers (count (:outliers sol))})
+                             (swap! session assoc-in [:pnp-picks idx]
+                                    (into {} (map (fn [[ci px]] [ci {:px px :proposed? true}]) picks)))
+                             true)
+                           false)
+                         false)))))))
+      (.catch (fn [_] false))))
+
+(defn- on-fit-ring!
+  "Plate 'f': register every unregistered ring photo from the ones already done."
+  []
+  (if-let [[iw ih] (backdrop/image-size)]
+    (let [proxy-mesh (:proxy-mesh @session)
+          proxy-pose (:creation-pose proxy-mesh)
+          det (bridge/plate-detect proxy-mesh)
+          marks (mapv #(select-keys % [:id :obj]) (pnp-targets))
+          zero-obj (:zero-obj det)
+          intrinsics (session-intrinsics iw ih)
+          n (count (:photos @session))
+          registered? (fn [idx] (:pnp? (get-in @session [:acquire-results idx])))
+          ;; ALL photos on a plate are θ=libera — the ring INFERS the angle, so
+          ;; (unlike the box turntable) the free-photo? guard must NOT apply here.
+          ;; Any registered photo (incl. 0, whose fixed-vantage camera is still a
+          ;; valid view of the moved proxy) is a reference; every unregistered
+          ;; photo ≥1 is a target (photo 0's own model moves the proxy, not the
+          ;; camera, so it is never ring-predicted).
+          refs (filterv (fn [idx] (and (registered? idx) (get-in @session [:camera-poses idx])))
+                        (range n))
+          ref-solvers (mapv #(bridge/editor->solver-pose (get-in @session [:camera-poses %]) proxy-pose) refs)
+          pending (filterv (fn [idx] (and (pos? idx) (not (registered? idx)))) (range n))]
+      (cond
+        (nil? zero-obj)
+        (set-status-message! "Questo piatto non espone lo zero-indice: rivaluta examples/param-acq-plate.clj e riapri.")
+        (empty? refs)
+        (set-status-message! "Anello: registra prima almeno una foto con 'p' (poi 'f' propone le altre).")
+        (empty? pending)
+        (set-status-message! "Anello: tutte le foto (nell'anello) sono già registrate.")
+        :else
+        (do
+          (set-status-message!
+           (str "Anello: registro " (count pending) " foto dai " (count refs) " riferimenti…"))
+          (-> (js/Promise.all
+               (clj->js (mapv #(register-one-ring-photo! % ref-solvers marks zero-obj
+                                                         intrinsics (:disc-r det) proxy-pose)
+                              pending)))
+              (.then (fn [results]
+                       (let [ok (count (filter identity (vec results)))]
+                         (when-let [cp (get-in @session [:camera-poses (:current-idx @session)])]
+                           (viewport/set-camera-pose! cp))
+                         (when (= :pnp (:mode @session))
+                           (redraw-pnp-preview!)
+                           (redraw-overlay-dots!))
+                         (save-acquire-state!)
+                         (set-status-message!
+                          (str "Anello: registrate " ok "/" (count pending) " foto"
+                               (when (< ok (count pending))
+                                 " — le altre: 'p' a mano, o registra un riferimento più vicino e ripremi 'f'")))
+                         (update-panel!))))))))
+    (set-status-message! "Foto non ancora caricata.")))
+
+;; ============================================================
 ;; Retrace ('d'): P3 thin slice — trace a planar feature ON a declared face of
 ;; the proxy, over the photo in pose. A click is backprojected (camera/pixel-ray)
 ;; from the registered camera and intersected (math/ray-plane-point) with the
@@ -3006,12 +3124,11 @@
                  "Piatto di registrazione: usa 'p' (PnP sui mark del piatto), non 's'. Gli spigoli di un piatto non registrano.")
                 (on-snap!)))
 
+        ;; 'f' fits the shared multi-photo model: a box's turntable joint, or a
+        ;; plate's ring (register a few with 'p', 'f' proposes the rest).
           (and (not retrace?) (not mark?) (= key "f"))
           (do (.preventDefault e) (.stopPropagation e)
-              (if (plate-proxy?)
-                (set-status-message!
-                 "Piatto di registrazione: ogni foto si registra da sola con 'p' (PnP), non c'è fit giradischi ('f').")
-                (on-fit-turntable!)))
+              (if (plate-proxy?) (on-fit-ring!) (on-fit-turntable!)))
 
           (= key "]")
           (do (.preventDefault e) (.stopPropagation e)
@@ -3462,25 +3579,45 @@
     (let [align (str key-indent (apply str (repeat (+ (count owner) 2) " ")))]
       (str "{" (str/join (str "\n" align) entries) "}"))))
 
+(defn- marker-proxy-expr
+  "The SOURCE text of the :proxy value in the (edit-acquire …) marker, read back
+   from the buffer — e.g. \"piatto-carta\" or \"(box 20 40 60)\". Lets the emitted
+   (acquire …) keep the SAME proxy the user opened with, which matters for a plate:
+   a dims-based (box …) would throw away its cylinder shape AND its crown marks
+   (Vincenzo 2026-07-29: the plate emitted+re-rendered as a box). nil when there's
+   no marker, no :proxy, or the marker doesn't read as EDN (then the caller falls
+   back to the (box …) reconstruction)."
+  []
+  (when-let [[from to] (find-marker)]
+    (try
+      (let [opts (nth (reader/read-string (subs (cm/get-value) from to)) 2 nil)]
+        (when (and (map? opts) (contains? opts :proxy))
+          (pr-str (:proxy opts))))
+      (catch :default _ nil))))
+
 (defn- emit-acquire-code
   "The (acquire \"dir\" {…}) source that replaces the marker on confirm, PRETTY-
-   PRINTED (multi-line, indented to the marker's column `col`). Proxy dims come from
-   the mesh's ACTUAL extents (bridge/dims-from-mesh). The emitted pose keeps the
-   ACQUIRED orientation but re-anchors the box CENTRE to the construction turtle's
-   position at open time (:build-pose) — object near the turtle/origin, re-entry
-   still overlays the photos (session file restores the acquired position). :shapes
-   = the ricalchi as named (poly …), :marks = named points as poses; both
-   destructurable by name, lifted through the SAME anchor pose (P4a-3)."
+   PRINTED (multi-line, indented to the marker's column `col`). The emitted pose
+   keeps the ACQUIRED orientation but re-anchors the CENTRE to the construction
+   turtle's position at open time (:build-pose) — object near the turtle/origin,
+   re-entry still overlays the photos (session file restores the acquired
+   position). The proxy: a plate keeps its ORIGINAL expression (marker-proxy-expr —
+   the cylinder + crown marks a (box …) would lose); a box is reconstructed from
+   its ACTUAL extents (bridge/dims-from-mesh). :shapes = the ricalchi as named
+   (poly …), :marks = named points as poses; both destructurable by name, lifted
+   through the SAME anchor pose (P4a-3)."
   [col]
   (let [proxy (:proxy-mesh @session)
         pose (:creation-pose proxy)                 ; acquired pose (orientation kept)
         anchor-pose {:position (get-in @session [:build-pose :position] [0 0 0])
                      :heading (:heading pose) :up (:up pose)}
         [w h d] (bridge/dims-from-mesh proxy pose)
+        proxy-expr (or (when (plate-proxy?) (marker-proxy-expr))
+                     (str "(box " (fmt-n w) " " (fmt-n h) " " (fmt-n d) ")"))
         ind (apply str (repeat col " "))
         i3 (str ind "   ")]                          ; column of the map's keys (:pose …)
     (str "(acquire " (pr-str (:base-dir @session)) "\n"
-         ind "  {:proxy (box " (fmt-n w) " " (fmt-n h) " " (fmt-n d) ")\n"
+         ind "  {:proxy " proxy-expr "\n"
          i3 ":pose {:position " (fmt-vec (:position anchor-pose))
          " :heading " (fmt-vec (:heading anchor-pose))
          " :up " (fmt-vec (:up anchor-pose)) "}\n"
