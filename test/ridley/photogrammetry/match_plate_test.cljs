@@ -8,6 +8,7 @@
             [ridley.photogrammetry.camera :as cam]
             [ridley.photogrammetry.match-plate :as mp]
             [ridley.photogrammetry.pnp :as pnp]
+            [ridley.photogrammetry.bridge :as bridge]
             [ridley.photogrammetry.synth :as synth]))
 
 ;; --- Synthetic plate: 12 crown marks + a zero-index, in the object frame ------
@@ -186,3 +187,107 @@
           (doseq [j (range (count picks))]
             (is (= (nth picks j) (get-in res [:assignment j]))
                 "each real click resolves to the mark it actually is")))))))
+
+;; ---------------------------------------------------------------------------
+;; Turntable ring — register a photo with ZERO clicks from an already-registered
+;; one. The plate spins about its axis; a 1-DOF search over the rotation θ must
+;; recover another ring photo's plate angle, the zero-index electing the true one
+;; among the 12 crown-symmetric candidates.
+
+(defn- spin-obj [p axis pivot angle]
+  ;; Rodrigues about a unit axis through pivot (mirrors match-plate's internal spin)
+  (let [d (mapv - p pivot) c (Math/cos angle) s (Math/sin angle)
+        [kx ky kz] axis [dx dy dz] d
+        cx (- (* ky dz) (* kz dy)) cy (- (* kz dx) (* kx dz)) cz (- (* kx dy) (* ky dx))
+        kdot (+ (* kx dx) (* ky dy) (* kz dz))]
+    (mapv + pivot
+          [(+ (* dx c) (* cx s) (* kx kdot (- 1 c)))
+           (+ (* dy c) (* cy s) (* ky kdot (- 1 c)))
+           (+ (* dz c) (* cz s) (* kz kdot (- 1 c)))])))
+
+(deftest ring-search-recovers-a-known-plate-rotation
+  (println "\n=== ring: recupero rotazione del piatto da una foto già registrata ===")
+  (let [axis [0.0 0.0 1.0] pivot [0.0 0.0 PLATE-Z]]  ; marks' plane normal + centroid
+    (doseq [[az el] [[0 45] [90 35] [210 50]]
+            true-deg [40.0 130.0 250.0]]
+      (let [ref-pose (synth/viewpoint az el 250.0)
+            true-rad (* true-deg (/ Math/PI 180.0))
+            ;; the TARGET photo = the same ref camera seeing the plate spun by true-rad
+            crown-px (mapv (fn [m] (cam/project (k*) ref-pose (spin-obj (:obj m) axis pivot true-rad))) marks)
+            zero-px (cam/project (k*) ref-pose (spin-obj zero-obj axis pivot true-rad))
+            discs (conj crown-px zero-px)
+            judge (fn [p _r] (boolean (some #(<= (dist-px p %) 14.0) discs)))
+            res (mp/find-ring-pose ref-pose marks zero-obj (k*) judge {:disc-r DISC-R})
+            got-deg (when res (* (:theta res) (/ 180.0 Math/PI)))]
+        (testing (str "ref az " az " el " el ", plate spun " true-deg "°")
+          (is (some? res) "must find an angle")
+          (is (:zero-hit? res) "the zero-index must elect the true rotation")
+          (is (= 12 (:crown-hits res)) "the whole crown reprojects onto discs at the found angle")
+          (is (< (min (Math/abs (- got-deg true-deg))
+                      (Math/abs (- 360.0 (Math/abs (- got-deg true-deg))))) 1.5)
+              (str "recovered " (.toFixed got-deg 1) "°, true " true-deg "°"))
+          ;; predicted pixels land on the target discs (blob-snap seeds)
+          (doseq [i (range 12)]
+            (is (< (dist-px (get-in res [:pixels i]) (nth crown-px i)) 8.0)
+                "predicted mark pixel is near its true target pixel")))))))
+
+;; --- REAL ring: Vincenzo's param-plate-one registered camera poses (world) ---
+;; Photos 1-7 were shot around the plate at a roughly constant elevation → a ring;
+;; 8/9/10 are off it (lower / top views). find-ring-pose, given ONE registered
+;; photo as reference, must predict another RING photo's marks close enough to
+;; seed blob-snap (the crux of the plate 'f'), and must NOT confidently register
+;; an off-ring photo. Both ref and target reproject the SAME replay :obj through
+;; the compiled bridge, so this tests the real camera RING geometry, not :obj.
+
+(def real-proxy-pose {:position [0.012774 0.101609 0.067386] :heading [0.002704 -0.009157 -0.999954] :up [-0.003651 0.999951 -0.009166]})
+
+(def real-cams
+  {1 {:position [210.759365 173.712344 158.639549] :heading [-0.676706 -0.57378 -0.461352] :up [-0.331328 -0.322257 0.886776]}
+   2 {:position [272.180072 -16.457675 157.965506] :heading [-0.887025 0.042135 -0.459794] :up [-0.460391 -0.005196 0.887701]}
+   3 {:position [117.487264 -241.564459 162.977935] :heading [-0.394154 0.785705 -0.47677] :up [-0.227671 0.419121 0.878922]}
+   4 {:position [-169.639407 -205.558528 165.261435] :heading [0.546251 0.683139 -0.484697] :up [0.280039 0.396417 0.874318]}
+   5 {:position [-260.250717 66.391603 163.575195] :heading [0.854414 -0.202803 -0.478379] :up [0.473356 -0.075854 0.877599]}
+   6 {:position [-85.953554 255.553948 161.833358] :heading [0.294373 -0.830251 -0.473317] :up [0.184916 -0.43642 0.880536]}
+   7 {:position [181.943787 203.465473 156.796115] :heading [-0.582898 -0.671938 -0.456869] :up [-0.27243 -0.368109 0.888976]}
+   9 {:position [101.100979 2.778747 349.96048] :heading [-0.245894 0.019185 -0.969107] :up [-0.948904 0.199239 0.244713]}})
+
+(deftest ring-predicts-a-real-photo-from-another
+  (println "\n=== ring REALE (param-plate-one): una foto registrata ne predice un'altra ===")
+  (let [solver (fn [idx] (bridge/editor->solver-pose (get real-cams idx) real-proxy-pose))
+        refs [1 2 3 4 5 6 7]
+        target-px (fn [idx] (mapv #(cam/project real-K (solver idx) (:obj %)) marks))
+        judge-for (fn [idx tol] (let [px (conj (target-px idx) (cam/project real-K (solver idx) zero-obj))]
+                                  (fn [p _r] (boolean (some #(<= (dist-px p %) tol) px)))))
+        max-err (fn [res tgt] (reduce max (mapv #(dist-px (get-in res [:pixels %]) (nth (target-px tgt) %)) (range 12))))
+        ;; the UI strategy: predict a target from whichever registered reference scores best (the nearest)
+        best-ref-for (fn [tgt] (->> (remove #{tgt} refs)
+                                    (keep (fn [r] (some-> (mp/find-ring-pose (solver r) marks zero-obj real-K (judge-for tgt 16.0) {})
+                                                          (assoc :ref r))))
+                                    (apply max-key :score)))]
+    ;; the error-vs-separation curve from ONE fixed reference (photo 1): near is
+    ;; tight, far drifts (a hand-held ring is not a perfect circle)
+    (println "  --- da un solo riferimento (foto 1): errore vs separazione ---")
+    (doseq [tgt [7 2 6 3 5 4]]
+      (let [res (mp/find-ring-pose (solver 1) marks zero-obj real-K (judge-for tgt 16.0) {})]
+        (println (str "  1→" tgt ": crown " (:crown-hits res) " zero " (:zero-hit? res)
+                      " err max " (when res (.toFixed (max-err res tgt) 0)) "px"))))
+    ;; the actual UI: nearest reference per target — every ring photo must register
+    (println "  --- strategia UI: miglior riferimento per ogni foto ---")
+    (doseq [tgt refs]
+      (let [res (best-ref-for tgt)]
+        (println (str "  tgt " tgt " ← ref " (:ref res) ": crown " (:crown-hits res)
+                      " zero " (:zero-hit? res) " err max " (.toFixed (max-err res tgt) 0) "px"))
+        (testing (str "target " tgt " from its best reference")
+          ;; zero-hit? is the clean discriminator: whenever it is true the whole
+          ;; prediction is within blob-snap reach (≤~30px here); when the rotation
+          ;; is wrong the zero misses and the error is ~2000px. crown-hits is a
+          ;; secondary floor (per-mark scatter thins it on the widest gaps).
+          (is (:zero-hit? res) "the zero-index elects the rotation")
+          (is (>= (:crown-hits res) 4) "enough marks confirm the angle")
+          (is (< (max-err res tgt) 40.0) "predicted within blob-snap reach of the real marks"))))
+    (testing "an off-ring top view (9) is not confidently registered from a side ref (1)"
+      (let [res (mp/find-ring-pose (solver 1) marks zero-obj real-K (judge-for 9 16.0) {})]
+        (println (str "  1→9 (fuori anello): "
+                      (if res (str "crown " (:crown-hits res) " zero " (:zero-hit? res)) "NIL")))
+        (is (or (nil? res) (not (:zero-hit? res)) (< (:crown-hits res) 10))
+            "a top-view photo off the side ring must not falsely register")))))

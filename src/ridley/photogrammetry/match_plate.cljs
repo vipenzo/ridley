@@ -103,7 +103,7 @@
         u (la/v-scale d0 (/ 1.0 (max 1e-12 (la/v-norm d0))))
         nn (la/v-scale n (/ 1.0 (max 1e-12 (la/v-norm n))))
         v (cross3 nn u)]
-    {:o o :u u :v v}))
+    {:o o :u u :v v :n nn}))
 
 (defn- cyclic-order-3d
   "Indices of the mark objects sorted by their angle in the plane frame — the
@@ -242,3 +242,71 @@
                      shortlist)]
       (when (seq fine)
         (apply max-key :score fine)))))
+
+;; ---------------------------------------------------------------------------
+;; Turntable ring — register a photo from an already-registered one (fetta B+)
+
+(defn- rotate-about
+  "Rodrigues rotation of vector `v` about the UNIT axis `k` by `angle` rad."
+  [v k angle]
+  (let [c (Math/cos angle) s (Math/sin angle)]
+    (la/v-add (la/v-add (la/v-scale v c) (la/v-scale (cross3 k v) s))
+              (la/v-scale k (* (la/v-dot k v) (- 1.0 c))))))
+
+(defn find-ring-pose
+  "Register a plate photo with ZERO clicks by exploiting a turntable ring: given
+   the solver pose `ref-pose` of an ALREADY-registered photo, and knowing the
+   plate spins about its own axis (the marks' plane normal, through their
+   centroid), find the plate rotation θ whose reprojection lands the crown +
+   zero-index on discs — the plate rotation of ANOTHER photo of the same ring (the
+   camera fixed on the ring, the plate turned by θ from the reference).
+
+   Reprojecting a mark at angle θ = project(ref-pose, spin(mark, θ)): spinning the
+   OBJECT under the fixed reference view is exactly equivalent to the camera
+   orbiting the axis, so one registered photo generates the whole ring. The crown
+   is 12-fold symmetric, so 12 angles score the crown alike; the asymmetric
+   zero-index elects the true one (as in assign-marks). The disc test is COARSE
+   (the ring is only approximate — hand-held cameras scatter off it — and the disc
+   size absorbs it); the caller blob-snaps the returned pixels and runs a full PnP
+   to get the exact pose. `disc-at?` samples THIS photo's luminance.
+
+   The plate spins about its own normal (the marks' plane) through their centre.
+   That is accurate for a NEAR reference — a hand-held ring is not a perfect
+   circle, so extrapolating a far-away photo drifts — hence the caller predicts
+   each photo from its NEAREST registered reference (max score over all).
+
+   Returns {:theta rad :crown-hits n :zero-hit? bool :score s
+            :pixels {mark-idx [u v]}} (pixels = the predicted mark pixels to
+   blob-snap + solve on) or nil when no angle lands the crown. The caller requires
+   :zero-hit? and a crown threshold before trusting it."
+  [ref-pose marks zero-obj intrinsics disc-at? {:keys [disc-r step-deg]
+                                                :or {disc-r 1.25 step-deg 1.0}}]
+  (when (and ref-pose zero-obj (>= (count marks) 4))
+    (let [objs (mapv :obj marks)
+          {:keys [o n] :as plane} (plane-basis objs)
+          axis (la/v-scale n (/ 1.0 (max 1e-12 (la/v-norm n))))
+          spin (fn [p a] (la/v-add o (rotate-about (la/v-sub p o) axis a)))
+          step (* step-deg (/ Math/PI 180.0))
+          n-steps (max 1 (int (/ (* 2.0 Math/PI) step)))
+          scored (keep (fn [k]
+                         (let [a (* k step)
+                               spun (mapv #(spin % a) objs)
+                               ;; TIGHT (not coarse): a clean ring pair reprojects
+                               ;; WITHIN the disc, and only the tight test keeps the
+                               ;; zero-index tiebreak sharp — a coarse ±2-radius test
+                               ;; lets the zero "hit" at several rotations and a
+                               ;; wrong θ wins (the 1115px failure on a 9° pair).
+                               {:keys [crown zero?]} (disc-hits ref-pose spun (spin zero-obj a)
+                                                                intrinsics disc-at? disc-r plane false)]
+                           (when (pos? crown)
+                             {:theta a :crown-hits crown :zero-hit? zero?
+                              :score (+ crown (if zero? zero-bonus 0))})))
+                       (range n-steps))]
+      (when (seq scored)
+        (let [best (apply max-key :score scored)]
+          (assoc best :pixels
+                 (into {} (keep-indexed
+                           (fn [i m]
+                             (when-let [px (cam/project intrinsics ref-pose (spin (:obj m) (:theta best)))]
+                               [i px]))
+                           marks))))))))
