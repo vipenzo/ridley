@@ -1541,11 +1541,12 @@
   (update-panel!))
 
 (defn- skip-armed-corner!
-  "'o': the armed marker is HIDDEN by the object in this view — the user can't
-   click it. Drop any pick for it (a blob-snap false-positive on the part, or a
-   flagged outlier that must be dropped rather than re-clicked), record it
-   occluded so auto-advance and blob-snap both skip it, clear its stale fit
-   flags, and arm the next spread marker. Then 'r' re-solves clean on the rest."
+  "'o': DROP the armed marker from this photo — because it is hidden by the part,
+   OR because it is a stubborn one that won't align (a flagged outlier whose
+   residual won't drop no matter where it's re-clicked, e.g. a blurred disc on a
+   steep view). Drop any pick for it, record it occluded so auto-advance and
+   blob-snap both skip it, clear its stale fit flags, and arm the next spread
+   marker. Then 'r' re-solves clean on the rest (a plate has marks to spare)."
   []
   (when-let [i (:pnp-armed @session)]
     (let [idx (:current-idx @session)
@@ -1560,8 +1561,8 @@
       (update-panel!)
       (save-acquire-state!)
       (set-status-message!
-       (str (str/capitalize (pnp-noun)) " #" lbl " segnato nascosto (saltato) — "
-            "continua a piazzarne, poi 'r' per risolvere sui restanti")))))
+       (str (str/capitalize (pnp-noun)) " #" lbl " scartato — "
+            "premi 'r' per registrare sui restanti")))))
 
 (defn- corner-labels [cis]
   (let [targets (pnp-targets)]
@@ -1577,11 +1578,11 @@
         out (mapv :ci (:outliers sol))]
     (cond
       (seq out)
-      (str (if (> (count out) 1) "scartati i punti " "scartato il punto ")
-           (corner-labels out) " — riclicca" (if (> (count out) 1) "li" "lo")
-           " dov'" (if (> (count out) 1) "sono" "è") " davvero, o 'o' se nascost"
-           (if (> (count out) 1) "i" "o") " dal pezzo, poi 'r'. Fit sui restanti "
-           (.toFixed rms 1) "px")
+      (str "registrata sui restanti (" (.toFixed rms 1) "px), "
+           (if (> (count out) 1) "scartati i punti " "scartato il punto ")
+           (corner-labels out) ": riclicca" (if (> (count out) 1) "li" "lo")
+           " più preciso, o 'o' per scartarl" (if (> (count out) 1) "i" "o")
+           " (nascosto o non allineabile), poi 'r' — o vai avanti così")
       (> rms pnp/accept-rms-px)
       (str "rms alto (" (.toFixed rms 1) "px) senza un singolo colpevole: clicca più "
            "preciso, o la faccia dichiarata è sbagliata; se resta, segnalamelo")
@@ -2536,10 +2537,12 @@
         (set! (.-textContent info)
               (cond
                 (seq outliers)
-                (str "⚠ " (if (> (count outliers) 1) "punti " "punto ")
-                     (corner-labels outliers) " in rosso — riclicca dov'"
-                     (if (> (count outliers) 1) "sono" "è") ", o 'o' se nascost"
-                     (if (> (count outliers) 1) "i" "o") ", poi 'r'")
+                (str "✓ registrata" (when rms (str " (rms " (.toFixed rms 1) "px)")) " — "
+                     (if (> (count outliers) 1) "i punti " "il punto ") (corner-labels outliers)
+                     (if (> (count outliers) 1) " non si allineano" " non si allinea")
+                     " (rosso): riclicca più preciso, o 'o' per scartarl"
+                     (if (> (count outliers) 1) "i" "o") " (nascosto o non allineabile), poi 'r'"
+                     " — oppure vai avanti così.")
                 (and rms (> rms pnp/accept-rms-px))
                 (str "⚠ rms alto (" (.toFixed rms 0) "px) senza un colpevole singolo — "
                      "clicca più preciso o controlla la faccia dichiarata")
