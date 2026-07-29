@@ -2871,7 +2871,8 @@
    "path-2d"     "edit-path-2d"
    "image-board" "edit-image-board"
    "attach"      "edit-attach"
-   "mesh-split"  "edit-mesh-split"})
+   "mesh-split"  "edit-mesh-split"
+   "acquire"     "edit-acquire"})
 
 (defn- edit-menu-candidate
   "At the cursor, the {:from :head :new-head} needed to rewrite the
