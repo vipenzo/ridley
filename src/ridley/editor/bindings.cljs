@@ -32,6 +32,7 @@
             [ridley.editor.edit-mesh-split :as edit-mesh-split]
             [ridley.editor.edit-image-board :as edit-image-board]
             [ridley.editor.edit-acquire :as edit-acquire]
+            [ridley.photogrammetry.plate :as plate]
             [ridley.editor.mesh-board :as mesh-board]
             [ridley.editor.impl :as macro-impl]
             [ridley.geometry.warp :as warp]
@@ -647,6 +648,10 @@
    ;; edit-acquire marker emits — reference-citizen shape (image-board/mesh-board
    ;; family), returns {:proxy :pose :shapes :marks :dir}, destructurable by name.
    'acquire             edit-acquire/acquire
+   ;; registration-plate: the parametric plate PROXY (cylinder + crown marks +
+   ;; zero-index under :anchors), so `(edit-acquire dir {:proxy (registration-plate
+   ;; :d 130)})` needs no file import and the emitted (acquire …) is self-contained.
+   'registration-plate  plate/registration-plate
    ;; edit-acquire (dev-docs/brief-param-acq-v1.md): now a MARKER in the edit-*
    ;; family. The `edit-acquire` macro dispatches a dir-string first arg here
    ;; (request!, opened from the definitions panel) and a proxy-mesh first arg to
