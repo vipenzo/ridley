@@ -189,6 +189,74 @@
                 "each real click resolves to the mark it actually is")))))))
 
 ;; ---------------------------------------------------------------------------
+;; fit-crown — SELECT the crown from a detector's superset, then identify (fetta C)
+
+(deftest fit-crown-selects-and-identifies-from-a-superset
+  ;; The detector hands fit-crown a SUPERSET — the 12 crown pixels, the zero-index,
+  ;; and outliers (the part, stray dark spots) in NO order. It must pick a crown
+  ;; quartet, identify every mark, and recover the pose — the seedless, zero-click
+  ;; front the detector feeds. Built on the REAL param-plate-paper photo-1 geometry,
+  ;; so the selection is proven on a real oblique view, not only synthetic.
+  (println "\n=== fetta C: fit-crown seleziona+identifica la corona da un sovrainsieme (reale) ===")
+  (let [truesol (pnp/solve-pnp (mapv (fn [m p] {:world (:obj m) :px p}) marks real-px-1) real-K {})
+        zero-px (cam/project real-K (:pose truesol) zero-obj)
+        centre-px (cam/project real-K (:pose truesol) [0.0 0.0 PLATE-Z])
+        ;; distractors a real detector would also surface: the plate centre (part)
+        ;; and two stray dark spots off the crown — NONE near a real disc.
+        outliers [centre-px (mapv + centre-px [220.0 90.0]) (mapv + centre-px [-160.0 260.0])]
+        alldisc (conj real-px-1 zero-px)
+        judge (fn [p _r] (boolean (some #(<= (dist-px p %) 30.0) alldisc)))
+        ;; a NON-ring input order (crown reversed, zero + outliers appended): fit-crown
+        ;; must not lean on the order the blobs arrive in
+        blobs (concat (reverse real-px-1) [zero-px] outliers)
+        res (mp/fit-crown blobs marks zero-obj real-K judge {:disc-r DISC-R :face-normal [0.0 0.0 1.0]})]
+    (println (str "  " (count blobs) " blob (12 corona + zero + " (count outliers) " outlier) → "
+                  (if res (str "crown " (:crown-hits res) " zero " (:zero-hit? res)) "NIL")))
+    (is (some? res) "fit-crown deve registrare da un sovrainsieme")
+    (is (:zero-hit? res) "lo zero-indice fissa la rotazione")
+    (is (>= (:crown-hits res) 10) "quasi tutta la corona riproietta sui dischi")
+    ;; the reprojection under the recovered pose lands on THIS mark's real disc
+    ;; (well under the ~450px neighbour spacing → proves the identity, not a 30°
+    ;; shift; the slack absorbs the 4-point fit + real lens distortion the k1=k2=0
+    ;; model doesn't carry)
+    (doseq [i (range 12)]
+      (is (< (dist-px (get (:pixels res) i) (nth real-px-1 i)) 40.0)
+          (str "mark " i " riproiettato lontano dal disco reale")))))
+
+(deftest fit-crown-across-poses-synthetic
+  (println "\n=== fetta C: fit-crown su più pose sintetiche con outlier ===")
+  (let [crown-objs (mapv :obj marks)]
+    (doseq [[az el] [[15 45] [95 40] [210 55]]]
+      (let [pose (synth/viewpoint az el 230.0)
+            crown-px (mapv #(cam/project (k*) pose %) crown-objs)
+            zero-px (cam/project (k*) pose zero-obj)
+            centre-px (cam/project (k*) pose [0.0 0.0 PLATE-Z])
+            outliers [centre-px (mapv + centre-px [140.0 60.0])
+                      (mapv + centre-px [-110.0 150.0]) (mapv + centre-px [90.0 -170.0])]
+            judge (disc-judge pose (conj crown-objs zero-obj) 20.0)
+            blobs (concat crown-px [zero-px] outliers)
+            res (mp/fit-crown blobs marks zero-obj (k*) judge {:disc-r DISC-R :face-normal [0 0 1]})]
+        (println (str "  az=" az " el=" el " → "
+                      (if res (str "crown " (:crown-hits res) " zero " (:zero-hit? res)) "NIL")))
+        (testing (str "az " az " el " el)
+          (is (some? res) "must register")
+          (is (:zero-hit? res) "zero-index fixes the rotation")
+          (is (>= (:crown-hits res) 11) "the whole crown reprojects onto discs")
+          (doseq [i (range 12)]
+            (is (< (dist-px (get (:pixels res) i) (nth crown-px i)) 5.0)
+                (str "mark " i " reprojected off its disc"))))))))
+
+(deftest fit-crown-fails-safe-without-a-crown
+  (testing "no crown among the blobs → nil (leave the photo to ring/manual, never register wrong)"
+    (let [pose (synth/viewpoint 40 45 230.0)
+          centre-px (cam/project (k*) pose [0.0 0.0 PLATE-Z])
+          judge (disc-judge pose (conj (mapv :obj marks) zero-obj) 20.0)
+          blobs [centre-px (mapv + centre-px [200.0 0.0]) (mapv + centre-px [0.0 200.0])
+                 (mapv + centre-px [-200.0 -50.0]) (mapv + centre-px [150.0 150.0])]
+          res (mp/fit-crown blobs marks zero-obj (k*) judge {:disc-r DISC-R :face-normal [0 0 1]})]
+      (is (nil? res) "senza corona rilevata, fit-crown non registra (fail-safe)"))))
+
+;; ---------------------------------------------------------------------------
 ;; Turntable ring — register a photo with ZERO clicks from an already-registered
 ;; one. The plate spins about its axis; a 1-DOF search over the rotation θ must
 ;; recover another ring photo's plate angle, the zero-index electing the true one

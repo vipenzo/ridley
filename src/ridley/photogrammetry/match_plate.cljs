@@ -41,6 +41,7 @@
    returned :zero-hit?/:crown-hits and hands the assignment to the armed solve."
   (:require [ridley.photogrammetry.camera :as cam]
             [ridley.photogrammetry.linalg :as la]
+            [ridley.photogrammetry.ellipse :as ellipse]
             [ridley.photogrammetry.pnp :as pnp]))
 
 (def zero-bonus
@@ -119,7 +120,9 @@
 (defn- candidate-assignments
   "Every cyclic-order-preserving map {click-idx -> mark-idx}: for each k-subset of
    the marks (in cyclic order) × k rotations × 2 handednesses, align the clicks
-   (in cyclic image order) onto the subset."
+   (in cyclic image order) onto the subset. For fit-crown's clean crown (k≈m) this is
+   a single subset × m rotations × 2 ≈ 24 candidates; for fetta-B's 4 clicks it is the
+   full C(m,4)·4·2 search."
   [click-order mark-order]
   (let [k (count click-order)]
     (for [positions (combinations (vec (range (count mark-order))) k)
@@ -242,6 +245,67 @@
                      shortlist)]
       (when (seq fine)
         (apply max-key :score fine)))))
+
+;; ---------------------------------------------------------------------------
+;; Fit-crown — SELECT the crown from a detector's superset, then identify (fetta C)
+
+(def ^:private fit-crown-defaults
+  {:min-crown 8         ; accept only if ≥ this many crown marks reproject onto discs (+ zero)
+   :ellipse-iters 250   ; conic RANSAC samples (each is a cheap 5-point solve)
+   :ellipse-thr 0.04})  ; conic inlier band (Sampson, normalised units) — loose enough to
+                        ; gather all 12 crown discs on an oblique/noisy frame
+
+(defn fit-crown
+  "Zero-click crown registration (fetta C): given the WHOLE frame's detected dark
+   blobs — a superset of the 12 crown marks with the zero-index, the part and noise
+   mixed in — recover which blobs are the crown, their identities, and the pose.
+
+   blob-pts   [[u v] …]                 blob-detect/detect-blobs centres (≥5)
+   marks      [{:id :obj} …]            the m crown marks, object/solver frame
+   zero-obj   [x y z]                    the asymmetric zero-index, same frame
+   intrinsics {…}                        camera intrinsics
+   disc-at?   (fn [px r] -> bool)        dark-disc / detected-blob presence judge
+   opts       {:disc-r :face-normal      as assign-marks
+               :min-crown :ellipse-iters :ellipse-thr}
+
+   Two clean stages, not a blind search: (1) the 12 crown marks lie on a CIRCLE, so in
+   the image they lie on an ELLIPSE — `ellipse/fit-inliers` RANSAC-fits that ellipse
+   and returns the inliers, which ARE the crown (the zero-index sits inside it, the
+   noise off it). (2) hand those ~12 clean crown points to `assign-marks`, which now
+   has almost no combinatorics to do (12 clicks → 12 marks is a single subset × 12
+   rotations × 2 handednesses ≈ 24 candidates, not thousands) — it fixes the rotation
+   with the zero-index, rejects the mirror twin, and LM-refines the pose. So a photo
+   costs one ellipse fit + one identity solve instead of a per-quartet homography
+   storm — the fetta-C speed+robustness fix.
+
+   Returns {:pose :crown-hits :zero-hit? :score
+            :pixels {mark-idx [u v]}}   (all marks reprojected under the pose, to
+   blob-snap + PnP-solve like find-ring-pose's output) or nil when the ellipse gathers
+   too few crown points, or the identity solve misses the zero-index / crown threshold
+   — the fail-safe that leaves a hard photo to the ring ('f') or a manual 'p'."
+  [blob-pts marks zero-obj intrinsics disc-at? opts]
+  (let [{:keys [min-crown ellipse-iters ellipse-thr]}
+        (merge fit-crown-defaults (select-keys opts [:min-crown :ellipse-iters :ellipse-thr]))]
+    (when (and (>= (count blob-pts) 5) (seq marks) zero-obj)
+      (let [pts (vec blob-pts)
+            m (count marks)
+            ;; STAGE 1 — the crown discs are the inliers of the best-fitting ellipse
+            inliers (ellipse/fit-inliers pts {:iters ellipse-iters :thr ellipse-thr
+                                              :min-inliers 6})
+            ;; take at most m, best-on-ellipse first (drops a stray near-ellipse blob)
+            crown (mapv #(nth pts %) (take m inliers))]
+        (when (>= (count crown) 6)
+          ;; STAGE 2 — identify the clean crown (cheap: ~24 candidates for a full 12)
+          (let [res (assign-marks crown marks zero-obj intrinsics disc-at?
+                                  (select-keys opts [:disc-r :face-normal]))]
+            (when (and res (:zero-hit? res) (>= (:crown-hits res) min-crown))
+              {:pose (:pose res) :crown-hits (:crown-hits res)
+               :zero-hit? (:zero-hit? res) :score (:score res)
+               :pixels (into {} (keep-indexed
+                                 (fn [i mrk]
+                                   (when-let [px (cam/project intrinsics (:pose res) (:obj mrk))]
+                                     [i px]))
+                                 marks))})))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Turntable ring — register a photo from an already-registered one (fetta B+)
