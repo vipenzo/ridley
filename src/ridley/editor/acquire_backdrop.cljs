@@ -273,6 +273,11 @@
                                   (let [data (.-data (.getImageData ctx 0 0 iw ih))]
                                     (js/URL.revokeObjectURL url)
                                     {:size [iw ih]
+                                     ;; the raw RGBA byte array (4/px), so the global
+                                     ;; blob detector can downsample in one tight loop
+                                     ;; instead of ~12M lum-at CLOSURE calls per photo
+                                     ;; (the batch-freezes-the-browser fix, fetta C)
+                                     :data data
                                      :lum-at (fn [x y]
                                                (let [px (Math/round x) py (Math/round y)]
                                                  (when (and (>= px 0) (>= py 0) (< px iw) (< py ih))

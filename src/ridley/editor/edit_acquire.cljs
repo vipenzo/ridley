@@ -54,6 +54,7 @@
             [ridley.photogrammetry.edge-snap :as edge-snap]
             [ridley.photogrammetry.pnp :as pnp]
             [ridley.photogrammetry.blob :as blob]
+            [ridley.photogrammetry.blob-detect :as blob-detect]
             [ridley.photogrammetry.match-plate :as match-plate]
             [ridley.photogrammetry.match :as match]
             [ridley.photogrammetry.turntable-fit :as tt]
@@ -1891,6 +1892,248 @@
     (set-status-message! "Foto non ancora caricata.")))
 
 ;; ============================================================
+;; Auto (plate 'a'): fetta C — register with ZERO clicks. For each unregistered
+;; photo the detector (blob-detect) finds the crown's dark discs across the WHOLE
+;; frame; fit-crown SELECTS the crown from that superset and IDENTIFIES it (the
+;; zero-index breaking the 12-fold symmetry); a full PnP on the blob-snapped marks
+;; gives the pose — no armed picks, no 'p'. A photo whose detection is too poor (a
+;; grazing shot — the discs image as thin ellipses the shape filter drops) simply
+;; fails fit-crown and is LEFT for the ring ('f') or a manual 'p', never registered
+;; wrong (the zero-index + crown threshold + rms bar are the guards). Photo 0 moves
+;; the PROXY (as 'p' there does); photos ≥1 set their camera. Processed SEQUENTIALLY
+;; (photo 0 first, so its proxy move precedes the camera solves) and OFF-SCREEN like
+;; the ring. The plate's analogue of nothing on the box — dispatched by 'a'.
+;; ============================================================
+
+(def ^:private auto-snap-radius
+  "blob-snap window (px) for an identified crown mark before the final PnP. The
+   detector centroid + fit-crown's reprojection land within a disc-radius, well
+   inside this."
+  40)
+
+(def ^:private auto-fit-blobs
+  "How many of the detector's TOP-scored blobs fit-crown samples the crown from. The
+   ~12 crown discs outrank the frame noise on area·fill, so this keeps the noise out
+   of the RANSAC (each stray blob it must sift past costs ~a second) while leaving
+   slack for a faint mark or two. The geometric judge still scores against ALL
+   detected blobs (incl. the zero-index), so the crown + zero are found even when a
+   mark falls just outside this top slice. The ellipse fit tolerates the extra noise
+   these carry, and a wider slice recovers the crown on the busier (noisier) frames."
+  24)
+
+(defn- auto-log!
+  "Append a line to the REPL history panel — a PERSISTENT progress stream for the
+   Auto batch (the status line auto-clears after 4s, so a per-photo trace would be
+   unreadable there). Vincenzo's ask: 'scrivi nella REPL così resta lo stream'."
+  [text]
+  (when-let [history (.getElementById js/document "repl-history")]
+    (let [entry (.createElement js/document "div")
+          res (.createElement js/document "div")]
+      (set! (.-className entry) "repl-entry")
+      (set! (.-className res) "repl-result")
+      (set! (.-textContent res) text)
+      (.appendChild entry res)
+      (.appendChild history entry)
+      (set! (.-scrollTop history) (.-scrollHeight history)))))
+
+(defn- yield-frame
+  "A Promise that resolves on the next macrotask, so a long sequential batch hands
+   control back to the browser event loop between photos — otherwise the many
+   seconds of solid compute freeze the page and the dev-server drops the socket."
+  []
+  (js/Promise. (fn [res] (js/setTimeout res 0))))
+
+(defn- apply-auto-solve!
+  "Apply an auto-registered `sol` for photo `idx` exactly as solve-and-apply! does
+   for a manual solve — photo 0 moves the PROXY (and transports already-registered
+   cameras rigidly), photos ≥1 set their camera — writing picks/results/residuals.
+   Pure session mutation (no viewport), so it is safe inside the off-screen batch;
+   the caller refreshes the view once at the end. `proxy-pose` is the proxy's
+   creation-pose BEFORE this photo (recomputed per photo by the caller)."
+  [idx sol picks proxy-pose]
+  (let [residuals (into {} (map (juxt :ci :residual-px) (:per-point sol)))]
+    (if (zero? idx)
+      (when-let [camera-pose (get-in @session [:camera-poses 0])]
+        (let [np (bridge/solver-pose->proxy (:pose sol) camera-pose)
+              [new-mesh] (attachment/group-transform
+                          [(:proxy-mesh @session)]
+                          (:position proxy-pose) (:heading proxy-pose) (:up proxy-pose)
+                          (:position np) (:heading np) (:up np))]
+          (swap! session assoc :proxy-mesh new-mesh)
+          (transport-registered-cameras! proxy-pose (:creation-pose new-mesh))))
+      ;; camera branch, as register-one-ring-photo! does — NOT via marker-lock-camera
+      ;; (that reads backdrop/image-size, the DISPLAYED photo, wrong for this
+      ;; off-screen photo; and a plate needs no Klein branch lock — its zero-index
+      ;; already fixed the orientation inside fit-crown).
+      (swap! session assoc-in [:camera-poses idx]
+             (bridge/solver-pose->camera (:pose sol) proxy-pose)))
+    (swap! session assoc-in [:pnp-picks idx]
+           (into {} (map (fn [[ci px]] [ci {:px px :proposed? true}]) picks)))
+    (swap! session assoc-in [:acquire-results idx]
+           {:pnp? true :auto? true :matched (:n sol) :rms-px (:rms-px sol)
+            :outliers (count (:outliers sol))})
+    (swap! session assoc-in [:pnp-residuals idx] residuals)
+    (swap! session assoc-in [:pnp-outliers idx] (set (map :ci (:outliers sol))))))
+
+(defn- register-one-auto-photo!
+  "Detect + identify + register ONE unregistered photo `idx` with zero clicks.
+   Samples off-screen, runs blob-detect → fit-crown → blob-snap → PnP, and applies
+   the pose only if it clears the rms bar and the crown threshold. Resolves true on
+   a registration, else false (poor detection / high rms is a skip, never a throw).
+   Recomputes marks + proxy-pose from the CURRENT proxy-mesh so it stays correct
+   after photo 0 has moved it."
+  [idx]
+  (-> (backdrop/load-luminance-sampler (photo-path (:file (nth (:photos @session) idx))))
+      (.then (fn [sampler]
+               (let [lum-at (:lum-at sampler)
+                     [iw ih] (:size sampler)
+                     proxy-mesh (:proxy-mesh @session)
+                     proxy-pose (:creation-pose proxy-mesh)
+                     det (bridge/plate-detect proxy-mesh)
+                     marks (mapv #(select-keys % [:id :obj]) (pnp-targets))
+                     zero-obj (:zero-obj det)
+                     intrinsics (session-intrinsics iw ih)
+                     ;; FAST path: hand the raw RGBA array so the detector downsamples
+                     ;; in one tight loop, not ~12M lum-at closure calls (the freeze).
+                     cands (blob-detect/detect-blobs lum-at [iw ih] {:rgba (:data sampler)})
+                     centers (mapv :center cands)     ; best-first (detector score order)
+                     ;; GEOMETRIC judge (no pixel reads): a reprojection "hits a disc"
+                     ;; if a DETECTED blob sits within its radius. fit-crown's per-
+                     ;; candidate scoring runs this thousands of times, so reading the
+                     ;; photo there (blob/disc-at?) was the ~5s/photo churn; the blobs
+                     ;; are already the pixel evidence. Final accuracy still comes from
+                     ;; the real-pixel blob-snap + PnP + rms gate below.
+                     judge (fn [[px py] r]
+                             (let [r2 (* r r)]
+                               (boolean (some (fn [[bx by]]
+                                                (<= (+ (* (- bx px) (- bx px)) (* (- by py) (- by py))) r2))
+                                              centers))))
+                     ;; sample the crown from the TOP-scored blobs only (the discs
+                     ;; outrank the noise), so a good quartet lands on the first sample
+                     res (match-plate/fit-crown (vec (take auto-fit-blobs centers)) marks zero-obj
+                                                intrinsics judge
+                                                {:disc-r (:disc-r det) :face-normal (:face-normal det)})]
+                 (if-not (and res (:zero-hit? res) (>= (:crown-hits res) min-crown-assign))
+                   (do (auto-log! (str "  foto " idx ": corona non riconosciuta ("
+                                       (count cands) " blob rilevati"
+                                       (when res (str ", " (:crown-hits res) "/12 sui dischi"
+                                                      (when-not (:zero-hit? res) ", zero-indice mancante"))) ")"
+                                       " — la lascio all'anello / 'p'"))
+                       false)
+                   (let [picks (into {} (keep (fn [[mi px]]
+                                                (some->> (blob/snap-to-blob lum-at px auto-snap-radius)
+                                                         :center (vector mi)))
+                                              (:pixels res)))
+                         corr (vec (for [[ci px] picks]
+                                     {:ci ci :world (:obj (nth marks ci)) :px px}))]
+                     (if (< (count corr) min-plate-picks)
+                       (do (auto-log! (str "  foto " idx ": pochi dischetti agganciati (" (count corr) ")")) false)
+                       (if-let [sol (pnp/solve-pnp corr intrinsics {})]
+                         (if (<= (:rms-px sol) pnp/accept-rms-px)
+                           (do (apply-auto-solve! idx sol picks proxy-pose)
+                               (auto-log! (str "  foto " idx ": registrata ✓  rms "
+                                               (.toFixed (:rms-px sol) 1) "px, " (count corr) " dischetti"))
+                               true)
+                           (do (auto-log! (str "  foto " idx ": scartata, rms "
+                                               (.toFixed (:rms-px sol) 1) "px > " pnp/accept-rms-px)) false))
+                         (do (auto-log! (str "  foto " idx ": PnP senza soluzione")) false))))))))
+      (.catch (fn [_] (auto-log! (str "  foto " idx ": errore di caricamento")) false))))
+
+(defn- finish-auto!
+  "Common tail of the Auto batch: refresh the view for the current photo, save, and
+   report the final tally to BOTH the persistent REPL stream and the status line."
+  [total detect-ok ring-ok]
+  (when-let [cp (get-in @session [:camera-poses (:current-idx @session)])]
+    (viewport/set-camera-pose! cp))
+  (when (= :pnp (:mode @session))
+    (redraw-pnp-preview!)
+    (redraw-overlay-dots!))
+  (save-acquire-state!)
+  (let [ok (+ detect-ok ring-ok)
+        msg (str "Auto: registrate " ok "/" total " foto ("
+                 detect-ok " rilevate" (when (pos? ring-ok) (str " + " ring-ok " dall'anello")) ")"
+                 (when (< ok total) " — le rimanenti: 'p' a mano"))]
+    (auto-log! (str "=== " msg " ==="))
+    ;; Nothing registered at all is almost always a WRONG FOCAL (the crown geometry
+    ;; can't match at the wrong scale) — the loudest single cause. Point at it.
+    (when (zero? ok)
+      (auto-log! (str "  ⚠ 0 registrate: controlla la FOCALE (ora " (:focal-mm @session)
+                      "mm, sorgente " (name (or (:focal-source @session) :?))
+                      ") — dev'essere quella della foto (EXIF), es. 48mm; e che il proxy sia il piatto giusto")))
+    (set-status-message! msg))
+  (update-panel!))
+
+(defn- ring-fill-then-finish!
+  "Second pass of Auto: hand the photos the detector couldn't seed to the FAST ring
+   (register-one-ring-photo! — 1-DOF search from an already-registered reference, no
+   per-photo detection), then finish. This is why Auto stays cheap: only a few photos
+   are detected outright; the rest ride the ring. Photo 0 (the proxy anchor) is never
+   ring-filled, so if its detection failed it stays for a manual 'p'."
+  [total detect-ok]
+  (if-let [[iw ih] (backdrop/image-size)]
+    (let [proxy-mesh (:proxy-mesh @session)
+          proxy-pose (:creation-pose proxy-mesh)
+          det (bridge/plate-detect proxy-mesh)
+          marks (mapv #(select-keys % [:id :obj]) (pnp-targets))
+          zero-obj (:zero-obj det)
+          intrinsics (session-intrinsics iw ih)
+          n (count (:photos @session))
+          registered? (fn [idx] (:pnp? (get-in @session [:acquire-results idx])))
+          refs (filterv (fn [idx] (and (registered? idx) (get-in @session [:camera-poses idx]))) (range n))
+          ref-solvers (mapv #(bridge/editor->solver-pose (get-in @session [:camera-poses %]) proxy-pose) refs)
+          remaining (filterv (fn [idx] (and (pos? idx) (not (registered? idx)))) (range n))]
+      (if (or (empty? refs) (empty? remaining))
+        (finish-auto! total detect-ok 0)
+        (do
+          (auto-log! (str "  anello: propago alle " (count remaining) " foto rimaste da "
+                          (count refs) " riferimenti…"))
+          (-> (js/Promise.all
+               (clj->js (mapv #(register-one-ring-photo! % ref-solvers marks zero-obj
+                                                         intrinsics (:disc-r det) proxy-pose)
+                              remaining)))
+              (.then (fn [ring-results]
+                       (let [ring-ok (count (filter identity (vec ring-results)))]
+                         (auto-log! (str "  anello: registrate " ring-ok "/" (count remaining) " foto rimaste"))
+                         (finish-auto! total detect-ok ring-ok))))))))
+    (finish-auto! total detect-ok 0)))
+
+(defn- on-auto-register!
+  "Plate 'a': register every UNREGISTERED photo with zero clicks (fetta C), then fill
+   any leftovers with the ring. First pass = detect+identify+PnP per photo,
+   SEQUENTIALLY (photo 0 first, so its proxy move precedes the camera solves), yielding
+   between photos so the batch never freezes the page; a per-photo trace goes to the
+   REPL stream (persistent, unlike the 4s status line). Second pass = the fast ring
+   over whatever the detector couldn't seed."
+  []
+  (if-let [[_iw _ih] (backdrop/image-size)]
+    (let [proxy-mesh (:proxy-mesh @session)
+          det (bridge/plate-detect proxy-mesh)
+          n (count (:photos @session))
+          registered? (fn [idx] (:pnp? (get-in @session [:acquire-results idx])))
+          pending (filterv #(not (registered? %)) (range n))]
+      (cond
+        (nil? (:zero-obj det))
+        (set-status-message! "Questo piatto non espone lo zero-indice: rivaluta examples/param-acq-plate.clj e riapri.")
+        (empty? pending)
+        (set-status-message! "Auto: tutte le foto sono già registrate.")
+        :else
+        (do
+          (auto-log! (str "=== Auto (fetta C): rilevo e registro " (count pending) " foto ==="))
+          (set-status-message! (str "Auto: rilevo " (count pending) " foto… (dettaglio nella REPL a destra)"))
+          (-> (reduce (fn [p idx]
+                        (-> p
+                            (.then (fn [acc] (-> (register-one-auto-photo! idx)
+                                                 (.then (fn [ok] (conj acc ok))))))
+                            (.then (fn [acc] (-> (yield-frame) (.then (fn [_] acc)))))))
+                      (js/Promise.resolve [])
+                      pending)
+              (.then (fn [results]
+                       (let [detect-ok (count (filter identity (vec results)))]
+                         (ring-fill-then-finish! (count pending) detect-ok))))))))
+    (set-status-message! "Foto non ancora caricata."))
+  (update-panel!))
+
+;; ============================================================
 ;; Retrace ('d'): P3 thin slice — trace a planar feature ON a declared face of
 ;; the proxy, over the photo in pose. A click is backprojected (camera/pixel-ray)
 ;; from the registered camera and intersected (math/ray-plane-point) with the
@@ -2627,7 +2870,16 @@
           (set! (.-type b) "button")
           (set! (.-textContent b) "Registra per punti (p)")
           (.addEventListener b "click" (fn [_] (start-pnp!)))
-          (.appendChild box b)))
+          (.appendChild box b)
+          ;; a registration plate can register with ZERO clicks (fetta C): the
+          ;; detector finds the crown and fit-crown identifies it. Offer it here
+          ;; next to the manual entry, plate-only.
+          (when (plate-proxy?)
+            (let [a (.createElement js/document "button")]
+              (set! (.-type a) "button")
+              (set! (.-textContent a) "Auto — rileva e registra (a)")
+              (.addEventListener a "click" (fn [_] (on-auto-register!)))
+              (.appendChild box a)))))
 
       (batch-mode?)
       (render-pnp-batch-panel! box)
@@ -3129,6 +3381,14 @@
           (and (not retrace?) (not mark?) (= key "f"))
           (do (.preventDefault e) (.stopPropagation e)
               (if (plate-proxy?) (on-fit-ring!) (on-fit-turntable!)))
+
+        ;; 'a' (plate only) — Auto: detect + register every photo with zero clicks
+        ;; (fetta C). The box has no analogue; say so rather than silently no-op.
+          (and (not retrace?) (not mark?) (= key "a"))
+          (do (.preventDefault e) (.stopPropagation e)
+              (if (plate-proxy?)
+                (on-auto-register!)
+                (set-status-message! "Auto (a) è solo per il piatto di registrazione.")))
 
           (= key "]")
           (do (.preventDefault e) (.stopPropagation e)
