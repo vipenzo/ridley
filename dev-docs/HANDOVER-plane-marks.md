@@ -327,6 +327,61 @@ forma vuota → voce rimossa, nessun `nil`; accetta → `(plane-mark {…})` con
 sessione modale con foto vere. Ho verificato il meccanismo (fusione per chiave
 su un marcatore reale nel buffer), non il giro completo.
 
+## Seguito 3 (2026-08-01): geometrie spiazzate — misure
+
+**Il discriminante proposto dal brief è confuso.** Due cilindri di altezze
+diverse allo stesso mark danno la STESSA correzione — ma non perché ci sia un
+offset di sistema: perché **l'asse di un cilindro corre lungo `up`, non lungo
+`heading`**, quindi lungo la normale del mark il suo ingombro è il RAGGIO, che
+in quel test non cambiava. Chi avesse eseguito quell'eval avrebbe concluso D2
+guardando un fenomeno D1. Misurato (`test/ridley/geometry/primitive_anchoring_test.cljs`):
+
+```
+  cyl r2 h6    right -2…2 | up  -3…3  | HEADING -2…2   → sepolto 2.00mm
+  cyl r2 h20   right -2…2 | up -10…10 | HEADING -2…2   → sepolto 2.00mm
+  sphere r1.5  right -1.5…1.5         | HEADING -1.5…1.5 → sepolto 1.50mm
+  box 4 6 10   right -2…2 | up  -3…3  | HEADING -5…5   → sepolto 5.00mm
+```
+
+**Il discriminante corretto varia la misura LUNGO LA NORMALE** (il raggio per un
+cilindro, la terza dimensione per un box): raggio 2→sepolto 2, raggio 5→sepolto
+5; d=10→5, d=3→1.5. Sempre metà dell'ingombro proprio lungo la normale.
+**Verdetto: D1, convenzione di ancoraggio.** Ogni primitivo nasce CENTRATO
+sulla posa; il mark sta sulla superficie; quindi metà solido finisce sotto.
+
+**Conseguenza meno ovvia, misurata**: un cilindro piazzato su un mark-piano
+**giace sulla superficie** (asse nel piano) invece di starci in piedi sopra. Per
+farlo stare in piedi serve estrudere lungo heading, o girare la turtle.
+
+### Le verifiche di frame chieste al codice
+
+**Nessun mismatch mondo↔oggetto, nessun doppio trasporto.** Il palcoscenico
+triangola in MONDO (`world-frame` identità, camere già riconciliate alla
+`:emit-pose`) ed emette coordinate assolute; i mark di sessione arrivano allo
+stesso posto per un'altra strada (`marks-entries` fa `bridge/local->world` con
+la posa d'ancoraggio). `acquire` passa `:marks` **verbatim**
+(`(or (:marks opts) {})`), e `resolve-proxy`/`apply-pose` toccano **solo la mesh
+del proxy**. Quindi la famiglia (a) del brief è scagionata.
+
+### Ma la verifica ne ha trovato un altro, e riguarda ciò che ho appena scritto
+
+Le due strade differiscono in un punto che conta: **i mark di sessione vengono
+RI-SOLLEVATI attraverso la posa a ogni confirm, i mark-piano no** — sono già
+mondo, e il confirm chirurgico li conserva byte per byte. Finché la `:pose`
+emessa non cambia, identico. Ma se cambia (una ri-registrazione, o una
+`:build-pose` diversa), allora al confirm successivo i mark di sessione seguono
+l'oggetto e **i mark-piano restano nel mondo vecchio**: spiazzati esattamente
+del moto rigido posa-vecchia → posa-nuova.
+
+Prima del confirm chirurgico questo non si vedeva perché i mark-piano venivano
+*cancellati*. Non cancellandoli più, il difetto diventa visibile — cioè il
+lavoro di ieri ha barattato una perdita con un possibile spiazzamento. La cura
+è simmetrica al trasporto che il palcoscenico già fa sulle camere
+(`attachment/transform-pose-rigid`): al confirm, se la posa emessa differisce da
+quella che il marcatore portava, trasportare rigidamente anche le voci
+conservate. NON implementato — è una decisione da prendere con Vincenzo, e non
+è detto sia la causa di ciò che ha visto.
+
 ## Quello che resta aperto
 
 - **Ricollaudare la HUD dal vivo**: è verificata renderizzando stati finti in un

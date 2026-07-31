@@ -299,3 +299,79 @@ a mano → `find-form-bounds` + `map-value-bounds` la delimitano comunque.
 
 **Gate**: sessione con mark-piano → riapri `edit-acquire` → riconferma →
 `:marks` e `:shapes` byte-identici, `:proxy`/`:pose` aggiornati.
+
+## Seguito 3 (2026-08-01): geometrie spiazzate ai mark — piano diagnostico
+
+Sintomo (Vincenzo): geometrie (box, cilindri) piazzate ai mark-piano appena
+creati risultano SPOSTATE rispetto all'oggetto, "con non so quale regola",
+mentre i pallini dei mark cadevano giusti in tutte le foto durante la
+creazione. Nessuna diagnosi ancora: qui il piano per farla, ordinato per
+potere discriminante.
+
+**Le tre famiglie di cause** (il sintomo le confonde):
+
+- (a) **valore**: il mark scritto nel sorgente vive in un frame diverso da
+  quello del display di creazione (un mismatch mondo↔oggetto con la `:pose`
+  ruotata produce rototraslazioni che sembrano arbitrarie — sospetto
+  principale);
+- (b) **consumo**: `turtle`/ancoraggio dei primitivi (un box centrato vs
+  appoggiato dà offset DIVERSI per primitivi diversi — anche questo si
+  traveste da "regola sconosciuta");
+- (c) **display**: riproiezione/registrazione — quasi scagionata dal fatto che
+  i pallini cadono giusti su tutte le foto.
+
+**Test discriminanti (eseguibili da Vincenzo, senza toccare codice)**:
+
+1. `(mesh-translate (sphere 1.5) (:position ma))` — bypassa turtle: se la
+   sfera cade giusta sul punto fisico (≥2 foto), il valore è sano → famiglia (b).
+2. `(turtle ma (sphere 1.5))` — se diverge dal test 1, il colpevole è turtle.
+3. Se il test 1 fallisce: applicare a mano la `:pose` della acquire alla
+   posizione (e l'inversa) — quella che combacia dice il VERSO del mismatch
+   di frame.
+4. Se famiglia (b): box di dimensioni note al mark, misurare il delta — se è
+   esattamente metà-dimensione lungo gli assi del mark è convenzione di
+   ancoraggio (centro vs base), non bug: si documenta o si compensa.
+5. Orientamento: cilindretto estruso lungo heading dal mark — perpendicolare
+   alla superficie nelle foto? (separa posizione da rotazione).
+
+**Verifiche nel codice (Code)**:
+
+- in che frame triangola il palcoscenico (mondo) e in che frame
+  `acquire`/`turtle` interpretano `:position` dei mark; i mark di sessione
+  (via `marks-entries`, "portati in mondo") e i mark-piano del palcoscenico
+  passano dalla STESSA strada?
+- `apply-pose` della acquire trasforma il proxy: qualcosa a valle si aspetta
+  che anche i `:marks` siano relativi alla posa (doppio trasporto)?
+
+**Strumento da costruire comunque (piccolo, richiesto)**: il palcoscenico
+ridisegni i dischetti dei mark DAL VALORE NEL SORGENTE a ogni Run (acquire
+già potrebbe passare `:marks` allo stage — "è una riga"). Rende visibile
+SUBITO ogni divergenza emissione↔display, invece di scoprirla tre passi dopo
+come geometria spiazzata. È il gemello di "il sorgente è l'unica verità":
+anche il display la legge da lì.
+
+> **ESITO TEST 1-2 (Vincenzo, 2026-08-01)**: entrambe le sfere (con e senza
+> turtle) risultano BASSE uguali → la turtle è scagionata. Workaround trovato:
+> `(attach … (u 5))` rimette a posto le geometrie. Il 5 NON è una dimensione
+> del piatto (verificato in `examples/param-acq-plate.clj`: spessore 3,
+> TOP-Z 1.5, inlay 0.6, dischi ø2.5).
+>
+> **Bivio diagnostico aperto — UNA eval lo chiude**: due cilindri di altezze
+> diverse (6 e 20) allo stesso mark.
+>
+> - Correzioni DIVERSE (u 3 / u 10) → **D1: convenzione di ancoraggio**. I
+>   primitivi nascono CENTRATI sulla posa (cfr. `(cyl r h)`: top a +h/2), il
+>   mark sta sulla superficie → solido mezzo sepolto, offset = metà dimensione
+>   (diverso per geometria = la "regola sconosciuta"). NON È UN BUG: la via
+>   appoggiata idiomatica è l'estrusione (`(extrude … (f h))` cresce dalla
+>   posa in avanti). Conseguenze: paragrafo dovuto in cap. 19 §19.6; mai
+>   `(u 5)` nudi nel sorgente (metti `(/ h 2)` o estrudi).
+> - Correzione UGUALE (u 5 per entrambi) → **D2: offset di sistema**.
+>   Candidato con nome (Vincenzo): **metà spessore del piatto** = 1.5mm (il
+>   frame del piatto ha l'origine a metà spessore, il top a +1.5: un mixup
+>   base↔top affonda tutto di 1.5). Compatibile col workaround solo se il 5
+>   era tarato a occhio (1.5 vs 5 ≈ 100px in foto). Calibrazione esatta già
+>   in casa: mark-piano cliccato SU UN DISCHETTO DELLA CORONA del piatto →
+>   posizione vera nota per costruzione (z=TOP-Z=1.5 nel frame piatto) → il
+>   delta emesso−noto misura l'errore in mm e decide tra 1.5, metà-geometria
+>   e altro — da consegnare a Code con le verifiche di frame qui sopra.
