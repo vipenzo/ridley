@@ -21,10 +21,14 @@
             [ridley.viewport.core :as viewport]
             [ridley.editor.modal-evaluator :as modal]
             [ridley.editor.acquire-backdrop :as backdrop]
+            [ridley.editor.codemirror :as cm]
+            [ridley.editor.source-edit :as src]
+            [ridley.editor.state :as state]
             [ridley.turtle.attachment :as attachment]
             [ridley.photogrammetry.camera :as pcamera]
             [ridley.photogrammetry.bridge :as bridge]
             [ridley.photogrammetry.exif :as exif]
+            [ridley.photogrammetry.triangulate :as tri]
             [ridley.export.stl :as stl]))
 
 (def default-focal-mm 48.0)
@@ -109,20 +113,32 @@
     (mapv (fn [[file theta]] {:file file :theta theta}) (js->clj (.-photos obj)))))
 
 (defn- parse-acquire-state
-  "acquire-state.json → {:proxy-pose <acq frame> :camera-poses {idx pose} :focal-mm}.
+  "acquire-state.json → {:proxy-pose <acq frame> :camera-poses {idx pose}
+   :focal-mm :registration {idx {:rms-px :matched}}}.
    Camera poses are the acquisition-frame poses (idx 0 = the fixed vantage,
-   camera-pose-0); idx>0 only when the photo carries a real camera-pose."
+   camera-pose-0); idx>0 only when the photo carries a real camera-pose.
+
+   :registration is the quality edit-acquire recorded when it solved each photo,
+   and it was sitting unread in the file until Vincenzo hit exactly the problem
+   it answers (2026-07-31: 'le ultime due foto probabilmente non erano
+   allineate, vedevo i puntini e il dischetto in posti sbagliati'). In that very
+   session photos 8 and 9 carry rms 9.9 / 11.3 px on 10 of 12 marks, against
+   ~4.5 px on 12/12 for the rest — the file knew. A badly registered photo
+   reprojects EVERYTHING wrong, so it must be labelled before it is clicked, not
+   diagnosed after."
   [text]
   (let [{:keys [proxy-pose camera-pose-0 photos focal]}
         (js->clj (js/JSON.parse text) :keywordize-keys true)
+        by-idx (fn [f] (into {} (keep (fn [[idx-kw v]]
+                                        (when-let [x (f v)]
+                                          [(js/parseInt (name idx-kw) 10) x]))
+                                      photos)))
         cams (cond-> {}
                camera-pose-0 (assoc 0 camera-pose-0)
-               :always (into (keep (fn [[idx-kw {:keys [camera-pose]}]]
-                                     (when camera-pose
-                                       [(js/parseInt (name idx-kw) 10) camera-pose]))
-                                   photos)))]
+               :always (into (by-idx :camera-pose)))]
     {:proxy-pose proxy-pose
      :camera-poses cams
+     :registration (by-idx #(when (:rms-px %) (select-keys % [:rms-px :matched])))
      :focal-mm (:mm focal)}))
 
 (defn- reconcile-cameras
@@ -168,7 +184,16 @@
                        (frustum-pick-mesh pose depth half-w half-h idx)]))
             camera-poses))))
 
-(defn- show-frustums! [] (viewport/show-frustum-layer! (frustum-preview-items)))
+(declare plane-preview-items)
+
+(defn- show-frustums!
+  "Repaint the stage's OWN overlay layer: the ghost frustums (free orbit) plus
+   whatever the plane-mark gesture is showing (in pose). One call, one layer —
+   they share it because both are the stage's, and because the layer is
+   deliberately NOT the preview layer an open edit-path-2d ricalco owns."
+  []
+  (viewport/show-frustum-layer! (into (vec (frustum-preview-items))
+                                      (plane-preview-items))))
 
 ;; ------------------------------------------------------------
 ;; In-pose / free-orbit transitions. In pose the camera is locked (set-camera-pose!
@@ -308,31 +333,42 @@
 
 (def ^:private click-slop-px 6)
 
+(declare plane-mode? plane-click! plane-key! toggle-plane-mode!)
+
 (defn- editable? [^js el]
   (boolean (and el (or (#{"INPUT" "TEXTAREA"} (.-tagName el))
                        (.-isContentEditable el)))))
 
 (defn- on-pointerdown [^js e]
-  (when (and (free-orbit?) (zero? (.-button e)))
-    (swap! stage assoc :press {:x (.-clientX e) :y (.-clientY e)
-                               :idx (viewport/raycast-frustum-pick e)})))
+  (when (zero? (.-button e))
+    (cond
+      (free-orbit?)
+      (swap! stage assoc :press {:x (.-clientX e) :y (.-clientY e)
+                                 :idx (viewport/raycast-frustum-pick e)})
+      ;; in pose, a clean click marks a plane point — but never while a modal
+      ;; (an edit-path-2d ricalco) is up: there the click is the ricalco's.
+      (and (plane-mode?) (:in-pose? @stage) (not (modal/active?)))
+      (swap! stage assoc :press {:x (.-clientX e) :y (.-clientY e) :plane? true}))))
 
 (defn- on-pointerup [^js e]
-  (when (and (free-orbit?) (zero? (.-button e)))
-    (let [{:keys [x y idx]} (:press @stage)]
+  (when (zero? (.-button e))
+    (let [{:keys [x y idx plane?]} (:press @stage)]
       (swap! stage dissoc :press)
-      (when (and (some? idx) (some? x)
+      (when (and (some? x)
                  (< (js/Math.hypot (- (.-clientX e) x) (- (.-clientY e) y)) click-slop-px))
-        ;; Defer the pose (which disables the orbit controls) to a macrotask so
-        ;; TrackballControls processes THIS pointerup first — it early-returns while
-        ;; disabled, leaving its ROTATE state + document listeners stranded, which
-        ;; then re-activate on leave-pose! (Vincenzo 2026-07-25: "dopo Esc orbita
-        ;; come se tenessi giù il tasto" — a lost mouse-up). Letting the controls
-        ;; end the click cleanly first, then locking, avoids the stranded drag.
-        ;; setTimeout (not requestAnimationFrame): rAF is throttled/paused in a
-        ;; background tab, which would swallow the click; a 0-delay timer still runs
-        ;; right after the pointerup dispatch, which is all the fix needs.
-        (js/setTimeout (fn [] (go-in-pose! idx)) 0)))))
+        (if plane?
+          (when (plane-mode?) (plane-click! e))
+          (when (and (free-orbit?) (some? idx))
+            ;; Defer the pose (which disables the orbit controls) to a macrotask so
+            ;; TrackballControls processes THIS pointerup first — it early-returns while
+            ;; disabled, leaving its ROTATE state + document listeners stranded, which
+            ;; then re-activate on leave-pose! (Vincenzo 2026-07-25: "dopo Esc orbita
+            ;; come se tenessi giù il tasto" — a lost mouse-up). Letting the controls
+            ;; end the click cleanly first, then locking, avoids the stranded drag.
+            ;; setTimeout (not requestAnimationFrame): rAF is throttled/paused in a
+            ;; background tab, which would swallow the click; a 0-delay timer still runs
+            ;; right after the pointerup dispatch, which is all the fix needs.
+            (js/setTimeout (fn [] (go-in-pose! idx)) 0)))))))
 
 (defn- on-keydown [^js e]
   ;; Guard on editable focus (the user must be able to type brackets in their
@@ -350,6 +386,11 @@
         (do (.preventDefault e) (nav-photo! -1))
         (and navigable? (= k "]"))
         (do (.preventDefault e) (nav-photo! 1))
+        ;; plane mode owns n / Enter / Backspace / Esc while it is on — including
+        ;; Esc, which it consumes BEFORE leave-pose!: pressing it once should
+        ;; close the gesture, not throw you out of the photo you were measuring on.
+        (and (plane-mode?) (not (modal/active?)) (plane-key! k))
+        (.preventDefault e)
         (and (:in-pose? @stage) (not (modal/active?)) (= k "Escape"))
         (do (.preventDefault e) (leave-pose!))))))
 
@@ -465,19 +506,734 @@
     (.removeEventListener canvas "contextmenu" on-contextmenu true)))
 
 ;; ------------------------------------------------------------
+;; PLANE MARKS (dev-docs/brief-plane-marks.md, gradino 1).
+;;
+;; The hole this fills: with a registration PLATE the proxy sits UNDER the object,
+;; so — unlike a box, whose faces double as tracing planes — it offers no working
+;; plane ON the object. The user marks one by hand: click the same physical point
+;; on ≥2 registered photos (it triangulates), do that for ≥3 points, and the plane
+;; fitted through them is emitted as an ordinary named mark {:position :heading
+;; :up} with heading = the surface normal. `(turtle (:zona (:marks A))
+;; (edit-path-2d …))` then works with no new DSL — the mark IS the abstraction.
+;;
+;; It lives HERE, not in edit-acquire, on the v1 principle: edit-acquire does
+;; REGISTRATION and closes; MEASUREMENT belongs to the stage. The cost that made
+;; that debatable — the stage cannot write to the source — turns out to be small:
+;; the emitted (acquire …) already carries a `:marks {…}` block, so appending an
+;; entry to it is a bounded text edit (commit-plane-mark! below), and rename and
+;; delete come free because the mark then lives in the user's own source.
+;;
+;; The verification is the gesture's own reprojection: the triangulated dots and
+;; the fitted disc are drawn in the WORLD, so navigating photos with [ / ] shows
+;; them from every registered angle. A disc that stays glued to the surface from
+;; all of them is a correct plane; one that slides off is not. Same trick as the
+;; ricalco, no new machinery.
+;; ------------------------------------------------------------
+
+(def ^:private plane-point-color 0x33ffcc)  ; verde-acqua: i punti triangolati
+(def ^:private plane-ray-color 0x1f7f6b)    ; il raggio del click, più spento
+(def ^:private plane-disc-color 0x33ffcc)
+(def ^:private plane-pending-color 0xffcc33) ; giallo: un click che aspetta la seconda foto
+(def ^:private plane-origin-color 0xff33cc)  ; magenta: l'origine del piano (come i mark)
+
+(def ^:private plane-disc-segments 40)
+
+(def ^:private world-frame
+  "The identity proxy pose. bridge/box-basis of it is the identity matrix, so
+   bridge/editor->solver-pose against it turns an editor camera pose into a
+   solver pose in the WORLD frame — which is where plane marks belong: the
+   stage's cameras are already reconciled to the emitted frame, and the emitted
+   :marks are world poses. No object-frame round trip to get the sign of."
+  {:position [0.0 0.0 0.0] :heading [0.0 0.0 1.0] :up [0.0 1.0 0.0]})
+
+(defn- say!
+  "Report to the output console. The stage has no status panel of its own (it is
+   viewport state, not a modal session), and these messages carry NUMBERS — the
+   residual, the parallax, the planarity — that the user should be able to read
+   back after the fact rather than watch fade from a toast."
+  [msg]
+  (state/capture-println (str ";; piano: " msg)))
+
+(defn- plane-mode? [] (some? (:plane @stage)))
+(defn- plane-picks [] (get-in @stage [:plane :picks] []))
+
+(defn- stage-intrinsics
+  "Pinhole intrinsics for the CURRENT photo's pixel size — the 35mm-equivalent
+   focal against the photo's own aspect (the diagonal convention). Stored with
+   each click rather than assumed session-wide, so a session that mixes pixel
+   sizes still triangulates correctly."
+  []
+  (when-let [[iw ih] (backdrop/image-size)]
+    (pcamera/intrinsics-from-fov
+     (pcamera/equiv-focal->hfov-deg (:focal-mm @stage) (/ iw ih)) iw ih)))
+
+(defn- world-solver-pose [idx]
+  (when-let [cam (get-in @stage [:camera-poses idx])]
+    (bridge/editor->solver-pose cam world-frame)))
+
+(defn- object-radius []
+  (* 0.5 (m/magnitude (:dims @stage))))
+
+(defn- plausible-point?
+  "A triangulated point must land near the acquired object. Two rays that nearly
+   agree can meet a long way off (the same failure the retrace's plausible-hit?
+   rejects); flinging a point out there and fitting a plane to it would produce a
+   confident, meaningless mark."
+  [p]
+  (<= (m/magnitude (m/v- p (:position (:emit-pose @stage))))
+      (+ (object-radius) 60.0)))
+
+(defn- retriangulate
+  "Re-solve one pick from its observations. Keyed by photo index so a second
+   click on the same photo REPLACES that view's observation (the natural way to
+   correct a slip) instead of piling up two contradictory rays."
+  [pick]
+  (let [entries (sort-by key (:obs pick))
+        idxs (mapv key entries)
+        obs (mapv val entries)
+        fit (tri/triangulate (stage-intrinsics) obs)]
+    (assoc pick :fit (when fit
+                       (assoc fit :photos idxs
+                              :plausible? (plausible-point? (:point fit)))))))
+
+(defn- fitted-points []
+  (into [] (keep #(when (get-in % [:fit :plausible?]) (get-in % [:fit :point]))
+                 (plane-picks))))
+
+;; ---- preview ----
+
+(defn- disc-item [mark radius opacity]
+  (let [{:keys [vertices faces]} (tri/disc-mesh mark radius plane-disc-segments)]
+    {:type :mesh
+     :data {:vertices vertices :faces faces
+            :material {:color plane-disc-color :opacity opacity :double-sided true}}}))
+
+(defn- disc-radius
+  "Size the verification disc to the clicked zone — the spread of the points,
+   with a margin so its rim reaches past them (that overhang is what makes a
+   wrong plane visibly peel away from the surface). A single declared point has
+   no spread, so it gets a fraction of the object instead."
+  [pts]
+  (if (< (count pts) 2)
+    (max 8.0 (* 0.35 (object-radius)))
+    (let [n (count pts)
+          c (mapv #(/ % n) (reduce m/v+ [0.0 0.0 0.0] pts))]
+      (max 6.0 (* 1.25 (reduce max (map #(m/magnitude (m/v- % c)) pts)))))))
+
+(defn- ray-items
+  "The current point's click rays, drawn as short world segments straddling the
+   object. This is the gesture's navigation aid and it costs nothing: reprojected
+   onto ANOTHER photo, a ray from the first click IS the epipolar line — the
+   locus on which the same physical point must lie. Click photo A, press ], and
+   the line tells you where to look."
+  [pick]
+  (let [c (:position (:emit-pose @stage))
+        r (max 15.0 (* 1.1 (object-radius)))]
+    (into []
+          (keep (fn [[_ {:keys [px pose intrinsics]}]]
+                  (when-let [{:keys [origin dir]} (pcamera/pixel-ray intrinsics pose px)]
+                    (let [t (m/dot (m/v- c origin) dir)
+                          a (m/v+ origin (m/v* dir (max 1.0 (- t r))))
+                          b (m/v+ origin (m/v* dir (+ t r)))]
+                      {:type :lines :data [{:from a :to b :color plane-ray-color}]}))))
+          (:obs pick))))
+
+(defn- pending-dot-items
+  "A YELLOW dot for a click that is still waiting for its second photo — the
+   'did that register?' feedback the gesture lacked (Vincenzo 2026-07-31: 'dopo
+   il click del primo punto non succede niente e non si vede dove si è
+   cliccato'; the ray alone is invisible on the photo it was cast from, since it
+   points straight at you, and the green dot needs two views to exist).
+
+   Placed on the ray at its closest approach to the object. That choice is not
+   cosmetic: EVERY point of the ray reprojects onto the very pixel that was
+   clicked, so on the photo you clicked the dot sits exactly under the cursor —
+   while on any other photo it slides along the epipolar line, which is the
+   honest picture of what is known so far (direction yes, depth not yet)."
+  [pick]
+  (when-not (:fit pick)
+    (let [c (:position (:emit-pose @stage))
+          dots (into [] (keep (fn [[_ {:keys [px pose intrinsics]}]]
+                                (when-let [{:keys [origin dir]}
+                                           (pcamera/pixel-ray intrinsics pose px)]
+                                  {:pos (m/v+ origin (m/v* dir (m/dot (m/v- c origin) dir)))
+                                   :radius 1.0
+                                   :color plane-pending-color
+                                   :opacity 0.9}))
+                              (:obs pick)))]
+      (when (seq dots) [{:type :dots :data dots}]))))
+
+(defn- plane-preview-items
+  "Everything the plane gesture draws: the current point's rays and pending
+   click, every triangulated point as a dot, the candidate plane's disc, and the
+   discs of marks already committed this session (kept on so the user can keep
+   checking them across photos after the source has been written)."
+  []
+  (when (plane-mode?)
+    (let [picks (plane-picks)
+          pts (fitted-points)
+          dots (into [] (keep (fn [p]
+                                (when-let [f (:fit p)]
+                                  {:pos (:point f)
+                                   :radius 1.1
+                                   :color plane-point-color
+                                   :opacity (if (:plausible? f) 0.95 0.35)}))
+                              picks))]
+      (cond-> (ray-items (peek picks))
+        :always (into (pending-dot-items (peek picks)))
+        (seq dots) (conj {:type :dots :data dots})
+        (:candidate (:plane @stage))
+        (conj (disc-item (:candidate (:plane @stage))
+                         (:candidate-radius (:plane @stage) (disc-radius pts)) 0.35)
+              ;; the origin itself, drawn distinctly from the disc it centres:
+              ;; it is the point every coordinate written against this mark will
+              ;; be measured from, so it must be visible, not implied.
+              {:type :dots
+               :data [{:pos (:position (:candidate (:plane @stage)))
+                       :radius 1.4 :color plane-origin-color :opacity 1.0}]})
+        :always (into (map (fn [{:keys [mark radius]}] (disc-item mark radius 0.22))
+                           (get-in @stage [:plane :committed] [])))))))
+
+(defn- redraw-plane! []
+  (show-frustums!)
+  ;; update-toolbar! refreshes the HUD too — it is called on EVERY pose change
+  ;; (frustum click, Prev/Next, photo lock), so hanging the HUD off it is what
+  ;; keeps "foto N — reg. …" honest as you navigate, instead of freezing on the
+  ;; photo you happened to be on when the gesture started.
+  (update-toolbar!))
+
+;; ---- registration quality of a photo (read from acquire-state.json) ----
+
+(def ^:private poor-registration-px
+  "Above this per-photo PnP rms, a photo's camera pose is not to be trusted for
+   measurement: everything drawn in the world reprojects visibly off on it. The
+   plate sessions register at ~4-5 px when they register well and at 10-11 px
+   when they don't (a grazing shot losing 2 of 12 marks), so the gap is wide and
+   8 px sits in it."
+  8.0)
+
+(defn- registration-of [idx] (get-in @stage [:registration idx]))
+
+(defn- poorly-registered? [idx]
+  (when-let [{:keys [rms-px]} (registration-of idx)]
+    (> rms-px poor-registration-px)))
+
+(defn- registration-label
+  "'reg. 11.3px · 10/12' for the current photo, or nil when unknown."
+  [idx]
+  (when-let [{:keys [rms-px matched]} (registration-of idx)]
+    (str "reg. " (src/fmt-number rms-px) "px"
+         (when matched (str " · " matched " marker")))))
+
+;; ---- the HUD ----
+;; The gesture's state, drawn where the user is looking. The first live run
+;; (Vincenzo 2026-07-31) worked but read as opaque: the state lived in a cramped
+;; toolbar label and in console lines that scroll away, and every step had to be
+;; advanced by a key you had to remember. Here the three steps are always all
+;; visible with the current one highlighted, and every action is a BUTTON whose
+;; enabled/disabled state IS the answer to "what can I do now" (keys still work).
+
+(defn- enough-points?
+  "Whether 'Crea il piano' can fire: three triangulated points, or the single
+   declared one of the plate-parallel shortcut."
+  []
+  (let [n (count (fitted-points))]
+    (or (>= n 3) (and (= n 1) (:plate? @stage)))))
+
+(defn- hud-el [] (.getElementById js/document "eaq-plane-hud"))
+
+(defn- el
+  "Small DOM helper: tag + class + text, children appended."
+  [tag cls & {:keys [text children html]}]
+  (let [^js e (.createElement js/document tag)]
+    (when cls (set! (.-className e) cls))
+    (when text (set! (.-textContent e) text))
+    (when html (set! (.-innerHTML e) html))
+    (doseq [^js c children] (when c (.appendChild e c)))
+    e))
+
+(defn- hud-step
+  "One line of the procedure. `state` is :done, :current or :todo."
+  [state n label]
+  (el "div" (str "eaq-hud-step " (name state))
+      :children [(el "span" "eaq-hud-bullet"
+                     :text (case state :done "✓" :current "▸" "·"))
+                 (el "span" nil :text (str n ". " label))]))
+
+(defn- hud-detail
+  "The paragraph under the steps: what to do RIGHT NOW, with the numbers."
+  []
+  (let [picks (plane-picks)
+        cur (peek picks)
+        obs (:obs cur)
+        fit (:fit cur)
+        here (:current-idx @stage)
+        cand (:candidate (:plane @stage))
+        box (el "div" "eaq-hud-detail")
+        add! (fn [cls txt] (.appendChild box (el "div" cls :text txt)))]
+    (cond
+      cand
+      (do (add! (if (> (:flatness-mm cand) 1.0) "eaq-hud-warn" "eaq-hud-good")
+                (str "Planarità " (src/fmt-number (:flatness-mm cand)) " mm"))
+          (add! "eaq-hud-hint"
+                "Cambia foto con [ e ] : il dischetto deve restare incollato alla superficie.")
+          (when (> (:flatness-mm cand) 1.0)
+            (add! "eaq-hud-warn" "La zona non è molto piana — guarda bene prima di accettare."))
+          (add! nil (str "Origine (pallino magenta): "
+                         (if (:origin-placed? (:plane @stage))
+                           "dove hai cliccato."
+                           "al centro dei punti.")))
+          (add! "eaq-hud-hint"
+                "Un click sul piano la sposta lì — è il punto da cui si misura tutto quello che ci disegnerai."))
+
+      (not (:in-pose? @stage))
+      (add! "eaq-hud-hint"
+            (str "Sei in vista libera: i punti già presi restano. Per cliccarne "
+                 "altri torna dentro una foto — bottone Foto, o clicca una piramide."))
+
+      :else
+      (do
+        (when-let [r (registration-label here)]
+          (add! (if (poorly-registered? here) "eaq-hud-bad" nil)
+                (str "Foto " (nav-rank here) " — " r
+                     (when (poorly-registered? here) "  ⚠ mal registrata"))))
+        (when (poorly-registered? here)
+          (add! "eaq-hud-bad"
+                "Su questa foto tutto si riproietta storto: usane un'altra."))
+        (case (count obs)
+          0 (add! "eaq-hud-hint" "Clicca un punto ben riconoscibile della zona piana.")
+          1 (add! "eaq-hud-hint"
+                  (str "Click preso — è il pallino GIALLO. Ora cambia foto con ] e "
+                       "riclicca LO STESSO punto: lo troverai sulla linea verde, e il "
+                       "pallino diventa verde quando il punto è fissato."))
+          nil)
+        (when fit
+          (add! (cond (not (:plausible? fit)) "eaq-hud-bad"
+                      (or (< (:parallax-deg fit) tri/min-parallax-deg)
+                          (> (:max-residual-px fit) 25.0)) "eaq-hud-warn"
+                      :else "eaq-hud-good")
+                (str "scarto " (src/fmt-number (:max-residual-px fit)) " px · "
+                     "parallasse " (src/fmt-number (:parallax-deg fit)) "°")))
+        (when (seq obs)
+          (let [shots (el "div" "eaq-hud-shots")]
+            (doseq [[idx _] (sort-by key obs)]
+              (.appendChild shots
+                            (el "div" "eaq-hud-shot"
+                                :children [(el "span" nil :text (str "foto " (nav-rank idx)))
+                                           (el "span" (when (poorly-registered? idx) "eaq-hud-bad")
+                                               :text (if (poorly-registered? idx) "⚠" "✓"))])))
+            (.appendChild box shots)))))
+    box))
+
+(defn- hud-button [label title enabled? primary? on-click]
+  (let [^js b (el "button" (str "action-btn view-btn" (when primary? " primary")))]
+    (set! (.-textContent b) label)
+    (set! (.-title b) title)
+    (set! (.-disabled b) (not enabled?))
+    (.addEventListener b "click" (fn [^js e]
+                                   (.preventDefault e) (.stopPropagation e)
+                                   (on-click)))
+    b))
+
+(declare next-plane-point! fit-candidate! accept-candidate! discard-candidate!
+         recentre-origin! undo-plane-click! stop-plane!)
+
+(defn- hud-actions []
+  (let [picks (plane-picks)
+        cur (peek picks)
+        cand (:candidate (:plane @stage))
+        enough? (enough-points?)
+        row (el "div" "eaq-hud-actions")]
+    (doseq [^js b (if cand
+                    [(hud-button "Accetta" "Scrive il mark nel sorgente (Invio)"
+                                 true true accept-candidate!)
+                     (hud-button "Origine al centro"
+                                 "Rimette l'origine al centro dei punti cliccati"
+                                 (boolean (:origin-placed? (:plane @stage))) false
+                                 recentre-origin!)
+                     (hud-button "Rifai" "Scarta il piano proposto (Backspace)"
+                                 true false discard-candidate!)]
+                    [(hud-button "Punto successivo"
+                                 "Chiude questo punto e ne comincia un altro (n)"
+                                 (boolean (:plausible? (:fit cur))) false next-plane-point!)
+                     (hud-button "Crea il piano"
+                                 (if enough?
+                                   "Calcola il piano e mostra il dischetto (Invio)"
+                                   "Servono 3 punti triangolati")
+                                 enough? enough? fit-candidate!)
+                     (hud-button "Annulla click" "Toglie l'ultimo click (Backspace)"
+                                 (boolean (seq (:obs cur))) false undo-plane-click!)])]
+      (.appendChild row b))
+    (.appendChild row (hud-button "Chiudi" "Esce dal modo piano (Esc)" true false stop-plane!))
+    row))
+
+(defn- hud-content []
+  (let [ready (count (fitted-points))
+        cand (:candidate (:plane @stage))
+        ok? (enough-points?)
+        frag (.createDocumentFragment js/document)]
+    (.appendChild frag (el "div" "eaq-hud-title" :text "PIANO DI LAVORO"))
+    ;; Always 'di 3', even where one point would legally do: the plate shortcut
+    ;; is only valid when the user KNOWS the zone is parallel to the plate, and
+    ;; advertising '1 di 1' would read as 'one point is normally enough'.
+    (.appendChild frag (hud-step (if (or cand ok?) :done :current)
+                                 1 (str "Punti: " ready " di 3")))
+    (.appendChild frag (hud-step (cond cand :done ok? :current :else :todo)
+                                 2 "Crea il piano"))
+    (.appendChild frag (hud-step (if cand :current :todo) 3 "Controlla e accetta"))
+    (.appendChild frag (hud-detail))
+    (.appendChild frag (hud-actions))
+    frag))
+
+(defn- refresh-plane-hud!
+  "Rebuild the HUD from the current state (or remove it when plane mode is off).
+   Rebuilt wholesale rather than patched: it is a dozen nodes, and a panel that
+   is a pure function of the state can never drift out of sync with it."
+  []
+  (if-not (plane-mode?)
+    (when-let [^js p (hud-el)] (.remove p))
+    (when-let [^js host (.getElementById js/document "viewport-panel")]
+      (let [^js panel (or (hud-el)
+                          (let [^js p (el "div" nil)]
+                            (set! (.-id p) "eaq-plane-hud")
+                            (.appendChild host p)
+                            p))]
+        (set! (.-innerHTML panel) "")
+        (.appendChild panel (hud-content))))))
+
+;; ---- the gesture ----
+
+(defn- plane-status
+  "One line of live state for the toolbar button: which point is being clicked,
+   how many photos it has, and the fit quality once it has enough."
+  []
+  (let [picks (plane-picks)
+        n (count picks)
+        cur (peek picks)
+        obs (count (:obs cur))
+        fit (:fit cur)]
+    (if (:candidate (:plane @stage))
+      "Piano proposto · Invio accetta"
+      (str "Piano · punto " n
+           (cond
+             (zero? obs) " (clicca)"
+             (= 1 obs) " (1 foto — vai su un'altra)"
+             fit (str " (" obs " foto, "
+                      (src/fmt-number (:rms-px fit)) "px, "
+                      (src/fmt-number (:parallax-deg fit)) "°)")
+             :else (str " (" obs " foto)"))))))
+
+(defn- start-plane! []
+  (swap! stage assoc :plane {:picks [{:obs {}}] :committed []})
+  (say! (str "modo piano attivo. Clicca lo STESSO punto su almeno 2 foto ("
+             "usa [ e ] per cambiare), poi 'n' per il punto successivo. "
+             "Servono 3 punti; Invio crea il piano, Esc esce."))
+  (redraw-plane!))
+
+(defn- stop-plane! []
+  (swap! stage dissoc :plane)
+  (redraw-plane!))     ; :plane gone → the HUD removes itself
+
+(defn- place-origin!
+  "With a plane already proposed, a click MOVES ITS ORIGIN — the point everything
+   drawn against the mark is measured from.
+
+   This costs a single click, on one photo, and is exact: the plane is known, so
+   the click's ray meets it in exactly one point (m/ray-plane-point, the same
+   inverse the ricalco uses) — no triangulation, no second view. Which matters,
+   because the three components of a mark do not come from the same place: the
+   NORMAL is a measurement, averaged over the clicked points and better the more
+   of them there are; `up` is inherited from the object's own up, so it is
+   reproducible; but the ORIGIN was, until now, the centroid of wherever the user
+   happened to click — an artefact of the gesture, not a property of the surface,
+   which silently moved everything written against the mark whenever the mark was
+   redone (Vincenzo 2026-07-31: 'la posizione in quel piano da cosa dipende?').
+   Placing it deliberately makes it reproducible: click the same corner again and
+   the origin comes back to the same corner."
+  [px pose k]
+  (let [{:keys [candidate]} (:plane @stage)
+        hit (some-> (pcamera/pixel-ray k pose px)
+                    (m/ray-plane-point (:position candidate) (:heading candidate)))]
+    (cond
+      (nil? hit)
+      (say! (str "il click non incontra il piano — da questa foto lo vedi troppo "
+                 "di taglio, provane un'altra"))
+      (not (plausible-point? hit))
+      (say! "il punto cade lontano dall'oggetto: da questa foto il piano è quasi di taglio")
+      :else
+      (do (swap! stage assoc-in [:plane :candidate :position] hit)
+          (swap! stage assoc-in [:plane :origin-placed?] true)
+          (say! "origine del piano spostata dove hai cliccato")
+          (redraw-plane!)))))
+
+(defn- add-observation!
+  "Record this photo's view of the current point, re-triangulate, and say what is
+   wrong with the result when something is."
+  [idx px pose k]
+  (swap! stage update-in [:plane :picks]
+         (fn [picks]
+           (let [i (dec (count picks))]
+             (-> picks
+                 (update i update :obs assoc idx {:px px :pose pose :intrinsics k})
+                 (update i retriangulate)))))
+  (when (poorly-registered? idx)
+    (say! (str "attenzione: la foto " (nav-rank idx) " è registrata male ("
+               (registration-label idx) "). Il click è preso lo stesso, ma "
+               "su questa foto TUTTO si riproietta storto: se puoi, usane un'altra.")))
+  (let [fit (:fit (peek (plane-picks)))]
+    (cond
+      (nil? fit) nil
+      (not (:plausible? fit))
+      (say! (str "il punto triangolato cade lontano dall'oggetto — i due click non "
+                 "sono sullo stesso punto fisico, oppure le foto sono troppo vicine fra loro"))
+      (< (:parallax-deg fit) tri/min-parallax-deg)
+      (say! (str "parallasse " (src/fmt-number (:parallax-deg fit))
+                 "° — troppo poca: aggiungi un click da una foto più lontana"))
+      (> (:max-residual-px fit) 25.0)
+      (say! (str "residuo " (src/fmt-number (:max-residual-px fit))
+                 "px — uno dei click non è sullo stesso punto fisico. "
+                 (if-let [w (:worst-obs fit)]
+                   (str "Quello sbagliato è sulla foto "
+                        (nav-rank (nth (:photos fit) w))
+                        " (stessa numerazione della toolbar): vacci con [ o ] e riclicca.")
+                   "Con due sole foto non si può dire quale: aggiungine una terza.")))
+      :else nil))
+  (redraw-plane!))
+
+(defn- plane-click!
+  "One click in plane mode. Its meaning depends on the stage of the gesture: with
+   a plane already proposed it places that plane's ORIGIN; before that it records
+   this photo's observation of the current point."
+  [^js e]
+  (let [idx (:current-idx @stage)]
+    (if-let [pose (world-solver-pose idx)]
+      (if-let [px (backdrop/pixel-under-pointer e (viewport/get-camera) (viewport/get-canvas))]
+        (if-let [k (stage-intrinsics)]
+          (if (:candidate (:plane @stage))
+            (place-origin! px pose k)
+            (add-observation! idx px pose k))
+          (say! "nessuna foto caricata: non so a che risoluzione riferire il click"))
+        (say! "il click è caduto fuori dalla foto"))
+      (say! (str "la foto " (nav-rank idx) " non ha una posa registrata: non può contribuire — "
+                 "cambiane una con [ o ]")))))
+
+(defn- next-plane-point!
+  "Close the current point and start another. Refuses to advance from a point
+   that has not triangulated, so the user never discovers at fit time that a
+   point they thought was placed contributed nothing."
+  []
+  (let [cur (peek (plane-picks))]
+    (cond
+      (nil? (:fit cur))
+      (say! "questo punto non è ancora triangolato: serve un click su almeno 2 foto")
+      (not (:plausible? (:fit cur)))
+      (say! "questo punto non è affidabile: riclicca prima di passare al successivo")
+      :else
+      (do (swap! stage update-in [:plane :picks] conj {:obs {}})
+          (redraw-plane!)))))
+
+(defn- undo-plane-click!
+  "Backspace: drop the current point's observation on THE PHOTO YOU ARE LOOKING
+   AT — the one you just mis-clicked — falling back to the highest-numbered photo
+   if this one has none. With the point already empty, drop the point itself."
+  []
+  (let [here (:current-idx @stage)]
+    (swap! stage update-in [:plane :picks]
+           (fn [picks]
+             (let [i (dec (count picks))
+                   obs (:obs (nth picks i))]
+               (cond
+                 (seq obs)
+                 (let [victim (if (contains? obs here) here (key (last (sort-by key obs))))]
+                   (update picks i #(retriangulate (update % :obs dissoc victim))))
+                 (> (count picks) 1) (vec (butlast picks))
+                 :else picks)))))
+  (redraw-plane!))
+
+;; ---- source write-back ----
+
+(defn- acquire-form-bounds
+  "[from to) of THIS stage's `(acquire \"dir\" …)` in the buffer. Matched on the
+   dir string so a source holding more than one acquire is never amended in the
+   wrong one; falls back to the first `(acquire` only when the dir literal isn't
+   found verbatim (a hand-edited path)."
+  [text]
+  (or (modal/find-form-bounds text (str "(acquire " (pr-str (:dir @stage))))
+      (modal/find-form-bounds text "(acquire")))
+
+(defn- next-plane-name
+  "`piano-N`, N one past the highest already in the form — read from the SOURCE,
+   not from stage state, because that is where the marks actually live (the user
+   may have renamed or deleted some since)."
+  [form-text]
+  (let [nums (map #(js/parseInt (second %) 10)
+                  (re-seq #":piano-(\d+)\b" form-text))]
+    (str "piano-" (inc (reduce max 0 nums)))))
+
+(defn- mark-entry-text [nm {:keys [position heading up]}]
+  (str ":" nm
+       " {:position " (src/fmt-vec3 position)
+       " :heading " (src/fmt-vec3 heading)
+       " :up " (src/fmt-vec3 up) "}"))
+
+(defn- commit-plane-mark!
+  "Append `mark` to the evaluated `(acquire …)`'s :marks map and re-run the
+   definitions. A bounded text edit — only the :marks block's braces move — so
+   everything else the user has written or hand-tuned in that form survives
+   byte-identical. Returns the name written, or nil when the form can't be found."
+  [mark]
+  (let [text (cm/get-value)]
+    (if-let [[from to] (acquire-form-bounds text)]
+      (if-let [[o e i] (src/map-value-bounds text from to ":marks")]
+        (let [nm (next-plane-name (.substring text from to))
+              updated (src/append-map-entry (.substring text o e)
+                                            (mark-entry-text nm mark)
+                                            ":marks" (src/column-of text i))]
+          (modal/replace-source! o e updated)
+          (modal/run-definitions!)
+          nm)
+        (do (say! (str "la forma (acquire …) non ha uno slot :marks — aggiungi "
+                       ":marks {} dentro la mappa e riprova"))
+            nil))
+      (do (say! "non trovo la forma (acquire …) nel sorgente")
+          nil))))
+
+(defn- fit-candidate!
+  "First Enter: fit the plane through the triangulated points and show it as a
+   translucent disc — but write NOTHING yet. The disc is the check the brief
+   asks for: it lives in the world, so navigating the photos with [ / ] shows it
+   from every registered angle, and it stays glued to the surface only if the
+   plane is right. Accepting is a second, deliberate Enter."
+  []
+  (let [pts (fitted-points)
+        picks (plane-picks)
+        cams (into [] (keep #(get-in @stage [:camera-poses % :position])
+                            (distinct (mapcat #(keys (:obs %)) picks))))
+        toward (when (seq cams)
+                 (mapv #(/ % (count cams)) (reduce m/v+ [0.0 0.0 0.0] cams)))
+        emit (:emit-pose @stage)
+        hints [(:up emit) (:heading emit)]
+        mark (cond
+               (>= (count pts) 3)
+               (tri/fit-plane-mark pts {:toward toward :up-hints hints})
+
+               ;; One point is enough when the zone is KNOWN parallel to the
+               ;; plate — an object standing on the turntable, its upper face
+               ;; level. The plate's own axis supplies the normal; the click only
+               ;; fixes the height. Plate proxies only: a box's heading is its
+               ;; front face, which says nothing about what the object rests on.
+               (and (= 1 (count pts)) (:plate? @stage))
+               (let [n (:heading emit)
+                     n (if (and toward (neg? (m/dot n (m/v- toward (first pts)))))
+                         (m/v* n -1.0) n)]
+                 (tri/plane-through-point (first pts) n hints))
+
+               :else nil)]
+    (if (nil? mark)
+      (say! (str "servono 3 punti triangolati (ne hai " (count pts) ")"
+                 (when (:plate? @stage)
+                   ", oppure 1 solo se la zona è parallela al piatto")
+                 (when (>= (count pts) 3)
+                   " — i punti sono quasi allineati, non definiscono un piano")))
+      (do
+        (swap! stage update :plane assoc
+               :candidate mark
+               :candidate-radius (disc-radius pts)
+               ;; keep the fit's own origin so 'Origine al centro' can undo a
+               ;; misplaced click without refitting the plane
+               :origin-centroid (:position mark)
+               :origin-placed? false)
+        (say! (str "piano proposto: planarità " (src/fmt-number (:flatness-mm mark))
+                   "mm su " (count pts) " punti"
+                   (when (> (:flatness-mm mark) 1.0)
+                     (str " — ATTENZIONE, la zona non è così piana. Scarti per punto (mm): "
+                          (mapv #(src/fmt-number %) (:per-point mark))))
+                   ". Naviga le foto con [ e ] e guarda se il dischetto resta incollato "
+                   "alla superficie: se sì Invio per accettarlo, se no Backspace per rifarlo."))
+        (redraw-plane!)))))
+
+(defn- accept-candidate!
+  "Second Enter: write the previewed plane into the source as a named mark and
+   keep its disc on screen (dimmer) so it can still be checked afterwards."
+  []
+  (let [{:keys [candidate candidate-radius]} (:plane @stage)]
+    (if-let [nm (commit-plane-mark! (select-keys candidate [:position :heading :up]))]
+      (do (swap! stage update :plane
+                 (fn [p] (-> p
+                             (update :committed conj {:mark candidate :radius candidate-radius})
+                             (assoc :picks [{:obs {}}])
+                             (dissoc :candidate :candidate-radius
+                                     :origin-centroid :origin-placed?))))
+          (say! (str "creato :" nm ". Usalo così:  (turtle (:" nm " (:marks A)) (edit-path-2d))"))
+          (redraw-plane!))
+      (redraw-plane!))))
+
+(defn- recentre-origin!
+  "Put the origin back where the fit itself put it — the centroid of the clicked
+   points — without refitting anything. The plane is untouched: only the point
+   coordinates are measured from moves."
+  []
+  (when-let [c (:origin-centroid (:plane @stage))]
+    (swap! stage update :plane #(-> %
+                                    (assoc-in [:candidate :position] c)
+                                    (assoc :origin-placed? false)))
+    (say! "origine rimessa al centro dei punti")
+    (redraw-plane!)))
+
+(defn- discard-candidate! []
+  (swap! stage update :plane dissoc
+         :candidate :candidate-radius :origin-centroid :origin-placed?)
+  (say! "piano proposto scartato — i punti restano, correggili e ripremi Invio")
+  (redraw-plane!))
+
+(defn- plane-key!
+  "Plane-mode keys. Returns true when the key was consumed. Enter is two-stage —
+   fit, then accept — so nothing reaches the source before the user has looked at
+   the disc across the photos."
+  [k]
+  (let [candidate? (some? (:candidate (:plane @stage)))]
+    (case k
+      "n" (do (if candidate?
+                (say! "c'è un piano proposto: Invio per accettarlo o Backspace per scartarlo")
+                (next-plane-point!))
+              true)
+      "Enter" (do (if candidate? (accept-candidate!) (fit-candidate!)) true)
+      "Backspace" (do (if candidate? (discard-candidate!) (undo-plane-click!)) true)
+      "Escape" (do (stop-plane!) (say! "modo piano chiuso") true)
+      false)))
+
+(defn- toggle-plane-mode! []
+  (if (plane-mode?)
+    (stop-plane!)
+    (if (seq (:camera-poses @stage))
+      (do (when-not (in-pose?)
+            (let [order (nav-order)
+                  cur (:current-idx @stage)]
+              (when (seq order)
+                (go-in-pose! (if (get-in @stage [:camera-poses cur]) cur (first order)) true))))
+          (start-plane!))
+      (say! "nessuna camera registrata: non c'è niente da triangolare"))))
+
+;; ------------------------------------------------------------
 ;; Viewport toolbar (shown only while the stage is active WITH registered cameras):
 ;; a Photo-lock toggle (in-pose ↔ free, label 'foto i/N · θ°') + Prev/Next photo
-;; (θ order, ~200ms flight). Mounted in #viewport-toolbar; torn down on deactivate!.
+;; (θ order, ~200ms flight) + the plane-mark toggle. Mounted in #viewport-toolbar;
+;; torn down on deactivate!.
 ;; ------------------------------------------------------------
 
 (defn- theta-label
-  "'foto i/N · θ°' for the current photo — i = its 1-based rank in θ order."
+  "'foto i/N · θ°' for the current photo — i = its 1-based rank in θ order, plus
+   a ⚠ when this photo registered badly. The warning belongs HERE, not only in
+   the plane gesture: a photo whose camera pose is off reprojects everything
+   wrong — proxy, ricalchi, marks — so it is worth knowing the moment you land
+   on it (Vincenzo 2026-07-31)."
   []
   (let [cur (:current-idx @stage)
         n (count (nav-order))
         theta (:theta (nth (:photos @stage) cur nil))]
     (str "foto " (nav-rank cur) "/" n
-         (when theta (str " · " (js/Math.round theta) "°")))))
+         (when theta (str " · " (js/Math.round theta) "°"))
+         (when (poorly-registered? cur) " ⚠"))))
 
 (defn- update-toolbar!
   "Refresh the lock toggle's label + selected state. Called on every pose change so
@@ -488,7 +1244,14 @@
       (do (.add (.-classList lock) "active")
           (set! (.-textContent lock) (theta-label)))
       (do (.remove (.-classList lock) "active")
-          (set! (.-textContent lock) "Foto")))))
+          (set! (.-textContent lock) "Foto"))))
+  (when-let [^js pl (.getElementById js/document "eaq-stage-plane")]
+    (if (plane-mode?)
+      (do (.add (.-classList pl) "active")
+          (set! (.-textContent pl) (plane-status)))
+      (do (.remove (.-classList pl) "active")
+          (set! (.-textContent pl) "Piano"))))
+  (refresh-plane-hud!))
 
 (defn- toggle-lock! []
   (cond
@@ -532,6 +1295,10 @@
         (.appendChild wrap (make-tool-btn "eaq-stage-next" "›"
                                           "Foto successiva (ordine giradischi) — tasto ]"
                                           #(nav-photo! 1)))
+        (.appendChild wrap (make-tool-btn "eaq-stage-plane" "Piano"
+                                          (str "Crea un piano di lavoro sull'oggetto: clicca lo stesso "
+                                               "punto su 2+ foto, 'n' per il punto dopo, 3 punti, Invio")
+                                          toggle-plane-mode!))
         (.insertBefore tb wrap (.-firstChild tb))))
     (update-toolbar!)))
 
@@ -550,6 +1317,8 @@
   (when @stage
     (teardown-listeners!)
     (teardown-toolbar!)
+    (swap! stage dissoc :plane)
+    (refresh-plane-hud!)
     (viewport/unregister-frame-callback! :acquire-stage)
     (viewport/unregister-frame-callback! :camera-flight)
     (when (:in-pose? @stage) (backdrop/set-visible! false))
@@ -584,7 +1353,8 @@
                        st (some-> (aget results 1) parse-acquire-state)
                        cams (reconcile-cameras (:camera-poses st)
                                                (:proxy-pose st) (:emit-pose @stage))]
-                   (swap! stage assoc :photos photos :camera-poses cams)
+                   (swap! stage assoc :photos photos :camera-poses cams
+                          :registration (:registration st))
                    (-> (resolve-focal! (:focal-mm st) (first photos))
                        (.then (fn [focal]
                                 (swap! stage assoc :focal-mm focal :loaded? true)))))))
@@ -601,7 +1371,12 @@
                  (assoc (or s {})
                         :pending {:dir dir
                                   :emit-pose (or pose (:creation-pose proxy))
-                                  :dims (bridge/dims-from-mesh proxy (:creation-pose proxy))}))))
+                                  :dims (bridge/dims-from-mesh proxy (:creation-pose proxy))
+                                  ;; a registration PLATE (it carries named marks)
+                                  ;; — its axis is a usable 'the object rests on
+                                  ;; this' normal, which unlocks the one-click
+                                  ;; plane-mark case. A box's heading is not.
+                                  :plate? (boolean (seq (:anchors proxy)))}))))
 
 (defn after-eval!
   "Post-eval hook (mirrors modal/requested?→enter!): run AFTER refresh-viewport!.
@@ -615,12 +1390,16 @@
       (do (swap! stage merge {:dir (:dir pending)
                               :emit-pose (:emit-pose pending)
                               :dims (:dims pending)
+                              :plate? (:plate? pending)
                               :camera-poses {}
                               :photos []
                               :focal-mm default-focal-mm
                               :current-idx 0
                               :in-pose? false
                               :loaded? false
+                              ;; a different acquire = different object: its
+                              ;; half-finished plane picks mean nothing here
+                              :plane nil
                               :pending nil})
           (install-listeners!)
           ;; Build the photo backdrop plane (child of the camera) ONCE per activation,
@@ -642,6 +1421,7 @@
       pending
       (do (swap! stage merge {:emit-pose (:emit-pose pending)
                               :dims (:dims pending)
+                              :plate? (:plate? pending)
                               :pending nil})
           (when (and (loaded?) (seq (:camera-poses @stage))) (setup-toolbar!))
           (when (:in-pose? @stage) (backdrop/set-visible! true))

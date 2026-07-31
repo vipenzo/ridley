@@ -14,6 +14,7 @@ status: stable
 `(turtle :preserve-up & body)`
 `(turtle [x y z] & body)`
 `(turtle pose-map & body)`
+`(turtle :pose pose-expr & body)`
 
 ## Description
 
@@ -35,13 +36,39 @@ orientation drift:
 - **`:preserve-up`** — enable preserve-up mode (see below).
 - **`[x y z]`** — set the child's position (positional vector).
 - **Map** — `{:pos … :heading … :up …}` overrides any of the three
-  vectors.
+  vectors. `:position` is accepted as a synonym of `:pos`, so a mark or
+  anchor plugs straight in.
+
+### Where the pose may come from
+
+A pose can be written inline, reached by an accessor, or held in a name:
+
+```clojure
+(turtle {:pos [10 20 30] :heading [0 0 1]} …)   ; literal
+(turtle (:piano-1 (:marks A)) …)                ; accessor on the acquire's marks
+(def ma (:piano-1 (:marks A)))
+(turtle ma …)                                   ; a symbol holding a pose
+```
+
+For anything else — a pose returned by a call, e.g. `(turtle (my-pose-fn x) …)`
+— use the explicit `:pose` form:
+
+```clojure
+(turtle :pose (my-pose-fn x) …)
+```
+
+The macro can only inspect a first argument that is safe to evaluate before the
+body (a literal, an accessor, or a symbol). An unrecognised call is treated as
+the first **body** form, which is silent: the turtle simply stays at its parent
+pose and the geometry appears there instead of at the intended one. When
+geometry lands somewhere unexpected — typically at the origin — this is the
+first thing to check.
 
 ## Parameters
 
 - `body` — forms evaluated in the isolated scope.
-- Optional first argument: `:reset`, `:preserve-up`, `[x y z]`, or a
-  pose-override map.
+- Optional first argument: `:reset`, `:preserve-up`, `[x y z]`, a
+  pose-override map, a symbol bound to one, or `:pose <expr>`.
 
 ## Example
 

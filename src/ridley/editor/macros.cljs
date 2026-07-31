@@ -1784,13 +1784,27 @@
              {:opts opts
               :pose-expr (list (quote get-anchor) x)
               :body (vec (subvec remaining 1))}
+             ;; (turtle ma body…) where `ma` is a SYMBOL bound to a pose —
+             ;; e.g. (def ma (:piano-1 (:marks A))). The documented signature is
+             ;; `(turtle pose-map & body)`, and naming a mark before using it is
+             ;; the obvious thing to do, but a bare symbol used to fall through
+             ;; to :else and become the first BODY form: the turtle silently
+             ;; stayed at its parent pose and the geometry landed at the origin
+             ;; (Vincenzo 2026-07-31: \"il mark sembra essere da tutt'altra parte\").
+             ;; A symbol's VALUE is only knowable at runtime, so it is flagged
+             ;; :maybe-pose-expr here and decided below.
+             (and (nil? pose-expr) (symbol? x))
+             {:opts opts
+              :maybe-pose-expr x
+              :body (vec (subvec remaining 1))}
              :else
              {:opts opts :pose-expr pose-expr :body (vec remaining)})))))
 
    (defmacro turtle [& args]
-     (let [{:keys [opts pose-expr body]} (parse-turtle-opts args)
+     (let [{:keys [opts pose-expr maybe-pose-expr body]} (parse-turtle-opts args)
            opts-form (if (empty? opts) {} opts)]
-       (if pose-expr
+       (cond
+         pose-expr
          `(let [parent-state# @*turtle-state*
                 pose# ~pose-expr
                 ;; Accept either :pos (extrude+/revolve+ end-face style)
@@ -1802,6 +1816,34 @@
                                (:up pose#)      (assoc :up (:up pose#)))]
             (binding [*turtle-state* (atom (init-turtle merged-opts# parent-state#))]
               ~@body))
+
+         ;; Bare symbol first: use it as the pose when it holds one, otherwise
+         ;; leave it exactly as it was — a body form, whose value is the result
+         ;; when nothing follows it. A pose is 'a map with a heading and a
+         ;; position'; meshes (:vertices/:faces/:creation-pose) and shapes do not
+         ;; match, so a symbol holding geometry keeps its old meaning. The two
+         ;; names are explicit gensyms, not auto-gensyms, because the fallback
+         ;; body form is built outside this syntax-quote and must refer to them.
+         maybe-pose-expr
+         (let [xs (gensym \"pose-candidate\")
+               ps (gensym \"is-pose\")
+               body-forms (if (seq body) body [(list (quote when-not) ps xs)])]
+           `(let [parent-state# @*turtle-state*
+                  ~xs ~maybe-pose-expr
+                  ~ps (and (map? ~xs)
+                           (some? (:heading ~xs))
+                           (or (some? (:position ~xs)) (some? (:pos ~xs))))
+                  pose-pos# (or (:pos ~xs) (:position ~xs))
+                  merged-opts# (if ~ps
+                                 (cond-> ~opts-form
+                                   pose-pos#      (assoc :pos pose-pos#)
+                                   (:heading ~xs) (assoc :heading (:heading ~xs))
+                                   (:up ~xs)      (assoc :up (:up ~xs)))
+                                 ~opts-form)]
+              (binding [*turtle-state* (atom (init-turtle merged-opts# parent-state#))]
+                ~@body-forms)))
+
+         :else
          `(let [parent-state# @*turtle-state*]
             (binding [*turtle-state* (atom (init-turtle ~opts-form parent-state#))]
               ~@body)))))

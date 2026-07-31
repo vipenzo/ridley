@@ -20,38 +20,63 @@ scelta: il dettaglio vive nei brief. Si aggiorna a ogni cambio di fase
 (chiusura di una Parte di un brief, apertura di un fronte), come da
 istruzioni in CLAUDE.md.*
 
-**Fronte attivo (dal 2026-07): canale di acquisizione parametrica** — da
-foto su giradischi a geometria Ridley nativa, senza scanner. Registrazione
-camere via PnP su proxy (fatta e collaudata), ricalco su viste in posa
-(fatto), emissione e round-trip (in corso).
+**Fronte (dal 2026-07): canale di acquisizione parametrica — SOSTANZIALMENTE
+CONSEGNATO.** Da foto su giradischi a geometria Ridley nativa, senza scanner.
+Registrazione camere via PnP su proxy, ricalco su viste in posa, emissione/
+round-trip (P4a), palcoscenico non-modale (P4b) e piatto di registrazione a
+marker (fette A/B/anello/C): tutto fatto, collaudato dal vivo e committato sul
+branch `edit-acquire-registration-stability`. **Gate funzionale del v1 passato**
+(giro completo foto → registrazione → ricalco della faccia → estrusione, da
+utente).
 
-- **Documento di governo**: `dev-docs/brief-param-acq-v1.md` — Parti P0-P5
-  con stato aggiornato in testa alla sezione "Parti". Oggi: **P4b in corso**
-  (palcoscenico non-modale). P4a fatto e committato. P4b: il palcoscenico è
-  **stato del viewport** guidato dalla `(acquire …)` valutata nel sorgente
-  normale — frustum cliccabili → posa con foto e proxy allineato → ricalco
-  con `edit-path-2d` NORMALE su una faccia (`:faces`), con zoom/pan sulla
-  foto e handle a dimensione fissa; tutto costruito e collaudato da Vincenzo.
-  Resta l'ultima fetta ricca: **toolbar del palcoscenico (Photo lock +
-  Prev/Next) e riproiezione live** — navigare le foto mentre si traccia.
-  Handover `dev-docs/HANDOVER-p4b-stage-toolbar.md`.
-- **Design di riferimento**: `dev-docs/acquisizione-parametrica-design.md`
-  (principi, accertamenti chiusi con verdetti misurati).
-- **Storia e handover**: `dev-docs/HANDOVER-edit-acquire-gate.md` e
-  precedenti — leggere solo se serve il *perché* di una decisione.
-- **Dopo il v1** (coda nel brief): corona di marker sul piatto (bersaglio
-  PnP universale) — **FATTA e collaudata dal vivo**: `examples/param-acq-plate.clj`
-  (piatto ⌀130 + corona 12 dischetti + zero-indice, unica fonte geometria+mark),
-  PnP planare, fetta A (4 click → propose+blob-snap), **fetta B identità-free**
-  (clicca 4 dischetti QUALSIASI, `b`+`r`, il software assegna le identità via
-  ricerca esaustiva + zero-indice; scorer a due passi coarse→refine) e **fetta C
-  ZERO-click** (tasto `a`/"Auto": `blob-detect` trova i dischetti su tutto il
-  fotogramma, `match-plate/fit-crown` seleziona+identifica la corona, PnP registra
-  ogni foto; fail-safe → le difficili restano per `f`/`p`) — costruita e node-testata
-  (sintetico + JPEG reale via sharp: recall 12/12), **attende gate live**.
-  Handover `dev-docs/HANDOVER-edit-acquire-fetta-B-live-gate.md` e
-  `dev-docs/HANDOVER-edit-acquire-fetta-C-live-gate.md`. Restano:
-  rounded-prism/fillet, sorgenti live (webcam/companion).
+- **Documento di governo**: `dev-docs/brief-param-acq-v1.md` (Parti P0-P5).
+  Stato: **P0–P4a ✅. P4b ✅** — palcoscenico eval-driven come STATO DEL VIEWPORT
+  guidato dalla `(acquire …)` valutata nel sorgente normale: frustum cliccabili
+  → camera in posa con foto + proxy allineato, raddrizzamento, **toolbar**
+  (Prev / Photo-lock / Next in ordine θ, riproiezione live navigando), **`:faces`**
+  (la acquire posa la turtle su una faccia → il ricalco è l'`edit-path-2d`
+  NORMALE dell'utente sopra la posa, non un modale annidato). Handover
+  `dev-docs/HANDOVER-p4b-stage-toolbar.md` / `HANDOVER-p4b-frustum-phaseB.md`.
+- **Piatto di registrazione a marker** (promosso dopo il gate di *precisione*:
+  i raccordi ~1.7 mm del lettore SD ≈ 33 px, "l'angolo" non esiste come punto →
+  il piatto dà landmark netti sub-pixel). `examples/param-acq-plate.clj` +
+  binding built-in **`(registration-plate)`** (⌀130 + corona 12 dischetti +
+  zero-indice, unica fonte geometria+mark). Registrazione: **A** (4 click →
+  propose + blob-snap), **B** identità-free (`b`+`r`, ricerca esaustiva +
+  zero-indice), **anello `f`** (registra alcune, propaga le altre), **C ZERO-click**
+  (`a`/"Auto": detector globale dei dischetti + **fit dell'ellisse della corona**
+  che ne seleziona i 12 + PnP; ~170× più veloce della vecchia ricerca a quartetti;
+  fail-safe → le radenti restano per `f`/`p`). Live-gated: piatto di carta **8/10
+  in ~4 s**. Handover `HANDOVER-edit-acquire-fetta-{B,C}-live-gate.md`.
+- **Residui piccoli (non bloccanti)**: togliere il modo modale `:retrace` (tasto
+  `d`), ora che il ricalco si fa con `edit-path-2d` normale sopra la posa (pulizia
+  architetturale); la domanda UX di FASE B (i frustum come navigazione principale
+  o la pellicola); ri-collaudare param-plate-one con focale 48 (dato di sessione
+  sbagliato — 22 mm — non codice); rifiniture di precisione P2 (priori θ nel fit).
+- **Mark-piano — GATE PASSATO** (2026-07-31; brief
+  `dev-docs/brief-plane-marks.md`, gradino 1). Col proxy piatto il ricalco non
+  aveva piani di lavoro sull'oggetto: ora se ne crea uno a mano dal
+  palcoscenico. Bottone **"Piano"**: clicca lo stesso punto su ≥2 foto
+  registrate (triangolazione ai minimi quadrati), ripeti per ≥3 punti, il piano
+  fittato diventa un **mark ordinario** `{:position :heading(=normale) :up}` che
+  finisce nello slot `:marks` della `(acquire …)` già emessa — quindi
+  `(turtle (:piano-1 (:marks A)) (edit-path-2d …))` funziona senza DSL nuovo.
+  Decisione architetturale del brief risolta in **(A) palcoscenico**: il
+  write-back nel sorgente è piccolo (`ridley.editor.source-edit`, puro e
+  testato) e in cambio rinomina/cancella del mark diventano gratis (si edita il
+  sorgente). Il caso 1-click "piano parallelo al piatto" è supportato. Nuovo
+  `ridley.photogrammetry.triangulate`; `pnp/plane-frame` resa pubblica.
+  Dopo il gate: **HUD sul viewport** con i tre passi della procedura e ogni
+  azione come bottone abilitato/disabilitato (lo stato si legge invece di
+  ricordarlo), e **qualità di registrazione per foto** — già salvata in
+  `acquire-state.json` e mai letta — esposta col ⚠ sul bottone Foto, che vale
+  per tutto ciò che si riproietta, non solo per il piano.
+  Handover `dev-docs/HANDOVER-plane-marks.md`. Gradini 2 (click assistito) e 3
+  (omografia) fuori perimetro per scelta.
+- **Coda post-v1** (dichiarata, non iniziata): proxy oltre box/piatto
+  (rounded-prism / fillet); sorgenti foto live (webcam / companion app).
+- **Design/storia**: `dev-docs/acquisizione-parametrica-design.md`; handover in
+  `dev-docs/HANDOVER-edit-acquire-*.md` — leggere solo per il *perché* di una scelta.
 
 **Fronti chiusi di recente** (2026-07): famiglia mesh-split/mesh-board —
 spec ad albero, `split-tree`, viste di confronto, heal-slivers (brief

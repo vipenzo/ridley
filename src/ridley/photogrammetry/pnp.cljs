@@ -136,14 +136,18 @@
           [[0.0 0.0 0.0] [0.0 0.0 0.0] [0.0 0.0 0.0]]
           centered))
 
-(defn- plane-frame
+(defn plane-frame
   "Orthonormal frame {:o :u :v :n} of the best-fit plane through `pts`: o the
    centroid; n the plane normal — recovered WITHOUT an eigenvector routine from
    the covariance's rank-2 structure (for coplanar points the covariance's
    columns span the plane, so the cross product of the two most-independent
    columns is the normal); u,v an in-plane right-handed basis with n = u×v (so
    the object→plane basis [u v n] is a proper rotation, det +1, for either sign
-   of n). Returns nil when the points are collinear/degenerate (no plane)."
+   of n). Returns nil when the points are collinear/degenerate (no plane).
+
+   Public because the PLANE MARK gesture fits its surface with exactly this
+   (ridley.photogrammetry.triangulate/fit-plane-mark) — same fit, different
+   consumer: there the normal becomes a mark's heading instead of a pose seed."
   [pts]
   (let [o (centroid pts)
         centered (mapv #(la/v-sub % o) pts)

@@ -2510,7 +2510,7 @@
     :category "turtle-movement"
     :status "stable"
     :since ""
-    :signature "(turtle & body)\n(turtle :reset & body)\n(turtle :preserve-up & body)\n(turtle [x y z] & body)\n(turtle pose-map & body)"
+    :signature "(turtle & body)\n(turtle :reset & body)\n(turtle :preserve-up & body)\n(turtle [x y z] & body)\n(turtle pose-map & body)\n(turtle :pose pose-expr & body)"
     :description "Macro. Open an **isolated turtle scope**. The child turtle inherits the parent's full state (position, heading, up, pen, resolution, joint mode, material, …) but operates on its own copy. Movements and rotations inside the scope **do not affect the outer turtle**."
     :path "docs/manual/reference/en/turtle.md"}
 

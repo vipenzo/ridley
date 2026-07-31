@@ -23,6 +23,7 @@
   (:require [sci.core :as sci]
             [ridley.editor.state :as state]
             [ridley.editor.codemirror :as cm]
+            [ridley.editor.source-edit :as source-edit]
             [ridley.scene.registry :as registry]))
 
 ;; ============================================================
@@ -182,17 +183,7 @@
   [text from to replacement]
   (str (.substring text 0 from) replacement (.substring text to)))
 
-(defn- skip-string
-  "Given text and the index of an opening quote, return the index after the
-   closing quote, or -1 if unterminated."
-  [text start]
-  (let [len (count text)]
-    (loop [j (inc start)]
-      (cond
-        (>= j len) -1
-        (= (.charAt text j) "\\") (recur (+ j 2))
-        (= (.charAt text j) "\"") (inc j)
-        :else (recur (inc j))))))
+(def ^:private skip-string source-edit/skip-string)
 
 (defn- find-matching-paren
   "Given text and the index of an opening paren, return the index one past the
@@ -214,6 +205,12 @@
             ";" (let [nl (.indexOf text "\n" i)]
                   (if (neg? nl) -1 (recur (inc nl) depth)))
             (recur (inc i) depth)))))))
+
+;; Compact source-number rendering lives in source-edit (pure, node-testable),
+;; shared with the acquire STAGE — which appends plane marks to the same emitted
+;; form later and must format them identically.
+(def fmt-number source-edit/fmt-number)
+(def fmt-vec3 source-edit/fmt-vec3)
 
 (defn strip-head
   "Replace the literal head token at the very start of text[from,to) — the

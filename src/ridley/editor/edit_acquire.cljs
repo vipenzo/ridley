@@ -3787,13 +3787,11 @@
 ;; Source write-back (P4a-1): the edit-acquire ↔ acquire round-trip
 ;; ------------------------------------------------------------
 
-(defn- fmt-n
-  "Round to 4 decimals, drop trailing zeros, integers as ints — compact source."
-  [x]
-  (let [r (/ (js/Math.round (* (double x) 10000)) 10000)]
-    (if (= r (js/Math.floor r)) (str (long r)) (str r))))
-
-(defn- fmt-vec [[a b c]] (str "[" (fmt-n a) " " (fmt-n b) " " (fmt-n c) "]"))
+;; Compact source-number rendering now lives in modal-evaluator, shared with the
+;; acquire STAGE — which appends plane marks to this same emitted form later and
+;; must format them identically (dev-docs/brief-plane-marks.md).
+(def ^:private fmt-n modal/fmt-number)
+(def ^:private fmt-vec modal/fmt-vec3)
 
 (defn- find-marker []
   (modal/find-form-bounds (cm/get-value) marker-prefix))

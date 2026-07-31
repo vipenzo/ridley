@@ -3244,3 +3244,79 @@ body.resizing-h * {
 }
 
 .manual-draft-error { color: #f48771; }
+
+/* ------------------------------------------------------------------
+   Plane-mark HUD (acquire stage) — dev-docs/brief-plane-marks.md.
+   A persistent panel over the viewport while the "Piano" gesture is on.
+   Vincenzo 2026-07-31, after the first live use: the gesture worked but
+   "gli stati da far avanzare a keyword è un po' ostica" — the state lived
+   in a cramped toolbar label and in console messages that scroll away.
+   So: the procedure's steps are drawn, the current one is highlighted, and
+   every action is a BUTTON whose disabled state shows what is possible now
+   (the keys still work for whoever prefers them).
+   ------------------------------------------------------------------ */
+
+#eaq-plane-hud {
+  position: absolute;
+  top: 52px;
+  left: 12px;
+  width: 300px;
+  background: rgba(30, 30, 30, 0.94);
+  border: 1px solid #3c3c3c;
+  border-left: 3px solid #33ffcc;
+  border-radius: 4px;
+  color: #ccc;
+  font-family: "SF Mono", "Monaco", "Menlo", "Consolas", monospace;
+  font-size: 12px;
+  z-index: 120;
+  padding: 10px 12px;
+  user-select: none;
+}
+
+.eaq-hud-title {
+  color: #33ffcc;
+  font-weight: bold;
+  margin-bottom: 8px;
+  letter-spacing: 0.4px;
+}
+
+/* the three steps of the procedure, always all visible so the shape of the
+   task is legible before you are in the middle of it */
+.eaq-hud-step {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 2px 0;
+  color: #777;
+}
+.eaq-hud-step.current { color: #eee; }
+.eaq-hud-step.done { color: #6a9955; }
+.eaq-hud-bullet { width: 1.1em; flex: none; text-align: center; }
+
+.eaq-hud-detail {
+  margin: 7px 0 9px 0;
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, 0.32);
+  border-radius: 3px;
+  line-height: 1.5;
+  white-space: normal;
+}
+.eaq-hud-hint { color: #9cdcfe; }
+.eaq-hud-warn { color: #f4b183; }
+.eaq-hud-bad { color: #f48771; }
+.eaq-hud-good { color: #6a9955; }
+
+/* one row per photo already clicked for the current point */
+.eaq-hud-shots { margin-top: 4px; color: #aaa; }
+.eaq-hud-shot { display: flex; justify-content: space-between; gap: 8px; }
+
+.eaq-hud-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.eaq-hud-actions .action-btn { font-size: 11px; padding: 3px 8px; }
+.eaq-hud-actions .action-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.eaq-hud-actions .action-btn.primary {
+  border-color: #33ffcc;
+  color: #33ffcc;
+}

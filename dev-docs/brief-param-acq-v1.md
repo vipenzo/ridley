@@ -94,6 +94,24 @@ free-look, il costo grosso dell'accertamento 6) prima di costruire il resto.
 
 ## Parti
 
+> **STATO ATTUALE 2026-07-30 (leggi questo per primo; le note sotto sono la
+> cronologia)**: **v1 sostanzialmente CONSEGNATO.** P0–P4a ✅. **P4b ✅** —
+> palcoscenico eval-driven (frustum cliccabili → camera in posa + foto + proxy
+> allineato, raddrizzamento, toolbar Prev/Photo-lock/Next in θ con riproiezione
+> live, `:faces` posa la turtle su una faccia → ricalco con `edit-path-2d`
+> NORMALE dell'utente, non un modale annidato). **Piatto di registrazione a
+> marker** (promosso dopo il gate di precisione): `(registration-plate)` built-in
+> + fette **A** (4 click), **B** identità-free, **anello `f`**, **C ZERO-click**
+> (`a`/"Auto": detector globale + fit dell'ellisse della corona + PnP, ~170× più
+> veloce; live-gated piatto di carta 8/10 in ~4 s). TUTTO committato sul branch
+> `edit-acquire-registration-stability`. **Residui piccoli, non bloccanti**:
+> togliere il modo modale `:retrace` (tasto `d`) ora sostituito dall'`edit-path-2d`
+> normale sopra la posa; domanda UX fase-B (frustum vs pellicola); param-plate-one
+> da ri-collaudare con focale 48 (dato di sessione sbagliato, non codice); priori
+> θ nel fit congiunto (P2). **Coda post-v1**: proxy rounded-prism/fillet; sorgenti
+> foto live. Handover: `HANDOVER-edit-acquire-fetta-{B,C}-live-gate.md`,
+> `HANDOVER-p4b-*.md`.
+
 > **Stato 2026-07-25**: P0 ✅ · Gate ✅ (poi scavalcato dal PnP) · P1 ✅ ·
 > **P2 ✅ nella sostanza** (registrazione per corrispondenze PnP collaudata
 > da Vincenzo: "abbastanza usabile, proxy allineato facilmente alle sei
