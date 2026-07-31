@@ -234,3 +234,68 @@ i punti da cui è nata, `:from [[x y z] …]`. `turtle` ignora la chiave in più
 l'origine con un click e aggiungere un punto al piano, confermare; verificare
 che il sorgente contenga il letterale aggiornato (con `:from`) e che fuori dal
 blocco resti byte-identico.
+
+> **ESITO (2026-07-31)**: FATTO e committato (`1013161`), 804 test verdi.
+> Nome scelto: **`edit-plane-mark`** (accertamento 1: `edit-mark` avrebbe
+> promesso di editare la `(mark :id)` dei path; e il cancel qui scarta
+> l'involucro, non rinomina una testa — deviazione accettata). Meccanica:
+> nessun meccanismo nuovo, la forma è una chiamata SCI che annota la richiesta
+> e restituisce il letterale, poi `after-eval!`. Bug preso al collaudo:
+> l'origine piazzata non sopravviveva al refit (viveva nel candidato);
+> ora vive fuori e viene riproiettata sul piano nuovo — era la seconda nota
+> di design qui sopra. Minor aperto: il cancel della forma VUOTA lascia
+> `nil` nel sorgente da cancellare a mano (pulizia possibile: rimuovere
+> l'intera entry chiave+valore).
+
+**Rifinitura concordata DOPO l'esito (Vincenzo, 2026-07-31): la forma di
+riposo `(plane-mark …)` — DA IMPLEMENTARE.** Supera la "deviazione accettata"
+dell'esito: il confirm di `edit-plane-mark` non lascia più il letterale nudo
+ma `(plane-mark {…})`, e il cancel idem: così la coppia
+`edit-plane-mark ⇄ plane-mark` recupera ESATTAMENTE la grammatica della
+famiglia (rieditare = anteporre `edit-` e Run, niente più avvolgere a mano
+una mappa multilinea). Ergonomia + leggibilità: la mappa nel sorgente smette
+di essere un letterale anonimo e dichiara cosa è. Specifiche:
+
+- `plane-mark` è un costruttore PURO e gentile, non un puro alias di identity:
+  valida il poco che c'è (chiavi attese, heading⊥up entro tolleranza,
+  segnalazione non-bloccante se no) e restituisce la mappa intatta. `:from`
+  passa attraverso.
+- Il letterale nudo resta valido ovunque (compat: i mark già emessi non si
+  toccano); ma il confirm emette SEMPRE `(plane-mark …)`, anche quando l'edit
+  era partito da un letterale nudo — il sorgente converge su un dialetto solo.
+- Reference: `plane-mark` si merita la sua scheda (e la coppia va citata in
+  cap. 19 §19.6 quando si documenta il rieditare).
+
+## Seguito 2 (2026-07-31): il re-confirm perde i mark — cura proposta
+
+Il residuo è diventato pungente al primo uso vero (Vincenzo: "è abbastanza
+seccante che rifare la edit-acquire cancelli i marks"). Domanda posta: `:marks`
+deve stare dentro la form, o può essere una cosa a sé legata alla acquire per
+id o per path di sessione?
+
+**Analisi (Claude-docs + Vincenzo)**:
+
+- **Split** (form separata, legata per dir/id): risolve per partizione ma paga
+  tre prezzi — rompe la decisione v1 "forma emessa autocontenuta, una sola
+  form"; il legame per stringa/id è fragile (cartella rinominata → mark
+  orfani); i mark sono misure NEL frame di quell'acquisizione (una
+  ri-registrazione che cambia la posa li riguarda comunque): separarli nel
+  sorgente slega cose geometricamente legate.
+- **Persistere i mark in `acquire-state.json`**: bocciata — viola la
+  demarcazione (i mark sono programma, non impalcatura) e crea doppia verità
+  da riconciliare.
+- **Confirm CHIRURGICO (raccomandata)**: il difetto non è dove vivono i mark,
+  è che due writer reclamano la stessa form intera. La demarcazione già
+  assegna la proprietà: la registrazione possiede `:proxy` e `:pose`; il
+  palcoscenico possiede `:marks` e `:shapes`. Il confirm di edit-acquire deve
+  aggiornare SOLO le sue chiavi e restare byte-identico fuori — la stessa
+  disciplina che `source-edit` già impone al palcoscenico nell'altra
+  direzione (`map-value-bounds` esiste per questo). Nessun cambio di forma,
+  nessun id, il round-trip resta uno.
+
+**Edge**: prima emissione (form assente) → emissione piena come oggi;
+`:marks`/`:shapes` assenti nel sorgente → si aggiungono vuote; form ritoccata
+a mano → `find-form-bounds` + `map-value-bounds` la delimitano comunque.
+
+**Gate**: sessione con mark-piano → riapri `edit-acquire` → riconferma →
+`:marks` e `:shapes` byte-identici, `:proxy`/`:pose` aggiornati.

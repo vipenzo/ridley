@@ -100,6 +100,68 @@
     (let [body (subs text (+ from (count head)) (dec to))]
       (.trim body))))
 
+(defn- skip-blanks
+  "Index of the next meaningful character from `i`, stepping over whitespace,
+   commas and line comments."
+  [text i]
+  (let [len (count text)]
+    (loop [j i]
+      (cond
+        (>= j len) j
+        (re-find #"[\s,]" (.charAt text j)) (recur (inc j))
+        (= ";" (.charAt text j)) (let [nl (.indexOf text "\n" j)]
+                                   (if (neg? nl) len (recur (inc nl))))
+        :else j))))
+
+(defn map-entries
+  "The TOP-LEVEL entries of a `{…}` block, as [{:key \":id\" :text \":id value\"} …]
+   with each :text the source's own bytes for that entry.
+
+   Needed to merge two writers into one map without either trampling the other:
+   edit-acquire's confirm regenerates the entries IT owns and must leave every
+   other one exactly as written — a plane mark the stage put there, or anything
+   the user hand-edited. A regex cannot do this (a `(poly …)` value contains
+   `:mark {…}` of its own), so the values are skipped with the bracket matcher.
+   Returns nil if `block` is not a brace-delimited map."
+  [block]
+  (when (and (seq block) (= "{" (.charAt block 0)))
+    (let [end (dec (count block))]
+      (loop [i (skip-blanks block 1) out []]
+        (if (>= i end)
+          out
+          (let [k-end (or (some (fn [j] (when (re-find #"[\s,{}\[\]()]" (.charAt block j)) j))
+                                (range i end))
+                          end)
+                v-start (skip-blanks block k-end)
+                v-end (cond
+                        (>= v-start end) end
+                        (closer-of (.charAt block v-start))
+                        (find-matching-bracket block v-start)
+                        (= "\"" (.charAt block v-start)) (skip-string block v-start)
+                        :else (or (some (fn [j] (when (re-find #"[\s,{}\[\]()]" (.charAt block j)) j))
+                                        (range v-start end))
+                                  end))]
+            (if (or (neg? v-end) (<= v-end i))
+              out       ; malformed: stop rather than guess
+              (recur (skip-blanks block v-end)
+                     (conj out {:key (subs block i k-end)
+                                :text (.trim (subs block i v-end))})))))))))
+
+(defn entry-bounds-before
+  "Given the index where a map ENTRY'S VALUE starts, return [key-start
+   value-start] — key-start being the beginning of the `:key` token that
+   introduces it, including the whitespace and newline in front of it. Removing
+   [key-start, value-end) therefore removes the whole entry and the blank line it
+   would otherwise leave behind. Returns [nil value-start] when no key precedes.
+
+   Used to withdraw an abandoned `:piano-4 (edit-plane-mark)` entirely, rather
+   than leaving a `nil` value for the user to sweep up."
+  [text value-start]
+  (let [before (subs text 0 value-start)]
+    (if-let [m (re-find #"(\s*):([A-Za-z0-9*+!_'?<>=/.-]+)\s*$" before)]
+      [(- value-start (count (first m))) value-start]
+      [nil value-start])))
+
 (defn append-map-entry
   "The `{…}` block text with `entry` added, laid out the way the emitted forms
    already are: entries one per line, aligned under the first, which sits right

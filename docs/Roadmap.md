@@ -71,6 +71,12 @@ utente).
   ricordarlo), e **qualità di registrazione per foto** — già salvata in
   `acquire-state.json` e mai letta — esposta col ⚠ sul bottone Foto, che vale
   per tutto ciò che si riproietta, non solo per il piano.
+  Rieditabile: **`(plane-mark …)` ⇄ `(edit-plane-mark …)`** — un mark porta i
+  punti da cui è nato (`:from`) e si riapre con la grammatica della famiglia
+  (anteponi `edit-` alla testa e Run). E il confirm di edit-acquire non cancella
+  più i mark del palcoscenico: fonde `:shapes`/`:marks` **per chiave** invece di
+  rigenerarli in blocco, così ognuno dei due writer rigenera solo ciò che
+  possiede e lascia il resto byte-identico.
   Handover `dev-docs/HANDOVER-plane-marks.md`. Gradini 2 (click assistito) e 3
   (omografia) fuori perimetro per scelta.
 - **Coda post-v1** (dichiarata, non iniziata): proxy oltre box/piatto

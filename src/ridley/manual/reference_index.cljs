@@ -513,7 +513,7 @@
     :status "stable"
     :since ""
     :signature "(edit-plane-mark pose-map)\n(edit-plane-mark)"
-    :description "Re-open a **plane mark** of an evaluated `(acquire …)` on the acquisition stage. Unlike the other `edit-*` forms it is not a top-level marker: it wraps a value **inside** the acquire's `:marks` map."
+    :description "Re-open a **plane mark** of an evaluated `(acquire …)` on the acquisition stage. Unlike the other `edit-*` forms it is not a top-level marker: it lives **inside** the acquire's `:marks` map — but the gesture is the family's usual one, because a mark's resting form is `(plane-mark …)`: put `edit-` in front of the head and Run."
     :path "docs/manual/reference/en/edit-plane-mark.md"}
 
    "embroid"
@@ -1415,6 +1415,15 @@
     :signature "(pin-path path)"
     :description "Resolve a path's marks at the **current turtle pose** and return the resulting `{anchor-name → {:position [x y z] :heading [x y z] :up [x y z]}}` map."
     :path "docs/manual/reference/en/pin-path.md"}
+
+   "plane-mark"
+   {:name "plane-mark"
+    :category "acquisition"
+    :status "stable"
+    :since ""
+    :signature "(plane-mark pose-map)"
+    :description "A **plane mark** of an acquisition: a named working plane on the photographed object, expressed as an ordinary Ridley pose whose `:heading` is the surface normal. It is what the acquisition stage's *Piano* gesture writes into the `:marks` of an emitted `(acquire …)`."
+    :path "docs/manual/reference/en/plane-mark.md"}
 
    "play!"
    {:name "play!"

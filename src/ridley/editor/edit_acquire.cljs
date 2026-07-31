@@ -40,6 +40,7 @@
             [cljs.reader :as reader]
             [ridley.editor.modal-evaluator :as modal]
             [ridley.editor.codemirror :as cm]
+            [ridley.editor.source-edit :as src]
             [ridley.editor.gizmo :as gizmo]
             [ridley.editor.acquire-backdrop :as backdrop]
             [ridley.editor.acquire-stage :as stage]
@@ -3727,6 +3728,49 @@
             (map (fn [[nm [axis sign]]] [nm (box-axis-face-pose proxy pose axis sign)])
                  box-face-specs)))))
 
+(def ^:private plane-mark-perp-tol
+  "Allowed |heading·up| before a plane mark is called out as not perpendicular.
+   0.01 is ~0.6°: far above the 1e-5 the fitter produces and far below anything
+   a hand-edit would leave by accident."
+  0.01)
+
+(defn ^:export plane-mark
+  "A PLANE MARK of an acquisition: `{:position … :heading(=surface normal) … :up …}`,
+   optionally with `:from [[x y z] …]`, the triangulated points it was fitted
+   through. Returns the map UNCHANGED — it is the resting form of the pair
+   `edit-plane-mark ⇄ plane-mark`, so that re-opening one is the family's own
+   gesture (put `edit-` in front of the head and Run) instead of wrapping a
+   multi-line map by hand.
+
+   Gentle, not silent: it checks the little there is to check — the expected
+   keys, and heading ⊥ up — and REPORTS what looks wrong without touching the
+   data or refusing it. A mark that has drifted out of square is still the
+   user's mark; fixing it quietly would hide a real problem (a hand-edited
+   heading, a mark copied between objects), and refusing it would break a source
+   that otherwise renders.
+
+   A bare `{…}` literal remains valid wherever a mark is accepted — marks
+   emitted before this form exists keep working, they simply do not announce
+   what they are."
+  [m]
+  (when (map? m)
+    (let [missing (remove #(contains? m %) [:position :heading :up])
+          d (when (and (:heading m) (:up m))
+              (Math/abs (m/dot (m/normalize (:heading m)) (m/normalize (:up m)))))]
+      (when (seq missing)
+        (state/capture-println
+         (str ";; plane-mark: mancano " (str/join ", " missing)
+              " — un mark ha bisogno di posizione, normale e up")))
+      (when (and d (> d plane-mark-perp-tol))
+        ;; d = |cos θ| between heading and up, so the deviation from square is
+        ;; 90° − θ; reported in degrees because that is what a person can judge.
+        (let [dev (- 90.0 (* (/ 180.0 Math/PI) (Math/acos (min 1.0 d))))]
+          (state/capture-println
+           (str ";; plane-mark: heading e up fuori squadra di "
+                (modal/fmt-number dev)
+                "° — la turtle userà comunque questa coppia"))))))
+  m)
+
 (defn ^:export acquire
   "(acquire \"dir\") / (acquire \"dir\" {:proxy (box …) :pose {…} :shapes {} :marks {}})
    — the self-contained acquisizione-parametrica form (P4a). Mounts the posed
@@ -3837,6 +3881,38 @@
     (let [align (str key-indent (apply str (repeat (+ (count owner) 2) " ")))]
       (str "{" (str/join (str "\n" align) entries) "}"))))
 
+(defn- preserved-entries
+  "The entries of the marker's own `:kw {…}` block, as they are written NOW.
+
+   On a re-open the marker still holds everything the previous `(acquire …)`
+   carried — the user only renamed its head — so its text is where the entries
+   this session knows nothing about live: a plane mark the STAGE wrote there, or
+   anything hand-edited. Reading them back is what stops a re-confirm from
+   deleting them (Vincenzo 2026-07-31: 'è abbastanza seccante che rifare la
+   edit-acquire cancelli i marks'). nil on a first emission, when there is no
+   block yet."
+  [kw]
+  (when-let [[from to] (find-marker)]
+    (let [text (cm/get-value)]
+      (when-let [[o e _] (src/map-value-bounds text from to kw)]
+        (src/map-entries (.substring text o e))))))
+
+(defn- merge-entries
+  "The session's entries laid over whatever the source already had, matched by
+   key: an entry this session owns is regenerated, every other one is kept with
+   its own bytes, and the source's order is preserved so a confirm does not
+   shuffle the map around.
+
+   This is the demarcation made operational — registration owns :proxy and
+   :pose, the stage owns what it wrote — without splitting the emitted form in
+   two, which would have broken the v1 decision that it be self-contained."
+  [existing session-entries]
+  (let [key-of (fn [s] (second (re-find #"^(:[^\s]+)" s)))
+        by-key (into {} (map (juxt key-of identity)) session-entries)
+        kept (mapv (fn [{:keys [key text]}] (get by-key key text)) existing)
+        seen (set (map :key existing))]
+    (into kept (remove #(contains? seen (key-of %))) session-entries)))
+
 (defn- marker-proxy-expr
   "The SOURCE text of the :proxy value in the (edit-acquire …) marker, read back
    from the buffer — e.g. \"piatto-carta\" or \"(box 20 40 60)\". Lets the emitted
@@ -3879,8 +3955,15 @@
          i3 ":pose {:position " (fmt-vec (:position anchor-pose))
          " :heading " (fmt-vec (:heading anchor-pose))
          " :up " (fmt-vec (:up anchor-pose)) "}\n"
-         i3 ":shapes " (fmt-map-block ":shapes" (shapes-entries anchor-pose) i3) "\n"
-         i3 ":marks " (fmt-map-block ":marks" (marks-entries anchor-pose) i3) "})")))
+         ;; :shapes/:marks are MERGED with what the marker already holds rather
+         ;; than regenerated wholesale: this session owns the ricalchi and the
+         ;; 'k' marks it can see, and nothing else in those maps is its business.
+         i3 ":shapes " (fmt-map-block ":shapes"
+                                      (merge-entries (preserved-entries ":shapes")
+                                                     (shapes-entries anchor-pose)) i3) "\n"
+         i3 ":marks " (fmt-map-block ":marks"
+                                     (merge-entries (preserved-entries ":marks")
+                                                    (marks-entries anchor-pose)) i3) "})")))
 
 (defn- confirm!
   "OK: write the aligned proxy+pose back to source as (acquire \"dir\" {…}),

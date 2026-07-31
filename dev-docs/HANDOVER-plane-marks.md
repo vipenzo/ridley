@@ -1,7 +1,8 @@
 # Handover — mark-piano (brief-plane-marks.md, gradino 1)
 
 Stato al 2026-07-31. **Gate umano PASSATO** (Vincenzo: "ho provato e funziona").
-Non committato.
+Committato: `0055534` (mark-piano + UI), `1013161` (`edit-plane-mark`), e il
+giro seguente (forma di riposo + confirm chirurgico).
 
 Brief di riferimento: `dev-docs/brief-plane-marks.md`.
 
@@ -23,7 +24,17 @@ sopra. Soglia `poor-registration-px` = 8 px, che cade nel vuoto largo fra i due
 regimi osservati.
 
 **(b) "La UI con questo workflow e gli stati da far avanzare a keyword è un po'
-ostica."**  — vedi sotto, la HUD.
+ostica."** Vero: lo stato viveva in una scritta stretta sul bottone e in messaggi
+di console che scorrono via, e ogni passo andava avanti con un tasto da
+ricordare. Ora c'è una **HUD sul viewport** (`#eaq-plane-hud`): i tre passi della
+procedura sempre tutti visibili col corrente evidenziato, il dettaglio di cosa
+fare *adesso* coi numeri (scarto px, parallasse, planarità), l'elenco delle foto
+già cliccate per il punto corrente, e **ogni azione è un bottone il cui stato
+abilitato/disabilitato È la risposta a "cosa posso fare ora"**. I tasti
+continuano a funzionare per chi li preferisce. La HUD si ricostruisce per intero
+a ogni cambio di stato (è funzione pura dello stato, non può sfasarsi) ed è
+agganciata a `update-toolbar!`, chiamata a ogni cambio di posa — così la riga
+"foto N — reg. …" resta onesta mentre navighi.
 
 ## Il secondo giro (2026-07-31): "il mark è da tutt'altra parte"
 
@@ -65,17 +76,7 @@ esattamente sul pixel cliccato, quindi sulla foto da cui hai cliccato il pallino
 cade sotto il cursore (verificato: riproietta a `[2000 1500]` per un click a
 `[2000 1500]`), mentre sulle altre scivola lungo la retta epipolare — che è il
 ritratto onesto di ciò che si sa finora: direzione sì, profondità non ancora.
-Diventa verde quando il punto è triangolato. Vero: lo stato viveva in una scritta stretta sul bottone e in
-messaggi di console che scorrono via, e ogni passo andava avanti con un tasto da
-ricordare. Ora c'è una **HUD sul viewport** (`#eaq-plane-hud`): i tre passi
-della procedura sempre tutti visibili col corrente evidenziato, il dettaglio di
-cosa fare *adesso* coi numeri (scarto px, parallasse, planarità), l'elenco delle
-foto già cliccate per il punto corrente, e **ogni azione è un bottone il cui
-stato abilitato/disabilitato È la risposta a "cosa posso fare ora"**. I tasti
-continuano a funzionare per chi li preferisce. La HUD si ricostruisce per intero
-a ogni cambio di stato (è funzione pura dello stato, non può sfasarsi) ed è
-agganciata a `update-toolbar!`, che è chiamata a ogni cambio di posa — così la
-riga "foto N — reg. …" resta onesta mentre navighi.
+Diventa verde quando il punto è triangolato.
 
 ## Gli accertamenti chiesti dal brief (risposte)
 
@@ -281,6 +282,50 @@ il browser ha servito per mezz'ora codice vecchio. Il compile-check non basta:
 (`grep public/js/cljs-runtime/<ns>.js`) prima di credere a un collaudo live. Il
 watcher era anche incastrato dai compile concorrenti (la nota di memoria era
 giusta): riavviato con `npx shadow-cljs stop` + `npm run dev`.
+
+## Il quinto giro (2026-07-31): forma di riposo + confirm chirurgico
+
+Due rifiniture chieste nel brief dopo l'esito.
+
+**`(plane-mark …)`, la forma di riposo.** Costruttore puro che restituisce la
+mappa intatta; valida chiavi attese e heading⊥up e SEGNALA senza toccare né
+rifiutare (un mark storto è comunque il mark dell'utente: raddrizzarlo di
+nascosto nasconderebbe un problema vero, rifiutarlo romperebbe un sorgente che
+per il resto renderizza). Sta accanto ad `acquire` in `edit_acquire.cljs`.
+
+Il guadagno non è cosmetico: **la deviazione dalla famiglia sparisce**. Con
+`(plane-mark {…})` come forma di riposo, rieditare è "anteponi `edit-` alla
+testa e Run" come ovunque, e il cancel torna a essere `modal/strip-head` —
+la stessa funzione che usano tutti gli altri editor. Il codice si è
+SEMPLIFICATO: `unwrap-edit-mark!` non ha più bisogno di ricostruire il
+letterale. Il caso della forma vuota (dove `(plane-mark)` sarebbe un errore di
+arità) rimuove l'intera voce chiave+valore — che chiude anche il minor aperto
+nell'esito precedente.
+
+**Confirm chirurgico (Seguito 2).** `emit-acquire-code` non rigenera più
+`:shapes`/`:marks` in blocco: li FONDE per chiave con quelli che il marcatore
+già porta (`preserved-entries` + `merge-entries`, su `src/map-entries`).
+
+Un punto che il brief non prevedeva e che va sottolineato: **oggi anche
+edit-acquire possiede `:marks`** — i mark del tasto `k`, persistiti in
+`acquire-state.json` e ricaricati alla riapertura — e `:shapes` dai ricalchi.
+Preservare il blocco *in blocco*, come la demarcazione suggerirebbe alla
+lettera, avrebbe quindi cancellato i suoi. La fusione per chiave è la lettura
+corretta della stessa demarcazione: ognuno rigenera le voci che possiede e
+lascia intatte, byte per byte, tutte le altre. Verificato dal vivo: `:mark-1`
+(della sessione) rigenerato, `:piano-1` conservato col suo `(plane-mark …)` e
+il suo `:from`.
+
+Collaudato live: identità di `plane-mark`; avvisi corretti (45° fuori squadra
+riportato come 45°, chiave mancante nominata) nel buffer di stampa; cancel →
+`(plane-mark {…})` col corpo identico e la coda del file intatta; cancel della
+forma vuota → voce rimossa, nessun `nil`; accetta → `(plane-mark {…})` con
+`:from`. 806 test verdi.
+
+**Non collaudato da me**: il gate del Seguito 2 vero e proprio — riaprire
+`edit-acquire` su una sessione con mark-piano e riconfermare — richiede una
+sessione modale con foto vere. Ho verificato il meccanismo (fusione per chiave
+su un marcatore reale nel buffer), non il giro completo.
 
 ## Quello che resta aperto
 

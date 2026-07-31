@@ -112,6 +112,42 @@
   (testing "a range that does not start with the head is refused"
     (is (nil? (src/form-inner "(something-else 1)" 0 18 "(edit-plane-mark")))))
 
+(deftest map-entries-splits-a-block-without-a-regex
+  ;; Two writers share the acquire's :marks/:shapes — edit-acquire's confirm and
+  ;; the stage. Merging them by key is what stops a re-confirm from deleting
+  ;; whatever the other one wrote, and that needs the block split into entries
+  ;; whose VALUES may themselves contain keys.
+  (testing "a value containing its own keys is skipped whole"
+    (let [block (str "{:bordo {:shape (poly [1 2 3] [4 5 6])\n"
+                     "         :mark {:position [1 1 1] :heading [0 0 1]}}\n"
+                     " :foro {:shape (poly [7 8 9])}}")
+          es (src/map-entries block)]
+      (is (= [":bordo" ":foro"] (mapv :key es))
+          "the nested :shape/:mark keys are values, not entries")
+      (is (re-find #":mark \{:position" (:text (first es)))
+          "and the entry's own bytes come back whole")))
+  (testing "entries of every value shape"
+    (is (= [":a" ":b" ":c" ":d"]
+           (mapv :key (src/map-entries "{:a 1 :b [1 2] :c (f 3) :d \"s}\"}")))))
+  (testing "an empty block has no entries, a non-map is refused"
+    (is (= [] (src/map-entries "{}")))
+    (is (nil? (src/map-entries "(not-a-map)"))))
+  (testing "comments between entries are not mistaken for one"
+    (is (= [":a" ":b"] (mapv :key (src/map-entries "{:a 1 ; :fake 9\n :b 2}"))))))
+
+(deftest withdrawing-a-whole-entry
+  ;; Cancelling an abandoned `:piano-4 (edit-plane-mark)` should take the key
+  ;; with it, not leave a dangling value behind.
+  (let [text "(acquire \"d\" {:marks {:piano-1 {:a 1}\n                       :piano-4 (edit-plane-mark)}})"
+        v (.indexOf text "(edit-plane-mark)")
+        [k-from _] (src/entry-bounds-before text v)]
+    (is (some? k-from))
+    (is (= "(acquire \"d\" {:marks {:piano-1 {:a 1}}})"
+           (str (subs text 0 k-from) (subs text (+ v (count "(edit-plane-mark)")))))
+        "key, value and the newline that introduced them all go"))
+  (testing "no key in front → nothing to widen to"
+    (is (nil? (first (src/entry-bounds-before "(f 1)" 0))))))
+
 (deftest compact-numbers
   (is (= "3" (src/fmt-number 3.0)) "integers as ints")
   (is (= "-0.5" (src/fmt-number -0.5)))

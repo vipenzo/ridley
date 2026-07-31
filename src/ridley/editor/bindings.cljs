@@ -664,6 +664,12 @@
    ;; NOT named `edit-mark`: `(mark :A)` is the path-anchor command, a different
    ;; thing that name would promise to edit.
    'edit-plane-mark     acquire-stage/request-mark-edit!
+   ;; plane-mark: the RESTING form of that pair. A pure, gentle constructor —
+   ;; it validates the little there is (expected keys, heading ⊥ up), reports
+   ;; what looks off, and returns the map untouched. Its point is grammatical:
+   ;; with it, re-opening a mark is the family's own gesture (put `edit-` in
+   ;; front of the head and Run) instead of hand-wrapping a multi-line map.
+   'plane-mark          edit-acquire/plane-mark
    ;; edit-acquire (dev-docs/brief-param-acq-v1.md): now a MARKER in the edit-*
    ;; family. The `edit-acquire` macro dispatches a dir-string first arg here
    ;; (request!, opened from the definitions panel) and a proxy-mesh first arg to

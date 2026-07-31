@@ -1135,8 +1135,21 @@
          (str " :from [" (str/join " " (map src/fmt-vec3 points)) "]"))
        "}"))
 
+(defn- mark-form
+  "The RESTING form a plane mark is written as: `(plane-mark {…})`.
+
+   Not decoration. It restores the family grammar for the pair
+   `edit-plane-mark ⇄ plane-mark`: re-opening a mark becomes 'put edit- in front
+   of the head and Run', the same gesture as every other editor, instead of
+   wrapping a multi-line map by hand. And it makes the source say what the map
+   IS rather than leaving an anonymous literal. A bare literal stays valid
+   everywhere — old marks keep working — but everything emitted from here on is
+   the one dialect, including a mark whose edit started from a bare literal."
+  [mark points]
+  (str "(plane-mark " (mark-literal mark points) ")"))
+
 (defn- mark-entry-text [nm mark points]
-  (str ":" nm " " (mark-literal mark points)))
+  (str ":" nm " " (mark-form mark points)))
 
 (defn- commit-plane-mark!
   "Append `mark` to the evaluated `(acquire …)`'s :marks map and re-run the
@@ -1203,21 +1216,25 @@
   (modal/find-form-bounds text edit-mark-head))
 
 (defn- unwrap-edit-mark!
-  "Give up on an edit: take the wrapper out of the source, leaving the literal
-   exactly as it was. The cancel half of the family grammar — except there is no
-   `(mark …)` call to rename the head to, so the scaffolding is removed rather
-   than renamed. An EMPTY `(edit-plane-mark)` (the creation spelling) has no
-   literal to fall back to, so it leaves `nil`: inert, visible, and the user's to
-   delete."
+  "Give up on an edit. Now that a mark's resting form is `(plane-mark {…})` this
+   is the family's ordinary cancel — rename the head back, body byte-identical
+   (modal/strip-head) — and the deviation this editor used to carry is gone.
+
+   The EMPTY creation spelling has no body to keep, and `(plane-mark)` would be
+   an arity error, so its whole `:key (edit-plane-mark)` entry is removed
+   instead of leaving a `nil` behind for the user to sweep up."
   [_edit]
   (let [text (cm/get-value)]
     (when-let [[from to] (modal/find-form-bounds text edit-mark-head)]
-      (let [inner (src/form-inner text from to edit-mark-head)]
-        (modal/replace-source! from to (if (seq inner) inner "nil"))
-        (modal/run-definitions!)
-        (say! (if (seq inner)
-                "edit annullato — il mark è rimasto com'era"
-                "edit annullato — non c'era ancora un piano, resta nil da cancellare"))))))
+      (if (str/blank? (src/form-inner text from to edit-mark-head))
+        (let [[k-from _] (src/entry-bounds-before text from)]
+          (modal/replace-source! (or k-from from) to "")
+          (modal/run-definitions!)
+          (say! "creazione annullata — la voce è stata tolta dal sorgente"))
+        (do (modal/replace-source! from to
+                                   (modal/strip-head text from to edit-mark-head "(plane-mark"))
+            (modal/run-definitions!)
+            (say! "edit annullato — il mark è rimasto com'era"))))))
 
 (defn- mark-name-before
   "The `:name` key this wrapped value belongs to, read backwards from the form's
@@ -1315,7 +1332,7 @@
     (if edit
       ;; re-locate the form: the buffer may have moved since it was opened
       (if-let [[from to] (edit-mark-bounds (cm/get-value))]
-        (do (modal/replace-source! from to (mark-literal mark pts))
+        (do (modal/replace-source! from to (mark-form mark pts))
             (modal/run-definitions!)
             (done! (str "aggiornato :" (or (:name edit) "il mark")
                         " — " (count pts) " punti, planarità "
