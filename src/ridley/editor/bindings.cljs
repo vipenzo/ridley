@@ -32,6 +32,7 @@
             [ridley.editor.edit-mesh-split :as edit-mesh-split]
             [ridley.editor.edit-image-board :as edit-image-board]
             [ridley.editor.edit-acquire :as edit-acquire]
+            [ridley.editor.acquire-stage :as acquire-stage]
             [ridley.photogrammetry.plate :as plate]
             [ridley.editor.mesh-board :as mesh-board]
             [ridley.editor.impl :as macro-impl]
@@ -652,6 +653,17 @@
    ;; zero-index under :anchors), so `(edit-acquire dir {:proxy (registration-plate
    ;; :d 130)})` needs no file import and the emitted (acquire …) is self-contained.
    'registration-plate  plate/registration-plate
+   ;; edit-plane-mark (dev-docs/brief-plane-marks.md §Seguito): wrap a plane mark
+   ;; INSIDE the emitted (acquire …)'s :marks to re-open it on the stage —
+   ;;   :marks {:piano-1 (edit-plane-mark {…})}
+   ;; The edit-* grammar applied to an inner form: it returns the literal
+   ;; untouched (so the acquire stays valid while the editor is open) and notes
+   ;; the request for the post-eval hook; confirm leaves the updated literal,
+   ;; cancel unwraps back to the original. Empty — `(edit-plane-mark)` — it is
+   ;; the creation gesture with the destination already chosen in the source.
+   ;; NOT named `edit-mark`: `(mark :A)` is the path-anchor command, a different
+   ;; thing that name would promise to edit.
+   'edit-plane-mark     acquire-stage/request-mark-edit!
    ;; edit-acquire (dev-docs/brief-param-acq-v1.md): now a MARKER in the edit-*
    ;; family. The `edit-acquire` macro dispatches a dir-string first arg here
    ;; (request!, opened from the definitions panel) and a proxy-mesh first arg to

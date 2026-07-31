@@ -86,6 +86,20 @@
   [text idx]
   (- idx (inc (.lastIndexOf (.substring text 0 idx) "\n"))))
 
+(defn form-inner
+  "The text INSIDE `(head …)` occupying [from to): everything after the head
+   token and before the closing paren, trimmed. `(edit-plane-mark {…})` → `{…}`.
+
+   This is the cancel path of a wrapper form whose strip-head has no call to
+   rename it to — the acquire stage's plane-mark editor wraps a LITERAL, so
+   giving up on the edit means removing the wrapper entirely rather than
+   rewriting its head (modal-evaluator/strip-head). Returns nil when the range
+   does not start with `head`."
+  [text from to head]
+  (when (= head (subs text from (min (count text) (+ from (count head)))))
+    (let [body (subs text (+ from (count head)) (dec to))]
+      (.trim body))))
+
 (defn append-map-entry
   "The `{…}` block text with `entry` added, laid out the way the emitted forms
    already are: entries one per line, aligned under the first, which sits right

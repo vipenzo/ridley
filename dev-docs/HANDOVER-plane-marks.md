@@ -230,6 +230,58 @@ ricalcolava le intrinsics invece di ricevere quelle già validate dal chiamante,
 e in un contesto senza foto caricata falliva in silenzio. Ora le riceve —
 una dipendenza in meno e una funzione testabile.
 
+## Il quarto giro (2026-07-31): `(edit-plane-mark …)`
+
+Design di Vincenzo (brief §Seguito): niente UI di selezione; il mark da editare
+si marca NEL SORGENTE avvolgendolo. Costruito.
+
+**Risposte agli accertamenti del §Seguito.**
+
+1. **Nome: `edit-plane-mark`, non `edit-mark`.** Ogni membro della famiglia
+   `edit-*` si accoppia con una forma esistente dello stesso nome
+   (`edit-path`↔`path`, `edit-acquire`↔`acquire`…): `edit-mark` prometterebbe di
+   editare `(mark :A)`, il comando di ancora dei path — cosa diversa. E la
+   simmetria che il nome corto comprerebbe non c'è comunque, perché qui il
+   cancel non rinomina una testa: **scarta l'involucro**. Deviazione accettata
+   esplicitamente, ed è più onesta — l'impalcatura non sopravvive sotto altro
+   nome, cade del tutto, che è l'"inline deliberato del letterale" di P4a.
+2. **Meccanica.** Nessun meccanismo nuovo: dentro `:marks` la forma è una
+   normale chiamata valutata da SCI *prima* di `acquire`. `request-mark-edit!`
+   annota la richiesta e **restituisce il letterale intatto**, così la acquire
+   resta valida mentre l'editor è aperto; `after-eval!` — il gancio che il
+   palcoscenico già usa — apre. Su una acquire FRESCA le camere arrivano
+   asincrone, quindi la richiesta aspetta il `load!` invece di essere persa.
+   Con più forme: si apre la prima e si dice che le altre aspettano. Il nome del
+   mark non serve al write-back (che possiede un RANGE di sorgente); si recupera
+   all'indietro solo per scriverlo nella UI.
+3. **Re-confirm di edit-acquire**: confermato, `:from` non c'entra. Il
+   re-confirm riemette la forma da `acquire-state.json` e perde i mark-piano
+   comunque. Residuo a sé, non risolto qui.
+
+**`:from` nel sorgente**: emesso da ogni mark (creazione compresa), tiene i
+punti TRIANGOLATI. `turtle` ignora la chiave in più.
+
+**Origine attraverso il refit**: proiettata sul piano nuovo, non ricalcolata.
+Un bug preso proprio qui dal collaudo: la tenevo dentro il candidato, che viene
+scartato appena si torna ad aggiungere un punto — quindi si perdeva e l'origine
+ricadeva sul centroide. Ora vive in `:origin-override`, fuori dal candidato.
+
+**Collaudato end-to-end sul buffer vero** (dev-browser, CodeMirror reale):
+apertura con nome e 3 punti ripresi; aggiunta del quarto punto → l'origine
+piazzata a `[8 3 40]` torna `[8 2.9966 40.1499]`, cioè proiettata sul piano
+nuovo e non il centroide `[0 3 40.15]`; accetta → letterale con `:from` a 4
+punti, prefisso e coda del sorgente byte-identici, involucro sparito; Esc →
+letterale ripristinato identico; forma vuota → apre in creazione e Esc lascia
+`nil`.
+
+**Nota di metodo (costata tempo)**: `sh/compile :app` via nREPL ha risposto
+`warnings=0 failure=nil` mentre il sorgente aveva una parentesi sbilanciata, e
+il browser ha servito per mezz'ora codice vecchio. Il compile-check non basta:
+**verificare che il bundle emesso contenga davvero il simbolo nuovo**
+(`grep public/js/cljs-runtime/<ns>.js`) prima di credere a un collaudo live. Il
+watcher era anche incastrato dai compile concorrenti (la nota di memoria era
+giusta): riavviato con `npx shadow-cljs stop` + `npm run dev`.
+
 ## Quello che resta aperto
 
 - **Ricollaudare la HUD dal vivo**: è verificata renderizzando stati finti in un

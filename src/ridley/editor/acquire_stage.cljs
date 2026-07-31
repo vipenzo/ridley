@@ -17,7 +17,8 @@
    motion acq-proxy→emit-proxy (attachment/transform-pose-rigid) so cameras and
    proxy stay coincident — reusing the registration-stability transport, not
    re-running canonicalize."
-  (:require [ridley.math :as m]
+  (:require [clojure.string :as str]
+            [ridley.math :as m]
             [ridley.viewport.core :as viewport]
             [ridley.editor.modal-evaluator :as modal]
             [ridley.editor.acquire-backdrop :as backdrop]
@@ -780,7 +781,7 @@
           (when (> (:flatness-mm cand) 1.0)
             (add! "eaq-hud-warn" "La zona non è molto piana — guarda bene prima di accettare."))
           (add! nil (str "Origine (pallino magenta): "
-                         (if (:origin-placed? (:plane @stage))
+                         (if (:origin-override (:plane @stage))
                            "dove hai cliccato."
                            "al centro dei punti.")))
           (add! "eaq-hud-hint"
@@ -835,8 +836,8 @@
                                    (on-click)))
     b))
 
-(declare next-plane-point! fit-candidate! accept-candidate! discard-candidate!
-         recentre-origin! undo-plane-click! stop-plane!)
+(declare next-plane-point! add-another-point! fit-candidate! accept-candidate!
+         discard-candidate! recentre-origin! undo-plane-click! stop-plane!)
 
 (defn- hud-actions []
   (let [picks (plane-picks)
@@ -847,9 +848,12 @@
     (doseq [^js b (if cand
                     [(hud-button "Accetta" "Scrive il mark nel sorgente (Invio)"
                                  true true accept-candidate!)
+                     (hud-button "Aggiungi punto"
+                                 "Torna a cliccare punti, tenendo quelli che ci sono (n)"
+                                 true false add-another-point!)
                      (hud-button "Origine al centro"
                                  "Rimette l'origine al centro dei punti cliccati"
-                                 (boolean (:origin-placed? (:plane @stage))) false
+                                 (some? (:origin-override (:plane @stage))) false
                                  recentre-origin!)
                      (hud-button "Rifai" "Scarta il piano proposto (Backspace)"
                                  true false discard-candidate!)]
@@ -872,7 +876,10 @@
         cand (:candidate (:plane @stage))
         ok? (enough-points?)
         frag (.createDocumentFragment js/document)]
-    (.appendChild frag (el "div" "eaq-hud-title" :text "PIANO DI LAVORO"))
+    (.appendChild frag (el "div" "eaq-hud-title"
+                           :text (if-let [nm (:name (:edit (:plane @stage)))]
+                                   (str "PIANO · :" nm)
+                                   "PIANO DI LAVORO")))
     ;; Always 'di 3', even where one point would legally do: the plate shortcut
     ;; is only valid when the user KNOWS the zone is parallel to the plate, and
     ;; advertising '1 di 1' would read as 'one point is normally enough'.
@@ -930,9 +937,18 @@
              "Servono 3 punti; Invio crea il piano, Esc esce."))
   (redraw-plane!))
 
-(defn- stop-plane! []
-  (swap! stage dissoc :plane)
-  (redraw-plane!))     ; :plane gone → the HUD removes itself
+(declare unwrap-edit-mark!)
+
+(defn- stop-plane!
+  "Leave plane mode. When an `(edit-plane-mark …)` opened it, the wrapper MUST
+   come out of the source on the way out — otherwise the next eval re-opens the
+   editor and there is no way to stop, since the intent to edit lives in the
+   source rather than in a mode."
+  []
+  (let [edit (:edit (:plane @stage))]
+    (swap! stage dissoc :plane)
+    (redraw-plane!)                    ; :plane gone → the HUD removes itself
+    (when edit (unwrap-edit-mark! edit))))
 
 (defn- place-origin!
   "With a plane already proposed, a click MOVES ITS ORIGIN — the point everything
@@ -961,8 +977,15 @@
       (not (plausible-point? hit))
       (say! "il punto cade lontano dall'oggetto: da questa foto il piano è quasi di taglio")
       :else
-      (do (swap! stage assoc-in [:plane :candidate :position] hit)
-          (swap! stage assoc-in [:plane :origin-placed?] true)
+      (do (swap! stage update :plane
+                 (fn [p] (-> p
+                             (assoc-in [:candidate :position] hit)
+                             ;; kept OUTSIDE the candidate on purpose: the
+                             ;; candidate is thrown away whenever the user goes
+                             ;; back to add a point, and a deliberately placed
+                             ;; origin must survive that and be carried onto the
+                             ;; refitted plane.
+                             (assoc :origin-override hit))))
           (say! "origine del piano spostata dove hai cliccato")
           (redraw-plane!)))))
 
@@ -1032,6 +1055,24 @@
       (do (swap! stage update-in [:plane :picks] conj {:obs {}})
           (redraw-plane!)))))
 
+(defn- add-another-point!
+  "'One more point'. With a plane on screen this means going BACK to picking
+   while keeping the points already gathered: the proposed plane is dropped (a
+   later Enter refits it, carrying a placed origin across) and an empty slot is
+   opened for the next click. Without one it is the ordinary 'next point'."
+  []
+  (if (:candidate (:plane @stage))
+    (do (swap! stage update :plane
+               (fn [p] (-> p
+                           (dissoc :candidate :candidate-radius)
+                           (update :picks (fn [ps]
+                                            (if (or (:fit (peek ps)) (seq (:obs (peek ps))))
+                                              (conj ps {:obs {}})
+                                              ps))))))
+        (say! "aggiungi un punto: click su 2 foto, poi Invio per rifare il piano")
+        (redraw-plane!))
+    (next-plane-point!)))
+
 (defn- undo-plane-click!
   "Backspace: drop the current point's observation on THE PHOTO YOU ARE LOOKING
    AT — the one you just mis-clicked — falling back to the highest-numbered photo
@@ -1070,24 +1111,45 @@
                   (re-seq #":piano-(\d+)\b" form-text))]
     (str "piano-" (inc (reduce max 0 nums)))))
 
-(defn- mark-entry-text [nm {:keys [position heading up]}]
-  (str ":" nm
-       " {:position " (src/fmt-vec3 position)
+(defn- mark-literal
+  "The `{…}` source of a plane mark, carrying the points it was fitted through
+   under `:from`.
+
+   `:from` is the mark's own EVIDENCE, and it is what makes the mark re-editable
+   later ((edit-plane-mark …)): without it the source keeps the result and
+   throws away what produced it, so 'add a better point to this plane' is
+   impossible and the only move is to build a new mark from scratch — which
+   moves the origin and takes whatever was written against it along. `turtle`
+   and every other consumer ignore the extra key.
+
+   It holds the TRIANGULATED points, not the per-photo clicks: a point can be
+   added or dropped and the plane refitted, but a single 2D click cannot be
+   revisited. That boundary is deliberate — storing observations would mean
+   storing pixels against photo identities, which the source has no business
+   knowing."
+  [{:keys [position heading up]} points]
+  (str "{:position " (src/fmt-vec3 position)
        " :heading " (src/fmt-vec3 heading)
-       " :up " (src/fmt-vec3 up) "}"))
+       " :up " (src/fmt-vec3 up)
+       (when (seq points)
+         (str " :from [" (str/join " " (map src/fmt-vec3 points)) "]"))
+       "}"))
+
+(defn- mark-entry-text [nm mark points]
+  (str ":" nm " " (mark-literal mark points)))
 
 (defn- commit-plane-mark!
   "Append `mark` to the evaluated `(acquire …)`'s :marks map and re-run the
    definitions. A bounded text edit — only the :marks block's braces move — so
    everything else the user has written or hand-tuned in that form survives
    byte-identical. Returns the name written, or nil when the form can't be found."
-  [mark]
+  [mark points]
   (let [text (cm/get-value)]
     (if-let [[from to] (acquire-form-bounds text)]
       (if-let [[o e i] (src/map-value-bounds text from to ":marks")]
         (let [nm (next-plane-name (.substring text from to))
               updated (src/append-map-entry (.substring text o e)
-                                            (mark-entry-text nm mark)
+                                            (mark-entry-text nm mark points)
                                             ":marks" (src/column-of text i))]
           (modal/replace-source! o e updated)
           (modal/run-definitions!)
@@ -1097,6 +1159,73 @@
             nil))
       (do (say! "non trovo la forma (acquire …) nel sorgente")
           nil))))
+
+;; ---- (edit-plane-mark …): rieditare un mark dal SORGENTE ----
+;;
+;; Design (Vincenzo 2026-07-31, brief-plane-marks §Seguito): no selection UI on
+;; the stage. The mark to edit is marked IN THE SOURCE by wrapping it —
+;;
+;;   :marks {:piano-1 {…}
+;;           :piano-2 (edit-plane-mark {…})}
+;;
+;; — eval opens the editor on it, confirm leaves the updated literal behind. The
+;; edit-* family grammar applied to an INNER form: transient, round-tripping,
+;; source as the single truth, and the stage stays pure by default because the
+;; intent to edit lives in the source rather than in a mode.
+;;
+;; Two deliberate deviations from the family, both accepted explicitly:
+;; - the name is `edit-plane-mark`, not `edit-mark`: every other member pairs
+;;   with an existing form of the same name, and `(mark :A)` is the PATH anchor
+;;   command — a different thing, which `edit-mark` would promise to edit;
+;; - cancel does not rename a head (`edit-X` → `(X …)`) because there is no call
+;;   to rename to: it UNWRAPS back to the literal. The scaffolding does not
+;;   survive under another name, it falls away entirely — which is the same
+;;   'inline deliberato del letterale' P4a already wanted.
+;;
+;; Called during the eval of the (acquire …) opts map, i.e. BEFORE acquire
+;; itself, and it returns its argument untouched so the acquire value stays
+;; valid and everything downstream keeps working while the edit is open.
+
+(def ^:private edit-mark-head "(edit-plane-mark")
+
+(defn ^:export request-mark-edit!
+  "SCI entry point for `(edit-plane-mark <literal>)` / `(edit-plane-mark)`.
+   Notes the request for after-eval! and returns the literal unchanged (nil for
+   the empty creation form)."
+  ([] (request-mark-edit! nil))
+  ([mark]
+   (swap! stage (fn [s] (update (or s {}) :pending-edits (fnil conj []) {:mark mark})))
+   mark))
+
+(defn- edit-mark-bounds
+  "[from to) of the `(edit-plane-mark …)` form in the buffer, or nil."
+  [text]
+  (modal/find-form-bounds text edit-mark-head))
+
+(defn- unwrap-edit-mark!
+  "Give up on an edit: take the wrapper out of the source, leaving the literal
+   exactly as it was. The cancel half of the family grammar — except there is no
+   `(mark …)` call to rename the head to, so the scaffolding is removed rather
+   than renamed. An EMPTY `(edit-plane-mark)` (the creation spelling) has no
+   literal to fall back to, so it leaves `nil`: inert, visible, and the user's to
+   delete."
+  [_edit]
+  (let [text (cm/get-value)]
+    (when-let [[from to] (modal/find-form-bounds text edit-mark-head)]
+      (let [inner (src/form-inner text from to edit-mark-head)]
+        (modal/replace-source! from to (if (seq inner) inner "nil"))
+        (modal/run-definitions!)
+        (say! (if (seq inner)
+                "edit annullato — il mark è rimasto com'era"
+                "edit annullato — non c'era ancora un piano, resta nil da cancellare"))))))
+
+(defn- mark-name-before
+  "The `:name` key this wrapped value belongs to, read backwards from the form's
+   opening paren — used only to say WHICH mark is being edited; the write-back
+   itself needs no name, it owns a source range."
+  [text from]
+  (when-let [m (re-find #":([A-Za-z0-9*+!_'?<>=/.-]+)\s*$" (.substring text 0 from))]
+    (second m)))
 
 (defn- fit-candidate!
   "First Enter: fit the plane through the triangulated points and show it as a
@@ -1135,14 +1264,25 @@
                    ", oppure 1 solo se la zona è parallela al piatto")
                  (when (>= (count pts) 3)
                    " — i punti sono quasi allineati, non definiscono un piano")))
-      (do
+      (let [fit-origin (:position mark)   ; the fit's own centroid, for 'Origine al centro'
+            ;; A deliberately placed origin must SURVIVE a refit — dropped back
+            ;; to the new centroid it would wander on its own, which is exactly
+            ;; the defect place-origin! cures. Project the old origin onto the
+            ;; new plane (its nearest point): the same physical spot, expressed
+            ;; on the plane that now replaces the old one.
+            placed (:origin-override (:plane @stage))
+            mark (if placed
+                   (let [n (:heading mark)
+                         d (m/dot (m/v- placed fit-origin) n)]
+                     (assoc mark :position (m/v- placed (m/v* n d))))
+                   mark)]
         (swap! stage update :plane assoc
                :candidate mark
                :candidate-radius (disc-radius pts)
-               ;; keep the fit's own origin so 'Origine al centro' can undo a
-               ;; misplaced click without refitting the plane
-               :origin-centroid (:position mark)
-               :origin-placed? false)
+               :origin-centroid fit-origin
+               ;; re-anchor the override to its projection, so repeated refits
+               ;; do not keep re-projecting an ever-staler point
+               :origin-override (when placed (:position mark)))
         (say! (str "piano proposto: planarità " (src/fmt-number (:flatness-mm mark))
                    "mm su " (count pts) " punti"
                    (when (> (:flatness-mm mark) 1.0)
@@ -1153,20 +1293,37 @@
         (redraw-plane!)))))
 
 (defn- accept-candidate!
-  "Second Enter: write the previewed plane into the source as a named mark and
-   keep its disc on screen (dimmer) so it can still be checked afterwards."
+  "Second Enter: write the previewed plane into the source. Editing an existing
+   mark REPLACES the `(edit-plane-mark …)` form with the updated literal — the
+   scaffolding falls away and the source is left holding plain data; creating
+   one appends a new named entry to the :marks block. Either way the disc stays
+   on screen (dimmer) so it can still be checked afterwards."
   []
-  (let [{:keys [candidate candidate-radius]} (:plane @stage)]
-    (if-let [nm (commit-plane-mark! (select-keys candidate [:position :heading :up]))]
-      (do (swap! stage update :plane
-                 (fn [p] (-> p
-                             (update :committed conj {:mark candidate :radius candidate-radius})
-                             (assoc :picks [{:obs {}}])
-                             (dissoc :candidate :candidate-radius
-                                     :origin-centroid :origin-placed?))))
-          (say! (str "creato :" nm ". Usalo così:  (turtle (:" nm " (:marks A)) (edit-path-2d))"))
-          (redraw-plane!))
-      (redraw-plane!))))
+  (let [{:keys [candidate candidate-radius edit]} (:plane @stage)
+        mark (select-keys candidate [:position :heading :up])
+        pts (fitted-points)
+        done! (fn [label]
+                (swap! stage update :plane
+                       (fn [p] (-> p
+                                   (update :committed conj {:mark candidate
+                                                            :radius candidate-radius})
+                                   (assoc :picks [{:obs {}}])
+                                   (dissoc :candidate :candidate-radius :edit
+                                           :origin-centroid :origin-override))))
+                (say! label)
+                (redraw-plane!))]
+    (if edit
+      ;; re-locate the form: the buffer may have moved since it was opened
+      (if-let [[from to] (edit-mark-bounds (cm/get-value))]
+        (do (modal/replace-source! from to (mark-literal mark pts))
+            (modal/run-definitions!)
+            (done! (str "aggiornato :" (or (:name edit) "il mark")
+                        " — " (count pts) " punti, planarità "
+                        (src/fmt-number (:flatness-mm candidate)) "mm")))
+        (say! "non trovo più (edit-plane-mark …) nel sorgente: è stata modificata?"))
+      (if-let [nm (commit-plane-mark! mark pts)]
+        (done! (str "creato :" nm ". Usalo così:  (turtle (:" nm " (:marks A)) (edit-path-2d))"))
+        (redraw-plane!)))))
 
 (defn- recentre-origin!
   "Put the origin back where the fit itself put it — the centroid of the clicked
@@ -1176,13 +1333,13 @@
   (when-let [c (:origin-centroid (:plane @stage))]
     (swap! stage update :plane #(-> %
                                     (assoc-in [:candidate :position] c)
-                                    (assoc :origin-placed? false)))
+                                    (dissoc :origin-override)))
     (say! "origine rimessa al centro dei punti")
     (redraw-plane!)))
 
 (defn- discard-candidate! []
   (swap! stage update :plane dissoc
-         :candidate :candidate-radius :origin-centroid :origin-placed?)
+         :candidate :candidate-radius :origin-centroid :origin-override)
   (say! "piano proposto scartato — i punti restano, correggili e ripremi Invio")
   (redraw-plane!))
 
@@ -1193,14 +1350,72 @@
   [k]
   (let [candidate? (some? (:candidate (:plane @stage)))]
     (case k
-      "n" (do (if candidate?
-                (say! "c'è un piano proposto: Invio per accettarlo o Backspace per scartarlo")
-                (next-plane-point!))
-              true)
+      "n" (do (add-another-point!) true)
       "Enter" (do (if candidate? (accept-candidate!) (fit-candidate!)) true)
       "Backspace" (do (if candidate? (discard-candidate!) (undo-plane-click!)) true)
       "Escape" (do (stop-plane!) (say! "modo piano chiuso") true)
       false)))
+
+(defn- pick-of-point
+  "A triangulated point loaded back from a mark's :from, dressed as a pick so it
+   feeds fitted-points like a freshly clicked one. It carries no observations —
+   :from keeps the POINTS, not the per-photo clicks — which is why a loaded
+   point can be dropped or joined by new ones but not itself re-aimed."
+  [p]
+  {:obs {} :loaded? true :fit {:point (vec p) :plausible? true :photos []}})
+
+(defn- open-mark-edit!
+  "Open the plane editor on the `(edit-plane-mark …)` found in the source. With a
+   literal it starts from that mark — its plane shown as the candidate disc, its
+   :from points restored so they can be added to or thinned — so the very first
+   click already re-places the origin. Empty, it is just the creation flow with a
+   destination already chosen in the source."
+  [{:keys [mark]}]
+  (let [text (cm/get-value)
+        from (first (edit-mark-bounds text))
+        nm (when from (mark-name-before text from))
+        pts (mapv vec (:from mark))
+        edit {:name nm}]
+    (if-not from
+      (say! "(edit-plane-mark …) valutata ma non trovata nel sorgente")
+      (do
+        (swap! stage assoc :plane
+               (merge {:picks (conj (mapv pick-of-point pts) {:obs {}})
+                       :committed []
+                       :edit edit}
+                      (when (and mark (:position mark) (:heading mark))
+                        {:candidate (select-keys mark [:position :heading :up])
+                         :candidate-radius (disc-radius pts)
+                         :origin-centroid (:position mark)
+                         ;; an existing mark's origin is treated as PLACED: it is
+                         ;; whatever the user settled on last time, and a refit
+                         ;; must carry it over rather than recentre it.
+                         :origin-override (:position mark)})))
+        (when-not (in-pose?)
+          (let [order (nav-order) cur (:current-idx @stage)]
+            (when (seq order)
+              (go-in-pose! (if (get-in @stage [:camera-poses cur]) cur (first order)) true))))
+        (say! (str "edit di :" (or nm "?") " — "
+                   (if (seq pts)
+                     (str (count pts) " punti ripresi dal sorgente. Un click sposta l'origine; "
+                          "'n' per aggiungere un punto al piano.")
+                     "nessun punto memorizzato: clicca i punti del piano come per un mark nuovo.")
+                   " Invio accetta, Esc annulla e lascia il mark com'era."))
+        (redraw-plane!)))))
+
+(defn- open-pending-edit!
+  "Consume the `(edit-plane-mark …)` requests noted during the eval: the first
+   opens the editor, the rest wait (they are still in the source, so confirming
+   this one and re-running picks up the next)."
+  []
+  (when-let [reqs (seq (:pending-edits @stage))]
+    (swap! stage dissoc :pending-edits :edit-after-load?)
+    (when (> (count reqs) 1)
+      (say! (str "ci sono " (count reqs) " forme (edit-plane-mark …): apro la prima, "
+                 "le altre restano in attesa")))
+    (if (seq (:camera-poses @stage))
+      (open-mark-edit! (first reqs))
+      (say! "nessuna camera registrata: non c'è niente con cui misurare un piano"))))
 
 (defn- toggle-plane-mode! []
   (if (plane-mode?)
@@ -1414,7 +1629,9 @@
                                ;; frustums live on their OWN dedicated layer, so this
                                ;; is safe even when edit-path-2d opened in the same eval
                                ;; (its overlay owns the preview layer; the two coexist).
-                               (show-frustums!)))))
+                               (show-frustums!)
+                               ;; an edit requested before the cameras existed
+                               (when (:edit-after-load? @stage) (open-pending-edit!))))))
 
       ;; same dir re-evaluated → keep camera/pose, just refresh geometry (dims/pose
       ;; may have changed) and re-show the layers the Run's clear-geometry wiped
@@ -1431,4 +1648,12 @@
 
       ;; no (acquire …) this eval → tear down
       @stage
-      (deactivate!))))
+      (deactivate!))
+    ;; An (edit-plane-mark …) evaluated inside the acquire's :marks opens the
+    ;; plane editor on it — but only once the stage has its cameras, so on a
+    ;; FRESH acquire (which loads them asynchronously) the request waits for the
+    ;; load to resolve rather than being dropped.
+    (when (seq (:pending-edits @stage))
+      (if (loaded?)
+        (open-pending-edit!)
+        (swap! stage assoc :edit-after-load? true)))))

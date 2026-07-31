@@ -90,6 +90,28 @@
     (is (= "{:piano-1 {:position [0 0 1]}}" updated)
         "a single entry stays on one line — no gratuitous newline")))
 
+(deftest unwrapping-a-wrapper-form-gives-back-what-it-wrapped
+  ;; The cancel path of (edit-plane-mark …): unlike the rest of the edit-* family
+  ;; there is no call to rename the head to, because what is wrapped is a
+  ;; LITERAL. Giving up must therefore restore that literal exactly — anything
+  ;; less would quietly damage a mark the user chose NOT to change.
+  (let [head "(edit-plane-mark"
+        lit "{:position [0 0 40] :heading [0 0 1] :up [0 1 0] :from [[10 0 40] [-5 8 40]]}"
+        wrapped (str head " " lit ")")]
+    (is (= lit (src/form-inner wrapped 0 (count wrapped) head))
+        "round-trip: what comes out is what went in")
+    (testing "inside a larger buffer"
+      (let [text (str "(acquire \"d\" {:marks {:piano-2 " wrapped "}})")
+            [from to] [(.indexOf text head) (src/find-matching-bracket text (.indexOf text head))]]
+        (is (= lit (src/form-inner text from to head)))
+        (is (= "(acquire \"d\" {:marks {:piano-2 {:position [0 0 40] :heading [0 0 1] :up [0 1 0] :from [[10 0 40] [-5 8 40]]}}})"
+               (str (subs text 0 from) (src/form-inner text from to head) (subs text to)))
+            "splicing the inner text back leaves valid, unchanged source"))))
+  (testing "the empty creation spelling has nothing inside"
+    (is (= "" (src/form-inner "(edit-plane-mark)" 0 17 "(edit-plane-mark"))))
+  (testing "a range that does not start with the head is refused"
+    (is (nil? (src/form-inner "(something-else 1)" 0 18 "(edit-plane-mark")))))
+
 (deftest compact-numbers
   (is (= "3" (src/fmt-number 3.0)) "integers as ints")
   (is (= "-0.5" (src/fmt-number -0.5)))

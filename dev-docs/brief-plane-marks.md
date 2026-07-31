@@ -1,5 +1,18 @@
 # Brief: piani ancorati al palcoscenico (mark-piano)
 
+> **STATO 2026-07-31: gradino 1 COSTRUITO, gate umano PASSATO** (Vincenzo:
+> "ho provato e funziona"). Scelta architetturale: **(A)**, write-back dal
+> palcoscenico (costo piccolo; bonus non previsto: il mark nel sorgente
+> eredita gratis rinomina/cancellazione dall'editor). Naming: nomi attuali
+> confermati (vedi appendice). Dettagli, accertamenti risposti e residui
+> aperti (ricollaudo HUD, persistenza in acquire-state.json):
+> `dev-docs/HANDOVER-plane-marks.md`. Cap. 19 §19.6 riscritta attorno al
+> gesto. Gradini 2-3 restano fuori perimetro.
+>
+> **Seguito APERTO 2026-07-31**: rieditare un mark via forma `(edit-mark …)`
+> nel sorgente + evidenza `:from` — design concordato, da implementare. Vedi
+> sezione in coda.
+
 Aperto 2026-07-30 (Vincenzo + Claude-docs). Figlio diretto del v1 di
 edit-acquire: nasce da un buco scoperto scrivendo la guida utente
 (`docs/manual/guides/it/19-acquisire-dalle-foto.md`, bozza).
@@ -162,3 +175,62 @@ l'oggetto almeno quanto combaciava sul box?
 Se il gradino 1 passa, la guida utente (cap. 19, §19.6) va aggiornata: oggi
 presenta i mark nominati al passato prossimo del box; col mark-piano il piatto
 diventa autosufficiente e la sezione si riscrive attorno a questo gesto.
+
+## Seguito (2026-07-31): rieditare un mark — la forma (edit-mark)
+
+Bisogno emerso al primo uso vero (Vincenzo): i mark appena creati vanno spesso
+ritoccati (origine, orientamento, a volte il piano stesso), e oggi l'unica
+strada è rifarli da zero. Costi già stimati da Code: selezione facile;
+ri-piazzare origine e asse a portata (`place-origin!` esiste); rifit del piano
+impossibile senza l'evidenza — i punti cliccati vivono solo in memoria e
+muoiono alla conferma.
+
+**Design proposto (Vincenzo)**: niente UI di selezione sul palcoscenico; il
+mark da editare si marca NEL SORGENTE avvolgendolo:
+
+```clojure
+:marks {:piano-1 {…}
+        :piano-2 (edit-mark {:position … :heading … :up …})
+        :piano-3 {…}}
+```
+
+Eval → il palcoscenico apre il modo di edit su quel mark; confirm →
+strip-head, resta il letterale aggiornato. È la grammatica `edit-*` applicata a
+una forma interna: transitoria, round-trip, sorgente unica verità. Il
+palcoscenico resta puro per default e l'intenzione di editing vive nel
+sorgente — il che scioglie anche la tensione di naming dell'appendice.
+
+**Estensione simmetrica (Claude-docs)**: `(edit-mark)` VUOTA come gesto di
+creazione — `:piano-4 (edit-mark)` → eval → flusso di creazione (i click dei
+punti) → confirm → letterale. A regime il bottone "Piano" diventa zucchero o
+sparisce: la UI si alleggerisce.
+
+**Evidenza nel sorgente** (proposta di Code, adottata): la forma emessa porta
+i punti da cui è nata, `:from [[x y z] …]`. `turtle` ignora la chiave in più;
+`edit-mark` la riapre. Note di design:
+
+- `:from` conserva i punti TRIANGOLATI, non le osservazioni per-foto: si può
+  aggiungere/togliere un punto e rifittare, non "rivedere" un click 2D. Il
+  confine va dichiarato nella UI e nella guida.
+- Al refit, un'origine click-piazzata va RIPROIETTATA sul piano nuovo, non
+  ricalcolata come centroide (o si sposta da sola, che è il difetto curato da
+  `place-origin!`).
+- Formattazione numeri via `source-edit/fmt-vec3` condiviso, o la form si
+  biforca in due dialetti.
+
+**Accertamenti per Code**:
+
+1. **Collisione di nomi**: `(mark :id)` esiste già nei path. `edit-mark` è
+   accettabile o serve un nome più specifico (`edit-plane-mark`)? E qui lo
+   strip-head produce un LETTERALE, non una `(mark …)`: deviazione dalla
+   simmetria `edit-X → (X …)` da accettare esplicitamente.
+2. **Meccanica dell'eval annidata**: come una forma interna alla mappa segnala
+   il palcoscenico (side-effect all'eval? scan del sorgente in `after-eval!`?),
+   e cosa succede con PIÙ `edit-mark` presenti (una alla volta? errore? coda?).
+3. **Interazione col limite del re-confirm** di edit-acquire (riemette la form
+   e perde i mark-piano): `:from` non lo risolve, resta un residuo a sé.
+
+**Gate**: creare un mark, avvolgerlo in `(edit-mark …)`, rieval, spostare
+l'origine con un click e aggiungere un punto al piano, confermare; verificare
+che il sorgente contenga il letterale aggiornato (con `:from`) e che fuori dal
+blocco resti byte-identico.

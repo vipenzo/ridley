@@ -507,6 +507,15 @@
     :description "A **pen tool** for tracing a planar polyline interactively — draw over a reference image (see `set-image`) and clip the piece you need. `edit-path-2d` wraps a [`path-2d`](#path-2d) body and opens an interactive session from the **definitions panel** (Cmd+Enter), not the REPL. Its result is a `:2d` path that lives in the `(right,up)` plane, so it reads un-rotated and feeds `path-to-shape` / `stroke-shape` directly."
     :path "docs/manual/reference/en/edit-path-2d.md"}
 
+   "edit-plane-mark"
+   {:name "edit-plane-mark"
+    :category "acquisition"
+    :status "stable"
+    :since ""
+    :signature "(edit-plane-mark pose-map)\n(edit-plane-mark)"
+    :description "Re-open a **plane mark** of an evaluated `(acquire …)` on the acquisition stage. Unlike the other `edit-*` forms it is not a top-level marker: it wraps a value **inside** the acquire's `:marks` map."
+    :path "docs/manual/reference/en/edit-plane-mark.md"}
+
    "embroid"
    {:name "embroid"
     :category "generative-operations"
