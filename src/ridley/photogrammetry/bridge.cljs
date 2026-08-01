@@ -206,6 +206,20 @@
        ;; axis, so a reflected assignment reprojects onto discs and ties on score)
        :face-normal (m/normalize (world->local-dir proxy-pose (:heading zero)))})))
 
+(defn camera-sees-marked-face?
+  "True when `solver-pose` puts the camera on the side of the plate its marks
+   are printed on. `detect` is plate-detect's map (:face-normal, :zero-obj).
+
+   The constraint the reprojection error cannot express: the discs were
+   photographed, so the camera WAS on their side. A plane admits two poses that
+   explain the same image — the 2-fold ambiguity of a planar homography — and on
+   a grazing shot with a mark or two missing the residual cannot tell them apart.
+   This can: a pose that puts the camera behind the printed face is not unlikely,
+   it is impossible."
+  [{:keys [face-normal zero-obj]} solver-pose]
+  (when (and face-normal zero-obj solver-pose)
+    (pos? (m/dot face-normal (m/v- (cam/camera-center solver-pose) zero-obj)))))
+
 (defn klein-images
   "The four camera poses that reproject a box with three distinct sides to the
    IDENTICAL silhouette: `camera-pose` plus its 180°-rotations about each of the

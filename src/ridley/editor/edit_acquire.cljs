@@ -1708,7 +1708,37 @@
         correspondences (vec (for [[ci {:keys [px]}] (pnp-picks)]
                                {:ci ci :world (:obj (nth targets ci)) :px px}))
         camera-pose (current-camera-pose)]
-    (when-let [sol (pnp/solve-pnp correspondences (session-intrinsics iw ih) {})]
+    (when-let [sol (let [k (session-intrinsics iw ih)
+                         first-try (pnp/solve-pnp correspondences k {})
+                         detect (bridge/plate-detect (:proxy-mesh @session))]
+                     ;; A planar target has TWO poses that explain the image, and
+                     ;; on a grazing shot with a mark or two missing the residual
+                     ;; cannot tell them apart: the seedless decomposition can
+                     ;; return the twin, with the camera BEHIND the printed face.
+                     ;; That is impossible, not improbable — the discs were
+                     ;; photographed — so when it happens, re-solve REFINING from
+                     ;; the pose the user already has on screen (their manual
+                     ;; alignment, or the previous registration) instead of
+                     ;; letting the estimator choose the basin again. Measured:
+                     ;; the twin is not a stable minimum for a clean crown, so
+                     ;; this recovers it; the physical test is applied to the
+                     ;; RESULT anyway, because 'very likely' is not 'always'.
+                     (if (and detect first-try
+                              (not (bridge/camera-sees-marked-face? detect (:pose first-try))))
+                       (let [seed (bridge/editor->solver-pose camera-pose proxy-pose)
+                             retry (pnp/solve-pnp correspondences k
+                                                  {:method :seeded :seed seed})]
+                         (if (and retry (bridge/camera-sees-marked-face? detect (:pose retry)))
+                           (do (set-status-message!
+                                (str "la prima soluzione metteva la camera DIETRO il piatto "
+                                     "(gemello planare): ripresa dall'allineamento corrente"))
+                               retry)
+                           (do (set-status-message!
+                                (str "ATTENZIONE: questa foto si registra con la camera dietro "
+                                     "il piatto e non riesco a raddrizzarla. Allinea il proxy a "
+                                     "mano più vicino al vero e ripremi, oppure scarta la foto."))
+                               first-try)))
+                       first-try))]
       (let [residuals (into {} (map (juxt :ci :residual-px) (:per-point sol)))
             outlier-cis (set (map :ci (:outliers sol)))]
         (if (zero? idx)

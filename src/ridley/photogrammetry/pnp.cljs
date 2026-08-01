@@ -322,13 +322,23 @@
    :auto (default) routes on coplanarity — a flat plate to the planar
    homography, box corners spanning ≥2 faces to the calibrated DLT (with the
    planar homography as a fallback if the DLT is under-determined);
-   :dlt forces the calibrated DLT; :planar forces the homography.
-   A caller-supplied `seed` is the last resort when neither estimator applies
-   (too few points)."
+   :dlt forces the calibrated DLT; :planar forces the homography;
+   :seeded skips them and refines the caller's `seed` (see below).
+   Otherwise a caller-supplied `seed` is the last resort when neither estimator
+   applies (too few points)."
   [correspondences intrinsics sigma-px seed method]
-  (let [use-planar? (or (= method :planar)
-                        (and (= method :auto) (coplanar? correspondences)))
-        dlt (when (and (not use-planar?) (not= method :planar))
+  (let [;; :seeded starts from the caller's pose and REFINES it, instead of
+        ;; letting a seedless estimator choose the basin. The reason it exists:
+        ;; a planar target has two poses that explain the image equally well, and
+        ;; when the shot is grazing the reprojection error cannot tell them apart
+        ;; — the homography can return the twin, with the camera BEHIND the
+        ;; marked face. A pose known to be near the truth (a neighbouring photo's)
+        ;; picks the basin that physics already decided.
+        seeded? (= method :seeded)
+        use-planar? (and (not seeded?)
+                         (or (= method :planar)
+                             (and (= method :auto) (coplanar? correspondences))))
+        dlt (when (and (not use-planar?) (not seeded?) (not= method :planar))
               (estimate-dlt correspondences intrinsics))
         ;; planar only for a genuinely coplanar (or forced) set — never as a
         ;; blanket fallback for a non-coplanar set that was merely too small for
@@ -336,7 +346,7 @@
         ;; garbage pose instead of an honest nil.
         planar (when (and (nil? dlt) use-planar?)
                  (estimate-homography correspondences intrinsics))
-        start (or dlt planar seed)]
+        start (if seeded? seed (or dlt planar seed))]
     (when start
       (assoc (refine correspondences intrinsics start {:sigma-px sigma-px})
              :method (cond dlt :dlt planar :planar :else :seed)))))

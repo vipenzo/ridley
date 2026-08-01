@@ -667,6 +667,34 @@ Due aggiunte, e la seconda conta quanto la prima:
 Verificato: con un blob a 30px dal click, senza ALT il pixel va a [130 100] e
 scatta l'avviso; con ALT torna [100 100], il click esatto.
 
+### Seguito 3, nono giro: uscire dal gemello planare
+
+"Non c'è speranza? Come faccio a ribaltarla? Da cosa me ne accorgo?"
+
+**Da cosa te ne accorgi**: era già fatto — il ⚠ e la riga "REGISTRAZIONE
+RIBALTATA" del giro precedente.
+
+**Speranza sì, e più di quanta ne davo.** Misurato
+(`test/ridley/photogrammetry/planar_twin_test.cljs`): con una corona pulita **il
+gemello non è un minimo stabile** — LM ne esce anche partendo da un seed dal lato
+sbagliato (rms 0.00, camera davanti in entrambi i casi). Quindi la posa
+sbagliata viene dalla SCELTA della decomposizione senza seed, non dal
+raffinamento intrappolato: basta ri-risolvere partendo da una posa.
+
+Serviva però poterlo chiedere: `solve-once` usava il seed solo come ripiego
+(`start (or dlt planar seed)`). Aggiunto `:method :seeded`, che salta gli
+stimatori e raffina il seed del chiamante.
+
+**Automatico**: `solve-and-apply!` verifica ogni soluzione di un piatto con
+`bridge/camera-sees-marked-face?` — il vincolo che il residuo non sa esprimere
+(i dischetti sono stati fotografati, quindi la camera stava dalla loro parte:
+impossibile, non improbabile). Se la posa cade dietro, ri-risolve raffinando
+**dall'allineamento che l'utente ha già sullo schermo** e tiene il risultato solo
+se ora passa il test. Se non passa nemmeno il secondo tentativo lo dice e
+suggerisce cosa fare, invece di applicare in silenzio una posa impossibile.
+
+Ecco perché l'allineamento manuale conta: non è solo estetica, è il seed.
+
 ## Quello che resta aperto
 
 - **Ricollaudare la HUD dal vivo**: è verificata renderizzando stati finti in un
