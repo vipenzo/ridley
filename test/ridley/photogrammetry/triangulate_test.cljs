@@ -196,6 +196,41 @@
                                                        (:per-point r)))))
         "and :per-point names WHICH click to re-take")))
 
+(deftest three-points-fit-exactly-so-flatness-checks-nothing
+  (println "\n=== Fit del piano: 3 punti non verificano niente ===")
+  (testing "any three points give flatness 0 — even ones that are not level"
+    (let [ragged [[0.0 0.0 40.0] [20.0 3.0 41.7] [-6.0 18.0 38.2]]
+          r (tri/fit-plane-mark ragged {:toward [0.0 0.0 300.0]})]
+      (println (str "  3 punti sghembi → planarità " (fmt (:flatness-mm r) 4)
+                    "mm, esatto? " (:exact? r)
+                    ", presa " (fmt (:width-mm r) 1) "mm → "
+                    (fmt (:tilt-per-mm-deg r) 2) "°/mm"))
+      (is (< (:flatness-mm r) 1e-9) "zero by arithmetic, not by merit")
+      (is (:exact? r) "and the fit says so, so the UI can stop claiming a check")))
+  (testing "a fourth point makes it a real check again"
+    (let [r (tri/fit-plane-mark [[0.0 0.0 40.0] [20.0 0.0 40.0] [0.0 20.0 40.0]
+                                 [15.0 15.0 42.5]]
+                                {:toward [0.0 0.0 300.0]})]
+      (is (not (:exact? r)))
+      (is (> (:flatness-mm r) 0.5) "the out-of-plane point finally shows up"))))
+
+(deftest a-thin-spread-is-reported-as-poor-conditioning
+  (println "\n=== Fit del piano: presa larga vs presa stretta ===")
+  (let [fat (tri/fit-plane-mark [[0.0 0.0 40.0] [30.0 0.0 40.0] [15.0 26.0 40.0]]
+                                {:toward [0.0 0.0 300.0]})
+        thin (tri/fit-plane-mark [[0.0 0.0 40.0] [30.0 0.0 40.0] [15.0 1.5 40.0]]
+                                 {:toward [0.0 0.0 300.0]})]
+    (println (str "  triangolo largo: presa " (fmt (:width-mm fat) 1) "mm → "
+                  (fmt (:tilt-per-mm-deg fat) 2) "°/mm"
+                  " | stretto: presa " (fmt (:width-mm thin) 1) "mm → "
+                  (fmt (:tilt-per-mm-deg thin) 2) "°/mm"))
+    (is (< (:width-mm thin) (:width-mm fat)) "the sliver is narrower…")
+    (is (> (:tilt-per-mm-deg thin) (* 3 (:tilt-per-mm-deg fat)))
+        "…and its normal is far more sensitive — the number a user can act on
+         when flatness has nothing to say")
+    (is (< (js/Math.abs (- 26.0 (:width-mm fat))) 0.5)
+        "for a triangle the width IS its shortest height")))
+
 (deftest degenerate-inputs-return-nil
   (testing "fewer than 3 points is not a plane"
     (is (nil? (tri/fit-plane-mark [[0 0 0] [1 0 0]] {}))))

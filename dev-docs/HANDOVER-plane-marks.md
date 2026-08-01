@@ -382,6 +382,41 @@ quella che il marcatore portava, trasportare rigidamente anche le voci
 conservate. NON implementato — è una decisione da prendere con Vincenzo, e non
 è detto sia la causa di ciò che ha visto.
 
+### Seguito 3, secondo giro: il codice vero di Vincenzo
+
+Il frammento reale usa `extrude`, non primitivi piazzati — quindi **la
+convenzione di ancoraggio NON spiega il suo caso**: la risposta D1 del giro
+precedente era corretta come misura e irrilevante come diagnosi. Correzione
+messa a verbale.
+
+**Il sintomo esclude un offset costante.** "Migliora in alcune foto, peggiora in
+altre" non può essere curato da nessuno spostamento rigido: un solido rigido
+spostato è giusto o sbagliato *globalmente*. Quindi `(rt N)` è lo strumento
+sbagliato e tararlo è rincorrere.
+
+**Il difetto mio, trovato guardando i suoi dati**: entrambi i suoi mark hanno
+ESATTAMENTE 3 punti, e con 3 punti **il piano ci passa esatto** — la planarità
+vale 0.00 per aritmetica, non per merito. Lo strumento gli ha mostrato "0.00mm"
+come se fosse una promozione. Corretto: `fit-plane-mark` ora riporta `:exact?`
+e, al suo posto, il **condizionamento** — `:width-mm` (la presa più stretta del
+set di punti nel piano; per un triangolo è la sua altezza minima) e
+`:tilt-per-mm-deg` = quanti gradi ruota la normale per 1mm di errore su un
+click. Numeri che dicono qualcosa anche quando la planarità non può.
+
+Sui suoi due mark:
+
+```
+  piano-h  normale a  1.0° dall'asse del piatto, centro a 7.34mm sopra il piatto
+           quote dei 3 punti: 7.56 / 7.79 / 7.11     presa 24.4mm → 2.3°/mm
+  piano-1  normale a 89.3° (faccia verticale), quote: 15.38 / 16.01 / -0.23
+                                                     presa 12.4mm → 4.6°/mm
+```
+
+**Un'incompatibilità da chiarire con lui**: `piano-h` colloca la faccia
+orizzontale a 7.34mm sopra il piatto, ma i punti di `piano-1` arrivano a
+16.01mm — 8.68mm più in alto. O `piano-h` non è la faccia superiore
+dell'oggetto, o uno dei due mark è preso male. Non risolvibile senza le foto.
+
 ## Quello che resta aperto
 
 - **Ricollaudare la HUD dal vivo**: è verificata renderizzando stati finti in un

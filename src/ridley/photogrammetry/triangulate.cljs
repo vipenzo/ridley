@@ -152,6 +152,28 @@
       (when-let [r (solve-point intrinsics observations)]
         (assoc r :worst-obs (worst-observation intrinsics observations (:rms-px r)))))))
 
+(defn- min-in-plane-width
+  "The NARROWEST width of the point set inside its own plane: the smallest slab,
+   over all in-plane directions, that still contains every point. For three
+   points this is the triangle's shortest height.
+
+   It is the conditioning number that matters for a plane, and it is the one
+   number that still says something when there is no redundancy left: with
+   exactly three points the plane passes through them EXACTLY, so :flatness-mm is
+   identically zero and checks nothing — but a long thin triangle still pins the
+   normal far worse than a fat one, and this says by how much."
+  [points o u v]
+  (let [pts2 (mapv (fn [p] (let [q (la/v-sub p o)]
+                             [(la/v-dot q u) (la/v-dot q v)]))
+                   points)
+        steps 180]
+    (reduce min
+            (for [i (range steps)]
+              (let [a (* Math/PI (/ (double i) steps))
+                    dx (Math/cos a) dy (Math/sin a)
+                    ds (map (fn [[x y]] (+ (* x dx) (* y dy))) pts2)]
+                (- (apply max ds) (apply min ds)))))))
+
 (defn fit-plane-mark
   "Fit a plane to ≥3 world `points` and express it as a Ridley MARK —
    {:position :heading :up} — plus the numbers that say whether the zone really
@@ -191,11 +213,20 @@
 
    Returns nil for <3 points or a degenerate (collinear) set. Otherwise the mark
    plus:
-     :flatness-mm  — largest |signed distance| from a point to the plane. This is
-                     the honest verdict on 'is this zone flat': a rounded or
-                     stepped area shows up here, not as a silently tilted plane.
+     :flatness-mm  — largest |signed distance| from a point to the plane. The
+                     honest verdict on 'is this zone flat' — BUT ONLY above three
+                     points. At exactly three it is identically zero, because a
+                     plane through three points passes through them exactly; see
+                     :exact?, and do not read 0.00 as good news there.
      :per-point    — the signed distance of each point, so the WORST click can be
-                     re-taken instead of the whole set."
+                     re-taken instead of the whole set.
+     :exact?       — true when the fit had no redundancy left (three points), so
+                     :flatness-mm carries no information.
+     :width-mm     — narrowest in-plane width of the point set (min-in-plane-width):
+                     the conditioning number, meaningful at any count.
+     :tilt-per-mm-deg — how many degrees the normal swings for one millimetre of
+                     error on one point, = atan(1/width). This is what turns a
+                     thin spread into visible displacement far from the mark."
   [points {:keys [toward up-hints]}]
   (when (>= (count points) 3)
     (when-let [{:keys [o u n]} (pnp/plane-frame points)]
@@ -206,13 +237,21 @@
                    ;; plane-frame's u is in-plane by construction; re-orthogonalise
                    ;; against the possibly-flipped n so heading ⊥ up exactly.
                    (unit (la/v-sub u (la/v-scale n (la/v-dot u n)))))
-            dists (mapv #(la/v-dot (la/v-sub % o) n) points)]
+            dists (mapv #(la/v-dot (la/v-sub % o) n) points)
+            width (min-in-plane-width points o
+                                      (unit (la/v-sub u (la/v-scale n (la/v-dot u n))))
+                                      (cross3 n (unit (la/v-sub u (la/v-scale n (la/v-dot u n))))))]
         (when up
           {:position o
            :heading n
            :up up
            :flatness-mm (reduce max 0.0 (map #(Math/abs %) dists))
-           :per-point dists})))))
+           :per-point dists
+           :exact? (= 3 (count points))
+           :width-mm width
+           :tilt-per-mm-deg (if (> width 1e-9)
+                              (* (/ 180.0 Math/PI) (Math/atan (/ 1.0 width)))
+                              90.0)})))))
 
 (defn plane-through-point
   "The degenerate-but-common case the brief calls out: a zone KNOWN to be

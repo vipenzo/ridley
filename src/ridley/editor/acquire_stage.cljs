@@ -774,8 +774,14 @@
         add! (fn [cls txt] (.appendChild box (el "div" cls :text txt)))]
     (cond
       cand
-      (do (add! (if (> (:flatness-mm cand) 1.0) "eaq-hud-warn" "eaq-hud-good")
-                (str "Planarità " (src/fmt-number (:flatness-mm cand)) " mm"))
+      (do (if (:exact? cand)
+            (add! "eaq-hud-warn"
+                  (str "3 punti: piano esatto, planarità non verificata · "
+                       (src/fmt-number (:tilt-per-mm-deg cand)) "°/mm"))
+            (add! (if (> (:flatness-mm cand) 1.0) "eaq-hud-warn" "eaq-hud-good")
+                  (str "Planarità " (src/fmt-number (:flatness-mm cand)) " mm")))
+          (when (:exact? cand)
+            (add! "eaq-hud-hint" "Un quarto punto lontano dagli altri rende la planarità un controllo."))
           (add! "eaq-hud-hint"
                 "Cambia foto con [ e ] : il dischetto deve restare incollato alla superficie.")
           (when (> (:flatness-mm cand) 1.0)
@@ -1300,12 +1306,23 @@
                ;; re-anchor the override to its projection, so repeated refits
                ;; do not keep re-projecting an ever-staler point
                :origin-override (when placed (:position mark)))
-        (say! (str "piano proposto: planarità " (src/fmt-number (:flatness-mm mark))
-                   "mm su " (count pts) " punti"
-                   (when (> (:flatness-mm mark) 1.0)
-                     (str " — ATTENZIONE, la zona non è così piana. Scarti per punto (mm): "
-                          (mapv #(src/fmt-number %) (:per-point mark))))
-                   ". Naviga le foto con [ e ] e guarda se il dischetto resta incollato "
+        (say! (str "piano proposto su " (count pts) " punti. "
+                   (if (:exact? mark)
+                     ;; Three points fit ANY plane exactly, so reporting a
+                     ;; flatness of 0.00 here would be false comfort — it is
+                     ;; arithmetic, not a check. Say what IS known instead.
+                     (str "Con 3 punti il piano ci passa esatto: la planarità non è "
+                          "una verifica, vale 0 comunque. Quello che si può dire è il "
+                          "condizionamento: presa larga " (src/fmt-number (:width-mm mark))
+                          "mm, quindi 1mm di errore su un click inclina la normale di "
+                          (src/fmt-number (:tilt-per-mm-deg mark)) "°. "
+                          "Un QUARTO punto, lontano dagli altri, è quello che rende "
+                          "la planarità un controllo vero.")
+                     (str "Planarità " (src/fmt-number (:flatness-mm mark)) "mm"
+                          (when (> (:flatness-mm mark) 1.0)
+                            (str " — ATTENZIONE, la zona non è così piana. Scarti per punto (mm): "
+                                 (mapv #(src/fmt-number %) (:per-point mark))))))
+                   " Naviga le foto con [ e ] e guarda se il dischetto resta incollato "
                    "alla superficie: se sì Invio per accettarlo, se no Backspace per rifarlo."))
         (redraw-plane!)))))
 
