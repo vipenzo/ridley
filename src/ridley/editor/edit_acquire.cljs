@@ -653,8 +653,45 @@
         dims (bridge/dims-from-mesh pm pose)
         cams (vals (:camera-poses @session))
         rels (mapv #(m/v- (:position %) center) cams)]
-    (if (< (count rels) 4)
+    (cond
+      ;; A PLATE knows its own turntable axis: it IS the plate's axis, built
+      ;; along the creation-pose heading (plate.cljs). Asking the camera ring
+      ;; instead — which is what the box path must do — makes the guard refuse
+      ;; exactly when the answer is certain: on param-plate-paper it IDENTIFIED
+      ;; the plate axis correctly and then rejected it, because the shots were
+      ;; taken from varying heights (σ≈78mm) and the ring was not planar enough.
+      ;; So the object stayed at whatever orientation the solver happened to
+      ;; produce (Vincenzo 2026-08-01: 'l'asse del cilindro dovrebbe coincidere
+      ;; con l'asse Z').
+      ;;
+      ;; And a plate needs no axis RELABEL — the box path re-describes the box so
+      ;; its dims read (right, up, heading), which for a disc means nothing. All
+      ;; that is wanted is the pose: bring the plate to its own identity
+      ;; convention (axis = heading = world +Z) at the build position. That is a
+      ;; plain rigid move, so the object-frame ricalchi/marks/planes need no
+      ;; re-expression at all — their frame's LABELS do not change — and the
+      ;; cameras ride along on the transport that already exists.
+      (plate-proxy?)
+      (let [new-pose {:position build-pos :heading [0.0 0.0 1.0] :up [0.0 1.0 0.0]}]
+        (when (> (+ (m/magnitude (m/v- (:position pose) build-pos))
+                    (m/magnitude (m/v- (m/normalize (:heading pose)) [0.0 0.0 1.0])))
+                 1e-9)
+          (let [[moved] (attachment/group-transform
+                         [pm]
+                         (:position pose) (:heading pose) (:up pose)
+                         (:position new-pose) (:heading new-pose) (:up new-pose))]
+            (swap! session assoc :proxy-mesh moved)
+            (transport-registered-cameras! pose (:creation-pose moved))
+            (swap! session assoc-in [:camera-poses 0]
+                   (when-let [c0 (get-in @session [:camera-poses 0])]
+                     (attachment/transform-pose-rigid
+                      c0 (:position pose) (:heading pose) (:up pose)
+                      (:position new-pose) (:heading new-pose) (:up new-pose)))))))
+
+      (< (count rels) 4)
       (reanchor-to-build-pose!)                          ; too few cameras for a ring
+
+      :else
       (let [vars (mapv (fn [a] (variance (map #(m/dot % a) rels))) axes)
             vidx (first (apply min-key second (map-indexed vector vars)))
             [v-small v-mid _] (sort vars)]

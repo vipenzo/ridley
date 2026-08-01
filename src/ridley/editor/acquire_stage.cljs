@@ -897,7 +897,7 @@
                                    (on-click)))
     b))
 
-(declare set-candidate-origin! next-plane-point! add-another-point! fit-candidate! accept-candidate!
+(declare set-candidate-origin! schedule-live-reeval! next-plane-point! add-another-point! fit-candidate! accept-candidate!
          discard-candidate! recentre-origin! nudge-plane! reset-offset!
          undo-plane-click! stop-plane!)
 
@@ -1053,7 +1053,8 @@
           ;; placed origin must survive that and be carried onto the refit.
           (swap! stage assoc-in [:plane :origin-override] hit)
           (say! "origine del piano spostata dove hai cliccato")
-          (redraw-plane!)))))
+          (redraw-plane!)
+          (schedule-live-reeval!)))))
 
 (defn- add-observation!
   "Record this photo's view of the current point, re-triangulate, and say what is
@@ -1504,13 +1505,54 @@
                        ": destra " (src/fmt-number dr)
                        ", su " (src/fmt-number du)
                        ", normale " (src/fmt-number dn) " mm dal fit")))
-          (redraw-plane!)))))
+          (redraw-plane!)
+          (schedule-live-reeval!)))))
+
+(def ^:private live-reeval-delay-ms
+  "Trailing debounce on the live re-run. Key-repeat on the arrows would otherwise
+   re-evaluate the whole script per step; this collapses a burst into one run at
+   the end of it, which is what the eye needs anyway."
+  90)
+
+(defn- reeval-with-candidate!
+  "Re-run the WHOLE script with the mark under edit replaced by its current
+   value, so everything built on that mark moves as it is nudged.
+
+   Requested by Vincenzo (2026-08-01: 'se ho usato quel mark per posizionare un
+   oggetto sarebbe bello vederlo muoversi quando ne sposto la posizione — aiuta a
+   trovare quella giusta'), and it is the right instrument for the job: what you
+   are really aiming at is not the disc, it is the thing you built on it, and
+   only that thing can tell you when you have got there.
+
+   Reuses the modal family's live-preview machinery on the source with the
+   (edit-plane-mark …) form swapped for the literal — no marker survives the
+   substitution, hence arm-skip? false (see modal/reeval-script!)."
+  []
+  (let [{:keys [candidate edit]} (:plane @stage)]
+    (when (and candidate edit)
+      (when-let [[from to] (edit-mark-bounds (cm/get-value))]
+        (modal/reeval-script!
+         (fn [] (modal/splice-source (cm/get-value) from to
+                                     (mark-form (select-keys candidate [:position :heading :up])
+                                                (fitted-points))))
+         "plane-mark live:" false)
+        ;; the run rebuilt the scene, so the stage's own overlay must come back
+        (show-frustums!)))))
+
+(defn- schedule-live-reeval! []
+  (when-let [t (:live-timer @stage)] (js/clearTimeout t))
+  (swap! stage assoc :live-timer
+         (js/setTimeout (fn []
+                          (swap! stage dissoc :live-timer)
+                          (reeval-with-candidate!))
+                        live-reeval-delay-ms)))
 
 (defn- reset-offset! []
   (swap! stage assoc-in [:plane :offset] nil)
   (apply-offset!)
   (say! "piano rimesso dove l'hanno messo i punti")
-  (redraw-plane!))
+  (redraw-plane!)
+  (schedule-live-reeval!))
 
 (defn- recentre-origin!
   "Put the origin back where the fit itself put it — the centroid of the clicked
@@ -1521,6 +1563,7 @@
     (set-candidate-origin! c)
     (swap! stage update :plane dissoc :origin-override)
     (say! "origine rimessa al centro dei punti")
+    (schedule-live-reeval!)
     (redraw-plane!)))
 
 (defn- discard-candidate! []

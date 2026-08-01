@@ -543,6 +543,44 @@ byte per byte dal confirm chirurgico — resterebbero indietro. È la stessa
 staleness già annotata sopra: la cura è il trasporto rigido delle voci
 conservate, e le due cose vanno fatte insieme o non fatte.
 
+### Seguito 3, quinto giro: piatto raddrizzato + propagazione live
+
+**1. Il palcoscenico ora si raddrizza anche col piatto.** `canonicalize-orientation!`
+ha un ramo per il proxy piatto che NON interroga l'anello di camere: l'asse è
+quello del piatto, noto per costruzione. E non serve nessuna rietichettatura
+degli assi — il ramo box ri-descrive il box perché le sue dimensioni leggano
+(right, up, heading), cosa che per un disco non vuol dire niente. Serve solo la
+posa: portare il piatto alla sua convenzione identità (asse = heading = world
++Z) alla build position. È un moto rigido puro, quindi i ricalchi/mark/piani in
+frame-oggetto **non vanno ri-espressi** (le etichette del loro frame non
+cambiano) e le camere viaggiano sul trasporto che già esiste
+(`transport-registered-cameras!` + `transform-pose-rigid` per la camera 0).
+
+Verificato dal vivo: da una posa storta come quella reale, dopo la
+canonicalizzazione heading = [0 −2e−5 1.0] ≈ world +Z, up ≈ +Y, posizione alla
+turtle; e la geometria resta coerente — l'anchor `m00` conserva la sua
+convenzione (heading ≈ [0 0 1], z = 1.5 = mezzo spessore).
+
+NB: i mark-piano già scritti sono in coordinate mondo e NON vengono trasportati.
+Vincenzo (2026-08-01) ha esplicitamente accettato di perderli ("non ho molte
+cose da recuperare"); vanno rifatti dopo il primo raddrizzamento.
+
+**2. Propagazione live durante l'edit di un mark.** Ogni spostamento (frecce,
+click sull'origine, Origine-al-centro, azzeramento) ri-esegue TUTTO lo script
+con la forma `(edit-plane-mark …)` sostituita dal valore corrente, così ciò che
+è costruito su quel mark si muove insieme a lui. È la macchina di anteprima
+della famiglia modale (`modal/reeval-script!`) applicata a una forma interna;
+nessun marcatore sopravvive alla sostituzione, quindi `arm-skip?` false.
+
+Debounce di 90ms in coda: la ripetizione del tasto altrimenti ri-eseguirebbe lo
+script a ogni passo. Dopo la ri-esecuzione il layer del palcoscenico va
+ri-mostrato (il run ricostruisce la scena).
+
+Verificato con uno script che usa davvero il mark
+(`(register BB (turtle (:p1 (:marks A)) (extrude (circle 3) (f 2))))`): centro
+di BB `[1 0 20]` → su +5 → `[1 0 25]` → destra +4 → `[1 4 25]` → azzeramento →
+`[1 0 20]`.
+
 ## Quello che resta aperto
 
 - **Ricollaudare la HUD dal vivo**: è verificata renderizzando stati finti in un
