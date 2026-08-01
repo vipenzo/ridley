@@ -762,16 +762,44 @@
 
 (defn- registration-of [idx] (get-in @stage [:registration idx]))
 
+(defn- behind-plate?
+  "True when this photo's camera sits BEHIND the plate's marked face.
+
+   Physically impossible: the discs were photographed, so the camera was on
+   their side. A pose that says otherwise is the mirror twin of the planar PnP —
+   the 2-fold ambiguity a plane-based homography always has, normally arbitrated
+   by the reprojection error and lost when the shot is grazing and a few marks
+   are missing. On such a photo the proxy renders SEEN FROM BEHIND: its crown
+   dots appear on the far face while the photo shows them face-on, which reads
+   as 'the proxy has been turned 180°' (Vincenzo 2026-08-01).
+
+   Measured on param-plate-paper: photo 9 (rms 12.26, 10 marks of 12) has its
+   camera at cos −0.26 from the marked normal, while every other photo sits
+   between +0.33 and +0.99."
+  [idx]
+  (when (:plate? @stage)
+    (let [{:keys [position heading]} (:emit-pose @stage)
+          cam (get-in @stage [:camera-poses idx :position])]
+      (when (and cam heading position)
+        (neg? (m/dot (m/normalize heading) (m/v- cam position)))))))
+
 (defn- poorly-registered? [idx]
-  (when-let [{:keys [rms-px]} (registration-of idx)]
-    (> rms-px poor-registration-px)))
+  (or (behind-plate? idx)
+      (when-let [{:keys [rms-px]} (registration-of idx)]
+        (> rms-px poor-registration-px))))
 
 (defn- registration-label
   "'reg. 11.3px · 10/12' for the current photo, or nil when unknown."
   [idx]
-  (when-let [{:keys [rms-px matched]} (registration-of idx)]
-    (str "reg. " (src/fmt-number rms-px) "px"
-         (when matched (str " · " matched " marker")))))
+  (let [{:keys [rms-px matched]} (registration-of idx)]
+    (cond
+      (behind-plate? idx)
+      (str "REGISTRAZIONE RIBALTATA — la camera è dietro il piatto"
+           (when rms-px (str " (reg. " (src/fmt-number rms-px) "px)")))
+      rms-px
+      (str "reg. " (src/fmt-number rms-px) "px"
+           (when matched (str " · " matched " marker")))
+      :else nil)))
 
 ;; ---- the HUD ----
 ;; The gesture's state, drawn where the user is looking. The first live run
@@ -861,7 +889,10 @@
                      (when (poorly-registered? here) "  ⚠ mal registrata"))))
         (when (poorly-registered? here)
           (add! "eaq-hud-bad"
-                "Su questa foto tutto si riproietta storto: usane un'altra."))
+                (if (behind-plate? here)
+                  (str "Il piatto è registrato al contrario su questa foto: la vedi "
+                       "da dietro. Non usarla — va ri-registrata.")
+                  "Su questa foto tutto si riproietta storto: usane un'altra.")))
         (case (count obs)
           0 (add! "eaq-hud-hint" "Clicca un punto ben riconoscibile della zona piana.")
           1 (add! "eaq-hud-hint"

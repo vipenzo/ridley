@@ -581,6 +581,46 @@ Verificato con uno script che usa davvero il mark
 di BB `[1 0 20]` → su +5 → `[1 0 25]` → destra +4 → `[1 4 25]` → azzeramento →
 `[1 0 20]`.
 
+### Seguito 3, sesto giro: "il proxy è girato di 180°" — non lo è
+
+Segnalazione: i pallini della corona sul proxy appaiono sulla faccia che guarda
+in basso, mentre nella foto guardano in alto.
+
+**Misurato: il proxy NON è ribaltato e non c'entra nessuna modifica al codice.**
+Ancore e faccia `:top` della mesh stanno dallo stesso lato (+1.5 lungo heading)
+sia appena creata sia montata alla posa emessa. E la registrazione è sana: 9
+camere su 10 vedono la faccia marcata.
+
+**È UNA FOTO SOLA, ed è il gemello specchiato del PnP planare.** Correlazione
+netta sui dati della sessione:
+
+```
+foto | qualità registrazione | lato del piatto visto
+   7 | rms  1.40  12/12      | cos +0.994  ok
+   8 | rms  9.42  12/12      | cos +0.328  radente
+   9 | rms 12.26  10/12      | cos -0.258  DIETRO  ***
+```
+
+La foto 9 ha insieme il peggior rms, i marker mancanti e la camera **dietro** il
+piatto. Un piano ha sempre due pose che lo spiegano (l'ambiguità 2-fold del
+PnP planare, dichiarata in `pnp/estimate-homography` come "lasciata arbitrare a
+refine+rms"): su uno scatto radente con 10 marker su 12 l'rms ha arbitrato male
+e ha vinto il gemello. Su quella foto il proxy si vede DA DIETRO — e i pallini
+finiscono sulla faccia lontana, che è esattamente il sintomo.
+
+**Reso visibile**: `behind-plate?` usa il vincolo fisico che l'rms non usa — i
+dischetti sono stati fotografati, quindi la camera stava dalla loro parte; una
+posa che dice il contrario è impossibile, non improbabile. Confluisce nel ⚠ del
+bottone Foto e la riga della HUD lo nomina per quello che è ("REGISTRAZIONE
+RIBALTATA — la camera è dietro il piatto") invece di dire genericamente che è
+storta. Verificato sulle camere vere: foto 7 pulita, 8 segnalata per rms, 9
+segnalata come ribaltata.
+
+**NON fatto, ed è il seguito naturale**: usare lo stesso vincolo al momento del
+solve, per SCARTARE il gemello invece di accorgersene dopo. È gratis come test
+(`bridge/plate-detect` calcola già `:face-normal`) ma richiede o rifiutare la
+foto o ri-seedare LM dalla posa specchiata.
+
 ## Quello che resta aperto
 
 - **Ricollaudare la HUD dal vivo**: è verificata renderizzando stati finti in un
