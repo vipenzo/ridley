@@ -645,6 +645,28 @@ solido per leggere la foto è esattamente il momento in cui servono.
 Verificato: proxy visibile → mesh + corona + mark; proxy nascosto → corona +
 mark; 13 pallini, 2 colori, tutti sulla faccia marcata (z = 1.50).
 
+### Seguito 3, ottavo giro: overridare lo snap
+
+Lo snap del click su un mark del piatto aggancia il blob scuro sotto al cursore.
+Quando il mark TOCCA qualcosa di grigio simile — l'oggetto nero appoggiato sul
+piatto — il blob li abbraccia entrambi e il centroide finisce su una punta
+arrotondata dell'oggetto, per quanto bene si sia cliccato (Vincenzo 2026-08-01,
+foto 10 / mark 11). Non è un problema di mira: nessuna precisione lo risolve.
+
+Due aggiunte, e la seconda conta quanto la prima:
+
+- **ALT prende il click alla lettera.** `click-pixel` salta lo snap quando il
+  tasto è premuto e lo conferma nella riga di stato.
+- **Uno snap che ha viaggiato troppo lo ANNUNCIA e nomina la via d'uscita.**
+  Un dischetto è ~2.5mm ≈ 50px su queste foto, quindi uno snap onesto da un
+  click grossolano si sposta al massimo di ~25px; oltre, è andato su un
+  vicino. Sopra soglia il messaggio dice quanti px si è spostato e suggerisce
+  ALT. Un utente che non conosce l'override non può chiederlo: l'affordance va
+  offerta nel momento in cui serve, non nascosta in una mappa di tasti.
+
+Verificato: con un blob a 30px dal click, senza ALT il pixel va a [130 100] e
+scatta l'avviso; con ALT torna [100 100], il click esatto.
+
 ## Quello che resta aperto
 
 - **Ricollaudare la HUD dal vivo**: è verificata renderizzando stati finti in un

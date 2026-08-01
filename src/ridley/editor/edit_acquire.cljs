@@ -1414,6 +1414,13 @@
    a neighbour."
   50)
 
+(def ^:private suspicious-snap-px
+  "A snap that moves the click further than this has probably latched onto
+   something that is not the mark. A disc is ~2.5mm across — some 50px on these
+   photos — so an honest snap from a rough click travels at most ~25px; beyond
+   that it has walked to a NEIGHBOURING feature."
+  25.0)
+
 (defn- snap-plate-click
   "A plate mark IS a dark blob, so snap a raw click to its disc centroid — the
    clicks then match the auto-proposals' sub-pixel precision (what keeps the
@@ -1423,6 +1430,33 @@
   (or (when (plate-proxy?)
         (some-> (blob/snap-to-blob backdrop/luminance-at raw plate-click-snap-radius) :center))
       raw))
+
+(defn- click-pixel
+  "The pixel a click means: snapped to the disc under it, unless ALT is held.
+
+   The snap is right almost always and wrong in a way the user cannot argue
+   with: when the mark touches something of a similar grey — the dark object
+   sitting on the plate — the blob it finds spans both, and the centroid lands on
+   a rounded tip of the object instead of the disc, however carefully you
+   clicked (Vincenzo 2026-08-01, foto 10 / mark 11). No amount of aim fixes that,
+   so there has to be a way to say 'take my click literally'.
+
+   And because a user who does not know the override cannot ask for it, a snap
+   that travelled suspiciously far ANNOUNCES itself and names the way out — the
+   affordance is offered at the moment it is needed rather than hidden in a
+   keymap."
+  [raw ^js e]
+  (if (.-altKey e)
+    (do (set-status-message! "click preso alla lettera (Alt): nessuno snap")
+        raw)
+    (let [px (snap-plate-click raw)
+          d (Math/hypot (- (nth px 0) (nth raw 0)) (- (nth px 1) (nth raw 1)))]
+      (when (> d suspicious-snap-px)
+        (set-status-message!
+         (str "lo snap ha spostato il click di " (modal/fmt-number d) "px — se ha agganciato "
+              "la cosa sbagliata (un bordo scuro lì vicino), riclicca tenendo ALT "
+              "per prenderlo alla lettera")))
+      px)))
 
 (defn- screen-for [px client-fallback]
   (or (backdrop/screen-of-pixel (viewport/get-canvas) (viewport/get-camera) px) client-fallback))
@@ -1437,7 +1471,7 @@
           (batch-mode?)
           (do
             (.preventDefault e) (.stopPropagation e)
-            (let [px (snap-plate-click raw)]
+            (let [px (click-pixel raw e)]
               (swap! session update-in [:pnp-batch idx] (fnil conj [])
                      {:px px :screen (screen-for px [(.-clientX e) (.-clientY e)])})
               (redraw-overlay-dots!)
@@ -1446,7 +1480,7 @@
           ;; fetta A / box: place the armed target; ignore clicks when unarmed
           (:pnp-armed @session)
           (let [ci (:pnp-armed @session)
-                px (snap-plate-click raw)]
+                px (click-pixel raw e)]
             (.preventDefault e) (.stopPropagation e)
             (swap! session assoc-in [:pnp-picks idx ci]
                    {:px px :screen (screen-for px [(.-clientX e) (.-clientY e)])})
