@@ -457,9 +457,17 @@ corsa 0→4, `(f -4)` occupa −4→0, stesso volume e **stesso segno del volume
 orientato** — non è rovesciata (che nessun controllo di mesh vedrebbe).
 `test/ridley/turtle/backward_extrude_test.cljs`.
 
-**2. Movimento vincolato del piano (richiesto: "muoverlo solo in altezza").**
-Frecce su/giù (e i bottoni ▲▼) fanno scorrere il piano proposto lungo **la sua
-normale**, 0.25mm per volta. Il motivo dietro la richiesta è giusto e vale la
+**2. Movimento vincolato, sui tre assi del mark.** Frecce = sposta l'ORIGINE
+**dentro** il piano (su/giù lungo l'`up` del mark, destra/sinistra lungo il suo
+`right` = up×heading, la stessa convenzione con cui la geometria creata al mark
+viene posata). **Shift+↑↓** = sposta il PIANO in profondità, lungo la normale.
+0.25mm per passo.
+
+La prima versione offriva solo la normale, per una lettura sbagliata della
+richiesta: il bisogno vero era muovere sulla superficie, non attraverso. Le due
+cose restano entrambe utili e sono tenute distinte perché *sono* distinte —
+nel piano si sposta il punto da cui si misura, lungo la normale si sposta il
+piano stesso; la HUD le nomina diversamente. Il motivo dietro la richiesta è giusto e vale la
 pena scriverlo: una foto non osserva tutte le direzioni allo stesso modo — la
 profondità lungo la propria linea di vista è quella che fissa peggio — quindi
 poter muovere in UNA direzione dichiarata permette di giudicare la correzione

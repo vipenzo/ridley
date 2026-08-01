@@ -442,7 +442,7 @@
         ;; plane mode owns n / Enter / Backspace / Esc while it is on — including
         ;; Esc, which it consumes BEFORE leave-pose!: pressing it once should
         ;; close the gesture, not throw you out of the photo you were measuring on.
-        (and (plane-mode?) (not (modal/active?)) (plane-key! k))
+        (and (plane-mode?) (not (modal/active?)) (plane-key! k (.-shiftKey e)))
         (.preventDefault e)
         (and (:in-pose? @stage) (not (modal/active?)) (= k "Escape"))
         (do (.preventDefault e) (leave-pose!))))))
@@ -833,11 +833,14 @@
                 "Cambia foto con [ e ] : il dischetto deve restare incollato alla superficie.")
           (when (> (:flatness-mm cand) 1.0)
             (add! "eaq-hud-warn" "La zona non è molto piana — guarda bene prima di accettare."))
-          (let [off (get-in @stage [:plane :offset-mm] 0.0)]
-            (when-not (zero? off)
+          (let [{:keys [dr du dn] :or {dr 0.0 du 0.0 dn 0.0}} (:offset (:plane @stage))]
+            (when-not (= 0.0 dr du dn)
               (add! "eaq-hud-warn"
-                    (str "Spostato a mano di " (src/fmt-number off)
-                         "mm lungo la normale (frecce su/giu)"))))
+                    (str "Spostato a mano: →" (src/fmt-number dr)
+                         " ↑" (src/fmt-number du)
+                         " ⊥" (src/fmt-number dn) " mm")))
+            (add! "eaq-hud-hint"
+                  "Frecce = sposta l'origine NEL piano · Shift+↑↓ = sposta il piano in profondità"))
           (add! nil (str "Origine (pallino magenta): "
                          (if (:origin-override (:plane @stage))
                            "dove hai cliccato."
@@ -910,10 +913,14 @@
                      (hud-button "Aggiungi punto"
                                  "Torna a cliccare punti, tenendo quelli che ci sono (n)"
                                  true false add-another-point!)
-                     (hud-button "▲" "Alza il piano lungo la sua normale (freccia su)"
-                                 true false #(nudge-plane! plane-nudge-step))
-                     (hud-button "▼" "Abbassa il piano lungo la sua normale (freccia giu)"
-                                 true false #(nudge-plane! (- plane-nudge-step)))
+                     (hud-button "◀" "Sposta l'origine a sinistra nel piano (freccia sinistra)"
+                                 true false #(nudge-plane! :dr (- plane-nudge-step)))
+                     (hud-button "▶" "Sposta l'origine a destra nel piano (freccia destra)"
+                                 true false #(nudge-plane! :dr plane-nudge-step))
+                     (hud-button "▲" "Sposta l'origine in su nel piano (freccia su)"
+                                 true false #(nudge-plane! :du plane-nudge-step))
+                     (hud-button "▼" "Sposta l'origine in giù nel piano (freccia giù)"
+                                 true false #(nudge-plane! :du (- plane-nudge-step)))
                      (hud-button "Origine al centro"
                                  "Rimette l'origine al centro dei punti cliccati"
                                  (some? (:origin-override (:plane @stage))) false
@@ -1361,7 +1368,7 @@
                :origin-override (when placed (:position mark))
                ;; a refit is a fresh measurement: it supersedes a hand offset
                :candidate-base-pos (:position mark)
-               :offset-mm 0.0)
+               :offset nil)
         (say! (str "piano proposto su " (count pts) " punti. "
                    (if (:exact? mark)
                      ;; Three points fit ANY plane exactly, so reporting a
@@ -1428,17 +1435,38 @@
   [pos]
   (swap! stage update :plane #(-> %
                                   (assoc-in [:candidate :position] pos)
-                                  (assoc :candidate-base-pos pos :offset-mm 0.0))))
+                                  (assoc :candidate-base-pos pos :offset nil))))
+
+(defn- mark-axes
+  "The mark's own three directions: [right up normal]. `right` is up×heading,
+   the same convention geometry created at the mark is placed with
+   (primitives/apply-transform), so a nudge 'to the right' moves the mark the
+   way the thing built on it will move."
+  [{:keys [heading up]}]
+  (let [h (m/normalize heading)
+        u (m/normalize up)]
+    [(m/normalize (m/cross u h)) u h]))
 
 (defn- apply-offset!
-  "Re-derive the candidate position from its BASE plus the accumulated offset
-   along the normal — recomputed from the base every time, so repeated nudges
-   cannot drift."
+  "Re-derive the candidate position from its BASE plus the accumulated offset,
+   component by component in the mark's OWN frame. Recomputed from the base
+   every time, so repeated nudges cannot drift."
   []
-  (let [{:keys [candidate candidate-base-pos offset-mm]} (:plane @stage)]
+  (let [{:keys [candidate candidate-base-pos offset]} (:plane @stage)]
     (when (and candidate candidate-base-pos)
-      (swap! stage assoc-in [:plane :candidate :position]
-             (m/v+ candidate-base-pos (m/v* (:heading candidate) (or offset-mm 0.0)))))))
+      (let [[r u n] (mark-axes candidate)
+            {:keys [dr du dn] :or {dr 0.0 du 0.0 dn 0.0}} offset
+            p (-> candidate-base-pos
+                  (m/v+ (m/v* r dr))
+                  (m/v+ (m/v* u du))
+                  (m/v+ (m/v* n dn)))]
+        (swap! stage update :plane
+               (fn [pl] (cond-> (assoc-in pl [:candidate :position] p)
+                          ;; a hand-positioned origin is the user's answer to
+                          ;; 'where is this measured from', so a later refit must
+                          ;; carry it rather than fall back to the centroid
+                          (or (:origin-override pl) (not= p candidate-base-pos))
+                          (assoc :origin-override p))))))))
 
 (defn- nudge-plane!
   "Slide the proposed plane along its own NORMAL.
@@ -1451,7 +1479,7 @@
    dimensions at once and trusting all of them equally. The normal is that
    direction for a plane: what an orientation-correct but mis-placed fit gets
    wrong, and what the points cannot pin better than their own triangulation."
-  [delta]
+  [axis delta]
   (when (:candidate (:plane @stage))
     (if-not (:candidate-base-pos (:plane @stage))
       ;; Without a baseline apply-offset! can do nothing, and the failure is
@@ -1459,14 +1487,17 @@
       ;; displacement, and the plane does not move. Say it instead.
       (say! (str "non riesco a spostare il piano: manca il riferimento di partenza. "
                  "Rifai il fit (Invio) e riprova — e segnalalo, è un difetto."))
-      (do (swap! stage update-in [:plane :offset-mm] (fnil + 0.0) delta)
+      (do (swap! stage update-in [:plane :offset axis] (fnil + 0.0) delta)
           (apply-offset!)
-          (say! (str "piano spostato lungo la normale: "
-                     (src/fmt-number (get-in @stage [:plane :offset-mm])) "mm dal fit"))
+          (let [{:keys [dr du dn] :or {dr 0.0 du 0.0 dn 0.0}} (:offset (:plane @stage))]
+            (say! (str (if (= axis :dn) "piano spostato in profondità" "origine spostata nel piano")
+                       ": destra " (src/fmt-number dr)
+                       ", su " (src/fmt-number du)
+                       ", normale " (src/fmt-number dn) " mm dal fit")))
           (redraw-plane!)))))
 
 (defn- reset-offset! []
-  (swap! stage assoc-in [:plane :offset-mm] 0.0)
+  (swap! stage assoc-in [:plane :offset] nil)
   (apply-offset!)
   (say! "piano rimesso dove l'hanno messo i punti")
   (redraw-plane!))
@@ -1492,14 +1523,20 @@
   "Plane-mode keys. Returns true when the key was consumed. Enter is two-stage —
    fit, then accept — so nothing reaches the source before the user has looked at
    the disc across the photos."
-  [k]
+  [k shift?]
   (let [candidate? (some? (:candidate (:plane @stage)))]
     (case k
       "n" (do (add-another-point!) true)
       "Enter" (do (if candidate? (accept-candidate!) (fit-candidate!)) true)
       "Backspace" (do (if candidate? (discard-candidate!) (undo-plane-click!)) true)
-      "ArrowUp" (do (nudge-plane! plane-nudge-step) true)
-      "ArrowDown" (do (nudge-plane! (- plane-nudge-step)) true)
+      ;; the arrows move IN the plane — up/down/left/right on the surface, which
+      ;; is what a displaced mark actually needs (Vincenzo 2026-08-01). Depth,
+      ;; the direction that moves the PLANE itself, goes on the same arrows with
+      ;; Shift: separate gesture for a separate kind of change.
+      "ArrowUp" (do (nudge-plane! (if shift? :dn :du) plane-nudge-step) true)
+      "ArrowDown" (do (nudge-plane! (if shift? :dn :du) (- plane-nudge-step)) true)
+      "ArrowRight" (do (nudge-plane! :dr plane-nudge-step) true)
+      "ArrowLeft" (do (nudge-plane! :dr (- plane-nudge-step)) true)
       "Escape" (do (stop-plane!) (say! "modo piano chiuso") true)
       false)))
 
@@ -1537,7 +1574,7 @@
                          ;; the invariant set-candidate-origin! maintains — without
                          ;; it the arrows move nothing on a re-opened mark
                          :candidate-base-pos (:position mark)
-                         :offset-mm 0.0
+                         :offset nil
                          ;; an existing mark's origin is treated as PLACED: it is
                          ;; whatever the user settled on last time, and a refit
                          ;; must carry it over rather than recentre it.
