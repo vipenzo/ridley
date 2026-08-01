@@ -476,6 +476,24 @@ azzeramento tornano esatti, e solo la coordinata lungo la normale cambia.
 **Non è un gizmo** — è la sua parte utile. Un gizmo a tre assi resta possibile
 se serve trascinare anche nel piano.
 
+**Difetto trovato al primo uso, e come l'ho lasciato passare.** Le frecce non
+muovevano niente su un mark RIAPERTO: il contatore saliva, la HUD annunciava lo
+spostamento, il piano stava fermo. Causa: `open-mark-edit!` posava `:candidate`
+senza `:candidate-base-pos`, quindi `apply-offset!` non aveva da dove partire e
+usciva in silenzio. Anche `recentre-origin!` spostava l'origine senza
+ri-azzerare la base.
+
+Il mio collaudo non l'aveva visto perché **avevo iniettato uno stato finto che
+il campo lo conteneva già**: verificavo il calcolo e non il percorso che
+costruisce lo stato. La lezione, generale: quando si collauda iniettando stato,
+si sta collaudando ciò che sta a valle dell'iniezione — il codice che *produce*
+quello stato resta fuori dal test. Ora la verifica passa da
+`request-mark-edit!` + `open-pending-edit!` veri.
+
+Rimedi: un solo `set-candidate-origin!` mantiene l'invariante (base = posizione
+a scostamento zero) e ci passano tutti e tre i chiamanti; e `nudge-plane!`, se
+la base manca, **lo dice** invece di non fare nulla.
+
 ## Quello che resta aperto
 
 - **Ricollaudare la HUD dal vivo**: è verificata renderizzando stati finti in un

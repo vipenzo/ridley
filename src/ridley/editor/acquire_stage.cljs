@@ -894,7 +894,7 @@
                                    (on-click)))
     b))
 
-(declare next-plane-point! add-another-point! fit-candidate! accept-candidate!
+(declare set-candidate-origin! next-plane-point! add-another-point! fit-candidate! accept-candidate!
          discard-candidate! recentre-origin! nudge-plane! reset-offset!
          undo-plane-click! stop-plane!)
 
@@ -1040,16 +1040,11 @@
       (not (plausible-point? hit))
       (say! "il punto cade lontano dall'oggetto: da questa foto il piano è quasi di taglio")
       :else
-      (do (swap! stage update :plane
-                 (fn [p] (-> p
-                             (assoc-in [:candidate :position] hit)
-                             ;; kept OUTSIDE the candidate on purpose: the
-                             ;; candidate is thrown away whenever the user goes
-                             ;; back to add a point, and a deliberately placed
-                             ;; origin must survive that and be carried onto the
-                             ;; refitted plane.
-                             (assoc :origin-override hit)
-                             (assoc :candidate-base-pos hit :offset-mm 0.0))))
+      (do (set-candidate-origin! hit)
+          ;; kept OUTSIDE the candidate on purpose: the candidate is thrown away
+          ;; whenever the user goes back to add a point, and a deliberately
+          ;; placed origin must survive that and be carried onto the refit.
+          (swap! stage assoc-in [:plane :origin-override] hit)
           (say! "origine del piano spostata dove hai cliccato")
           (redraw-plane!)))))
 
@@ -1422,6 +1417,19 @@
 
 (def ^:private plane-nudge-step 0.25)
 
+(defn- set-candidate-origin!
+  "Move the candidate's origin AND re-baseline the along-normal offset.
+
+   THE INVARIANT: :candidate-base-pos is where the candidate sits with zero
+   offset. Anything that moves the origin must go through here, or the arrows
+   silently stop working — which is exactly what happened when re-opening a mark
+   with (edit-plane-mark …) set :candidate without a base: the offset counter
+   went up, the HUD said so, and the plane did not move (Vincenzo 2026-08-01)."
+  [pos]
+  (swap! stage update :plane #(-> %
+                                  (assoc-in [:candidate :position] pos)
+                                  (assoc :candidate-base-pos pos :offset-mm 0.0))))
+
 (defn- apply-offset!
   "Re-derive the candidate position from its BASE plus the accumulated offset
    along the normal — recomputed from the base every time, so repeated nudges
@@ -1445,11 +1453,17 @@
    wrong, and what the points cannot pin better than their own triangulation."
   [delta]
   (when (:candidate (:plane @stage))
-    (swap! stage update-in [:plane :offset-mm] (fnil + 0.0) delta)
-    (apply-offset!)
-    (say! (str "piano spostato lungo la normale: "
-               (src/fmt-number (get-in @stage [:plane :offset-mm])) "mm dal fit"))
-    (redraw-plane!)))
+    (if-not (:candidate-base-pos (:plane @stage))
+      ;; Without a baseline apply-offset! can do nothing, and the failure is
+      ;; SILENT in the worst way: the counter goes up, the HUD reports a
+      ;; displacement, and the plane does not move. Say it instead.
+      (say! (str "non riesco a spostare il piano: manca il riferimento di partenza. "
+                 "Rifai il fit (Invio) e riprova — e segnalalo, è un difetto."))
+      (do (swap! stage update-in [:plane :offset-mm] (fnil + 0.0) delta)
+          (apply-offset!)
+          (say! (str "piano spostato lungo la normale: "
+                     (src/fmt-number (get-in @stage [:plane :offset-mm])) "mm dal fit"))
+          (redraw-plane!)))))
 
 (defn- reset-offset! []
   (swap! stage assoc-in [:plane :offset-mm] 0.0)
@@ -1463,9 +1477,8 @@
    coordinates are measured from moves."
   []
   (when-let [c (:origin-centroid (:plane @stage))]
-    (swap! stage update :plane #(-> %
-                                    (assoc-in [:candidate :position] c)
-                                    (dissoc :origin-override)))
+    (set-candidate-origin! c)
+    (swap! stage update :plane dissoc :origin-override)
     (say! "origine rimessa al centro dei punti")
     (redraw-plane!)))
 
@@ -1521,6 +1534,10 @@
                         {:candidate (select-keys mark [:position :heading :up])
                          :candidate-radius (disc-radius pts)
                          :origin-centroid (:position mark)
+                         ;; the invariant set-candidate-origin! maintains — without
+                         ;; it the arrows move nothing on a re-opened mark
+                         :candidate-base-pos (:position mark)
+                         :offset-mm 0.0
                          ;; an existing mark's origin is treated as PLACED: it is
                          ;; whatever the user settled on last time, and a refit
                          ;; must carry it over rather than recentre it.
