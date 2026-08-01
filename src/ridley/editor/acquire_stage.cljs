@@ -833,6 +833,11 @@
                 "Cambia foto con [ e ] : il dischetto deve restare incollato alla superficie.")
           (when (> (:flatness-mm cand) 1.0)
             (add! "eaq-hud-warn" "La zona non è molto piana — guarda bene prima di accettare."))
+          (let [off (get-in @stage [:plane :offset-mm] 0.0)]
+            (when-not (zero? off)
+              (add! "eaq-hud-warn"
+                    (str "Spostato a mano di " (src/fmt-number off)
+                         "mm lungo la normale (frecce su/giu)"))))
           (add! nil (str "Origine (pallino magenta): "
                          (if (:origin-override (:plane @stage))
                            "dove hai cliccato."
@@ -890,7 +895,8 @@
     b))
 
 (declare next-plane-point! add-another-point! fit-candidate! accept-candidate!
-         discard-candidate! recentre-origin! undo-plane-click! stop-plane!)
+         discard-candidate! recentre-origin! nudge-plane! reset-offset!
+         undo-plane-click! stop-plane!)
 
 (defn- hud-actions []
   (let [picks (plane-picks)
@@ -904,6 +910,10 @@
                      (hud-button "Aggiungi punto"
                                  "Torna a cliccare punti, tenendo quelli che ci sono (n)"
                                  true false add-another-point!)
+                     (hud-button "▲" "Alza il piano lungo la sua normale (freccia su)"
+                                 true false #(nudge-plane! plane-nudge-step))
+                     (hud-button "▼" "Abbassa il piano lungo la sua normale (freccia giu)"
+                                 true false #(nudge-plane! (- plane-nudge-step)))
                      (hud-button "Origine al centro"
                                  "Rimette l'origine al centro dei punti cliccati"
                                  (some? (:origin-override (:plane @stage))) false
@@ -1038,7 +1048,8 @@
                              ;; back to add a point, and a deliberately placed
                              ;; origin must survive that and be carried onto the
                              ;; refitted plane.
-                             (assoc :origin-override hit))))
+                             (assoc :origin-override hit)
+                             (assoc :candidate-base-pos hit :offset-mm 0.0))))
           (say! "origine del piano spostata dove hai cliccato")
           (redraw-plane!)))))
 
@@ -1352,7 +1363,10 @@
                :origin-centroid fit-origin
                ;; re-anchor the override to its projection, so repeated refits
                ;; do not keep re-projecting an ever-staler point
-               :origin-override (when placed (:position mark)))
+               :origin-override (when placed (:position mark))
+               ;; a refit is a fresh measurement: it supersedes a hand offset
+               :candidate-base-pos (:position mark)
+               :offset-mm 0.0)
         (say! (str "piano proposto su " (count pts) " punti. "
                    (if (:exact? mark)
                      ;; Three points fit ANY plane exactly, so reporting a
@@ -1406,6 +1420,43 @@
         (done! (str "creato :" nm ". Usalo così:  (turtle (:" nm " (:marks A)) (edit-path-2d))"))
         (redraw-plane!)))))
 
+(def ^:private plane-nudge-step 0.25)
+
+(defn- apply-offset!
+  "Re-derive the candidate position from its BASE plus the accumulated offset
+   along the normal — recomputed from the base every time, so repeated nudges
+   cannot drift."
+  []
+  (let [{:keys [candidate candidate-base-pos offset-mm]} (:plane @stage)]
+    (when (and candidate candidate-base-pos)
+      (swap! stage assoc-in [:plane :candidate :position]
+             (m/v+ candidate-base-pos (m/v* (:heading candidate) (or offset-mm 0.0)))))))
+
+(defn- nudge-plane!
+  "Slide the proposed plane along its own NORMAL.
+
+   The one constrained move worth having (Vincenzo 2026-08-01: 'su una certa
+   foto mi posso fidare di quella dimensione e non di altre'). A photo does not
+   observe every direction equally — depth along its own line of sight is the
+   one it pins worst — so moving in ONE declared direction lets the correction
+   be judged on the view that actually sees it, instead of dragging in three
+   dimensions at once and trusting all of them equally. The normal is that
+   direction for a plane: what an orientation-correct but mis-placed fit gets
+   wrong, and what the points cannot pin better than their own triangulation."
+  [delta]
+  (when (:candidate (:plane @stage))
+    (swap! stage update-in [:plane :offset-mm] (fnil + 0.0) delta)
+    (apply-offset!)
+    (say! (str "piano spostato lungo la normale: "
+               (src/fmt-number (get-in @stage [:plane :offset-mm])) "mm dal fit"))
+    (redraw-plane!)))
+
+(defn- reset-offset! []
+  (swap! stage assoc-in [:plane :offset-mm] 0.0)
+  (apply-offset!)
+  (say! "piano rimesso dove l'hanno messo i punti")
+  (redraw-plane!))
+
 (defn- recentre-origin!
   "Put the origin back where the fit itself put it — the centroid of the clicked
    points — without refitting anything. The plane is untouched: only the point
@@ -1434,6 +1485,8 @@
       "n" (do (add-another-point!) true)
       "Enter" (do (if candidate? (accept-candidate!) (fit-candidate!)) true)
       "Backspace" (do (if candidate? (discard-candidate!) (undo-plane-click!)) true)
+      "ArrowUp" (do (nudge-plane! plane-nudge-step) true)
+      "ArrowDown" (do (nudge-plane! (- plane-nudge-step)) true)
       "Escape" (do (stop-plane!) (say! "modo piano chiuso") true)
       false)))
 

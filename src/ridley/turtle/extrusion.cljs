@@ -470,14 +470,22 @@
    RAIL, so it is called only at the extrude/loft consumption point."
   [segments]
   (doseq [seg segments]
-    (let [dist (:dist seg)
+    (let [;; The RUN a segment offers is its length. A negative :dist is travel
+          ;; BACKWARDS — `(f -2)`, the natural way to grow a solid out of the far
+          ;; side of a plane mark — and it offers just as much run as the same
+          ;; distance forward. Testing the signed value rejected every backward
+          ;; segment, including a lone straight one with no corner to fold and
+          ;; `need` = 0, with a message about a corner that was not there
+          ;; (Vincenzo 2026-08-01). The miter is what eats the run; which way the
+          ;; run points is not this guard's business.
+          run  (Math/abs (:dist seg))
           need (+ (:shorten-start seg) (:shorten-end seg))
-          eff  (- dist need)]
+          eff  (- run need)]
       (when (< eff corner-realizability-tol)
         (throw (js/Error.
                 (str "extrude/loft: this corner is too sharp for how wide the profile is. "
                      "The turn here needs about " (.toFixed need 2) " of straight run on its "
-                     "ends to fold cleanly, but the segment is only " (.toFixed dist 2) " long — "
+                     "ends to fold cleanly, but the segment is only " (.toFixed run 2) " long — "
                      "so the section after the corner is placed BEHIND where it starts and the "
                      "tube folds back through itself. (The result would still look watertight: this "
                      "is a geometric self-intersection the mesh checks can't see.) Three ways out: "

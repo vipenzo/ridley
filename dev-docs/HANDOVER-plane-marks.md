@@ -439,6 +439,43 @@ quell'impressione: DOV'È l'origine del mark.
 Verificato: due mark → 6 item (disco+origine+punti ciascuno), vertici del disco
 nel piano a 5e-15 mm, toggle 6↔0.
 
+### Seguito 3, terzo giro: due difetti veri
+
+**1. `(extrude … (f -h))` era rifiutato da una guardia su un angolo inesistente.**
+Estrudere all'indietro è il modo naturale di far crescere un solido dall'altra
+parte di un mark (la normale punta fuori, l'altro lato è semplicemente `f`
+negativo) ed è la prima cosa che Vincenzo ha provato. La guardia di
+realizzabilità degli spigoli confrontava il `:dist` CON SEGNO contro il miter
+richiesto, quindi bocciava ogni segmento all'indietro — anche uno dritto e
+solo, con `need` = 0, con un messaggio su un angolo che non c'era. Corretto:
+la corsa che un segmento offre è la sua LUNGHEZZA; da che parte punta non è
+affare di questa guardia. Un angolo che davvero non ci sta viene ancora
+respinto in entrambi i versi (test).
+
+Misurato che l'estrusione all'indietro è un solido sano: `(f 4)` occupa la
+corsa 0→4, `(f -4)` occupa −4→0, stesso volume e **stesso segno del volume
+orientato** — non è rovesciata (che nessun controllo di mesh vedrebbe).
+`test/ridley/turtle/backward_extrude_test.cljs`.
+
+**2. Movimento vincolato del piano (richiesto: "muoverlo solo in altezza").**
+Frecce su/giù (e i bottoni ▲▼) fanno scorrere il piano proposto lungo **la sua
+normale**, 0.25mm per volta. Il motivo dietro la richiesta è giusto e vale la
+pena scriverlo: una foto non osserva tutte le direzioni allo stesso modo — la
+profondità lungo la propria linea di vista è quella che fissa peggio — quindi
+poter muovere in UNA direzione dichiarata permette di giudicare la correzione
+sulla vista che quella direzione la vede davvero, invece di trascinare in tre
+dimensioni fidandosi di tutte allo stesso modo. E la normale è proprio la
+direzione che un fit giusto d'orientamento ma mal posizionato sbaglia.
+
+Implementato senza deriva: la posizione è ri-derivata ogni volta da una BASE
+più lo scostamento accumulato, mai incrementata sul posto. Un refit azzera lo
+scostamento (è una misura nuova, che supersede una correzione a mano) e la HUD
+mostra sempre di quanto si è spostati. Verificato: +0.25 → +0.50 → −1.00 →
+azzeramento tornano esatti, e solo la coordinata lungo la normale cambia.
+
+**Non è un gizmo** — è la sua parte utile. Un gizmo a tre assi resta possibile
+se serve trascinare anche nel piano.
+
 ## Quello che resta aperto
 
 - **Ricollaudare la HUD dal vivo**: è verificata renderizzando stati finti in un
