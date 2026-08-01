@@ -185,6 +185,57 @@
                        (frustum-pick-mesh pose depth half-w half-h idx)]))
             camera-poses))))
 
+;; ------------------------------------------------------------
+;; Marks drawn FROM THE SOURCE VALUE (brief-plane-marks.md, Seguito 3).
+;;
+;; The stage reads `:marks` off the evaluated (acquire …) and draws each one as
+;; it is WRITTEN — its plane, its origin, and the points it was fitted through.
+;; The point is diagnostic, and it is the twin of 'the source is the single
+;; truth': the display reads from there too, so any divergence between what was
+;; emitted and what is shown appears immediately, instead of surfacing three
+;; steps later as geometry that looks displaced 'by some rule'.
+;;
+;; It also answers, without a measurement, the question that usually causes that
+;; look: WHERE the mark's origin actually is — because everything the user
+;; builds at the mark is centred on it, and a deliberately placed origin can sit
+;; well away from the cluster of clicked points.
+;; ------------------------------------------------------------
+
+(def ^:private source-mark-color 0x66aaff)   ; azzurro: i mark come stanno nel sorgente
+
+(def ^:private plane-disc-segments 40)
+
+(defn- object-radius []
+  (* 0.5 (m/magnitude (:dims @stage))))
+
+(defn- source-mark-items
+  "Disc + origin + fitted points for every mark of the evaluated acquire."
+  []
+  (when (:show-source-marks? @stage true)
+    (into []
+          (mapcat
+           (fn [[_ mark]]
+             (when (and (map? mark) (:position mark) (:heading mark) (:up mark))
+               (let [pts (mapv vec (:from mark))
+                     r (if (>= (count pts) 2)
+                         (max 6.0 (* 1.15 (reduce max (map #(m/magnitude (m/v- % (:position mark)))
+                                                           pts))))
+                         (max 8.0 (* 0.3 (object-radius))))
+                     {:keys [vertices faces]} (tri/disc-mesh mark r plane-disc-segments)]
+                 (cond-> [{:type :mesh
+                           :data {:vertices vertices :faces faces
+                                  :material {:color source-mark-color :opacity 0.16
+                                             :double-sided true}}}
+                          {:type :dots
+                           :data [{:pos (:position mark) :radius 1.2
+                                   :color source-mark-color :opacity 0.95}]}]
+                   (seq pts)
+                   (conj {:type :dots
+                          :data (mapv (fn [p] {:pos p :radius 0.8
+                                               :color source-mark-color :opacity 0.6})
+                                      pts)})))))
+           (:source-marks @stage)))))
+
 (declare plane-preview-items)
 
 (defn- show-frustums!
@@ -193,8 +244,9 @@
    they share it because both are the stage's, and because the layer is
    deliberately NOT the preview layer an open edit-path-2d ricalco owns."
   []
-  (viewport/show-frustum-layer! (into (vec (frustum-preview-items))
-                                      (plane-preview-items))))
+  (viewport/show-frustum-layer! (-> (vec (frustum-preview-items))
+                                    (into (source-mark-items))
+                                    (into (plane-preview-items)))))
 
 ;; ------------------------------------------------------------
 ;; In-pose / free-orbit transitions. In pose the camera is locked (set-camera-pose!
@@ -334,7 +386,7 @@
 
 (def ^:private click-slop-px 6)
 
-(declare plane-mode? plane-click! plane-key! toggle-plane-mode!)
+(declare plane-mode? plane-click! plane-key! toggle-plane-mode! toggle-source-marks!)
 
 (defn- editable? [^js el]
   (boolean (and el (or (#{"INPUT" "TEXTAREA"} (.-tagName el))
@@ -537,8 +589,6 @@
 (def ^:private plane-pending-color 0xffcc33) ; giallo: un click che aspetta la seconda foto
 (def ^:private plane-origin-color 0xff33cc)  ; magenta: l'origine del piano (come i mark)
 
-(def ^:private plane-disc-segments 40)
-
 (def ^:private world-frame
   "The identity proxy pose. bridge/box-basis of it is the identity matrix, so
    bridge/editor->solver-pose against it turns an editor camera pose into a
@@ -571,9 +621,6 @@
 (defn- world-solver-pose [idx]
   (when-let [cam (get-in @stage [:camera-poses idx])]
     (bridge/editor->solver-pose cam world-frame)))
-
-(defn- object-radius []
-  (* 0.5 (m/magnitude (:dims @stage))))
 
 (defn- plausible-point?
   "A triangulated point must land near the acquired object. Two rays that nearly
@@ -1451,6 +1498,10 @@
       (open-mark-edit! (first reqs))
       (say! "nessuna camera registrata: non c'è niente con cui misurare un piano"))))
 
+(defn- toggle-source-marks! []
+  (swap! stage update :show-source-marks? #(not (if (nil? %) true %)))
+  (redraw-plane!))
+
 (defn- toggle-plane-mode! []
   (if (plane-mode?)
     (stop-plane!)
@@ -1494,6 +1545,10 @@
           (set! (.-textContent lock) (theta-label)))
       (do (.remove (.-classList lock) "active")
           (set! (.-textContent lock) "Foto"))))
+  (when-let [^js mk (.getElementById js/document "eaq-stage-marks")]
+    (if (:show-source-marks? @stage true)
+      (.add (.-classList mk) "active")
+      (.remove (.-classList mk) "active")))
   (when-let [^js pl (.getElementById js/document "eaq-stage-plane")]
     (if (plane-mode?)
       (do (.add (.-classList pl) "active")
@@ -1544,6 +1599,10 @@
         (.appendChild wrap (make-tool-btn "eaq-stage-next" "›"
                                           "Foto successiva (ordine giradischi) — tasto ]"
                                           #(nav-photo! 1)))
+        (.appendChild wrap (make-tool-btn "eaq-stage-marks" "Mark"
+                                          (str "Mostra i mark COME SONO SCRITTI nel sorgente: "
+                                               "piano, origine e punti da cui è nato")
+                                          toggle-source-marks!))
         (.appendChild wrap (make-tool-btn "eaq-stage-plane" "Piano"
                                           (str "Crea un piano di lavoro sull'oggetto: clicca lo stesso "
                                                "punto su 2+ foto, 'n' per il punto dopo, 3 punti, Invio")
@@ -1615,12 +1674,13 @@
   "Called by the `acquire` runtime fn DURING evaluation: record the acquire value so
    after-eval! (post refresh-viewport!) can (re)establish the stage. `acquire-value`
    is {:proxy <posed mesh> :pose <emit pose> :dir …}."
-  [{:keys [proxy pose dir]}]
+  [{:keys [proxy pose dir marks]}]
   (swap! stage (fn [s]
                  (assoc (or s {})
                         :pending {:dir dir
                                   :emit-pose (or pose (:creation-pose proxy))
                                   :dims (bridge/dims-from-mesh proxy (:creation-pose proxy))
+                                  :marks marks
                                   ;; a registration PLATE (it carries named marks)
                                   ;; — its axis is a usable 'the object rests on
                                   ;; this' normal, which unlocks the one-click
@@ -1640,6 +1700,7 @@
                               :emit-pose (:emit-pose pending)
                               :dims (:dims pending)
                               :plate? (:plate? pending)
+                              :source-marks (:marks pending)
                               :camera-poses {}
                               :photos []
                               :focal-mm default-focal-mm
@@ -1673,6 +1734,7 @@
       (do (swap! stage merge {:emit-pose (:emit-pose pending)
                               :dims (:dims pending)
                               :plate? (:plate? pending)
+                              :source-marks (:marks pending)
                               :pending nil})
           (when (and (loaded?) (seq (:camera-poses @stage))) (setup-toolbar!))
           (when (:in-pose? @stage) (backdrop/set-visible! true))

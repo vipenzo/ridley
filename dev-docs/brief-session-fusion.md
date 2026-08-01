@@ -14,47 +14,71 @@ occhio): la fascia stretta è oggi il limite pratico principale.
 Idea (Vincenzo): ripetere la sessione con l'oggetto GIRATO in pose diverse
 (su un fianco, capovolto) e FONDERE le sessioni in un unico spazio di lavoro.
 
-## Il principio (la fusione è UNA posa per sessione)
+## Il principio (la fusione è UNA rototraslazione per sessione)
 
 Ogni sessione resta autonoma: cartella, corona, camere ancorate al piatto.
 Due sessioni dello stesso oggetto differiscono per UNA rototraslazione rigida
 (l'oggetto è rigido; la scala è mm in entrambe, data dalla corona).
 
-La rappresentazione esiste già: la **`:pose` della seconda acquire**. Scritta
-lì, trasporta rigidamente l'intero impianto della sessione (piatto, camere,
-mark) nel mondo della prima; il piatto-2 resta "appeso" dov'è finito (è
-impalcatura). La macchina di trasporto rigido camere-dietro-posa esiste
+La rappresentazione è il VALORE fuso restituito da `acquire-union` (vedi "Il
+gesto"): la trasformazione è ricalcolata a ogni eval dai mark omonimi, mai
+scritta nel sorgente. (Il primo abbozzo di questo brief prevedeva il
+write-back della `:pose` della seconda acquire; superato dalla proposta
+`acquire-union` di Vincenzo — pura, senza numeri cotti che invecchiano.)
+La macchina di trasporto rigido camere-dietro-posa esiste
 (`transport-registered-cameras!`, stabilità della registrazione).
 
+## Il gesto: `acquire-union`, la fusione come funzione pura (Vincenzo, 2026-08-01)
+
+Niente UI di fusione. Le sessioni condividono mark OMONIMI (stesso nome =
+stesso punto fisico, dichiarato dall'utente — la filosofia che ha ucciso
+Klein), e la fusione è una forma nel sorgente:
+
 ```clojure
-(def A (acquire "scans/reader-in-piedi/" {:proxy (registration-plate) :pose {...}}))
-(def B (acquire "scans/reader-capovolto/" {:proxy (registration-plate)
-                                           :pose T-B->A}))   ; la fusione è QUI
+(let [a (acquire "scans/reader-in-piedi/" {...})
+      b (acquire "scans/reader-capovolto/" {...})]
+  (acquire-union a b))
 ```
 
-## Il gesto: corrispondenze dichiarate tra sessioni
-
-Stessa filosofia che ha ucciso Klein: l'identità la dichiara l'utente.
-≥3 punti fisici riconoscibili, cliccati e triangolati in ENTRAMBE le sessioni
-(la macchina dei mark-piano c'è già: triangolate.cljs, origine per click).
-
-- **Convenzione candidata**: stesso nome = stesso punto fisico (mark
-  `:spigolo-a` presente in A e in B → entra nel fit). Elegante, zero UI; il
-  rischio è la collisione accidentale di nomi → in alternativa un pairing
-  esplicito (es. un blocco `:align {:a :spigolo-a :b :spigolo-a}` o un
-  prefisso riservato). Da decidere con Vincenzo.
-- Il fit emette la `:pose` (write-back chirurgico, come i mark) + il residuo
-  in mm per punto.
+- **Pura e ricalcolata a ogni eval**: `acquire-union` prende i mark omonimi
+  delle due sessioni, risolve la rototraslazione e restituisce il valore fuso
+  (mark e camere di b trasportati nel frame di a). NESSUN write-back della
+  `:pose`: niente numeri cotti — migliori un mark, rilanci, la fusione si
+  aggiorna. Prezzo dichiarato: i mark di aggancio devono RESTARE nel sorgente
+  (sono l'ancora; cancellarli de-fonde).
+- **Quanti mark servono**: i mark sono POSE, non punti. DUE mark-piano con
+  origini ben separate + le loro normali determinano tutto (sovradeterminano).
+  UNO solo no. Attenzione all'`:up`: NON è affidabile tra sessioni (viene
+  proiettato dalla posa dell'oggetto, diversa per costruzione tra le
+  sessioni) — il fit pesa origini e normali, ignora o quasi gli up. Con soli
+  PUNTI ne servono tre non allineati.
+- **Variadica come la famiglia union** (`mesh-union`, `shape-union`,
+  `sdf-union`): `(acquire-union a b c)` → tutte allineate alla prima.
+- **Restituzione del residuo**: precedente `mesh-board` (stampa la fedeltà
+  nel pannello output) → `acquire-union` stampa il residuo per mark in mm.
+  Sotto-determinata o degenere → nil onesto con messaggio, mai una posa
+  spazzatura.
+- **Politica dello stage risolta dal sorgente**: se in scena c'è una
+  `acquire-union`, lo stage mostra QUELLA — l'insieme di lavoro lo dichiara
+  il sorgente, non un click. Semplifica la "decisione D".
+- **Da definire in implementazione**: la forma del valore fuso per i
+  consumatori — `:marks` fusi in una mappa unica (gli omonimi di aggancio
+  SONO lo stesso punto: collassano in uno, mediato); collisione di nomi tra
+  mark NON di aggancio → errore onesto o prefisso di sessione, da decidere;
+  `:faces` di quale proxy espone (la prima? entrambe con prefisso?).
 
 **Nota implementativa (stile casa, niente SVD)**: Kabsch classico vuole una
-SVD; con 3 punti la R si costruisce per composizione di due terne ortonormali
-(base del triangolo in A e in B); con >3 quella è il SEME e rifinisce l'LM
-(lm/solve) sui 6 DOF minimizzando le distanze punto-punto. Stesso pattern
-seme-chiuso + LM di tutto il canale.
+SVD; qui la R si costruisce per composizione di terne ortonormali dalle pose
+dei mark (origini + normali), e quella è il SEME per il raffinamento LM
+(lm/solve) sui 6 DOF, minimizzando le distanze origine-origine con
+l'allineamento delle normali pesato. Stesso pattern seme-chiuso + LM di tutto
+il canale.
 
-**Guardie**: punti non collineari e ben distribuiti (base larga); residuo per
-punto riportato (stile :per-point); leave-one-out per nominare un click
-sbagliato (già scritto per la triangolazione, si riusa).
+**Guardie**: origini ben separate (base larga); con DUE mark, normali non
+parallele (due piani paralleli non fissano la rotazione attorno alla normale
+— in quel caso serve un terzo punto, o l'up torna in gioco con cautela);
+residuo per mark riportato (stile :per-point); leave-one-out riusato dalla
+triangolazione.
 
 ## Cosa deve crescere: multi-acquire sul palcoscenico
 
@@ -64,6 +88,18 @@ stessa scena (distinguibili, es. per colore), navigazione foto attraverso le
 sessioni (ordine θ per sessione? unificato?), toolbar consapevole. Il ricalco
 non cambia: edit-path-2d resta identico, semplicemente le foto disponibili
 diventano quelle di TUTTE le sessioni fuse.
+
+**Visibilità delle impalcature (Vincenzo, 2026-08-01)**: dopo la fusione i
+piatti delle sessioni secondarie restano "appesi" in pose strane e occludono
+proprio la zona da ricalcare → visibilità regolabile PER SESSIONE e PER
+COMPONENTE (piatto-proxy / frustum / dischetti dei mark, spegnibili
+separatamente: i frustum di B servono a navigare anche col suo piatto
+nascosto). Collocazione: è STATO DI VISTA, non programma → vive nella
+toolbar (il selettore di sessione che il multi-acquire richiede comunque è il
+posto naturale: un chip per sessione con l'occhietto), NON nella form
+`acquire` nel sorgente. Default sensati che minimizzano i toggle: in posa,
+solo l'impalcatura della sessione della foto corrente; in orbita libera,
+piatti secondari spenti, frustum di tutte le sessioni accesi (per colore).
 
 ## Il premio
 
@@ -97,10 +133,10 @@ misura il floor dell'intero giro).
 
 1. Gate di floor: stessa scena fotografata in due sessioni SENZA muovere
    l'oggetto → fit su 3 mark omologhi → T ≈ identità; il delta è il floor.
-2. Gate vero: lettore SD in piedi + capovolto; 3 corrispondenze; fusione;
-   ricalco di un contorno su foto della sessione A verificato dalle foto della
-   sessione B; una estrusione che combacia in TUTTE le viste delle due
-   sessioni.
+2. Gate vero: lettore SD in piedi + capovolto; 2 mark-piano omonimi ben
+   separati (o 3 punti); `(acquire-union a b)`; ricalco di un contorno su
+   foto della sessione A verificato dalle foto della sessione B; una
+   estrusione che combacia in TUTTE le viste delle due sessioni.
 
 ## Fuori perimetro (dichiarato)
 

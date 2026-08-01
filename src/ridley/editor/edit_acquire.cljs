@@ -3787,7 +3787,12 @@
      ;; P4b: note the stage so the post-eval hook (core/after refresh-viewport!)
      ;; turns this evaluated directive into the interactive palcoscenico —
      ;; clickable frustums + click→pose, viewport state, camera left where it is.
-     (stage/note-eval! {:proxy posed :pose pose :dir dir})
+     ;; :marks travel with the note so the stage can draw them FROM THE SOURCE
+     ;; VALUE (dev-docs/brief-plane-marks.md, Seguito 3): any divergence between
+     ;; what was emitted and what is displayed shows up at once, instead of
+     ;; three steps later as displaced geometry.
+     (stage/note-eval! {:proxy posed :pose pose :dir dir
+                        :marks (or (:marks opts) {})})
      {:proxy posed
       :pose pose
       :shapes (or (:shapes opts) {})

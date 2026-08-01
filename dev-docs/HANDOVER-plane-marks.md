@@ -412,10 +412,32 @@ Sui suoi due mark:
                                                      presa 12.4mm → 4.6°/mm
 ```
 
-**Un'incompatibilità da chiarire con lui**: `piano-h` colloca la faccia
-orizzontale a 7.34mm sopra il piatto, ma i punti di `piano-1` arrivano a
-16.01mm — 8.68mm più in alto. O `piano-h` non è la faccia superiore
-dell'oggetto, o uno dei due mark è preso male. Non risolvibile senza le foto.
+**L'incompatibilità apparente si risolve**: Vincenzo chiarisce che `piano-h` non
+è la faccia superiore ma una faccia perpendicolare a `piano-1`, a circa metà
+della sua altezza. I dati lo confermano: 89.6° fra i due piani (atteso 90) e
+`piano-h` a 7.34mm contro una mezzeria di `piano-1` a 7.89mm — scarto 0.56mm.
+**I due mark sono coerenti fra loro e con l'oggetto: l'acquisizione non è in
+causa.**
+
+Un dato che invece merita attenzione: l'origine di ENTRAMBI i mark sta ~7.3mm
+dal baricentro dei rispettivi punti, ed esattamente nel piano (0.0004 e 0.0001
+mm fuori) — cioè sono state piazzate a mano col click, non lasciate al
+centroide. Conta perché **tutto ciò che si costruisce al mark è centrato lì**:
+un `(rect 20 19)` nasce a cavallo di quell'origine, non del gruppo di punti
+cliccati.
+
+### Lo strumento chiesto dal brief, ora costruito
+
+`acquire` passa `:marks` al palcoscenico, che li disegna **come stanno scritti
+nel sorgente**: piano (dischetto azzurro), origine, e i punti del `:from`.
+Bottone "Mark" per accenderli/spegnerli. È il gemello di "il sorgente è l'unica
+verità" — anche il display legge da lì, quindi una divergenza
+emissione↔visualizzazione si vede subito invece di arrivare tre passi dopo come
+geometria spiazzata. E risponde senza misure alla domanda che di solito causa
+quell'impressione: DOV'È l'origine del mark.
+
+Verificato: due mark → 6 item (disco+origine+punti ciascuno), vertici del disco
+nel piano a 5e-15 mm, toggle 6↔0.
 
 ## Quello che resta aperto
 
