@@ -621,6 +621,30 @@ solve, per SCARTARE il gemello invece di accorgersene dopo. È gratis come test
 (`bridge/plate-detect` calcola già `:face-normal`) ma richiede o rifiutare la
 foto o ri-seedare LM dalla posa specchiata.
 
+### Seguito 3, settimo giro: la corona non c'era in modo gizmo
+
+Chiarimento di Vincenzo: il vero fastidio non è il ribaltamento ma che **il
+proxy non mostra la corona di pallini**, quindi non ci sono riferimenti per
+allinearlo A MANO.
+
+Verificato: non è una regressione — `proxy-preview-items` non cambia da
+`f338953`, ben prima di questa sessione, e **in modo gizmo la corona non è mai
+stata disegnata**: compariva solo in modo `p` (`pnp-preview-items`), che è
+inutile proprio quando quello che stai facendo è trascinare il gizmo. La
+memoria di averla vista è di quel modo lì.
+
+La richiesta però è giusta e specifica del piatto: un box in wireframe ha
+spigoli e vertici su cui allineare, **un piatto è un disco liscio** — i
+dischetti stampati sono l'unica cosa chiaramente visibile nella foto. Aggiunto
+`plate-crown-item`: i 13 pallini (12 corona + zero-indice) disegnati quando il
+proxy porta `:anchors`, con lo zero in un colore diverso perché è ciò che rompe
+la simmetria 12-fold — con quello si vede non solo dove sta il piatto ma da che
+verso. Disegnati **anche col proxy nascosto** ('v'), visto che nascondere il
+solido per leggere la foto è esattamente il momento in cui servono.
+
+Verificato: proxy visibile → mesh + corona + mark; proxy nascosto → corona +
+mark; 13 pallini, 2 colori, tutti sulla faccia marcata (z = 1.50).
+
 ## Quello che resta aperto
 
 - **Ricollaudare la HUD dal vivo**: è verificata renderizzando stati finti in un

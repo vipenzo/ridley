@@ -159,6 +159,33 @@
   {:type :dots :data (mapv (fn [w] {:pos w :radius 1.3 :color mark-color :opacity 0.95})
                            (mark-world-positions))})
 
+(def ^:private crown-dot-color 0x66ddff)   ; azzurro: i dischetti della corona
+(def ^:private zero-dot-color 0xffaa33)    ; arancio: lo zero-indice
+
+(defn- plate-crown-item
+  "The plate's crown of discs as small dots, drawn whenever the proxy carries
+   :anchors.
+
+   A registration plate is a featureless disc: its wireframe gives the eye almost
+   nothing to line up against the photo, while the printed discs are the one
+   thing clearly visible in it. Without them there is no way to align the proxy
+   BY HAND (Vincenzo 2026-08-01) — the crown only ever appeared in the 'p'
+   picking mode, which is no help when what you are doing is dragging the gizmo.
+
+   The zero-index gets its own colour, because it is what breaks the crown's
+   12-fold symmetry: with it you can tell not just where the plate is but which
+   way round. Drawn even when the solid proxy is hidden ('v'), since hiding it to
+   read the photo is exactly when these are wanted."
+  []
+  (when-let [as (seq (:anchors (:proxy-mesh @session)))]
+    {:type :dots
+     :data (mapv (fn [[k a]]
+                   {:pos (:position a)
+                    :radius (if (= k :zero) 1.3 1.0)
+                    :color (if (= k :zero) zero-dot-color crown-dot-color)
+                    :opacity 0.9})
+                 as)}))
+
 (defn- proxy-preview-items
   "The proxy mesh, plus the traced bezels and placed named marks (appended so they
    stay visible after leaving :retrace/:mark and reproject as the camera moves).
@@ -172,9 +199,11 @@
   []
   (let [red-corner (when (= :marker (:mode @session))
                      {:type :dots :data [{:pos (corner-marker-pos) :radius 3.0 :color 0xff3333}]})
+        crown (plate-crown-item)
         base (cond-> (if (:hide-proxy? @session)
                        []
                        [{:type :mesh :data (:proxy-mesh @session)}])
+               crown (conj crown)
                red-corner (conj red-corner))]
     (conj (into base (trace-items))
           (mark-dots-item))))
