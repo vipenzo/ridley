@@ -502,6 +502,47 @@ Rimedi: un solo `set-candidate-origin!` mantiene l'invariante (base = posizione
 a scostamento zero) e ci passano tutti e tre i chiamanti; e `nudge-plane!`, se
 la base manca, **lo dice** invece di non fare nulla.
 
+### Seguito 3, quarto giro: l'`up` girato di 90° e il palcoscenico storto
+
+Due sorprese segnalate da Vincenzo, con due risposte diverse.
+
+**1. L'`up` di un mark su faccia verticale era ⊥ all'asse del giradischi.**
+Difetto mio. `fit-plane-mark` riceve i candidati per l'up nell'ordine
+`[(:up posa) (:heading posa)]` — giusto per un BOX, sbagliato per un PIATTO:
+**il piatto ha l'asse del giradischi nel suo `:heading`** (plate.cljs costruisce
+il cilindro lungo +Z con creation-pose identità), mentre il suo `:up` è una
+direzione qualunque attraverso il disco. Su una faccia verticale quel primo
+suggerimento è perfettamente utilizzabile e vinceva, girando il mark di 90°.
+Corretto: con un piatto l'ordine è `[(:heading posa) (:up posa)]`. Verificato sui
+punti veri di `piano-1`: up a **0.4°** dall'asse invece di 89.9°.
+
+(Su una faccia ORIZZONTALE l'up resta ⊥ all'asse, e deve: lì l'asse è la
+normale, non può stare anche nel piano.)
+
+**2. Il palcoscenico storto rispetto alla turtle: nessuna ragione, un guardrail
+che con un piatto non può scattare.** `canonicalize-orientation!` raddrizza il
+sistema (asse giradischi → +Z) solo davanti a un ANELLO PULITO di camere:
+≥4 camere e varianza minima < 0.15× la mediana. Sulla sessione
+param-plate-paper, misurato:
+
+```
+  camere registrate 10
+  varianze lungo gli assi del piatto: [17600.6, 20313.8, 6169.2]
+  minima 6169.2, serve < 0.15 × 17600.6 = 2640.1   →  RIFIUTA
+  ma l'asse a varianza minima È l'indice 2, cioè l'asse del piatto: quello giusto
+```
+
+Cioè: **individua correttamente l'asse e poi si rifiuta di usarlo**, perché le
+foto sono state scattate da altezze diverse (σ≈78mm) e il test cerca un anello
+planare da giradischi. Con un piatto la domanda non andrebbe nemmeno posta:
+l'asse è quello del piatto, noto per costruzione.
+
+NON corretto, perché è un cambio di FRAME e va deciso: raddrizzare cambia la
+`:pose` emessa, quindi i mark-piano già scritti — coordinate mondo, conservate
+byte per byte dal confirm chirurgico — resterebbero indietro. È la stessa
+staleness già annotata sopra: la cura è il trasporto rigido delle voci
+conservate, e le due cose vanno fatte insieme o non fatte.
+
 ## Quello che resta aperto
 
 - **Ricollaudare la HUD dal vivo**: è verificata renderizzando stati finti in un

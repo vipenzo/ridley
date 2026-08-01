@@ -1324,7 +1324,17 @@
         toward (when (seq cams)
                  (mapv #(/ % (count cams)) (reduce m/v+ [0.0 0.0 0.0] cams)))
         emit (:emit-pose @stage)
-        hints [(:up emit) (:heading emit)]
+        ;; Which direction of the OBJECT should read as 'up' on the mark. For a
+        ;; box it is its :up. For a PLATE it is its :heading — the plate's
+        ;; heading IS the turntable axis (plate.cljs builds the cylinder along
+        ;; +Z with an identity creation-pose), while its :up is just some
+        ;; direction across the disc. Trying :up first on a plate gave every
+        ;; vertical face a mark turned 90° from the axis (Vincenzo 2026-08-01:
+        ;; 'l'up deve essere l'asse del turntable'), because on such a face the
+        ;; across-the-disc hint is perfectly usable and won.
+        hints (if (:plate? @stage)
+                [(:heading emit) (:up emit)]
+                [(:up emit) (:heading emit)])
         mark (cond
                (>= (count pts) 3)
                (tri/fit-plane-mark pts {:toward toward :up-hints hints})
