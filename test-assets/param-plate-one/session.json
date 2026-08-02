@@ -1,0 +1,55 @@
+{
+ "dir": "test-assets/param-plate-one",
+ "photos": [
+  [
+   "IMG_8927.jpeg",
+   null
+  ],
+  [
+   "IMG_8928.jpeg",
+   null
+  ],
+  [
+   "IMG_8929.jpeg",
+   null
+  ],
+  [
+   "IMG_8930.jpeg",
+   null
+  ],
+  [
+   "IMG_8931.jpeg",
+   null
+  ],
+  [
+   "IMG_8932.jpeg",
+   null
+  ],
+  [
+   "IMG_8933.jpeg",
+   null
+  ],
+  [
+   "IMG_8934.jpeg",
+   null
+  ],
+  [
+   "IMG_8935.jpeg",
+   null
+  ],
+  [
+   "IMG_8936.jpeg",
+   null
+  ],
+  [
+   "IMG_8937.jpeg",
+   null
+  ]
+ ],
+ "bootstrap": [],
+ "caliper": {
+  "x": 15.3,
+  "y": 42.1,
+  "z": 80.05
+ }
+}

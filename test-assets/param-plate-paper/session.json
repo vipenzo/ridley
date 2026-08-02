@@ -1,0 +1,51 @@
+{
+ "dir": "test-assets/param-plate-paper",
+ "photos": [
+  [
+   "IMG_8938.jpeg",
+   null
+  ],
+  [
+   "IMG_8939.jpeg",
+   null
+  ],
+  [
+   "IMG_8940.jpeg",
+   null
+  ],
+  [
+   "IMG_8941.jpeg",
+   null
+  ],
+  [
+   "IMG_8942.jpeg",
+   null
+  ],
+  [
+   "IMG_8943.jpeg",
+   null
+  ],
+  [
+   "IMG_8944.jpeg",
+   null
+  ],
+  [
+   "IMG_8945.jpeg",
+   null
+  ],
+  [
+   "IMG_8946.jpeg",
+   null
+  ],
+  [
+   "IMG_8947.jpeg",
+   null
+  ]
+ ],
+ "bootstrap": [],
+ "caliper": {
+  "x": 15.3,
+  "y": 42.1,
+  "z": 80.05
+ }
+}
