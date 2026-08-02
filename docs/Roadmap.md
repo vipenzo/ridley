@@ -91,7 +91,12 @@ utente).
   mancante. Corretti: il workflow, `beforeBuildCommand` in `tauri.conf.json`,
   una guardia che rifiuta la shell HTML con un messaggio esplicito, e — bug
   indipendente trovato nella spazzata — il percent-encoding del nome scheda
-  (`sdf-node?` dava 404 anche online). `dev-docs/HANDOVER-manual-pages-blank.md`.
+  (`sdf-node?` dava 404 anche online). Rilasciato in **v3.5.1** (`main`
+  fast-forward al branch: la release porta tutto il lavoro di luglio, ma il
+  changelog dichiara solo il fix; il numero minore resta libero per la
+  presentazione dell'acquisizione parametrica). Verificato sul DMG della
+  release: 40 chiavi `/manual/guides` + 296 `/manual/reference`, dov'era zero.
+  `dev-docs/HANDOVER-manual-pages-blank.md`.
 - **Coda post-v1** (dichiarata, non iniziata): **fusione di sessioni di scatto**
   (oggetto girato in pose diverse → sessioni fuse in uno spazio unico via una
   `:pose` per sessione da ≥3 corrispondenze dichiarate — brief

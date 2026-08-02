@@ -65,8 +65,14 @@ resta non auto-linkato (l'inversa dell'encoding funziona). Suite: **822 test,
 0 fallimenti**, con `test/ridley/manual/structure_test.cljs` nuovo a coprire
 encoding, round-trip e riconoscimento della shell.
 
-**Non verificato costruendo un DMG** (richiede la toolchain Rust + libfive in
-CI): la correzione del desktop è dimostrata per costruzione — il passo mancante
-è quello che `deploy.yml` esegue e che produce un manuale funzionante sul web.
-La conferma definitiva è il primo DMG costruito dopo questa modifica: aprire
-il manuale e una scheda qualsiasi.
+**Verificato anche sul DMG.** Rilasciata **v3.5.1** (2026-08-02, `main`
+fast-forward al branch): il passo `Sync manual content into public/` risulta
+`success` nel run di Desktop Build, e nel binario del DMG scaricato dalla
+release le chiavi degli asset incorporati contengono **40** occorrenze di
+`/manual/guides` (20 guide × 2 lingue) e **296** di `/manual/reference` —
+dov'era **zero** in 3.4.0. Il pacchetto passa da 5.5 MB a 6.2 MB, coerente col
+Markdown aggiunto. Sul sito, sul build di release v3.5.1, la scheda `sdf-node?`
+si apre (prima 404). Cask Homebrew allineato a 3.5.1.
+
+Resta un solo gesto umano, non una verifica di codice: installare il DMG e
+aprire una pagina del manuale nell'app.
