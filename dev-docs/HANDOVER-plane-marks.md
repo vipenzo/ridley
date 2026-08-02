@@ -89,6 +89,46 @@ aperto come questione di design, ma perde quasi tutta l'urgenza: `r` non
 riporta più il proxy dal lato sbagliato, converge al lato fisicamente possibile
 qualunque sia l'allineamento a mano.
 
+### Seguito immediato: il ⚠ resta, ma diceva la cosa sbagliata
+
+Vincenzo, subito dopo: la foto 10 non è più ribaltata, ma il palcoscenico
+mostra ancora `⚠ mal registrata` e *"Su questa foto tutto si riproietta storto:
+usane un'altra"*. Il numero è vero (rms 10.74 px contro ~4.5), il messaggio no:
+era stato scritto quando un rms alto voleva dire "posa probabilmente sbagliata",
+e adesso la posa è verificata fisicamente.
+
+**Guardando i residui per punto, non c'è un colpevole**: 20, 13.3, 13.3, 11.1,
+10, 9.9, 8.6, 8.2, 5, 3.8, 2.9 px — togliere il peggiore lascia rms 9.3. E su
+tutta la sessione l'errore segue **l'elevazione della camera e nient'altro**:
+
+```
+  foto  elevazione  distanza     rms  marker
+     8      83.8°      265mm    1.40      12
+   1-7    38.3-39.8°   260mm  4.19-5.17   12
+     9      19.1°      233mm    9.42      12
+    10      15.4°      219mm   10.74      11
+```
+
+Monotona. È la firma di un errore **sistematico del modello di camera** (focale
+imperfetta, distorsione radiale non modellata): un piano fronto-parallelo lo
+assorbe nella distanza, un piano obliquo no — e su una foto radente la corona si
+spalma su tutta la larghezza del fotogramma, dove la distorsione è massima. NON
+è qualità di click: ricliccare non sposta il numero. (Una scala sbagliata del
+piatto di carta è invece esclusa a priori: scalare l'oggetto è esattamente
+degenere con la distanza, quindi non produce residuo.)
+
+Il palcoscenico ora distingue tre regimi (`registration-trouble`):
+`:flipped` (impossibile → ri-registrare, rosso), `:grazing` (corretta ma meno
+precisa → arancione, e **dice che ricliccare non serve**), `:loose` (rms alto
+SENZA la scusa dell'angolo → il sospetto torna sui click). Soglia
+`grazing-deg` = 25°. Verificato dal vivo su `hud-detail` con le posizioni di
+camera vere: foto 10 → `:grazing` a 15°, foto 9 → `:grazing` a 19°, le altre
+pulite, un rms alto su una foto alta → `:loose`, una camera dietro → `:flipped`.
+
+**Non fatto, ed è il vero seguito**: modellare la distorsione radiale (un `k1`
+stimato per sessione). Sarebbe la cura, non l'etichetta — e migliorerebbe TUTTE
+le foto, non solo le radenti.
+
 **Regressione fissata**: `test/ridley/photogrammetry/plate_mirror_test.cljs` —
 i pick veri delle foto 8 e 9 inlineati (niente dipendenza dal file di sessione
 né dai JPEG da 2 MB), la coincidenza dei residui, i due lati opposti,

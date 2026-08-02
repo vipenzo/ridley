@@ -753,12 +753,38 @@
 ;; ---- registration quality of a photo (read from acquire-state.json) ----
 
 (def ^:private poor-registration-px
-  "Above this per-photo PnP rms, a photo's camera pose is not to be trusted for
-   measurement: everything drawn in the world reprojects visibly off on it. The
-   plate sessions register at ~4-5 px when they register well and at 10-11 px
-   when they don't (a grazing shot losing 2 of 12 marks), so the gap is wide and
-   8 px sits in it."
+  "Above this per-photo PnP rms, what is drawn in the world reprojects visibly
+   off on this photo, so points clicked on it are worth less. Measured on
+   param-plate-paper: ~4-5 px on the turntable ring, 1.4 px looking straight
+   down, 9-11 px on the two grazing shots. The gap is wide and 8 px sits in it."
   8.0)
+
+(def ^:private grazing-deg
+  "Below this elevation above the plate's marked face a photo counts as GRAZING.
+   Measured across a whole session, the reprojection rms tracks elevation and
+   nothing else: 84° → 1.4 px, ~39° (the ring) → 4.2-5.2 px, 19° → 9.4 px,
+   15° → 10.7 px. That is the signature of a systematic camera-model error (an
+   imperfect focal, unmodelled radial distortion), which a fronto-parallel plane
+   absorbs into its distance and an oblique one cannot — not of sloppy clicking.
+   Worth separating, because the advice is the opposite: on a grazing photo
+   re-clicking does NOT help."
+  25.0)
+
+(defn- camera-elevation-deg
+  "Degrees photo `idx`'s camera sits ABOVE the plane of the marked face: 90° is
+   straight down on the plate, 0° is in its plane, negative is behind it.
+   Plate-only — a box has no single marked plane. nil when unknown."
+  [idx]
+  (when (:plate? @stage)
+    (let [{:keys [position heading]} (:emit-pose @stage)
+          cam (get-in @stage [:camera-poses idx :position])]
+      (when (and cam heading position)
+        (let [d (m/v- cam position)
+              len (m/magnitude d)]
+          (when (pos? len)
+            (-> (/ (m/dot (m/normalize heading) d) len)
+                (max -1.0) (min 1.0) Math/asin
+                (* (/ 180.0 Math/PI)) Math/round)))))))
 
 (defn- registration-of [idx] (get-in @stage [:registration idx]))
 
@@ -783,10 +809,31 @@
       (when (and cam heading position)
         (neg? (m/dot (m/normalize heading) (m/v- cam position)))))))
 
+(defn- registration-trouble
+  "What is wrong with photo `idx`'s registration, or nil when nothing is:
+
+     :flipped  the camera is behind the marked face — impossible, re-register;
+     :grazing  correct but looser, because the shot is nearly in the plate's
+               plane (see grazing-deg);
+     :loose    a high rms with no such excuse, so the clicks are the suspect.
+
+   Kept apart because the advice is opposite: :loose says re-click, :grazing
+   says re-clicking will not help and the photo is fine to work from, just not
+   to measure from."
+  [idx]
+  (if (behind-plate? idx)
+    ;; not gated on a registration record: an impossible pose is impossible
+    ;; whether or not this photo ever recorded an rms.
+    :flipped
+    (when-let [{:keys [rms-px]} (registration-of idx)]
+      (cond
+        (<= rms-px poor-registration-px) nil
+        ;; an unknown elevation earns no excuse — fall through to :loose
+        (when-let [e (camera-elevation-deg idx)] (< e grazing-deg)) :grazing
+        :else :loose))))
+
 (defn- poorly-registered? [idx]
-  (or (behind-plate? idx)
-      (when-let [{:keys [rms-px]} (registration-of idx)]
-        (> rms-px poor-registration-px))))
+  (some? (registration-trouble idx)))
 
 (defn- registration-label
   "'reg. 11.3px · 10/12' for the current photo, or nil when unknown."
@@ -883,16 +930,39 @@
 
       :else
       (do
-        (when-let [r (registration-label here)]
-          (add! (if (poorly-registered? here) "eaq-hud-bad" nil)
-                (str "Foto " (nav-rank here) " — " r
-                     (when (poorly-registered? here) "  ⚠ mal registrata"))))
-        (when (poorly-registered? here)
-          (add! "eaq-hud-bad"
-                (if (behind-plate? here)
+        (let [trouble (registration-trouble here)]
+          (when-let [r (registration-label here)]
+            (add! (case trouble (:flipped :loose) "eaq-hud-bad" :grazing "eaq-hud-warn" nil)
+                  (str "Foto " (nav-rank here) " — " r
+                       (case trouble
+                         :flipped "  ⚠ mal registrata"
+                         :loose "  ⚠ mal registrata"
+                         :grazing "  ⚠ meno precisa"
+                         nil))))
+          (case trouble
+            :flipped
+            (add! "eaq-hud-bad"
                   (str "Il piatto è registrato al contrario su questa foto: la vedi "
-                       "da dietro. Non usarla — va ri-registrata.")
-                  "Su questa foto tutto si riproietta storto: usane un'altra.")))
+                       "da dietro. Non usarla — va ri-registrata."))
+            ;; A grazing photo is registered CORRECTLY; it is just looser, and
+            ;; the looseness comes from the viewing angle, not from the clicks.
+            ;; Saying 'usane un'altra' here sent Vincenzo hunting for a mistake
+            ;; that isn't there (2026-08-02) — so name the cause and say plainly
+            ;; that re-clicking won't move it.
+            :grazing
+            (add! "eaq-hud-warn"
+                  (str "Foto radente"
+                       (when-let [e (camera-elevation-deg here)]
+                         (str " (" e "° sul piano del piatto)"))
+                       ": i mark si riproiettano più larghi che sulle foto alte. "
+                       "È l'angolo, non i tuoi click — ricliccare non la migliora. "
+                       "La posa è coerente: usala pure per orientarti, ma per "
+                       "prendere punti da misurare preferisci una foto più alta."))
+            :loose
+            (add! "eaq-hud-bad"
+                  (str "Su questa foto i punti si riproiettano storti, e non è "
+                       "l'angolo: controlla i mark cliccati, o usane un'altra."))
+            nil))
         (case (count obs)
           0 (add! "eaq-hud-hint" "Clicca un punto ben riconoscibile della zona piana.")
           1 (add! "eaq-hud-hint"
@@ -913,7 +983,13 @@
               (.appendChild shots
                             (el "div" "eaq-hud-shot"
                                 :children [(el "span" nil :text (str "foto " (nav-rank idx)))
-                                           (el "span" (when (poorly-registered? idx) "eaq-hud-bad")
+                                           ;; orange ⚠ for a grazing shot, red for one
+                                           ;; whose pose is actually suspect — the same
+                                           ;; distinction the paragraph above draws
+                                           (el "span" (case (registration-trouble idx)
+                                                        (:flipped :loose) "eaq-hud-bad"
+                                                        :grazing "eaq-hud-warn"
+                                                        nil)
                                                :text (if (poorly-registered? idx) "⚠" "✓"))])))
             (.appendChild box shots)))))
     box))
@@ -1097,10 +1173,16 @@
              (-> picks
                  (update i update :obs assoc idx {:px px :pose pose :intrinsics k})
                  (update i retriangulate)))))
-  (when (poorly-registered? idx)
+  (case (registration-trouble idx)
+    :grazing
+    (say! (str "nota: la foto " (nav-rank idx) " è radente ("
+               (registration-label idx) "), quindi meno precisa delle altre. "
+               "Il click è preso: se puoi, dai a questo punto anche una foto più alta."))
+    (:flipped :loose)
     (say! (str "attenzione: la foto " (nav-rank idx) " è registrata male ("
                (registration-label idx) "). Il click è preso lo stesso, ma "
-               "su questa foto TUTTO si riproietta storto: se puoi, usane un'altra.")))
+               "su questa foto TUTTO si riproietta storto: se puoi, usane un'altra."))
+    nil)
   (let [fit (:fit (peek (plane-picks)))]
     (cond
       (nil? fit) nil
