@@ -77,9 +77,20 @@ utente).
   più i mark del palcoscenico: fonde `:shapes`/`:marks` **per chiave** invece di
   rigenerarli in blocco, così ognuno dei due writer rigenera solo ciò che
   possiede e lascia il resto byte-identico.
-  Handover `dev-docs/HANDOVER-plane-marks.md`. Gradini 2 (click assistito) e 3
-  (omografia) fuori perimetro per scelta.
-- **Coda post-v1** (dichiarata, non iniziata): proxy oltre box/piatto
+  Handover `dev-docs/HANDOVER-plane-marks.md` (in testa lo stato alla
+  sospensione). Gradini 2 (click assistito) e 3 (omografia) fuori perimetro.
+- **Residuo aperto sulla registrazione, non sui mark**: su una foto radente il
+  GEMELLO planare vince ai punti — il solver lo riconosce e ora RIFIUTA di
+  applicare una posa impossibile invece di scriverla, ma la cura vera è far
+  restituire all'omografia entrambi i rami e scegliere col vincolo fisico.
+- **URGENTE, fronte a sé**: le pagine del manuale online sono vuote nell'ultimo
+  rilascio (indice sì, corpi no) — `dev-docs/HANDOVER-manual-pages-blank.md`.
+- **Coda post-v1** (dichiarata, non iniziata): **fusione di sessioni di scatto**
+  (oggetto girato in pose diverse → sessioni fuse in uno spazio unico via una
+  `:pose` per sessione da ≥3 corrispondenze dichiarate — brief
+  `dev-docs/brief-session-fusion.md`; include il multi-acquire dello stage,
+  la "decisione D" di P4b; PREREQUISITO: chiudere la semantica dei frame dei
+  mark, Seguito 3 di brief-plane-marks); proxy oltre box/piatto
   (rounded-prism / fillet); sorgenti foto live (webcam / companion app).
 - **Design/storia**: `dev-docs/acquisizione-parametrica-design.md`; handover in
   `dev-docs/HANDOVER-edit-acquire-*.md` — leggere solo per il *perché* di una scelta.
