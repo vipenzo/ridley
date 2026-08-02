@@ -1208,6 +1208,22 @@
   []
   (get-in @session [:pnp-occluded (:current-idx @session)] #{}))
 
+(defn- relabel-picks!
+  "Rewrite photo `idx`'s declared identities through `flip` (a permutation of the
+   crown indices), leaving every clicked PIXEL exactly where it is. Used when the
+   mirror twin is resolved: the clicks were right and the labels were reflected,
+   so the picks, the occlusion flags and the armed mark must all travel with them
+   — otherwise the panel, the residuals and the dots would go on describing a
+   different photo than the pose does."
+  [idx flip]
+  (letfn [(remap-keys [m] (when m (into {} (map (fn [[ci v]] [(flip ci) v])) m)))
+          (remap-set [s] (when s (into #{} (map flip) s)))]
+    (swap! session (fn [st]
+                     (-> st
+                         (update-in [:pnp-picks idx] remap-keys)
+                         (update-in [:pnp-occluded idx] remap-set)
+                         (update :pnp-armed #(some-> % flip)))))))
+
 (defn- batch-mode?
   "Fetta B toggle ('b'): while on, PnP clicks accumulate as IDENTITY-FREE batch
    picks (no armed target) that 'r' assigns in one shot (match-plate); while off,
@@ -1709,86 +1725,104 @@
         correspondences (vec (for [[ci {:keys [px]}] (pnp-picks)]
                                {:ci ci :world (:obj (nth targets ci)) :px px}))
         camera-pose (current-camera-pose)]
-    (when-let [sol (let [k (session-intrinsics iw ih)
-                         first-try (pnp/solve-pnp correspondences k {})
-                         detect (bridge/plate-detect (:proxy-mesh @session))]
-                     ;; A planar target has TWO poses that explain the image, and
-                     ;; on a grazing shot with a mark or two missing the residual
-                     ;; cannot tell them apart: the seedless decomposition can
-                     ;; return the twin, with the camera BEHIND the printed face.
-                     ;; That is impossible, not improbable — the discs were
-                     ;; photographed — so when it happens, re-solve REFINING from
-                     ;; the pose the user already has on screen (their manual
-                     ;; alignment, or the previous registration) instead of
-                     ;; letting the estimator choose the basin again. Measured:
-                     ;; the twin is not a stable minimum for a clean crown, so
-                     ;; this recovers it; the physical test is applied to the
-                     ;; RESULT anyway, because 'very likely' is not 'always'.
-                     (if (and detect first-try
-                              (not (bridge/camera-sees-marked-face? detect (:pose first-try))))
-                       (let [seed (bridge/editor->solver-pose camera-pose proxy-pose)
-                             retry (pnp/solve-pnp correspondences k
-                                                  {:method :seeded :seed seed})]
-                         (if (and retry (bridge/camera-sees-marked-face? detect (:pose retry)))
-                           (do (set-status-message!
-                                (str "la prima soluzione metteva la camera DIETRO il piatto "
-                                     "(gemello planare): ripresa dall'allineamento corrente"))
-                               retry)
-                           ;; Both candidates put the camera behind the printed
-                           ;; face. APPLYING one would be worse than doing
-                           ;; nothing: it silently overwrites whatever the user
-                           ;; has aligned by hand — which on photos ≠ 0 is the
-                           ;; camera, exactly what this would replace — and
-                           ;; leaves them with an impossible pose that looks
-                           ;; like a result (Vincenzo 2026-08-02: "'r' non
-                           ;; riparte dalla posa girata: rimette il proxy sul
-                           ;; lato sbagliato"). A pose that cannot be is not a
-                           ;; better answer than no answer, however low its
-                           ;; residual. Refuse, keep what is on screen, say why.
-                           (do (set-status-message!
-                                (str "NON applicata: su questa foto entrambe le soluzioni mettono "
-                                     "la camera dietro il piatto, e il gemello sbagliato ha "
-                                     "persino il residuo migliore. Lascio la posa che hai adesso. "
-                                     "Girala a mano e usala così, oppure scarta la foto."))
-                               ;; NOT nil: nil means 'could not fit' to the caller,
-                               ;; which would replace this explanation with the
-                               ;; generic 'nessuna soluzione' and hide the real
-                               ;; reason. A refusal is a decision, not a failure.
-                               (swap! session assoc :last-solve ::refused)
-                               ::refused)))
-                       first-try))]
-      (let [residuals (into {} (map (juxt :ci :residual-px) (:per-point sol)))
-            outlier-cis (set (map :ci (:outliers sol)))]
-        (if (zero? idx)
-          (let [np (bridge/solver-pose->proxy (:pose sol) camera-pose)
-                [new-mesh] (attachment/group-transform
-                            [(:proxy-mesh @session)]
-                            (:position proxy-pose) (:heading proxy-pose) (:up proxy-pose)
-                            (:position np) (:heading np) (:up np))]
-            (swap! session assoc :proxy-mesh new-mesh)
-            ;; Re-aligning the proxy on photo 0 via PnP is the same rigid move as
-            ;; an on-photo0-commit! gizmo drag, so it earns the same treatment
-            ;; (fix (2)): registered cameras follow the proxy rigidly, pure
-            ;; seeds/predictions are dropped to re-derive.
-            (transport-registered-cameras! proxy-pose (:creation-pose new-mesh)))
-          (let [ncp (marker-lock-camera (bridge/solver-pose->camera (:pose sol) proxy-pose) idx)]
-            (swap! session assoc-in [:camera-poses idx] ncp)
-            ;; move the viewport camera to the solved pose NOW (as on-snap! does)
-            ;; — the proxy is fixed on these photos, so without this the
-            ;; wireframe/dots stay rendered from the old vantage and the disc
-            ;; only snaps into place on the next enter-photo!.
-            (viewport/set-camera-pose! ncp)))
-        (swap! session assoc-in [:acquire-results idx]
-               {:pnp? true :matched (:n sol) :rms-px (:rms-px sol)
-                :outliers (count outlier-cis)})
-        (swap! session assoc-in [:pnp-residuals idx] residuals)
-        (swap! session assoc-in [:pnp-outliers idx] outlier-cis)
-        ;; tee up the first rejected corner for an immediate re-click
-        (when (seq outlier-cis)
-          (swap! session assoc :pnp-armed (first (sort outlier-cis))))
-        (redraw-pnp-preview!)
-        (redraw-overlay-dots!)
-        sol))))
+    (let [sol (let [k (session-intrinsics iw ih)
+                    first-try (pnp/solve-pnp correspondences k {})
+                    detect (bridge/plate-detect (:proxy-mesh @session))
+                    sees? (fn [s] (and s (bridge/camera-sees-marked-face?
+                                          detect (:pose s))))]
+                ;; A pose that puts the camera BEHIND the printed face is
+                ;; impossible, not improbable — the discs were photographed. For
+                ;; a plate it also has one exact cause: the crown is mirror-
+                ;; symmetric about the axis through mark 0, so the reflected
+                ;; LABELLING fits the very same clicks (measured: rms equal to
+                ;; the last digit) and lands the camera on the opposite side.
+                ;; The residual therefore cannot arbitrate and never will; the
+                ;; physical test always can. So don't re-seed and hope — reflect
+                ;; the identities and solve again. The user is not being
+                ;; overruled arbitrarily: a proxy drawn from an already-flipped
+                ;; pose shows mirrored labels, so clicking them confirms the
+                ;; flip. See bridge/mirror-crown-index.
+                (if (and detect first-try (not (sees? first-try)))
+                  (let [flip #(bridge/mirror-crown-index (count targets) %)
+                        mirrored (mapv (fn [c]
+                                         (let [j (flip (:ci c))]
+                                           (assoc c :ci j :world (:obj (nth targets j)))))
+                                       correspondences)
+                        m-sol (pnp/solve-pnp mirrored k {})]
+                    (if (sees? m-sol)
+                      (do (relabel-picks! idx flip)
+                          (assoc m-sol :note
+                                 (str "le etichette erano SPECCHIATE (la corona è simmetrica "
+                                      "e il residuo non le distingue): riflesse attorno a m00, "
+                                      "ora la camera è davanti al piatto")))
+                      ;; The mirror didn't rescue it either: fall back on
+                      ;; refining from the pose the user has on screen.
+                      (let [seed (bridge/editor->solver-pose camera-pose proxy-pose)
+                            retry (pnp/solve-pnp correspondences k
+                                                 {:method :seeded :seed seed})]
+                        (if (sees? retry)
+                          (assoc retry :note
+                                 (str "la prima soluzione metteva la camera dietro il piatto: "
+                                      "ripresa dall'allineamento corrente"))
+                          ;; Every candidate is impossible. APPLYING one would be
+                          ;; worse than doing nothing: it silently overwrites
+                          ;; whatever the user has aligned by hand — which on
+                          ;; photos ≠ 0 is the camera, exactly what this would
+                          ;; replace — and leaves them with an impossible pose
+                          ;; that looks like a result. Refuse, keep what is on
+                          ;; screen, say why.
+                          (do (set-status-message!
+                               (str "NON applicata: su questa foto ogni soluzione mette la camera "
+                                    "dietro il piatto, anche riflettendo le etichette. Lascio la "
+                                    "posa che hai adesso. Girala a mano e usala così, oppure "
+                                    "scarta la foto."))
+                              ;; NOT nil: nil means 'could not fit' to the caller,
+                              ;; which would replace this explanation with the
+                              ;; generic 'nessuna soluzione' and hide the real
+                              ;; reason. A refusal is a decision, not a failure.
+                              (swap! session assoc :last-solve ::refused)
+                              ::refused)))))
+                  first-try))]
+      ;; A refusal must not reach the apply body: (:pose ::refused) is nil, and
+      ;; bridge/solver-pose->camera of nil returns a PLAUSIBLE pose (measured:
+      ;; {:position [0 0 0] :heading [0 0 1]}) rather than failing — so the
+      ;; refusal would overwrite the very alignment it exists to protect, and
+      ;; nothing downstream would notice.
+      (if (= sol ::refused)
+        ::refused
+        (when sol
+          (let [residuals (into {} (map (juxt :ci :residual-px) (:per-point sol)))
+                outlier-cis (set (map :ci (:outliers sol)))]
+            (if (zero? idx)
+              (let [np (bridge/solver-pose->proxy (:pose sol) camera-pose)
+                    [new-mesh] (attachment/group-transform
+                                [(:proxy-mesh @session)]
+                                (:position proxy-pose) (:heading proxy-pose) (:up proxy-pose)
+                                (:position np) (:heading np) (:up np))]
+                (swap! session assoc :proxy-mesh new-mesh)
+                ;; Re-aligning the proxy on photo 0 via PnP is the same rigid move as
+                ;; an on-photo0-commit! gizmo drag, so it earns the same treatment
+                ;; (fix (2)): registered cameras follow the proxy rigidly, pure
+                ;; seeds/predictions are dropped to re-derive.
+                (transport-registered-cameras! proxy-pose (:creation-pose new-mesh)))
+              (let [ncp (marker-lock-camera (bridge/solver-pose->camera (:pose sol) proxy-pose) idx)]
+                (swap! session assoc-in [:camera-poses idx] ncp)
+                ;; move the viewport camera to the solved pose NOW (as on-snap! does)
+                ;; — the proxy is fixed on these photos, so without this the
+                ;; wireframe/dots stay rendered from the old vantage and the disc
+                ;; only snaps into place on the next enter-photo!.
+                (viewport/set-camera-pose! ncp)))
+            (swap! session assoc-in [:acquire-results idx]
+                   {:pnp? true :matched (:n sol) :rms-px (:rms-px sol)
+                    :outliers (count outlier-cis)})
+            (swap! session assoc-in [:pnp-residuals idx] residuals)
+            (swap! session assoc-in [:pnp-outliers idx] outlier-cis)
+            ;; tee up the first rejected corner for an immediate re-click
+            (when (seq outlier-cis)
+              (swap! session assoc :pnp-armed (first (sort outlier-cis))))
+            (redraw-pnp-preview!)
+            (redraw-overlay-dots!)
+            sol))))))
 
 (defn- propose-and-snap!
   "Fetta A: with `pose` already solved from the placed picks, reproject every
@@ -1852,7 +1886,13 @@
             (set-status-message!
              (str "PnP " (name (:method final)) ": " (pnp-diagnosis final)
                   (when (pos? added)
-                    (str " · " added " " (pnp-noun) " agganciati in automatico"))))
+                    (str " · " added " " (pnp-noun) " agganciati in automatico"))
+                  ;; A solve that had to reinterpret the picks says so HERE: the
+                  ;; status line is written once per gesture, so a message set
+                  ;; during the solve would be overwritten by this one and the
+                  ;; user would never learn their labels had been reflected.
+                  (when-let [note (or (:note final) (:note sol))]
+                    (str " · " note))))
             (save-acquire-state!))
           ;; a REFUSED solve already said why, and its message must survive
           (when-not (= ::refused (:last-solve @session))

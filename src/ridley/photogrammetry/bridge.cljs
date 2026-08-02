@@ -220,6 +220,26 @@
   (when (and face-normal zero-obj solver-pose)
     (pos? (m/dot face-normal (m/v- (cam/camera-center solver-pose) zero-obj)))))
 
+(defn mirror-crown-index
+  "The index the SAME physical disc takes under the plate's own mirror symmetry:
+   i → (n − i) mod n, the reflection about the axis through crown mark 0.
+
+   A crown of n evenly-spaced marks is mirror-symmetric about that axis, and so
+   is the zero-index (it sits radially INSIDE mark 0, on the axis). Reflecting
+   every declared identity therefore yields a labelling that the SAME clicks fit
+   exactly as well — measured on real picks (param-plate-paper photo 9, 11
+   marks): rms 10.74 px both, to the last digit. The two are not a near-tie the
+   residual could arbitrate; they are equal, and they put the camera on OPPOSITE
+   sides of the printed face (z = −55.3 vs +58.3 mm). So the residual can never
+   choose between them, and camera-sees-marked-face? always can.
+
+   This is the same reflection twin match-plate rejects in the identity-FREE
+   path; declared correspondences are just as exposed to it, because a proxy
+   drawn from an already-flipped pose invites the user to click the mirror
+   labelling and confirm it."
+  [n i]
+  (mod (- n i) n))
+
 (defn klein-images
   "The four camera poses that reproject a box with three distinct sides to the
    IDENTICAL silhouette: `camera-pose` plus its 180°-rotations about each of the

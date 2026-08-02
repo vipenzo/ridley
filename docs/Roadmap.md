@@ -79,10 +79,17 @@ utente).
   possiede e lascia il resto byte-identico.
   Handover `dev-docs/HANDOVER-plane-marks.md` (in testa lo stato alla
   sospensione). Gradini 2 (click assistito) e 3 (omografia) fuori perimetro.
-- **Residuo aperto sulla registrazione, non sui mark**: su una foto radente il
-  GEMELLO planare vince ai punti — il solver lo riconosce e ora RIFIUTA di
-  applicare una posa impossibile invece di scriverla, ma la cura vera è far
-  restituire all'omografia entrambi i rami e scegliere col vincolo fisico.
+- **Gemello planare — CHIUSO 2026-08-02, ma non dov'era stato ipotizzato.**
+  L'omografia con piano noto e `h33` pinnato ha UN solo ramo: l'ambiguità sta
+  nelle ETICHETTE. La corona (e lo zero-indice, che sta sull'asse di m00) è
+  simmetrica per riflessione, quindi `i → (n−i)` dà un etichettamento che gli
+  stessi click adattano con residuo IDENTICO fino all'ultima cifra e camera dal
+  lato opposto. Misurato sui pick veri: 10.74 px in entrambi i casi, z = −55.3
+  vs +58.3. Ora `solve-and-apply!` riflette e rietichetta i pick; `r` non
+  oscilla più. Trovati verificando: il rifiuto applicava lo stesso (`when-let`
+  accettava `::refused`, e `solver-pose->camera` di `nil` restituisce una posa
+  plausibile invece di fallire) e la spiegazione veniva sovrascritta dalla riga
+  di diagnosi. `dev-docs/HANDOVER-plane-marks.md`, sezione RIPRESA.
 - **Pagine di manuale vuote — CHIUSO 2026-08-02**. Non era il sito (che è
   sano: spazzati tutti i 294 URL delle schede e tutte le guide) ma **l'app
   desktop**: `desktop-build.yml` non eseguiva `npm run sync-manual` e

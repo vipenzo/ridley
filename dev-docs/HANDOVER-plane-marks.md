@@ -8,39 +8,91 @@ Brief di riferimento: `dev-docs/brief-plane-marks.md`.
 
 ---
 
-## STATO ALLA SOSPENSIONE (2026-08-02) — da leggere per primo
+## RIPRESA (2026-08-02) — il gemello: misurato, e non era dove pensavamo
 
-Il lavoro è **committato e verde** (817 test, build app senza warning). La
-sessione si è interrotta per una priorità esterna: le pagine del manuale online
-sono vuote nell'ultimo rilascio → `dev-docs/HANDOVER-manual-pages-blank.md`.
+Ripreso dopo il fix del manuale. **Il punto 1 della sospensione è CHIUSO, ma per
+una causa diversa da quella ipotizzata**, e lungo la strada sono usciti due
+difetti veri nel percorso di rifiuto. 825 test verdi.
 
-**Il mark-piano è finito e usabile.** Restano aperte due cose, entrambe sulla
-REGISTRAZIONE delle foto, non sui mark:
+### Il piano del handover era sbagliato, e la misura lo dice
 
-1. **Il gemello planare su una foto radente (la 10 di param-plate-paper).** Il
-   solver restituisce la posa con la camera dietro il piatto, e su quella foto
-   il gemello sbagliato ha il residuo MIGLIORE: nessun seed lo batte. Oggi il
-   codice lo RICONOSCE e RIFIUTA di applicarlo (lascia in piedi la posa che
-   l'utente ha allineato a mano) invece di scrivere una posa impossibile. Il
-   rimedio vero, non fatto: far restituire a `pnp/estimate-homography`
-   **entrambi i rami** della decomposizione e lasciar scegliere al vincolo
-   fisico (`bridge/camera-sees-marked-face?`) invece che al residuo. Attenzione:
-   il gemello NON è una coniugazione semplice della prima soluzione — va preso
-   dalla decomposizione, non costruito a posteriori.
+L'ipotesi era: far restituire a `pnp/estimate-homography` **entrambi i rami**
+della decomposizione. **Non esistono due rami.** Col piano noto metricamente e
+`h33` pinnato a 1, l'omografia è unica e la posa che se ne ricava pure: l'unica
+altra scelta è il segno di λ, e λ<0 mette il bersaglio DIETRO la camera (è
+esattamente il motivo del pin). Ho anche costruito il gemello alla
+Schweighofer-Pinz (riflessione della normale attorno alla linea di vista,
+rotazione di 2β attorno a `n×v`): sui dati veri raffina a **rms 280 px** contro
+10.74. Non è quello.
 
-2. **Il gizmo e `r` si contendono la stessa quantità.** Sulle foto ≠ 0 il gizmo
-   muove la CAMERA (`on-inv-commit!`), ed `r` ricalcola proprio la camera: la
-   rotazione a mano viene sovrascritta. Ora almeno non lo fa più quando il
-   risultato sarebbe impossibile, ma la tensione fra i due gesti resta e
-   meriterebbe un pensiero di design (bloccare la posa a mano? un "usa questa
-   posa" esplicito?).
+**L'ambiguità è nelle ETICHETTE, non nella decomposizione.** Una corona di mark
+equispaziati è simmetrica per riflessione attorno all'asse che passa per il mark
+0 — e lo è anche lo zero-indice, che su quell'asse ci sta sopra (sta radialmente
+DENTRO m00). Riflettere ogni identità dichiarata (`i → (n−i) mod n`) dà un
+etichettamento che gli STESSI click adattano **altrettanto bene**, con la camera
+dall'altra parte della faccia stampata. Misurato sui pick veri di Vincenzo
+(`param-plate-paper`, foto 9, 11 mark):
 
-**Ultimo stato riferito dall'utente**, da verificare per primo alla ripresa: con
-`r` legge "PnP: nessuna soluzione — marker su più facce e almeno 4?". Quel
-messaggio generico ora NON dovrebbe più comparire al posto della spiegazione del
-rifiuto (corretto in `b44006b`+ successivo: il rifiuto è `::refused`, non `nil`,
-e il chiamante non lo scambia più per un fallimento). Se ricompare, la
-correzione non basta e va guardata lì.
+```
+  etichette come dichiarate   rms 10.74 px   camera z = −55.3  (DIETRO)
+  etichette specchiate        rms 10.74 px   camera z = +58.3  (davanti)
+  vincolando al lato davanti CON le etichette dichiarate: rms 1156 px,
+                                       camera a 2·10⁶ mm — non esiste
+```
+
+I due residui coincidono **fino all'ultima cifra** (differenza ~1e-9 px): non è
+un quasi-pareggio che una soglia meglio tarata potrebbe rompere. Il residuo non
+può scegliere, mai; il vincolo fisico può, sempre — e le due pose stanno per
+costruzione su lati OPPOSTI, perché il riflesso è una riflessione rispetto al
+piano del piatto. Sulla foto 8 (buona) la prova gira al contrario: è la
+riflessione a diventare impossibile. Il test discrimina nei due versi.
+
+Questa è la stessa riflessione che `match-plate` già rifiuta nel percorso
+identity-free (fetta B/C): le corrispondenze dichiarate erano semplicemente
+rimaste scoperte. E si capisce perché l'utente le dichiara specchiate: un proxy
+disegnato da una posa già ribaltata mostra le etichette specchiate, quindi
+cliccarle conferma il ribaltamento.
+
+### Cosa fa ora
+
+`solve-and-apply!`: se la soluzione mette la camera dietro la faccia stampata,
+**riflette le identità e risolve di nuovo**; se ora la camera è davanti, applica
+e RIETICHETTA i pick della foto (`relabel-picks!` — i pixel restano dove sono,
+si muovono le identità, insieme a occlusioni e mark armato, o pannello/residui/
+pallini descriverebbero una foto diversa da quella che la posa descrive). Il
+ritentativo `:seeded` resta come ripiego, e il rifiuto resta come coda onesta —
+ma per un piatto è ormai irraggiungibile in pratica, proprio perché le due
+etichettature cadono su lati opposti.
+
+Verificato end-to-end sul vero `solve-and-apply!` con lo stato di sessione dei
+dati veri: nota emessa, camera a `[−209.3, −30.5, 58.3]` (davanti), pick 1 che
+porta il pixel che era dell'11 — e **un secondo `r` non oscilla**: nessun
+riflesso, stessa posa, pick fermi. Era il sintomo di Vincenzo ("premendo `r` il
+proxy torna dal lato sbagliato").
+
+### Due difetti nel percorso di rifiuto, trovati verificando
+
+1. **Il rifiuto applicava lo stesso.** `(when-let [sol …])` accettava
+   `::refused` come valore vero, quindi il corpo di applicazione girava con
+   `(:pose ::refused)` = `nil`. E `bridge/solver-pose->camera` di `nil` **non
+   fallisce**: restituisce una posa plausibile (`{:position [0 0 0] :heading
+   [0 0 1]}`, misurato). Il rifiuto scriveva quindi una camera fasulla proprio
+   sopra l'allineamento che esisteva per proteggere, senza che niente a valle se
+   ne accorgesse. Corretto: `::refused` esce prima del corpo.
+2. **La spiegazione veniva sovrascritta.** Il messaggio impostato dentro il
+   solve ("ripresa dall'allineamento corrente") era subito rimpiazzato da
+   `on-solve-pnp!`, che scrive la riga di stato una volta per gesto. Ora la nota
+   viaggia nella mappa di soluzione (`:note`) e viene composta lì.
+
+**Il punto 2 della sospensione** (gizmo ed `r` si contendono la camera) resta
+aperto come questione di design, ma perde quasi tutta l'urgenza: `r` non
+riporta più il proxy dal lato sbagliato, converge al lato fisicamente possibile
+qualunque sia l'allineamento a mano.
+
+**Regressione fissata**: `test/ridley/photogrammetry/plate_mirror_test.cljs` —
+i pick veri delle foto 8 e 9 inlineati (niente dipendenza dal file di sessione
+né dai JPEG da 2 MB), la coincidenza dei residui, i due lati opposti,
+l'involutività del riflesso.
 
 ---
 
