@@ -1733,11 +1733,23 @@
                                 (str "la prima soluzione metteva la camera DIETRO il piatto "
                                      "(gemello planare): ripresa dall'allineamento corrente"))
                                retry)
+                           ;; Both candidates put the camera behind the printed
+                           ;; face. APPLYING one would be worse than doing
+                           ;; nothing: it silently overwrites whatever the user
+                           ;; has aligned by hand — which on photos ≠ 0 is the
+                           ;; camera, exactly what this would replace — and
+                           ;; leaves them with an impossible pose that looks
+                           ;; like a result (Vincenzo 2026-08-02: "'r' non
+                           ;; riparte dalla posa girata: rimette il proxy sul
+                           ;; lato sbagliato"). A pose that cannot be is not a
+                           ;; better answer than no answer, however low its
+                           ;; residual. Refuse, keep what is on screen, say why.
                            (do (set-status-message!
-                                (str "ATTENZIONE: questa foto si registra con la camera dietro "
-                                     "il piatto e non riesco a raddrizzarla. Allinea il proxy a "
-                                     "mano più vicino al vero e ripremi, oppure scarta la foto."))
-                               first-try)))
+                                (str "NON applicata: su questa foto entrambe le soluzioni mettono "
+                                     "la camera dietro il piatto, e il gemello sbagliato ha "
+                                     "persino il residuo migliore. Lascio la posa che hai adesso. "
+                                     "Girala a mano e usala così, oppure scarta la foto."))
+                               nil)))
                        first-try))]
       (let [residuals (into {} (map (juxt :ci :residual-px) (:per-point sol)))
             outlier-cis (set (map :ci (:outliers sol)))]

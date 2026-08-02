@@ -695,6 +695,39 @@ suggerisce cosa fare, invece di applicare in silenzio una posa impossibile.
 
 Ecco perché l'allineamento manuale conta: non è solo estetica, è il seed.
 
+### Seguito 3, decimo giro: perché `r` disfa la rotazione a mano
+
+Vincenzo: girando il proxy di 180° i pallini tornano dentro e l'aspetto è
+naturale — ma premendo `r` il proxy torna dal lato sbagliato.
+
+**Perché.** Sulle foto ≠ 0 il gizmo **non muove il proxy: muove la camera**
+(`on-inv-commit!`, "photos 1..N-1's commits invert onto the CAMERA"). Quindi la
+rotazione a mano è una rotazione di camera — ed `r`, che ricalcola proprio la
+camera, la sovrascrive. Il gesto e il comando si contendono la stessa quantità.
+
+**E il seed non basta.** Il ritentativo `:seeded` parte dall'allineamento
+corrente, che dopo la rotazione È dal lato giusto — eppure LM torna al gemello:
+su questa foto (radente, 10 marker su 12) il gemello ha il residuo MIGLIORE. Non
+è un problema di basin, è che i dati preferiscono la risposta impossibile. Il
+test sintetico non lo aveva mostrato perché con una corona pulita il gemello non
+è nemmeno un minimo — la degenerazione è del caso radente.
+
+**Rimedio immediato (fatto): non applicare mai una posa impossibile.** Se
+entrambe le candidate mettono la camera dietro la faccia stampata,
+`solve-and-apply!` **rifiuta** e lascia in piedi quello che c'è, spiegando
+perché. Applicarla sarebbe peggio di non fare niente: sovrascrive proprio la
+cosa che l'utente ha allineato a mano e lascia una posa impossibile con
+l'aspetto di un risultato. Un residuo più basso non rende possibile ciò che non
+lo è.
+
+**Rimedio vero (DA FARE): far restituire a `estimate-homography` ENTRAMBI i rami
+della decomposizione**, e lasciare che sia il vincolo fisico a scegliere, invece
+di sperare che il residuo scelga bene. È il modo classico e l'unico che funziona
+quando il gemello ha il residuo migliore. Nota per chi lo farà: il gemello NON è
+una coniugazione semplice della prima soluzione (M R M con t'=M t riflette
+l'immagine, non la lascia invariata) — va preso dalla decomposizione, non
+costruito a posteriori.
+
 ## Quello che resta aperto
 
 - **Ricollaudare la HUD dal vivo**: è verificata renderizzando stati finti in un
