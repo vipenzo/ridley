@@ -48,6 +48,15 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
+      # Tauri bundles `public/` verbatim (frontendDist), and public/manual/ is
+      # gitignored — it exists only after this sync. Without it the DMG ships
+      # the manual's index (compiled into the JS) and none of the page bodies
+      # (fetched as Markdown at runtime), so every page opens blank. Same step
+      # as deploy.yml; `npm run release`'s prerelease hook does NOT fire here
+      # because the build below calls shadow-cljs directly.
+      - name: Sync manual content into public/
+        run: npm run sync-manual
+
       - name: Resolve build tag
         id: tag
         run: |

@@ -83,8 +83,15 @@ utente).
   GEMELLO planare vince ai punti — il solver lo riconosce e ora RIFIUTA di
   applicare una posa impossibile invece di scriverla, ma la cura vera è far
   restituire all'omografia entrambi i rami e scegliere col vincolo fisico.
-- **URGENTE, fronte a sé**: le pagine del manuale online sono vuote nell'ultimo
-  rilascio (indice sì, corpi no) — `dev-docs/HANDOVER-manual-pages-blank.md`.
+- **Pagine di manuale vuote — CHIUSO 2026-08-02**. Non era il sito (che è
+  sano: spazzati tutti i 294 URL delle schede e tutte le guide) ma **l'app
+  desktop**: `desktop-build.yml` non eseguiva `npm run sync-manual` e
+  `public/manual/` è gitignorato, quindi il DMG incorporava indice e nessun
+  corpo. Silenzioso perché Tauri risponde `index.html` con HTTP 200 a un file
+  mancante. Corretti: il workflow, `beforeBuildCommand` in `tauri.conf.json`,
+  una guardia che rifiuta la shell HTML con un messaggio esplicito, e — bug
+  indipendente trovato nella spazzata — il percent-encoding del nome scheda
+  (`sdf-node?` dava 404 anche online). `dev-docs/HANDOVER-manual-pages-blank.md`.
 - **Coda post-v1** (dichiarata, non iniziata): **fusione di sessioni di scatto**
   (oggetto girato in pose diverse → sessioni fuse in uno spazio unico via una
   `:pose` per sessione da ≥3 corrispondenze dichiarate — brief

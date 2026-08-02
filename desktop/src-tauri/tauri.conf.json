@@ -4,7 +4,8 @@
   "version": "3.4.0",
   "identifier": "com.ridley.desktop",
   "build": {
-    "frontendDist": "../../public"
+    "frontendDist": "../../public",
+    "beforeBuildCommand": "npm run sync-manual"
   },
   "app": {
     "withGlobalTauri": true,

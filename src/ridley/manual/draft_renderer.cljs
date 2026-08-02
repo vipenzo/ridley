@@ -69,7 +69,7 @@
    :path basenames. Used to skip auto-linking a card's own symbol to itself."
   [url]
   (when (string? url)
-    (let [base (last (str/split url #"/"))]
+    (let [base (structure/card-file url)]
       (some (fn [e] (when (str/ends-with? (str (:path e)) base) (:name e)))
             (vals ref-index/reference-index)))))
 
@@ -156,6 +156,14 @@
                    (throw (js/Error. (str "Failed to fetch " url
                                           " (HTTP " (.-status resp) ")"))))))
         (.then (fn [text]
+                 ;; A missing file is not always a 404: SPA and Tauri hosts hand
+                 ;; back index.html with HTTP 200, which marked then renders as
+                 ;; an empty page. Refuse it loudly instead.
+                 (when (structure/shell-html? text)
+                   (throw (js/Error.
+                           (str "il file " url " non è in questa build "
+                                "(il server ha risposto con la pagina dell'app). "
+                                "Manca `npm run sync-manual` prima del build."))))
                  (swap! chapter-cache assoc url text)
                  text)))))
 

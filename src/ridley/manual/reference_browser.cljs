@@ -161,11 +161,9 @@
       (get cc-index/clojure-core-index nm)))
 
 (defn- card-url
-  "Served URL of a card's Markdown, derived from its index :path
-   (docs/manual/reference/en/x.md → manual/reference/en/x.md)."
+  "Served URL of a card's Markdown (see structure/card-url)."
   [entry]
-  (when-let [p (:path entry)]
-    (str/replace p #"^docs/" "")))
+  (structure/card-url (:path entry)))
 
 (defn- render-compact! [body e]
   (let [card (el "div" "ref-card" nil)

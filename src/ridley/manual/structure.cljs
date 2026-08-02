@@ -11,9 +11,13 @@
      docs/manual/guides/{it,en}/<file>.md       guides (IT source, EN translated)
      docs/manual/reference/{it,en}/<category>/   reference cards (EN source)
 
-   At build/serve time the guides are copied under the public web root and
-   fetched by ridley.manual.draft-renderer; the reference cards are compiled
-   into ridley.manual.reference-index by scripts/build_reference_index.bb.")
+   At build/serve time `npm run sync-manual` copies BOTH trees under the public
+   web root; every page BODY — guides and reference cards alike — is fetched
+   from there at runtime by ridley.manual.draft-renderer. Only the card
+   METADATA (name, signature, category) is compiled into
+   ridley.manual.reference-index by scripts/build_reference_index.bb. A build
+   that skips the sync therefore still shows the index and no page at all."
+  (:require [clojure.string :as str]))
 
 ;; ── Served location of the guide Markdown ─────────────────────
 ;;
@@ -180,11 +184,50 @@
       (contains? avail source-lang) source-lang
       :else (first avail))))
 
+;; ── Served URLs ───────────────────────────────────────────────
+;;
+;; A card's filename is its symbol name, and Ridley has symbols carrying
+;; characters that are structural in a URL: fetched raw, `sdf-node?.md` asks
+;; the server for `sdf-node` with the query string `.md`, which 404s. Encode
+;; the filename — never the slashes.
+
+(defn- url-path
+  "Join path segments into a served URL, percent-encoding the last one."
+  [segs]
+  (str/join "/" (conj (vec (butlast segs))
+                      (js/encodeURIComponent (last segs)))))
+
 (defn chapter-url
   "Served URL of a chapter's Markdown, resolving the language to one that
    actually exists (bidirectional fallback)."
   [chapter lang]
-  (str guides-url-base "/" (name (resolve-guide-lang chapter lang)) "/" (:file chapter)))
+  (url-path [guides-url-base (name (resolve-guide-lang chapter lang)) (:file chapter)]))
+
+(defn card-url
+  "Served URL of a Reference card's Markdown, derived from its index :path
+   (docs/manual/reference/en/x.md → manual/reference/en/x.md). nil for an
+   entry with no card file (Clojure core entries)."
+  [path]
+  (when path
+    (url-path (str/split (str/replace path #"^docs/" "") #"/"))))
+
+(defn card-file
+  "Inverse of the encoding done by card-url: the on-disk filename behind a
+   served card URL. Used to match a URL back to its index entry."
+  [url]
+  (when url
+    (js/decodeURIComponent (last (str/split url #"/")))))
+
+(defn shell-html?
+  "True when a body fetched as Markdown is really the app's index.html. SPA and
+   Tauri hosts answer a missing file with the shell page and HTTP 200 (see
+   default-guide-langs), so without this check a build shipped without the
+   synced manual renders every page BLANK instead of reporting the failure —
+   which is exactly how the missing sync in the desktop build presented."
+  [text]
+  (let [head (-> (subs text 0 (min 200 (count text))) str/triml str/lower-case)]
+    (or (str/starts-with? head "<!doctype html")
+        (str/starts-with? head "<html"))))
 
 (defn adjacent-chapter
   "Next/previous chapter (:next or :prev) relative to a chapter id, in order."

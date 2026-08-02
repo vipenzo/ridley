@@ -91,6 +91,12 @@ the release tag into `tauri.conf.json` before building, so `About Ridley` matche
 The versions checked into `tauri.conf.json` / `Cargo.toml` / `package.json` are only the
 baseline a local dev build reports — they do not need bumping per release.
 
+Both workflows must run `npm run sync-manual` before building: `public/manual/` is
+gitignored, so it does not exist in a CI checkout, and both Pages (`./public`) and Tauri
+(`frontendDist: ../../public`) ship whatever is in `public/`. Skipping it produces an app
+whose manual has an index and no page bodies — the desktop bug of 2026-08-02
+(`dev-docs/HANDOVER-manual-pages-blank.md`).
+
 ## ClojureScript Gotchas
 
 ### Dead Code Elimination (DCE)
