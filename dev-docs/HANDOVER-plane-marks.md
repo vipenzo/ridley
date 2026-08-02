@@ -6,6 +6,44 @@ giro seguente (forma di riposo + confirm chirurgico).
 
 Brief di riferimento: `dev-docs/brief-plane-marks.md`.
 
+---
+
+## STATO ALLA SOSPENSIONE (2026-08-02) — da leggere per primo
+
+Il lavoro è **committato e verde** (817 test, build app senza warning). La
+sessione si è interrotta per una priorità esterna: le pagine del manuale online
+sono vuote nell'ultimo rilascio → `dev-docs/HANDOVER-manual-pages-blank.md`.
+
+**Il mark-piano è finito e usabile.** Restano aperte due cose, entrambe sulla
+REGISTRAZIONE delle foto, non sui mark:
+
+1. **Il gemello planare su una foto radente (la 10 di param-plate-paper).** Il
+   solver restituisce la posa con la camera dietro il piatto, e su quella foto
+   il gemello sbagliato ha il residuo MIGLIORE: nessun seed lo batte. Oggi il
+   codice lo RICONOSCE e RIFIUTA di applicarlo (lascia in piedi la posa che
+   l'utente ha allineato a mano) invece di scrivere una posa impossibile. Il
+   rimedio vero, non fatto: far restituire a `pnp/estimate-homography`
+   **entrambi i rami** della decomposizione e lasciar scegliere al vincolo
+   fisico (`bridge/camera-sees-marked-face?`) invece che al residuo. Attenzione:
+   il gemello NON è una coniugazione semplice della prima soluzione — va preso
+   dalla decomposizione, non costruito a posteriori.
+
+2. **Il gizmo e `r` si contendono la stessa quantità.** Sulle foto ≠ 0 il gizmo
+   muove la CAMERA (`on-inv-commit!`), ed `r` ricalcola proprio la camera: la
+   rotazione a mano viene sovrascritta. Ora almeno non lo fa più quando il
+   risultato sarebbe impossibile, ma la tensione fra i due gesti resta e
+   meriterebbe un pensiero di design (bloccare la posa a mano? un "usa questa
+   posa" esplicito?).
+
+**Ultimo stato riferito dall'utente**, da verificare per primo alla ripresa: con
+`r` legge "PnP: nessuna soluzione — marker su più facce e almeno 4?". Quel
+messaggio generico ora NON dovrebbe più comparire al posto della spiegazione del
+rifiuto (corretto in `b44006b`+ successivo: il rifiuto è `::refused`, non `nil`,
+e il chiamante non lo scambia più per un fallimento). Se ricompare, la
+correzione non basta e va guardata lì.
+
+---
+
 ## Il gate e i suoi due esiti (2026-07-31)
 
 Vincenzo ha creato un mark-piano su foto vere e ha ricalcato. Funziona. Due

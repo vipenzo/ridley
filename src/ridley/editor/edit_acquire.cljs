@@ -1702,6 +1702,7 @@
    propose-and-snap! for fetta A. Does NOT set the status line or save — the
    caller owns those, once, after the (possibly two-pass) solve settles."
   [iw ih]
+  (swap! session dissoc :last-solve)
   (let [idx (:current-idx @session)
         proxy-pose (get-in @session [:proxy-mesh :creation-pose])
         targets (pnp-targets)
@@ -1749,7 +1750,12 @@
                                      "la camera dietro il piatto, e il gemello sbagliato ha "
                                      "persino il residuo migliore. Lascio la posa che hai adesso. "
                                      "Girala a mano e usala così, oppure scarta la foto."))
-                               nil)))
+                               ;; NOT nil: nil means 'could not fit' to the caller,
+                               ;; which would replace this explanation with the
+                               ;; generic 'nessuna soluzione' and hide the real
+                               ;; reason. A refusal is a decision, not a failure.
+                               (swap! session assoc :last-solve ::refused)
+                               ::refused)))
                        first-try))]
       (let [residuals (into {} (map (juxt :ci :residual-px) (:per-point sol)))
             outlier-cis (set (map :ci (:outliers sol)))]
@@ -1839,7 +1845,8 @@
       (if (< n (min-pnp-picks))
         (set-status-message!
          (str "PnP: servono almeno " (min-pnp-picks) " " (pnp-noun) " piazzati (ne hai " n ")"))
-        (if-let [sol (solve-and-apply! iw ih)]
+        (if-let [sol (let [r (solve-and-apply! iw ih)]
+                       (when-not (= r ::refused) r))]
           (let [added (propose-and-snap! (:pose sol) (session-intrinsics iw ih))
                 final (if (pos? added) (or (solve-and-apply! iw ih) sol) sol)]
             (set-status-message!
@@ -1847,9 +1854,11 @@
                   (when (pos? added)
                     (str " · " added " " (pnp-noun) " agganciati in automatico"))))
             (save-acquire-state!))
-          (set-status-message!
-           (str "PnP: nessuna soluzione — " (pnp-noun) " su più facce e almeno "
-                (min-pnp-picks) "?"))))))
+          ;; a REFUSED solve already said why, and its message must survive
+          (when-not (= ::refused (:last-solve @session))
+            (set-status-message!
+             (str "PnP: nessuna soluzione — " (pnp-noun) " su più facce e almeno "
+                  (min-pnp-picks) "?")))))))
   (update-panel!))
 
 (def ^:private min-crown-assign
