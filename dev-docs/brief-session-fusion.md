@@ -1,8 +1,33 @@
 # Brief: fusione di sessioni di scatto (multi-sessione)
 
 Aperto 2026-08-01 (Vincenzo + Claude-docs). Stato: PROPOSTA di design, non
-assegnata. Prerequisito d'ordine: chiudere prima il Seguito 3 di
-`brief-plane-marks.md` (semantica dei frame dei mark) — vedi "Vincolo".
+assegnata.
+
+> **VINCOLO D'ORDINE CADUTO (verificato 2026-08-02, Code).** Il prerequisito in
+> coda ("chiudere il Seguito 3 di `brief-plane-marks.md` scegliendo la regola dei
+> frame con la fusione in mente") è soddisfatto: il Seguito 3 è chiuso (`6bbcd90`
+> + i giri successivi), e la regola che ne è uscita è già compatibile con la
+> fusione, anche se non fu scelta pensando a lei. Misurato sul codice: i `:marks`
+> emessi sono pose MONDO nel frame registrato (`acquire_stage.cljs`, `world-frame`),
+> `acquire` li restituisce verbatim, il proxy è già posato e `:faces` è CALCOLATO
+> dalla posa (`edit_acquire.cljs`, `face-poses`) — cioè tutto il valore di una
+> `acquire` vive in UN frame solo, quindi UNA T rigida lo trasporta tutto. Il
+> timore "sposta le camere ma non i mark" apparteneva al primo abbozzo col
+> write-back della `:pose`; `acquire-union` applica la sua T al VALORE e non
+> tocca la posa. Il vincolo si riformula: *`acquire-union` deve trasportare con
+> la stessa T proxy, `:marks`, `:shapes` e le camere registrate dello stage* (la
+> macchina esiste: `transport-registered-cameras!`, `attachment/transform-pose-rigid`),
+> e non deve ri-applicare la `:pose` a ciò che è già in mondo (doppio trasporto).
+>
+> **Il momento giusto NON è però ora** (giudizio 2026-08-02): la registrazione a
+> sessione singola sta ancora restituendo difetti di correttezza sotto uso vero
+> (`55c7159`, `e401dad`), e la fusione SOMMA l'errore di due sessioni — fondere
+> adesso renderebbe illeggibili i residui. Segnale d'ingaggio dichiarato: un
+> oggetto vero portato dall'inizio alla fine senza correzioni al programma.
+> Fetta anticipabile che non si spreca: il **gate di floor** (sotto), fattibile
+> con le foto già in casa spezzando una sessione in due mezze sessioni
+> registrate indipendentemente — misura il termine che la fusione aggiunge (la
+> triangolazione dei mark d'aggancio) senza scrivere una riga di UI.
 
 ## Il bisogno
 
@@ -110,15 +135,21 @@ piatti secondari spenti, frustum di tutte le sessioni accesi (per colore).
 - Lo stesso meccanismo fonde anche sessioni NON capovolte (es. un giro di
   dettaglio più ravvicinato dello stesso lato).
 
-## Vincolo d'ordine (importante)
+## Vincolo d'ordine (SUPERATO — vedi il riquadro in testa)
 
-La fusione rende PORTANTE la semantica dei frame dei mark (Seguito 3 di
-brief-plane-marks): perché tutto si trasporti gratis, i `:marks` devono
-essere memorizzati nel frame DI SESSIONE e posati alla restituzione (viaggiare
-con la `:pose`), come le camere. Se oggi i mark sono baked nel mondo, fondere
-sposterebbe le camere ma non i mark. → Chiudere la diagnosi del Seguito 3
-SCEGLIENDO la regola dei frame con la fusione in mente, PRIMA di costruire
-questo brief.
+*Testo originale, conservato per il perché.* La fusione rende PORTANTE la
+semantica dei frame dei mark (Seguito 3 di brief-plane-marks): perché tutto si
+trasporti gratis, i `:marks` devono essere memorizzati nel frame DI SESSIONE e
+posati alla restituzione (viaggiare con la `:pose`), come le camere. Se oggi i
+mark sono baked nel mondo, fondere sposterebbe le camere ma non i mark. →
+Chiudere la diagnosi del Seguito 3 SCEGLIENDO la regola dei frame con la fusione
+in mente, PRIMA di costruire questo brief.
+
+**Esito**: i mark SONO in mondo, e va bene lo stesso — perché anche camere e
+proxy posato lo sono, e `acquire-union` trasporta il valore invece di riscrivere
+la `:pose`. La condizione da preservare non è più "dove stanno i mark" ma
+"tutto ciò che una `acquire` restituisce sta nello stesso frame": chi in futuro
+esprimesse una di quelle chiavi relativamente alla `:pose` romperebbe la fusione.
 
 ## Budget d'errore (onestà)
 
@@ -133,6 +164,12 @@ misura il floor dell'intero giro).
 
 1. Gate di floor: stessa scena fotografata in due sessioni SENZA muovere
    l'oggetto → fit su 3 mark omologhi → T ≈ identità; il delta è il floor.
+   **Variante a costo zero (2026-08-02)**: non servono scatti nuovi — si spezza
+   una sessione esistente in due cartelle di 5-6 foto e si registrano
+   separatamente. Entrambe restano ancorate al piatto, quindi la T attesa è
+   l'identità per costruzione e il residuo isola esattamente il termine che la
+   fusione aggiunge: la triangolazione dei mark d'aggancio. Dichiararlo per
+   quello che è (non misura il rimettere l'oggetto sul piatto in un'altra posa).
 2. Gate vero: lettore SD in piedi + capovolto; 2 mark-piano omonimi ben
    separati (o 3 punti); `(acquire-union a b)`; ricalco di un contorno su
    foto della sessione A verificato dalle foto della sessione B; una

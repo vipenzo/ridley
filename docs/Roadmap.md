@@ -50,9 +50,18 @@ utente).
   in ~4 s**. Handover `HANDOVER-edit-acquire-fetta-{B,C}-live-gate.md`.
 - **Residui piccoli (non bloccanti)**: togliere il modo modale `:retrace` (tasto
   `d`), ora che il ricalco si fa con `edit-path-2d` normale sopra la posa (pulizia
-  architetturale); la domanda UX di FASE B (i frustum come navigazione principale
-  o la pellicola); ri-collaudare param-plate-one con focale 48 (dato di sessione
+  architetturale); ri-collaudare param-plate-one con focale 48 (dato di sessione
   sbagliato — 22 mm — non codice); rifiniture di precisione P2 (priori θ nel fit).
+- **Domanda UX di FASE B — DECISA 2026-08-02** (Vincenzo: "non ho preferenze,
+  dipende dai momenti, credo servano entrambe"): frustum cliccabili **e**
+  pellicola di miniature convivono sul palcoscenico, nessuna delle due è "la"
+  navigazione. Default scelto da Code, da costruire: frustum accesi in orbita
+  libera (dicono DOVE stanno le camere), pellicola disponibile sempre come
+  strisciata rapida (dice COSA si vede) — oggi la pellicola esiste solo dentro la
+  sessione modale di registrazione, sul palcoscenico va portata. Vincolo di
+  progetto che ne discende: la pellicola dello stage nasce già consapevole di
+  PIÙ sessioni (chip per sessione), perché è lo stesso pezzo che serve alla
+  fusione — vedi coda post-v1.
 - **Mark-piano — GATE PASSATO** (2026-07-31; brief
   `dev-docs/brief-plane-marks.md`, gradino 1). Col proxy piatto il ricalco non
   aveva piani di lavoro sull'oggetto: ora se ne crea uno a mano dal
