@@ -127,13 +127,22 @@ utente).
   scrivono nel sorgente la riga successiva (il write-back esiste già). Da
   scrivere come brief prima di costruire. (c) **Turtle su un mark** — FATTO,
   `ff6f955`: `(turtle A :at :piano-1 …)`.
-- **Coda post-v1** (dichiarata, non iniziata): **fusione di sessioni di scatto**
-  (oggetto girato in pose diverse → sessioni fuse in uno spazio unico via una
-  `:pose` per sessione da ≥3 corrispondenze dichiarate — brief
-  `dev-docs/brief-session-fusion.md`; include il multi-acquire dello stage,
-  la "decisione D" di P4b; PREREQUISITO: chiudere la semantica dei frame dei
-  mark, Seguito 3 di brief-plane-marks); proxy oltre box/piatto
+- **Fusione di sessioni — FETTA A COSTRUITA 2026-08-03** (`brief-session-fusion.md`).
+  `(acquire-union a b …)`: due sessioni dello stesso oggetto in un frame solo,
+  agganciate sui mark OMONIMI (dichiarati dall'utente, nessun matching
+  fotometrico). Puro e ricalcolato a ogni eval — nessun numero cotto nel
+  sorgente. `ridley.photogrammetry.fuse`: seme in forma chiusa (terne
+  ortonormali, niente SVD) + LM sui 6 DOF, residuo per mark in mm, e rifiuto
+  onesto (un mark solo, due punti nudi senza normali, collineari, base < 5 mm)
+  invece di una posa plausibile. Resta: il **palcoscenico multi-sessione** —
+  oggi le foto di B non sono navigabili, lo stage mostra la prima sessione con
+  tutti i mark (la caduta dei mark trasportati sull'oggetto nelle foto di A è
+  già la verifica visiva). E il **gate con foto vere**, che Vincenzo deve
+  ancora scattare: seconda sessione con l'oggetto girato + mark omonimi.
+- **Coda post-v1** (dichiarata, non iniziata): proxy oltre box/piatto
   (rounded-prism / fillet); sorgenti foto live (webcam / companion app).
+  Il multi-acquire dello stage (la "decisione D" di P4b) è ora la seconda
+  fetta della fusione, sopra.
 - **Design/storia**: `dev-docs/acquisizione-parametrica-design.md`; handover in
   `dev-docs/HANDOVER-edit-acquire-*.md` — leggere solo per il *perché* di una scelta.
 

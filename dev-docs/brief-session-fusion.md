@@ -29,6 +29,24 @@ assegnata.
 > registrate indipendentemente — misura il termine che la fusione aggiunge (la
 > triangolazione dei mark d'aggancio) senza scrivere una riga di UI.
 
+> **FETTA A COSTRUITA (2026-08-03), gate con foto vere DA FARE.** Vincenzo:
+> «passerei alla acquire-union: la necessità che veramente si sente sono foto da
+> angolazioni più sparse». Fatto: `ridley.photogrammetry.fuse` (puro — seme in
+> forma chiusa per composizione di terne + raffinamento LM sui 6 DOF, residuo
+> per mark in mm, rifiuto onesto sui casi indeterminati) e il binding SCI
+> `(acquire-union a b …)`. NON fatto: il palcoscenico multi-sessione (le foto di
+> B non sono ancora navigabili) — vedi "Cosa deve crescere". Per ora lo stage
+> mostra la PRIMA sessione con TUTTI i mark, trasportati compresi: un mark
+> misurato in B che cade sull'oggetto nelle foto di A è già la verifica visiva
+> della fusione, a costo zero.
+>
+> Verificato: 11 test sintetici (moto noto → recuperato; due mark-piano bastano;
+> due punti nudi no; collineari no; base < 5 mm no; il gemello sbagliato viene
+> NOMINATO invece che mediato; l'identità resta identità) più una prova live in
+> SCI con due sessioni sintetiche — rms 4.6e-15 mm, il mark presente solo in B
+> ricade esattamente sul suo punto in A, `(turtle U :at :solo-di-b …)` funziona.
+> Suite 839 test, 0 fallimenti.
+
 ## Il bisogno
 
 Il giradischi dà foto dettagliate ma su una FASCIA limitata di angoli:

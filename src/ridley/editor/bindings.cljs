@@ -649,6 +649,11 @@
    ;; edit-acquire marker emits — reference-citizen shape (image-board/mesh-board
    ;; family), returns {:proxy :pose :shapes :marks :dir}, destructurable by name.
    'acquire             edit-acquire/acquire
+   ;; acquire-union (dev-docs/brief-session-fusion.md): two shooting sessions of
+   ;; the same object, in the FIRST one's frame. The join is declared — marks
+   ;; with the same name are the same physical point — and the motion is
+   ;; recomputed at every eval, never written into the source.
+   'acquire-union       edit-acquire/acquire-union
    ;; registration-plate: the parametric plate PROXY (cylinder + crown marks +
    ;; zero-index under :anchors), so `(edit-acquire dir {:proxy (registration-plate
    ;; :d 130)})` needs no file import and the emitted (acquire …) is self-contained.

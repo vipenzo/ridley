@@ -54,6 +54,7 @@
             [ridley.photogrammetry.bridge :as bridge]
             [ridley.photogrammetry.edge-snap :as edge-snap]
             [ridley.photogrammetry.pnp :as pnp]
+            [ridley.photogrammetry.fuse :as fuse]
             [ridley.photogrammetry.blob :as blob]
             [ridley.photogrammetry.blob-detect :as blob-detect]
             [ridley.photogrammetry.match-plate :as match-plate]
@@ -3993,6 +3994,123 @@
       ;; — and draw the ricalco there over the stage backdrop. Computed, not stored.
       :faces (face-poses posed pose)
       :dir dir})))
+
+;; ------------------------------------------------------------
+;; acquire-union — fusing two shooting sessions (brief-session-fusion.md)
+;; ------------------------------------------------------------
+
+(defn- acq? [x] (and (map? x) (contains? x :marks) (contains? x :proxy)))
+
+(defn- union-anchors
+  "The marks the two acquisitions share BY NAME — the user's declaration that
+   those are the same physical point. Only :marks: `:faces` are generated per
+   proxy, so a shared `:top` would be a false correspondence between two
+   different boxes, and the fit would believe it."
+  [a b]
+  (->> (keys (:marks b))
+       (keep (fn [nm]
+               (let [pb (get (:marks b) nm) pa (get (:marks a) nm)]
+                 (when (and (:position pa) (:position pb))
+                   {:name nm
+                    :from-pos (vec (:position pb)) :to-pos (vec (:position pa))
+                    :from-dir (some-> (:heading pb) vec) :to-dir (some-> (:heading pa) vec)}))))
+       (sort-by :name)
+       vec))
+
+(defn- report-union!
+  "Print the fit the way mesh-board prints fidelity: the numbers that decide
+   whether to trust it, per anchor, in millimetres. A fused frame that is
+   quietly 2 mm out looks exactly like a good one until an extrusion misses the
+   object — so the residual is not optional output."
+  [dir fit]
+  (state/capture-println
+   (str ";; acquire-union · " dir " → frame della prima sessione\n"
+        (str/join "\n"
+                  (map (fn [{:keys [name residual-mm normal-deg]}]
+                         (str ";;   :" (clj->js name) "  " (modal/fmt-number residual-mm) " mm"
+                              (when normal-deg (str "  ·  normale " (modal/fmt-number normal-deg) "°"))))
+                       (:per-anchor fit)))
+        "\n;;   rms " (modal/fmt-number (:rms-mm fit)) " mm su " (:n fit) " mark"))
+  (when-let [w (fuse/worst-anchor (:per-anchor fit))]
+    (state/capture-println
+     (str ";; acquire-union: :" (clj->js (:name w)) " si discosta dagli altri ("
+          (modal/fmt-number (:residual-mm w)) " mm). "
+          "O è cliccato male in una delle due sessioni, o i due mark con quel nome "
+          "non sono lo stesso punto fisico.")))
+  (when (> (:rms-mm fit) 1.0)
+    (state/capture-println
+     (str ";; acquire-union: " (modal/fmt-number (:rms-mm fit))
+          " mm di scarto è molto per una fusione — quello che disegni su una "
+          "sessione cadrà storto sull'altra di altrettanto."))))
+
+(defn ^:export acquire-union
+  "(acquire-union a b …) — the two (or more) sessions of the same object as ONE
+   value, in the FIRST one's frame.
+
+   The turntable only reaches a band of angles; the cure is to shoot the object
+   again lying differently and fuse. The tie between the sessions is declared,
+   not detected: marks with the SAME NAME are the same physical point. Two plane
+   marks with well-separated origins are enough (their normals supply what a
+   bare pair of points cannot); three points also do.
+
+   Pure and recomputed at every eval: the motion is never written into the
+   source, so improving a mark and re-running improves the fusion. The price,
+   declared: the anchor marks must STAY in the source — they are the join.
+
+   Returns the fused value ({:marks fused, :sessions, and the first session's
+   :proxy/:pose/:faces/:dir}), or nil with a printed reason when the anchors do
+   not determine a motion. Never a plausible-looking motion.
+
+   Not fused in v1: `:shapes` stay the first session's (a traced outline is
+   geometry, not a pose; transporting it is a separate move). Each session's own
+   value is kept under :sessions."
+  [& acquisitions]
+  (let [[a & others] (filter acq? acquisitions)]
+    (cond
+      (nil? a)
+      (do (state/capture-println ";; acquire-union: serve almeno una (acquire …) valida") nil)
+
+      (empty? others)
+      (do (state/capture-println
+           (str ";; acquire-union: una sessione sola non è una fusione — "
+                "passane due: (acquire-union a b)"))
+          a)
+
+      :else
+      (let [fits (mapv (fn [b]
+                         (let [anchors (union-anchors a b)
+                               fit (fuse/fit-rigid anchors)]
+                           {:b b :anchors anchors :fit fit}))
+                       others)]
+        (if-let [bad (first (filter #(:error (:fit %)) fits))]
+          (do (state/capture-println
+               (str ";; acquire-union · " (:dir (:b bad)) ": " (:error (:fit bad))
+                    "\n;;   mark in comune: "
+                    (if (seq (:anchors bad))
+                      (str/join ", " (map #(str ":" (clj->js (:name %))) (:anchors bad)))
+                      "nessuno — i nomi devono coincidere fra le due sessioni")))
+              nil)
+          (let [moved (mapv (fn [{:keys [b fit]}]
+                              (report-union! (:dir b) fit)
+                              {:dir (:dir b) :proxy (:proxy b) :pose (:pose b)
+                               :transform (select-keys fit [:R :t :rvec])
+                               :rms-mm (:rms-mm fit)
+                               :marks (into {} (map (fn [[nm p]] [nm (fuse/transform-pose fit p)])
+                                                    (:marks b)))})
+                            fits)
+                marks (reduce (fn [acc {:keys [marks]}]
+                                (merge-with (fn [pa pb] (fuse/mean-pose [pa pb])) acc marks))
+                              (:marks a) moved)]
+            ;; The stage keeps showing the FIRST session — its frame is the fused
+            ;; frame — but with ALL the marks, transported ones included. Which
+            ;; makes the fusion visible for free: a mark measured in session B
+            ;; must land on the object in session A's photos.
+            (stage/note-eval! {:proxy (:proxy a) :pose (:pose a) :dir (:dir a) :marks marks})
+            (assoc a
+                   :marks marks
+                   :sessions (into [{:dir (:dir a) :proxy (:proxy a) :pose (:pose a)
+                                     :transform nil :rms-mm 0.0}]
+                                   (mapv #(dissoc % :marks) moved)))))))))
 
 ;; ============================================================
 ;; Entry / exit

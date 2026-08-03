@@ -3,7 +3,16 @@
 (ns ridley.manual.reference-index)
 
 (def reference-index
-  {"add-mark"
+  {"acquire-union"
+   {:name "acquire-union"
+    :category "acquisition"
+    :status "experimental"
+    :since ""
+    :signature "(acquire-union a b …)"
+    :description "Two (or more) shooting sessions of the **same object**, as one value, in the **first session's frame**."
+    :path "docs/manual/reference/en/acquire-union.md"}
+
+   "add-mark"
    {:name "add-mark"
     :category "path"
     :status "stable"
