@@ -908,14 +908,12 @@
                 "Cambia foto con [ e ] : il dischetto deve restare incollato alla superficie.")
           (when (> (:flatness-mm cand) 1.0)
             (add! "eaq-hud-warn" "La zona non è molto piana — guarda bene prima di accettare."))
-          (let [{:keys [dr du dn] :or {dr 0.0 du 0.0 dn 0.0}} (:offset (:plane @stage))]
-            (when-not (= 0.0 dr du dn)
-              (add! "eaq-hud-warn"
-                    (str "Spostato a mano: →" (src/fmt-number dr)
-                         " ↑" (src/fmt-number du)
-                         " ⊥" (src/fmt-number dn) " mm")))
-            (add! "eaq-hud-hint"
-                  "Frecce = sposta l'origine NEL piano · Shift+↑↓ = sposta il piano in profondità"))
+          ;; The hand offset is NOT reported here any more: it is drawn in the
+          ;; nudge pad above, always, at a fixed width. A line that appears the
+          ;; moment you press an arrow is a line that moves the arrow you were
+          ;; about to press again.
+          (add! "eaq-hud-hint"
+                "Frecce = sposta l'origine NEL piano · Shift+↑↓ = sposta il piano in profondità")
           (add! nil (str "Origine (pallino magenta): "
                          (if (:origin-override (:plane @stage))
                            "dove hai cliccato."
@@ -1008,6 +1006,72 @@
          discard-candidate! recentre-origin! nudge-plane! reset-offset!
          undo-plane-click! stop-plane!)
 
+(def ^:private plane-nudge-steps
+  "The ladder the 'passo' button cycles through, in mm. 0.25 was the fixed step
+   before it was adjustable, and stays the default: the gesture opens behaving
+   exactly as it did. The fine end matters for the same reason the whole origin
+   gesture exists — an origin placed on a real feature is reproducible, and
+   'reproducible' at photo scale can mean well under a tenth of a millimetre
+   (Vincenzo 2026-08-03: 'in alcuni casi mi servirebbe più fine')."
+  [1.0 0.5 0.25 0.1 0.05])
+
+(def ^:private default-nudge-step 0.25)
+
+(defn- nudge-step [] (get-in @stage [:plane :nudge-step] default-nudge-step))
+
+(defn- cycle-nudge-step!
+  "Next step on the ladder, wrapping. A cycling BUTTON rather than a number
+   field on purpose: the HUD is rebuilt wholesale on every state change, and a
+   focused input would lose its caret (or force the rebuild to tiptoe around
+   it) — while a button carries its current value as its own label, which is
+   also the only place the step is documented."
+  []
+  (let [cur (nudge-step)
+        i (or (first (keep-indexed (fn [i v] (when (= v cur) i)) plane-nudge-steps)) 2)]
+    (swap! stage assoc-in [:plane :nudge-step]
+           (nth plane-nudge-steps (mod (inc i) (count plane-nudge-steps))))
+    (redraw-plane!)))
+
+(defn- hud-nudge-pad
+  "The origin controls, in their OWN block above the detail paragraph.
+
+   Position stability is the whole point (Vincenzo 2026-08-03: 'dopo il primo
+   click l'icona è da un'altra parte'). The arrows are the one control here that
+   gets clicked repeatedly, and they used to sit in the wrapping actions row
+   BELOW a paragraph that changes height at every press — the hand-offset line
+   appears, a hint swaps — so the second click of a pair landed where the first
+   button no longer was. Here everything above this block (title + three steps)
+   is constant-height, and the offset readout is always drawn, at a fixed width,
+   even when it is zero: nothing in this block can move it."
+  []
+  (let [{:keys [dr du dn] :or {dr 0.0 du 0.0 dn 0.0}} (:offset (:plane @stage))
+        step (nudge-step)
+        moved? (not (= 0.0 dr du dn))
+        pad (el "div" "eaq-hud-pad")
+        row (el "div" "eaq-hud-pad-row")
+        ;; toFixed, not fmt-number: a readout that must not change WIDTH cannot
+        ;; use the formatter that trims trailing zeros.
+        num (fn [glyph v]
+              (el "span" "eaq-hud-num" :text (str glyph " " (.toFixed v 2))))]
+    (doseq [[label title axis delta]
+            [["◀" "Sposta l'origine a sinistra nel piano (freccia sinistra)" :dr (- step)]
+             ["▶" "Sposta l'origine a destra nel piano (freccia destra)" :dr step]
+             ["▲" "Sposta l'origine in su nel piano (freccia su)" :du step]
+             ["▼" "Sposta l'origine in giù nel piano (freccia giù)" :du (- step)]]]
+      (.appendChild row (hud-button label title true false #(nudge-plane! axis delta))))
+    (let [^js b (hud-button (str "passo " (src/fmt-number step) " mm")
+                            (str "Di quanto si sposta a ogni freccia — click per il passo "
+                                 "successivo (" (str/join " · " (map src/fmt-number plane-nudge-steps))
+                                 " mm). Vale anche per le frecce della tastiera.")
+                            true false cycle-nudge-step!)]
+      (set! (.-className b) (str (.-className b) " eaq-hud-step-btn"))
+      (.appendChild row b))
+    (.appendChild pad row)
+    (.appendChild pad (el "div" (str "eaq-hud-offset" (when moved? " moved"))
+                          :children [(num "→" dr) (num "↑" du) (num "⊥" dn)
+                                     (el "span" nil :text "mm")]))
+    pad))
+
 (defn- hud-actions []
   (let [picks (plane-picks)
         cur (peek picks)
@@ -1020,14 +1084,9 @@
                      (hud-button "Aggiungi punto"
                                  "Torna a cliccare punti, tenendo quelli che ci sono (n)"
                                  true false add-another-point!)
-                     (hud-button "◀" "Sposta l'origine a sinistra nel piano (freccia sinistra)"
-                                 true false #(nudge-plane! :dr (- plane-nudge-step)))
-                     (hud-button "▶" "Sposta l'origine a destra nel piano (freccia destra)"
-                                 true false #(nudge-plane! :dr plane-nudge-step))
-                     (hud-button "▲" "Sposta l'origine in su nel piano (freccia su)"
-                                 true false #(nudge-plane! :du plane-nudge-step))
-                     (hud-button "▼" "Sposta l'origine in giù nel piano (freccia giù)"
-                                 true false #(nudge-plane! :du (- plane-nudge-step)))
+                     ;; the arrows are NOT here: they live in hud-nudge-pad, above
+                     ;; the detail paragraph, where nothing can slide them around
+                     ;; between two clicks.
                      (hud-button "Origine al centro"
                                  "Rimette l'origine al centro dei punti cliccati"
                                  (some? (:origin-override (:plane @stage))) false
@@ -1065,6 +1124,11 @@
     (.appendChild frag (hud-step (cond cand :done ok? :current :else :todo)
                                  2 "Crea il piano"))
     (.appendChild frag (hud-step (if cand :current :todo) 3 "Controlla e accetta"))
+    ;; ORDER MATTERS: the nudge pad goes ABOVE the detail paragraph. Everything
+    ;; before it (title + the three steps) has constant height, so the arrows sit
+    ;; at the same pixel for the whole life of the candidate — which is what lets
+    ;; you click one of them twice without looking.
+    (when cand (.appendChild frag (hud-nudge-pad)))
     (.appendChild frag (hud-detail))
     (.appendChild frag (hud-actions))
     frag))
@@ -1546,8 +1610,6 @@
         (done! (str "creato :" nm ". Usalo così:  (turtle (:" nm " (:marks A)) (edit-path-2d))"))
         (redraw-plane!)))))
 
-(def ^:private plane-nudge-step 0.25)
-
 (defn- set-candidate-origin!
   "Move the candidate's origin AND re-baseline the along-normal offset.
 
@@ -1699,10 +1761,11 @@
       ;; is what a displaced mark actually needs (Vincenzo 2026-08-01). Depth,
       ;; the direction that moves the PLANE itself, goes on the same arrows with
       ;; Shift: separate gesture for a separate kind of change.
-      "ArrowUp" (do (nudge-plane! (if shift? :dn :du) plane-nudge-step) true)
-      "ArrowDown" (do (nudge-plane! (if shift? :dn :du) (- plane-nudge-step)) true)
-      "ArrowRight" (do (nudge-plane! :dr plane-nudge-step) true)
-      "ArrowLeft" (do (nudge-plane! :dr (- plane-nudge-step)) true)
+      ;; Same step as the buttons — one setting, wherever the nudge comes from.
+      "ArrowUp" (do (nudge-plane! (if shift? :dn :du) (nudge-step)) true)
+      "ArrowDown" (do (nudge-plane! (if shift? :dn :du) (- (nudge-step))) true)
+      "ArrowRight" (do (nudge-plane! :dr (nudge-step)) true)
+      "ArrowLeft" (do (nudge-plane! :dr (- (nudge-step))) true)
       "Escape" (do (stop-plane!) (say! "modo piano chiuso") true)
       false)))
 

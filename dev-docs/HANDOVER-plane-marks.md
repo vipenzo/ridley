@@ -858,6 +858,42 @@ una coniugazione semplice della prima soluzione (M R M con t'=M t riflette
 l'immagine, non la lascia invariata) — va preso dalla decomposizione, non
 costruito a posteriori.
 
+## Seguito 4 (2026-08-03): le frecce scappavano da sotto il cursore
+
+Due difetti d'uso riportati da Vincenzo al primo lavoro vero con l'origine:
+il passo delle frecce (0.25 mm fisso) a volte troppo grosso, e — il vero
+fastidio — «vuoi cliccare due volte sulla stessa freccetta e dopo il primo
+click l'icona è da un'altra parte».
+
+**La causa del secondo non erano le frecce**: erano in fondo a una riga
+`flex-wrap` che stava SOTTO `hud-detail`, un paragrafo che cambia altezza a
+ogni pressione — la riga «Spostato a mano: →0.25 …» compariva al primo nudge
+(prima non c'era), e da lì in poi ogni cifra che cresceva poteva mandarla a
+capo. Il pulsante scendeva mentre il dito era già a metà del secondo click.
+
+**Cura**: le frecce escono dalla riga delle azioni e vanno in un blocco
+proprio (`hud-nudge-pad`) piazzato SOPRA il paragrafo, subito dopo i tre passi
+— che hanno altezza costante. Il resoconto dello spostamento si sposta lì
+dentro ed è disegnato SEMPRE, anche a zero, con cifre tabulari e larghezza
+fissa (`.toFixed(2)`, non `fmt-number`, che tronca gli zeri e quindi cambia
+larghezza). Niente sopra il pad può più muoverlo.
+
+**Passo regolabile**: bottone che cicla `1 · 0.5 · 0.25 · 0.1 · 0.05` mm e
+porta il valore corrente come etichetta; vale anche per le frecce della
+tastiera. Bottone e non campo numerico: la HUD si ricostruisce interamente a
+ogni cambio di stato, e un input col fuoco perderebbe il caret (o costringerebbe
+la ricostruzione a fare eccezioni). Il default resta 0.25: il gesto si apre
+comportandosi come prima.
+
+**Verificato in un browser vero** (dev-browser + CDP), non dedotto: la HUD
+renderizzata in quattro stati — offset zero, dopo un nudge, con numeri larghi
+e negativi (`-12.75`), e con un paragrafo cresciuto di due righe (planarità
+2.7 mm) — tiene il pulsante ◀ a x=672 y=154, 26×21 px in TUTTI e quattro,
+mentre l'altezza della HUD passa da 447 a 483 px. Il giro completo del passo
+torna a 0.25 dopo cinque click, e un click su ◀ con passo 1 mm sposta la
+posizione del candidato da [10 5 2] a [9 5 2] — la catena bottone → nudge →
+apply-offset! è intatta. Suite: 0 failures, 0 errors.
+
 ## Quello che resta aperto
 
 - **Ricollaudare la HUD dal vivo**: è verificata renderizzando stati finti in un

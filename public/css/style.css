@@ -3310,6 +3310,39 @@ body.resizing-h * {
 .eaq-hud-shots { margin-top: 4px; color: #aaa; }
 .eaq-hud-shot { display: flex; justify-content: space-between; gap: 8px; }
 
+/* Origin nudge pad: fixed geometry, on purpose. It sits above the detail
+   paragraph (which changes height as the state changes) and its own contents
+   never change size — the arrows are square and constant, the offset readout is
+   always drawn with tabular figures at a fixed width even when it reads zero.
+   The arrows are the one control here clicked repeatedly, and a control that
+   moves between two clicks is a control you cannot aim at. */
+.eaq-hud-pad { margin: 7px 0 0 0; }
+.eaq-hud-pad-row { display: flex; align-items: center; gap: 4px; }
+.eaq-hud-pad-row .action-btn {
+  font-size: 11px;
+  padding: 3px 0;
+  width: 26px;
+  flex: none;
+  text-align: center;
+}
+.eaq-hud-pad-row .eaq-hud-step-btn {
+  width: auto;
+  min-width: 104px;
+  padding: 3px 8px;
+  margin-left: 4px;
+}
+.eaq-hud-offset {
+  display: flex;
+  gap: 6px;
+  margin: 5px 0 0 0;
+  color: #777;
+  font-variant-numeric: tabular-nums;
+}
+.eaq-hud-offset.moved { color: #f4b183; }
+/* width, not min-width: the readout must be the same size at 0.00 and at
+   -12.75, or the fields slide under each other as you nudge. */
+.eaq-hud-num { width: 4.8em; text-align: right; flex: none; }
+
 .eaq-hud-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .eaq-hud-actions .action-btn { font-size: 11px; padding: 3px 8px; }
 .eaq-hud-actions .action-btn:disabled {
