@@ -302,15 +302,11 @@
    'save-stl            (fn [& _] nil)
    'save-mesh           (fn [& _] nil)
    ;; on-anchors macro support
-   'anchors             (fn [target]
-                          (cond
-                            (and (map? target) (= :path (:type target)))
-                            (turtle/resolve-marks
-                             {:position [0 0 0] :heading [1 0 0] :up [0 0 1]}
-                             target)
-                            (and (map? target) (:vertices target))
-                            (:anchors target)
-                            :else nil))
+   ;; SHARED with production (editor.implicit) rather than re-implemented: this
+   ;; binding used to hand-copy the cond, which is exactly how a harness drifts
+   ;; from the thing it is supposed to be testing. The registry branch is the
+   ;; only part production adds; there is no registry here.
+   'anchors             turtle/named-poses
    ;; pin-path: resolve a path's marks at the CURRENT turtle pose.
    'pin-path
    (fn [path]

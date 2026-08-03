@@ -1780,6 +1780,37 @@
       (:anchors result))
     {}))
 
+(defn named-poses
+  "The named poses a VALUE carries: `{name → {:position :heading :up}}`, or nil.
+
+   One place, three shapes, because `anchors`/`turtle … :at …`/`on-anchors` all
+   ask the same question of whatever the user hands them:
+
+   - a **path** — its `(mark …)`s resolved from the world origin;
+   - a **mesh** — the `:anchors` attached to it;
+   - an **acquire** value — the marks measured on the photos, plus the proxy's
+     faces. Which is what lets `(turtle A :at :piano-1 …)` replace the
+     hand-written `(turtle (:piano-1 (:marks A)) …)` (Vincenzo 2026-08-03: 'mi
+     trovo spesso a scrivere codice per spostare una turtle a un mark'). On a
+     name clash the MARK wins: a name the user chose beats a generated one.
+
+   Lookup by registered NAME is not here on purpose — it needs the registry, so
+   it stays in the caller (editor.implicit). Pure, so the SCI test harness can
+   share it instead of hand-copying the cond and drifting from it."
+  [target]
+  (when (map? target)
+    (cond
+      (= :path (:type target))
+      (resolve-marks {:position [0 0 0] :heading [1 0 0] :up [0 0 1]} target)
+
+      ;; a mesh FIRST: it carries :faces too, so an acquire-shaped test that
+      ;; looked at :faces would swallow every mesh in the program.
+      (:vertices target)
+      (:anchors target)
+
+      (and (:proxy target) (contains? target :marks))
+      (merge (:faces target) (:marks target)))))
+
 (defn synthesize-delta
   "Minimal canonical (th tv tr f rt u) delta that turns turtle pose `from`
    into pose `to`, exactly — not an approximation.

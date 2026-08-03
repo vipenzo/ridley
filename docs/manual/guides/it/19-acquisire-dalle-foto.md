@@ -96,6 +96,15 @@ e le pose delle camere, i click e la focale restano in un file di sessione accan
 
 Il proxy viene montato in scena come impalcatura: si vede, ci si aggancia, ma non entra mai in una CSG né in un export. I nomi in `:faces` seguono la convenzione dei face-group della primitiva (gli stessi nomi che usa `flash-face`), quindi `:top` è la stessa faccia dappertutto.
 
+Per la cosa che si fa in continuazione — piazzare la turtle su un mark — c'è la forma corta, la stessa che vale per i mark di un path o di una mesh:
+
+```clojure
+(turtle A :at :piano-1
+  (extrude (rect 18 16) (f 2)))
+```
+
+è l'abbreviazione di `(turtle (:piano-1 (:marks A)) …)`. Valgono anche i nomi delle facce (`:at :top`), e se un mark ha lo stesso nome di una faccia vince il mark.
+
 ## 19.5 Il palcoscenico
 
 Valutare una `(acquire ...)` nel sorgente accende il palcoscenico: attorno all'oggetto compare l'anello dei frustum, un segnaposto per ogni camera registrata. Non è una sessione modale: è uno stato del viewport, e tutti gli strumenti normali di Ridley continuano a funzionare.

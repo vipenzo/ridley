@@ -16,7 +16,7 @@ status: stable
 Return the named anchor map of a path or registered mesh — a value of
 the form `{name → {:position [x y z] :heading [x y z] :up [x y z]}}`.
 
-Two input shapes are accepted:
+Three input shapes are accepted:
 
 - **Path.** When `target` is a recorded path, `anchors` walks the path
   from the world origin (`[0 0 0]`, heading `+X`, up `+Z`) and
@@ -28,12 +28,18 @@ Two input shapes are accepted:
   anchors attached to it by `attach-path` or by being registered
   inside a `with-path` scope.
 
+- **Acquisition.** When `target` is an `(acquire …)` value, `anchors`
+  returns the marks measured on the photos, over the proxy's faces —
+  so `(turtle A :at :piano-1 …)` poses the turtle on a measured plane
+  the same way it poses it on a path's mark. On a name clash the mark
+  wins: a name you chose beats a generated one.
+
 Returns `nil` if the target has no resolvable anchors.
 
 ## Parameters
 
-- `target` — a path map, a registered mesh keyword/name, or a mesh
-  value.
+- `target` — a path map, a registered mesh keyword/name, a mesh
+  value, or an `(acquire …)` value.
 
 ## Example
 
@@ -77,6 +83,9 @@ the original path — useful for runtime introspection.
   current turtle pose; the two views are intentionally different.
 - `anchors` is read-only: it never mutates the path, the mesh, or the
   registry.
+- On an acquisition, `(turtle A :at :name …)` is the short spelling of
+  `(turtle (:name (:marks A)) …)`; both are valid, and `on-anchors`
+  works over an acquisition too.
 
 ## See also
 

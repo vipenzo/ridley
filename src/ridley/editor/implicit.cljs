@@ -326,13 +326,16 @@
         updated))))
 
 (defn ^:export implicit-anchors
-  "Return the named anchors of a registered mesh OR a path.
+  "Return the named anchors of a registered mesh, a path, or an acquire.
 
    - When `target` is a registered mesh name (or mesh value), returns its
      `:anchors` map (set by `attach-path`), or nil.
    - When `target` is a path, resolves the path's marks at the world origin
      and returns the resulting `name → pose` map. Useful when iterating a
      skeleton path's marks without going through a carrier mesh.
+   - When `target` is an `(acquire …)` value, returns its measured `:marks`
+     over the proxy's `:faces` — so the acquisition answers the same question
+     a path or a mesh does, and `(turtle A :at :piano-1 …)` works on it.
 
    Each entry is `name → {:position [x y z] :heading [x y z] :up [x y z]}`.
 
@@ -344,18 +347,14 @@
      ;; Or via a registered carrier:
      (register Sk (sphere 0.001) :hidden)
      (attach-path :Sk my-skel)
-     (anchors :Sk)                  ; => same"
+     (anchors :Sk)                  ; => same
+
+     ;; Or on an acquisition:
+     (def A (acquire \"scans/reader/\" {…}))
+     (turtle A :at :piano-1 (extrude (rect 18 16) (f 2)))"
   [target]
-  (cond
-    (and (map? target) (= :path (:type target)))
-    (turtle/resolve-marks
-     {:position [0 0 0] :heading [1 0 0] :up [0 0 1]}
-     target)
-
-    (and (map? target) (:vertices target))
-    (:anchors target)
-
-    :else
+  (if (map? target)
+    (turtle/named-poses target)
     (:anchors (registry/get-mesh target))))
 
 (defn- on-anchors-format-pattern [pat]
