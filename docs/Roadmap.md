@@ -113,6 +113,20 @@ utente).
   presentazione dell'acquisizione parametrica). Verificato sul DMG della
   release: 40 chiavi `/manual/guides` + 296 `/manual/reference`, dov'era zero.
   `dev-docs/HANDOVER-manual-pages-blank.md`.
+- **Uso vero, 2026-08-03** (Vincenzo ha ricalcato un oggetto complesso): «si
+  riesce senza troppe difficoltà», con tre osservazioni. (a) **Misura sulla
+  foto** (due punti su un piano dichiarato → mm): non esiste — c'è il righello
+  shift+click, ma raycasta la geometria in scena, e la foto è uno sfondo
+  agganciato alla camera. Rimandata da Vincenzo, «nice to have»: la misura si
+  ottiene indirettamente popolando la scena e confrontando. La matematica
+  sarebbe pronta (`pixel-ray` + `ray-plane-point`). (b) **Ergonomia**: «i passi
+  sono tanti e legati uno all'altro, mi sembra difficile, anche da
+  raccontare» → i passaggi di consegne fra i tre modi (sessione modale,
+  palcoscenico, sorgente) sono tutti battuti a mano e nessuna vista dice a che
+  punto sei. Direzione proposta: pannello di stato dell'acquisizione + i gesti
+  scrivono nel sorgente la riga successiva (il write-back esiste già). Da
+  scrivere come brief prima di costruire. (c) **Turtle su un mark** — FATTO,
+  `ff6f955`: `(turtle A :at :piano-1 …)`.
 - **Coda post-v1** (dichiarata, non iniziata): **fusione di sessioni di scatto**
   (oggetto girato in pose diverse → sessioni fuse in uno spazio unico via una
   `:pose` per sessione da ≥3 corrispondenze dichiarate — brief
