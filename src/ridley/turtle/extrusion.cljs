@@ -955,7 +955,10 @@
    Each ring is a vector of 3D vertices.
    If closed? is true, connects last ring back to first (torus-like, no caps).
    Otherwise creates side faces, and optionally bottom/top caps.
-   caps? controls whether to generate end caps (default true).
+   caps? selects the end caps: true (both, the default), false (none),
+   :start (first ring only), :end (last ring only) — same convention as
+   build-shell-sweep-mesh. Sub-meshes that will be welded at a seam must cap
+   only their TRUE ends.
    Optional creation-pose records where the extrusion started."
   ([rings] (build-sweep-mesh rings false nil true))
   ([rings closed?] (build-sweep-mesh rings closed? nil true))
@@ -1026,13 +1029,20 @@
                ;; projection and the caps come out open. The drift is used only
                ;; to orient the plane normal outward (bottom away from / top
                ;; along the sweep).
-               cap-faces (when caps?
+               ;; caps? : true (both), false (none), :start / :end (one end) —
+               ;; the selector build-shell-sweep-mesh honours. Per-segment
+               ;; sub-meshes that will be welded may only cap their TRUE ends.
+               cap-start? (or (true? caps?) (= caps? :start))
+               cap-end?   (or (true? caps?) (= caps? :end))
+               cap-faces (when (or cap-start? cap-end?)
                            (let [bn (ring-plane-normal first-ring)
                                  tn (ring-plane-normal last-ring)
                                  bottom-normal (if (pos? (dot bn bottom-dir)) (v* bn -1) bn)
                                  top-normal (if (neg? (dot tn top-dir)) (v* tn -1) tn)
-                                 bottom-cap (triangulate-cap first-ring 0 bottom-normal false)
-                                 top-cap (triangulate-cap last-ring last-base top-normal false)]
+                                 bottom-cap (when cap-start?
+                                              (triangulate-cap first-ring 0 bottom-normal false))
+                                 top-cap (when cap-end?
+                                           (triangulate-cap last-ring last-base top-normal false))]
                              (concat bottom-cap top-cap)))]
            (cond-> {:type :mesh
                     :primitive :sweep
@@ -1188,14 +1198,35 @@
   "Build a unified mesh from accumulated ring-data entries.
    Each entry is {:outer <3D-ring> :holes [<3D-ring> ...]}.
    All entries must have the same number of outer vertices and same hole structure.
-   Generates side faces for outer + each hole, and optionally caps at both ends."
+   Generates side faces for outer + each hole, and caps as selected by caps?:
+   true (both), false (none), :start (first ring only), :end (last ring only)."
   ([ring-data-vec creation-pose] (build-sweep-mesh-with-holes ring-data-vec creation-pose true))
   ([ring-data-vec creation-pose caps?]
-   (let [;; Detect backward extrusion: compare sweep direction with creation-pose heading
+   (let [;; Detect backward extrusion (rings advancing AGAINST the frame they
+         ;; were stamped in — (f -30) — whose side faces would come out inside
+         ;; out) and reverse the ring order to fix the winding.
+         ;;
+         ;; The reference is the FIRST RING'S OWN plane normal, not the
+         ;; creation-pose heading: stamp-shape lays every ring out with its
+         ;; Newell normal anti-parallel to the stamping heading, so -normal is
+         ;; the local direction of travel and it rotates WITH the rail. Judged
+         ;; against the fixed creation heading instead, every sub-mesh of a rail
+         ;; that had turned more than 90° (a long arc) read as "backward" and
+         ;; was reversed — inverted winding against its neighbours, and the
+         ;; welded loft was rejected by Manifold.
+         ;;
+         ;; The length guard covers the other half of the same defect: a corner
+         ;; bridge's two rings share a centroid (the miter pivots in place), so
+         ;; sweep-dir is zero to within float noise and its sign is meaningless
+         ;; — roughly half the bridges of an arc came out reversed. A degenerate
+         ;; sweep is never backward.
          first-centroid (ring-centroid (:outer (first ring-data-vec)))
          last-centroid (ring-centroid (:outer (last ring-data-vec)))
          sweep-dir (v- last-centroid first-centroid)
-         backward? (neg? (dot sweep-dir (:heading creation-pose)))
+         sweep-len (magnitude sweep-dir)
+         local-heading (v* (ring-plane-normal (:outer (first ring-data-vec))) -1)
+         backward? (and (> sweep-len 1e-9)
+                        (neg? (dot (v* sweep-dir (/ 1.0 sweep-len)) local-heading)))
          ;; Reverse ring order for backward extrusion so winding is correct
          ring-data-vec (if backward? (vec (reverse ring-data-vec)) ring-data-vec)
          n-rings (count ring-data-vec)
@@ -1250,9 +1281,22 @@
                                (range (dec n-rings)))))
                           holes-structure)))
 
-             ;; Caps (optional)
+             ;; Caps: true (both), false (none), :start (start only), :end (end
+             ;; only) — the same selector build-shell-sweep-mesh honours. A
+             ;; corner splits a holed loft into per-segment sub-meshes that are
+             ;; welded afterwards: only the TRUE ends may be capped, or the weld
+             ;; stacks an internal cap on a seam ring and every edge of it ends
+             ;; up on 3 faces (non-manifold → Manifold refuses the mesh → the
+             ;; union silently drops it). Treating :start/:end as merely truthy
+             ;; is what produced exactly that.
+             ;; The selector names the rings AS PASSED IN, so it flips when the
+             ;; backward? branch above reversed them.
+             cap-start? (or (true? caps?) (= caps? :start))
+             cap-end?   (or (true? caps?) (= caps? :end))
+             cap-bottom? (if backward? cap-end? cap-start?)
+             cap-top?    (if backward? cap-start? cap-end?)
              cap-faces
-             (when caps?
+             (when (or cap-bottom? cap-top?)
                (let [first-outer (:outer first-data)
                      first-holes (or (:holes first-data) [])
                      last-data (last ring-data-vec)
@@ -1268,10 +1312,12 @@
                                             (ring-centroid (:outer second-to-last-data))))
                      bottom-normal (v* bottom-dir -1)
                      top-normal top-dir
-                     bottom-cap (triangulate-cap-with-holes first-outer first-holes
-                                                            0 bottom-normal false)
-                     top-cap (triangulate-cap-with-holes last-outer last-holes
-                                                         last-ring-base top-normal false)]
+                     bottom-cap (when cap-bottom?
+                                  (triangulate-cap-with-holes first-outer first-holes
+                                                              0 bottom-normal false))
+                     top-cap (when cap-top?
+                               (triangulate-cap-with-holes last-outer last-holes
+                                                           last-ring-base top-normal false))]
                  (vec (concat bottom-cap top-cap))))
 
              all-faces (vec (concat outer-side-faces hole-side-faces
