@@ -764,10 +764,20 @@
    same rigid body transform group-transform applies to a mesh — the one that
    maps basis (p0,h0,u0)→(p1,h1,u1). :position moves like a point, :heading/:up
    like directions. Used when a pose (e.g. a registered camera) must follow a
-   moved/rotated proxy rigidly instead of being recomputed from scratch."
+   moved/rotated proxy rigidly instead of being recomputed from scratch.
+
+   A creation-pose that also carries :material-heading/:material-up (the frame
+   the geometry was built in, which stretch-* scales along) keeps them, rotated
+   the same way. Dropping them is not neutral: readers fall back to
+   :heading/:up, so a carried pose would silently put the gizmo's stretch cubes
+   back on the pose axes (brief-stretch-material-frame). Poses without them —
+   every camera — come out exactly as before."
   [pose p0 h0 u0 p1 h1 u1]
   (let [h0 (normalize h0) u0 (normalize u0) r0 (normalize (cross h0 u0))
-        h1 (normalize h1) u1 (normalize u1) r1 (normalize (cross h1 u1))]
-    {:position (transform-point-rigid (:position pose) p0 h0 u0 r0 p1 h1 u1 r1)
-     :heading (transform-direction-rigid (:heading pose) h0 u0 r0 h1 u1 r1)
-     :up (transform-direction-rigid (:up pose) h0 u0 r0 h1 u1 r1)}))
+        h1 (normalize h1) u1 (normalize u1) r1 (normalize (cross h1 u1))
+        dir #(transform-direction-rigid % h0 u0 r0 h1 u1 r1)]
+    (cond-> {:position (transform-point-rigid (:position pose) p0 h0 u0 r0 p1 h1 u1 r1)
+             :heading (dir (:heading pose))
+             :up (dir (:up pose))}
+      (:material-heading pose) (assoc :material-heading (dir (:material-heading pose)))
+      (:material-up pose)      (assoc :material-up (dir (:material-up pose))))))

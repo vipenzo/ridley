@@ -96,6 +96,37 @@
       (is (vclose? (:heading back) (m/normalize (:heading camera))))
       (is (vclose? (:up back) (m/normalize (:up camera)))))))
 
+;; A creation-pose carried through this transform (edit-attach placing its gizmo
+;; where the REST of the script moved the object) also carries the material frame
+;; stretch-* scales along. Readers fall back to :heading/:up when it's missing, so
+;; dropping it wouldn't fail loudly — the stretch cubes would just quietly go back
+;; on the pose axes.
+(deftest transport-carries-the-material-frame
+  (testing "material axes rotate with the pose, and are absent when the input had none"
+    (let [{op :position oh :heading ou :up} proxy-old
+          proxy-new (ortho-pose [-40.0 25.0 -6.0] [0.2 -0.9 0.35] [0.6 0.1 0.79])
+          {np :position nh :heading nu :up} proxy-new
+          ;; a creation-pose whose geometry was built in a frame of its own,
+          ;; distinct from the pose frame (what stretch-f/rt/u actually use)
+          material {:material-heading (m/normalize [0.0 1.0 0.0])
+                    :material-up (m/normalize [0.0 0.0 1.0])}
+          pose (merge camera material)
+          out (att/transform-pose-rigid pose op oh ou np nh nu)
+          ;; the material axes are directions: transporting them on their own as
+          ;; a pose's heading/up must give the same vectors
+          probe (att/transform-pose-rigid
+                 {:position [0.0 0.0 0.0]
+                  :heading (:material-heading material)
+                  :up (:material-up material)}
+                 op oh ou np nh nu)]
+      (is (vclose? (:material-heading out) (:heading probe)))
+      (is (vclose? (:material-up out) (:up probe)))
+      (testing "material frame stays distinct from the pose frame after transport"
+        (is (not (vclose? (:material-heading out) (:heading out)))))
+      (testing "a pose without a material frame gains no keys (every camera)"
+        (let [bare (att/transform-pose-rigid camera op oh ou np nh nu)]
+          (is (= #{:position :heading :up} (set (keys bare)))))))))
+
 ;; group-transform must carry a mesh's :anchors rigidly, not leave them behind:
 ;; edit-acquire poses/canonicalizes a proxy through group-transform, and a proxy
 ;; PLATE's registration marks live on :anchors. If they don't ride the geometry,

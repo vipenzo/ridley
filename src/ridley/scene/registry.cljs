@@ -317,6 +317,15 @@
   (vec (keep (fn [entry] (when (:visible entry) {:mesh (:mesh entry) :name (:name entry)}))
              @scene-meshes)))
 
+(defn all-meshes
+  "Every mesh in the scene, named or anonymous, visible or hidden. Unlike
+   visible-meshes this is not a rendering query — it is for code that must find
+   a mesh by what it CARRIES (an anchor, a tag) rather than by what is on
+   screen, e.g. edit-attach reading back the probe anchor it left on the value
+   it returned."
+  []
+  (vec (keep :mesh @scene-meshes)))
+
 (defn registered-names
   "Get all named mesh names."
   []

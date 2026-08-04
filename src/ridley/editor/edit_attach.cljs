@@ -13,6 +13,8 @@
             [ridley.editor.codemirror :as cm]
             [ridley.editor.modal-evaluator :as modal]
             [ridley.editor.gizmo :as gizmo]
+            [ridley.scene.registry :as registry]
+            [ridley.turtle.attachment :as attachment]
             [ridley.viewport.core :as viewport]
             [clojure.string :as str]))
 
@@ -132,6 +134,95 @@
   (modal/find-form-bounds text (if (= marker-kind :pilot) alias-prefix marker-prefix)))
 
 ;; ============================================================
+;; World placement — the transform the REST of the script applies
+;; ============================================================
+
+;; (edit-attach mesh …) returns a value the surrounding expression is free to
+;; move: in
+;;   (attach (mesh-union (box 20) (edit-attach (cyl 10 5))) (u 30))
+;; the edited cylinder ends up 30mm up from wherever the session's own commands
+;; put it. The gizmo has to stand on the object the user SEES, so instead of
+;; assuming that outer transform is the identity we MEASURE it: request! stamps
+;; a probe anchor carrying the inner creation-pose onto the value it returns,
+;; every mesh transform carries :anchors along rigidly (transform-poses, and
+;; carry-meta/carry-indexed-anchors for booleans), and enter! reads the probe
+;; back off the finished scene. Probe pose vs inner pose IS the outer transform.
+;;
+;; The commands themselves need no adjustment. They are expressed on the inner
+;; pose's own {heading, right, up} frame, and a rigid transform maps that frame
+;; onto the displayed one — so a drag along the arrow the user sees still emits
+;; the (f d) that moves the object along exactly that arrow, by exactly d. (A
+;; non-rigid outer transform — an outer `scale` — would still skew distances;
+;; the pose placement stays right, the step size wouldn't.)
+
+(defonce ^:private probe-counter (atom 0))
+
+(defn- new-probe-key!
+  "A fresh :anchors key for this session's probe. Numbered per session so a
+   probe left behind by an earlier one (still sitting on a registered mesh,
+   since only a full re-run clears it) can never be mistaken for this one."
+  []
+  (keyword (str "ridley-edit-attach-probe-" (swap! probe-counter inc))))
+
+(defn- probe-pose
+  "The probe anchor's pose as it ended up in the finished scene, or nil when the
+   edit-attach subtree never reached a mesh in the scene, or an operation on the
+   way dropped :anchors — either way the caller falls back to the inner pose,
+   which is what this editor always used. Matching is by SUFFIX: a boolean
+   re-tags a non-first operand's anchors as :i|name."
+  [probe-key]
+  (when probe-key
+    (some (fn [mesh]
+            (some (fn [[k pose]]
+                    (when (and (str/ends-with? (name k) (name probe-key))
+                               (:position pose) (:heading pose) (:up pose))
+                      pose))
+                  (:anchors mesh)))
+          (registry/all-meshes))))
+
+(defn- capture-world-xform!
+  "Measure the outer transform once, from the probe left in the finished scene,
+   and keep it as the basis pair group-transform/transform-pose-rigid want. It
+   does not change as the session's commands change (they only rebuild the
+   subtree UNDER it), so it is captured at entry and reused for every preview —
+   which matters because the previews replace the marker with literal attach
+   code and so leave no probe of their own."
+  []
+  (let [{:keys [creation-pose probe-key]} @session]
+    (when-let [world (probe-pose probe-key)]
+      (swap! session assoc :world-xform
+             {:p0 (:position creation-pose) :h0 (:heading creation-pose) :u0 (:up creation-pose)
+              :p1 (:position world)         :h1 (:heading world)         :u1 (:up world)}))))
+
+(defn- to-world-pose
+  "Carry an inner-frame pose to where the script's outer transform puts it."
+  [pose]
+  (if-let [{:keys [p0 h0 u0 p1 h1 u1]} (:world-xform @session)]
+    (attachment/transform-pose-rigid pose p0 h0 u0 p1 h1 u1)
+    pose))
+
+(defn- to-world-mesh
+  "The same transform applied to a whole mesh. The wireframe preview is built by
+   evaluating the replacement expression on its own — in the inner frame — so
+   without this it would be drawn next to the object it is previewing instead of
+   on it. An SDF node passes through untouched: it has no vertices to move, and
+   show-wireframe-preview! already draws nothing for it."
+  [mesh]
+  (if-let [{:keys [p0 h0 u0 p1 h1 u1]} (and (seq (:vertices mesh)) (:world-xform @session))]
+    (first (attachment/group-transform [mesh] p0 h0 u0 p1 h1 u1))
+    mesh))
+
+(defn- show-preview!
+  "Put the turtle, the gizmo and the wireframe preview on the pose `mesh-result`
+   produced, carried out to where the script actually shows it."
+  [mesh-result]
+  (when (and (map? mesh-result) (:creation-pose mesh-result))
+    (let [pose (to-world-pose (:creation-pose mesh-result))]
+      (viewport/update-turtle-pose pose)
+      (gizmo/update-pose! pose)
+      (viewport/show-wireframe-preview! (to-world-mesh mesh-result)))))
+
+;; ============================================================
 ;; Code generation
 ;; ============================================================
 
@@ -162,10 +253,7 @@
           code (build-code source-expr commands)
           ctx @state/sci-ctx-ref
           result (sci/eval-string code ctx)]
-      (when (and (map? result) (:creation-pose result))
-        (viewport/update-turtle-pose (:creation-pose result))
-        (gizmo/update-pose! (:creation-pose result))
-        (viewport/show-wireframe-preview! result)))
+      (show-preview! result))
     (catch :default e
       (js/console.warn "edit-attach eval error (repl):" (.-message e)))))
 
@@ -187,10 +275,7 @@
           replacement (build-code source-expr commands)
           mesh-result (try (sci/eval-string replacement @state/sci-ctx-ref)
                            (catch :default _ nil))]
-      (when (and (map? mesh-result) (:creation-pose mesh-result))
-        (viewport/update-turtle-pose (:creation-pose mesh-result))
-        (gizmo/update-pose! (:creation-pose mesh-result))
-        (viewport/show-wireframe-preview! mesh-result)))))
+      (show-preview! mesh-result))))
 
 (defn- eval-with-commands!
   "Re-evaluate with current commands. Dispatches to REPL or script mode."
@@ -650,26 +735,34 @@
         ;; All validation passed — claim slot and store request.
         ;; Claim is the LAST possible failure point so no error can leave it dangling.
         (modal/claim! :edit-attach)
-        (reset! session
-                {:source-expr      source-expr
-                 :commands         commands
-                 :orig-commands    commands
-                 :step             5
-                 :angle-step       15
-                 :scale-step       1.1
-                 :gizmo-mode       :object
-                 :digit-buffer     ""
-                 :digit-target     :step
-                 :creation-pose    (or (:creation-pose attached-value)
-                                       {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})
-                 :original-mesh    mesh-value
-                 :from-repl        from-repl
-                 :edit-attach-from edit-attach-from
-                 :edit-attach-to   edit-attach-to
-                 :entered?         false})
-        ;; Return the attached value so (edit-attach mesh body...) previews
-        ;; the current, already-transformed scene during the first eval.
-        attached-value))))
+        (let [inner-pose (or (:creation-pose attached-value)
+                             {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})
+              probe-key (new-probe-key!)]
+          (reset! session
+                  {:source-expr      source-expr
+                   :commands         commands
+                   :orig-commands    commands
+                   :step             5
+                   :angle-step       15
+                   :scale-step       1.1
+                   :gizmo-mode       :object
+                   :digit-buffer     ""
+                   :digit-target     :step
+                   :creation-pose    inner-pose
+                   :probe-key        probe-key
+                   :original-mesh    mesh-value
+                   :from-repl        from-repl
+                   :edit-attach-from edit-attach-from
+                   :edit-attach-to   edit-attach-to
+                   :entered?         false})
+          ;; Return the attached value so (edit-attach mesh body...) previews
+          ;; the current, already-transformed scene during the first eval —
+          ;; carrying the probe anchor, so that whatever the rest of the script
+          ;; does to this value can be read back off the scene by enter!. It
+          ;; lives only in this eval's values: the next full run has no marker
+          ;; left to stamp it.
+          (cond-> attached-value
+            (map? attached-value) (assoc-in [:anchors probe-key] inner-pose)))))))
 
 (defn requested?
   "Check if an edit-attach session was requested during evaluation."
@@ -686,18 +779,24 @@
     (let [handler on-edit-attach-keydown]
       (swap! session assoc :key-handler handler)
       (modal/install-keydown! handler))
-    ;; Show turtle indicator on the mesh's current (attached) creation-pose
-    (viewport/set-turtle-source! {:custom (:creation-pose @session)})
-    (viewport/update-turtle-pose (:creation-pose @session))
-    (viewport/set-turtle-visible true)
-    ;; Drag gizmo — object mode only for now; on-commit is the same add-command!
-    ;; path a keyboard arrow press already uses.
-    (gizmo/enter! (:creation-pose @session)
-                  {:mode (:gizmo-mode @session)
-                   :step (:step @session)
-                   :angle-step (:angle-step @session)
-                   :scale-step (:scale-step @session)}
-                  {:on-commit add-command!})
+    ;; Where the rest of the script put this object. The scene is finished by
+    ;; now (core.cljs pushes the meshes before calling us), so the probe anchor
+    ;; is readable — and everything below stands on the mesh the user sees
+    ;; instead of on the untransformed inner pose.
+    (capture-world-xform!)
+    (let [world-pose (to-world-pose (:creation-pose @session))]
+      ;; Show turtle indicator on the mesh's current (attached) creation-pose
+      (viewport/set-turtle-source! {:custom world-pose})
+      (viewport/update-turtle-pose world-pose)
+      (viewport/set-turtle-visible true)
+      ;; Drag gizmo — object mode only for now; on-commit is the same add-command!
+      ;; path a keyboard arrow press already uses.
+      (gizmo/enter! world-pose
+                    {:mode (:gizmo-mode @session)
+                     :step (:step @session)
+                     :angle-step (:angle-step @session)
+                     :scale-step (:scale-step @session)}
+                    {:on-commit add-command!}))
     ;; Update dropdown to show "Edit-Attach" instead of "Global"
     (when-let [sel (.getElementById js/document "turtle-source-select")]
       (let [opt (.createElement js/document "option")]

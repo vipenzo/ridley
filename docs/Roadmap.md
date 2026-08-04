@@ -139,6 +139,18 @@ utente).
   tutti i mark (la caduta dei mark trasportati sull'oggetto nelle foto di A è
   già la verifica visiva). E il **gate con foto vere**, che Vincenzo deve
   ancora scattare: seconda sessione con l'oggetto girato + mark omonimi.
+- **Gizmo di edit-attach sull'oggetto vero — FATTO 2026-08-04** (segnalato da
+  Vincenzo dall'uso). Se il valore di `(edit-attach …)` era poi spostato dal
+  resto del sorgente — `(attach (mesh-union (box 20) (edit-attach (cyl 10 5)))
+  (u 30))` — il gizmo restava sulla pose interna, non trasformata: si editava
+  da una parte e l'oggetto si muoveva dall'altra. Ora la trasformazione esterna
+  si **misura** invece di assumerla identità: `request!` timbra un'ancora sonda
+  sul valore restituito, gli `:anchors` viaggiano rigidamente attraverso
+  trasformazioni e boolean, `enter!` la rilegge a scena finita. Gizmo, turtle e
+  anteprima wireframe stanno sull'oggetto che si vede; i comandi emessi non
+  cambiano (frame rigido ⇒ covarianti). Vale anche per l'alias `pilot` e per la
+  modalità origin, che prima confrontava un pivot non trasformato con click
+  raycastati in world. Dettaglio in `Architecture.md` §11.2.3.
 - **Coda post-v1** (dichiarata, non iniziata): proxy oltre box/piatto
   (rounded-prism / fillet); sorgenti foto live (webcam / companion app).
   Il multi-acquire dello stage (la "decisione D" di P4b) è ora la seconda
