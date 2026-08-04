@@ -131,13 +131,37 @@
 ;; Extrude+ / Revolve+ (chainable variants)
 ;; ============================================================
 
-(defn- derive-end-up [heading ref-up]
-  (let [dot-hu (math/dot ref-up heading)
-        up-raw (math/v- ref-up (math/v* heading dot-hu))
-        m (math/magnitude up-raw)]
-    (if (> m 0.001)
-      (math/v* up-raw (/ 1.0 m))
-      [0 0 1])))
+(defn- derive-end-up
+  "The `up` of a chained op's end frame: `ref-up` (the step's starting up) made
+   perpendicular to the new heading, so a chain keeps its reference vertical.
+
+   When the step turns the heading ONTO ref-up — a cumulative quarter turn, e.g.
+   (extrude+ (f 30)) then (arc-v 45 90) — that projection collapses to zero and
+   there is no `up` to recover from ref-up alone. `carried-up` is the frame the
+   rail actually transported (turtle end-state :up); it is the continuous limit
+   of the projection on either side of the degenerate angle, so using it there
+   introduces no roll discontinuity — at 89.99° the projection already returns
+   (essentially) the transported up.
+
+   Without it the old fallback returned a hardcoded [0 0 1] that is NOT
+   perpendicular to the heading in exactly that case: the next step then swept
+   a skewed frame, produced a self-intersecting mesh, and transform->'s union
+   silently dropped it — the whole chain collapsed to its first segment
+   (loft-plus-test/quarter-turn-end-frame)."
+  ([heading ref-up] (derive-end-up heading ref-up nil))
+  ([heading ref-up carried-up]
+   (let [orthogonalize (fn [v]
+                         (when v
+                           (let [raw (math/v- v (math/v* heading (math/dot v heading)))
+                                 m (math/magnitude raw)]
+                             (when (> m 0.001)
+                               (math/v* raw (/ 1.0 m))))))]
+     (or (orthogonalize ref-up)
+         (orthogonalize carried-up)
+         ;; both degenerate (no carried frame, or it too is parallel): any
+         ;; perpendicular beats a fixed [0 0 1], which may BE the heading.
+         (orthogonalize (if (> (js/Math.abs (nth heading 2)) 0.9) [1 0 0] [0 0 1]))
+         [0 0 1]))))
 
 (defn- current-pose []
   (let [t @@state/turtle-state-var]
@@ -171,7 +195,8 @@
                      (if mesh
                        (let [end-heading (:heading state)
                              end-pos (:position state)
-                             end-up (derive-end-up end-heading (or (:up pose) [0 0 1]))]
+                             end-up (derive-end-up end-heading (or (:up pose) [0 0 1])
+                                                   (:up state))]
                          (conj acc {:mesh (assoc mesh :creation-pose pose)
                                     :end-face {:shape s
                                                :pose {:pos end-pos
@@ -257,7 +282,7 @@
           ->result (fn [r]
                      (let [es (:end-state r)
                            end-heading (:heading es)
-                           end-up (derive-end-up end-heading ref-up)]
+                           end-up (derive-end-up end-heading ref-up (:up es))]
                        {:mesh (assoc (:mesh r) :creation-pose pose)
                         :start-face {:shape (:start-shape r)
                                      :pose {:pos (:position pose)

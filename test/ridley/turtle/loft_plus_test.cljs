@@ -224,3 +224,58 @@
                   {:position (:pos ep) :heading (:heading ep) :up (:up ep)}
                   (:shape end))]
         (is (every? #(on-mesh? % (:vertices (:mesh res)) 1e-6) ring))))))
+
+;; ── 8. quarter-turn end frame (regression) ─────────────────────────
+
+(defn- dot3 [[ax ay az] [bx by bz]] (+ (* ax bx) (* ay by) (* az bz)))
+
+(deftest quarter-turn-end-frame
+  ;; A step whose turn lands the heading ON the step's reference up — plain
+  ;; (arc-v 45 90) from the default frame — leaves nothing to project: the end
+  ;; `up` used to fall back to a hardcoded [0 0 1], which THERE is the heading
+  ;; itself. The next chained op then swept a degenerate frame, its mesh was
+  ;; self-intersecting, Manifold refused it, and the union dropped it without a
+  ;; word — transform-> silently returned only its first segment.
+  ;; No WASM needed: the defect is visible in the end frame itself.
+  (testing "loft+ end frame is orthonormal after a quarter turn"
+    (h/eval-dsl "1")                                  ;; turtle at origin, up +Z
+    (let [res (impl/loft+-impl circle taper-fn (path* "(path (arc-v 45 90))"))
+          {:keys [heading up]} (:pose (:end-face res))]
+      (is (< (dist heading [0 0 1]) 1e-6) "the rail ends pointing straight up")
+      (is (< (Math/abs (dot3 heading up)) 1e-9) (str "up must be ⊥ heading, got " up))
+      (is (< (Math/abs (- 1 (Math/sqrt (dot3 up up)))) 1e-9) "up must be normalized")))
+
+  (testing "extrude+ end frame too (same fallback, same collapse)"
+    (h/eval-dsl "1")
+    (let [res (impl/extrude+-impl circle (path* "(path (arc-v 45 90))"))
+          {:keys [heading up]} (:pose (:end-face res))]
+      (is (< (Math/abs (dot3 heading up)) 1e-9) (str "up must be ⊥ heading, got " up))))
+
+  (testing "the op chained after the quarter turn seams onto the loft surface"
+    ;; both rails BEFORE the turtle is posed: path* evaluates DSL, which resets it
+    (let [turn (path* "(path (arc-v 45 90))")
+          run  (path* "(path (f 20))")
+          _ (h/eval-dsl "1")
+          res (impl/loft+-impl circle taper-fn turn)
+          end (:end-face res)
+          _ (reset! @state/turtle-state-var
+                    (state/init-turtle (:pose end) @@state/turtle-state-var))
+          ext (impl/extrude+-impl (:shape end) run)
+          sp (:pose (:start-face ext))
+          ring0 (extrusion/stamp-shape
+                 {:position (:pos sp) :heading (:heading sp) :up (:up sp)}
+                 (:shape (:start-face ext)))
+          diag (mu/mesh-diagnose (:mesh ext))]
+      ;; The chained mesh is a closed solid. THIS is the assertion the bug
+      ;; failed: with the old up == heading the sweep collapsed to 48 faces,
+      ;; :is-watertight? false, and Manifold refused to ingest it at all —
+      ;; which is why the union dropped it. With the transported frame: 92
+      ;; faces, watertight, ingested.
+      (is (zero? (:non-manifold-edges diag)) (str diag))
+      (is (:is-watertight? diag) (str diag))
+      ;; And it starts AT the loft's end, not somewhere else. Not exact to 1e-6
+      ;; like the straight-rail seam above: an arc rail's last ring is stamped
+      ;; before the trailing half-step cap, so it is tilted by half a
+      ;; tessellation step w.r.t. the reported end heading (≈0.15 at r=12 here).
+      ;; Pre-existing, orthogonal to the frame this test guards.
+      (is (every? #(on-mesh? % (:vertices (:mesh res)) 0.2) ring0)))))

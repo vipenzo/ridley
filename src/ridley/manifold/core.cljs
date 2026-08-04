@@ -381,7 +381,7 @@
   (when (get-manifold-class)
     (let [ma (mesh->manifold mesh-a)
           mb (mesh->manifold mesh-b)]
-      (when (and ma mb)
+      (if (and ma mb)
         (let [^js raw-result (.add ma mb)
               ^js result (.asOriginal raw-result)
               output (manifold->mesh result)
@@ -390,7 +390,14 @@
           (.delete mb)
           (.delete raw-result)
           (.delete result)
-          (schema/assert-mesh! output))))))
+          (schema/assert-mesh! output))
+        ;; A mesh Manifold refuses to ingest (self-intersecting, degenerate)
+        ;; used to make the union vanish without a word.
+        (do (js/console.warn "mesh-union:" (if ma "second" "first")
+                             "operand is not a valid manifold mesh — union dropped")
+            (some-> ma (.delete))
+            (some-> mb (.delete))
+            nil)))))
 
 (defn- tree-union
   "Union meshes using balanced binary tree strategy.
@@ -406,7 +413,13 @@
           right (tree-union (subvec meshes mid))]
       (if (and left right)
         (union-two left right)
-        (or left right)))))
+        ;; One half failed to convert (non-manifold input). Returning the other
+        ;; half silently loses geometry — the caller gets a plausible-looking
+        ;; partial mesh with no clue why. Say so.
+        (do (js/console.warn
+             "mesh-union: a branch produced no manifold mesh and was dropped —"
+             (count meshes) "meshes in, geometry is INCOMPLETE")
+            (or left right))))))
 
 (defn union
   "Compute the union of one or more meshes.

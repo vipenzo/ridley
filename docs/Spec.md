@@ -1470,6 +1470,14 @@ Notes:
 - Inside `transform->`, operations do NOT take a shape argument: it is passed automatically. For `loft+` the first argument is the transform-fn or target shape, not the profile.
 - `:pivot` on `revolve+` determines which edge of the shape sits on the revolution axis.
 - The standard `extrude`/`revolve`/`loft` remain unchanged (return just the mesh).
+- Each step hands the next one an **orthonormal** end frame. Normally its `up` is
+  the step's starting up projected perpendicular to the new heading, so a chain
+  keeps its reference vertical. When a step turns the heading exactly ONTO that
+  reference up — a cumulative quarter turn, e.g. `(extrude+ (f 30))` then
+  `(loft+ … (arc-v 45 90))` — there is nothing left to project and the frame the
+  rail transported is used instead. It is the continuous limit of the projection
+  on both sides of that angle, so the roll of the following segments does not
+  jump.
 
 ---
 

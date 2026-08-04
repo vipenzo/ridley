@@ -198,8 +198,13 @@
                           (conj acc {:mesh (merge-rail-anchors mesh path pose)
                                      :start-shape (transform-fn shape 0)
                                      :end-shape (:loft-end-shape result-state)
+                                     ;; :up is the frame the rail transported. It is
+                                     ;; the only `up` available when a chained step's
+                                     ;; turn lands the heading on the reference up
+                                     ;; (loft+ → derive-end-up's carried-up).
                                      :end-state {:position (:position result-state)
-                                                 :heading (:heading result-state)}})
+                                                 :heading (:heading result-state)
+                                                 :up (:up result-state)}})
                           acc)))
                     []
                     shapes))]
