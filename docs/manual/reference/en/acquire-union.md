@@ -73,6 +73,26 @@ both survive and nothing collides.
 The session list is a **vector** because its order answers "whose frame is the
 fused frame": the first one's.
 
+### More than two sessions
+
+A row is **one zone**, not one couple. List every session that sees it:
+
+```clojure
+(acquire-union [[:A A] [:B B] [:C C]]
+               [[:A/piano-1 :B/piano-1 :C/piano-3]     ; the head, seen by all three
+                [:A/piano-2 :B/piano-2 :C/piano-1]     ; the flank
+                [:A/piano-3 :B/piano-3]])              ; the beak — C cannot see it
+```
+
+Three zones cost three rows, not six: each secondary session reads the same rows
+against the reference. A row that does not name a session simply gives that
+session no anchor — and if what is left does not determine its motion, that
+session is refused by name, with the others still fused.
+
+Every session is aligned onto the **reference** directly, so a zone the
+reference cannot see is of no use, however many other sessions share it. Choose
+the pose that sees the most as the first one.
+
 ## Returns
 
 The fused acquisition: the reference session's `:proxy`, `:pose`, `:faces` and

@@ -196,6 +196,19 @@
     (let [[_ errs] (fuse/declared-anchors sessions [[:A/piano-1 :B/manca]] :A :B)]
       (is (re-find #"non esiste" (first errs)))))
 
+  (testing "a row can name MORE than two sessions — one row per ZONE, not per couple"
+    ;; With three sessions, [[:A/p1 :B/p1 :C/p1] …] says 'this zone, seen by all
+    ;; three'. Each secondary session reads the same row against the reference,
+    ;; so three zones cost three rows and not six (Vincenzo 2026-08-05).
+    (let [ss (conj sessions [:C {:piano-7 {:position [1 1 1] :heading [0 1 0] :up [0 0 1]}}])
+          rows [[:A/piano-1 :B/piano-2 :C/piano-7]]
+          [for-b eb] (fuse/declared-anchors ss rows :A :B)
+          [for-c ec] (fuse/declared-anchors ss rows :A :C)]
+      (is (and (empty? eb) (empty? ec)))
+      (is (= [:B/piano-2] (mapv :name for-b)))
+      (is (= [:C/piano-7] (mapv :name for-c)) "the same row serves C too")
+      (is (v= [1 1 1] (:from-pos (first for-c))))))
+
   (testing "a pair that does not mention this session is simply not its anchor"
     (let [[anchors errs] (fuse/declared-anchors
                           (conj sessions [:C {:piano-1 {:position [1 1 1] :heading [0 1 0] :up [0 0 1]}}])
