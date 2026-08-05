@@ -66,13 +66,78 @@
   (let [n (max 1 (count ps))]
     (m/v* (reduce m/v+ [0.0 0.0 0.0] ps) (/ 1.0 n))))
 
-(defn- seed-rt
-  "Closed-form (R, t) taking the `from` anchors onto the `to` anchors.
+(defn plane-anchor?
+  "Is this anchor to be believed as a PLANE (normal + distance) rather than as a
+   point?
+
+   It matters more than it looks (Vincenzo 2026-08-05: 'spero conti solo il
+   piano, perché è riscontrabile facilmente nelle diverse sessioni, mentre un
+   punto specifico è molto più difficile trovarlo'). He is right, and the
+   geometry agrees: the origin of a plane mark is the centroid of wherever the
+   user happened to click, or wherever they placed it by hand — it is NOT a
+   reproducible feature of the object, while the plane IS. Believing the origin
+   would import the click noise of two sessions into the fusion for nothing.
+
+   So a mark with a normal counts as a plane by default. A mark whose origin
+   really is a physical point — a corner, a printed dot — has to say so with
+   `:point? true`, and then its full position is used."
+  [a]
+  (and (:from-dir a) (:to-dir a) (not (:point? a))))
+
+(defn- independent-normals?
+  "Do these normals span 3D — i.e. do the planes pin the translation from every
+   side? Three planes with independent normals determine a rigid motion outright;
+   two leave the slide along their line of intersection free, and no amount of
+   least squares invents it."
+  [normals]
+  (boolean
+   (when (>= (count normals) 3)
+     (some (fn [[a b c]]
+             (> (js/Math.abs (m/dot (m/cross a b) c)) 0.05)) ; ~ sin of the solid angle
+           (for [i (range (count normals))
+                 j (range (inc i) (count normals))
+                 k (range (inc j) (count normals))]
+             [(m/normalize (nth normals i))
+              (m/normalize (nth normals j))
+              (m/normalize (nth normals k))])))))
+
+(defn- seed-from-planes
+  "Closed-form (R, t) from plane correspondences ALONE.
+
+   Rotation: two non-parallel normals already fix it — a triad from each side and
+   compose. Translation: with three independent normals, `t` is the solution of
+   the 3x3 system that puts each transported plane back on its twin,
+   `t · n = (p_to − R·p_from) · n`. No origin is ever compared to an origin."
+  [anchors]
+  (let [ps (filterv plane-anchor? anchors)]
+    (when (and (>= (count ps) 3)
+               (independent-normals? (mapv :to-dir ps)))
+      (let [nf (mapv #(m/normalize (:from-dir %)) ps)
+            nt (mapv #(m/normalize (:to-dir %)) ps)
+            ;; the two most nearly perpendicular normals make the sturdiest triad
+            [i j] (first (sort-by (fn [[i j]] (js/Math.abs (m/dot (nth nt i) (nth nt j))))
+                                  (for [i (range (count ps))
+                                        j (range (inc i) (count ps))] [i j])))
+            Ff (triad (nth nf i) (nth nf j))
+            Ft (triad (nth nt i) (nth nt j))]
+        (when (and Ff Ft)
+          (let [R (la/mat*mat Ft (la/transpose Ff))
+                ;; rows of the system: one per plane, n · t = (p_to − R·p_from) · n
+                rows (mapv vec nt)
+                rhs (mapv (fn [a n] (m/dot (la/v-sub (:to-pos a) (la/mat*vec R (:from-pos a))) n))
+                          ps nt)
+                ;; least squares through the normal equations: works with 3 planes
+                ;; and improves with more
+                A (la/transpose rows)
+                t (la/solve (la/mat*mat A rows) (la/mat*vec A rhs))]
+            (when t {:R R :t t})))))))
+
+(defn- seed-from-points
+  "Closed-form (R, t) taking the `from` anchors onto the `to` anchors as POINTS.
 
    With three or more anchors the origins alone give the frame. With exactly
-   two, the baseline gives one direction and the first anchor's NORMAL gives the
-   second — which is why two plane marks suffice where two bare points would
-   not. Returns nil when the geometry does not determine a frame."
+   two, the baseline gives one direction and the first anchor's normal gives the
+   second. Returns nil when the geometry does not determine a frame."
   [anchors]
   (let [pf (mapv :from-pos anchors)
         pt (mapv :to-pos anchors)
@@ -91,114 +156,237 @@
             t (la/v-sub (centroid pt) (la/mat*vec R (centroid pf)))]
         {:R R :t t}))))
 
+(defn- seed-rt
+  "The seed, planes first: if the plane marks alone determine the motion, the
+   origins are never consulted — which is the whole point of preferring planes."
+  [anchors]
+  (or (seed-from-planes anchors)
+      (when (>= (count anchors) 2) (seed-from-points anchors))))
+
 ;; ------------------------------------------------------------
 ;; The refinement
 ;; ------------------------------------------------------------
 
-(def ^:private normal-arm-mm
-  "Lever arm that turns a normal mismatch into millimetres, so directions and
-   positions can be summed in one chi-square. 5 mm means 1° of normal error
-   weighs about as much as 0.09 mm of position error: the normals nudge the fit,
-   the origins decide it. `up` stays OUT of the cost entirely — it is projected
-   from the object's own pose, which differs BY CONSTRUCTION between sessions."
+(def ^:private plane-normal-arm-mm
+  "Lever arm that turns a normal mismatch into millimetres for a PLANE anchor,
+   where the normal is a primary constraint and not a hint. 20 mm is the order
+   of the objects this channel handles, so 1° of tilt weighs like the 0.35 mm it
+   actually costs at the far edge of a piece that size."
+  20.0)
+
+(def ^:private point-normal-arm-mm
+  "The same for a POINT anchor, where the position carries the constraint and the
+   normal only nudges: a tenth of the plane arm."
   5.0)
+
+;; `up` stays OUT of the cost entirely, for both kinds — it is projected from the
+;; object's own pose, which differs BY CONSTRUCTION between two sessions.
 
 (defn- rt-of-params [p]
   {:R (cam/rodrigues [(nth p 0) (nth p 1) (nth p 2)])
    :t [(nth p 3) (nth p 4) (nth p 5)]})
 
+(defn- anchor-residuals
+  "The residuals of ONE anchor, in millimetres, before weighting.
+
+   A PLANE anchor contributes what a plane actually knows: how far its
+   transported origin sits OFF the twin plane (one number, along the normal —
+   sliding within the plane costs nothing, because a plane mark's origin is not
+   a reproducible feature) plus the misalignment of the normals.
+
+   A POINT anchor contributes the full three-component displacement, because
+   there the origin IS the claim.
+
+   Constant length either way (4 numbers), because lm/solve needs it: a plane's
+   in-plane freedom is expressed as a zero, not as a missing residual."
+  [rt {:keys [from-pos to-pos from-dir to-dir] :as a}]
+  (let [moved (transform-point rt from-pos)
+        d (la/v-sub moved to-pos)]
+    (if (plane-anchor? a)
+      (let [n (m/normalize to-dir)
+            dn (la/v-scale (la/v-sub (transform-dir rt from-dir) n) plane-normal-arm-mm)]
+        (into [(m/dot d n)] dn))
+      (let [dn (if (and from-dir to-dir)
+                 (la/v-scale (la/v-sub (transform-dir rt from-dir) (m/normalize to-dir))
+                             point-normal-arm-mm)
+                 [0.0 0.0 0.0])]
+        [(nth d 0) (nth d 1) (nth d 2) (la/v-norm dn)]))))
+
 (defn- residual-fn [anchors sigma-mm]
   (fn [p]
     (let [rt (rt-of-params p)]
-      (vec (mapcat (fn [{:keys [from-pos to-pos from-dir to-dir]}]
-                     (let [dp (la/v-sub (transform-point rt from-pos) to-pos)
-                           dn (if (and from-dir to-dir)
-                                (la/v-sub (la/v-scale (transform-dir rt from-dir) normal-arm-mm)
-                                          (la/v-scale (m/normalize to-dir) normal-arm-mm))
-                                [0.0 0.0 0.0])]
-                       (mapv #(/ % sigma-mm) (concat dp dn))))
-                   anchors)))))
+      (vec (mapcat (fn [a] (mapv #(/ % sigma-mm) (anchor-residuals rt a))) anchors)))))
 
 (defn- per-anchor
-  "What each anchor costs after the fit: how far its transported origin lands
-   from its twin (mm) and how far its normal is turned (degrees). This is the
-   table that lets a wrong click be found rather than averaged into the answer."
+  "What each anchor costs after the fit. For a plane: its distance from the twin
+   PLANE (mm) and how far the normal is turned (degrees) — deliberately NOT how
+   far the two origins ended up from each other, which is not an error. For a
+   point: the full distance between the origins.
+
+   This is the table that lets a wrong twin be found instead of averaged in."
   [rt anchors]
-  (mapv (fn [{:keys [name from-pos to-pos from-dir to-dir]}]
-          (let [d (la/v-norm (la/v-sub (transform-point rt from-pos) to-pos))
+  (mapv (fn [{:keys [name from-pos to-pos from-dir to-dir] :as a}]
+          (let [moved (transform-point rt from-pos)
+                plane? (plane-anchor? a)
+                d (if plane?
+                    (js/Math.abs (m/dot (la/v-sub moved to-pos) (m/normalize to-dir)))
+                    (la/v-norm (la/v-sub moved to-pos)))
                 ang (when (and from-dir to-dir)
                       (let [c (max -1.0 (min 1.0 (m/dot (transform-dir rt from-dir)
                                                         (m/normalize to-dir))))]
                         (* (/ 180.0 Math/PI) (Math/acos c))))]
-            {:name name :residual-mm d :normal-deg ang}))
+            {:name name :kind (if plane? :piano :punto) :residual-mm d :normal-deg ang}))
         anchors))
 
 (def min-baseline-mm
-  "Anchors closer together than this do not span the object: the rotation they
-   determine is as noisy as the clicks, amplified by the ratio of the object's
-   size to the baseline. Refusing is better than returning a pose that looks
-   fitted."
+  "POINT anchors closer together than this do not span the object: the rotation
+   they determine is as noisy as the clicks, amplified by the ratio of the
+   object's size to the baseline. Planes are exempt — their constraint is the
+   normal, and two parallel planes are refused by rank, not by distance."
   5.0)
+
+(def ^:private rank-floor
+  "Smallest/largest eigenvalue of JᵀJ below which the anchors leave a direction
+   of the motion FREE. A genuine rank deficiency lands near 1e-16; ordinary
+   ill-conditioning stays orders of magnitude above 1e-6. Guarding on the rank of
+   the actual system, rather than on a checklist of cases, is what makes 'two
+   planes plus one point' work without anyone having enumerated it."
+  1e-6)
+
+(defn- underdetermined?
+  "Does the fitted system leave a degree of freedom unconstrained? Asked of the
+   Jacobian at the solution — the same object `lm/covariance-spectrum` exists
+   for."
+  [rfn params]
+  (let [ev (lm/covariance-spectrum rfn params)
+        hi (reduce max 0.0 (map js/Math.abs ev))
+        lo (reduce min js/Number.MAX_VALUE (map js/Math.abs ev))]
+    (or (< (count ev) 6) (< hi 1e-12) (< (/ lo hi) rank-floor))))
 
 (defn fit-rigid
   "The rigid motion carrying `anchors`' :from poses onto their :to poses.
 
-   Each anchor is {:name :from-pos :to-pos :from-dir :to-dir} — the dirs
-   optional, and used only as a weak pull (see normal-arm-mm).
+   Each anchor is {:name :from-pos :to-pos :from-dir :to-dir [:point? bool]}.
+   With a normal and no `:point?` it is believed as a PLANE: its origin is free
+   to slide within the plane, because a plane mark's origin is not a
+   reproducible feature of the object (see plane-anchor?). Three planes with
+   independent normals determine the motion outright; two leave the slide along
+   their intersection free, and that is refused rather than guessed.
 
-   Returns {:R :t :rvec :rms-mm :max-mm :per-anchor :n} or
-   {:error <human sentence>}: under-determined or degenerate input gets an
-   honest nil, never a plausible-looking motion."
+   Returns {:R :t :rvec :rms-mm :max-mm :per-anchor :n :planes :points} or
+   {:error <human sentence>}."
   ([anchors] (fit-rigid anchors {}))
   ([anchors {:keys [sigma-mm] :or {sigma-mm 0.2}}]
-   (cond
-     (< (count anchors) 2)
-     {:error (str "servono almeno DUE mark con lo stesso nome nelle due sessioni "
-                  "(ne ho trovato " (count anchors) "): uno solo fissa il punto ma non l'orientamento")}
+   (let [planes (filterv plane-anchor? anchors)
+         points (filterv (complement plane-anchor?) anchors)
+         short-baseline? (and (>= (count points) 2)
+                              (< (la/v-norm (la/v-sub (:from-pos (second points))
+                                                      (:from-pos (first points))))
+                                 min-baseline-mm))]
+     (cond
+       (< (count anchors) 2)
+       {:error (str "servono almeno DUE agganci fra le due sessioni (ne ho trovato "
+                    (count anchors) "). Con i piani ne servono TRE, con le normali "
+                    "che guardano in direzioni diverse")}
 
-     (< (la/v-norm (la/v-sub (:from-pos (second anchors)) (:from-pos (first anchors))))
-        min-baseline-mm)
-     {:error (str "i mark di aggancio sono troppo vicini fra loro (meno di "
-                  min-baseline-mm " mm): la rotazione che determinano è rumore. "
-                  "Prendine due lontani, agli estremi dell'oggetto")}
+       short-baseline?
+       {:error (str "i mark-punto di aggancio sono troppo vicini fra loro (meno di "
+                    min-baseline-mm " mm): la rotazione che determinano è rumore. "
+                    "Prendine due lontani, agli estremi dell'oggetto")}
 
-     :else
-     (if-let [seed (seed-rt anchors)]
-       (let [p0 (vec (concat (cam/rot-mat->rodrigues (:R seed)) (:t seed)))
-             res (lm/solve (residual-fn anchors sigma-mm) p0 {:max-iterations 120})
-             rt (rt-of-params (:params res))
-             pa (per-anchor rt anchors)
-             ds (mapv :residual-mm pa)]
-         (assoc rt
-                :rvec (vec (take 3 (:params res)))
-                :n (count anchors)
-                :per-anchor pa
-                :rms-mm (Math/sqrt (/ (reduce + 0.0 (map #(* % %) ds)) (count ds)))
-                :max-mm (reduce max 0.0 ds)))
-       {:error (str "i mark di aggancio sono allineati (o le loro normali sono parallele "
-                    "alla congiungente): non determinano la rotazione attorno a quella retta. "
-                    "Serve un terzo mark fuori da quella linea")}))))
+       :else
+       (if-let [seed (seed-rt anchors)]
+         (let [rfn (residual-fn anchors sigma-mm)
+               p0 (vec (concat (cam/rot-mat->rodrigues (:R seed)) (:t seed)))
+               res (lm/solve rfn p0 {:max-iterations 120})
+               rt (rt-of-params (:params res))
+               pa (per-anchor rt anchors)
+               ds (mapv :residual-mm pa)]
+           (if (underdetermined? rfn (:params res))
+             {:error (str "questi agganci non fissano tutto il movimento: "
+                          (if (and (>= (count planes) 2) (empty? points))
+                            (str "due piani lasciano libero lo scorrimento lungo la loro "
+                                 "intersezione. Aggiungi un TERZO piano con la normale in "
+                                 "un'altra direzione, oppure un mark su un punto vero")
+                            (str "gli agganci sono allineati o le normali sono tutte "
+                                 "parallele fra loro. Serve un aggancio fuori da quella "
+                                 "direzione")))}
+             (assoc rt
+                    :rvec (vec (take 3 (:params res)))
+                    :n (count anchors)
+                    :planes (count planes)
+                    :points (count points)
+                    :per-anchor pa
+                    :rms-mm (Math/sqrt (/ (reduce + 0.0 (map #(* % %) ds)) (count ds)))
+                    :max-mm (reduce max 0.0 ds))))
+         {:error (str "i mark di aggancio non determinano una rotazione: sono allineati, "
+                      "oppure le loro normali sono parallele fra loro. "
+                      "Serve un aggancio che guardi in un'altra direzione")})))))
 
-(defn mean-pose
-  "The average of poses that are supposed to BE the same pose — the two views
-   an anchor mark has of itself, one per session, once they are in one frame.
+;; Homonymous marks are NOT averaged into one: with plane semantics the two
+;; origins are legitimately different points ON THE SAME PLANE, so their mean is
+;; a third arbitrary point and no better than either. The reference session's
+;; mark is kept as it is — one rule, and the one the user can predict.
 
-   Collapsing them is the honest representation: after the fit they ARE one
-   point, and keeping two would invite code to pick the wrong one. `up` is
-   re-orthogonalised against the averaged heading, so the result is a frame and
-   not merely three averaged vectors."
-  [poses]
-  (let [ps (remove nil? poses)]
-    (when (seq ps)
-      (let [avg (fn [k] (m/v* (reduce m/v+ [0.0 0.0 0.0] (map #(vec (get % k)) ps))
-                              (/ 1.0 (count ps))))
-            h (m/normalize (avg :heading))
-            u0 (avg :up)
-            u (m/v- u0 (m/v* h (m/dot u0 h)))]
-        (assoc (first ps)
-               :position (avg :position)
-               :heading h
-               :up (if (> (la/v-norm u) 1e-9) (m/normalize u) (:up (first ps))))))))
+;; ------------------------------------------------------------
+;; Declaring the correspondences
+;; ------------------------------------------------------------
+;;
+;; Name equality stops being a good enough declaration the moment a mark is
+;; believed as a PLANE (Vincenzo 2026-08-05): two marks called `:piano-1` then
+;; agree about the plane and disagree about where the origin sits on it, both
+;; legitimately — so which one survives cannot be decided by the fuser, and both
+;; are worth keeping. Hence labelled sessions and an explicit list of pairs:
+;;
+;;   (acquire-union [[:A a] [:B b]] [[:A/piano-1 :B/piano-1] [:A/becco :B/piano-2]])
+
+(defn anchor-of
+  "One correspondence, as fit-rigid wants it: `to` is the reference session's
+   mark, `from` the one to be carried onto it. nil when either is unusable."
+  [nm to from]
+  (when (and (:position to) (:position from))
+    {:name nm
+     :from-pos (vec (:position from)) :to-pos (vec (:position to))
+     :from-dir (some-> (:heading from) vec) :to-dir (some-> (:heading to) vec)
+     ;; opt-in: this mark's ORIGIN is a real physical point (a corner, a printed
+     ;; dot), so use its full position and not only the plane it lies on.
+     ;; Declared in the source — `(plane-mark {… :point? true})` — because only
+     ;; the person who clicked it knows whether it is reproducible.
+     :point? (boolean (or (:point? to) (:point? from)))}))
+
+(defn resolve-ref
+  "`:A/piano-1` against `sessions` ([[label marks] …]) → [label mark-name pose],
+   or {:missing <human sentence>} naming exactly what could not be found."
+  [sessions ref]
+  (let [lbl (some-> (namespace ref) keyword)
+        nm (keyword (name ref))
+        marks (some (fn [[l ms]] (when (= l lbl) ms)) sessions)]
+    (cond
+      (nil? lbl) {:missing (str ref " non dice a quale sessione appartiene: "
+                                "scrivilo come :etichetta/nome-del-mark")}
+      (nil? marks) {:missing (str "l'etichetta :" (name lbl) " di " ref
+                                  " non è fra le sessioni passate")}
+      (nil? (get marks nm)) {:missing (str "il mark " ref " non esiste in quella sessione")}
+      :else [lbl nm (get marks nm)])))
+
+(defn declared-anchors
+  "Correspondences between the reference session and the one labelled `lbl`,
+   from the declared pair list. `sessions` is [[label marks] …].
+   Returns [anchors errors]; an anchor is named after its SOURCE side
+   (`:B/piano-1`), so the residual table says which mark of which session cost
+   what."
+  [sessions pairs ref-lbl lbl]
+  (let [resolved (mapv (fn [pair] (mapv #(resolve-ref sessions %) pair)) pairs)
+        errs (->> resolved (mapcat identity) (keep :missing) distinct vec)
+        pick (fn [refs l] (some (fn [r] (when (and (vector? r) (= l (first r))) r)) refs))
+        anchors (->> resolved
+                     (keep (fn [refs]
+                             (let [to (pick refs ref-lbl) from (pick refs lbl)]
+                               (when (and to from)
+                                 (anchor-of (keyword (name (first from)) (name (second from)))
+                                            (nth to 2) (nth from 2))))))
+                     vec)]
+    [anchors errs]))
 
 (defn worst-anchor
   "The anchor whose residual stands out from the others — a candidate for a

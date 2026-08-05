@@ -72,32 +72,36 @@ costa meno che rifare la sessione.
 
 ## Agganci per la fusione (la parte che conta)
 
-`acquire-union` non riconosce niente da solo: il legame fra le due sessioni sono
-i mark che portano lo **stesso nome** in entrambe, e che devono stare sullo
-**stesso punto fisico** del pezzo. Regole, in ordine di importanza:
+`acquire-union` non riconosce niente da solo: il legame lo dichiari tu. E quello
+che conta è **il piano, non il puntino**: un mark viene creduto come piano
+(normale + distanza), mentre dove sta la sua origine dentro il piano non entra
+nel conto. Puoi piazzarla dove ti pare, e nelle due sessioni può stare in due
+posti diversi della stessa faccia.
+
+Regole, in ordine di importanza:
 
 1. **Visibili in entrambe le pose.** Una zona che in una delle due sessioni
    guarda il piatto non è un aggancio.
-2. **Lontani fra loro.** Due mark vicini determinano una rotazione che è rumore
-   amplificato: sotto i 5 mm di distanza la fusione si rifiuta proprio.
-3. **Normali non parallele**, se gli agganci sono due. Due facce parallele non
-   fissano la rotazione attorno alla retta che le unisce. Tre punti non allineati
-   vanno bene lo stesso.
+2. **Servono TRE piani con normali in direzioni diverse.** Un piano vincola 3
+   gradi di libertà su 6: due piani lasciano libero lo scorrimento lungo la loro
+   intersezione, e la fusione lo rifiuta invece di indovinare. Tre facce
+   parallele non servono a niente: fissano una direzione sola.
+3. In alternativa: due piani **più un punto vero** (uno spigolo riconoscibile,
+   dichiarato con `:point? true` nel mark) chiudono il conto lo stesso.
 
-Zone candidate su questo pezzo, da scegliere DOPO aver visto come sta la posa 2:
+Zone candidate su questo pezzo, incrociate con la posa 2 (dove il collare è
+coricato su un fianco):
 
-- `:testa-sopra` — la faccia piatta in cima alla testa (normale verso l'alto in
-  questa posa);
-- `:testa-fronte` — la faccia rettangolare della testa dove sporge il rilievo
-  (normale orizzontale: buona compagna di `:testa-sopra`, le due normali sono
-  perpendicolari);
-- `:piede-a` / `:piede-b` — i fianchi esterni piatti dei due piedini, l'estremo
-  opposto della testa: sono questi a dare la base larga che la regola 2 chiede.
+- `:testa-sopra` — la faccia piatta in cima alla testa;
+- `:fianco` — la grande faccia laterale, quella che nella posa 2 guarda in alto;
+- `:becco` — la faccia piatta all'estremità di un braccio della C.
 
-Il nome va scritto identico nelle due sessioni. Un nome uguale su due punti
-DIVERSI è l'errore che la fusione può solo subire — anche se lo denuncia: nel
-rapporto quell'aggancio esce con uno scarto molto più grande degli altri e viene
-nominato.
+Le tre normali sono all'incirca perpendicolari fra loro: è la condizione giusta.
+
+**I nomi NON devono coincidere fra le due sessioni**: le corrispondenze si
+dichiarano nella chiamata (`(acquire-union [[:A A] [:B B]] [[:A/piano-1
+:B/piano-1] …])`), quindi puoi lasciare i nomi automatici. Quello che serve è
+sapere quale `:piano-N` è quale zona — annotalo mentre li crei.
 
 ## Per Code
 

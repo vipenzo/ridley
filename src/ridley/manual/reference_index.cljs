@@ -8,7 +8,7 @@
     :category "acquisition"
     :status "experimental"
     :since ""
-    :signature "(acquire-union a b …)"
+    :signature "(acquire-union a b …)\n(acquire-union [[label acquisition] …] [[ref ref] …])"
     :description "Two (or more) shooting sessions of the **same object**, as one value, in the **first session's frame**."
     :path "docs/manual/reference/en/acquire-union.md"}
 

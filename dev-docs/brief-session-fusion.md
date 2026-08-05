@@ -40,12 +40,36 @@ assegnata.
 > misurato in B che cade sull'oggetto nelle foto di A è già la verifica visiva
 > della fusione, a costo zero.
 >
-> Verificato: 11 test sintetici (moto noto → recuperato; due mark-piano bastano;
-> due punti nudi no; collineari no; base < 5 mm no; il gemello sbagliato viene
-> NOMINATO invece che mediato; l'identità resta identità) più una prova live in
-> SCI con due sessioni sintetiche — rms 4.6e-15 mm, il mark presente solo in B
-> ricade esattamente sul suo punto in A, `(turtle U :at :solo-di-b …)` funziona.
-> Suite 839 test, 0 fallimenti.
+> Verificato: test sintetici (moto noto → recuperato; collineari no; base < 5 mm
+> no; il gemello sbagliato viene NOMINATO invece che mediato; l'identità resta
+> identità) più prove live in SCI. Suite 848 test, 0 fallimenti.
+>
+> **SECONDO GIRO (2026-08-05), prima del gate — due correzioni di sostanza dette
+> da Vincenzo mentre preparava le sessioni.**
+>
+> (1) *«Conta solo il piano o anche la posizione del mark nel piano? Spero solo
+> il piano: quello è riscontrabile facilmente nelle diverse sessioni, un punto
+> specifico no.»* Aveva ragione e la geometria è d'accordo: l'origine di un
+> mark-piano è il centroide di dove si è cliccato, non una feature dell'oggetto.
+> Ora un mark è creduto come PIANO — residuo punto-piano (una componente) più
+> l'allineamento delle normali a piena forza — e scivolare dentro il piano non
+> costa niente. Chi ha un'origine che è davvero un punto fisico lo dichiara con
+> `:point? true`. Conseguenza sui requisiti: **tre piani con normali
+> indipendenti**, non più due mark qualsiasi; due piani lasciano libera la
+> traslazione lungo la loro intersezione. La guardia non è una casistica ma il
+> RANGO del sistema (`lm/covariance-spectrum` sullo jacobiano alla soluzione),
+> per cui "due piani + un punto vero" funziona senza che nessuno l'abbia
+> enumerato.
+>
+> (2) *«Se li svincoli viene fuori un problema di nomi: due `:piano-1` che
+> coincidono come piano ma hanno posizioni diverse — forse servono tutti e due.
+> Passare a acquire-union la lista dei mark da considerare uguali.»* Adottata:
+> forma dichiarata `(acquire-union [[:A a] [:B b]] [[:A/piano-1 :B/piano-1] …])`.
+> I nomi non devono più coincidere (i `:piano-N` automatici collidono per
+> caso), ogni mark resta distinguibile come `:label/nome`, entrambi
+> sopravvivono. La forma corta resta per il caso in cui i nomi coincidono
+> davvero. Verificato live: origini fatte scivolare di 12-15 mm DENTRO i piani →
+> rms 4.1e-15 mm, e il mark di B conserva la propria origine trasportata.
 
 ## Il bisogno
 

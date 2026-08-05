@@ -4002,20 +4002,37 @@
 (defn- acq? [x] (and (map? x) (contains? x :marks) (contains? x :proxy)))
 
 (defn- union-anchors
-  "The marks the two acquisitions share BY NAME — the user's declaration that
-   those are the same physical point. Only :marks: `:faces` are generated per
-   proxy, so a shared `:top` would be a false correspondence between two
-   different boxes, and the fit would believe it."
+  "The marks two acquisitions share BY NAME — the short form's declaration that
+   those are the same zone. Only :marks: `:faces` are generated per proxy, so a
+   shared `:top` would be a false correspondence between two different boxes,
+   and the fit would believe it."
   [a b]
   (->> (keys (:marks b))
-       (keep (fn [nm]
-               (let [pb (get (:marks b) nm) pa (get (:marks a) nm)]
-                 (when (and (:position pa) (:position pb))
-                   {:name nm
-                    :from-pos (vec (:position pb)) :to-pos (vec (:position pa))
-                    :from-dir (some-> (:heading pb) vec) :to-dir (some-> (:heading pa) vec)}))))
+       (keep (fn [nm] (fuse/anchor-of nm (get (:marks a) nm) (get (:marks b) nm))))
        (sort-by :name)
        vec))
+
+;; ---- the declared form: labelled sessions + explicit correspondences ----
+;;
+;;   (acquire-union [[:A a] [:B b]]
+;;                  [[:A/piano-1 :B/piano-1]
+;;                   [:A/piano-h :B/piano-2]])
+;;
+;; The resolution itself is pure and lives in photogrammetry.fuse (with its
+;; tests); here there is only the shape of the call. The session list is a
+;; VECTOR, not a map, because its ORDER is meaningful: the first session's frame
+;; is the fused frame.
+
+(defn- labelled-sessions?
+  [x]
+  (and (vector? x) (seq x)
+       (every? #(and (vector? %) (= 2 (count %)) (keyword? (first %)) (acq? (second %))) x)))
+
+(defn- marks-by-label
+  "[[label acquire] …] → [[label marks] …], which is all fuse/declared-anchors
+   needs to know about a session."
+  [sessions]
+  (mapv (fn [[l a]] [l (:marks a)]) sessions))
 
 (defn- report-union!
   "Print the fit the way mesh-board prints fidelity: the numbers that decide
@@ -4026,91 +4043,154 @@
   (state/capture-println
    (str ";; acquire-union · " dir " → frame della prima sessione\n"
         (str/join "\n"
-                  (map (fn [{:keys [name residual-mm normal-deg]}]
-                         (str ";;   :" (clj->js name) "  " (modal/fmt-number residual-mm) " mm"
+                  ;; `str`, NOT clj->js: clj->js on a keyword keeps only its name,
+                  ;; which would silently drop the :A/ label that says WHICH
+                  ;; session's mark this line is about.
+                  (map (fn [{:keys [name kind residual-mm normal-deg]}]
+                         (str ";;   " name " (" (clj->js kind) ")  "
+                              (modal/fmt-number residual-mm) " mm"
+                              (when (= kind :piano) " dal piano")
                               (when normal-deg (str "  ·  normale " (modal/fmt-number normal-deg) "°"))))
                        (:per-anchor fit)))
-        "\n;;   rms " (modal/fmt-number (:rms-mm fit)) " mm su " (:n fit) " mark"))
+        "\n;;   rms " (modal/fmt-number (:rms-mm fit)) " mm · "
+        (:planes fit) " piani"
+        (when (pos? (:points fit)) (str " + " (:points fit) " punti"))))
   (when-let [w (fuse/worst-anchor (:per-anchor fit))]
     (state/capture-println
-     (str ";; acquire-union: :" (clj->js (:name w)) " si discosta dagli altri ("
+     (str ";; acquire-union: " (:name w) " si discosta dagli altri ("
           (modal/fmt-number (:residual-mm w)) " mm). "
-          "O è cliccato male in una delle due sessioni, o i due mark con quel nome "
-          "non sono lo stesso punto fisico.")))
+          "O è misurato male in una delle due sessioni, o i due mark che hai "
+          "dichiarato uguali non sono la stessa zona fisica.")))
   (when (> (:rms-mm fit) 1.0)
     (state/capture-println
      (str ";; acquire-union: " (modal/fmt-number (:rms-mm fit))
           " mm di scarto è molto per una fusione — quello che disegni su una "
           "sessione cadrà storto sull'altra di altrettanto."))))
 
-(defn ^:export acquire-union
-  "(acquire-union a b …) — the two (or more) sessions of the same object as ONE
-   value, in the FIRST one's frame.
+(defn- fuse-sessions
+  "The shared body of both call forms. `sessions` is [[label acq] …] with the
+   REFERENCE first (labels are nil in the short form); `anchors-for` builds the
+   correspondences of one session against the reference."
+  [sessions anchors-for]
+  (let [[[ref-lbl a] & others] sessions
+        fits (mapv (fn [[lbl b]]
+                     (let [[anchors errs] (anchors-for lbl b)]
+                       {:lbl lbl :b b :anchors anchors :errs errs
+                        :fit (if (seq errs)
+                               {:error (str/join " · " errs)}
+                               (fuse/fit-rigid anchors))}))
+                   others)
+        prefix (fn [lbl nm] (if lbl (keyword (name lbl) (name nm)) nm))]
+    (if-let [bad (first (filter #(:error (:fit %)) fits))]
+      (do (state/capture-println
+           (str ";; acquire-union · " (:dir (:b bad)) ": " (:error (:fit bad))
+                "\n;;   agganci trovati: "
+                (if (seq (:anchors bad))
+                  (str/join ", " (map #(str (:name %)) (:anchors bad)))
+                  (if ref-lbl
+                    "nessuno — controlla i riferimenti nella lista delle corrispondenze"
+                    "nessuno — in questa forma i nomi devono coincidere fra le sessioni"))))
+          nil)
+      (let [moved (mapv (fn [{:keys [lbl b fit]}]
+                          (report-union! (:dir b) fit)
+                          {:label lbl :dir (:dir b) :proxy (:proxy b) :pose (:pose b)
+                           :transform (select-keys fit [:R :t :rvec])
+                           :rms-mm (:rms-mm fit)
+                           :marks (into {} (map (fn [[nm p]] [(prefix lbl nm) (fuse/transform-pose fit p)])
+                                                (:marks b)))})
+                        fits)
+            ;; SHORT form: a name only in B comes across, a shared name keeps the
+            ;; reference session's mark — not averaged, because with plane
+            ;; semantics the two origins are different points on the same plane
+            ;; and their mean is a third arbitrary one.
+            ;; DECLARED form: every mark is `:label/name`, so both survive and
+            ;; nothing collides — which is the whole reason that form exists.
+            marks (reduce (fn [acc {:keys [marks]}] (merge marks acc))
+                          (into {} (map (fn [[nm p]] [(prefix ref-lbl nm) p]) (:marks a)))
+                          moved)]
+        ;; The stage keeps showing the REFERENCE session — its frame is the fused
+        ;; frame — but with ALL the marks, transported ones included. Which makes
+        ;; the fusion visible for free: a mark measured in session B must land on
+        ;; the object in session A's photos.
+        (stage/note-eval! {:proxy (:proxy a) :pose (:pose a) :dir (:dir a) :marks marks})
+        (assoc a
+               :marks marks
+               :sessions (into [{:label ref-lbl :dir (:dir a) :proxy (:proxy a)
+                                 :pose (:pose a) :transform nil :rms-mm 0.0}]
+                               (mapv #(dissoc % :marks) moved)))))))
 
-   The turntable only reaches a band of angles; the cure is to shoot the object
-   again lying differently and fuse. The tie between the sessions is declared,
-   not detected: marks with the SAME NAME are the same physical point. Two plane
-   marks with well-separated origins are enough (their normals supply what a
-   bare pair of points cannot); three points also do.
+(defn ^:export acquire-union
+  "Two (or more) sessions of the same object as ONE value, in the FIRST one's
+   frame. Two call forms.
+
+   SHORT — the sessions positional, the join by equal mark name:
+
+     (acquire-union a b)
+
+   DECLARED — labelled sessions and explicit correspondences:
+
+     (acquire-union [[:A a] [:B b]]
+                    [[:A/piano-1 :B/piano-1]
+                     [:A/piano-h :B/piano-2]])
+
+   The declared form exists because a plane mark's NAME is a weak declaration
+   (Vincenzo 2026-08-05). Since the fit believes a mark as a PLANE, two marks
+   called `:piano-1` agree about the plane and disagree about where the origin
+   sits on it — both legitimately — so which one survives the fusion cannot be
+   decided by the fuser. Here nothing is decided: every mark keeps its session's
+   label (`:A/piano-1`, `:B/piano-1`), both survive, and the correspondences are
+   said out loud instead of inferred from a coincidence of auto-generated names.
+   The session list is a vector because its ORDER is the answer to 'whose frame
+   is the fused frame'.
+
+   Either way the tie is DECLARED, never detected: no feature matching, which is
+   what makes this work on smooth textureless plastic.
 
    Pure and recomputed at every eval: the motion is never written into the
    source, so improving a mark and re-running improves the fusion. The price,
    declared: the anchor marks must STAY in the source — they are the join.
 
-   Returns the fused value ({:marks fused, :sessions, and the first session's
+   Returns the fused value ({:marks, :sessions, and the reference session's
    :proxy/:pose/:faces/:dir}), or nil with a printed reason when the anchors do
    not determine a motion. Never a plausible-looking motion.
 
-   Not fused in v1: `:shapes` stay the first session's (a traced outline is
-   geometry, not a pose; transporting it is a separate move). Each session's own
-   value is kept under :sessions."
-  [& acquisitions]
-  (let [[a & others] (filter acq? acquisitions)]
+   Not fused in v1: `:shapes` stay the reference session's (a traced outline is
+   geometry, not a pose; transporting it is a separate move)."
+  [& args]
+  (let [[x y] args]
     (cond
-      (nil? a)
-      (do (state/capture-println ";; acquire-union: serve almeno una (acquire …) valida") nil)
+      ;; declared form
+      (labelled-sessions? x)
+      (cond
+        (< (count x) 2)
+        (do (state/capture-println
+             ";; acquire-union: una sessione sola non è una fusione — passane due")
+            (second (first x)))
 
-      (empty? others)
-      (do (state/capture-println
-           (str ";; acquire-union: una sessione sola non è una fusione — "
-                "passane due: (acquire-union a b)"))
-          a)
+        (not (and (vector? y) (seq y) (every? vector? y)))
+        (do (state/capture-println
+             (str ";; acquire-union: con le sessioni etichettate serve la lista delle "
+                  "corrispondenze, es. [[:A/piano-1 :B/piano-1] [:A/becco :B/piano-2]]"))
+            nil)
+
+        :else
+        (fuse-sessions x (fn [lbl _b] (fuse/declared-anchors (marks-by-label x) y (ffirst x) lbl))))
 
       :else
-      (let [fits (mapv (fn [b]
-                         (let [anchors (union-anchors a b)
-                               fit (fuse/fit-rigid anchors)]
-                           {:b b :anchors anchors :fit fit}))
-                       others)]
-        (if-let [bad (first (filter #(:error (:fit %)) fits))]
+      (let [acqs (filter acq? args)]
+        (cond
+          (empty? acqs)
+          (do (state/capture-println ";; acquire-union: serve almeno una (acquire …) valida") nil)
+
+          (= 1 (count acqs))
           (do (state/capture-println
-               (str ";; acquire-union · " (:dir (:b bad)) ": " (:error (:fit bad))
-                    "\n;;   mark in comune: "
-                    (if (seq (:anchors bad))
-                      (str/join ", " (map #(str ":" (clj->js (:name %))) (:anchors bad)))
-                      "nessuno — i nomi devono coincidere fra le due sessioni")))
-              nil)
-          (let [moved (mapv (fn [{:keys [b fit]}]
-                              (report-union! (:dir b) fit)
-                              {:dir (:dir b) :proxy (:proxy b) :pose (:pose b)
-                               :transform (select-keys fit [:R :t :rvec])
-                               :rms-mm (:rms-mm fit)
-                               :marks (into {} (map (fn [[nm p]] [nm (fuse/transform-pose fit p)])
-                                                    (:marks b)))})
-                            fits)
-                marks (reduce (fn [acc {:keys [marks]}]
-                                (merge-with (fn [pa pb] (fuse/mean-pose [pa pb])) acc marks))
-                              (:marks a) moved)]
-            ;; The stage keeps showing the FIRST session — its frame is the fused
-            ;; frame — but with ALL the marks, transported ones included. Which
-            ;; makes the fusion visible for free: a mark measured in session B
-            ;; must land on the object in session A's photos.
-            (stage/note-eval! {:proxy (:proxy a) :pose (:pose a) :dir (:dir a) :marks marks})
-            (assoc a
-                   :marks marks
-                   :sessions (into [{:dir (:dir a) :proxy (:proxy a) :pose (:pose a)
-                                     :transform nil :rms-mm 0.0}]
-                                   (mapv #(dissoc % :marks) moved)))))))))
+               (str ";; acquire-union: una sessione sola non è una fusione — "
+                    "passane due: (acquire-union a b)"))
+              (first acqs))
+
+          :else
+          (fuse-sessions (mapv (fn [a] [nil a]) acqs)
+                         (fn [_lbl b] [(union-anchors (first acqs) b) nil])))))))
 
 ;; ============================================================
 ;; Entry / exit

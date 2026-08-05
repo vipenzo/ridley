@@ -58,28 +58,58 @@ qualsiasi cosa.
 
 ## Agganci per la fusione (la parte che conta)
 
-Le due sessioni si legano SOLO attraverso i mark che portano lo stesso **nome**
-e stanno sullo stesso **punto fisico**. Da questa posa, incrociando con la posa
-1, le zone che si vedono in entrambe sono:
+**Conta il PIANO, non il puntino.** Un mark viene creduto come piano: la sua
+normale e la sua distanza lungo quella normale. Dove sta l'origine (il pallino
+magenta) dentro il piano non entra nel conto — puoi piazzarla dove ti pare, e
+nelle due sessioni può stare in due posti diversi della stessa faccia. È la
+ragione per cui la fusione si appoggia ai piani: una faccia piatta la ritrovi in
+un altro set di foto, un punto preciso su quella faccia no.
+
+Un piano vincola 3 dei 6 gradi di libertà, quindi:
+
+- **TRE piani con normali che guardano in direzioni diverse** determinano tutto.
+  È il caso da puntare.
+- **DUE piani non bastano**: lasciano libero lo scorrimento lungo la loro
+  intersezione. La fusione lo rifiuta e lo dice.
+- Due piani **più un punto vero** bastano: se una zona è uno spigolo o un
+  dettaglio riconoscibile, dichiaralo con `:point? true` dentro il mark e allora
+  la sua posizione viene usata per intero.
+
+Da questa posa, incrociando con la posa 1, le tre zone che si vedono in entrambe
+e guardano in direzioni diverse sono:
 
 - `:testa-sopra` — la faccia piatta in cima alla testa. In posa 1 guarda in
-  alto, qui guarda di lato: visibile in tutte e due, ed è la candidata migliore.
+  alto, qui guarda di lato.
 - `:fianco` — la grande faccia laterale piatta che qui guarda in ALTO. In posa 1
   è una delle due facce laterali. **Attenzione**: il pezzo ha due fianchi quasi
-  identici, e vanno bene solo se in entrambe le sessioni clicchi lo STESSO,
-  quello che qui sta in alto. Riconoscilo da un dettaglio asimmetrico (il
-  rilievo sulla testa, o dove sta la pasta adesiva), non "a occhio".
-- `:becco` — la faccia piatta all'estremità di uno dei due bracci della C, il
-  punto più lontano dalla testa: serve ad allargare la base, che è la cosa che
-  rende stabile la rotazione.
+  identici, e vanno bene solo se in entrambe le sessioni usi lo STESSO, quello
+  che qui sta in alto. Riconoscilo da un dettaglio asimmetrico (il rilievo sulla
+  testa, o dove sta la pasta adesiva), non "a occhio".
+- `:becco` — la faccia piatta all'estremità di uno dei due bracci della C.
 
-Con DUE agganci le loro normali non devono essere parallele (`:testa-sopra` e
-`:fianco` sono perpendicolari: bene). Con TRE non serve nemmeno quello, purché
-non siano allineati. Mark più vicini di 5 mm vengono rifiutati.
+Le loro normali sono all'incirca perpendicolari fra loro: è la condizione che
+serve. Tre facce PARALLELE (per esempio i due fianchi opposti) non servirebbero
+a niente: fissano una direzione sola.
 
-Il pezzo è piccolo: la distanza fra `:testa-sopra` e `:becco` è la base più
-larga che offre. Se la fusione dovesse uscire con uno scarto grande, il primo
-sospetto è una base troppo corta, non il solutore.
+**I nomi non devono più coincidere**: le corrispondenze si dichiarano nella
+chiamata, e ogni mark resta distinguibile per sessione —
+
+```clojure
+(acquire-union [[:A A] [:B B]]
+               [[:A/piano-1 :B/piano-1]     ; testa in tutte e due
+                [:A/piano-2 :B/piano-3]     ; fianco
+                [:A/piano-3 :B/piano-2]])   ; becco
+```
+
+Quindi puoi lasciare i nomi automatici `:piano-N` che il bottone Piano assegna,
+purché tu sappia quale è quale — annotarlo qui sotto mentre li crei è il modo
+più semplice di non perderne il conto.
+
+| mark | posa 1 (A) | posa 2 (B) |
+|------|-----------|-----------|
+| testa-sopra | | |
+| fianco | | |
+| becco | | |
 
 ## Per Code
 
