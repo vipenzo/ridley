@@ -3974,8 +3974,21 @@
   ([dir] (acquire dir nil))
   ([dir opts]
    (let [posed (resolve-proxy opts)
-         pose (or (:pose opts) (:creation-pose posed))]
+         pose (or (:pose opts) (:creation-pose posed))
+         faces (face-poses posed pose)]
      (record-scaffolds! [posed])
+     ;; A mark named like one of the proxy's faces WINS over it in
+     ;; `(turtle A :at …)` (turtle/named-poses merges faces under marks, on
+     ;; purpose: a name you chose beats a generated one). That is the right
+     ;; precedence and a silent surprise, so say it once — the plate's own faces
+     ;; are called :top/:bottom/:side, which are tempting names for a zone.
+     (when-let [clash (seq (filter (set (keys faces)) (keys (:marks opts))))]
+       (state/capture-println
+        (str ";; acquire · " dir ": " (str/join ", " (map str clash))
+             (if (next clash) " sono nomi" " è un nome")
+             " di faccia del proxy — il mark ha la precedenza, quindi "
+             "(turtle A :at " (first clash) " …) userà il MARK. "
+             "La faccia resta raggiungibile come (" (first clash) " (:faces A)).")))
      ;; P4b: note the stage so the post-eval hook (core/after refresh-viewport!)
      ;; turns this evaluated directive into the interactive palcoscenico —
      ;; clickable frustums + click→pose, viewport state, camera left where it is.
@@ -3992,7 +4005,7 @@
       ;; P4b Pezzo (iii): the 6 box faces as turtle poses, so the user can drop the
       ;; turtle onto a face by name — `(turtle (:top (:faces A)) (edit-path-2d …))`
       ;; — and draw the ricalco there over the stage backdrop. Computed, not stored.
-      :faces (face-poses posed pose)
+      :faces faces
       :dir dir})))
 
 ;; ------------------------------------------------------------

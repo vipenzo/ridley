@@ -1,6 +1,6 @@
 # Sessione fusione — posa 1: il collare IN PIEDI sui piedini
 
-Prima delle due pose che servono a collaudare `(acquire-union a b)` con foto
+Prima delle due pose che servono a collaudare `(acquire-union …)` con foto
 vere. Il giradischi copre una FASCIA di angoli e basta: da questa posa non si
 vedono né il sotto dei piedini né l'interno dell'arco visto da sotto. La seconda
 sessione (`param-plate-paper-3`) riprende lo STESSO pezzo appoggiato
@@ -92,14 +92,14 @@ Regole, in ordine di importanza:
 Zone candidate su questo pezzo, incrociate con la posa 2 (dove il collare è
 coricato su un fianco):
 
-- `:testa-sopra` — la faccia piatta in cima alla testa;
-- `:fianco` — la grande faccia laterale, quella che nella posa 2 guarda in alto;
-- `:becco` — la faccia piatta all'estremità di un braccio della C.
+- `:head` — la faccia piatta in cima alla testa;
+- `:flank` — la grande faccia laterale, quella che nella posa 2 guarda in alto;
+- `:tip` — la faccia piatta all'estremità di un braccio della C.
 
 Le tre normali sono all'incirca perpendicolari fra loro: è la condizione giusta.
 
 **I nomi sono la dichiarazione**: chiama la stessa zona con lo stesso nome nelle
-due sessioni (`:testa-sopra`, `:fianco`, `:becco`) e la fusione è
+due sessioni (`:head`, `:flank`, `:tip`) e la fusione è
 
 ```clojure
 (def U (acquire-union [[:A A] [:B B]]))
@@ -107,9 +107,9 @@ due sessioni (`:testa-sopra`, `:fianco`, `:becco`) e la fusione è
 
 Rinomina il `:piano-N` automatico appena il mark compare nel sorgente, mentre ti
 ricordi ancora quale zona era: è solo editing di testo, e dopo il sorgente si
-legge da solo. Ogni mark resta comunque raggiungibile per sessione — `:A/testa-sopra`
-e `:B/testa-sopra` sono le due misure della stessa zona, e il nome nudo
-`:testa-sopra` è quella della sessione di riferimento.
+legge da solo. Ogni mark resta comunque raggiungibile per sessione — `:A/head` e `:B/head`
+sono le due misure della stessa zona, ognuna con la SUA origine, e il nome nudo
+`:head` è quella della sessione di riferimento.
 
 Se i nomi non possono coincidere, le corrispondenze si dichiarano a mano come
 secondo argomento: `(acquire-union [[:A A] [:B B]] [[:A/piano-1 :B/piano-3] …])`.
@@ -122,5 +122,5 @@ secondo argomento: `(acquire-union [[:A A] [:B B]] [[:A/piano-1 :B/piano-3] …]
   {:proxy (registration-plate)})`, poi il bottone **Auto**.
 - Esito atteso: le 5 foto registrate con rms sotto i ~2-3 px (dischetti di carta
   netti). Le radenti, se ce ne sono, restano per `f` / `p`.
-- Poi: mark-piano sulle zone d'aggancio da entrambe le sessioni, e
-  `(acquire-union A B)` con le due `(acquire …)` nel sorgente.
+- Poi: mark-piano sulle zone d'aggancio da entrambe le sessioni, con gli STESSI
+  nomi, e `(acquire-union [[:A A] [:B B]])` con le due `(acquire …)` nel sorgente.

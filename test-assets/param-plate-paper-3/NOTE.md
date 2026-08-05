@@ -1,6 +1,6 @@
 # Sessione fusione — posa 2: il collare CORICATO su un fianco
 
-Seconda delle due pose con cui si collauda `(acquire-union a b)` su foto vere.
+Seconda delle due pose con cui si collauda `(acquire-union …)` su foto vere.
 Compagna di `param-plate-paper-2`, dove lo stesso pezzo sta in piedi sui
 piedini. Insieme coprono quello che il giradischi da solo non raggiunge: qui si
 vede il sotto dell'arco e la faccia d'appoggio dell'altra posa, e viceversa.
@@ -78,18 +78,27 @@ Un piano vincola 3 dei 6 gradi di libertà, quindi:
 Da questa posa, incrociando con la posa 1, le tre zone che si vedono in entrambe
 e guardano in direzioni diverse sono:
 
-- `:testa-sopra` — la faccia piatta in cima alla testa. In posa 1 guarda in
-  alto, qui guarda di lato.
-- `:fianco` — la grande faccia laterale piatta che qui guarda in ALTO. In posa 1
+- `:head` — la faccia piatta in cima alla testa. In posa 1 guarda in alto, qui
+  guarda di lato.
+- `:flank` — la grande faccia laterale piatta che qui guarda in ALTO. In posa 1
   è una delle due facce laterali. **Attenzione**: il pezzo ha due fianchi quasi
   identici, e vanno bene solo se in entrambe le sessioni usi lo STESSO, quello
   che qui sta in alto. Riconoscilo da un dettaglio asimmetrico (il rilievo sulla
   testa, o dove sta la pasta adesiva), non "a occhio".
-- `:becco` — la faccia piatta all'estremità di uno dei due bracci della C.
+- `:tip` — la faccia piatta all'estremità di uno dei due bracci della C.
 
 Le loro normali sono all'incirca perpendicolari fra loro: è la condizione che
 serve. Tre facce PARALLELE (per esempio i due fianchi opposti) non servirebbero
 a niente: fissano una direzione sola.
+
+**Perché non `:top`, `:side`, `:front`.** Due ragioni. La prima è tecnica:
+`:top`, `:bottom` e `:side` sono i nomi delle FACCE del proxy (il piatto è un
+cilindro e le sue face-group si chiamano così), e un mark con quel nome le
+oscura in `(turtle A :at :top …)` — il mark vince, la faccia resta raggiungibile
+solo come `(:top (:faces A))`. La seconda vale in generale: in una fusione la
+stessa zona compare in orientamenti diversi — quella che in posa 1 sta in cima,
+qui sta di lato — quindi un nome che parla di direzione mente in metà delle
+sessioni. Meglio nomi che dicono QUALE PARTE del pezzo è.
 
 **Il nome è la dichiarazione.** Chiama la stessa zona con lo stesso nome nelle
 due sessioni e non serve altro:
@@ -99,10 +108,10 @@ due sessioni e non serve altro:
 ```
 
 Rinomina il `:piano-N` automatico appena compare nel sorgente — mentre ti ricordi
-quale zona era. Dopo la fusione niente si perde e niente collide: `:A/fianco` e
-`:B/fianco` sono le due misure della stessa faccia (ognuna con la SUA origine,
-che può stare in punti diversi della faccia), e `:fianco` nudo è quella della
-sessione di riferimento.
+quale zona era. Dopo la fusione niente si perde e niente collide: `:A/flank` e `:B/flank` sono
+le due misure della stessa faccia (ognuna con la SUA origine, che può stare in
+punti diversi della faccia), e `:flank` nudo è quella della sessione di
+riferimento.
 
 Se i nomi non possono coincidere — per esempio perché in una sessione avevi già
 chiamato `:top` un'altra faccia — le corrispondenze si dichiarano a mano:
@@ -117,5 +126,5 @@ chiamato `:top` un'altra faccia — le corrispondenze si dichiarano a mano:
 - Registrazione: `(edit-acquire "test-assets/param-plate-paper-3/"
   {:proxy (registration-plate)})`, poi il bottone **Auto**.
 - Poi, con le due `(acquire …)` nel sorgente:
-  `(def U (acquire-union A B))` — A la posa 1, B questa. Il rapporto stampa lo
-  scarto per aggancio in mm; sotto il millimetro è buono.
+  `(def U (acquire-union [[:A A] [:B B]]))` — A la posa 1, B questa. Il rapporto
+  stampa lo scarto per aggancio in mm; sotto il millimetro è buono.
