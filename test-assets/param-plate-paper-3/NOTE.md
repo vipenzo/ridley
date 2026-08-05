@@ -5,11 +5,6 @@ Compagna di `param-plate-paper-2`, dove lo stesso pezzo sta in piedi sui
 piedini. Insieme coprono quello che il giradischi da solo non raggiunge: qui si
 vede il sotto dell'arco e la faccia d'appoggio dell'altra posa, e viceversa.
 
-> **Il nome della cartella** dice `plane` invece di `plate` (le altre sono
-> `param-plate-*`). Non è un problema tecnico — nessun codice deduce niente dal
-> nome — ma finirà scritto dentro la `(acquire "…")` emessa nel sorgente, quindi
-> conviene decidere adesso se rinominarla, non dopo.
-
 ## Il pezzo
 
 - Lo STESSO collare a scatto in plastica nera di `param-plate-paper-2` (arco a
@@ -89,7 +84,7 @@ sospetto è una base troppo corta, non il solutore.
 ## Per Code
 
 - Auto-inizializzazione in-app da questo NOTE + le foto.
-- Registrazione: `(edit-acquire "test-assets/param-plane-paper-3/"
+- Registrazione: `(edit-acquire "test-assets/param-plate-paper-3/"
   {:proxy (registration-plate)})`, poi il bottone **Auto**.
 - Poi, con le due `(acquire …)` nel sorgente:
   `(def U (acquire-union A B))` — A la posa 1, B questa. Il rapporto stampa lo
