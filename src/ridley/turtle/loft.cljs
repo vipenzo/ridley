@@ -867,6 +867,21 @@
                              ;; Original corner position (before pullback)
                              corner-base (v+ (:position s) (v* (:heading s) remaining-to-corner))
 
+                             ;; Last ring of an arc-ended rail: apply the arc's
+                             ;; trailing half-step so the end cap is perpendicular
+                             ;; to the OUTGOING heading — the mirror of
+                             ;; start-cap-state at the other end, and exactly what
+                             ;; extrude already does (extrusion/extrude-from-path,
+                             ;; extrude-with-holes-from-path: trail-cap-rot).
+                             ;; Without it the cap stays square to the last CHORD
+                             ;; while the reported end pose follows the analytic
+                             ;; tangent, so a chained op starts on a plane tilted
+                             ;; by half a step: the transform-> seam opens into a
+                             ;; wedge (loft-plus-test/arc-trailing-cap-seam).
+                             trail-cap-rot (when (= seg-idx (dec n-segments))
+                                             (first (filter #(= :trail (:arc-cap %))
+                                                            rotations)))
+
                              ;; Generate rings for this segment.
                              ;; Skip i=0 if we already have accumulated rings (smooth continuation)
                              ;; to avoid duplicate rings at the junction.
@@ -883,11 +898,19 @@
                                       pos (v+ (:position s) (v* (:heading s) dist-in-seg))
                                       transformed-shape (transform-fn shape clamped-t)
                                       ;; The VERY FIRST ring of the loft uses the
-                                      ;; arc carve-out frame (start-cap-state); all
+                                      ;; arc carve-out frame (start-cap-state), the
+                                      ;; VERY LAST one the post-trail frame; all
                                       ;; others use the running frame s. For non-arc
-                                      ;; rails the two are identical.
-                                      temp-state (if (and (zero? seg-idx) (zero? i))
+                                      ;; rails all three are identical.
+                                      temp-state (cond
+                                                   (and (zero? seg-idx) (zero? i))
                                                    (assoc start-cap-state :position pos)
+
+                                                   (and trail-cap-rot (= i seg-steps))
+                                                   (apply-rotation-to-state
+                                                    (assoc s :position pos) trail-cap-rot)
+
+                                                   :else
                                                    (assoc s :position pos))]
                                   (do-stamp temp-state transformed-shape))))
 

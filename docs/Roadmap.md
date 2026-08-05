@@ -151,6 +151,20 @@ utente).
   cambiano (frame rigido ⇒ covarianti). Vale anche per l'alias `pilot` e per la
   modalità origin, che prima confrontava un pivot non trasformato con click
   raycastati in world. Dettaglio in `Architecture.md` §11.2.3.
+- **Cucitura dopo un arco in `transform->` — FATTO 2026-08-04** (segnalato da
+  Vincenzo dall'uso, secondo difetto della stessa catena del quarto di giro).
+  `(transform-> anello (extrude+ (f 30)) (loft+ sf (arc-v 80 90)) (extrude+ (f 30)))`
+  lasciava una fessura fra il loft e l'estrusione successiva. `arc-h`/`arc-v` si
+  tessellano in mezzo-passo · corde · mezzo-passo: `loft` stampava l'ultimo
+  anello **prima** del mezzo-passo finale — quadrato all'ultima corda — ma
+  dichiarava come posa di fine la tangente analitica. Il passo successivo
+  partiva quindi su un piano inclinato di mezzo passo attorno al centro della
+  sezione: i due solidi si incontravano a cuneo, aperto da un lato (0.43 mm con
+  profilo r=35 su arco R=80). `extrude` non l'ha mai avuto (`trail-cap-rot`);
+  ora `loft` fa lo stesso — è anche il gemello simmetrico di `split-leading-cap`
+  all'altro capo. Vale per entrambi i rami di costruzione (profilo pieno e
+  profilo col buco). Test `loft_plus_test.cljs` §9 `arc-trailing-cap-seam`; il
+  §8 può stringere la tolleranza da 0.2 mm a 1e-6.
 - **Coda post-v1** (dichiarata, non iniziata): proxy oltre box/piatto
   (rounded-prism / fillet); sorgenti foto live (webcam / companion app).
   Il multi-acquire dello stage (la "decisione D" di P4b) è ora la seconda

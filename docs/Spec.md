@@ -1478,6 +1478,11 @@ Notes:
   rail transported is used instead. It is the continuous limit of the projection
   on both sides of that angle, so the roll of the following segments does not
   jump.
+- A step whose rail **ends with an arc** (`arc-h`/`arc-v`) closes its end cap
+  perpendicular to the arc's analytic **exit tangent**, not to the last
+  tessellation chord — the same carve-out that keeps the *start* cap flush with
+  the incoming heading. So `(loft+ … (arc-v 80 90))` followed by
+  `(extrude+ (f 30))` welds exactly, with no half-step wedge at the seam.
 
 ---
 

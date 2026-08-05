@@ -273,9 +273,56 @@
       ;; faces, watertight, ingested.
       (is (zero? (:non-manifold-edges diag)) (str diag))
       (is (:is-watertight? diag) (str diag))
-      ;; And it starts AT the loft's end, not somewhere else. Not exact to 1e-6
-      ;; like the straight-rail seam above: an arc rail's last ring is stamped
-      ;; before the trailing half-step cap, so it is tilted by half a
-      ;; tessellation step w.r.t. the reported end heading (≈0.15 at r=12 here).
-      ;; Pre-existing, orthogonal to the frame this test guards.
-      (is (every? #(on-mesh? % (:vertices (:mesh res)) 0.2) ring0)))))
+      ;; And it starts AT the loft's end, not somewhere else — exactly, like the
+      ;; straight-rail seam above. This used to need a 0.2 tolerance because the
+      ;; arc's last ring was stamped BEFORE the trailing half-step cap, tilted by
+      ;; half a tessellation step w.r.t. the reported end heading; see §9.
+      (is (every? #(on-mesh? % (:vertices (:mesh res)) 1e-6) ring0)))))
+
+;; ── 9. arc-ended rail: the end cap carries the trailing half-step ──
+
+(defn- end-seam-gap
+  "How far the reported end face sits off its own mesh: stamp the end section at
+   the end pose and take the worst distance to the nearest mesh vertex. 0 means
+   the reported face IS the last stamped ring — the seam a chained op welds to."
+  [res]
+  (let [ep (:pose (:end-face res))
+        ring (extrusion/stamp-shape
+              {:position (:pos ep) :heading (:heading ep) :up (:up ep)}
+              (:shape (:end-face res)))
+        verts (:vertices (:mesh res))]
+    (reduce max (map (fn [p] (reduce min (map #(dist p %) verts))) ring))))
+
+(deftest arc-trailing-cap-seam
+  ;; arc-h/arc-v lower to lead-half-step · chords · trail-half-step (midpoint
+  ;; integration). loft stamped its LAST ring with the pre-trail frame — square
+  ;; to the last CHORD — while reporting the post-trail heading (the analytic
+  ;; tangent) as the end pose. The next transform-> step therefore started on a
+  ;; plane tilted by half a step about the section centre: the two solids met in
+  ;; a wedge, open on one side. Vincenzo's
+  ;;   (transform-> ring (extrude+ (f 30)) (loft+ sf (arc-v 80 90)) (extrude+ (f 30)))
+  ;; showed it as a crack after the curve — 0.43 mm at r=35.
+  ;; extrude never had it (extrusion/trail-cap-rot); loft now mirrors it, which is
+  ;; also the symmetric partner of split-leading-cap at the other end.
+  (let [rail (path* "(path (arc-v 80 90))")
+        straight (path* "(path (f 30))")
+        ring (shape/circle-shape 35 32)
+        annulus (assoc (shape/circle-shape 35 32)
+                       :holes [(vec (reverse (:points (shape/circle-shape 33 32))))])]
+    (testing "plain profile: loft+'s end face is flush with its own mesh"
+      (h/eval-dsl "1")
+      (is (< (end-seam-gap (impl/loft+-impl ring (fn [s _t] s) rail)) 1e-9)))
+
+    (testing "holed profile (the reported case) — the other build branch"
+      (h/eval-dsl "1")
+      (is (< (end-seam-gap (impl/loft+-impl annulus (fn [s _t] s) rail)) 1e-9)))
+
+    (testing "parity: extrude+ on the same rail was already flush"
+      (h/eval-dsl "1")
+      (is (< (end-seam-gap (impl/extrude+-impl ring rail)) 1e-9))
+      (h/eval-dsl "1")
+      (is (< (end-seam-gap (impl/extrude+-impl annulus rail)) 1e-9)))
+
+    (testing "a rail with no trailing arc cap is untouched"
+      (h/eval-dsl "1")
+      (is (< (end-seam-gap (impl/loft+-impl ring (fn [s _t] s) straight)) 1e-9)))))
