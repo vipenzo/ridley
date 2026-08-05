@@ -383,10 +383,35 @@
                      (keep (fn [refs]
                              (let [to (pick refs ref-lbl) from (pick refs lbl)]
                                (when (and to from)
-                                 (anchor-of (keyword (name (first from)) (name (second from)))
-                                            (nth to 2) (nth from 2))))))
+                                 (assoc (anchor-of (keyword (name (first from)) (name (second from)))
+                                                   (nth to 2) (nth from 2))
+                                        ;; the zone's name on the REFERENCE side: what
+                                        ;; the fused value calls the zone itself
+                                        :ref-name (second to))))))
                      vec)]
     [anchors errs]))
+
+(defn shared-name-anchors
+  "Correspondences by EQUAL NAME between the reference session's marks and
+   another's — the implicit declaration.
+
+   Implicit matching was a hazard while the stage's auto-names (`:piano-1`,
+   `:piano-2`, …) were the only names around: two sessions collided by counting,
+   not by meaning. It stops being a hazard once each session's marks stay
+   addressable as `:label/name` (Vincenzo 2026-08-05): then giving the same zone
+   the same name in two sessions is a DELIBERATE act, and the deliberate act is
+   exactly what a declaration is. Renaming a mark is a text edit in the source,
+   done while you still remember which zone it was.
+
+   Only :marks — `:faces` are generated per proxy, so a shared `:top` would be a
+   false correspondence between two different boxes and the fit would believe it."
+  [ref-marks marks]
+  (->> (keys marks)
+       (keep (fn [nm]
+               (some-> (anchor-of nm (get ref-marks nm) (get marks nm))
+                       (assoc :ref-name nm))))
+       (sort-by :name)
+       vec))
 
 (defn worst-anchor
   "The anchor whose residual stands out from the others — a candidate for a

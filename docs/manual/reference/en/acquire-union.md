@@ -9,8 +9,8 @@ status: experimental
 
 ## Signature
 
-`(acquire-union a b …)`
-`(acquire-union [[label acquisition] …] [[ref ref] …])`
+`(acquire-union [[label acquisition] …])`
+`(acquire-union [[label acquisition] …] [[ref ref …] …])`
 
 ## Description
 
@@ -46,36 +46,48 @@ improve a mark, press Run, and the fusion improves with it. The price, stated
 plainly: the anchor marks must **stay** in the source — they are the join, and
 deleting one un-fuses the sessions.
 
-## The two call forms
+## Naming the sessions, and the join
 
-**Short** — sessions positional, correspondence by equal mark name:
+Sessions are always **labelled**, and the label is what lets every mark survive
+the fusion under its own address — `:A/testa` and `:B/testa` are the two
+sessions' measurements of the same zone, and both are kept.
+
+That addressability is what makes the **implicit** rule safe: by default, marks
+with the **same name** in two sessions are the same zone.
 
 ```clojure
-(acquire-union A B)
+(acquire-union [[:A A] [:B B]])
 ```
 
-**Declared** — labelled sessions and an explicit list of correspondences:
+Give the zone the same name in both sessions and you have declared the
+correspondence. Rename the stage's `:piano-1`, `:piano-2` … as you create them:
+that is a text edit in the source, done while you still remember which zone was
+which, and it leaves a source that reads `:testa`, `:fianco`, `:becco` instead
+of counters.
+
+When the names cannot agree — `:top` means one face in one session and another
+face in the other, or you would rather not rename — say the correspondences out
+loud instead:
 
 ```clojure
 (acquire-union [[:A A] [:B B]]
-               [[:A/testa  :B/piano-1]
-                [:A/becco  :B/piano-3]])
+               [[:A/testa :B/piano-1]
+                [:A/becco :B/piano-3]])
 ```
 
-The declared form exists because a name is a weak declaration once marks are
-believed as planes: the stage names them `:piano-1`, `:piano-2` … per session,
-so two `:piano-1` collide *by accident*, and even when they genuinely are the
-same zone their origins sit at different places on it — both legitimate, so
-neither can be discarded. Here nothing is guessed: correspondences are said out
-loud, and every mark keeps its session's label (`:A/testa`, `:B/piano-1`), so
-both survive and nothing collides.
+Both routes end in the same place; the second only replaces the name-matching.
 
 The session list is a **vector** because its order answers "whose frame is the
 fused frame": the first one's.
 
 ### More than two sessions
 
-A row is **one zone**, not one couple. List every session that sees it:
+With the implicit rule nothing changes: name the zone alike in every session
+that sees it, and leave it out of the ones that do not. The anchors of each
+session are the names it shares with the reference.
+
+With an explicit list, a row is **one zone**, not one couple. List every session
+that sees it:
 
 ```clojure
 (acquire-union [[:A A] [:B B] [:C C]]
@@ -98,11 +110,12 @@ the pose that sees the most as the first one.
 The fused acquisition: the reference session's `:proxy`, `:pose`, `:faces` and
 `:dir`, with
 
-- `:marks` — every mark of every session, the later ones carried into the
-  reference frame. In the declared form each is keyed `:label/name`; in the
-  short form names are bare and a shared name keeps the reference session's
-  mark (they are *not* averaged: with plane semantics the two origins are
-  different points on the same plane, so their mean is a third arbitrary one).
+- `:marks` — every mark of every session under `:label/name`, the later ones
+  carried into the reference frame, **plus** each declared zone under its bare
+  name, bound to the reference session's measurement of it. So `:testa` is the
+  zone, `:A/testa` and `:B/testa` are the two measurements. Nothing is averaged:
+  with plane semantics the two origins are different points on the same plane,
+  so their mean would be a third arbitrary one.
 - `:sessions` — one entry per session: `:label`, `:dir`, `:proxy`, `:pose`, the
   `:transform` applied to it, and its `:rms-mm`.
 
@@ -112,16 +125,14 @@ motion — never a plausible-looking one.
 ## Example
 
 ```clojure
-(def A (acquire "scans/clip-in-piedi/" {…}))
-(def B (acquire "scans/clip-coricato/" {…}))
+;; the same three zones are named alike in both sessions
+(def A (acquire "scans/clip-in-piedi/"  {… :marks {:testa … :fianco … :becco …}}))
+(def B (acquire "scans/clip-coricato/"  {… :marks {:testa … :fianco … :becco …}}))
 
-(def U (acquire-union [[:A A] [:B B]]
-                      [[:A/testa :B/piano-1]
-                       [:A/fianco :B/piano-2]
-                       [:A/becco  :B/piano-3]]))
+(def U (acquire-union [[:A A] [:B B]]))
 
-;; a plane measured in B, now usable in A's frame
-(turtle U :at :B/piano-3 (extrude (rect 20 12) (f 3)))
+(turtle U :at :becco   (extrude (rect 20 12) (f 3)))   ; the zone (A's measurement)
+(turtle U :at :B/becco (extrude (rect 20 12) (f 3)))   ; B's own origin on it
 ```
 
 ## How many marks it takes

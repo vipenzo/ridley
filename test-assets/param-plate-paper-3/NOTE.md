@@ -91,25 +91,25 @@ Le loro normali sono all'incirca perpendicolari fra loro: è la condizione che
 serve. Tre facce PARALLELE (per esempio i due fianchi opposti) non servirebbero
 a niente: fissano una direzione sola.
 
-**I nomi non devono più coincidere**: le corrispondenze si dichiarano nella
-chiamata, e ogni mark resta distinguibile per sessione —
+**Il nome è la dichiarazione.** Chiama la stessa zona con lo stesso nome nelle
+due sessioni e non serve altro:
 
 ```clojure
-(acquire-union [[:A A] [:B B]]
-               [[:A/piano-1 :B/piano-1]     ; testa in tutte e due
-                [:A/piano-2 :B/piano-3]     ; fianco
-                [:A/piano-3 :B/piano-2]])   ; becco
+(def U (acquire-union [[:A A] [:B B]]))
 ```
 
-Quindi puoi lasciare i nomi automatici `:piano-N` che il bottone Piano assegna,
-purché tu sappia quale è quale — annotarlo qui sotto mentre li crei è il modo
-più semplice di non perderne il conto.
+Rinomina il `:piano-N` automatico appena compare nel sorgente — mentre ti ricordi
+quale zona era. Dopo la fusione niente si perde e niente collide: `:A/fianco` e
+`:B/fianco` sono le due misure della stessa faccia (ognuna con la SUA origine,
+che può stare in punti diversi della faccia), e `:fianco` nudo è quella della
+sessione di riferimento.
 
-| mark | posa 1 (A) | posa 2 (B) |
-|------|-----------|-----------|
-| testa-sopra | | |
-| fianco | | |
-| becco | | |
+Se i nomi non possono coincidere — per esempio perché in una sessione avevi già
+chiamato `:top` un'altra faccia — le corrispondenze si dichiarano a mano:
+
+```clojure
+(acquire-union [[:A A] [:B B]] [[:A/piano-1 :B/piano-3] …])
+```
 
 ## Per Code
 

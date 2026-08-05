@@ -169,6 +169,22 @@
    [:B {:piano-1 {:position [5 5 5] :heading [1 0 0] :up [0 0 1]}
         :piano-2 {:position [9 9 9] :heading [0 0 1] :up [0 1 0]}}]])
 
+(deftest a-shared-name-is-the-declaration-by-default
+  (let [a {:testa {:position [0 0 0] :heading [0 0 1] :up [0 1 0]}
+           :becco {:position [40 1 2] :heading [1 0 0] :up [0 0 1]}
+           :solo-di-a {:position [5 5 5] :heading [0 1 0] :up [0 0 1]}}
+        b {:testa {:position [9 9 9] :heading [1 0 0] :up [0 0 1]}
+           :becco {:position [1 2 3] :heading [0 1 0] :up [0 0 1]}
+           :solo-di-b {:position [7 7 7] :heading [0 0 1] :up [0 1 0]}}
+        anchors (fuse/shared-name-anchors a b)]
+    (is (= [:becco :testa] (mapv :name anchors))
+        "only the names present in BOTH — the ones the user wrote alike on purpose")
+    (is (= [:becco :testa] (mapv :ref-name anchors))
+        "and each carries the zone's name, which the fused value binds to the zone")
+    (testing "the pose that moves is the other session's"
+      (is (v= [1 2 3] (:from-pos (first anchors))))
+      (is (v= [40 1 2] (:to-pos (first anchors)))))))
+
 (deftest declared-pairs-say-what-name-equality-cannot
   (testing "the pairs are read as written — crossed names included"
     (let [[anchors errs] (fuse/declared-anchors sessions

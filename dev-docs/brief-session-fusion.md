@@ -63,13 +63,23 @@ assegnata.
 >
 > (2) *«Se li svincoli viene fuori un problema di nomi: due `:piano-1` che
 > coincidono come piano ma hanno posizioni diverse — forse servono tutti e due.
-> Passare a acquire-union la lista dei mark da considerare uguali.»* Adottata:
+> Passare a acquire-union la lista dei mark da considerare uguali.»* Adottata la
 > forma dichiarata `(acquire-union [[:A a] [:B b]] [[:A/piano-1 :B/piano-1] …])`.
-> I nomi non devono più coincidere (i `:piano-N` automatici collidono per
-> caso), ogni mark resta distinguibile come `:label/nome`, entrambi
-> sopravvivono. La forma corta resta per il caso in cui i nomi coincidono
-> davvero. Verificato live: origini fatte scivolare di 12-15 mm DENTRO i piani →
-> rms 4.1e-15 mm, e il mark di B conserva la propria origine trasportata.
+>
+> (3) Subito dopo, sempre Vincenzo: *«visto che ora possiamo indirizzare i mark
+> come :A/p1, non potremmo tornare alla soluzione implicita?»* Sì — ed è il
+> punto che chiude il giro. La corrispondenza per nome era pericolosa finché i
+> nomi in giro erano i CONTATORI del palcoscenico (`:piano-1` in due sessioni
+> coincideva per conteggio, non per intenzione); torna sicura appena ogni mark
+> sopravvive alla fusione al proprio indirizzo, perché allora chiamare due mark
+> con lo stesso nome è un ATTO DELIBERATO, che è esattamente cosa deve essere una
+> dichiarazione. Forma finale: sessioni SEMPRE etichettate, lista delle
+> corrispondenze OPZIONALE (serve solo quando i nomi non possono coincidere).
+> `:marks` del valore fuso = ogni mark come `:label/nome` + ogni zona dichiarata
+> col nome nudo (la misura della sessione di riferimento). Verificato live:
+> implicita ed esplicita danno lo stesso valore fino all'ultima cifra, con le
+> origini fatte scivolare di 12-15 mm DENTRO i piani (rms 4.1e-15 mm) e il mark
+> di B che conserva la propria origine trasportata.
 
 ## Il bisogno
 

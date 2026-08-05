@@ -98,10 +98,21 @@ coricato su un fianco):
 
 Le tre normali sono all'incirca perpendicolari fra loro: è la condizione giusta.
 
-**I nomi NON devono coincidere fra le due sessioni**: le corrispondenze si
-dichiarano nella chiamata (`(acquire-union [[:A A] [:B B]] [[:A/piano-1
-:B/piano-1] …])`), quindi puoi lasciare i nomi automatici. Quello che serve è
-sapere quale `:piano-N` è quale zona — annotalo mentre li crei.
+**I nomi sono la dichiarazione**: chiama la stessa zona con lo stesso nome nelle
+due sessioni (`:testa-sopra`, `:fianco`, `:becco`) e la fusione è
+
+```clojure
+(def U (acquire-union [[:A A] [:B B]]))
+```
+
+Rinomina il `:piano-N` automatico appena il mark compare nel sorgente, mentre ti
+ricordi ancora quale zona era: è solo editing di testo, e dopo il sorgente si
+legge da solo. Ogni mark resta comunque raggiungibile per sessione — `:A/testa-sopra`
+e `:B/testa-sopra` sono le due misure della stessa zona, e il nome nudo
+`:testa-sopra` è quella della sessione di riferimento.
+
+Se i nomi non possono coincidere, le corrispondenze si dichiarano a mano come
+secondo argomento: `(acquire-union [[:A A] [:B B]] [[:A/piano-1 :B/piano-3] …])`.
 
 ## Per Code
 
