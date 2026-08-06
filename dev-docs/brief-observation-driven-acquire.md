@@ -8,6 +8,64 @@ vedi brief-session-fusion.md), ma "l'esperienza è faticosa … non credo che
 riuscirei a indurre qualcun altro a ripeterla" (Vincenzo). Questo brief è la
 risposta strutturale a quella fatica.
 
+> **GRADINO 1 GIÀ FATTO, e ha pagato** (rilasciato in v3.6.0): `photogrammetry/bundle`
+> — una focale per sessione + tutte le pose insieme, tasto `R`. Ha trovato che la
+> focale EXIF era sbagliata del 4.5%, che è la spiegazione dei 2-3 mm.
+> Vedi il seguito in `brief-session-fusion.md`.
+>
+> **GRADINO 3 (edge dichiarati), FETTA 1 COSTRUITA 2026-08-06 — gate umano DA FARE.**
+> Scelta di Vincenzo: partire dagli edge invece che dai punti nel pool, perché è
+> lì che sta la fatica. Fatto:
+>
+> - **`photogrammetry/edge`** (puro, 10 test, 40 asserzioni): la retta 3D che
+>   spiega lo stesso spigolo dichiarato su più foto. Ogni foto contribuisce il
+>   PIANO che la sua riga d'immagine spanna col centro ottico; due piani non
+>   paralleli si incontrano in una retta sola, in forma chiusa, e le altre foto
+>   la sovradeterminano (seme chiuso + LM sui 4 DOF, stile di casa). Riporta
+>   riproiezione in px, `:exact?` con due sole foto, e con ≥4 foto NOMINA quella
+>   disegnata male (leave-one-out; con tre non si può — tolta una, quel che resta
+>   è esatto e chiunque sembrerebbe colpevole).
+> - **Gesto "Spigolo"** sul palcoscenico, gemello di "Piano": **UN click per
+>   foto** (vedi sotto), o due se l'immagine non sa rispondere; mai gli stessi
+>   punti delle altre foto. Segmento arancione disegnato NEL MONDO — quindi
+>   `[`/`]` è la verifica, gratis.
+> - **UN CLICK BASTA** (chiesto da Vincenzo subito dopo la prima fetta). La
+>   direzione può venire da due posti e solo uno funziona: dalla geometria già
+>   nota no (un click sulla seconda foto vincola la retta di 1 DOF su 4, il
+>   secondo servirebbe comunque), **dall'immagine sì** — il tensore di struttura
+>   attorno al click dà la direzione E quanto quel punto è un bordo dritto
+>   invece che un angolo. Poi il programma CAMMINA lungo il bordo finché il
+>   contrasto c'è, quindi trova anche l'estensione, e più lunga di quanta se ne
+>   traccia a mano (972 px contro 120). Il pezzo che decide: i bordi veri
+>   finiscono in curve, quindi si tiene il **tratto dritto attorno al click** —
+>   senza, sul collare nero di Vincenzo un click alla cieca riusciva 1 volta su
+>   1442; con, 33. Rifiuta in quattro modi nominati (`:flat`, `:ambiguous`,
+>   `:short`, `:curved`) e in tutti chiede i due click, che restano.
+> - **`:edges` nel valore di `acquire`**, scritto come `(edge-mark {…})`. È una
+>   POSA che corre LUNGO lo spigolo, quindi `(turtle A :at :spigolo-1 (extrude
+>   (circle 2) (f 79.7)))` posa un raccordo su tutta la sua lunghezza senza DSL
+>   nuovo. Tenuto separato da `:marks` di proposito: l'heading di un mark è una
+>   normale, quello di uno spigolo una direzione, e `acquire-union` leggerebbe
+>   uno spigolo come un piano storto. `acquire-union` li trasporta.
+>
+> **Quello che il collaudo ha insegnato, e non era ovvio**: la parallasse di uno
+> spigolo è il giro che le camere fanno INTORNO a lui, ripiegato in [0°,90°] —
+> spostarsi LUNGO lo spigolo non serve a niente per quanto lontano si vada, e
+> **mezzo giro è cieco quanto stare fermi** (a 180° le due camere e lo spigolo
+> tornano complanari, i due piani coincidono e la retta è libera di scivolarci
+> dentro). È scritto come test, non come opinione.
+>
+> Verificato dal vivo sulla sessione vera `param-plate-paper` (10 foto, camere
+> registrate, focale rifinita 50.07): da 3 pose vere una retta nota torna esatta
+> a 1e-14 mm, i capi cadono sull'unione dei tratti dichiarati a 1e-14 mm, la
+> scrittura nel sorgente e il ri-eval chiudono il giro, e lo snap aggancia il
+> contrasto vero (28 stazioni su 40 su un bordo reale).
+>
+> **Resta**: il magazzino delle osservazioni (fetta 2 — oggi i tratti vivono
+> nello stato del palcoscenico e non sopravvivono alla chiusura), archi/cerchi,
+> i punti nel pool congiunto (gradino 2), la segnalazione di copertura.
+> Entry point: `dev-docs/HANDOVER-edge-declared.md`.
+
 ## L'idea (Vincenzo, 2026-08-02)
 
 Oggi il canale ha quattro macchine separate (PnP per foto, anello, mark-piano,

@@ -158,6 +158,41 @@ utente).
   fondazione, non lavoro da buttare. È la risposta alla radice della fatica
   segnalata nell'uso vero (punto b del 2026-08-03): il brief di ergonomia da
   scrivere e questa visione vanno progettati INSIEME.
+- **Spigoli dichiarati — COSTRUITO 2026-08-06, click singolo GATED** (gradino 3
+  del brief sopra, anticipato per scelta di Vincenzo: «è lì che sta la fatica»).
+  Bottone **Spigolo** sul palcoscenico, gemello di Piano: su ogni foto **UN
+  CLICK** sullo spigolo — non servono gli stessi punti delle altre foto — e ne
+  esce un segmento 3D misurato
+  che il palcoscenico disegna nel mondo (quindi `[`/`]` è già la verifica) e
+  scrive nel sorgente come `:edges {:spigolo-1 (edge-mark {…})}`. È una POSA che
+  corre LUNGO lo spigolo, così `(turtle A :at :spigolo-1 (extrude (circle 2)
+  (f len)))` posa un raccordo senza DSL nuovo; tenuta separata da `:marks`
+  perché l'heading di un mark è una normale e `acquire-union` leggerebbe uno
+  spigolo come un piano storto. `ridley.photogrammetry.edge` è puro: piani
+  d'interpretazione + intersezione in forma chiusa + LM sui 4 DOF, residuo in
+  px, `:exact?` con due sole foto, e con ≥4 foto NOMINA quella disegnata male.
+  **Numero non ovvio che ne è uscito**: la parallasse di uno spigolo è il giro
+  che le camere fanno INTORNO a lui, ripiegato in [0°,90°] — muoversi lungo lo
+  spigolo non serve, e mezzo giro è cieco quanto stare fermi (a 180° camere e
+  spigolo tornano complanari). **Un click basta** (chiesto da Vincenzo lo stesso
+  giorno): la direzione non può venire dalla geometria già nota — un click sulla
+  seconda foto vincola la retta di 1 grado di libertà su 4, il secondo
+  servirebbe comunque — ma viene dall'IMMAGINE, col tensore di struttura attorno
+  al click, che dà anche quanto quel punto è un bordo dritto invece che un
+  angolo; poi il programma cammina lungo il bordo e trova pure l'estensione (972
+  px contro i 120 di un tratto tracciato a mano). Il pezzo decisivo: i bordi veri
+  finiscono in curve, quindi si tiene il tratto dritto ATTORNO AL CLICK — senza,
+  sul collare nero un click alla cieca riusciva 1 volta su 1442; con, 33. Quattro
+  rifiuti nominati (niente contrasto / più di una direzione / troppo corto /
+  curvo) e in tutti restano i due click come via di scampo. Verificato dal vivo
+  sulla sessione vera: retta nota recuperata a 1e-14 mm da 3 pose reali,
+  round-trip nel sorgente, snap agganciato al contrasto vero. **Gate di Vincenzo
+  sul click singolo, 2026-08-06**: «una volta su due devo dare due click, va
+  abbastanza bene» — e un rifiuto costa UN click in più, non due, perché quel
+  click diventa il primo capo del tratto a mano (~1.5 click per foto). Resta: il
+  magazzino delle osservazioni (i tratti oggi non sopravvivono alla chiusura),
+  archi/cerchi, i punti nel pool. Entry point
+  `dev-docs/HANDOVER-edge-declared.md`.
 - **Fusione di sessioni — FETTA A COSTRUITA 2026-08-03** (`brief-session-fusion.md`).
   `(acquire-union a b …)`: due sessioni dello stesso oggetto in un frame solo,
   agganciate sui mark OMONIMI (dichiarati dall'utente, nessun matching
