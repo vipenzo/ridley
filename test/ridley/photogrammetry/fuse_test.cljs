@@ -51,13 +51,16 @@
       (is (approx= 0.0 (rt-error fit [80 -60 55]) 1e-5)
           "a probe point 100 mm away lands where the known motion puts it"))))
 
-(deftest three-planes-with-independent-normals-determine-everything
+(deftest three-planes-alone-are-ambiguous-however-clean-they-are
+  ;; Not a precision problem and not a data problem: a half-turn about any one of
+  ;; three normals carries the three faces back onto themselves, so three planes
+  ;; admit four placements that fit identically. On a near-symmetric object they
+  ;; are mirror images — which is exactly what Vincenzo saw, session by session.
   (let [fit (fuse/fit-rigid [(anchor :testa [0 0 0] [0 0 1])
                              (anchor :fianco [45 3 2] [1 0 0])
                              (anchor :becco [3 40 -2] [0 1 0])])]
-    (is (nil? (:error fit)) (:error fit))
-    (is (= 3 (:planes fit)) "believed as planes, not as points")
-    (is (approx= 0.0 (rt-error fit [70 -50 40]) 1e-4))))
+    (is (some? (:error fit)) "must refuse rather than pick one of the four")
+    (is (re-find #"sistemazioni|ASIMMETRICO" (:error fit)))))
 
 (deftest sliding-a-mark-INSIDE-its-plane-changes-nothing
   ;; THE property this design exists for (Vincenzo 2026-08-05: a plane is easy to
@@ -68,12 +71,17 @@
   (let [planes [[:testa [0 0 0] [0 0 1] [12 -7 0]]      ; slide vector ⟂ the normal
                 [:fianco [45 3 2] [1 0 0] [0 9 -6]]
                 [:becco [3 40 -2] [0 1 0] [-8 0 11]]]
-        clean (fuse/fit-rigid (mapv (fn [[nm p d _]] (anchor nm p d)) planes))
-        slid (fuse/fit-rigid (mapv (fn [[nm p d s]]
-                                     ;; the twin's origin sits elsewhere on the plane
-                                     (update (anchor nm p d) :to-pos
-                                             #(m/v+ % (fuse/transform-dir known-rt s))))
-                                   planes))]
+        ;; plus the asymmetric anchor three planes always need (see
+        ;; three-planes-alone-are-ambiguous): the point is what makes the answer
+        ;; unique, the planes are what this test is about.
+        pt (assoc (anchor :spigolo [12 -9 22] [0 1 0]) :point? true)
+        clean (fuse/fit-rigid (conj (mapv (fn [[nm p d _]] (anchor nm p d)) planes) pt))
+        slid (fuse/fit-rigid (conj (mapv (fn [[nm p d s]]
+                                           ;; the twin's origin sits elsewhere on the plane
+                                           (update (anchor nm p d) :to-pos
+                                                   #(m/v+ % (fuse/transform-dir known-rt s))))
+                                         planes)
+                                   pt))]
     (is (nil? (:error slid)) (:error slid))
     (is (approx= 0.0 (:rms-mm slid) 1e-6)
         "sliding within the plane is not an error, so it costs nothing")
@@ -129,7 +137,8 @@
   (let [same (fn [nm p d] {:name nm :from-pos p :to-pos p :from-dir d :to-dir d})
         fit (fuse/fit-rigid [(same :a [0 0 0] [0 0 1])
                              (same :b [40 1 2] [1 0 0])
-                             (same :c [2 38 -3] [0 1 0])])]
+                             (same :c [2 38 -3] [0 1 0])
+                             (assoc (same :d [7 -9 21] [0 1 0]) :point? true)])]
     (is (nil? (:error fit)))
     (is (approx= 0.0 (:rms-mm fit) 1e-9))
     (is (approx= 0.0 (la/v-norm (:t fit)) 1e-6) "no translation")
@@ -194,24 +203,35 @@
                   :from-pos (get-in clip-origins [from nm]) :from-dir (get-in clip-normals [from nm])})
         [:flank :head :tip]))
 
-(deftest vincenzos-three-sessions-fuse
-  (doseq [[to from] [[:A :B] [:A :C] [:B :C]]]
-    (let [fit (fuse/fit-rigid (clip-anchors to from))]
-      (is (nil? (:error fit)) (str to "←" from ": " (:error fit)))
-      (is (< (:max-normal-deg fit) 2.5)
-          (str to "←" from ": normals agree to " (:max-normal-deg fit) "°"))))
+(deftest vincenzos-three-planes-are-ambiguous-and-say-so
+  ;; What he saw across nine photos, in one word: 'specchiato'. Three planes, read
+  ;; as unsigned, admit several placements that fit identically, and on a piece
+  ;; with a near mirror symmetry those placements ARE mirror images of each other.
+  ;; The fusion used to pick one per session — a different one per session, which
+  ;; is why B came out mirrored about :head and C about :tip.
+  (let [fits (mapv #(fuse/fit-rigid (clip-anchors (first %) (second %)))
+                   [[:A :B] [:A :C] [:B :C]])
+        refused (filterv :error fits)]
+    (is (seq refused)
+        "at least one pair must own up to the ambiguity instead of picking a branch")
+    (is (every? #(re-find #"sistemazioni|ASIMMETRICO" (:error %)) refused)
+        "and say what would settle it")))
 
-  (testing "the sign of a normal is not information, and flipping any of them changes nothing"
-    (let [base (fuse/fit-rigid (clip-anchors :A :C))
-          flipped (fuse/fit-rigid (mapv (fn [a] (if (= :flank (:name a))
-                                                  (update a :from-dir #(mapv - %)) a))
-                                        (clip-anchors :A :C)))]
-      (is (nil? (:error flipped)))
-      (is (< (js/Math.abs (- (:max-normal-deg base) (:max-normal-deg flipped))) 1e-6))))
-
-  (testing "three planes cannot put their own millimetres to the test"
-    (is (false? (:distances-testify? (fuse/fit-rigid (clip-anchors :A :C))))
-        "three offsets, three translational unknowns — the mm are zero by construction")))
+(deftest one-asymmetric-point-settles-the-mirror
+  ;; The remedy the refusal names. A point is not mirror-symmetric with anything:
+  ;; the rival placement puts it somewhere else, and the tie is over.
+  (let [planes [(anchor :testa [0 0 0] [0 0 1])
+                (anchor :fianco [45 3 2] [1 0 0])
+                (anchor :becco [3 40 -2] [0 1 0])]
+        with-point (conj planes (assoc (anchor :spigolo [12 -9 22] [0 1 0]) :point? true))
+        ambiguous (fuse/fit-rigid planes)
+        settled (fuse/fit-rigid with-point)]
+    (is (some? (:error ambiguous)) "three planes alone: refused")
+    (is (nil? (:error settled)) (:error settled))
+    (is (approx= 0.0 (rt-error settled [70 -50 40]) 1e-3)
+        "and the motion recovered is the known one")
+    (is (true? (:distances-testify? settled))
+        "with a point in it the millimetres finally mean something")))
 
 (deftest zones-that-really-are-different-are-still-refused
   ;; The check that survives sign-agnosticity: the ACUTE angle between two faces
@@ -294,7 +314,8 @@
 (deftest transported-poses-keep-their-frame
   (let [fit (fuse/fit-rigid [(anchor :a [0 0 0] [0 0 1])
                              (anchor :b [40 2 1] [1 0 0])
-                             (anchor :c [3 35 -2] [0 1 0])])
+                             (anchor :c [3 35 -2] [0 1 0])
+                             (assoc (anchor :d [9 -8 25] [0 1 0]) :point? true)])
         pose {:position [5 6 7] :heading [0 0 1] :up [0 1 0]}
         moved (fuse/transform-pose fit pose)]
     (testing "heading and up rotate, and stay unit and perpendicular"

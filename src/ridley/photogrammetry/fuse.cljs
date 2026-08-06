@@ -285,6 +285,56 @@
             tied (filter #(<= (:cost %) (+ (* 1.05 best) 1.0)) cands)]
         (:seed (apply min-key :spread tied))))))
 
+(def ^:private branch-gap-mm
+  "How far apart two placements must be before they count as different answers
+   rather than the same one twice."
+  2.0)
+
+(defn- outward-votes
+  "How many of the anchors' recorded normals this placement agrees with.
+
+   Taken as unsigned, three planes are satisfied by four placements — the
+   identity and the half-turns that map the triple onto itself — and on a nearly
+   symmetric object those are mirror images of one another. Nothing in the plane
+   geometry separates them, which is what Vincenzo saw across nine photos
+   ('specchiato', session by session, 2026-08-06).
+
+   But the sign is not nothing. The stage points a fitted normal toward the
+   cameras that SAW the zone, and a face is only visible from outside it — so
+   the recorded direction is usually the outward one, just not reliably enough
+   to be believed one mark at a time. Believed by MAJORITY it is exactly right:
+   the correct placement agrees with most of them, and when the vote is tied the
+   honest answer is that the anchors do not say."
+  [rt anchors]
+  (->> anchors
+       (filter plane-anchor?)
+       (map (fn [{:keys [from-dir to-dir]}]
+              (if (pos? (m/dot (transform-dir rt from-dir) (m/normalize to-dir))) 1 0)))
+       (reduce + 0)))
+
+(defn- probe-point
+  "A point out at the object's own scale, where two placements that differ show
+   the difference in millimetres."
+  [anchors]
+  (let [c (centroid (mapv :from-pos anchors))
+        r (reduce max 1.0 (map #(la/v-norm (la/v-sub (:from-pos %) c)) anchors))]
+    (la/v-add c [r r r])))
+
+(defn- branches
+  "Every placement these anchors admit, refined, with its cost and its vote."
+  [anchors sigma-mm]
+  (let [k (count (filterv plane-anchor? anchors))
+        masks (if (<= 1 k 6) (range (bit-shift-left 1 k)) [0])
+        rfn (residual-fn anchors sigma-mm)]
+    (->> masks
+         (keep (fn [m] (seed-once (flip-planes anchors m))))
+         (mapv (fn [s]
+                 (let [res (lm/solve rfn (vec (concat (cam/rot-mat->rodrigues (:R s)) (:t s)))
+                                     {:max-iterations 120})
+                       rt (rt-of-params (:params res))]
+                   {:rt rt :params (:params res) :cost (:cost res)
+                    :votes (outward-votes rt anchors)}))))))
+
 (defn- per-anchor
   "What each anchor costs after the fit. For a plane: its distance from the twin
    PLANE (mm) and how far the normal is turned (degrees) — deliberately NOT how
@@ -417,32 +467,89 @@
        {:error (normal-consistency-error anchors)}
 
        :else
-       (if-let [seed (seed-rt anchors sigma-mm)]
-         (let [rfn (residual-fn anchors sigma-mm)
-               p0 (vec (concat (cam/rot-mat->rodrigues (:R seed)) (:t seed)))
-               res (lm/solve rfn p0 {:max-iterations 120})
-               rt (rt-of-params (:params res))
-               pa (per-anchor rt anchors)
-               ds (mapv :residual-mm pa)]
-           (if (underdetermined? rfn (:params res))
-             {:error (str "questi agganci non fissano tutto il movimento: "
-                          (if (and (>= (count planes) 2) (empty? points))
-                            (str "due piani lasciano libero lo scorrimento lungo la loro "
-                                 "intersezione. Aggiungi un TERZO piano con la normale in "
-                                 "un'altra direzione, oppure un mark su un punto vero")
-                            (str "gli agganci sono allineati o le normali sono tutte "
-                                 "parallele fra loro. Serve un aggancio fuori da quella "
-                                 "direzione")))}
-             (assoc rt
-                    :rvec (vec (take 3 (:params res)))
-                    :n (count anchors)
-                    :planes (count planes)
-                    :points (count points)
-                    :per-anchor pa
+       (let [rfn (residual-fn anchors sigma-mm)
+             cands (branches anchors sigma-mm)
+             best-cost (reduce min js/Number.MAX_VALUE (map :cost cands))
+             ;; every placement that fits the PLANES as well as the best one:
+             ;; between these, the plane geometry has nothing more to say
+             tied (filterv #(<= (:cost %) (+ (* 1.2 best-cost) 1.0)) cands)
+             probe (probe-point anchors)
+             ;; The recorded normals only choose the wording of the refusal, never
+             ;; the answer. Believing them by majority was tried and measured on
+             ;; Vincenzo's three sessions (2026-08-06): it picked branches that
+             ;; contradicted each other, the loop closing at 80 mm while every
+             ;; pairwise report claimed a fraction of a degree. Believing them
+             ;; when unanimous was tried too, and turning the one dissenter round
+             ;; by hand left the loop at 33 mm — because unanimity among signs
+             ;; that are individually unreliable is not evidence either.
+             ;;
+             ;; So: if a rival placement fits, REFUSE. What makes a fusion
+             ;; unambiguous is not a tiebreak, it is anchors that are themselves
+             ;; asymmetric — a point, or planes enough that no half-turn maps the
+             ;; set onto itself. Then no rival fits and nothing has to be chosen.
+             ;; COST first, votes only to break a tie: what the anchors measure
+             ;; outranks what their normals claim.
+             winner (first (sort-by (juxt :cost #(- (:votes %))) tied))
+             rival (first (filter (fn [c]
+                                    (> (la/v-norm (la/v-sub (transform-point (:rt c) probe)
+                                                            (transform-point (:rt winner) probe)))
+                                       branch-gap-mm))
+                                  tied))
+             dissenting (when rival
+                          (->> (filter plane-anchor? anchors)
+                               (filter (fn [{:keys [from-dir to-dir]}]
+                                         (neg? (m/dot (transform-dir (:rt winner) from-dir)
+                                                      (m/normalize to-dir)))))
+                               (mapv :name)))]
+         (if (empty? cands)
+           {:error (str "i mark di aggancio non determinano una rotazione: sono allineati, "
+                        "oppure le loro normali sono parallele fra loro. "
+                        "Serve un aggancio che guardi in un'altra direzione")}
+           (let [res {:params (:params winner) :cost (:cost winner)}
+                 rt (:rt winner)
+                 pa (per-anchor rt anchors)
+                 ds (mapv :residual-mm pa)]
+             ;; 'not enough constraints' comes BEFORE 'more than one answer':
+             ;; when both are true, the first is the more useful thing to be told.
+             (if (underdetermined? rfn (:params res))
+               {:error (str "questi agganci non fissano tutto il movimento: "
+                            (if (and (>= (count planes) 2) (empty? points))
+                              (str "due piani lasciano libero lo scorrimento lungo la loro "
+                                   "intersezione. Aggiungi un TERZO piano con la normale in "
+                                   "un'altra direzione, oppure un mark su un punto vero")
+                              (str "gli agganci sono allineati o le normali sono tutte "
+                                   "parallele fra loro. Serve un aggancio fuori da quella "
+                                   "direzione")))}
+               (if rival
+                 {:error (str "questi agganci ammettono DUE sistemazioni lontane "
+                              (js/Math.round (la/v-norm (la/v-sub (transform-point (:rt rival) probe)
+                                                                  (transform-point rt probe))))
+                              " mm l'una dall'altra, e combaciano ugualmente bene: su un "
+                              "pezzo quasi simmetrico sono l'una lo specchio dell'altra. "
+                              "Tre facce da sole non bastano MAI a distinguerle: una mezza "
+                              "rotazione attorno a una qualunque delle tre normali riporta "
+                              "le tre facce su se stesse. Non è una questione di "
+                              "precisione, e non posso sceglierne una a caso. Serve un "
+                              "aggancio ASIMMETRICO: un dettaglio che esista da una parte "
+                              "sola — uno spigolo, un rilievo, una tacca — marcato in "
+                              "entrambe le sessioni e dichiarato punto vero con "
+                              "`(plane-mark {… :point? true})`. In alternativa una quarta "
+                              "faccia messa di traverso"
+                              (when (seq dissenting)
+                                (str ". Per inciso: il verso di "
+                                     (apply str (interpose " e " (map str dissenting)))
+                                     " contraddice quello degli altri mark, quindi quello "
+                                     "è comunque da rivedere")))}
+                 (assoc rt
+                        :rvec (vec (take 3 (:params res)))
+                        :n (count anchors)
+                        :planes (count planes)
+                        :points (count points)
+                        :per-anchor pa
                     ;; reported NEXT TO the distance rms, never instead of it: with
                     ;; three planes the distances alone can always be zeroed, so a
                     ;; distance-only verdict says 'perfect' about anything.
-                    :max-normal-deg (reduce max 0.0 (keep :normal-deg pa))
+                        :max-normal-deg (reduce max 0.0 (keep :normal-deg pa))
                     ;; Can the DISTANCES testify? Each plane pins the translation
                     ;; along one direction, each point along three. With exactly
                     ;; three planes that is three equations in three unknowns:
@@ -450,12 +557,9 @@
                     ;; only the normals carry information (they are 2 constraints
                     ;; each against 3 rotational unknowns, so they are checked
                     ;; from the third plane on).
-                    :distances-testify? (> (+ (count planes) (* 3 (count points))) 3)
-                    :rms-mm (Math/sqrt (/ (reduce + 0.0 (map #(* % %) ds)) (count ds)))
-                    :max-mm (reduce max 0.0 ds))))
-         {:error (str "i mark di aggancio non determinano una rotazione: sono allineati, "
-                      "oppure le loro normali sono parallele fra loro. "
-                      "Serve un aggancio che guardi in un'altra direzione")})))))
+                        :distances-testify? (> (+ (count planes) (* 3 (count points))) 3)
+                        :rms-mm (Math/sqrt (/ (reduce + 0.0 (map #(* % %) ds)) (count ds)))
+                        :max-mm (reduce max 0.0 ds)))))))))))
 
 ;; Homonymous marks are NOT averaged into one: with plane semantics the two
 ;; origins are legitimately different points ON THE SAME PLANE, so their mean is
