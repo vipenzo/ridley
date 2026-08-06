@@ -183,11 +183,6 @@
    actually costs at the far edge of a piece that size."
   20.0)
 
-(def ^:private point-normal-arm-mm
-  "The same for a POINT anchor, where the position carries the constraint and the
-   normal only nudges: a tenth of the plane arm."
-  5.0)
-
 ;; `up` stays OUT of the cost entirely, for both kinds — it is projected from the
 ;; object's own pose, which differs BY CONSTRUCTION between two sessions.
 
@@ -225,11 +220,14 @@
             s (if (neg? (m/dot moved-n n)) -1.0 1.0)
             dn (la/v-scale (la/v-sub (la/v-scale moved-n s) n) plane-normal-arm-mm)]
         (into [(m/dot d n)] dn))
-      (let [dn (if (and from-dir to-dir)
-                 (la/v-scale (la/v-sub (transform-dir rt from-dir) (m/normalize to-dir))
-                             point-normal-arm-mm)
-                 [0.0 0.0 0.0])]
-        [(nth d 0) (nth d 1) (nth d 2) (la/v-norm dn)]))))
+      ;; A POINT contributes its position and NOTHING ELSE. Declaring `:point?`
+      ;; says 'believe where this is'; it says nothing about a direction, and the
+      ;; :heading such a mark carries is whatever the plane gesture happened to
+      ;; leave there — [0 0 1] for the one-click plate-parallel case. Weighing it
+      ;; wrecked the very fit the point was added to rescue (Vincenzo 2026-08-06:
+      ;; the notch reported 84° and 170° of 'normal' error, and dragged the
+      ;; rotation with it at a 5 mm arm).
+      [(nth d 0) (nth d 1) (nth d 2) 0.0])))
 
 (defn- residual-fn [anchors sigma-mm]
   (fn [p]
@@ -349,11 +347,13 @@
                 d (if plane?
                     (js/Math.abs (m/dot (la/v-sub moved to-pos) (m/normalize to-dir)))
                     (la/v-norm (la/v-sub moved to-pos)))
-                ang (when (and from-dir to-dir)
-                      ;; measured between LINES for a plane (a plane has no side,
-                      ;; see anchor-residuals) and between rays for a point
-                      (let [c0 (m/dot (transform-dir rt from-dir) (m/normalize to-dir))
-                            c (max -1.0 (min 1.0 (if plane? (js/Math.abs c0) c0)))]
+                ;; only a plane has an orientation to be wrong about; a point's
+                ;; :heading is not part of what it claims
+                ang (when (and plane? from-dir to-dir)
+                      ;; between LINES, not rays: a plane has no side
+                      (let [c (max -1.0 (min 1.0 (js/Math.abs
+                                                  (m/dot (transform-dir rt from-dir)
+                                                         (m/normalize to-dir)))))]
                         (* (/ 180.0 Math/PI) (Math/acos c))))]
             {:name name :kind (if plane? :piano :punto) :residual-mm d :normal-deg ang}))
         anchors))
@@ -441,7 +441,7 @@
    Returns {:R :t :rvec :rms-mm :max-mm :per-anchor :n :planes :points} or
    {:error <human sentence>}."
   ([anchors] (fit-rigid anchors {}))
-  ([anchors {:keys [sigma-mm] :or {sigma-mm 0.2}}]
+  ([anchors {:keys [sigma-mm no-loo?] :or {sigma-mm 0.2}}]
    (let [planes (filterv plane-anchor? anchors)
          points (filterv (complement plane-anchor?) anchors)
          short-baseline? (and (>= (count points) 2)
@@ -559,7 +559,35 @@
                     ;; from the third plane on).
                         :distances-testify? (> (+ (count planes) (* 3 (count points))) 3)
                         :rms-mm (Math/sqrt (/ (reduce + 0.0 (map #(* % %) ds)) (count ds)))
-                        :max-mm (reduce max 0.0 ds)))))))))))
+                        :max-mm (reduce max 0.0 ds)
+                        ;; LEAVE-ONE-OUT, the same move the PnP makes on a
+                        ;; mislabelled corner: least squares spreads the damage,
+                        ;; so a single wrong anchor does NOT show up as one big
+                        ;; residual — it shows up as everything being a bit off.
+                        ;; Dropping each in turn is what tells them apart. On
+                        ;; Vincenzo's session B (2026-08-06) the full fit read
+                        ;; 2.5 mm and every anchor looked mediocre; without
+                        ;; :flank it read 0.07 mm, and :flank was indeed the
+                        ;; opposite face of a piece that has two alike.
+                        :suspect
+                        (when-not no-loo?
+                          (let [full (Math/sqrt (/ (reduce + 0.0 (map #(* % %) ds)) (count ds)))]
+                            (when (> full 0.4)
+                              (->> anchors
+                                   (keep (fn [drop-me]
+                                           (let [rest- (filterv #(not= (:name %) (:name drop-me)) anchors)
+                                                 f (fit-rigid rest- {:sigma-mm sigma-mm :no-loo? true})]
+                                             ;; …and only when what is LEFT can still be
+                                             ;; contradicted. Drop the point from three
+                                             ;; planes plus a point and the residual falls
+                                             ;; to zero by construction, which would accuse
+                                             ;; the one anchor that was doing its job.
+                                             (when (and (nil? (:error f))
+                                                        (:distances-testify? f)
+                                                        (< (:rms-mm f) (/ full 4.0)))
+                                               {:name (:name drop-me) :rms-without (:rms-mm f)}))))
+                                   (sort-by :rms-without)
+                                   first))))))))))))))
 
 ;; Homonymous marks are NOT averaged into one: with plane semantics the two
 ;; origins are legitimately different points ON THE SAME PLANE, so their mean is

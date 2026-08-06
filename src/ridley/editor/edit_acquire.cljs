@@ -4078,6 +4078,13 @@
           "costruzione (tre equazioni, tre incognite) — non sono una prova, e qui "
           "l'unica prova sono le NORMALI. Un quarto piano, o un mark su un punto "
           "vero (:point? true), mette alla prova anche i millimetri.")))
+  (when-let [s (:suspect fit)]
+    (state/capture-println
+     (str ";; acquire-union: togliendo " (:name s) " lo scarto crolla da "
+          (modal/fmt-number (:rms-mm fit)) " a " (modal/fmt-number (:rms-without s))
+          " mm — è quell'aggancio a essere sbagliato, non gli altri. I minimi "
+          "quadrati spalmano il danno su tutti, per questo nessuno sembrava "
+          "colpevole. Rifallo, o togli quel mark dalla fusione.")))
   (when-let [w (fuse/worst-anchor (:per-anchor fit))]
     (state/capture-println
      (str ";; acquire-union: " (:name w) " si discosta dagli altri ("

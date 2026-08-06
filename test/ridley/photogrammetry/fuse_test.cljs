@@ -327,3 +327,36 @@
       (is (approx= 0.0 (la/v-norm (la/v-sub (:position moved)
                                             (fuse/transform-point known-rt [5 6 7])))
                    1e-5)))))
+
+(deftest the-culprit-is-named-instead-of-spread-over-everyone
+  ;; Vincenzo's session B, 2026-08-06: rms 2.5 mm with every anchor looking
+  ;; mediocre and none obviously guilty — because least squares does not leave a
+  ;; wrong anchor sticking out, it shares the damage. Dropping :flank took it to
+  ;; 0.07 mm, and :flank was the opposite of the two alike faces of the clip.
+  (let [B {:flank {:position [-12.7218 -0.6151 6.6052] :heading [0.8993 0.0519 -0.4342]}
+           :head {:position [-3.4436 -3.9861 13.2627] :heading [-0.0479 0.9976 -0.0503]}
+           :tip {:position [-1.2977 -3.5465 40.7239] :heading [-0.0065 0.0393 0.9992]}
+           :notch {:position [0.9154 -7.916 45.1577] :point? true}}
+        A {:flank {:position [13.4631 16.2897 5.1921] :heading [0.5817 -0.8132 0.0169]}
+           :head {:position [0.6277 1.9013 8.7112] :heading [-0.0199 0.0108 0.9997]}
+           :tip {:position [-18.8248 -1.5046 9.7131] :heading [0.9839 0.178 -0.0135]}
+           :notch {:position [-23.2685 -0.4632 14.5843] :point? true}}
+        anchors (mapv (fn [nm] (cond-> {:name nm
+                                        :to-pos (:position (nm A)) :from-pos (:position (nm B))
+                                        :to-dir (:heading (nm A)) :from-dir (:heading (nm B))}
+                                 (:point? (nm A)) (assoc :point? true)))
+                      [:flank :head :tip :notch])
+        fit (fuse/fit-rigid anchors)]
+    (is (nil? (:error fit)) (:error fit))
+    (is (> (:rms-mm fit) 1.0) "the fit as a whole is poor")
+    (is (= :flank (:name (:suspect fit))) "and the one to blame is named")
+    (is (< (:rms-without (:suspect fit)) 0.2) "because without it the rest agree")
+
+    (testing "a fit that is already good accuses no one"
+      (let [clean (fuse/fit-rigid (filterv #(not= :flank (:name %)) anchors))]
+        (is (nil? (:suspect clean)))))
+
+    (testing "and dropping the POINT is never taken as evidence"
+      ;; three planes left: their millimetres are zero by construction, which
+      ;; would frame the anchor that was doing the work
+      (is (not= :notch (:name (:suspect fit)))))))
