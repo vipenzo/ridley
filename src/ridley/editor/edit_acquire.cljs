@@ -2335,8 +2335,16 @@
           (auto-log! (str "  riproiezione " (modal/fmt-number (:rms-px before))
                           " → " (modal/fmt-number rms-px) " px"))
           (save-acquire-state!)
-          (redraw-pnp-preview!)
-          (redraw-overlay-dots!)
+          ;; Re-ENTER the photo, don't just redraw over it. The refinement moves
+          ;; two things the viewport only picks up when a photo is loaded: the
+          ;; camera pose (viewport/set-camera-pose!) and the FIELD OF VIEW, which
+          ;; comes from the focal via set-photo-for-current-focal!. Redrawing the
+          ;; overlays alone left the photo you were standing on with the OLD
+          ;; framing under the NEW dots — misalignment that was pure display, and
+          ;; that vanished as soon as you navigated away and back (Vincenzo
+          ;; 2026-08-06: 'se faccio R su una foto sembra si disallineino le
+          ;; altre'). One call, the same one every navigation makes.
+          (enter-photo! (:current-idx @session))
           (set-status-message!
            (str "Rifinitura: focale " (modal/fmt-number focal-mm) " mm, riproiezione "
                 (modal/fmt-number (:rms-px before)) " → " (modal/fmt-number rms-px) " px")))))
