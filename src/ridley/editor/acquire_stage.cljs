@@ -30,6 +30,8 @@
             [ridley.photogrammetry.bridge :as bridge]
             [ridley.photogrammetry.exif :as exif]
             [ridley.photogrammetry.triangulate :as tri]
+            [ridley.photogrammetry.edge :as pedge]
+            [ridley.photogrammetry.edge-snap :as edge-snap]
             [ridley.photogrammetry.fuse :as fuse]
             [ridley.export.stl :as stl]))
 
@@ -249,17 +251,38 @@
                                       pts)})))))
            (:source-marks @stage)))))
 
-(declare plane-preview-items)
+(def ^:private source-edge-color 0xff8811)   ; arancio scuro: gli spigoli nel sorgente
+
+(defn- source-edge-items
+  "Every measured edge of the evaluated acquire, drawn AS IT IS WRITTEN — from
+   its own :a to its own :b, not from the gesture's state. Same principle as
+   source-mark-items: what you see is what the source says, so a divergence
+   between what was written and what is displayed shows up at once instead of
+   three steps later as displaced geometry. It is also the after-the-fact check —
+   navigate the photos and the segment must stay on the object's edge."
+  []
+  (when (:show-source-marks? @stage true)
+    (into []
+          (keep (fn [[_ e]]
+                  (when (and (map? e) (:a e) (:b e))
+                    {:type :lines
+                     :data [{:from (vec (:a e)) :to (vec (:b e))
+                             :color source-edge-color}]})))
+          (:source-edges @stage))))
+
+(declare plane-preview-items edge-preview-items)
 
 (defn- show-frustums!
   "Repaint the stage's OWN overlay layer: the ghost frustums (free orbit) plus
-   whatever the plane-mark gesture is showing (in pose). One call, one layer —
-   they share it because both are the stage's, and because the layer is
-   deliberately NOT the preview layer an open edit-path-2d ricalco owns."
+   whatever the plane-mark and edge gestures are showing (in pose). One call, one
+   layer — they share it because all of them are the stage's, and because the
+   layer is deliberately NOT the preview layer an open edit-path-2d ricalco owns."
   []
   (viewport/show-frustum-layer! (-> (vec (frustum-preview-items))
                                     (into (source-mark-items))
-                                    (into (plane-preview-items)))))
+                                    (into (source-edge-items))
+                                    (into (plane-preview-items))
+                                    (into (edge-preview-items)))))
 
 ;; ------------------------------------------------------------
 ;; In-pose / free-orbit transitions. In pose the camera is locked (set-camera-pose!
@@ -403,7 +426,8 @@
 
 (def ^:private click-slop-px 6)
 
-(declare plane-mode? plane-click! plane-key! toggle-plane-mode! toggle-source-marks!)
+(declare plane-mode? plane-click! plane-key! toggle-plane-mode! toggle-source-marks!
+         edge-mode? edge-click! edge-key! toggle-edge-mode! edge-hud-content edge-status)
 
 (defn- editable? [^js el]
   (boolean (and el (or (#{"INPUT" "TEXTAREA"} (.-tagName el))
@@ -415,19 +439,21 @@
       (free-orbit?)
       (swap! stage assoc :press {:x (.-clientX e) :y (.-clientY e)
                                  :idx (viewport/raycast-frustum-pick e)})
-      ;; in pose, a clean click marks a plane point — but never while a modal
-      ;; (an edit-path-2d ricalco) is up: there the click is the ricalco's.
-      (and (plane-mode?) (:in-pose? @stage) (not (modal/active?)))
-      (swap! stage assoc :press {:x (.-clientX e) :y (.-clientY e) :plane? true}))))
+      ;; in pose, a clean click marks a plane point or draws an edge stroke — but
+      ;; never while a modal (an edit-path-2d ricalco) is up: there the click is
+      ;; the ricalco's. Only one gesture is ever on (each toggle stops the other).
+      (and (or (plane-mode?) (edge-mode?)) (:in-pose? @stage) (not (modal/active?)))
+      (swap! stage assoc :press {:x (.-clientX e) :y (.-clientY e) :gesture? true}))))
 
 (defn- on-pointerup [^js e]
   (when (zero? (.-button e))
-    (let [{:keys [x y idx plane?]} (:press @stage)]
+    (let [{:keys [x y idx gesture?]} (:press @stage)]
       (swap! stage dissoc :press)
       (when (and (some? x)
                  (< (js/Math.hypot (- (.-clientX e) x) (- (.-clientY e) y)) click-slop-px))
-        (if plane?
-          (when (plane-mode?) (plane-click! e))
+        (if gesture?
+          (cond (plane-mode?) (plane-click! e)
+                (edge-mode?) (edge-click! e))
           (when (and (free-orbit?) (some? idx))
             ;; Defer the pose (which disables the orbit controls) to a macrotask so
             ;; TrackballControls processes THIS pointerup first — it early-returns while
@@ -460,6 +486,9 @@
         ;; Esc, which it consumes BEFORE leave-pose!: pressing it once should
         ;; close the gesture, not throw you out of the photo you were measuring on.
         (and (plane-mode?) (not (modal/active?)) (plane-key! k (.-shiftKey e)))
+        (.preventDefault e)
+        ;; the edge gesture owns the same keys while IT is on, for the same reason
+        (and (edge-mode?) (not (modal/active?)) (edge-key! k))
         (.preventDefault e)
         (and (:in-pose? @stage) (not (modal/active?)) (= k "Escape"))
         (do (.preventDefault e) (leave-pose!))))))
@@ -759,7 +788,10 @@
         :always (into (map (fn [{:keys [mark radius]}] (disc-item mark radius 0.22))
                            (get-in @stage [:plane :committed] [])))))))
 
-(defn- redraw-plane! []
+(defn- redraw-overlay!
+  "Repaint everything the stage draws and refresh its toolbar/HUD. Shared by the
+   plane gesture and the edge gesture — one call, because they share one layer."
+  []
   (show-frustums!)
   ;; update-toolbar! refreshes the HUD too — it is called on EVERY pose change
   ;; (frustum click, Prev/Next, photo lock), so hanging the HUD off it is what
@@ -1047,7 +1079,7 @@
         i (or (first (keep-indexed (fn [i v] (when (= v cur) i)) plane-nudge-steps)) 2)]
     (swap! stage assoc-in [:plane :nudge-step]
            (nth plane-nudge-steps (mod (inc i) (count plane-nudge-steps))))
-    (redraw-plane!)))
+    (redraw-overlay!)))
 
 (defn- hud-nudge-pad
   "The origin controls, in their OWN block above the detail paragraph.
@@ -1150,13 +1182,15 @@
     (.appendChild frag (hud-actions))
     frag))
 
-(defn- refresh-plane-hud!
-  "Rebuild the HUD from the current state (or remove it when plane mode is off).
+(defn- refresh-hud!
+  "Rebuild the HUD of whichever gesture is on (or remove it when none is).
    Rebuilt wholesale rather than patched: it is a dozen nodes, and a panel that
-   is a pure function of the state can never drift out of sync with it."
+   is a pure function of the state can never drift out of sync with it. One panel
+   serves both gestures because only one of them is ever on."
   []
-  (if-not (plane-mode?)
-    (when-let [^js p (hud-el)] (.remove p))
+  (if-let [content (cond (plane-mode?) (hud-content)
+                         (edge-mode?) (edge-hud-content)
+                         :else nil)]
     (when-let [^js host (.getElementById js/document "viewport-panel")]
       (let [^js panel (or (hud-el)
                           (let [^js p (el "div" nil)]
@@ -1164,7 +1198,8 @@
                             (.appendChild host p)
                             p))]
         (set! (.-innerHTML panel) "")
-        (.appendChild panel (hud-content))))))
+        (.appendChild panel content)))
+    (when-let [^js p (hud-el)] (.remove p))))
 
 ;; ---- the gesture ----
 
@@ -1193,7 +1228,7 @@
   (say! (str "modo piano attivo. Clicca lo STESSO punto su almeno 2 foto ("
              "usa [ e ] per cambiare), poi 'n' per il punto successivo. "
              "Servono 3 punti; Invio crea il piano, Esc esce."))
-  (redraw-plane!))
+  (redraw-overlay!))
 
 (declare unwrap-edit-mark!)
 
@@ -1205,7 +1240,7 @@
   []
   (let [edit (:edit (:plane @stage))]
     (swap! stage dissoc :plane)
-    (redraw-plane!)                    ; :plane gone → the HUD removes itself
+    (redraw-overlay!)                    ; :plane gone → the HUD removes itself
     (when edit (unwrap-edit-mark! edit))))
 
 (defn- place-origin!
@@ -1241,7 +1276,7 @@
           ;; placed origin must survive that and be carried onto the refit.
           (swap! stage assoc-in [:plane :origin-override] hit)
           (say! "origine del piano spostata dove hai cliccato")
-          (redraw-plane!)
+          (redraw-overlay!)
           (schedule-live-reeval!)))))
 
 (defn- add-observation!
@@ -1282,7 +1317,7 @@
                         " (stessa numerazione della toolbar): vacci con [ o ] e riclicca.")
                    "Con due sole foto non si può dire quale: aggiungine una terza.")))
       :else nil))
-  (redraw-plane!))
+  (redraw-overlay!))
 
 (defn- plane-click!
   "One click in plane mode. Its meaning depends on the stage of the gesture: with
@@ -1314,7 +1349,7 @@
       (say! "questo punto non è affidabile: riclicca prima di passare al successivo")
       :else
       (do (swap! stage update-in [:plane :picks] conj {:obs {}})
-          (redraw-plane!)))))
+          (redraw-overlay!)))))
 
 (defn- add-another-point!
   "'One more point'. With a plane on screen this means going BACK to picking
@@ -1331,7 +1366,7 @@
                                               (conj ps {:obs {}})
                                               ps))))))
         (say! "aggiungi un punto: click su 2 foto, poi Invio per rifare il piano")
-        (redraw-plane!))
+        (redraw-overlay!))
     (next-plane-point!)))
 
 (defn- undo-plane-click!
@@ -1350,7 +1385,7 @@
                    (update picks i #(retriangulate (update % :obs dissoc victim))))
                  (> (count picks) 1) (vec (butlast picks))
                  :else picks)))))
-  (redraw-plane!))
+  (redraw-overlay!))
 
 ;; ---- source write-back ----
 
@@ -1592,7 +1627,7 @@
                                  (mapv #(src/fmt-number %) (:per-point mark))))))
                    " Naviga le foto con [ e ] e guarda se il dischetto resta incollato "
                    "alla superficie: se sì Invio per accettarlo, se no Backspace per rifarlo."))
-        (redraw-plane!)))))
+        (redraw-overlay!)))))
 
 (defn- accept-candidate!
   "Second Enter: write the previewed plane into the source. Editing an existing
@@ -1613,7 +1648,7 @@
                                    (dissoc :candidate :candidate-radius :edit
                                            :origin-centroid :origin-override))))
                 (say! label)
-                (redraw-plane!))]
+                (redraw-overlay!))]
     (if edit
       ;; re-locate the form: the buffer may have moved since it was opened
       (if-let [[from to] (edit-mark-bounds (cm/get-value))]
@@ -1625,7 +1660,7 @@
         (say! "non trovo più (edit-plane-mark …) nel sorgente: è stata modificata?"))
       (if-let [nm (commit-plane-mark! mark pts)]
         (done! (str "creato :" nm ". Usalo così:  (turtle (:" nm " (:marks A)) (edit-path-2d))"))
-        (redraw-plane!)))))
+        (redraw-overlay!)))))
 
 (defn- set-candidate-origin!
   "Move the candidate's origin AND re-baseline the along-normal offset.
@@ -1697,7 +1732,7 @@
                        ": destra " (src/fmt-number dr)
                        ", su " (src/fmt-number du)
                        ", normale " (src/fmt-number dn) " mm dal fit")))
-          (redraw-plane!)
+          (redraw-overlay!)
           (schedule-live-reeval!)))))
 
 (def ^:private live-reeval-delay-ms
@@ -1743,7 +1778,7 @@
   (swap! stage assoc-in [:plane :offset] nil)
   (apply-offset!)
   (say! "piano rimesso dove l'hanno messo i punti")
-  (redraw-plane!)
+  (redraw-overlay!)
   (schedule-live-reeval!))
 
 (defn- recentre-origin!
@@ -1756,13 +1791,13 @@
     (swap! stage update :plane dissoc :origin-override)
     (say! "origine rimessa al centro dei punti")
     (schedule-live-reeval!)
-    (redraw-plane!)))
+    (redraw-overlay!)))
 
 (defn- discard-candidate! []
   (swap! stage update :plane dissoc
          :candidate :candidate-radius :origin-centroid :origin-override)
   (say! "piano proposto scartato — i punti restano, correggili e ripremi Invio")
-  (redraw-plane!))
+  (redraw-overlay!))
 
 (defn- plane-key!
   "Plane-mode keys. Returns true when the key was consumed. Enter is two-stage —
@@ -1835,7 +1870,7 @@
                           "'n' per aggiungere un punto al piano.")
                      "nessun punto memorizzato: clicca i punti del piano come per un mark nuovo.")
                    " Invio accetta, Esc annulla e lascia il mark com'era."))
-        (redraw-plane!)))))
+        (redraw-overlay!)))))
 
 (defn- open-pending-edit!
   "Consume the `(edit-plane-mark …)` requests noted during the eval: the first
@@ -1853,7 +1888,7 @@
 
 (defn- toggle-source-marks! []
   (swap! stage update :show-source-marks? #(not (if (nil? %) true %)))
-  (redraw-plane!))
+  (redraw-overlay!))
 
 (defn- toggle-plane-mode! []
   (if (plane-mode?)
@@ -1866,6 +1901,549 @@
                 (go-in-pose! (if (get-in @stage [:camera-poses cur]) cur (first order)) true))))
           (start-plane!))
       (say! "nessuna camera registrata: non c'è niente da triangolare"))))
+
+;; ------------------------------------------------------------
+;; DECLARED EDGES (dev-docs/brief-observation-driven-acquire.md, gradino 3)
+;;
+;; The plane gesture asks for the hardest thing there is: find THE SAME PHYSICAL
+;; POINT from another angle. On a black glossy moulding there is often no such
+;; point to find, and that gesture is where the mis-clicks of the fusion gate came
+;; from. This one asks for nothing of the kind. On each photo you draw the edge —
+;; two clicks anywhere along it, in any order, snapped to the real gradient — and
+;; the program intersects the planes those lines span with their camera centres.
+;; Any two points along a line are as good as any other two, so there is no
+;; correspondence to get wrong.
+;;
+;; And the click becomes PRODUCT: what comes out is a measured 3D segment of the
+;; object, written into the source as a mark that runs along the edge. Registration
+;; and modelling stop being separate phases.
+;;
+;; The check is the same one the plane disc uses and costs nothing: the measured
+;; edge is drawn IN THE WORLD, so navigating with [ / ] reprojects it onto every
+;; photo. It lies on the object's edge in all of them, or it is wrong.
+;; ------------------------------------------------------------
+
+(def ^:private edge-measured-color 0xff9933)  ; arancio: lo spigolo misurato in 3D
+(def ^:private edge-drawn-color 0xffe08a)     ; il tratto dichiarato su questa foto
+(def ^:private edge-pending-color 0xffcc33)   ; il primo click, in attesa del secondo
+(def ^:private edge-committed-color 0xb36b1f) ; gli spigoli già scritti nel sorgente
+
+(defn- edge-mode? [] (some? (:edge @stage)))
+(defn- edge-obs [] (get-in @stage [:edge :obs] {}))
+(defn- edge-fit [] (get-in @stage [:edge :fit]))
+
+(defn- edge-usable?
+  "Whether the current fit is fit to be written: solved, near the object, and not
+   the intersection of two nearly identical planes."
+  []
+  (let [f (edge-fit)]
+    (boolean (and f (:plausible? f) (>= (:angle-deg f) pedge/min-plane-angle-deg)))))
+
+(defn- solve-edge!
+  "Re-solve the edge from every photo's declared line. Keyed by photo index, so
+   drawing again on the same photo REPLACES that view's line (the natural way to
+   correct a slip) instead of piling up two contradictory declarations."
+  []
+  (let [entries (sort-by key (edge-obs))
+        idxs (mapv key entries)
+        obs (mapv (fn [[_ o]] (select-keys o [:pose :seg :intrinsics])) entries)
+        fit (when (>= (count obs) 2) (pedge/triangulate-edge (stage-intrinsics) obs))]
+    (swap! stage assoc-in [:edge :fit]
+           (when fit
+             (assoc fit
+                    :photos idxs
+                    :plausible? (and (plausible-point? (:a fit))
+                                     (plausible-point? (:b fit))))))))
+
+(defn- ray-point-near-object
+  "Where to DRAW a pixel that has no depth yet: on its ray, at its closest
+   approach to the object. On the photo it was clicked from, that point
+   reprojects exactly under the cursor (every point of the ray does); on any
+   other photo it slides along the epipolar line — which is the honest picture of
+   what is known so far."
+  [k pose px]
+  (let [c (:position (:emit-pose @stage))]
+    (when-let [{:keys [origin dir]} (pcamera/pixel-ray k pose px)]
+      (m/v+ origin (m/v* dir (m/dot (m/v- c origin) dir))))))
+
+(defn- edge-preview-items
+  "What the edge gesture draws: the pending click, the line declared on the photo
+   you are looking at, the measured 3D segment, and the edges already written to
+   the source this session."
+  []
+  (when (edge-mode?)
+    (let [here (:current-idx @stage)
+          k (stage-intrinsics)
+          pose (world-solver-pose here)
+          fit (edge-fit)
+          items (atom [])
+          add! (fn [x] (swap! items conj x))]
+      ;; the pending click is drawn from ITS OWN photo's pose, not the current
+      ;; one: it is a point on that photo's ray, so it lands under the cursor
+      ;; there and on the epipolar line everywhere else — which is the honest
+      ;; picture, and what makes a stroke left behind on another photo visible.
+      (when-let [{ppx :px pidx :idx} (get-in @stage [:edge :pending])]
+        (when-let [ppose (world-solver-pose pidx)]
+          (when-let [pk (get-in @stage [:edge :pending :intrinsics] k)]
+            (when-let [p (ray-point-near-object pk ppose ppx)]
+              (add! {:type :dots :data [{:pos p :radius 1.1
+                                         :color edge-pending-color :opacity 0.95}]})))))
+      ;; the stroke declared on THIS photo, drawn at object depth so it lies over
+      ;; the pixels it was drawn on
+      (when-let [o (get (edge-obs) here)]
+        (when (and k pose)
+          (let [[a b] (keep #(ray-point-near-object k pose %) (:seg o))]
+            (when (and a b)
+              (add! {:type :lines :data [{:from a :to b :color edge-drawn-color}]})))))
+      (doseq [{:keys [a b]} (get-in @stage [:edge :committed] [])]
+        (add! {:type :lines :data [{:from a :to b :color edge-committed-color}]}))
+      (when (and fit (:plausible? fit))
+        (add! {:type :lines :data [{:from (:a fit) :to (:b fit)
+                                    :color edge-measured-color}]})
+        (add! {:type :dots :data [{:pos (:a fit) :radius 0.9
+                                   :color edge-measured-color :opacity 0.95}
+                                  {:pos (:b fit) :radius 0.9
+                                   :color edge-measured-color :opacity 0.95}]}))
+      @items)))
+
+;; ---- the gesture ----
+
+(defn- report-edge!
+  "Say what the fit is worth, in the currency of the rest of the channel: pixels
+   of reprojection, degrees of parallax, millimetres of length — and, when one
+   photo is the culprit, WHICH."
+  []
+  (let [f (edge-fit)]
+    (cond
+      (nil? f) nil
+
+      (not (:plausible? f))
+      (say! (str "lo spigolo cade lontano dall'oggetto: i tratti disegnati non sono "
+                 "lo stesso spigolo fisico, oppure le due foto sono troppo simili"))
+
+      (< (:angle-deg f) pedge/min-plane-angle-deg)
+      (say! (str "le foto girano solo " (src/fmt-number (:angle-deg f))
+                 "° INTORNO allo spigolo: troppo poco perché la sua posizione sia "
+                 "determinata. Serve una foto che lo guardi da un altro lato — "
+                 "spostarsi lungo lo spigolo non serve a niente, e nemmeno mettersi "
+                 "esattamente di fronte alla foto di prima (mezzo giro riporta allo "
+                 "stesso piano)."))
+
+      :else
+      (do (say! (str "spigolo su " (count (:photos f)) " foto · lunghezza "
+                     (src/fmt-number (:length-mm f)) " mm · riproiezione "
+                     (src/fmt-number (:rms-px f)) " px · giro "
+                     (src/fmt-number (:angle-deg f)) "°"
+                     (when (:exact? f)
+                       (str " — con DUE foto la retta ci passa esatta: quello 0 px "
+                            "non è una verifica, aggiungi una terza foto perché lo diventi"))))
+          (when-let [w (:worst-obs f)]
+            (say! (str "il tratto sbagliato è quello della foto "
+                       (nav-rank (nth (:photos f) w))
+                       ": vacci con [ o ] e ridisegnalo — togliendolo gli altri "
+                       "vanno d'accordo, quindi non è rumore, è un altro spigolo.")))))))
+
+(defn- finish-edge-stroke!
+  "Second click on a photo: the stroke is closed, snapped to the real gradient,
+   and becomes this photo's declaration.
+
+   The snap is what makes two rough clicks worth a measurement — cross-peak finds
+   the luminance edge perpendicular to the stroke at ~40 stations and refits the
+   line through them (edge-snap/snap-segment, the same routine the box gesture
+   uses). It is also the one step that can fail honestly: on a soft or occluded
+   edge too few stations peak, and then the raw clicks stand, SAID OUT LOUD —
+   a silent fallback would quietly turn a measurement into a guess."
+  [idx p1 p2 pose k]
+  (if (< (pedge/segment-length-px [p1 p2]) pedge/min-segment-px)
+    (do (swap! stage update :edge dissoc :pending)
+        (say! (str "i due click sono quasi sovrapposti (meno di "
+                   pedge/min-segment-px " px): un tratto così corto non dice in che "
+                   "direzione va lo spigolo. Ridisegnalo più lungo."))
+        (redraw-overlay!))
+    (let [snap (edge-snap/snap-segment backdrop/luminance-at p1 p2)
+          seg (if snap [(:p1 snap) (:p2 snap)] [p1 p2])]
+      (swap! stage update :edge
+             #(-> %
+                  (assoc-in [:obs idx] {:seg seg :raw [p1 p2] :pose pose
+                                        :intrinsics k :snap snap})
+                  (dissoc :pending)))
+      (solve-edge!)
+      (if snap
+        (say! (str "tratto preso sulla foto " (nav-rank idx) " · agganciato al "
+                   "contrasto su " (:n snap) " punti (scarto "
+                   (src/fmt-number (:rms snap)) " px)"))
+        (say! (str "tratto preso sulla foto " (nav-rank idx)
+                   " · NON agganciato al contrasto (l'edge è sfumato o coperto qui): "
+                   "valgono i tuoi due click, quindi conta la precisione della mano")))
+      (case (registration-trouble idx)
+        :grazing (say! (str "nota: la foto " (nav-rank idx) " è radente, quindi meno "
+                            "precisa — il tratto è preso lo stesso"))
+        (:flipped :loose) (say! (str "attenzione: la foto " (nav-rank idx)
+                                     " è registrata male, su di lei tutto si "
+                                     "riproietta storto"))
+        nil)
+      (report-edge!)
+      (redraw-overlay!))))
+
+(defn- edge-refusal-message
+  "Why one click was not enough, said so the user knows what to do next rather
+   than that something failed."
+  [{:keys [reason coherence length-px rms]}]
+  (case reason
+    :flat (str "qui non c'è contrasto: non vedo nessun bordo. Se lo spigolo c'è "
+               "ma è debole, dammelo con DUE click (uno adesso, uno più avanti "
+               "lungo lo spigolo).")
+    :ambiguous (str "qui i bordi sono più di uno (coerenza "
+                    (src/fmt-number coherence) ", ne serve "
+                    (src/fmt-number edge-snap/min-coherence)
+                    "): sei su un angolo, su un incrocio o su una texture. "
+                    "Clicca più lontano dall'angolo, oppure dammi DUE click.")
+    :short (str "il bordo qui dura solo " (src/fmt-number length-px)
+                " pixel: troppo poco perché la sua direzione valga più della tua "
+                "mano. Cliccane uno più lungo, o usa DUE click.")
+    :curved (str "questo bordo NON è dritto (si scosta di "
+                 (src/fmt-number rms) " px da una retta su "
+                 (src/fmt-number length-px) " px): è un arco o un raccordo. "
+                 "Gli archi non ci sono ancora — con DUE click puoi comunque "
+                 "dichiarare un tratto corto che sia quasi rettilineo.")
+    "non riesco a leggere il bordo da qui: dammi DUE click."))
+
+(defn- try-one-click!
+  "The normal case: ONE click, and the edge finds its own direction and its own
+   extent (edge-snap/edge-at-point). Returns true when it did.
+
+   A click is a point and a point is not a line, so the direction has to come
+   from somewhere: it comes from the gradients around the click, which is the
+   only place it CAN come from — the geometry already known constrains the 3D
+   line by one degree of freedom out of four, so it would need a second click on
+   every photo anyway.
+
+   What is gained is not only the second click. The walk follows the edge as far
+   as the contrast goes, which is usually much further than anyone would trace by
+   hand, and a longer baseline is a better-determined edge — the convenience and
+   the accuracy pull the same way for once."
+  [idx px pose k]
+  (let [r (edge-snap/edge-at-point backdrop/luminance-at (first px) (second px))]
+    (if-not (:ok? r)
+      (do (say! (edge-refusal-message r)) false)
+      (do (swap! stage update :edge
+                 #(-> %
+                      (assoc-in [:obs idx] {:seg [(:p1 r) (:p2 r)]
+                                            :raw [px px]
+                                            :pose pose :intrinsics k
+                                            :snap {:n (:n r) :rms (:rms r)}
+                                            :auto? true})
+                      (dissoc :pending)))
+          (solve-edge!)
+          (say! (str "spigolo trovato da un click sulla foto " (nav-rank idx)
+                     ": " (src/fmt-number (:length-px r)) " px di bordo, seguito su "
+                     (:n r) " punti (scarto " (src/fmt-number (:rms r)) " px)"))
+          (report-edge!)
+          (redraw-overlay!)
+          true))))
+
+(defn- edge-click!
+  "One click in edge mode. Normally that is the whole gesture (try-one-click!);
+   when the image cannot answer — a corner, a curve, no contrast — the program
+   says so and falls back to asking for the second click, which is also what a
+   second click on an already-declared photo means: 'let me draw this one'."
+  [^js e]
+  (let [idx (:current-idx @stage)]
+    (if-let [pose (world-solver-pose idx)]
+      (if-let [px (backdrop/pixel-under-pointer e (viewport/get-camera) (viewport/get-canvas))]
+        (if-let [k (stage-intrinsics)]
+          (let [{ppx :px pidx :idx} (get-in @stage [:edge :pending])
+                open! (fn [msg]
+                        (swap! stage assoc-in [:edge :pending]
+                               {:px px :idx idx :intrinsics k})
+                        (say! msg)
+                        (redraw-overlay!))]
+            (cond
+              ;; A stroke belongs to ONE photo. Half of it left behind on another
+              ;; one is not half a declaration — the two pixels would be read as
+              ;; a line on THIS photo, which is a line through nothing. Start
+              ;; over here, and say why, rather than silently building it.
+              (and ppx (not= pidx idx))
+              (open! (str "avevi un capo aperto sulla foto " (nav-rank pidx)
+                          ": un tratto sta tutto su UNA foto, quindi quello è "
+                          "stato lasciato e questo click apre il tratto di qui"))
+
+              ppx (finish-edge-stroke! idx ppx px pose k)
+
+              ;; Clicking again on a photo that already has its stroke means 'I
+              ;; want to draw this one myself' — which is how the user takes back
+              ;; an extent the walk chose, or declares a short straight stretch of
+              ;; something the detector rightly called curved.
+              (contains? (edge-obs) idx)
+              (open! (str "questa foto ha già il suo tratto: questo click apre un "
+                          "tratto A MANO che lo sostituirà — clicca l'altro capo"))
+
+              ;; the normal case: one click, and the image answers
+              (try-one-click! idx px pose k) nil
+
+              :else
+              (open! (str "…quindi facciamolo a mano: primo capo preso (pallino "
+                          "giallo), clicca il secondo più avanti lungo lo spigolo"))))
+          (say! "nessuna foto caricata: non so a che risoluzione riferire il click"))
+        (say! "il click è caduto fuori dalla foto"))
+      (say! (str "la foto " (nav-rank idx) " non ha una posa registrata: non può "
+                 "contribuire — cambiane una con [ o ]")))))
+
+(defn- undo-edge-click!
+  "Backspace: drop the pending click, else the line declared on the photo you are
+   looking at — the one you just drew wrong — falling back to the last one
+   declared anywhere."
+  []
+  (let [here (:current-idx @stage)
+        obs (edge-obs)]
+    (cond
+      (get-in @stage [:edge :pending])
+      (do (swap! stage update :edge dissoc :pending)
+          (say! "primo capo annullato"))
+
+      (seq obs)
+      (let [victim (if (contains? obs here) here (key (last (sort-by key obs))))]
+        (swap! stage update-in [:edge :obs] dissoc victim)
+        (solve-edge!)
+        (say! (str "tratto della foto " (nav-rank victim) " tolto")))
+
+      :else (say! "non c'è niente da togliere"))
+    (redraw-overlay!)))
+
+;; ---- source write-back ----
+
+(defn- next-edge-name
+  "`spigolo-N`, N one past the highest already in the form — read from the SOURCE,
+   where the edges actually live (the user may have renamed or deleted some)."
+  [form-text]
+  (let [nums (map #(js/parseInt (second %) 10)
+                  (re-seq #":spigolo-(\d+)\b" form-text))]
+    (str "spigolo-" (inc (reduce max 0 nums)))))
+
+(defn- edge-literal
+  "The `(edge-mark {…})` source of a measured edge.
+
+   It is a POSE first — :position :heading :up, like every other mark — so it
+   needs no new DSL to be useful: `(turtle (:spigolo-1 (:edges A)) (extrude
+   (circle 2) (f (:length …))))` runs a fillet down it. :a and :b are its ends
+   and :length their distance, which is the number the `(f …)` wants.
+
+   Unlike a plane mark it carries no :from evidence: an edge's evidence is a
+   PIXEL LINE per photo, and the source has no business knowing about photo
+   identities (the same boundary mark-literal draws). Re-declaring an edge means
+   drawing it again — until the observation store of the next slice makes it
+   re-openable."
+  [{:keys [position heading up]} a b]
+  (str "{:position " (src/fmt-vec3 position)
+       " :heading " (src/fmt-vec3 heading)
+       " :up " (src/fmt-vec3 up)
+       " :a " (src/fmt-vec3 a)
+       " :b " (src/fmt-vec3 b)
+       " :length " (src/fmt-number (m/magnitude (m/v- b a)))
+       "}"))
+
+(defn- ensure-edges-slot!
+  "Give the acquire form an `:edges {}` block when it has none, by inserting one
+   right after :marks at the same indentation. Forms emitted before edges existed
+   have no such slot, and refusing to write into them would mean asking the user
+   to hand-edit a map before the gesture would work. Returns the buffer text
+   after the insertion, or nil when there is no :marks to hang it off."
+  [text from to]
+  (when-let [[_ e i] (src/map-value-bounds text from to ":marks")]
+    (let [col (src/column-of text i)
+          ins (str "\n" (apply str (repeat col " ")) ":edges {}")]
+      (modal/replace-source! e e ins)
+      (cm/get-value))))
+
+(defn- commit-edge!
+  "Write the measured edge into the evaluated `(acquire …)`'s :edges block and
+   re-run the definitions. A bounded text edit — only that block's braces move —
+   so everything else in the form survives byte-identical. Returns the name
+   written, or nil."
+  [mark a b]
+  (let [text (cm/get-value)]
+    (if-let [[from to] (acquire-form-bounds text)]
+      (let [text (if (src/map-value-bounds text from to ":edges")
+                   text
+                   (ensure-edges-slot! text from to))
+            [from to] (when text (acquire-form-bounds text))]
+        (if-let [[o e i] (and text (src/map-value-bounds text from to ":edges"))]
+          (let [nm (next-edge-name (.substring text from to))
+                updated (src/append-map-entry
+                         (.substring text o e)
+                         (str ":" nm " (edge-mark " (edge-literal mark a b) ")")
+                         ":edges" (src/column-of text i))]
+            (modal/replace-source! o e updated)
+            (modal/run-definitions!)
+            nm)
+          (do (say! (str "la forma (acquire …) non ha né uno slot :edges né uno "
+                         ":marks a cui affiancarlo — aggiungi :edges {} dentro la "
+                         "mappa e riprova"))
+              nil)))
+      (do (say! "non trovo la forma (acquire …) nel sorgente")
+          nil))))
+
+(defn- accept-edge!
+  "Enter: write the edge to the source. One Enter, not two — unlike a plane, an
+   edge is BEING checked the whole time it is being declared: the orange segment
+   has been drawn over the photos since the second stroke, and every `]` since
+   then was a look at it."
+  []
+  (let [f (edge-fit)]
+    (cond
+      (nil? f)
+      (say! "servono i tratti su almeno DUE foto perché ci sia uno spigolo da scrivere")
+
+      (not (edge-usable?))
+      (report-edge!)
+
+      :else
+      (let [emit (:emit-pose @stage)
+            hints (if (:plate? @stage)
+                    [(:heading emit) (:up emit)]
+                    [(:up emit) (:heading emit)])
+            mark (pedge/edge-mark (:a f) (:b f) hints)]
+        (if-not mark
+          (say! "i due capi coincidono: non c'è una direzione da scrivere")
+          (if-let [nm (commit-edge! mark (:a f) (:b f))]
+            (do (swap! stage update :edge
+                       #(-> % (update :committed conj {:a (:a f) :b (:b f)})
+                            (assoc :obs {}) (dissoc :fit :pending)))
+                (say! (str "scritto :" nm " nel sorgente · lunghezza "
+                           (src/fmt-number (:length-mm f)) " mm. "
+                           "Usalo con (turtle (:" nm " (:edges A)) …): la turtle parte "
+                           "da un capo e (f " (src/fmt-number (:length-mm f))
+                           ") arriva all'altro."))
+                (redraw-overlay!))
+            (redraw-overlay!)))))))
+
+(defn- edge-status
+  "One line of live state for the toolbar button."
+  []
+  (let [n (count (edge-obs))
+        f (edge-fit)]
+    (cond
+      (get-in @stage [:edge :pending]) "Spigolo · clicca il secondo capo"
+      f (str "Spigolo · " n " foto, " (src/fmt-number (:rms-px f)) "px, "
+             (src/fmt-number (:length-mm f)) "mm")
+      (= 1 n) "Spigolo · 1 foto (vai su un'altra)"
+      :else "Spigolo · disegna il tratto")))
+
+(defn- edge-hud-content []
+  (let [n (count (edge-obs))
+        f (edge-fit)
+        here (:current-idx @stage)
+        frag (.createDocumentFragment js/document)
+        box (el "div" "eaq-hud-detail")
+        add! (fn [cls txt] (.appendChild box (el "div" cls :text txt)))]
+    (.appendChild frag (el "div" "eaq-hud-title" :text "SPIGOLO"))
+    (.appendChild frag (hud-step (if (>= n 2) :done :current)
+                                 1 (str "Foto con lo spigolo: " n " di 2")))
+    (.appendChild frag (hud-step (cond (nil? f) :todo (edge-usable?) :done :else :current)
+                                 2 "Controlla sulle altre foto"))
+    (.appendChild frag (hud-step (if (edge-usable?) :current :todo) 3 "Accetta"))
+    (if-not (:in-pose? @stage)
+      (add! "eaq-hud-hint"
+            (str "Sei in vista libera: i tratti presi restano. Per disegnarne altri "
+                 "torna dentro una foto — bottone Foto, o clicca una piramide."))
+      (do
+        (when-let [r (registration-label here)]
+          (add! (case (registration-trouble here)
+                  (:flipped :loose) "eaq-hud-bad" :grazing "eaq-hud-warn" nil)
+                (str "Foto " (nav-rank here) " — " r)))
+        (cond
+          (get-in @stage [:edge :pending])
+          (add! "eaq-hud-hint"
+                "Primo capo preso (pallino giallo). Clicca il secondo più avanti lungo lo spigolo.")
+          (contains? (edge-obs) here)
+          (add! "eaq-hud-hint"
+                (str "Su questa foto lo spigolo c'è (linea chiara). Un altro click qui "
+                     "apre un tratto a mano che lo sostituisce; oppure cambia foto con ] ."))
+          :else
+          (add! "eaq-hud-hint"
+                (str "UN click sullo spigolo: direzione e lunghezza le trova da sé. "
+                     "Se il punto è ambiguo (un angolo, una curva) te lo dice e ti "
+                     "chiede due click.")))))
+    (when f
+      (add! (cond (not (:plausible? f)) "eaq-hud-bad"
+                  (< (:angle-deg f) pedge/min-plane-angle-deg) "eaq-hud-warn"
+                  (> (:rms-px f) 4.0) "eaq-hud-warn"
+                  :else "eaq-hud-good")
+            (str "lunghezza " (src/fmt-number (:length-mm f)) " mm · scarto "
+                 (src/fmt-number (:rms-px f)) " px · giro "
+                 (src/fmt-number (:angle-deg f)) "°"))
+      (when (:exact? f)
+        (add! "eaq-hud-warn"
+              "Con 2 foto lo scarto è 0 per costruzione: non è una verifica. Una terza lo rende tale."))
+      (when (< (:angle-deg f) pedge/min-plane-angle-deg)
+        (add! "eaq-hud-warn"
+              "Le foto guardano lo spigolo quasi dallo stesso lato: gira INTORNO a lui."))
+      (when-let [w (:worst-obs f)]
+        (add! "eaq-hud-bad"
+              (str "Il tratto della foto " (nav-rank (nth (:photos f) w))
+                   " non va d'accordo con gli altri: ridisegnalo.")))
+      (add! "eaq-hud-hint"
+            "Il segmento arancione è disegnato nel MONDO: cambia foto con [ e ] — deve restare sullo spigolo."))
+    (when (seq (edge-obs))
+      (let [shots (el "div" "eaq-hud-shots")]
+        (doseq [[idx o] (sort-by key (edge-obs))]
+          (.appendChild shots
+                        (el "div" "eaq-hud-shot"
+                            ;; how this photo's line was obtained, because it is
+                            ;; what its precision rests on: found by the image,
+                            ;; drawn and then snapped to the contrast, or pure hand
+                            :children [(el "span" nil :text (str "foto " (nav-rank idx)))
+                                       (el "span" (when-not (:snap o) "eaq-hud-warn")
+                                           :text (cond (:auto? o) "auto"
+                                                       (:snap o) "✓"
+                                                       :else "mano"))])))
+        (.appendChild box shots)))
+    (.appendChild frag box)
+    (let [row (el "div" "eaq-hud-actions")]
+      (.appendChild row (hud-button "Accetta" "Scrive lo spigolo nel sorgente (Invio)"
+                                    (edge-usable?) (edge-usable?) accept-edge!))
+      (.appendChild row (hud-button "Annulla tratto" "Toglie il tratto di questa foto (Backspace)"
+                                    (boolean (or (seq (edge-obs))
+                                                 (get-in @stage [:edge :pending])))
+                                    false undo-edge-click!))
+      (.appendChild row (hud-button "Chiudi" "Esce dal modo spigolo (Esc)" true false
+                                    #(do (swap! stage dissoc :edge) (redraw-overlay!))))
+      (.appendChild frag row))
+    frag))
+
+(defn- start-edge! []
+  (swap! stage assoc :edge {:obs {} :committed []})
+  (say! (str "modo spigolo attivo. UN click sullo spigolo, su ogni foto: "
+             "direzione e lunghezza le legge dall'immagine (se non ci riesce lo "
+             "dice e ti chiede due click). Servono almeno 2 foto che lo guardino "
+             "da lati DIVERSI — girate intorno allo spigolo, non spostate lungo "
+             "di lui ([ e ] per cambiare); Invio scrive, Esc esce."))
+  (redraw-overlay!))
+
+(defn- stop-edge! []
+  (swap! stage dissoc :edge)
+  (say! "modo spigolo chiuso")
+  (redraw-overlay!))
+
+(defn- edge-key! [k]
+  (case k
+    "Enter" (do (accept-edge!) true)
+    "Backspace" (do (undo-edge-click!) true)
+    "Escape" (do (stop-edge!) true)
+    false))
+
+(defn- toggle-edge-mode! []
+  (if (edge-mode?)
+    (stop-edge!)
+    (if (seq (:camera-poses @stage))
+      (do (when (plane-mode?) (stop-plane!))   ; one gesture owns the clicks at a time
+          (when-not (in-pose?)
+            (let [order (nav-order)
+                  cur (:current-idx @stage)]
+              (when (seq order)
+                (go-in-pose! (if (get-in @stage [:camera-poses cur]) cur (first order)) true))))
+          (start-edge!))
+      (say! "nessuna camera registrata: non c'è niente con cui misurare uno spigolo"))))
 
 ;; ------------------------------------------------------------
 ;; Viewport toolbar (shown only while the stage is active WITH registered cameras):
@@ -1908,7 +2486,13 @@
           (set! (.-textContent pl) (plane-status)))
       (do (.remove (.-classList pl) "active")
           (set! (.-textContent pl) "Piano"))))
-  (refresh-plane-hud!))
+  (when-let [^js sp (.getElementById js/document "eaq-stage-edge")]
+    (if (edge-mode?)
+      (do (.add (.-classList sp) "active")
+          (set! (.-textContent sp) (edge-status)))
+      (do (.remove (.-classList sp) "active")
+          (set! (.-textContent sp) "Spigolo"))))
+  (refresh-hud!))
 
 (defn- toggle-lock! []
   (cond
@@ -1960,6 +2544,12 @@
                                           (str "Crea un piano di lavoro sull'oggetto: clicca lo stesso "
                                                "punto su 2+ foto, 'n' per il punto dopo, 3 punti, Invio")
                                           toggle-plane-mode!))
+        (.appendChild wrap (make-tool-btn "eaq-stage-edge" "Spigolo"
+                                          (str "Misura uno spigolo dell'oggetto: UN click su 2+ foto — "
+                                               "NON serve ritrovare lo stesso punto, e direzione e "
+                                               "lunghezza le legge dall'immagine — e ne esce un segmento "
+                                               "3D scritto nel sorgente. Invio scrive.")
+                                          toggle-edge-mode!))
         (.insertBefore tb wrap (.-firstChild tb))))
     (update-toolbar!)))
 
@@ -1978,8 +2568,8 @@
   (when @stage
     (teardown-listeners!)
     (teardown-toolbar!)
-    (swap! stage dissoc :plane)
-    (refresh-plane-hud!)
+    (swap! stage dissoc :plane :edge)
+    (refresh-hud!)
     (viewport/unregister-frame-callback! :acquire-stage)
     (viewport/unregister-frame-callback! :camera-flight)
     (when (:in-pose? @stage) (backdrop/set-visible! false))
@@ -2060,7 +2650,7 @@
   "Called by the `acquire` runtime fn DURING evaluation: record the acquire value so
    after-eval! (post refresh-viewport!) can (re)establish the stage. `acquire-value`
    is {:proxy <posed mesh> :pose <emit pose> :dir …}."
-  [{:keys [proxy pose dir marks sessions]}]
+  [{:keys [proxy pose dir marks edges sessions]}]
   (let [emit (or pose (:creation-pose proxy))]
     (swap! stage
            (fn [s]
@@ -2069,6 +2659,7 @@
                               :emit-pose emit
                               :dims (bridge/dims-from-mesh proxy (:creation-pose proxy))
                               :marks marks
+                              :edges edges
                               ;; every session whose photos belong on the film. One
                               ;; entry for a lone (acquire …); one per fused session
                               ;; for an (acquire-union …), each with the rigid motion
@@ -2099,6 +2690,7 @@
                               :dims (:dims pending)
                               :plate? (:plate? pending)
                               :source-marks (:marks pending)
+                              :source-edges (:edges pending)
                               :camera-poses {}
                               :photos []
                               :focal-mm default-focal-mm
@@ -2106,8 +2698,10 @@
                               :in-pose? false
                               :loaded? false
                               ;; a different acquire = different object: its
-                              ;; half-finished plane picks mean nothing here
+                              ;; half-finished plane picks and edge strokes mean
+                              ;; nothing here
                               :plane nil
+                              :edge nil
                               :pending nil})
           (install-listeners!)
           ;; Build the photo backdrop plane (child of the camera) ONCE per activation,
@@ -2133,6 +2727,7 @@
                               :dims (:dims pending)
                               :plate? (:plate? pending)
                               :source-marks (:marks pending)
+                              :source-edges (:edges pending)
                               :pending nil})
           (when (and (loaded?) (seq (:camera-poses @stage))) (setup-toolbar!))
           (when (:in-pose? @stage) (backdrop/set-visible! true))

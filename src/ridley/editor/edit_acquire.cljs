@@ -4068,6 +4068,18 @@
              " di faccia del proxy — il mark ha la precedenza, quindi "
              "(turtle A :at " (first clash) " …) userà il MARK. "
              "La faccia resta raggiungibile come (" (first clash) " (:faces A)).")))
+     ;; The same silent-precedence trap one level up: a mark and an edge that
+     ;; share a name are BOTH the user's, so neither is the obvious winner, and
+     ;; `(turtle A :at …)` has to pick one (the mark). Worth saying, because an
+     ;; edge's heading runs along it and a mark's points out of a surface — the
+     ;; wrong one of the two aims an extrusion 90° away.
+     (when-let [clash (seq (filter (set (keys (:marks opts))) (keys (:edges opts))))]
+       (state/capture-println
+        (str ";; acquire · " dir ": " (str/join ", " (map str clash))
+             (if (next clash) " sono nomi" " è un nome")
+             " sia di mark che di spigolo — (turtle A :at " (first clash)
+             " …) userà il MARK. Lo spigolo resta raggiungibile come ("
+             (first clash) " (:edges A)).")))
      ;; P4b: note the stage so the post-eval hook (core/after refresh-viewport!)
      ;; turns this evaluated directive into the interactive palcoscenico —
      ;; clickable frustums + click→pose, viewport state, camera left where it is.
@@ -4076,16 +4088,62 @@
      ;; what was emitted and what is displayed shows up at once, instead of
      ;; three steps later as displaced geometry.
      (stage/note-eval! {:proxy posed :pose pose :dir dir
-                        :marks (or (:marks opts) {})})
+                        :marks (or (:marks opts) {})
+                        :edges (or (:edges opts) {})})
      {:proxy posed
       :pose pose
       :shapes (or (:shapes opts) {})
       :marks (or (:marks opts) {})
+      ;; Measured EDGES of the object (brief-observation-driven-acquire, gradino
+      ;; 3): each one a pose that runs ALONG the edge, plus its two ends. Kept
+      ;; apart from :marks on purpose — a mark's heading is a surface normal and
+      ;; an edge's is a direction, and everything that reads marks as planes
+      ;; (acquire-union's anchors, above all) would quietly misread an edge as a
+      ;; plane whose normal points down its own length.
+      :edges (or (:edges opts) {})
       ;; P4b Pezzo (iii): the 6 box faces as turtle poses, so the user can drop the
       ;; turtle onto a face by name — `(turtle (:top (:faces A)) (edit-path-2d …))`
       ;; — and draw the ricalco there over the stage backdrop. Computed, not stored.
       :faces faces
       :dir dir})))
+
+(def ^:private edge-length-tol-mm
+  "Allowed disagreement between an edge's declared :length and the distance
+   between its own ends. 0.01 mm is far above the emitter's rounding and far
+   below anything a hand-edit would leave by accident."
+  0.01)
+
+(defn ^:export edge-mark
+  "A MEASURED EDGE of an acquisition: a pose that runs ALONG the edge —
+   `{:position <one end> :heading <direction> :up …}` — plus `:a`/`:b`, its two
+   ends, and `:length`, their distance. Returns the map UNCHANGED; it is the
+   resting form the stage's Spigolo gesture writes, in the same family as
+   `plane-mark`.
+
+   Heading along the edge, not across it, is what makes it useful without any new
+   DSL: `(turtle (:spigolo-1 (:edges A)) (extrude (circle 2) (f 42.13)))` lays a
+   fillet down the whole edge, because `(f …)` travels the heading.
+
+   Gentle, not silent, exactly like plane-mark: it checks the little there is to
+   check — the expected keys, and that :length still matches the ends — and
+   REPORTS what looks wrong without touching the data. An edge whose length has
+   been hand-edited is still the user's edge; correcting it quietly would hide
+   the fact that the two no longer describe the same segment."
+  [e]
+  (when (map? e)
+    (let [missing (remove #(contains? e %) [:position :heading :a :b])]
+      (when (seq missing)
+        (state/capture-println
+         (str ";; edge-mark: mancano " (str/join ", " missing)
+              " — uno spigolo ha bisogno dei suoi due capi e di una posa che li percorra")))
+      (when (and (:a e) (:b e) (:length e))
+        (let [d (m/magnitude (m/v- (:b e) (:a e)))]
+          (when (> (Math/abs (- d (:length e))) edge-length-tol-mm)
+            (state/capture-println
+             (str ";; edge-mark: :length dice " (modal/fmt-number (:length e))
+                  " mm ma fra :a e :b ce ne sono " (modal/fmt-number d)
+                  " — uno dei due è stato modificato a mano")))))))
+  e)
 
 ;; ------------------------------------------------------------
 ;; acquire-union — fusing two shooting sessions (brief-session-fusion.md)
@@ -4215,6 +4273,15 @@
             "quindi niente che possa smentire il fit. Una terza posa dello stesso "
             "oggetto lo metterebbe alla prova.")))))
 
+(defn- transform-edge
+  "Carry a measured edge through the fusion motion. Its pose moves like any mark
+   (transform-pose keeps the keys it does not know about); its two ENDS are
+   points and move as points. :length is invariant — the motion is rigid."
+  [rt e]
+  (-> (fuse/transform-pose rt e)
+      (assoc :a (vec (fuse/transform-point rt (:a e)))
+             :b (vec (fuse/transform-point rt (:b e))))))
+
 (defn- fuse-sessions
   "`sessions` is [[label acq] …] with the REFERENCE first; `anchors-for` builds
    the correspondences between two labelled sessions."
@@ -4246,7 +4313,9 @@
                            :transform (select-keys fit [:R :t :rvec])
                            :rms-mm (:rms-mm fit)
                            :marks (into {} (map (fn [[nm p]] [(prefix lbl nm) (fuse/transform-pose fit p)])
-                                                (:marks b)))})
+                                                (:marks b)))
+                           :edges (into {} (map (fn [[nm e]] [(prefix lbl nm) (transform-edge fit e)])
+                                                (:edges b)))})
                         fits)
             ;; Every mark of every session survives under its own address,
             ;; `:label/name` — nothing collides, nothing is dropped, and nothing
@@ -4264,6 +4333,18 @@
             marks (reduce (fn [acc {:keys [marks]}] (merge marks acc))
                           (merge zones
                                  (into {} (map (fn [[nm p]] [(prefix ref-lbl nm) p]) (:marks a))))
+                          moved)
+            ;; Edges follow the same addressing — every one survives as
+            ;; `:label/name` — with one difference: the REFERENCE session's edges
+            ;; also keep their bare names. A mark's bare name is reserved (it
+            ;; means the declared ZONE, as opposed to one session's measurement of
+            ;; it), but an edge belongs to exactly one session and has no such
+            ;; second meaning, so leaving A's names alone costs nothing and keeps
+            ;; every `(:spigolo-1 (:edges A))` already written against A working
+            ;; the day a second session is fused onto it.
+            edges (reduce (fn [acc {:keys [edges]}] (merge edges acc))
+                          (merge (:edges a)
+                                 (into {} (map (fn [[nm e]] [(prefix ref-lbl nm) e]) (:edges a))))
                           moved)]
         (loop-closure! sessions anchors-for fits)
         ;; The stage works in the REFERENCE session's frame — the fused frame —
@@ -4272,7 +4353,8 @@
         ;; can be traced from angles no single turntable pass could reach. Which
         ;; is the entire point of the fusion, and the check on it too: a mark
         ;; measured in B must land on the object in A's photos.
-        (stage/note-eval! {:proxy (:proxy a) :pose (:pose a) :dir (:dir a) :marks marks
+        (stage/note-eval! {:proxy (:proxy a) :pose (:pose a) :dir (:dir a)
+                           :marks marks :edges edges
                            :sessions (into [{:dir (:dir a) :label ref-lbl
                                              :emit-pose (:pose a) :transform nil}]
                                            (map (fn [{:keys [dir label pose transform]}]
@@ -4281,6 +4363,7 @@
                                                 moved))})
         (assoc a
                :marks marks
+               :edges edges
                :sessions (into [{:label ref-lbl :dir (:dir a) :proxy (:proxy a)
                                  :pose (:pose a) :transform nil :rms-mm 0.0}]
                                (mapv #(dissoc % :marks) moved)))))))
@@ -4522,7 +4605,13 @@
                                                      (shapes-entries anchor-pose)) i3) "\n"
          i3 ":marks " (fmt-map-block ":marks"
                                      (merge-entries (preserved-entries ":marks")
-                                                    (marks-entries anchor-pose)) i3) "})")))
+                                                    (marks-entries anchor-pose)) i3) "\n"
+         ;; :edges is emitted EMPTY (this session measures none — edges are the
+         ;; stage's Spigolo gesture, which runs after registration is over) but it
+         ;; is emitted, so the gesture finds its slot instead of having to insert
+         ;; one. Whatever a re-opened marker already carried is preserved, like
+         ;; the other two blocks.
+         i3 ":edges " (fmt-map-block ":edges" (preserved-entries ":edges") i3) "})")))
 
 (defn- confirm!
   "OK: write the aligned proxy+pose back to source as (acquire \"dir\" {…}),

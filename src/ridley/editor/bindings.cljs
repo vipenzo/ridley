@@ -675,6 +675,12 @@
    ;; with it, re-opening a mark is the family's own gesture (put `edit-` in
    ;; front of the head and Run) instead of hand-wrapping a multi-line map.
    'plane-mark          edit-acquire/plane-mark
+   ;; edge-mark (dev-docs/brief-observation-driven-acquire.md, gradino 3): the
+   ;; resting form of a MEASURED EDGE, written by the stage's Spigolo gesture into
+   ;; the emitted (acquire …)'s :edges block. Same gentle-constructor contract as
+   ;; plane-mark. Its pose runs ALONG the edge, so `(turtle (:spigolo-1 (:edges A))
+   ;; (extrude (circle 2) (f len)))` needs no new DSL to lay a fillet down it.
+   'edge-mark           edit-acquire/edge-mark
    ;; edit-acquire (dev-docs/brief-param-acq-v1.md): now a MARKER in the edit-*
    ;; family. The `edit-acquire` macro dispatches a dir-string first arg here
    ;; (request!, opened from the definitions panel) and a proxy-mesh first arg to

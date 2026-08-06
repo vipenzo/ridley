@@ -1788,11 +1788,13 @@
 
    - a **path** — its `(mark …)`s resolved from the world origin;
    - a **mesh** — the `:anchors` attached to it;
-   - an **acquire** value — the marks measured on the photos, plus the proxy's
-     faces. Which is what lets `(turtle A :at :piano-1 …)` replace the
-     hand-written `(turtle (:piano-1 (:marks A)) …)` (Vincenzo 2026-08-03: 'mi
-     trovo spesso a scrivere codice per spostare una turtle a un mark'). On a
-     name clash the MARK wins: a name the user chose beats a generated one.
+   - an **acquire** value — the marks measured on the photos, the EDGES measured
+     on them, plus the proxy's faces. Which is what lets `(turtle A :at :piano-1
+     …)` replace the hand-written `(turtle (:piano-1 (:marks A)) …)` (Vincenzo
+     2026-08-03: 'mi trovo spesso a scrivere codice per spostare una turtle a un
+     mark'). On a name clash the MARK wins, then the edge, then the face: a name
+     the user chose beats a generated one. NB an edge's heading runs ALONG it,
+     not out of a surface — `(turtle A :at :spigolo-1 (f len))` travels the edge.
 
    Lookup by registered NAME is not here on purpose — it needs the registry, so
    it stays in the caller (editor.implicit). Pure, so the SCI test harness can
@@ -1809,7 +1811,7 @@
       (:anchors target)
 
       (and (:proxy target) (contains? target :marks))
-      (merge (:faces target) (:marks target)))))
+      (merge (:faces target) (:edges target) (:marks target)))))
 
 (defn synthesize-delta
   "Minimal canonical (th tv tr f rt u) delta that turns turtle pose `from`
