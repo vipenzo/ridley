@@ -190,9 +190,28 @@ utente).
   sul click singolo, 2026-08-06**: «una volta su due devo dare due click, va
   abbastanza bene» — e un rifiuto costa UN click in più, non due, perché quel
   click diventa il primo capo del tratto a mano (~1.5 click per foto). Resta: il
-  magazzino delle osservazioni (i tratti oggi non sopravvivono alla chiusura),
-  archi/cerchi, i punti nel pool. Entry point
-  `dev-docs/HANDOVER-edge-declared.md`.
+  magazzino delle osservazioni (i tratti oggi non sopravvivono alla chiusura) e i
+  punti nel pool. Entry point `dev-docs/HANDOVER-edge-declared.md`.
+- **Cerchi e archi — COSTRUITO 2026-08-06, gate umano DA FARE** (la fetta scelta
+  dopo il gate del click singolo). Un bordo curvo non è più un rifiuto: il
+  cammino l'ha già seguito, e quei punti sono ciò che il fit del cerchio mangia,
+  quindi il gesto passa da solo in modo CERCHIO ed emette `(circle-mark {…})`
+  nello stesso blocco `:edges` — posa col centro e l'asse più `:radius`, così
+  `(turtle A :at :cerchio-1 (extrude (circle r) (f d)))` alesa dove le foto hanno
+  trovato un cerchio. La matematica è un'altra: una riga spanna un piano e due
+  piani si incontrano in una retta, ma una curva spanna un CONO e due coni si
+  incontrano in una quartica — quindi si recuperano prima i punti 3D (i raggi
+  delle due foto che si sfiorano; le pose sono note, l'accoppiamento lo fa la
+  geometria), poi piano, cerchio nel piano e LM in pixel. **Tre difetti veri
+  trovati sui dati veri**, tutti invisibili ai sintetici: la soglia di
+  accoppiamento era il triplo del necessario (giusto 0.15 mm contro sbagliato
+  3.3 — con 1.5 il RANSAC preferiva un cerchio di raggio 1838 mm a un bordo da
+  65); un modello illimitato si adatta a tutto (ora un candidato non supera 3×
+  l'estensione della nuvola); e mancava la guardia sul RESIDUO, per cui una
+  figura con 157 px di riproiezione passava ogni altro test — ora niente si
+  scrive sopra gli 8 px, rette comprese. Misurato sul piatto vero: **⌀128.4 su
+  ⌀130 nominale, asse a 2.4° dalla verticale, 5.2 px** — e rifiutato lo stesso
+  perché se ne era visto solo 73° di giro contro i 120 richiesti.
 - **Fusione di sessioni — FETTA A COSTRUITA 2026-08-03** (`brief-session-fusion.md`).
   `(acquire-union a b …)`: due sessioni dello stesso oggetto in un frame solo,
   agganciate sui mark OMONIMI (dichiarati dall'utente, nessun matching

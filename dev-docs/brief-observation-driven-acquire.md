@@ -61,9 +61,20 @@ risposta strutturale a quella fatica.
 > scrittura nel sorgente e il ri-eval chiudono il giro, e lo snap aggancia il
 > contrasto vero (28 stazioni su 40 su un bordo reale).
 >
-> **Resta**: il magazzino delle osservazioni (fetta 2 — oggi i tratti vivono
-> nello stato del palcoscenico e non sopravvivono alla chiusura), archi/cerchi,
-> i punti nel pool congiunto (gradino 2), la segnalazione di copertura.
+> **CERCHI E ARCHI COSTRUITI (2026-08-06)**, fetta scelta dopo il gate del click
+> singolo: un bordo curvo smette di essere un rifiuto e diventa una misura
+> (`photogrammetry/circle`, 7 test). La matematica è un'altra — una curva spanna
+> un CONO, non un piano — quindi si recuperano prima i punti 3D dai raggi che si
+> sfiorano, poi piano + cerchio + LM in pixel. Sui dati veri sono usciti tre
+> difetti che i sintetici non vedevano: soglia di accoppiamento tre volte troppo
+> larga (giusto 0.15 mm contro sbagliato 3.3), un modello illimitato che si
+> adatta a tutto (raggio 1838 mm preferito a 65), e la guardia mancante sul
+> residuo (157 px passavano ogni altro test). Misurato sul piatto: ⌀128.4 su 130
+> nominale, asse a 2.4°.
+>
+> **Resta**: il magazzino delle osservazioni (fetta 2 — oggi le dichiarazioni
+> vivono nello stato del palcoscenico e non sopravvivono alla chiusura), i punti
+> nel pool congiunto (gradino 2), la segnalazione di copertura.
 > Entry point: `dev-docs/HANDOVER-edge-declared.md`.
 
 ## L'idea (Vincenzo, 2026-08-02)

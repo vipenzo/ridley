@@ -28,6 +28,8 @@ scritto nel sorgente come una posa che percorre lo spigolo.
 | test sintetici | `test/ridley/photogrammetry/edge_test.cljs` |
 | rilevamento da UN click | `src/ridley/photogrammetry/edge_snap.cljs` (`edge-at-point`) |
 | suoi test su foto finte | `test/ridley/photogrammetry/edge_snap_test.cljs` |
+| cerchi e archi | `src/ridley/photogrammetry/circle.cljs` |
+| loro test | `test/ridley/photogrammetry/circle_test.cljs` |
 | gesto + HUD + write-back | `src/ridley/editor/acquire_stage.cljs`, sezione "DECLARED EDGES" |
 | disegno dal sorgente | `acquire_stage.cljs`, `source-edge-items` |
 | forma di riposo `(edge-mark …)` | `src/ridley/editor/edit_acquire.cljs` |
@@ -94,6 +96,60 @@ La sagitta lo dice dall'altro lato — un cerchio resta dentro 1.2 px per
 `sqrt(8·R·tol)` px, cioè 34 px su raggio 120, quindi un arco non può arrivarci e
 continua a essere rifiutato come arco (verificato: il test del disco tiene 58 px
 e viene respinto).
+
+## Cerchi e archi (2026-08-06, la fetta scelta dopo il gate)
+
+Un bordo curvo non è più un rifiuto: il cammino l'ha GIÀ seguito, e quei punti
+sono esattamente quello che il fit del cerchio mangia. Il rifiuto `:curved`
+adesso porta con sé i punti, e il gesto passa da solo in modalità CERCHIO — è la
+prima dichiarazione a decidere cosa si sta misurando, e dopo le due devono
+andare d'accordo, perché uno spigolo dritto e un cerchio sono misure di cose
+diverse e una mescolanza è un errore da nominare, non da mediare.
+
+**Perché la matematica è un'altra.** Una riga nell'immagine spanna un PIANO, e
+due piani si incontrano in una retta: forma chiusa. Una curva spanna un CONO, e
+due coni si incontrano in una quartica — quella scorciatoia non c'è. Al suo posto:
+i raggi delle due foto che si sfiorano segnano un punto della curva (le pose sono
+già note, quindi la geometria fa da sola l'accoppiamento che nessuno dichiara),
+poi piano, poi cerchio nel piano (Kasa, un solo sistema lineare), poi LM sui 6
+gradi di libertà contro la riproiezione in PIXEL.
+
+Emesso come `(circle-mark {…})` nello stesso blocco `:edges`: posa col centro e
+l'asse più `:radius`, quindi `(turtle A :at :cerchio-1 (extrude (circle r) (f d)))`
+alesa o rialza esattamente dove le foto hanno trovato un cerchio.
+
+**Due difetti veri trovati sui dati veri, che i sintetici non avevano visto:**
+
+1. **La soglia di accoppiamento era il triplo di quanto serve.** Misurato sul
+   piatto: un accoppiamento GIUSTO passa a 0.15 mm, uno sbagliato a 3.3 mm — un
+   fattore venti. Con la soglia a 1.5 mm un pugno di raggi quasi complanari (la
+   stessa cattiva parallasse che rende cieco il mezzo giro per una retta)
+   contribuiva decine di incroci a testa: nuvola di 329 punti di cui 28 veri, e
+   il RANSAC preferiva un cerchio di **raggio 1838 mm** a un bordo da 65. Ora
+   0.5 mm e UN solo incrocio per raggio (che è il numero fisicamente giusto:
+   ogni punto dichiarato è l'immagine di un punto solo). Nei sintetici la nuvola
+   è passata da 41% a 100% pulita, con la stessa precisione.
+2. **Un modello illimitato si adatta a qualunque cosa**: un cerchio enorme è
+   localmente quasi una retta, quindi infila più inlier di quello vero. Ora un
+   candidato non può superare 3× l'estensione della nuvola — una scala letta dai
+   dati, senza chiederla a nessuno.
+3. **Mancava la guardia sul residuo.** Un cerchio con centro vicino all'oggetto e
+   arco ben coperto passava ogni test pur avendo **157 px** di riproiezione,
+   cioè pur non spiegando affatto le foto. Ora nessuna figura si scrive sopra gli
+   8 px (`max-write-rms-px`, la stessa riga che il palcoscenico già traccia per
+   una foto mal registrata), e vale anche per le rette.
+
+**Misurato dal vivo sul piatto vero** (⌀130 nominale, 3 foto, click sul bordo):
+**⌀128.4**, asse a **2.4°** dalla verticale, centro a 2 mm dall'asse del
+giradischi, riproiezione 5.2 px — e il gesto lo rifiuta lo stesso, perché se ne
+era dichiarato solo 73° di giro contro i 120 richiesti. Sotto un terzo di giro un
+cerchio piccolo vicino e uno grande lontano spiegano gli stessi pixel.
+
+**Avvertenza per chi collauda**: il piatto ha cerchi CONCENTRICI (bordo della
+carta, bordo sopra e sotto del piatto), e seguirne uno diverso su foto diverse dà
+subito residui enormi — misurato, 85 px. È il caso in cui l'anello arancione
+disegnato nel mondo serve davvero: cambia foto e guarda se cade sullo stesso
+bordo.
 
 ## La cosa non ovvia, da non ri-scoprire
 
@@ -169,8 +225,12 @@ tappetino sgombri).
 - **Le pose sono congelate al momento del click** (stessa cosa che fa il gesto
   Piano): dopo una rifinitura `R` uno spigolo misurato prima resta indietro di
   quanto si sono mosse le camere. Rifinire PRIMA di misurare.
-- **Solo rette.** Archi e cerchi sono il passo dopo (il brief dice: partire dai
-  parametrici, la curva libera è fuori perimetro).
+- **Rette e cerchi**, non archi generici: un arco parziale si misura (il fit non
+  chiede il giro completo), ma sotto 120° il raggio non è una misura e viene
+  detto. La curva libera resta fuori perimetro, come da brief.
+- **Il cerchio non ha via di scampo a mano**: per una retta due click bastano
+  sempre, per un cerchio no (un segmento non dice niente di un arco), quindi se
+  il cammino non riesce a seguire il bordo curvo lì non si misura.
 - **Nessun editor** `edit-edge-mark` ancora: la coppia `edit-X ⇄ X` esiste solo
   per i mark-piano.
 - **Capitolo 19 del manuale intonso**, come da nota di metodo del brief: la
