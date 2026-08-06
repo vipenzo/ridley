@@ -55,6 +55,7 @@
             [ridley.photogrammetry.edge-snap :as edge-snap]
             [ridley.photogrammetry.pnp :as pnp]
             [ridley.photogrammetry.fuse :as fuse]
+            [ridley.photogrammetry.bundle :as bundle]
             [ridley.photogrammetry.blob :as blob]
             [ridley.photogrammetry.blob-detect :as blob-detect]
             [ridley.photogrammetry.match-plate :as match-plate]
@@ -2290,6 +2291,57 @@
                          (finish-auto! total detect-ok ring-ok))))))))
     (finish-auto! total detect-ok 0)))
 
+(defn- on-refine-session!
+  "'R': one focal for the session and every registered pose refined TOGETHER.
+
+   Each photo is registered alone, and alone it cannot tell a wrong focal from a
+   wrong distance: it absorbs the first into the second and reports a clean
+   residual either way. Together they can — the lens is one, the distances are
+   many — and what is random in the clicking averages instead of settling into
+   each pose separately. It is the residual Vincenzo was left with after the
+   fusion itself closed to 0.13 mm (2026-08-06): 4-5 px of per-photo rms, worth
+   a millimetre or two of depth.
+
+   Reuses each photo's own clicks; asks for nothing new."
+  []
+  (if-let [[iw ih] (backdrop/image-size)]
+    (let [proxy-pose (get-in @session [:proxy-mesh :creation-pose])
+          targets (pnp-targets)
+          views (vec (keep (fn [idx]
+                             (let [picks (get-in @session [:pnp-picks idx] {})
+                                   cam (get-in @session [:camera-poses idx])]
+                               (when (and cam (>= (count picks) 4))
+                                 {:idx idx
+                                  ;; one lens, one session: the pixel size is the
+                                  ;; current photo's, which is every photo's
+                                  :image-size [iw ih]
+                                  :pose (bridge/editor->solver-pose cam proxy-pose)
+                                  :picks (vec (for [[ci {:keys [px]}] picks]
+                                                {:world (:obj (nth targets ci)) :px px}))})))
+                           (range (count (:photos @session)))))
+          out (bundle/refine-session views (:focal-mm @session))]
+      (if (:error out)
+        (set-status-message! (str "Rifinitura: " (:error out)))
+        (let [{:keys [focal-mm poses rms-px before]} out]
+          (doseq [[view pose] (map vector (filterv #(and (:pose %) (>= (count (:picks %)) 4)) views)
+                                   poses)]
+            (swap! session assoc-in [:camera-poses (:idx view)]
+                   (bridge/solver-pose->camera pose proxy-pose)))
+          (swap! session assoc :focal-mm focal-mm :focal-source :manual)
+          (auto-log! (str "=== rifinitura congiunta: " (count poses) " foto ==="))
+          (auto-log! (str "  focale " (modal/fmt-number (:focal-mm before))
+                          " → " (modal/fmt-number focal-mm) " mm"
+                          (when (:clamped? out) "  (fermata al limite: guarda i click, non la lente)")))
+          (auto-log! (str "  riproiezione " (modal/fmt-number (:rms-px before))
+                          " → " (modal/fmt-number rms-px) " px"))
+          (save-acquire-state!)
+          (redraw-pnp-preview!)
+          (redraw-overlay-dots!)
+          (set-status-message!
+           (str "Rifinitura: focale " (modal/fmt-number focal-mm) " mm, riproiezione "
+                (modal/fmt-number (:rms-px before)) " → " (modal/fmt-number rms-px) " px")))))
+    (set-status-message! "Rifinitura: nessuna foto caricata.")))
+
 (defn- on-auto-register!
   "Plate 'a': register every UNREGISTERED photo with zero clicks (fetta C), then fill
    any leftovers with the ring. First pass = detect+identify+PnP per photo,
@@ -3072,7 +3124,20 @@
               (set! (.-type a) "button")
               (set! (.-textContent a) "Auto — rileva e registra (a)")
               (.addEventListener a "click" (fn [_] (on-auto-register!)))
-              (.appendChild box a)))))
+              (.appendChild box a))
+            ;; offered only once there is something to refine: with one photo the
+            ;; focal and the distance are the same unknown
+            (when (>= (count (filter #(>= (count (second %)) 4) (:pnp-picks @session))) 2)
+              (let [r (.createElement js/document "button")]
+                (set! (.-type r) "button")
+                (set! (.-textContent r) "Rifinisci insieme (R)")
+                (set! (.-title r)
+                      (str "Una focale sola per la sessione e tutte le pose raffinate "
+                           "insieme sui click che hai già fatto. Una foto da sola non "
+                           "distingue una focale sbagliata da una distanza sbagliata; "
+                           "tutte insieme sì."))
+                (.addEventListener r "click" (fn [_] (on-refine-session!)))
+                (.appendChild box r))))))
 
       (batch-mode?)
       (render-pnp-batch-panel! box)
@@ -3582,6 +3647,12 @@
               (if (plate-proxy?)
                 (on-auto-register!)
                 (set-status-message! "Auto (a) è solo per il piatto di registrazione.")))
+
+          ;; capital R: refining the whole session is not something to trip into
+          ;; while reaching for 'r' (which re-solves THIS photo)
+          (and (not retrace?) (not mark?) (= key "R"))
+          (do (.preventDefault e) (.stopPropagation e)
+              (on-refine-session!))
 
           (= key "]")
           (do (.preventDefault e) (.stopPropagation e)

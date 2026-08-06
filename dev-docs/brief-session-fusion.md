@@ -242,6 +242,28 @@ ha normale → `:point? true` pesa solo la posizione; i minimi quadrati spalmano
 il danno → leave-one-out che nomina il colpevole; due fusioni a due possono
 essere entrambe "perfette" e contraddirsi → chiusura dell'anello.
 
+> **SEGUITO (2026-08-06): rifinitura congiunta COSTRUITA, e la focale EXIF era
+> sbagliata del 4.5%.** `photogrammetry/bundle` (puro, testato) raffina UNA
+> focale per sessione più tutte le pose insieme, sui click già fatti; in
+> edit-acquire è il tasto `R` / bottone "Rifinisci insieme". Sulle tre sessioni
+> vere di Vincenzo, ognuna per conto suo:
+>
+> | sessione | foto | focale | riproiezione |
+> |---|---|---|---|
+> | param-plate-paper | 10 | 48 → **50.07** | 5.90 → **4.38 px** |
+> | param-plate-paper-2 | 5 | 48.25 → **50.28** | 4.99 → **2.17 px** |
+> | param-plate-paper-3 | 4 | 48 → **50.19** | 5.23 → **2.15 px** |
+>
+> Tre stime indipendenti della stessa lente che cadono entro 0.2 mm l'una
+> dall'altra, e tutte e tre a +4.5% dal valore EXIF: quello è il numero vero, e
+> l'errore che spiega i 2-3 mm. Una foto sola non poteva accorgersene — se lo
+> assorbe nella propria distanza e mostra un residuo pulito lo stesso.
+>
+> **Avvertenza d'ordine**: i mark già misurati sono stati triangolati con le
+> pose VECCHIE. Dopo una rifinitura vanno rifatti, o restano indietro di quanto
+> si sono spostate le camere. Rifinire conviene subito dopo la registrazione,
+> prima di misurare.
+
 **Residuo dichiarato, 2-3 mm, e NON è la fusione** (che chiude a 0.13). È
 l'errore di posa PER FOTO: il PnP di ogni scatto sta a 4-5 px di rms, e su un
 piatto ⌀130 visto da 250 mm quello vale circa 1 mm di profondità; in `A` due

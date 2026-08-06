@@ -139,6 +139,20 @@ utente).
   la fusione ma la posa per foto (PnP a 4-5 px, ~1 mm di profondità; due radenti
   in A a 9-11 px). Prossimo passo indicato: **bundle a focale condivisa per
   sessione** — automatizzabile, nessun lavoro in più per l'utente.
+- **Direzione v2: acquire guidata dalle osservazioni** (Vincenzo, 2026-08-06;
+  brief `dev-docs/brief-observation-driven-acquire.md` — VISIONE, non task).
+  Un solo solutore che mangia OSSERVAZIONI dichiarate ("questo è il dischetto
+  3", "questo è lo stesso edge fisico", dritto o curvo, cliccato su più foto)
+  e stima insieme pose, focali, punti, edge e trasformazioni tra gruppi di
+  rigidità; il programma segnala per nome le foto sotto-vincolate. Tre punti
+  forti: gli edge non richiedono identità di punto (un punto qualsiasi lungo
+  l'edge è un'osservazione valida); un edge è CONTRASTO, non texture (snap al
+  gradiente funziona sulla plastica nera dove il matching fotometrico è
+  cieco); un edge triangolato È già ricalco (i click diventano prodotto).
+  Primo gradino = il bundle a focale condivisa già indicato qui sopra — è la
+  fondazione, non lavoro da buttare. È la risposta alla radice della fatica
+  segnalata nell'uso vero (punto b del 2026-08-03): il brief di ergonomia da
+  scrivere e questa visione vanno progettati INSIEME.
 - **Fusione di sessioni — FETTA A COSTRUITA 2026-08-03** (`brief-session-fusion.md`).
   `(acquire-union a b …)`: due sessioni dello stesso oggetto in un frame solo,
   agganciate sui mark OMONIMI (dichiarati dall'utente, nessun matching
