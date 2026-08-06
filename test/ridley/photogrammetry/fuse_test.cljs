@@ -169,6 +169,35 @@
    [:B {:piano-1 {:position [5 5 5] :heading [1 0 0] :up [0 0 1]}
         :piano-2 {:position [9 9 9] :heading [0 0 1] :up [0 1 0]}}]])
 
+(deftest the-real-failure-of-2026-08-06-is-caught-before-fitting
+  ;; Vincenzo's first fusion of the clip: three zones named alike in two
+  ;; sessions, a report saying `rms 0 mm`, and normals 152° out. These are his
+  ;; actual normals. The angle BETWEEN two normals cannot change when the object
+  ;; moves, so the correspondence can be refuted without fitting anything —
+  ;; which matters, because the distance residuals alone are always satisfiable
+  ;; (three planes, six unknowns) and so the fit looked perfect.
+  (let [B {:flank [0.8993 0.0519 -0.4342] :head [-0.0479 0.9976 -0.0503] :tip [-0.0065 0.0393 0.9992]}
+        C {:flank [0.5611 0.8274 0.0244] :head [-0.1676 0.0201 0.9857] :tip [0.9705 -0.1744 0.1666]}
+        anchor (fn [nm] {:name nm :from-pos [0 0 0] :to-pos [0 0 0]
+                         :from-dir (get C nm) :to-dir (get B nm)})
+        anchors [(anchor :flank) (anchor :head) (anchor :tip)]
+        err (fuse/normal-consistency-error anchors)]
+    (is (some? err) "flank-tip is 116° in one session and 66° in the other")
+    (is (re-find #"flank|tip" err) "and the offending pair is named")
+    (is (re-find #"OPPOSTE|lato sbagliato" err)
+        "116 + 66 ≈ 180, so it says what that means: one normal is turned around")
+    (testing "and the fit refuses instead of returning the motion it used to"
+      (is (= err (:error (fuse/fit-rigid anchors))))))
+
+  (testing "the two zones that DO agree are not accused"
+    ;; head-tip: 90.6° vs 90.1°. Consistent, and consistency must not be noisy.
+    (let [B {:head [-0.0479 0.9976 -0.0503] :tip [-0.0065 0.0393 0.9992]}
+          C {:head [-0.1676 0.0201 0.9857] :tip [0.9705 -0.1744 0.1666]}
+          anchors (mapv (fn [nm] {:name nm :from-pos [0 0 0] :to-pos [0 0 0]
+                                  :from-dir (get C nm) :to-dir (get B nm)})
+                        [:head :tip])]
+      (is (nil? (fuse/normal-consistency-error anchors))))))
+
 (deftest a-shared-name-is-the-declaration-by-default
   (let [a {:testa {:position [0 0 0] :heading [0 0 1] :up [0 1 0]}
            :becco {:position [40 1 2] :heading [1 0 0] :up [0 0 1]}

@@ -238,6 +238,55 @@
             {:name name :kind (if plane? :piano :punto) :residual-mm d :normal-deg ang}))
         anchors))
 
+(defn- angle-deg [a b]
+  (let [c (max -1.0 (min 1.0 (m/dot (m/normalize a) (m/normalize b))))]
+    (* (/ 180.0 Math/PI) (Math/acos c))))
+
+(def ^:private angle-tol-deg
+  "How far the angle between two anchor normals may differ between the two
+   sessions before they cannot be the same pair of zones. Fitting a plane
+   through hand-clicked points on a small face is worth a few degrees; ten is
+   well past that and well short of the tens of degrees a wrong correspondence
+   produces."
+  10.0)
+
+(defn normal-consistency-error
+  "A check that needs NO fit: the angles BETWEEN the anchor normals are the same
+   in both sessions, because a rigid motion does not change angles. If two
+   anchors are 116° apart in one session and 66° in the other, they are not the
+   same pair of zones, and no rotation will make them so.
+
+   This is the check that was missing when the fusion happily returned a motion
+   with normals 152° out and an rms of zero (Vincenzo 2026-08-06): the distance
+   residuals alone can ALWAYS be driven to zero — three planes, six unknowns —
+   so the numbers looked perfect while the answer was rubbish.
+
+   Returns a human sentence, or nil when the anchors are mutually consistent."
+  [anchors]
+  (let [ps (filterv plane-anchor? anchors)
+        pairs (for [i (range (count ps)) j (range (inc i) (count ps))]
+                (let [a (nth ps i) b (nth ps j)
+                      af (angle-deg (:from-dir a) (:from-dir b))
+                      at (angle-deg (:to-dir a) (:to-dir b))]
+                  {:a (:name a) :b (:name b) :from af :to at
+                   :delta (js/Math.abs (- af at))
+                   ;; the two agree once one of them is turned around: the
+                   ;; signature of opposite faces, or of the same face marked
+                   ;; from the other side
+                   :flip? (< (js/Math.abs (- 180.0 (+ af at))) angle-tol-deg)}))
+        bad (filter #(> (:delta %) angle-tol-deg) pairs)]
+    (when (seq bad)
+      (let [w (apply max-key :delta bad)]
+        (str "gli agganci non possono essere le stesse zone: fra " (:a w) " e " (:b w)
+             " l'angolo è " (js/Math.round (:from w)) "° in una sessione e "
+             (js/Math.round (:to w)) "° nell'altra, e l'angolo fra due facce non "
+             "cambia muovendo l'oggetto"
+             (if (:flip? w)
+               (str ". Combaciano se una delle due si gira: o hai preso le facce "
+                    "OPPOSTE (due facce parallele di un pezzo si somigliano), o la "
+                    "stessa faccia è stata marcata dal lato sbagliato")
+               ". Controlla di aver marcato le stesse zone in tutte e due"))))))
+
 (def min-baseline-mm
   "POINT anchors closer together than this do not span the object: the rotation
    they determine is as noisy as the clicks, amplified by the ratio of the
@@ -294,6 +343,13 @@
                     min-baseline-mm " mm): la rotazione che determinano è rumore. "
                     "Prendine due lontani, agli estremi dell'oggetto")}
 
+       ;; BEFORE fitting: the angles between the normals must already agree.
+       ;; Fitting first and judging after does not work here — the distance part
+       ;; alone is always satisfiable, so a wrong correspondence comes back
+       ;; wearing a perfect residual.
+       (normal-consistency-error anchors)
+       {:error (normal-consistency-error anchors)}
+
        :else
        (if-let [seed (seed-rt anchors)]
          (let [rfn (residual-fn anchors sigma-mm)
@@ -317,6 +373,10 @@
                     :planes (count planes)
                     :points (count points)
                     :per-anchor pa
+                    ;; reported NEXT TO the distance rms, never instead of it: with
+                    ;; three planes the distances alone can always be zeroed, so a
+                    ;; distance-only verdict says 'perfect' about anything.
+                    :max-normal-deg (reduce max 0.0 (keep :normal-deg pa))
                     :rms-mm (Math/sqrt (/ (reduce + 0.0 (map #(* % %) ds)) (count ds)))
                     :max-mm (reduce max 0.0 ds))))
          {:error (str "i mark di aggancio non determinano una rotazione: sono allineati, "

@@ -4058,9 +4058,20 @@
                               (when (= kind :piano) " dal piano")
                               (when normal-deg (str "  ·  normale " (modal/fmt-number normal-deg) "°"))))
                        (:per-anchor fit)))
-        "\n;;   rms " (modal/fmt-number (:rms-mm fit)) " mm · "
+        "\n;;   rms " (modal/fmt-number (:rms-mm fit)) " mm dai piani · normali "
+        ;; The distance rms alone is not a verdict: with three planes it can
+        ;; always be driven to zero (three constraints, six unknowns), so it once
+        ;; printed 'rms 0 mm' under a fit whose normals were 152° out (Vincenzo
+        ;; 2026-08-06). The angle travels next to it, always.
+        "fuori di " (modal/fmt-number (:max-normal-deg fit)) "° al massimo · "
         (:planes fit) " piani"
         (when (pos? (:points fit)) (str " + " (:points fit) " punti"))))
+  (when (> (:max-normal-deg fit) 3.0)
+    (state/capture-println
+     (str ";; acquire-union: normali fuori di " (modal/fmt-number (:max-normal-deg fit))
+          "° — le zone combaciano come posizione ma non come ORIENTAMENTO. "
+          "Sopra i pochi gradi non è imprecisione: è una zona marcata male, o due "
+          "zone che non sono la stessa.")))
   (when-let [w (fuse/worst-anchor (:per-anchor fit))]
     (state/capture-println
      (str ";; acquire-union: " (:name w) " si discosta dagli altri ("
