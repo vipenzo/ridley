@@ -127,6 +127,11 @@ utente).
   scrivono nel sorgente la riga successiva (il write-back esiste già). Da
   scrivere come brief prima di costruire. (c) **Turtle su un mark** — FATTO,
   `ff6f955`: `(turtle A :at :piano-1 …)`.
+- **RILASCIATA in v3.6.0** (2026-08-06): la versione che presenta la fusione di
+  sessioni. `main` portato avanti dal branch `edit-acquire-registration-stability`
+  (27 commit). NON pubblicato in questa release: il **capitolo 19** del manuale
+  esiste nel repo ma resta fuori da `structure.cljs` per scelta di Vincenzo —
+  quindi l'acquisizione parametrica è nel prodotto e non ancora nella guida.
 - **Fusione di sessioni — GATE PASSATO 2026-08-06.** Tre sessioni del collare
   (19 foto), tutte coincidenti col modello costruito sul primo set a meno di 2-3
   mm; anello A→B→C chiuso a 0.13 mm. Il palcoscenico tiene tutte le sessioni
