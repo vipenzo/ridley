@@ -373,8 +373,12 @@
                ;; short to be worth more than the hand: that is an ARC
                (or (< kept min-straight-px)
                    (< kept (* min-straight-fraction walked-px)))
+               ;; the walked points travel WITH the refusal, ordered along the
+               ;; curve: a bend is not a failure to find an edge, it is finding a
+               ;; curved one, and the circle fit takes exactly this cloud. The
+               ;; walk has already done the hard part.
                {:ok? false :reason :curved :rms (:rms rough)
-                :length-px kept :walked-px walked-px}
+                :length-px kept :walked-px walked-px :points ordered}
                :else
                {:ok? true
                 :p1 [(+ mx (* vx t-min)) (+ my (* vy t-min))]
@@ -383,4 +387,5 @@
                 :rms rms
                 :coherence (:coherence tensor)
                 :length-px kept
-                :walked-px walked-px}))))))))
+                :walked-px walked-px
+                :points (subvec ordered i (inc j))}))))))))

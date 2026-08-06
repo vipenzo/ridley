@@ -31,6 +31,7 @@
             [ridley.photogrammetry.exif :as exif]
             [ridley.photogrammetry.triangulate :as tri]
             [ridley.photogrammetry.edge :as pedge]
+            [ridley.photogrammetry.circle :as pcircle]
             [ridley.photogrammetry.edge-snap :as edge-snap]
             [ridley.photogrammetry.fuse :as fuse]
             [ridley.export.stl :as stl]))
@@ -253,6 +254,15 @@
 
 (def ^:private source-edge-color 0xff8811)   ; arancio scuro: gli spigoli nel sorgente
 
+(defn- ring-segments
+  "A closed 3D polyline as :lines data — how a measured circle gets drawn with
+   the same primitive a measured edge uses."
+  [pts color]
+  (mapv (fn [i] {:from (nth pts i)
+                 :to (nth pts (mod (inc i) (count pts)))
+                 :color color})
+        (range (count pts))))
+
 (defn- source-edge-items
   "Every measured edge of the evaluated acquire, drawn AS IT IS WRITTEN — from
    its own :a to its own :b, not from the gesture's state. Same principle as
@@ -264,10 +274,20 @@
   (when (:show-source-marks? @stage true)
     (into []
           (keep (fn [[_ e]]
-                  (when (and (map? e) (:a e) (:b e))
+                  (cond
+                    (and (map? e) (:a e) (:b e))
                     {:type :lines
                      :data [{:from (vec (:a e)) :to (vec (:b e))
-                             :color source-edge-color}]})))
+                             :color source-edge-color}]}
+                    ;; a measured CIRCLE draws as its own ring, rebuilt from the
+                    ;; three numbers the source holds — centre, axis, radius
+                    (and (map? e) (:radius e) (:position e) (:heading e))
+                    {:type :lines
+                     :data (ring-segments (pcircle/ring-mesh {:center (vec (:position e))
+                                                              :normal (vec (:heading e))
+                                                              :radius (:radius e)})
+                                          source-edge-color)}
+                    :else nil)))
           (:source-edges @stage))))
 
 (declare plane-preview-items edge-preview-items)
@@ -1932,28 +1952,75 @@
 (defn- edge-obs [] (get-in @stage [:edge :obs] {}))
 (defn- edge-fit [] (get-in @stage [:edge :fit]))
 
+(defn- edge-kind
+  "Whether this session is measuring a straight edge or a circular one. Decided
+   by the FIRST declaration and then held: the two are different measurements of
+   different things, and a mixture is a mistake worth naming rather than an
+   average worth taking."
+  []
+  (get-in @stage [:edge :kind] :retta))
+
+(defn- circle-mode? [] (= :cerchio (edge-kind)))
+
+(def ^:private max-write-rms-px
+  "Reprojection above which a measured feature must NOT be written, whatever else
+   about it looks fine.
+
+   It is the guard that was missing, and its absence was not theoretical: a
+   circle fitted across three photos that had each followed a DIFFERENT curve
+   came back at ⌀390 for a rim of 130 — with its centre near the object and its
+   arc well covered, so every other test passed it, while its residual stood at
+   157 px (2026-08-06). A residual that size does not mean 'imprecise', it means
+   the figure does not explain the photographs at all.
+
+   8 px is the same line the stage already draws for a badly registered photo
+   (poor-registration-px): above it, what is drawn in the world visibly misses
+   what is in the picture."
+  8.0)
+
 (defn- edge-usable?
-  "Whether the current fit is fit to be written: solved, near the object, and not
-   the intersection of two nearly identical planes."
+  "Whether the current fit is fit to be written. Always: solved, near the object,
+   and explaining the pixels it was fitted to. Then, for a line, that the photos
+   turned enough AROUND it; for a circle, that they saw enough OF it — the two
+   ways each shape can be under-determined while looking perfectly healthy."
   []
   (let [f (edge-fit)]
-    (boolean (and f (:plausible? f) (>= (:angle-deg f) pedge/min-plane-angle-deg)))))
+    (boolean (and f (:plausible? f)
+                  (<= (:rms-px f) max-write-rms-px)
+                  (if (circle-mode?)
+                    (>= (:span-deg f) pcircle/min-arc-deg)
+                    (>= (:angle-deg f) pedge/min-plane-angle-deg))))))
 
 (defn- solve-edge!
-  "Re-solve the edge from every photo's declared line. Keyed by photo index, so
-   drawing again on the same photo REPLACES that view's line (the natural way to
-   correct a slip) instead of piling up two contradictory declarations."
+  "Re-solve from every photo's declaration. Keyed by photo index, so declaring
+   again on the same photo REPLACES that view (the natural way to correct a slip)
+   instead of piling up two contradictory ones.
+
+   Two solvers, one gesture: a straight edge is the intersection of the planes
+   its image lines span (closed form), a circle is fitted to the 3D points where
+   the photos' rays meet. The user does the same thing either way — point at the
+   edge — and the image decides which of the two it is."
   []
   (let [entries (sort-by key (edge-obs))
         idxs (mapv key entries)
-        obs (mapv (fn [[_ o]] (select-keys o [:pose :seg :intrinsics])) entries)
-        fit (when (>= (count obs) 2) (pedge/triangulate-edge (stage-intrinsics) obs))]
+        circle? (circle-mode?)
+        obs (mapv (fn [[_ o]]
+                    (select-keys o (if circle?
+                                     [:pose :points :intrinsics]
+                                     [:pose :seg :intrinsics])))
+                  entries)
+        fit (when (>= (count obs) 2)
+              (if circle?
+                (pcircle/fit-circle obs)
+                (pedge/triangulate-edge (stage-intrinsics) obs)))]
     (swap! stage assoc-in [:edge :fit]
            (when fit
              (assoc fit
                     :photos idxs
-                    :plausible? (and (plausible-point? (:a fit))
-                                     (plausible-point? (:b fit))))))))
+                    :plausible? (if circle?
+                                  (plausible-point? (:center fit))
+                                  (and (plausible-point? (:a fit))
+                                       (plausible-point? (:b fit)))))))))
 
 (defn- ray-point-near-object
   "Where to DRAW a pixel that has no depth yet: on its ray, at its closest
@@ -1995,15 +2062,24 @@
           (let [[a b] (keep #(ray-point-near-object k pose %) (:seg o))]
             (when (and a b)
               (add! {:type :lines :data [{:from a :to b :color edge-drawn-color}]})))))
-      (doseq [{:keys [a b]} (get-in @stage [:edge :committed] [])]
-        (add! {:type :lines :data [{:from a :to b :color edge-committed-color}]}))
+      (doseq [{:keys [a b ring]} (get-in @stage [:edge :committed] [])]
+        (if ring
+          (add! {:type :lines :data (ring-segments ring edge-committed-color)})
+          (add! {:type :lines :data [{:from a :to b :color edge-committed-color}]})))
       (when (and fit (:plausible? fit))
-        (add! {:type :lines :data [{:from (:a fit) :to (:b fit)
-                                    :color edge-measured-color}]})
-        (add! {:type :dots :data [{:pos (:a fit) :radius 0.9
-                                   :color edge-measured-color :opacity 0.95}
-                                  {:pos (:b fit) :radius 0.9
-                                   :color edge-measured-color :opacity 0.95}]}))
+        (if (circle-mode?)
+          ;; the measured circle, drawn as its own ring in the WORLD — navigate
+          ;; the photos and it stays on the object's rim, or it is wrong
+          (do (add! {:type :lines :data (ring-segments (pcircle/ring-mesh fit)
+                                                       edge-measured-color)})
+              (add! {:type :dots :data [{:pos (:center fit) :radius 1.0
+                                         :color edge-measured-color :opacity 0.95}]}))
+          (do (add! {:type :lines :data [{:from (:a fit) :to (:b fit)
+                                          :color edge-measured-color}]})
+              (add! {:type :dots :data [{:pos (:a fit) :radius 0.9
+                                         :color edge-measured-color :opacity 0.95}
+                                        {:pos (:b fit) :radius 0.9
+                                         :color edge-measured-color :opacity 0.95}]}))))
       @items)))
 
 ;; ---- the gesture ----
@@ -2016,6 +2092,36 @@
   (let [f (edge-fit)]
     (cond
       (nil? f) nil
+
+      (circle-mode?)
+      (cond
+        (not (:plausible? f))
+        (say! (str "il cerchio cade lontano dall'oggetto: le due foto non stanno "
+                   "guardando lo stesso bordo curvo"))
+
+        (> (:rms-px f) max-write-rms-px)
+        (say! (str "riproiezione " (src/fmt-number (:rms-px f))
+                   " px: questo cerchio NON spiega le foto da cui è nato. Quasi "
+                   "sempre vuol dire che su qualche foto è stato seguito un bordo "
+                   "diverso — controlla che l'anello arancione cada sullo stesso "
+                   "spigolo in tutte, e rifai quella che sbaglia."))
+        :else
+        (do (say! (str "cerchio su " (count (:photos f)) " foto · raggio "
+                       (src/fmt-number (:radius f)) " mm (diametro "
+                       (src/fmt-number (* 2 (:radius f))) ") · arco visto "
+                       (src/fmt-number (:span-deg f)) "° · riproiezione "
+                       (src/fmt-number (:rms-px f)) " px"))
+            (when (< (:span-deg f) pcircle/min-arc-deg)
+              (say! (str "ATTENZIONE: se ne vede solo " (src/fmt-number (:span-deg f))
+                         "° (ne servono " (src/fmt-number pcircle/min-arc-deg)
+                         "). Sotto un terzo di giro il raggio e il centro si "
+                         "scambiano quasi liberamente — un cerchio piccolo vicino e "
+                         "uno grande lontano spiegano gli stessi pixel. Serve una "
+                         "foto che ne mostri di più.")))
+            (when (> (:rms-px f) 4.0)
+              (say! (str "riproiezione " (src/fmt-number (:rms-px f))
+                         " px: il bordo seguito su qualche foto non è quello giusto, "
+                         "oppure non è davvero un cerchio.")))))
 
       (not (:plausible? f))
       (say! (str "lo spigolo cade lontano dall'oggetto: i tratti disegnati non sono "
@@ -2088,7 +2194,7 @@
 (defn- edge-refusal-message
   "Why one click was not enough, said so the user knows what to do next rather
    than that something failed."
-  [{:keys [reason coherence length-px rms]}]
+  [{:keys [reason coherence length-px]}]
   (case reason
     :flat (str "qui non c'è contrasto: non vedo nessun bordo. Se lo spigolo c'è "
                "ma è debole, dammelo con DUE click (uno adesso, uno più avanti "
@@ -2101,11 +2207,10 @@
     :short (str "il bordo qui dura solo " (src/fmt-number length-px)
                 " pixel: troppo poco perché la sua direzione valga più della tua "
                 "mano. Cliccane uno più lungo, o usa DUE click.")
-    :curved (str "questo bordo NON è dritto (si scosta di "
-                 (src/fmt-number rms) " px da una retta su "
-                 (src/fmt-number length-px) " px): è un arco o un raccordo. "
-                 "Gli archi non ci sono ancora — con DUE click puoi comunque "
-                 "dichiarare un tratto corto che sia quasi rettilineo.")
+    :curved (str "questo bordo è curvo, ma le altre foto lo dichiarano dritto: "
+                 "o non è lo stesso bordo, o questa foto lo guarda di taglio. "
+                 "(Uno spigolo dritto e un cerchio sono misure diverse: per "
+                 "misurare il cerchio, chiudi e ricomincia cliccando prima qui.)")
     "non riesco a leggere il bordo da qui: dammi DUE click."))
 
 (defn- try-one-click!
@@ -2123,24 +2228,49 @@
    hand, and a longer baseline is a better-determined edge — the convenience and
    the accuracy pull the same way for once."
   [idx px pose k]
-  (let [r (edge-snap/edge-at-point backdrop/luminance-at (first px) (second px))]
-    (if-not (:ok? r)
-      (do (say! (edge-refusal-message r)) false)
-      (do (swap! stage update :edge
-                 #(-> %
-                      (assoc-in [:obs idx] {:seg [(:p1 r) (:p2 r)]
-                                            :raw [px px]
-                                            :pose pose :intrinsics k
-                                            :snap {:n (:n r) :rms (:rms r)}
-                                            :auto? true})
-                      (dissoc :pending)))
-          (solve-edge!)
-          (say! (str "spigolo trovato da un click sulla foto " (nav-rank idx)
-                     ": " (src/fmt-number (:length-px r)) " px di bordo, seguito su "
-                     (:n r) " punti (scarto " (src/fmt-number (:rms r)) " px)"))
-          (report-edge!)
-          (redraw-overlay!)
-          true))))
+  (let [r (edge-snap/edge-at-point backdrop/luminance-at (first px) (second px))
+        first? (empty? (edge-obs))
+        curved? (= :curved (:reason r))
+        take! (fn [entry kind msg]
+                (swap! stage update :edge
+                       #(-> % (assoc :kind kind)
+                            (assoc-in [:obs idx] entry)
+                            (dissoc :pending)))
+                (solve-edge!)
+                (say! msg)
+                (report-edge!)
+                (redraw-overlay!)
+                true)]
+    (cond
+      ;; A CURVED edge is not a failure to find one: the walk followed it, and
+      ;; those points are exactly what the circle fit eats. The first declaration
+      ;; decides what is being measured; after that the two must agree, because a
+      ;; straight edge and a circle are different measurements of different
+      ;; things and a mixture is a mistake worth naming.
+      (and curved? (or first? (circle-mode?)))
+      (take! {:points (:points r) :raw [px px] :pose pose :intrinsics k
+              :snap {:n (count (:points r))} :auto? true :curved? true}
+             :cerchio
+             (str "bordo CURVO trovato sulla foto " (nav-rank idx) ": "
+                  (count (:points r)) " punti seguiti su "
+                  (src/fmt-number (:walked-px r)) " px. Stiamo misurando un "
+                  "CERCHIO — serve un'altra foto che lo guardi da un altro lato."))
+
+      (and (:ok? r) (circle-mode?))
+      (do (say! (str "questa foto vede un bordo DRITTO, ma stiamo misurando un "
+                     "cerchio: o non è lo stesso bordo, o da qui l'arco si vede "
+                     "troppo di taglio per essere riconosciuto. Provane un'altra."))
+          false)
+
+      (:ok? r)
+      (take! {:seg [(:p1 r) (:p2 r)] :raw [px px] :pose pose :intrinsics k
+              :snap {:n (:n r) :rms (:rms r)} :auto? true}
+             :retta
+             (str "spigolo trovato da un click sulla foto " (nav-rank idx)
+                  ": " (src/fmt-number (:length-px r)) " px di bordo, seguito su "
+                  (:n r) " punti (scarto " (src/fmt-number (:rms r)) " px)"))
+
+      :else (do (say! (edge-refusal-message r)) false))))
 
 (defn- edge-click!
   "One click in edge mode. Normally that is the whole gesture (try-one-click!);
@@ -2181,6 +2311,14 @@
               ;; the normal case: one click, and the image answers
               (try-one-click! idx px pose k) nil
 
+              ;; no hand fallback while measuring a CIRCLE: two clicks declare a
+              ;; straight stroke, and a straight stroke says nothing about an arc.
+              (circle-mode?)
+              (say! (str "qui non riesco a seguire il bordo curvo. Prova a "
+                         "cliccare dove l'arco si vede meglio, o passa a una foto "
+                         "che lo mostri più aperto — per un cerchio i due click a "
+                         "mano non servono, un segmento non dice niente di un arco."))
+
               :else
               (open! (str "…quindi facciamolo a mano: primo capo preso (pallino "
                           "giallo), clicca il secondo più avanti lungo lo spigolo"))))
@@ -2213,12 +2351,14 @@
 ;; ---- source write-back ----
 
 (defn- next-edge-name
-  "`spigolo-N`, N one past the highest already in the form — read from the SOURCE,
-   where the edges actually live (the user may have renamed or deleted some)."
-  [form-text]
+  "`spigolo-N` / `cerchio-N`, N one past the highest already in the form — read
+   from the SOURCE, where the features actually live (the user may have renamed
+   or deleted some). The two families count separately, so a source holding both
+   reads as what it is instead of interleaving them."
+  [form-text stem]
   (let [nums (map #(js/parseInt (second %) 10)
-                  (re-seq #":spigolo-(\d+)\b" form-text))]
-    (str "spigolo-" (inc (reduce max 0 nums)))))
+                  (re-seq (re-pattern (str ":" stem "-(\\d+)\\b")) form-text))]
+    (str stem "-" (inc (reduce max 0 nums)))))
 
 (defn- edge-literal
   "The `(edge-mark {…})` source of a measured edge.
@@ -2242,6 +2382,17 @@
        " :length " (src/fmt-number (m/magnitude (m/v- b a)))
        "}"))
 
+(defn- circle-literal
+  "The `(circle-mark {…})` source of a measured circle. A POSE first, like every
+   other mark — origin at the centre, heading along the axis — with the radius
+   attached, which is the number the user came for."
+  [{:keys [position heading up radius]}]
+  (str "{:position " (src/fmt-vec3 position)
+       " :heading " (src/fmt-vec3 heading)
+       " :up " (src/fmt-vec3 up)
+       " :radius " (src/fmt-number radius)
+       "}"))
+
 (defn- ensure-edges-slot!
   "Give the acquire form an `:edges {}` block when it has none, by inserting one
    right after :marks at the same indentation. Forms emitted before edges existed
@@ -2260,7 +2411,7 @@
    re-run the definitions. A bounded text edit — only that block's braces move —
    so everything else in the form survives byte-identical. Returns the name
    written, or nil."
-  [mark a b]
+  [stem entry-fn]
   (let [text (cm/get-value)]
     (if-let [[from to] (acquire-form-bounds text)]
       (let [text (if (src/map-value-bounds text from to ":edges")
@@ -2268,10 +2419,10 @@
                    (ensure-edges-slot! text from to))
             [from to] (when text (acquire-form-bounds text))]
         (if-let [[o e i] (and text (src/map-value-bounds text from to ":edges"))]
-          (let [nm (next-edge-name (.substring text from to))
+          (let [nm (next-edge-name (.substring text from to) stem)
                 updated (src/append-map-entry
                          (.substring text o e)
-                         (str ":" nm " (edge-mark " (edge-literal mark a b) ")")
+                         (entry-fn nm)
                          ":edges" (src/column-of text i))]
             (modal/replace-source! o e updated)
             (modal/run-definitions!)
@@ -2283,39 +2434,76 @@
       (do (say! "non trovo la forma (acquire …) nel sorgente")
           nil))))
 
-(defn- accept-edge!
-  "Enter: write the edge to the source. One Enter, not two — unlike a plane, an
-   edge is BEING checked the whole time it is being declared: the orange segment
-   has been drawn over the photos since the second stroke, and every `]` since
-   then was a look at it."
+(defn- up-hints
+  "Which direction of the OBJECT should read as `up` on a written mark. Same
+   choice fit-candidate! makes for a plane mark, and for the same reason: a
+   plate's HEADING is the turntable axis, while its up is just some direction
+   across the disc."
   []
-  (let [f (edge-fit)]
+  (let [emit (:emit-pose @stage)]
+    (if (:plate? @stage)
+      [(:heading emit) (:up emit)]
+      [(:up emit) (:heading emit)])))
+
+(defn- camera-centre
+  "Mean position of the cameras that declared this feature — which side the
+   measured surface faces, so a fitted normal is not signed at random."
+  []
+  (let [cams (into [] (keep #(get-in @stage [:camera-poses % :position])
+                            (:photos (edge-fit))))]
+    (when (seq cams)
+      (mapv #(/ % (count cams)) (reduce m/v+ [0.0 0.0 0.0] cams)))))
+
+(defn- accept-edge!
+  "Enter: write the measured feature to the source. One Enter, not two — unlike a
+   plane, this is BEING checked the whole time it is declared: the orange
+   segment (or ring) has been drawn over the photos since the second
+   declaration, and every `]` since then was a look at it."
+  []
+  (let [f (edge-fit)
+        circle? (circle-mode?)]
     (cond
       (nil? f)
-      (say! "servono i tratti su almeno DUE foto perché ci sia uno spigolo da scrivere")
+      (say! (str "serve una dichiarazione su almeno DUE foto perché ci sia "
+                 (if circle? "un cerchio" "uno spigolo") " da scrivere"))
 
       (not (edge-usable?))
       (report-edge!)
 
+      circle?
+      (if-let [mark (pcircle/circle-mark f {:toward (camera-centre) :up-hints (up-hints)})]
+        (if-let [nm (commit-edge! "cerchio"
+                                  (fn [nm] (str ":" nm " (circle-mark "
+                                                (circle-literal mark) ")")))]
+          (do (swap! stage update :edge
+                     #(-> % (update :committed conj {:ring (pcircle/ring-mesh f)})
+                          (assoc :obs {}) (dissoc :fit :pending :kind)))
+              (say! (str "scritto :" nm " nel sorgente · raggio "
+                         (src/fmt-number (:radius f)) " mm (diametro "
+                         (src/fmt-number (* 2 (:radius f))) "). "
+                         "Usalo con (turtle (:" nm " (:edges A)) …): la turtle sta al "
+                         "CENTRO col naso lungo l'asse, quindi (extrude (circle "
+                         (src/fmt-number (:radius f)) ") (f …)) ci costruisce sopra."))
+              (redraw-overlay!))
+          (redraw-overlay!))
+        (say! "il cerchio misurato non ha una normale utilizzabile"))
+
       :else
-      (let [emit (:emit-pose @stage)
-            hints (if (:plate? @stage)
-                    [(:heading emit) (:up emit)]
-                    [(:up emit) (:heading emit)])
-            mark (pedge/edge-mark (:a f) (:b f) hints)]
-        (if-not mark
-          (say! "i due capi coincidono: non c'è una direzione da scrivere")
-          (if-let [nm (commit-edge! mark (:a f) (:b f))]
-            (do (swap! stage update :edge
-                       #(-> % (update :committed conj {:a (:a f) :b (:b f)})
-                            (assoc :obs {}) (dissoc :fit :pending)))
-                (say! (str "scritto :" nm " nel sorgente · lunghezza "
-                           (src/fmt-number (:length-mm f)) " mm. "
-                           "Usalo con (turtle (:" nm " (:edges A)) …): la turtle parte "
-                           "da un capo e (f " (src/fmt-number (:length-mm f))
-                           ") arriva all'altro."))
-                (redraw-overlay!))
-            (redraw-overlay!)))))))
+      (if-let [mark (pedge/edge-mark (:a f) (:b f) (up-hints))]
+        (if-let [nm (commit-edge! "spigolo"
+                                  (fn [nm] (str ":" nm " (edge-mark "
+                                                (edge-literal mark (:a f) (:b f)) ")")))]
+          (do (swap! stage update :edge
+                     #(-> % (update :committed conj {:a (:a f) :b (:b f)})
+                          (assoc :obs {}) (dissoc :fit :pending :kind)))
+              (say! (str "scritto :" nm " nel sorgente · lunghezza "
+                         (src/fmt-number (:length-mm f)) " mm. "
+                         "Usalo con (turtle (:" nm " (:edges A)) …): la turtle parte "
+                         "da un capo e (f " (src/fmt-number (:length-mm f))
+                         ") arriva all'altro."))
+              (redraw-overlay!))
+          (redraw-overlay!))
+        (say! "i due capi coincidono: non c'è una direzione da scrivere")))))
 
 (defn- edge-status
   "One line of live state for the toolbar button."
@@ -2324,10 +2512,13 @@
         f (edge-fit)]
     (cond
       (get-in @stage [:edge :pending]) "Spigolo · clicca il secondo capo"
+      (and f (circle-mode?))
+      (str "Cerchio · " n " foto, ⌀" (src/fmt-number (* 2 (:radius f))) "mm, "
+           (src/fmt-number (:span-deg f)) "°")
       f (str "Spigolo · " n " foto, " (src/fmt-number (:rms-px f)) "px, "
              (src/fmt-number (:length-mm f)) "mm")
-      (= 1 n) "Spigolo · 1 foto (vai su un'altra)"
-      :else "Spigolo · disegna il tratto")))
+      (= 1 n) (str (if (circle-mode?) "Cerchio" "Spigolo") " · 1 foto (vai su un'altra)")
+      :else "Spigolo · clicca il bordo")))
 
 (defn- edge-hud-content []
   (let [n (count (edge-obs))
@@ -2336,9 +2527,10 @@
         frag (.createDocumentFragment js/document)
         box (el "div" "eaq-hud-detail")
         add! (fn [cls txt] (.appendChild box (el "div" cls :text txt)))]
-    (.appendChild frag (el "div" "eaq-hud-title" :text "SPIGOLO"))
+    (.appendChild frag (el "div" "eaq-hud-title"
+                           :text (if (circle-mode?) "CERCHIO" "SPIGOLO")))
     (.appendChild frag (hud-step (if (>= n 2) :done :current)
-                                 1 (str "Foto con lo spigolo: " n " di 2")))
+                                 1 (str "Foto con il bordo: " n " di 2")))
     (.appendChild frag (hud-step (cond (nil? f) :todo (edge-usable?) :done :else :current)
                                  2 "Controlla sulle altre foto"))
     (.appendChild frag (hud-step (if (edge-usable?) :current :todo) 3 "Accetta"))
@@ -2364,7 +2556,23 @@
                 (str "UN click sullo spigolo: direzione e lunghezza le trova da sé. "
                      "Se il punto è ambiguo (un angolo, una curva) te lo dice e ti "
                      "chiede due click.")))))
-    (when f
+    (when (and f (circle-mode?))
+      (add! (cond (not (:plausible? f)) "eaq-hud-bad"
+                  (< (:span-deg f) pcircle/min-arc-deg) "eaq-hud-warn"
+                  (> (:rms-px f) 4.0) "eaq-hud-warn"
+                  :else "eaq-hud-good")
+            (str "⌀ " (src/fmt-number (* 2 (:radius f))) " mm · arco visto "
+                 (src/fmt-number (:span-deg f)) "° · scarto "
+                 (src/fmt-number (:rms-px f)) " px"))
+      (when (< (:span-deg f) pcircle/min-arc-deg)
+        (add! "eaq-hud-warn"
+              (str "Se ne vede meno di " (src/fmt-number pcircle/min-arc-deg)
+                   "°: sotto un terzo di giro un cerchio piccolo vicino e uno "
+                   "grande lontano spiegano gli stessi pixel, quindi il raggio "
+                   "non è ancora una misura.")))
+      (add! "eaq-hud-hint"
+            "L'anello arancione è disegnato nel MONDO: cambia foto con [ e ] — deve restare sul bordo."))
+    (when (and f (not (circle-mode?)))
       (add! (cond (not (:plausible? f)) "eaq-hud-bad"
                   (< (:angle-deg f) pedge/min-plane-angle-deg) "eaq-hud-warn"
                   (> (:rms-px f) 4.0) "eaq-hud-warn"

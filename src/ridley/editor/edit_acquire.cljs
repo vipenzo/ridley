@@ -4145,6 +4145,32 @@
                   " — uno dei due è stato modificato a mano")))))))
   e)
 
+(defn ^:export circle-mark
+  "A MEASURED CIRCLE of an acquisition: `{:position <centre> :heading <axis> :up …
+   :radius r}` — the curved sibling of `edge-mark`, written by the stage's
+   Spigolo gesture when the bordo it walked turns out to bend.
+
+   A pose first, like every mark, and the pose is the useful part: the turtle
+   stands at the CENTRE with its nose along the axis, so `(turtle (:cerchio-1
+   (:edges A)) (extrude (circle 12.4) (f 20)))` raises or bores a cylinder
+   exactly where the photographs found one. The radius travels with it because
+   that is the number one came for.
+
+   Gentle, not silent, like its siblings: it checks the keys and that the radius
+   is a positive number, and reports without touching the data."
+  [c]
+  (when (map? c)
+    (let [missing (remove #(contains? c %) [:position :heading :radius])]
+      (when (seq missing)
+        (state/capture-println
+         (str ";; circle-mark: mancano " (str/join ", " missing)
+              " — un cerchio ha bisogno di centro, asse e raggio")))
+      (when (and (:radius c) (not (and (number? (:radius c)) (pos? (:radius c)))))
+        (state/capture-println
+         (str ";; circle-mark: :radius " (pr-str (:radius c))
+              " non e' un raggio")))))
+  c)
+
 ;; ------------------------------------------------------------
 ;; acquire-union — fusing two shooting sessions (brief-session-fusion.md)
 ;; ------------------------------------------------------------
@@ -4278,9 +4304,12 @@
    (transform-pose keeps the keys it does not know about); its two ENDS are
    points and move as points. :length is invariant — the motion is rigid."
   [rt e]
-  (-> (fuse/transform-pose rt e)
-      (assoc :a (vec (fuse/transform-point rt (:a e)))
-             :b (vec (fuse/transform-point rt (:b e))))))
+  (cond-> (fuse/transform-pose rt e)
+    ;; a straight edge carries its two ENDS, which are points and move as
+    ;; points; a circle carries only its radius, which a rigid motion does not
+    ;; touch at all. Same transport, different luggage.
+    (:a e) (assoc :a (vec (fuse/transform-point rt (:a e))))
+    (:b e) (assoc :b (vec (fuse/transform-point rt (:b e))))))
 
 (defn- fuse-sessions
   "`sessions` is [[label acq] …] with the REFERENCE first; `anchors-for` builds

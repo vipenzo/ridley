@@ -681,6 +681,11 @@
    ;; plane-mark. Its pose runs ALONG the edge, so `(turtle (:spigolo-1 (:edges A))
    ;; (extrude (circle 2) (f len)))` needs no new DSL to lay a fillet down it.
    'edge-mark           edit-acquire/edge-mark
+   ;; circle-mark: the curved sibling. Same block (:edges), same contract — a
+   ;; pose plus what makes it that feature: the turtle stands at the CENTRE with
+   ;; its nose along the axis, so `(turtle (:cerchio-1 (:edges A)) (extrude
+   ;; (circle r) (f d)))` bores or raises exactly where the photos found a circle.
+   'circle-mark         edit-acquire/circle-mark
    ;; edit-acquire (dev-docs/brief-param-acq-v1.md): now a MARKER in the edit-*
    ;; family. The `edit-acquire` macro dispatches a dir-string first arg here
    ;; (request!, opened from the definitions panel) and a proxy-mesh first arg to
