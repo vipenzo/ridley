@@ -169,34 +169,64 @@
    [:B {:piano-1 {:position [5 5 5] :heading [1 0 0] :up [0 0 1]}
         :piano-2 {:position [9 9 9] :heading [0 0 1] :up [0 1 0]}}]])
 
-(deftest the-real-failure-of-2026-08-06-is-caught-before-fitting
-  ;; Vincenzo's first fusion of the clip: three zones named alike in two
-  ;; sessions, a report saying `rms 0 mm`, and normals 152° out. These are his
-  ;; actual normals. The angle BETWEEN two normals cannot change when the object
-  ;; moves, so the correspondence can be refuted without fitting anything —
-  ;; which matters, because the distance residuals alone are always satisfiable
-  ;; (three planes, six unknowns) and so the fit looked perfect.
-  (let [B {:flank [0.8993 0.0519 -0.4342] :head [-0.0479 0.9976 -0.0503] :tip [-0.0065 0.0393 0.9992]}
-        C {:flank [0.5611 0.8274 0.0244] :head [-0.1676 0.0201 0.9857] :tip [0.9705 -0.1744 0.1666]}
-        anchor (fn [nm] {:name nm :from-pos [0 0 0] :to-pos [0 0 0]
-                         :from-dir (get C nm) :to-dir (get B nm)})
-        anchors [(anchor :flank) (anchor :head) (anchor :tip)]
-        err (fuse/normal-consistency-error anchors)]
-    (is (some? err) "flank-tip is 116° in one session and 66° in the other")
-    (is (re-find #"flank|tip" err) "and the offending pair is named")
-    (is (re-find #"OPPOSTE|lato sbagliato" err)
-        "116 + 66 ≈ 180, so it says what that means: one normal is turned around")
-    (testing "and the fit refuses instead of returning the motion it used to"
-      (is (= err (:error (fuse/fit-rigid anchors))))))
+;; --- Vincenzo's real sessions of the clip, 2026-08-06 -------------------------
+;; Three poses on the plate, the same three zones marked in each. The first
+;; fusion came back with normals 152° out, which looked like three wrong marks
+;; and was not: a plane HAS NO SIDE, and the sign the stage gives a fitted normal
+;; ('toward the cameras') is a coin toss on a turntable, where the cameras'
+;; mean sits near the axis. Read as rays, his zones were irreconcilable — the
+;; three normal triples did not even have the same handedness. Read as planes,
+;; they agree to within two degrees.
 
-  (testing "the two zones that DO agree are not accused"
-    ;; head-tip: 90.6° vs 90.1°. Consistent, and consistency must not be noisy.
-    (let [B {:head [-0.0479 0.9976 -0.0503] :tip [-0.0065 0.0393 0.9992]}
-          C {:head [-0.1676 0.0201 0.9857] :tip [0.9705 -0.1744 0.1666]}
-          anchors (mapv (fn [nm] {:name nm :from-pos [0 0 0] :to-pos [0 0 0]
-                                  :from-dir (get C nm) :to-dir (get B nm)})
-                        [:head :tip])]
-      (is (nil? (fuse/normal-consistency-error anchors))))))
+(def ^:private clip-normals
+  {:A {:flank [0.5817 -0.8132 0.0169] :head [-0.0199 0.0108 0.9997] :tip [0.9839 0.178 -0.0135]}
+   :B {:flank [0.8993 0.0519 -0.4342] :head [-0.0479 0.9976 -0.0503] :tip [-0.0065 0.0393 0.9992]}
+   :C {:flank [0.5611 0.8274 0.0244] :head [-0.1676 0.0201 0.9857] :tip [0.9705 -0.1744 0.1666]}})
+
+(def ^:private clip-origins
+  {:A {:flank [13.4631 16.2897 5.1921] :head [0.6277 1.9013 8.7112] :tip [-18.8248 -1.5046 9.7131]}
+   :B {:flank [-12.7218 -0.6151 6.6052] :head [-3.4436 -3.9861 13.2627] :tip [-1.2977 -3.5465 40.7239]}
+   :C {:flank [-14.2412 20.0022 7.7839] :head [7.1592 8.167 7.7172] :tip [19.814 4.2967 11.7558]}})
+
+(defn- clip-anchors [to from]
+  (mapv (fn [nm] {:name nm
+                  :to-pos (get-in clip-origins [to nm]) :to-dir (get-in clip-normals [to nm])
+                  :from-pos (get-in clip-origins [from nm]) :from-dir (get-in clip-normals [from nm])})
+        [:flank :head :tip]))
+
+(deftest vincenzos-three-sessions-fuse
+  (doseq [[to from] [[:A :B] [:A :C] [:B :C]]]
+    (let [fit (fuse/fit-rigid (clip-anchors to from))]
+      (is (nil? (:error fit)) (str to "←" from ": " (:error fit)))
+      (is (< (:max-normal-deg fit) 2.5)
+          (str to "←" from ": normals agree to " (:max-normal-deg fit) "°"))))
+
+  (testing "the sign of a normal is not information, and flipping any of them changes nothing"
+    (let [base (fuse/fit-rigid (clip-anchors :A :C))
+          flipped (fuse/fit-rigid (mapv (fn [a] (if (= :flank (:name a))
+                                                  (update a :from-dir #(mapv - %)) a))
+                                        (clip-anchors :A :C)))]
+      (is (nil? (:error flipped)))
+      (is (< (js/Math.abs (- (:max-normal-deg base) (:max-normal-deg flipped))) 1e-6))))
+
+  (testing "three planes cannot put their own millimetres to the test"
+    (is (false? (:distances-testify? (fuse/fit-rigid (clip-anchors :A :C))))
+        "three offsets, three translational unknowns — the mm are zero by construction")))
+
+(deftest zones-that-really-are-different-are-still-refused
+  ;; The check that survives sign-agnosticity: the ACUTE angle between two faces
+  ;; cannot change when the object moves. 20° against 60° is no flip.
+  (let [anchors [{:name :a :from-pos [0 0 0] :to-pos [0 0 0]
+                  :from-dir [0 0 1] :to-dir [0 0 1]}
+                 {:name :b :from-pos [10 0 0] :to-pos [10 0 0]
+                  :from-dir [0 (Math/sin 0.35) (Math/cos 0.35)]   ; 20° from :a
+                  :to-dir [0 (Math/sin 1.05) (Math/cos 1.05)]}    ; 60° from :a
+                 {:name :c :from-pos [0 10 0] :to-pos [0 10 0]
+                  :from-dir [1 0 0] :to-dir [1 0 0]}]
+        err (fuse/normal-consistency-error anchors)]
+    (is (some? err))
+    (is (re-find #":a|:b" err) "the offending pair is named")
+    (is (= err (:error (fuse/fit-rigid anchors))))))
 
 (deftest a-shared-name-is-the-declaration-by-default
   (let [a {:testa {:position [0 0 0] :heading [0 0 1] :up [0 1 0]}

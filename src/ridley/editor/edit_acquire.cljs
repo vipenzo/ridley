@@ -4072,6 +4072,12 @@
           "° — le zone combaciano come posizione ma non come ORIENTAMENTO. "
           "Sopra i pochi gradi non è imprecisione: è una zona marcata male, o due "
           "zone che non sono la stessa.")))
+  (when-not (:distances-testify? fit)
+    (state/capture-println
+     (str ";; acquire-union: con tre soli piani gli scarti in mm tornano zero per "
+          "costruzione (tre equazioni, tre incognite) — non sono una prova, e qui "
+          "l'unica prova sono le NORMALI. Un quarto piano, o un mark su un punto "
+          "vero (:point? true), mette alla prova anche i millimetri.")))
   (when-let [w (fuse/worst-anchor (:per-anchor fit))]
     (state/capture-println
      (str ";; acquire-union: " (:name w) " si discosta dagli altri ("
@@ -4084,13 +4090,52 @@
           " mm di scarto è molto per una fusione — quello che disegni su una "
           "sessione cadrà storto sull'altra di altrettanto."))))
 
+(defn- loop-closure!
+  "With THREE or more sessions, the only real proof available.
+
+   Each pairwise fusion is exactly determined in translation when the anchors
+   are three planes, so its own residuals are zero whatever it did — a fit can
+   be confidently, silently wrong. But going round the loop cannot lie: carrying
+   a point from C into A directly, and again via B, must land in the same place.
+   On Vincenzo's three sessions that check read 33 mm while every pairwise report
+   said 'perfect' (2026-08-06), and it is what caught the branch ambiguity that
+   caused it.
+
+   Prints the closure in millimetres — a number that IS the fusion's accuracy."
+  [sessions anchors-for fits]
+  (let [others (vec (rest sessions))
+        by-lbl (into {} (map (fn [{:keys [lbl fit]}] [lbl fit]) fits))
+        probe (fn [acq] (or (some-> (first (vals (:marks acq))) :position vec) [0.0 0.0 0.0]))]
+    (doseq [[[lx _] [ly by]] (for [i (range (count others)) j (range (count others))
+                                   :when (not= i j)]
+                               [(nth others i) (nth others j)])
+            :let [[anchors errs] (anchors-for lx ly by)
+                  mid (when (empty? errs) (fuse/fit-rigid anchors))]
+            :when (and mid (nil? (:error mid)) (by-lbl lx) (by-lbl ly))]
+      (let [p (probe by)
+            direct (fuse/transform-point (by-lbl ly) p)
+            via (fuse/transform-point (by-lbl lx) (fuse/transform-point mid p))
+            mm (Math/sqrt (reduce + 0.0 (map (fn [u v] (* (- u v) (- u v))) direct via)))]
+        (state/capture-println
+         (str ";; acquire-union: anello " (name (first (first sessions))) "→" (name lx)
+              "→" (name ly) " chiude a " (modal/fmt-number mm) " mm"
+              (cond
+                (> mm 5.0) " — è tanto: due fusioni a due a due si contraddicono, quindi almeno una zona non è la stessa in tutte le sessioni"
+                (> mm 1.5) " — accettabile ma non ottimo"
+                :else " — le sessioni si accordano fra loro")))))
+    (when (< (count others) 2)
+      (state/capture-println
+       (str ";; acquire-union: con due sole sessioni non c'è nessun anello da chiudere, "
+            "quindi niente che possa smentire il fit. Una terza posa dello stesso "
+            "oggetto lo metterebbe alla prova.")))))
+
 (defn- fuse-sessions
   "`sessions` is [[label acq] …] with the REFERENCE first; `anchors-for` builds
-   the correspondences of one session against it."
+   the correspondences between two labelled sessions."
   [sessions anchors-for declared?]
   (let [[[ref-lbl a] & others] sessions
         fits (mapv (fn [[lbl b]]
-                     (let [[anchors errs] (anchors-for lbl b)]
+                     (let [[anchors errs] (anchors-for ref-lbl lbl b)]
                        {:lbl lbl :b b :anchors anchors :errs errs
                         :fit (if (seq errs)
                                {:error (str/join " · " errs)}
@@ -4134,6 +4179,7 @@
                           (merge zones
                                  (into {} (map (fn [[nm p]] [(prefix ref-lbl nm) p]) (:marks a))))
                           moved)]
+        (loop-closure! sessions anchors-for fits)
         ;; The stage keeps showing the REFERENCE session — its frame is the fused
         ;; frame — but with ALL the marks, transported ones included. Which makes
         ;; the fusion visible for free: a mark measured in session B must land on
@@ -4198,9 +4244,11 @@
            ";; acquire-union: una sessione sola non è una fusione — passane due")
           (second (first x)))
 
-      ;; with a correspondence list: read it as written
+      ;; with a correspondence list: read it as written. The builder takes BOTH
+      ;; labels, so the loop-closure check can ask for a pair that does not
+      ;; involve the reference at all.
       (and (vector? y) (seq y) (every? vector? y))
-      (fuse-sessions x (fn [lbl _b] (fuse/declared-anchors (marks-by-label x) y (ffirst x) lbl)) true)
+      (fuse-sessions x (fn [to-lbl lbl _b] (fuse/declared-anchors (marks-by-label x) y to-lbl lbl)) true)
 
       (some? y)
       (do (state/capture-println
@@ -4210,9 +4258,10 @@
 
       ;; without one: the shared names ARE the declaration
       :else
-      (fuse-sessions x
-                     (fn [_lbl b] [(fuse/shared-name-anchors (:marks (second (first x))) (:marks b)) nil])
-                     false))))
+      (let [marks-of (into {} (map (fn [[l a]] [l (:marks a)]) x))]
+        (fuse-sessions x
+                       (fn [to-lbl _lbl b] [(fuse/shared-name-anchors (get marks-of to-lbl) (:marks b)) nil])
+                       false)))))
 
 ;; ============================================================
 ;; Entry / exit

@@ -156,12 +156,21 @@
             t (la/v-sub (centroid pt) (la/mat*vec R (centroid pf)))]
         {:R R :t t}))))
 
-(defn- seed-rt
-  "The seed, planes first: if the plane marks alone determine the motion, the
-   origins are never consulted — which is the whole point of preferring planes."
+(defn- seed-once
+  "The seed for ONE sign assignment: planes first, so that when the plane marks
+   alone determine the motion the origins are never consulted."
   [anchors]
   (or (seed-from-planes anchors)
       (when (>= (count anchors) 2) (seed-from-points anchors))))
+
+(defn- flip-planes
+  "The anchors with the plane normals selected by `mask` turned around."
+  [anchors mask]
+  (let [idx (into {} (map-indexed (fn [i a] [(:name a) i]) (filterv plane-anchor? anchors)))]
+    (mapv (fn [a] (if (and (plane-anchor? a) (bit-test mask (get idx (:name a) 0)))
+                    (update a :from-dir #(m/v* (vec %) -1.0))
+                    a))
+          anchors)))
 
 ;; ------------------------------------------------------------
 ;; The refinement
@@ -204,7 +213,17 @@
         d (la/v-sub moved to-pos)]
     (if (plane-anchor? a)
       (let [n (m/normalize to-dir)
-            dn (la/v-scale (la/v-sub (transform-dir rt from-dir) n) plane-normal-arm-mm)]
+            moved-n (transform-dir rt from-dir)
+            ;; A PLANE HAS NO SIDE. The stage points a fitted normal 'toward the
+            ;; cameras', which on a turntable means toward their MEAN — and with
+            ;; shots taken all the way round, the mean sits near the axis, so
+            ;; which side of the plane it falls on is very nearly a coin toss
+            ;; (Vincenzo's own three sessions, 2026-08-06: the same three zones
+            ;; came out with the two handednesses, which no rotation can
+            ;; reconcile). So the sign is not information: take whichever of ±n
+            ;; is closer and compare the LINES, not the rays.
+            s (if (neg? (m/dot moved-n n)) -1.0 1.0)
+            dn (la/v-scale (la/v-sub (la/v-scale moved-n s) n) plane-normal-arm-mm)]
         (into [(m/dot d n)] dn))
       (let [dn (if (and from-dir to-dir)
                  (la/v-scale (la/v-sub (transform-dir rt from-dir) (m/normalize to-dir))
@@ -216,6 +235,55 @@
   (fn [p]
     (let [rt (rt-of-params p)]
       (vec (mapcat (fn [a] (mapv #(/ % sigma-mm) (anchor-residuals rt a))) anchors)))))
+
+(defn- origin-spread-mm
+  "How far the transported origins land from their twins, in millimetres.
+
+   NOT a constraint — a plane mark's origin is wherever the clicking happened,
+   and pinning it was the whole thing this design got rid of. It is a TIE-BREAK,
+   and it is needed because sign-free normals leave a discrete ambiguity that
+   nothing else can settle: three planes taken as unsigned admit four rotations
+   (the identity and the three half-turns that map the triple onto itself), and
+   all four fit the planes exactly — same zero millimetres, same fraction of a
+   degree. They place the object in four very different attitudes, though, tens
+   of millimetres apart, and about THAT the origins are entirely trustworthy.
+   So: the planes decide the geometry, the origins only say which branch.
+
+   Without it the fusion picked a branch per session pair and the loop did not
+   close — 33 mm around A→B→C→A on Vincenzo's own three sessions (2026-08-06),
+   with every pairwise report claiming a perfect fit."
+  [rt anchors]
+  (Math/sqrt (/ (reduce + 0.0
+                        (map (fn [{:keys [from-pos to-pos]}]
+                               (let [d (la/v-sub (transform-point rt from-pos) to-pos)]
+                                 (m/dot d d)))
+                             anchors))
+                (max 1 (count anchors)))))
+
+(defn- seed-rt
+  "The seed, searched over the SIGNS of the plane normals.
+
+   The residual no longer cares which way a plane's normal points, but the
+   closed-form seed does: it composes triads out of those very vectors, and a
+   normal pointing the other way is a different branch entirely. The signs are
+   few and discrete (2^k over the planes), so they are enumerated rather than
+   guessed: build the seed for each assignment, keep those that fit the planes
+   as well as the best one does, and among THOSE take the one that puts the
+   object where the origins say it is."
+  [anchors sigma-mm]
+  (let [k (count (filterv plane-anchor? anchors))
+        masks (if (<= 1 k 6) (range (bit-shift-left 1 k)) [0])
+        rfn (residual-fn anchors sigma-mm)
+        cost-of (fn [s] (lm/cost (rfn (vec (concat (cam/rot-mat->rodrigues (:R s)) (:t s))))))
+        cands (mapv (fn [s] {:seed s :cost (cost-of s) :spread (origin-spread-mm s anchors)})
+                    (keep (fn [m] (seed-once (flip-planes anchors m))) masks))]
+    (when (seq cands)
+      (let [best (reduce min (map :cost cands))
+            ;; 'as well as the best one' with room for the difference between a
+            ;; seed and its refinement; the branches this must separate are not
+            ;; close calls.
+            tied (filter #(<= (:cost %) (+ (* 1.05 best) 1.0)) cands)]
+        (:seed (apply min-key :spread tied))))))
 
 (defn- per-anchor
   "What each anchor costs after the fit. For a plane: its distance from the twin
@@ -232,8 +300,10 @@
                     (js/Math.abs (m/dot (la/v-sub moved to-pos) (m/normalize to-dir)))
                     (la/v-norm (la/v-sub moved to-pos)))
                 ang (when (and from-dir to-dir)
-                      (let [c (max -1.0 (min 1.0 (m/dot (transform-dir rt from-dir)
-                                                        (m/normalize to-dir))))]
+                      ;; measured between LINES for a plane (a plane has no side,
+                      ;; see anchor-residuals) and between rays for a point
+                      (let [c0 (m/dot (transform-dir rt from-dir) (m/normalize to-dir))
+                            c (max -1.0 (min 1.0 (if plane? (js/Math.abs c0) c0)))]
                         (* (/ 180.0 Math/PI) (Math/acos c))))]
             {:name name :kind (if plane? :piano :punto) :residual-mm d :normal-deg ang}))
         anchors))
@@ -264,28 +334,24 @@
    Returns a human sentence, or nil when the anchors are mutually consistent."
   [anchors]
   (let [ps (filterv plane-anchor? anchors)
+        ;; ACUTE angles: a plane has no side (anchor-residuals), so 116° and 64°
+        ;; between the same two faces are the same statement.
+        acute (fn [a b] (let [x (angle-deg a b)] (min x (- 180.0 x))))
         pairs (for [i (range (count ps)) j (range (inc i) (count ps))]
                 (let [a (nth ps i) b (nth ps j)
-                      af (angle-deg (:from-dir a) (:from-dir b))
-                      at (angle-deg (:to-dir a) (:to-dir b))]
+                      af (acute (:from-dir a) (:from-dir b))
+                      at (acute (:to-dir a) (:to-dir b))]
                   {:a (:name a) :b (:name b) :from af :to at
-                   :delta (js/Math.abs (- af at))
-                   ;; the two agree once one of them is turned around: the
-                   ;; signature of opposite faces, or of the same face marked
-                   ;; from the other side
-                   :flip? (< (js/Math.abs (- 180.0 (+ af at))) angle-tol-deg)}))
+                   :delta (js/Math.abs (- af at))}))
         bad (filter #(> (:delta %) angle-tol-deg) pairs)]
     (when (seq bad)
       (let [w (apply max-key :delta bad)]
         (str "gli agganci non possono essere le stesse zone: fra " (:a w) " e " (:b w)
-             " l'angolo è " (js/Math.round (:from w)) "° in una sessione e "
+             " le facce formano " (js/Math.round (:from w)) "° in una sessione e "
              (js/Math.round (:to w)) "° nell'altra, e l'angolo fra due facce non "
-             "cambia muovendo l'oggetto"
-             (if (:flip? w)
-               (str ". Combaciano se una delle due si gira: o hai preso le facce "
-                    "OPPOSTE (due facce parallele di un pezzo si somigliano), o la "
-                    "stessa faccia è stata marcata dal lato sbagliato")
-               ". Controlla di aver marcato le stesse zone in tutte e due"))))))
+             "cambia muovendo l'oggetto. Controlla di aver marcato le stesse zone "
+             "in tutte e due — su un pezzo con facce parallele è facile prendere "
+             "quella sbagliata")))))
 
 (def min-baseline-mm
   "POINT anchors closer together than this do not span the object: the rotation
@@ -351,7 +417,7 @@
        {:error (normal-consistency-error anchors)}
 
        :else
-       (if-let [seed (seed-rt anchors)]
+       (if-let [seed (seed-rt anchors sigma-mm)]
          (let [rfn (residual-fn anchors sigma-mm)
                p0 (vec (concat (cam/rot-mat->rodrigues (:R seed)) (:t seed)))
                res (lm/solve rfn p0 {:max-iterations 120})
@@ -377,6 +443,14 @@
                     ;; three planes the distances alone can always be zeroed, so a
                     ;; distance-only verdict says 'perfect' about anything.
                     :max-normal-deg (reduce max 0.0 (keep :normal-deg pa))
+                    ;; Can the DISTANCES testify? Each plane pins the translation
+                    ;; along one direction, each point along three. With exactly
+                    ;; three planes that is three equations in three unknowns:
+                    ;; the millimetres come out at zero whatever was marked, and
+                    ;; only the normals carry information (they are 2 constraints
+                    ;; each against 3 rotational unknowns, so they are checked
+                    ;; from the third plane on).
+                    :distances-testify? (> (+ (count planes) (* 3 (count points))) 3)
                     :rms-mm (Math/sqrt (/ (reduce + 0.0 (map #(* % %) ds)) (count ds)))
                     :max-mm (reduce max 0.0 ds))))
          {:error (str "i mark di aggancio non determinano una rotazione: sono allineati, "
