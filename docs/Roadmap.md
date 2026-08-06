@@ -192,8 +192,34 @@ utente).
   click diventa il primo capo del tratto a mano (~1.5 click per foto). Resta: il
   magazzino delle osservazioni (i tratti oggi non sopravvivono alla chiusura) e i
   punti nel pool. Entry point `dev-docs/HANDOVER-edge-declared.md`.
-- **Cerchi e archi — COSTRUITO 2026-08-06, gate umano DA FARE** (la fetta scelta
-  dopo il gate del click singolo). Un bordo curvo non è più un rifiuto: il
+- **Da una curva, il PIANO — COSTRUITO 2026-08-06, gate umano DA FARE.**
+  Correzione di rotta di Vincenzo dopo aver provato i cerchi sui suoi pezzi: «la
+  curva da identificare non è mai un cerchio, al massimo un segmento … potremmo
+  usare le linee curve per identificare PIANI. Quelle su cui sto cliccando sono
+  tutte curve adagiate su un piano». Ha ragione e la geometria concorda: un piano
+  ha 3 gradi di libertà contro i 6 di un cerchio, non chiede alla curva di essere
+  niente in particolare, ed esce come un **normale mark-piano** scritto in
+  `:marks` dallo STESSO write-back del gesto a tre punti — quindi turtle,
+  edit-path-2d e gli agganci di acquire-union funzionano intatti. Sostituisce il
+  gesto che costa di più: tre punti × due foto = sei click che chiedono ogni
+  volta di RITROVARE lo stesso punto fisico (il posto da cui venivano gli
+  "specchiati" del gate di fusione). Ora due click e nessuna corrispondenza
+  richiesta; `n` aggiunge una seconda curva sulla stessa faccia, che è l'unica
+  cura quando una curva poco pronunciata dà punti quasi in fila — e una fila sta
+  su infiniti piani (misurato: larghezza 3.05 → 56.5 mm). **Il difetto insidioso
+  e i due test sbagliati**: metà degli incroci fra i raggi sono fantasmi, e il
+  caso peggiore è un piano ordinato, pulito e sbagliato di 88°. L'elevazione
+  delle camere non basta (vera sul piatto, inutile in generale) e "le due foto
+  ricostruiscono la stessa curva" è **circolare** — i fantasmi SONO gli incroci,
+  quindi ogni piano che ci passa le fa coincidere (93% di accordo per un piano
+  sbagliato di 88°). Funziona l'ORDINE: il cammino dà i punti ordinati, e una
+  corrispondenza vera lo conserva mentre gli incroci casuali no — 100% contro
+  51%, dove il 51% è la sottosequenza monotona attesa di una permutazione a caso.
+  Misurato dal vivo: piano a 0.59 mm da quello vero del piatto, e rifiutato lo
+  stesso perché largo 2 mm su 4 richiesti.
+- **Cerchi e archi — COSTRUITO 2026-08-06** (fetta precedente, ora subordinata al
+  piano: da una curva si scrive il piano con Invio, il cerchio con 'c' quando la
+  curva è davvero un cerchio ben definito). Un bordo curvo non è più un rifiuto: il
   cammino l'ha già seguito, e quei punti sono ciò che il fit del cerchio mangia,
   quindi il gesto passa da solo in modo CERCHIO ed emette `(circle-mark {…})`
   nello stesso blocco `:edges` — posa col centro e l'asse più `:radius`, così

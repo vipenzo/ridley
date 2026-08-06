@@ -72,9 +72,26 @@ risposta strutturale a quella fatica.
 > residuo (157 px passavano ogni altro test). Misurato sul piatto: ⌀128.4 su 130
 > nominale, asse a 2.4°.
 >
+> **DA UNA CURVA, IL PIANO (2026-08-06)** — correzione di rotta di Vincenzo dopo
+> aver provato i cerchi: «la curva da identificare non è mai un cerchio, al
+> massimo un segmento … potremmo usare le linee curve per identificare PIANI».
+> È il colpo che attacca la fatica alla radice, perché sostituisce il gesto più
+> costoso del canale — il mark-piano a tre punti, sei click ognuno dei quali
+> chiede di RITROVARE lo stesso punto fisico — con due click e nessuna
+> corrispondenza. Esce come un normale `(plane-mark …)` dallo stesso write-back,
+> quindi tutto il valle funziona intatto. `photogrammetry/curve`, 8 test.
+> Il difetto insidioso: metà degli incroci sono fantasmi, e possono formare un
+> piano ordinato e sbagliato di 88°. Due test l'hanno lasciato passare (uno
+> inutile in generale, uno CIRCOLARE — i fantasmi sono gli incroci, quindi ogni
+> piano che ci passa fa coincidere le ricostruzioni: 93% di accordo per un piano
+> sbagliato di 88°). Funziona l'ORDINE del percorso: 100% contro 51%.
+>
 > **Resta**: il magazzino delle osservazioni (fetta 2 — oggi le dichiarazioni
 > vivono nello stato del palcoscenico e non sopravvivono alla chiusura), i punti
-> nel pool congiunto (gradino 2), la segnalazione di copertura.
+> nel pool congiunto (gradino 2), la segnalazione di copertura. E un limite
+> misurato: su queste foto il rilevatore trova i bordi CURVI solo a tratti (fra
+> due foto, un solo punto in comune sul bordo del piatto sondando ogni 15°) —
+> il che rende il gesto a due click meno spesso disponibile di quanto vorrebbe.
 > Entry point: `dev-docs/HANDOVER-edge-declared.md`.
 
 ## L'idea (Vincenzo, 2026-08-02)

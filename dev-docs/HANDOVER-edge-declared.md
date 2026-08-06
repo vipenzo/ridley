@@ -97,6 +97,79 @@ La sagitta lo dice dall'altro lato — un cerchio resta dentro 1.2 px per
 continua a essere rifiutato come arco (verificato: il test del disco tiene 58 px
 e viene respinto).
 
+## Da una curva, il PIANO (2026-08-06, la correzione di rotta di Vincenzo)
+
+Dopo aver provato i cerchi sui suoi pezzi: «la curva da identificare non è mai un
+cerchio, al massimo un segmento. Credo che potremmo usare le linee curve, non
+tanto per identificare cerchi, quanto per identificare **piani**. Quelle su cui
+sto cliccando sono tutte curve adagiate su un piano.»
+
+Ha ragione su ogni conto, e la geometria è d'accordo:
+
+- un piano ha **3** gradi di libertà dove un cerchio ne ha 6, quindi gli stessi
+  punti recuperati lo determinano molto meglio;
+- un piano non chiede alla curva di essere niente in particolare. Un cerchio si
+  adatta solo a una curva che È un cerchio, e solo se se ne vede abbastanza;
+  qualunque curva piana — un arco, il contorno di una modanatura, uno spigolo
+  arrotondato — dà un piano;
+- e il piano è ciò che il resto di Ridley già sa usare. Esce come un **normale
+  mark-piano**, scritto in `:marks` dallo STESSO write-back del gesto a tre
+  punti, quindi `(turtle A :at :zona …)`, `edit-path-2d` sulla zona e gli
+  agganci di `acquire-union` funzionano intatti.
+
+Quello che sostituisce è il gesto che costa di più: il mark-piano a tre punti,
+ciascuno cliccato su due foto, **ciascuno chiedendo di ritrovare lo stesso punto
+fisico**. Sei click fallibili, ed è il posto da cui venivano gli "specchiati" del
+gate di fusione. Una curva sono due click e non chiede nessuna corrispondenza.
+
+`n` dichiara una SECONDA curva sulla stessa faccia — ed è l'unica cura per il
+modo in cui questo fallisce, che non è ovvio guardando la foto: una curva poco
+pronunciata dà punti quasi in fila, e una fila di punti sta su INFINITI piani.
+Nessun click più preciso rimedia; una seconda curva sì (misurato: larghezza da
+3.05 a 56.5 mm, con la normale che resta esatta ma smette di essere fortunata).
+
+### Il fantasma, e i due test sbagliati prima di quello giusto
+
+Un raggio della foto A buca il cono di B due volte, quindi metà degli incroci
+sono fantasmi. Con i cerchi bastava il RANSAC; col piano no, e il caso peggiore
+è **un piano ordinato, pulito e sbagliato di 88°**. Due test sono stati provati e
+tutti e due l'hanno lasciato passare — sono documentati nel codice perché il
+prossimo non li ri-provi:
+
+1. **l'elevazione delle camere sopra il piano trovato.** Vera sui dati del piatto
+   (là i fantasmi si accumulavano proprio sul piano che contiene i due centri
+   ottici, e quel piano si smentisce da solo: visto di taglio, una curva si
+   vedrebbe dritta). Inutile in generale: nel caso sintetico il piano fantasma
+   stava 47° sotto le camere e passava indisturbato.
+2. **se le due foto ricostruiscono la stessa curva su quel piano.** Sembra il
+   test definitivo ed è **circolare**: i fantasmi SONO gli incroci dei raggi,
+   quindi qualunque piano ci passi fa passare di lì entrambe le ricostruzioni.
+   Misurato: 93% di accordo per un piano sbagliato di 88°.
+
+Quello che funziona è l'**ORDINE**. Il cammino restituisce i punti ordinati lungo
+la curva, e una corrispondenza vera conserva l'ordine: percorri la curva in un
+verso su A e la percorri in un verso su B. Gli incroci casuali no. Non è
+circolare, perché è una proprietà dell'ACCOPPIAMENTO e non del piano che ci si
+adatta sopra. Misurato: **100% sul caso vero, 51% sul fantasma** — e il 51% non è
+casuale, è la lunghezza attesa della sottosequenza monotona più lunga di una
+permutazione a caso (~2√n). Soglia al 75%, in mezzo, con margine da entrambe le
+parti.
+
+Resta la guardia più vecchia e più affidabile di tutte: **il dischetto disegnato
+nel mondo**. Cambiare foto e vedere se resta incollato alla superficie è il test
+che l'aritmetica non sa fare.
+
+### Misurato dal vivo (piatto vero, 2 foto)
+
+Dichiarando lo STESSO tratto del bordo in entrambe: accordo **100%**, il piano
+cade a **0.59 mm** dal piano vero del piatto — e viene **rifiutato lo stesso**,
+perché i punti sono larghi 2 mm contro i 4 richiesti, e infatti la normale è
+6.9° fuori. Il gesto lo dice e chiede la seconda curva.
+
+Nota utile per il collaudo, e conferma quantitativa della difficoltà segnalata da
+Vincenzo: fra due foto di quella sessione, sondando il bordo del piatto ogni 15°,
+c'era **un solo punto in comune** dove entrambe lo vedono come curva.
+
 ## Cerchi e archi (2026-08-06, la fetta scelta dopo il gate)
 
 Un bordo curvo non è più un rifiuto: il cammino l'ha GIÀ seguito, e quei punti
