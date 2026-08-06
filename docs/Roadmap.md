@@ -127,6 +127,18 @@ utente).
   scrivono nel sorgente la riga successiva (il write-back esiste già). Da
   scrivere come brief prima di costruire. (c) **Turtle su un mark** — FATTO,
   `ff6f955`: `(turtle A :at :piano-1 …)`.
+- **Fusione di sessioni — GATE PASSATO 2026-08-06.** Tre sessioni del collare
+  (19 foto), tutte coincidenti col modello costruito sul primo set a meno di 2-3
+  mm; anello A→B→C chiuso a 0.13 mm. Il palcoscenico tiene tutte le sessioni
+  fuse e `[`/`]` percorre l'intera pellicola. Le guardie nate dal collaudo, tutte
+  da errori veri sopravvissuti alle precedenti: un piano non ha lato (confronto
+  fra rette); tre piani ammettono quattro sistemazioni (rifiuto + richiesta di un
+  aggancio asimmetrico `:point? true`); un punto non ha normale; leave-one-out
+  che NOMINA l'aggancio sbagliato invece di spalmare lo scarto; chiusura
+  dell'anello con tre o più sessioni. **Residuo dichiarato**: i 2-3 mm non sono
+  la fusione ma la posa per foto (PnP a 4-5 px, ~1 mm di profondità; due radenti
+  in A a 9-11 px). Prossimo passo indicato: **bundle a focale condivisa per
+  sessione** — automatizzabile, nessun lavoro in più per l'utente.
 - **Fusione di sessioni — FETTA A COSTRUITA 2026-08-03** (`brief-session-fusion.md`).
   `(acquire-union a b …)`: due sessioni dello stesso oggetto in un frame solo,
   agganciate sui mark OMONIMI (dichiarati dall'utente, nessun matching

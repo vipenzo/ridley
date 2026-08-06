@@ -226,6 +226,31 @@ MISURATO: il gate deve includere un oggetto con feature note (o il piatto
 stesso in due sessioni con l'oggetto fermo → T attesa = identità, il residuo
 misura il floor dell'intero giro).
 
+## GATE UMANO PASSATO (2026-08-06)
+
+Vincenzo, tre sessioni del collare (in piedi / coricato / coricato sull'altro
+fianco), 19 foto: «tutte le foto coincidono (a meno di errori dell'ordine dei 2
+o 3 mm in qualche direzione) con il modello costruito sul set A». Numeri finali:
+rms 0.17 e 0.22 mm dai piani, normali entro 3.7°, **anello A→B→C chiuso a 0.13 e
+0.04 mm**.
+
+La strada per arrivarci ha prodotto tutte le guardie che il canale ora ha, e
+ognuna nasce da un errore vero che aveva superato quelle precedenti:
+un piano non ha lato → confronto fra rette; tre piani ammettono quattro
+sistemazioni → rifiuto con la richiesta di un aggancio asimmetrico; un punto non
+ha normale → `:point? true` pesa solo la posizione; i minimi quadrati spalmano
+il danno → leave-one-out che nomina il colpevole; due fusioni a due possono
+essere entrambe "perfette" e contraddirsi → chiusura dell'anello.
+
+**Residuo dichiarato, 2-3 mm, e NON è la fusione** (che chiude a 0.13). È
+l'errore di posa PER FOTO: il PnP di ogni scatto sta a 4-5 px di rms, e su un
+piatto ⌀130 visto da 250 mm quello vale circa 1 mm di profondità; in `A` due
+foto radenti stanno a 9.4 e 10.7 px, cioè ~2 mm. Prossimo passo naturale, e
+automatizzabile senza lavoro per l'utente: **una focale sola per sessione,
+fittata dai dati invece che letta dall'EXIF, con le pose raffinate insieme**
+(bundle a focale condivisa) — oggi ogni foto è registrata da sola e la focale è
+un dato esterno preso per buono.
+
 ## Gate umano (giudice: Vincenzo)
 
 1. Gate di floor: stessa scena fotografata in due sessioni SENZA muovere
