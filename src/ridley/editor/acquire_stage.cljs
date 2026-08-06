@@ -32,6 +32,7 @@
             [ridley.photogrammetry.triangulate :as tri]
             [ridley.photogrammetry.edge :as pedge]
             [ridley.photogrammetry.circle :as pcircle]
+            [ridley.photogrammetry.curve :as pcurve]
             [ridley.photogrammetry.edge-snap :as edge-snap]
             [ridley.photogrammetry.fuse :as fuse]
             [ridley.export.stl :as stl]))
@@ -1953,14 +1954,28 @@
 (defn- edge-fit [] (get-in @stage [:edge :fit]))
 
 (defn- edge-kind
-  "Whether this session is measuring a straight edge or a circular one. Decided
-   by the FIRST declaration and then held: the two are different measurements of
+  "Whether this session is measuring a straight edge or a CURVED one. Decided by
+   the FIRST declaration and then held: the two are different measurements of
    different things, and a mixture is a mistake worth naming rather than an
    average worth taking."
   []
   (get-in @stage [:edge :kind] :retta))
 
-(defn- circle-mode? [] (= :cerchio (edge-kind)))
+(defn- curve-mode? [] (= :curva (edge-kind)))
+
+(defn- curve-groups
+  "Every curve declared so far: the finished ones plus the one in hand. They are
+   kept APART — pooled only after each has become 3D points — because pairing a
+   ray of one curve with a ray of another gives meetings that are real geometry
+   and meaningless measurement.
+
+   More than one is the answer to the commonest failure, and the reason this is a
+   vector at all: a single gentle arc is nearly straight, and a nearly straight
+   set of points lies in infinitely many planes."
+  []
+  (let [done (get-in @stage [:edge :done-curves] [])
+        cur (edge-obs)]
+    (filterv seq (conj done cur))))
 
 (def ^:private max-write-rms-px
   "Reprojection above which a measured feature must NOT be written, whatever else
@@ -1979,46 +1994,80 @@
   8.0)
 
 (defn- edge-usable?
-  "Whether the current fit is fit to be written. Always: solved, near the object,
-   and explaining the pixels it was fitted to. Then, for a line, that the photos
-   turned enough AROUND it; for a circle, that they saw enough OF it — the two
-   ways each shape can be under-determined while looking perfectly healthy."
+  "Whether the current fit is fit to be written.
+
+   For a straight edge: near the object, explaining its pixels, and with the
+   photos having turned enough AROUND it. For a curve, what is written is the
+   PLANE it lies in, and the one way that fails is different — the points can be
+   strung along what is almost a line, which lies in infinitely many planes. So
+   the test is the SPREAD, and flatness only earns a warning: a zone that is not
+   quite flat is still the user's zone."
   []
   (let [f (edge-fit)]
-    (boolean (and f (:plausible? f)
-                  (<= (:rms-px f) max-write-rms-px)
-                  (if (circle-mode?)
-                    (>= (:span-deg f) pcircle/min-arc-deg)
-                    (>= (:angle-deg f) pedge/min-plane-angle-deg))))))
+    (boolean (and f
+                  (if (curve-mode?)
+                    (and (:plane f)
+                         (>= (:agreement (:plane f)) pcurve/min-agreement)
+                         (>= (:width-mm (:plane f)) pcurve/min-width-mm)
+                         (>= (:min-elevation-deg (:plane f)) pcurve/min-elevation-deg))
+                    (and (:plausible? f)
+                         (<= (:rms-px f) max-write-rms-px)
+                         (>= (:angle-deg f) pedge/min-plane-angle-deg)))))))
 
 (defn- solve-edge!
   "Re-solve from every photo's declaration. Keyed by photo index, so declaring
    again on the same photo REPLACES that view (the natural way to correct a slip)
    instead of piling up two contradictory ones.
 
-   Two solvers, one gesture: a straight edge is the intersection of the planes
-   its image lines span (closed form), a circle is fitted to the 3D points where
-   the photos' rays meet. The user does the same thing either way — point at the
-   edge — and the image decides which of the two it is."
+   Two answers, one gesture. A straight edge is the intersection of the planes
+   its image lines span — closed form, and the answer IS the edge. A curve gives
+   3D points where the photos' rays meet, and what those points are worth is the
+   PLANE they lie in (Vincenzo, 2026-08-06: «la curva da identificare non è mai
+   un cerchio, al massimo un segmento … potremmo usare le linee curve per
+   identificare piani»). The circle is computed too, when the curve happens to be
+   one, and offered — but the plane is what a curve reliably IS.
+
+   The user does the same thing either way: point at the edge. The image decides."
   []
   (let [entries (sort-by key (edge-obs))
         idxs (mapv key entries)
-        circle? (circle-mode?)
-        obs (mapv (fn [[_ o]]
-                    (select-keys o (if circle?
-                                     [:pose :points :intrinsics]
-                                     [:pose :seg :intrinsics])))
-                  entries)
-        fit (when (>= (count obs) 2)
-              (if circle?
-                (pcircle/fit-circle obs)
-                (pedge/triangulate-edge (stage-intrinsics) obs)))]
+        curve? (curve-mode?)
+        emit (:emit-pose @stage)
+        hints (if (:plate? @stage)
+                [(:heading emit) (:up emit)]
+                [(:up emit) (:heading emit)])
+        cams (into [] (keep #(get-in @stage [:camera-poses % :position]) idxs))
+        toward (when (seq cams)
+                 (mapv #(/ % (count cams)) (reduce m/v+ [0.0 0.0 0.0] cams)))
+        groups (when curve?
+                 (mapv (fn [obs] (mapv #(select-keys (val %) [:pose :points :intrinsics])
+                                       (sort-by key obs)))
+                       (curve-groups)))
+        obs (mapv (fn [[_ o]] (select-keys o [:pose :seg :intrinsics])) entries)
+        fit (cond
+              curve?
+              (when (some #(>= (count %) 2) groups)
+                (let [plane (pcurve/plane-from-curves groups {:toward toward :up-hints hints})
+                      ;; a curve that IS a circle is worth saying so: the diameter
+                      ;; is a number the user came for, even when the plane is
+                      ;; what gets written.
+                      circ (pcircle/fit-circle (first (filter #(>= (count %) 2) groups)))]
+                  (when plane
+                    {:plane plane
+                     :circle (when (and circ (>= (:span-deg circ) pcircle/min-arc-deg)
+                                        (<= (:rms-px circ) max-write-rms-px)
+                                        (plausible-point? (:center circ)))
+                               circ)
+                     :curves (count groups)})))
+
+              (>= (count obs) 2)
+              (pedge/triangulate-edge (stage-intrinsics) obs))]
     (swap! stage assoc-in [:edge :fit]
            (when fit
              (assoc fit
                     :photos idxs
-                    :plausible? (if circle?
-                                  (plausible-point? (:center fit))
+                    :plausible? (if curve?
+                                  (plausible-point? (:position (:plane fit)))
                                   (and (plausible-point? (:a fit))
                                        (plausible-point? (:b fit)))))))))
 
@@ -2067,13 +2116,26 @@
           (add! {:type :lines :data (ring-segments ring edge-committed-color)})
           (add! {:type :lines :data [{:from a :to b :color edge-committed-color}]})))
       (when (and fit (:plausible? fit))
-        (if (circle-mode?)
-          ;; the measured circle, drawn as its own ring in the WORLD — navigate
-          ;; the photos and it stays on the object's rim, or it is wrong
-          (do (add! {:type :lines :data (ring-segments (pcircle/ring-mesh fit)
-                                                       edge-measured-color)})
-              (add! {:type :dots :data [{:pos (:center fit) :radius 1.0
-                                         :color edge-measured-color :opacity 0.95}]}))
+        (if (curve-mode?)
+          ;; the PLANE the curve lies in, drawn as the same translucent disc the
+          ;; plane-mark gesture uses — navigate the photos and it stays glued to
+          ;; the surface, or it is wrong — plus the 3D points it was fitted to,
+          ;; which are the evidence and should be visible as such.
+          (let [pl (:plane fit)
+                pts (:points pl)
+                r (max 6.0 (* 1.25 (reduce max 1.0
+                                           (map #(m/magnitude (m/v- % (:position pl))) pts))))
+                {:keys [vertices faces]} (tri/disc-mesh pl r plane-disc-segments)]
+            (add! {:type :mesh
+                   :data {:vertices vertices :faces faces
+                          :material {:color edge-measured-color :opacity 0.22
+                                     :double-sided true}}})
+            (add! {:type :dots
+                   :data (mapv (fn [p] {:pos p :radius 0.7
+                                        :color edge-measured-color :opacity 0.9})
+                               pts)})
+            (add! {:type :dots :data [{:pos (:position pl) :radius 1.3
+                                       :color plane-origin-color :opacity 1.0}]}))
           (do (add! {:type :lines :data [{:from (:a fit) :to (:b fit)
                                           :color edge-measured-color}]})
               (add! {:type :dots :data [{:pos (:a fit) :radius 0.9
@@ -2093,35 +2155,68 @@
     (cond
       (nil? f) nil
 
-      (circle-mode?)
-      (cond
-        (not (:plausible? f))
-        (say! (str "il cerchio cade lontano dall'oggetto: le due foto non stanno "
-                   "guardando lo stesso bordo curvo"))
+      (curve-mode?)
+      (let [pl (:plane f)]
+        (cond
+          (not (:plausible? f))
+          (say! (str "il piano cade lontano dall'oggetto: le due foto non stanno "
+                     "guardando lo stesso bordo curvo"))
 
-        (> (:rms-px f) max-write-rms-px)
-        (say! (str "riproiezione " (src/fmt-number (:rms-px f))
-                   " px: questo cerchio NON spiega le foto da cui è nato. Quasi "
-                   "sempre vuol dire che su qualche foto è stato seguito un bordo "
-                   "diverso — controlla che l'anello arancione cada sullo stesso "
-                   "spigolo in tutte, e rifai quella che sbaglia."))
-        :else
-        (do (say! (str "cerchio su " (count (:photos f)) " foto · raggio "
-                       (src/fmt-number (:radius f)) " mm (diametro "
-                       (src/fmt-number (* 2 (:radius f))) ") · arco visto "
-                       (src/fmt-number (:span-deg f)) "° · riproiezione "
-                       (src/fmt-number (:rms-px f)) " px"))
-            (when (< (:span-deg f) pcircle/min-arc-deg)
-              (say! (str "ATTENZIONE: se ne vede solo " (src/fmt-number (:span-deg f))
-                         "° (ne servono " (src/fmt-number pcircle/min-arc-deg)
-                         "). Sotto un terzo di giro il raggio e il centro si "
-                         "scambiano quasi liberamente — un cerchio piccolo vicino e "
-                         "uno grande lontano spiegano gli stessi pixel. Serve una "
-                         "foto che ne mostri di più.")))
-            (when (> (:rms-px f) 4.0)
-              (say! (str "riproiezione " (src/fmt-number (:rms-px f))
-                         " px: il bordo seguito su qualche foto non è quello giusto, "
-                         "oppure non è davvero un cerchio.")))))
+          :else
+          (do (say! (str "PIANO da " (:curves f) (if (> (:curves f) 1) " curve" " curva")
+                         " su " (count (:photos f)) " foto · larghezza "
+                         (src/fmt-number (:width-mm pl)) " mm · planarità "
+                         (src/fmt-number (:flatness-mm pl)) " mm · "
+                         (:n pl) " punti"
+                         (when (pos? (:dropped pl))
+                           (str " (" (:dropped pl) " scartati)"))))
+              (cond
+                (< (:agreement pl) pcurve/min-agreement)
+                (say! (str "ATTENZIONE: solo il " (src/fmt-number (* 100 (:agreement pl)))
+                           "% degli accoppiamenti fra le due foto rispetta l'ORDINE "
+                           "in cui i due bordi sono stati percorsi (ne serve il "
+                           (src/fmt-number (* 100 pcurve/min-agreement)) "%). "
+                           "Percorrere la stessa curva da due parti dà accoppiamenti "
+                           "ordinati; incroci casuali no. Quasi sempre vuol dire che "
+                           "le due foto hanno seguito TRATTI DIVERSI dello stesso "
+                           "bordo, senza sovrapporsi: rifai quella che non si "
+                           "sovrappone, partendo da dove passa l'altra."))
+
+                (< (:min-elevation-deg pl) pcurve/min-elevation-deg)
+                (say! (str "ATTENZIONE: il piano trovato passa quasi per le camere "
+                           "stesse (la più bassa sta a "
+                           (src/fmt-number (:min-elevation-deg pl))
+                           "° sopra di lui, ne servono "
+                           (src/fmt-number pcurve/min-elevation-deg)
+                           "). Un piano così si smentisce da solo: visto di taglio "
+                           "da entrambe le foto, una curva adagiata su di lui si "
+                           "vedrebbe DRITTA — e tu ne hai dichiarata una curva. "
+                           "Quasi sempre vuol dire che le due foto hanno seguito "
+                           "TRATTI DIVERSI dello stesso bordo, senza sovrapporsi: "
+                           "ridichiarane una partendo da dove passa l'altra."))
+
+                (< (:width-mm pl) pcurve/min-width-mm)
+                (say! (str "ATTENZIONE: i punti sono larghi solo "
+                           (src/fmt-number (:width-mm pl))
+                           " mm attraverso il piano, quindi stanno quasi in fila — e "
+                           "una fila di punti sta su INFINITI piani. Un millimetro "
+                           "d'errore su un punto inclinerebbe la normale di "
+                           (src/fmt-number (:tilt-per-mm-deg pl)) "°. Premi 'n' e "
+                           "dichiara una SECONDA curva sulla stessa faccia: è quella "
+                           "la cura, non un click più preciso."))
+
+                (> (:flatness-mm pl) 1.0)
+                (say! (str "la zona non è così piana: i punti si scostano fino a "
+                           (src/fmt-number (:flatness-mm pl))
+                           " mm dal piano trovato. Guarda bene prima di accettarlo."))
+
+                :else nil)
+              (when-let [ci (:circle f)]
+                (say! (str "per inciso, questa curva È un cerchio di ⌀"
+                           (src/fmt-number (* 2 (:radius ci))) " mm (arco "
+                           (src/fmt-number (:span-deg ci)) "°, "
+                           (src/fmt-number (:rms-px ci)) " px). Invio scrive il PIANO; "
+                           "premi 'c' se vuoi il cerchio invece."))))))
 
       (not (:plausible? f))
       (say! (str "lo spigolo cade lontano dall'oggetto: i tratti disegnati non sono "
@@ -2243,23 +2338,25 @@
                 true)]
     (cond
       ;; A CURVED edge is not a failure to find one: the walk followed it, and
-      ;; those points are exactly what the circle fit eats. The first declaration
+      ;; those points are exactly what the plane fit eats. The first declaration
       ;; decides what is being measured; after that the two must agree, because a
-      ;; straight edge and a circle are different measurements of different
-      ;; things and a mixture is a mistake worth naming.
-      (and curved? (or first? (circle-mode?)))
+      ;; straight edge and a curve are different measurements of different things
+      ;; and a mixture is a mistake worth naming.
+      (and curved? (or first? (curve-mode?)))
       (take! {:points (:points r) :raw [px px] :pose pose :intrinsics k
               :snap {:n (count (:points r))} :auto? true :curved? true}
-             :cerchio
+             :curva
              (str "bordo CURVO trovato sulla foto " (nav-rank idx) ": "
                   (count (:points r)) " punti seguiti su "
-                  (src/fmt-number (:walked-px r)) " px. Stiamo misurando un "
-                  "CERCHIO — serve un'altra foto che lo guardi da un altro lato."))
+                  (src/fmt-number (:walked-px r)) " px. Da una curva si ricava il "
+                  "PIANO su cui è adagiata — serve un'altra foto che la guardi da "
+                  "un altro lato."))
 
-      (and (:ok? r) (circle-mode?))
+      (and (:ok? r) (curve-mode?))
       (do (say! (str "questa foto vede un bordo DRITTO, ma stiamo misurando un "
-                     "cerchio: o non è lo stesso bordo, o da qui l'arco si vede "
-                     "troppo di taglio per essere riconosciuto. Provane un'altra."))
+                     "piano da bordi curvi: o non è lo stesso bordo, o da qui la "
+                     "curva si vede troppo di taglio per essere riconosciuta. "
+                     "Provane un'altra."))
           false)
 
       (:ok? r)
@@ -2311,13 +2408,15 @@
               ;; the normal case: one click, and the image answers
               (try-one-click! idx px pose k) nil
 
-              ;; no hand fallback while measuring a CIRCLE: two clicks declare a
-              ;; straight stroke, and a straight stroke says nothing about an arc.
-              (circle-mode?)
+              ;; no hand fallback while measuring a plane from CURVES: two clicks
+              ;; declare a straight stroke, and a straight stroke gives a line of
+              ;; points, which lies in infinitely many planes.
+              (curve-mode?)
               (say! (str "qui non riesco a seguire il bordo curvo. Prova a "
-                         "cliccare dove l'arco si vede meglio, o passa a una foto "
-                         "che lo mostri più aperto — per un cerchio i due click a "
-                         "mano non servono, un segmento non dice niente di un arco."))
+                         "cliccare dove la curva si vede meglio, o passa a una foto "
+                         "che la mostri più aperta — i due click a mano non "
+                         "servirebbero: darebbero una fila di punti, e una fila sta "
+                         "su infiniti piani."))
 
               :else
               (open! (str "…quindi facciamolo a mano: primo capo preso (pallino "
@@ -2344,6 +2443,16 @@
         (swap! stage update-in [:edge :obs] dissoc victim)
         (solve-edge!)
         (say! (str "tratto della foto " (nav-rank victim) " tolto")))
+
+      ;; the current curve is empty but earlier ones are not: step back into the
+      ;; last one, so Backspace unwinds 'n' as well as the clicks
+      (seq (get-in @stage [:edge :done-curves]))
+      (do (swap! stage update :edge
+                 (fn [e] (-> e
+                             (assoc :obs (peek (:done-curves e)))
+                             (update :done-curves pop))))
+          (solve-edge!)
+          (say! "curva precedente riaperta"))
 
       :else (say! "non c'è niente da togliere"))
     (redraw-overlay!)))
@@ -2454,39 +2563,81 @@
     (when (seq cams)
       (mapv #(/ % (count cams)) (reduce m/v+ [0.0 0.0 0.0] cams)))))
 
-(defn- accept-edge!
-  "Enter: write the measured feature to the source. One Enter, not two — unlike a
-   plane, this is BEING checked the whole time it is declared: the orange
-   segment (or ring) has been drawn over the photos since the second
-   declaration, and every `]` since then was a look at it."
+(def ^:private evidence-points
+  "How many of the recovered 3D points to write into the mark's `:from`. They are
+   the mark's evidence — what makes it re-editable — but a walked curve arrives
+   forty-odd points long and a literal that size buries the form it lives in.
+   A dozen, evenly spaced, still describes the zone."
+  12)
+
+(defn- accept-curve-plane!
+  "Enter, on a curve: write the PLANE it lies in, as an ordinary plane mark.
+
+   Not a new kind of thing — the very same `(plane-mark {…})` in `:marks` that
+   the three-point gesture writes, through the very same write-back. That is the
+   point of doing it this way: everything downstream (turtle :at, edit-path-2d on
+   the zone, acquire-union's anchors, the stage's own drawing of source marks)
+   works untouched, and what changed is only that the mark cost two clicks
+   instead of six and asked for no point identity at all."
+  [f]
+  (let [pl (:plane f)
+        mark (select-keys pl [:position :heading :up])
+        pts (pcurve/subsample (:points pl) evidence-points)]
+    (if-let [nm (commit-plane-mark! mark pts)]
+      (do (swap! stage update :edge
+                 #(-> % (assoc :obs {} :done-curves [])
+                      (dissoc :fit :pending :kind)))
+          (say! (str "scritto :" nm " nel sorgente come mark-piano · larghezza "
+                     (src/fmt-number (:width-mm pl)) " mm, planarità "
+                     (src/fmt-number (:flatness-mm pl)) " mm. "
+                     "Usalo come qualunque altro piano: (turtle A :at :" nm " …), "
+                     "oppure come aggancio in una acquire-union."))
+          (redraw-overlay!))
+      (redraw-overlay!))))
+
+(defn- accept-curve-circle!
+  "'c', on a curve that really is a circle: write the CIRCLE instead of the
+   plane. The plane is what a curve reliably is; this is for when it is more."
   []
   (let [f (edge-fit)
-        circle? (circle-mode?)]
-    (cond
-      (nil? f)
-      (say! (str "serve una dichiarazione su almeno DUE foto perché ci sia "
-                 (if circle? "un cerchio" "uno spigolo") " da scrivere"))
-
-      (not (edge-usable?))
-      (report-edge!)
-
-      circle?
-      (if-let [mark (pcircle/circle-mark f {:toward (camera-centre) :up-hints (up-hints)})]
+        ci (:circle f)]
+    (if-not ci
+      (say! (str "questa curva non è un cerchio abbastanza definito da scrivere "
+                 "(o se ne vede troppo poco): Invio scrive il piano, che è quello "
+                 "che una curva è sempre."))
+      (if-let [mark (pcircle/circle-mark ci {:toward (camera-centre) :up-hints (up-hints)})]
         (if-let [nm (commit-edge! "cerchio"
                                   (fn [nm] (str ":" nm " (circle-mark "
                                                 (circle-literal mark) ")")))]
           (do (swap! stage update :edge
-                     #(-> % (update :committed conj {:ring (pcircle/ring-mesh f)})
-                          (assoc :obs {}) (dissoc :fit :pending :kind)))
-              (say! (str "scritto :" nm " nel sorgente · raggio "
-                         (src/fmt-number (:radius f)) " mm (diametro "
-                         (src/fmt-number (* 2 (:radius f))) "). "
-                         "Usalo con (turtle (:" nm " (:edges A)) …): la turtle sta al "
-                         "CENTRO col naso lungo l'asse, quindi (extrude (circle "
-                         (src/fmt-number (:radius f)) ") (f …)) ci costruisce sopra."))
+                     #(-> % (update :committed conj {:ring (pcircle/ring-mesh ci)})
+                          (assoc :obs {} :done-curves []) (dissoc :fit :pending :kind)))
+              (say! (str "scritto :" nm " nel sorgente · diametro "
+                         (src/fmt-number (* 2 (:radius ci))) " mm. "
+                         "La turtle ci sta al CENTRO col naso lungo l'asse: "
+                         "(turtle A :at :" nm " (extrude (circle "
+                         (src/fmt-number (:radius ci)) ") (f …)))."))
               (redraw-overlay!))
           (redraw-overlay!))
-        (say! "il cerchio misurato non ha una normale utilizzabile"))
+        (say! "il cerchio misurato non ha una normale utilizzabile")))))
+
+(defn- accept-edge!
+  "Enter: write the measured feature to the source. One Enter, not two — unlike
+   the three-point plane gesture, this is BEING checked the whole time it is
+   declared: the segment (or the disc) has been drawn over the photos since the
+   second declaration, and every `]` since then was a look at it."
+  []
+  (let [f (edge-fit)
+        curve? (curve-mode?)]
+    (cond
+      (nil? f)
+      (say! (str "serve una dichiarazione su almeno DUE foto perché ci sia "
+                 (if curve? "un piano" "uno spigolo") " da scrivere"))
+
+      (not (edge-usable?))
+      (report-edge!)
+
+      curve? (accept-curve-plane! f)
 
       :else
       (if-let [mark (pedge/edge-mark (:a f) (:b f) (up-hints))]
@@ -2512,12 +2663,12 @@
         f (edge-fit)]
     (cond
       (get-in @stage [:edge :pending]) "Spigolo · clicca il secondo capo"
-      (and f (circle-mode?))
-      (str "Cerchio · " n " foto, ⌀" (src/fmt-number (* 2 (:radius f))) "mm, "
-           (src/fmt-number (:span-deg f)) "°")
+      (and f (curve-mode?))
+      (str "Piano · " (count (curve-groups)) "×curva, larghezza "
+           (src/fmt-number (:width-mm (:plane f))) "mm")
       f (str "Spigolo · " n " foto, " (src/fmt-number (:rms-px f)) "px, "
              (src/fmt-number (:length-mm f)) "mm")
-      (= 1 n) (str (if (circle-mode?) "Cerchio" "Spigolo") " · 1 foto (vai su un'altra)")
+      (= 1 n) (str (if (curve-mode?) "Cerchio" "Spigolo") " · 1 foto (vai su un'altra)")
       :else "Spigolo · clicca il bordo")))
 
 (defn- edge-hud-content []
@@ -2528,7 +2679,7 @@
         box (el "div" "eaq-hud-detail")
         add! (fn [cls txt] (.appendChild box (el "div" cls :text txt)))]
     (.appendChild frag (el "div" "eaq-hud-title"
-                           :text (if (circle-mode?) "CERCHIO" "SPIGOLO")))
+                           :text (if (curve-mode?) "PIANO DA UN BORDO CURVO" "SPIGOLO")))
     (.appendChild frag (hud-step (if (>= n 2) :done :current)
                                  1 (str "Foto con il bordo: " n " di 2")))
     (.appendChild frag (hud-step (cond (nil? f) :todo (edge-usable?) :done :else :current)
@@ -2556,23 +2707,44 @@
                 (str "UN click sullo spigolo: direzione e lunghezza le trova da sé. "
                      "Se il punto è ambiguo (un angolo, una curva) te lo dice e ti "
                      "chiede due click.")))))
-    (when (and f (circle-mode?))
-      (add! (cond (not (:plausible? f)) "eaq-hud-bad"
-                  (< (:span-deg f) pcircle/min-arc-deg) "eaq-hud-warn"
-                  (> (:rms-px f) 4.0) "eaq-hud-warn"
-                  :else "eaq-hud-good")
-            (str "⌀ " (src/fmt-number (* 2 (:radius f))) " mm · arco visto "
-                 (src/fmt-number (:span-deg f)) "° · scarto "
-                 (src/fmt-number (:rms-px f)) " px"))
-      (when (< (:span-deg f) pcircle/min-arc-deg)
-        (add! "eaq-hud-warn"
-              (str "Se ne vede meno di " (src/fmt-number pcircle/min-arc-deg)
-                   "°: sotto un terzo di giro un cerchio piccolo vicino e uno "
-                   "grande lontano spiegano gli stessi pixel, quindi il raggio "
-                   "non è ancora una misura.")))
-      (add! "eaq-hud-hint"
-            "L'anello arancione è disegnato nel MONDO: cambia foto con [ e ] — deve restare sul bordo."))
-    (when (and f (not (circle-mode?)))
+    (when (and f (curve-mode?))
+      (let [pl (:plane f)]
+        (add! (cond (not (:plausible? f)) "eaq-hud-bad"
+                    (< (:agreement pl) pcurve/min-agreement) "eaq-hud-bad"
+                    (< (:min-elevation-deg pl) pcurve/min-elevation-deg) "eaq-hud-bad"
+                    (< (:width-mm pl) pcurve/min-width-mm) "eaq-hud-warn"
+                    (> (:flatness-mm pl) 1.0) "eaq-hud-warn"
+                    :else "eaq-hud-good")
+              (str "larghezza " (src/fmt-number (:width-mm pl)) " mm · planarità "
+                   (src/fmt-number (:flatness-mm pl)) " mm · " (:n pl) " punti · accordo "
+                   (src/fmt-number (* 100 (:agreement pl))) "%"))
+        (when (< (:agreement pl) pcurve/min-agreement)
+          (add! "eaq-hud-bad"
+                (str "Le due foto non stanno percorrendo lo stesso tratto: solo il "
+                     (src/fmt-number (* 100 (:agreement pl))) "% degli accoppiamenti "
+                     "rispetta l'ordine del percorso. Rifai la foto che non si "
+                     "sovrappone, partendo da dove passa l'altra.")))
+        (when (< (:min-elevation-deg pl) pcurve/min-elevation-deg)
+          (add! "eaq-hud-bad"
+                (str "Il piano trovato passa quasi per le camere ("
+                     (src/fmt-number (:min-elevation-deg pl))
+                     "° sopra di lui): si smentisce da solo, perché di taglio una "
+                     "curva si vedrebbe dritta. Le due foto hanno seguito TRATTI "
+                     "DIVERSI dello stesso bordo — rifai quella che non si sovrappone.")))
+        (when (< (:width-mm pl) pcurve/min-width-mm)
+          (add! "eaq-hud-warn"
+                (str "I punti stanno quasi in FILA (larghi " (src/fmt-number (:width-mm pl))
+                     " mm), e una fila sta su infiniti piani: 1 mm d'errore "
+                     "inclinerebbe la normale di " (src/fmt-number (:tilt-per-mm-deg pl))
+                     "°. Premi 'n' e dichiara una seconda curva sulla stessa faccia.")))
+        (when-let [ci (:circle f)]
+          (add! "eaq-hud-hint"
+                (str "Questa curva è anche un cerchio di ⌀"
+                     (src/fmt-number (* 2 (:radius ci))) " mm: premi 'c' per scrivere "
+                     "quello invece del piano.")))
+        (add! "eaq-hud-hint"
+              "Il dischetto è disegnato nel MONDO: cambia foto con [ e ] — deve restare incollato alla superficie.")))
+    (when (and f (not (curve-mode?)))
       (add! (cond (not (:plausible? f)) "eaq-hud-bad"
                   (< (:angle-deg f) pedge/min-plane-angle-deg) "eaq-hud-warn"
                   (> (:rms-px f) 4.0) "eaq-hud-warn"
@@ -2620,12 +2792,15 @@
     frag))
 
 (defn- start-edge! []
-  (swap! stage assoc :edge {:obs {} :committed []})
-  (say! (str "modo spigolo attivo. UN click sullo spigolo, su ogni foto: "
-             "direzione e lunghezza le legge dall'immagine (se non ci riesce lo "
-             "dice e ti chiede due click). Servono almeno 2 foto che lo guardino "
-             "da lati DIVERSI — girate intorno allo spigolo, non spostate lungo "
-             "di lui ([ e ] per cambiare); Invio scrive, Esc esce."))
+  (swap! stage assoc :edge {:obs {} :done-curves [] :committed []})
+  (say! (str "modo bordi attivo. UN click su un bordo, su ogni foto: l'immagine "
+             "dice da sé se è DRITTO o CURVO, e le due cose danno misure diverse. "
+             "Dritto → lo spigolo 3D. Curvo → il PIANO su cui la curva è adagiata, "
+             "scritto come un normale mark-piano (due click al posto dei sei del "
+             "gesto a tre punti, e senza dover ritrovare lo stesso punto). "
+             "Servono 2 foto che lo guardino da lati DIVERSI ([ e ] per cambiare); "
+             "'n' aggiunge una seconda curva sulla stessa faccia, Invio scrive, "
+             "Esc esce."))
   (redraw-overlay!))
 
 (defn- stop-edge! []
@@ -2633,9 +2808,31 @@
   (say! "modo spigolo chiuso")
   (redraw-overlay!))
 
+(defn- next-curve!
+  "'n': close this curve and open another on the SAME plane. The one cure for the
+   commonest failure — a single gentle arc is nearly straight, and a nearly
+   straight set of points lies in infinitely many planes — and it is a cure no
+   amount of careful clicking on the first curve can substitute for."
+  []
+  (cond
+    (not (curve-mode?))
+    (say! "'n' serve solo quando stai misurando un piano da bordi curvi")
+    (< (count (edge-obs)) 2)
+    (say! "questa curva ha ancora bisogno di una seconda foto prima di passare alla prossima")
+    :else
+    (do (swap! stage update :edge
+               #(-> % (update :done-curves (fnil conj []) (:obs %))
+                    (assoc :obs {})))
+        (say! (str "curva chiusa (" (count (curve-groups)) " in tutto). "
+                   "Dichiarane un'altra sulla STESSA faccia: due curve che si "
+                   "incrociano fissano il piano molto meglio di una."))
+        (redraw-overlay!))))
+
 (defn- edge-key! [k]
   (case k
     "Enter" (do (accept-edge!) true)
+    "n" (do (next-curve!) true)
+    "c" (do (when (curve-mode?) (accept-curve-circle!)) true)
     "Backspace" (do (undo-edge-click!) true)
     "Escape" (do (stop-edge!) true)
     false))
