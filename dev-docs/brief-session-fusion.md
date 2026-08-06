@@ -157,6 +157,20 @@ parallele (due piani paralleli non fissano la rotazione attorno alla normale
 residuo per mark riportato (stile :per-point); leave-one-out riusato dalla
 triangolazione.
 
+> **FETTA 2 COSTRUITA (2026-08-06)**: il palcoscenico tiene TUTTE le sessioni
+> fuse. `note-eval!` riceve l'elenco delle sessioni con la loro rototraslazione;
+> `load!` legge ogni cartella, riconcilia le camere nel frame emesso di quella
+> sessione e poi le trasporta nel frame fuso; le foto diventano UNA pellicola con
+> indici globali, ognuna con la propria cartella. Tutto il resto (frustum, `[`/`]`,
+> le osservazioni del gesto Piano, i badge di registrazione) è rimasto com'era:
+> era già indicizzato per foto e non sa di attraversare tre cartelle. `[`/`]`
+> ordina per sessione e poi per θ. Misurato sui dati di Vincenzo: 19 foto (10+5+4)
+> da tre cartelle, 19 camere registrate, e le camere di tutte e tre a 209-262 mm
+> dal centro dei mark fusi — cioè guardano davvero lo stesso oggetto.
+> NON fatto (e da valutare solo se dà fastidio): il proxy mostrato resta quello
+> della sessione di riferimento, quindi nelle foto delle altre sessioni il PIATTO
+> non combacia — combacia l'oggetto, che è ciò che serve.
+
 ## Cosa deve crescere: multi-acquire sul palcoscenico
 
 È la "decisione D" lasciata aperta in `HANDOVER-p4b-stage-toolbar.md` (oggi lo

@@ -30,6 +30,7 @@
             [ridley.photogrammetry.bridge :as bridge]
             [ridley.photogrammetry.exif :as exif]
             [ridley.photogrammetry.triangulate :as tri]
+            [ridley.photogrammetry.fuse :as fuse]
             [ridley.export.stl :as stl]))
 
 (def default-focal-mm 48.0)
@@ -101,6 +102,18 @@
 (defn- free-orbit? [] (and @stage (loaded?) (not (:in-pose? @stage))))
 
 (defn- photo-file [idx] (:file (nth (:photos @stage) idx nil)))
+
+(defn- photo-dir
+  "Which session's folder photo `idx` lives in. The film is a FLAT list across
+   every fused session, so the folder travels with the photo rather than being
+   the stage's one directory (dev-docs/brief-session-fusion.md, fetta 2)."
+  [idx]
+  (or (:dir (nth (:photos @stage) idx nil)) (:dir @stage)))
+
+(defn- photo-session
+  "The label of the session photo `idx` came from, or nil for a lone acquire."
+  [idx]
+  (:session (nth (:photos @stage) idx nil)))
 (defn- stage-pivot [] (:position (:emit-pose @stage)))
 
 ;; ------------------------------------------------------------
@@ -286,7 +299,7 @@
   (when-not (backdrop/ready?)
     (backdrop/create! (viewport/get-camera)))
   (when-let [file (photo-file idx)]
-    (backdrop/set-photo! (str (:dir @stage) "/" file) (:focal-mm @stage)
+    (backdrop/set-photo! (str (photo-dir idx) "/" file) (:focal-mm @stage)
                          viewport/set-camera-fov!)
     (backdrop/set-visible! true))
   ;; every photo starts un-zoomed (fresh view offset)
@@ -353,10 +366,14 @@
 ;; ------------------------------------------------------------
 
 (defn- nav-order
-  "Registered photo indices (those with a camera pose) sorted by turntable angle θ."
+  "Registered photo indices (those with a camera pose), sorted by SESSION first
+   and turntable angle θ within it. With sessions fused the film is one strip
+   that walks a pose at a time, which is what makes `[`/`]` read as 'go round
+   this pose, then round the next'."
   []
   (let [{:keys [photos camera-poses]} @stage]
-    (vec (sort-by (fn [idx] (or (:theta (nth photos idx nil)) 0))
+    (vec (sort-by (fn [idx] [(or (:session-idx (nth photos idx nil)) 0)
+                             (or (:theta (nth photos idx nil)) 0)])
                   (keys camera-poses)))))
 
 (defn- nav-rank
@@ -1974,34 +1991,67 @@
 (defn- resolve-focal!
   "Adopt the focal: acquire-state's saved value if present, else EXIF from photo 0,
    else the default. Returns a Promise resolving to the focal (mm)."
-  [state-focal first-file]
+  [state-focal dir first-file]
   (if state-focal
     (js/Promise.resolve state-focal)
-    (-> (stl/desktop-read-file-blob (str (:dir @stage) "/" (:file first-file)))
+    (-> (stl/desktop-read-file-blob (str dir "/" (:file first-file)))
         (.then (fn [^js blob] (.arrayBuffer blob)))
         (.then (fn [ab] (or (exif/focal-35mm-from-arraybuffer ab) default-focal-mm)))
         (.catch (fn [_] default-focal-mm)))))
 
+(defn- load-one-session!
+  "Read one session's files and return a Promise of
+   {:photos [{:file :theta :dir :session :session-idx}] :camera-poses {i pose}
+    :registration {i …} :focal-mm}, with the camera poses ALREADY in the fused
+   frame: first reconciled from the acquisition frame to that session's emitted
+   frame, then carried through the fusion's own rigid motion (nil for the
+   reference session, which is already there)."
+  [{:keys [dir label emit-pose transform]} session-idx]
+  (-> (js/Promise.all
+       #js [(stl/desktop-read-file (str dir "/session.json"))
+            (-> (stl/desktop-read-file (str dir "/acquire-state.json"))
+                (.catch (fn [_] nil)))]) ; no state yet → no cameras (no frustums)
+      (.then (fn [^js results]
+               (let [photos (mapv #(assoc % :dir dir :session label :session-idx session-idx)
+                                  (parse-session-json (aget results 0)))
+                     st (some-> (aget results 1) parse-acquire-state)
+                     cams (reconcile-cameras (:camera-poses st) (:proxy-pose st) emit-pose)
+                     cams (if transform
+                            (into {} (map (fn [[i p]] [i (fuse/transform-pose transform p)]) cams))
+                            cams)]
+                 {:photos photos :camera-poses cams
+                  :registration (:registration st) :focal-mm (:focal-mm st)})))
+      (.catch (fn [err]
+                (js/console.warn "acquire-stage: load failed" dir err)
+                {:photos [] :camera-poses {} :registration {}}))))
+
 (defn- load!
-  "Async: read session.json + acquire-state.json from the stage dir, reconcile
-   camera poses into the emit frame, resolve focal, and mark the stage loaded.
-   Returns a Promise. On resolve the caller shows the frustums (post-refresh)."
+  "Async: read every fused session, transport its cameras into the fused frame,
+   and lay the photos out as ONE film with global indices. Returns a Promise; on
+   resolve the caller shows the frustums (post-refresh).
+
+   Global indices are what let everything downstream stay as it was: frustums,
+   `[`/`]`, the plane gesture's observations and the registration badges are all
+   keyed by photo index, and they neither know nor care that the index now spans
+   three folders."
   []
-  (let [dir (:dir @stage)]
-    (-> (js/Promise.all
-         #js [(stl/desktop-read-file (str dir "/session.json"))
-              (-> (stl/desktop-read-file (str dir "/acquire-state.json"))
-                  (.catch (fn [_] nil)))]) ; no state yet → no cameras (no frustums)
-        (.then (fn [^js results]
-                 (let [photos (parse-session-json (aget results 0))
-                       st (some-> (aget results 1) parse-acquire-state)
-                       cams (reconcile-cameras (:camera-poses st)
-                                               (:proxy-pose st) (:emit-pose @stage))]
-                   (swap! stage assoc :photos photos :camera-poses cams
-                          :registration (:registration st))
-                   (-> (resolve-focal! (:focal-mm st) (first photos))
-                       (.then (fn [focal]
-                                (swap! stage assoc :focal-mm focal :loaded? true)))))))
+  (let [sessions (or (seq (:sessions @stage))
+                     [{:dir (:dir @stage) :emit-pose (:emit-pose @stage)}])]
+    (-> (js/Promise.all (into-array (map-indexed #(load-one-session! %2 %1) sessions)))
+        (.then (fn [^js parts]
+                 (let [parts (vec parts)
+                       ;; offset each session's own 0-based photo indices into the
+                       ;; global film
+                       offsets (reductions + 0 (map #(count (:photos %)) parts))
+                       shift (fn [m off] (into {} (map (fn [[i v]] [(+ i off) v]) m)))]
+                   (swap! stage assoc
+                          :photos (vec (mapcat :photos parts))
+                          :camera-poses (apply merge (map #(shift (:camera-poses %1) %2) parts offsets))
+                          :registration (apply merge (map #(shift (:registration %1) %2) parts offsets)))
+                   (let [p0 (first (:photos @stage))]
+                     (-> (resolve-focal! (:focal-mm (first parts)) (:dir p0) p0)
+                         (.then (fn [focal]
+                                  (swap! stage assoc :focal-mm focal :loaded? true))))))))
         (.catch (fn [err]
                   (js/console.warn "acquire-stage: load failed" err)
                   nil)))))
@@ -2010,29 +2060,41 @@
   "Called by the `acquire` runtime fn DURING evaluation: record the acquire value so
    after-eval! (post refresh-viewport!) can (re)establish the stage. `acquire-value`
    is {:proxy <posed mesh> :pose <emit pose> :dir …}."
-  [{:keys [proxy pose dir marks]}]
-  (swap! stage (fn [s]
-                 (assoc (or s {})
-                        :pending {:dir dir
-                                  :emit-pose (or pose (:creation-pose proxy))
-                                  :dims (bridge/dims-from-mesh proxy (:creation-pose proxy))
-                                  :marks marks
-                                  ;; a registration PLATE (it carries named marks)
-                                  ;; — its axis is a usable 'the object rests on
-                                  ;; this' normal, which unlocks the one-click
-                                  ;; plane-mark case. A box's heading is not.
-                                  :plate? (boolean (seq (:anchors proxy)))}))))
+  [{:keys [proxy pose dir marks sessions]}]
+  (let [emit (or pose (:creation-pose proxy))]
+    (swap! stage
+           (fn [s]
+             (assoc (or s {})
+                    :pending {:dir dir
+                              :emit-pose emit
+                              :dims (bridge/dims-from-mesh proxy (:creation-pose proxy))
+                              :marks marks
+                              ;; every session whose photos belong on the film. One
+                              ;; entry for a lone (acquire …); one per fused session
+                              ;; for an (acquire-union …), each with the rigid motion
+                              ;; that carries its cameras into this frame.
+                              :sessions (or sessions [{:dir dir :emit-pose emit}])
+                              ;; a registration PLATE (it carries named marks)
+                              ;; — its axis is a usable 'the object rests on
+                              ;; this' normal, which unlocks the one-click
+                              ;; plane-mark case. A box's heading is not.
+                              :plate? (boolean (seq (:anchors proxy)))})))))
 
 (defn after-eval!
   "Post-eval hook (mirrors modal/requested?→enter!): run AFTER refresh-viewport!.
    If an (acquire …) was noted this eval, (re)establish the stage without moving the
    camera; a Run that noted none tears the stage down."
   []
-  (let [pending (:pending @stage)]
+  (let [pending (:pending @stage)
+        ;; what identifies 'the same stage' is now the whole SET of fused
+        ;; sessions, not one folder: adding a session to an acquire-union has to
+        ;; count as a change, or its photos never arrive.
+        sig (fn [s] (mapv :dir (:sessions s)))]
     (cond
       ;; a fresh/changed acquire → (re)load, then show frustums (unless in pose)
-      (and pending (not= (:dir pending) (:dir @stage)))
+      (and pending (not= (sig pending) (sig @stage)))
       (do (swap! stage merge {:dir (:dir pending)
+                              :sessions (:sessions pending)
                               :emit-pose (:emit-pose pending)
                               :dims (:dims pending)
                               :plate? (:plate? pending)

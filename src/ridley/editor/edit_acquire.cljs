@@ -4180,11 +4180,19 @@
                                  (into {} (map (fn [[nm p]] [(prefix ref-lbl nm) p]) (:marks a))))
                           moved)]
         (loop-closure! sessions anchors-for fits)
-        ;; The stage keeps showing the REFERENCE session — its frame is the fused
-        ;; frame — but with ALL the marks, transported ones included. Which makes
-        ;; the fusion visible for free: a mark measured in session B must land on
-        ;; the object in session A's photos.
-        (stage/note-eval! {:proxy (:proxy a) :pose (:pose a) :dir (:dir a) :marks marks})
+        ;; The stage works in the REFERENCE session's frame — the fused frame —
+        ;; and gets EVERY session's photos: each one's cameras carried here by
+        ;; the motion just fitted, so `[`/`]` walks the whole film and the object
+        ;; can be traced from angles no single turntable pass could reach. Which
+        ;; is the entire point of the fusion, and the check on it too: a mark
+        ;; measured in B must land on the object in A's photos.
+        (stage/note-eval! {:proxy (:proxy a) :pose (:pose a) :dir (:dir a) :marks marks
+                           :sessions (into [{:dir (:dir a) :label ref-lbl
+                                             :emit-pose (:pose a) :transform nil}]
+                                           (map (fn [{:keys [dir label pose transform]}]
+                                                  {:dir dir :label label
+                                                   :emit-pose pose :transform transform})
+                                                moved))})
         (assoc a
                :marks marks
                :sessions (into [{:label ref-lbl :dir (:dir a) :proxy (:proxy a)
