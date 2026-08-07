@@ -124,6 +124,13 @@ e' una lista, e' un indovinello.
 - **I piani fatti sono un elenco a se'**, ognuno coi numeri dei bordi di cui e'
   fatto, e il loro nome e' scritto nel mondo sull'origine del piano.
 
+I numeri si spengono col tasto `l` (bottone «Numeri: sì/no»), e serve: sono la
+risposta a una domanda che ci si fa TRA una pennellata e l'altra («quale di
+questi e' il numero 2?»), mentre DURANTE una stanno in mezzo — sono disegnati
+sopra tutto, quindi coprono la foto proprio dove si sta cercando di dipingere
+(Vincenzo, 2026-08-07: «con le labels cosi' in evidenza non si riesce a
+selezionare ulteriori tratti»). Due modi d'uso, un interruttore.
+
 Attenzione per chi tocca questo: `set-labels!` e' GLOBALE e sostituisce tutto.
 Va chiamata solo mentre il gesto e' attivo, o cancella le etichette di un
 edit-path-2d aperto — e il palcoscenico ridisegna a ogni cambio di foto, cioe'

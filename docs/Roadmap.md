@@ -200,9 +200,11 @@ utente).
   accanto al bordo (billboard, le stesse etichette di edit-path); un bordo speso
   in un piano non sparisce ma si smorza e dice a chi appartiene, nell'elenco e
   nella foto (uno spigolo puo' servire a due facce); e i piani fatti sono un
-  elenco a se', ognuno coi numeri dei bordi di cui e' fatto. Trappola per chi
-  tocca: `set-labels!` e' globale, va chiamata solo a gesto attivo o cancella le
-  etichette di un edit-path-2d aperto. **Direzione dichiarata e non costruita**:
+  elenco a se', ognuno coi numeri dei bordi di cui e' fatto. I numeri si spengono col tasto `l`,
+  perche' rispondono a una domanda che ci si fa TRA una pennellata e l'altra e
+  durante una stanno in mezzo — sono disegnati sopra tutto e coprono la foto dove
+  si dipinge. Trappola per chi tocca: `set-labels!` e' globale, va chiamata solo a
+  gesto attivo o cancella le etichette di un edit-path-2d aperto. **Direzione dichiarata e non costruita**:
   raccogliere i bordi di una faccia in un `path-2d` editabile — sono semilavorati
   di un contorno, e proiettati sul piano che definiscono lo sono gia'; manca
   l'ordinamento (sequenza e cuciture agli angoli), non la geometria.

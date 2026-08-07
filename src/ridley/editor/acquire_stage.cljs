@@ -293,7 +293,7 @@
 
 (declare plane-preview-items edge-preview-items)
 
-(declare edge-labels)
+(declare edge-labels edge-mode?)
 
 (defn- show-frustums!
   "Repaint the stage's OWN overlay layer: the ghost frustums (free orbit) plus
@@ -315,7 +315,7 @@
   ;; there, so calling it on every repaint would wipe the labels an open
   ;; edit-path-2d ricalco has put up — and the stage repaints on every photo
   ;; change, which is exactly when a ricalco is being navigated.
-  (when (edge-mode?) (viewport/set-labels! (edge-labels))))
+  (when (edge-mode?) (viewport/set-labels! (vec (edge-labels)))))
 
 ;; ------------------------------------------------------------
 ;; In-pose / free-orbit transitions. In pose the camera is locked (set-camera-pose!
@@ -460,7 +460,7 @@
 (def ^:private click-slop-px 6)
 
 (declare plane-mode? plane-click! plane-key! toggle-plane-mode! toggle-source-marks!
-         edge-mode? edge-click! edge-key! toggle-edge-mode! edge-hud-content edge-status
+         edge-click! edge-key! toggle-edge-mode! edge-hud-content edge-status
          paint-declare! world-solver-pose stage-intrinsics say!)
 
 (defn- editable? [^js el]
@@ -2306,12 +2306,29 @@
     (when (seq points) (nth points (quot (count points) 2)))
     (when (and a b) (m/v* (m/v+ a b) 0.5))))
 
+(defn- labels-on? [] (get-in @stage [:edge :labels?] true))
+
+(defn- toggle-labels!
+  "'l' — put the numbers away, or bring them back.
+
+   They answer a question one asks BETWEEN strokes («quale di questi è il numero
+   2?») and get in the way DURING one, because they are drawn on top of
+   everything and sit over the very photo one is trying to paint on (Vincenzo,
+   2026-08-07: «con le labels così in evidenza non si riesce a selezionare
+   ulteriori tratti»). Two modes of use, one switch."
+  []
+  (swap! stage update-in [:edge :labels?] #(not (if (nil? %) true %)))
+  (say! (if (labels-on?)
+          "etichette accese: ogni bordo del banco porta il suo numero nella foto"
+          "etichette spente — 'l' le riaccende quando devi scegliere"))
+  (redraw-overlay!))
+
 (defn- edge-labels
   "The bench's numbers and the planes' names, written IN THE WORLD next to what
-   they name. Empty when the gesture is off, so nothing of this lingers over an
-   ordinary stage."
+   they name. Empty when the gesture is off or the numbers are put away, so
+   nothing of this lingers over an ordinary stage."
   []
-  (when (edge-mode?)
+  (when (and (edge-mode?) (labels-on?))
     (-> []
         (into (keep (fn [feat]
                       (when-let [p (feature-anchor feat)]
@@ -3149,6 +3166,11 @@
                                     "Scrive il bordo dritto come spigolo misurato (Invio)"
                                     (boolean (and f (= :retta (:kind f)) (edge-usable?)))
                                     false accept-edge!))
+      (.appendChild row (hud-button (if (labels-on?) "Numeri: sì" "Numeri: no")
+                                    (str "Mostra o nasconde i numeri dei bordi NELLA "
+                                         "FOTO (tasto l). Servono per scegliere; "
+                                         "mentre dipingi stanno in mezzo.")
+                                    true false toggle-labels!))
       (.appendChild row (hud-button (str "punta " (src/fmt-number (brush-px)) "px")
                                     (str "Spessore del pennarello — click per il "
                                          "prossimo (tasti + e -). E' in pixel dello "
@@ -3194,6 +3216,7 @@
     (= k "p") (do (plane-from-bench!) true)
     (= k "c") (do (accept-circle!) true)
     (= k "r") (do (reset-current!) true)
+    (= k "l") (do (toggle-labels!) true)
     (or (= k "+") (= k "=")) (do (cycle-brush! 1) true)
     (or (= k "-") (= k "_")) (do (cycle-brush! -1) true)
     (= k "Backspace") (do (undo-edge-click!) true)
