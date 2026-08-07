@@ -1,8 +1,13 @@
 # Handover: spigoli dichiarati (gradino 3, fetta 1)
 
-Aperto 2026-08-06. Stato: **COSTRUITO, suite verde (869 test / 3412 asserzioni),
-verificato dal vivo sulla sessione vera. GATE UMANO DA FARE** (Vincenzo deve
-disegnare uno spigolo VERO di un oggetto VERO). Non committato.
+Aperto 2026-08-06, cresciuto per sei giri d'uso vero fino al 2026-08-07. Stato:
+**COSTRUITO e COMMITTATO** sul branch `acquire-edges-declared`; suite verde
+(893 test / 3515 asserzioni); verificato dal vivo sulla sessione vera.
+
+Il gate umano è in corso e sta guidando il lavoro: Vincenzo ha già creato un
+piano dai tratti dritti. Ogni sezione qui sotto nasce da una sua osservazione
+all'uso, ed è ordinata dalla più recente alla più vecchia — chi arriva adesso
+legga le prime tre, che sono la forma che il gesto ha oggi.
 
 Brief di riferimento: `dev-docs/brief-observation-driven-acquire.md`.
 
