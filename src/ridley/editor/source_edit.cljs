@@ -33,6 +33,31 @@
         (= (.charAt text j) "\"") (inc j)
         :else (recur (inc j))))))
 
+(defn commented?
+  "Is the character at `idx` inside a LINE COMMENT? Scans its own line from the
+   start, honouring strings, so a `;` inside a string literal does not count.
+
+   A commented-out form is not part of the program, so it must never be the
+   target of a write-back. This bit for real (2026-08-07): an earlier
+   `(def A (acquire …))` had been commented out to start over, and the stage's
+   edge write-back landed in THAT one — it was merely the first occurrence in
+   the file.
+
+   Line comments only: a form disabled with the reader discard `#_` still looks
+   live from here. That is the rarer gesture, and catching it properly means
+   parsing, not scanning."
+  [text idx]
+  (let [start (inc (.lastIndexOf (.substring text 0 idx) "\n"))]
+    (loop [i start]
+      (if (>= i idx)
+        false
+        (let [ch (.charAt text i)]
+          (cond
+            (= ch ";") true
+            (= ch "\"") (let [after (skip-string text i)]
+                          (if (neg? after) false (recur after)))
+            :else (recur (inc i))))))))
+
 (def ^:private closer-of {"(" ")" "[" "]" "{" "}"})
 (def ^:private closer? #{")" "]" "}"})
 

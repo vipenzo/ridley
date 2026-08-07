@@ -154,3 +154,27 @@
   (is (= "1.2346" (src/fmt-number 1.23456789)) "4 decimals")
   (is (= "0" (src/fmt-number 1e-9)) "noise rounds away rather than printing 1e-9")
   (is (= "[1 -2.5 0]" (src/fmt-vec3 [1.0 -2.5 0.0]))))
+
+(deftest a-commented-out-form-is-not-a-target
+  ;; The write-backs (edge, curve, plane) locate their acquire form by searching
+  ;; the buffer for its head. Vincenzo commented out an earlier `(def A (acquire …`
+  ;; to start over, and `n` wrote into THAT one — it was the first occurrence in
+  ;; the file, and nothing in the search said "must be live code".
+  (let [text (str ";; (def A\n"
+                  ";;   (acquire \"dir\" {:edges {}}))\n"
+                  "(def A\n"
+                  "  (acquire \"dir\" {:edges {}}))\n")
+        dead (.indexOf text "(acquire")
+        live (.indexOf text "(acquire" (inc dead))]
+    (is (src/commented? text dead) "the one behind ;; is dead text")
+    (is (not (src/commented? text live)) "the one that runs is not"))
+  (testing "a ; inside a string is not a comment"
+    (let [text "(acquire \"dir;x\" {:edges {}})"]
+      (is (not (src/commented? text (.indexOf text ":edges"))))))
+  (testing "a comment ends at its newline"
+    (let [text "; nota\n(acquire \"d\" {})"]
+      (is (not (src/commented? text (.indexOf text "(acquire"))))))
+  (testing "code, then a trailing comment on the same line"
+    (let [text "(acquire \"d\" {}) ; e questo e' morto (acquire \"d\" {})"]
+      (is (not (src/commented? text 0)))
+      (is (src/commented? text (.lastIndexOf text "(acquire"))))))

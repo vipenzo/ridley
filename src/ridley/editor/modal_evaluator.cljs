@@ -223,14 +223,22 @@
   (str new-head (subs text (+ from (count old-head)) to)))
 
 (defn find-form-bounds
-  "Find the [from to) character bounds of the first form in `text` whose opening
-   matches `prefix` (e.g. \"(tweak \" or \"(edit-bezier\"). Returns [from to] or
-   nil. Shared by every modal evaluator that locates its own marker in the source."
+  "Find the [from to) character bounds of the first LIVE form in `text` whose
+   opening matches `prefix` (e.g. \"(tweak \" or \"(edit-bezier\"). Returns
+   [from to] or nil. Shared by every modal evaluator that locates its own marker
+   in the source.
+
+   Occurrences inside line comments are skipped: they are not part of the
+   program, so they are never what the user meant, and a write-back that landed
+   in one would edit text that nothing evaluates."
   [text prefix]
-  (let [idx (.indexOf text prefix)]
-    (when (>= idx 0)
-      (let [end (find-matching-paren text idx)]
-        (when (pos? end) [idx end])))))
+  (loop [from 0]
+    (let [idx (.indexOf text prefix from)]
+      (when (>= idx 0)
+        (if (source-edit/commented? text idx)
+          (recur (inc idx))
+          (let [end (find-matching-paren text idx)]
+            (when (pos? end) [idx end])))))))
 
 (defn balanced-source?
   "True if `text` is one or more complete, well-formed s-expressions: brackets

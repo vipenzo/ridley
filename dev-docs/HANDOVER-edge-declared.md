@@ -102,6 +102,38 @@ La sagitta lo dice dall'altro lato — un cerchio resta dentro 1.2 px per
 continua a essere rifiutato come arco (verificato: il test del disco tiene 58 px
 e viene respinto).
 
+## SCRIVEVA IN UNA FORMA COMMENTATA (2026-08-07)
+
+«Avevo commentato il `(def A …` di prima per ripartire da zero, e con `n` scrive
+a riga 24 anziché nel blocco non commentato (quello a riga 27).»
+
+Difetto vero, e appena il banco ha cominciato a vivere nel sorgente è diventato
+inevitabile trovarlo: il write-back cercava la sua forma con una ricerca di
+testo — la PRIMA occorrenza di `(acquire "dir"` nel buffer — e un `(acquire …)`
+dietro `;;` è pur sempre un'occorrenza. Anzi, è quella che vince, perché
+commentando si lascia la vecchia sopra e si riparte sotto.
+
+Il rimedio sta un piano sotto, in `find-form-bounds` (`modal_evaluator.cljs`),
+che è il localizzatore di TUTTI i modali: ora scorre le occorrenze e salta
+quelle dentro un commento di riga, con `source-edit/commented?` (puro,
+node-testabile, rispetta le stringhe: un `;` dentro `"dir;x"` non commenta
+niente). Ne guadagnano gratis anche edit-path, edit-bezier, edit-attach e
+edit-image-board: nessuno di loro può più confermare dentro un marcatore
+commentato.
+
+Il lato LETTURA non aveva il problema e non è stato toccato: banco e piani si
+leggono da `:pending`, che nasce dalla VALUTAZIONE dell'acquire — una forma
+commentata non viene valutata, quindi non è mai esistita per il banco.
+
+Limite dichiarato: solo i commenti di riga. Una forma spenta con `#_` continua a
+sembrare viva alla ricerca; prenderla davvero vuol dire fare il parsing, non lo
+scorrimento.
+
+Verificato dal vivo (Playwright, sul build in esecuzione): buffer con un
+`(acquire "test-assets/param-plate-paper" …)` commentato a riga 2 e quello vero
+a riga 7 → entrambe le ricerche (con la dir e il ripiego) tornano riga 7, e i
+bounds finiscono sulla chiusura della forma viva.
+
 ## IL BANCO VIVE NEL SORGENTE (2026-08-07)
 
 «Sembra non ci sia modo, se sbagli, di annullare un piano e rifarlo. Non sarebbe
