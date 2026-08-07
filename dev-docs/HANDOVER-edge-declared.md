@@ -97,6 +97,51 @@ La sagitta lo dice dall'altro lato — un cerchio resta dentro 1.2 px per
 continua a essere rifiutato come arco (verificato: il test del disco tiene 58 px
 e viene respinto).
 
+## IL BANCO (2026-08-07) — la forma che il gesto ha adesso
+
+Il primo giro della curva→piano è stato **bocciato all'uso**: «Troppo complicato.
+Prima di aver cliccato tre volte su una curva non dà segni di vita, al primo
+click dice che la curva c'è, ma non si vede nessuna linea, e alla fine non sono
+mai riuscito ad andare oltre». Due difetti distinti, e vale la pena separarli:
+
+1. **Un difetto vero**: la dichiarazione non veniva disegnata. Il gesto diceva
+   «bordo CURVO trovato» e non mostrava niente, perché i punti comparivano solo
+   dopo che la SECONDA foto rendeva possibile il fit. Chi clicca non aveva modo
+   di distinguere un click buono da uno cattivo per due foto intere. Ora quello
+   che si dichiara si vede subito, alla profondità dell'oggetto sul proprio
+   raggio — quindi sulla foto da cui viene sta esattamente sopra i pixel che
+   l'hanno prodotto.
+2. **Un difetto di disegno**, e la proposta di Vincenzo è migliore: «se
+   accumulassimo semplicemente segmenti che restano visualizzati e l'utente può
+   selezionare per dire *questi stanno sullo stesso piano*?»
+
+Il gesto è ora un **banco**. Ogni bordo misurato — dritto o curvo — resta lì,
+disegnato nel mondo e numerato; `n` lo tiene, il suo numero lo seleziona, `p`
+scrive il mark-piano dai selezionati. Invio scrive un bordo dritto come spigolo,
+`c` un cerchio.
+
+**Perché è meglio, e non solo più comodo.** Una RETTA si misura intersecando i
+piani che le sue righe-immagine spannano: nessun punto viene mai accoppiato con
+un altro, quindi non ci sono fantasmi da sopravvivere, nessun ordine da
+rispettare, nessun accordo al 62%. È l'evidenza più solida che ci sia qui — ed è
+proprio quella che il rilevatore trova meglio (una volta su due al primo click).
+**Due rette non parallele su una faccia ne fissano il piano esattamente.** La
+curva smette di essere l'unica strada al piano e diventa una delle cose che si
+possono mettere sul banco.
+
+E ogni bordo è indipendente: uno che non riesce non porta con sé gli altri, e i
+bordi possono venire da COPPIE DI FOTO DIVERSE — il banco non se ne cura.
+
+### Misurato dal vivo (piatto vero, la verità nota migliore)
+
+Il bordo del piatto è UN cerchio, quindi due suoi archi qualsiasi sono
+provatamente complanari. Due archi (a 210° e 345°, misurati dalle foto 0 e 7,
+accordo 100% e 96%), tenuti sul banco, selezionati, `p`:
+
+**piano a 0.64° dalla verticale e 0.47 mm di quota** — contro i 6.9° della
+singola curva, che veniva giustamente rifiutata. Scritto nel sorgente come
+`(plane-mark …)` normale, con i suoi punti in `:from`.
+
 ## Da una curva, il PIANO (2026-08-06, la correzione di rotta di Vincenzo)
 
 Dopo aver provato i cerchi sui suoi pezzi: «la curva da identificare non è mai un

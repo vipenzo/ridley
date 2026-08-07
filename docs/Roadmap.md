@@ -192,7 +192,30 @@ utente).
   click diventa il primo capo del tratto a mano (~1.5 click per foto). Resta: il
   magazzino delle osservazioni (i tratti oggi non sopravvivono alla chiusura) e i
   punti nel pool. Entry point `dev-docs/HANDOVER-edge-declared.md`.
-- **Da una curva, il PIANO — COSTRUITO 2026-08-06, gate umano DA FARE.**
+- **Il BANCO dei bordi — COSTRUITO 2026-08-07, gate umano DA FARE.** Il primo
+  giro della curva→piano è stato bocciato all'uso da Vincenzo («troppo
+  complicato … al primo click dice che la curva c'è, ma non si vede nessuna
+  linea, e alla fine non sono mai riuscito ad andare oltre»), e la sua proposta
+  è migliore: «se accumulassimo semplicemente segmenti che restano visualizzati e
+  l'utente può selezionare per dire *questi stanno sullo stesso piano*?». Due
+  cose distinte, entrambe fatte. (a) Un **difetto vero**: la dichiarazione non
+  veniva disegnata — i punti comparivano solo dopo che la seconda foto rendeva
+  possibile il fit, quindi per due foto intere non c'era modo di distinguere un
+  click buono da uno cattivo. Ora si vede subito, alla profondità dell'oggetto
+  sul proprio raggio. (b) Il **banco**: ogni bordo misurato, dritto o curvo,
+  resta disegnato e numerato; `n` lo tiene, il numero lo seleziona, `p` scrive il
+  mark-piano dai selezionati, Invio scrive uno spigolo, `c` un cerchio. **Perché
+  è meglio e non solo più comodo**: una RETTA si misura intersecando i piani
+  delle sue righe-immagine, senza accoppiare nessun punto — niente fantasmi,
+  niente ordine, niente accordo al 62% — ed è proprio quella che il rilevatore
+  trova meglio; due rette non parallele su una faccia ne fissano il piano
+  esattamente. La curva smette di essere l'unica strada al piano. Ogni bordo è
+  indipendente e può venire da coppie di foto diverse. **Misurato dal vivo** sul
+  piatto (due archi dello stesso bordo, provatamente complanari, da foto
+  diverse): piano a **0.64° dalla verticale e 0.47 mm di quota**, contro i 6.9°
+  della singola curva.
+- **Da una curva, il PIANO — COSTRUITO 2026-08-06** (primo giro, superato dal
+  banco qui sopra ma la matematica è la stessa).
   Correzione di rotta di Vincenzo dopo aver provato i cerchi sui suoi pezzi: «la
   curva da identificare non è mai un cerchio, al massimo un segmento … potremmo
   usare le linee curve per identificare PIANI. Quelle su cui sto cliccando sono

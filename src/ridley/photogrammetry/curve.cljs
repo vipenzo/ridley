@@ -302,6 +302,34 @@
                     (recur (inc i) best best-score)))
                 (recur (inc i) best best-score)))))))))
 
+(defn plane-from-points
+  "The plane a set of ALREADY MEASURED 3D points lies in, as an ordinary Ridley
+   mark — the robust fit and nothing else.
+
+   Split out from plane-from-curves because the points can come from anywhere:
+   from a curve's ray meetings, or from a straight edge that was measured by
+   intersecting the planes its image lines span. That second source is the
+   valuable one (Vincenzo, 2026-08-06: «se accumulassimo semplicemente segmenti
+   che restano visualizzati e l'utente può selezionare per dire questi stanno
+   sullo stesso piano»), because a straight edge is recovered WITHOUT pairing any
+   points at all — so it carries none of the ghost trouble a curve does. Two
+   non-parallel edges of a face pin its plane exactly.
+
+   `opts` takes :toward and :up-hints, as triangulate/fit-plane-mark, plus the
+   RANSAC knobs. Returns the mark with :points :n :dropped, or nil."
+  ([pts] (plane-from-points pts {}))
+  ([pts {:keys [toward up-hints ransac-iters seed]
+         :or {ransac-iters 200 seed 7}}]
+   (let [pts (vec pts)]
+     (when (>= (count pts) 3)
+       (let [inliers (ransac-plane pts plane-outlier-mm ransac-iters seed)
+             inliers (if (>= (count inliers) 3) inliers pts)]
+         (when-let [mark (tri/fit-plane-mark inliers {:toward toward :up-hints up-hints})]
+           (assoc mark
+                  :points inliers
+                  :n (count inliers)
+                  :dropped (- (count pts) (count inliers)))))))))
+
 (defn plane-from-curves
   "The PLANE that the declared curves lie in, as an ordinary Ridley MARK.
 
