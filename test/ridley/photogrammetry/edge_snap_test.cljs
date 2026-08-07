@@ -162,6 +162,52 @@
 
 ;; ---------------------------------------------------------------------------
 
+(deftest a-painted-zone-stops-the-walk-before-the-corner
+  (println "\n=== Pennarello: 'cerca la linea QUI' ferma il cammino all'angolo ===")
+  ;; The failure Vincenzo photographed (2026-08-07): «la cattura della linea ha
+  ;; preso troppo: insegue tratti non complanari». The walk stops when CONTRAST
+  ;; dies — but a real edge does not die at a corner, it turns into another edge,
+  ;; and the walk follows it round onto a face that lies on a different plane.
+  ;; Which edge is meant is knowledge the program does not have, so the user
+  ;; paints a band and the walk stays in it.
+  ;;
+  ;; Here: an L, dark in the quarter x<400 ∧ y<300. Its boundary is a vertical
+  ;; arm and a horizontal one meeting at (400,300).
+  ;;
+  ;; NOTE what this test does and does not show. A SHARP synthetic corner already
+  ;; stops the free walk on its own (the perpendicular peak jumps and vanishes),
+  ;; so the overshoot itself is not reproduced here — the evidence for that is on
+  ;; the real photographs, where corners are rounded and the walk sails through
+  ;; them: on Vincenzo's clip, 48 places where a walk ran 250+ px past what was
+  ;; straight, and one where painting the band turned 692 px of refusal into an
+  ;; accepted edge. What IS under test here is the mechanism: the band bounds the
+  ;; walk to exactly what was painted, and what is inside it stays measurable.
+  (let [dist-to-L (fn [x y]
+                    (let [d1 (if (<= y 300) (Math/abs (- x 400)) (Math/hypot (- x 400) (- y 300)))
+                          d2 (if (<= x 400) (Math/abs (- y 300)) (Math/hypot (- x 400) (- y 300)))
+                          d (min d1 d2)]
+                      (if (and (< x 400) (< y 300)) (- d) d)))
+        lum (bounded (fn [x y] (+ 130.0 (* 70.0 (Math/tanh (/ (dist-to-L x y) 1.5))))))
+        free (es/edge-at-point lum 400 150)
+        ;; the user paints the vertical arm only, from y=60 to y=240
+        in-zone? (fn [x y]
+                   (and (< (Math/abs (- x 400)) 18.0) (<= 60.0 y 240.0)))
+        zoned (es/edge-at-point lum 400 150 {:in-zone? in-zone? :zoned? true})]
+    (println (str "  libero    → " (if (:ok? free) "dritto" (str "RIFIUTATO " (:reason free)))
+                  ", camminato " (fmt (or (:walked-px free) 0) 0)
+                  " px, tenuto dritto " (fmt (or (:length-px free) 0) 0) " px"))
+    (println (str "  con zona  → " (if (:ok? zoned) "dritto" (str "RIFIUTATO " (:reason zoned)))
+                  ", camminato " (fmt (or (:walked-px zoned) 0) 0)
+                  " px, tenuto " (fmt (or (:length-px zoned) 0) 0)
+                  " px, scarto " (fmt (or (:rms zoned) 0) 2) " px"))
+    (is (< (:walked-px zoned) (:walked-px free))
+        "the painted band must actually stop the walk short of the free one")
+    (is (:ok? zoned) "and what is left inside it is a clean straight edge")
+    (is (< (angle-between-deg (dir-of zoned) [0.0 1.0]) 1.0)
+        "running down the arm that was painted, not round the corner")
+    (is (> (:length-px zoned) 100)
+        "with the whole painted arm kept, since (count band) covers 180 px")))
+
 (deftest the-tensor-reads-orientation-and-how-sure-it-is
   (println "\n=== Il tensore di struttura: direzione + quanto è sicuro ===")
   (doseq [[label lum expect-coherent?]

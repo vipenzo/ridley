@@ -192,6 +192,24 @@ utente).
   click diventa il primo capo del tratto a mano (~1.5 click per foto). Resta: il
   magazzino delle osservazioni (i tratti oggi non sopravvivono alla chiusura) e i
   punti nel pool. Entry point `dev-docs/HANDOVER-edge-declared.md`.
+- **Il PENNARELLO — COSTRUITO 2026-08-07, gate umano DA FARE.** Segnalato da
+  Vincenzo con una foto: «la cattura della linea ha preso troppo: insegue tratti
+  non complanari. Non è che può essere utile una sorta di pennarello a punta
+  spessa, con cui l'utente dice: la linea cercala in questa zona?». Coglie il
+  difetto alla radice: il cammino si ferma quando muore il CONTRASTO, ma un bordo
+  vero non muore a un angolo — si trasforma in un altro bordo, e il cammino lo
+  segue girando su una faccia di un altro piano. Quale bordo si intenda è
+  conoscenza che il programma non ha e l'utente sì. Ora **trascinare in posa
+  dipinge una fascia** e il cammino ci resta dentro; la pennellata resta
+  disegnata (così anche un rilevamento fallito mostra che il gesto è stato
+  sentito), la punta è spessa in pixel-SCHERMO e convertita con la scala che il
+  tratto stesso misura (stesso spessore a ogni zoom, e zoomare è il modo di
+  averla più fine), il seme si cerca lungo la pennellata dal centro in fuori, e
+  la soglia di lunghezza si abbassa da 60 a 25 px perché dipingere corto è un
+  atto deliberato. **Misurato**: stesso bordo del collare, click libero →
+  cammina 692 px, ne tiene 163 dritti, rifiutato; con la pennellata → confinato a
+  254 px, accettato, 1.19 px di scarto. I casi di cammino che scavalca, sul solo
+  collare, sono 48.
 - **Il BANCO dei bordi — COSTRUITO 2026-08-07, gate umano DA FARE.** Il primo
   giro della curva→piano è stato bocciato all'uso da Vincenzo («troppo
   complicato … al primo click dice che la curva c'è, ma non si vede nessuna

@@ -97,6 +97,42 @@ La sagitta lo dice dall'altro lato — un cerchio resta dentro 1.2 px per
 continua a essere rifiutato come arco (verificato: il test del disco tiene 58 px
 e viene respinto).
 
+## IL PENNARELLO (2026-08-07) — «cerca la linea in questa zona»
+
+Vincenzo, con una foto a riprova: «la cattura della linea ha preso troppo:
+insegue tratti non complanari. Non è che può essere utile una sorta di pennarello
+a punta spessa, con cui l'utente dice: la linea cercala in questa zona?»
+
+Sì, e coglie il difetto alla radice. Il cammino si ferma quando **muore il
+contrasto** — ma un bordo vero non muore a un angolo, si trasforma in un altro
+bordo, e il cammino lo segue girando su una faccia che sta su un altro piano.
+QUALE bordo si intende è conoscenza che il programma non ha e l'utente sì. Quindi
+l'utente dipinge una fascia e il cammino ci resta dentro.
+
+- **Trascinare** in posa dipinge la zona (il tasto sinistro era libero: la
+  panoramica è sul destro). La pennellata resta disegnata, così anche quando il
+  rilevatore non trova niente si vede che il gesto è stato sentito.
+- La punta è **spessa in pixel-SCHERMO** e convertita in pixel-foto dalla scala
+  che il tratto stesso misura — quindi ha lo stesso spessore a ogni zoom, e
+  zoomare è il modo di averla più fine.
+- Il seme si cerca **lungo** la pennellata, dal centro in fuori: la fascia è la
+  dichiarazione, dove esattamente attaccarsi è affare del programma, e una
+  pennellata a mano ha il diritto di essere approssimativa.
+- Con una zona la soglia di lunghezza si abbassa (da 60 a 25 px): dipingere corto
+  è un atto deliberato — è proprio il modo di tagliare il bordo prima che
+  diventi un altro — non un fallimento nel trovare di più.
+
+**Misurato sui dati veri** (collare, foto 0): stesso bordo, click libero →
+cammina 692 px, ne tiene 163 dritti, **rifiutato come curvo**; con la pennellata
+sul tratto dritto → cammino confinato a 254 px, **accettato**, scarto 1.19 px.
+Sul solo collare i casi di cammino che scavalca sono **48**.
+
+Nota sul test sintetico: un angolo NETTO ferma il cammino da solo (il picco
+perpendicolare salta e sparisce), quindi lo sconfinamento non si riproduce lì —
+si riproduce sulle foto vere, dove gli angoli sono raccordati. Il test sintetico
+prova il meccanismo (la fascia limita il cammino a esattamente ciò che è stato
+dipinto); l'evidenza dello sconfinamento sono i numeri qui sopra.
+
 ## IL BANCO (2026-08-07) — la forma che il gesto ha adesso
 
 Il primo giro della curva→piano è stato **bocciato all'uso**: «Troppo complicato.

@@ -158,6 +158,18 @@
    so an arc cannot reach this length and is still refused as an arc."
   60.0)
 
+(def min-zoned-straight-px
+  "The same floor, for an edge the user has BOUNDED with a painted zone.
+
+   Lower because the declaration has changed hands. Unbounded, a short straight
+   run means the walk could not find more, and 60 px is where a found direction
+   starts being worth more than a drawn one. Inside a zone, a short run means the
+   user painted a short band — a deliberate act, and usually the right one, since
+   what they are doing is cutting the edge off before it turns into another. 25 px
+   still carries a direction at a couple of tenths of a degree; below it the hand
+   would do as well, zone or no zone."
+  25.0)
+
 (def ^:private min-straight-fraction
   "…and it must also be this much of what was walked. A straight stretch that is
    a small part of a long bending run IS an arc's chord, however long it is in
@@ -210,27 +222,41 @@
 
 (defn- walk
   "Follow the edge from (x0,y0) along unit direction (ux,uy), snapping
-   perpendicular at every `step` pixels, and stop when the contrast dies or the
-   edge turns away. Returns the snapped points found (excluding the start).
+   perpendicular at every `step` pixels, and stop when the contrast dies, the
+   edge turns away, or the walk leaves the zone it was told to stay in. Returns
+   the snapped points found (excluding the start).
 
    Stopping is where the honesty lives. `misses` consecutive stations without a
    peak ends the walk — that is the edge's END (at a corner the peak jumps off
    the search band and vanishes, which is exactly what should stop it), and so
    does a peak that lands further than `jump` from where the walk expected it,
-   which is a different edge crossing rather than this one continuing."
-  [lum-at x0 y0 ux uy {:keys [step max-len H misses jump]}]
+   which is a different edge crossing rather than this one continuing.
+
+   `in-zone?` is the one the USER controls, and it is the answer to the way this
+   fails on real objects: contrast dying is not the same as the edge ending, so a
+   walk that only watches the contrast follows the outline round a corner and
+   into a stretch that lies on another plane entirely (Vincenzo, 2026-08-07: «la
+   cattura della linea ha preso troppo: insegue tratti non complanari»). Which
+   edge is meant is knowledge the program does not have and the user does — so
+   the user paints a band and the walk stays inside it."
+  [lum-at x0 y0 ux uy {:keys [step max-len H misses jump in-zone?]}]
   (let [nx (- uy) ny ux]
     (loop [d step, miss 0, off 0.0, acc []]
       (if (or (> d max-len) (>= miss misses))
         acc
         (let [cx (+ x0 (* ux d) (* nx off))
-              cy (+ y0 (* uy d) (* ny off))
-              pk (cross-peak lum-at cx cy nx ny H)]
-          (cond
-            (nil? pk) (recur (+ d step) (inc miss) off acc)
-            (> (Math/abs (:t pk)) jump) (recur (+ d step) (inc miss) off acc)
-            :else (recur (+ d step) 0 (+ off (:t pk))
-                         (conj acc [(+ cx (* nx (:t pk))) (+ cy (* ny (:t pk)))]))))))))
+              cy (+ y0 (* uy d) (* ny off))]
+          (if (and in-zone? (not (in-zone? cx cy)))
+            acc
+            (let [pk (cross-peak lum-at cx cy nx ny H)]
+              (cond
+                (nil? pk) (recur (+ d step) (inc miss) off acc)
+                (> (Math/abs (:t pk)) jump) (recur (+ d step) (inc miss) off acc)
+                :else
+                (let [px (+ cx (* nx (:t pk))) py (+ cy (* ny (:t pk)))]
+                  (if (and in-zone? (not (in-zone? px py)))
+                    acc
+                    (recur (+ d step) 0 (+ off (:t pk)) (conj acc [px py]))))))))))))
 
 ;; ---- the straight stretch around the click ----
 ;;
@@ -324,7 +350,7 @@
    `:length-px` for what was kept — a big gap between the two is the edge
    bending, said in numbers."
   ([lum-at cx cy] (edge-at-point lum-at cx cy {}))
-  ([lum-at cx cy {:keys [window step max-len H misses jump]
+  ([lum-at cx cy {:keys [window step max-len H misses jump in-zone? zoned?]
                   :or {window 12 step 2.0 max-len 900.0 H 10 misses 4 jump 6.0}}]
    (let [tensor (structure-tensor lum-at cx cy window)]
      (cond
@@ -340,7 +366,8 @@
              start (if-let [{:keys [t]} (cross-peak lum-at cx cy (- uy) ux H)]
                      [(+ cx (* (- uy) t)) (+ cy (* ux t))]
                      [cx cy])
-             opts {:step step :max-len max-len :H H :misses misses :jump jump}
+             opts {:step step :max-len max-len :H H :misses misses :jump jump
+                   :in-zone? in-zone?}
              pass (fn [[sx sy] [dx dy]]
                     (into [[sx sy]]
                           (concat (walk lum-at sx sy dx dy opts)
@@ -371,7 +398,11 @@
                (< walked-px 20.0) {:ok? false :reason :short :length-px walked-px}
                ;; the straight part is a sliver of a long bending run, or too
                ;; short to be worth more than the hand: that is an ARC
-               (or (< kept min-straight-px)
+               ;; With a ZONE the user has said where the edge ends, and their
+               ;; declaration replaces the program's guess: the absolute floor
+               ;; drops to what still carries a direction, because painting a
+               ;; short band is a deliberate act and not a failure to find more.
+               (or (< kept (if zoned? min-zoned-straight-px min-straight-px))
                    (< kept (* min-straight-fraction walked-px)))
                ;; the walked points travel WITH the refusal, ordered along the
                ;; curve: a bend is not a failure to find an edge, it is finding a

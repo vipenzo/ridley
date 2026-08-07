@@ -448,7 +448,8 @@
 (def ^:private click-slop-px 6)
 
 (declare plane-mode? plane-click! plane-key! toggle-plane-mode! toggle-source-marks!
-         edge-mode? edge-click! edge-key! toggle-edge-mode! edge-hud-content edge-status)
+         edge-mode? edge-click! edge-key! toggle-edge-mode! edge-hud-content edge-status
+         paint-declare! world-solver-pose stage-intrinsics say!)
 
 (defn- editable? [^js el]
   (boolean (and el (or (#{"INPUT" "TEXTAREA"} (.-tagName el))
@@ -464,12 +465,44 @@
       ;; never while a modal (an edit-path-2d ricalco) is up: there the click is
       ;; the ricalco's. Only one gesture is ever on (each toggle stops the other).
       (and (or (plane-mode?) (edge-mode?)) (:in-pose? @stage) (not (modal/active?)))
-      (swap! stage assoc :press {:x (.-clientX e) :y (.-clientY e) :gesture? true}))))
+      (do (swap! stage assoc :press {:x (.-clientX e) :y (.-clientY e) :gesture? true})
+          ;; …and in edge mode a DRAG paints the zone to look in, so start
+          ;; collecting the trail now: whether it was a click or a stroke is only
+          ;; known when the pointer comes up.
+          (when (edge-mode?)
+            (swap! stage assoc :paint {:idx (:current-idx @stage) :trail []}))))))
+
+(defn- on-paint-move
+  "While the left button is down in edge mode, every few pixels of travel become
+   a station of the painted band. Sampled by DISTANCE rather than by event, so a
+   slow hand and a fast one paint the same stroke."
+  [^js e]
+  (when-let [{:keys [trail]} (:paint @stage)]
+    (when-let [px (backdrop/pixel-under-pointer e (viewport/get-camera) (viewport/get-canvas))]
+      (let [last-px (:px (peek trail))]
+        (when (or (nil? last-px)
+                  (> (js/Math.hypot (- (first px) (first last-px))
+                                    (- (second px) (second last-px)))
+                     4.0))
+          (swap! stage update-in [:paint :trail] conj
+                 {:px px :screen [(.-clientX e) (.-clientY e)]}))))))
 
 (defn- on-pointerup [^js e]
   (when (zero? (.-button e))
-    (let [{:keys [x y idx gesture?]} (:press @stage)]
-      (swap! stage dissoc :press)
+    (let [{:keys [x y idx gesture?]} (:press @stage)
+          paint (:paint @stage)
+          dragged? (and (some? x)
+                        (>= (js/Math.hypot (- (.-clientX e) x) (- (.-clientY e) y))
+                            click-slop-px))]
+      (swap! stage dissoc :press :paint)
+      ;; a DRAG in edge mode is the marker, not a miss-click
+      (when (and dragged? gesture? (edge-mode?) (>= (count (:trail paint)) 2))
+        (let [i (:idx paint)]
+          (if-let [pose (world-solver-pose i)]
+            (if-let [k (stage-intrinsics)]
+              (paint-declare! i (:trail paint) pose k)
+              (say! "nessuna foto caricata: non so a che risoluzione riferire la pennellata"))
+            (say! (str "la foto " (nav-rank i) " non ha una posa registrata")))))
       (when (and (some? x)
                  (< (js/Math.hypot (- (.-clientX e) x) (- (.-clientY e) y)) click-slop-px))
         (if gesture?
@@ -610,6 +643,7 @@
       (.addEventListener canvas "wheel" on-wheel #js {:capture true :passive false})
       (.addEventListener canvas "pointerdown" on-pan-down true)
       (.addEventListener canvas "pointermove" on-pan-move true)
+      (.addEventListener canvas "pointermove" on-paint-move true)
       (.addEventListener canvas "pointerup" on-pan-up true)
       (.addEventListener canvas "contextmenu" on-contextmenu true))
     (swap! stage assoc :listeners? true)))
@@ -622,6 +656,7 @@
     (.removeEventListener canvas "wheel" on-wheel true)
     (.removeEventListener canvas "pointerdown" on-pan-down true)
     (.removeEventListener canvas "pointermove" on-pan-move true)
+    (.removeEventListener canvas "pointermove" on-paint-move true)
     (.removeEventListener canvas "pointerup" on-pan-up true)
     (.removeEventListener canvas "contextmenu" on-contextmenu true)))
 
@@ -1950,6 +1985,7 @@
 (def ^:private edge-committed-color 0xb36b1f) ; gli spigoli già scritti nel sorgente
 (def ^:private bench-color 0x66ddaa)          ; i bordi tenuti sul banco
 (def ^:private bench-selected-color 0x33ffcc) ; …e quelli scelti per il piano
+(def ^:private brush-color 0x8899ff)          ; la zona dipinta col pennarello
 
 (defn- edge-mode? [] (some? (:edge @stage)))
 (defn- edge-obs [] (get-in @stage [:edge :obs] {}))
@@ -2144,6 +2180,20 @@
       ;; nothing, so there was no way to tell a good click from a bad one until
       ;; two photos later. Placed at the object's depth on its own ray, so on the
       ;; photo it was declared from it lies exactly over the pixels it came from.
+      ;; the painted band, kept on screen after the stroke: it is the user's own
+      ;; declaration of WHERE the edge is, and when the detector finds nothing it
+      ;; is the only thing that says the gesture was heard at all.
+      (let [br (get-in @stage [:edge :brush])
+            zone (or (when (= (:idx br) here) (:stroke br))
+                     (:zone (get (edge-obs) here)))]
+        (when (and zone k pose)
+          (let [pts (into [] (keep #(ray-point-near-object k pose %))
+                          (pcurve/subsample zone 30))]
+            (when (seq pts)
+              (add! {:type :dots
+                     :data (mapv (fn [p] {:pos p :radius 1.6
+                                          :color brush-color :opacity 0.25})
+                                 pts)})))))
       (when-let [o (get (edge-obs) here)]
         (when (and k pose)
           (if (:points o)
@@ -2329,6 +2379,35 @@
                  "misurare il cerchio, chiudi e ricomincia cliccando prima qui.)")
     "non riesco a leggere il bordo da qui: dammi DUE click."))
 
+(def ^:private brush-screen-px
+  "Half-width of the marker, in SCREEN pixels — so it feels the same thickness
+   whatever the zoom, and zooming in is how you get a finer one. Converted to
+   photo pixels from the stroke's own screen-to-photo scale, which the drag
+   measures for free."
+  18.0)
+
+(defn- zone-pred
+  "'Look for the line in HERE': within `r` of the painted polyline. The user's
+   declaration of WHICH edge is meant — knowledge the program does not have, and
+   the reason the walk was running off along the outline into stretches that lie
+   on other planes."
+  [pts r]
+  (let [r2 (* r r)]
+    (fn [x y]
+      (loop [i 0]
+        (if (>= i (dec (count pts)))
+          false
+          (let [[ax ay] (nth pts i)
+                [bx by] (nth pts (inc i))
+                dx (- bx ax) dy (- by ay)
+                len2 (+ (* dx dx) (* dy dy))
+                t (if (< len2 1e-9)
+                    0.0
+                    (max 0.0 (min 1.0 (/ (+ (* (- x ax) dx) (* (- y ay) dy)) len2))))
+                px (+ ax (* t dx)) py (+ ay (* t dy))
+                d2 (+ (* (- x px) (- x px)) (* (- y py) (- y py)))]
+            (if (<= d2 r2) true (recur (inc i)))))))))
+
 (defn- try-one-click!
   "The normal case: ONE click, and the edge finds its own direction and its own
    extent (edge-snap/edge-at-point). Returns true when it did.
@@ -2343,52 +2422,94 @@
    as the contrast goes, which is usually much further than anyone would trace by
    hand, and a longer baseline is a better-determined edge — the convenience and
    the accuracy pull the same way for once."
-  [idx px pose k]
-  (let [r (edge-snap/edge-at-point backdrop/luminance-at (first px) (second px))
-        first? (empty? (edge-obs))
-        curved? (= :curved (:reason r))
-        take! (fn [entry kind msg]
-                (swap! stage update :edge
-                       #(-> % (assoc :kind kind)
-                            (assoc-in [:obs idx] entry)
-                            (dissoc :pending)))
-                (solve-edge!)
-                (say! msg)
-                (report-edge!)
-                (redraw-overlay!)
-                true)]
-    (cond
+  ([idx px pose k] (try-one-click! idx px pose k nil))
+  ([idx px pose k zone]
+   (let [r (if zone
+            ;; a painted zone: try seeds ALONG it until one takes. Which edge is
+            ;; meant is the user's declaration; WHERE exactly on it to start is
+            ;; the program's business, and a thick stroke is allowed to be sloppy.
+             (or (first (keep (fn [q]
+                                (let [res (edge-snap/edge-at-point
+                                           backdrop/luminance-at (first q) (second q)
+                                           {:in-zone? (:pred zone) :zoned? true})]
+                                  (when (or (:ok? res) (= :curved (:reason res))) res)))
+                              (:seeds zone)))
+                 (edge-snap/edge-at-point backdrop/luminance-at (first px) (second px)
+                                          {:in-zone? (:pred zone) :zoned? true}))
+             (edge-snap/edge-at-point backdrop/luminance-at (first px) (second px)))
+         first? (empty? (edge-obs))
+         curved? (= :curved (:reason r))
+         take! (fn [entry kind msg]
+                 (swap! stage update :edge
+                        #(-> % (assoc :kind kind)
+                             (assoc-in [:obs idx] entry)
+                             (dissoc :pending)))
+                 (solve-edge!)
+                 (say! msg)
+                 (report-edge!)
+                 (redraw-overlay!)
+                 true)]
+     (cond
       ;; A CURVED edge is not a failure to find one: the walk followed it, and
       ;; those points are exactly what the plane fit eats. The first declaration
       ;; decides what is being measured; after that the two must agree, because a
       ;; straight edge and a curve are different measurements of different things
       ;; and a mixture is a mistake worth naming.
-      (and curved? (or first? (curve-mode?)))
-      (take! {:points (:points r) :raw [px px] :pose pose :intrinsics k
-              :snap {:n (count (:points r))} :auto? true :curved? true}
-             :curva
-             (str "bordo CURVO trovato sulla foto " (nav-rank idx) ": "
-                  (count (:points r)) " punti seguiti su "
-                  (src/fmt-number (:walked-px r)) " px. Da una curva si ricava il "
-                  "PIANO su cui è adagiata — serve un'altra foto che la guardi da "
-                  "un altro lato."))
+       (and curved? (or first? (curve-mode?)))
+       (take! {:points (:points r) :raw [px px] :pose pose :intrinsics k
+               :zone (:stroke zone)
+               :snap {:n (count (:points r))} :auto? true :curved? true}
+              :curva
+              (str "bordo CURVO trovato sulla foto " (nav-rank idx) ": "
+                   (count (:points r)) " punti seguiti su "
+                   (src/fmt-number (:walked-px r)) " px. Da una curva si ricava il "
+                   "PIANO su cui è adagiata — serve un'altra foto che la guardi da "
+                   "un altro lato."))
 
-      (and (:ok? r) (curve-mode?))
-      (do (say! (str "questa foto vede un bordo DRITTO, ma stiamo misurando un "
-                     "piano da bordi curvi: o non è lo stesso bordo, o da qui la "
-                     "curva si vede troppo di taglio per essere riconosciuta. "
-                     "Provane un'altra."))
-          false)
+       (and (:ok? r) (curve-mode?))
+       (do (say! (str "questa foto vede un bordo DRITTO, ma stiamo misurando un "
+                      "piano da bordi curvi: o non è lo stesso bordo, o da qui la "
+                      "curva si vede troppo di taglio per essere riconosciuta. "
+                      "Provane un'altra."))
+           false)
 
-      (:ok? r)
-      (take! {:seg [(:p1 r) (:p2 r)] :raw [px px] :pose pose :intrinsics k
-              :snap {:n (:n r) :rms (:rms r)} :auto? true}
-             :retta
-             (str "spigolo trovato da un click sulla foto " (nav-rank idx)
-                  ": " (src/fmt-number (:length-px r)) " px di bordo, seguito su "
-                  (:n r) " punti (scarto " (src/fmt-number (:rms r)) " px)"))
+       (:ok? r)
+       (take! {:seg [(:p1 r) (:p2 r)] :raw [px px] :pose pose :intrinsics k
+               :zone (:stroke zone)
+               :snap {:n (:n r) :rms (:rms r)} :auto? true}
+              :retta
+              (str "spigolo trovato da un click sulla foto " (nav-rank idx)
+                   ": " (src/fmt-number (:length-px r)) " px di bordo, seguito su "
+                   (:n r) " punti (scarto " (src/fmt-number (:rms r)) " px)"))
 
-      :else (do (say! (edge-refusal-message r)) false))))
+       :else (do (say! (edge-refusal-message r)) false)))))
+
+(defn- paint-declare!
+  "A DRAG in edge mode: the user has painted a band and said 'the line is in
+   here'. The stroke bounds the walk; where on it to start is found by trying.
+
+   The brush's half-width is fixed in SCREEN pixels and converted to photo pixels
+   by the stroke's own scale — measured, not assumed, so it feels the same
+   thickness at any zoom and zooming in is how one gets a finer marker."
+  [idx trail pose k]
+  (let [pts (mapv :px trail)
+        screen (mapv :screen trail)
+        span (fn [ps] (Math/hypot (- (first (peek ps)) (first (first ps)))
+                                  (- (second (peek ps)) (second (first ps)))))
+        scale (let [sc (span screen)]
+                (if (> sc 1.0) (/ (span pts) sc) 1.0))
+        r (max 6.0 (* brush-screen-px scale))
+        ;; seeds along the painted stroke, from the middle outward: the middle is
+        ;; where a hand-drawn band sits most squarely over what it meant
+        n (count pts)
+        order (sort-by #(Math/abs (- % (quot n 2))) (range n))
+        zone {:pred (zone-pred pts r) :stroke pts
+              :seeds (mapv #(nth pts %) (take 12 order))}]
+    (if (< (count pts) 2)
+      (say! "pennellata troppo corta")
+      (do (swap! stage assoc-in [:edge :brush] {:idx idx :stroke pts :r r})
+          (when-not (try-one-click! idx (nth pts (quot n 2)) pose k zone)
+            (redraw-overlay!))))))
 
 (defn- edge-click!
   "One click in edge mode. Normally that is the whole gesture (try-one-click!);
