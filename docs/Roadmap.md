@@ -192,6 +192,20 @@ utente).
   click diventa il primo capo del tratto a mano (~1.5 click per foto). Resta: il
   magazzino delle osservazioni (i tratti oggi non sopravvivono alla chiusura) e i
   punti nel pool. Entry point `dev-docs/HANDOVER-edge-declared.md`.
+- **Il bordo sfocato: era la BANDA — 2026-08-07.** Vincenzo manda la foto di un
+  bordo in silhouette ovvio all'occhio che il cammino non prende: «un mix di
+  sfocatura e rotondita' dello spigolo … forse si puo' abbassare qualche
+  soglia?». Non era una soglia di contrasto: censimento su 186 punti con un salto
+  vero (>60 livelli su 24 px), quelli rifiutati avevano **coerenza 0.84** — la
+  direzione si vedeva benissimo. Era la banda di ricerca perpendicolare: un bordo
+  sfocato spalma la transizione su 10-15 px, quindi una scansione da ±10 ci sta
+  tutta dentro e il massimo cade all'ESTREMO, dove viene giustamente rifiutato
+  (un picco al bordo vuol dire che il bordo vero e' fuori). Allargata a ±16: i
+  rifiuti passano da **17 a ZERO**, al prezzo di un falso in piu' su 454 zone
+  piatte. Provata e SCARTATA, con le misure agli atti perche' non si ri-provi:
+  rendere il test del picco relativo invece che assoluto (17 → 21 → 26 a ogni
+  variante) — una gobba larga in una banda che riempie non ha fondo da cui
+  distinguersi, quindi la prominenza misurava la gobba contro se stessa.
 - **Vedere il banco — 2026-08-07.** «Comincia a essere usabile. La difficolta'
   piu' grande ora e' interagire col banco: i segmenti listati li', come faccio a
   vedere dove sono nelle foto?». Tre domande sue, un problema solo: il banco era

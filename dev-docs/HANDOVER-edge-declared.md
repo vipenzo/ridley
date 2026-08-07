@@ -102,6 +102,40 @@ La sagitta lo dice dall'altro lato — un cerchio resta dentro 1.2 px per
 continua a essere rifiutato come arco (verificato: il test del disco tiene 58 px
 e viene respinto).
 
+## IL BORDO SFOCATO (2026-08-07) — era la BANDA, non il contrasto
+
+Vincenzo, con una foto: un bordo in silhouette del collare, ovvio all'occhio, che
+il cammino non prendeva. «C'e' un mix di sfocatura e rotondita' dello spigolo che
+concorrono credo, ma forse si puo' abbassare qualche soglia?»
+
+Non era una soglia di contrasto. Censimento su quella foto, 186 punti che portano
+un salto di luminosita' VERO (>60 livelli su 24 px): quelli rifiutati come
+`:flat` avevano **coerenza 0.84** — il tensore vedeva benissimo la direzione — e
+gradiente locale 6.6, cioe' proprio sul filo del vecchio pavimento assoluto di
+`cross-peak`.
+
+**Era la BANDA di ricerca.** Un bordo sfocato spalma la transizione su dieci o
+quindici pixel, quindi una scansione da ±10 ci sta tutta dentro e il massimo del
+gradiente cade all'ESTREMO della banda — dove `cross-peak` giustamente lo
+rifiuta, perche' un picco al bordo vuol dire che il bordo vero e' fuori e la sua
+posizione non e' dicibile.
+
+| banda H | ok | `:flat` | falsi su 454 zone piatte |
+|---|---|---|---|
+| ±10 (prima) | 41 | **17** | 1 |
+| **±16 (ora)** | 39 | **0** | 2 |
+| ±22 | 37 | 5 | 2 |
+| ±30 | 45 | 3 | 2 |
+
+**Un'ipotesi provata e SCARTATA, che vale la pena non ri-provare**: rendere il
+test del picco RELATIVO (prominenza sopra il fondo della scansione) invece che
+assoluto. Sembra la cosa giusta — una soglia assoluta penalizza per costruzione
+i bordi sfocati — e peggiora a ogni variante (17 → 21 col fondo preso sulla
+mediana di tutta la banda, → 26 prendendolo agli estremi). Il motivo e' lo
+stesso della diagnosi vera: un bordo sfocato e' una gobba LARGA, e in una banda
+che la gobba riempie non resta fondo da cui distinguersi. La prominenza misurava
+la gobba contro se stessa.
+
 ## VEDERE IL BANCO (2026-08-07)
 
 «Comincia a essere usabile. La difficolta' piu' grande che trovo ora e' interagire

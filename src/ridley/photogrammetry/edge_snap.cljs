@@ -132,6 +132,27 @@
    floor (6 units across its 2px difference)."
   3.0)
 
+;; HOW WIDE THE PERPENDICULAR SEARCH IS (the `:H` option, default 16)
+;;
+;; Vincenzo sent a photograph of a silhouette edge of the black clip — obvious to
+;; the eye, and the walk would not touch it (2026-08-07): «c'è un mix di
+;; sfocatura e rotondità dello spigolo». The reason turned out to be neither the
+;; contrast nor the direction: measured over 186 places in that photo carrying a
+;; real luminance step (>60 levels across 24 px), the ones refused had a
+;; structure-tensor coherence of 0.84 — the direction was perfectly clear.
+;;
+;; It was the BAND. A blurred edge spreads its transition over ten or fifteen
+;; pixels, so a ±10 scan sits entirely inside it and the gradient's maximum lands
+;; at the band's end — where cross-peak rightly refuses it, since a peak at the
+;; end means the edge is outside the band and its position cannot be said.
+;;
+;; Widening to ±16 takes the refusals from 17 to ZERO, at a cost of one extra
+;; false positive in 454 flat places (1 → 2). Measured, not guessed — as was the
+;; hypothesis tried before it: making the peak test RELATIVE (prominence over the
+;; scan's background) instead of absolute, which made things worse at every
+;; setting (17 → 21 → 26), because a blurred edge is a wide hump and a band that
+;; the hump fills has no background left to stand out from.
+
 (def max-straight-rms-px
   "Perpendicular scatter, in pixels, above which points are not on a straight
    line. On a real edge this sits well under a pixel; on the rim of a disc the
@@ -351,7 +372,7 @@
    bending, said in numbers."
   ([lum-at cx cy] (edge-at-point lum-at cx cy {}))
   ([lum-at cx cy {:keys [window step max-len H misses jump in-zone? zoned?]
-                  :or {window 12 step 2.0 max-len 900.0 H 10 misses 4 jump 6.0}}]
+                  :or {window 12 step 2.0 max-len 900.0 H 16 misses 4 jump 6.0}}]
    (let [tensor (structure-tensor lum-at cx cy window)]
      (cond
        (nil? tensor) {:ok? false :reason :flat}
