@@ -102,6 +102,39 @@ La sagitta lo dice dall'altro lato — un cerchio resta dentro 1.2 px per
 continua a essere rifiutato come arco (verificato: il test del disco tiene 58 px
 e viene respinto).
 
+## LA GRAFFA VA A CAPO (2026-08-07)
+
+«Sono riuscito a ricalcare due piani. L'undo via testo è reso più complicato dal
+fatto che ogni elemento è piuttosto lungo. Un accorgimento che aiuta è la
+formattazione: `{\n:spigolo-4 (edge-mark <linea lunghissima>)}` è molto peggio
+di `{\n:spigolo-4 (edge-mark <linea lunghissima>)\n}`, perché non bisogna
+scrollare in orizzontale per una lunghezza enorme.»
+
+Il difetto è preciso: se il blocco chiude in fondo all'ULTIMA voce, quella voce
+non è una riga. Tutte le altre si cancellano con un colpo solo, l'ultima no —
+bisogna scorrere uno schermo a destra per trovare dove finisce la voce e comincia
+la graffa del blocco. E dato che l'annullamento QUI è cancellare testo (è il
+motivo per cui il banco vive nel sorgente), quella graffa è un difetto della
+funzione di undo, non dell'estetica.
+
+Ora entrambe le graffe stanno su una riga loro, e ogni voce è una riga intera:
+
+    :edges {
+            :spigolo-1 (edge-mark {…})
+            :spigolo-2 (edge-mark {…})
+            }
+
+Due dettagli che valeva la pena non sbagliare:
+
+- **si aggiunge solo spazio bianco.** Il blocco NON viene ricomposto dalle voci
+  ri-lette, perché Vincenzo parcheggia i mark che non gli servono commentandoli
+  DENTRO il blocco (il suo `:marks` ne ha tre), e una ricomposizione li
+  cancellerebbe in silenzio: `map-entries` salta i commenti, non li conserva;
+- **i due scrittori sono stati cambiati insieme** — `source-edit/append-map-entry`
+  (le scritture del palcoscenico) e `edit-acquire/fmt-map-block` (la forma
+  emessa alla conferma). Se ne cambiavo uno solo, la prima riconferma
+  riportava indietro la formattazione delle scritture dell'altro.
+
 ## SCRIVEVA NELLA FORMA SPENTA (2026-08-07, due giri)
 
 «Avevo commentato il `(def A …` di prima per ripartire da zero, e con `n` scrive

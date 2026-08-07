@@ -75,20 +75,22 @@
       (is (re-find #":piano-1 \{:position \[1 2 3\]" result)))
     (testing "the result is still balanced source"
       (is (pos? (src/find-matching-bracket result (.indexOf result "(acquire")))))
-    (testing "the new entry aligns under the first, as the emitter lays them out"
-      (let [lines (.split result "\n")
-            marks-line (first (filter #(re-find #":marks \{" %) lines))
-            new-line (first (filter #(re-find #":piano-1" %) lines))]
-        (is (= (.indexOf marks-line ":cima") (.indexOf new-line ":piano-1"))
-            "second entry starts in the same column as the first")))))
+    (testing "every entry is a whole LINE, so undo is deleting that line"
+      (let [lines (vec (.split result "\n"))
+            col-of #(.indexOf (first (filter (fn [l] (re-find % l)) lines)) (str %2))]
+        (is (= (col-of #":cima" ":cima") (col-of #":piano-1" ":piano-1"))
+            "old and new entry start in the same column")
+        (is (re-find #"^\s*\}" (second (drop-while #(not (re-find #":piano-1" %)) lines)))
+            "the line AFTER the last entry is where the block closes")))))
 
 (deftest appending-to-an-empty-marks-block
   (let [text "(acquire \"d\" {:proxy (box 1 2 3)\n              :marks {}})"
         [o e i] (src/map-value-bounds text 0 (count text) ":marks")
         updated (src/append-map-entry (subs text o e) ":piano-1 {:position [0 0 1]}"
-                                      ":marks" (src/column-of text i))]
-    (is (= "{:piano-1 {:position [0 0 1]}}" updated)
-        "a single entry stays on one line — no gratuitous newline")))
+                                      ":marks" (src/column-of text i))
+        pad (apply str (repeat 22 " "))]     ; :marks at col 14 + ":marks {"
+    (is (= (str "{\n" pad ":piano-1 {:position [0 0 1]}\n" pad "}") updated)
+        "even the first entry gets its own line, and the brace closes below it")))
 
 (deftest unwrapping-a-wrapper-form-gives-back-what-it-wrapped
   ;; The cancel path of (edit-plane-mark …): unlike the rest of the edit-* family
@@ -230,3 +232,19 @@
     (is (= 1 (src/entry-column "{}" 0))))
   (testing "no map in range"
     (is (nil? (src/first-map-bounds "(acquire \"d\")" 0 13)))))
+
+(deftest a-commented-entry-inside-the-block-survives-an-append
+  ;; How Vincenzo parks a mark he does not want right now: he comments the line
+  ;; INSIDE :marks. Re-flowing the block from parsed entries would delete those
+  ;; lines silently, which is why append only adds whitespace.
+  (let [block (str "{;:notch (plane-mark {:position [1 1 1]})\n"
+                   "         :head (plane-mark {:position [2 2 2]})}")
+        updated (src/append-map-entry block ":piano-9 (plane-mark {:position [3 3 3]})"
+                                      ":marks" 1)]
+    (is (re-find #";:notch \(plane-mark" updated) "the parked one is still there")
+    (is (re-find #":head \(plane-mark" updated))
+    (is (re-find #":piano-9 \(plane-mark \{:position \[3 3 3\]\}\)\n\s+\}$" updated)
+        "new entry on its own line, brace below it")
+    (is (= (count (re-seq #"plane-mark" block))
+           (dec (count (re-seq #"plane-mark" updated))))
+        "exactly one entry was added, none lost")))

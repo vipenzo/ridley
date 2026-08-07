@@ -4570,17 +4570,22 @@
           (marks))))
 
 (defn- fmt-map-block
-  "Render a source map from its \"key value\" entry strings on their own lines: the
-   first right after `{`, the rest aligned under it (pretty-print, so the emitted
-   form is readable instead of one long line — Vincenzo 2026-07-24). `owner` is the
-   key this map is the value of (e.g. \":shapes\"), `key-indent` the indent string
-   where that key sits, so alignment = key-indent + width of \"<owner> {\". A single
-   entry stays on one line; empty → \"{}\"."
+  "Render a source map from its \"key value\" entry strings, one per line, with
+   both braces alone on their own line (pretty-print, so the emitted form is
+   readable instead of one long line — Vincenzo 2026-07-24). `owner` is the key
+   this map is the value of (e.g. \":shapes\"), `key-indent` the indent string
+   where that key sits, so alignment = key-indent + width of \"<owner> {\".
+   Empty → \"{}\".
+
+   Same layout as source-edit/append-map-entry, and for the same reason: every
+   entry is a whole LINE, so undoing one is deleting that line (Vincenzo
+   2026-08-07). Two writers of the same block must agree, or a re-confirm would
+   undo the layout the stage's writes had."
   [owner entries key-indent]
   (if (empty? entries)
     "{}"
     (let [align (str key-indent (apply str (repeat (+ (count owner) 2) " ")))]
-      (str "{" (str/join (str "\n" align) entries) "}"))))
+      (str "{\n" align (str/join (str "\n" align) entries) "\n" align "}"))))
 
 (defn- preserved-entries
   "The entries of the marker's own `:kw {…}` block, as they are written NOW.

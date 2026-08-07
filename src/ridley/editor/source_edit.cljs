@@ -269,13 +269,28 @@
       [nil value-start])))
 
 (defn append-map-entry
-  "The `{…}` block text with `entry` added, laid out the way the emitted forms
-   already are: entries one per line, aligned under the first, which sits right
-   after `<kw> {`. `key-col` is the column the key token starts at. An empty
-   block gets its single entry inline."
+  "The `{…}` block text with `entry` added: entries one per line, aligned in the
+   column right after `<kw> {`, and BOTH BRACES ALONE ON THEIR OWN LINE.
+   `key-col` is the column the key token starts at.
+
+   The lonely closing brace is the whole point (Vincenzo, 2026-08-07). These
+   entries are long — a measured edge or a fitted plane carries its numbers —
+   and undo here is deleting the text. With the block closing at the end of the
+   last entry,
+
+       {:spigolo-4 (edge-mark …molto lungo…)}
+
+   that last entry cannot be killed as a LINE: you have to scroll a screenful to
+   the right to find where the entry stops and the block's brace begins. One
+   newline turns every entry into a line you can select and delete.
+
+   Only whitespace is added: the existing entries keep their own bytes, so a
+   mark the user commented out INSIDE the block survives (his blocks have
+   several). That is also why the block is not re-flowed from parsed entries —
+   parsing them back would drop those comment lines."
   [block entry kw key-col]
   (let [inner (.trim (subs block 1 (dec (count block))))
         align (apply str (repeat (+ key-col (count kw) 2) " "))]
-    (if (empty? inner)
-      (str "{" entry "}")
-      (str "{" (subs block 1 (dec (count block))) "\n" align entry "}"))))
+    (str "{\n" align
+         (when (seq inner) (str inner "\n" align))
+         entry "\n" align "}")))
