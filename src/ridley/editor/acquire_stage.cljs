@@ -2072,7 +2072,8 @@
   (let [f (edge-fit)]
     (boolean (and f (:plausible? f)
                   (if (= :curva (:kind f))
-                    (>= (:agreement f) pcurve/min-agreement)
+                    (and (>= (:agreement f) pcurve/min-agreement)
+                         (>= (count (:points f)) pcurve/min-shared-points))
                     (and (<= (:rms-px f) max-write-rms-px)
                          (>= (:angle-deg f) pedge/min-plane-angle-deg)))))))
 
@@ -2296,6 +2297,14 @@
         (say! (str "i punti recuperati cadono lontano dall'oggetto: le due foto "
                    "non stanno guardando lo stesso bordo curvo"))
 
+        (< (count (:points f)) pcurve/min-shared-points)
+        (say! (str "le due foto condividono solo " (count (:points f))
+                   " punti di questa curva (ne servono almeno "
+                   pcurve/min-shared-points "): hanno seguito tratti quasi "
+                   "disgiunti. Col pennarello dipingi sulla seconda foto LO STESSO "
+                   "pezzo di bordo che hai dipinto sulla prima — non serve tutto, "
+                   "serve in comune."))
+
         (< (:agreement f) pcurve/min-agreement)
         (say! (str "solo il " (src/fmt-number (* 100 (:agreement f)))
                    "% degli accoppiamenti fra le due foto rispetta l'ORDINE in cui "
@@ -2307,11 +2316,14 @@
                    "sovrappone, partendo da dove passa l'altra."))
 
         :else
-        (do (say! (str "curva misurata su " (count (:photos f)) " foto · "
-                       (count (:points f)) " punti · accordo "
-                       (src/fmt-number (* 100 (:agreement f))) "%. "
-                       "Tienila con 'n', poi prendi un altro bordo sulla stessa "
-                       "faccia e premi 'p' per il piano."))
+        (do (say! (str "curva misurata: le due foto condividono " (count (:points f))
+                       " punti (ordine rispettato al "
+                       (src/fmt-number (* 100 (:agreement f))) "%). "
+                       (if (< (count (:points f)) 8)
+                         (str "Sono POCHI, ma bastano come pezzo: tienila con 'n' e "
+                              "aggiungi un altro bordo sulla stessa faccia — il piano "
+                              "si fa con tutto insieme.")
+                         "Tienila con 'n', poi prendi un altro bordo sulla stessa faccia e premi 'p'.")))
             (when-let [ci (:circle f)]
               (say! (str "per inciso, questa curva E' un cerchio di ⌀"
                          (src/fmt-number (* 2 (:radius ci))) " mm: 'c' scrive quello.")))))
@@ -3002,9 +3014,10 @@
     (when f
       (if (= :curva (:kind f))
         (add! (cond (not (:plausible? f)) "eaq-hud-bad"
+                    (< (count (:points f)) pcurve/min-shared-points) "eaq-hud-bad"
                     (< (:agreement f) pcurve/min-agreement) "eaq-hud-bad"
                     :else "eaq-hud-good")
-              (str "curva · " (count (:points f)) " punti · accordo "
+              (str "curva · " (count (:points f)) " punti IN COMUNE fra le due foto · ordine "
                    (src/fmt-number (* 100 (:agreement f))) "%"))
         (add! (cond (not (:plausible? f)) "eaq-hud-bad"
                     (< (:angle-deg f) pedge/min-plane-angle-deg) "eaq-hud-warn"

@@ -97,6 +97,42 @@ La sagitta lo dice dall'altro lato — un cerchio resta dentro 1.2 px per
 continua a essere rifiutato come arco (verificato: il test del disco tiene 58 px
 e viene respinto).
 
+## ACCONTENTARSI DEL PEZZO IN COMUNE (2026-08-07)
+
+Vincenzo, dopo aver creato un piano riuscendoci solo con i tratti dritti: «con le
+curve sembra avere piu' difficolta'. In particolare e' difficile ripetere lo
+stesso segmento di curva in foto diverse, la parte comune sara' sicuramente solo
+un pezzo, dovrebbe accontentarsi».
+
+Aveva ragione, e la misura ha detto anche PERCHE' la vecchia soglia era sbagliata.
+Censimento sui suoi dati, due tratti del bordo del piatto dichiarati in posti
+diversi sulle due foto:
+
+- un accoppiamento VERO passa a **0.23 mm**, uno falso a **32 mm**. Un fattore
+  sessanta. La distanza e' gia' un giudice quasi perfetto;
+- degli accoppiamenti tenuti sotto 0.5 mm, praticamente tutti sono veri;
+- ma sono POCHI: 3 su 40 raggi. La parte in comune era il 7%.
+
+Verificata e scartata l'ipotesi che fosse granularita' di campionamento
+(infittire la seconda curva da 40 a 567 punti non cambia nulla: sempre 3). I due
+tratti sono davvero quasi disgiunti.
+
+Quindi il pericolo non e' la contaminazione ma la SCARSITA', e la soglia sulla
+frazione (75%) stava buttando via roba buona per un pericolo che non c'e'. Due
+cambiamenti:
+
+1. la frazione scende a 0.6 — sopra il 51% che il caso produrrebbe, sotto quel
+   che una corrispondenza vera raggiunge;
+2. e soprattutto: **una curva sul banco non deve pinzare un piano da sola**. E'
+   evidenza. Bastano 3 punti in comune per tenerla; se ce ne sia abbastanza lo
+   decide dopo `min-width-mm` sui punti di TUTTI i bordi messi insieme. E' per
+   questo che il banco esiste.
+
+Misurato con una mano volutamente imprecisa (dichiarazioni a posti diversi sulle
+due foto): 3 punti in comune / ordine 100% → tenuta; 18 punti / 64% → tenuta;
+13 punti / 33% → RIFIUTATA, e giustamente. Piano dai due pezzi: **1.1° dalla
+verticale, quota 0.87 mm**.
+
 ## IL PENNARELLO (2026-08-07) — «cerca la linea in questa zona»
 
 Vincenzo, con una foto a riprova: «la cattura della linea ha preso troppo:

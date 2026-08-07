@@ -192,6 +192,21 @@ utente).
   click diventa il primo capo del tratto a mano (~1.5 click per foto). Resta: il
   magazzino delle osservazioni (i tratti oggi non sopravvivono alla chiusura) e i
   punti nel pool. Entry point `dev-docs/HANDOVER-edge-declared.md`.
+- **Accontentarsi del pezzo in comune — 2026-08-07.** Vincenzo crea un piano, ma
+  solo coi tratti DRITTI: «con le curve e' difficile ripetere lo stesso segmento
+  in foto diverse, la parte comune sara' solo un pezzo, dovrebbe accontentarsi».
+  La misura gli da' ragione e dice perche': un accoppiamento vero passa a 0.23 mm
+  e uno falso a 32 — fattore sessanta, quindi la distanza e' gia' un giudice
+  quasi perfetto e i tenuti sono praticamente tutti veri; ma sono POCHI (3 su 40
+  raggi, il 7% in comune). Scartata per misura l'ipotesi che fosse granularita'
+  di campionamento (infittire da 40 a 567 punti non cambia niente). Il pericolo
+  non e' la contaminazione ma la scarsita', quindi la frazione d'ordine scende da
+  0.75 a 0.6 e — la parte che conta — **una curva sul banco non deve pinzare un
+  piano da sola**: bastano 3 punti in comune per tenerla, e se ce ne sia
+  abbastanza lo decide dopo la larghezza sui punti di tutti i bordi insieme. E'
+  per questo che il banco esiste. Misurato con una mano volutamente imprecisa:
+  pezzi da 3 e 18 punti tenuti, uno da 13 con ordine 33% rifiutato, piano dai due
+  a 1.1° dalla verticale e 0.87 mm di quota.
 - **Il PENNARELLO — COSTRUITO 2026-08-07, gate umano DA FARE.** Segnalato da
   Vincenzo con una foto: «la cattura della linea ha preso troppo: insegue tratti
   non complanari. Non è che può essere utile una sorta di pennarello a punta

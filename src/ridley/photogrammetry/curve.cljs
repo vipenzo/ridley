@@ -117,11 +117,29 @@
    had no partner were already dropped by the distance test rather than paired
    badly. A pairing that is coincidence is a random permutation, and the longest
    monotone run of a random permutation of n is about 2√n, i.e. half of a set of
-   twenty-six — measured, 51%. Three quarters sits in that gap with room on both
-   sides, and it is still the weakest guard in the chain: the disc drawn in the
-   world, checked across the photos, is the one that catches what arithmetic
-   cannot."
-  0.75)
+   twenty-six — measured, 51%. 0.6 sits in that gap.
+
+   It started at 0.75 and came down, because on real photographs the distance
+   test turned out to be a far better judge than expected: measured on the plate
+   with two stretches that barely overlap, a TRUE meeting passes at 0.23 mm and a
+   false one at 32 mm — a factor of sixty, not of twenty. Contamination is
+   therefore not what threatens a curve; SCARCITY is (Vincenzo, 2026-08-07: «è
+   difficile ripetere lo stesso segmento di curva in foto diverse, la parte
+   comune sarà sicuramente solo un pezzo, dovrebbe accontentarsi»). He is right,
+   and the answer is not only a looser fraction: it is that a curve on the bench
+   does not have to pin a plane BY ITSELF. It is evidence. Whether there is
+   enough of it is decided later, on the pooled points, by min-width-mm."
+  0.6)
+
+(def min-shared-points
+  "How many order-respecting meetings a curve must contribute before it is worth
+   keeping at all.
+
+   Three, because three points is the least that is not a line — and because the
+   bench exists precisely so that a small piece need not carry the plane alone.
+   Two curves of three points each, or one curve and one straight edge, make a
+   better plane than one curve of thirty that only saw one side of the face."
+  3)
 
 (def ^:private plane-outlier-mm
   "A recovered point further than this from the plane most of them agree on did
