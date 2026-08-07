@@ -2513,27 +2513,61 @@
                " (le altre: " (str/join " · " (map src/fmt-number brush-sizes)) ")"))
     (redraw-overlay!)))
 
+(def ^:private zone-end-margin-px
+  "How far past the painted stroke's ends the walk may still go, in photo pixels.
+   A little, because the hand stops where it means to stop but not to the pixel."
+  12.0)
+
 (defn- zone-pred
-  "'Look for the line in HERE': within `r` of the painted polyline. The user's
-   declaration of WHICH edge is meant — knowledge the program does not have, and
-   the reason the walk was running off along the outline into stretches that lie
-   on other planes."
+  "'Look for the line in HERE'. Two conditions, and separating them is the point:
+
+   - LATERALLY, within `r` of the painted polyline. This is tolerance for the
+     hand, and it wants to be generous;
+   - ALONG the stroke, between its two ends. This is the instruction — «fin
+     qui» — and it wants to be exact.
+
+   The first version used only the lateral distance, and so one number had to do
+   both jobs at once. They pull opposite ways, and the measurement showed it on
+   Vincenzo's own edge (2026-08-07): with a band of 10-30 px the walk was held
+   and the edge came back straight at 1.19 px; at 60 px it escaped again and the
+   answer went back to :curved. A wide band does not merely fail to stop the walk
+   at the stroke's end — near a corner it lets the walk CUT ACROSS onto the other
+   branch, which is the very thing being guarded against. Meanwhile the default
+   nib, at ordinary zoom, was already producing about 56 px.
+
+   Projecting on the stroke's own principal direction settles it: lateral
+   tolerance can be as wide as a hand needs, while the extent stays exactly what
+   was painted."
   [pts r]
-  (let [r2 (* r r)]
+  (let [n (count pts)
+        r2 (* r r)
+        cx (/ (reduce + (map first pts)) n)
+        cy (/ (reduce + (map second pts)) n)
+        [sxx syy sxy] (reduce (fn [[axx ayy axy] [px py]]
+                                (let [a (- px cx) b (- py cy)]
+                                  [(+ axx (* a a)) (+ ayy (* b b)) (+ axy (* a b))]))
+                              [0.0 0.0 0.0] pts)
+        th (* 0.5 (Math/atan2 (* 2.0 sxy) (- sxx syy)))
+        vx (Math/cos th) vy (Math/sin th)
+        ts (mapv (fn [[px py]] (+ (* (- px cx) vx) (* (- py cy) vy))) pts)
+        t-lo (- (reduce min ts) zone-end-margin-px)
+        t-hi (+ (reduce max ts) zone-end-margin-px)]
     (fn [x y]
-      (loop [i 0]
-        (if (>= i (dec (count pts)))
-          false
-          (let [[ax ay] (nth pts i)
-                [bx by] (nth pts (inc i))
-                dx (- bx ax) dy (- by ay)
-                len2 (+ (* dx dx) (* dy dy))
-                t (if (< len2 1e-9)
-                    0.0
-                    (max 0.0 (min 1.0 (/ (+ (* (- x ax) dx) (* (- y ay) dy)) len2))))
-                px (+ ax (* t dx)) py (+ ay (* t dy))
-                d2 (+ (* (- x px) (- x px)) (* (- y py) (- y py)))]
-            (if (<= d2 r2) true (recur (inc i)))))))))
+      (let [t (+ (* (- x cx) vx) (* (- y cy) vy))]
+        (and (<= t-lo t t-hi)
+             (loop [i 0]
+               (if (>= i (dec n))
+                 false
+                 (let [[ax ay] (nth pts i)
+                       [bx by] (nth pts (inc i))
+                       dx (- bx ax) dy (- by ay)
+                       len2 (+ (* dx dx) (* dy dy))
+                       u (if (< len2 1e-9)
+                           0.0
+                           (max 0.0 (min 1.0 (/ (+ (* (- x ax) dx) (* (- y ay) dy)) len2))))
+                       px (+ ax (* u dx)) py (+ ay (* u dy))
+                       d2 (+ (* (- x px) (- x px)) (* (- y py) (- y py)))]
+                   (if (<= d2 r2) true (recur (inc i)))))))))))
 
 (defn- try-one-click!
   "The normal case: ONE click, and the edge finds its own direction and its own
@@ -2643,12 +2677,31 @@
         scale (let [sc (path screen)]
                 (if (> sc 1.0) (/ (path pts) sc) 1.0))
         r (max 3.0 (* (brush-px) scale))
-        ;; seeds along the painted stroke, from the middle outward: the middle is
-        ;; where a hand-drawn band sits most squarely over what it meant
+        ;; Seeds along the painted stroke, from the middle outward — the middle is
+        ;; where a hand-drawn band sits most squarely over what it meant — and
+        ;; each one SNAPPED SIDEWAYS onto the strongest contrast within the band
+        ;; first. That is the second job the width does now that it no longer has
+        ;; to stop the walk: it is how far off the line the hand is allowed to be.
+        ;; Without it a stroke drawn twenty pixels wide of the edge finds nothing,
+        ;; however wide the band, because every seed offered is twenty pixels off.
         n (count pts)
         order (sort-by #(Math/abs (- % (quot n 2))) (range n))
+        dir-at (fn [i]
+                 (let [j (min (dec n) (max 1 i))
+                       [ax ay] (nth pts (dec j))
+                       [bx by] (nth pts j)
+                       d (Math/hypot (- bx ax) (- by ay))]
+                   (if (< d 1e-6) [1.0 0.0] [(/ (- bx ax) d) (/ (- by ay) d)])))
+        seed-at (fn [i]
+                  (let [[px py] (nth pts i)
+                        [ux uy] (dir-at i)
+                        nx (- uy) ny ux]
+                    (if-let [pk (edge-snap/cross-peak backdrop/luminance-at px py nx ny
+                                                      (Math/round r))]
+                      [(+ px (* nx (:t pk))) (+ py (* ny (:t pk)))]
+                      [px py])))
         zone {:pred (zone-pred pts r) :stroke pts
-              :seeds (mapv #(nth pts %) (take 12 order))}]
+              :seeds (mapv seed-at (take 12 order))}]
     (if (< (count pts) 2)
       (do (swap! stage assoc-in [:edge :outcome]
                  {:ok? false :text "pennellata troppo corta"})

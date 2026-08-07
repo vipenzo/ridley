@@ -102,6 +102,45 @@ La sagitta lo dice dall'altro lato — un cerchio resta dentro 1.2 px per
 continua a essere rifiutato come arco (verificato: il test del disco tiene 58 px
 e viene respinto).
 
+## LA PENNELLATA: LARGHEZZA E LUNGHEZZA SONO DUE COSE (2026-08-07)
+
+«Non ce la fa ancora con questo (sempre foto 1), ho provato sia con size grandi
+che piccoli.» Il bordo era la silhouette superiore del collare, e il censimento
+su di essa lo spiega: dopo l'allargamento della banda i `:flat` erano spariti
+(46 punti: 10 ok, 36 `:curved`), ma i `:curved` camminavano **700-970 px** attorno
+al profilo del pezzo tenendone dritti un centinaio. Il cammino scavalcava, e la
+pennellata avrebbe dovuto fermarlo.
+
+Non lo fermava, e la misura dice esattamente da che larghezza in poi:
+
+| raggio della fascia | esito |
+|---|---|
+| 10-30 px | **DRITTO**, rms 1.19 |
+| **60 px** | `:curved` — scappa di nuovo |
+
+E la punta di default, allo zoom normale (≈4 px-foto per px-schermo), produceva
+già una fascia da ~56 px. Cioè: la pennellata funzionava solo se stretta, e
+stretta di default non era.
+
+**Il difetto era di disegno**: usavo la LARGHEZZA per due lavori in conflitto —
+tollerare l'imprecisione della mano (vuole essere generosa) e fermare il cammino
+(vuole essere stretta). Ma quello che si dice dipingendo è «FIN QUI», cioè una
+LUNGHEZZA. Ora sono due condizioni separate:
+
+- **lungo** il tratto: fra i suoi due capi, proiettando sulla direzione
+  principale della pennellata (più 12 px di margine, perché la mano si ferma dove
+  intende ma non al pixel). È l'istruzione, e vuole essere esatta.
+- **di lato**: entro il raggio della fascia. È la tolleranza, e può essere larga
+  quanto serve. Serve anche a un secondo scopo, che prima non poteva avere: ogni
+  seme viene AGGANCIATO DI LATO al contrasto più forte dentro la fascia prima di
+  provarci, perché una pennellata tirata venti pixel fuori dal bordo offriva solo
+  semi venti pixel fuori dal bordo.
+
+Con le due cose separate, ogni raggio da 10 a 120 px dà lo stesso risultato
+(DRITTO, rms 1.16), e pilotando il gesto vero: mano a ±4 px → dritto 130 px;
+±12 px → dritto 128 px; ±22 px → trovato come curva. Una fascia larga adesso
+aiuta invece di far danno.
+
 ## IL BORDO SFOCATO (2026-08-07) — era la BANDA, non il contrasto
 
 Vincenzo, con una foto: un bordo in silhouette del collare, ovvio all'occhio, che

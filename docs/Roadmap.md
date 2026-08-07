@@ -192,6 +192,20 @@ utente).
   click diventa il primo capo del tratto a mano (~1.5 click per foto). Resta: il
   magazzino delle osservazioni (i tratti oggi non sopravvivono alla chiusura) e i
   punti nel pool. Entry point `dev-docs/HANDOVER-edge-declared.md`.
+- **La pennellata: larghezza e lunghezza sono due cose — 2026-08-07.** «Non ce la
+  fa ancora con questo, ho provato sia con size grandi che piccoli». Misurato sul
+  suo bordo: con una fascia da 10-30 px viene DRITTO a 1.19 px di scarto, con una
+  da 60 px scappa di nuovo — e la punta di default, allo zoom normale, ne
+  produceva già ~56. La pennellata funzionava solo stretta, e stretta di default
+  non era. Il difetto era di disegno: la LARGHEZZA faceva due lavori in conflitto
+  (tollerare la mano, che la vuole generosa; fermare il cammino, che la vuole
+  stretta), mentre quello che si dichiara dipingendo è «fin qui», cioè una
+  LUNGHEZZA. Ora sono separate: lungo il tratto si sta fra i suoi capi
+  (proiezione sulla direzione principale, +12 px di margine), di lato entro il
+  raggio — e la larghezza guadagna il secondo mestiere che prima non poteva
+  avere, agganciare ogni seme al contrasto più forte dentro la fascia. Con le due
+  cose separate ogni raggio da 10 a 120 px dà lo stesso risultato, e il gesto vero
+  regge una mano fuori di 22 px.
 - **Il bordo sfocato: era la BANDA — 2026-08-07.** Vincenzo manda la foto di un
   bordo in silhouette ovvio all'occhio che il cammino non prende: «un mix di
   sfocatura e rotondita' dello spigolo … forse si puo' abbassare qualche
