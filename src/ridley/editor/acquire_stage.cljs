@@ -470,7 +470,9 @@
           ;; collecting the trail now: whether it was a click or a stroke is only
           ;; known when the pointer comes up.
           (when (edge-mode?)
-            (swap! stage assoc :paint {:idx (:current-idx @stage) :trail []}))))))
+            (swap! stage (fn [st] (-> st
+                                      (assoc :paint {:idx (:current-idx @stage) :trail []})
+                                      (update :edge dissoc :outcome)))))))))
 
 (defn- on-paint-move
   "While the left button is down in edge mode, every few pixels of travel become
@@ -1986,6 +1988,9 @@
 (def ^:private bench-color 0x66ddaa)          ; i bordi tenuti sul banco
 (def ^:private bench-selected-color 0x33ffcc) ; …e quelli scelti per il piano
 (def ^:private brush-color 0x8899ff)          ; la zona dipinta col pennarello
+(def ^:private brush-ok-color 0x44dd66)       ; …quando la pennellata ha trovato
+(def ^:private brush-fail-color 0xff4444)     ; …quando non ha trovato niente
+(def ^:private fresh-plane-color 0x33ccff)    ; il piano appena scritto nel sorgente
 
 (defn- edge-mode? [] (some? (:edge @stage)))
 (defn- edge-obs [] (get-in @stage [:edge :obs] {}))
@@ -2201,13 +2206,23 @@
                                                   (pcamera/camera-center pose)))
                                (:fx k)))]
             (when (seq pts)
-              (add! {:type :dots
-                     :data (mapv (fn [p] {:pos p
-                                          :radius (if mm-per-px
-                                                    (max 0.4 (* r-px mm-per-px))
-                                                    1.6)
-                                          :color brush-color :opacity 0.22})
-                                 pts)})))))
+              ;; the band carries the ANSWER in its colour: green when the stroke
+              ;; found an edge, red when it did not. Said where the eye already
+              ;; is — the console line was three panels away from the hand, which
+              ;; is why 'non è chiaro se trova qualcosa o no' came back three
+              ;; times (Vincenzo, 2026-08-07).
+              (let [oc (get-in @stage [:edge :outcome])
+                    col (cond (nil? oc) brush-color
+                              (:ok? oc) brush-ok-color
+                              :else brush-fail-color)]
+                (add! {:type :dots
+                       :data (mapv (fn [p] {:pos p
+                                            :radius (if mm-per-px
+                                                      (max 0.4 (* r-px mm-per-px))
+                                                      1.6)
+                                            :color col
+                                            :opacity (if oc 0.35 0.22)})
+                                   pts)}))))))
       (when-let [o (get (edge-obs) here)]
         (when (and k pose)
           (if (:points o)
@@ -2245,8 +2260,10 @@
               {:keys [vertices faces]} (tri/disc-mesh mark r plane-disc-segments)]
           (add! {:type :mesh
                  :data {:vertices vertices :faces faces
-                        :material {:color plane-disc-color :opacity 0.14
-                                   :double-sided true}}})))
+                        :material {:color fresh-plane-color :opacity 0.3
+                                   :double-sided true}}})
+          (add! {:type :dots :data [{:pos (:position mark) :radius 1.4
+                                     :color plane-origin-color :opacity 1.0}]})))
       ;; and the bordo in hand, once it is measured
       (when (and fit (:plausible? fit))
         (if (= :curva (:kind fit))
@@ -2487,6 +2504,9 @@
          ;; view of one thing. Otherwise the declaration simply starts a fresh
          ;; one, and says so.
          clash? (and cur-kind (not= cur-kind kind) (seq others))
+         outcome! (fn [ok? txt]
+                    (swap! stage assoc-in [:edge :outcome] {:ok? ok? :text txt})
+                    ok?)
          take! (fn [entry msg]
                  (swap! stage update :edge
                         (fn [e] (-> (if clash? (assoc e :obs {}) e)
@@ -2501,6 +2521,7 @@
                               "aggiungere una vista a quello di prima, Backspace "
                               "torna indietro.")
                          msg))
+                 (outcome! true msg)
                  (report-edge!)
                  (redraw-overlay!)
                  true)]
@@ -2509,19 +2530,22 @@
        (take! {:points (:points r) :raw [px px] :pose pose :intrinsics k
                :zone (:stroke zone)
                :snap {:n (count (:points r))} :auto? true :curved? true}
-              (str "bordo CURVO trovato sulla foto " (nav-rank idx) ": "
-                   (count (:points r)) " punti seguiti su "
-                   (src/fmt-number (:walked-px r)) " px"))
+              (str "bordo CURVO sulla foto " (nav-rank idx) ": "
+                   (count (:points r)) " punti su " (Math/round (:walked-px r)) " px"))
 
        (:ok? r)
        (take! {:seg [(:p1 r) (:p2 r)] :raw [px px] :pose pose :intrinsics k
                :zone (:stroke zone)
                :snap {:n (:n r) :rms (:rms r)} :auto? true}
-              (str "bordo DRITTO trovato sulla foto " (nav-rank idx)
-                   ": " (src/fmt-number (:length-px r)) " px, seguito su "
-                   (:n r) " punti (scarto " (src/fmt-number (:rms r)) " px)"))
+              (str "bordo DRITTO sulla foto " (nav-rank idx) ": "
+                   (Math/round (:length-px r)) " px su " (:n r)
+                   " punti, scarto " (src/fmt-number (:rms r)) " px"))
 
-       :else (do (say! (edge-refusal-message r)) false)))))
+       :else (let [m (edge-refusal-message r)]
+               (say! m)
+               (outcome! false m)
+               (redraw-overlay!)
+               false)))))
 
 (defn- paint-declare!
   "A DRAG in edge mode: the user has painted a band and said 'the line is in
@@ -2548,7 +2572,10 @@
         zone {:pred (zone-pred pts r) :stroke pts
               :seeds (mapv #(nth pts %) (take 12 order))}]
     (if (< (count pts) 2)
-      (say! "pennellata troppo corta")
+      (do (swap! stage assoc-in [:edge :outcome]
+                 {:ok? false :text "pennellata troppo corta"})
+          (say! "pennellata troppo corta")
+          (redraw-overlay!))
       (do (swap! stage assoc-in [:edge :brush] {:idx idx :stroke pts :r r})
           (when-not (try-one-click! idx (nth pts (quot n 2)) pose k zone)
             (redraw-overlay!))))))
@@ -2647,7 +2674,7 @@
    resettare la pennellata e ricominciare?»). The BENCH is untouched — what has
    been measured and kept is not part of the mess."
   []
-  (swap! stage update :edge #(-> % (assoc :obs {}) (dissoc :fit :pending :kind :brush)))
+  (swap! stage update :edge #(-> % (assoc :obs {}) (dissoc :fit :pending :kind :brush :outcome)))
   (say! "ricominciato: pennellata e bordo in mano azzerati (il banco resta)")
   (redraw-overlay!))
 
@@ -2829,15 +2856,25 @@
               (do (swap! stage update :edge
                          (fn [e] (-> e
                                      (update :planes (fnil conj []) {:mark mark :points (:points pl)})
-                                     (assoc :selected #{}))))
+                                     (assoc :selected #{})
+                                     (assoc :outcome {:ok? true
+                                                      :text (str "piano :" nm
+                                                                 " scritto — è il dischetto AZZURRO sull'oggetto")}))))
+                  ;; a mark has just been made: showing marks is the obvious
+                  ;; follow-through, and leaving the toggle off would mean writing
+                  ;; something the user then cannot find (which is exactly what
+                  ;; happened: «ho generato un piano, ma non capisco dove lo vedo»)
+                  (swap! stage assoc :show-source-marks? true)
                   (say! (str "scritto :" nm " nel sorgente come mark-piano, da "
                              (count feats) " bordi · larghezza "
                              (src/fmt-number (:width-mm pl)) " mm, planarita' "
                              (src/fmt-number (:flatness-mm pl)) " mm"
                              (when (> (:flatness-mm pl) 1.0)
                                " — ATTENZIONE, i bordi non sono cosi' complanari")
-                             ". Usalo come qualunque altro piano: (turtle A :at :"
-                             nm " …)."))
+                             ". LO VEDI come dischetto AZZURRO sull'oggetto: cambia "
+                             "foto con [ e ] e deve restare incollato alla superficie. "
+                             "Il bottone Mark lo accende e spegne. Usalo come "
+                             "qualunque altro piano: (turtle A :at :" nm " …)."))
                   (redraw-overlay!))
               (redraw-overlay!))))
         (say! "i bordi selezionati non definiscono un piano")))))
@@ -2927,6 +2964,14 @@
         box (el "div" "eaq-hud-detail")
         add! (fn [cls txt] (.appendChild box (el "div" cls :text txt)))]
     (.appendChild frag (el "div" "eaq-hud-title" :text "BORDI MISURATI"))
+    ;; The ANSWER to the last stroke, first and big. Everything else in this
+    ;; panel is state; this is the one line that says whether the thing you just
+    ;; did worked, and it goes where the hand already is instead of three panels
+    ;; away in the console (Vincenzo asked for it three times before it landed).
+    (when-let [oc (get-in @stage [:edge :outcome])]
+      (.appendChild frag (el "div" (if (:ok? oc) "eaq-hud-good" "eaq-hud-bad")
+                             :text (str (if (:ok? oc) "✓ TROVATO — " "✗ NIENTE QUI — ")
+                                        (:text oc)))))
     (.appendChild frag (hud-step (if f :done :current) 1 "Misura un bordo (2 foto)"))
     (.appendChild frag (hud-step (cond (seq b) :done f :current :else :todo)
                                  2 (str "Tienilo sul banco — 'n'  (" (count b) ")")))
