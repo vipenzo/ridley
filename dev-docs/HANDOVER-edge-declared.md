@@ -102,6 +102,36 @@ La sagitta lo dice dall'altro lato — un cerchio resta dentro 1.2 px per
 continua a essere rifiutato come arco (verificato: il test del disco tiene 58 px
 e viene respinto).
 
+## IL BANCO VIVE NEL SORGENTE (2026-08-07)
+
+«Sembra non ci sia modo, se sbagli, di annullare un piano e rifarlo. Non sarebbe
+meglio accumulare le cose (piani, segmenti) nel sorgente, così li posso cancellare
+come testo invece che nella UI?»
+
+Sì, ed era il resto del canale a essere coerente e questa gestura no. I piani già
+finivano nel sorgente; erano i BORDI a restare in un magazzino invisibile, che
+per giunta spariva chiudendo il gesto.
+
+Ora `n` non mette il bordo su un banco in memoria: lo **scrive nel sorgente**,
+nel blocco `:edges` dell'acquire, e il banco è la LETTURA di quel blocco. I piani
+si leggono da `:marks` come sempre. Nessuna copia in memoria di nessuno dei due —
+una copia sarebbe proprio ciò che una riga cancellata non riesce a raggiungere.
+
+Il guadagno non è solo l'annullamento. Cancellare, rinominare, riordinare,
+tenere fra una sessione e l'altra, diffare: il testo fa già tutto questo, e ogni
+verbo che avrei dovuto costruire nella UI è un verbo che non esiste. Il codice
+che ne è uscito è meno di quello che c'era.
+
+- una curva ha una forma di riposo sua, `(curve-mark {:points […]})`: nessuna
+  posa, perché una curva non ce l'ha — è EVIDENZA per un piano, non un ancoraggio,
+  e `named-poses` la salta apposta;
+- `acquire-union` la trasporta (i punti si muovono come punti);
+- Backspace, che prima toglieva l'ultimo dal banco, ora dice dove si cancella.
+
+Verificato dal vivo: due bordi e un piano nel sorgente → si cancella `:curva-1`
+come testo e il banco passa da 2 a 1 → si cancella `:piano-1` e il piano sparisce
+da elenco, disegno ed etichette.
+
 ## LA PENNELLATA, TERZO GIRO: TRE QUANTITA', NON UNA (2026-08-07)
 
 «Ancora non si riesce. Qui siamo un pelo zoomati. Senza zoom viene verde, ma

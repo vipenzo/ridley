@@ -1811,7 +1811,12 @@
       (:anchors target)
 
       (and (:proxy target) (contains? target :marks))
-      (merge (:faces target) (:edges target) (:marks target)))))
+      ;; only the edges that ARE poses: a measured curve is stored as a cloud of
+      ;; points and has no frame, so it is evidence rather than an anchor, and
+      ;; offering it to `turtle :at` would promise a pose that is not there.
+      (merge (:faces target)
+             (into {} (filter (fn [[_ e]] (and (:position e) (:heading e))) (:edges target)))
+             (:marks target)))))
 
 (defn synthesize-delta
   "Minimal canonical (th tv tr f rt u) delta that turns turtle pose `from`

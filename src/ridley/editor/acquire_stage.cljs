@@ -2035,7 +2035,26 @@
 
 (defn- curve-mode? [] (= :curva (edge-kind)))
 
-(defn- bench [] (get-in @stage [:edge :bench] []))
+(defn- bench
+  "The bench IS the `:edges` block of the evaluated acquire — read from the
+   SOURCE, not from a store of its own.
+
+   Vincenzo asked for this in as many words (2026-08-07): «non sarebbe meglio
+   accumulare le cose (piani, segmenti) nel sorgente, così li posso cancellare
+   come testo invece che nella UI?». It is also what the rest of the channel
+   already does, and it pays three ways at once: a bordo can be deleted, renamed
+   or hand-edited with no UI for any of it; it survives closing the gesture; and
+   the answer to «non c'è modo di annullare un piano e rifarlo» stops being a
+   feature to build and becomes a line to delete.
+
+   Each entry carries its own source NAME, which is what the label shows."
+  []
+  (into []
+        (map-indexed (fn [i [nm e]]
+                       (assoc e :id nm :label (str (inc i))
+                              :kind (if (:points e) :curva :retta)
+                              :name (name nm))))
+        (sort-by key (:source-edges @stage))))
 (defn- selected-ids [] (get-in @stage [:edge :selected] #{}))
 (defn- selected-features [] (filterv #(contains? (selected-ids) (:id %)) (bench)))
 
@@ -2260,29 +2279,17 @@
       ;; visible while making it.
       (doseq [feat (bench)]
         (let [picked? (contains? (selected-ids) (:id feat))
-              used? (seq (:planes feat))
-              col (cond picked? bench-selected-color
-                        used? bench-used-color
-                        :else bench-color)]
+              col (if picked? bench-selected-color bench-color)]
           (if (= :curva (:kind feat))
             (add! {:type :dots
                    :data (mapv (fn [p] {:pos p :radius (if picked? 0.9 0.6)
                                         :color col
-                                        :opacity (cond picked? 0.95 used? 0.35 :else 0.6)})
+                                        :opacity (if picked? 0.95 0.6)})
                                (:points feat))})
             (add! {:type :lines :data [{:from (:a feat) :to (:b feat) :color col}]}))))
-      ;; planes already written this session, kept on so they can go on being
-      ;; checked across the photos after the source has changed
-      (doseq [{:keys [mark points]} (get-in @stage [:edge :planes] [])]
-        (let [r (max 6.0 (* 1.2 (reduce max 1.0
-                                        (map #(m/magnitude (m/v- % (:position mark))) points))))
-              {:keys [vertices faces]} (tri/disc-mesh mark r plane-disc-segments)]
-          (add! {:type :mesh
-                 :data {:vertices vertices :faces faces
-                        :material {:color fresh-plane-color :opacity 0.3
-                                   :double-sided true}}})
-          (add! {:type :dots :data [{:pos (:position mark) :radius 1.4
-                                     :color plane-origin-color :opacity 1.0}]})))
+      ;; the planes are NOT redrawn here: they live in the source's :marks, and
+      ;; source-mark-items already draws them from there. Keeping a second copy
+      ;; in the gesture would be a copy that a deleted line could not reach.
       ;; and the bordo in hand, once it is measured
       (when (and fit (:plausible? fit))
         (if (= :curva (:kind fit))
@@ -2333,18 +2340,17 @@
         (into (keep (fn [feat]
                       (when-let [p (feature-anchor feat)]
                         {:text (str (:label feat)
-                                    (when-let [ps (seq (:planes feat))]
-                                      (str " → " (str/join "," ps))))
+                                    "")
                          :position p
                          :color (if (contains? (selected-ids) (:id feat))
                                   bench-selected-color
                                   bench-color)}))
                     (bench)))
-        (into (keep (fn [{:keys [name mark]}]
-                      (when (and name mark)
-                        {:text name :position (:position mark)
+        (into (keep (fn [[nm mark]]
+                      (when (and (map? mark) (:position mark))
+                        {:text (name nm) :position (vec (:position mark))
                          :color fresh-plane-color}))
-                    (get-in @stage [:edge :planes] []))))))
+                    (:source-marks @stage))))))
 
 ;; ---- the gesture ----
 
@@ -2810,15 +2816,11 @@
         (solve-edge!)
         (say! (str "tratto della foto " (nav-rank victim) " tolto")))
 
-      ;; nothing in hand but something on the bench: take the last one back off
-      ;; it, so Backspace unwinds 'n' too and there is one way out of everything
+      ;; nothing in hand: what is on the bench lives in the SOURCE now, and the
+      ;; way to take it back is the way one takes back any text
       (seq (bench))
-      (let [victim (peek (bench))]
-        (swap! stage update :edge
-               (fn [e] (-> e
-                           (update :bench pop)
-                           (update :selected disj (:id victim)))))
-        (say! (str "bordo " (:label victim) " tolto dal banco")))
+      (say! (str "non c'e' niente in mano. I bordi tenuti stanno nel sorgente, nel "
+                 "blocco :edges — per toglierne uno cancella la sua riga e rilancia."))
 
       :else (say! "non c'è niente da togliere"))
     (redraw-overlay!)))
@@ -2929,10 +2931,22 @@
    A dozen, evenly spaced, still describes the zone."
   12)
 
+(defn- curve-literal
+  "The `(curve-mark {…})` source of a measured curved edge: its 3D points, thinned
+   to what still describes the curve. Evidence, in the source, where it can be
+   deleted as text."
+  [pts]
+  (str "{:points [" (str/join " " (map src/fmt-vec3 (pcurve/subsample pts evidence-points)))
+       "]}"))
+
 (defn- keep-feature!
-  "'n' — keep the bordo in hand on the BENCH: measured, drawn, numbered, and
-   there to be picked. Selected straight away, because the commonest thing to do
-   next is take another one and make a plane of the two."
+  "'n' — keep the bordo in hand by WRITING IT INTO THE SOURCE, in the acquire's
+   `:edges` block, next to the ones kept before.
+
+   It used to go onto a bench that lived in the gesture's own state, and that was
+   the wrong home: it needed a UI to delete from, another to rename in, and it
+   vanished when the gesture closed. In the source it needs none of those — the
+   text editor already does all three — and it survives."
   []
   (let [f (edge-fit)]
     (cond
@@ -2942,23 +2956,33 @@
       (not (edge-usable?))
       (report-edge!)
 
+      (= :curva (:kind f))
+      (if-let [nm (commit-edge! "curva"
+                                (fn [nm] (str ":" nm " (curve-mark "
+                                              (curve-literal (:points f)) ")")))]
+        (do (swap! stage update :edge
+                   #(-> % (assoc :obs {}) (dissoc :fit :pending :kind :brush :outcome)))
+            (say! (str "curva scritta nel sorgente come :" nm " ("
+                       (count (:points f)) " punti). Prendine un altro bordo sulla "
+                       "stessa faccia e poi premi 'p'. Per toglierla, cancella la "
+                       "sua riga nel sorgente."))
+            (redraw-overlay!))
+        (redraw-overlay!))
+
       :else
-      (let [id (get-in @stage [:edge :next-id] 1)
-            feat (merge (select-keys f [:kind :points :a :b :length-mm :circle :photos])
-                        {:id id :label (str id)})]
-        (swap! stage update :edge
-               (fn [e] (-> e
-                           (update :bench (fnil conj []) feat)
-                           (update :selected (fnil conj #{}) id)
-                           (assoc :next-id (inc id) :obs {})
-                           (dissoc :fit :pending :kind))))
-        (say! (str "bordo " id " tenuto sul banco ("
-                   (if (= :curva (:kind feat)) "curva" "retta")
-                   (when (:length-mm feat)
-                     (str ", " (src/fmt-number (:length-mm feat)) " mm"))
-                   "). Prendine un altro sulla STESSA faccia e poi premi 'p': "
-                   "due bordi non paralleli fissano il piano esattamente."))
-        (redraw-overlay!)))))
+      (if-let [mark (pedge/edge-mark (:a f) (:b f) (up-hints))]
+        (if-let [nm (commit-edge! "spigolo"
+                                  (fn [nm] (str ":" nm " (edge-mark "
+                                                (edge-literal mark (:a f) (:b f)) ")")))]
+          (do (swap! stage update :edge
+                     #(-> % (assoc :obs {}) (dissoc :fit :pending :kind :brush :outcome)))
+              (say! (str "spigolo scritto nel sorgente come :" nm " · lunghezza "
+                         (src/fmt-number (:length-mm f)) " mm. Prendine un altro sulla "
+                         "stessa faccia e poi premi 'p'. Per toglierlo, cancella la "
+                         "sua riga nel sorgente."))
+              (redraw-overlay!))
+          (redraw-overlay!))
+        (say! "i due capi coincidono: non c'e' una direzione da scrivere")))))
 
 (defn- toggle-selected!
   "A digit key picks or unpicks a bordo of the bench. Which ones lie on the same
@@ -2970,9 +2994,11 @@
       (swap! stage update-in [:edge :selected]
              (fn [sel] (let [sel (or sel #{})]
                          (if (sel id) (disj sel id) (conj sel id)))))
-      (say! (str "bordo " id (if (contains? (selected-ids) id) " selezionato" " deselezionato")
+      (say! (str "bordo :" (name id)
+                 (if (contains? (selected-ids) id) " selezionato" " deselezionato")
                  " · selezionati: "
-                 (if (seq (selected-ids)) (str/join ", " (sort (selected-ids))) "nessuno")))
+                 (if (seq (selected-ids))
+                   (str/join ", " (sort (map name (selected-ids)))) "nessuno")))
       (redraw-overlay!))))
 
 (defn- plane-from-bench!
@@ -3013,21 +3039,6 @@
             (if-let [nm (commit-plane-mark! mark ev)]
               (do (swap! stage update :edge
                          (fn [e] (-> e
-                                     (update :planes (fnil conj [])
-                                             {:name nm :mark mark :points (:points pl)
-                                              :members (mapv :id feats)})
-                                     ;; the bordi are not consumed: an edge can
-                                     ;; serve two faces, and one that was used is
-                                     ;; still evidence. They are MARKED as used
-                                     ;; and dimmed, which answers 'dopo aver
-                                     ;; creato un piano dovrei farli sparire?'
-                                     ;; with 'no — devono dire a chi appartengono'
-                                     (update :bench
-                                             (fn [b] (mapv (fn [f]
-                                                             (if (some #{(:id f)} (mapv :id feats))
-                                                               (update f :planes (fnil conj []) nm)
-                                                               f))
-                                                           b)))
                                      (assoc :selected #{})
                                      (assoc :outcome {:ok? true
                                                       :text (str "piano :" nm
@@ -3043,7 +3054,10 @@
                              (src/fmt-number (:flatness-mm pl)) " mm"
                              (when (> (:flatness-mm pl) 1.0)
                                " — ATTENZIONE, i bordi non sono cosi' complanari")
-                             ". LO VEDI come dischetto AZZURRO sull'oggetto: cambia "
+                             ". Per DISFARLO, cancella la riga :" nm " nel sorgente e "
+                             "rilancia — non c'e' altro da annullare, perche' il "
+                             "sorgente e' l'unico posto dove vive. "
+                             "LO VEDI come dischetto AZZURRO sull'oggetto: cambia "
                              "foto con [ e ] e deve restare incollato alla superficie. "
                              "Il bottone Mark lo accende e spegne. Usalo come "
                              "qualunque altro piano: (turtle A :at :" nm " …)."))
@@ -3211,13 +3225,9 @@
                                                       (if (= :curva (:kind feat)) "curva" "retta")
                                                       (when (:length-mm feat)
                                                         (str " " (src/fmt-number (:length-mm feat)) "mm"))))
-                                       (el "span" (cond (sel (:id feat)) "eaq-hud-good"
-                                                        (seq (:planes feat)) "eaq-hud-hint"
-                                                        :else nil)
-                                           :text (cond (sel (:id feat)) "scelto"
-                                                       (seq (:planes feat))
-                                                       (str "→ " (str/join "," (:planes feat)))
-                                                       :else "—"))])))
+                                       (el "span" (when (sel (:id feat)) "eaq-hud-good")
+                                           :text (if (sel (:id feat)) "scelto"
+                                                     (str ":" (:name feat))))])))
         (.appendChild box shots)
         (add! "eaq-hud-hint"
               "Il numero di ogni bordo è scritto anche NELLA FOTO, accanto al bordo stesso."))
@@ -3227,15 +3237,14 @@
                    "parallelo, sulla stessa faccia."))))
     ;; the planes already made, with the bordi each was made of — the record of
     ;; what has been decided, which the bench alone could not show
-    (when-let [ps (seq (get-in @stage [:edge :planes] []))]
-      (add! nil (str "Piani fatti (" (count ps) "):"))
+    (when-let [ps (seq (:source-marks @stage))]
+      (add! nil (str "Piani nel sorgente (" (count ps) "):"))
       (let [rows (el "div" "eaq-hud-shots")]
-        (doseq [{:keys [name members]} ps]
+        (doseq [[nm _] (sort-by key ps)]
           (.appendChild rows
                         (el "div" "eaq-hud-shot"
-                            :children [(el "span" nil :text (str ":" name))
-                                       (el "span" "eaq-hud-hint"
-                                           :text (str "bordi " (str/join "," (sort members))))])))
+                            :children [(el "span" nil :text (str ":" (name nm)))
+                                       (el "span" "eaq-hud-hint" :text "cancellabile nel testo")])))
         (.appendChild box rows)))
     (.appendChild frag box)
     (let [row (el "div" "eaq-hud-actions")]
@@ -3275,14 +3284,15 @@
     frag))
 
 (defn- start-edge! []
-  (swap! stage assoc :edge {:obs {} :bench [] :selected #{} :next-id 1 :committed []})
+  (swap! stage assoc :edge {:obs {} :selected #{} :committed []})
   (say! (str "modo bordi attivo. UN click su un bordo (dritto o curvo, lo capisce "
              "l'immagine), su DUE foto che lo guardino da lati diversi ([ e ] per "
              "cambiare): il bordo viene misurato e disegnato. 'n' lo TIENE sul "
-             "banco, dove resta visibile e numerato. Quando ne hai due sulla stessa "
-             "faccia, premi 'p': quello è il mark-piano, e due bordi non paralleli "
-             "lo fissano esattamente. Invio scrive un bordo dritto come spigolo, "
-             "'c' un cerchio, Esc esce."))
+             "SORGENTE, nel blocco :edges, dove resta visibile e numerato — e da "
+             "dove si toglie cancellandone la riga, senza bisogno di un comando "
+             "apposta. Quando ne hai due sulla stessa faccia, premi 'p': quello è "
+             "il mark-piano, e due bordi non paralleli lo fissano esattamente. "
+             "Invio scrive un bordo dritto come spigolo, 'c' un cerchio, Esc esce."))
   (redraw-overlay!))
 
 (defn- stop-edge! []

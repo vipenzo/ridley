@@ -4171,6 +4171,34 @@
               " non e' un raggio")))))
   c)
 
+(defn ^:export curve-mark
+  "A measured CURVED edge of an acquisition: `{:points [[x y z] …]}`, the 3D
+   points recovered from the photographs.
+
+   It carries no pose, because a curve has none — and that is the whole of what
+   it is for. A curve's value is the PLANE it lies in, and a plane wants
+   evidence: several curves, and straight edges too, pooled. So this is stored
+   evidence and nothing more, written into the same `:edges` block as its
+   straight siblings.
+
+   Why it lives in the SOURCE rather than in the gesture's own memory (Vincenzo,
+   2026-08-07): «non sarebbe meglio accumulare le cose (piani, segmenti) nel
+   sorgente, così li posso cancellare come testo invece che nella UI?». Yes — and
+   it is what this channel does everywhere else. A bench that lives in the source
+   can be renamed, deleted, kept across sessions and diffed, with no editing UI
+   at all; one that lives in a gesture's state needs a UI for each of those, and
+   is lost the moment the gesture closes.
+
+   Gentle, not silent, like the rest of the family."
+  [m]
+  (when (map? m)
+    (let [pts (:points m)]
+      (when-not (and (sequential? pts) (>= (count pts) 3))
+        (state/capture-println
+         (str ";; curve-mark: servono almeno 3 punti in :points — questo bordo curvo "
+              "non e' utilizzabile come evidenza per un piano")))))
+  m)
+
 ;; ------------------------------------------------------------
 ;; acquire-union — fusing two shooting sessions (brief-session-fusion.md)
 ;; ------------------------------------------------------------
@@ -4305,6 +4333,8 @@
    points and move as points. :length is invariant — the motion is rigid."
   [rt e]
   (cond-> (fuse/transform-pose rt e)
+    ;; a curve's luggage is its cloud of points, each of which moves as a point
+    (:points e) (assoc :points (mapv #(vec (fuse/transform-point rt %)) (:points e)))
     ;; a straight edge carries its two ENDS, which are points and move as
     ;; points; a circle carries only its radius, which a rigid motion does not
     ;; touch at all. Same transport, different luggage.

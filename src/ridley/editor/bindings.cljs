@@ -686,6 +686,12 @@
    ;; its nose along the axis, so `(turtle (:cerchio-1 (:edges A)) (extrude
    ;; (circle r) (f d)))` bores or raises exactly where the photos found a circle.
    'circle-mark         edit-acquire/circle-mark
+   ;; curve-mark: a measured CURVED edge, stored as its 3D points. No pose — a
+   ;; curve has none — because what it is for is being EVIDENCE for a plane,
+   ;; pooled with other curves and with straight edges. It lives in the source so
+   ;; it can be deleted, renamed and kept as text, which is the whole reason the
+   ;; gesture's bench was moved there.
+   'curve-mark          edit-acquire/curve-mark
    ;; edit-acquire (dev-docs/brief-param-acq-v1.md): now a MARKER in the edit-*
    ;; family. The `edit-acquire` macro dispatches a dir-string first arg here
    ;; (request!, opened from the definitions panel) and a proxy-mesh first arg to

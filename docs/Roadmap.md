@@ -192,6 +192,22 @@ utente).
   click diventa il primo capo del tratto a mano (~1.5 click per foto). Resta: il
   magazzino delle osservazioni (i tratti oggi non sopravvivono alla chiusura) e i
   punti nel pool. Entry point `dev-docs/HANDOVER-edge-declared.md`.
+- **Il banco vive nel sorgente — 2026-08-07.** «Sembra non ci sia modo, se sbagli,
+  di annullare un piano e rifarlo. Non sarebbe meglio accumulare le cose (piani,
+  segmenti) nel sorgente, così li posso cancellare come testo invece che nella
+  UI?». Sì: era il resto del canale a essere coerente e questa gestura no — i
+  piani già finivano nel sorgente, erano i BORDI a restare in un magazzino
+  invisibile che per giunta spariva chiudendo il gesto. Ora `n` scrive il bordo
+  nel blocco `:edges` dell'acquire e il banco è la LETTURA di quel blocco; i
+  piani si leggono da `:marks`; nessuna copia in memoria di nessuno dei due,
+  perché una copia è proprio ciò che una riga cancellata non raggiunge. Il
+  guadagno non è solo l'annullamento: cancellare, rinominare, riordinare, tenere
+  fra sessioni, diffare — il testo fa già tutto, e ogni verbo che avrei dovuto
+  costruire nella UI è un verbo che non esiste. Nuova forma di riposo
+  `(curve-mark {:points …})`, senza posa perché una curva non ne ha (è evidenza,
+  non ancoraggio: `named-poses` la salta), trasportata da `acquire-union`.
+  Verificato: cancellare `:curva-1` toglie il bordo dal banco, cancellare
+  `:piano-1` annulla il piano — elenco, disegno ed etichette.
 - **La pennellata, terzo giro: tre quantità — 2026-08-07.** «Ancora non si riesce.
   Qui siamo un pelo zoomati. Senza zoom viene verde, ma credo prenda altri bordi
   che vengono inclusi». Due frasi, una causa: il tubo laterale era misurato dalla
