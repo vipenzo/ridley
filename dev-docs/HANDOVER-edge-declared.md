@@ -102,37 +102,57 @@ La sagitta lo dice dall'altro lato — un cerchio resta dentro 1.2 px per
 continua a essere rifiutato come arco (verificato: il test del disco tiene 58 px
 e viene respinto).
 
-## SCRIVEVA IN UNA FORMA COMMENTATA (2026-08-07)
+## SCRIVEVA NELLA FORMA SPENTA (2026-08-07, due giri)
 
 «Avevo commentato il `(def A …` di prima per ripartire da zero, e con `n` scrive
 a riga 24 anziché nel blocco non commentato (quello a riga 27).»
 
-Difetto vero, e appena il banco ha cominciato a vivere nel sorgente è diventato
-inevitabile trovarlo: il write-back cercava la sua forma con una ricerca di
-testo — la PRIMA occorrenza di `(acquire "dir"` nel buffer — e un `(acquire …)`
-dietro `;;` è pur sempre un'occorrenza. Anzi, è quella che vince, perché
-commentando si lascia la vecchia sopra e si riparte sotto.
+Difetto vero, e appena il banco ha cominciato a vivere nel sorgente diventava
+inevitabile: il write-back cercava la sua forma con una ricerca di testo — la
+PRIMA occorrenza di `(acquire "dir"` nel buffer — e una forma spenta è pur
+sempre un'occorrenza. Anzi è quella che vince **sempre**, perché il modo di
+ripartire da zero è disattivare la vecchia e scrivere la nuova SOTTO.
 
-Il rimedio sta un piano sotto, in `find-form-bounds` (`modal_evaluator.cljs`),
-che è il localizzatore di TUTTI i modali: ora scorre le occorrenze e salta
-quelle dentro un commento di riga, con `source-edit/commented?` (puro,
-node-testabile, rispetta le stringhe: un `;` dentro `"dir;x"` non commenta
-niente). Ne guadagnano gratis anche edit-path, edit-bezier, edit-attach e
-edit-image-board: nessuno di loro può più confermare dentro un marcatore
-commentato.
+Il primo rimedio ha saltato solo i commenti di riga, e lui ha risposto «No,
+scrive ancora in quello commentato». Aveva ragione, e la lezione è che la
+domanda era troppo piccola: la sua vecchia forma non era dietro `;;`, era dentro
+`(comment def A (acquire …`, che è testo vivo per qualunque misura lessicale.
+
+Domanda giusta: **questo punto fa parte del programma?** `source-edit/dead-code?`
+cammina le parentesi dall'inizio del buffer (rispettando stringhe e commenti di
+riga) e guarda se una qualunque forma ancora APERTA è di uno dei tre tipi che
+significano "non è programma": commento di riga, `(comment …)`, `#_`. Testo
+sbilanciato davanti può solo farle rispondere "non morto", cioè il
+comportamento di prima. La usa `find-form-bounds` (`modal_evaluator.cljs`), che
+è il localizzatore di TUTTI i modali: ne guadagnano gratis edit-path,
+edit-bezier, edit-attach e edit-image-board.
 
 Il lato LETTURA non aveva il problema e non è stato toccato: banco e piani si
 leggono da `:pending`, che nasce dalla VALUTAZIONE dell'acquire — una forma
-commentata non viene valutata, quindi non è mai esistita per il banco.
+spenta non si valuta, quindi non è mai esistita per il banco.
 
-Limite dichiarato: solo i commenti di riga. Una forma spenta con `#_` continua a
-sembrare viva alla ricerca; prenderla davvero vuol dire fare il parsing, non lo
-scorrimento.
+### Lo slot che non c'è
 
-Verificato dal vivo (Playwright, sul build in esecuzione): buffer con un
-`(acquire "test-assets/param-plate-paper" …)` commentato a riga 2 e quello vero
-a riga 7 → entrambe le ricerche (con la dir e il ripiego) tornano riga 7, e i
-bounds finiscono sulla chiusura della forma viva.
+Guardando il suo buffer vero è saltato fuori il muro successivo, a due secondi
+di distanza: la forma viva era stata sfoltita a mano a `:proxy` e `:pose`, e
+`ensure-edges-slot!` sapeva creare `:edges` solo appendendolo a `:marks`. Senza
+`:marks`, la risposta a un bordo appena misurato sarebbe stata «vai a scrivere
+`:edges {}` dentro quella mappa e ridisegnalo».
+
+Ora `ensure-slot!` (uno solo, per bordi E piani) prova prima ad affiancare la
+chiave sorella — che tiene l'ordine delle chiavi emesse — e altrimenti scrive
+in fondo alla mappa delle opzioni, trovata con `src/first-map-bounds` (salta le
+stringhe: le graffe dentro `"dir{x"` non contano) e indentata con
+`src/entry-column`.
+
+Verificato dal vivo (Playwright, sul build in esecuzione), su una replica fedele
+del suo buffer — `(comment def A (acquire "…param-plate-paper"` in cima, il
+`(def A …` vero sotto, un altro `(comment` in fondo:
+
+- `find-form-bounds` torna la forma viva sia con la dir sia col ripiego;
+- `commit-edge!` scrive `spigolo-1` **nella forma viva**, creando `:edges` dal
+  nulla, e la forma spenta resta byte per byte identica;
+- `commit-plane-mark!` fa lo stesso con `piano-1` e `:marks`.
 
 ## IL BANCO VIVE NEL SORGENTE (2026-08-07)
 

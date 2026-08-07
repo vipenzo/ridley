@@ -228,14 +228,14 @@
    [from to] or nil. Shared by every modal evaluator that locates its own marker
    in the source.
 
-   Occurrences inside line comments are skipped: they are not part of the
-   program, so they are never what the user meant, and a write-back that landed
-   in one would edit text that nothing evaluates."
+   Occurrences in DEAD code are skipped — `;;`, `(comment …)`, `#_` — because
+   they are not part of the program, so they are never what the user meant, and
+   a write-back that landed in one would edit text that nothing evaluates."
   [text prefix]
   (loop [from 0]
     (let [idx (.indexOf text prefix from)]
       (when (>= idx 0)
-        (if (source-edit/commented? text idx)
+        (if (source-edit/dead-code? text idx)
           (recur (inc idx))
           (let [end (find-matching-paren text idx)]
             (when (pos? end) [idx end])))))))

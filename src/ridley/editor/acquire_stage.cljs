@@ -1468,6 +1468,31 @@
   (or (modal/find-form-bounds text (str "(acquire " (pr-str (:dir @stage))))
       (modal/find-form-bounds text "(acquire")))
 
+(defn- ensure-slot!
+  "Give the acquire form a `<kw> {}` block when it has none. Preferably right
+   after `after-kw`'s block at the same indentation, which keeps the emitted
+   order of keys; failing that, at the end of the opts map itself.
+
+   Refusing instead would mean answering a measured edge with 'go and type
+   `:edges {}` inside that map, then draw it again' — and the forms that lack the
+   slot are exactly the ones a user has been editing by hand (Vincenzo's, which
+   he had trimmed down to :proxy and :pose before starting over). Returns the
+   buffer text after the insertion, or nil when there is no map to write into."
+  [text from to kw after-kw]
+  (let [pad #(apply str (repeat % " "))]
+    (if-let [[_ e i] (src/map-value-bounds text from to after-kw)]
+      (do (modal/replace-source! e e (str "\n" (pad (src/column-of text i)) kw " {}"))
+          (cm/get-value))
+      (when-let [[o e] (src/first-map-bounds text from to)]
+        (let [col (src/entry-column text o)
+              ;; before the closing brace: the map may be empty, may end on its
+              ;; own line, may have a trailing comment — inserting HERE is the
+              ;; one position that is right in all three
+              at (dec e)]
+          (modal/replace-source! at at (str (when-not (= "\n" (.charAt text (dec at))) "\n")
+                                            (pad col) kw " {}\n" (pad (src/column-of text o))))
+          (cm/get-value))))))
+
 (defn- next-plane-name
   "`piano-N`, N one past the highest already in the form — read from the SOURCE,
    not from stage state, because that is where the marks actually live (the user
@@ -1525,17 +1550,21 @@
   [mark points]
   (let [text (cm/get-value)]
     (if-let [[from to] (acquire-form-bounds text)]
-      (if-let [[o e i] (src/map-value-bounds text from to ":marks")]
-        (let [nm (next-plane-name (.substring text from to))
-              updated (src/append-map-entry (.substring text o e)
-                                            (mark-entry-text nm mark points)
-                                            ":marks" (src/column-of text i))]
-          (modal/replace-source! o e updated)
-          (modal/run-definitions!)
-          nm)
-        (do (say! (str "la forma (acquire …) non ha uno slot :marks — aggiungi "
-                       ":marks {} dentro la mappa e riprova"))
-            nil))
+      (let [text (if (src/map-value-bounds text from to ":marks")
+                   text
+                   (ensure-slot! text from to ":marks" ":shapes"))
+            [from to] (when text (acquire-form-bounds text))]
+        (if-let [[o e i] (and text (src/map-value-bounds text from to ":marks"))]
+          (let [nm (next-plane-name (.substring text from to))
+                updated (src/append-map-entry (.substring text o e)
+                                              (mark-entry-text nm mark points)
+                                              ":marks" (src/column-of text i))]
+            (modal/replace-source! o e updated)
+            (modal/run-definitions!)
+            nm)
+          (do (say! (str "non riesco ad aggiungere uno slot :marks alla forma "
+                         "(acquire …) — aggiungi :marks {} dentro la mappa e riprova"))
+              nil)))
       (do (say! "non trovo la forma (acquire …) nel sorgente")
           nil))))
 
@@ -2883,19 +2912,6 @@
        " :radius " (src/fmt-number radius)
        "}"))
 
-(defn- ensure-edges-slot!
-  "Give the acquire form an `:edges {}` block when it has none, by inserting one
-   right after :marks at the same indentation. Forms emitted before edges existed
-   have no such slot, and refusing to write into them would mean asking the user
-   to hand-edit a map before the gesture would work. Returns the buffer text
-   after the insertion, or nil when there is no :marks to hang it off."
-  [text from to]
-  (when-let [[_ e i] (src/map-value-bounds text from to ":marks")]
-    (let [col (src/column-of text i)
-          ins (str "\n" (apply str (repeat col " ")) ":edges {}")]
-      (modal/replace-source! e e ins)
-      (cm/get-value))))
-
 (defn- commit-edge!
   "Write the measured edge into the evaluated `(acquire …)`'s :edges block and
    re-run the definitions. A bounded text edit — only that block's braces move —
@@ -2906,7 +2922,7 @@
     (if-let [[from to] (acquire-form-bounds text)]
       (let [text (if (src/map-value-bounds text from to ":edges")
                    text
-                   (ensure-edges-slot! text from to))
+                   (ensure-slot! text from to ":edges" ":marks"))
             [from to] (when text (acquire-form-bounds text))]
         (if-let [[o e i] (and text (src/map-value-bounds text from to ":edges"))]
           (let [nm (next-edge-name (.substring text from to) stem)
@@ -2917,9 +2933,8 @@
             (modal/replace-source! o e updated)
             (modal/run-definitions!)
             nm)
-          (do (say! (str "la forma (acquire …) non ha né uno slot :edges né uno "
-                         ":marks a cui affiancarlo — aggiungi :edges {} dentro la "
-                         "mappa e riprova"))
+          (do (say! (str "non riesco ad aggiungere uno slot :edges alla forma "
+                         "(acquire …) — aggiungi :edges {} dentro la mappa e riprova"))
               nil)))
       (do (say! "non trovo la forma (acquire …) nel sorgente")
           nil))))

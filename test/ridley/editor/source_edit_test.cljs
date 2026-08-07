@@ -178,3 +178,55 @@
     (let [text "(acquire \"d\" {}) ; e questo e' morto (acquire \"d\" {})"]
       (is (not (src/commented? text 0)))
       (is (src/commented? text (.lastIndexOf text "(acquire"))))))
+
+(deftest dead-code-is-not-a-target
+  ;; Second round of the same defect, and the reason the question had to get
+  ;; bigger: Vincenzo had not commented the old form with `;;` at all — he had
+  ;; wrapped it in `(comment def A (acquire …`, which is live text by every
+  ;; lexical measure and kept winning the search.
+  (let [text (str "(comment def A (acquire \"dir\"\n"
+                  "  {:marks {} :edges {}}))\n"
+                  "\n"
+                  "(def A (acquire \"dir\"\n"
+                  "  {:marks {}}))\n")
+        dead (.indexOf text "(acquire")
+        live (.indexOf text "(acquire" (inc dead))]
+    (is (src/dead-code? text dead) "inside (comment …)")
+    (is (not (src/dead-code? text live)) "the one that runs")
+    (is (not (src/commented? text dead))
+        "and it is NOT a line comment — which is why the first fix missed it"))
+  (testing "the discard reader macro, on the form that wraps it"
+    (let [text "#_(def A (acquire \"d\" {}))\n(def A (acquire \"d\" {}))"
+          dead (.indexOf text "(acquire")
+          live (.indexOf text "(acquire" (inc dead))]
+      (is (src/dead-code? text dead))
+      (is (not (src/dead-code? text live)))))
+  (testing "(comment …) closes, and what follows is alive again"
+    (let [text "(comment (acquire \"d\" {}))\n(acquire \"d\" {})"]
+      (is (not (src/dead-code? text (.lastIndexOf text "(acquire"))))))
+  (testing "a head that merely starts with comment is a normal call"
+    (let [text "(comment-on (acquire \"d\" {}))"]
+      (is (not (src/dead-code? text (.indexOf text "(acquire"))))))
+  (testing "parens inside strings and line comments do not unbalance the walk"
+    (let [text (str "(def s \"a ) ( b\")\n"
+                    "; ) ( )\n"
+                    "(def A (acquire \"d\" {}))")]
+      (is (not (src/dead-code? text (.indexOf text "(acquire")))))))
+
+(deftest creating-a-missing-slot
+  ;; A form trimmed by hand down to :proxy and :pose has no :marks to hang
+  ;; :edges off. Refusing there means answering a measured edge with "go type
+  ;; :edges {} and draw it again".
+  (let [text "(def A (acquire \"d\"\n         {:proxy (registration-plate)\n          :pose {:position [0 0 0]}}))"
+        [o e] (src/first-map-bounds text 0 (count text))]
+    (is (= "{" (.charAt text o)))
+    (is (= "}" (.charAt text (dec e))) "and it is the OPTS map, not :pose's")
+    (is (= 10 (src/entry-column text o)) "entries line up under :proxy"))
+  (testing "the dir string's own braces are stepped over"
+    (let [text "(acquire \"d{x\" {:marks {}})"
+          [o _] (src/first-map-bounds text 0 (count text))]
+      (is (= (.indexOf text "{:marks") o))))
+  (testing "an empty map: entries would go one past the brace"
+    (is (= 1 (src/entry-column "{}" 0))))
+  (testing "no map in range"
+    (is (nil? (src/first-map-bounds "(acquire \"d\")" 0 13)))))
