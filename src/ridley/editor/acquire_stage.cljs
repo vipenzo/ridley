@@ -2659,15 +2659,43 @@
                (redraw-overlay!)
                false)))))
 
+(def ^:private walk-tube-px
+  "How far, in PHOTO pixels, the walk may stray from the edge the pennellata
+   actually landed on. Absolute and small on purpose.
+
+   The lateral limit used to be the brush's own width, measured from the PAINTED
+   stroke, and that made it do a job it could not do: it had to absorb the hand's
+   error AND keep the walk on one edge. So a wide band let the walk hop to a
+   neighbouring parallel edge (Vincenzo, 2026-08-07: «senza zoom viene verde, ma
+   credo prenda altri bordi che a quel punto vengono inclusi») and a narrow one —
+   which is what zooming in produces, the width being in screen pixels — let the
+   walk out after forty pixels of a five-hundred-pixel stroke, reported as «non
+   c'è contrasto».
+
+   Once the painted points are snapped sideways onto the contrast, the tube can
+   be measured from the EDGE instead, and then it needs to be neither wide nor
+   zoom-dependent: 14 px is more than any real edge wanders between stations and
+   far less than the gap to the next edge."
+  14.0)
+
 (defn- paint-declare!
   "A DRAG in edge mode: the user has painted a band and said 'the line is in
-   here'. The stroke bounds the walk; where on it to start is found by trying.
+   here'. Three quantities come out of that one gesture, and keeping them apart
+   is what finally made it work:
 
-   The nib is a width in SCREEN pixels, converted to photo pixels by the stroke's
-   own scale — measured, not assumed. The scale is read off the TOTAL PATH LENGTH
-   rather than the distance between the first and last points: a stroke that
-   curves back on itself has almost no end-to-end span, and reading the scale
-   from that gave a nib of essentially random width."
+   - the WIDTH (the nib, in screen pixels, converted by the stroke's own
+     measured scale): how far off the edge the hand is allowed to be. Used to
+     SNAP the painted points sideways onto the contrast, and for nothing else;
+   - the LENGTH: where the edge is meant to stop. Enforced along the stroke's
+     principal direction;
+   - the TUBE (walk-tube-px, absolute): how far the walk may stray from the edge
+     it landed on. Measured from the SNAPPED points, not the painted ones, so it
+     no longer has to absorb the hand's error and can be as tight as keeping to
+     one edge requires.
+
+   The scale is read off the TOTAL PATH LENGTH rather than the distance between
+   the first and last points: a stroke that curves back on itself has almost no
+   end-to-end span, and reading the scale from that gave a nib of random width."
   [idx trail pose k]
   (let [pts (mapv :px trail)
         screen (mapv :screen trail)
@@ -2677,38 +2705,37 @@
         scale (let [sc (path screen)]
                 (if (> sc 1.0) (/ (path pts) sc) 1.0))
         r (max 3.0 (* (brush-px) scale))
-        ;; Seeds along the painted stroke, from the middle outward — the middle is
-        ;; where a hand-drawn band sits most squarely over what it meant — and
-        ;; each one SNAPPED SIDEWAYS onto the strongest contrast within the band
-        ;; first. That is the second job the width does now that it no longer has
-        ;; to stop the walk: it is how far off the line the hand is allowed to be.
-        ;; Without it a stroke drawn twenty pixels wide of the edge finds nothing,
-        ;; however wide the band, because every seed offered is twenty pixels off.
         n (count pts)
-        order (sort-by #(Math/abs (- % (quot n 2))) (range n))
         dir-at (fn [i]
                  (let [j (min (dec n) (max 1 i))
                        [ax ay] (nth pts (dec j))
                        [bx by] (nth pts j)
                        d (Math/hypot (- bx ax) (- by ay))]
                    (if (< d 1e-6) [1.0 0.0] [(/ (- bx ax) d) (/ (- by ay) d)])))
-        seed-at (fn [i]
-                  (let [[px py] (nth pts i)
-                        [ux uy] (dir-at i)
-                        nx (- uy) ny ux]
-                    (if-let [pk (edge-snap/cross-peak backdrop/luminance-at px py nx ny
-                                                      (Math/round r))]
-                      [(+ px (* nx (:t pk))) (+ py (* ny (:t pk)))]
-                      [px py])))
-        zone {:pred (zone-pred pts r) :stroke pts
-              :seeds (mapv seed-at (take 12 order))}]
+        ;; snap the WHOLE stroke sideways onto the contrast: what comes back is
+        ;; where the edge actually runs, which is what the walk should be held to
+        snapped (into [] (keep-indexed
+                          (fn [i [px py]]
+                            (let [[ux uy] (dir-at i)
+                                  nx (- uy) ny ux]
+                              (when-let [pk (edge-snap/cross-peak backdrop/luminance-at
+                                                                  px py nx ny (Math/round r))]
+                                [(+ px (* nx (:t pk))) (+ py (* ny (:t pk)))])))
+                          pts))
+        on-edge? (>= (count snapped) (max 3 (quot n 3)))
+        spine (if on-edge? snapped pts)
+        tube (if on-edge? walk-tube-px (max r walk-tube-px))
+        m (count spine)
+        order (sort-by #(Math/abs (- % (quot m 2))) (range m))
+        zone {:pred (zone-pred spine tube) :stroke pts
+              :seeds (mapv #(nth spine %) (take 12 order))}]
     (if (< (count pts) 2)
       (do (swap! stage assoc-in [:edge :outcome]
                  {:ok? false :text "pennellata troppo corta"})
           (say! "pennellata troppo corta")
           (redraw-overlay!))
       (do (swap! stage assoc-in [:edge :brush] {:idx idx :stroke pts :r r})
-          (when-not (try-one-click! idx (nth pts (quot n 2)) pose k zone)
+          (when-not (try-one-click! idx (nth spine (quot m 2)) pose k zone)
             (redraw-overlay!))))))
 
 (defn- edge-click!
@@ -3137,8 +3164,10 @@
                 "Primo capo preso (pallino giallo). Clicca il secondo più avanti lungo il bordo.")
           (contains? (edge-obs) here)
           (add! "eaq-hud-hint"
-                (str "Su questa foto il bordo c'è (chiaro). Un altro click qui lo "
-                     "rifà a mano; oppure cambia foto con ] e clicca LO STESSO tratto."))
+                (str "Su questa foto un bordo è già preso (chiaro)"
+                     (when-let [oc (get-in @stage [:edge :outcome])]
+                       (when-not (:ok? oc) " — l'ULTIMA pennellata però non ha preso niente"))
+                     ". Cambia foto con ] e prendi LO STESSO tratto, oppure ridipingi qui."))
           :else
           (add! "eaq-hud-hint"
                 (str "UN click su un bordo — oppure TRASCINA per dire 'cercalo qui "

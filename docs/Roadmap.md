@@ -192,6 +192,20 @@ utente).
   click diventa il primo capo del tratto a mano (~1.5 click per foto). Resta: il
   magazzino delle osservazioni (i tratti oggi non sopravvivono alla chiusura) e i
   punti nel pool. Entry point `dev-docs/HANDOVER-edge-declared.md`.
+- **La pennellata, terzo giro: tre quantità — 2026-08-07.** «Ancora non si riesce.
+  Qui siamo un pelo zoomati. Senza zoom viene verde, ma credo prenda altri bordi
+  che vengono inclusi». Due frasi, una causa: il tubo laterale era misurato dalla
+  pennellata DIPINTA, quindi doveva assorbire l'errore della mano — e la punta,
+  essendo in pixel-schermo, zoomando diventa stretta in pixel-foto. Zoomato: tubo
+  da 7 px, il cammino esce dopo 40 px su 564 dipinti e sotto soglia dice «non c'è
+  contrasto»; senza zoom: tubo da ~58 px, largo abbastanza da far saltare il
+  cammino su un bordo parallelo. Ora dalla gestura escono TRE quantità con tre
+  mestieri: la LARGHEZZA aggancia di lato i punti dipinti sul contrasto (quanto
+  la mano può sbagliare), la LUNGHEZZA ferma il cammino fra i capi, e il TUBO
+  (14 px, assoluto) tiene il cammino vicino al BORDO AGGANCIATO — non alla
+  pennellata, quindi non deve più assorbire niente e può essere stretto e
+  indipendente dallo zoom. Cinque regimi misurati, tutti ✓: zoomato con mano
+  peggiore 108 px a 1.19 di scarto; senza zoom con raggio 156 px, 66 px a 0.88.
 - **La pennellata: larghezza e lunghezza sono due cose — 2026-08-07.** «Non ce la
   fa ancora con questo, ho provato sia con size grandi che piccoli». Misurato sul
   suo bordo: con una fascia da 10-30 px viene DRITTO a 1.19 px di scarto, con una

@@ -102,6 +102,36 @@ La sagitta lo dice dall'altro lato — un cerchio resta dentro 1.2 px per
 continua a essere rifiutato come arco (verificato: il test del disco tiene 58 px
 e viene respinto).
 
+## LA PENNELLATA, TERZO GIRO: TRE QUANTITA', NON UNA (2026-08-07)
+
+«Ancora non si riesce. Qui siamo un pelo zoomati. Senza zoom viene verde, ma
+credo prenda altri bordi che a quel punto vengono inclusi.»
+
+Le due frasi sono la stessa causa vista da due lati, e la misura le unisce: il
+tubo laterale era ancora misurato dalla pennellata DIPINTA, quindi doveva
+assorbire l'errore della mano; e siccome la punta e' in pixel-SCHERMO, zoomando
+diventa stretta in pixel-foto. Zoomato: tubo da 7 px, il cammino esce dopo 40 px
+su 564 dipinti, e sotto la soglia esce «non c'è contrasto» — il messaggio dello
+screenshot. Senza zoom: tubo da ~58 px, abbastanza largo da lasciare il cammino
+saltare su un bordo parallelo vicino, che e' il «prende altri bordi».
+
+Dalla stessa gestura escono TRE quantita', e adesso fanno tre mestieri distinti:
+
+| quantita' | che cos'e' | dove agisce |
+|---|---|---|
+| **larghezza** (punta, px-schermo × scala) | quanto la mano puo' sbagliare | aggancia di lato i punti dipinti sul contrasto |
+| **lunghezza** | dove il bordo deve finire | proiezione fra i capi (+12 px) |
+| **tubo** (14 px, assoluto) | quanto il cammino puo' scostarsi dal BORDO | attorno ai punti AGGANCIATI |
+
+La chiave e' l'ultima riga: una volta agganciati di lato i punti dipinti, il tubo
+si misura dal bordo VERO invece che dalla pennellata, quindi non deve piu'
+assorbire l'errore della mano — e puo' essere stretto e indipendente dallo zoom,
+che e' quello che serve per non saltare sul bordo accanto.
+
+Misurato, cinque regimi: zoomato forte con mano peggiore → ✓ 108 px, scarto 1.19;
+senza zoom con punta grossa (raggio 156 px!) e mano larga → ✓ 66 px, scarto 0.88.
+Prima il primo dava «niente contrasto» e il secondo scappava.
+
 ## LA PENNELLATA: LARGHEZZA E LUNGHEZZA SONO DUE COSE (2026-08-07)
 
 «Non ce la fa ancora con questo (sempre foto 1), ho provato sia con size grandi
