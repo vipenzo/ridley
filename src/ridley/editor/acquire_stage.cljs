@@ -721,6 +721,30 @@
   [msg]
   (state/capture-println (str ";; piano: " msg)))
 
+(declare redraw-overlay!)
+
+(defn- deny!
+  "Refuse WHERE THE HAND IS: the same sentence `say!` puts in the console, plus
+   the panel's answer line, plus a redraw so it appears at once.
+
+   Every refusal of a WRITE used to speak only in the console, and Vincenzo read
+   that as the gesture being broken: «premo p o clicco su Piano dai selezionati
+   e non succede niente» (2026-08-07) — while the program was in fact telling
+   him, three panels away, that his three bordi were nearly in a row. A refusal
+   nobody sees is indistinguishable from a bug, and this is the third time the
+   same lesson has come back, so it now goes through one door.
+
+   `head` overrides the headline for a refusal that is not about writing (a
+   measurement that does not hold up is NOT MISURATO, not NON SCRITTO)."
+  ([msg] (deny! nil msg))
+  ([head msg]
+   (say! msg)
+   (when (:edge @stage)
+     (swap! stage assoc-in [:edge :outcome]
+            (cond-> {:ok? false :about :write :text msg}
+              head (assoc :head head))))
+   (redraw-overlay!)))
+
 (defn- plane-mode? [] (some? (:plane @stage)))
 (defn- plane-picks [] (get-in @stage [:plane :picks] []))
 
@@ -1562,10 +1586,10 @@
             (modal/replace-source! o e updated)
             (modal/run-definitions!)
             nm)
-          (do (say! (str "non riesco ad aggiungere uno slot :marks alla forma "
-                         "(acquire …) — aggiungi :marks {} dentro la mappa e riprova"))
+          (do (deny! (str "non riesco ad aggiungere uno slot :marks alla forma "
+                          "(acquire …) — aggiungi :marks {} dentro la mappa e riprova"))
               nil)))
-      (do (say! "non trovo la forma (acquire …) nel sorgente")
+      (do (deny! "non trovo la forma (acquire …) nel sorgente")
           nil))))
 
 ;; ---- (edit-plane-mark …): rieditare un mark dal SORGENTE ----
@@ -2395,11 +2419,11 @@
       (= :curva (:kind f))
       (cond
         (not (:plausible? f))
-        (say! (str "i punti recuperati cadono lontano dall'oggetto: le due foto "
+        (deny! "NON MISURATO" (str "i punti recuperati cadono lontano dall'oggetto: le due foto "
                    "non stanno guardando lo stesso bordo curvo"))
 
         (< (count (:points f)) pcurve/min-shared-points)
-        (say! (str "le due foto condividono solo " (count (:points f))
+        (deny! "NON MISURATO" (str "le due foto condividono solo " (count (:points f))
                    " punti di questa curva (ne servono almeno "
                    pcurve/min-shared-points "): hanno seguito tratti quasi "
                    "disgiunti. Col pennarello dipingi sulla seconda foto LO STESSO "
@@ -2407,7 +2431,7 @@
                    "serve in comune."))
 
         (< (:agreement f) pcurve/min-agreement)
-        (say! (str "solo il " (src/fmt-number (* 100 (:agreement f)))
+        (deny! "NON MISURATO" (str "solo il " (src/fmt-number (* 100 (:agreement f)))
                    "% degli accoppiamenti fra le due foto rispetta l'ORDINE in cui "
                    "i due bordi sono stati percorsi (ne serve il "
                    (src/fmt-number (* 100 pcurve/min-agreement)) "%). Percorrere la "
@@ -2430,11 +2454,11 @@
                          (src/fmt-number (* 2 (:radius ci))) " mm: 'c' scrive quello.")))))
 
       (not (:plausible? f))
-      (say! (str "lo spigolo cade lontano dall'oggetto: i tratti disegnati non sono "
+      (deny! "NON MISURATO" (str "lo spigolo cade lontano dall'oggetto: i tratti disegnati non sono "
                  "lo stesso spigolo fisico, oppure le due foto sono troppo simili"))
 
       (< (:angle-deg f) pedge/min-plane-angle-deg)
-      (say! (str "le foto girano solo " (src/fmt-number (:angle-deg f))
+      (deny! "NON MISURATO" (str "le foto girano solo " (src/fmt-number (:angle-deg f))
                  "° INTORNO allo spigolo: troppo poco perche' la sua posizione sia "
                  "determinata. Serve una foto che lo guardi da un altro lato — "
                  "spostarsi lungo lo spigolo non serve a niente, e nemmeno mettersi "
@@ -2442,7 +2466,7 @@
                  "stesso piano)."))
 
       (> (:rms-px f) max-write-rms-px)
-      (say! (str "riproiezione " (src/fmt-number (:rms-px f))
+      (deny! "NON MISURATO" (str "riproiezione " (src/fmt-number (:rms-px f))
                  " px: questo spigolo NON spiega le foto da cui e' nato — su "
                  "qualcuna e' stato seguito un bordo diverso."))
 
@@ -2933,10 +2957,10 @@
             (modal/replace-source! o e updated)
             (modal/run-definitions!)
             nm)
-          (do (say! (str "non riesco ad aggiungere uno slot :edges alla forma "
-                         "(acquire …) — aggiungi :edges {} dentro la mappa e riprova"))
+          (do (deny! (str "non riesco ad aggiungere uno slot :edges alla forma "
+                          "(acquire …) — aggiungi :edges {} dentro la mappa e riprova"))
               nil)))
-      (do (say! "non trovo la forma (acquire …) nel sorgente")
+      (do (deny! "non trovo la forma (acquire …) nel sorgente")
           nil))))
 
 (def ^:private evidence-points
@@ -2966,7 +2990,7 @@
   (let [f (edge-fit)]
     (cond
       (nil? f)
-      (say! "questo bordo non e' ancora misurato: serve una dichiarazione su DUE foto")
+      (deny! "questo bordo non e' ancora misurato: serve una dichiarazione su DUE foto")
 
       (not (edge-usable?))
       (report-edge!)
@@ -2976,7 +3000,9 @@
                                 (fn [nm] (str ":" nm " (curve-mark "
                                               (curve-literal (:points f)) ")")))]
         (do (swap! stage update :edge
-                   #(-> % (assoc :obs {}) (dissoc :fit :pending :kind :brush :outcome)))
+                   #(-> % (assoc :obs {}) (dissoc :fit :pending :kind :brush)
+                        (assoc :outcome {:ok? true :about :write
+                                         :text (str "curva :" nm " sul banco")})))
             (say! (str "curva scritta nel sorgente come :" nm " ("
                        (count (:points f)) " punti). Prendine un altro bordo sulla "
                        "stessa faccia e poi premi 'p'. Per toglierla, cancella la "
@@ -2990,14 +3016,17 @@
                                   (fn [nm] (str ":" nm " (edge-mark "
                                                 (edge-literal mark (:a f) (:b f)) ")")))]
           (do (swap! stage update :edge
-                     #(-> % (assoc :obs {}) (dissoc :fit :pending :kind :brush :outcome)))
+                     #(-> % (assoc :obs {}) (dissoc :fit :pending :kind :brush)
+                          (assoc :outcome {:ok? true :about :write
+                                           :text (str "spigolo :" nm " · "
+                                                      (src/fmt-number (:length-mm f)) " mm")})))
               (say! (str "spigolo scritto nel sorgente come :" nm " · lunghezza "
                          (src/fmt-number (:length-mm f)) " mm. Prendine un altro sulla "
                          "stessa faccia e poi premi 'p'. Per toglierlo, cancella la "
                          "sua riga nel sorgente."))
               (redraw-overlay!))
           (redraw-overlay!))
-        (say! "i due capi coincidono: non c'e' una direzione da scrivere")))))
+        (deny! "i due capi coincidono: non c'e' una direzione da scrivere")))))
 
 (defn- toggle-selected!
   "A digit key picks or unpicks a bordo of the bench. Which ones lie on the same
@@ -3031,22 +3060,22 @@
         idxs (distinct (mapcat :photos feats))]
     (cond
       (empty? feats)
-      (say! (str "nessun bordo selezionato: tienine almeno uno con 'n', poi premi "
-                 "il suo numero per selezionarlo"))
+      (deny! (str "nessun bordo selezionato: tienine almeno uno con 'n', poi premi "
+                  "il suo numero per selezionarlo"))
 
       (< (count pts) 3)
-      (say! "i bordi selezionati non hanno abbastanza punti per un piano")
+      (deny! "i bordi selezionati non hanno abbastanza punti per un piano")
 
       :else
       (if-let [pl (pcurve/plane-from-points pts {:toward (toward-cameras idxs)
                                                  :up-hints (up-hints)})]
         (cond
           (< (:width-mm pl) pcurve/min-width-mm)
-          (say! (str "i bordi selezionati stanno quasi in FILA (larghi "
-                     (src/fmt-number (:width-mm pl)) " mm), e una fila sta su "
-                     "INFINITI piani: 1 mm d'errore inclinerebbe la normale di "
-                     (src/fmt-number (:tilt-per-mm-deg pl)) "°. Aggiungine uno "
-                     "trasversale, non parallelo a questi."))
+          (deny! (str "i bordi selezionati stanno quasi in FILA (larghi "
+                      (src/fmt-number (:width-mm pl)) " mm), e una fila sta su "
+                      "INFINITI piani: 1 mm d'errore inclinerebbe la normale di "
+                      (src/fmt-number (:tilt-per-mm-deg pl)) "°. Aggiungine uno "
+                      "trasversale, non parallelo a questi."))
 
           :else
           (let [mark (select-keys pl [:position :heading :up])
@@ -3055,9 +3084,9 @@
               (do (swap! stage update :edge
                          (fn [e] (-> e
                                      (assoc :selected #{})
-                                     (assoc :outcome {:ok? true
+                                     (assoc :outcome {:ok? true :about :write
                                                       :text (str "piano :" nm
-                                                                 " scritto — è il dischetto AZZURRO sull'oggetto")}))))
+                                                                 " — è il dischetto AZZURRO sull'oggetto")}))))
                   ;; a mark has just been made: showing marks is the obvious
                   ;; follow-through, and leaving the toggle off would mean writing
                   ;; something the user then cannot find (which is exactly what
@@ -3078,7 +3107,7 @@
                              "qualunque altro piano: (turtle A :at :" nm " …)."))
                   (redraw-overlay!))
               (redraw-overlay!))))
-        (say! "i bordi selezionati non definiscono un piano")))))
+        (deny! "i bordi selezionati non definiscono un piano")))))
 
 (defn- accept-circle!
   "'c' — write the bordo in hand as a CIRCLE, when the curve really is one."
@@ -3086,8 +3115,8 @@
   (let [f (edge-fit)
         ci (:circle f)]
     (if-not ci
-      (say! (str "questa curva non e' un cerchio abbastanza definito (o se ne vede "
-                 "troppo poco): tienila con 'n' e usala per un piano."))
+      (deny! (str "questa curva non e' un cerchio abbastanza definito (o se ne vede "
+                  "troppo poco): tienila con 'n' e usala per un piano."))
       (if-let [mark (pcircle/circle-mark ci {:toward (:toward f) :up-hints (up-hints)})]
         (if-let [nm (commit-edge! "cerchio"
                                   (fn [nm] (str ":" nm " (circle-mark "
@@ -3102,7 +3131,7 @@
                          (src/fmt-number (:radius ci)) ") (f …)))."))
               (redraw-overlay!))
           (redraw-overlay!))
-        (say! "il cerchio misurato non ha una normale utilizzabile")))))
+        (deny! "il cerchio misurato non ha una normale utilizzabile")))))
 
 (defn- accept-edge!
   "Enter — write the bordo in hand as a measured EDGE. For a curve there is
@@ -3170,9 +3199,18 @@
     ;; did worked, and it goes where the hand already is instead of three panels
     ;; away in the console (Vincenzo asked for it three times before it landed).
     (when-let [oc (get-in @stage [:edge :outcome])]
+      ;; the headline depends on WHAT was refused: 'NIENTE QUI' is the answer to
+      ;; a stroke that found no edge, and would be a lie in front of a write that
+      ;; was refused for a reason of its own (the bordi are nearly in a row…)
       (.appendChild frag (el "div" (if (:ok? oc) "eaq-hud-good" "eaq-hud-bad")
-                             :text (str (if (:ok? oc) "✓ TROVATO — " "✗ NIENTE QUI — ")
-                                        (:text oc)))))
+                             :text (str (if (:ok? oc) "✓ " "✗ ")
+                                        (or (:head oc)
+                                            (case [(boolean (:ok? oc)) (:about oc :stroke)]
+                                              [true :write] "SCRITTO"
+                                              [false :write] "NON SCRITTO"
+                                              [true :stroke] "TROVATO"
+                                              "NIENTE QUI"))
+                                        " — " (:text oc)))))
     (.appendChild frag (hud-step (if f :done :current) 1 "Misura un bordo (2 foto)"))
     (.appendChild frag (hud-step (cond (seq b) :done f :current :else :todo)
                                  2 (str "Tienilo sul banco — 'n'  (" (count b) ")")))
@@ -3195,7 +3233,8 @@
           (add! "eaq-hud-hint"
                 (str "Su questa foto un bordo è già preso (chiaro)"
                      (when-let [oc (get-in @stage [:edge :outcome])]
-                       (when-not (:ok? oc) " — l'ULTIMA pennellata però non ha preso niente"))
+                       (when (and (not (:ok? oc)) (= :stroke (:about oc :stroke)))
+                         " — l'ULTIMA pennellata però non ha preso niente"))
                      ". Cambia foto con ] e prendi LO STESSO tratto, oppure ridipingi qui."))
           :else
           (add! "eaq-hud-hint"

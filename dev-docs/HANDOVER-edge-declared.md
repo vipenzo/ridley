@@ -102,6 +102,41 @@ La sagitta lo dice dall'altro lato — un cerchio resta dentro 1.2 px per
 continua a essere rifiutato come arco (verificato: il test del disco tiene 58 px
 e viene respinto).
 
+## «PREMO p E NON SUCCEDE NIENTE» (2026-08-07)
+
+Non era rotto: stava rifiutando, e lo diceva in console. Il gesto rispondeva
+«i bordi selezionati stanno quasi in FILA (larghi 2 mm), e una fila sta su
+INFINITI piani: 1 mm d'errore inclinerebbe la normale di 26°. Aggiungine uno
+trasversale» — a tre pannelli di distanza da dove lui aveva la mano. Un rifiuto
+che nessuno vede è indistinguibile da un bug, ed è la terza volta che questa
+lezione torna indietro.
+
+Ora tutti i rifiuti passano da una porta sola, `deny!`: la stessa frase va in
+console E sulla riga di risposta del pannello, con un redraw perché compaia
+subito. La riga di risposta ha imparato di CHE COSA parla, perché «NIENTE QUI»
+è la risposta a una pennellata che non ha trovato bordi e sarebbe una bugia
+davanti a un rifiuto di scrittura:
+
+| esito | titolo |
+|---|---|
+| pennellata che trova | ✓ TROVATO |
+| pennellata a vuoto | ✗ NIENTE QUI |
+| scrittura riuscita | ✓ SCRITTO |
+| scrittura rifiutata | ✗ NON SCRITTO |
+| misura che non regge (`report-edge!`) | ✗ NON MISURATO |
+
+Anche i successi di `n` ora lasciano la loro riga (`✓ SCRITTO — spigolo
+:spigolo-9 · 42.1 mm`), che prima veniva cancellata insieme al resto.
+
+Verificato dal vivo, guidando il gesto da headless su dati sintetici: tre
+spigoli paralleli a 1 mm l'uno dall'altro → «✗ NON SCRITTO — … larghi 2 mm …
+Aggiungine uno trasversale»; aggiunto un quarto spigolo che li taglia → «✓
+SCRITTO — piano :piano-2».
+
+Da ricordare: la soglia che scatta è `pcurve/min-width-mm` (4 mm) e non è
+severità gratuita — il messaggio riporta di quanto si inclinerebbe la normale
+per 1 mm d'errore, ed è quel numero il motivo.
+
 ## LA GRAFFA VA A CAPO (2026-08-07)
 
 «Sono riuscito a ricalcare due piani. L'undo via testo è reso più complicato dal
