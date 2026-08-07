@@ -2184,15 +2184,29 @@
       ;; declaration of WHERE the edge is, and when the detector finds nothing it
       ;; is the only thing that says the gesture was heard at all.
       (let [br (get-in @stage [:edge :brush])
-            zone (or (when (= (:idx br) here) (:stroke br))
-                     (:zone (get (edge-obs) here)))]
+            here-br? (= (:idx br) here)
+            zone (or (when here-br? (:stroke br))
+                     (:zone (get (edge-obs) here)))
+            r-px (when here-br? (:r br))]
         (when (and zone k pose)
           (let [pts (into [] (keep #(ray-point-near-object k pose %))
-                          (pcurve/subsample zone 30))]
+                          (pcurve/subsample zone 30))
+                ;; the band is drawn at the width it ACTUALLY has. Millimetres per
+                ;; photo pixel at the object's distance is depth/fx, so the dots
+                ;; are the zone rather than a decoration of it — which matters,
+                ;; because a marker whose drawn width does not match its effect is
+                ;; worse than no marker at all.
+                mm-per-px (when (and r-px (seq pts))
+                            (/ (m/magnitude (m/v- (first pts)
+                                                  (pcamera/camera-center pose)))
+                               (:fx k)))]
             (when (seq pts)
               (add! {:type :dots
-                     :data (mapv (fn [p] {:pos p :radius 1.6
-                                          :color brush-color :opacity 0.25})
+                     :data (mapv (fn [p] {:pos p
+                                          :radius (if mm-per-px
+                                                    (max 0.4 (* r-px mm-per-px))
+                                                    1.6)
+                                          :color brush-color :opacity 0.22})
                                  pts)})))))
       (when-let [o (get (edge-obs) here)]
         (when (and k pose)
@@ -2379,12 +2393,30 @@
                  "misurare il cerchio, chiudi e ricomincia cliccando prima qui.)")
     "non riesco a leggere il bordo da qui: dammi DUE click."))
 
-(def ^:private brush-screen-px
-  "Half-width of the marker, in SCREEN pixels — so it feels the same thickness
-   whatever the zoom, and zooming in is how you get a finer one. Converted to
-   photo pixels from the stroke's own screen-to-photo scale, which the drag
-   measures for free."
-  18.0)
+(def ^:private brush-sizes
+  "The ladder the marker's half-width climbs, in SCREEN pixels.
+
+   A ladder and not a fixed value because the first version had none, and the
+   consequence was the one thing a marker must never do (Vincenzo, 2026-08-07:
+   «la pennellata cambia size con lo zoom, per cui non si riesce ad
+   assottigliarla»). Screen pixels rather than photo pixels so the nib feels the
+   same under the hand at any zoom; what zooming changes is how much of the OBJECT
+   it covers, which is the useful half of the bargain and the one worth keeping."
+  [4.0 8.0 14.0 22.0 34.0])
+
+(defn- brush-px [] (get-in @stage [:edge :brush-px] 14.0))
+
+(defn- cycle-brush!
+  "Next nib on the ladder, wrapping — a cycling control that carries its current
+   value as its own label, like the plane gesture's nudge step."
+  [dir]
+  (let [cur (brush-px)
+        i (or (first (keep-indexed #(when (= %2 cur) %1) brush-sizes)) 2)
+        nxt (nth brush-sizes (mod (+ i dir) (count brush-sizes)))]
+    (swap! stage assoc-in [:edge :brush-px] nxt)
+    (say! (str "pennarello: punta " (src/fmt-number nxt) " px di schermo"
+               " (le altre: " (str/join " · " (map src/fmt-number brush-sizes)) ")"))
+    (redraw-overlay!)))
 
 (defn- zone-pred
   "'Look for the line in HERE': within `r` of the painted polyline. The user's
@@ -2437,49 +2469,56 @@
                  (edge-snap/edge-at-point backdrop/luminance-at (first px) (second px)
                                           {:in-zone? (:pred zone) :zoned? true}))
              (edge-snap/edge-at-point backdrop/luminance-at (first px) (second px)))
-         first? (empty? (edge-obs))
          curved? (= :curved (:reason r))
-         take! (fn [entry kind msg]
+         kind (if curved? :curva :retta)
+         cur-kind (get-in @stage [:edge :kind])
+         others (dissoc (edge-obs) idx)
+         ;; A declaration of the OTHER kind is not a mistake to refuse — it is
+         ;; almost always a new bordo. Refusing it was the bug that made the
+         ;; gesture die after its first success (Vincenzo, 2026-08-07: «non sono
+         ;; riuscito a trovare nessun bordo, tranne la prima volta»): the kind
+         ;; stayed latched from the first stroke, so every stroke of the other
+         ;; kind came back with a message about 'the other photos' that meant
+         ;; nothing here.
+         ;;
+         ;; The kind belongs to a FEATURE, and a feature is what the bench holds.
+         ;; So: a clash only exists when this feature already has views on OTHER
+         ;; photos — that is the case where the user is genuinely adding a second
+         ;; view of one thing. Otherwise the declaration simply starts a fresh
+         ;; one, and says so.
+         clash? (and cur-kind (not= cur-kind kind) (seq others))
+         take! (fn [entry msg]
                  (swap! stage update :edge
-                        #(-> % (assoc :kind kind)
-                             (assoc-in [:obs idx] entry)
-                             (dissoc :pending)))
+                        (fn [e] (-> (if clash? (assoc e :obs {}) e)
+                                    (assoc :kind kind)
+                                    (assoc-in [:obs idx] entry)
+                                    (dissoc :pending))))
                  (solve-edge!)
-                 (say! msg)
+                 (say! (if clash?
+                         (str msg " — le foto di prima lo vedevano "
+                              (if (= :curva cur-kind) "CURVO" "DRITTO")
+                              ", quindi questo comincia un bordo NUOVO. Se volevi "
+                              "aggiungere una vista a quello di prima, Backspace "
+                              "torna indietro.")
+                         msg))
                  (report-edge!)
                  (redraw-overlay!)
                  true)]
      (cond
-      ;; A CURVED edge is not a failure to find one: the walk followed it, and
-      ;; those points are exactly what the plane fit eats. The first declaration
-      ;; decides what is being measured; after that the two must agree, because a
-      ;; straight edge and a curve are different measurements of different things
-      ;; and a mixture is a mistake worth naming.
-       (and curved? (or first? (curve-mode?)))
+       curved?
        (take! {:points (:points r) :raw [px px] :pose pose :intrinsics k
                :zone (:stroke zone)
                :snap {:n (count (:points r))} :auto? true :curved? true}
-              :curva
               (str "bordo CURVO trovato sulla foto " (nav-rank idx) ": "
                    (count (:points r)) " punti seguiti su "
-                   (src/fmt-number (:walked-px r)) " px. Da una curva si ricava il "
-                   "PIANO su cui è adagiata — serve un'altra foto che la guardi da "
-                   "un altro lato."))
-
-       (and (:ok? r) (curve-mode?))
-       (do (say! (str "questa foto vede un bordo DRITTO, ma stiamo misurando un "
-                      "piano da bordi curvi: o non è lo stesso bordo, o da qui la "
-                      "curva si vede troppo di taglio per essere riconosciuta. "
-                      "Provane un'altra."))
-           false)
+                   (src/fmt-number (:walked-px r)) " px"))
 
        (:ok? r)
        (take! {:seg [(:p1 r) (:p2 r)] :raw [px px] :pose pose :intrinsics k
                :zone (:stroke zone)
                :snap {:n (:n r) :rms (:rms r)} :auto? true}
-              :retta
-              (str "spigolo trovato da un click sulla foto " (nav-rank idx)
-                   ": " (src/fmt-number (:length-px r)) " px di bordo, seguito su "
+              (str "bordo DRITTO trovato sulla foto " (nav-rank idx)
+                   ": " (src/fmt-number (:length-px r)) " px, seguito su "
                    (:n r) " punti (scarto " (src/fmt-number (:rms r)) " px)"))
 
        :else (do (say! (edge-refusal-message r)) false)))))
@@ -2488,17 +2527,20 @@
   "A DRAG in edge mode: the user has painted a band and said 'the line is in
    here'. The stroke bounds the walk; where on it to start is found by trying.
 
-   The brush's half-width is fixed in SCREEN pixels and converted to photo pixels
-   by the stroke's own scale — measured, not assumed, so it feels the same
-   thickness at any zoom and zooming in is how one gets a finer marker."
+   The nib is a width in SCREEN pixels, converted to photo pixels by the stroke's
+   own scale — measured, not assumed. The scale is read off the TOTAL PATH LENGTH
+   rather than the distance between the first and last points: a stroke that
+   curves back on itself has almost no end-to-end span, and reading the scale
+   from that gave a nib of essentially random width."
   [idx trail pose k]
   (let [pts (mapv :px trail)
         screen (mapv :screen trail)
-        span (fn [ps] (Math/hypot (- (first (peek ps)) (first (first ps)))
-                                  (- (second (peek ps)) (second (first ps)))))
-        scale (let [sc (span screen)]
-                (if (> sc 1.0) (/ (span pts) sc) 1.0))
-        r (max 6.0 (* brush-screen-px scale))
+        path (fn [ps] (reduce + 0.0 (map (fn [a b] (Math/hypot (- (first b) (first a))
+                                                               (- (second b) (second a))))
+                                         ps (rest ps))))
+        scale (let [sc (path screen)]
+                (if (> sc 1.0) (/ (path pts) sc) 1.0))
+        r (max 3.0 (* (brush-px) scale))
         ;; seeds along the painted stroke, from the middle outward: the middle is
         ;; where a hand-drawn band sits most squarely over what it meant
         n (count pts)
@@ -2550,16 +2592,6 @@
               ;; the normal case: one click, and the image answers
               (try-one-click! idx px pose k) nil
 
-              ;; no hand fallback while measuring a plane from CURVES: two clicks
-              ;; declare a straight stroke, and a straight stroke gives a line of
-              ;; points, which lies in infinitely many planes.
-              (curve-mode?)
-              (say! (str "qui non riesco a seguire il bordo curvo. Prova a "
-                         "cliccare dove la curva si vede meglio, o passa a una foto "
-                         "che la mostri più aperta — i due click a mano non "
-                         "servirebbero: darebbero una fila di punti, e una fila sta "
-                         "su infiniti piani."))
-
               :else
               (open! (str "…quindi facciamolo a mano: primo capo preso (pallino "
                           "giallo), clicca il secondo più avanti lungo lo spigolo"))))
@@ -2582,7 +2614,14 @@
 
       (seq obs)
       (let [victim (if (contains? obs here) here (key (last (sort-by key obs))))]
-        (swap! stage update-in [:edge :obs] dissoc victim)
+        (swap! stage update :edge
+               (fn [e] (-> e
+                           (update :obs dissoc victim)
+                           ;; the painted band goes with the declaration it made:
+                           ;; leaving it behind would mean the screen still showed
+                           ;; a zone that no longer bounds anything
+                           (cond-> (= (:idx (:brush e)) victim) (dissoc :brush))
+                           (cond-> (empty? (dissoc (:obs e) victim)) (dissoc :kind)))))
         (solve-edge!)
         (say! (str "tratto della foto " (nav-rank victim) " tolto")))
 
@@ -2598,6 +2637,19 @@
 
       :else (say! "non c'è niente da togliere"))
     (redraw-overlay!)))
+
+(defn- reset-current!
+  "'r' — throw away the bordo in hand, pennellata and all, and start over.
+
+   Backspace unwinds one step at a time, which is right when one step is what
+   went wrong; this is for when the whole attempt is a mess and picking it apart
+   costs more than redoing it (Vincenzo, 2026-08-07: «forse serve un modo per
+   resettare la pennellata e ricominciare?»). The BENCH is untouched — what has
+   been measured and kept is not part of the mess."
+  []
+  (swap! stage update :edge #(-> % (assoc :obs {}) (dissoc :fit :pending :kind :brush)))
+  (say! "ricominciato: pennellata e bordo in mano azzerati (il banco resta)")
+  (redraw-overlay!))
 
 ;; ---- source write-back ----
 
@@ -2899,8 +2951,9 @@
                      "rifà a mano; oppure cambia foto con ] e clicca LO STESSO tratto."))
           :else
           (add! "eaq-hud-hint"
-                (str "UN click su un bordo: l'immagine dice da sé se è dritto o "
-                     "curvo. Serve su 2 foto, guardato da lati diversi.")))))
+                (str "UN click su un bordo — oppure TRASCINA per dire 'cercalo qui "
+                     "dentro', se il bordo prosegue in un altro e va tagliato. "
+                     "Serve su 2 foto, guardato da lati diversi.")))))
     (when f
       (if (= :curva (:kind f))
         (add! (cond (not (:plausible? f)) "eaq-hud-bad"
@@ -2956,6 +3009,16 @@
                                     "Scrive il bordo dritto come spigolo misurato (Invio)"
                                     (boolean (and f (= :retta (:kind f)) (edge-usable?)))
                                     false accept-edge!))
+      (.appendChild row (hud-button (str "punta " (src/fmt-number (brush-px)) "px")
+                                    (str "Spessore del pennarello — click per il "
+                                         "prossimo (tasti + e -). E' in pixel dello "
+                                         "SCHERMO: zoomando copre meno oggetto.")
+                                    true false #(cycle-brush! 1)))
+      (.appendChild row (hud-button "Ricomincia"
+                                    "Butta via pennellata e bordo in mano, il banco resta (r)"
+                                    (boolean (or (seq (edge-obs))
+                                                 (get-in @stage [:edge :brush])))
+                                    false reset-current!))
       (.appendChild row (hud-button "Annulla tratto" "Toglie il tratto di questa foto (Backspace)"
                                     (boolean (or (seq (edge-obs))
                                                  (get-in @stage [:edge :pending])))
@@ -2987,6 +3050,9 @@
     (= k "n") (do (keep-feature!) true)
     (= k "p") (do (plane-from-bench!) true)
     (= k "c") (do (accept-circle!) true)
+    (= k "r") (do (reset-current!) true)
+    (or (= k "+") (= k "=")) (do (cycle-brush! 1) true)
+    (or (= k "-") (= k "_")) (do (cycle-brush! -1) true)
     (= k "Backspace") (do (undo-edge-click!) true)
     (= k "Escape") (do (stop-edge!) true)
     (re-matches #"[1-9]" k) (do (toggle-selected! (js/parseInt k 10)) true)
