@@ -192,6 +192,20 @@ utente).
   click diventa il primo capo del tratto a mano (~1.5 click per foto). Resta: il
   magazzino delle osservazioni (i tratti oggi non sopravvivono alla chiusura) e i
   punti nel pool. Entry point `dev-docs/HANDOVER-edge-declared.md`.
+- **Vedere il banco — 2026-08-07.** «Comincia a essere usabile. La difficolta'
+  piu' grande ora e' interagire col banco: i segmenti listati li', come faccio a
+  vedere dove sono nelle foto?». Tre domande sue, un problema solo: il banco era
+  un elenco senza corrispondenza, e una lista di cose numerate i cui numeri non
+  compaiono sulla cosa e' un indovinello. Ora il numero e' scritto NELLA FOTO
+  accanto al bordo (billboard, le stesse etichette di edit-path); un bordo speso
+  in un piano non sparisce ma si smorza e dice a chi appartiene, nell'elenco e
+  nella foto (uno spigolo puo' servire a due facce); e i piani fatti sono un
+  elenco a se', ognuno coi numeri dei bordi di cui e' fatto. Trappola per chi
+  tocca: `set-labels!` e' globale, va chiamata solo a gesto attivo o cancella le
+  etichette di un edit-path-2d aperto. **Direzione dichiarata e non costruita**:
+  raccogliere i bordi di una faccia in un `path-2d` editabile — sono semilavorati
+  di un contorno, e proiettati sul piano che definiscono lo sono gia'; manca
+  l'ordinamento (sequenza e cuciture agli angoli), non la geometria.
 - **Accontentarsi del pezzo in comune — 2026-08-07.** Vincenzo crea un piano, ma
   solo coi tratti DRITTI: «con le curve e' difficile ripetere lo stesso segmento
   in foto diverse, la parte comune sara' solo un pezzo, dovrebbe accontentarsi».

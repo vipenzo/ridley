@@ -102,6 +102,42 @@ La sagitta lo dice dall'altro lato — un cerchio resta dentro 1.2 px per
 continua a essere rifiutato come arco (verificato: il test del disco tiene 58 px
 e viene respinto).
 
+## VEDERE IL BANCO (2026-08-07)
+
+«Comincia a essere usabile. La difficolta' piu' grande che trovo ora e' interagire
+col banco, i segmenti listati li' come faccio a vedere dove sono nelle foto?
+Dopo aver creato un piano dovrei farli sparire? In teoria serve una lista dei
+piani gia' definiti con una lista dei segmenti/punti che appartengono a loro»
+(Vincenzo, 2026-08-07).
+
+Tre domande, un problema solo: il banco era un ELENCO SENZA CORRISPONDENZA. Una
+lista di cose numerate i cui numeri non compaiono da nessuna parte sulla cosa non
+e' una lista, e' un indovinello.
+
+- **Il numero e' scritto nella foto**, accanto al bordo che nomina
+  (`viewport/set-labels!`, le stesse etichette billboard che edit-path usa per i
+  suoi mark). Selezionato, cambia colore insieme al bordo.
+- **Un bordo speso in un piano non sparisce: si smorza e dice a chi
+  appartiene** — nell'elenco («→ piano-1») e nella foto (l'etichetta diventa
+  «1 → piano-1»). Non sparisce perche' uno spigolo puo' servire a DUE facce, e
+  perche' resta comunque l'evidenza di cio' che e' stato deciso.
+- **I piani fatti sono un elenco a se'**, ognuno coi numeri dei bordi di cui e'
+  fatto, e il loro nome e' scritto nel mondo sull'origine del piano.
+
+Attenzione per chi tocca questo: `set-labels!` e' GLOBALE e sostituisce tutto.
+Va chiamata solo mentre il gesto e' attivo, o cancella le etichette di un
+edit-path-2d aperto — e il palcoscenico ridisegna a ogni cambio di foto, cioe'
+esattamente quando un ricalco si sta navigando.
+
+**Direzione dichiarata, non costruita** (Vincenzo, stesso messaggio): «in futuro
+si potrebbe pensare di raccogliere questi segmenti in un path-2d editabile (sono
+semilavorati di qualcosa che sicuramente servira')». E' la strada giusta e il
+brief la prevede gia' in spirito — «i click diventano prodotto». I bordi misurati
+su una faccia, proiettati sul piano che quella faccia definisce, SONO un contorno
+2D; darlo a `edit-path-2d` chiude il giro fra misurare e modellare. Il pezzo che
+manca non e' la geometria (il piano e i bordi ci sono gia') ma l'ordinamento: un
+contorno vuole i suoi tratti in sequenza e cuciti agli angoli.
+
 ## ACCONTENTARSI DEL PEZZO IN COMUNE (2026-08-07)
 
 Vincenzo, dopo aver creato un piano riuscendoci solo con i tratti dritti: «con le

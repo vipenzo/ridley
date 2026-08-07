@@ -293,17 +293,29 @@
 
 (declare plane-preview-items edge-preview-items)
 
+(declare edge-labels)
+
 (defn- show-frustums!
   "Repaint the stage's OWN overlay layer: the ghost frustums (free orbit) plus
    whatever the plane-mark and edge gestures are showing (in pose). One call, one
    layer — they share it because all of them are the stage's, and because the
-   layer is deliberately NOT the preview layer an open edit-path-2d ricalco owns."
+   layer is deliberately NOT the preview layer an open edit-path-2d ricalco owns.
+
+   The billboard LABELS go up in the same breath. They are what ties the bench's
+   list to the photograph — «i segmenti listati lì come faccio a vedere dove sono
+   nelle foto?» (Vincenzo, 2026-08-07) — and a list of numbered things whose
+   numbers appear nowhere on the thing is not a list, it is a riddle."
   []
   (viewport/show-frustum-layer! (-> (vec (frustum-preview-items))
                                     (into (source-mark-items))
                                     (into (source-edge-items))
                                     (into (plane-preview-items))
-                                    (into (edge-preview-items)))))
+                                    (into (edge-preview-items))))
+  ;; ONLY while the gesture is on. set-labels! is global and replaces whatever is
+  ;; there, so calling it on every repaint would wipe the labels an open
+  ;; edit-path-2d ricalco has put up — and the stage repaints on every photo
+  ;; change, which is exactly when a ricalco is being navigated.
+  (when (edge-mode?) (viewport/set-labels! (edge-labels))))
 
 ;; ------------------------------------------------------------
 ;; In-pose / free-orbit transitions. In pose the camera is locked (set-camera-pose!
@@ -1987,6 +1999,7 @@
 (def ^:private edge-committed-color 0xb36b1f) ; gli spigoli già scritti nel sorgente
 (def ^:private bench-color 0x66ddaa)          ; i bordi tenuti sul banco
 (def ^:private bench-selected-color 0x33ffcc) ; …e quelli scelti per il piano
+(def ^:private bench-used-color 0x557766)     ; …e quelli già spesi in un piano
 (def ^:private brush-color 0x8899ff)          ; la zona dipinta col pennarello
 (def ^:private brush-ok-color 0x44dd66)       ; …quando la pennellata ha trovato
 (def ^:private brush-fail-color 0xff4444)     ; …quando non ha trovato niente
@@ -2242,15 +2255,20 @@
           (add! {:type :lines :data (ring-segments ring edge-committed-color)})
           (add! {:type :lines :data [{:from a :to b :color edge-committed-color}]})))
       ;; the BENCH: every bordo already measured, still there, still numbered.
-      ;; Picked ones brighter — which ones lie on the same face is the user's
-      ;; declaration and has to be visible while making it.
+      ;; Picked ones brighter, and ones already spent on a plane dimmer — which
+      ;; ones lie on the same face is the user's declaration and has to be
+      ;; visible while making it.
       (doseq [feat (bench)]
         (let [picked? (contains? (selected-ids) (:id feat))
-              col (if picked? bench-selected-color bench-color)]
+              used? (seq (:planes feat))
+              col (cond picked? bench-selected-color
+                        used? bench-used-color
+                        :else bench-color)]
           (if (= :curva (:kind feat))
             (add! {:type :dots
                    :data (mapv (fn [p] {:pos p :radius (if picked? 0.9 0.6)
-                                        :color col :opacity (if picked? 0.95 0.5)})
+                                        :color col
+                                        :opacity (cond picked? 0.95 used? 0.35 :else 0.6)})
                                (:points feat))})
             (add! {:type :lines :data [{:from (:a feat) :to (:b feat) :color col}]}))))
       ;; planes already written this session, kept on so they can go on being
@@ -2279,6 +2297,37 @@
                                         {:pos (:b fit) :radius 0.9
                                          :color edge-measured-color :opacity 0.95}]}))))
       @items)))
+
+(defn- feature-anchor
+  "Where to hang a bench feature's number: the middle of a segment, the middle
+   point of a curve."
+  [{:keys [kind a b points]}]
+  (if (= :curva kind)
+    (when (seq points) (nth points (quot (count points) 2)))
+    (when (and a b) (m/v* (m/v+ a b) 0.5))))
+
+(defn- edge-labels
+  "The bench's numbers and the planes' names, written IN THE WORLD next to what
+   they name. Empty when the gesture is off, so nothing of this lingers over an
+   ordinary stage."
+  []
+  (when (edge-mode?)
+    (-> []
+        (into (keep (fn [feat]
+                      (when-let [p (feature-anchor feat)]
+                        {:text (str (:label feat)
+                                    (when-let [ps (seq (:planes feat))]
+                                      (str " → " (str/join "," ps))))
+                         :position p
+                         :color (if (contains? (selected-ids) (:id feat))
+                                  bench-selected-color
+                                  bench-color)}))
+                    (bench)))
+        (into (keep (fn [{:keys [name mark]}]
+                      (when (and name mark)
+                        {:text name :position (:position mark)
+                         :color fresh-plane-color}))
+                    (get-in @stage [:edge :planes] []))))))
 
 ;; ---- the gesture ----
 
@@ -2867,7 +2916,21 @@
             (if-let [nm (commit-plane-mark! mark ev)]
               (do (swap! stage update :edge
                          (fn [e] (-> e
-                                     (update :planes (fnil conj []) {:mark mark :points (:points pl)})
+                                     (update :planes (fnil conj [])
+                                             {:name nm :mark mark :points (:points pl)
+                                              :members (mapv :id feats)})
+                                     ;; the bordi are not consumed: an edge can
+                                     ;; serve two faces, and one that was used is
+                                     ;; still evidence. They are MARKED as used
+                                     ;; and dimmed, which answers 'dopo aver
+                                     ;; creato un piano dovrei farli sparire?'
+                                     ;; with 'no — devono dire a chi appartengono'
+                                     (update :bench
+                                             (fn [b] (mapv (fn [f]
+                                                             (if (some #{(:id f)} (mapv :id feats))
+                                                               (update f :planes (fnil conj []) nm)
+                                                               f))
+                                                           b)))
                                      (assoc :selected #{})
                                      (assoc :outcome {:ok? true
                                                       :text (str "piano :" nm
@@ -3049,13 +3112,32 @@
                                                       (if (= :curva (:kind feat)) "curva" "retta")
                                                       (when (:length-mm feat)
                                                         (str " " (src/fmt-number (:length-mm feat)) "mm"))))
-                                       (el "span" (when (sel (:id feat)) "eaq-hud-good")
-                                           :text (if (sel (:id feat)) "scelto" "—"))])))
-        (.appendChild box shots))
-      (when (< (count sel) 2)
+                                       (el "span" (cond (sel (:id feat)) "eaq-hud-good"
+                                                        (seq (:planes feat)) "eaq-hud-hint"
+                                                        :else nil)
+                                           :text (cond (sel (:id feat)) "scelto"
+                                                       (seq (:planes feat))
+                                                       (str "→ " (str/join "," (:planes feat)))
+                                                       :else "—"))])))
+        (.appendChild box shots)
         (add! "eaq-hud-hint"
-              (str "Con UN bordo solo il piano è debole: due bordi non paralleli "
-                   "sulla stessa faccia lo fissano esattamente."))))
+              "Il numero di ogni bordo è scritto anche NELLA FOTO, accanto al bordo stesso."))
+      (when (= 1 (count sel))
+        (add! "eaq-hud-hint"
+              (str "Con UN bordo solo il piano è debole: scegline un secondo, non "
+                   "parallelo, sulla stessa faccia."))))
+    ;; the planes already made, with the bordi each was made of — the record of
+    ;; what has been decided, which the bench alone could not show
+    (when-let [ps (seq (get-in @stage [:edge :planes] []))]
+      (add! nil (str "Piani fatti (" (count ps) "):"))
+      (let [rows (el "div" "eaq-hud-shots")]
+        (doseq [{:keys [name members]} ps]
+          (.appendChild rows
+                        (el "div" "eaq-hud-shot"
+                            :children [(el "span" nil :text (str ":" name))
+                                       (el "span" "eaq-hud-hint"
+                                           :text (str "bordi " (str/join "," (sort members))))])))
+        (.appendChild box rows)))
     (.appendChild frag box)
     (let [row (el "div" "eaq-hud-actions")]
       (.appendChild row (hud-button "Tieni" "Mette il bordo misurato sul banco (n)"
@@ -3082,7 +3164,9 @@
                                                  (get-in @stage [:edge :pending])))
                                     false undo-edge-click!))
       (.appendChild row (hud-button "Chiudi" "Esce dal modo bordi (Esc)" true false
-                                    #(do (swap! stage dissoc :edge) (redraw-overlay!))))
+                                    #(do (swap! stage dissoc :edge)
+                                         (viewport/clear-labels!)
+                                         (redraw-overlay!))))
       (.appendChild frag row))
     frag))
 
@@ -3099,6 +3183,7 @@
 
 (defn- stop-edge! []
   (swap! stage dissoc :edge)
+  (viewport/clear-labels!)
   (say! "modo spigolo chiuso")
   (redraw-overlay!))
 
@@ -3253,6 +3338,7 @@
     (teardown-listeners!)
     (teardown-toolbar!)
     (swap! stage dissoc :plane :edge)
+    (viewport/clear-labels!)
     (refresh-hud!)
     (viewport/unregister-frame-callback! :acquire-stage)
     (viewport/unregister-frame-callback! :camera-flight)
