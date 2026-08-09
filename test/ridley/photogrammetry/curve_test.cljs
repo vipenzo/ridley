@@ -225,3 +225,57 @@
                   " scartati · il peggiore sta a " (fmt (reduce max off) 4) " mm dal piano"))
     (is (> (:n mark) 10) "enough evidence must survive")
     (is (< (reduce max off) 0.5) "and all of it must actually be on the plane")))
+
+;; ---------------------------------------------------------------------------
+;; edge-points: un bordo MISURATO come prova per un piano
+;;
+;; È il pezzo su cui poggia `(plane-from-edges :bordo-alto :bordo-basso)`, cioè
+;; il piano-come-formula: si rifà a ogni Run dalle prove che nomina, invece di
+;; conservare i numeri di un calcolo fatto una volta.
+
+(deftest a-measured-edge-becomes-evidence-whatever-kind-it-is
+  (testing "uno spigolo dritto viene campionato lungo sé stesso"
+    (let [pts (pcurve/edge-points {:a [0 0 10] :b [30 0 10]})]
+      (is (= pcurve/line-samples (count pts)))
+      (is (= [0.0 0.0 10.0] (first pts)))
+      (is (every? #(< (Math/abs (- 10.0 (nth % 2))) 1e-9) pts) "restano sul loro piano")
+      (is (< (Math/abs (- 30.0 (la/v-norm (la/v-sub (peek pts) (first pts))))) 1e-9)
+          "e coprono tutto il segmento, capo compreso")))
+  (testing "una curva porta i punti che ha"
+    (is (= [[1.0 2.0 3.0] [4.0 5.0 6.0]]
+           (mapv #(mapv double %) (pcurve/edge-points {:points [[1 2 3] [4 5 6]]})))))
+  (testing "un cerchio porta il suo anello, che sta nel suo piano"
+    (let [pts (pcurve/edge-points {:position [0 0 5] :heading [0 0 1] :radius 12.0})]
+      (is (> (count pts) 8))
+      (is (every? #(< (Math/abs (- 5.0 (nth % 2))) 1e-6) pts))
+      (is (every? #(< (Math/abs (- 12.0 (Math/hypot (nth % 0) (nth % 1)))) 1e-6) pts))))
+  (testing "tutto il resto non dà niente, invece di indovinare"
+    (is (= [] (pcurve/edge-points {:position [0 0 0]})))
+    (is (= [] (pcurve/edge-points nil)))))
+
+(deftest the-plane-follows-its-evidence
+  ;; La ragione per cui il piano è diventato una formula: correggi uno spigolo e
+  ;; il piano lo segue. Due bordi incrociati sulla stessa faccia la fissano.
+  (println "\n=== Il piano segue le prove che nomina ===")
+  (let [plane-at (fn [z]
+                   (pcurve/plane-from-points
+                    (vec (mapcat pcurve/edge-points
+                                 [{:a [-15 -10 z] :b [15 -10 z]}
+                                  {:a [-15 10 z] :b [15 12 z]}]))
+                    {:up-hints [[0.0 1.0 0.0]]}))
+        a (plane-at 10.0)
+        b (plane-at 25.0)]
+    (println (str "  z=10 → " (fmt (nth (:position a) 2) 3)
+                  " mm · z=25 → " (fmt (nth (:position b) 2) 3) " mm"))
+    (is (< (Math/abs (- 10.0 (nth (:position a) 2))) 1e-6))
+    (is (< (Math/abs (- 25.0 (nth (:position b) 2))) 1e-6)
+        "spostata la prova, il piano si sposta con lei")
+    (is (> (Math/abs (nth (:heading a) 2)) 0.999) "e la normale è quella della faccia"))
+  (testing "due bordi PARALLELI e vicini non fissano niente, e il numero lo dice"
+    (let [pl (pcurve/plane-from-points
+              (vec (mapcat pcurve/edge-points
+                           [{:a [0 0 0] :b [0 0 40]}
+                            {:a [2 0 0] :b [2 0 40]}]))
+              {:up-hints [[0.0 1.0 0.0]]})]
+      (is (< (:width-mm pl) pcurve/min-width-mm)
+          "2 mm di larghezza stanno sotto la soglia che rifiuta una FILA"))))

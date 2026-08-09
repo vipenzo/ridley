@@ -290,3 +290,34 @@ appeso in fondo. E la valutazione vera di `(edit-edge-mark)` /
 
 NON ancora collaudato con le mani: dipingere e confermare dentro una sessione
 vera con le foto. È il gate di Vincenzo.
+
+### Fetta 2 — il piano è una formula (fatta, 2026-08-09)
+
+`(plane-from-edges :bordo-alto :bordo-basso)` si scrive dove sta un mark:
+
+    :marks {:coperchio (plane-from-edges :bordo-alto :bordo-basso)}
+
+Vale ogni tipo di bordo misurato — spigolo dritto (campionato lungo sé stesso),
+curva (i suoi punti), cerchio (il suo anello): `curve/edge-points` li porta tutti
+a punti, e il piano è il fit robusto che già c'era. Un ultimo argomento mappa
+passa dritto nel mark, quindi `(plane-from-edges :a :b {:show false})` fa il
+piano e lo tiene fuori dal disegno.
+
+Tre decisioni dentro:
+
+- **il verso della normale non viene dalle camere.** Qui non ce ne sono, e
+  soprattutto una FORMULA deve dare lo stesso risultato a ogni Run mentre le
+  camere si spostano: la normale punta VIA DAL CENTRO dell'oggetto, che è la
+  regola fisica della faccia uscente;
+- **un rifiuto non crea il mark**, e porta i suoi numeri: «i bordi nominati
+  stanno quasi in FILA (larghi 2 mm) … 1 mm d'errore inclinerebbe la normale di
+  26.5651°. Il mark NON è stato creato.» Meglio un nome che manca di un piano
+  sbagliato che nessuno ha modo di sospettare;
+- **il pezzo geometrico è puro e testato**: `curve/edge-points` sta in
+  photogrammetry, non nell'editor, e la suite node ne prova le tre specie più il
+  fatto che *spostata la prova, il piano si sposta con lei*.
+
+Verificato dal vivo valutando sorgenti veri: due bordi incrociati a z=10 → piano
+a z=10 con normale +Z; gli stessi a z=25 → piano a z=25; due paralleli a 2 mm →
+rifiuto coi numeri e nessun mark; un nome che non esiste → rifiuto che lo
+nomina.

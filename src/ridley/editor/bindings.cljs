@@ -702,6 +702,15 @@
    ;; user's, the arming is text, and nothing has to be listed or selected in a
    ;; panel. Re-opening one REMEASURES from zero: the observations are pixel
    ;; lines against photo identities, which the source deliberately does not know.
+   ;; plane-from-edges: il PIANO come formula. Scritto fra i :marks dello stesso
+   ;; acquire, nomina i bordi che gli fanno da prova —
+   ;;   :marks {:coperchio (plane-from-edges :bordo-alto :bordo-basso)}
+   ;; — e si rifà a ogni Run: correggi uno spigolo e il piano lo segue, ne
+   ;; cancelli uno e il piano cambia. Non potendo vedere i :edges al momento in
+   ;; cui viene valutato (la mappa si costruisce prima dell'acquire), restituisce
+   ;; una specifica differita che `acquire` risolve — lo stesso trucco a due
+   ;; tempi di edit-plane-mark.
+   'plane-from-edges    edit-acquire/plane-from-edges
    'edit-edge-mark      (fn [& [e]] (acquire-stage/request-edge-edit! :retta e))
    'edit-curve-mark     (fn [& [e]] (acquire-stage/request-edge-edit! :curva e))
    ;; edit-acquire (dev-docs/brief-param-acq-v1.md): now a MARKER in the edit-*

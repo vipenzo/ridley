@@ -29,6 +29,7 @@
 
    Pure: poses and pixels in, millimetres out."
   (:require [ridley.photogrammetry.camera :as cam]
+            [ridley.photogrammetry.circle :as circle]
             [ridley.photogrammetry.linalg :as la]
             [ridley.photogrammetry.triangulate :as tri]))
 
@@ -319,6 +320,37 @@
                     (recur (inc i) in s)
                     (recur (inc i) best best-score)))
                 (recur (inc i) best best-score)))))))))
+
+(def line-samples
+  "How many points to spread along a measured straight edge when it stands as
+   evidence for a plane. A line is a line however finely it is sampled; twenty is
+   enough for the robust fit to chew on without letting one long edge outvote
+   everything else."
+  20)
+
+(defn edge-points
+  "The 3D points a MEASURED EDGE contributes as evidence for a plane, whichever
+   of the three kinds it is: a curve gives its own recovered points, a straight
+   edge is sampled along itself, a circle gives its ring.
+
+   All three are honest evidence for a plane and none of them needs pairing any
+   point with any other — which is the reason this channel prefers them to
+   clicked points. Anything else gives nothing rather than guessing."
+  [e]
+  (cond
+    (not (map? e)) []
+    (seq (:points e)) (mapv vec (:points e))
+    (and (:a e) (:b e))
+    (let [a (mapv double (:a e)) b (mapv double (:b e))
+          d (mapv - b a)]
+      (mapv (fn [i] (let [t (/ (double i) (dec line-samples))]
+                      (mapv (fn [ai di] (+ ai (* di t))) a d)))
+            (range line-samples)))
+    (and (:radius e) (:position e) (:heading e))
+    (mapv vec (circle/ring-mesh {:center (vec (:position e))
+                                 :normal (vec (:heading e))
+                                 :radius (:radius e)}))
+    :else []))
 
 (defn plane-from-points
   "The plane a set of ALREADY MEASURED 3D points lies in, as an ordinary Ridley

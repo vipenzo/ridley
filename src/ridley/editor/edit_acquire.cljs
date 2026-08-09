@@ -64,6 +64,7 @@
             [ridley.photogrammetry.box-fit :as bf]
             [ridley.photogrammetry.bootstrap :as boot]
             [ridley.photogrammetry.note :as note]
+            [ridley.photogrammetry.curve :as pcurve]
             [ridley.math :as m]
             [ridley.export.stl :as stl]))
 
@@ -4047,6 +4048,110 @@
                 "° — la turtle userà comunque questa coppia"))))))
   m)
 
+;; ============================================================
+;; plane-from-edges — il piano come FORMULA, non come copia
+;; ============================================================
+;;
+;; «L'utente può creare un nuovo piano scrivendo (plane-from-edges :spigolo-1
+;; :spigolo-2 :curva-1)» (Vincenzo, 2026-08-09). Il guadagno più profondo non è
+;; togliere la UI di selezione — è che il piano smette di essere una COPIA dei
+;; numeri calcolati una volta e diventa una formula: si rifà a ogni Run dalle
+;; prove che nomina. Correggi uno spigolo e il piano lo segue; ne cancelli uno e
+;; il piano cambia; e il caso «piano vecchio, prove nuove» smette di esistere.
+;;
+;; Scritta dentro la mappa dell'acquire, la chiamata viene valutata PRIMA che
+;; l'acquire esista, quindi non può risolvere i nomi da sé: restituisce una
+;; specifica DIFFERITA che `acquire` risolve dopo aver costruito i suoi :edges.
+;; È lo stesso trucco a due tempi di edit-plane-mark.
+
+(defn ^:export plane-from-edges
+  "`(plane-from-edges :bordo-alto :bordo-basso)` — il PIANO che passa per i
+   bordi nominati, scritto dove sta un mark:
+
+       :marks {:coperchio (plane-from-edges :bordo-alto :bordo-basso)}
+
+   I nomi sono quelli del blocco `:edges` dello STESSO acquire. Vale ogni tipo
+   di bordo misurato: uno spigolo dritto (campionato lungo sé stesso), una curva
+   (i suoi punti), un cerchio (il suo anello) — tutti diventano punti, e il
+   piano è il fit robusto attraverso di essi.
+
+   Due spigoli NON PARALLELI della stessa faccia la fissano esattamente, ed è la
+   prova più solida che ci sia qui: uno spigolo dritto si misura senza appaiare
+   nessun punto fra le foto, quindi non porta con sé i fantasmi che una curva
+   può portare.
+
+   Un ultimo argomento mappa passa dritto nel mark: `(plane-from-edges :a :b
+   {:show false})` fa il piano e lo tiene fuori dal disegno.
+
+   Restituisce una SPECIFICA, non ancora un mark: i nomi si possono risolvere
+   solo dopo che l'acquire ha costruito i suoi :edges, ed è `acquire` a farlo."
+  [& args]
+  {:plane-from (vec (remove map? args))
+   :opts (first (filter map? args))})
+
+(defn- plane-spec? [v]
+  (and (map? v) (contains? v :plane-from)))
+
+(defn- resolve-plane-spec
+  "Fit del piano di una specifica, o nil dopo aver detto AD ALTA VOCE perché no.
+   Un rifiuto porta i suoi numeri, come ovunque in questo canale, e il mark non
+   viene creato: meglio un nome che manca di un piano sbagliato che nessuno ha
+   modo di sospettare.
+
+   Il verso della normale NON viene dalle camere — qui non ce ne sono, e
+   soprattutto una formula deve dare lo stesso risultato a ogni Run, mentre le
+   camere si spostano. Punta VIA DAL CENTRO dell'oggetto, che è la regola fisica
+   della normale uscente di una faccia."
+  [dir nm {:keys [plane-from opts]} edges pose plate? centre]
+  (let [say (fn [msg] (state/capture-println
+                       (str ";; plane-from-edges · " dir " · :" (name nm) ": " msg)))
+        missing (remove #(contains? edges %) plane-from)
+        pts (vec (mapcat #(pcurve/edge-points (get edges %)) plane-from))]
+    (cond
+      (empty? plane-from)
+      (do (say "nessun bordo nominato — serve almeno uno spigolo o una curva") nil)
+
+      (seq missing)
+      (do (say (str (str/join ", " missing) " non "
+                    (if (next missing) "sono" "è") " fra gli :edges di questo acquire"))
+          nil)
+
+      (< (count pts) 3)
+      (do (say "i bordi nominati non hanno abbastanza punti per un piano") nil)
+
+      :else
+      (if-let [pl (pcurve/plane-from-points
+                   pts {:up-hints (if plate? [(:heading pose) (:up pose)]
+                                      [(:up pose) (:heading pose)])})]
+        (if (< (:width-mm pl) pcurve/min-width-mm)
+          (do (say (str "i bordi nominati stanno quasi in FILA (larghi "
+                        (modal/fmt-number (:width-mm pl)) " mm), e una fila sta su "
+                        "INFINITI piani: 1 mm d'errore inclinerebbe la normale di "
+                        (modal/fmt-number (:tilt-per-mm-deg pl)) "°. Nominane uno "
+                        "trasversale, non parallelo a questi. Il mark NON è stato creato."))
+              nil)
+          (let [outward (m/v- (:position pl) centre)
+                flip? (neg? (m/dot (:heading pl) outward))
+                mk (cond-> (select-keys pl [:position :heading :up])
+                     flip? (update :heading #(m/v* % -1.0)))]
+            (when (> (:flatness-mm pl) 1.0)
+              (say (str "attenzione: i bordi nominati non sono così complanari "
+                        "(planarità " (modal/fmt-number (:flatness-mm pl)) " mm)")))
+            (merge mk {:from (mapv vec (pcurve/subsample (:points pl) 12))} opts)))
+        (do (say "i bordi nominati non definiscono un piano") nil)))))
+
+(defn- resolve-plane-specs
+  "Sostituisce ogni `(plane-from-edges …)` di `:marks` col piano che nomina. Le
+   specifiche che non si risolvono spariscono, dopo aver detto perché."
+  [dir marks edges pose plate? centre]
+  (reduce-kv (fn [acc nm v]
+               (if-not (plane-spec? v)
+                 (assoc acc nm v)
+                 (if-let [mk (resolve-plane-spec dir nm v edges pose plate? centre)]
+                   (assoc acc nm mk)
+                   acc)))
+             {} marks))
+
 (defn ^:export acquire
   "(acquire \"dir\") / (acquire \"dir\" {:proxy (box …) :pose {…} :shapes {} :marks {}})
    — the self-contained acquisizione-parametrica form (P4a). Mounts the posed
@@ -4059,14 +4164,20 @@
   ([dir opts]
    (let [posed (resolve-proxy opts)
          pose (or (:pose opts) (:creation-pose posed))
-         faces (face-poses posed pose)]
+         faces (face-poses posed pose)
+         edges (or (:edges opts) {})
+         ;; ogni `(plane-from-edges …)` fra i :marks diventa QUI il suo piano:
+         ;; dopo che gli :edges esistono, prima che chiunque legga i marks
+         marks (resolve-plane-specs dir (or (:marks opts) {}) edges pose
+                                    (boolean (seq (:anchors posed)))
+                                    (:position pose))]
      (record-scaffolds! [posed])
      ;; A mark named like one of the proxy's faces WINS over it in
      ;; `(turtle A :at …)` (turtle/named-poses merges faces under marks, on
      ;; purpose: a name you chose beats a generated one). That is the right
      ;; precedence and a silent surprise, so say it once — the plate's own faces
      ;; are called :top/:bottom/:side, which are tempting names for a zone.
-     (when-let [clash (seq (filter (set (keys faces)) (keys (:marks opts))))]
+     (when-let [clash (seq (filter (set (keys faces)) (keys marks)))]
        (state/capture-println
         (str ";; acquire · " dir ": " (str/join ", " (map str clash))
              (if (next clash) " sono nomi" " è un nome")
@@ -4078,7 +4189,7 @@
      ;; `(turtle A :at …)` has to pick one (the mark). Worth saying, because an
      ;; edge's heading runs along it and a mark's points out of a surface — the
      ;; wrong one of the two aims an extrusion 90° away.
-     (when-let [clash (seq (filter (set (keys (:marks opts))) (keys (:edges opts))))]
+     (when-let [clash (seq (filter (set (keys marks)) (keys edges)))]
        (state/capture-println
         (str ";; acquire · " dir ": " (str/join ", " (map str clash))
              (if (next clash) " sono nomi" " è un nome")
@@ -4093,19 +4204,19 @@
      ;; what was emitted and what is displayed shows up at once, instead of
      ;; three steps later as displaced geometry.
      (stage/note-eval! {:proxy posed :pose pose :dir dir
-                        :marks (or (:marks opts) {})
-                        :edges (or (:edges opts) {})})
+                        :marks marks
+                        :edges edges})
      {:proxy posed
       :pose pose
       :shapes (or (:shapes opts) {})
-      :marks (or (:marks opts) {})
+      :marks marks
       ;; Measured EDGES of the object (brief-observation-driven-acquire, gradino
       ;; 3): each one a pose that runs ALONG the edge, plus its two ends. Kept
       ;; apart from :marks on purpose — a mark's heading is a surface normal and
       ;; an edge's is a direction, and everything that reads marks as planes
       ;; (acquire-union's anchors, above all) would quietly misread an edge as a
       ;; plane whose normal points down its own length.
-      :edges (or (:edges opts) {})
+      :edges edges
       ;; P4b Pezzo (iii): the 6 box faces as turtle poses, so the user can drop the
       ;; turtle onto a face by name — `(turtle (:top (:faces A)) (edit-path-2d …))`
       ;; — and draw the ricalco there over the stage backdrop. Computed, not stored.
