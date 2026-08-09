@@ -512,7 +512,8 @@
 
 (declare plane-mode? plane-click! plane-key! toggle-plane-mode! toggle-source-marks!
          edge-click! edge-key! toggle-edge-mode! edge-hud-content edge-status
-         paint-declare! world-solver-pose stage-intrinsics say! brush-px)
+         paint-declare! world-solver-pose stage-intrinsics say! brush-px
+         open-edge-edit!)
 
 (defn- editable? [^js el]
   (boolean (and el (or (#{"INPUT" "TEXTAREA"} (.-tagName el))
@@ -2163,19 +2164,29 @@
                    " Invio accetta, Esc annulla e lascia il mark com'era."))
         (redraw-overlay!)))))
 
-(defn- open-pending-edit!
-  "Consume the `(edit-plane-mark …)` requests noted during the eval: the first
-   opens the editor, the rest wait (they are still in the source, so confirming
-   this one and re-running picks up the next)."
+(defn- pending-edits?
+  "Did this eval ask for an editor — a plane mark or a bordo?"
   []
-  (when-let [reqs (seq (:pending-edits @stage))]
-    (swap! stage dissoc :pending-edits :edit-after-load?)
-    (when (> (count reqs) 1)
-      (say! (str "ci sono " (count reqs) " forme (edit-plane-mark …): apro la prima, "
-                 "le altre restano in attesa")))
-    (if (seq (:camera-poses @stage))
-      (open-mark-edit! (first reqs))
-      (say! "nessuna camera registrata: non c'è niente con cui misurare un piano"))))
+  (boolean (or (seq (:pending-edits @stage)) (seq (:pending-edge-edits @stage)))))
+
+(defn- open-pending-edit!
+  "Consume the `(edit-plane-mark …)` / `(edit-edge-mark …)` requests noted during
+   the eval: the first opens its editor, the rest wait (they are still in the
+   source, so confirming this one and re-running picks up the next)."
+  []
+  (let [marks (seq (:pending-edits @stage))
+        edges (seq (:pending-edge-edits @stage))
+        n (+ (count marks) (count edges))]
+    (when (pos? n)
+      (swap! stage dissoc :pending-edits :pending-edge-edits :edit-after-load?)
+      (when (> n 1)
+        (say! (str "ci sono " n " forme edit-…: apro la prima, le altre restano "
+                   "in attesa")))
+      (if-not (seq (:camera-poses @stage))
+        (say! "nessuna camera registrata: non c'è niente con cui misurare")
+        (if marks
+          (open-mark-edit! (first marks))
+          (open-edge-edit! (first edges)))))))
 
 (defn- toggle-source-marks! []
   (swap! stage update :show-source-marks? #(not (if (nil? %) true %)))
@@ -3106,31 +3117,50 @@
        "}"))
 
 (defn- commit-edge!
-  "Write the measured edge into the evaluated `(acquire …)`'s :edges block and
-   re-run the definitions. A bounded text edit — only that block's braces move —
-   so everything else in the form survives byte-identical. Returns the name
-   written, or nil."
-  [stem entry-fn]
-  (let [text (cm/get-value)]
-    (if-let [[from to] (acquire-form-bounds text)]
-      (let [text (if (src/map-value-bounds text from to ":edges")
-                   text
-                   (ensure-slot! text from to ":edges" ":marks"))
-            [from to] (when text (acquire-form-bounds text))]
-        (if-let [[o e i] (and text (src/map-value-bounds text from to ":edges"))]
-          (let [nm (next-edge-name (.substring text from to) stem)
-                updated (src/append-map-entry
-                         (.substring text o e)
-                         (entry-fn nm)
-                         ":edges" (src/column-of text i))]
-            (modal/replace-source! o e updated)
-            (modal/run-definitions!)
-            nm)
-          (do (deny! (str "non riesco ad aggiungere uno slot :edges alla forma "
-                          "(acquire …) — aggiungi :edges {} dentro la mappa e riprova"))
-              nil)))
-      (do (deny! "non trovo la forma (acquire …) nel sorgente")
-          nil))))
+  "Write the measured edge into the source and re-run the definitions.
+   `value-fn` renders the resting form — `(edge-mark {…})` and friends. Returns
+   the name written, or nil.
+
+   Two ways in, and the FIRST is the one the channel is moving to (Vincenzo,
+   2026-08-09: «se una nuova linea la facessimo partire, anziché cliccando su
+   Spigolo, scrivendo nel codice (edit-edge-mark)?»):
+
+   - ARMED FROM THE SOURCE: an `(edit-edge-mark …)` form is open, and the
+     measurement REPLACES it in place. The name is the key the user typed in
+     front of it, so it is his — `:bordo-alto` rather than `:spigolo-7` — which
+     is what makes `(plane-from-edges :bordo-alto :bordo-basso)` readable;
+   - free-hand: no form, so the entry is appended to the `:edges` block with a
+     generated name. Still there for as long as the Spigolo button is.
+
+   Either way the edit is BOUNDED: everything outside the range written survives
+   byte-identical."
+  [stem value-fn]
+  (let [text (cm/get-value)
+        {:keys [head name]} (get-in @stage [:edge :target])]
+    (if-let [[from to] (and head (modal/find-form-bounds text head))]
+      (do (modal/replace-source! from to (value-fn (or name stem)))
+          (swap! stage update :edge dissoc :target)
+          (modal/run-definitions!)
+          (or name stem))
+      (if-let [[from to] (acquire-form-bounds text)]
+        (let [text (if (src/map-value-bounds text from to ":edges")
+                     text
+                     (ensure-slot! text from to ":edges" ":marks"))
+              [from to] (when text (acquire-form-bounds text))]
+          (if-let [[o e i] (and text (src/map-value-bounds text from to ":edges"))]
+            (let [nm (next-edge-name (.substring text from to) stem)
+                  updated (src/append-map-entry
+                           (.substring text o e)
+                           (str ":" nm " " (value-fn nm))
+                           ":edges" (src/column-of text i))]
+              (modal/replace-source! o e updated)
+              (modal/run-definitions!)
+              nm)
+            (do (deny! (str "non riesco ad aggiungere uno slot :edges alla forma "
+                            "(acquire …) — aggiungi :edges {} dentro la mappa e riprova"))
+                nil)))
+        (do (deny! "non trovo la forma (acquire …) nel sorgente")
+            nil)))))
 
 (def ^:private evidence-points
   "How many of the recovered 3D points to write into the mark's `:from`. They are
@@ -3166,8 +3196,7 @@
 
       (= :curva (:kind f))
       (if-let [nm (commit-edge! "curva"
-                                (fn [nm] (str ":" nm " (curve-mark "
-                                              (curve-literal (:points f)) ")")))]
+                                (fn [_] (str "(curve-mark " (curve-literal (:points f)) ")")))]
         (do (swap! stage update :edge
                    #(-> % (assoc :obs {}) (dissoc :fit :pending :kind :brush)
                         (assoc :outcome {:ok? true :about :write
@@ -3182,8 +3211,8 @@
       :else
       (if-let [mark (pedge/edge-mark (:a f) (:b f) (up-hints))]
         (if-let [nm (commit-edge! "spigolo"
-                                  (fn [nm] (str ":" nm " (edge-mark "
-                                                (edge-literal mark (:a f) (:b f)) ")")))]
+                                  (fn [_] (str "(edge-mark "
+                                               (edge-literal mark (:a f) (:b f)) ")")))]
           (do (swap! stage update :edge
                      #(-> % (assoc :obs {}) (dissoc :fit :pending :kind :brush)
                           (assoc :outcome {:ok? true :about :write
@@ -3288,8 +3317,7 @@
                   "troppo poco): tienila con 'n' e usala per un piano."))
       (if-let [mark (pcircle/circle-mark ci {:toward (:toward f) :up-hints (up-hints)})]
         (if-let [nm (commit-edge! "cerchio"
-                                  (fn [nm] (str ":" nm " (circle-mark "
-                                                (circle-literal mark) ")")))]
+                                  (fn [_] (str "(circle-mark " (circle-literal mark) ")")))]
           (do (swap! stage update :edge
                      #(-> % (update :committed conj {:ring (pcircle/ring-mesh ci)})
                           (assoc :obs {}) (dissoc :fit :pending :kind)))
@@ -3324,8 +3352,8 @@
       :else
       (if-let [mark (pedge/edge-mark (:a f) (:b f) (up-hints))]
         (if-let [nm (commit-edge! "spigolo"
-                                  (fn [nm] (str ":" nm " (edge-mark "
-                                                (edge-literal mark (:a f) (:b f)) ")")))]
+                                  (fn [_] (str "(edge-mark "
+                                               (edge-literal mark (:a f) (:b f)) ")")))]
           (do (swap! stage update :edge
                      #(-> % (update :committed conj {:a (:a f) :b (:b f)})
                           (assoc :obs {}) (dissoc :fit :pending :kind)))
@@ -3514,6 +3542,38 @@
       (.appendChild frag row))
     frag))
 
+;; ---- armed FROM THE SOURCE: (edit-edge-mark) / (edit-curve-mark) ----
+;;
+;; The gesture used to be started by a button, and everything it produced had to
+;; be named, listed and picked in the panel. Written as a form instead
+;; (Vincenzo, 2026-08-09) all of that goes: the form IS the arming, the key in
+;; front of it IS the name, and the measurement replaces the form where it
+;; stands — the same round trip as every other edit-* in this codebase.
+;;
+;; Deliberately NOT a modal-evaluator session: the stage disables its own clicks
+;; while a modal is up (`(not (modal/active?))` in on-pointerdown), so a modal
+;; edge gesture would switch itself off. It is armed the way edit-plane-mark is,
+;; by the stage, from a note left during the eval.
+
+(def ^:private edit-edge-heads
+  {:retta "(edit-edge-mark" :curva "(edit-curve-mark"})
+
+(defn ^:export request-edge-edit!
+  "SCI entry point for `(edit-edge-mark …)` / `(edit-curve-mark …)`. Notes the
+   request for after-eval! and returns its argument untouched, so the acquire
+   value stays valid while the measurement is being made.
+
+   Whatever literal it wraps is scaffolding only: re-opening an edge REMEASURES
+   it from zero (agreed with Vincenzo, 2026-08-09). An edge's observations are
+   pixel lines against photo identities, and the source deliberately knows
+   nothing of photos or pixels — carrying them there would be a different
+   decision, not a detail of this one."
+  ([kind] (request-edge-edit! kind nil))
+  ([kind e]
+   (swap! stage (fn [s] (update (or s {}) :pending-edge-edits (fnil conj [])
+                                {:kind kind :mark e})))
+   e))
+
 (defn- start-edge! []
   (swap! stage assoc :edge {:obs {} :selected #{} :committed []})
   (say! (str "modo bordi attivo. UN click su un bordo (dritto o curvo, lo capisce "
@@ -3526,7 +3586,52 @@
              "Invio scrive un bordo dritto come spigolo, 'c' un cerchio, Esc esce."))
   (redraw-overlay!))
 
+(defn- open-edge-edit!
+  "Arm the bordi gesture on the `(edit-edge-mark …)` / `(edit-curve-mark …)` form
+   that asked for it. What the measurement becomes is decided here and nowhere
+   else: it will REPLACE that form, under the name of the key written in front
+   of it — so the name is the user's, and `(plane-from-edges :bordo-alto …)`
+   reads like a sentence instead of like an inventory number."
+  [{:keys [kind]}]
+  (let [head (edit-edge-heads kind)
+        text (cm/get-value)
+        from (first (modal/find-form-bounds text head))
+        nm (when from (mark-name-before text from))]
+    (if-not from
+      (say! (str head " …) valutata ma non trovata nel sorgente"))
+      (do (when (plane-mode?) (stop-plane!))   ; one gesture owns the clicks
+          (when-not (in-pose?)
+            (let [order (nav-order) cur (:current-idx @stage)]
+              (when (seq order)
+                (go-in-pose! (if (get-in @stage [:camera-poses cur]) cur (first order)) true))))
+          (start-edge!)
+          (swap! stage assoc-in [:edge :target] {:head head :kind kind :name nm})
+          (say! (str "misura di :" (or nm "?") " — dipingi il bordo su DUE foto che lo "
+                     "guardino da lati diversi ([ e ] per cambiare). Quando è "
+                     (if (= :curva kind) "misurato, 'n' scrive la curva" "misurato, Invio scrive lo spigolo")
+                     " AL POSTO della forma " head " …), col nome che le hai dato. "
+                     "Esc annulla e lascia il sorgente com'era."))
+          (redraw-overlay!)))))
+
+(defn- cancel-edge-edit!
+  "Give up on a gesture armed from the source, leaving the source as it was.
+   The family's ordinary cancel: the empty creation spelling has no body to keep
+   and `(edge-mark)` would be an arity error, so its whole `:key (edit-…)` entry
+   goes; a wrapped literal gets its head renamed back, body byte-identical."
+  [{:keys [head kind]}]
+  (let [text (cm/get-value)
+        resting (str "(" (clojure.core/name (get {:retta :edge-mark :curva :curve-mark} kind :edge-mark)))]
+    (when-let [[from to] (modal/find-form-bounds text head)]
+      (if (str/blank? (src/form-inner text from to head))
+        (let [[k-from _] (src/entry-bounds-before text from)]
+          (modal/replace-source! (or k-from from) to "")
+          (say! "misura annullata: la forma vuota è stata tolta dal sorgente"))
+        (do (modal/replace-source! from to (modal/strip-head text from to head resting))
+            (say! "misura annullata: il bordo è rimasto com'era")))
+      (modal/run-definitions!))))
+
 (defn- stop-edge! []
+  (when-let [t (get-in @stage [:edge :target])] (cancel-edge-edit! t))
   (swap! stage dissoc :edge)
   (clear-ink!)
   (viewport/clear-labels!)
@@ -3860,7 +3965,7 @@
     ;; plane editor on it — but only once the stage has its cameras, so on a
     ;; FRESH acquire (which loads them asynchronously) the request waits for the
     ;; load to resolve rather than being dropped.
-    (when (seq (:pending-edits @stage))
+    (when (pending-edits?)
       (if (loaded?)
         (open-pending-edit!)
         (swap! stage assoc :edit-after-load? true)))))

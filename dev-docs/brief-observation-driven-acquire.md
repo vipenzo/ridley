@@ -256,3 +256,37 @@ da chiedere, non da portarsi sempre dietro. Un mark nascosto non prende
 etichetta (un nome che galleggia sul nulla è peggio di nessun nome), e l'elenco
 nel pannello dice «nascosto», perché nascondere una cosa non deve somigliare a
 perderla.
+
+### Fetta 1 — l'innesco dal codice (fatta, 2026-08-09)
+
+`(edit-edge-mark)` e `(edit-curve-mark)` armano il gesto. La forma si scrive
+come VALORE dentro `:edges`, e la chiave davanti è il nome:
+
+    :edges {:bordo-alto (edit-edge-mark)}
+
+Run → il palcoscenico entra in posa e apre i bordi; si dipinge su due foto;
+la conferma **sostituisce la forma** con `(edge-mark {…})` sotto quello stesso
+nome. Esc annulla: la forma vuota se ne va con tutta la sua voce (`(edge-mark)`
+sarebbe un errore di arità), una forma che ne avvolgeva una già misurata torna
+`(edge-mark {…})` col corpo identico byte per byte.
+
+Dettagli decisi qui e non altrove:
+
+- **il nome è dell'utente.** `commit-edge!` in modalità bersaglio non genera
+  `:spigolo-7`: legge la chiave davanti alla forma. È ciò che rende leggibile
+  `(plane-from-edges :bordo-alto :bordo-basso)`;
+- **la via a mano resta**, finché c'è il bottone Spigolo: senza bersaglio la
+  voce si aggiunge al blocco con un nome generato, esattamente come prima;
+- **non è un modale.** Il palco disattiva i propri click quando un modale è
+  aperto, quindi si sarebbe spento da solo: si arma come `edit-plane-mark`, da
+  una nota lasciata durante la valutazione e consumata dal post-eval.
+
+Verificato dal vivo sul sorgente vero (headless): conferma su forma vuota →
+`:bordo-alto (edge-mark {…})` al posto giusto e resto intatto; Esc su forma
+vuota → la voce sparisce; Esc su forma avvolgente → testa rinominata, corpo
+identico; curva → `:profilo (curve-mark {…})`; senza bersaglio → `:spigolo-1`
+appeso in fondo. E la valutazione vera di `(edit-edge-mark)` /
+`(edit-curve-mark …)` lascia la nota giusta (`:retta` / `:curva` col letterale).
+
+NON ancora collaudato con le mani: dipingere e confermare dentro una sessione
+vera con le foto. È il gate di Vincenzo.

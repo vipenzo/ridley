@@ -692,6 +692,18 @@
    ;; it can be deleted, renamed and kept as text, which is the whole reason the
    ;; gesture's bench was moved there.
    'curve-mark          edit-acquire/curve-mark
+   ;; edit-edge-mark / edit-curve-mark: the same edit-* grammar as edit-plane-mark,
+   ;; applied to the bordi gesture — and the reason it exists is that the gesture
+   ;; had grown a UI of its own (Vincenzo, 2026-08-09: «proporrei di togliere
+   ;; stati alla UI e usare di più il codice»). Writing
+   ;;   :edges {:bordo-alto (edit-edge-mark)}
+   ;; ARMS the measurement; the drag on two photos makes it; confirming replaces
+   ;; the form with `(edge-mark {…})` under that same name. So the name is the
+   ;; user's, the arming is text, and nothing has to be listed or selected in a
+   ;; panel. Re-opening one REMEASURES from zero: the observations are pixel
+   ;; lines against photo identities, which the source deliberately does not know.
+   'edit-edge-mark      (fn [& [e]] (acquire-stage/request-edge-edit! :retta e))
+   'edit-curve-mark     (fn [& [e]] (acquire-stage/request-edge-edit! :curva e))
    ;; edit-acquire (dev-docs/brief-param-acq-v1.md): now a MARKER in the edit-*
    ;; family. The `edit-acquire` macro dispatches a dir-string first arg here
    ;; (request!, opened from the definitions panel) and a proxy-mesh first arg to
